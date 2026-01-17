@@ -36,7 +36,8 @@ export class RedisCacheStore implements CacheStore {
 
   private getFallbackStore(): MemoryCacheStore {
     if (!this.fallbackStore) {
-      this.fallbackStore = new MemoryCacheStore({ maxEntries: 500 });
+      // Small fallback cache (100 entries) for when Redis is unavailable
+      this.fallbackStore = new MemoryCacheStore({ maxEntries: 100 });
       logger.warn("[redis] Redis unavailable, using memory cache fallback");
     }
     return this.fallbackStore;

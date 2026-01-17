@@ -1,8 +1,16 @@
+/**
+ * File Cache - Redis-First Architecture
+ *
+ * Optimized for ephemeral pods with limited memory.
+ *
+ * Strategy:
+ * - Redis: Primary storage for file content (shared across pods)
+ * - Memory: Small fallback for local development without Redis
+ */
+
 import { logger } from "@veryfront/utils";
 import type { CacheEntry, CacheStats, FileCacheOptions } from "./types.ts";
 import { estimateSize } from "./size-estimator.ts";
-import { LRUTracker } from "./lru-tracker.ts";
-import { EvictionManager } from "@veryfront/utils/cache/eviction/eviction-manager.ts";
 import {
   getRedisClient,
   isRedisConfigured,
@@ -10,14 +18,14 @@ import {
 } from "../../../../core/utils/redis-client.ts";
 import { buildRedisFileCacheKey } from "../../../../core/cache/keys.ts";
 
-/** Default maximum memory for file cache (100 MB) */
-const DEFAULT_MAX_MEMORY_BYTES = 100 * 1024 * 1024;
-
 /** Default TTL for cache entries (1 minute) */
 const DEFAULT_CACHE_TTL_MS = 60_000;
 
-/** Default maximum number of cache entries */
-const DEFAULT_MAX_ENTRIES = 1000;
+/** Fallback cache max entries (small, for local dev) */
+const FALLBACK_MAX_ENTRIES = 200;
+
+/** Fallback cache max memory (10 MB, for local dev) */
+const FALLBACK_MAX_MEMORY_BYTES = 10 * 1024 * 1024;
 
 const REDIS_TTL_SECONDS = 300; // 5 minutes
 
@@ -146,10 +154,15 @@ async function deleteFromRedisByPattern(pattern: string): Promise<number> {
   }
 }
 
+/**
+ * FileCache - Redis-First with Small Fallback
+ *
+ * When Redis is available: Redis-only (no memory duplication)
+ * When Redis unavailable: Small memory fallback for local dev
+ */
 export class FileCache {
-  private cache: Map<string, CacheEntry<unknown>>;
-  private lruTracker: LRUTracker;
-  private evictionManager: EvictionManager<CacheEntry<unknown>>;
+  private fallbackCache: Map<string, CacheEntry<unknown>>;
+  private fallbackMemoryUsed: number = 0;
   private options: Required<FileCacheOptions>;
   private hits: number = 0;
   private misses: number = 0;
@@ -158,51 +171,53 @@ export class FileCache {
     this.options = {
       enabled: true,
       ttl: DEFAULT_CACHE_TTL_MS,
-      maxSize: DEFAULT_MAX_ENTRIES,
-      maxMemory: DEFAULT_MAX_MEMORY_BYTES,
+      maxSize: FALLBACK_MAX_ENTRIES,
+      maxMemory: FALLBACK_MAX_MEMORY_BYTES,
       ...options,
     };
 
-    this.cache = new Map();
-    this.lruTracker = new LRUTracker();
-    this.evictionManager = new EvictionManager<CacheEntry<unknown>>({
-      onEvict: (key: string, _value: unknown) => {
-        logger.debug("[FileCache] Evicted LRU entry", { key });
-      },
-      loggerContext: "FileCache",
-    });
+    // Fallback cache only used when Redis is unavailable
+    this.fallbackCache = new Map();
 
-    logger.debug("[FileCache] Initialized", this.options);
+    const mode = redisEnabled ? "redis-only" : "fallback-memory";
+    logger.debug("[FileCache] Initialized", { ...this.options, mode });
   }
 
+  /**
+   * Synchronous get - only checks fallback cache (for local dev without Redis).
+   * In production with Redis, use getAsync instead.
+   */
   get<T>(key: string): T | undefined {
     if (!this.options.enabled) {
       this.misses++;
       return undefined;
     }
 
-    const entry = this.cache.get(key) as CacheEntry<T> | undefined;
+    // In Redis mode, sync get always misses - use getAsync
+    if (redisEnabled) {
+      this.misses++;
+      return undefined;
+    }
 
+    // Fallback mode: check memory cache
+    const entry = this.fallbackCache.get(key) as CacheEntry<T> | undefined;
     if (!entry) {
       this.misses++;
       return undefined;
     }
 
-    if (this.evictionManager.isExpired(entry, this.options.ttl)) {
+    if (Date.now() - entry.timestamp > this.options.ttl) {
       this.delete(key);
       this.misses++;
       return undefined;
     }
 
-    this.lruTracker.update(key);
     this.hits++;
-
     return entry.value;
   }
 
   /**
-   * Async get that checks Redis after memory miss.
-   * Use this when Redis caching is enabled for cross-pod cache sharing.
+   * Async get - checks Redis (primary) or fallback memory cache.
    */
   async getAsync<T>(key: string): Promise<T | undefined> {
     if (!this.options.enabled) {
@@ -210,40 +225,28 @@ export class FileCache {
       return undefined;
     }
 
-    // Try memory first
-    const entry = this.cache.get(key) as CacheEntry<T> | undefined;
-
-    if (entry) {
-      if (this.evictionManager.isExpired(entry, this.options.ttl)) {
-        this.delete(key);
-      } else {
-        this.lruTracker.update(key);
-        this.hits++;
-        return entry.value;
-      }
-    }
-
-    // Try Redis if enabled
+    // Redis-only mode: only check Redis
     if (redisEnabled && redisClient) {
       const redisEntry = await getFromRedis<T>(key);
       if (redisEntry) {
-        // Check if expired
         const now = Date.now();
         if (now - redisEntry.timestamp < this.options.ttl) {
-          // Store in memory for faster subsequent access
-          this.cache.set(key, redisEntry as CacheEntry<unknown>);
-          this.lruTracker.update(key);
           this.hits++;
-          logger.debug("[FileCache] Redis cache hit", { key });
           return redisEntry.value;
         }
       }
+      this.misses++;
+      return undefined;
     }
 
-    this.misses++;
-    return undefined;
+    // Fallback mode: check memory cache
+    return this.get<T>(key);
   }
 
+  /**
+   * Synchronous set - only writes to fallback cache (for local dev without Redis).
+   * In production with Redis, use setAsync instead.
+   */
   set<T>(key: string, value: T): void {
     if (!this.options.enabled) {
       return;
@@ -251,43 +254,28 @@ export class FileCache {
 
     const size = estimateSize(value);
 
-    if (size > this.options.maxMemory) {
-      logger.warn("[FileCache] Value too large to cache", {
-        key,
-        size,
-        maxMemory: this.options.maxMemory,
-      });
+    // In Redis mode, fire-and-forget to Redis
+    if (redisEnabled && redisClient) {
+      const entry: CacheEntry<T> = { value, timestamp: Date.now(), size };
+      setInRedis(key, entry).catch(() => {});
       return;
     }
 
-    this.evictionManager.evictIfNeeded(
-      this.cache,
-      this.lruTracker,
-      size,
-      this.options.maxSize,
-      this.options.maxMemory,
-    );
-
-    const entry: CacheEntry<T> = {
-      value,
-      timestamp: Date.now(),
-      size,
-    };
-
-    this.cache.set(key, entry as CacheEntry<unknown>);
-    this.lruTracker.update(key);
-
-    // Fire-and-forget Redis write if enabled
-    if (redisEnabled && redisClient) {
-      setInRedis(key, entry).catch(() => {});
+    // Fallback mode: write to memory cache
+    if (size > this.options.maxMemory) {
+      logger.warn("[FileCache] Value too large for fallback cache", { key, size });
+      return;
     }
 
-    logger.debug("[FileCache] Cached", { key, size, entries: this.cache.size });
+    this.evictFallbackIfNeeded(size);
+
+    const entry: CacheEntry<T> = { value, timestamp: Date.now(), size };
+    this.fallbackCache.set(key, entry as CacheEntry<unknown>);
+    this.fallbackMemoryUsed += size;
   }
 
   /**
-   * Async set that writes through to Redis.
-   * Use this when you need to ensure Redis write completes.
+   * Async set - writes to Redis (primary) or fallback memory cache.
    */
   async setAsync<T>(key: string, value: T): Promise<void> {
     if (!this.options.enabled) {
@@ -295,116 +283,71 @@ export class FileCache {
     }
 
     const size = estimateSize(value);
+    const entry: CacheEntry<T> = { value, timestamp: Date.now(), size };
 
-    if (size > this.options.maxMemory) {
-      logger.warn("[FileCache] Value too large to cache", {
-        key,
-        size,
-        maxMemory: this.options.maxMemory,
-      });
+    // Redis-only mode: write to Redis
+    if (redisEnabled && redisClient) {
+      await setInRedis(key, entry);
       return;
     }
 
-    this.evictionManager.evictIfNeeded(
-      this.cache,
-      this.lruTracker,
-      size,
-      this.options.maxSize,
-      this.options.maxMemory,
-    );
-
-    const entry: CacheEntry<T> = {
-      value,
-      timestamp: Date.now(),
-      size,
-    };
-
-    this.cache.set(key, entry as CacheEntry<unknown>);
-    this.lruTracker.update(key);
-
-    // Write to Redis if enabled
-    if (redisEnabled && redisClient) {
-      await setInRedis(key, entry);
+    // Fallback mode: write to memory cache
+    if (size > this.options.maxMemory) {
+      logger.warn("[FileCache] Value too large for fallback cache", { key, size });
+      return;
     }
 
-    logger.debug("[FileCache] Cached", { key, size, entries: this.cache.size });
+    this.evictFallbackIfNeeded(size);
+    this.fallbackCache.set(key, entry as CacheEntry<unknown>);
+    this.fallbackMemoryUsed += size;
   }
 
   has(key: string): boolean {
-    if (!this.options.enabled) {
-      return false;
-    }
+    if (!this.options.enabled) return false;
+    if (redisEnabled) return false; // Use hasAsync for Redis mode
 
-    const entry = this.cache.get(key);
-    if (!entry) {
-      return false;
-    }
-
-    if (this.evictionManager.isExpired(entry, this.options.ttl)) {
+    const entry = this.fallbackCache.get(key);
+    if (!entry) return false;
+    if (Date.now() - entry.timestamp > this.options.ttl) {
       this.delete(key);
       return false;
     }
-
     return true;
   }
 
   delete(key: string): boolean {
-    const deleted = this.cache.delete(key);
-    if (deleted) {
-      this.lruTracker.remove(key);
+    const entry = this.fallbackCache.get(key);
+    if (entry) {
+      this.fallbackMemoryUsed -= entry.size;
     }
-    return deleted;
+    return this.fallbackCache.delete(key);
   }
 
   deleteByPrefix(prefix: string): number {
     let count = 0;
-    for (const key of this.cache.keys()) {
+    for (const key of [...this.fallbackCache.keys()]) {
       if (key.startsWith(prefix)) {
-        this.cache.delete(key);
-        this.lruTracker.remove(key);
+        const entry = this.fallbackCache.get(key);
+        if (entry) this.fallbackMemoryUsed -= entry.size;
+        this.fallbackCache.delete(key);
         count++;
       }
     }
-    if (count > 0) {
-      logger.debug("[FileCache] Deleted by prefix (memory)", { prefix, count });
-    }
 
-    // Fire-and-forget Redis deletion for cross-pod consistency
+    // Fire-and-forget Redis deletion
     if (redisEnabled && redisClient) {
-      deleteFromRedisByPattern(`${prefix}*`).catch((error) => {
-        logger.warn("[FileCache] Redis deleteByPrefix failed", { prefix, error });
-      });
+      deleteFromRedisByPattern(`${prefix}*`).catch(() => {});
     }
 
     return count;
   }
 
-  /**
-   * Async version that awaits Redis deletion.
-   * Use this when you need to ensure Redis cache is cleared before proceeding,
-   * such as during invalidation before triggering browser reload.
-   */
   async deleteByPrefixAsync(prefix: string): Promise<number> {
-    let count = 0;
-    for (const key of this.cache.keys()) {
-      if (key.startsWith(prefix)) {
-        this.cache.delete(key);
-        this.lruTracker.remove(key);
-        count++;
-      }
-    }
-    if (count > 0) {
-      logger.debug("[FileCache] Deleted by prefix (memory)", { prefix, count });
-    }
+    const count = this.deleteByPrefix(prefix);
 
-    // Await Redis deletion to ensure cross-pod cache consistency
+    // Await Redis deletion for cross-pod consistency
     if (redisEnabled && redisClient) {
-      try {
-        const redisCount = await deleteFromRedisByPattern(`${prefix}*`);
-        logger.debug("[FileCache] Deleted by prefix (Redis)", { prefix, redisCount });
-      } catch (error) {
-        logger.warn("[FileCache] Redis deleteByPrefixAsync failed", { prefix, error });
-      }
+      await deleteFromRedisByPattern(`${prefix}*`);
     }
 
     return count;
@@ -412,100 +355,92 @@ export class FileCache {
 
   deleteByPrefixAndSuffix(prefix: string, suffix: string): number {
     let count = 0;
-    for (const key of this.cache.keys()) {
+    for (const key of [...this.fallbackCache.keys()]) {
       if (key.startsWith(prefix) && key.endsWith(`:${suffix}`)) {
-        this.cache.delete(key);
-        this.lruTracker.remove(key);
+        const entry = this.fallbackCache.get(key);
+        if (entry) this.fallbackMemoryUsed -= entry.size;
+        this.fallbackCache.delete(key);
         count++;
       }
     }
-    if (count > 0) {
-      logger.debug("[FileCache] Deleted by prefix+suffix (memory)", { prefix, suffix, count });
-    }
 
-    // Fire-and-forget Redis deletion for cross-pod consistency
-    // Pattern: prefix*:suffix (e.g., file:content:*:components/sections/HeroSection.tsx)
+    // Fire-and-forget Redis deletion
     if (redisEnabled && redisClient) {
-      deleteFromRedisByPattern(`${prefix}*:${suffix}`).catch((error) => {
-        logger.warn("[FileCache] Redis deleteByPrefixAndSuffix failed", { prefix, suffix, error });
-      });
+      deleteFromRedisByPattern(`${prefix}*:${suffix}`).catch(() => {});
     }
 
     return count;
   }
 
-  /**
-   * Async version that awaits Redis deletion.
-   * Use this when you need to ensure Redis cache is cleared before proceeding,
-   * such as during selective invalidation before triggering browser reload.
-   */
   async deleteByPrefixAndSuffixAsync(prefix: string, suffix: string): Promise<number> {
-    let count = 0;
-    for (const key of this.cache.keys()) {
-      if (key.startsWith(prefix) && key.endsWith(`:${suffix}`)) {
-        this.cache.delete(key);
-        this.lruTracker.remove(key);
-        count++;
-      }
-    }
-    if (count > 0) {
-      logger.debug("[FileCache] Deleted by prefix+suffix (memory)", { prefix, suffix, count });
-    }
+    const count = this.deleteByPrefixAndSuffix(prefix, suffix);
 
-    // Await Redis deletion to ensure cross-pod cache consistency
-    // Pattern: prefix*:suffix (e.g., file:content:*:components/sections/HeroSection.tsx)
+    // Await Redis deletion for cross-pod consistency
     if (redisEnabled && redisClient) {
-      try {
-        const redisCount = await deleteFromRedisByPattern(`${prefix}*:${suffix}`);
-        logger.debug("[FileCache] Deleted by prefix+suffix (Redis)", {
-          prefix,
-          suffix,
-          redisCount,
-        });
-      } catch (error) {
-        logger.warn("[FileCache] Redis deleteByPrefixAndSuffixAsync failed", {
-          prefix,
-          suffix,
-          error,
-        });
-      }
+      await deleteFromRedisByPattern(`${prefix}*:${suffix}`);
     }
 
     return count;
   }
 
   clear(): void {
-    this.cache.clear();
-    this.lruTracker.clear();
+    this.fallbackCache.clear();
+    this.fallbackMemoryUsed = 0;
     this.hits = 0;
     this.misses = 0;
-    logger.debug("[FileCache] Cleared");
   }
 
-  stats(): CacheStats & { redisEnabled: boolean } {
-    const memoryUsed = Array.from(this.cache.values()).reduce((sum, entry) => sum + entry.size, 0);
+  stats(): CacheStats & { redisEnabled: boolean; mode: string } {
     const total = this.hits + this.misses;
     const hitRate = total > 0 ? this.hits / total : 0;
 
     return {
-      size: this.cache.size,
-      memoryUsed,
+      size: this.fallbackCache.size,
+      memoryUsed: this.fallbackMemoryUsed,
       hits: this.hits,
       misses: this.misses,
       hitRate,
       redisEnabled,
+      mode: redisEnabled ? "redis-only" : "fallback-memory",
     };
   }
 
   evictExpired(): number {
-    const evicted = this.evictionManager.evictExpired(
-      this.cache,
-      this.lruTracker,
-      this.options.ttl,
-    );
-    if (evicted > 0) {
-      logger.debug("[FileCache] Evicted expired entries", { evicted, remaining: this.cache.size });
+    const now = Date.now();
+    let evicted = 0;
+
+    for (const [key, entry] of this.fallbackCache) {
+      if (now - entry.timestamp > this.options.ttl) {
+        this.fallbackMemoryUsed -= entry.size;
+        this.fallbackCache.delete(key);
+        evicted++;
+      }
     }
+
     return evicted;
+  }
+
+  private evictFallbackIfNeeded(newSize: number): void {
+    // Evict by count
+    while (this.fallbackCache.size >= this.options.maxSize) {
+      const oldest = this.fallbackCache.keys().next().value;
+      if (oldest) {
+        const entry = this.fallbackCache.get(oldest);
+        if (entry) this.fallbackMemoryUsed -= entry.size;
+        this.fallbackCache.delete(oldest);
+      } else break;
+    }
+
+    // Evict by memory
+    while (
+      this.fallbackMemoryUsed + newSize > this.options.maxMemory && this.fallbackCache.size > 0
+    ) {
+      const oldest = this.fallbackCache.keys().next().value;
+      if (oldest) {
+        const entry = this.fallbackCache.get(oldest);
+        if (entry) this.fallbackMemoryUsed -= entry.size;
+        this.fallbackCache.delete(oldest);
+      } else break;
+    }
   }
 }
