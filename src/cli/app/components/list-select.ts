@@ -32,6 +32,8 @@ export interface ListSelectOptions {
   numberOffset?: number;
   /** Empty state message */
   emptyMessage?: string;
+  /** Show selection cursor (default true). Set false for inactive sections */
+  showSelection?: boolean;
 }
 
 export interface ListSelectState<T = unknown> {
@@ -130,6 +132,7 @@ export function renderList<T>(
     showNumbers = true,
     numberOffset = 0,
     emptyMessage = "No items",
+    showSelection = true,
   } = options;
 
   if (state.items.length === 0) {
@@ -150,13 +153,13 @@ export function renderList<T>(
   for (let i = 0; i < visibleItems.length; i++) {
     const item = visibleItems[i]!;
     const actualIndex = start + i;
-    const isSelected = actualIndex === state.selectedIndex;
+    const isSelected = showSelection && actualIndex === state.selectedIndex;
     const displayNum = actualIndex + 1 + numberOffset; // Apply offset for display
 
     // Build line parts
     const parts: string[] = [];
 
-    // Cursor
+    // Cursor (only show if section is active)
     parts.push(isSelected ? brand("›") : " ");
     parts.push(" ");
 

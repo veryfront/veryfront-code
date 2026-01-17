@@ -406,6 +406,17 @@ export function createApp(config: AppConfig): App {
       return;
     }
 
+    // Tab to switch between projects and examples sections
+    if (key === "\t") {
+      const hasProjects = state.projects.items.length > 0;
+      const hasExamples = state.examples.items.length > 0;
+      if (hasProjects && hasExamples) {
+        const newList = state.activeList === "projects" ? "examples" : "projects";
+        update(setActiveList(newList));
+      }
+      return;
+    }
+
     // Number keys for quick select (works across projects and examples)
     if (key >= "1" && key <= "9") {
       const num = parseInt(key, 10);
