@@ -1,4 +1,4 @@
-import { assertEquals } from "jsr:@std/assert@1";
+import { assertEquals } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import { parseUpArgs, UpArgsSchema } from "./up.ts";
 import type { ParsedArgs } from "../index/types.ts";

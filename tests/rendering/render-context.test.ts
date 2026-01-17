@@ -5,7 +5,7 @@
  * through cache key generation and context creation.
  */
 
-import { assertEquals, assertThrows } from "jsr:@std/assert";
+import { assertEquals, assertThrows } from "@std/assert";
 import {
   createCacheKey,
   createRenderContext,

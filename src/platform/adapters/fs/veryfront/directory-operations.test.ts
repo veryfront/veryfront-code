@@ -1,5 +1,5 @@
-import { assertEquals, assertExists } from "jsr:@std/assert@1";
-import { describe, it } from "jsr:@std/testing@1/bdd";
+import { assertEquals, assertExists } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import { DirectoryOperations } from "./directory-operations.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 import { FileCache } from "../cache/file-cache.ts";

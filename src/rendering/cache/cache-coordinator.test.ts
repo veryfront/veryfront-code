@@ -1,4 +1,4 @@
-import { assertEquals, assertObjectMatch } from "jsr:@std/assert@1";
+import { assertEquals, assertObjectMatch } from "@std/assert";
 import { CacheCoordinator } from "./cache-coordinator.ts";
 import type { RenderResult } from "../orchestrator/types.ts";
 

@@ -1,5 +1,5 @@
-import { assertEquals, assertExists, assertRejects } from "jsr:@std/assert@1";
-import { describe, it } from "jsr:@std/testing@1/bdd";
+import { assertEquals, assertExists, assertRejects } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import { ServerDataFetcher } from "./server-data-fetcher.ts";
 import type { DataContext, PageWithData } from "./types.ts";
 

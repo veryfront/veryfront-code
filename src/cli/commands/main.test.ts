@@ -2,8 +2,8 @@
  * Tests for main.ts
  */
 
-import { assertEquals, assertMatch } from "jsr:@std/assert@1";
-import { describe, it } from "jsr:@std/testing@1/bdd";
+import { assertEquals, assertMatch } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 
 // Test the random name generation pattern
 describe("main", () => {

@@ -2,7 +2,7 @@
  * Login Module Tests
  */
 
-import { assertEquals, assertExists } from "jsr:@std/assert@1";
+import { assertEquals, assertExists } from "@std/assert";
 import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import { deleteEnv, getEnv, setEnv } from "@veryfront/platform/compat/process.ts";
 import { deleteToken, readToken, saveToken } from "./token-store.ts";

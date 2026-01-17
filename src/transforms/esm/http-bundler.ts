@@ -8,6 +8,7 @@
 import { rendererLogger as logger } from "@veryfront/utils";
 import { replaceSpecifiers } from "./lexer.ts";
 import { getReactUrls } from "./package-registry.ts";
+import { isDeno } from "@veryfront/platform/compat/runtime.ts";
 
 const LOG_PREFIX = "[HTTP-HANDLER]";
 
@@ -18,7 +19,6 @@ export function hasHttpImports(code: string): boolean {
 
 /** Strip Deno shim from esm.sh bundles (if present) */
 export function stripDenoShim(code: string): string {
-  const isDeno = typeof Deno !== "undefined";
   if (!isDeno) return code;
   return code.replace(
     /globalThis\.Deno\s*=\s*globalThis\.Deno\s*\|\|\s*\{[\s\S]*?env:\s*\{[\s\S]*?\}\s*\};?/g,

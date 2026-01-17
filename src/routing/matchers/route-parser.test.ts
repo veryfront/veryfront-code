@@ -1,5 +1,5 @@
-import { assertEquals, assertGreater } from "jsr:@std/assert@1";
-import { describe, it } from "jsr:@std/testing@1/bdd";
+import { assertEquals, assertGreater } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import { getSpecificityScore, parseRoute } from "./route-parser.ts";
 
 describe("route-parser", () => {

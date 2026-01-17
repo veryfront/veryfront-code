@@ -1,5 +1,5 @@
-import { assertEquals, assertNotEquals } from "jsr:@std/assert@1";
-import { describe, it } from "jsr:@std/testing@1/bdd";
+import { assert, assertEquals } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import {
   createError,
   ensureError,
@@ -193,7 +193,8 @@ describe("veryfront-error", () => {
     it("should create new Error instance for non-Error values", () => {
       const result1 = ensureError("test");
       const result2 = ensureError("test");
-      assertNotEquals(result1, result2);
+      // Use reference comparison - each call should create a new Error instance
+      assert(result1 !== result2, "Expected different Error instances");
     });
   });
 });

@@ -2,8 +2,8 @@
  * Tests for CLI colors
  */
 
-import { assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
-import { afterAll, beforeAll, describe, it } from "jsr:@std/testing@1/bdd";
+import { assertEquals, assertStringIncludes } from "@std/assert";
+import { afterAll, beforeAll, describe, it } from "@std/testing/bdd";
 import {
   bold,
   brand,

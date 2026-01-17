@@ -1,5 +1,5 @@
-import { assertEquals, assertNotEquals } from "jsr:@std/assert@1";
-import { describe, it } from "jsr:@std/testing@1/bdd";
+import { assertEquals, assertNotEquals } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import { MemoCache, memoize, memoizeAsync, simpleHash } from "./memoize.ts";
 
 describe("memoize", () => {

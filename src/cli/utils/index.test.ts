@@ -1,5 +1,5 @@
 import { VERSION } from "@veryfront/utils";
-import { assertEquals, assertExists, assertStringIncludes } from "jsr:@std/assert@1";
+import { assertEquals, assertExists, assertStringIncludes } from "@std/assert";
 import {
   formatBytes,
   logError,

@@ -1,4 +1,4 @@
-import { assertEquals, assertExists } from "jsr:@std/assert@1";
+import { assertEquals, assertExists } from "@std/assert";
 import { join } from "@std/path";
 import { getRehypePlugins, getRemarkPlugins } from "./plugin-loader.ts";
 

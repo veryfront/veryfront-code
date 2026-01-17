@@ -8,7 +8,7 @@
  * - Relative imports
  */
 
-import { assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
+import { assertEquals, assertStringIncludes } from "@std/assert";
 import { runPipeline } from "../index.ts";
 
 const FIXTURES_DIR = new URL(".", import.meta.url).pathname;

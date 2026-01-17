@@ -5,7 +5,7 @@
 // Disable LRU intervals during testing to prevent resource leaks
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 
-import { assertEquals, assertExists } from "jsr:@std/assert@1";
+import { assertEquals, assertExists } from "@std/assert";
 import { join } from "@std/path";
 import { LayoutCompiler } from "../../../../src/rendering/layouts/layout-compiler.ts";
 import { DenoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
