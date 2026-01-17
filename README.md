@@ -10,7 +10,7 @@ Veryfront is a **zero-config React framework** for building **agentic applicatio
 ```
 my-ai-app/
 ├── .env
-├── app/
+├── app/                         # App Router (pages & API routes)
 │   ├── chat/page.tsx
 │   └── api/chat/route.ts
 ├── agents/
