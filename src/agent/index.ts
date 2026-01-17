@@ -28,12 +28,7 @@ export type {
 } from "./types.ts";
 
 // Type guards and helpers
-export {
-  getTextFromParts,
-  getToolArguments,
-  hasArgs,
-  hasInput,
-} from "./types.ts";
+export { getTextFromParts, getToolArguments, hasArgs, hasInput } from "./types.ts";
 
 // Memory
 export {
@@ -54,8 +49,8 @@ export {
 // Composition
 export {
   agentAsTool,
-  AgentRegistryClass,
   agentRegistry,
+  AgentRegistryClass,
   createWorkflow,
   getAgent,
   getAgentsAsTools,

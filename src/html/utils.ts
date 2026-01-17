@@ -120,7 +120,8 @@ function getJsdelivrImportMap(versions: DetectedVersions): Record<string, string
       `https://cdn.jsdelivr.net/npm/react-dom@${react}/umd/react-dom.production.min.js`,
     "react/jsx-runtime": `https://cdn.jsdelivr.net/npm/react@${react}/jsx-runtime`,
     "react/jsx-dev-runtime": `https://cdn.jsdelivr.net/npm/react@${react}/jsx-dev-runtime`,
-    "veryfront/agent/react": `https://cdn.jsdelivr.net/npm/veryfront@${veryfront}/dist/agent/react.js`,
+    "veryfront/agent/react":
+      `https://cdn.jsdelivr.net/npm/veryfront@${veryfront}/dist/agent/react.js`,
     "veryfront/components/ai":
       `https://cdn.jsdelivr.net/npm/veryfront@${veryfront}/dist/components/ai.js`,
     "veryfront/primitives":

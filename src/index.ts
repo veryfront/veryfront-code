@@ -104,11 +104,11 @@ export { agent } from "@veryfront/agent";
 export type { Agent, AgentConfig } from "@veryfront/agent";
 
 // Tool
-export { tool, executeTool } from "@veryfront/tool";
+export { executeTool, tool } from "@veryfront/tool";
 export type { Tool, ToolConfig } from "@veryfront/tool";
 
 // Workflow
-export { workflow, step, parallel, branch, waitForApproval } from "@veryfront/workflow";
+export { branch, parallel, step, waitForApproval, workflow } from "@veryfront/workflow";
 export type { WorkflowDefinition, WorkflowRun } from "@veryfront/workflow";
 
 // Prompt

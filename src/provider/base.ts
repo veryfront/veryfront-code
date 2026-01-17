@@ -1,10 +1,5 @@
 import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
-import type {
-  CompletionRequest,
-  CompletionResponse,
-  Provider,
-  ProviderConfig,
-} from "./types.ts";
+import type { CompletionRequest, CompletionResponse, Provider, ProviderConfig } from "./types.ts";
 import { agentLogger } from "@veryfront/utils/logger/logger.ts";
 import { z } from "zod";
 

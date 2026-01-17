@@ -36,24 +36,19 @@ export { createMiddlewareChain, MiddlewareChain } from "./chain.ts";
 // Rate limiting
 export {
   createRateLimiter,
-  rateLimitMiddleware,
   type RateLimitConfig,
+  rateLimitMiddleware,
   type RateLimitResult,
 } from "./rate-limit/index.ts";
 
 // Caching
-export {
-  cacheMiddleware,
-  createCache,
-  type CacheConfig,
-  type CacheEntry,
-} from "./cache/index.ts";
+export { type CacheConfig, type CacheEntry, cacheMiddleware, createCache } from "./cache/index.ts";
 
 // Cost tracking
 export {
+  type CostConfig,
   costTrackingMiddleware,
   createCostTracker,
-  type CostConfig,
   type UsageRecord,
   type UsageSummary,
 } from "./cost-tracking/index.ts";
@@ -63,7 +58,7 @@ export {
   COMMON_BLOCKED_PATTERNS,
   InputValidator,
   OutputFilter,
-  securityMiddleware,
   type SecurityConfig,
+  securityMiddleware,
   type SecurityViolation,
 } from "./security/index.ts";

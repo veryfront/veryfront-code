@@ -4,8 +4,8 @@
  */
 
 import * as React from "react";
-import { MessageList } from "../../../primitives/index.ts";
-import { InputBox } from "../../../primitives/index.ts";
+import { MessageList } from "../../../../primitives/index.ts";
+import { InputBox } from "../../../../primitives/index.ts";
 import { cn, defaultChatTheme } from "../../theme.ts";
 
 // Composition API (for advanced usage)

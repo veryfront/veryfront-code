@@ -14,7 +14,7 @@ import {
   MessageItem,
   MessageList,
   SubmitButton,
-} from "../../../primitives/index.ts";
+} from "../../../../primitives/index.ts";
 import { useVoiceInput } from "@veryfront/agent/react";
 import type { DynamicToolUIPart, ToolUIPart, UIMessage } from "@veryfront/agent/react";
 import { type ChatTheme, cn, defaultChatTheme, mergeThemes } from "../theme.ts";
