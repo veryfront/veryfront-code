@@ -8,6 +8,8 @@
 
 export {
   // Types
+  type AnyRenderer,
+  type AnyRendererPromise,
   type CachedRenderer,
   // Memory
   checkAndEvictUnderMemoryPressure,

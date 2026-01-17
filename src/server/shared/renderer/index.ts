@@ -7,13 +7,20 @@
  * In multi-project mode, renderers are cached per-project with LRU eviction
  * to prevent unbounded memory growth.
  *
+ * ## Universal Renderer Mode
+ *
+ * When UNIVERSAL_RENDERER=1 is set, a shared universal renderer is used instead
+ * of creating per-project renderer instances. This eliminates 7+ second cold
+ * starts for new projects by sharing expensive initialization (esbuild, etc.)
+ * across all tenants.
+ *
  * @module server/shared/renderer
  */
 
 import { rendererLogger } from "@veryfront/utils";
 import { clearConfigCache, getConfig } from "@veryfront/config";
 import type { HandlerContext } from "../../handlers/types.ts";
-import type { RendererInstance, RendererPromise } from "./types.ts";
+import type { AnyRenderer, AnyRendererPromise, RendererInstance } from "./types.ts";
 import { MAX_RENDERER_CACHE_SIZE } from "./constants.ts";
 import { rendererCache, setSingleProjectRenderer, singleProjectRenderer } from "./state.ts";
 import { getCacheKey } from "./cache/key-generation.ts";
@@ -25,9 +32,21 @@ import {
 import { evictExpired, evictLRU } from "./cache/lru-cache.ts";
 import { createRendererInternal } from "./lifecycle/creation.ts";
 import { checkAndEvictUnderMemoryPressure } from "./memory/pressure.ts";
+import {
+  getRendererForProjectUniversal,
+  isUniversalRendererEnabled,
+  type RendererAdapter,
+} from "./universal-adapter.ts";
 
 // Re-export types
-export type { CachedRenderer, RendererInstance, RendererPromise } from "./types.ts";
+export type {
+  AnyRenderer,
+  AnyRendererPromise,
+  CachedRenderer,
+  RendererInstance,
+  RendererPromise,
+} from "./types.ts";
+export type { RendererAdapter } from "./universal-adapter.ts";
 
 // Re-export constants
 export {
@@ -63,10 +82,21 @@ export { getCacheKey } from "./cache/key-generation.ts";
  * In multi-project mode (when projectSlug is available), renderers are
  * cached per-project with LRU eviction to prevent memory growth.
  *
+ * When UNIVERSAL_RENDERER=1 is set, uses a shared universal renderer instead
+ * of creating per-project instances. This eliminates cold start times.
+ *
  * @param ctx - Handler context with projectDir, mode, adapter, projectSlug
- * @returns Renderer instance
+ * @returns Renderer instance or adapter
  */
-export async function getRendererForProject(ctx: HandlerContext): Promise<RendererInstance> {
+export async function getRendererForProject(
+  ctx: HandlerContext,
+): Promise<RendererInstance | RendererAdapter> {
+  // Check if universal renderer mode is enabled
+  if (isUniversalRendererEnabled()) {
+    rendererLogger.debug("[RendererFactory] Using universal renderer mode");
+    return getRendererForProjectUniversal(ctx);
+  }
+
   const cacheKey = getCacheKey(ctx);
 
   // Single-project mode (no projectSlug)
@@ -191,8 +221,8 @@ export async function getRendererForProject(ctx: HandlerContext): Promise<Render
  */
 export async function getRenderer(
   ctx: HandlerContext,
-  rendererInit?: RendererPromise | null,
-): Promise<RendererInstance> {
+  rendererInit?: AnyRendererPromise | null,
+): Promise<AnyRenderer> {
   // If caller provided a cached promise, use it
   if (rendererInit) {
     return await rendererInit;
@@ -207,7 +237,9 @@ export async function getRenderer(
  *
  * @deprecated Use getRendererForProject which handles caching internally.
  */
-export function createRendererPromise(ctx: HandlerContext): RendererPromise {
+export function createRendererPromise(
+  ctx: HandlerContext,
+): Promise<RendererInstance | RendererAdapter> {
   return getRendererForProject(ctx);
 }
 
@@ -225,10 +257,19 @@ export function getRendererCacheStats(): {
   size: number;
   maxSize: number;
   projects: string[];
+  universalMode: boolean;
 } {
   return {
     size: rendererCache.size,
     maxSize: MAX_RENDERER_CACHE_SIZE,
     projects: [...rendererCache.keys()],
+    universalMode: isUniversalRendererEnabled(),
   };
 }
+
+// Re-export universal renderer functions
+export {
+  destroyUniversalRendererAdapter,
+  getRendererForProjectUniversal,
+  isUniversalRendererEnabled,
+} from "./universal-adapter.ts";
