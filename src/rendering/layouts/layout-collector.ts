@@ -1,5 +1,5 @@
 import { join } from "@veryfront/platform/compat/path-helper.ts";
-import { rendererLogger as logger, timeAsync } from "@veryfront/utils";
+import { rendererLogger as logger } from "@veryfront/utils";
 import { parallelFind } from "@veryfront/utils/parallel.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { isExtendedFSAdapter } from "@veryfront/platform/adapters/fs/wrapper.ts";
@@ -62,7 +62,7 @@ export class LayoutCollector {
   }
 
   async collectLayouts(pageInfo: EntityInfo): Promise<LayoutCollectionResult> {
-    return withSpan(
+    return await withSpan(
       SpanNames.LAYOUT_COLLECT,
       async () => {
         logger.debug("[LayoutCollector] collectLayouts called", {
