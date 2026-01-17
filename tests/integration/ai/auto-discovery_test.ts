@@ -18,7 +18,7 @@ describe("Auto-Discovery Integration", { sanitizeOps: false, sanitizeResources: 
 
   it("should discover tools from ai/tools/ directory", async () => {
     const result = await discoverAll({
-      baseDir: new URL("../../../examples/ai-autodiscovery/", import.meta.url).pathname,
+      baseDir: new URL("../../../examples/autodiscovery/", import.meta.url).pathname,
       verbose: false,
     });
 
@@ -29,7 +29,7 @@ describe("Auto-Discovery Integration", { sanitizeOps: false, sanitizeResources: 
 
   it("should discover resources from ai/resources/ directory", async () => {
     const result = await discoverAll({
-      baseDir: new URL("../../../examples/ai-autodiscovery/", import.meta.url).pathname,
+      baseDir: new URL("../../../examples/autodiscovery/", import.meta.url).pathname,
       verbose: false,
     });
 
@@ -39,7 +39,7 @@ describe("Auto-Discovery Integration", { sanitizeOps: false, sanitizeResources: 
 
   it("should discover prompts from ai/prompts/ directory", async () => {
     const result = await discoverAll({
-      baseDir: new URL("../../../examples/ai-autodiscovery/", import.meta.url).pathname,
+      baseDir: new URL("../../../examples/autodiscovery/", import.meta.url).pathname,
       verbose: false,
     });
 
@@ -49,7 +49,7 @@ describe("Auto-Discovery Integration", { sanitizeOps: false, sanitizeResources: 
 
   it("should register discovered tools in registry", async () => {
     await discoverAll({
-      baseDir: new URL("../../../examples/ai-autodiscovery/", import.meta.url).pathname,
+      baseDir: new URL("../../../examples/autodiscovery/", import.meta.url).pathname,
       verbose: false,
     });
 
