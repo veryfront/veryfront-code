@@ -48,6 +48,8 @@
     "./prompt": "./src/prompt/index.ts",
     "./resource": "./src/resource/index.ts",
     "./mcp": "./src/mcp/index.ts",
+    "./primitives": "./src/react/primitives/index.ts",
+    "./components/ai": "./src/react/components/ai/index.ts",
     "./oauth": "./src/core/oauth/index.ts",
     "./oauth/providers": "./src/core/oauth/providers/index.ts",
     "./oauth/handlers": "./src/core/oauth/handlers/index.ts",
