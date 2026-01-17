@@ -53,10 +53,6 @@ export function renderDashboard(state: AppState): string {
     lines.push("");
   }
 
-  // Quick actions
-  lines.push(renderQuickActions());
-  lines.push("");
-
   // Help bar
   lines.push(renderHelpBar(state));
 
@@ -126,25 +122,24 @@ function renderHelpBar(state: AppState): string {
   const parts: string[] = [];
 
   // Navigation
-  parts.push(`${dim("↑↓")} Navigate`);
+  parts.push(`${dim("↑↓")} nav`);
 
   // Tab to switch sections (only if both exist)
   if (state.projects.items.length > 0 && state.examples.items.length > 0) {
-    parts.push(`${dim("Tab")} Switch`);
+    parts.push(`${dim("Tab")} switch`);
   }
-
-  // Selection
-  parts.push(`${dim("Enter")} Select`);
 
   // Quick actions based on context
   if (state.projects.items.length > 0 || state.examples.items.length > 0) {
-    parts.push(`${dim("o")} Browser`);
-    parts.push(`${dim("s")} Studio`);
-    parts.push(`${dim("i")} IDE`);
+    parts.push(`${dim("o")} open`);
+    parts.push(`${dim("s")} studio`);
+    parts.push(`${dim("i")} ide`);
   }
 
-  // Exit
-  parts.push(`${dim("q")} Quit`);
+  // Other
+  parts.push(`${dim("n")} new`);
+  parts.push(`${dim("?")} help`);
+  parts.push(`${dim("q")} quit`);
 
   return `  ${parts.join("  ")}`;
 }
