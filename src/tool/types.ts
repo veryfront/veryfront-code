@@ -42,7 +42,7 @@ export interface ToolConfig<TInput = any, TOutput = any> {
 
 // Forward reference for BlobStorage - will be defined in workflow module
 // Using type-only import to avoid circular runtime dependency
-import type { BlobStorage } from "../ai/workflow/blob/types.ts";
+import type { BlobStorage } from "../workflow/blob/types.ts";
 
 /**
  * Context passed to tool execution

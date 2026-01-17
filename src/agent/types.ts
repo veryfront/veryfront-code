@@ -3,7 +3,7 @@
  */
 
 import type { Tool } from "@veryfront/tool";
-import type { Platform } from "../ai/runtime/platform.ts";
+import type { Platform } from "../core/platform.ts";
 import type { Memory } from "./memory/index.ts";
 
 /**
