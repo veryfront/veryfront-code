@@ -144,12 +144,12 @@ export async function resolveModuleFile(
     });
   }
 
-  // FALLBACK: For lib/* imports not found in project, check framework lib directory
+  // FALLBACK: For lib/* imports not found in project, check framework lib directory (src/lib/)
   // This provides framework utilities like lib/Router, lib/Head, lib/usePageContext
   if (filePathWithoutJs.startsWith("lib/")) {
     const localFs = getLocalFs();
     for (const ext of MODULE_EXTENSIONS) {
-      const frameworkPath = join(FRAMEWORK_ROOT, filePathWithoutJs + ext);
+      const frameworkPath = join(FRAMEWORK_ROOT, "src", filePathWithoutJs + ext);
       try {
         const stat = await localFs.stat(frameworkPath);
         if (stat?.isFile) {

@@ -254,11 +254,11 @@ async function loadAndTransformModule(
     }
   }
 
-  // Check framework lib files if not found
+  // Check framework lib files if not found (lib/ is in src/lib/)
   if (!source && basePath.startsWith("lib/")) {
     const platformFs = createFileSystem();
     for (const ext of extensions) {
-      const frameworkPath = join(FRAMEWORK_ROOT, basePath + ext);
+      const frameworkPath = join(FRAMEWORK_ROOT, "src", basePath + ext);
       try {
         const stat = await platformFs.stat(frameworkPath);
         if (stat.isFile) {
