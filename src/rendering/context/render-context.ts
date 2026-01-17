@@ -11,6 +11,7 @@
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "@veryfront/config";
 import type { HandlerContext } from "../../server/handlers/types.ts";
+import { VERSION } from "@veryfront/utils/version.ts";
 
 /**
  * Environment type for rendering context
@@ -122,9 +123,10 @@ export function createRenderContext(
   const projectSlug = ctx.projectSlug ?? ctx.projectId ?? "__single__";
 
   // Compute cache prefix for tenant isolation
-  // Format: "{projectId}:{environment}:{releaseId|'draft'}"
+  // Format: "{projectId}:{environment}:{releaseId|'draft'}:{frameworkVersion}"
+  // Including framework version ensures cache invalidation on deployments
   const releaseKey = ctx.releaseId ?? "draft";
-  const cachePrefix = `${projectId}:${environment}:${releaseKey}`;
+  const cachePrefix = `${projectId}:${environment}:${releaseKey}:${VERSION}`;
 
   return {
     projectId,
