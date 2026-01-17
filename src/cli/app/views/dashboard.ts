@@ -24,12 +24,14 @@ export function renderDashboard(state: AppState): string {
 
   // Projects section
   if (state.projects.items.length > 0) {
-    lines.push(renderSection("Your Projects", state.projects.items.length));
+    const isActive = state.activeList === "projects";
+    lines.push(renderSection("Your Projects", state.projects.items.length, isActive));
     lines.push(
       renderList(state.projects, {
         maxWidth: termWidth - 4,
         visibleCount: 5,
         showNumbers: true,
+        showSelection: isActive,
       }),
     );
     lines.push("");
@@ -37,13 +39,15 @@ export function renderDashboard(state: AppState): string {
 
   // Examples section
   if (state.examples.items.length > 0) {
-    lines.push(renderSection("Examples", state.examples.items.length));
+    const isActive = state.activeList === "examples";
+    lines.push(renderSection("Examples", state.examples.items.length, isActive));
     lines.push(
       renderList(state.examples, {
         maxWidth: termWidth - 4,
         visibleCount: 5,
         showNumbers: true,
         numberOffset: state.projects.items.length, // Continue numbering from projects
+        showSelection: isActive,
       }),
     );
     lines.push("");
@@ -96,8 +100,10 @@ function renderBanner(state: AppState): string {
 /**
  * Render a section header
  */
-function renderSection(title: string, count: number): string {
-  return `  ${dim(title)} ${dim(`(${count})`)}`;
+function renderSection(title: string, count: number, isActive = true): string {
+  const indicator = isActive ? brand("›") : " ";
+  const titleText = isActive ? title : dim(title);
+  return `  ${indicator} ${titleText} ${dim(`(${count})`)}`;
 }
 
 /**
@@ -121,6 +127,11 @@ function renderHelpBar(state: AppState): string {
 
   // Navigation
   parts.push(`${dim("↑↓")} Navigate`);
+
+  // Tab to switch sections (only if both exist)
+  if (state.projects.items.length > 0 && state.examples.items.length > 0) {
+    parts.push(`${dim("Tab")} Switch`);
+  }
 
   // Selection
   parts.push(`${dim("Enter")} Select`);
