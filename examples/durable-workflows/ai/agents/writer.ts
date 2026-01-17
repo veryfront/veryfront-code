@@ -1,4 +1,4 @@
-import { agent } from "veryfront/ai";
+import { agent } from "veryfront/agent";
 
 export default agent({
   id: "writer",

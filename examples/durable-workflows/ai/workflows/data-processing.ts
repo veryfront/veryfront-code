@@ -11,7 +11,7 @@ import {
   dependsOn,
   step,
   workflow,
-} from "veryfront/ai/workflow";
+} from "veryfront/workflow";
 import { z } from "zod";
 
 /**
