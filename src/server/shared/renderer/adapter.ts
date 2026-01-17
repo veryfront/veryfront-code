@@ -1,11 +1,11 @@
 /**
- * Universal Renderer Adapter
+ * Renderer Adapter
  *
- * Adapts the UniversalRenderer to work with the existing renderer factory API.
- * When UNIVERSAL_RENDERER=1 is set, this adapter is used instead of creating
- * per-project renderer instances.
+ * Adapts the shared Renderer to work with handler contexts.
+ * Creates lightweight adapters that bind the shared renderer
+ * to a specific project context.
  *
- * @module server/shared/renderer/universal-adapter
+ * @module server/shared/renderer/adapter
  */
 
 import { rendererLogger as logger } from "@veryfront/utils";
@@ -13,12 +13,13 @@ import { clearConfigCache, getConfig } from "@veryfront/config";
 import type { HandlerContext } from "../../handlers/types.ts";
 import {
   createRenderContext,
-  getUniversalRenderer,
-  initializeUniversalRenderer,
-  isUniversalRendererInitialized,
+  destroyRenderer as destroySharedRenderer,
+  getRenderer,
+  initializeRenderer,
+  isRendererInitialized,
   type RenderContext,
-  UniversalRenderer,
-} from "../../../rendering/universal-renderer.ts";
+  Renderer,
+} from "../../../rendering/renderer.ts";
 import type {
   PageDataResponse,
   RenderOptions,
@@ -29,9 +30,8 @@ import type { MdxBundle } from "@veryfront/types";
 /**
  * Minimal renderer interface that handlers actually use.
  *
- * This interface defines the subset of VeryfrontRenderer's API that
- * handlers depend on, allowing the UniversalRendererAdapter to be
- * used interchangeably.
+ * This interface defines the subset of the Renderer API that
+ * handlers depend on, allowing adapters to be used interchangeably.
  */
 export interface RendererAdapter {
   renderPage(slug: string, options?: RenderOptions): Promise<RenderResult>;
@@ -56,40 +56,31 @@ export interface RendererAdapter {
 }
 
 /**
- * Check if universal renderer mode is enabled via environment variable
+ * Renderer initialization state
  */
-export function isUniversalRendererEnabled(): boolean {
-  // Check for UNIVERSAL_RENDERER=1 or UNIVERSAL_RENDERER=true
-  const envValue = Deno.env.get("UNIVERSAL_RENDERER");
-  return envValue === "1" || envValue === "true";
-}
+let rendererInitPromise: Promise<Renderer> | null = null;
 
 /**
- * Universal renderer initialization state
- */
-let universalRendererInitPromise: Promise<UniversalRenderer> | null = null;
-
-/**
- * Get or initialize the universal renderer
+ * Get or initialize the renderer
  *
  * This is idempotent - multiple calls will return the same instance.
  */
-async function getOrInitUniversalRenderer(): Promise<UniversalRenderer> {
-  if (isUniversalRendererInitialized()) {
-    return getUniversalRenderer();
+async function getOrInitRenderer(): Promise<Renderer> {
+  if (isRendererInitialized()) {
+    return getRenderer();
   }
 
-  if (universalRendererInitPromise) {
-    return universalRendererInitPromise;
+  if (rendererInitPromise) {
+    return rendererInitPromise;
   }
 
-  logger.info("[UniversalAdapter] Initializing universal renderer");
-  universalRendererInitPromise = initializeUniversalRenderer();
+  logger.info("[RendererAdapter] Initializing renderer");
+  rendererInitPromise = initializeRenderer();
 
   try {
-    return await universalRendererInitPromise;
+    return await rendererInitPromise;
   } finally {
-    universalRendererInitPromise = null;
+    rendererInitPromise = null;
   }
 }
 
@@ -103,7 +94,7 @@ async function createContextFromHandler(ctx: HandlerContext): Promise<RenderCont
   // Load config if not already loaded
   let config = ctx.config;
   if (!config) {
-    logger.debug("[UniversalAdapter] Loading config for context");
+    logger.debug("[RendererAdapter] Loading config for context");
     clearConfigCache();
     config = await getConfig(ctx.projectDir, ctx.adapter);
   }
@@ -114,16 +105,16 @@ async function createContextFromHandler(ctx: HandlerContext): Promise<RenderCont
 }
 
 /**
- * Adapter that wraps the UniversalRenderer to provide the RendererAdapter interface
+ * Adapter that wraps the shared Renderer to provide the RendererAdapter interface
  *
- * This allows the universal renderer to be used transparently with the existing
+ * This allows the renderer to be used transparently with the existing
  * handler code that expects a renderer instance.
  */
-export class UniversalRendererAdapter implements RendererAdapter {
-  private renderer: UniversalRenderer;
+class RendererAdapterImpl implements RendererAdapter {
+  private renderer: Renderer;
   private ctx: RenderContext;
 
-  constructor(renderer: UniversalRenderer, ctx: RenderContext) {
+  constructor(renderer: Renderer, ctx: RenderContext) {
     this.renderer = renderer;
     this.ctx = ctx;
   }
@@ -143,7 +134,7 @@ export class UniversalRendererAdapter implements RendererAdapter {
   clearCache(slug?: string): void {
     // Fire and forget - the interface doesn't expect a promise
     this.renderer.clearCache(this.ctx, slug).catch((err) => {
-      logger.warn("[UniversalAdapter] Failed to clear cache", { error: String(err), slug });
+      logger.warn("[RendererAdapter] Failed to clear cache", { error: String(err), slug });
     });
   }
 
@@ -152,11 +143,9 @@ export class UniversalRendererAdapter implements RendererAdapter {
   }
 
   getVirtualModuleSystem() {
-    // The universal renderer creates virtual modules per-request
+    // Virtual modules are created per-request
     // This is a compatibility shim for handlers that access this
-    logger.warn(
-      "[UniversalAdapter] getVirtualModuleSystem called - not supported in universal mode",
-    );
+    logger.warn("[RendererAdapter] getVirtualModuleSystem called - not supported");
     return {
       handleRequest: () => null,
       register: () => Promise.resolve(""),
@@ -167,7 +156,7 @@ export class UniversalRendererAdapter implements RendererAdapter {
   }
 
   async initializeComponents(): Promise<void> {
-    // Components are initialized per-request in universal mode
+    // Components are initialized per-request
     // This is a no-op for compatibility
   }
 
@@ -175,8 +164,8 @@ export class UniversalRendererAdapter implements RendererAdapter {
     content: string,
     frontmatter?: Record<string, unknown>,
     filePath?: string,
-  ): Promise<import("@veryfront/types").MdxBundle> {
-    // MDX compilation is handled internally by the universal renderer
+  ): Promise<MdxBundle> {
+    // MDX compilation is handled internally by the renderer
     // This is a compatibility shim
     const { MDXCompiler } = await import("../../../rendering/orchestrator/mdx.ts");
     const { MDXCacheAdapter } = await import("@veryfront/transforms/mdx/index.ts");
@@ -196,47 +185,44 @@ export class UniversalRendererAdapter implements RendererAdapter {
   }
 
   async destroy(): Promise<void> {
-    // The universal renderer is shared - don't destroy it here
+    // The renderer is shared - don't destroy it here
     // Individual adapter instances just release their context reference
   }
 }
 
 /**
- * Get a renderer instance for a project using the universal renderer
+ * Get a renderer adapter for a project
  *
- * This creates a lightweight adapter that wraps the shared universal renderer
+ * This creates a lightweight adapter that wraps the shared renderer
  * with the specific project context.
  *
  * @param ctx - Handler context
  * @returns Renderer adapter
  */
-export async function getRendererForProjectUniversal(
-  ctx: HandlerContext,
-): Promise<RendererAdapter> {
+export async function getRendererForProject(ctx: HandlerContext): Promise<RendererAdapter> {
   const startTime = performance.now();
 
-  // Get or initialize the universal renderer (shared, ~100ms first time, instant after)
-  const renderer = await getOrInitUniversalRenderer();
+  // Get or initialize the renderer (shared, ~100ms first time, instant after)
+  const renderer = await getOrInitRenderer();
 
   // Create context for this project (~1ms)
   const renderCtx = await createContextFromHandler(ctx);
 
   const duration = performance.now() - startTime;
-  logger.debug("[UniversalAdapter] Created renderer adapter", {
+  logger.debug("[RendererAdapter] Created renderer adapter", {
     projectId: renderCtx.projectId,
     projectSlug: renderCtx.projectSlug,
     duration: `${duration.toFixed(2)}ms`,
   });
 
-  // Return an adapter that binds the universal renderer to this context
-  return new UniversalRendererAdapter(renderer, renderCtx);
+  // Return an adapter that binds the renderer to this context
+  return new RendererAdapterImpl(renderer, renderCtx);
 }
 
 /**
- * Destroy the universal renderer (for cleanup/testing)
+ * Destroy the shared renderer (for cleanup/testing)
  */
-export async function destroyUniversalRendererAdapter(): Promise<void> {
-  const { destroyUniversalRenderer } = await import("../../../rendering/universal-renderer.ts");
-  await destroyUniversalRenderer();
-  universalRendererInitPromise = null;
+export async function destroyRendererAdapter(): Promise<void> {
+  await destroySharedRenderer();
+  rendererInitPromise = null;
 }

@@ -1,5 +1,5 @@
 /**
- * Universal Renderer
+ * Renderer
  *
  * A shared renderer that handles ANY project by injecting context at render time.
  * This eliminates the 7+ second cold start for new projects by sharing expensive
@@ -28,7 +28,7 @@
  * 2. Per-request service instances (no shared mutable state)
  * 3. RenderContext passed through the entire pipeline
  *
- * @module rendering/universal-renderer
+ * @module rendering/renderer
  */
 
 import { rendererLogger as logger } from "@veryfront/utils";
@@ -69,9 +69,9 @@ import type { PageDataResponse, RenderOptions, RenderResult } from "./orchestrat
 import type { HandlerContext } from "../server/handlers/types.ts";
 
 /**
- * Options for initializing the UniversalRenderer
+ * Options for initializing the Renderer
  */
-export interface UniversalRendererOptions {
+export interface RendererOptions {
   /** Shared services options */
   shared?: SharedServicesOptions;
   /** Cache options */
@@ -79,22 +79,22 @@ export interface UniversalRendererOptions {
 }
 
 /**
- * Universal Renderer - Shared renderer for all projects
+ * Renderer - Shared renderer for all projects
  *
  * Initialize once at startup, then use for any project by passing
  * a RenderContext to each render call.
  */
-export class UniversalRenderer {
+export class Renderer {
   private cache: ContextAwareCacheCoordinator;
   private initialized: boolean = false;
   private initializationPromise: Promise<void> | null = null;
 
-  constructor(options: UniversalRendererOptions = {}) {
+  constructor(options: RendererOptions = {}) {
     this.cache = new ContextAwareCacheCoordinator(options.cache);
   }
 
   /**
-   * Initialize the universal renderer
+   * Initialize the renderer
    *
    * This must be called once at startup. It initializes shared services
    * like esbuild and the element validator. Takes ~100ms.
@@ -112,14 +112,14 @@ export class UniversalRenderer {
 
     this.initializationPromise = (async () => {
       const startTime = performance.now();
-      logger.debug("[UniversalRenderer] Initializing...");
+      logger.debug("[Renderer] Initializing...");
 
       // Initialize shared services (esbuild, element validator)
       await initializeSharedServices(options);
 
       this.initialized = true;
       const duration = performance.now() - startTime;
-      logger.info("[UniversalRenderer] Initialized", {
+      logger.info("[Renderer] Initialized", {
         duration: `${duration.toFixed(2)}ms`,
       });
     })();
@@ -149,11 +149,11 @@ export class UniversalRenderer {
     options?: RenderOptions,
   ): Promise<RenderResult> {
     if (!this.initialized) {
-      throw new Error("UniversalRenderer not initialized. Call initialize() first.");
+      throw new Error("Renderer not initialized. Call initialize() first.");
     }
 
     const startTime = performance.now();
-    logger.debug("[UniversalRenderer] Rendering page", {
+    logger.debug("[Renderer] Rendering page", {
       slug,
       projectId: ctx.projectId,
       environment: ctx.environment,
@@ -162,7 +162,7 @@ export class UniversalRenderer {
     // Check cache first (context-aware)
     const cacheResult = await this.cache.checkCache(slug, ctx);
     if (cacheResult.hit && cacheResult.cachedResult) {
-      logger.debug("[UniversalRenderer] Cache hit", {
+      logger.debug("[Renderer] Cache hit", {
         slug,
         projectId: ctx.projectId,
         duration: `${(performance.now() - startTime).toFixed(2)}ms`,
@@ -185,7 +185,7 @@ export class UniversalRenderer {
     await this.cache.persistResult(result, slug, ctx);
 
     const duration = performance.now() - startTime;
-    logger.debug("[UniversalRenderer] Render complete", {
+    logger.debug("[Renderer] Render complete", {
       slug,
       projectId: ctx.projectId,
       duration: `${duration.toFixed(2)}ms`,
@@ -209,7 +209,7 @@ export class UniversalRenderer {
     options?: RenderOptions,
   ): Promise<PageDataResponse> {
     if (!this.initialized) {
-      throw new Error("UniversalRenderer not initialized. Call initialize() first.");
+      throw new Error("Renderer not initialized. Call initialize() first.");
     }
 
     const services = this.createServicesForContext(ctx);
@@ -229,7 +229,7 @@ export class UniversalRenderer {
    */
   getAllPages(ctx: RenderContext): Promise<string[]> {
     if (!this.initialized) {
-      throw new Error("UniversalRenderer not initialized. Call initialize() first.");
+      throw new Error("Renderer not initialized. Call initialize() first.");
     }
 
     const pageResolver = createPageResolver(ctx);
@@ -256,7 +256,7 @@ export class UniversalRenderer {
   async destroy(): Promise<void> {
     await this.cache.destroy();
     this.initialized = false;
-    logger.debug("[UniversalRenderer] Destroyed");
+    logger.debug("[Renderer] Destroyed");
   }
 
   /**
@@ -379,60 +379,58 @@ export class UniversalRenderer {
 export { createRenderContext, type CreateRenderContextOptions, type RenderContext };
 
 /**
- * Singleton universal renderer instance
+ * Singleton renderer instance
  */
-let universalRenderer: UniversalRenderer | null = null;
+let renderer: Renderer | null = null;
 
 /**
- * Get the singleton universal renderer
+ * Get the singleton renderer
  *
- * @returns Universal renderer instance
+ * @returns Renderer instance
  * @throws Error if not initialized
  */
-export function getUniversalRenderer(): UniversalRenderer {
-  if (!universalRenderer) {
-    throw new Error("UniversalRenderer not initialized. Call initializeUniversalRenderer() first.");
+export function getRenderer(): Renderer {
+  if (!renderer) {
+    throw new Error("Renderer not initialized. Call initializeRenderer() first.");
   }
-  return universalRenderer;
+  return renderer;
 }
 
 /**
- * Initialize the singleton universal renderer
+ * Initialize the singleton renderer
  *
  * @param options - Renderer options
- * @returns Initialized universal renderer
+ * @returns Initialized renderer
  */
-export async function initializeUniversalRenderer(
-  options?: UniversalRendererOptions,
-): Promise<UniversalRenderer> {
-  if (universalRenderer) {
-    return universalRenderer;
+export async function initializeRenderer(options?: RendererOptions): Promise<Renderer> {
+  if (renderer) {
+    return renderer;
   }
 
-  universalRenderer = new UniversalRenderer(options);
-  await universalRenderer.initialize(options?.shared);
-  return universalRenderer;
+  renderer = new Renderer(options);
+  await renderer.initialize(options?.shared);
+  return renderer;
 }
 
 /**
- * Check if the universal renderer is initialized
+ * Check if the renderer is initialized
  */
-export function isUniversalRendererInitialized(): boolean {
-  return universalRenderer !== null && areSharedServicesInitialized();
+export function isRendererInitialized(): boolean {
+  return renderer !== null && areSharedServicesInitialized();
 }
 
 /**
- * Destroy the singleton universal renderer
+ * Destroy the singleton renderer
  */
-export async function destroyUniversalRenderer(): Promise<void> {
-  if (universalRenderer) {
-    await universalRenderer.destroy();
-    universalRenderer = null;
+export async function destroyRenderer(): Promise<void> {
+  if (renderer) {
+    await renderer.destroy();
+    renderer = null;
   }
 }
 
 /**
- * Render a page using the universal renderer
+ * Render a page using the renderer
  *
  * Convenience function that creates a render context from handler context
  * and renders the page.
@@ -443,13 +441,13 @@ export async function destroyUniversalRenderer(): Promise<void> {
  * @param contextOptions - Context creation options
  * @returns Render result
  */
-export function renderPageUniversal(
+export function renderPage(
   slug: string,
   handlerCtx: HandlerContext,
   options?: RenderOptions,
   contextOptions?: CreateRenderContextOptions,
 ): Promise<RenderResult> {
-  const renderer = getUniversalRenderer();
+  const r = getRenderer();
   const ctx = createRenderContext(handlerCtx, contextOptions);
-  return renderer.renderPage(slug, ctx, options);
+  return r.renderPage(slug, ctx, options);
 }

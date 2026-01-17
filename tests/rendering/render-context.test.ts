@@ -82,7 +82,7 @@ Deno.test("createRenderContext - uses draft for preview environment", () => {
   assertEquals(ctx.cachePrefix, "proj_123:preview:draft");
 });
 
-Deno.test("createRenderContext - throws without projectId or projectSlug", () => {
+Deno.test("createRenderContext - uses __single__ for single-project mode", () => {
   const handlerCtx: HandlerContext = {
     projectDir: "/projects/test-project",
     mode: "development",
@@ -92,11 +92,11 @@ Deno.test("createRenderContext - throws without projectId or projectSlug", () =>
     cspUserHeader: null,
   };
 
-  assertThrows(
-    () => createRenderContext(handlerCtx),
-    Error,
-    "RenderContext requires projectId or projectSlug",
-  );
+  const ctx = createRenderContext(handlerCtx);
+
+  assertEquals(ctx.projectId, "__single__");
+  assertEquals(ctx.projectSlug, "__single__");
+  assertEquals(ctx.cachePrefix, "__single__:preview:draft");
 });
 
 Deno.test("createRenderContext - throws without config", () => {

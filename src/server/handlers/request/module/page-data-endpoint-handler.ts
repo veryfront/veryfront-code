@@ -7,8 +7,7 @@
 import type { HandlerContext, HandlerResult } from "../../types.ts";
 import { computeEtag, hasMatchingEtag } from "../../utils/etag.ts";
 import { ResponseBuilder } from "@veryfront/security/index.ts";
-import { getRenderer } from "../../../shared/renderer-factory.ts";
-import type { AnyRendererPromise } from "../../../shared/renderer/types.ts";
+import { getRendererForProject } from "../../../shared/renderer-factory.ts";
 
 /**
  * Handles SPA page data endpoint requests.
@@ -18,7 +17,6 @@ export async function handlePageDataEndpoint(
   req: Request,
   pathname: string,
   ctx: HandlerContext,
-  rendererInit: AnyRendererPromise | null | undefined,
   createResponseBuilder: (ctx: HandlerContext) => ResponseBuilder,
   respond: (response: Response) => HandlerResult,
   getErrorMessage: (error: unknown) => string,
@@ -31,7 +29,7 @@ export async function handlePageDataEndpoint(
       "";
 
     const url = new URL(req.url);
-    const renderer = await getRenderer(ctx, rendererInit);
+    const renderer = await getRendererForProject(ctx);
 
     // Use resolvePageData instead of renderPage to get structured data
     const pageData = await renderer.resolvePageData(slug, {

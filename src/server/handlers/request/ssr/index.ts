@@ -10,6 +10,6 @@
 export { SSRHandler } from "./ssr-handler.ts";
 
 // Export utilities (for testing/advanced usage)
-export { getRenderer } from "../../../shared/renderer-factory.ts";
+export { getRendererForProject } from "../../../shared/renderer-factory.ts";
 export { computeSSRETag } from "./etag-handler.ts";
 export { tryNotFoundFallback } from "./not-found-fallback.ts";

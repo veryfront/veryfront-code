@@ -12,10 +12,9 @@ export async function cleanupBundler() {
   const { clearMDXModuleCache } = await import("./ssr/index.ts");
   clearMDXModuleCache();
 
-  // Always clean up renderers to prevent test isolation issues
-  // (each test needs a fresh renderer with its own projectDir)
-  const { cleanupRenderers } = await import("../server/shared/index.ts");
-  await cleanupRenderers();
+  // Clean up the shared renderer (for testing)
+  const { destroyRendererAdapter } = await import("../server/shared/index.ts");
+  await destroyRendererAdapter();
 }
 
 export async function configureRendererNamespace(namespace: string) {

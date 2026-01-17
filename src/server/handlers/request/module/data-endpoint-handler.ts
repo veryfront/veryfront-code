@@ -6,8 +6,7 @@
 import type { HandlerContext, HandlerResult } from "../../types.ts";
 import { computeEtag, hasMatchingEtag } from "../../utils/etag.ts";
 import { ResponseBuilder } from "@veryfront/security/index.ts";
-import { getRenderer } from "../../../shared/renderer-factory.ts";
-import type { AnyRendererPromise } from "../../../shared/renderer/types.ts";
+import { getRendererForProject } from "../../../shared/renderer-factory.ts";
 
 /**
  * Handles data endpoint requests for client-side prefetch.
@@ -17,14 +16,13 @@ export async function handleDataEndpoint(
   req: Request,
   pathname: string,
   ctx: HandlerContext,
-  rendererInit: AnyRendererPromise | null | undefined,
   createResponseBuilder: (ctx: HandlerContext) => ResponseBuilder,
   respond: (response: Response) => HandlerResult,
   getErrorMessage: (error: unknown) => string,
 ): Promise<HandlerResult> {
   try {
     const encSlug = pathname.replace("/_veryfront/data/", "").replace(/\.json$/, "");
-    const renderer = await getRenderer(ctx, rendererInit);
+    const renderer = await getRendererForProject(ctx);
     const result = await renderer.renderPage(encSlug || "");
 
     const body = JSON.stringify({

@@ -1,8 +1,8 @@
 /**
- * RenderContext - Per-request context for universal rendering
+ * RenderContext - Per-request context for rendering
  *
  * This interface encapsulates all project-specific data needed for rendering.
- * The UniversalRenderer uses this to maintain tenant isolation while sharing
+ * The Renderer uses this to maintain tenant isolation while sharing
  * expensive services (esbuild, MDX compiler) across all projects.
  *
  * @module rendering/context/render-context
@@ -106,9 +106,6 @@ export function createRenderContext(
   options?: CreateRenderContextOptions,
 ): RenderContext {
   // Validate required fields
-  if (!ctx.projectId && !ctx.projectSlug) {
-    throw new Error("RenderContext requires projectId or projectSlug");
-  }
   if (!ctx.config) {
     throw new Error("RenderContext requires config to be pre-loaded");
   }
@@ -119,9 +116,10 @@ export function createRenderContext(
   // Determine environment
   const environment: RenderEnvironment = ctx.proxyEnvironment ?? "preview";
 
-  // Compute project identifier (prefer ID, fall back to slug)
-  const projectId = ctx.projectId ?? ctx.projectSlug!;
-  const projectSlug = ctx.projectSlug ?? ctx.projectId!;
+  // Compute project identifier (prefer ID, fall back to slug, default to __single__)
+  // Single-project mode (local dev without subdomain) uses "__single__"
+  const projectId = ctx.projectId ?? ctx.projectSlug ?? "__single__";
+  const projectSlug = ctx.projectSlug ?? ctx.projectId ?? "__single__";
 
   // Compute cache prefix for tenant isolation
   // Format: "{projectId}:{environment}:{releaseId|'draft'}"

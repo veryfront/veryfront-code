@@ -3,8 +3,8 @@ import { join } from "std/path/mod.ts";
 import type { HandlerContext } from "../../../src/server/handlers/types.ts";
 import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
 import { ResponseBuilder } from "@veryfront/security/index.ts";
-import { createRenderer } from "../../../src/rendering/index.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
+import { getConfig } from "@veryfront/config";
 
 async function setupProject(): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: "vf_module_cache_" });
@@ -25,9 +25,7 @@ function createBuilder(ctx: HandlerContext): ResponseBuilder {
 const respond = (response: Response) => ({ response, continue: false });
 const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 
-type RendererPromise = Promise<Awaited<ReturnType<typeof createRenderer>>>;
-
-denoTest("Module handler returns cached ETag for page modules", async (ctx, rendererInit) => {
+denoTest("Module handler returns cached ETag for page modules", async (ctx) => {
   const { handlePageModule } = await import(
     "../../../src/server/handlers/request/module/page-module-handler.ts"
   );
@@ -37,7 +35,6 @@ denoTest("Module handler returns cached ETag for page modules", async (ctx, rend
     req1,
     "/_veryfront/pages/index.js",
     ctx,
-    rendererInit,
     () => createBuilder(ctx),
     respond,
     getErrorMessage,
@@ -56,7 +53,6 @@ denoTest("Module handler returns cached ETag for page modules", async (ctx, rend
     req2,
     "/_veryfront/pages/index.js",
     ctx,
-    rendererInit,
     () => createBuilder(ctx),
     respond,
     getErrorMessage,
@@ -66,7 +62,7 @@ denoTest("Module handler returns cached ETag for page modules", async (ctx, rend
   await res2.body?.cancel();
 });
 
-denoTest("Module handler caches data endpoint responses", async (ctx, rendererInit) => {
+denoTest("Module handler caches data endpoint responses", async (ctx) => {
   const { handleDataEndpoint } = await import(
     "../../../src/server/handlers/request/module/data-endpoint-handler.ts"
   );
@@ -76,7 +72,6 @@ denoTest("Module handler caches data endpoint responses", async (ctx, rendererIn
     req1,
     "/_veryfront/data/index.json",
     ctx,
-    rendererInit,
     () => createBuilder(ctx),
     respond,
     getErrorMessage,
@@ -94,7 +89,6 @@ denoTest("Module handler caches data endpoint responses", async (ctx, rendererIn
     req2,
     "/_veryfront/data/index.json",
     ctx,
-    rendererInit,
     () => createBuilder(ctx),
     respond,
     getErrorMessage,
@@ -106,7 +100,7 @@ denoTest("Module handler caches data endpoint responses", async (ctx, rendererIn
 
 function denoTest(
   name: string,
-  run: (ctx: HandlerContext, rendererInit: RendererPromise) => Promise<void>,
+  run: (ctx: HandlerContext) => Promise<void>,
 ) {
   Deno.test({
     name,
@@ -114,6 +108,10 @@ function denoTest(
     sanitizeOps: false,
   }, async () => {
     const projectDir = await setupProject();
+
+    // Load config for the handler context
+    const config = await getConfig(projectDir, denoAdapter);
+
     const handlerContext: HandlerContext = {
       projectDir,
       adapter: denoAdapter,
@@ -122,26 +120,12 @@ function denoTest(
       securityConfig: null,
       cspUserHeader: null,
       debug: false,
+      config,
     };
 
-    const rendererInit: RendererPromise = createRenderer({
-      projectDir,
-      mode: handlerContext.mode,
-      adapter: handlerContext.adapter,
-      moduleServerUrl: handlerContext.moduleServerUrl,
-    });
-
     try {
-      await run(handlerContext, rendererInit);
+      await run(handlerContext);
     } finally {
-      if (rendererInit) {
-        try {
-          const renderer = await rendererInit;
-          (renderer as { destroy?: () => void })?.destroy?.();
-        } catch {
-          /* ignore */
-        }
-      }
       await cleanupBundler();
       await denoAdapter.fs.remove(projectDir, { recursive: true });
     }

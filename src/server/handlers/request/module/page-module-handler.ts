@@ -6,8 +6,7 @@
 import type { HandlerContext, HandlerResult } from "../../types.ts";
 import { computeEtag, hasMatchingEtag } from "../../utils/etag.ts";
 import { ResponseBuilder } from "@veryfront/security/index.ts";
-import { getRenderer } from "../../../shared/renderer-factory.ts";
-import type { AnyRendererPromise } from "../../../shared/renderer/types.ts";
+import { getRendererForProject } from "../../../shared/renderer-factory.ts";
 
 /**
  * Handles page module generation requests.
@@ -17,7 +16,6 @@ export async function handlePageModule(
   req: Request,
   pathname: string,
   ctx: HandlerContext,
-  rendererInit: AnyRendererPromise | null | undefined,
   createResponseBuilder: (ctx: HandlerContext) => ResponseBuilder,
   respond: (response: Response) => HandlerResult,
   getErrorMessage: (error: unknown) => string,
@@ -29,7 +27,7 @@ export async function handlePageModule(
       .replace(/\/$/, "");
     const slug = slugPath || "index";
 
-    const renderer = await getRenderer(ctx, rendererInit);
+    const renderer = await getRendererForProject(ctx);
     const moduleResult = await renderer.renderPage(slug, {
       params: undefined,
       props: undefined,
