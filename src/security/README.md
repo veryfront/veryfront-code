@@ -284,9 +284,8 @@ deno task test src/security/input-validation/
 
 ## Related Modules
 
-- [`server/handlers/security/`](../server/handlers/security/README.md) - Request-level enforcement
-- [`middleware/builtin/security/`](../middleware/builtin/security/README.md) - Security middleware
-- [`runtime/security/`](../runtime/security/README.md) - Runtime sandboxing
+- [`server/`](../server/README.md) - Request handlers with security enforcement
+- [`middleware/`](../middleware/README.md) - Security middleware
 
 ## Common Vulnerabilities
 

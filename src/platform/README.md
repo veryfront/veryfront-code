@@ -222,8 +222,8 @@ Deno.test("Filesystem operations", async () => {
 
 ## See Also
 
-- [@veryfront/runtime](../runtime/README.md) - Runtime engine
-- [Veryfront API Client](./adapters/veryfront-api-client/README.md)
+- [Platform Adapters](./adapters/README.md) - Filesystem and runtime adapters
+- [GitHub Filesystem](./adapters/fs/github/README.md) - GitHub API filesystem
 
 ## License
 

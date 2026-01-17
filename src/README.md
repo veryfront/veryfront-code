@@ -395,7 +395,9 @@ Complete module reference for working with Veryfront's source code.
 AI capabilities are organized into 7 first-class modules:
 
 #### `agent/` - Agent Runtime
+
 **Exports**: `veryfront/agent`
+
 - Agent factory and runtime execution
 - Memory management (conversation, buffer, summary)
 - Agent composition (`agentAsTool`)
@@ -403,34 +405,46 @@ AI capabilities are organized into 7 first-class modules:
 - Middleware (rate limiting, caching, cost tracking)
 
 #### `tool/` - Tool System
+
 **Exports**: `veryfront/tool`
+
 - Tool factory and registry
 - Tool execution engine
 - Zod schema to JSON schema conversion
 
 #### `workflow/` - Workflow Engine
+
 **Exports**: `veryfront/workflow`
+
 - Durable DAG-based workflow execution
 - Step, parallel, and branch primitives
 - React hooks (`useWorkflow`)
 
 #### `prompt/` - Prompt Templates
+
 **Exports**: `veryfront/prompt`
+
 - Prompt factory and registry
 - Template rendering
 
 #### `resource/` - Resources
+
 **Exports**: `veryfront/resource`
+
 - Resource factory and registry
 - MCP resource protocol
 
 #### `mcp/` - MCP Server
+
 **Exports**: `veryfront/mcp`
+
 - Model Context Protocol server
 - Aggregates tools, prompts, resources
 
 #### `provider/` - AI Providers
+
 **Exports**: `veryfront/provider`
+
 - Provider adapters (OpenAI, Anthropic, Google)
 - Provider initialization and management
 

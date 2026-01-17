@@ -243,7 +243,7 @@ deno task test src/core/utils/
 ## Related Modules
 
 - [`errors/`](./errors/README.md) - Error handling subsystem
-- [`config/`](../config/) - Configuration loading
+- [`config/`](./config/) - Configuration loading
 - All modules depend on `core/`
 
 ## Troubleshooting

@@ -323,9 +323,8 @@ const solution = createErrorSolution(ErrorCode.MY_ERROR, {
 
 ## Related Modules
 
-- [`observability/logging/`](../observability/logging/README.md) - Error logging
-- [`server/handlers/response/`](../server/handlers/response/README.md) - HTTP error responses
-- [`dev/error-overlay/`](../dev/error-overlay/README.md) - Development error UI
+- [`observability/`](../../observability/README.md) - Error logging and tracing
+- [`server/`](../../server/README.md) - HTTP error responses
 
 ## Migration Guide
 

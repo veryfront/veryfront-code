@@ -193,7 +193,7 @@ interface UniversalHandlerOptions {
 
 ### server/build
 
-Build system exports - see [server/build/README.md](build/README.md)
+Build system exports for server-side bundling and generation.
 
 ### server/modules
 
