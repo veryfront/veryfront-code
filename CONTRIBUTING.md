@@ -493,7 +493,7 @@ Report security issues to: security@veryfront.com
 
 ## Questions?
 
-- **Documentation**: See [docs/](./docs/)
+- **Documentation**: See [veryfront.com/docs](https://veryfront.com/docs/framework)
 - **Architecture**: See [ARCHITECTURE.md](./ARCHITECTURE.md)
 - **Issues**: https://github.com/veryfront/veryfront/issues
 - **Discussions**: https://github.com/veryfront/veryfront/discussions

@@ -366,6 +366,4 @@ const exists = await testFS.exists("/test.txt"); // true
 
 ## References
 
-- [Runtime Compatibility Guide](../../docs/runtime-compatibility.md)
-- [Deployment Guide](../../docs/deployment.md)
-- [Veryfront API Documentation](https://docs.veryfront.com/api)
+- [Veryfront Documentation](https://veryfront.com/docs/framework)

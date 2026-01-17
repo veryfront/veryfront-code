@@ -425,10 +425,7 @@ deno run --allow-all example.ts
 
 ## Additional Resources
 
-- **[Main Documentation](../docs/README.md)** - Complete framework docs
-- **[AI Documentation](../docs/ai/README.md)** - AI features guide
-- **[Quick Start](../docs/quick-start.md)** - Framework quick start
-- **[API Reference](../docs/api/)** - API documentation
+- **[Documentation](https://veryfront.com/docs/framework)** - Complete framework documentation
 
 ---
 
@@ -476,7 +473,6 @@ See our [Contributing Guide](../CONTRIBUTING.md) for more details.
 ## Need Help?
 
 1. Check the example's README first
-2. Review [main documentation](../docs/README.md)
-3. Check [AI documentation](../docs/ai/README.md) for AI examples
-4. Look at similar examples for patterns
-5. Open an issue on GitHub
+2. Review [documentation](https://veryfront.com/docs/framework)
+3. Look at similar examples for patterns
+4. Open an issue on GitHub

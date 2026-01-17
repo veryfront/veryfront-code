@@ -221,6 +221,4 @@ Server-side modules:
 
 ## References
 
-- [Deployment Guide](../../docs/deployment.md)
-- [Security Guide](../../docs/security.md)
-- [Build System Guide](build/README.md)
+- [Veryfront Documentation](https://veryfront.com/docs/framework)
