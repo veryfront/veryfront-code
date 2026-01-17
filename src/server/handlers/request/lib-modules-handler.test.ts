@@ -57,16 +57,16 @@ describe("LibModulesHandler", () => {
       const handler = new LibModulesHandler();
       const pattern = findPatternByMethod(handler, "GET");
 
-      assertEquals(pattern.test("/_veryfront/lib/ai/react.js"), true);
-      assertEquals(pattern.test("/_veryfront/lib/ai/components.js"), true);
-      assertEquals(pattern.test("/_veryfront/lib/ai/primitives.js"), true);
+      assertEquals(pattern.test("/_veryfront/lib/agent/react.js"), true);
+      assertEquals(pattern.test("/_veryfront/lib/components/ai.js"), true);
+      assertEquals(pattern.test("/_veryfront/lib/primitives.js"), true);
     });
 
     it("should match HEAD requests to /_veryfront/lib/", () => {
       const handler = new LibModulesHandler();
       const pattern = findPatternByMethod(handler, "HEAD");
 
-      assertEquals(pattern.test("/_veryfront/lib/ai/react.js"), true);
+      assertEquals(pattern.test("/_veryfront/lib/agent/react.js"), true);
     });
 
     it("should not match other paths", () => {
@@ -80,25 +80,25 @@ describe("LibModulesHandler", () => {
   });
 
   describe("ALLOWED_MODULES whitelist", () => {
-    it("should allow ai/react.js path pattern", () => {
+    it("should allow agent/react.js path pattern", () => {
       const handler = new LibModulesHandler();
       const pattern = getRegExpPattern(handler, 0);
 
-      assertEquals(pattern.test("/_veryfront/lib/ai/react.js"), true);
+      assertEquals(pattern.test("/_veryfront/lib/agent/react.js"), true);
     });
 
-    it("should allow ai/components.js path pattern", () => {
+    it("should allow components/ai.js path pattern", () => {
       const handler = new LibModulesHandler();
       const pattern = getRegExpPattern(handler, 0);
 
-      assertEquals(pattern.test("/_veryfront/lib/ai/components.js"), true);
+      assertEquals(pattern.test("/_veryfront/lib/components/ai.js"), true);
     });
 
-    it("should allow ai/primitives.js path pattern", () => {
+    it("should allow primitives.js path pattern", () => {
       const handler = new LibModulesHandler();
       const pattern = getRegExpPattern(handler, 0);
 
-      assertEquals(pattern.test("/_veryfront/lib/ai/primitives.js"), true);
+      assertEquals(pattern.test("/_veryfront/lib/primitives.js"), true);
     });
   });
 
@@ -116,18 +116,18 @@ describe("LibModulesHandler", () => {
       const handler = new LibModulesHandler();
       const pattern = getRegExpPattern(handler, 0);
 
-      assertEquals(pattern.test("/veryfront/lib/ai/react.js"), false);
-      assertEquals(pattern.test("/_veryfront/ai/react.js"), false);
-      assertEquals(pattern.test("/lib/ai/react.js"), false);
+      assertEquals(pattern.test("/veryfront/lib/agent/react.js"), false);
+      assertEquals(pattern.test("/_veryfront/agent/react.js"), false);
+      assertEquals(pattern.test("/lib/agent/react.js"), false);
     });
 
     it("should be case sensitive", () => {
       const handler = new LibModulesHandler();
       const pattern = getRegExpPattern(handler, 0);
 
-      assertEquals(pattern.test("/_veryfront/lib/ai/react.js"), true);
-      assertEquals(pattern.test("/_VERYFRONT/lib/ai/react.js"), false);
-      assertEquals(pattern.test("/_Veryfront/lib/ai/react.js"), false);
+      assertEquals(pattern.test("/_veryfront/lib/agent/react.js"), true);
+      assertEquals(pattern.test("/_VERYFRONT/lib/agent/react.js"), false);
+      assertEquals(pattern.test("/_Veryfront/lib/agent/react.js"), false);
     });
   });
 

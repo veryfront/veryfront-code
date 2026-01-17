@@ -150,20 +150,14 @@ deno task dev --mcp  # Port 3001 by default
 
 ## Documentation
 
-- [Quick Start Tutorial](./docs/learn/quickstart.md)
-- [AI Getting Started](./docs/ai/getting-started.md)
-- [Routing Guide](./docs/guides/routing/README.md)
-- [Deployment Guide](./docs/guides/deployment/README.md)
-- [API Reference](./docs/reference/ai/README.md)
-
-[Browse all docs →](./docs/README.md)
+See [veryfront.com/docs](https://veryfront.com/docs/framework) for complete documentation.
 
 ---
 
 ## Examples
 
 ```bash
-cd examples/ai-basic
+cd examples/agent-basic
 deno run --allow-all demo.ts
 ```
 

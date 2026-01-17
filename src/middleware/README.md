@@ -339,4 +339,3 @@ ctx.executionCtx; // Execution context (for edge runtimes)
 ## References
 
 - [Hono Documentation](https://hono.dev/) - Inspiration for middleware design
-- [Security Guide](../../docs/security.md)
