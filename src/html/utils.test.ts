@@ -1,5 +1,5 @@
-import { describe, it } from "std/testing/bdd.ts";
-import { assert, assertEquals, assertStringIncludes } from "std/assert/mod.ts";
+import { describe, it } from "@std/testing/bdd.ts";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import {
   buildContentAttributes,
   buildImportMapJson,

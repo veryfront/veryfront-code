@@ -12,7 +12,7 @@ import {
   assertStringIncludes,
 } from "jsr:@std/assert@1";
 import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
-import { afterAll, describe, it } from "std/testing/bdd.ts";
+import { afterAll, describe, it } from "@std/testing/bdd.ts";
 import { VeryfrontRenderer } from "../../../../src/rendering/orchestrator/ssr.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 import { withTestContext } from "../../../_helpers/context.ts";

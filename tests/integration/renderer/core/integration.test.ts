@@ -8,7 +8,7 @@
 
 import { assertEquals, assertExists } from "https://deno.land/std@0.220.0/assert/mod.ts";
 import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
-import { afterAll, describe, it } from "std/testing/bdd.ts";
+import { afterAll, describe, it } from "@std/testing/bdd.ts";
 import { VeryfrontRenderer } from "../../../../src/rendering/orchestrator/ssr.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { DenoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";

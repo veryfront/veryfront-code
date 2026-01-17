@@ -7,9 +7,9 @@
  * - All RSC endpoints work correctly when enabled
  */
 
-import { assert, assertEquals } from "std/assert/mod.ts";
-import { afterAll, describe, it } from "std/testing/bdd.ts";
-import { join } from "std/path/mod.ts";
+import { assert, assertEquals } from "@std/assert";
+import { afterAll, describe, it } from "@std/testing/bdd.ts";
+import { join } from "@std/path";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 

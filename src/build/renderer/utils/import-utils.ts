@@ -2,7 +2,7 @@
  * Import resolution and extraction utilities
  */
 
-import { existsSync } from "std/fs/mod.ts";
+import { existsSync } from "@std/fs";
 import { dirname, join, resolve } from "@veryfront/platform/compat/path/index.ts";
 
 /**

@@ -1,5 +1,5 @@
-import { assertEquals, assertThrows } from "std/assert/mod.ts";
-import { describe, it } from "std/testing/bdd.ts";
+import { assertEquals, assertThrows } from "@std/assert";
+import { describe, it } from "@std/testing/bdd.ts";
 import { findUnknownTopLevelKeys, validateVeryfrontConfig } from "./schema.ts";
 
 describe("configSchema", () => {

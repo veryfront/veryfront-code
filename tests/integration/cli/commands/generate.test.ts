@@ -1,6 +1,6 @@
-import { assert } from "std/assert/assert.ts";
-import { join } from "std/path/mod.ts";
-import { describe, it } from "std/testing/bdd.ts";
+import { assert } from "@std/assert";
+import { join } from "@std/path";
+import { describe, it } from "@std/testing/bdd.ts";
 import { generateCommand } from "../../../../src/cli/commands/generate.ts";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
 

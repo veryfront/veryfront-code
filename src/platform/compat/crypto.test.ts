@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertExists, assertNotEquals } from "std/assert/mod.ts";
+import { assert, assertEquals, assertExists, assertNotEquals } from "@std/assert";
 import { createCrypto } from "./crypto.ts";
 
 Deno.test("Crypto Compat | createCrypto returns crypto instance", () => {

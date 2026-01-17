@@ -6,7 +6,7 @@
 import { cliLogger as logger } from "@veryfront/utils";
 import { FileSystemError } from "@veryfront/errors";
 import { cyan } from "@veryfront/compat/console";
-import { ensureDir } from "std/fs/mod.ts";
+import { ensureDir } from "@std/fs";
 import { join } from "@veryfront/platform/compat/path/index.ts";
 import { createPackageJson } from "./config-generator.ts";
 import { createError, toError } from "@veryfront/errors/veryfront-error.ts";

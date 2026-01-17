@@ -10,10 +10,10 @@
  * - Edge cases and error handling
  */
 
-import { assert, assertEquals, assertExists } from "std/assert/mod.ts";
-import { describe, it } from "std/testing/bdd.ts";
-import { join } from "std/path/mod.ts";
-import { ensureDir } from "std/fs/mod.ts";
+import { assert, assertEquals, assertExists } from "@std/assert";
+import { describe, it } from "@std/testing/bdd.ts";
+import { join } from "@std/path";
+import { ensureDir } from "@std/fs";
 import { detectAppRouter, getAppRouteEntity } from "../../../src/rendering/router-detection.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";

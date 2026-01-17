@@ -21,7 +21,7 @@
  * ```
  */
 
-import { join } from "std/path/mod.ts";
+import { join } from "@std/path";
 import { createDevServer } from "../../src/server/dev-server.ts";
 import { startProductionServer } from "../../src/server/production-server.ts";
 import { resetApiHandler } from "../../src/server/handlers/request/api/index.ts";

@@ -1,5 +1,5 @@
-import { describe, it } from "std/testing/bdd.ts";
-import { assertEquals, assertStringIncludes } from "std/assert/mod.ts";
+import { describe, it } from "@std/testing/bdd.ts";
+import { assertEquals, assertStringIncludes } from "@std/assert";
 import { processMetadata } from "./metadata-builder.ts";
 import type { RenderMetadata } from "@veryfront/types";
 

@@ -10,10 +10,10 @@
  * - Performance and concurrency
  */
 
-import { assert, assertEquals, assertExists } from "std/assert/mod.ts";
-import { ensureDir } from "std/fs/mod.ts";
-import { join } from "std/path/mod.ts";
-import { afterAll, describe, it } from "std/testing/bdd.ts";
+import { assert, assertEquals, assertExists } from "@std/assert";
+import { ensureDir } from "@std/fs";
+import { join } from "@std/path";
+import { afterAll, describe, it } from "@std/testing/bdd.ts";
 import "../../_helpers/log-guard.ts";
 import { buildProduction } from "../../../src/build/production-build/index.ts";
 import { TestDataFactory } from "../../fixtures/test-data-factory.ts";

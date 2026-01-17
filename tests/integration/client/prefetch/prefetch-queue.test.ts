@@ -3,8 +3,8 @@
  * Tests queue management, concurrent prefetching, and resource callback handling
  */
 
-import { assertEquals, assertExists } from "std/assert/mod.ts";
-import { describe, it } from "std/testing/bdd.ts";
+import { assertEquals, assertExists } from "@std/assert";
+import { describe, it } from "@std/testing/bdd.ts";
 import {
   PrefetchQueue,
   PrefetchQueueOptions,

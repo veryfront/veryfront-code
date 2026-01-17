@@ -1,6 +1,6 @@
-import { assert, assertEquals } from "std/assert/mod.ts";
-import { join } from "std/path/mod.ts";
-import { describe, it } from "std/testing/bdd.ts";
+import { assert, assertEquals } from "@std/assert";
+import { join } from "@std/path";
+import { describe, it } from "@std/testing/bdd.ts";
 import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 

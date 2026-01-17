@@ -1,5 +1,5 @@
-import { assertEquals, assertExists } from "std/testing/asserts.ts";
-import { describe, it } from "std/testing/bdd.ts";
+import { assertEquals, assertExists } from "@std/assert";
+import { describe, it } from "@std/testing/bdd.ts";
 import { createContext, normalizeParams, parseCookies } from "./context-builder.ts";
 import type { RouteMatch } from "./api-route-matcher.ts";
 import type { FileSystemAdapter } from "@veryfront/platform/adapters/base.ts";

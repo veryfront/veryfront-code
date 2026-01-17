@@ -1,4 +1,4 @@
-import { assertEquals } from "std/assert/mod.ts";
+import { assertEquals } from "@std/assert";
 import { charset, contentType, extension, lookup } from "./media-types.ts";
 
 Deno.test("media types compat | basics", () => {

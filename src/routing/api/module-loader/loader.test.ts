@@ -1,5 +1,5 @@
-import { assertEquals, assertMatch } from "std/assert/mod.ts";
-import { join } from "std/path/mod.ts";
+import { assertEquals, assertMatch } from "@std/assert";
+import { join } from "@std/path";
 import { loadHandlerModule } from "./loader.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";

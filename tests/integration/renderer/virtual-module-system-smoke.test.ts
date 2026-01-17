@@ -1,4 +1,4 @@
-import { assertEquals } from "std/assert/mod.ts";
+import { assertEquals } from "@std/assert";
 import { getAdapter } from "@veryfront/platform";
 import { VirtualModuleSystem } from "../../../src/rendering/virtual-module-system.ts";
 

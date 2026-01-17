@@ -2,7 +2,7 @@
  * Tests for OptimizedImage Component
  */
 
-import { assertEquals, assertExists } from "std/assert/mod.ts";
+import { assertEquals, assertExists } from "@std/assert";
 import React from "react";
 import {
   generateBlurDataURL,

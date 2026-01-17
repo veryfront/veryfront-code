@@ -1,6 +1,6 @@
-import { assertStringIncludes } from "std/assert/assert_string_includes.ts";
-import { join } from "std/path/mod.ts";
-import { describe, it } from "std/testing/bdd.ts";
+import { assertStringIncludes } from "@std/assert";
+import { join } from "@std/path";
+import { describe, it } from "@std/testing/bdd.ts";
 import { routesCommand } from "../../../../src/cli/commands/routes.ts";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
 

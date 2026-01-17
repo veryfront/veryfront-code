@@ -2,8 +2,8 @@ import {
   assert,
   assertEquals as _assertEquals,
   assertStringIncludes,
-} from "std/testing/asserts.ts";
-import { afterAll, describe, it } from "std/testing/bdd.ts";
+} from "@std/assert";
+import { afterAll, describe, it } from "@std/testing/bdd.ts";
 import {
   generateAppModule,
   generateImportMap,
