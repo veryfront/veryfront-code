@@ -11,7 +11,7 @@ const SOURCE_EXTENSIONS = ["tsx", "ts", "jsx", "mdx"] as const;
 
 /** Regex pattern for matching source paths */
 const SOURCE_PATH_PATTERN = new RegExp(
-  `(${SOURCE_DIRS.join("|")})/(.+)\\.(${SOURCE_EXTENSIONS.join("|")})$`
+  `(${SOURCE_DIRS.join("|")})/(.+)\\.(${SOURCE_EXTENSIONS.join("|")})$`,
 );
 
 /**

@@ -1,5 +1,5 @@
-import { Suspense, useState, useEffect, type ComponentType, type ReactNode } from "react";
-import { loadComponent, getCachedComponent } from "./component-loader.ts";
+import { type ComponentType, type ReactNode, Suspense, useEffect, useState } from "react";
+import { getCachedComponent, loadComponent } from "./component-loader.ts";
 
 export interface LayoutInfo {
   kind: "mdx" | "tsx";
@@ -27,10 +27,12 @@ function LayoutLoading(): JSX.Element {
 }
 
 function LayoutWrapper({ layout, layoutProps, children }: LayoutWrapperProps): JSX.Element {
-  const [LayoutComponent, setLayoutComponent] = useState<ComponentType<{
-    children: ReactNode;
-    [key: string]: unknown;
-  }> | null>(() => {
+  const [LayoutComponent, setLayoutComponent] = useState<
+    ComponentType<{
+      children: ReactNode;
+      [key: string]: unknown;
+    }> | null
+  >(() => {
     // Try to get from cache synchronously first (for SSR hydration match)
     const cached = getCachedComponent(layout.path);
     return cached as ComponentType<{ children: ReactNode; [key: string]: unknown }> | null;
@@ -42,7 +44,9 @@ function LayoutWrapper({ layout, layoutProps, children }: LayoutWrapperProps): J
     let mounted = true;
     loadComponent(layout.path).then((Component) => {
       if (mounted && Component) {
-        setLayoutComponent(() => Component as ComponentType<{ children: ReactNode; [key: string]: unknown }>);
+        setLayoutComponent(() =>
+          Component as ComponentType<{ children: ReactNode; [key: string]: unknown }>
+        );
       }
     });
 
@@ -55,12 +59,12 @@ function LayoutWrapper({ layout, layoutProps, children }: LayoutWrapperProps): J
     return <LayoutLoading />;
   }
 
-  return (
-    <LayoutComponent {...(layoutProps || {})}>{children}</LayoutComponent>
-  );
+  return <LayoutComponent {...(layoutProps || {})}>{children}</LayoutComponent>;
 }
 
-export function LayoutShell({ layouts, layoutProps = {}, children }: LayoutShellProps): JSX.Element {
+export function LayoutShell(
+  { layouts, layoutProps = {}, children }: LayoutShellProps,
+): JSX.Element {
   if (layouts.length === 0) {
     return <>{children}</>;
   }

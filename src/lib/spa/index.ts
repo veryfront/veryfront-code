@@ -1,13 +1,9 @@
 export { ClientApp, type PageDataResponse } from "./ClientApp.tsx";
-export { LayoutShell, type LayoutInfo } from "./LayoutShell.tsx";
+export { type LayoutInfo, LayoutShell } from "./LayoutShell.tsx";
 export {
+  clearComponentCache,
+  getCachedComponent,
   loadComponent,
   preloadComponent,
-  getCachedComponent,
-  clearComponentCache,
 } from "./component-loader.ts";
-export {
-  pathToModuleUrl,
-  getModuleServerUrl,
-  getPathToModuleUrlScript,
-} from "./path-utils.ts";
+export { getModuleServerUrl, getPathToModuleUrlScript, pathToModuleUrl } from "./path-utils.ts";

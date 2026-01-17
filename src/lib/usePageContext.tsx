@@ -9,8 +9,8 @@
  */
 export {
   PageContextProvider,
-  usePageContext,
   type PageContextValue as PageContext,
+  usePageContext,
 } from "veryfront/context";
 
 // Default export for compatibility

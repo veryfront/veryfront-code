@@ -1,14 +1,8 @@
-import {
-  useState,
-  useEffect,
-  useCallback,
-  Suspense,
-  type ComponentType,
-} from "react";
-import { RouterProvider, type Router } from "../Router.tsx";
-import { PageContextProvider, type PageContext } from "../usePageContext.tsx";
-import { LayoutShell, type LayoutInfo } from "./LayoutShell.tsx";
-import { loadComponent, preloadComponent, getCachedComponent } from "./component-loader.ts";
+import { type ComponentType, Suspense, useCallback, useEffect, useState } from "react";
+import { type Router, RouterProvider } from "../Router.tsx";
+import { type PageContext, PageContextProvider } from "../usePageContext.tsx";
+import { type LayoutInfo, LayoutShell } from "./LayoutShell.tsx";
+import { getCachedComponent, loadComponent, preloadComponent } from "./component-loader.ts";
 
 export interface PageDataResponse {
   slug: string;
@@ -24,7 +18,9 @@ export interface PageDataResponse {
 
 interface ClientAppState {
   currentPath: string;
-  PageComponent: ComponentType<{ params?: Record<string, string | string[]>; [key: string]: unknown }> | null;
+  PageComponent:
+    | ComponentType<{ params?: Record<string, string | string[]>; [key: string]: unknown }>
+    | null;
   layouts: LayoutInfo[];
   layoutProps: Record<string, Record<string, unknown>>;
   pageProps: Record<string, unknown>;
@@ -74,10 +70,12 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
 
     return {
       currentPath: initialData.slug || "/",
-      PageComponent: cachedComponent as ComponentType<{
-        params?: Record<string, string | string[]>;
-        [key: string]: unknown;
-      }> | null,
+      PageComponent: cachedComponent as
+        | ComponentType<{
+          params?: Record<string, string | string[]>;
+          [key: string]: unknown;
+        }>
+        | null,
       layouts: initialData.layouts || [],
       layoutProps: initialData.layoutProps || {},
       pageProps: initialData.props || {},
@@ -185,34 +183,41 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
 
   // Create router value
   const routerValue: Router = {
-    domain: typeof globalThis !== "undefined" && globalThis.location ? globalThis.location.hostname : "",
+    domain: typeof globalThis !== "undefined" && globalThis.location
+      ? globalThis.location.hostname
+      : "",
     path: state.currentPath,
     pathname: state.currentPath,
     params: Object.fromEntries(
-      Object.entries(state.params).map(([k, v]) => [k, Array.isArray(v) ? v.join("/") : v])
+      Object.entries(state.params).map(([k, v]) => [k, Array.isArray(v) ? v.join("/") : v]),
     ),
-    query:
-      typeof globalThis !== "undefined" && globalThis.location
-        ? Object.fromEntries(new URLSearchParams(globalThis.location.search))
-        : {},
+    query: typeof globalThis !== "undefined" && globalThis.location
+      ? Object.fromEntries(new URLSearchParams(globalThis.location.search))
+      : {},
     isPreview: false,
     isMounted,
     navigate: async (path, _options) => {
       const url = typeof path === "string" ? path : path.pathname;
       if (globalThis.veryFrontRouter && "navigate" in globalThis.veryFrontRouter) {
-        await (globalThis.veryFrontRouter as { navigate: (url: string) => Promise<void> }).navigate(url);
+        await (globalThis.veryFrontRouter as { navigate: (url: string) => Promise<void> }).navigate(
+          url,
+        );
       }
     },
     push: async (path, _options) => {
       const url = typeof path === "string" ? path : path.pathname;
       if (globalThis.veryFrontRouter && "navigate" in globalThis.veryFrontRouter) {
-        await (globalThis.veryFrontRouter as { navigate: (url: string) => Promise<void> }).navigate(url);
+        await (globalThis.veryFrontRouter as { navigate: (url: string) => Promise<void> }).navigate(
+          url,
+        );
       }
     },
     replace: async (path, _options) => {
       const url = typeof path === "string" ? path : path.pathname;
       if (globalThis.veryFrontRouter && "navigate" in globalThis.veryFrontRouter) {
-        await (globalThis.veryFrontRouter as { navigate: (url: string, push?: boolean) => Promise<void> }).navigate(url, false);
+        await (globalThis.veryFrontRouter as {
+          navigate: (url: string, push?: boolean) => Promise<void>;
+        }).navigate(url, false);
       }
     },
     reload: () => {
@@ -225,12 +230,11 @@ export function ClientApp({ initialData }: ClientAppProps): JSX.Element {
     slug: state.currentPath,
     path: state.currentPath,
     params: Object.fromEntries(
-      Object.entries(state.params).map(([k, v]) => [k, Array.isArray(v) ? v.join("/") : v])
+      Object.entries(state.params).map(([k, v]) => [k, Array.isArray(v) ? v.join("/") : v]),
     ),
-    query:
-      typeof globalThis !== "undefined" && globalThis.location
-        ? Object.fromEntries(new URLSearchParams(globalThis.location.search))
-        : {},
+    query: typeof globalThis !== "undefined" && globalThis.location
+      ? Object.fromEntries(new URLSearchParams(globalThis.location.search))
+      : {},
     frontmatter: state.frontmatter,
   };
 
