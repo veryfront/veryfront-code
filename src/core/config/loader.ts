@@ -6,6 +6,7 @@ import { isExtendedFSAdapter } from "@veryfront/platform/adapters/fs/wrapper.ts"
 import { serverLogger } from "@veryfront/utils/logger/logger.ts";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "@veryfront/utils/constants/cdn.ts";
 import { DEFAULT_CACHE_DIR } from "@veryfront/utils/constants/server.ts";
+import { VERSION } from "@veryfront/utils/version.ts";
 import { DEFAULT_PORT } from "./defaults.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { getEsbuildLoader } from "../utils/path-utils.ts";
@@ -248,6 +249,8 @@ async function loadConfigFromVirtualFS(
         const configModule = await import(`file://${tempFile}?v=${Date.now()}`);
         const userConfig = configModule.default || configModule;
 
+        // projectDir here is actually the effectiveCacheKey (includes projectId/slug and VERSION)
+        // so caching is safe even for virtual filesystem
         return validateAndCacheConfig(userConfig, projectDir);
       } finally {
         await fs.remove(tempDir, { recursive: true });
@@ -257,9 +260,15 @@ async function loadConfigFromVirtualFS(
   );
 }
 
+/**
+ * Validate config and cache it.
+ *
+ * @param userConfig - Raw config object to validate
+ * @param cacheKey - Cache key (projectDir for local, projectId:VERSION for API-backed)
+ */
 function validateAndCacheConfig(
   userConfig: unknown,
-  projectDir: string,
+  cacheKey: string,
 ): VeryfrontConfig {
   if (userConfig === null || typeof userConfig !== "object" || Array.isArray(userConfig)) {
     throw new ConfigValidationError(
@@ -271,7 +280,8 @@ function validateAndCacheConfig(
   validateConfigShape(userConfig);
 
   const merged = mergeConfigs(userConfig as Partial<VeryfrontConfig>);
-  configCacheByProject.set(projectDir, { revision: cacheRevision, config: merged });
+  configCacheByProject.set(cacheKey, { revision: cacheRevision, config: merged });
+
   return merged;
 }
 
@@ -298,15 +308,39 @@ function isConfigError(error: unknown): boolean {
   return error instanceof Error && error.message.startsWith("Invalid veryfront.config");
 }
 
+/**
+ * Options for getConfig
+ */
+export interface GetConfigOptions {
+  /**
+   * Cache key for virtual filesystem (API-backed) projects.
+   * When provided, this is used instead of projectDir for caching.
+   * This should be a unique project identifier (e.g., projectId or projectSlug).
+   */
+  cacheKey?: string;
+}
+
 export async function getConfig(
   projectDir: string,
   adapter: RuntimeAdapter,
+  options?: GetConfigOptions,
 ): Promise<VeryfrontConfig> {
   return await withSpan(
     SpanNames.CONFIG_LOAD,
     async () => {
-      const cached = configCacheByProject.get(projectDir);
+      // For virtual filesystem, use provided cacheKey (projectId/projectSlug)
+      // For local filesystem, use projectDir
+      // Include framework VERSION for automatic invalidation on deployments
+      const isVirtualFS = isVirtualFilesystem(adapter);
+      const baseKey = isVirtualFS && options?.cacheKey ? `vf:${options.cacheKey}` : projectDir;
+      const effectiveCacheKey = `${baseKey}:${VERSION}`;
+
+      const cached = configCacheByProject.get(effectiveCacheKey);
       if (cached && cached.revision === cacheRevision) {
+        serverLogger.debug("[CONFIG] Using cached config", {
+          cacheKey: effectiveCacheKey,
+          isVirtualFS,
+        });
         return cached.config;
       }
 
@@ -319,7 +353,7 @@ export async function getConfig(
         if (!exists) continue;
 
         try {
-          const merged = await loadAndMergeConfig(configPath, projectDir, adapter);
+          const merged = await loadAndMergeConfig(configPath, effectiveCacheKey, adapter);
           if (merged) return merged;
         } catch (error) {
           if (isConfigError(error)) throw error;
@@ -332,10 +366,13 @@ export async function getConfig(
       }
 
       const defaultConfig = DEFAULT_CONFIG as VeryfrontConfig;
-      configCacheByProject.set(projectDir, { revision: cacheRevision, config: defaultConfig });
+      configCacheByProject.set(effectiveCacheKey, {
+        revision: cacheRevision,
+        config: defaultConfig,
+      });
       return defaultConfig;
     },
-    { "config.project_dir": projectDir },
+    { "config.project_dir": projectDir, "config.cache_key": options?.cacheKey || "default" },
   );
 }
 
