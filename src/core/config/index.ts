@@ -1,4 +1,9 @@
-export { clearConfigCache, getCachedConfigSync, getConfig, type GetConfigOptions } from "./loader.ts";
+export {
+  clearConfigCache,
+  getCachedConfigSync,
+  getConfig,
+  type GetConfigOptions,
+} from "./loader.ts";
 
 export { defineConfig } from "./define-config.ts";
 
