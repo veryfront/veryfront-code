@@ -36,6 +36,18 @@ my-app/
 
 All directories are auto-discovered.
 
+## Modules
+
+| Module | Import | Purpose |
+|--------|--------|---------|
+| **agent** | `veryfront/agent` | Agent runtime, memory, composition |
+| **tool** | `veryfront/tool` | Tool definition and execution |
+| **workflow** | `veryfront/workflow` | Durable workflow engine |
+| **prompt** | `veryfront/prompt` | Prompt templates |
+| **resource** | `veryfront/resource` | MCP resources |
+| **mcp** | `veryfront/mcp` | Model Context Protocol server |
+| **provider** | `veryfront/provider` | AI providers (OpenAI, Anthropic) |
+
 ## Documentation
 
 - [Getting Started](https://veryfront.com/docs/framework)
