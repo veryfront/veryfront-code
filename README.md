@@ -2,7 +2,7 @@
 
 [![CI/CD](https://github.com/veryfront/veryfront-renderer/actions/workflows/ci.yml/badge.svg)](https://github.com/veryfront/veryfront-renderer/actions/workflows/ci.yml)
 
-Veryfront is a **zero-config React framework** for building **agentic applications**. Automatically discovers agents, tools, and routes through file-based conventions.
+React framework for AI applications. Create agents, tools, and workflows by adding files.
 
 ## Features
 
