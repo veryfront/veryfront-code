@@ -16,6 +16,8 @@ export interface CacheStats {
   entries: number;
   maxEntries?: number;
   estimatedSizeBytes?: number;
+  /** Cache backend type (memory, redis, api) */
+  backend?: string;
 }
 
 export interface HeapStats {

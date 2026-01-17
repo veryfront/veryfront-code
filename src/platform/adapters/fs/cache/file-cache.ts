@@ -14,6 +14,7 @@
  */
 
 import { logger } from "@veryfront/utils";
+import { registerCache } from "@veryfront/core/memory/index.ts";
 import type { CacheEntry, CacheStats, FileCacheOptions } from "./types.ts";
 import { estimateSize } from "./size-estimator.ts";
 import {
@@ -21,6 +22,15 @@ import {
   CacheBackends,
   MemoryCacheBackend,
 } from "../../../../core/cache/backend.ts";
+
+// Register with memory profiler
+// Note: entries shows backend size when available, -1 for distributed backends
+registerCache("file-cache", () => ({
+  name: "file-cache",
+  entries: cacheBackend?.size ?? -1,
+  maxEntries: FALLBACK_MAX_ENTRIES,
+  backend: cacheBackend?.type ?? "uninitialized",
+}));
 
 /** Default TTL for cache entries (1 minute) */
 const DEFAULT_CACHE_TTL_MS = 60_000;

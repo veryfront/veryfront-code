@@ -37,6 +37,9 @@ export interface CacheBackend {
 
   /** Delete multiple keys matching a pattern */
   delByPattern?(pattern: string): Promise<number>;
+
+  /** Current entry count (only available for memory backend) */
+  readonly size?: number;
 }
 
 /** Memory cache backend with TTL support. */
