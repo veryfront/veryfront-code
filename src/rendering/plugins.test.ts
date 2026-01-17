@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertExists } from "jsr:@std/assert@1";
+import { assert, assertEquals, assertExists } from "@std/assert";
 import { VFile } from "npm:vfile@6";
 import {
   getRehypePlugins,

@@ -6,8 +6,8 @@
  * @module cli/commands/new.integration.test
  */
 
-import { assertEquals, assertExists } from "jsr:@std/assert@1";
-import { afterEach, describe, it } from "jsr:@std/testing@1/bdd";
+import { assertEquals, assertExists } from "@std/assert";
+import { afterEach, describe, it } from "@std/testing/bdd";
 import { join } from "@veryfront/platform/compat/path/index.ts";
 
 const TEST_DIR = Deno.makeTempDirSync({ prefix: "veryfront-new-test-" });

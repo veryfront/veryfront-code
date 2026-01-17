@@ -1,5 +1,5 @@
-import { assertEquals, assertThrows } from "jsr:@std/assert@1";
-import { afterEach, beforeEach, describe, it } from "jsr:@std/testing@1/bdd";
+import { assertEquals, assertThrows } from "@std/assert";
+import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import { findInstalledTools, parseTargetFlag, uninstallTargets } from "./uninstall.ts";
 
 describe("parseTargetFlag", () => {

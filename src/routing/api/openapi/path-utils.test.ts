@@ -2,7 +2,7 @@
  * Path utilities tests
  */
 
-import { assertEquals } from "jsr:@std/assert@1";
+import { assertEquals } from "@std/assert";
 import { extractPathParams, generateOperationId, toOpenAPIPath } from "./path-utils.ts";
 
 Deno.test("toOpenAPIPath", async (t) => {

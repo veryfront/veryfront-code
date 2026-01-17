@@ -1,5 +1,5 @@
-import { assertStringIncludes } from "jsr:@std/assert@1";
-import { describe, it } from "jsr:@std/testing@1/bdd";
+import { assertStringIncludes } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 
 describe("demo command integration", () => {
   async function runDemo(args: string[] = []): Promise<{ code: number; output: string }> {

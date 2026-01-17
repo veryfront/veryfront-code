@@ -2,8 +2,8 @@
  * Tests for new-tui.ts (Charm-style wizard)
  */
 
-import { assertEquals, assertExists } from "jsr:@std/assert@1";
-import { describe, it } from "jsr:@std/testing@1/bdd";
+import { assertEquals, assertExists } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import type { NewTuiResult } from "./new-tui.ts";
 
 describe("new-tui", () => {

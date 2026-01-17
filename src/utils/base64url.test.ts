@@ -1,5 +1,5 @@
-import { assertEquals } from "jsr:@std/assert@1";
-import { describe, it } from "jsr:@std/testing@1/bdd";
+import { assertEquals } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import { base64urlEncode, base64urlEncodeBytes } from "./base64url.ts";
 
 describe("base64url", () => {

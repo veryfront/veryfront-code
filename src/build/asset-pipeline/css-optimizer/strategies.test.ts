@@ -2,7 +2,7 @@
  * Tests for CSS Optimization Strategies
  */
 
-import { assertEquals, assertExists as _assertExists } from "jsr:@std/assert@1";
+import { assertEquals, assertExists as _assertExists } from "@std/assert";
 import { join } from "@std/path";
 import { ensureDir } from "@std/fs";
 import { LightningCSSStrategy, MinificationStrategy, PurgeStrategy } from "./strategies/index.ts";

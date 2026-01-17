@@ -2,7 +2,7 @@
  * Browser Utility Tests
  */
 
-import { assertEquals } from "jsr:@std/assert@1";
+import { assertEquals } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import { deleteEnv, getEnv, setEnv } from "@veryfront/platform/compat/process.ts";
 import { canOpenBrowser } from "./browser.ts";

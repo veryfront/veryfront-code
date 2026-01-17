@@ -1,5 +1,5 @@
-import { assertEquals } from "jsr:@std/assert@1";
-import { describe, it } from "jsr:@std/testing@1/bdd";
+import { assertEquals } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import { matchRoute } from "./route-matcher.ts";
 import { parseRoute } from "./route-parser.ts";
 

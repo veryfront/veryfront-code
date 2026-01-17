@@ -1,5 +1,5 @@
-import { assertEquals } from "jsr:@std/assert@1";
-import { join } from "jsr:@std/path@1";
+import { assertEquals } from "@std/assert";
+import { join } from "@std/path";
 import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
 import { clearSSRModuleCache, SSRModuleLoader } from "./index.ts";
 

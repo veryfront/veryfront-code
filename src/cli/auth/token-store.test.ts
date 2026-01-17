@@ -2,7 +2,7 @@
  * Token Store Tests
  */
 
-import { assertEquals, assertExists } from "jsr:@std/assert@1";
+import { assertEquals, assertExists } from "@std/assert";
 import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import { deleteToken, getTokenLocation, readToken, saveToken } from "./token-store.ts";
 

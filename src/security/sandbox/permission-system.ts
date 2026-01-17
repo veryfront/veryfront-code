@@ -63,8 +63,10 @@ async function requestDenoPermission(
 ): Promise<PermissionResult> {
   // Check if Deno permissions API is available
   if (
-    typeof Deno === "undefined" ||
+    !isDeno ||
+    // @ts-ignore - Deno permissions API
     !("permissions" in Deno) ||
+    // @ts-ignore - Deno permissions API
     typeof Deno.permissions?.request !== "function"
   ) {
     return { state: "denied" };

@@ -2,7 +2,7 @@
  * Callback Server Tests
  */
 
-import { assertEquals, assertExists } from "jsr:@std/assert@1";
+import { assertEquals, assertExists } from "@std/assert";
 import { afterEach, describe, it } from "@std/testing/bdd";
 import { type CallbackServer, getCallbackUrl, startCallbackServer } from "./callback-server.ts";
 

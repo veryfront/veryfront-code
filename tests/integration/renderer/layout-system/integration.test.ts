@@ -10,7 +10,7 @@ import {
   assertEquals as _assertEquals,
   assertExists,
   assertStringIncludes,
-} from "jsr:@std/assert@1";
+} from "@std/assert";
 import { join } from "@std/path";
 import { afterAll, describe, it } from "@std/testing/bdd";
 import { VeryfrontRenderer } from "../../../../src/rendering/orchestrator/ssr.ts";

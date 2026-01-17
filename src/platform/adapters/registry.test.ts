@@ -1,5 +1,5 @@
-import { assertEquals, assertExists, assertRejects, assertThrows } from "jsr:@std/assert@1";
-import { afterEach, describe, it } from "jsr:@std/testing@1/bdd";
+import { assertEquals, assertExists, assertRejects, assertThrows } from "@std/assert";
+import { afterEach, describe, it } from "@std/testing/bdd";
 import { getLocalAdapter, resetLocalAdapter, runtime } from "./registry.ts";
 import { createMockAdapter } from "./mock.ts";
 

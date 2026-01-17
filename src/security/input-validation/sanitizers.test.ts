@@ -4,8 +4,8 @@
  * Tests for XSS and prototype pollution prevention
  */
 
-import { describe, it } from "jsr:@std/testing@1/bdd";
-import { assertEquals } from "jsr:@std/assert@1";
+import { describe, it } from "@std/testing/bdd";
+import { assertEquals } from "@std/assert";
 import { sanitizeData } from "./sanitizers.ts";
 
 describe("sanitizeData", () => {
