@@ -1,0 +1,95 @@
+import type {
+  BaseNodeConfig,
+  RetryConfig,
+  WaitNodeConfig,
+  WorkflowContext,
+  WorkflowNode,
+} from "../types.ts";
+import { validateNodeId } from "./validation.ts";
+
+export interface WaitForApprovalOptions extends Omit<BaseNodeConfig, "checkpoint"> {
+  message?: string;
+  payload?: unknown | ((context: WorkflowContext) => unknown);
+  timeout?: string | number;
+  approvers?: string[];
+  retry?: RetryConfig;
+  skip?: (context: WorkflowContext) => boolean | Promise<boolean>;
+}
+
+/** Create a wait-for-approval node. Pauses until human approves/rejects. */
+export function waitForApproval(
+  id: string,
+  options: WaitForApprovalOptions = {},
+): WorkflowNode {
+  validateNodeId(id);
+
+  const config: WaitNodeConfig = {
+    type: "wait",
+    waitType: "approval",
+    message: options.message ?? "Approval required",
+    payload: options.payload,
+    approvers: options.approvers,
+    timeout: options.timeout,
+    // Always checkpoint before waiting
+    checkpoint: true,
+    retry: options.retry,
+    skip: options.skip,
+  };
+
+  return {
+    id,
+    config,
+  };
+}
+
+export interface WaitForEventOptions extends Omit<BaseNodeConfig, "checkpoint"> {
+  eventName: string;
+  timeout?: string | number;
+  retry?: RetryConfig;
+  skip?: (context: WorkflowContext) => boolean | Promise<boolean>;
+}
+
+/** Create a wait-for-event node. Pauses until external event is received. */
+export function waitForEvent(
+  id: string,
+  options: WaitForEventOptions,
+): WorkflowNode {
+  validateNodeId(id);
+
+  if (!options.eventName) {
+    throw new Error(`waitForEvent "${id}" must specify an eventName`);
+  }
+
+  const config: WaitNodeConfig = {
+    type: "wait",
+    waitType: "event",
+    eventName: options.eventName,
+    timeout: options.timeout,
+    checkpoint: true,
+    retry: options.retry,
+    skip: options.skip,
+  };
+
+  return {
+    id,
+    config,
+  };
+}
+
+/** Create a simple delay/sleep node. */
+export function delay(id: string, duration: string | number): WorkflowNode {
+  validateNodeId(id);
+
+  const config: WaitNodeConfig = {
+    type: "wait",
+    waitType: "event",
+    eventName: "__delay__",
+    timeout: duration,
+    checkpoint: false,
+  };
+
+  return {
+    id,
+    config,
+  };
+}
