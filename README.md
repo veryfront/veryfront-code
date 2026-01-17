@@ -8,11 +8,11 @@ Veryfront is a full-stack React framework for building AI apps and agents with z
 
 ## Features
 
-- 🚀 **Zero config** — Auto-discovery from file structure
-- 🌐 **Multi-runtime** — Deno, Node.js, Bun, Cloudflare Workers
-- ⚛️ **Full-stack React** — SSR, SSG, ISR, streaming
-- 🤖 **MCP built-in** — Model Context Protocol server
-- 🏭 **Production-ready** — Rate limiting, caching, observability
+- **Zero config** — Auto-discovery from file structure
+- **Multi-runtime** — Deno, Node.js, Bun, Cloudflare Workers
+- **Full-stack React** — SSR, SSG, ISR, streaming
+- **MCP built-in** — Model Context Protocol server
+- **Production-ready** — Rate limiting, caching, observability
 
 ## Quick Start
 
