@@ -93,9 +93,9 @@ async function getOrInitRenderer(): Promise<Renderer> {
  * 3. Fall back to async load if not cached
  */
 async function createContextFromHandler(ctx: HandlerContext): Promise<RenderContext> {
-  const config = ctx.config
-    ?? getCachedConfigSync(ctx.projectDir)
-    ?? await loadConfigWithCacheClear(ctx);
+  const config = ctx.config ??
+    getCachedConfigSync(ctx.projectDir) ??
+    await loadConfigWithCacheClear(ctx);
 
   return createRenderContext({ ...ctx, config });
 }
