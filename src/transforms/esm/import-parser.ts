@@ -4,7 +4,7 @@ import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { getLoaderFromPath } from "./transform-utils.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { isCrossProjectImport, parseCrossProjectImport } from "./path-resolver.ts";
-import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
+import { join } from "@std/path";
 
 // Framework root directory (veryfront-renderer/) - computed from this file's location
 // From src/build/transforms/esm/import-parser.ts, go up 4 levels

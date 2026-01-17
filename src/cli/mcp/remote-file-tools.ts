@@ -9,7 +9,7 @@
  * API Base: Configurable via VERYFRONT_API_BASE_URL (default: http://api.lvh.me:4000)
  */
 
-import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
+import { z } from "zod";
 import { getEnv } from "@veryfront/platform/compat/process.ts";
 import type { MCPTool } from "./tools.ts";
 

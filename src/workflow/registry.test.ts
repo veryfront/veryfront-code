@@ -2,8 +2,8 @@
  * Workflow Registry Tests
  */
 
-import { assertEquals, assertExists } from "https://deno.land/std@0.220.0/assert/mod.ts";
-import { afterEach, beforeEach, describe, it } from "https://deno.land/std@0.220.0/testing/bdd.ts";
+import { assertEquals, assertExists } from "@std/assert";
+import { afterEach, beforeEach, describe, it } from "@std/testing/bdd.ts";
 import { getAllWorkflowIds, getWorkflow, registerWorkflow, workflowRegistry } from "./registry.ts";
 import type { WorkflowDefinition, WorkflowNode } from "./types.ts";
 import { workflow } from "./dsl/workflow.ts";

@@ -4,7 +4,7 @@
  * These tests verify the cross-runtime detection utilities work correctly.
  */
 
-import { assertEquals, assertExists } from "https://deno.land/std@0.220.0/assert/mod.ts";
+import { assertEquals } from "@std/assert";
 import { describe, it } from "@std/testing/bdd.ts";
 import { isBun, isCloudflare, isDeno, isNode, isNodeRuntime } from "./runtime.ts";
 

@@ -8,7 +8,7 @@
  * @module build/transforms/mdx/esm-module-loader/transforms/alias-imports
  */
 
-import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
+import { join } from "@std/path";
 import { rendererLogger as logger } from "@veryfront/utils";
 import {
   ESBUILD_JSX_FACTORY,

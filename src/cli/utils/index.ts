@@ -7,6 +7,7 @@ import {
   isStdoutTTY,
   onSignal,
   promptSync,
+  writeStdout,
 } from "@veryfront/platform/compat/process.ts";
 import { getForceColorEnv, getNoColorEnv } from "@veryfront/config/env.ts";
 
@@ -336,7 +337,7 @@ export function createSpinner(message: string): Spinner {
   const clearLine = () => {
     if (isInteractive) {
       // Move cursor to beginning of line and clear it
-      process.stdout?.write?.("\r\x1b[K");
+      writeStdout("\r\x1b[K");
     }
   };
 
@@ -344,7 +345,7 @@ export function createSpinner(message: string): Spinner {
     if (!isInteractive) return;
     const frame = SPINNER_FRAMES[frameIndex % SPINNER_FRAMES.length] ?? "⠋";
     const coloredFrame = getColorEnabled() ? cyan(frame) : frame;
-    process.stdout?.write?.(`\r${coloredFrame} ${currentMessage}`);
+    writeStdout(`\r${coloredFrame} ${currentMessage}`);
     frameIndex++;
   };
 

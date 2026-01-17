@@ -2,8 +2,8 @@
  * Memory Backend Tests
  */
 
-import { assertEquals, assertExists } from "https://deno.land/std@0.220.0/assert/mod.ts";
-import { beforeEach, describe, it } from "https://deno.land/std@0.220.0/testing/bdd.ts";
+import { assertEquals, assertExists } from "@std/assert";
+import { beforeEach, describe, it } from "@std/testing/bdd.ts";
 import { MemoryBackend } from "./memory.ts";
 import type { Checkpoint, PendingApproval, WorkflowJob, WorkflowRun } from "../types.ts";
 

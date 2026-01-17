@@ -1,5 +1,6 @@
 /**
  * Simple VCR (Video Cassette Recorder) for API testing
+ * Uses cross-runtime platform abstractions.
  *
  * Record:  deno task test:vcr:record
  * Replay:  deno task test:vcr (default)
@@ -7,8 +8,10 @@
  * @module cli/test-utils/vcr
  */
 
-import { load } from "jsr:@std/dotenv@0.225";
+import { load } from "@std/dotenv";
 import { cliLogger } from "@veryfront/utils";
+import { cwd, getEnv } from "@veryfront/platform/compat/process.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import type { ApiClient } from "../shared/config.ts";
 
 // Load .env.local for credentials in record mode
@@ -40,7 +43,8 @@ export async function createVCRClient(
   realClient?: ApiClient,
   projectSlug?: string,
 ): Promise<{ client: ApiClient; save: () => Promise<void>; projectSlug: string }> {
-  const recording = Deno.env.get("VCR") === "record";
+  const fs = createFileSystem();
+  const recording = getEnv("VCR") === "record";
   const fixturesDir = new URL("../commands/fixtures", import.meta.url).pathname;
   const cassettePath = `${fixturesDir}/${cassetteName}.json`;
 
@@ -53,7 +57,7 @@ export async function createVCRClient(
   // Load existing cassette for playback
   if (!recording) {
     try {
-      const content = await Deno.readTextFile(cassettePath);
+      const content = await fs.readTextFile(cassettePath);
       const parsed: unknown = JSON.parse(content);
       // Handle both old (array) and new (object with meta) format
       if (Array.isArray(parsed)) {
@@ -143,8 +147,8 @@ export async function createVCRClient(
 
   async function save(): Promise<void> {
     if (recording && cassette.entries.length > 0) {
-      await Deno.mkdir(fixturesDir, { recursive: true });
-      await Deno.writeTextFile(
+      await fs.mkdir(fixturesDir, { recursive: true });
+      await fs.writeTextFile(
         cassettePath,
         JSON.stringify(cassette, null, 2) + "\n",
       );
@@ -159,7 +163,7 @@ export async function createVCRClient(
  * Check if running in record mode
  */
 export function isRecording(): boolean {
-  return Deno.env.get("VCR") === "record";
+  return getEnv("VCR") === "record";
 }
 
 /**
@@ -200,13 +204,13 @@ export interface VCRTestContext {
  */
 export async function initVCRTest(cassetteName: string): Promise<VCRTestContext> {
   if (isRecording()) {
-    const slug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
+    const slug = getEnv("VERYFRONT_PROJECT_SLUG");
     if (!slug) {
       throw new Error("VCR=record requires VERYFRONT_PROJECT_SLUG");
     }
     // Dynamic import to avoid loading config module in playback mode
     const { createApiClient, resolveConfig } = await import("../shared/config.ts");
-    const config = await resolveConfig(Deno.cwd());
+    const config = await resolveConfig(cwd());
     const realClient = createApiClient(config);
     const vcr = await createVCRClient(cassetteName, realClient, slug);
     return {

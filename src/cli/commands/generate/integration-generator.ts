@@ -8,7 +8,11 @@
 import { join } from "@std/path";
 import { cyan, dim, green } from "@veryfront/compat/console";
 import { cliLogger } from "@veryfront/utils";
-import { createFileSystem, type FileSystem } from "@veryfront/platform/compat/fs.ts";
+import {
+  createFileSystem,
+  type FileSystem,
+  isAlreadyExistsError,
+} from "@veryfront/platform/compat/fs.ts";
 import {
   isInteractive as checkIsInteractive,
   promptSync,
@@ -643,10 +647,8 @@ async function ensureDir(path: string): Promise<void> {
   try {
     await fs.mkdir(path, { recursive: true });
   } catch (error) {
-    const code = (error as { code?: string })?.code;
-    const isAlreadyExists = code === "EEXIST" ||
-      (typeof Deno !== "undefined" && error instanceof Deno.errors.AlreadyExists);
-    if (!isAlreadyExists) {
+    // Directory might already exist, which is fine
+    if (!isAlreadyExistsError(error)) {
       throw error;
     }
   }

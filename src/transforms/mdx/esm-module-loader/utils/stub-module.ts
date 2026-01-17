@@ -8,7 +8,7 @@
  * @module build/transforms/mdx/esm-module-loader/utils/stub-module
  */
 
-import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
+import { join } from "@std/path";
 import { rendererLogger as logger } from "@veryfront/utils";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { hashString } from "./hash.ts";

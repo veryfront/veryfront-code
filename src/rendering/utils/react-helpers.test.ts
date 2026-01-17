@@ -2,7 +2,7 @@
  * Tests for React Helper Utilities
  */
 
-import { assert, assertEquals } from "https://deno.land/std@0.220.0/assert/mod.ts";
+import { assert, assertEquals } from "@std/assert";
 import * as React from "react";
 import { createDefaultMDXComponents, normalizeChild } from "./react-helpers.ts";
 

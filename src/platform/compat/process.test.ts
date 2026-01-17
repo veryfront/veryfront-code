@@ -4,18 +4,17 @@
  * These tests verify the cross-runtime process abstractions work correctly.
  */
 
-import { assertEquals, assertExists } from "https://deno.land/std@0.220.0/assert/mod.ts";
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd.ts";
+import { assertEquals, assertExists } from "@std/assert";
+import { afterEach, describe, it } from "@std/testing/bdd.ts";
 import {
   cwd,
   deleteEnv,
   env,
-  exit,
   getArgs,
   getEnv,
   getOsType,
-  getStdout,
   getRuntimeVersion,
+  getStdout,
   getTerminalSize,
   isInteractive,
   isStdoutTTY,
@@ -145,8 +144,7 @@ describe("Process Compat", () => {
       assertExists(version);
       assertEquals(typeof version, "string");
       // Should start with one of the known runtimes
-      const startsWithKnown =
-        version.startsWith("Deno") ||
+      const startsWithKnown = version.startsWith("Deno") ||
         version.startsWith("Node.js") ||
         version.startsWith("Bun") ||
         version === "unknown";

@@ -1,6 +1,6 @@
-import { assert, assertEquals, assertExists } from "https://deno.land/std@0.220.0/assert/mod.ts";
+import { assert, assertEquals, assertExists } from "@std/assert";
 import { LocalBlobStorage } from "./local-storage.ts";
-import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
+import { join } from "@std/path";
 
 // Helper function to replace std's remove
 async function remove(path: string, options?: { recursive?: boolean }): Promise<void> {

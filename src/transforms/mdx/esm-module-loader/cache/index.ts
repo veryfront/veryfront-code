@@ -6,10 +6,14 @@
  * @module build/transforms/mdx/esm-module-loader/cache
  */
 
-import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
+import { join } from "@std/path";
 import { rendererLogger as logger } from "@veryfront/utils";
 import { getMdxEsmCacheDir } from "@veryfront/utils/cache-dir.ts";
-import { createFileSystem, type FileSystem } from "@veryfront/platform/compat/fs.ts";
+import {
+  createFileSystem,
+  type FileSystem,
+  isNotFoundError,
+} from "@veryfront/platform/compat/fs.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 
 // Local filesystem for cache operations (not project's FSAdapter which may be remote/read-only)
@@ -143,17 +147,18 @@ export function invalidateModulePaths(changedPaths: string[]): void {
  */
 export async function clearESMDiskCache(): Promise<void> {
   const cacheDir = getMdxEsmCacheDir();
+  const fs = getLocalFs();
   try {
     // Remove all cached module files
-    for await (const entry of Deno.readDir(cacheDir)) {
+    for await (const entry of fs.readDir(cacheDir)) {
       if (entry.isFile && entry.name.endsWith(".mjs")) {
-        await Deno.remove(join(cacheDir, entry.name));
+        await fs.remove(join(cacheDir, entry.name));
       }
     }
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Cleared ESM disk cache`);
   } catch (error) {
     // Cache dir might not exist yet
-    if (!(error instanceof Deno.errors.NotFound)) {
+    if (!isNotFoundError(error)) {
       logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to clear ESM disk cache`, error);
     }
   }

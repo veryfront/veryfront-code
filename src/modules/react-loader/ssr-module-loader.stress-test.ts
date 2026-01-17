@@ -4,19 +4,21 @@
  * Tests the race condition fix by simulating concurrent requests
  * for components with deep dependency trees.
  *
- * Run with: deno test --allow-all src/module-system/react-loader/ssr-module-loader.stress-test.ts
+ * Run with: deno test --allow-all src/modules/react-loader/ssr-module-loader.stress-test.ts
  */
 
 import { assertEquals } from "jsr:@std/assert@1";
-import { join } from "jsr:@std/path@1";
+import { join } from "@veryfront/platform/compat/path/index.ts";
 import { clearSSRModuleCache, SSRModuleLoader } from "./ssr-module-loader/index.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { createFileSystem, makeTempDir } from "@veryfront/platform/compat/fs.ts";
 
 // Create a real temp directory for tests
 async function createTempProjectDir(): Promise<string> {
-  const tempDir = await Deno.makeTempDir({ prefix: "ssr-stress-test-" });
-  await Deno.mkdir(join(tempDir, "components"), { recursive: true });
-  await Deno.mkdir(join(tempDir, "node_modules", ".cache"), { recursive: true });
+  const fs = createFileSystem();
+  const tempDir = await makeTempDir({ prefix: "ssr-stress-test-" });
+  await fs.mkdir(join(tempDir, "components"), { recursive: true });
+  await fs.mkdir(join(tempDir, "node_modules", ".cache"), { recursive: true });
   return tempDir;
 }
 
@@ -25,32 +27,29 @@ async function writeComponentFiles(
   projectDir: string,
   files: Record<string, string>,
 ): Promise<void> {
+  const fs = createFileSystem();
   for (const [path, content] of Object.entries(files)) {
     const fullPath = path.startsWith(projectDir) ? path : join(projectDir, path);
     const dir = fullPath.substring(0, fullPath.lastIndexOf("/"));
-    await Deno.mkdir(dir, { recursive: true });
-    await Deno.writeTextFile(fullPath, content);
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeTextFile(fullPath, content);
   }
 }
 
 // Create adapter that uses real filesystem
 function createRealAdapter(_projectDir: string): RuntimeAdapter {
+  const fs = createFileSystem();
   return {
     name: "deno",
     fs: {
       readFile: async (path: string) => {
-        return await Deno.readTextFile(path);
+        return await fs.readTextFile(path);
       },
       writeFile: async () => {},
       readDir: async function* () {},
       stat: () => Promise.resolve(null),
       exists: async (path: string) => {
-        try {
-          await Deno.stat(path);
-          return true;
-        } catch {
-          return false;
-        }
+        return await fs.exists(path);
       },
       mkdir: async () => {},
       rm: async () => {},
@@ -133,7 +132,7 @@ Deno.test({
 
       console.log(`✓ ${concurrentRequests} concurrent requests completed without race condition`);
     } finally {
-      await Deno.remove(projectDir, { recursive: true });
+      await createFileSystem().remove(projectDir, { recursive: true });
     }
   },
   sanitizeResources: false,
@@ -226,7 +225,7 @@ Deno.test({
       console.log(`  - No deadlock detected`);
       console.log(`  - ${errors.length} errors (0 = success)`);
     } finally {
-      await Deno.remove(projectDir, { recursive: true });
+      await createFileSystem().remove(projectDir, { recursive: true });
     }
   },
   sanitizeResources: false,
@@ -289,7 +288,7 @@ Deno.test({
       console.log(`  - ${concurrentRequests} concurrent requests`);
       console.log(`  - ${errors.length} errors (0 = success)`);
     } finally {
-      await Deno.remove(projectDir, { recursive: true });
+      await createFileSystem().remove(projectDir, { recursive: true });
     }
   },
   sanitizeResources: false,

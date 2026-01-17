@@ -1,35 +1,21 @@
 /**
  * Package manager detection and installation utilities
+ * Uses cross-runtime platform abstractions.
  * @module cli/utils/package-manager
  */
 
 import { join } from "@veryfront/platform/compat/path/index.ts";
 import { cliLogger as logger } from "@veryfront/utils";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
-import { isDeno, isNode } from "@veryfront/platform/compat/runtime.ts";
+import { getOsType, runCommand } from "@veryfront/platform/compat/process.ts";
 
 export type PackageManager = "npm" | "yarn" | "pnpm" | "bun";
-
-/** Global interface for Node.js process */
-interface GlobalWithProcess {
-  process?: {
-    platform?: string;
-  };
-}
 
 /**
  * Check if running on Windows
  */
 function isWindows(): boolean {
-  if (isDeno) {
-    // @ts-ignore - Deno global
-    return Deno.build.os === "windows";
-  }
-  if (isNode) {
-    const nodeProcess = (globalThis as unknown as GlobalWithProcess).process;
-    return nodeProcess?.platform === "win32";
-  }
-  return false;
+  return getOsType() === "windows";
 }
 
 /**
@@ -42,38 +28,13 @@ async function executeCommand(
   cwd: string,
   silent: boolean,
 ): Promise<number> {
-  // Try Deno.Command first (Deno runtime)
-  if (isDeno) {
-    // @ts-ignore - Deno global
-    const process = new Deno.Command(cmd, {
-      args,
-      cwd,
-      stdout: silent ? "null" : "inherit",
-      stderr: silent ? "null" : "inherit",
-    });
-    const { code } = await process.output();
-    return code;
-  }
-
-  // Fall back to Node.js child_process (npm package runtime)
-  // Use dynamic import to avoid Deno type errors
-  const { spawn } = await import("node:child_process");
-
-  return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, {
-      cwd,
-      stdio: silent ? "ignore" : "inherit",
-      shell: isWindows(), // Use shell on Windows for .cmd files
-    });
-
-    child.on("error", (error: Error) => {
-      reject(error);
-    });
-
-    child.on("close", (code: number | null) => {
-      resolve(code ?? 1);
-    });
+  const result = await runCommand(cmd, {
+    args,
+    cwd,
+    inherit: !silent,
+    shell: isWindows(), // Use shell on Windows for .cmd files
   });
+  return result.code;
 }
 
 /**

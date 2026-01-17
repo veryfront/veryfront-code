@@ -2,8 +2,9 @@
  * Login Module Tests
  */
 
-import { assertEquals, assertExists } from "https://deno.land/std@0.220.0/assert/mod.ts";
+import { assertEquals, assertExists } from "jsr:@std/assert@1";
 import { afterEach, beforeEach, describe, it } from "@std/testing/bdd.ts";
+import { deleteEnv, getEnv, setEnv } from "@veryfront/platform/compat/process.ts";
 import { deleteToken, readToken, saveToken } from "./token-store.ts";
 import type { UserInfo } from "./login.ts";
 
@@ -48,10 +49,10 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
 
   describe("ensureAuthenticated", () => {
     it("should use existing valid token from env", async () => {
-      const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
+      const originalToken = getEnv("VERYFRONT_API_TOKEN");
       try {
         // Set a fake token (won't actually validate but tests the flow)
-        Deno.env.set("VERYFRONT_API_TOKEN", "env-token");
+        setEnv("VERYFRONT_API_TOKEN", "env-token");
 
         // Since we can't actually validate against the API in tests,
         // we just verify the function exists and can be called
@@ -60,9 +61,9 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         assertEquals(typeof ensureAuthenticated, "function");
       } finally {
         if (originalToken) {
-          Deno.env.set("VERYFRONT_API_TOKEN", originalToken);
+          setEnv("VERYFRONT_API_TOKEN", originalToken);
         } else {
-          Deno.env.delete("VERYFRONT_API_TOKEN");
+          deleteEnv("VERYFRONT_API_TOKEN");
         }
       }
     });

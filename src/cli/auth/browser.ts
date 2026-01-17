@@ -1,5 +1,4 @@
-import { isDeno } from "@veryfront/platform/compat/runtime.ts";
-import { getEnv, getOsType } from "@veryfront/platform/compat/process.ts";
+import { getEnv, getOsType, runCommand } from "@veryfront/platform/compat/process.ts";
 
 function getOpenCommand(): { cmd: string; args: string[] } {
   const platform = getOsType();
@@ -16,24 +15,8 @@ function getOpenCommand(): { cmd: string; args: string[] } {
 
 export async function openBrowser(url: string): Promise<void> {
   const { cmd, args } = getOpenCommand();
-
-  if (isDeno) {
-    // @ts-ignore - Deno global
-    const command = new Deno.Command(cmd, {
-      args: [...args, url],
-      stdout: "null",
-      stderr: "null",
-    });
-    // Wait for the command to complete (open returns quickly after launching browser)
-    await command.output();
-  } else {
-    const { spawn } = await import("node:child_process");
-    const child = spawn(cmd, [...args, url], {
-      detached: true,
-      stdio: "ignore",
-    });
-    child.unref();
-  }
+  // Use platform runCommand - open/xdg-open/start return quickly after launching browser
+  await runCommand(cmd, { args: [...args, url] });
 }
 
 export function canOpenBrowser(): boolean {

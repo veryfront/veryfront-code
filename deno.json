@@ -112,6 +112,8 @@
     "@veryfront/workflow/react": "./src/workflow/react/index.ts",
     "std/": "https://deno.land/std@0.220.0/",
     "@std/path": "https://deno.land/std@0.220.0/path/mod.ts",
+    "@std/assert": "https://deno.land/std@0.220.0/assert/mod.ts",
+    "@std/dotenv": "https://deno.land/std@0.220.0/dotenv/mod.ts",
     "@std/testing/bdd.ts": "https://deno.land/std@0.220.0/testing/bdd.ts",
     "@std/expect": "https://deno.land/std@0.220.0/expect/mod.ts",
     "csstype": "https://esm.sh/csstype@3.2.3",
