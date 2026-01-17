@@ -56,5 +56,6 @@ export function clearComponentCache(): void {
 if (typeof window !== "undefined") {
   (window as unknown as Record<string, unknown>).__VERYFRONT_LOAD_COMPONENT__ = loadComponent;
   (window as unknown as Record<string, unknown>).__VERYFRONT_PRELOAD_COMPONENT__ = preloadComponent;
-  (window as unknown as Record<string, unknown>).__VERYFRONT_GET_CACHED_COMPONENT__ = getCachedComponent;
+  (window as unknown as Record<string, unknown>).__VERYFRONT_GET_CACHED_COMPONENT__ =
+    getCachedComponent;
 }

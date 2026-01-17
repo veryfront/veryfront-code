@@ -179,7 +179,7 @@ cd test-app
 ./scripts/prepare-release.sh 0.1.0
 
 # Or manually update:
-# - package.json (version)
+# - npm/package.json (version)
 # - deno.json (version)
 ```
 
@@ -473,8 +473,8 @@ Follow [Semantic Versioning](https://semver.org/):
 Automate releases with GitHub Actions:
 
 ```yaml
-# .github/workflows/release.yml
-name: Release
+# .github/workflows/publish.yml
+name: Publish
 
 on:
   push:

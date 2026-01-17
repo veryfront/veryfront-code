@@ -26,41 +26,53 @@
       "types": "./dist/config.d.ts",
       "import": "./dist/config.js"
     },
-    "./ai": {
-      "types": "./dist/ai/index.d.ts",
-      "import": "./dist/ai/index.js"
+    "./agent": {
+      "types": "./dist/agent/index.d.ts",
+      "import": "./dist/agent/index.js"
     },
-    "./ai/client": {
-      "types": "./dist/ai/client.d.ts",
-      "import": "./dist/ai/client.js"
+    "./agent/react": {
+      "types": "./dist/agent/react.d.ts",
+      "import": "./dist/agent/react.js"
     },
-    "./ai/react": {
-      "types": "./dist/ai/react.d.ts",
-      "import": "./dist/ai/react.js"
+    "./agent/middleware": {
+      "types": "./dist/agent/middleware.d.ts",
+      "import": "./dist/agent/middleware.js"
     },
-    "./ai/primitives": {
-      "types": "./dist/ai/primitives.d.ts",
-      "import": "./dist/ai/primitives.js"
+    "./tool": {
+      "types": "./dist/tool/index.d.ts",
+      "import": "./dist/tool/index.js"
     },
-    "./ai/components": {
-      "types": "./dist/ai/components.d.ts",
-      "import": "./dist/ai/components.js"
+    "./workflow": {
+      "types": "./dist/workflow/index.d.ts",
+      "import": "./dist/workflow/index.js"
     },
-    "./ai/production": {
-      "types": "./dist/ai/production.d.ts",
-      "import": "./dist/ai/production.js"
+    "./workflow/react": {
+      "types": "./dist/workflow/react.d.ts",
+      "import": "./dist/workflow/react.js"
     },
-    "./ai/dev": {
-      "types": "./dist/ai/dev.d.ts",
-      "import": "./dist/ai/dev.js"
+    "./prompt": {
+      "types": "./dist/prompt/index.d.ts",
+      "import": "./dist/prompt/index.js"
     },
-    "./ai/workflow": {
-      "types": "./dist/ai/workflow.d.ts",
-      "import": "./dist/ai/workflow.js"
+    "./resource": {
+      "types": "./dist/resource/index.d.ts",
+      "import": "./dist/resource/index.js"
     },
-    "./ai/workflow/react": {
-      "types": "./dist/ai/workflow-react.d.ts",
-      "import": "./dist/ai/workflow-react.js"
+    "./mcp": {
+      "types": "./dist/mcp/index.d.ts",
+      "import": "./dist/mcp/index.js"
+    },
+    "./provider": {
+      "types": "./dist/provider/index.d.ts",
+      "import": "./dist/provider/index.js"
+    },
+    "./primitives": {
+      "types": "./dist/primitives.d.ts",
+      "import": "./dist/primitives.js"
+    },
+    "./components/ai": {
+      "types": "./dist/components/ai.d.ts",
+      "import": "./dist/components/ai.js"
     },
     "./oauth": {
       "types": "./dist/oauth/index.d.ts",

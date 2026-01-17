@@ -30,7 +30,10 @@ export function getLocalLibDir(): string {
     return currentFile.substring(0, srcIndex) + "/src/lib";
   }
   // Fallback: navigate up from current file location
-  return currentFile.replace(/\/src\/rendering\/orchestrator\/file-resolver\/index\.ts$/, "/src/lib");
+  return currentFile.replace(
+    /\/src\/rendering\/orchestrator\/file-resolver\/index\.ts$/,
+    "/src/lib",
+  );
 }
 
 /**
