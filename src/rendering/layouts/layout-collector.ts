@@ -60,6 +60,13 @@ export class LayoutCollector {
   }
 
   async collectLayouts(pageInfo: EntityInfo): Promise<LayoutCollectionResult> {
+    logger.debug("[LayoutCollector] collectLayouts called", {
+      pagePath: pageInfo.entity.path,
+      projectDir: this.projectDir,
+      hasConfig: !!this.config,
+      defaultLayout: this.config?.defaultLayout,
+    });
+
     // Skip layout resolution for .veryfront paths - these are framework-level pages
     // that should not use user-defined layouts
     if (

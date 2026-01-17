@@ -148,6 +148,15 @@ export class RenderPipeline {
           logger.debug("[renderPage] Skipping layouts/providers for dot-prefixed path", { slug });
         }
 
+        logger.debug("[renderPage] Layout collection result", {
+          slug,
+          skipLayouts,
+          hasLayoutBundle: !!layoutResult.layoutBundle,
+          nestedLayoutsCount: layoutResult.nestedLayouts.length,
+          nestedLayoutPaths: layoutResult.nestedLayouts.map((l) => l.path || l.componentPath),
+          providerCount: providerResult.providerItems.length,
+        });
+
         let dataFetchingProps: Record<string, unknown> | undefined;
         const layoutDataMap = new Map<string, Record<string, unknown>>();
 

@@ -257,7 +257,7 @@ function validateAndCacheConfig(
   validateCorsConfig(userConfig);
   validateConfigShape(userConfig);
 
-  const merged = mergeConfigs(userConfig);
+  const merged = mergeConfigs(userConfig as Partial<VeryfrontConfig>);
   configCacheByProject.set(projectDir, { revision: cacheRevision, config: merged });
   return merged;
 }
@@ -290,7 +290,9 @@ export async function getConfig(
   adapter: RuntimeAdapter,
 ): Promise<VeryfrontConfig> {
   const cached = configCacheByProject.get(projectDir);
-  if (cached && cached.revision === cacheRevision) return cached.config;
+  if (cached && cached.revision === cacheRevision) {
+    return cached.config;
+  }
 
   const configFiles = ["veryfront.config.js", "veryfront.config.ts", "veryfront.config.mjs"];
 
