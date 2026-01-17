@@ -509,6 +509,10 @@ export function createVeryfrontHandler(
           : undefined;
         const isLocalProject = !!localProjectPath;
 
+        // Determine the effective config for this request
+        // For local projects, load project-specific config; otherwise use global config
+        let effectiveConfig = config;
+
         if (isLocalProject && localProjectPath) {
           effectiveProjectDir = localProjectPath;
           logger.debug("[universal] Using local project (filesystem-first)", {
@@ -527,6 +531,27 @@ export function createVeryfrontHandler(
             });
           }
           effectiveAdapter = localAdapterCache.get(effectiveProjectDir)!;
+
+          // Load project-specific config for local projects
+          // This ensures each project uses its own veryfront.config.ts
+          try {
+            effectiveConfig = await timeAsync(
+              "config:load-project",
+              () => getConfig(effectiveProjectDir, effectiveAdapter),
+            );
+            logger.debug("[universal] Loaded project-specific config", {
+              projectSlug,
+              projectDir: effectiveProjectDir,
+              defaultLayout: effectiveConfig?.defaultLayout,
+              router: effectiveConfig?.router,
+            });
+          } catch (err) {
+            logger.warn("[universal] Failed to load project config, using defaults", {
+              projectSlug,
+              projectDir: effectiveProjectDir,
+              error: getErrorMessage(err),
+            });
+          }
         }
 
         // Create handler context
@@ -538,7 +563,7 @@ export function createVeryfrontHandler(
           securityConfig: securityLoader.getSecurityConfig(),
           cspUserHeader: securityLoader.getCspUserHeader(),
           debug: opts.debug,
-          config,
+          config: effectiveConfig,
           parsedDomain,
           projectSlug,
           projectId,
