@@ -191,12 +191,12 @@ async function resolveAliasImportPath(
   // Normalize the path - remove any leading slashes for consistency
   const normalizedPath = basePath.replace(/^\/+/, "");
 
-  // FAST PATH: For lib/* imports, check framework directory FIRST
+  // FAST PATH: For lib/* imports, check framework directory FIRST (lib/ is in src/lib/)
   // This avoids expensive project file lookups for framework utilities
   if (normalizedPath.startsWith("lib/")) {
     const fs = createFileSystem();
     for (const ext of EXTENSIONS) {
-      const frameworkPath = join(FRAMEWORK_ROOT, normalizedPath + ext);
+      const frameworkPath = join(FRAMEWORK_ROOT, "src", normalizedPath + ext);
       try {
         const stat = await fs.stat(frameworkPath);
         if (stat.isFile) {
@@ -273,7 +273,7 @@ async function resolveAliasImportPath(
   // This provides framework utilities like lib/Head, lib/Router, lib/usePageContext
   if (normalizedPath.startsWith("lib/")) {
     for (const ext of EXTENSIONS) {
-      const frameworkPath = join(FRAMEWORK_ROOT, normalizedPath + ext);
+      const frameworkPath = join(FRAMEWORK_ROOT, "src", normalizedPath + ext);
       try {
         const stat = await localFs.stat(frameworkPath);
         if (stat.isFile) {

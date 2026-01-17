@@ -18,19 +18,19 @@ const SOURCE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"];
 const COMPONENT_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js"];
 
 /**
- * Get the local lib directory path (veryfront-private/lib).
+ * Get the local lib directory path (src/lib).
  * Determines the path relative to the current module.
  */
 export function getLocalLibDir(): string {
   // This file is at src/rendering/orchestrator/file-resolver/index.ts
-  // lib/ is at the root of veryfront-private
+  // lib/ is at src/lib/
   const currentFile = new URL(import.meta.url).pathname;
   const srcIndex = currentFile.indexOf("/src/");
   if (srcIndex !== -1) {
-    return currentFile.substring(0, srcIndex) + "/lib";
+    return currentFile.substring(0, srcIndex) + "/src/lib";
   }
   // Fallback: navigate up from current file location
-  return currentFile.replace(/\/src\/rendering\/orchestrator\/file-resolver\/index\.ts$/, "/lib");
+  return currentFile.replace(/\/src\/rendering\/orchestrator\/file-resolver\/index\.ts$/, "/src/lib");
 }
 
 /**
