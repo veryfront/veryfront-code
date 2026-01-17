@@ -9,7 +9,7 @@
  */
 
 import { rendererLogger as logger } from "@veryfront/utils";
-import { clearConfigCache, getCachedConfigSync, getConfig } from "@veryfront/config";
+import { getConfig } from "@veryfront/config";
 import type { HandlerContext } from "../../handlers/types.ts";
 import {
   createRenderContext,
@@ -87,26 +87,25 @@ async function getOrInitRenderer(): Promise<Renderer> {
 /**
  * Create a render context from handler context, loading config if needed.
  *
- * Uses a two-tier approach for optimal performance:
- * 1. Use provided config if available
- * 2. Try synchronous cache lookup (instant, no I/O)
- * 3. Fall back to async load if not cached
+ * IMPORTANT: For proxy mode (API-backed) projects, ctx.config is intentionally
+ * set to undefined to signal that we should load the project-specific config
+ * from the API. We must NOT use the sync cache in this case because the
+ * projectDir is not unique per project.
  */
 async function createContextFromHandler(ctx: HandlerContext): Promise<RenderContext> {
-  const config = ctx.config ??
-    getCachedConfigSync(ctx.projectDir) ??
-    await loadConfigWithCacheClear(ctx);
+  let config = ctx.config;
+
+  if (!config) {
+    // Load config from API adapter (for proxy mode projects)
+    // Don't use sync cache here - projectDir is not unique per project in proxy mode
+    logger.debug("[RendererAdapter] Loading config from adapter", {
+      projectDir: ctx.projectDir,
+      projectSlug: ctx.projectSlug,
+    });
+    config = await getConfig(ctx.projectDir, ctx.adapter);
+  }
 
   return createRenderContext({ ...ctx, config });
-}
-
-/**
- * Load config after clearing cache. Used when sync cache lookup fails.
- */
-function loadConfigWithCacheClear(ctx: HandlerContext): ReturnType<typeof getConfig> {
-  logger.debug("[RendererAdapter] Loading config for context (cache miss)");
-  clearConfigCache();
-  return getConfig(ctx.projectDir, ctx.adapter);
 }
 
 /**
