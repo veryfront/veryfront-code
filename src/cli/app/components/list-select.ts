@@ -163,10 +163,12 @@ export function renderList<T>(
     parts.push(isSelected ? brand("›") : " ");
     parts.push(" ");
 
-    // Number shortcut (only show if within 1-9 range after offset)
-    if (showNumbers && displayNum <= 9) {
-      const num = String(displayNum);
-      parts.push(isSelected ? brand(`[${num}]`) : dim(`[${num}]`));
+    // Number/letter shortcut (1-9, then a-z for 10+)
+    if (showNumbers && displayNum <= 35) { // 1-9 + a-z (26 letters)
+      const shortcut = displayNum <= 9
+        ? String(displayNum)
+        : String.fromCharCode(96 + displayNum - 9); // 10='a', 11='b', etc.
+      parts.push(isSelected ? brand(`[${shortcut}]`) : dim(`[${shortcut}]`));
       parts.push(" ");
     } else if (showNumbers) {
       parts.push("    "); // Keep alignment
