@@ -1,5 +1,5 @@
-import { assertEquals, assertExists } from "std/assert/mod.ts";
-import { delay } from "std/async/delay.ts";
+import { assertEquals, assertExists } from "@std/assert";
+import { delay } from "@std/async";
 import {
   HMRServer,
   type HMRServerOptions,

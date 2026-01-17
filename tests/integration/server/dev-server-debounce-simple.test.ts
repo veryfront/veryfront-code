@@ -4,9 +4,9 @@
  * Focused test to verify debouncing functionality is working
  */
 
-import { assert as _assert, assertEquals as _assertEquals, assertExists } from "std/assert/mod.ts";
-import { join } from "std/path/mod.ts";
-import { afterAll, describe, it } from "std/testing/bdd.ts";
+import { assert as _assert, assertEquals as _assertEquals, assertExists } from "@std/assert";
+import { join } from "@std/path";
+import { afterAll, describe, it } from "@std/testing/bdd.ts";
 import { createDevServer as _createDevServer } from "../../../src/server/dev-server.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";

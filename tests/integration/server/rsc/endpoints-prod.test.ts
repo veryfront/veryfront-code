@@ -1,6 +1,6 @@
-import { assertEquals } from "std/assert/mod.ts";
-import { afterAll, describe, it } from "std/testing/bdd.ts";
-import { join } from "std/path/mod.ts";
+import { assertEquals } from "@std/assert";
+import { afterAll, describe, it } from "@std/testing/bdd.ts";
+import { join } from "@std/path";
 import "../../../_helpers/log-guard.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { assertDrained, drainEventLoop } from "../../../_helpers/utils.ts";

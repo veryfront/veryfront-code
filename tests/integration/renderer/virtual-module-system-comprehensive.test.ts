@@ -1,5 +1,5 @@
-import { assert, assertEquals, assertExists } from "std/assert/mod.ts";
-import { describe, it } from "std/testing/bdd.ts";
+import { assert, assertEquals, assertExists } from "@std/assert";
+import { describe, it } from "@std/testing/bdd.ts";
 import { VirtualModuleSystem } from "../../../src/rendering/virtual-module-system.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";

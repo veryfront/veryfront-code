@@ -12,11 +12,11 @@
 // Disable LRU intervals during testing to prevent resource leaks
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 
-import { assert, assertEquals, assertExists, assertRejects } from "std/assert/mod.ts";
-import { afterEach, describe, it } from "std/testing/bdd.ts";
+import { assert, assertEquals, assertExists, assertRejects } from "@std/assert";
+import { afterEach, describe, it } from "@std/testing/bdd.ts";
 import { bootstrap, bootstrapDev, bootstrapProd } from "../../../src/server/bootstrap.ts";
 import { clearConfigCache } from "@veryfront/config";
-import { join } from "std/path/mod.ts";
+import { join } from "@std/path";
 import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
 
 // ============================================================================

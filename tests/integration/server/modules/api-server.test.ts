@@ -5,7 +5,7 @@
  * and renderer integration for client-side navigation.
  */
 
-import { assertEquals, assertExists } from "std/assert/mod.ts";
+import { assertEquals, assertExists } from "@std/assert";
 import {
   APIServer,
   type APIServerOptions,

@@ -1,6 +1,6 @@
 #!/usr/bin/env -S deno run -A
-import { walk } from "std/fs/walk.ts";
-import { existsSync } from "std/fs/exists.ts";
+import { walk } from "@std/fs";
+import { existsSync } from "@std/fs";
 
 const repoRoot = new URL("../", import.meta.url).pathname;
 

@@ -1,11 +1,11 @@
-import { assertEquals, assertExists } from "std/assert/mod.ts";
+import { assertEquals, assertExists } from "@std/assert";
 import {
   afterEach as _afterEach,
   beforeEach as _beforeEach,
   describe,
   it,
-} from "std/testing/bdd.ts";
-import { join } from "std/path/mod.ts";
+} from "@std/testing/bdd.ts";
+import { join } from "@std/path";
 import {
   getDefaultImportMap,
   loadImportMap,

@@ -14,8 +14,12 @@ import { cwd, getEnv } from "@veryfront/platform/compat/process.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import type { ApiClient } from "../shared/config.ts";
 
-// Load .env.local for credentials in record mode
-await load({ envPath: ".env.local", export: true });
+// Load .env.local for credentials in record mode (skip validation against .env.example)
+try {
+  await load({ envPath: ".env.local", examplePath: null, export: true });
+} catch {
+  // .env.local doesn't exist - that's fine for playback mode
+}
 
 interface VCREntry {
   method: string;

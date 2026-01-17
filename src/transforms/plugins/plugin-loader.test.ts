@@ -1,5 +1,5 @@
 import { assertEquals, assertExists } from "jsr:@std/assert@1";
-import { join } from "std/path/mod.ts";
+import { join } from "@std/path";
 import { getRehypePlugins, getRemarkPlugins } from "./plugin-loader.ts";
 
 Deno.test("plugin-loader - getRemarkPlugins returns array of plugins", async () => {

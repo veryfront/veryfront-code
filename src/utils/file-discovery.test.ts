@@ -2,8 +2,8 @@
  * Tests for consolidated file discovery utility
  */
 
-import { assertEquals, assertExists } from "std/assert/mod.ts";
-import { join } from "std/path/mod.ts";
+import { assertEquals, assertExists } from "@std/assert";
+import { join } from "@std/path";
 import { collectFiles, countFiles, discoverFiles, hasMatchingFiles } from "./file-discovery.ts";
 import { cwd } from "../platform/compat/process.ts";
 

@@ -2,8 +2,8 @@
  * @file Integration tests for Veryfront API FSAdapter
  */
 
-import { assertEquals, assertExists } from "std/assert/mod.ts";
-import { afterEach, describe, it } from "std/testing/bdd.ts";
+import { assertEquals, assertExists } from "@std/assert";
+import { afterEach, describe, it } from "@std/testing/bdd.ts";
 import { bootstrap } from "@veryfront/server/bootstrap.ts";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import type { VeryfrontConfig } from "@veryfront/config";

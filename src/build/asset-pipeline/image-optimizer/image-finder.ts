@@ -1,4 +1,4 @@
-import { walk } from "std/fs/mod.ts";
+import { walk } from "@std/fs";
 import { extname } from "@veryfront/platform/compat/path/index.ts";
 import { logger } from "@veryfront/utils";
 import { SUPPORTED_EXTENSIONS } from "./constants.ts";

@@ -1,7 +1,7 @@
-import { assert } from "std/assert/mod.ts";
-import { afterAll, describe, it } from "std/testing/bdd.ts";
+import { assert } from "@std/assert";
+import { afterAll, describe, it } from "@std/testing/bdd.ts";
 import "../../../_helpers/log-guard.ts";
-import { join } from "std/path/mod.ts";
+import { join } from "@std/path";
 import { consumeNdjsonStream, getContainer } from "../../../../src/rendering/rsc/client-dom.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";

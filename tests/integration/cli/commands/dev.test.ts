@@ -1,6 +1,6 @@
-import { assertEquals, assertExists } from "std/assert/mod.ts";
-import { ensureDir } from "std/fs/mod.ts";
-import { describe, it } from "std/testing/bdd.ts";
+import { assertEquals, assertExists } from "@std/assert";
+import { ensureDir } from "@std/fs";
+import { describe, it } from "@std/testing/bdd.ts";
 import type { DevCommandOptions } from "../../../../src/cli/commands/dev.ts";
 import { clearConfigCache } from "@veryfront/config";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";

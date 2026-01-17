@@ -5,7 +5,7 @@
 
 import { serverLogger as logger } from "@veryfront/utils";
 import { dirname, join, relative } from "@veryfront/platform/compat/path/index.ts";
-import { walk } from "std/fs/mod.ts";
+import { walk } from "@std/fs";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { CLIENT_STYLES } from "./templates.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";

@@ -1,5 +1,5 @@
-import { assertEquals, assertExists, assertRejects } from "std/assert/mod.ts";
-import { describe, it } from "std/testing/bdd.ts";
+import { assertEquals, assertExists, assertRejects } from "@std/assert";
+import { describe, it } from "@std/testing/bdd.ts";
 import {
   bunAdapter,
   denoAdapter,

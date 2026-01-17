@@ -9,7 +9,7 @@
  * - Development mode skip
  */
 
-import { assertEquals, assertExists } from "std/assert/mod.ts";
+import { assertEquals, assertExists } from "@std/assert";
 import * as esbuild from "esbuild/mod.js";
 import { optimizeBundle } from "../../../../../src/build/renderer/services/optimizer.ts";
 import type {

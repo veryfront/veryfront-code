@@ -2,8 +2,8 @@
  * Simplified production server test to debug resource leaks
  */
 
-import { assertEquals } from "std/assert/mod.ts";
-import { join } from "std/path/mod.ts";
+import { assertEquals } from "@std/assert";
+import { join } from "@std/path";
 import { withTestContext } from "../../_helpers/context.ts";
 
 Deno.test("Simple Production Server - basic functionality without leaks", async () => {

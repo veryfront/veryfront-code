@@ -1,4 +1,4 @@
-import { assertEquals } from "std/assert/mod.ts";
+import { assertEquals } from "@std/assert";
 
 Deno.test("flags | isRSCEnabled toggles with env", async () => {
   const prev = Deno.env.get("VERYFRONT_EXPERIMENTAL_RSC");

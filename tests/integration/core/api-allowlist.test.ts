@@ -1,6 +1,6 @@
-import { assertEquals } from "std/assert/mod.ts";
-import { join } from "std/path/mod.ts";
-import { describe, it } from "std/testing/bdd.ts";
+import { assertEquals } from "@std/assert";
+import { join } from "@std/path";
+import { describe, it } from "@std/testing/bdd.ts";
 import { APIRouteHandler } from "@veryfront/routing/api/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 

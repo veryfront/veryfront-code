@@ -8,9 +8,9 @@
  * - Configuration options
  */
 
-import { assert, assertEquals as _assertEquals, assertExists } from "std/assert/mod.ts";
-import { join } from "std/path/mod.ts";
-import { afterAll, describe, it } from "std/testing/bdd.ts";
+import { assert, assertEquals as _assertEquals, assertExists } from "@std/assert";
+import { join } from "@std/path";
+import { afterAll, describe, it } from "@std/testing/bdd.ts";
 import { createDevServer as _createDevServer } from "../../../src/server/dev-server.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import type { TestContext } from "../../_helpers/context.ts";

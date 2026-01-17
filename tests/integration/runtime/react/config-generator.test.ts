@@ -1,5 +1,5 @@
-import { assert, assertEquals, assertThrows } from "std/assert/mod.ts";
-import { describe, it } from "std/testing/bdd.ts";
+import { assert, assertEquals, assertThrows } from "@std/assert";
+import { describe, it } from "@std/testing/bdd.ts";
 import {
   createReactVersionSwitcher,
   detectReactVersionFromConfig,
