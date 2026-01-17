@@ -14,6 +14,7 @@ import {
   type RenderContext,
 } from "../../src/rendering/context/render-context.ts";
 import type { HandlerContext } from "../../src/server/handlers/types.ts";
+import { VERSION } from "../../src/core/utils/version.ts";
 
 // Mock adapter for testing
 const mockAdapter = {
@@ -60,7 +61,7 @@ Deno.test("createRenderContext - creates context from handler context", () => {
   assertEquals(ctx.environment, "production");
   assertEquals(ctx.releaseId, "rel_456");
   assertEquals(ctx.proxyToken, "token_xyz");
-  assertEquals(ctx.cachePrefix, "proj_123:production:rel_456");
+  assertEquals(ctx.cachePrefix, `proj_123:production:rel_456:${VERSION}`);
 });
 
 Deno.test("createRenderContext - uses draft for preview environment", () => {
@@ -79,7 +80,7 @@ Deno.test("createRenderContext - uses draft for preview environment", () => {
   const ctx = createRenderContext(handlerCtx);
 
   assertEquals(ctx.environment, "preview");
-  assertEquals(ctx.cachePrefix, "proj_123:preview:draft");
+  assertEquals(ctx.cachePrefix, `proj_123:preview:draft:${VERSION}`);
 });
 
 Deno.test("createRenderContext - uses __single__ for single-project mode", () => {
@@ -96,7 +97,7 @@ Deno.test("createRenderContext - uses __single__ for single-project mode", () =>
 
   assertEquals(ctx.projectId, "__single__");
   assertEquals(ctx.projectSlug, "__single__");
-  assertEquals(ctx.cachePrefix, "__single__:preview:draft");
+  assertEquals(ctx.cachePrefix, `__single__:preview:draft:${VERSION}`);
 });
 
 Deno.test("createRenderContext - throws without config", () => {
@@ -193,11 +194,12 @@ Deno.test("createCacheKey - same project different releases have different keys"
 });
 
 Deno.test("parseCacheKey - parses valid cache keys", () => {
-  const parsed = parseCacheKey("proj_123:production:v1:page:blog/post");
+  const parsed = parseCacheKey("proj_123:production:v1:0.0.75:page:blog/post");
 
   assertEquals(parsed?.projectId, "proj_123");
   assertEquals(parsed?.environment, "production");
   assertEquals(parsed?.releaseKey, "v1");
+  assertEquals(parsed?.version, "0.0.75");
   assertEquals(parsed?.contentKey, "page:blog/post");
 });
 
@@ -205,6 +207,7 @@ Deno.test("parseCacheKey - returns null for invalid keys", () => {
   assertEquals(parseCacheKey("invalid"), null);
   assertEquals(parseCacheKey("too:short"), null);
   assertEquals(parseCacheKey("a:b:c"), null);
+  assertEquals(parseCacheKey("a:b:c:d"), null); // Now needs 5 parts minimum
 });
 
 Deno.test("isSameTenant - returns true for same tenant", () => {

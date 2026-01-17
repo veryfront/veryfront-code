@@ -164,19 +164,26 @@ export function createCacheKey(ctx: RenderContext, contentKey: string): string {
  */
 export function parseCacheKey(
   cacheKey: string,
-): { projectId: string; environment: string; releaseKey: string; contentKey: string } | null {
+): {
+  projectId: string;
+  environment: string;
+  releaseKey: string;
+  version: string;
+  contentKey: string;
+} | null {
   const parts = cacheKey.split(":");
-  if (parts.length < 4) return null;
+  if (parts.length < 5) return null;
 
-  const [projectId, environment, releaseKey, ...contentParts] = parts;
+  const [projectId, environment, releaseKey, version, ...contentParts] = parts;
   // Ensure all required parts are present
-  if (!projectId || !environment || !releaseKey) {
+  if (!projectId || !environment || !releaseKey || !version) {
     return null;
   }
   return {
     projectId,
     environment,
     releaseKey,
+    version,
     contentKey: contentParts.join(":"),
   };
 }
