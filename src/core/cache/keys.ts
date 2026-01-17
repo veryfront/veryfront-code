@@ -29,6 +29,36 @@
  *    Format: {prefix}:{filePath}:{contentHash}:{suffix}
  *    Example: veryfront:transform:/pages/index.tsx:abc123:browser
  *
+ * ## Conventions (MUST follow for consistency)
+ *
+ * 1. **FORMAT**: Always use single colon separator
+ *    ✅ "prefix:segment:segment"
+ *    ❌ "prefix::segment" or "segmentsegment"
+ *
+ * 2. **PREFIXES**: All keys MUST start with a CacheKeyPrefix constant
+ *    ✅ `${CacheKeyPrefix.COMPONENT}:${path}:${hash}`
+ *    ❌ `${path}:${hash}`
+ *
+ * 3. **VERSION**: Include VERSION for compilation artifacts
+ *    - Render cache: YES (code changes affect output)
+ *    - Config cache: YES (schema may change)
+ *    - File cache: NO (content-addressed by API)
+ *    - GitHub cache: NO (ref-addressed)
+ *
+ * 4. **NULL HANDLING**: Use explicit defaults, never pass through undefined
+ *    ✅ ctx.branch ?? "main"
+ *    ❌ ctx.branch (could be undefined)
+ *
+ * 5. **NAMING**: build{Domain}{Type}CacheKey
+ *    - Domain: Render, Config, SSRModule, GitHub, etc.
+ *    - Type: omit for full key, "Prefix" for partial
+ *
+ * 6. **PARAMETERS**: (context/id, path, hash?, options?)
+ *    - Context/identifier first
+ *    - Path/location second
+ *    - Hash/version third
+ *    - Optional config last
+ *
  * @module core/cache/keys
  */
 
@@ -41,9 +71,11 @@ import { VERSION } from "@veryfront/utils/version.ts";
 /**
  * All cache key prefixes used in the system.
  * Using constants ensures consistency and makes refactoring easier.
+ *
+ * NOTE: All new cache keys MUST use a prefix from this object.
  */
 export const CacheKeyPrefix = {
-  // Redis prefixes
+  // Redis prefixes (include trailing colon for direct concatenation)
   SSR_MODULE: "veryfront:ssr-module:",
   FILE_CACHE: "veryfront:file-cache:",
   TRANSFORM: "veryfront:transform:",
@@ -69,6 +101,18 @@ export const CacheKeyPrefix = {
   // Module system prefixes
   MODULE_RESOLVE: "resolve",
   MODULE_PATH: "veryfront",
+  SSR_VERSION: "v", // Version prefix for SSR module cache keys
+
+  // Component cache prefixes
+  COMPONENT: "component",
+  LAYOUT: "layout",
+
+  // Server-side prefixes
+  ERROR_PAGE: "error",
+  PROXY: "proxy",
+
+  // Project prefixes
+  PROJECT: "project",
 } as const;
 
 /**
@@ -274,10 +318,10 @@ export function buildModuleTransformCacheKey(
 
 /**
  * Build a module resolve cache key.
- * Format: {specifier}::{referrer}
+ * Format: resolve:{specifier}:{referrer}
  */
 export function buildModuleResolveCacheKey(specifier: string, referrer?: string): string {
-  return `${specifier}::${referrer || "root"}`;
+  return `${CacheKeyPrefix.MODULE_RESOLVE}:${specifier}:${referrer ?? "root"}`;
 }
 
 /**
@@ -289,7 +333,7 @@ export function buildSSRModuleCacheKey(
   projectId: string,
   filePath: string,
 ): string {
-  return `v${version}:${projectId}:${filePath}`;
+  return `${CacheKeyPrefix.SSR_VERSION}${version}:${projectId}:${filePath}`;
 }
 
 /**
@@ -342,10 +386,10 @@ export function buildTransformCacheKey(
  * Format: {prefix}:{filePath}:{contentHash}:{suffix?}
  *
  * @example
- * buildContentHashKey("veryfront:transform", "pages/index.tsx", "abc123", "ssr")
+ * buildContentHashCacheKey("veryfront:transform", "pages/index.tsx", "abc123", "ssr")
  * // → "veryfront:transform:pages/index.tsx:abc123:ssr"
  */
-export function buildContentHashKey(
+export function buildContentHashCacheKey(
   prefix: string,
   filePath: string,
   contentHash: string,
@@ -356,23 +400,28 @@ export function buildContentHashKey(
 }
 
 /**
+ * @deprecated Use buildContentHashCacheKey instead
+ */
+export const buildContentHashKey = buildContentHashCacheKey;
+
+/**
  * Build a component cache key.
- * Format: {projectId}:{filePath}:{contentHash}
+ * Format: component:{projectId}:{filePath}:{contentHash}
  */
 export function buildComponentCacheKey(
   projectId: string,
   filePath: string,
   contentHash: string,
 ): string {
-  return `${projectId}:${filePath}:${contentHash}`;
+  return `${CacheKeyPrefix.COMPONENT}:${projectId}:${filePath}:${contentHash}`;
 }
 
 /**
  * Build a layout component cache key.
- * Format: {componentPath}:{hash}
+ * Format: layout:{componentPath}:{hash}
  */
 export function buildLayoutComponentCacheKey(componentPath: string, hash: string): string {
-  return `${componentPath}:${hash}`;
+  return `${CacheKeyPrefix.LAYOUT}:${componentPath}:${hash}`;
 }
 
 // ============================================================================
@@ -433,14 +482,15 @@ export function buildGitHubResolveCacheKey(ref: string, path: string): string {
 
 /**
  * Build an error page cache key.
- * Format: {projectId}:{pageType}
+ * Format: error:{projectId}:{pageType}
  */
 export function buildErrorPageCacheKey(
   projectId: string | undefined,
   projectDir: string,
   pageType: string,
 ): string {
-  return `${projectId ?? projectDir}:${pageType}`;
+  const projectIdentifier = projectId ?? projectDir;
+  return `${CacheKeyPrefix.ERROR_PAGE}:${projectIdentifier}:${pageType}`;
 }
 
 // ============================================================================
@@ -449,7 +499,7 @@ export function buildErrorPageCacheKey(
 
 /**
  * Build a proxy manager cache key.
- * Format: {projectSlug}:{mode}:{releaseIdOrBranch}
+ * Format: proxy:{projectSlug}:{mode}:{releaseIdOrBranch}
  */
 export function buildProxyManagerCacheKey(
   projectSlug: string,
@@ -457,10 +507,9 @@ export function buildProxyManagerCacheKey(
   releaseId: string | null,
   branch: string | null,
 ): string {
-  if (productionMode) {
-    return `${projectSlug}:production:${releaseId ?? "latest"}`;
-  }
-  return `${projectSlug}:preview:${branch ?? "main"}`;
+  const mode = productionMode ? "production" : "preview";
+  const qualifier = productionMode ? (releaseId ?? "latest") : (branch ?? "main");
+  return `${CacheKeyPrefix.PROXY}:${projectSlug}:${mode}:${qualifier}`;
 }
 
 // ============================================================================
