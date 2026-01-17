@@ -24,7 +24,7 @@ First, let's create a simple vector store utility. In production, replace this w
 
 ```typescript
 // lib/vector-store.ts
-import { openai } from 'veryfront/ai';
+import { openai } from 'veryfront/provider';
 
 interface DocumentChunk {
   id: string;
@@ -79,7 +79,7 @@ Now, expose this vector store as a tool for the agent.
 
 ```typescript
 // ai/tools/knowledge-base.ts
-import { tool } from 'veryfront/ai';
+import { tool } from 'veryfront/tool';
 import { z } from 'zod';
 import { vectorStore } from '../../lib/vector-store';
 
@@ -108,7 +108,7 @@ Create an agent that uses this tool.
 
 ```typescript
 // ai/agents/support.ts
-import { agent } from 'veryfront/ai';
+import { agent } from 'veryfront/agent';
 
 export default agent({
   model: 'openai/gpt-4-turbo',

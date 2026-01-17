@@ -43,7 +43,8 @@ deno run --allow-net --allow-env --allow-read example.ts
 
 ### Option 1: AI SDK Providers (Recommended)
 ```typescript
-import { openai, generateText } from 'veryfront/ai';
+import { openai } from 'veryfront/provider';
+import { generateText } from 'veryfront/agent';
 
 const model = openai('gpt-4o', { apiKey });
 const result = await generateText({
@@ -60,7 +61,7 @@ const result = await generateText({
 
 ### Option 2: Custom Providers (Advanced)
 ```typescript
-import { BaseProvider, initializeProviders } from 'veryfront/ai';
+import { BaseProvider, initializeProviders } from 'veryfront/provider';
 
 class OllamaProvider extends BaseProvider {
   name = 'ollama';
@@ -80,8 +81,8 @@ initializeProviders({
 
 ### Option 3: Hybrid (Best of Both Worlds)
 ```typescript
-import { openai } from 'veryfront/ai';
-import { initializeProviders } from 'veryfront/ai';
+import { openai } from 'veryfront/provider';
+import { initializeProviders } from 'veryfront/provider';
 
 // Use AI SDK for standard providers
 const model = openai('gpt-4o');

@@ -16,7 +16,7 @@ The `agent()` function creates AI agents with tools, memory, and middleware.
 ## Import
 
 ```typescript
-import { agent } from "veryfront/ai";
+import { agent } from 'veryfront/agent';
 ```
 
 ## Syntax
@@ -94,7 +94,7 @@ export async function POST(req: Request) {
 ### Basic Agent
 
 ```typescript
-import { agent } from "veryfront/ai";
+import { agent } from 'veryfront/agent';
 
 export const assistant = agent({
   model: "anthropic/claude-3-5-sonnet",
@@ -105,7 +105,7 @@ export const assistant = agent({
 ### Agent with Integration Tools
 
 ```typescript
-import { agent } from "veryfront/ai";
+import { agent } from 'veryfront/agent';
 
 export const assistant = agent({
   model: "openai/gpt-4",
@@ -117,7 +117,7 @@ export const assistant = agent({
 ### Agent with Custom Tools
 
 ```typescript
-import { agent } from "veryfront/ai";
+import { agent } from 'veryfront/agent';
 import { calculator } from "@/ai/tools/calculator";
 
 export const mathHelper = agent({
@@ -134,8 +134,8 @@ export const mathHelper = agent({
 ### Production Agent
 
 ```typescript
-import { agent } from "veryfront/ai";
-import { rateLimit, securityMiddleware } from "veryfront/ai/middleware";
+import { agent } from 'veryfront/agent';
+import { rateLimit, securityMiddleware } from "veryfront/agent/middleware";
 
 export const productionAgent = agent({
   model: "anthropic/claude-3-5-sonnet",
@@ -204,8 +204,8 @@ memory: {
 Add middleware for cross-cutting concerns:
 
 ```typescript
-import { agent } from "veryfront/ai";
-import { logging, rateLimit, auth } from "veryfront/ai/middleware";
+import { agent } from 'veryfront/agent';
+import { logging, rateLimit, auth } from "veryfront/agent/middleware";
 
 export const secureAgent = agent({
   model: "openai/gpt-4",

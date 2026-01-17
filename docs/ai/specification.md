@@ -306,7 +306,7 @@ For Cloudflare Workers and edge deployments:
 
 ```typescript
 // ai/agents/edge-support.ts
-import { agent } from 'veryfront/ai';
+import { agent } from 'veryfront/agent';
 
 export default agent({
   id: 'edgeSupport',
@@ -551,7 +551,7 @@ my-ai-app/
 │   ├── ai/                     # (Optional) AI components
 │   │   # • shadcn mode: Created via 'npx veryfront add chat'
 │   │   # • Library mode ejection: Created via 'veryfront eject chat'
-│   │   # • Default: Import from 'veryfront/ai/components' (no files here)
+│   │   # • Default: Import from 'veryfront/react' (no files here)
 │   │   └── chat.tsx
 │   │
 │   └── custom/                 # Your custom components
@@ -627,7 +627,7 @@ Tools are defined using a standard API similar to AI SDK:
 
 ```typescript
 // ai/tools/search-web.ts
-import { tool } from 'veryfront/ai';
+import { tool } from 'veryfront/tool';
 import { z } from 'zod';
 
 export default tool({
@@ -658,7 +658,7 @@ Resources expose data to AI models using MCP:
 
 ```typescript
 // ai/resources/users/[userId]/profile.ts
-import { resource } from 'veryfront/ai';
+import { resource } from 'veryfront/resource';
 import { z } from 'zod';
 
 export default resource({
@@ -694,7 +694,7 @@ Reusable system prompts for agents:
 
 ```typescript
 // ai/prompts/customer-support.ts
-import { prompt } from 'veryfront/ai';
+import { prompt } from 'veryfront/prompt';
 
 export default prompt({
   id: 'customerSupport',
@@ -765,7 +765,7 @@ export default {
 Agents can use MCP resources from external servers:
 
 ```typescript
-import { agent } from 'veryfront/ai';
+import { agent } from 'veryfront/agent';
 
 const myAgent = agent({
   model: 'gpt-4',
@@ -804,7 +804,7 @@ Agents are defined in `ai/agents/`:
 
 ```typescript
 // ai/agents/customer-support.ts
-import { agent, stopWhen, stepCountIs } from 'veryfront/ai';
+import { agent, stopWhen, stepCountIs } from 'veryfront/agent';
 
 export default agent({
   id: 'customerSupport', // Optional, inferred from filename
@@ -853,7 +853,7 @@ export default agent({
 
 ```typescript
 // app/api/chat/route.ts
-import { streamText } from 'veryfront/ai';
+import { streamText } from 'veryfront/agent';
 import { agents } from '@/ai/agents'; // Auto-imported
 
 export async function POST(req: Request) {
@@ -903,7 +903,7 @@ export default async function DashboardPage() {
 // app/chat/page.tsx (Client Component)
 'use client';
 
-import { useChat } from 'veryfront/ai/react';
+import { useChat } from 'veryfront/agent/react';
 
 export default function ChatPage() {
   const { messages, input, handleSubmit, handleInputChange, isLoading } = useChat({
@@ -928,7 +928,7 @@ Agents can orchestrate other agents for complex workflows:
 
 ```typescript
 // ai/agents/orchestrator.ts
-import { agent } from 'veryfront/ai';
+import { agent } from 'veryfront/agent';
 import { agents } from '@/ai/agents';
 
 export default agent({
@@ -957,7 +957,7 @@ Support for vision and audio:
 
 ```typescript
 // ai/agents/vision-agent.ts
-import { agent } from 'veryfront/ai';
+import { agent } from 'veryfront/agent';
 
 export default agent({
   model: 'gpt-4-vision',
@@ -995,7 +995,7 @@ This architecture solves a critical problem: **teams need different levels of cu
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ Layer 3: Styled Components (veryfront/ai/components)        │
+│ Layer 3: Styled Components (veryfront/react)        │
 │ ─────────────────────────────────────────────────────────── │
 │ Production-ready, fully styled components                    │
 │ • Chat, AgentCard, WorkflowCanvas                           │
@@ -1008,7 +1008,7 @@ This architecture solves a critical problem: **teams need different levels of cu
                          │ Built on top of
                          ↓
 ┌─────────────────────────────────────────────────────────────┐
-│ Layer 2: Unstyled Primitives (veryfront/ai/primitives)      │
+│ Layer 2: Unstyled Primitives (veryfront/react/primitives)      │
 │ ─────────────────────────────────────────────────────────── │
 │ Headless UI primitives with minimal styling                 │
 │ • ChatContainer, MessageList, MessageItem, InputBox         │
@@ -1021,7 +1021,7 @@ This architecture solves a critical problem: **teams need different levels of cu
                          │ Uses
                          ↓
 ┌─────────────────────────────────────────────────────────────┐
-│ Layer 1: Headless Hooks (veryfront/ai/react)                │
+│ Layer 1: Headless Hooks (veryfront/agent/react)                │
 │ ─────────────────────────────────────────────────────────── │
 │ All logic, zero UI                                          │
 │ • useChat, useAgent, useCompletion, useStreaming            │
@@ -1035,7 +1035,7 @@ This architecture solves a critical problem: **teams need different levels of cu
 
 ### Layer 1: Headless Hooks
 
-**Import from**: `veryfront/ai/react`
+**Import from**: `veryfront/agent/react`
 
 Headless hooks provide complete control over AI interaction logic with zero UI opinions. Build any interface you want.
 
@@ -1044,7 +1044,7 @@ Headless hooks provide complete control over AI interaction logic with zero UI o
 Complete chat state management:
 
 ```typescript
-import { useChat } from 'veryfront/ai/react';
+import { useChat } from 'veryfront/agent/react';
 
 function CustomChatUI() {
   const {
@@ -1093,7 +1093,7 @@ function CustomChatUI() {
 Agent orchestration with tool execution:
 
 ```typescript
-import { useAgent } from 'veryfront/ai/react';
+import { useAgent } from 'veryfront/agent/react';
 
 function AgentInterface() {
   const {
@@ -1125,7 +1125,7 @@ function AgentInterface() {
 Single text completion:
 
 ```typescript
-import { useCompletion } from 'veryfront/ai/react';
+import { useCompletion } from 'veryfront/agent/react';
 
 function CompletionUI() {
   const {
@@ -1154,7 +1154,7 @@ function CompletionUI() {
 Low-level streaming control:
 
 ```typescript
-import { useStreaming } from 'veryfront/ai/react';
+import { useStreaming } from 'veryfront/agent/react';
 
 function CustomStreaming() {
   const {
@@ -1176,7 +1176,7 @@ function CustomStreaming() {
 
 ### Layer 2: Unstyled Primitives
 
-**Import from**: `veryfront/ai/primitives`
+**Import from**: `veryfront/react/primitives`
 
 Unstyled, composable primitives built on **Radix UI**. Bring your own styles, perfect for design systems.
 
@@ -1185,8 +1185,8 @@ Unstyled, composable primitives built on **Radix UI**. Bring your own styles, pe
 Root chat component:
 
 ```typescript
-import { ChatContainer } from 'veryfront/ai/primitives';
-import { useChat } from 'veryfront/ai/react';
+import { ChatContainer } from 'veryfront/react/primitives';
+import { useChat } from 'veryfront/agent/react';
 
 function DesignSystemChat() {
   const chat = useChat({ api: '/api/chat' });
@@ -1212,7 +1212,7 @@ function DesignSystemChat() {
 Message rendering primitives:
 
 ```typescript
-import { MessageList, MessageItem } from 'veryfront/ai/primitives';
+import { MessageList, MessageItem } from 'veryfront/react/primitives';
 
 function Messages({ messages }) {
   return (
@@ -1243,14 +1243,14 @@ function Messages({ messages }) {
 }
 ```
 
-> **Note**: Import `getTextFromParts` from `veryfront/ai` to extract text content from the v5 parts-based message format.
+> **Note**: Import `getTextFromParts` from `veryfront/agent` to extract text content from the v5 parts-based message format.
 
 #### InputBox
 
 Input primitive:
 
 ```typescript
-import { InputBox } from 'veryfront/ai/primitives';
+import { InputBox } from 'veryfront/react/primitives';
 
 function ChatInput({ value, onChange, onSubmit, isLoading }) {
   return (
@@ -1295,7 +1295,7 @@ function ChatInput({ value, onChange, onSubmit, isLoading }) {
 
 ### Layer 3: Styled Components
 
-**Import from**: `veryfront/ai/components`
+**Import from**: `veryfront/react`
 
 Production-ready, fully styled components. Get started in seconds.
 
@@ -1305,7 +1305,7 @@ Display individual messages in a conversation:
 
 ```typescript
 // app/components/chat-message.tsx
-import { Message, MessageContent, MessageRole } from 'veryfront/ai/components';
+import { Message, MessageContent, MessageRole } from 'veryfront/react';
 
 export function ChatMessage({ message }) {
   return (
@@ -1325,8 +1325,8 @@ Full chat interface with input, messages, and streaming:
 // app/chat/page.tsx
 'use client';
 
-import { Chat } from 'veryfront/ai/components';
-import { useChat } from 'veryfront/ai/react';
+import { Chat } from 'veryfront/react';
+import { useChat } from 'veryfront/agent/react';
 
 export default function ChatPage() {
   const chat = useChat({ api: '/api/chat' });
@@ -1363,7 +1363,7 @@ export default function ChatPage() {
 Display agent status, thinking process, and tool usage:
 
 ```typescript
-import { AgentCard, AgentStatus, AgentThinking, AgentTools } from 'veryfront/ai/components';
+import { AgentCard, AgentStatus, AgentThinking, AgentTools } from 'veryfront/react';
 
 export function AgentDisplay({ agent }) {
   return (
@@ -1387,7 +1387,7 @@ export function AgentDisplay({ agent }) {
 Visual workflow builder using React Flow:
 
 ```typescript
-import { WorkflowCanvas, WorkflowNode, WorkflowEdge } from 'veryfront/ai/components';
+import { WorkflowCanvas, WorkflowNode, WorkflowEdge } from 'veryfront/react';
 
 export function WorkflowBuilder() {
   const [nodes, setNodes] = useState<WorkflowNode[]>([]);
@@ -1418,8 +1418,8 @@ Handle streaming responses with built-in components:
 ```typescript
 'use client';
 
-import { StreamingMessage } from 'veryfront/ai/components';
-import { useChat } from 'veryfront/ai/react';
+import { StreamingMessage } from 'veryfront/react';
+import { useChat } from 'veryfront/agent/react';
 
 export function StreamingChat() {
   const { messages, streamingMessage } = useChat({
@@ -1450,7 +1450,7 @@ export function StreamingChat() {
 Visualize tool calls with detailed information:
 
 ```typescript
-import { ToolInvocation, ToolResult } from 'veryfront/ai/components';
+import { ToolInvocation, ToolResult } from 'veryfront/react';
 
 export function ToolDisplay({ toolCall }) {
   return (
@@ -1474,7 +1474,7 @@ Components are highly customizable without ejection:
 #### 1. Theme Customization
 
 ```typescript
-import { Chat } from 'veryfront/ai/components';
+import { Chat } from 'veryfront/react';
 
 export default function CustomChat() {
   return (
@@ -1497,7 +1497,7 @@ export default function CustomChat() {
 #### 2. Render Props
 
 ```typescript
-import { Chat } from 'veryfront/ai/components';
+import { Chat } from 'veryfront/react';
 
 export default function CustomChat() {
   return (
@@ -1532,7 +1532,7 @@ export default function CustomChat() {
 #### 3. Composition Pattern
 
 ```typescript
-import { Chat } from 'veryfront/ai/components';
+import { Chat } from 'veryfront/react';
 
 export default function CustomChat() {
   return (
@@ -1591,7 +1591,7 @@ You can mix and match layers as needed:
 
 ```typescript
 // Use hooks from Layer 1 for state
-import { useChat } from 'veryfront/ai/react';
+import { useChat } from 'veryfront/agent/react';
 // Use your own UI components
 import { MyMessageList, MyInput } from '@/components/custom';
 
@@ -1615,10 +1615,10 @@ export default function HybridChat() {
 
 ```typescript
 // Use primitives from Layer 2 for structure
-import { MessageList, MessageItem } from 'veryfront/ai/primitives';
+import { MessageList, MessageItem } from 'veryfront/react/primitives';
 // Use styled component from Layer 3 for input
-import { ChatInput } from 'veryfront/ai/components';
-import { useChat } from 'veryfront/ai/react';
+import { ChatInput } from 'veryfront/react';
+import { useChat } from 'veryfront/agent/react';
 
 export default function MixedChat() {
   const chat = useChat({ api: '/api/chat' });
@@ -1647,7 +1647,7 @@ export default function MixedChat() {
 
 ```typescript
 // Layer 1: Custom hook for special logic
-import { useChat } from 'veryfront/ai/react';
+import { useChat } from 'veryfront/agent/react';
 
 function useAdvancedChat() {
   const chat = useChat({ api: '/api/chat' });
@@ -1668,10 +1668,10 @@ function useAdvancedChat() {
 }
 
 // Layer 2: Primitives for custom messages
-import { MessageList, MessageItem } from 'veryfront/ai/primitives';
+import { MessageList, MessageItem } from 'veryfront/react/primitives';
 
 // Layer 3: Styled input
-import { ChatInput } from 'veryfront/ai/components';
+import { ChatInput } from 'veryfront/react';
 
 export default function AdvancedChat() {
   const chat = useAdvancedChat();
@@ -1704,7 +1704,7 @@ npx veryfront@latest add chat-primitives
 
 # Components copied to components/ai/
 # Still use hooks from library:
-import { useChat } from 'veryfront/ai/react';
+import { useChat } from 'veryfront/agent/react';
 ```
 
 This will allow teams to:
@@ -1841,7 +1841,7 @@ AI_MAX_TOKENS=4000
 ### Agent API
 
 ```typescript
-import { agent, stopWhen, stepCountIs } from 'veryfront/ai';
+import { agent, stopWhen, stepCountIs } from 'veryfront/agent';
 
 // Create agent
 const myAgent = agent({
@@ -1879,7 +1879,7 @@ const response = await myAgent.respond({
 ### Tool API
 
 ```typescript
-import { tool } from 'veryfront/ai';
+import { tool } from 'veryfront/tool';
 import { z } from 'zod';
 
 export default tool({
@@ -1897,7 +1897,7 @@ export default tool({
 ### Resource API
 
 ```typescript
-import { resource } from 'veryfront/ai';
+import { resource } from 'veryfront/resource';
 import { z } from 'zod';
 
 export default resource({
@@ -1916,7 +1916,7 @@ export default resource({
 ### Prompt API
 
 ```typescript
-import { prompt } from 'veryfront/ai';
+import { prompt } from 'veryfront/prompt';
 
 export default prompt({
   id: string,
@@ -1934,7 +1934,7 @@ import {
   useChat,
   useCompletion,
   useAgent,
-} from 'veryfront/ai/react';
+} from 'veryfront/agent/react';
 
 // Chat hook
 const {
@@ -1983,7 +1983,7 @@ const {
 
 ```typescript
 // ai/agents/assistant.ts
-import { agent } from 'veryfront/ai';
+import { agent } from 'veryfront/agent';
 
 export default agent({
   model: 'gpt-4',
@@ -2003,8 +2003,8 @@ export async function POST(req: Request) {
 // app/chat/page.tsx
 'use client';
 
-import { Chat } from 'veryfront/ai/components';
-import { useChat } from 'veryfront/ai/react';
+import { Chat } from 'veryfront/react';
+import { useChat } from 'veryfront/agent/react';
 
 export default function ChatPage() {
   const chat = useChat({ api: '/api/chat' });
@@ -2016,7 +2016,7 @@ export default function ChatPage() {
 
 ```typescript
 // ai/tools/search-products.ts
-import { tool } from 'veryfront/ai';
+import { tool } from 'veryfront/tool';
 import { z } from 'zod';
 
 export default tool({
@@ -2032,7 +2032,7 @@ export default tool({
 });
 
 // ai/agents/shopping-assistant.ts
-import { agent } from 'veryfront/ai';
+import { agent } from 'veryfront/agent';
 
 export default agent({
   model: 'gpt-4',
@@ -2060,7 +2060,7 @@ export default agent({
 });
 
 // ai/agents/orchestrator.ts
-import { agent } from 'veryfront/ai';
+import { agent } from 'veryfront/agent';
 import { agents } from '@/ai/agents';
 
 export default agent({
@@ -2083,7 +2083,7 @@ export default agent({
 
 ```typescript
 // ai/resources/users/[userId]/orders.ts
-import { resource } from 'veryfront/ai';
+import { resource } from 'veryfront/resource';
 import { z } from 'zod';
 
 export default resource({
@@ -2161,7 +2161,7 @@ mkdir -p ai/{agents,tools,prompts,resources}
 4. **Add your first agent**:
 ```typescript
 // ai/agents/assistant.ts
-import { agent } from 'veryfront/ai';
+import { agent } from 'veryfront/agent';
 
 export default agent({
   model: 'gpt-4',
@@ -2186,8 +2186,8 @@ export async function POST(req: Request) {
 // app/chat/page.tsx
 'use client';
 
-import { Chat } from 'veryfront/ai/components';
-import { useChat } from 'veryfront/ai/react';
+import { Chat } from 'veryfront/react';
+import { useChat } from 'veryfront/agent/react';
 
 export default function ChatPage() {
   const chat = useChat({ api: '/api/chat' });
@@ -2207,8 +2207,8 @@ Veryfront provides three layers - pick the one that matches your needs:
 // app/chat/page.tsx
 'use client';
 
-import { Chat } from 'veryfront/ai/components';  // Layer 3
-import { useChat } from 'veryfront/ai/react';    // Layer 1
+import { Chat } from 'veryfront/react';  // Layer 3
+import { useChat } from 'veryfront/agent/react';    // Layer 1
 
 export default function ChatPage() {
   const chat = useChat({ api: '/api/chat' });
@@ -2234,8 +2234,8 @@ export default function ChatPage() {
 // app/chat/page.tsx
 'use client';
 
-import { ChatContainer, MessageList, MessageItem } from 'veryfront/ai/primitives';  // Layer 2
-import { useChat } from 'veryfront/ai/react';  // Layer 1
+import { ChatContainer, MessageList, MessageItem } from 'veryfront/react/primitives';  // Layer 2
+import { useChat } from 'veryfront/agent/react';  // Layer 1
 
 export default function ChatPage() {
   const chat = useChat({ api: '/api/chat' });
@@ -2260,7 +2260,7 @@ export default function ChatPage() {
 // app/chat/page.tsx
 'use client';
 
-import { useChat } from 'veryfront/ai/react';  // Layer 1 only
+import { useChat } from 'veryfront/agent/react';  // Layer 1 only
 
 export default function ChatPage() {
   const { messages, input, setInput, append } = useChat({
@@ -2288,9 +2288,9 @@ export default function ChatPage() {
 
 ```typescript
 // Example: Mix all three
-import { useChat } from 'veryfront/ai/react';          // Layer 1: Custom state
-import { MessageList } from 'veryfront/ai/primitives'; // Layer 2: Custom messages
-import { ChatInput } from 'veryfront/ai/components';   // Layer 3: Standard input
+import { useChat } from 'veryfront/agent/react';          // Layer 1: Custom state
+import { MessageList } from 'veryfront/react/primitives'; // Layer 2: Custom messages
+import { ChatInput } from 'veryfront/react';   // Layer 3: Standard input
 
 export default function MixedChat() {
   const chat = useChat({ api: '/api/chat' });
@@ -2368,7 +2368,7 @@ export default function MixedChat() {
 - [ ] Add error handling and retry logic
 - [ ] Create comprehensive hook tests
 
-**Deliverable**: Complete headless hook layer (`veryfront/ai/react`)
+**Deliverable**: Complete headless hook layer (`veryfront/agent/react`)
 
 ### Phase 5: UI Layer - Primitives (Weeks 15-16)
 
@@ -2383,7 +2383,7 @@ export default function MixedChat() {
 - [ ] Add TypeScript types for all primitives
 - [ ] Create primitive composition examples
 
-**Deliverable**: Complete primitive layer (`veryfront/ai/primitives`)
+**Deliverable**: Complete primitive layer (`veryfront/react/primitives`)
 
 ### Phase 6: UI Layer - Styled Components (Weeks 17-18)
 
@@ -2399,7 +2399,7 @@ export default function MixedChat() {
 - [ ] Create StreamingMessage component
 - [ ] Build ToolInvocation UI components
 
-**Deliverable**: Complete styled component layer (`veryfront/ai/components`)
+**Deliverable**: Complete styled component layer (`veryfront/react`)
 
 ### Phase 7: Developer Experience (Weeks 19-20)
 

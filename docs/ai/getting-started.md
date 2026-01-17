@@ -31,7 +31,7 @@ Supported env vars:
 
 ```typescript
 // ai/tools/search.ts
-import { tool } from 'veryfront/ai';
+import { tool } from 'veryfront/tool';
 import { z } from 'zod';
 
 export default tool({
@@ -50,7 +50,7 @@ export default tool({
 
 ```typescript
 // ai/agents/assistant.ts
-import { agent } from 'veryfront/ai';
+import { agent } from 'veryfront/agent';
 
 export default agent({
   model: 'openai/gpt-4',
@@ -70,16 +70,16 @@ export default agent({
 
 **Option A: Layer 3 (Instant - 1 Line)**
 ```tsx
-import { Chat } from 'veryfront/ai/components';
-import { useChat } from 'veryfront/ai/react';
+import { Chat } from 'veryfront/react';
+import { useChat } from 'veryfront/agent/react';
 
 export default () => <Chat {...useChat({ api: '/api/chat' })} />;
 ```
 
 **Option B: Layer 2 (Flexible)**
 ```tsx
-import { ChatContainer, MessageList, MessageItem } from 'veryfront/ai/primitives';
-import { useChat } from 'veryfront/ai/react';
+import { ChatContainer, MessageList, MessageItem } from 'veryfront/react/primitives';
+import { useChat } from 'veryfront/agent/react';
 
 export default function MyChat() {
   const chat = useChat({ api: '/api/chat' });
@@ -97,7 +97,7 @@ export default function MyChat() {
 
 **Option C: Layer 1 (Total Control)**
 ```tsx
-import { useChat } from 'veryfront/ai/react';
+import { useChat } from 'veryfront/agent/react';
 
 export default function MyChat() {
   const { messages, input, append } = useChat({ api: '/api/chat' });
@@ -108,7 +108,7 @@ export default function MyChat() {
 ### 6. Run Auto-Discovery
 
 ```typescript
-import { discoverAll } from 'veryfront/ai';
+import { discoverAll } from 'veryfront/cli';
 
 // Discovers all tools, agents, resources, prompts
 await discoverAll({ baseDir: '.' });
@@ -126,7 +126,8 @@ veryfront dev
 Combine planners, executors, and MCP resources for multi-step automation:
 
 ```typescript
-import { agent, createWorkflow } from 'veryfront/ai';
+import { agent } from 'veryfront/agent';
+import { workflow } from 'veryfront/workflow';
 import { z } from 'zod';
 
 const planner = agent({
@@ -229,7 +230,7 @@ memory: { type: 'summary', maxMessages: 20 }
 
 **Agents as Tools:**
 ```typescript
-import { agentAsTool } from 'veryfront/ai';
+import { agentAsTool } from 'veryfront/agent';
 
 const orchestrator = agent({
   tools: {
@@ -241,7 +242,7 @@ const orchestrator = agent({
 
 **Multi-Agent Workflows:**
 ```typescript
-import { createWorkflow } from 'veryfront/ai';
+import { workflow } from 'veryfront/workflow';
 
 const workflow = createWorkflow({
   steps: [
@@ -260,7 +261,7 @@ const result = await workflow.execute('Topic');
 ### Rate Limiting
 
 ```typescript
-import { rateLimitMiddleware } from 'veryfront/ai/production';
+import { rateLimitMiddleware } from 'veryfront/agent/middleware';
 
 const agent = agent({
   middleware: [
@@ -276,7 +277,7 @@ const agent = agent({
 ### Response Caching
 
 ```typescript
-import { cacheMiddleware } from 'veryfront/ai/production';
+import { cacheMiddleware } from 'veryfront/agent/middleware';
 
 const agent = agent({
   middleware: [
@@ -291,7 +292,7 @@ const agent = agent({
 ### Cost Tracking
 
 ```typescript
-import { costTrackingMiddleware } from 'veryfront/ai/production';
+import { costTrackingMiddleware } from 'veryfront/agent/middleware';
 
 const agent = agent({
   middleware: [
@@ -316,7 +317,7 @@ const agent = agent({
 ### Security
 
 ```typescript
-import { securityMiddleware, COMMON_BLOCKED_PATTERNS } from 'veryfront/ai/production';
+import { securityMiddleware, COMMON_BLOCKED_PATTERNS } from 'veryfront/agent/middleware';
 
 const agent = agent({
   middleware: [
@@ -337,7 +338,7 @@ const agent = agent({
 ### Error Boundary
 
 ```tsx
-import { AIErrorBoundary } from 'veryfront/ai/components';
+import { AIErrorBoundary } from 'veryfront/react';
 
 <AIErrorBoundary
   fallback={(error, reset) => (
@@ -358,7 +359,7 @@ import { AIErrorBoundary } from 'veryfront/ai/components';
 ### Test Agents
 
 ```typescript
-import { testAgent, printTestResults } from 'veryfront/ai/dev';
+import { testAgent, printTestResults } from 'veryfront/agent/testing';
 
 const results = await testAgent(myAgent, [
   {
@@ -379,7 +380,7 @@ printTestResults(results);
 ### Test Tools
 
 ```typescript
-import { testTool } from 'veryfront/ai/dev';
+import { testTool } from 'veryfront/agent/testing';
 
 const results = await testTool(calculatorTool, [
   {
@@ -393,7 +394,7 @@ const results = await testTool(calculatorTool, [
 ### Inspect Execution
 
 ```typescript
-import { inspectAgent, printInspectionReport } from 'veryfront/ai/dev';
+import { inspectAgent, printInspectionReport } from 'veryfront/agent/testing';
 
 const report = await inspectAgent(agent, 'Test input');
 printInspectionReport(report);
@@ -451,16 +452,16 @@ export async function POST(req: Request) {
 
 **Layer 3 - Quick (1 line):**
 ```tsx
-import { Chat } from 'veryfront/ai/components';
-import { useChat } from 'veryfront/ai/react';
+import { Chat } from 'veryfront/react';
+import { useChat } from 'veryfront/agent/react';
 
 export default () => <Chat {...useChat({ api: '/api/chat' })} />;
 ```
 
 **Layer 2 - Custom Styling:**
 ```tsx
-import { ChatContainer, MessageList, MessageItem } from 'veryfront/ai/primitives';
-import { useChat } from 'veryfront/ai/react';
+import { ChatContainer, MessageList, MessageItem } from 'veryfront/react/primitives';
+import { useChat } from 'veryfront/agent/react';
 
 export default function MyChat() {
   const chat = useChat({ api: '/api/chat' });
@@ -478,7 +479,7 @@ export default function MyChat() {
 
 **Layer 1 - Total Control:**
 ```tsx
-import { useChat } from 'veryfront/ai/react';
+import { useChat } from 'veryfront/agent/react';
 
 export default function MyChat() {
   const { messages, input, setInput, append } = useChat({
@@ -558,7 +559,7 @@ const agent = agent({
 ### 2. Test Your Agents
 
 ```typescript
-import { testAgent } from 'veryfront/ai/dev';
+import { testAgent } from 'veryfront/agent/testing';
 
 await testAgent(agent, [
   { name: 'Test', input: '...', expected: /.../ },
@@ -568,7 +569,7 @@ await testAgent(agent, [
 ### 3. Monitor Costs
 
 ```typescript
-import { createCostTracker } from 'veryfront/ai/production';
+import { createCostTracker } from 'veryfront/agent/middleware';
 
 const tracker = createCostTracker({...});
 const summary = tracker.getDailySummary();

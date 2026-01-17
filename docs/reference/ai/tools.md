@@ -16,7 +16,7 @@ Tools enable AI agents to perform actions: call APIs, query databases, run calcu
 ## Import
 
 ```typescript
-import { tool } from "veryfront/ai";
+import { tool } from 'veryfront/tool';
 import { z } from "zod";
 ```
 
@@ -38,7 +38,7 @@ function tool<T extends z.ZodType>(config: ToolConfig<T>): Tool<T>
 ## Basic Example
 
 ```typescript
-import { tool } from "veryfront/ai";
+import { tool } from 'veryfront/tool';
 import { z } from "zod";
 
 export const getWeather = tool({
@@ -102,7 +102,7 @@ my-project/
 
 ```typescript
 // ai/tools/get-weather.ts
-import { tool } from "veryfront/ai";
+import { tool } from 'veryfront/tool';
 import { z } from "zod";
 
 export const getWeather = tool({
@@ -122,7 +122,7 @@ export const getWeather = tool({
 Reference tools by name or glob pattern:
 
 ```typescript
-import { agent } from "veryfront/ai";
+import { agent } from 'veryfront/agent';
 
 const assistant = agent({
   model: "openai/gpt-4",

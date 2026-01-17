@@ -1,7 +1,7 @@
 # Veryfront AI Styled Components
 
 **Status**: Phase 6 Complete (Styled Components)
-**Module**: `veryfront/ai/components`
+**Module**: `veryfront/react`
 **Layer**: 3 (Styled - Production-ready)
 
 ## Overview
@@ -25,8 +25,8 @@ Production-ready, fully styled components built on Layer 2 primitives. Get start
 Complete chat interface with messages, input, and loading states.
 
 ```tsx
-import { Chat } from "veryfront/ai/components";
-import { useChat } from "veryfront/ai/react";
+import { Chat } from "veryfront/react";
+import { useChat } from "veryfront/agent/react";
 
 export default function ChatPage() {
   const chat = useChat({ api: "/api/chat" });
@@ -63,7 +63,7 @@ The `Chat` component handles v5 UIMessage format internally, extracting text fro
 **Customization via render props:**
 
 ```tsx
-import type { UIMessage } from "veryfront/ai/react";
+import type { UIMessage } from "veryfront/agent/react";
 
 // Helper to extract text from v5 parts array
 function getTextContent(message: UIMessage): string {
@@ -89,7 +89,7 @@ function getTextContent(message: UIMessage): string {
 **Composition API:**
 
 ```tsx
-import { ChatComponents as Chat } from "veryfront/ai/components";
+import { ChatComponents as Chat } from "veryfront/react";
 
 <Chat>
   <Chat.Header>
@@ -117,8 +117,8 @@ import { ChatComponents as Chat } from "veryfront/ai/components";
 Agent status and tool visualization.
 
 ```tsx
-import { AgentCard } from "veryfront/ai/components";
-import { useAgent } from "veryfront/ai/react";
+import { AgentCard } from "veryfront/react";
+import { useAgent } from "veryfront/agent/react";
 
 export default function AgentInterface() {
   const agent = useAgent({ agent: "support" });
@@ -140,7 +140,7 @@ export default function AgentInterface() {
 Standalone message component for v5 UIMessage format.
 
 ```tsx
-import { Message } from "veryfront/ai/components";
+import { Message } from "veryfront/react";
 
 <Message
   message={msg} // UIMessage with parts array
@@ -160,7 +160,7 @@ import { Message } from "veryfront/ai/components";
 Display streaming text with cursor.
 
 ```tsx
-import { StreamingMessage } from "veryfront/ai/components";
+import { StreamingMessage } from "veryfront/react";
 
 {
   streamingText && (
@@ -270,8 +270,8 @@ If you need more control, use primitives (Layer 2) or hooks only (Layer 1).
 ### Quick Start (5 lines)
 
 ```tsx
-import { Chat } from "veryfront/ai/components";
-import { useChat } from "veryfront/ai/react";
+import { Chat } from "veryfront/react";
+import { useChat } from "veryfront/agent/react";
 
 export default function App() {
   const chat = useChat({ api: "/api/chat" });
@@ -301,8 +301,8 @@ export default function App() {
 ### Integration with Agent
 
 ```tsx
-import { AgentCard, Chat } from "veryfront/ai/components";
-import { useAgent } from "veryfront/ai/react";
+import { AgentCard, Chat } from "veryfront/react";
+import { useAgent } from "veryfront/agent/react";
 
 export default function AgentChat() {
   const agent = useAgent({ agent: "support" });
@@ -319,9 +319,9 @@ export default function AgentChat() {
 ### Working with v5 Message Parts
 
 ```tsx
-import { Chat } from "veryfront/ai/components";
-import { useChat } from "veryfront/ai/react";
-import type { UIMessage, UIMessagePart } from "veryfront/ai/react";
+import { Chat } from "veryfront/react";
+import { useChat } from "veryfront/agent/react";
+import type { UIMessage, UIMessagePart } from "veryfront/agent/react";
 
 // Custom renderer that handles all part types
 function CustomMessage({ message }: { message: UIMessage }) {
@@ -385,7 +385,7 @@ export default function AdvancedChat() {
 }
 
 // After (v5)
-import type { UIMessage } from "veryfront/ai/react";
+import type { UIMessage } from "veryfront/agent/react";
 
 function getTextContent(message: UIMessage): string {
   return message.parts
