@@ -126,7 +126,7 @@ function renderHelpBar(state: AppState): string {
 
   // Tab to switch sections (only if both exist)
   if (state.projects.items.length > 0 && state.examples.items.length > 0) {
-    parts.push(`${dim("Tab")} switch`);
+    parts.push(`${dim("tab")} switch`);
   }
 
   // Quick actions based on context
