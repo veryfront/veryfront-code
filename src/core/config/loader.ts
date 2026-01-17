@@ -343,3 +343,19 @@ export function clearConfigCache() {
   configCacheByProject.clear();
   cacheRevision++;
 }
+
+/**
+ * Synchronous config cache lookup for hot paths.
+ *
+ * Returns cached config immediately without async overhead.
+ * Use this for performance-critical paths when config is likely cached.
+ *
+ * @returns Cached config if valid, null if not cached or stale
+ */
+export function getCachedConfigSync(projectDir: string): VeryfrontConfig | null {
+  const cached = configCacheByProject.get(projectDir);
+  if (!cached || cached.revision !== cacheRevision) {
+    return null;
+  }
+  return cached.config;
+}

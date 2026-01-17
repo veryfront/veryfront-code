@@ -1,10 +1,15 @@
 /**
  * Render Pipeline
  *
- * Orchestrates the complete page rendering process through 9 stages:
- * 1. Page Resolution - 2. Layout/Provider Collection - 3. Route Params
- * 4. Data Fetching - 5. Cache Check - 6. Bundle Preparation
- * 7. Layout Application - 8. SSR Rendering - 9. Result Assembly
+ * Orchestrates the complete page rendering process through 10 stages:
+ * 1. Page Resolution - 2. Layout/Provider Collection - 3. Speculative Cache Check (parallel)
+ * 4. Route Params - 5. Two-Phase Data Fetching - 6. Await Cache Check
+ * 7. Bundle Preparation - 8. Layout Application - 9. SSR Rendering - 10. Result Assembly
+ *
+ * Performance optimizations:
+ * - Speculative cache check runs in parallel with data fetching
+ * - Two-phase data fetching: load all modules first, then fetch all data in parallel
+ * - Supports both /pages/ and /app/ router directories
  *
  * @module rendering/orchestrator/pipeline
  */
@@ -13,6 +18,7 @@ import { rendererLogger as logger } from "@veryfront/utils";
 import { timeAsync } from "@veryfront/utils";
 import { createBuildVersion } from "@veryfront/utils/version.ts";
 import { withSpan } from "@veryfront/observability/tracing/otlp-setup.ts";
+import { SpanNames } from "@veryfront/observability/tracing/span-names.ts";
 import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
 import {
   extractRelativePath as extractRelativePathShared,
@@ -34,12 +40,35 @@ import { clearSSRModuleCacheForProject } from "@veryfront/modules/react-loader/i
 import { setupSSRGlobals } from "../ssr-globals.ts";
 import { LAYOUT_EXTENSIONS } from "../layouts/types.ts";
 
+/** Check if a path segment is a hidden dot-directory (not . or ..) */
+function isHiddenSegment(segment: string): boolean {
+  return segment.startsWith(".") && segment !== "." && segment !== "..";
+}
+
 /** Check if a path contains dot-prefixed segments (e.g., .veryfront, .hidden) */
 function isDotPath(slug: string, filePath?: string): boolean {
-  const hasDotSegment = (path: string) =>
-    path.split("/").some((s) => s.startsWith(".") && s !== "." && s !== "..");
+  const hasDotSegment = (path: string) => path.split("/").some(isHiddenSegment);
   return hasDotSegment(slug) || (filePath ? hasDotSegment(filePath) : false);
 }
+
+/** Module to load for data fetching */
+interface ModuleToLoad {
+  type: "page" | "layout";
+  id: string;
+  path: string;
+}
+
+/** Result of loading a module */
+interface LoadedModule {
+  type: "page" | "layout";
+  id: string;
+  // deno-lint-ignore no-explicit-any
+  mod: any;
+}
+
+/** Empty layout/provider result for dot-prefixed paths */
+const EMPTY_LAYOUT_RESULT = { layoutBundle: undefined, nestedLayouts: [] };
+const EMPTY_PROVIDER_RESULT = { providerBundles: [], providerItems: [], providerInfos: [] };
 
 // Import extracted modules
 import { createEsmCache, createModuleCache, loadModule } from "./module-loader/index.ts";
@@ -57,10 +86,10 @@ export interface RenderPipelineConfig {
 }
 
 /**
- * Orchestrates the complete page rendering process through 9 stages:
- * 1. Page Resolution - 2. Layout/Provider Collection - 3. Route Params
- * 4. Data Fetching - 5. Cache Check - 6. Bundle Preparation
- * 7. Layout Application - 8. SSR Rendering - 9. Result Assembly
+ * Orchestrates the complete page rendering process through 10 stages:
+ * 1. Page Resolution - 2. Layout/Provider Collection - 3. Speculative Cache Check
+ * 4. Route Params - 5. Two-Phase Data Fetching - 6. Await Cache Check
+ * 7. Bundle Preparation - 8. Layout Application - 9. SSR Rendering - 10. Result Assembly
  */
 export class RenderPipeline {
   private config: RenderPipelineConfig;
@@ -80,8 +109,68 @@ export class RenderPipeline {
     };
   }
 
-  private loadModule(filePath: string): Promise<any> {
+  private loadModule(filePath: string): Promise<unknown> {
     return loadModule(filePath, this.moduleLoaderConfig);
+  }
+
+  /**
+   * Collect modules that need data fetching from page and layouts.
+   */
+  private collectModulesToLoad(
+    pagePath: string,
+    isComponentPage: boolean,
+    isInPagesOrAppDir: boolean,
+    nestedLayouts: Array<{ kind: string; componentPath?: string }>,
+  ): ModuleToLoad[] {
+    const modules: ModuleToLoad[] = [];
+
+    if (isComponentPage && isInPagesOrAppDir) {
+      modules.push({ type: "page", id: pagePath, path: pagePath });
+    }
+
+    for (const layout of nestedLayouts) {
+      if (layout.kind === "tsx" && layout.componentPath) {
+        modules.push({ type: "layout", id: layout.componentPath, path: layout.componentPath });
+      }
+    }
+
+    return modules;
+  }
+
+  /**
+   * Load modules in parallel and return only successfully loaded ones.
+   */
+  private async loadModulesInParallel(modules: ModuleToLoad[]): Promise<LoadedModule[]> {
+    const results = await Promise.all(
+      modules.map((m) =>
+        this.loadModule(m.path)
+          .then((mod) => ({ ...m, mod, error: null as Error | null }))
+          .catch((error: Error) => ({ ...m, mod: null, error }))
+      ),
+    );
+
+    const loaded: LoadedModule[] = [];
+    for (const result of results) {
+      if (result.mod && !result.error) {
+        loaded.push({ type: result.type, id: result.id, mod: result.mod });
+      } else if (result.error) {
+        logger.warn("[renderPage] Failed to load module", {
+          path: result.path,
+          error: result.error.message,
+        });
+      }
+    }
+
+    return loaded;
+  }
+
+  /**
+   * Check if module has data fetching function (getServerData or getStaticData).
+   */
+  private hasDataFetchingFunction(mod: unknown): boolean {
+    if (!mod || typeof mod !== "object") return false;
+    const m = mod as Record<string, unknown>;
+    return typeof m.getServerData === "function" || typeof m.getStaticData === "function";
   }
 
   async renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
@@ -122,10 +211,7 @@ export class RenderPipeline {
         const skipLayouts = isDotPath(slug, pageInfo.entity.path);
 
         const [layoutResult, providerResult] = skipLayouts
-          ? [
-            { layoutBundle: undefined, nestedLayouts: [] },
-            { providerBundles: [], providerItems: [], providerInfos: [] },
-          ]
+          ? [EMPTY_LAYOUT_RESULT, EMPTY_PROVIDER_RESULT]
           : await withSpan(
             "render.collect_layouts_providers",
             () =>
@@ -163,10 +249,20 @@ export class RenderPipeline {
         const fileExtension = pageInfo.entity.path.split(".").pop()!.toLowerCase();
         const isComponentPage = ["tsx", "jsx", "ts", "js"].includes(fileExtension);
         const isInPagesDir = pageInfo.entity.path.includes("/pages/");
+        const isInAppDir = pageInfo.entity.path.includes("/app/");
 
         // ─────────────────────────────────────────────────────────────────────────
-        // Stage 3: Route Params Extraction
-        // Stage 4: Data Fetching (parallel jobs for page + layouts)
+        // Stage 3: Start Speculative Cache Check (runs in parallel with data fetching)
+        // ─────────────────────────────────────────────────────────────────────────
+        const cacheCheckPromise = withSpan(
+          SpanNames.CACHE_CHECK_SPECULATIVE,
+          () => this.config.cacheCoordinator.checkCache(slug),
+          { "cache.slug": slug },
+        );
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // Stage 4: Route Params Extraction
+        // Stage 5: Two-Phase Data Fetching (parallel module loads, then parallel data fetches)
         // ─────────────────────────────────────────────────────────────────────────
         if (options?.request && options?.url) {
           await withSpan(
@@ -189,11 +285,6 @@ export class RenderPipeline {
                   }
                 }
 
-                // Parallel Data Fetching
-                const jobs: Array<
-                  { type: "page" | "layout"; id: string; run: () => Promise<any> }
-                > = [];
-
                 const dataContext: DataContext = {
                   params: options.params || {},
                   query: options.url!.searchParams,
@@ -201,77 +292,86 @@ export class RenderPipeline {
                   url: options.url!,
                 };
 
-                // Page Job
-                if (isComponentPage && isInPagesDir) {
-                  jobs.push({
-                    type: "page",
-                    id: pageInfo.entity.path,
-                    run: async () => {
-                      const mod = await this.loadModule(pageInfo.entity.path);
-                      if (mod && (mod.getServerData || mod.getStaticData)) {
-                        return this.dataFetcher.fetchData(mod, dataContext, this.config.mode);
-                      }
-                      return null;
-                    },
-                  });
-                }
-
-                // Layout Jobs
-                for (const layout of layoutResult.nestedLayouts) {
-                  if (layout.kind === "tsx" && layout.componentPath) {
-                    jobs.push({
-                      type: "layout",
-                      id: layout.componentPath,
-                      run: async () => {
-                        const mod = await this.loadModule(layout.componentPath!);
-                        if (mod && (mod.getServerData || mod.getStaticData)) {
-                          return this.dataFetcher.fetchData(mod, dataContext, this.config.mode);
-                        }
-                        return null;
-                      },
-                    });
-                  }
-                }
-
-                logger.debug("[renderPage] Executing parallel data fetching jobs", {
-                  count: jobs.length,
-                });
-                const results = await timeAsync(
-                  "data-fetching-jobs",
-                  () => Promise.all(jobs.map((j) => j.run())),
-                  "render-page",
+                // Phase 1: Collect and load all modules in parallel
+                const modulesToLoad = this.collectModulesToLoad(
+                  pageInfo.entity.path,
+                  isComponentPage,
+                  isInPagesDir || isInAppDir,
+                  layoutResult.nestedLayouts,
                 );
 
-                for (let i = 0; i < jobs.length; i++) {
-                  const job = jobs[i];
-                  if (!job) continue;
-                  const result = results[i];
-                  if (result) {
-                    if (result.notFound) {
-                      throw new VeryfrontError(
-                        "Page/Layout returned notFound",
-                        ErrorCode.FILE_NOT_FOUND,
-                        { slug, component: job.id },
-                      );
-                    }
+                if (modulesToLoad.length === 0) {
+                  logger.debug("[renderPage] No modules to load for data fetching", { slug });
+                  return;
+                }
 
-                    if (result.redirect) {
-                      throw new VeryfrontError(
-                        `Redirect to ${result.redirect.destination}`,
-                        ErrorCode.RENDER_ERROR,
-                        {
-                          slug,
-                          redirect: result.redirect,
-                        },
-                      );
-                    }
+                logger.debug("[renderPage] Phase 1: Loading modules in parallel", {
+                  count: modulesToLoad.length,
+                });
 
-                    if (result.props) {
-                      if (job.type === "page") {
-                        dataFetchingProps = result.props as Record<string, unknown>;
-                      } else {
-                        layoutDataMap.set(job.id, result.props as Record<string, unknown>);
-                      }
+                const loadedModules = await withSpan(
+                  SpanNames.RENDER_LOAD_MODULES,
+                  () => this.loadModulesInParallel(modulesToLoad),
+                  { "render.module_count": modulesToLoad.length },
+                );
+
+                // Phase 2: Fetch data for modules with data fetching functions
+                const dataJobs = loadedModules.filter((m) => this.hasDataFetchingFunction(m.mod));
+
+                if (dataJobs.length === 0) {
+                  logger.debug("[renderPage] No data fetching functions found", { slug });
+                  return;
+                }
+
+                logger.debug("[renderPage] Phase 2: Fetching data in parallel", {
+                  count: dataJobs.length,
+                });
+
+                const dataResults = await withSpan(
+                  SpanNames.RENDER_FETCH_DATA,
+                  () =>
+                    Promise.all(
+                      dataJobs.map((job) =>
+                        this.dataFetcher
+                          .fetchData(job.mod, dataContext, this.config.mode)
+                          .then((result) => ({ ...job, result, error: null as Error | null }))
+                          .catch((error: Error) => ({ ...job, result: null, error }))
+                      ),
+                    ),
+                  { "render.data_job_count": dataJobs.length },
+                );
+
+                // Process results - propagate errors from getServerData/getStaticData
+                for (const { type, id, result, error } of dataResults) {
+                  if (error) {
+                    // Re-throw errors from data fetching functions
+                    // These are application errors that should result in error pages
+                    throw error;
+                  }
+
+                  if (!result) continue;
+
+                  if (result.notFound) {
+                    throw new VeryfrontError(
+                      "Page/Layout returned notFound",
+                      ErrorCode.FILE_NOT_FOUND,
+                      { slug, component: id },
+                    );
+                  }
+
+                  if (result.redirect) {
+                    throw new VeryfrontError(
+                      `Redirect to ${result.redirect.destination}`,
+                      ErrorCode.RENDER_ERROR,
+                      { slug, redirect: result.redirect },
+                    );
+                  }
+
+                  if (result.props) {
+                    if (type === "page") {
+                      dataFetchingProps = result.props as Record<string, unknown>;
+                    } else {
+                      layoutDataMap.set(id, result.props as Record<string, unknown>);
                     }
                   }
                 }
@@ -287,20 +387,17 @@ export class RenderPipeline {
                 throw error;
               }
             },
-            { "render.slug": slug, "render.job_count": 0 },
+            { "render.slug": slug },
           );
         }
 
         // ─────────────────────────────────────────────────────────────────────────
-        // Stage 5: Cache Check
+        // Stage 6: Await Speculative Cache Check (started in parallel with data fetching)
         // ─────────────────────────────────────────────────────────────────────────
-        const cacheResult = await timeAsync(
-          "check-cache",
-          () => this.config.cacheCoordinator.checkCache(slug),
-          "render-page",
-        );
+        const cacheResult = await cacheCheckPromise;
 
         if (cacheResult?.cachedResult) {
+          logger.debug("[renderPage] Cache hit, returning cached result", { slug });
           return cacheResult.cachedResult;
         }
 
@@ -309,7 +406,7 @@ export class RenderPipeline {
           : options;
 
         // ─────────────────────────────────────────────────────────────────────────
-        // Stage 6: Page Bundle Preparation
+        // Stage 7: Page Bundle Preparation
         // ─────────────────────────────────────────────────────────────────────────
         const pageBundleResult = await withSpan(
           "render.prepare_bundles",
@@ -351,7 +448,7 @@ export class RenderPipeline {
         const headings = (pageBundle as PageBundle).headings || [];
 
         // ─────────────────────────────────────────────────────────────────────────
-        // Stage 7: Layout Application
+        // Stage 8: Layout Application
         // ─────────────────────────────────────────────────────────────────────────
         const wrappedElement = await withSpan(
           "render.apply_layouts",
@@ -377,7 +474,7 @@ export class RenderPipeline {
         );
 
         // ─────────────────────────────────────────────────────────────────────────
-        // Stage 8: SSR Rendering
+        // Stage 9: SSR Rendering
         // ─────────────────────────────────────────────────────────────────────────
         const ssrResult = await withSpan(
           "render.ssr",
@@ -404,7 +501,7 @@ export class RenderPipeline {
         );
 
         // ─────────────────────────────────────────────────────────────────────────
-        // Stage 9: Result Assembly
+        // Stage 10: Result Assembly
         // ─────────────────────────────────────────────────────────────────────────
         const pageModule = pageBundleResult.clientModuleCode && pageBundleResult.pageModuleType
           ? {
@@ -469,10 +566,7 @@ export class RenderPipeline {
     const skipLayouts = isDotPath(slug, pageInfo.entity.path);
 
     const [layoutResult, providerResult] = skipLayouts
-      ? [
-        { layoutBundle: undefined, nestedLayouts: [] },
-        { providerBundles: [], providerItems: [], providerInfos: [] },
-      ]
+      ? [EMPTY_LAYOUT_RESULT, EMPTY_PROVIDER_RESULT]
       : await Promise.all([
         timeAsync(
           "collect-layouts-data",
@@ -492,6 +586,7 @@ export class RenderPipeline {
     const pageType = fileExtension as PageDataResponse["pageType"];
     const isComponentPage = ["tsx", "jsx", "ts", "js"].includes(fileExtension);
     const isInPagesDir = pageInfo.entity.path.includes("/pages/");
+    const isInAppDir = pageInfo.entity.path.includes("/app/");
 
     // 4. Initialize data structures
     let pageProps: Record<string, unknown> = {};
@@ -506,7 +601,7 @@ export class RenderPipeline {
       }
     }
 
-    // 6. Fetch data if request context is available
+    // 6. Two-phase data fetching if request context is available
     if (options?.request && options?.url) {
       const dataContext: DataContext = {
         params,
@@ -515,25 +610,43 @@ export class RenderPipeline {
         url: options.url,
       };
 
-      // Fetch page data
-      if (isComponentPage && isInPagesDir) {
-        const mod = await this.loadModule(pageInfo.entity.path);
-        if (mod && (mod.getServerData || mod.getStaticData)) {
-          const result = await this.dataFetcher.fetchData(mod, dataContext, this.config.mode);
-          if (result?.props) {
-            pageProps = result.props as Record<string, unknown>;
-          }
-        }
-      }
+      // Phase 1: Collect and load all modules in parallel
+      const modulesToLoad = this.collectModulesToLoad(
+        pageInfo.entity.path,
+        isComponentPage,
+        isInPagesDir || isInAppDir,
+        layoutResult.nestedLayouts,
+      );
 
-      // Fetch layout data
-      for (const layout of layoutResult.nestedLayouts) {
-        if (layout.kind === "tsx" && layout.componentPath) {
-          const mod = await this.loadModule(layout.componentPath);
-          if (mod && (mod.getServerData || mod.getStaticData)) {
-            const result = await this.dataFetcher.fetchData(mod, dataContext, this.config.mode);
-            if (result?.props) {
-              layoutProps[layout.componentPath] = result.props as Record<string, unknown>;
+      if (modulesToLoad.length > 0) {
+        const loadedModules = await Promise.all(
+          modulesToLoad.map((m) =>
+            this.loadModule(m.path)
+              // deno-lint-ignore no-explicit-any
+              .then((mod) => ({ ...m, mod: mod as any }))
+              .catch(() => ({ ...m, mod: null }))
+          ),
+        );
+
+        // Phase 2: Fetch data for modules with data fetching functions
+        const dataJobs = loadedModules
+          .filter((r) => r.mod && this.hasDataFetchingFunction(r.mod))
+          .map((r) => ({
+            type: r.type,
+            id: r.id,
+            promise: this.dataFetcher.fetchData(r.mod, dataContext, this.config.mode),
+          }));
+
+        const dataResults = await Promise.all(
+          dataJobs.map((job) => job.promise.then((result) => ({ ...job, result }))),
+        );
+
+        for (const { type, id, result } of dataResults) {
+          if (result?.props) {
+            if (type === "page") {
+              pageProps = result.props as Record<string, unknown>;
+            } else {
+              layoutProps[id] = result.props as Record<string, unknown>;
             }
           }
         }

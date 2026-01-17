@@ -1,4 +1,4 @@
-export { clearConfigCache, getConfig } from "./loader.ts";
+export { clearConfigCache, getCachedConfigSync, getConfig } from "./loader.ts";
 
 export { defineConfig } from "./define-config.ts";
 
