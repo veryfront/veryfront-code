@@ -91,6 +91,32 @@ async function directoryExists(path: string): Promise<boolean> {
   }
 }
 
+// Check if a port is available
+async function isPortAvailable(port: number): Promise<boolean> {
+  try {
+    const listener = Deno.listen({ port });
+    listener.close();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Check required ports and exit with friendly message if unavailable
+async function checkPorts(port: number): Promise<void> {
+  const mainPortFree = await isPortAvailable(port);
+  const hmrPortFree = await isPortAvailable(port + 1);
+
+  if (!mainPortFree || !hmrPortFree) {
+    const blockedPort = !mainPortFree ? port : port + 1;
+    console.error(`\n\x1b[31mError: Port ${blockedPort} is already in use.\x1b[0m`);
+    console.error(`\nTo fix this, either:`);
+    console.error(`  1. Kill the existing process: \x1b[36mlsof -ti:${blockedPort} | xargs kill -9\x1b[0m`);
+    console.error(`  2. Use a different port: \x1b[36mdeno task start -p ${port + 100}\x1b[0m\n`);
+    Deno.exit(1);
+  }
+}
+
 // Get project slug from path (last directory name)
 function getProjectSlug(path: string): string {
   const normalized = path.replace(/\/+$/, "");
@@ -174,6 +200,9 @@ async function main(): Promise<void> {
 
   const { createApp, showStartup } = await import("../src/cli/app/index.ts");
 
+  // Check ports BEFORE starting TUI to show clear error message
+  await checkPorts(args.port);
+
   await clearModuleCaches();
 
   // Show startup animation (skip in headless mode)
@@ -219,30 +248,18 @@ async function main(): Promise<void> {
     return injectContextHeaders(req, ctx);
   };
 
-  // Start server
+  // Start server (port availability already checked above)
   const shutdownController = new AbortController();
-  let devServer;
-  try {
-    devServer = await createDevServer({
-      port: args.port,
-      projectDir: Deno.cwd(),
-      hmrPort: args.port + 1,
-      enableHMR: true,
-      enableFastRefresh: true,
-      signal: shutdownController.signal,
-      requestInterceptor,
-    });
-    await devServer.ready;
-  } catch (error) {
-    if (error instanceof Deno.errors.AddrInUse) {
-      console.error(`\n\x1b[31mError: Port ${args.port} or ${args.port + 1} is already in use.\x1b[0m`);
-      console.error(`\nTo fix this, either:`);
-      console.error(`  1. Kill the existing process: \x1b[36mlsof -ti:${args.port} | xargs kill -9\x1b[0m`);
-      console.error(`  2. Use a different port: \x1b[36mdeno task start -p ${args.port + 100}\x1b[0m\n`);
-      Deno.exit(1);
-    }
-    throw error;
-  }
+  const devServer = await createDevServer({
+    port: args.port,
+    projectDir: Deno.cwd(),
+    hmrPort: args.port + 1,
+    enableHMR: true,
+    enableFastRefresh: true,
+    signal: shutdownController.signal,
+    requestInterceptor,
+  });
+  await devServer.ready;
 
   // Start MCP server
   const { createMCPServer } = await import("../src/cli/mcp/index.ts");

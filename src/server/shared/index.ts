@@ -7,8 +7,8 @@
  */
 
 export {
-  cleanupRenderers,
-  createRendererPromise,
-  getRenderer,
-  getRendererCount,
+  destroyRendererAdapter,
+  getRendererForProject,
+  type RendererAdapter,
+  shouldRejectDueToMemory,
 } from "./renderer-factory.ts";

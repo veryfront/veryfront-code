@@ -7,37 +7,8 @@
  */
 
 export {
-  // Types
-  type AnyRenderer,
-  type AnyRendererPromise,
-  type CachedRenderer,
-  // Memory
-  checkAndEvictUnderMemoryPressure,
-  // Lifecycle
-  cleanupRenderers,
-  clearProjectCachesAfterRender,
-  // Main API
-  createRendererPromise,
-  destroyRenderer,
-  // Cache
-  evictExpired,
-  evictLRU,
-  evictProjectRenderer,
-  getCacheKey,
-  getRenderer,
-  getRendererCacheStats,
-  getRendererCount,
+  destroyRendererAdapter,
   getRendererForProject,
-  // Constants
-  MAX_RENDERER_CACHE_SIZE,
-  MEMORY_CHECK_INTERVAL_MS,
-  MEMORY_PRESSURE_CRITICAL,
-  MEMORY_PRESSURE_WARNING,
-  RENDERER_TTL_MS,
-  type RendererInstance,
-  type RendererPromise,
+  type RendererAdapter,
   shouldRejectDueToMemory,
-  startPeriodicMemoryCheck,
-  stopPeriodicMemoryCheck,
-  triggerMemoryCheck,
 } from "./renderer/index.ts";

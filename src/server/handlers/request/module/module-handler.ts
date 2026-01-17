@@ -14,7 +14,6 @@ import type {
   HandlerPriority,
   HandlerResult,
 } from "../../types.ts";
-import { getRendererForProject } from "../../../shared/renderer-factory.ts";
 import { handleModuleServer } from "./module-server-handler.ts";
 import { handlePageModule } from "./page-module-handler.ts";
 import { handleDataEndpoint } from "./data-endpoint-handler.ts";
@@ -50,16 +49,6 @@ export class ModuleHandler extends BaseHandler {
       { pattern: "/_veryfront/page-data/", prefix: true },
     ],
   };
-
-  /**
-   * Get or create renderer using shared factory cache.
-   * This ensures renderer persists across handler invalidations (HMR).
-   */
-  private ensureRenderer(
-    ctx: HandlerContext,
-  ): ReturnType<typeof getRendererForProject> {
-    return getRendererForProject(ctx);
-  }
 
   /**
    * Handles incoming requests by routing to appropriate handler.
@@ -114,17 +103,14 @@ export class ModuleHandler extends BaseHandler {
     if (pathname.startsWith("/_veryfront/modules/")) {
       return this.withProxyContext(
         ctx,
-        () => {
-          const rendererInit = this.ensureRenderer(ctx);
-          return handleVirtualModule(
+        () =>
+          handleVirtualModule(
             req,
             ctx,
-            rendererInit,
             createResponseBuilder,
             respond,
             getErrorMessage,
-          );
-        },
+          ),
         proxyOptions,
       );
     }
@@ -133,18 +119,15 @@ export class ModuleHandler extends BaseHandler {
     if (pathname.startsWith("/_veryfront/pages/")) {
       return this.withProxyContext(
         ctx,
-        () => {
-          const rendererInit = this.ensureRenderer(ctx);
-          return handlePageModule(
+        () =>
+          handlePageModule(
             req,
             pathname,
             ctx,
-            rendererInit,
             createResponseBuilder,
             respond,
             getErrorMessage,
-          );
-        },
+          ),
         proxyOptions,
       );
     }
@@ -153,18 +136,15 @@ export class ModuleHandler extends BaseHandler {
     if (pathname.startsWith("/_veryfront/data/")) {
       return this.withProxyContext(
         ctx,
-        () => {
-          const rendererInit = this.ensureRenderer(ctx);
-          return handleDataEndpoint(
+        () =>
+          handleDataEndpoint(
             req,
             pathname,
             ctx,
-            rendererInit,
             createResponseBuilder,
             respond,
             getErrorMessage,
-          );
-        },
+          ),
         proxyOptions,
       );
     }
@@ -173,18 +153,15 @@ export class ModuleHandler extends BaseHandler {
     if (pathname.startsWith("/_veryfront/page-data/")) {
       return this.withProxyContext(
         ctx,
-        () => {
-          const rendererInit = this.ensureRenderer(ctx);
-          return handlePageDataEndpoint(
+        () =>
+          handlePageDataEndpoint(
             req,
             pathname,
             ctx,
-            rendererInit,
             createResponseBuilder,
             respond,
             getErrorMessage,
-          );
-        },
+          ),
         proxyOptions,
       );
     }

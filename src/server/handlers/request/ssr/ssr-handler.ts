@@ -17,7 +17,6 @@ import type {
 import { hasMatchingEtag } from "../../utils/etag.ts";
 import { getContentType } from "../../utils/content-types.ts";
 import {
-  clearProjectCachesAfterRender,
   getRendererForProject,
   shouldRejectDueToMemory,
 } from "../../../shared/renderer-factory.ts";
@@ -325,12 +324,6 @@ export class SSRHandler extends BaseHandler {
           heapGrowthMB: Math.round(heapGrowthMB * 100) / 100,
         });
       }
-
-      // Aggressive post-render cache eviction to prevent memory buildup
-      // This runs async and doesn't block the response
-      clearProjectCachesAfterRender(ctx.projectSlug || "", projectId).catch((err) => {
-        this.logDebug("Post-render cache eviction failed", { error: String(err) }, ctx);
-      });
 
       // TRUE STREAMING: If we have a stream but no buffered HTML, this is true streaming mode
       // Skip ETag/304 checks since we don't have the content to hash
