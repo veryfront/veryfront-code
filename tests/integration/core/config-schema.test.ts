@@ -1,6 +1,6 @@
 import { assertRejects } from "@std/assert";
 import { join } from "@std/path";
-import { describe, it } from "@std/testing/bdd.ts";
+import { describe, it } from "@std/testing/bdd";
 import { getAdapter } from "@veryfront/platform";
 import { clearConfigCache, getConfig } from "@veryfront/config";
 import { withTestContext } from "../../_helpers/context.ts";

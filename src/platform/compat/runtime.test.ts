@@ -5,7 +5,7 @@
  */
 
 import { assertEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd.ts";
+import { describe, it } from "@std/testing/bdd";
 import { isBun, isCloudflare, isDeno, isNode, isNodeRuntime } from "./runtime.ts";
 
 describe("Runtime Detection", () => {

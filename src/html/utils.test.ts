@@ -1,4 +1,4 @@
-import { describe, it } from "@std/testing/bdd.ts";
+import { describe, it } from "@std/testing/bdd";
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import {
   buildContentAttributes,

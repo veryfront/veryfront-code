@@ -12,7 +12,7 @@
 
 import { assertEquals, assertExists } from "@std/assert";
 import { join } from "@std/path";
-import { describe, it } from "@std/testing/bdd.ts";
+import { describe, it } from "@std/testing/bdd";
 import {
   bundleMdx,
   bundleMDXWithOptions,

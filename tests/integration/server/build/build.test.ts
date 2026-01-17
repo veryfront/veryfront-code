@@ -13,7 +13,7 @@
 import { assert, assertEquals, assertExists } from "@std/assert";
 import { ensureDir } from "@std/fs";
 import { join } from "@std/path";
-import { afterAll, describe, it } from "@std/testing/bdd.ts";
+import { afterAll, describe, it } from "@std/testing/bdd";
 import { buildProduction } from "../../../../src/build/production-build/index.ts";
 import type { BuildStats } from "../../../../src/server/build-types.ts";
 import { withTestContext } from "../../../_helpers/context.ts";

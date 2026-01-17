@@ -4,7 +4,7 @@
  */
 
 import { assertEquals, assertExists } from "@std/assert";
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import type { RouterOptions } from "@veryfront/rendering/client/router.ts";
 import { VeryfrontRouter } from "@veryfront/rendering/client/router.ts";
 import type { DOMEnvironment } from "./test-helpers.ts";

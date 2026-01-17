@@ -6,7 +6,7 @@
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 
 import { assertEquals, assertExists } from "jsr:@std/assert@1";
-import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
+import { join } from "@std/path";
 import { LayoutCollector } from "../../../../src/rendering/layouts/layout-collector.ts";
 import { DenoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
 import type { EntityInfo } from "@veryfront/types";

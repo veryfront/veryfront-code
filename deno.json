@@ -116,7 +116,7 @@
     "@std/dotenv": "https://deno.land/std@0.220.0/dotenv/mod.ts",
     "@std/flags": "https://deno.land/std@0.220.0/flags/mod.ts",
     "@std/fmt/colors": "https://deno.land/std@0.220.0/fmt/colors.ts",
-    "@std/testing/bdd.ts": "https://deno.land/std@0.220.0/testing/bdd.ts",
+    "@std/testing/bdd": "https://deno.land/std@0.220.0/testing/bdd.ts",
     "@std/expect": "https://deno.land/std@0.220.0/expect/mod.ts",
     "@std/fs": "https://deno.land/std@0.220.0/fs/mod.ts",
     "@std/async": "https://deno.land/std@0.220.0/async/mod.ts",

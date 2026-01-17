@@ -1,5 +1,5 @@
 import { assertRejects } from "@std/assert";
-import { describe, it } from "@std/testing/bdd.ts";
+import { describe, it } from "@std/testing/bdd";
 import { buildCommand } from "../../../src/cli/commands/build.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 

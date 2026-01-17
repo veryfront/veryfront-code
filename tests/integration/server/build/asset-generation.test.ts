@@ -16,7 +16,7 @@
  * - Special characters in filenames
  */
 
-import { afterAll, describe, it } from "@std/testing/bdd.ts";
+import { afterAll, describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { assertRejects } from "@std/assert";
 import { join } from "@std/path";

@@ -3,7 +3,7 @@
  */
 
 import { assertEquals, assertThrows } from "@std/assert";
-import { describe, it } from "@std/testing/bdd.ts";
+import { describe, it } from "@std/testing/bdd";
 import { generateId, parseDuration, validateRetryConfig } from "./types.ts";
 
 describe("parseDuration", () => {

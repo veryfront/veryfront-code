@@ -5,7 +5,7 @@
 
 import { assertEquals, assertExists, assertRejects } from "@std/assert";
 import { assertStringIncludes } from "@std/assert";
-import { describe } from "@std/testing/bdd.ts";
+import { describe } from "@std/testing/bdd";
 import { clearConfigCache, getConfig } from "@veryfront/config";
 import { createMockAdapter } from "@veryfront/platform/adapters/mock.ts";
 import { join } from "@std/path";

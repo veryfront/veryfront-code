@@ -5,7 +5,7 @@
  */
 
 import { assertEquals, assertExists } from "@std/assert";
-import { afterAll, beforeAll, describe, it } from "@std/testing/bdd.ts";
+import { afterAll, beforeAll, describe, it } from "@std/testing/bdd";
 import {
   chmod,
   createFileSystem,

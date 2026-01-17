@@ -5,7 +5,7 @@
  */
 
 import { assertEquals, assertExists } from "@std/assert";
-import { afterEach, describe, it } from "@std/testing/bdd.ts";
+import { afterEach, describe, it } from "@std/testing/bdd";
 import {
   cwd,
   deleteEnv,

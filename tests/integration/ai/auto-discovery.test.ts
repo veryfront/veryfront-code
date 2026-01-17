@@ -2,8 +2,8 @@
  * Auto-Discovery Integration Tests
  */
 
-import { assertEquals, assertExists } from "https://deno.land/std@0.220.0/assert/mod.ts";
-import { beforeEach, describe, it } from "@std/testing/bdd.ts";
+import { assertEquals, assertExists } from "@std/assert";
+import { beforeEach, describe, it } from "@std/testing/bdd";
 import { discoverAll } from "../../../src/cli/discovery/index.ts";
 import { toolRegistry } from "@veryfront/tool";
 import { promptRegistry, resourceRegistry } from "@veryfront/mcp";

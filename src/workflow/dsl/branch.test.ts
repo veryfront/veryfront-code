@@ -3,7 +3,7 @@
  */
 
 import { assertEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd.ts";
+import { describe, it } from "@std/testing/bdd";
 import { branch, unless, when } from "./branch.ts";
 import { step } from "./step.ts";
 import type { BranchNodeConfig } from "../types.ts";

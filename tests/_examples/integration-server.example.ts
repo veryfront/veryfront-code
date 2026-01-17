@@ -6,7 +6,7 @@
  */
 
 import { assertEquals, assertExists } from "@std/assert";
-import { describe, it } from "@std/testing/bdd.ts";
+import { describe, it } from "@std/testing/bdd";
 import { withTestContext } from "../_helpers/context.ts";
 import { TEST_TIMEOUTS } from "../_helpers/constants.ts";
 

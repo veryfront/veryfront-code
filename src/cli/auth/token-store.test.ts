@@ -3,7 +3,7 @@
  */
 
 import { assertEquals, assertExists } from "jsr:@std/assert@1";
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import { deleteToken, getTokenLocation, readToken, saveToken } from "./token-store.ts";
 
 describe("Token Store", () => {

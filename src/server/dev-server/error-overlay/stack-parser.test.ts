@@ -2,7 +2,7 @@
  * Tests for stack trace parser
  */
 
-import { describe, it } from "@std/testing/bdd.ts";
+import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { formatStackTrace, hasStackTrace, parseStackTrace } from "./stack-parser.ts";
 

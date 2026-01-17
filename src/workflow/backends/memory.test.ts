@@ -3,7 +3,7 @@
  */
 
 import { assertEquals, assertExists } from "@std/assert";
-import { beforeEach, describe, it } from "@std/testing/bdd.ts";
+import { beforeEach, describe, it } from "@std/testing/bdd";
 import { MemoryBackend } from "./memory.ts";
 import type { Checkpoint, PendingApproval, WorkflowJob, WorkflowRun } from "../types.ts";
 

@@ -1,6 +1,6 @@
 import { assertEquals } from "@std/assert";
 import { join } from "@std/path";
-import { describe, it } from "@std/testing/bdd.ts";
+import { describe, it } from "@std/testing/bdd";
 import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
 import { loadComponentFromSource } from "../../../src/modules/react-loader/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";

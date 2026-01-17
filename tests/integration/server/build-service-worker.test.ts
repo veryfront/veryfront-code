@@ -2,7 +2,7 @@
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 
 import { assert, assertEquals } from "@std/assert";
-import { afterAll, describe, it } from "@std/testing/bdd.ts";
+import { afterAll, describe, it } from "@std/testing/bdd";
 import { generateServiceWorker } from "../../../src/server/build-service-worker.ts";
 import type { BuildManifest } from "../../../src/build/production-build/index.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";

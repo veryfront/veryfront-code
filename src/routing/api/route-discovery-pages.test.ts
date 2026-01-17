@@ -1,5 +1,5 @@
 import { assertEquals, assertExists } from "@std/assert";
-import { afterEach, describe, it } from "@std/testing/bdd.ts";
+import { afterEach, describe, it } from "@std/testing/bdd";
 import { discoverPagesRoutes } from "./route-discovery.ts";
 import { DynamicRouter } from "./api-route-matcher.ts";
 import { createMockAdapter } from "@veryfront/platform/adapters/mock.ts";

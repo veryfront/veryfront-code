@@ -13,7 +13,7 @@
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 
 import { assert, assertEquals, assertExists, assertRejects } from "@std/assert";
-import { afterEach, describe, it } from "@std/testing/bdd.ts";
+import { afterEach, describe, it } from "@std/testing/bdd";
 import { bootstrap, bootstrapDev, bootstrapProd } from "../../../src/server/bootstrap.ts";
 import { clearConfigCache } from "@veryfront/config";
 import { join } from "@std/path";

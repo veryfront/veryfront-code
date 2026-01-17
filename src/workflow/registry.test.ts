@@ -3,7 +3,7 @@
  */
 
 import { assertEquals, assertExists } from "@std/assert";
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import { getAllWorkflowIds, getWorkflow, registerWorkflow, workflowRegistry } from "./registry.ts";
 import type { WorkflowDefinition, WorkflowNode } from "./types.ts";
 import { workflow } from "./dsl/workflow.ts";

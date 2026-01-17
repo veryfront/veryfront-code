@@ -1,4 +1,4 @@
-import { describe, it } from "@std/testing/bdd.ts";
+import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { addDepsToEsmShUrls, resolveReactImports } from "./react-imports.ts";
 import { rewriteVendorImports } from "./import-rewriter.ts";

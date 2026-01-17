@@ -3,7 +3,7 @@
  */
 
 import { assertEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd.ts";
+import { describe, it } from "@std/testing/bdd";
 import { agentStep, step, toolStep } from "./step.ts";
 import type { StepNodeConfig } from "../types.ts";
 

@@ -3,7 +3,7 @@
  */
 
 import { assertEquals, assertThrows } from "@std/assert";
-import { describe, it } from "@std/testing/bdd.ts";
+import { describe, it } from "@std/testing/bdd";
 import { parallel } from "./parallel.ts";
 import { step } from "./step.ts";
 import type { ParallelNodeConfig } from "../types.ts";

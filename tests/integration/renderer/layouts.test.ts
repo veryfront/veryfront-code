@@ -1,7 +1,7 @@
 import { LRUCache } from "@veryfront/utils/lru-wrapper.ts";
 import * as React from "https://esm.sh/react@19.1.1";
 import { assert, assertEquals, assertExists, assertRejects } from "@std/assert";
-import { describe, it } from "@std/testing/bdd.ts";
+import { describe, it } from "@std/testing/bdd";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { LayoutItem, MdxBundle, MDXComponents } from "@veryfront/types";

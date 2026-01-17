@@ -1,5 +1,5 @@
 import { assert, assertEquals } from "@std/assert";
-import { afterEach, describe, it } from "@std/testing/bdd.ts";
+import { afterEach, describe, it } from "@std/testing/bdd";
 import { LRUCache } from "./lru-wrapper.ts";
 
 describe("LRUCache", () => {

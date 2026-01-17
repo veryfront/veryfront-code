@@ -1,5 +1,5 @@
 import { assertEquals, assertRejects } from "@std/assert";
-import { describe } from "@std/testing/bdd.ts";
+import { describe } from "@std/testing/bdd";
 import { __loggerResetForTests, LogLevel } from "@veryfront/utils/logger/index.ts";
 
 async function importFresh() {

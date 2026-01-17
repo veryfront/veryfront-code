@@ -15,7 +15,7 @@
 import { assertEquals, assertExists } from "@std/assert";
 import * as esbuild from "esbuild";
 import { join } from "@std/path";
-import { afterAll, describe, it } from "@std/testing/bdd.ts";
+import { afterAll, describe, it } from "@std/testing/bdd";
 import { bundleScript } from "../../../../../src/build/renderer/services/script-bundler.ts";
 import type {
   BundleResult,

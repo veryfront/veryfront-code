@@ -11,7 +11,7 @@
  */
 
 import { assert, assertEquals, assertExists } from "@std/assert";
-import { afterAll, afterEach, beforeEach, describe, it } from "@std/testing/bdd.ts";
+import { afterAll, afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import { HMRHandler } from "../../../../src/server/handlers/preview/hmr-handler.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 

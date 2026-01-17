@@ -3,7 +3,7 @@
  */
 
 import { assertEquals, assertExists } from "jsr:@std/assert@1";
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import { deleteEnv, getEnv, setEnv } from "@veryfront/platform/compat/process.ts";
 import { deleteToken, readToken, saveToken } from "./token-store.ts";
 import type { UserInfo } from "./login.ts";
