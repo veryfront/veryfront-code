@@ -4,6 +4,15 @@
 
 Veryfront is a **zero-config React framework** for building **agentic applications**. Automatically discovers agents, tools, and routes through file-based conventions.
 
+## Features
+
+- **Zero config** - Auto-discovery from file structure
+- **Multi-runtime** - Deno, Node.js, Bun, Cloudflare Workers
+- **Full-stack React** - SSR, SSG, ISR, JIT rendering
+- **MCP built-in** - Model Context Protocol server
+- **Production-ready** - Rate limiting, caching, cost tracking, security
+
+---
 
 ## Project Structure
 
@@ -141,17 +150,6 @@ export default resource({
 ```bash
 deno task dev --mcp  # Port 3001 by default
 ```
-
----
-
-## Features
-
-- **Zero config** - Auto-discovery from file structure
-- **Multi-runtime** - Deno, Node.js, Bun, Cloudflare Workers
-- **Full-stack React** - SSR, SSG, ISR, JIT rendering
-- **Remote imports** - Use `https://esm.sh/pkg` directly, no node_modules needed
-- **MCP built-in** - Model Context Protocol server
-- **Production-ready** - Rate limiting, caching, cost tracking, security
 
 ---
 
