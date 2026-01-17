@@ -10,10 +10,10 @@ import {
   checkMemoryPressure,
   getCacheStats,
   getHeapStats,
-} from "@veryfront/core/memory/profiler.ts";
+} from "@veryfront/utils/memory/profiler.ts";
 import { ERROR_CATALOG } from "@veryfront/errors/catalog/index.ts";
-import { TransformStage } from "@veryfront/build/transforms/pipeline/types.ts";
-import { isRSCEnabled } from "@veryfront/core/utils/feature-flags.ts";
+import { TransformStage } from "@veryfront/transforms/pipeline/types.ts";
+import { isRSCEnabled } from "@veryfront/utils/feature-flags.ts";
 import type { HandlerContext } from "../../types.ts";
 
 const JSON_HEADERS = { "Content-Type": "application/json", "Cache-Control": "no-cache" };

@@ -1,4 +1,4 @@
-import { detectPlatform, type Platform } from "../../core/platform.ts";
+import { detectPlatform, type Platform } from "../../platform/core-platform.ts";
 import type { Plugin, PluginBuild } from "esbuild";
 import { registerPrompt, registerResource, registerTool } from "@veryfront/mcp";
 import type { Tool } from "@veryfront/tool";

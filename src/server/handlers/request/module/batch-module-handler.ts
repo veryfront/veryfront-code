@@ -9,7 +9,7 @@
 
 import type { HandlerContext, HandlerResult } from "../../types.ts";
 import type { ResponseBuilder } from "@veryfront/security/index.ts";
-import { handleModuleBatch } from "@veryfront/module-system/server/module-batch-handler.ts";
+import { handleModuleBatch } from "@veryfront/modules/server/module-batch-handler.ts";
 import { serverLogger as logger } from "@veryfront/utils";
 
 /**

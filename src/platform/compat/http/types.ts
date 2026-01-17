@@ -15,3 +15,21 @@ export interface HttpServer {
 
   close(): Promise<void>;
 }
+
+/**
+ * WebSocket upgrade result containing the socket and HTTP response
+ */
+export interface WebSocketUpgradeResult {
+  socket: WebSocket;
+  response: Response;
+}
+
+/**
+ * Options for WebSocket upgrade
+ */
+export interface WebSocketUpgradeOptions {
+  /** Protocol to use for the WebSocket connection */
+  protocol?: string;
+  /** Headers to include in the upgrade response */
+  headers?: Headers | Record<string, string>;
+}

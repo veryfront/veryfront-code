@@ -24,8 +24,8 @@ import {
 import type { Provider } from "@veryfront/provider";
 import { getProviderFromModel } from "@veryfront/provider";
 import { executeTool } from "@veryfront/tool";
-import { generateId } from "../../core/id.ts";
-import { detectPlatform, getPlatformCapabilities } from "../../core/platform.ts";
+import { generateId } from "../../utils/id.ts";
+import { detectPlatform, getPlatformCapabilities } from "../../platform/core-platform.ts";
 import { createMemory, type Memory } from "../memory/index.ts";
 import { serverLogger as logger } from "@veryfront/utils";
 import {

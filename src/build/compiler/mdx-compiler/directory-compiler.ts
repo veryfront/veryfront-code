@@ -3,7 +3,7 @@ import { join } from "@veryfront/platform/compat/path/index.ts";
 import type { CompileOptions, CompileResult } from "./types.ts";
 import { pathExists } from "./validator.ts";
 import { compileMDXFile } from "./compiler.ts";
-import { discoverFiles } from "@veryfront/core/utils/file-discovery.ts";
+import { discoverFiles } from "@veryfront/utils/file-discovery.ts";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 
 export async function compileAllMDX(options: CompileOptions): Promise<Map<string, CompileResult>> {

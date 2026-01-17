@@ -12,7 +12,7 @@ import {
   type GitHubConfig,
   type ResolvedGitHubConfig,
 } from "./types.ts";
-import { getGithubEnvConfig } from "@veryfront/core/config/env.ts";
+import { getGithubEnvConfig } from "@veryfront/config/env.ts";
 
 const LOG_PREFIX = "[GitHubFSAdapter]";
 

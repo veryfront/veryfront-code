@@ -6,7 +6,7 @@
  * @module ai/agent/runtime/constants
  */
 
-import { AGENT_DEFAULTS, STREAMING_DEFAULTS } from "../../core/ai-defaults.ts";
+import { AGENT_DEFAULTS, STREAMING_DEFAULTS } from "../../agent/ai-defaults.ts";
 
 /** Default maximum tokens for completion */
 export const DEFAULT_MAX_TOKENS = AGENT_DEFAULTS.maxTokens;

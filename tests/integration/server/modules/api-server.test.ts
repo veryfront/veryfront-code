@@ -11,7 +11,7 @@ import {
   type APIServerOptions,
   type PageRendererLike,
   type PageRenderResult,
-} from "../../../../src/module-system/server/index.ts";
+} from "../../../../src/modules/server/index.ts";
 
 // Mock renderer for testing
 class MockRenderer implements PageRendererLike {

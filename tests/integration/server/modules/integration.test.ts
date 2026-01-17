@@ -21,7 +21,7 @@ import { afterAll, describe, it } from "std/testing/bdd.ts";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import { HMRServer as ModuleHMRServer } from "../../../../src/server/dev-server/hmr-server.ts";
 import { ErrorOverlay } from "../../../../src/server/dev-server/error-overlay/index.ts";
-import { APIServer } from "../../../../src/module-system/server/index.ts";
+import { APIServer } from "../../../../src/modules/server/index.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { drainEventLoop } from "../../../_helpers/utils.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";

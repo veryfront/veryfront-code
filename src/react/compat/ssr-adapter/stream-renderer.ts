@@ -5,7 +5,7 @@ import { getReactDOMServer } from "./server-loader.ts";
 import { renderToStringAdapter } from "./string-renderer.ts";
 import type { SSROptions, SSRResult } from "./types.ts";
 import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
-import { isDebugEnvEnabled } from "@veryfront/core/config/env.ts";
+import { isDebugEnvEnabled } from "@veryfront/config/env.ts";
 
 interface VeryfrontGlobal {
   __VERYFRONT_DEBUG__?: boolean;

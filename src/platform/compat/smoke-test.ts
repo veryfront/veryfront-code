@@ -33,13 +33,13 @@ const MODULES_TO_TEST = [
   "@veryfront/platform/compat/runtime.ts",
 
   // Core modules
-  "@veryfront/core/config/loader.ts",
-  "@veryfront/core/utils/file-discovery.ts",
-  "@veryfront/core/utils/cache-dir.ts",
-  "@veryfront/core/utils/import-lockfile.ts",
-  "@veryfront/core/memory/profiler.ts",
+  "@veryfront/config/loader.ts",
+  "@veryfront/utils/file-discovery.ts",
+  "@veryfront/utils/cache-dir.ts",
+  "@veryfront/utils/import-lockfile.ts",
+  "@veryfront/utils/memory/profiler.ts",
   "@veryfront/utils/lru-wrapper.ts",
-  "@veryfront/core/utils/env-loader.ts",
+  "@veryfront/utils/env-loader.ts",
 
   // Module system
   "@veryfront/modules/component-registry/registry.ts",

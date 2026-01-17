@@ -4,7 +4,7 @@
 
 import type { Agent, AgentConfig, AgentResponse, Message, ToolCall } from "./types.ts";
 import { AgentRuntime } from "./runtime/index.ts";
-import { detectPlatform, validatePlatformCompatibility } from "../core/platform.ts";
+import { detectPlatform, validatePlatformCompatibility } from "../platform/core-platform.ts";
 import { registerTool } from "@veryfront/mcp";
 import { agentRegistry } from "./composition/index.ts";
 import { agentLogger } from "@veryfront/utils/logger/logger.ts";

@@ -1,6 +1,6 @@
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { TracingConfig } from "./types.ts";
-import { getOtelTracingConfig } from "@veryfront/core/config/env.ts";
+import { getOtelTracingConfig } from "@veryfront/config/env.ts";
 
 const DEFAULT_CONFIG: TracingConfig = {
   enabled: false,

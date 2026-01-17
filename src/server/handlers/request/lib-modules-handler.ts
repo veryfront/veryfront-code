@@ -17,7 +17,7 @@ import {
   HTTP_NOT_FOUND,
   HTTP_OK,
   PRIORITY_MEDIUM_LIB_MODULES,
-} from "@veryfront/core/constants/index.ts";
+} from "@veryfront/utils/constants/index.ts";
 
 /** Allowed module paths that can be served */
 const ALLOWED_MODULES = new Set([

@@ -9,7 +9,7 @@ import * as React from "react";
 import { rendererLogger as logger } from "@veryfront/utils";
 import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
 import { createDefaultMDXComponents } from "./utils/index.ts";
-import { extractRouteParams } from "@veryfront/core/utils/route-path-utils.ts";
+import { extractRouteParams } from "@veryfront/utils/route-path-utils.ts";
 import type { EntityInfo } from "@veryfront/types";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { ComponentProps, MDXComponents, PageBundle } from "@veryfront/types";

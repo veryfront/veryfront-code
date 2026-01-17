@@ -27,7 +27,7 @@ import { resolveRelativePath } from "@veryfront/modules/react-loader/path-resolv
 import {
   generateModulePreloadHintsFromManifest,
   getRouteManifest,
-} from "../module-system/manifest/route-module-manifest.ts";
+} from "../modules/manifest/route-module-manifest.ts";
 
 /**
  * Metadata extracted from Head component for reconciliation with shell defaults.

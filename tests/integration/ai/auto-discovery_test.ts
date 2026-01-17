@@ -16,7 +16,7 @@ describe("Auto-Discovery Integration", { sanitizeOps: false, sanitizeResources: 
     promptRegistry.clear();
   });
 
-  it("should discover tools from ai/tools/ directory", async () => {
+  it("should discover tools from tools/ directory", async () => {
     const result = await discoverAll({
       baseDir: new URL("../../../examples/autodiscovery/", import.meta.url).pathname,
       verbose: false,
@@ -27,7 +27,7 @@ describe("Auto-Discovery Integration", { sanitizeOps: false, sanitizeResources: 
     assertExists(result.tools.get("greet") || result.tools.get("searchWeb"));
   });
 
-  it("should discover resources from ai/resources/ directory", async () => {
+  it("should discover resources from resources/ directory", async () => {
     const result = await discoverAll({
       baseDir: new URL("../../../examples/autodiscovery/", import.meta.url).pathname,
       verbose: false,
@@ -37,7 +37,7 @@ describe("Auto-Discovery Integration", { sanitizeOps: false, sanitizeResources: 
     assertEquals(result.resources.size >= 1, true);
   });
 
-  it("should discover prompts from ai/prompts/ directory", async () => {
+  it("should discover prompts from prompts/ directory", async () => {
     const result = await discoverAll({
       baseDir: new URL("../../../examples/autodiscovery/", import.meta.url).pathname,
       verbose: false,

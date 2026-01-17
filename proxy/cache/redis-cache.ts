@@ -1,303 +1,30 @@
 /**
- * Redis Token Cache - zero external dependencies.
- * Uses native Deno TCP for RESP protocol.
+ * Redis Token Cache
+ *
+ * Uses the standard `redis` package for cross-runtime compatibility.
+ * Works in Deno, Node.js, and Bun.
  */
 
+import { createClient, type RedisClientType } from "redis";
 import type { CacheStats, RedisCacheOptions, TokenCache, TokenCacheEntry } from "./types.ts";
 
 const DEFAULT_PREFIX = "vf:token:";
 const DEFAULT_CONNECT_TIMEOUT = 5000;
-const DEFAULT_REDIS_PORT = 6379;
 const DEFAULT_SCAN_COUNT = 100;
-const MAX_RECONNECT_ATTEMPTS = 3;
-const CRLF_LENGTH = 2;
-
-// RESP protocol bytes
-const CR = 0x0d; // \r
-const RESP_SIMPLE_STRING = "+";
-const RESP_ERROR = "-";
-const RESP_INTEGER = ":";
-const RESP_BULK_STRING = "$";
-const RESP_ARRAY = "*";
-const RESP_NULL_LENGTH = -1;
-// RESP3 types (for Upstash compatibility)
-const RESP3_MAP = "%";
-const RESP3_NULL = "_";
-const RESP3_DOUBLE = ",";
-const RESP3_BOOLEAN = "#";
-const RESP3_SET = "~";
-const RESP3_VERBATIM = "=";
-
-class RedisClient {
-  private conn: Deno.TcpConn | Deno.TlsConn | null = null;
-  private encoder = new TextEncoder();
-  private decoder = new TextDecoder();
-  private host: string;
-  private port: number;
-  private password?: string;
-  private connectTimeout: number;
-  private useTls: boolean;
-
-  constructor(url: string, options: { connectTimeout?: number } = {}) {
-    const parsed = new URL(url);
-    this.host = parsed.hostname;
-    this.port = parseInt(parsed.port) || DEFAULT_REDIS_PORT;
-    this.password = parsed.password ? decodeURIComponent(parsed.password) : undefined;
-    this.connectTimeout = options.connectTimeout ?? DEFAULT_CONNECT_TIMEOUT;
-    // rediss:// = TLS, redis:// = plain TCP
-    this.useTls = parsed.protocol === "rediss:";
-  }
-
-  async connect(): Promise<void> {
-    if (this.conn) return;
-
-    let timedOut = false;
-    let timeoutId: ReturnType<typeof setTimeout>;
-
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutId = setTimeout(() => {
-        timedOut = true;
-        reject(new Error("Connection timeout"));
-      }, this.connectTimeout);
-    });
-
-    try {
-      let conn: Deno.TcpConn | Deno.TlsConn;
-
-      if (this.useTls) {
-        // TLS connection for rediss://
-        const connectPromise = Deno.connectTls({
-          hostname: this.host,
-          port: this.port,
-        });
-        conn = await Promise.race([connectPromise, timeoutPromise]);
-      } else {
-        // Plain TCP for redis://
-        const connectPromise = Deno.connect({
-          hostname: this.host,
-          port: this.port,
-        });
-        conn = await Promise.race([connectPromise, timeoutPromise]);
-      }
-
-      clearTimeout(timeoutId!);
-      this.conn = conn;
-
-      // Force RESP2 protocol (Upstash defaults to RESP3 which we don't support)
-      // HELLO 2 AUTH <password> switches to RESP2 and authenticates in one command
-      if (this.password) {
-        await this.sendCommand("HELLO", "2", "AUTH", "default", this.password);
-      } else {
-        await this.sendCommand("HELLO", "2");
-      }
-    } catch (error) {
-      clearTimeout(timeoutId!);
-      this.conn = null;
-      throw error;
-    }
-  }
-
-  close(): void {
-    if (this.conn) {
-      try {
-        this.conn.close();
-      } catch {
-        // Ignore close errors
-      }
-      this.conn = null;
-    }
-  }
-
-  async get(key: string): Promise<string | null> {
-    return await this.sendCommand("GET", key) as string | null;
-  }
-
-  async set(key: string, value: string, ttlSeconds?: number): Promise<void> {
-    if (ttlSeconds && ttlSeconds > 0) {
-      await this.sendCommand("SETEX", key, String(Math.ceil(ttlSeconds)), value);
-    } else {
-      await this.sendCommand("SET", key, value);
-    }
-  }
-
-  async del(...keys: string[]): Promise<number> {
-    return await this.sendCommand("DEL", ...keys) as number;
-  }
-
-  async exists(key: string): Promise<boolean> {
-    return (await this.sendCommand("EXISTS", key)) === 1;
-  }
-
-  async scan(cursor: string, pattern: string, count = DEFAULT_SCAN_COUNT): Promise<[string, string[]]> {
-    return await this.sendCommand("SCAN", cursor, "MATCH", pattern, "COUNT", String(count)) as [string, string[]];
-  }
-
-  async dbsize(): Promise<number> {
-    return await this.sendCommand("DBSIZE") as number;
-  }
-
-  private sendCommand(...args: string[]): Promise<unknown> {
-    return this.sendCommandWithRetry(args, 0);
-  }
-
-  private async sendCommandWithRetry(args: string[], attempt: number): Promise<unknown> {
-    if (!this.conn) {
-      await this.connect();
-    }
-
-    try {
-      const command = this.encodeCommand(args);
-      await this.conn!.write(this.encoder.encode(command));
-      return await this.readResponse();
-    } catch (error) {
-      if (attempt < MAX_RECONNECT_ATTEMPTS && this.isConnectionError(error)) {
-        console.warn(`[RedisClient] Connection error, reconnecting (attempt ${attempt + 1})`);
-        this.close();
-        return this.sendCommandWithRetry(args, attempt + 1);
-      }
-      throw error;
-    }
-  }
-
-  private isConnectionError(error: unknown): boolean {
-    if (!(error instanceof Error)) return false;
-    const msg = error.message.toLowerCase();
-    return msg.includes("connection") || msg.includes("broken pipe") || msg.includes("reset");
-  }
-
-  private encodeCommand(args: string[]): string {
-    let cmd = `*${args.length}\r\n`;
-    for (const arg of args) {
-      cmd += `$${this.encoder.encode(arg).length}\r\n${arg}\r\n`;
-    }
-    return cmd;
-  }
-
-  private async readResponse(): Promise<unknown> {
-    const typeByte = await this.readBytes(1);
-    const type = this.decoder.decode(typeByte);
-
-    switch (type) {
-      // RESP2 types
-      case RESP_SIMPLE_STRING:
-        return await this.readLine();
-      case RESP_ERROR:
-        throw new Error(await this.readLine());
-      case RESP_INTEGER:
-        return parseInt(await this.readLine(), 10);
-      case RESP_BULK_STRING:
-        return await this.readBulkString();
-      case RESP_ARRAY:
-        return await this.readArray();
-      // RESP3 types (for Upstash compatibility)
-      case RESP3_MAP:
-        return await this.readMap();
-      case RESP3_NULL:
-        await this.readLine(); // consume CRLF
-        return null;
-      case RESP3_DOUBLE:
-        return parseFloat(await this.readLine());
-      case RESP3_BOOLEAN:
-        return (await this.readLine()) === "t";
-      case RESP3_SET:
-        return await this.readArray(); // Sets are arrays in our case
-      case RESP3_VERBATIM:
-        return await this.readVerbatimString();
-      default:
-        throw new Error(`Unknown RESP type: ${type}`);
-    }
-  }
-
-  private async readMap(): Promise<Record<string, unknown>> {
-    const count = parseInt(await this.readLine(), 10);
-    if (count === RESP_NULL_LENGTH) return {};
-
-    const result: Record<string, unknown> = {};
-    for (let i = 0; i < count; i++) {
-      const key = await this.readResponse();
-      const value = await this.readResponse();
-      if (typeof key === "string" || typeof key === "number") {
-        result[String(key)] = value;
-      }
-    }
-    return result;
-  }
-
-  private async readVerbatimString(): Promise<string | null> {
-    const len = parseInt(await this.readLine(), 10);
-    if (len === RESP_NULL_LENGTH) return null;
-
-    const data = await this.readBytes(len);
-    await this.readBytes(CRLF_LENGTH);
-    // Verbatim string has format "txt:actual content" - skip the type prefix
-    const str = this.decoder.decode(data);
-    const colonIdx = str.indexOf(":");
-    return colonIdx >= 0 ? str.slice(colonIdx + 1) : str;
-  }
-
-  private async readBytes(n: number): Promise<Uint8Array> {
-    const result = new Uint8Array(n);
-    let offset = 0;
-
-    while (offset < n) {
-      const chunk = await this.conn!.read(result.subarray(offset));
-      if (chunk === null) {
-        throw new Error("Connection closed unexpectedly");
-      }
-      offset += chunk;
-    }
-
-    return result;
-  }
-
-  private async readLine(): Promise<string> {
-    const bytes: number[] = [];
-
-    while (true) {
-      const buf = await this.readBytes(1);
-      if (buf[0] === CR) {
-        await this.readBytes(1); // consume \n
-        break;
-      }
-      bytes.push(buf[0]!);
-    }
-
-    return this.decoder.decode(new Uint8Array(bytes));
-  }
-
-  private async readBulkString(): Promise<string | null> {
-    const len = parseInt(await this.readLine(), 10);
-    if (len === RESP_NULL_LENGTH) return null;
-
-    const data = await this.readBytes(len);
-    await this.readBytes(CRLF_LENGTH);
-    return this.decoder.decode(data);
-  }
-
-  private async readArray(): Promise<unknown[] | null> {
-    const count = parseInt(await this.readLine(), 10);
-    if (count === RESP_NULL_LENGTH) return null;
-
-    const result: unknown[] = [];
-    for (let i = 0; i < count; i++) {
-      result.push(await this.readResponse());
-    }
-    return result;
-  }
-}
 
 export class RedisCache implements TokenCache {
-  private client: RedisClient;
+  private client: RedisClientType | null = null;
   private prefix: string;
+  private url: string;
+  private connectTimeout: number;
   private hits = 0;
   private misses = 0;
   private connected = false;
 
   constructor(options: RedisCacheOptions) {
-    this.client = new RedisClient(options.url, {
-      connectTimeout: options.connectTimeout,
-    });
+    this.url = options.url;
     this.prefix = options.prefix ?? DEFAULT_PREFIX;
+    this.connectTimeout = options.connectTimeout ?? DEFAULT_CONNECT_TIMEOUT;
   }
 
   private key(k: string): string {
@@ -307,7 +34,7 @@ export class RedisCache implements TokenCache {
   async get(key: string): Promise<TokenCacheEntry | null> {
     try {
       await this.ensureConnected();
-      const data = await this.client.get(this.key(key));
+      const data = await this.client!.get(this.key(key));
 
       if (!data) {
         this.misses++;
@@ -317,7 +44,7 @@ export class RedisCache implements TokenCache {
       const entry = JSON.parse(data) as TokenCacheEntry;
 
       if (Date.now() >= entry.expiresAt) {
-        await this.client.del(this.key(key));
+        await this.client!.del(this.key(key));
         this.misses++;
         return null;
       }
@@ -326,10 +53,9 @@ export class RedisCache implements TokenCache {
       return entry;
     } catch (error) {
       console.error("[RedisCache] Get error:", error);
-      // Reset connection state so next operation will attempt to reconnect
       this.connected = false;
       this.misses++;
-      throw error; // Propagate error so ResilientCache can handle fallback
+      throw error;
     }
   }
 
@@ -338,22 +64,22 @@ export class RedisCache implements TokenCache {
       await this.ensureConnected();
       const ttlMs = entry.expiresAt - Date.now();
       const ttlSeconds = Math.max(1, Math.floor(ttlMs / 1000));
-      await this.client.set(this.key(key), JSON.stringify(entry), ttlSeconds);
+      await this.client!.setEx(this.key(key), ttlSeconds, JSON.stringify(entry));
     } catch (error) {
       console.error("[RedisCache] Set error:", error);
       this.connected = false;
-      throw error; // Propagate error so ResilientCache can handle fallback
+      throw error;
     }
   }
 
   async delete(key: string): Promise<void> {
     try {
       await this.ensureConnected();
-      await this.client.del(this.key(key));
+      await this.client!.del(this.key(key));
     } catch (error) {
       console.error("[RedisCache] Delete error:", error);
       this.connected = false;
-      throw error; // Propagate error so ResilientCache can handle fallback
+      throw error;
     }
   }
 
@@ -366,11 +92,14 @@ export class RedisCache implements TokenCache {
       let totalDeleted = 0;
 
       do {
-        const [nextCursor, keys] = await this.client.scan(cursor, pattern);
-        cursor = nextCursor;
+        const result = await this.client!.scan(cursor, {
+          MATCH: pattern,
+          COUNT: DEFAULT_SCAN_COUNT,
+        });
+        cursor = String(result.cursor);
 
-        if (keys.length > 0) {
-          totalDeleted += await this.client.del(...keys);
+        if (result.keys.length > 0) {
+          totalDeleted += await this.client!.del(result.keys);
         }
       } while (cursor !== "0");
 
@@ -383,18 +112,19 @@ export class RedisCache implements TokenCache {
     } catch (error) {
       console.error("[RedisCache] Clear error:", error);
       this.connected = false;
-      throw error; // Propagate error so ResilientCache can handle fallback
+      throw error;
     }
   }
 
   async has(key: string): Promise<boolean> {
     try {
       await this.ensureConnected();
-      return await this.client.exists(this.key(key));
+      const exists = await this.client!.exists(this.key(key));
+      return exists === 1;
     } catch (error) {
       console.error("[RedisCache] Has error:", error);
       this.connected = false;
-      throw error; // Propagate error so ResilientCache can handle fallback
+      throw error;
     }
   }
 
@@ -402,9 +132,8 @@ export class RedisCache implements TokenCache {
     let size = 0;
     try {
       await this.ensureConnected();
-      size = await this.client.dbsize();
+      size = await this.client!.dbSize();
     } catch (error) {
-      // Reset connection state but don't throw for stats
       this.connected = false;
       console.warn("[RedisCache] Stats error:", error);
     }
@@ -412,17 +141,46 @@ export class RedisCache implements TokenCache {
     return { hits: this.hits, misses: this.misses, size, type: "redis" };
   }
 
-  close(): Promise<void> {
-    this.client.close();
+  async close(): Promise<void> {
+    if (this.client) {
+      try {
+        await this.client.quit();
+      } catch {
+        // Ignore close errors
+      }
+      this.client = null;
+    }
     this.connected = false;
-    return Promise.resolve();
   }
 
   private async ensureConnected(): Promise<void> {
-    if (!this.connected) {
-      await this.client.connect();
-      this.connected = true;
-      console.log("[RedisCache] Connected");
+    if (this.connected && this.client) {
+      return;
     }
+
+    // Create client with connection options
+    this.client = createClient({
+      url: this.url,
+      socket: {
+        connectTimeout: this.connectTimeout,
+        reconnectStrategy: (retries) => {
+          // Exponential backoff with max 3 retries
+          if (retries > 3) {
+            return new Error("Max reconnection attempts reached");
+          }
+          return Math.min(retries * 100, 3000);
+        },
+      },
+    });
+
+    // Handle connection errors
+    this.client.on("error", (err) => {
+      console.error("[RedisCache] Client error:", err);
+      this.connected = false;
+    });
+
+    await this.client.connect();
+    this.connected = true;
+    console.log("[RedisCache] Connected");
   }
 }

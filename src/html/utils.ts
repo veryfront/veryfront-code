@@ -1,7 +1,7 @@
 import { escapeHTML } from "./html-escape.ts";
 import type { VeryfrontConfig } from "@veryfront/config/types.ts";
 import { REACT_DEFAULT_VERSION, VERYFRONT_VERSION } from "@veryfront/utils/constants/cdn.ts";
-import { getTailwindImportMap } from "@veryfront/build/transforms/esm/package-registry.ts";
+import { getTailwindImportMap } from "@veryfront/transforms/esm/package-registry.ts";
 
 function joinAttributes(attrs: (string | false | undefined | null | "")[]): string {
   return attrs.filter(Boolean).join(" ");

@@ -8,7 +8,7 @@ import {
   getAnthropicEnvConfig,
   getGoogleGenAIEnvConfig,
   getOpenAIEnvConfig,
-} from "@veryfront/core/config/env.ts";
+} from "@veryfront/config/env.ts";
 
 class ProviderRegistry {
   private providers = new Map<string, Provider>();

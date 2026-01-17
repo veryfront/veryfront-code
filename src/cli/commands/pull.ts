@@ -18,7 +18,7 @@ import {
   type ResolvedConfig,
 } from "../shared/config.ts";
 import { confirmPrompt, createSpinner, logInfo, logSuccess, logWarning } from "../utils/index.ts";
-import { getApiTokenEnv } from "@veryfront/core/config/env.ts";
+import { getApiTokenEnv } from "@veryfront/config/env.ts";
 
 /**
  * Pull source type - determines which API endpoint to use

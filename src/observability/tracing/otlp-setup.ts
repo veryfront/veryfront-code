@@ -10,7 +10,7 @@
  */
 
 import { serverLogger as logger } from "@veryfront/utils";
-import { getOtelTracingConfig } from "@veryfront/core/config/env.ts";
+import { getOtelTracingConfig } from "@veryfront/config/env.ts";
 
 let initialized = false;
 

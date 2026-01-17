@@ -215,7 +215,12 @@ export type { CloudflareAdapterConfig } from "./backends/cloudflare.ts";
 // React Hooks (re-exported for convenience)
 // Note: For tree-shaking, prefer importing from 'veryfront/workflow/react'
 // =============================================================================
-export { useApproval, useWorkflow, useWorkflowList, useWorkflowStart } from "./react/index.ts";
+export {
+  useApproval,
+  useWorkflow,
+  useWorkflowList,
+  useWorkflowStart,
+} from "@veryfront/workflow/react";
 
 export type {
   UseApprovalOptions,
@@ -226,4 +231,4 @@ export type {
   UseWorkflowResult,
   UseWorkflowStartOptions,
   UseWorkflowStartResult,
-} from "./react/index.ts";
+} from "@veryfront/workflow/react";
