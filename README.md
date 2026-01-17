@@ -1,175 +1,61 @@
 # Veryfront
 
+[![npm version](https://img.shields.io/npm/v/veryfront.svg)](https://www.npmjs.com/package/veryfront)
 [![CI/CD](https://github.com/veryfront/veryfront-renderer/actions/workflows/ci.yml/badge.svg)](https://github.com/veryfront/veryfront-renderer/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-React framework for AI applications. Create agents, tools, and workflows by adding files.
+Veryfront is a full-stack React framework for building AI agents, tools, and workflows with zero configuration.
 
 ## Features
 
-- **Zero config** - Auto-discovery from file structure
-- **Multi-runtime** - Deno, Node.js, Bun, Cloudflare Workers
-- **Full-stack React** - SSR, SSG, ISR, JIT rendering
-- **MCP built-in** - Model Context Protocol server
-- **Production-ready** - Rate limiting, caching, cost tracking, security
+- 🚀 **Zero config** — Auto-discovery from file structure
+- 🌐 **Multi-runtime** — Deno, Node.js, Bun, Cloudflare Workers
+- ⚛️ **Full-stack React** — SSR, SSG, ISR, streaming
+- 🤖 **MCP built-in** — Model Context Protocol server
+- 🏭 **Production-ready** — Rate limiting, caching, observability
 
----
+## Quick Start
+
+```bash
+npx veryfront
+```
+
+Add your API key to `.env` and run `deno task dev`.
 
 ## Project Structure
 
 ```
-my-ai-app/
-├── .env
+my-app/
 ├── app/                     # App Router (pages & APIs)
 │   ├── chat/page.tsx
 │   └── api/chat/route.ts
-├── agents/
-│   └── assistant.ts         # AI agents
-├── tools/
-│   └── calculator.ts        # MCP tools
-├── workflows/
-│   └── onboarding.ts        # Durable workflows
-├── prompts/
-│   └── system.ts            # Prompt templates
-└── resources/
-    └── users/profile.ts     # MCP resources
+├── agents/                  # AI agents
+├── tools/                   # MCP tools
+├── workflows/               # Durable workflows
+├── prompts/                 # Prompt templates
+└── resources/               # MCP resources
 ```
 
-All directories are auto-discovered. No config required.
-
----
-
-## Quick Start
-
-**1. Install**
-```bash
-deno add npm:veryfront npm:ai npm:zod
-```
-
-**2. Create an agent**
-
-`agents/assistant.ts`:
-```typescript
-import { agent } from 'veryfront';
-
-export default agent({
-  model: 'openai/gpt-4',
-  system: 'You are a helpful assistant.',
-  tools: { calculator: true },
-});
-```
-
-**3. Add a tool**
-
-`tools/calculator.ts`:
-```typescript
-import { tool } from 'veryfront';
-import { z } from 'zod';
-
-export default tool({
-  description: 'Perform calculations',
-  inputSchema: z.object({ expression: z.string() }),
-  execute: async ({ expression }) => ({ result: eval(expression) }),
-});
-```
-
-**4. Create the API endpoint**
-
-`app/api/chat/route.ts`:
-```typescript
-import { agentRegistry } from 'veryfront/agent';
-
-export async function POST(req: Request) {
-  const assistant = agentRegistry.get('assistant');
-  return assistant.respond(req);
-}
-```
-
-**5. Add the UI**
-
-`app/chat/page.tsx`:
-```tsx
-'use client';
-import { Chat } from 'veryfront/components/ai';
-import { useChat } from 'veryfront/agent/react';
-
-export default function ChatPage() {
-  return <Chat {...useChat({ api: '/api/chat' })} />;
-}
-```
-
-**6. Run**
-```bash
-echo "OPENAI_API_KEY=sk-..." > .env
-deno task dev
-```
-
-Visit `localhost:3000/chat` - your agent can now use the calculator tool.
-
----
-
-## UI Customization
-
-**Styled components** (production-ready):
-```tsx
-import { Chat } from 'veryfront/components/ai';
-```
-
-**Primitives** (bring your own styles):
-```tsx
-import { ChatContainer, MessageList, MessageItem } from 'veryfront/primitives';
-```
-
-**Headless hooks** (total control):
-```tsx
-import { useChat } from 'veryfront/agent/react';
-```
-
----
-
-## Model Context Protocol
-
-MCP exposes your tools and resources to external AI applications. Enabled by default.
-
-**Add a resource:**
-
-`resources/users/profile.ts`:
-```typescript
-import { resource } from 'veryfront';
-import { z } from 'zod';
-
-export default resource({
-  description: 'Get user profile',
-  paramsSchema: z.object({ userId: z.string() }),
-  async load({ userId }) {
-    return await db.users.findUnique({ where: { id: userId } });
-  },
-});
-```
-
-**Run MCP server:**
-```bash
-deno task dev --mcp  # Port 3001 by default
-```
-
----
+All directories are auto-discovered.
 
 ## Documentation
 
-See [veryfront.com/docs](https://veryfront.com/docs/framework) for complete documentation.
+- [Getting Started](https://veryfront.com/docs/framework)
+- [Agents](https://veryfront.com/docs/framework/agents)
+- [Tools](https://veryfront.com/docs/framework/tools)
+- [Workflows](https://veryfront.com/docs/framework/workflows)
+- [MCP Server](https://veryfront.com/docs/framework/mcp)
 
----
+## Community
 
-## Examples
+- [Discord](https://discord.gg/veryfront)
+- [Twitter](https://twitter.com/veryfrontdev)
+- [GitHub Discussions](https://github.com/veryfront/veryfront/discussions)
 
-```bash
-cd examples/agent-basic
-deno run --allow-net --allow-env --allow-read example.ts
-```
+## Contributing
 
-See [examples/](./examples/) for more.
-
----
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
 
 ## License
 
-MIT - see [LICENSE](./LICENSE)
+MIT
