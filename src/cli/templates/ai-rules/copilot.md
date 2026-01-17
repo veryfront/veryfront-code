@@ -17,8 +17,8 @@ The project uses file-based routing:
 - `src/pages/*.tsx` - React pages (automatically become routes)
 - `src/api/*.ts` - API endpoints (accessible at `/api/*`)
 - `src/components/` - Shared React components
-- `src/ai/agents/` - AI agent definitions
-- `src/ai/tools/` - MCP tool implementations
+- `agents/` - AI agent definitions
+- `tools/` - MCP tool implementations
 
 ## Code Patterns
 

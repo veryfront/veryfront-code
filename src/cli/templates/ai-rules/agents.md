@@ -15,8 +15,8 @@ This is a Veryfront project. Veryfront is a zero-config React meta-framework for
 - **Pages**: `src/pages/*.tsx` (file-based routing)
 - **APIs**: `src/api/*.ts` (serverless functions at `/api/*`)
 - **Components**: `src/components/*.tsx`
-- **AI Agents**: `src/ai/agents/*.ts`
-- **MCP Tools**: `src/ai/tools/*.ts`
+- **AI Agents**: `agents/*.ts`
+- **MCP Tools**: `tools/*.ts`
 
 ## Examples
 
