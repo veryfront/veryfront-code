@@ -4,7 +4,7 @@ import {
   beforeEach as _beforeEach,
   describe,
   it,
-} from "@std/testing/bdd.ts";
+} from "@std/testing/bdd";
 import { join } from "@std/path";
 import {
   getDefaultImportMap,

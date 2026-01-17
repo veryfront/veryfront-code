@@ -1,4 +1,4 @@
-import { beforeEach, describe, it } from "@std/testing/bdd.ts";
+import { beforeEach, describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { LRUCacheAdapter } from "./lru-cache-adapter.ts";
 

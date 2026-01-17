@@ -1,5 +1,5 @@
 import { assert } from "@std/assert";
-import { afterAll, describe, it } from "@std/testing/bdd.ts";
+import { afterAll, describe, it } from "@std/testing/bdd";
 import "../../../_helpers/log-guard.ts";
 import { join } from "@std/path";
 import { consumeNdjsonStream, getContainer } from "../../../../src/rendering/rsc/client-dom.ts";

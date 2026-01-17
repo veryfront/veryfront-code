@@ -5,7 +5,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { describe, it } from "@std/testing/bdd.ts";
+import { describe, it } from "@std/testing/bdd";
 import { compileMDXRuntime } from "@veryfront/transforms/mdx/compiler/mdx-compiler.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 

@@ -18,7 +18,7 @@
 
 import { assert, assertEquals, assertExists } from "@std/assert";
 import { join } from "@std/path";
-import { afterAll, describe, it } from "@std/testing/bdd.ts";
+import { afterAll, describe, it } from "@std/testing/bdd";
 import "../../_helpers/log-guard.ts";
 import { collectAppRoutes, collectPagesRoutes } from "../../../src/server/build-routes.ts";
 import type { AppRouteInfo, RouteInfo } from "../../../src/server/build-types.ts";

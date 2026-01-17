@@ -14,7 +14,7 @@
  */
 
 import { assertEquals, assertExists, assertRejects } from "@std/assert";
-import { beforeEach, describe, it } from "@std/testing/bdd.ts";
+import { beforeEach, describe, it } from "@std/testing/bdd";
 import {
   type DataContext,
   DataFetcher,

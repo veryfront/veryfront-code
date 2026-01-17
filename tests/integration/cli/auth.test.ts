@@ -5,8 +5,8 @@
  * callback server, and login commands.
  */
 
-import { assertEquals, assertExists } from "https://deno.land/std@0.220.0/assert/mod.ts";
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd.ts";
+import { assertEquals, assertExists } from "@std/assert";
+import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import { deleteToken, readToken, saveToken } from "../../../src/cli/auth/token-store.ts";
 import {
   getCallbackUrl,

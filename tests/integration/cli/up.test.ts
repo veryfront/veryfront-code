@@ -1,5 +1,5 @@
-import { assertEquals } from "https://deno.land/std@0.220.0/assert/mod.ts";
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd.ts";
+import { assertEquals } from "@std/assert";
+import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import { join } from "@veryfront/platform/compat/path/index.ts";
 
 describe("Up Command Integration", { sanitizeOps: false, sanitizeResources: false }, () => {

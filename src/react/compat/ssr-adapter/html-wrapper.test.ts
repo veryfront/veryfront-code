@@ -1,4 +1,4 @@
-import { describe, it } from "@std/testing/bdd.ts";
+import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { wrapInHTML } from "./html-wrapper.ts";
 import type { HTMLWrapOptions } from "./types.ts";

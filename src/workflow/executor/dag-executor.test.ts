@@ -3,7 +3,7 @@
  */
 
 import { assertEquals } from "@std/assert";
-import { beforeEach, describe, it } from "@std/testing/bdd.ts";
+import { beforeEach, describe, it } from "@std/testing/bdd";
 import { DAGExecutor } from "./dag-executor.ts";
 import { StepExecutor } from "./step-executor.ts";
 import { step } from "../dsl/step.ts";

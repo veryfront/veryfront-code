@@ -1,7 +1,7 @@
-import { assert } from "https://deno.land/std@0.220.1/assert/mod.ts";
-import { ensureDir } from "https://deno.land/std@0.220.1/fs/mod.ts";
-import { join } from "https://deno.land/std@0.220.1/path/mod.ts";
-import { describe, it } from "@std/testing/bdd.ts";
+import { assert } from "@std/assert";
+import { ensureDir } from "@std/fs";
+import { join } from "@std/path";
+import { describe, it } from "@std/testing/bdd";
 import { withTestContext } from "../../_helpers/context.ts";
 
 // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue

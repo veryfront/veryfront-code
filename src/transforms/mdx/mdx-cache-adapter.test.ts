@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { MDXCacheAdapter } from "./mdx-cache-adapter.ts";
 import type { VeryfrontConfig } from "@veryfront/config";

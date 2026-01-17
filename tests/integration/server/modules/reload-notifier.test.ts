@@ -12,7 +12,7 @@
  */
 
 import { assert, assertEquals } from "@std/assert";
-import { afterAll, afterEach, beforeEach, describe, it } from "@std/testing/bdd.ts";
+import { afterAll, afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import { ReloadNotifier } from "../../../../src/server/reload-notifier.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 

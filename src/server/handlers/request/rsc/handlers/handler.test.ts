@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, it } from "@std/testing/bdd.ts";
+import { afterAll, beforeEach, describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { RSCDevServerHandler } from "./handler.ts";
 

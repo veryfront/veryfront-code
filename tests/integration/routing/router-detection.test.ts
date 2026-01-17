@@ -11,7 +11,7 @@
  */
 
 import { assert, assertEquals, assertExists } from "@std/assert";
-import { describe, it } from "@std/testing/bdd.ts";
+import { describe, it } from "@std/testing/bdd";
 import { join } from "@std/path";
 import { ensureDir } from "@std/fs";
 import { detectAppRouter, getAppRouteEntity } from "../../../src/rendering/router-detection.ts";

@@ -1,5 +1,5 @@
 import { assertEquals, assertExists } from "@std/assert";
-import { afterEach, describe, it } from "@std/testing/bdd.ts";
+import { afterEach, describe, it } from "@std/testing/bdd";
 import { APIRouteHandler } from "./handler.ts";
 import { createMockAdapter } from "@veryfront/platform/adapters/mock.ts";
 import { HTTP_OK } from "@veryfront/utils";

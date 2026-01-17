@@ -3,7 +3,7 @@
  */
 
 import { assertEquals, assertExists } from "jsr:@std/assert@1";
-import { afterEach, describe, it } from "@std/testing/bdd.ts";
+import { afterEach, describe, it } from "@std/testing/bdd";
 import { type CallbackServer, getCallbackUrl, startCallbackServer } from "./callback-server.ts";
 
 describe("Callback Server", { sanitizeOps: false, sanitizeResources: false }, () => {

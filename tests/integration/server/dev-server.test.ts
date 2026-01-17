@@ -14,7 +14,7 @@
 
 import { assert, assertEquals, assertExists, assertMatch } from "@std/assert";
 import { join } from "@std/path";
-import { afterAll, describe, it } from "@std/testing/bdd.ts";
+import { afterAll, describe, it } from "@std/testing/bdd";
 import { createDevServer } from "../../../src/server/dev-server.ts";
 import { TestDataFactory } from "../../fixtures/test-data-factory.ts";
 import { withTestContext } from "../../_helpers/context.ts";

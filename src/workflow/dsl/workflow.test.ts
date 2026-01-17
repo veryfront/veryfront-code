@@ -3,7 +3,7 @@
  */
 
 import { assertEquals, assertExists, assertThrows } from "@std/assert";
-import { describe, it } from "@std/testing/bdd.ts";
+import { describe, it } from "@std/testing/bdd";
 import { dag, dependsOn, sequence, workflow } from "./workflow.ts";
 import { step } from "./step.ts";
 

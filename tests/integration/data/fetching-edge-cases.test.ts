@@ -4,7 +4,7 @@
  */
 
 import { assertEquals, assertExists, assertRejects } from "@std/assert";
-import { describe } from "@std/testing/bdd.ts";
+import { describe } from "@std/testing/bdd";
 import { type DataContext, DataFetcher, type PageWithData } from "@veryfront/data/index.ts";
 
 type StaticDataContext = Omit<DataContext, "request" | "query">;

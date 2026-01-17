@@ -5,7 +5,7 @@
  */
 
 import { assertEquals, assertExists } from "@std/assert";
-import { afterAll, beforeEach, describe, it } from "@std/testing/bdd.ts";
+import { afterAll, beforeEach, describe, it } from "@std/testing/bdd";
 import { DataFetcher, type PageWithData } from "@veryfront/data";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 

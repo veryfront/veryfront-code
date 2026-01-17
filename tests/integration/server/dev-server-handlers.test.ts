@@ -11,7 +11,7 @@
 
 import { assert, assertEquals, assertExists } from "@std/assert";
 import { delay as _delay } from "@std/async";
-import { afterAll, describe, it } from "@std/testing/bdd.ts";
+import { afterAll, describe, it } from "@std/testing/bdd";
 import { DevServer } from "../../../src/server/dev-server.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { drainEventLoop } from "../../_helpers/utils.ts";

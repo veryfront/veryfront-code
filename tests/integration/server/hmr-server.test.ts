@@ -14,7 +14,7 @@
 import { assert, assertEquals, assertExists } from "@std/assert";
 import { delay } from "@std/async";
 import { join } from "@std/path";
-import { afterAll, describe, it } from "@std/testing/bdd.ts";
+import { afterAll, describe, it } from "@std/testing/bdd";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import { HMRServer, type HMRServerOptions } from "../../../src/server/dev-server/hmr-server.ts";
 import { withTestContext } from "../../_helpers/context.ts";

@@ -3,7 +3,7 @@ import {
   assertEquals as _assertEquals,
   assertStringIncludes,
 } from "@std/assert";
-import { afterAll, describe, it } from "@std/testing/bdd.ts";
+import { afterAll, describe, it } from "@std/testing/bdd";
 import {
   generateAppModule,
   generateImportMap,

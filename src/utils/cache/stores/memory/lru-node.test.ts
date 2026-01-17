@@ -1,4 +1,4 @@
-import { describe, it } from "@std/testing/bdd.ts";
+import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { LRUNode } from "./lru-node.ts";
 import type { LRUEntry } from "./types.ts";

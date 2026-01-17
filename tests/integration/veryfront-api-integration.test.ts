@@ -3,7 +3,7 @@
  */
 
 import { assertEquals, assertExists } from "@std/assert";
-import { afterEach, describe, it } from "@std/testing/bdd.ts";
+import { afterEach, describe, it } from "@std/testing/bdd";
 import { bootstrap } from "@veryfront/server/bootstrap.ts";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import type { VeryfrontConfig } from "@veryfront/config";
