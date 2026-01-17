@@ -314,7 +314,7 @@ export default defineConfig({
 
 **ai/tools/search-posts.ts:**
 ```typescript
-import { tool } from 'veryfront/ai';
+import { tool } from 'veryfront/tool';
 import { z } from 'zod';
 
 const posts = [
@@ -341,7 +341,7 @@ export default tool({
 
 **ai/agents/blog-assistant.ts:**
 ```typescript
-import { agent } from 'veryfront/ai';
+import { agent } from 'veryfront/agent';
 
 export default agent({
   model: 'openai/gpt-4',
@@ -375,8 +375,8 @@ export async function POST(req: Request) {
 ```tsx
 'use client';
 
-import { Chat } from 'veryfront/ai/components';
-import { useChat } from 'veryfront/ai/react';
+import { Chat } from 'veryfront/react';
+import { useChat } from 'veryfront/agent/react';
 import { Head, Link } from 'veryfront';
 
 export default function ChatPage() {

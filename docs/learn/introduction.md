@@ -218,8 +218,8 @@ Customer support app combining traditional and agent features:
 ```typescript
 // Traditional page rendering
 // app/support/page.tsx
-import { Chat } from 'veryfront/ai/components';
-import { useChat } from 'veryfront/ai/react';
+import { Chat } from 'veryfront/react';
+import { useChat } from 'veryfront/agent/react';
 
 export default function SupportPage() {
   return (

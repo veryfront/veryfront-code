@@ -78,13 +78,13 @@ veryfront deploy
 Veryfront provides built-in support for AI agents:
 
 ```typescript
-// src/ai/agent/factory.ts
-import { createAgent } from "veryfront/ai";
+// src/agent/factory.ts
+import { agent } from "veryfront/agent";
 
-const agent = createAgent({
+const myAgent = agent({
   model: "claude-3-opus",
-  tools: [/* MCP tools */],
-  memory: true,
+  tools: { /* discovered tools */ },
+  memory: { type: "conversation", maxTokens: 4000 },
 });
 ```
 
@@ -94,12 +94,13 @@ Model Context Protocol (MCP) tools are first-class citizens:
 
 ```typescript
 // Define MCP tools for your agent
-import { defineTool } from "veryfront/ai";
+import { tool } from "veryfront/tool";
+import { z } from "zod";
 
-const searchTool = defineTool({
-  name: "search",
+const searchTool = tool({
+  id: "search",
   description: "Search the web",
-  parameters: z.object({
+  inputSchema: z.object({
     query: z.string(),
   }),
   execute: async ({ query }) => {
@@ -113,8 +114,8 @@ const searchTool = defineTool({
 Build complex AI workflows:
 
 ```typescript
-// src/ai/workflow/dsl/workflow.ts
-import { workflow, step, parallel, branch } from "veryfront/ai/workflow";
+// src/workflow/dsl/workflow.ts
+import { workflow, step, parallel, branch } from "veryfront/workflow";
 
 const myWorkflow = workflow("process-document")
   .step("extract", extractStep)
