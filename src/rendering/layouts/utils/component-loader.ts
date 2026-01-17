@@ -68,7 +68,8 @@ export async function loadTSXComponent(
 ): Promise<BundledReact.ComponentType> {
   const source = await adapter.fs.readFile(componentPath);
   const hash = await getContentHash(source);
-  const cacheKey = buildLayoutComponentCacheKey(componentPath, hash);
+  const effectiveProjectId = projectId ?? projectDir;
+  const cacheKey = buildLayoutComponentCacheKey(effectiveProjectId, componentPath, hash);
   let component = cache.get(cacheKey);
 
   if (!component) {

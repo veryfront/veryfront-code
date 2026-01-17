@@ -418,10 +418,14 @@ export function buildComponentCacheKey(
 
 /**
  * Build a layout component cache key.
- * Format: layout:{componentPath}:{hash}
+ * Format: layout:{projectId}:{componentPath}:{hash}
  */
-export function buildLayoutComponentCacheKey(componentPath: string, hash: string): string {
-  return `${CacheKeyPrefix.LAYOUT}:${componentPath}:${hash}`;
+export function buildLayoutComponentCacheKey(
+  projectId: string,
+  componentPath: string,
+  hash: string,
+): string {
+  return `${CacheKeyPrefix.LAYOUT}:${projectId}:${componentPath}:${hash}`;
 }
 
 // ============================================================================
@@ -516,14 +520,30 @@ export function buildProxyManagerCacheKey(
 // CACHE KEY UTILITIES
 // ============================================================================
 
-/**
- * Check if a cache key matches a specific project.
- */
-export function isKeyForProject(key: string, projectId: string): boolean {
-  const parts = key.split(":");
-  // Check various formats where projectId is at different positions
-  return parts.includes(projectId);
-}
+// Import and re-export registry functions for convenience
+import {
+  cacheRegistry as _cacheRegistry,
+  type CacheStore,
+  extractProjectIdFromKey,
+  isKeyForProject,
+  LRUCacheStore,
+  MapCacheStore,
+  registerLRUCache,
+  registerMapCache,
+} from "./registry.ts";
+
+export {
+  type CacheStore,
+  extractProjectIdFromKey,
+  isKeyForProject,
+  LRUCacheStore,
+  MapCacheStore,
+  registerLRUCache,
+  registerMapCache,
+};
+
+// Re-export cacheRegistry so it's available in this module's scope
+export const cacheRegistry = _cacheRegistry;
 
 /**
  * Create a filter function for cache key clearing.
@@ -541,8 +561,13 @@ export function createCacheKeyFilter(options: {
     // Check prefix
     if (options.prefix && !key.startsWith(options.prefix)) return false;
 
-    // Check projectId (can be at various positions)
-    if (options.projectId && !parts.includes(options.projectId)) return false;
+    // Check projectId - primarily at position 1, but also check position 2 for file keys
+    if (options.projectId) {
+      const hasProjectId = parts[1] === options.projectId ||
+        (parts.length > 2 && parts[2] === options.projectId) ||
+        parts.includes(options.projectId);
+      if (!hasProjectId) return false;
+    }
 
     // Check environment
     if (options.environment && !parts.includes(options.environment)) return false;
@@ -560,4 +585,64 @@ export function createCacheKeyFilter(options: {
  */
 export function getCacheKeyVersion(): string {
   return VERSION;
+}
+
+/**
+ * Get all cache keys for a project across all registered memory stores.
+ *
+ * @param projectId - The project ID to filter by
+ * @returns Map of store name to matching keys
+ *
+ * @example
+ * const keys = getAllKeysForProject("proj_123");
+ * // → Map {
+ * //     "layout-cache" => ["layout:proj_123:path:hash", ...],
+ * //     "component-cache" => ["component:proj_123:file:hash", ...],
+ * //   }
+ */
+export function getAllKeysForProject(projectId: string): Map<string, string[]> {
+  return cacheRegistry.getKeysForProject(projectId);
+}
+
+/**
+ * Get all cache keys for a project from both memory and Redis.
+ * Use this for ephemeral pods where in-memory caches may be incomplete.
+ *
+ * @param projectId - The project ID to filter by
+ * @param includeRedis - Whether to scan Redis (default true)
+ * @returns Object with memory and redis key maps
+ *
+ * @example
+ * const { memory, redis } = await getAllKeysForProjectAsync("proj_123");
+ * // memory: Map { "ssr-module-cache" => ["v1:proj_123:path", ...] }
+ * // redis: Map { "veryfront:ssr-module" => ["veryfront:ssr-module:v1:proj_123:...", ...] }
+ */
+export async function getAllKeysForProjectAsync(
+  projectId: string,
+  includeRedis = true,
+): Promise<{ memory: Map<string, string[]>; redis: Map<string, string[]> }> {
+  return await cacheRegistry.getAllKeysForProjectAsync(projectId, includeRedis);
+}
+
+/**
+ * Delete all cache keys for a project from memory stores.
+ *
+ * @param projectId - The project ID to delete keys for
+ * @returns Total number of keys deleted
+ */
+export function deleteAllKeysForProject(projectId: string): number {
+  return cacheRegistry.deleteKeysForProject(projectId);
+}
+
+/**
+ * Delete all cache keys for a project from both memory and Redis.
+ * Use this for ephemeral pods to ensure complete cleanup.
+ *
+ * @param projectId - The project ID to delete keys for
+ * @returns Object with counts of deleted keys
+ */
+export async function deleteAllKeysForProjectAsync(
+  projectId: string,
+): Promise<{ memoryDeleted: number; redisDeleted: number }> {
+  return await cacheRegistry.deleteAllKeysForProjectAsync(projectId);
 }

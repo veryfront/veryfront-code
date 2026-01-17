@@ -15,7 +15,11 @@ import {
 } from "@veryfront/utils/redis-client.ts";
 import { unrefTimer } from "@veryfront/platform/compat/process.ts";
 import { getDisableLruIntervalEnv } from "@veryfront/core/config/env.ts";
-import { buildRedisTransformKey, buildTransformCacheKey } from "../../../core/cache/keys.ts";
+import {
+  buildRedisTransformKey,
+  buildTransformCacheKey,
+  registerMapCache,
+} from "../../../core/cache/keys.ts";
 
 const DEFAULT_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const DEFAULT_TTL_SECONDS = 300; // 5 minutes for Redis
@@ -45,6 +49,9 @@ registerCache("transform-cache", () => ({
   maxEntries: MAX_ENTRIES,
   redisEnabled,
 }));
+
+// Register with cache registry for project-based lookups
+registerMapCache("transform-cache", memoryCache);
 
 // Periodic cleanup of expired entries to prevent memory bloat
 let cleanupInterval: ReturnType<typeof setInterval> | undefined;
