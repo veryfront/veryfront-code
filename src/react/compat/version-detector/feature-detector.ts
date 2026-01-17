@@ -1,4 +1,5 @@
 import { rendererLogger as logger } from "@veryfront/utils";
+import { readTextFile } from "@veryfront/platform/compat/fs.ts";
 import * as React from "react";
 import type { ReactFeatures, ReactVersionInfo } from "./types.ts";
 import { isReact17, isReact18, isReact19, parseVersion } from "./version-parser.ts";
@@ -63,7 +64,7 @@ export async function detectReactVersionFromProject(projectDir: string): Promise
 
   try {
     const packageJsonPath = `${projectDir}/package.json`;
-    const packageJson = JSON.parse(await Deno.readTextFile(packageJsonPath));
+    const packageJson = JSON.parse(await readTextFile(packageJsonPath));
     const reactDep = packageJson.dependencies?.react ||
       packageJson.devDependencies?.react ||
       packageJson.peerDependencies?.react;

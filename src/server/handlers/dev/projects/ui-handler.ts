@@ -1,4 +1,5 @@
 import * as esbuild from "esbuild";
+import { readTextFile } from "@veryfront/platform/compat/fs.ts";
 
 const moduleCache = new Map<string, { code: string; timestamp: number }>();
 const CACHE_TTL = 5000;
@@ -56,11 +57,11 @@ export async function handleProjectsUI(req: Request): Promise<Response | null> {
   let source: string | null = null;
 
   try {
-    source = await Deno.readTextFile(filePath);
+    source = await readTextFile(filePath);
   } catch {
     filePath = `${uiDir}/${relativePath}.ts`;
     try {
-      source = await Deno.readTextFile(filePath);
+      source = await readTextFile(filePath);
     } catch {
       return new Response(`Module not found: ${relativePath}`, {
         status: 404,

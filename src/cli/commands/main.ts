@@ -2,6 +2,8 @@
  * Main Menu - Interactive CLI launcher
  */
 
+import { writeStdout } from "@veryfront/platform/compat/process.ts";
+import { getStdinReader, setRawMode } from "@veryfront/platform/compat/stdin.ts";
 import { isTTY } from "../utils/index.ts";
 import { bold, brand, muted } from "../ui/colors.ts";
 
@@ -17,7 +19,7 @@ const COL_1 = `${ESC}[1G`;
 const moveUp = (n = 1) => `${ESC}[${n}A`;
 
 function write(s: string): void {
-  Deno.stdout.writeSync(new TextEncoder().encode(s));
+  writeStdout(s);
 }
 
 function clearLines(n: number): void {
@@ -128,8 +130,8 @@ export async function promptProjectName(): Promise<string | null> {
   write(HIDE_CURSOR);
   draw();
 
-  Deno.stdin.setRaw(true);
-  const reader = Deno.stdin.readable.getReader();
+  setRawMode(true);
+  const reader = getStdinReader();
   const dec = new TextDecoder();
 
   let result: string | null = null;
@@ -169,7 +171,7 @@ export async function promptProjectName(): Promise<string | null> {
     }
   } finally {
     reader.releaseLock();
-    Deno.stdin.setRaw(false);
+    setRawMode(false);
   }
 
   write(SHOW_CURSOR);
@@ -221,8 +223,8 @@ export async function showMainMenu(): Promise<MenuAction | null> {
   write(HIDE_CURSOR);
   draw();
 
-  Deno.stdin.setRaw(true);
-  const reader = Deno.stdin.readable.getReader();
+  setRawMode(true);
+  const reader = getStdinReader();
   const dec = new TextDecoder();
 
   let result: MenuAction | null = null;
@@ -260,7 +262,7 @@ export async function showMainMenu(): Promise<MenuAction | null> {
     }
   } finally {
     reader.releaseLock();
-    Deno.stdin.setRaw(false);
+    setRawMode(false);
   }
 
   write(SHOW_CURSOR);

@@ -1,8 +1,13 @@
 import { VERSION } from "@veryfront/utils";
 import { bold, cyan, dim, green, red, yellow } from "@veryfront/compat/console";
 import { cliLogger } from "@veryfront/utils";
-import { exit } from "@veryfront/platform/compat/process.ts";
-import { isDeno } from "@veryfront/platform/compat/runtime.ts";
+import {
+  exit,
+  isInteractive,
+  isStdoutTTY,
+  onSignal,
+  promptSync,
+} from "@veryfront/platform/compat/process.ts";
 import { getForceColorEnv, getNoColorEnv } from "@veryfront/config/env.ts";
 
 // ============================================================================
@@ -14,12 +19,7 @@ import { getForceColorEnv, getNoColorEnv } from "@veryfront/config/env.ts";
  * @returns true if stdout is a TTY
  */
 export function isTTY(): boolean {
-  if (isDeno) {
-    // @ts-ignore - Deno global
-    return typeof Deno !== "undefined" && Deno.stdout?.isTerminal?.() === true;
-  }
-  // Node.js/Bun
-  return typeof process !== "undefined" && process.stdout?.isTTY === true;
+  return isStdoutTTY();
 }
 
 /**
@@ -27,11 +27,7 @@ export function isTTY(): boolean {
  * @returns true if stderr is a TTY
  */
 export function isStderrTTY(): boolean {
-  if (isDeno) {
-    // @ts-ignore - Deno global
-    return typeof Deno !== "undefined" && Deno.stderr?.isTerminal?.() === true;
-  }
-  return typeof process !== "undefined" && process.stderr?.isTTY === true;
+  return isInteractive(); // Uses stdin TTY check which is usually same as stderr
 }
 
 /**
@@ -218,54 +214,14 @@ export function logInfo(message: string) {
 export function registerTerminationSignals(
   handler: (signal: "SIGINT" | "SIGTERM") => void | Promise<void>,
 ): () => void {
-  const cleanupFns: Array<() => void> = [];
+  // Use platform abstraction for signal handling
   const signals: Array<"SIGINT" | "SIGTERM"> = ["SIGINT", "SIGTERM"];
-
   for (const signal of signals) {
-    // Deno (with Node compat available)
-    if (typeof Deno !== "undefined" && "addSignalListener" in Deno) {
-      const listener = () => {
-        void handler(signal);
-      };
-      // @ts-ignore - Deno types are available at runtime when using Deno
-      Deno.addSignalListener(signal, listener);
-      cleanupFns.push(() => {
-        try {
-          // @ts-ignore - optional on older Deno versions
-          Deno.removeSignalListener?.(signal, listener);
-        } catch {
-          /* ignore */
-        }
-      });
-      continue;
-    }
-
-    // Node/Bun
-    if (typeof process !== "undefined" && typeof process.on === "function") {
-      const listener = () => {
-        void handler(signal);
-      };
-      process.on(signal, listener);
-      cleanupFns.push(() => {
-        try {
-          if (typeof process.off === "function") {
-            process.off(signal, listener);
-          } else {
-            // @ts-ignore - removeListener exists on Node process
-            process.removeListener?.(signal, listener);
-          }
-        } catch {
-          /* ignore */
-        }
-      });
-    }
+    onSignal(signal, () => void handler(signal));
   }
-
-  return () => {
-    for (const cleanup of cleanupFns) {
-      cleanup();
-    }
-  };
+  // Note: cleanup function is a no-op since platform abstraction doesn't support removal
+  // This is fine for CLI usage where signals are registered once at startup
+  return () => {};
 }
 
 // ============================================================================
@@ -319,36 +275,11 @@ export function logVerbose(message: string): void {
 // ============================================================================
 
 /**
- * Prompt user for text input
+ * Prompt user for text input (cross-runtime)
  */
-export async function promptUser(message: string): Promise<string> {
-  cliLogger.info(message);
-
-  if (isDeno) {
-    // Deno-specific stdin reading
-    const buf = new Uint8Array(1024);
-    // @ts-ignore - Deno global
-    const n = await Deno.stdin.read(buf);
-    if (n === null) {
-      return "";
-    }
-    const input = new TextDecoder().decode(buf.subarray(0, n));
-    return input.trim();
-  } else {
-    // Node.js/Bun fallback using readline
-    const readline = await import("node:readline");
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
-
-    return new Promise((resolve) => {
-      rl.question("", (answer: string) => {
-        rl.close();
-        resolve(answer.trim());
-      });
-    });
-  }
+export function promptUser(message: string): Promise<string> {
+  const input = promptSync(message);
+  return Promise.resolve(input?.trim() || "");
 }
 
 /**

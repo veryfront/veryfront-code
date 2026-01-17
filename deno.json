@@ -88,7 +88,7 @@
     "@veryfront/data": "./src/data/index.ts",
     "@veryfront/errors": "./src/errors/index.ts",
     "@veryfront/html": "./src/html/index.ts",
-    "@veryfront/http": "./src/http/index.ts",
+    "@veryfront/http/responses": "./src/platform/compat/http/responses.ts",
     "@veryfront/mcp": "./src/mcp/index.ts",
     "@veryfront/middleware": "./src/middleware/index.ts",
     "@veryfront/modules": "./src/modules/index.ts",

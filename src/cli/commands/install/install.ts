@@ -3,7 +3,9 @@
  */
 
 import { dirname, join } from "@veryfront/platform/compat/path/index.ts";
-import { cwd as getCwd } from "@veryfront/platform/compat/process.ts";
+import { cwd as getCwd, getEnv, writeStdout } from "@veryfront/platform/compat/process.ts";
+import { exists, mkdir, writeTextFile } from "@veryfront/platform/compat/fs.ts";
+import { getStdinReader, setRawMode } from "@veryfront/platform/compat/stdin.ts";
 import { z } from "zod";
 import { bold, brand, dim, muted, success, warning } from "../../ui/colors.ts";
 import { isTTY } from "../../utils/index.ts";
@@ -25,7 +27,7 @@ const COL_1 = `${ESC}[1G`;
 const moveUp = (n = 1) => `${ESC}[${n}A`;
 
 function write(s: string): void {
-  Deno.stdout.writeSync(new TextEncoder().encode(s));
+  writeStdout(s);
 }
 
 function clearLines(n: number): void {
@@ -82,8 +84,8 @@ async function multiSelect(
   write(HIDE_CURSOR);
   draw();
 
-  Deno.stdin.setRaw(true);
-  const reader = Deno.stdin.readable.getReader();
+  setRawMode(true);
+  const reader = getStdinReader();
   const dec = new TextDecoder();
   let result: AIToolId[] | null = null;
 
@@ -125,7 +127,7 @@ async function multiSelect(
     }
   } finally {
     reader.releaseLock();
-    Deno.stdin.setRaw(false);
+    setRawMode(false);
   }
 
   write(SHOW_CURSOR);
@@ -149,7 +151,7 @@ export async function installTargets(
   z.array(AIToolIdSchema).min(1).parse(targets);
 
   const cwd = options.cwd ?? getCwd();
-  const homeDir = Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE")!;
+  const homeDir = getEnv("HOME") ?? getEnv("USERPROFILE")!;
 
   console.log();
   console.log("  " + bold("Installing AI integrations..."));
@@ -160,15 +162,15 @@ export async function installTargets(
     const content = await getTemplateContent(toolId);
     const dest = options.global ? join(homeDir, tool.file) : join(cwd, tool.file);
 
-    await Deno.mkdir(dirname(dest), { recursive: true });
+    await mkdir(dirname(dest), { recursive: true });
 
-    const fileExists = await Deno.stat(dest).then(() => true).catch(() => false);
+    const fileExists = await exists(dest);
     if (!options.force && fileExists) {
       console.log(`  ${warning("!")} ${tool.file} ${muted("exists (use --force to overwrite)")}`);
       continue;
     }
 
-    await Deno.writeTextFile(dest, content);
+    await writeTextFile(dest, content);
     console.log(`  ${success("✓")} ${tool.file}`);
   }
 

@@ -289,3 +289,90 @@ export function createFileSystem(): FileSystem {
   // Node.js or Bun falls through to NodeFileSystem
   return isDeno ? new DenoFileSystem() : new NodeFileSystem();
 }
+
+// Singleton filesystem instance for convenience functions
+let _fs: FileSystem | null = null;
+function getFs(): FileSystem {
+  if (!_fs) {
+    _fs = createFileSystem();
+  }
+  return _fs;
+}
+
+// ============================================================================
+// Convenience Functions
+// These provide a simpler API for common filesystem operations without
+// needing to create a FileSystem instance.
+// ============================================================================
+
+/**
+ * Read a text file and return its contents as a string
+ */
+export function readTextFile(path: string): Promise<string> {
+  return getFs().readTextFile(path);
+}
+
+/**
+ * Read a file and return its contents as a Uint8Array
+ */
+export function readFile(path: string): Promise<Uint8Array> {
+  return getFs().readFile(path);
+}
+
+/**
+ * Write text content to a file
+ */
+export function writeTextFile(path: string, data: string): Promise<void> {
+  return getFs().writeTextFile(path, data);
+}
+
+/**
+ * Write binary content to a file
+ */
+export function writeFile(path: string, data: Uint8Array): Promise<void> {
+  return getFs().writeFile(path, data);
+}
+
+/**
+ * Check if a file or directory exists
+ */
+export function exists(path: string): Promise<boolean> {
+  return getFs().exists(path);
+}
+
+/**
+ * Get file/directory information
+ */
+export function stat(path: string): Promise<FileInfo> {
+  return getFs().stat(path);
+}
+
+/**
+ * Create a directory
+ */
+export function mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
+  return getFs().mkdir(path, options);
+}
+
+/**
+ * Remove a file or directory
+ */
+export function remove(path: string, options?: { recursive?: boolean }): Promise<void> {
+  return getFs().remove(path, options);
+}
+
+/**
+ * Read directory entries
+ */
+export function readDir(
+  path: string,
+): AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }> {
+  return getFs().readDir(path);
+}
+
+/**
+ * Create a temporary directory
+ */
+export function makeTempDir(options?: { prefix?: string }): Promise<string> {
+  return getFs().makeTempDir(options);
+}

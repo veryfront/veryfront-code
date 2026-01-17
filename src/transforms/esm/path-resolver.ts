@@ -1,5 +1,6 @@
 import { replaceSpecifiers } from "./lexer.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
+import { stat } from "@veryfront/platform/compat/fs.ts";
 
 export interface BlockExternalUrlResult {
   code: string;
@@ -298,8 +299,8 @@ async function findFileWithExtension(basePath: string): Promise<string> {
   for (const ext of extensions) {
     const fullPath = basePath + ext;
     try {
-      const stat = await Deno.stat(fullPath);
-      if (stat.isFile) {
+      const fileStat = await stat(fullPath);
+      if (fileStat.isFile) {
         return fullPath;
       }
     } catch {

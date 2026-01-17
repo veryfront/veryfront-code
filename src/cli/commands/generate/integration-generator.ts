@@ -9,7 +9,10 @@ import { join } from "@std/path";
 import { cyan, dim, green } from "@veryfront/compat/console";
 import { cliLogger } from "@veryfront/utils";
 import { createFileSystem, type FileSystem } from "@veryfront/platform/compat/fs.ts";
-import { isInteractive as checkIsInteractive } from "@veryfront/platform/compat/process.ts";
+import {
+  isInteractive as checkIsInteractive,
+  promptSync,
+} from "@veryfront/platform/compat/process.ts";
 import { isCiEnv, isDenoTestingEnv } from "@veryfront/config/env.ts";
 import { select } from "../../utils/terminal-select.ts";
 
@@ -54,33 +57,13 @@ function canRunPrompts(): boolean {
 }
 
 /**
- * Prompt for text input
+ * Prompt for text input (cross-runtime)
  */
-async function promptText(question: string, defaultValue?: string): Promise<string> {
+function promptText(question: string, defaultValue?: string): Promise<string> {
   const defaultHint = defaultValue ? dim(` (${defaultValue})`) : "";
-  console.log(`${cyan("?")} ${question}${defaultHint}`);
-
-  const buf = new Uint8Array(1024);
-
-  if (typeof Deno !== "undefined") {
-    // @ts-ignore: Deno global
-    const n = await Deno.stdin.read(buf);
-    const input = new TextDecoder().decode(buf.subarray(0, n || 0)).trim();
-    return input || defaultValue || "";
-  } else {
-    // Node.js - synchronous readline
-    return new Promise((resolve) => {
-      const readline = require("readline");
-      const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
-      });
-      rl.question("  > ", (answer: string) => {
-        rl.close();
-        resolve(answer.trim() || defaultValue || "");
-      });
-    });
-  }
+  const fullQuestion = `${cyan("?")} ${question}${defaultHint}`;
+  const input = promptSync(fullQuestion);
+  return Promise.resolve(input?.trim() || defaultValue || "");
 }
 
 /**

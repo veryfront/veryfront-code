@@ -3,21 +3,12 @@
  */
 
 import { join } from "@veryfront/platform/compat/path/index.ts";
-import { cwd as getCwd } from "@veryfront/platform/compat/process.ts";
+import { cwd as getCwd, getEnv } from "@veryfront/platform/compat/process.ts";
+import { exists } from "@veryfront/platform/compat/fs.ts";
 import { type AIToolId, type DetectOptions, DetectOptionsSchema } from "./types.ts";
 
-async function exists(path: string): Promise<boolean> {
-  try {
-    await Deno.stat(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 const DETECTION_RULES: Record<AIToolId, (cwd: string) => Promise<boolean>> = {
-  cursor: async (cwd) =>
-    await exists(join(cwd, ".cursor")) || Boolean(Deno.env.get("CURSOR_SESSION")),
+  cursor: async (cwd) => await exists(join(cwd, ".cursor")) || Boolean(getEnv("CURSOR_SESSION")),
   "claude-code": async (cwd) => await exists(join(cwd, ".claude")),
   skill: () => Promise.resolve(true), // Always suggest - universal format
   copilot: async (cwd) => await exists(join(cwd, ".github")),
