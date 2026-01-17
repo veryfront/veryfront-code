@@ -197,7 +197,7 @@ async function loadConfigFromVirtualFS(
   projectDir: string,
   adapter: RuntimeAdapter,
 ): Promise<VeryfrontConfig | null> {
-  return withSpan(
+  return await withSpan(
     SpanNames.CONFIG_LOAD_PROJECT,
     async () => {
       const fs = createFileSystem();
@@ -302,7 +302,7 @@ export async function getConfig(
   projectDir: string,
   adapter: RuntimeAdapter,
 ): Promise<VeryfrontConfig> {
-  return withSpan(
+  return await withSpan(
     SpanNames.CONFIG_LOAD,
     async () => {
       const cached = configCacheByProject.get(projectDir);

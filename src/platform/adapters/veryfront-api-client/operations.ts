@@ -208,7 +208,7 @@ export class VeryfrontAPIOperations {
     branchName: string,
     pathOrId: string,
   ): Promise<FileDetail> {
-    return withSpan(
+    return await withSpan(
       SpanNames.API_GET_FILE,
       async () => {
         const url = `/projects/${encodeURIComponent(projectRef)}/branches/${
@@ -318,7 +318,7 @@ export class VeryfrontAPIOperations {
     environmentName: string,
     pathOrId: string,
   ): Promise<FileDetail> {
-    return withSpan(
+    return await withSpan(
       SpanNames.API_GET_FILE,
       async () => {
         const url = `/projects/${encodeURIComponent(projectRef)}/environments/${
@@ -417,7 +417,7 @@ export class VeryfrontAPIOperations {
     version: string,
     pathOrId: string,
   ): Promise<FileDetail> {
-    return withSpan(
+    return await withSpan(
       SpanNames.API_GET_FILE,
       async () => {
         const url = `/projects/${encodeURIComponent(projectRef)}/releases/${
@@ -455,7 +455,7 @@ export class VeryfrontAPIOperations {
    * Returns project details and environment info for routing.
    */
   async lookupProjectByDomain(domain: string): Promise<LookupDomainResponse | null> {
-    return withSpan(
+    return await withSpan(
       SpanNames.API_DOMAIN_LOOKUP,
       async () => {
         const url = `/lookup/domain/${encodeURIComponent(domain)}`;
@@ -489,7 +489,7 @@ export class VeryfrontAPIOperations {
   // =============================================================================
 
   private async request(endpoint: string): Promise<unknown> {
-    return withSpan(
+    return await withSpan(
       SpanNames.API_REQUEST,
       async () => {
         const url = `${this.apiBaseUrl}${endpoint}`;

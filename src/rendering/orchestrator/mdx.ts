@@ -29,7 +29,7 @@ export class MDXCompiler {
       nodeMap?: Map<number, unknown>;
     }
   > {
-    return withSpan(
+    return await withSpan(
       SpanNames.MDX_COMPILE,
       async () => {
         const cachedBundle = await withSpan(
