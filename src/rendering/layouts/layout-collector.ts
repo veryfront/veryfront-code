@@ -10,6 +10,8 @@ import { getLayoutEntity } from "@veryfront/types/entities/getEntityInfo.ts";
 import { discoverNestedLayouts } from "./utils/discovery.ts";
 import { detectAppRouter } from "../router-detection.ts";
 import { LAYOUT_EXTENSIONS } from "./types.ts";
+import { withSpan } from "@veryfront/observability/tracing/otlp-setup.ts";
+import { SpanNames } from "@veryfront/observability/tracing/span-names.ts";
 
 /**
  * Determine layout kind based on file extension.
@@ -60,46 +62,76 @@ export class LayoutCollector {
   }
 
   async collectLayouts(pageInfo: EntityInfo): Promise<LayoutCollectionResult> {
-    logger.debug("[LayoutCollector] collectLayouts called", {
-      pagePath: pageInfo.entity.path,
-      projectDir: this.projectDir,
-      hasConfig: !!this.config,
-      defaultLayout: this.config?.defaultLayout,
-    });
+    return withSpan(
+      SpanNames.LAYOUT_COLLECT,
+      async () => {
+        logger.debug("[LayoutCollector] collectLayouts called", {
+          pagePath: pageInfo.entity.path,
+          projectDir: this.projectDir,
+          hasConfig: !!this.config,
+          defaultLayout: this.config?.defaultLayout,
+        });
 
-    // Skip layout resolution for .veryfront paths - these are framework-level pages
-    // that should not use user-defined layouts
-    if (
-      pageInfo.entity.path.includes("/.veryfront/") || pageInfo.entity.path.includes(".veryfront/")
-    ) {
-      logger.debug("[LayoutCollector] Skipping layouts for .veryfront path", {
-        pagePath: pageInfo.entity.path,
-      });
-      return { layoutBundle: undefined, nestedLayouts: [] };
-    }
+        // Skip layout resolution for .veryfront paths - these are framework-level pages
+        // that should not use user-defined layouts
+        if (
+          pageInfo.entity.path.includes("/.veryfront/") ||
+          pageInfo.entity.path.includes(".veryfront/")
+        ) {
+          logger.debug("[LayoutCollector] Skipping layouts for .veryfront path", {
+            pagePath: pageInfo.entity.path,
+          });
+          return { layoutBundle: undefined, nestedLayouts: [] };
+        }
 
-    // Layout can be string, boolean (false to disable), or undefined
-    const layoutValue = pageInfo.entity.frontmatter.layout as string | boolean | undefined;
+        // Layout can be string, boolean (false to disable), or undefined
+        const layoutValue = pageInfo.entity.frontmatter.layout as string | boolean | undefined;
 
-    // Check if layout is explicitly disabled via `layout: false` or `layout: "false"`
-    const layoutDisabled = layoutValue === false || layoutValue === "false";
-    if (layoutDisabled) {
-      logger.debug("[LayoutCollector] Layout explicitly disabled via frontmatter", {
-        pagePath: pageInfo.entity.path,
-        layoutValue,
-      });
-      return { layoutBundle: undefined, nestedLayouts: [] };
-    }
+        // Check if layout is explicitly disabled via `layout: false` or `layout: "false"`
+        const layoutDisabled = layoutValue === false || layoutValue === "false";
+        if (layoutDisabled) {
+          logger.debug("[LayoutCollector] Layout explicitly disabled via frontmatter", {
+            pagePath: pageInfo.entity.path,
+            layoutValue,
+          });
+          return { layoutBundle: undefined, nestedLayouts: [] };
+        }
 
-    const hasExplicitFrontmatterLayout = typeof layoutValue === "string" && layoutValue.length > 0;
+        const hasExplicitFrontmatterLayout =
+          typeof layoutValue === "string" && layoutValue.length > 0;
 
-    // Collect the named layout (from frontmatter or config.defaultLayout)
-    const { layoutBundle, layoutPath, layoutName } = await timeAsync(
-      "layout-named",
-      () => this.collectNamedLayoutWithPath(pageInfo),
-      "collect-layouts",
+        // Collect the named layout (from frontmatter or config.defaultLayout)
+        const { layoutBundle, layoutPath, layoutName } = await withSpan(
+          SpanNames.LAYOUT_COLLECT_NAMED,
+          () => this.collectNamedLayoutWithPath(pageInfo),
+          {
+            "layout.page_path": pageInfo.entity.path,
+            "layout.default_layout": this.config?.defaultLayout || "none",
+          },
+        );
+
+        return this.processLayoutResult(
+          pageInfo,
+          hasExplicitFrontmatterLayout,
+          layoutBundle,
+          layoutPath,
+          layoutName,
+        );
+      },
+      {
+        "layout.page_path": pageInfo.entity.path,
+        "layout.project_dir": this.projectDir,
+      },
     );
+  }
 
+  private async processLayoutResult(
+    pageInfo: EntityInfo,
+    hasExplicitFrontmatterLayout: boolean,
+    layoutBundle: MdxBundle | undefined,
+    layoutPath: string | undefined,
+    layoutName: string | undefined,
+  ): Promise<LayoutCollectionResult> {
     let nestedLayouts: LayoutItem[];
 
     if (hasExplicitFrontmatterLayout && layoutPath) {
@@ -124,10 +156,10 @@ export class LayoutCollector {
       return { layoutBundle: undefined, nestedLayouts };
     } else {
       // No explicit frontmatter layout - use project-level nested layouts
-      nestedLayouts = await timeAsync(
-        "layout-nested",
+      nestedLayouts = await withSpan(
+        SpanNames.LAYOUT_COLLECT_NESTED,
         () => this.collectNestedLayouts(pageInfo),
-        "collect-layouts",
+        { "layout.page_path": pageInfo.entity.path },
       );
 
       // If we have a layoutBundle from config.defaultLayout, add it to nestedLayouts
@@ -198,7 +230,11 @@ export class LayoutCollector {
       return { layoutBundle: undefined, layoutPath: undefined, layoutName: undefined };
     }
 
-    const layoutInfo = await getLayoutEntity(this.projectDir, layoutName, this.adapter);
+    const layoutInfo = await withSpan(
+      SpanNames.LAYOUT_GET_ENTITY,
+      () => getLayoutEntity(this.projectDir, layoutName, this.adapter),
+      { "layout.name": layoutName, "layout.project_dir": this.projectDir },
+    );
     logger.debug("[LayoutCollector] Layout entity found:", { found: !!layoutInfo, layoutName });
 
     if (!layoutInfo) {

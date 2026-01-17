@@ -16,6 +16,8 @@ import {
   ProjectSchema,
   ReleaseFileDetailSchema,
 } from "./schemas.ts";
+import { withSpan } from "@veryfront/observability/tracing/otlp-setup.ts";
+import { SpanNames } from "@veryfront/observability/tracing/span-names.ts";
 
 /**
  * Token provider function - can return static token or dynamic per-request token.
@@ -206,21 +208,32 @@ export class VeryfrontAPIOperations {
     branchName: string,
     pathOrId: string,
   ): Promise<FileDetail> {
-    const url = `/projects/${encodeURIComponent(projectRef)}/branches/${
-      encodeURIComponent(branchName)
-    }/files/${encodeURIComponent(pathOrId)}`;
-    logger.debug("[API] getBranchFile", { projectRef, branchName, pathOrId });
+    return withSpan(
+      SpanNames.API_GET_FILE,
+      async () => {
+        const url = `/projects/${encodeURIComponent(projectRef)}/branches/${
+          encodeURIComponent(branchName)
+        }/files/${encodeURIComponent(pathOrId)}`;
+        logger.debug("[API] getBranchFile", { projectRef, branchName, pathOrId });
 
-    const raw = await this.request(url);
-    const response = BranchFileDetailSchema.parse(raw);
+        const raw = await this.request(url);
+        const response = BranchFileDetailSchema.parse(raw);
 
-    return {
-      path: response.path,
-      content: response.content,
-      id: response.id,
-      type: response.type,
-      size: response.size,
-    };
+        return {
+          path: response.path,
+          content: response.content,
+          id: response.id,
+          type: response.type,
+          size: response.size,
+        };
+      },
+      {
+        "api.operation": "getBranchFile",
+        "api.project": projectRef,
+        "api.branch": branchName,
+        "api.path": pathOrId,
+      },
+    );
   }
 
   // =============================================================================
@@ -305,22 +318,33 @@ export class VeryfrontAPIOperations {
     environmentName: string,
     pathOrId: string,
   ): Promise<FileDetail> {
-    const url = `/projects/${encodeURIComponent(projectRef)}/environments/${
-      encodeURIComponent(environmentName)
-    }/files/${encodeURIComponent(pathOrId)}`;
-    logger.debug("[API] getEnvironmentFile", { projectRef, environmentName, pathOrId });
+    return withSpan(
+      SpanNames.API_GET_FILE,
+      async () => {
+        const url = `/projects/${encodeURIComponent(projectRef)}/environments/${
+          encodeURIComponent(environmentName)
+        }/files/${encodeURIComponent(pathOrId)}`;
+        logger.debug("[API] getEnvironmentFile", { projectRef, environmentName, pathOrId });
 
-    const raw = await this.request(url);
-    const response = EnvironmentFileDetailSchema.parse(raw);
+        const raw = await this.request(url);
+        const response = EnvironmentFileDetailSchema.parse(raw);
 
-    return {
-      path: response.path,
-      content: response.content,
-      id: response.id,
-      version_id: response.version_id,
-      release_id: response.release_id,
-      release_version: response.release_version,
-    };
+        return {
+          path: response.path,
+          content: response.content,
+          id: response.id,
+          version_id: response.version_id,
+          release_id: response.release_id,
+          release_version: response.release_version,
+        };
+      },
+      {
+        "api.operation": "getEnvironmentFile",
+        "api.project": projectRef,
+        "api.environment": environmentName,
+        "api.path": pathOrId,
+      },
+    );
   }
 
   // =============================================================================
@@ -393,22 +417,33 @@ export class VeryfrontAPIOperations {
     version: string,
     pathOrId: string,
   ): Promise<FileDetail> {
-    const url = `/projects/${encodeURIComponent(projectRef)}/releases/${
-      encodeURIComponent(version)
-    }/files/${encodeURIComponent(pathOrId)}`;
-    logger.debug("[API] getReleaseFile", { projectRef, version, pathOrId });
+    return withSpan(
+      SpanNames.API_GET_FILE,
+      async () => {
+        const url = `/projects/${encodeURIComponent(projectRef)}/releases/${
+          encodeURIComponent(version)
+        }/files/${encodeURIComponent(pathOrId)}`;
+        logger.debug("[API] getReleaseFile", { projectRef, version, pathOrId });
 
-    const raw = await this.request(url);
-    const response = ReleaseFileDetailSchema.parse(raw);
+        const raw = await this.request(url);
+        const response = ReleaseFileDetailSchema.parse(raw);
 
-    return {
-      path: response.path,
-      content: response.content,
-      id: response.id,
-      version_id: response.version_id,
-      release_id: response.release_id,
-      release_version: response.release_version,
-    };
+        return {
+          path: response.path,
+          content: response.content,
+          id: response.id,
+          version_id: response.version_id,
+          release_id: response.release_id,
+          release_version: response.release_version,
+        };
+      },
+      {
+        "api.operation": "getReleaseFile",
+        "api.project": projectRef,
+        "api.version": version,
+        "api.path": pathOrId,
+      },
+    );
   }
 
   // =============================================================================
@@ -420,27 +455,33 @@ export class VeryfrontAPIOperations {
    * Returns project details and environment info for routing.
    */
   async lookupProjectByDomain(domain: string): Promise<LookupDomainResponse | null> {
-    const url = `/lookup/domain/${encodeURIComponent(domain)}`;
-    logger.debug("[API] lookupProjectByDomain", { domain });
+    return withSpan(
+      SpanNames.API_DOMAIN_LOOKUP,
+      async () => {
+        const url = `/lookup/domain/${encodeURIComponent(domain)}`;
+        logger.debug("[API] lookupProjectByDomain", { domain });
 
-    try {
-      const raw = await this.request(url);
-      const response = LookupDomainResponseSchema.parse(raw);
+        try {
+          const raw = await this.request(url);
+          const response = LookupDomainResponseSchema.parse(raw);
 
-      logger.debug("[API] Domain lookup result", {
-        domain,
-        projectSlug: response.project_slug,
-        environment: response.environment?.name,
-      });
+          logger.debug("[API] Domain lookup result", {
+            domain,
+            projectSlug: response.project_slug,
+            environment: response.environment?.name,
+          });
 
-      return response;
-    } catch (error) {
-      if (error instanceof Error && error.message.includes("404")) {
-        logger.debug("[API] No project found for domain", { domain });
-        return null;
-      }
-      throw error;
-    }
+          return response;
+        } catch (error) {
+          if (error instanceof Error && error.message.includes("404")) {
+            logger.debug("[API] No project found for domain", { domain });
+            return null;
+          }
+          throw error;
+        }
+      },
+      { "api.domain": domain },
+    );
   }
 
   // =============================================================================
@@ -448,8 +489,17 @@ export class VeryfrontAPIOperations {
   // =============================================================================
 
   private async request(endpoint: string): Promise<unknown> {
-    const url = `${this.apiBaseUrl}${endpoint}`;
-    const token = this.tokenProvider();
-    return await requestWithRetry(url, token, this.retryConfig);
+    return withSpan(
+      SpanNames.API_REQUEST,
+      async () => {
+        const url = `${this.apiBaseUrl}${endpoint}`;
+        const token = this.tokenProvider();
+        return await requestWithRetry(url, token, this.retryConfig);
+      },
+      {
+        "api.endpoint": endpoint,
+        "api.base_url": this.apiBaseUrl,
+      },
+    );
   }
 }
