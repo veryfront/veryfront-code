@@ -4,7 +4,7 @@ import { resourceRegistry } from "@veryfront/resource";
 import { promptRegistry } from "@veryfront/prompt";
 import { agentRegistry } from "@veryfront/agent";
 import { providerRegistry } from "@veryfront/provider";
-import { workflowRegistry, WorkflowClient } from "@veryfront/workflow";
+import { WorkflowClient, workflowRegistry } from "@veryfront/workflow";
 import { metrics } from "@veryfront/observability/simple-metrics/index.ts";
 import {
   checkMemoryPressure,

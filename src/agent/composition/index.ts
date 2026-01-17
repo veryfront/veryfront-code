@@ -1,7 +1,7 @@
 export {
   agentAsTool,
-  AgentRegistryClass,
   agentRegistry,
+  AgentRegistryClass,
   createWorkflow,
   getAgent,
   getAgentsAsTools,
