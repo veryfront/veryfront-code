@@ -9,6 +9,7 @@ import {
   invalidateModulePaths,
 } from "../../../../build/transforms/mdx/esm-module-loader/cache/index.ts";
 import { clearSnippetCache } from "../../../../rendering/snippet-renderer.ts";
+import { buildProxyManagerCacheKey } from "../../../../core/cache/keys.ts";
 
 interface ProjectAdapter {
   adapter: VeryfrontFSAdapter;
@@ -23,23 +24,7 @@ interface ProxyFSAdapterManagerConfig {
   maxIdleMs?: number;
 }
 
-/**
- * Generate cache key for adapter lookup.
- * Includes productionMode, releaseId, and branch to prevent race conditions between
- * concurrent requests with different modes/releases/branches.
- */
-function buildCacheKey(
-  projectSlug: string,
-  productionMode: boolean,
-  releaseId: string | null,
-  branch: string | null,
-): string {
-  if (productionMode) {
-    return `${projectSlug}:production:${releaseId ?? "latest"}`;
-  }
-  // Include branch in preview cache key to support branch-specific previews
-  return `${projectSlug}:preview:${branch ?? "main"}`;
-}
+// Use centralized buildProxyManagerCacheKey from core/cache/keys.ts
 
 export class ProxyFSAdapterManager {
   private adapters = new Map<string, ProjectAdapter>();
@@ -82,7 +67,7 @@ export class ProxyFSAdapterManager {
     const effectiveBranch = branch ?? null;
 
     // Cache key includes productionMode, releaseId, and branch to prevent race conditions
-    const cacheKey = buildCacheKey(
+    const cacheKey = buildProxyManagerCacheKey(
       projectSlug,
       effectiveProductionMode,
       effectiveReleaseId,
@@ -288,7 +273,7 @@ export class ProxyFSAdapterManager {
     releaseId?: string | null,
     branch?: string | null,
   ): boolean {
-    const cacheKey = buildCacheKey(
+    const cacheKey = buildProxyManagerCacheKey(
       projectSlug,
       productionMode ?? false,
       releaseId ?? null,

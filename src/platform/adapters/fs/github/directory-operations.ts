@@ -2,6 +2,7 @@ import { logger } from "@veryfront/utils";
 import type { FileCache } from "../cache/file-cache.ts";
 import type { GitHubStatOperations } from "./stat-operations.ts";
 import type { DirectoryEntry, ResolvedGitHubConfig } from "./types.ts";
+import { buildGitHubDirCacheKey } from "../../../../core/cache/keys.ts";
 
 const LOG_PREFIX = "[GitHubDirectoryOperations]";
 
@@ -33,7 +34,7 @@ export class GitHubDirectoryOperations {
     const normalizedPath = this.normalizePath(path);
 
     // Check cache
-    const cacheKey = `github:dir:${this.config.ref}:${normalizedPath}`;
+    const cacheKey = buildGitHubDirCacheKey(this.config.ref, normalizedPath);
     const cached = this.cache.get<DirectoryEntry[]>(cacheKey);
     if (cached) {
       return cached;

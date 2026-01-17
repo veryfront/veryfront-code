@@ -12,7 +12,8 @@ import {
   isRedisConfigured,
   type RedisClient,
 } from "@veryfront/utils/redis-client.ts";
-import { REDIS_KEY_PREFIX, REDIS_TTL_SECONDS } from "../constants.ts";
+import { REDIS_TTL_SECONDS } from "../constants.ts";
+import { buildRedisSSRModuleKey } from "../../../../core/cache/keys.ts";
 
 // Redis state
 let redisEnabled = false;
@@ -22,9 +23,10 @@ let redisInitPromise: Promise<void> | null = null;
 
 /**
  * Generate a Redis key with the standard prefix.
+ * Re-exported for backward compatibility.
  */
 export function redisKey(key: string): string {
-  return `${REDIS_KEY_PREFIX}${key}`;
+  return buildRedisSSRModuleKey(key);
 }
 
 /**

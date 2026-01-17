@@ -12,6 +12,7 @@ import type { HandlerContext } from "../../types.ts";
 import type { ResponseBuilder } from "@veryfront/security/index.ts";
 import { join as joinPath } from "@veryfront/platform/compat/path/index.ts";
 import { serverLogger as logger } from "@veryfront/utils";
+import { buildErrorPageCacheKey } from "../../../../core/cache/keys.ts";
 
 type ErrorPageType = "404" | "500" | "_error";
 
@@ -112,7 +113,7 @@ async function tryLoadErrorPage(
   pageType: ErrorPageType,
   ctx: HandlerContext,
 ): Promise<React.ComponentType<unknown> | null> {
-  const cacheKey = `${ctx.projectId ?? ctx.projectDir}:${pageType}`;
+  const cacheKey = buildErrorPageCacheKey(ctx.projectId, ctx.projectDir, pageType);
 
   // Check if we've already resolved (or failed to resolve) this error page
   if (errorPagePathCache.has(cacheKey)) {

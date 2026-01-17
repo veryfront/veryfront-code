@@ -8,6 +8,7 @@ import {
   isRedisConfigured,
   type RedisClient,
 } from "../../../../core/utils/redis-client.ts";
+import { buildRedisFileCacheKey } from "../../../../core/cache/keys.ts";
 
 /** Default maximum memory for file cache (100 MB) */
 const DEFAULT_MAX_MEMORY_BYTES = 100 * 1024 * 1024;
@@ -18,7 +19,6 @@ const DEFAULT_CACHE_TTL_MS = 60_000;
 /** Default maximum number of cache entries */
 const DEFAULT_MAX_ENTRIES = 1000;
 
-const REDIS_KEY_PREFIX = "veryfront:file-cache:";
 const REDIS_TTL_SECONDS = 300; // 5 minutes
 
 // Shared Redis state across all FileCache instances
@@ -73,7 +73,7 @@ export function isFileCacheRedisEnabled(): boolean {
 }
 
 function redisKey(key: string): string {
-  return `${REDIS_KEY_PREFIX}${key}`;
+  return buildRedisFileCacheKey(key);
 }
 
 /**
