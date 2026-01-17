@@ -5,7 +5,7 @@
 
 import type { HandlerContext, HandlerResult } from "../../types.ts";
 import { ResponseBuilder } from "@veryfront/security/index.ts";
-import type { createRenderer } from "@veryfront/rendering/index.ts";
+import type { AnyRendererPromise } from "../../../shared/renderer/types.ts";
 
 /**
  * Handles virtual module requests using the renderer's VirtualModuleSystem.
@@ -13,7 +13,7 @@ import type { createRenderer } from "@veryfront/rendering/index.ts";
 export async function handleVirtualModule(
   req: Request,
   ctx: HandlerContext,
-  rendererInit: Promise<Awaited<ReturnType<typeof createRenderer>>>,
+  rendererInit: AnyRendererPromise,
   createResponseBuilder: (ctx: HandlerContext) => ResponseBuilder,
   respond: (response: Response) => HandlerResult,
   getErrorMessage: (error: unknown) => string,

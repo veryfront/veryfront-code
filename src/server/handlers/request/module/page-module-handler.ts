@@ -7,7 +7,7 @@ import type { HandlerContext, HandlerResult } from "../../types.ts";
 import { computeEtag, hasMatchingEtag } from "../../utils/etag.ts";
 import { ResponseBuilder } from "@veryfront/security/index.ts";
 import { getRenderer } from "../../../shared/renderer-factory.ts";
-import type { createRenderer } from "@veryfront/rendering/index.ts";
+import type { AnyRendererPromise } from "../../../shared/renderer/types.ts";
 
 /**
  * Handles page module generation requests.
@@ -17,7 +17,7 @@ export async function handlePageModule(
   req: Request,
   pathname: string,
   ctx: HandlerContext,
-  rendererInit: Promise<Awaited<ReturnType<typeof createRenderer>>> | null | undefined,
+  rendererInit: AnyRendererPromise | null | undefined,
   createResponseBuilder: (ctx: HandlerContext) => ResponseBuilder,
   respond: (response: Response) => HandlerResult,
   getErrorMessage: (error: unknown) => string,
