@@ -49,7 +49,7 @@ All directories are auto-discovered.
 ## Community
 
 - [Discord](https://discord.gg/veryfront)
-- [Twitter](https://twitter.com/veryfrontdev)
+- [X](https://x.com/veryfrontdev)
 - [GitHub Discussions](https://github.com/veryfront/veryfront/discussions)
 
 ## Contributing
