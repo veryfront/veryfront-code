@@ -20,8 +20,6 @@ Veryfront is a full-stack React framework for building AI apps and agents with z
 npx veryfront
 ```
 
-Add your API key to `.env` and run `deno task dev`.
-
 ## Project Structure
 
 ```
