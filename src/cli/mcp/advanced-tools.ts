@@ -474,7 +474,7 @@ export function ${componentName}({ children }: ${componentName}Props) {
 `;
 }
 
-function generateToolTemplate(name: string, toolName: string): string {
+function generateToolTemplate(name: string, _toolName: string): string {
   return `import { tool } from "veryfront/tool";
 import { z } from "zod";
 
