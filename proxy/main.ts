@@ -7,8 +7,8 @@
  * For combined mode (single process), use the renderer with --proxy flag instead.
  *
  * Environment Variables:
- * - OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET: Production OAuth credentials
- * - OAUTH_PREVIEW_CLIENT_ID, OAUTH_PREVIEW_CLIENT_SECRET: Preview OAuth credentials
+ * - API_CLIENT_ID_VERYFRONT_RENDERER_PROXY: OAuth client ID (from 1Password)
+ * - API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY: OAuth client secret (from 1Password)
  * - RENDERER_URL: URL of the renderer service
  * - LOCAL_PROJECTS: JSON map of slug → filesystem path (for dev)
  * - CACHE_TYPE: "memory" (default) or "redis"
@@ -33,10 +33,11 @@ import { parseProjectDomain } from "../src/server/utils/domain-parser.ts";
 const config: ProxyConfig = {
   apiBaseUrl: Deno.env.get("VERYFRONT_API_BASE_URL") ||
     "http://api.lvh.me:4000",
-  clientId: Deno.env.get("OAUTH_CLIENT_ID") || "",
-  clientSecret: Deno.env.get("OAUTH_CLIENT_SECRET") || "",
-  previewClientId: Deno.env.get("OAUTH_PREVIEW_CLIENT_ID") || "",
-  previewClientSecret: Deno.env.get("OAUTH_PREVIEW_CLIENT_SECRET") || "",
+  clientId: Deno.env.get("API_CLIENT_ID_VERYFRONT_RENDERER_PROXY") || "",
+  clientSecret: Deno.env.get("API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY") || "",
+  // Preview uses same service account (scopes determine access)
+  previewClientId: Deno.env.get("API_CLIENT_ID_VERYFRONT_RENDERER_PROXY") || "",
+  previewClientSecret: Deno.env.get("API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY") || "",
   localProjects: Deno.env.get("LOCAL_PROJECTS")
     ? JSON.parse(Deno.env.get("LOCAL_PROJECTS")!)
     : {},

@@ -49,8 +49,11 @@ proxy:
     OTEL_SERVICE_NAME: "veryfront-proxy"
     OTEL_EXPORTER_OTLP_ENDPOINT: "https://otlp-gateway-prod-eu-west-2.grafana.net/otlp"
 
-  # Secret must contain: OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET, OAUTH_PREVIEW_CLIENT_ID,
-  # OAUTH_PREVIEW_CLIENT_SECRET, REDIS_URL, OTEL_EXPORTER_OTLP_HEADERS
+  # Secret must contain:
+  # - API_CLIENT_ID_VERYFRONT_RENDERER_PROXY (from 1Password: VERYFRONT_CI / "Veryfront Renderer Proxy OAuth")
+  # - API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY
+  # - REDIS_URL
+  # - OTEL_EXPORTER_OTLP_HEADERS
   envFrom:
     - secretRef:
         name: veryfront-proxy-secret

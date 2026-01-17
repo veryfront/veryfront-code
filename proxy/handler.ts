@@ -126,10 +126,8 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
    */
   function validateConfig(): string[] {
     const missing: string[] = [];
-    if (!config.clientId) missing.push("OAUTH_CLIENT_ID");
-    if (!config.clientSecret) missing.push("OAUTH_CLIENT_SECRET");
-    if (!config.previewClientId) missing.push("OAUTH_PREVIEW_CLIENT_ID");
-    if (!config.previewClientSecret) missing.push("OAUTH_PREVIEW_CLIENT_SECRET");
+    if (!config.clientId) missing.push("API_CLIENT_ID_VERYFRONT_RENDERER_PROXY");
+    if (!config.clientSecret) missing.push("API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY");
     return missing;
   }
 
