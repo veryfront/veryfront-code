@@ -8,6 +8,7 @@
 
 import { LRUCache } from "@veryfront/utils/lru-wrapper.ts";
 import { registerCache } from "@veryfront/core/memory/index.ts";
+import { registerLRUCache, registerMapCache } from "@veryfront/core/cache/keys.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 import {
   MAX_CONCURRENT_TRANSFORMS,
@@ -82,6 +83,12 @@ registerCache("ssr-transform-semaphore", () => ({
   maxEntries: MAX_CONCURRENT_TRANSFORMS,
   waiting: transformSemaphore.waiting,
 }));
+
+// Register caches with cache registry for project-based lookups
+registerLRUCache("ssr-module-cache", globalModuleCache);
+registerLRUCache("ssr-cross-project-cache", globalCrossProjectCache);
+registerMapCache("ssr-in-progress", globalInProgress);
+registerMapCache("ssr-failed-components", failedComponents);
 
 /**
  * Clear the global SSR module cache.
