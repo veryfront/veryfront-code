@@ -31,6 +31,7 @@ import { parseProjectDomain } from "../utils/domain-parser.ts";
 import { getEnvironmentType, lookupProjectByDomain } from "../utils/domain-lookup.ts";
 import { getErrorMessage } from "@veryfront/errors/veryfront-error.ts";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
+import { cwd } from "@veryfront/platform/compat/process.ts";
 
 /** Check if host is a private/internal IP address */
 function isInternalHost(host: string): boolean {
@@ -257,7 +258,7 @@ export function createVeryfrontHandler(
           if (hasApp || hasPages || hasComponents) {
             const absolutePath = projectPath.startsWith("/")
               ? projectPath
-              : `${Deno.cwd()}/${projectPath}`;
+              : `${cwd()}/${projectPath}`;
             localProjectCache.set(slug, absolutePath);
             logger.debug("[universal] Discovered local project", { slug, path: absolutePath });
             return absolutePath;

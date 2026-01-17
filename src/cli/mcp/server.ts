@@ -6,6 +6,11 @@
  * and HTTP transport (for remote access).
  */
 
+import { readTextFile } from "@veryfront/platform/compat/fs.ts";
+import { createHttpServer, type HttpServer } from "@veryfront/platform/compat/http/index.ts";
+import { writeStdoutAsync } from "@veryfront/platform/compat/process.ts";
+import { getStdinReader } from "@veryfront/platform/compat/stdin.ts";
+import type { StdinReader } from "@veryfront/platform/compat/stdin.ts";
 import { allTools, getTool, setServerStartTime } from "./tools.ts";
 import { getErrorCollector } from "./error-collector.ts";
 import { getLogBuffer } from "./log-buffer.ts";
@@ -50,8 +55,8 @@ interface JSONRPCResponse {
 export class MCPDevServer {
   private config: MCPServerConfig;
   private running = false;
-  private stdinReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
-  private httpServer: Deno.HttpServer | null = null;
+  private stdinReader: StdinReader | null = null;
+  private httpServer: HttpServer | null = null;
 
   constructor(config: MCPServerConfig = {}) {
     this.config = {
@@ -87,12 +92,12 @@ export class MCPDevServer {
     this.running = false;
 
     if (this.stdinReader) {
-      await this.stdinReader.cancel();
+      this.stdinReader.releaseLock();
       this.stdinReader = null;
     }
 
     if (this.httpServer) {
-      await this.httpServer.shutdown();
+      await this.httpServer.close();
       this.httpServer = null;
     }
   }
@@ -104,8 +109,8 @@ export class MCPDevServer {
     const decoder = new TextDecoder();
     const encoder = new TextEncoder();
 
-    // Read from stdin
-    this.stdinReader = Deno.stdin.readable.getReader();
+    // Read from stdin using platform abstraction
+    this.stdinReader = getStdinReader();
 
     const readLoop = async () => {
       let buffer = "";
@@ -114,6 +119,7 @@ export class MCPDevServer {
         try {
           const { value, done } = await this.stdinReader!.read();
           if (done) break;
+          if (!value) continue;
 
           buffer += decoder.decode(value, { stream: true });
 
@@ -128,7 +134,7 @@ export class MCPDevServer {
                 const request = JSON.parse(line) as JSONRPCRequest;
                 const response = await this.handleRequest(request);
                 const output = JSON.stringify(response) + "\n";
-                await Deno.stdout.write(encoder.encode(output));
+                await writeStdoutAsync(encoder.encode(output));
               } catch (e) {
                 const errorResponse: JSONRPCResponse = {
                   jsonrpc: "2.0",
@@ -138,7 +144,7 @@ export class MCPDevServer {
                     data: e instanceof Error ? e.message : String(e),
                   },
                 };
-                await Deno.stdout.write(encoder.encode(JSON.stringify(errorResponse) + "\n"));
+                await writeStdoutAsync(encoder.encode(JSON.stringify(errorResponse) + "\n"));
               }
             }
           }
@@ -156,66 +162,67 @@ export class MCPDevServer {
    * Start HTTP transport
    */
   private startHTTP(port: number): void {
-    this.httpServer = Deno.serve(
-      { port, onListen: () => {} },
-      async (req) => {
-        const url = new URL(req.url);
+    this.httpServer = createHttpServer();
 
-        // CORS headers - restrict to localhost origins for security
-        const origin = req.headers.get("Origin") || "";
-        const isLocalhost = origin === "" ||
-          origin.startsWith("http://localhost") ||
-          origin.startsWith("http://127.0.0.1") ||
-          origin.startsWith("http://lvh.me");
+    const handler = async (req: Request): Promise<Response> => {
+      const url = new URL(req.url);
 
-        const headers: Record<string, string> = {
-          "Content-Type": "application/json",
-          "Access-Control-Allow-Methods": "POST, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type",
+      // CORS headers - restrict to localhost origins for security
+      const origin = req.headers.get("Origin") || "";
+      const isLocalhost = origin === "" ||
+        origin.startsWith("http://localhost") ||
+        origin.startsWith("http://127.0.0.1") ||
+        origin.startsWith("http://lvh.me");
+
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      };
+
+      // Only set CORS header for localhost origins
+      if (isLocalhost && origin) {
+        headers["Access-Control-Allow-Origin"] = origin;
+      }
+
+      // Handle OPTIONS (CORS preflight)
+      if (req.method === "OPTIONS") {
+        return new Response(null, { status: 204, headers });
+      }
+
+      // Only accept POST requests to /mcp endpoint
+      if (url.pathname !== "/mcp") {
+        return new Response(
+          JSON.stringify({ error: "Not found. MCP endpoint is at /mcp" }),
+          { status: 404, headers },
+        );
+      }
+
+      if (req.method !== "POST") {
+        return new Response(
+          JSON.stringify({ error: "Method not allowed" }),
+          { status: 405, headers },
+        );
+      }
+
+      try {
+        const body = await req.json() as JSONRPCRequest;
+        const response = await this.handleRequest(body);
+        return new Response(JSON.stringify(response), { headers });
+      } catch (e) {
+        const errorResponse: JSONRPCResponse = {
+          jsonrpc: "2.0",
+          error: {
+            code: -32700,
+            message: "Parse error",
+            data: e instanceof Error ? e.message : String(e),
+          },
         };
+        return new Response(JSON.stringify(errorResponse), { status: 400, headers });
+      }
+    };
 
-        // Only set CORS header for localhost origins
-        if (isLocalhost && origin) {
-          headers["Access-Control-Allow-Origin"] = origin;
-        }
-
-        // Handle OPTIONS (CORS preflight)
-        if (req.method === "OPTIONS") {
-          return new Response(null, { status: 204, headers });
-        }
-
-        // Only accept POST requests to /mcp endpoint
-        if (url.pathname !== "/mcp") {
-          return new Response(
-            JSON.stringify({ error: "Not found. MCP endpoint is at /mcp" }),
-            { status: 404, headers },
-          );
-        }
-
-        if (req.method !== "POST") {
-          return new Response(
-            JSON.stringify({ error: "Method not allowed" }),
-            { status: 405, headers },
-          );
-        }
-
-        try {
-          const body = await req.json() as JSONRPCRequest;
-          const response = await this.handleRequest(body);
-          return new Response(JSON.stringify(response), { headers });
-        } catch (e) {
-          const errorResponse: JSONRPCResponse = {
-            jsonrpc: "2.0",
-            error: {
-              code: -32700,
-              message: "Parse error",
-              data: e instanceof Error ? e.message : String(e),
-            },
-          };
-          return new Response(JSON.stringify(errorResponse), { status: 400, headers });
-        }
-      },
-    );
+    this.httpServer.serve(handler, { port, onListen: () => {} });
   }
 
   /**
@@ -363,7 +370,7 @@ export class MCPDevServer {
     if (uri === "veryfront://skill") {
       try {
         const skillPath = new URL("./skills/veryfront/SKILL.md", import.meta.url).pathname;
-        const content = await Deno.readTextFile(skillPath);
+        const content = await readTextFile(skillPath);
         return {
           contents: [
             {
@@ -466,7 +473,7 @@ export class MCPDevServer {
 
     try {
       const fullPath = new URL(filePath, import.meta.url).pathname;
-      const content = await Deno.readTextFile(fullPath);
+      const content = await readTextFile(fullPath);
 
       return {
         description: `Veryfront skill: ${name}`,

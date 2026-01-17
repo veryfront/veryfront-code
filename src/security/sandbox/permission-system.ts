@@ -1,4 +1,5 @@
 import { serverLogger } from "@veryfront/utils";
+import { isDeno } from "@veryfront/platform/compat/runtime.ts";
 
 export type Permission = "net" | "fs" | "env" | "run" | "read" | "write";
 
@@ -12,6 +13,10 @@ export interface PermissionResult {
   state: "granted" | "denied" | "prompt";
 }
 
+/**
+ * Create a Deno permission descriptor from our generic request.
+ * Only used when running on Deno.
+ */
 function createDenoDescriptor(
   request: PermissionRequest,
 ): Deno.PermissionDescriptor | null {
@@ -42,6 +47,10 @@ function createDenoDescriptor(
   }
 }
 
+/**
+ * Request permission using Deno's built-in permission system.
+ * Deno requires explicit permission grants for security-sensitive operations.
+ */
 async function requestDenoPermission(
   request: PermissionRequest,
 ): Promise<PermissionResult> {
@@ -76,18 +85,30 @@ async function requestDenoPermission(
   return { state: status.state };
 }
 
+/**
+ * Request a runtime permission.
+ *
+ * On Deno: Uses Deno's built-in permission system which requires explicit grants.
+ * On Node.js/Bun: Always returns "granted" since these runtimes don't have a
+ * permission system - all operations are allowed by default.
+ *
+ * This abstraction allows code to be written with Deno's security model in mind
+ * while still working on other runtimes.
+ */
 export async function requestPermission(
   request: PermissionRequest,
 ): Promise<PermissionResult> {
   try {
-    if (typeof Deno !== "undefined") {
+    if (isDeno) {
       return await requestDenoPermission(request);
     }
 
-    serverLogger.warn("[permissions] Permission requests are not supported in this runtime", {
+    // Node.js and Bun don't have a permission system - everything is allowed.
+    // Return "granted" to allow operations to proceed.
+    serverLogger.debug("[permissions] Permission auto-granted (non-Deno runtime)", {
       permission: request.name,
     });
-    return { state: "denied" };
+    return { state: "granted" };
   } catch (error) {
     serverLogger.warn("[permissions] Permission request failed", {
       permission: request.name,

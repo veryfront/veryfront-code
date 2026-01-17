@@ -3,6 +3,8 @@
  * Standard select/multi-select with Veryfront agent logo
  */
 
+import { writeStdout } from "@veryfront/platform/compat/process.ts";
+import { getStdinReader, setRawMode } from "@veryfront/platform/compat/stdin.ts";
 import type { InitTemplate } from "./init/types.ts";
 import type { IntegrationName } from "../templates/types.ts";
 
@@ -63,7 +65,7 @@ const clearLine = `${ESC}[2K`;
 const col1 = `${ESC}[1G`;
 
 function write(s: string) {
-  Deno.stdout.writeSync(new TextEncoder().encode(s));
+  writeStdout(s);
 }
 
 function clear(n: number) {
@@ -98,8 +100,8 @@ async function select<T extends string>(
   write(hide);
   draw();
 
-  Deno.stdin.setRaw(true);
-  const reader = Deno.stdin.readable.getReader();
+  setRawMode(true);
+  const reader = getStdinReader();
   const dec = new TextDecoder();
 
   try {
@@ -110,7 +112,7 @@ async function select<T extends string>(
 
       if (key === "\x03") {
         reader.releaseLock();
-        Deno.stdin.setRaw(false);
+        setRawMode(false);
         write(show);
         clear(lines);
         return null;
@@ -127,7 +129,7 @@ async function select<T extends string>(
     }
   } finally {
     reader.releaseLock();
-    Deno.stdin.setRaw(false);
+    setRawMode(false);
   }
 
   write(show);
@@ -168,8 +170,8 @@ async function multiSelect<T extends string>(
   write(hide);
   draw();
 
-  Deno.stdin.setRaw(true);
-  const reader = Deno.stdin.readable.getReader();
+  setRawMode(true);
+  const reader = getStdinReader();
   const dec = new TextDecoder();
 
   try {
@@ -180,7 +182,7 @@ async function multiSelect<T extends string>(
 
       if (key === "\x03") {
         reader.releaseLock();
-        Deno.stdin.setRaw(false);
+        setRawMode(false);
         write(show);
         clear(lines);
         return null;
@@ -210,7 +212,7 @@ async function multiSelect<T extends string>(
     }
   } finally {
     reader.releaseLock();
-    Deno.stdin.setRaw(false);
+    setRawMode(false);
   }
 
   write(show);

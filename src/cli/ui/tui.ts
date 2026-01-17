@@ -3,7 +3,7 @@
  * Shared UI for new/dev commands with collapsible logs
  */
 
-import { writeStdout } from "@veryfront/platform/compat/process.ts";
+import { getTerminalSize, writeStdout } from "@veryfront/platform/compat/process.ts";
 import { brand, dim, error, muted, success } from "./colors.ts";
 import { ANSI_REGEX, cursor, getSpinnerFrame, screen, SPINNER_FRAMES } from "./ansi.ts";
 import {
@@ -43,7 +43,7 @@ const write = writeStdout;
 
 function getSize() {
   try {
-    const { rows, columns } = Deno.consoleSize();
+    const { rows, columns } = getTerminalSize();
     termH = rows;
     termW = columns;
   } catch { /* use defaults */ }

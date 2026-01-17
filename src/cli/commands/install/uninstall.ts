@@ -3,7 +3,9 @@
  */
 
 import { dirname, join } from "@veryfront/platform/compat/path/index.ts";
-import { cwd as getCwd } from "@veryfront/platform/compat/process.ts";
+import { cwd as getCwd, getEnv, writeStdout } from "@veryfront/platform/compat/process.ts";
+import { exists, readDir, remove } from "@veryfront/platform/compat/fs.ts";
+import { getStdinReader, setRawMode } from "@veryfront/platform/compat/stdin.ts";
 import { z } from "zod";
 import { bold, brand, dim, muted, success, warning } from "../../ui/colors.ts";
 import { isTTY } from "../../utils/index.ts";
@@ -24,21 +26,12 @@ const COL_1 = `${ESC}[1G`;
 const moveUp = (n = 1) => `${ESC}[${n}A`;
 
 function write(s: string): void {
-  Deno.stdout.writeSync(new TextEncoder().encode(s));
+  writeStdout(s);
 }
 
 function clearLines(n: number): void {
   for (let i = 0; i < n; i++) write(moveUp() + CLEAR_LINE);
   write(COL_1);
-}
-
-async function exists(path: string): Promise<boolean> {
-  try {
-    await Deno.stat(path);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 async function multiSelect(
@@ -89,8 +82,8 @@ async function multiSelect(
   write(HIDE_CURSOR);
   draw();
 
-  Deno.stdin.setRaw(true);
-  const reader = Deno.stdin.readable.getReader();
+  setRawMode(true);
+  const reader = getStdinReader();
   const dec = new TextDecoder();
   let result: AIToolId[] | null = null;
 
@@ -132,7 +125,7 @@ async function multiSelect(
     }
   } finally {
     reader.releaseLock();
-    Deno.stdin.setRaw(false);
+    setRawMode(false);
   }
 
   write(SHOW_CURSOR);
@@ -159,7 +152,7 @@ export async function findInstalledTools(
   options: Pick<UninstallOptions, "cwd" | "global">,
 ): Promise<AIToolId[]> {
   const cwd = options.cwd ?? getCwd();
-  const homeDir = Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE")!;
+  const homeDir = getEnv("HOME") ?? getEnv("USERPROFILE")!;
   const installed: AIToolId[] = [];
 
   for (const tool of AI_TOOLS) {
@@ -179,7 +172,7 @@ export async function uninstallTargets(
   z.array(AIToolIdSchema).min(1).parse(targets);
 
   const cwd = options.cwd ?? getCwd();
-  const homeDir = Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE")!;
+  const homeDir = getEnv("HOME") ?? getEnv("USERPROFILE")!;
 
   console.log();
   console.log("  " + bold("Removing AI integrations..."));
@@ -194,20 +187,20 @@ export async function uninstallTargets(
       continue;
     }
 
-    await Deno.remove(dest);
+    await remove(dest);
 
     // Try to remove empty parent directories (but not cwd itself)
     try {
       const parent = dirname(dest);
-      const baseDir = options.global ? (Deno.env.get("HOME") ?? Deno.env.get("USERPROFILE")!) : cwd;
+      const baseDir = options.global ? (getEnv("HOME") ?? getEnv("USERPROFILE")!) : cwd;
       // Only remove parent if it's not the base directory
       if (parent !== baseDir) {
         const entries = [];
-        for await (const entry of Deno.readDir(parent)) {
+        for await (const entry of readDir(parent)) {
           entries.push(entry);
         }
         if (entries.length === 0) {
-          await Deno.remove(parent);
+          await remove(parent);
         }
       }
     } catch {

@@ -374,7 +374,7 @@ export function getStdout(): { write: (data: string) => void } | null {
 }
 
 /**
- * Write text directly to stdout
+ * Write text directly to stdout (sync)
  * No-op if stdout is not available
  */
 export function writeStdout(text: string): void {
@@ -382,6 +382,25 @@ export function writeStdout(text: string): void {
   if (stdout) {
     stdout.write(text);
   }
+}
+
+/**
+ * Write data to stdout asynchronously
+ * Returns a promise that resolves when the write is complete
+ */
+export async function writeStdoutAsync(data: Uint8Array): Promise<number> {
+  if (IS_DENO) {
+    return await Deno.stdout.write(data);
+  }
+  if (hasNodeProcess && nodeProcess!.stdout) {
+    return new Promise((resolve, reject) => {
+      nodeProcess!.stdout.write(data, (err) => {
+        if (err) reject(err);
+        else resolve(data.length);
+      });
+    });
+  }
+  return 0;
 }
 
 // Cached Node.js modules for synchronous prompt

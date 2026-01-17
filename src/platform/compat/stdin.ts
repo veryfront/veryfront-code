@@ -4,6 +4,99 @@
  * @module platform/compat/stdin
  */
 
+import { isDeno } from "./runtime.ts";
+
+/**
+ * Set raw mode on stdin (enables character-by-character input)
+ */
+export function setRawMode(enabled: boolean): void {
+  if (isDeno) {
+    Deno.stdin.setRaw(enabled);
+  } else if (typeof process !== "undefined" && process.stdin?.setRawMode) {
+    process.stdin.setRawMode(enabled);
+    if (enabled) {
+      process.stdin.resume();
+    }
+  }
+}
+
+/**
+ * Stdin reader interface for cross-runtime compatibility
+ */
+export interface StdinReader {
+  read(): Promise<{ value: Uint8Array | undefined; done: boolean }>;
+  releaseLock(): void;
+}
+
+/**
+ * Get a reader for stdin (for raw mode character reading)
+ * Returns an object with read() and releaseLock() methods
+ */
+export function getStdinReader(): StdinReader {
+  if (isDeno) {
+    const reader = Deno.stdin.readable.getReader();
+    return {
+      async read() {
+        const result = await reader.read();
+        return { value: result.value, done: result.done };
+      },
+      releaseLock() {
+        reader.releaseLock();
+      },
+    };
+  }
+
+  // Node.js implementation
+  if (typeof process !== "undefined" && process.stdin) {
+    let buffer: Uint8Array[] = [];
+    let resolveRead: ((result: { value: Uint8Array | undefined; done: boolean }) => void) | null =
+      null;
+
+    const onData = (data: Uint8Array) => {
+      const chunk = new Uint8Array(data);
+      if (resolveRead) {
+        resolveRead({ value: chunk, done: false });
+        resolveRead = null;
+      } else {
+        buffer.push(chunk);
+      }
+    };
+
+    const onEnd = () => {
+      if (resolveRead) {
+        resolveRead({ value: undefined, done: true });
+        resolveRead = null;
+      }
+    };
+
+    process.stdin.on("data", onData);
+    process.stdin.on("end", onEnd);
+
+    return {
+      read(): Promise<{ value: Uint8Array | undefined; done: boolean }> {
+        if (buffer.length > 0) {
+          return Promise.resolve({ value: buffer.shift()!, done: false });
+        }
+        return new Promise((resolve) => {
+          resolveRead = resolve;
+        });
+      },
+      releaseLock(): void {
+        process.stdin.off("data", onData);
+        process.stdin.off("end", onEnd);
+        buffer = [];
+        resolveRead = null;
+      },
+    };
+  }
+
+  // Fallback: return a no-op reader
+  return {
+    read: () => Promise.resolve({ value: undefined, done: true }),
+    releaseLock: () => {},
+  };
+}
+
 /**
  * Wait for a single keypress from stdin.
  * Works in both Deno and Node.js.
