@@ -257,6 +257,22 @@ export function getRuntimeVersion(): string {
 }
 
 /**
+ * Get the operating system type
+ * Returns: "darwin" (macOS), "linux", "windows", or the raw platform string
+ */
+export function getOsType(): string {
+  if (IS_DENO) {
+    return Deno.build.os;
+  }
+  if (hasNodeProcess) {
+    // Node/Bun uses process.platform which returns "win32" for Windows
+    const platform = nodeProcess!.platform;
+    return platform === "win32" ? "windows" : platform;
+  }
+  return "unknown";
+}
+
+/**
  * Register a signal handler (SIGINT, SIGTERM) for graceful shutdown
  */
 export function onSignal(signal: "SIGINT" | "SIGTERM", handler: () => void): void {

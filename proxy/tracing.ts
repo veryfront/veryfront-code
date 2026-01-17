@@ -9,6 +9,17 @@ import type {
   Tracer,
 } from "@opentelemetry/api";
 
+// Inline cross-runtime getEnv to avoid dependency on src/platform/compat (not copied in Docker)
+function getEnv(key: string): string | undefined {
+  // Deno
+  if (typeof Deno !== "undefined" && Deno.env?.get) {
+    return Deno.env.get(key);
+  }
+  // Node.js / Bun
+  const nodeProcess = (globalThis as { process?: { env?: Record<string, string> } }).process;
+  return nodeProcess?.env?.[key];
+}
+
 let initialized = false;
 let tracerProvider: { shutdown: () => Promise<void> } | null = null;
 let tracer: Tracer | null = null;
@@ -34,10 +45,10 @@ function parseHeaders(headerString: string | undefined): Record<string, string> 
 
 function getConfig(): OTLPConfig {
   return {
-    enabled: Deno.env.get("OTEL_TRACES_ENABLED") === "true",
-    serviceName: Deno.env.get("OTEL_SERVICE_NAME") || "veryfront-proxy",
-    endpoint: Deno.env.get("OTEL_EXPORTER_OTLP_ENDPOINT") || "",
-    headers: parseHeaders(Deno.env.get("OTEL_EXPORTER_OTLP_HEADERS")),
+    enabled: getEnv("OTEL_TRACES_ENABLED") === "true",
+    serviceName: getEnv("OTEL_SERVICE_NAME") || "veryfront-proxy",
+    endpoint: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT") || "",
+    headers: parseHeaders(getEnv("OTEL_EXPORTER_OTLP_HEADERS")),
   };
 }
 

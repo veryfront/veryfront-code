@@ -1,22 +1,12 @@
 import { isDeno } from "@veryfront/platform/compat/runtime.ts";
-
-function getPlatform(): string {
-  // @ts-ignore - Deno global
-  return isDeno ? Deno.build.os : process.platform;
-}
-
-function getEnvVar(name: string): string | undefined {
-  // @ts-ignore - Deno global
-  return isDeno ? Deno.env.get(name) : process.env[name];
-}
+import { getEnv, getOsType } from "@veryfront/platform/compat/process.ts";
 
 function getOpenCommand(): { cmd: string; args: string[] } {
-  const platform = getPlatform();
+  const platform = getOsType();
 
   switch (platform) {
     case "darwin":
       return { cmd: "open", args: [] };
-    case "win32":
     case "windows":
       return { cmd: "cmd", args: ["/c", "start", ""] };
     default:
@@ -47,11 +37,11 @@ export async function openBrowser(url: string): Promise<void> {
 }
 
 export function canOpenBrowser(): boolean {
-  const isCI = Boolean(getEnvVar("CI") || getEnvVar("CONTINUOUS_INTEGRATION"));
-  const isSSH = Boolean(getEnvVar("SSH_CLIENT") || getEnvVar("SSH_TTY"));
+  const isCI = Boolean(getEnv("CI") || getEnv("CONTINUOUS_INTEGRATION"));
+  const isSSH = Boolean(getEnv("SSH_CLIENT") || getEnv("SSH_TTY"));
 
-  if (getPlatform() === "linux") {
-    const hasDisplay = Boolean(getEnvVar("DISPLAY") || getEnvVar("WAYLAND_DISPLAY"));
+  if (getOsType() === "linux") {
+    const hasDisplay = Boolean(getEnv("DISPLAY") || getEnv("WAYLAND_DISPLAY"));
     if (!hasDisplay) return false;
   }
 
