@@ -89,20 +89,23 @@ async function getOrInitRenderer(): Promise<Renderer> {
  *
  * IMPORTANT: For proxy mode (API-backed) projects, ctx.config is intentionally
  * set to undefined to signal that we should load the project-specific config
- * from the API. We must NOT use the sync cache in this case because the
- * projectDir is not unique per project.
+ * from the API. We use projectId or projectSlug as the cache key to ensure
+ * correct per-project config caching.
  */
 async function createContextFromHandler(ctx: HandlerContext): Promise<RenderContext> {
   let config = ctx.config;
 
   if (!config) {
     // Load config from API adapter (for proxy mode projects)
-    // Don't use sync cache here - projectDir is not unique per project in proxy mode
+    // Use projectId/projectSlug as cache key since projectDir is shared across all API-backed projects
+    const cacheKey = ctx.projectId || ctx.projectSlug;
     logger.debug("[RendererAdapter] Loading config from adapter", {
       projectDir: ctx.projectDir,
       projectSlug: ctx.projectSlug,
+      projectId: ctx.projectId,
+      cacheKey,
     });
-    config = await getConfig(ctx.projectDir, ctx.adapter);
+    config = await getConfig(ctx.projectDir, ctx.adapter, { cacheKey });
   }
 
   return createRenderContext({ ...ctx, config });
