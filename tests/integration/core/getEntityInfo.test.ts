@@ -6,7 +6,7 @@ import {
   getEntityInfo,
   getLayoutEntity,
   getProviderEntities,
-} from "../../../src/core/types/entities/getEntityInfo.ts";
+} from "../../../src/types/entities/getEntityInfo.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
 async function createTestFile(path: string, content: string): Promise<void> {

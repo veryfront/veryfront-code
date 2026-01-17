@@ -8,7 +8,7 @@ import { cyan, dim, green, yellow } from "@veryfront/compat/console";
 import { isInteractive as checkIsInteractive } from "@veryfront/platform/compat/process.ts";
 import type { EnvVarConfig } from "../templates/index.ts";
 import { promptUser } from "./index.ts";
-import { isCiEnv, isDenoTestingEnv } from "@veryfront/core/config/env.ts";
+import { isCiEnv, isDenoTestingEnv } from "@veryfront/config/env.ts";
 
 export interface EnvPromptOptions {
   /** Whether to run in interactive mode (prompt for values) */

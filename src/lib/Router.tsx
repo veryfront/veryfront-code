@@ -10,12 +10,12 @@
  */
 
 // Re-export all runtime exports
-export { Router, RouterProvider, useRouter } from "veryfront/router";
+export { Router, RouterProvider, useRouter } from "veryfront/react/router";
 
 // Re-export types - RouterValue is the new name for the Router type
-export type { RouterProviderProps, RouterValue } from "veryfront/router";
+export type { RouterProviderProps, RouterValue } from "veryfront/react/router";
 
 // Backward compatibility: export RouterValue as Router type for old code
 // that imports `import type { Router } from "@/lib/Router"`
-import type { RouterValue } from "veryfront/router";
+import type { RouterValue } from "veryfront/react/router";
 export type Router = RouterValue;

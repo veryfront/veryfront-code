@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { ApprovalDecision, PendingApproval } from "../types.ts";
+import type { ApprovalDecision, PendingApproval } from "@veryfront/workflow/types.ts";
 
 export interface UseApprovalOptions {
   runId: string;

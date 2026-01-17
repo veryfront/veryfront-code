@@ -14,7 +14,7 @@ import {
   type RenderContext,
 } from "../../src/rendering/context/render-context.ts";
 import type { HandlerContext } from "../../src/server/handlers/types.ts";
-import { VERSION } from "../../src/core/utils/version.ts";
+import { VERSION } from "../../src/utils/version.ts";
 
 // Mock adapter for testing
 const mockAdapter = {

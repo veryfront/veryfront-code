@@ -7,7 +7,7 @@
  */
 
 import { rendererLogger } from "@veryfront/utils";
-import { getHeapStats } from "@veryfront/core/memory/index.ts";
+import { getHeapStats } from "@veryfront/utils/memory/index.ts";
 
 /**
  * Check if memory is too high to safely process a request.

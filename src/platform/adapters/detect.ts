@@ -1,6 +1,6 @@
 import { logger } from "@veryfront/utils";
 import type { RuntimeAdapter } from "./base.ts";
-import { createError, toError } from "../../core/errors/veryfront-error.ts";
+import { createError, toError } from "../../errors/veryfront-error.ts";
 import { detectRuntime } from "./runtime-detection.ts";
 
 // Re-export from standalone module to avoid circular dependency

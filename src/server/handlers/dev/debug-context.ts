@@ -9,7 +9,7 @@
 
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
-import { HTTP_OK, PRIORITY_HIGH_DEV } from "@veryfront/core/constants/index.ts";
+import { HTTP_OK, PRIORITY_HIGH_DEV } from "@veryfront/utils/constants/index.ts";
 
 export class DebugContextHandler extends BaseHandler {
   metadata: HandlerMetadata = {

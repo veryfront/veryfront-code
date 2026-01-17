@@ -6,7 +6,7 @@ import type { EntityInfo } from "@veryfront/types";
 import type { VeryfrontConfig } from "@veryfront/config";
 import { getProviderEntities } from "@veryfront/types/entities/getEntityInfo.ts";
 import { join } from "@veryfront/platform/compat/path-helper.ts";
-import { getProjectScopedKeyAlways } from "@veryfront/core/cache/cache-key-builder.ts";
+import { getProjectScopedKeyAlways } from "@veryfront/cache/cache-key-builder.ts";
 
 interface ProjectData {
   id?: string;

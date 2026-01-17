@@ -20,7 +20,7 @@ import {
   getRendererForProject,
   shouldRejectDueToMemory,
 } from "../../../shared/renderer-factory.ts";
-import { getHeapStats } from "@veryfront/core/memory/index.ts";
+import { getHeapStats } from "@veryfront/utils/memory/index.ts";
 import { serverLogger as _logger } from "@veryfront/utils";
 import { endRequest, startRequest, timeAsync } from "@veryfront/utils";
 import { computeSSRETag } from "./etag-handler.ts";
@@ -32,14 +32,14 @@ import {
   HTTP_NOT_FOUND,
   HTTP_OK,
   PRIORITY_LOW,
-} from "@veryfront/core/constants/index.ts";
+} from "@veryfront/utils/constants/index.ts";
 import { generateNonce } from "@veryfront/security/http/response/security-handler.ts";
 import { getColorSchemeFromRequest } from "@veryfront/security/http/client-hints.ts";
 import { isExtendedFSAdapter } from "@veryfront/platform/adapters/fs/wrapper.ts";
 import {
   endRenderSession,
   startRenderSession,
-} from "@veryfront/build/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
+} from "@veryfront/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
 import { VeryfrontAPIError } from "@veryfront/platform/adapters/veryfront-api-client/types.ts";
 
 /**

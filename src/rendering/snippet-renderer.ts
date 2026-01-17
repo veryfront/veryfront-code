@@ -7,10 +7,10 @@
 
 import { rendererLogger as logger } from "@veryfront/utils";
 import type { RenderMetadata } from "@veryfront/types";
-import type { VeryfrontConfig } from "../core/config/types.ts";
+import type { VeryfrontConfig } from "../config/types.ts";
 import { wrapInHTMLShell } from "../html/html-shell-generator.ts";
-import { LRUCache } from "../core/utils/lru-wrapper.ts";
-import { registerCache } from "../core/memory/index.ts";
+import { LRUCache } from "../utils/lru-wrapper.ts";
+import { registerCache } from "../utils/memory/index.ts";
 import { escapeHtml } from "../html/html-escape.ts";
 
 // Cache limits to prevent unbounded memory growth

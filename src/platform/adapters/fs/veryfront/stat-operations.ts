@@ -3,7 +3,7 @@ import type { FileInfo } from "../../base.ts";
 import type { ProjectFile, VeryfrontAPIClient } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
-import { createError, toError } from "../../../../core/errors/veryfront-error.ts";
+import { createError, toError } from "../../../../errors/veryfront-error.ts";
 import type { ContentContextProvider } from "./read-operations.ts";
 import { buildFileListCacheKey, buildStatCacheKeyPrefix } from "./cache-keys.ts";
 

@@ -9,7 +9,7 @@
 
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { EntityInfo, Frontmatter } from "@veryfront/types";
-import { isDynamicSegment } from "@veryfront/core/utils/route-path-utils.ts";
+import { isDynamicSegment } from "@veryfront/utils/route-path-utils.ts";
 import { join } from "../platform/compat/path-helper.ts";
 import { serverLogger as logger } from "@veryfront/utils";
 

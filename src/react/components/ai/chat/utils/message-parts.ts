@@ -27,7 +27,7 @@ export function isToolPart(part: UIMessagePart): part is ToolUIPart | DynamicToo
 /** Check if a part is a reasoning part */
 export function isReasoningPart(
   part: UIMessagePart,
-): part is { type: "reasoning"; text: string; state?: string } {
+): part is { type: "reasoning"; text: string; state?: "streaming" | "done" } {
   return part.type === "reasoning";
 }
 

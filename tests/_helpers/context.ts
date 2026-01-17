@@ -25,7 +25,7 @@ import { join } from "std/path/mod.ts";
 import { createDevServer } from "../../src/server/dev-server.ts";
 import { startProductionServer } from "../../src/server/production-server.ts";
 import { resetApiHandler } from "../../src/server/handlers/request/api/index.ts";
-import { runWithCacheDir } from "../../src/core/utils/cache-dir.ts";
+import { runWithCacheDir } from "../../src/utils/cache-dir.ts";
 import type { TestServer } from "./server.ts";
 import { getFreePort } from "./utils.ts";
 

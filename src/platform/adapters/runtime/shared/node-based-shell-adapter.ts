@@ -1,5 +1,5 @@
 import type { ShellAdapter } from "../../base.ts";
-import { createError, toError } from "../../../../core/errors/veryfront-error.ts";
+import { createError, toError } from "../../../../errors/veryfront-error.ts";
 import * as fs from "node:fs";
 
 export class NodeBasedShellAdapter implements ShellAdapter {

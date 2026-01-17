@@ -11,7 +11,7 @@ export {
   PageContextProvider,
   type PageContextValue as PageContext,
   usePageContext,
-} from "veryfront/context";
+} from "veryfront/react/context";
 
 // Default export for compatibility
-export { usePageContext as default } from "veryfront/context";
+export { usePageContext as default } from "veryfront/react/context";

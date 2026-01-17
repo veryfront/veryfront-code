@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { RunFilter, WorkflowRun, WorkflowStatus } from "../types.ts";
+import type { RunFilter, WorkflowRun, WorkflowStatus } from "@veryfront/workflow/types.ts";
 
 export interface UseWorkflowListOptions {
   workflowId?: string;

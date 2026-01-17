@@ -1,5 +1,5 @@
 import type { Project } from "../../veryfront-api-client/index.ts";
-import { createError, toError } from "../../../../core/errors/veryfront-error.ts";
+import { createError, toError } from "../../../../errors/veryfront-error.ts";
 import type { GitHubConfig } from "../github/types.ts";
 // Import and re-export from shared types to avoid circular dependencies
 import type { DirectoryEntry } from "../shared-types.ts";

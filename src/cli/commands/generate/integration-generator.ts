@@ -10,7 +10,7 @@ import { cyan, dim, green } from "@veryfront/compat/console";
 import { cliLogger } from "@veryfront/utils";
 import { createFileSystem, type FileSystem } from "@veryfront/platform/compat/fs.ts";
 import { isInteractive as checkIsInteractive } from "@veryfront/platform/compat/process.ts";
-import { isCiEnv, isDenoTestingEnv } from "@veryfront/core/config/env.ts";
+import { isCiEnv, isDenoTestingEnv } from "@veryfront/config/env.ts";
 import { select } from "../../utils/terminal-select.ts";
 
 let fs: FileSystem;

@@ -12,7 +12,7 @@ import type {
   HandlerResult,
 } from "../../types.ts";
 import { getApiHandler } from "./pages-api-handler.ts";
-import { PRIORITY_MEDIUM_API } from "@veryfront/core/constants/index.ts";
+import { PRIORITY_MEDIUM_API } from "@veryfront/utils/constants/index.ts";
 
 /**
  * API handler wrapper for Pages and App Router

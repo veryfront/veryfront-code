@@ -21,7 +21,7 @@ import { DEFAULT_DASHBOARD_PORT, rendererLogger as logger } from "@veryfront/uti
 import type { RenderOptions } from "./types.ts";
 import { injectElementSelectors } from "@veryfront/studio/element-selector-injector.ts";
 import { computeSourceHash } from "@veryfront/studio/hash-utils.ts";
-import { extractRelativePath } from "@veryfront/core/utils/route-path-utils.ts";
+import { extractRelativePath } from "@veryfront/utils/route-path-utils.ts";
 import { resolveAppComponentPath } from "../layouts/utils/app-resolver.ts";
 
 export interface HTMLGeneratorConfig {
