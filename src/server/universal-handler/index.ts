@@ -510,8 +510,9 @@ export function createVeryfrontHandler(
         const isLocalProject = !!localProjectPath;
 
         // Determine the effective config for this request
-        // For local projects, load project-specific config; otherwise use global config
-        let effectiveConfig = config;
+        // For local projects, load project-specific config
+        // For proxy mode (API) projects, set config to undefined to force loading in createContextFromHandler
+        let effectiveConfig: VeryfrontConfig | undefined = config;
 
         if (isLocalProject && localProjectPath) {
           effectiveProjectDir = localProjectPath;
@@ -552,6 +553,14 @@ export function createVeryfrontHandler(
               error: getErrorMessage(err),
             });
           }
+        } else if (isProxyMode && projectSlug) {
+          // For proxy mode (API-backed) projects, don't pass global config
+          // This forces createContextFromHandler to load project-specific config via the API adapter
+          effectiveConfig = undefined;
+          logger.debug("[universal] Proxy mode - will load config via API adapter", {
+            projectSlug,
+            hasToken: !!proxyToken,
+          });
         }
 
         // Create handler context
