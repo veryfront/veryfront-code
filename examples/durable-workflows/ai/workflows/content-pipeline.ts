@@ -16,7 +16,7 @@ import {
   step,
   waitForApproval,
   workflow,
-} from "veryfront/ai/workflow";
+} from "veryfront/workflow";
 import { z } from "zod";
 
 /**

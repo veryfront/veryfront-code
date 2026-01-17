@@ -5,7 +5,7 @@
  * Uses secure path validation to prevent unauthorized access.
  */
 
-import { tool } from 'veryfront/ai';
+import { tool } from 'veryfront/tool';
 import { z } from 'zod';
 import { validateAndResolvePath } from '../utils/path-helpers.ts';
 

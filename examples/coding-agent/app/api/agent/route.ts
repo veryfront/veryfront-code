@@ -4,7 +4,9 @@
  * Uses Veryfront's autodiscovery to automatically register tools from ai/tools/
  */
 
-import { agent, discoverAll, getProviderFromModel, initializeProviders } from "veryfront/ai";
+import { agent } from "veryfront/agent";
+import { discoverAll } from "veryfront/mcp";
+import { getProviderFromModel, initializeProviders } from "veryfront/provider";
 
 // Cross-platform environment variable helper
 function getEnv(key: string): string | undefined {

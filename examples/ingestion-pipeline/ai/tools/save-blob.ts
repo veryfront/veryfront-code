@@ -1,4 +1,4 @@
-import { tool, type ToolExecutionContext } from "veryfront/ai";
+import { tool, type ToolExecutionContext } from "veryfront/tool";
 import { z } from "zod";
 
 export default tool({

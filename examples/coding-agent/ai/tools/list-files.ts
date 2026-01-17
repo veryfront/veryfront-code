@@ -3,7 +3,7 @@
  * List files and directories in a path (works with virtual FS)
  */
 
-import { tool } from "veryfront/ai";
+import { tool } from "veryfront/tool";
 import { z } from "zod";
 import { getAdapter } from "@veryfront/platform";
 import { resolvePath } from "../utils/path-helpers.ts";

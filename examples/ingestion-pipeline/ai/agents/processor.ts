@@ -1,4 +1,4 @@
-import { agent } from "veryfront/ai";
+import { agent } from "veryfront/agent";
 import processText from "../tools/process-text.ts";
 
 export default agent({

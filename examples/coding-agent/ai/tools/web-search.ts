@@ -3,7 +3,7 @@
  * Search the web for documentation, examples, or latest information using Brave Search API
  */
 
-import { tool } from "veryfront/ai";
+import { tool } from "veryfront/tool";
 import { z } from "zod";
 
 // Cross-platform environment variable helper
