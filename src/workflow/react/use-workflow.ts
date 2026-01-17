@@ -5,7 +5,7 @@
  *
  * @example
  * ```tsx
- * import { useWorkflow } from 'veryfront/ai/workflow/react';
+ * import { useWorkflow } from 'veryfront/workflow/react';
  *
  * function WorkflowDashboard({ runId }: { runId: string }) {
  *   const {

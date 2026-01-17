@@ -475,27 +475,29 @@ export function ${componentName}({ children }: ${componentName}Props) {
 }
 
 function generateToolTemplate(name: string, toolName: string): string {
-  return `import { z } from "zod";
+  return `import { tool } from "veryfront/tool";
+import { z } from "zod";
 
-export const ${toolName}Tool = {
-  name: "${name}",
+export default tool({
+  id: "${name}",
   description: "Description of what this tool does",
   parameters: z.object({
     // Add your parameters here
     input: z.string().describe("Input parameter"),
   }),
-  execute: async ({ input }: { input: string }) => {
+  execute: async ({ input }) => {
     // Implement your tool logic here
     return { result: input };
   },
-};
+});
 `;
 }
 
 function generateAgentTemplate(name: string, className: string): string {
-  return `import { Agent } from "@veryfront/ai";
+  return `import { agent } from "veryfront/agent";
 
-export const ${className}Agent = new Agent({
+export default agent({
+  id: "${className.toLowerCase()}",
   name: "${name}",
   description: "Description of this agent's capabilities",
   instructions: \`
@@ -516,22 +518,20 @@ export const ${className}Agent = new Agent({
 }
 
 function generatePromptTemplate(name: string): string {
-  return `export const ${name}Prompt = {
-  name: "${name}",
-  description: "Description of this prompt template",
-  template: \`
-    {{#system}}
-    You are a helpful AI assistant.
-    {{/system}}
+  return `import { prompt } from "veryfront/prompt";
+import { z } from "zod";
 
-    {{#user}}
-    {{input}}
-    {{/user}}
-  \`,
-  variables: {
-    input: "User input goes here",
-  },
-};
+export default prompt({
+  id: "${name}",
+  description: "Description of this prompt template",
+  argsSchema: z.object({
+    input: z.string().describe("User input"),
+  }),
+  getContent: ({ input }) => [
+    { role: "system", content: "You are a helpful AI assistant." },
+    { role: "user", content: input },
+  ],
+});
 `;
 }
 

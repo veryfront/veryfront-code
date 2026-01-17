@@ -550,7 +550,7 @@ async function createToolSkeletons(baseDir: string, config: IntegrationConfig): 
  * ${tool.name}
  */
 
-import { tool } from "veryfront/ai";
+import { tool } from "veryfront/tool";
 import { z } from "zod";
 import { listItems, getItem, searchItems } from "../lib/${config.name}-client.ts";
 

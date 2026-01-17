@@ -1,4 +1,4 @@
-import { tool } from "veryfront/ai";
+import { tool } from "veryfront/tool";
 import { z } from "zod";
 import { formatAmount, formatDate, listPaymentIntents } from "../../lib/stripe-client.ts";
 

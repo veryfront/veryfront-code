@@ -30,7 +30,7 @@ interface AIErrorBoundaryState {
  *
  * @example
  * ```tsx
- * import { AIErrorBoundary } from 'veryfront/ai/components';
+ * import { AIErrorBoundary } from 'veryfront/components/ai';
  *
  * <AIErrorBoundary
  *   fallback={(error, reset) => (

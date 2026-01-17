@@ -30,7 +30,7 @@ export interface SplitOptions {
   shared?: string[];
   /** External packages to exclude from bundle */
   external?: string[];
-  /** Module resolution strategy for veryfront/ai modules */
+  /** Module resolution strategy for veryfront client modules */
   moduleResolution?: "cdn" | "self-hosted" | "bundled";
 }
 

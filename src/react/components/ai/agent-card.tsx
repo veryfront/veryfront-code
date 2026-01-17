@@ -45,8 +45,8 @@ export interface AgentCardProps {
  *
  * @example
  * ```tsx
- * import { AgentCard } from 'veryfront/ai/components';
- * import { useAgent } from 'veryfront/ai/react';
+ * import { AgentCard } from 'veryfront/components/ai';
+ * import { useAgent } from 'veryfront/agent/react';
  *
  * export default function AgentInterface() {
  *   const agent = useAgent({ agent: 'support' });

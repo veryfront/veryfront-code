@@ -138,8 +138,8 @@ export function blockExternalUrlImports(
 export function resolveVeryfrontImports(code: string): Promise<string> {
   return Promise.resolve(replaceSpecifiers(code, (specifier) => {
     if (specifier.startsWith("@veryfront/")) {
-      // @veryfront/ai -> veryfront/ai
-      // @veryfront/ai/react -> veryfront/ai/react
+      // @veryfront/tool -> veryfront/tool
+      // @veryfront/agent/react -> veryfront/agent/react
       return specifier.replace("@veryfront/", "veryfront/");
     }
     if (specifier === "@veryfront") {

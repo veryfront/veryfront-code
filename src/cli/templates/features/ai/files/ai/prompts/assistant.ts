@@ -1,4 +1,4 @@
-import { prompt } from "veryfront/ai";
+import { prompt } from "veryfront/prompt";
 
 export default prompt({
   id: "assistant",

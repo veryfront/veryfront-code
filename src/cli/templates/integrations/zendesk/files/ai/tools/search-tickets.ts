@@ -3,7 +3,7 @@
  */
 
 import { z } from "zod";
-import { defineTool } from "veryfront/ai";
+import { tool } from "veryfront/tool";
 import { getZendeskClient } from "../../lib/zendesk-client.ts";
 import { isZendeskConnected } from "../../lib/token-store.ts";
 

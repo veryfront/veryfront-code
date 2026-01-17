@@ -1,4 +1,5 @@
-import { agent, promptRegistry } from "veryfront/ai";
+import { agent } from "veryfront/agent";
+import { promptRegistry } from "veryfront/prompt";
 
 function getSystemPrompt(): string {
   const prompt = promptRegistry.get("assistant");

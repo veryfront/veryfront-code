@@ -201,7 +201,7 @@ export function createVeryfrontHandler(
     new DevFileHandler(), // Priority: 400 (dev only)
     new SnippetHandler(), // Priority: 450 (before static, handles @/ component previews)
     new StaticHandler(), // Priority: 500 (MEDIUM_STATIC)
-    new LibModulesHandler(), // Priority: 550 (MEDIUM_LIB_MODULES, self-hosted veryfront/ai/*)
+    new LibModulesHandler(), // Priority: 550 (MEDIUM_LIB_MODULES, self-hosted veryfront modules)
     new RSCHandler(), // Priority: 600 (MEDIUM, runs before static to expose RSC endpoints)
     new ModuleHandler(), // Priority: 600 (MEDIUM)
     apiHandler, // Priority: 700 (MEDIUM)

@@ -10,11 +10,11 @@ import type { SplitOptions } from "./types.ts";
 import { createSplitterPlugin } from "./esbuild-plugin.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 
-/** Veryfront AI modules that may be externalized based on moduleResolution setting */
-const VERYFRONT_AI_MODULES = [
-  "veryfront/ai/react",
-  "veryfront/ai/components",
-  "veryfront/ai/primitives",
+/** Veryfront client modules that may be externalized based on moduleResolution setting */
+const VERYFRONT_CLIENT_MODULES = [
+  "veryfront/agent/react",
+  "veryfront/components/ai",
+  "veryfront/primitives",
 ];
 
 /** Gets list of external dependencies to exclude from bundle */
@@ -30,10 +30,10 @@ export function getExternalDependencies(
     "react/jsx-dev-runtime",
   ];
 
-  // In 'bundled' mode, veryfront/ai modules are NOT external (bundled into client JS)
+  // In 'bundled' mode, veryfront client modules are NOT external (bundled into client JS)
   // In 'cdn' or 'self-hosted' mode, they ARE external (resolved via import map)
   if (moduleResolution !== "bundled") {
-    baseExternal.push(...VERYFRONT_AI_MODULES);
+    baseExternal.push(...VERYFRONT_CLIENT_MODULES);
   }
 
   return [...baseExternal, ...customExternal];

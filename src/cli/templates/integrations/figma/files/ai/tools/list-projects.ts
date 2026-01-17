@@ -1,4 +1,4 @@
-import { tool } from "veryfront/ai";
+import { tool } from "veryfront/tool";
 import { z } from "zod";
 import { getProjectFiles, getTeamProjects } from "../../lib/figma-client.ts";
 
