@@ -1,26 +1,37 @@
 export const SpanNames = {
+  // HTTP layer
   HTTP_REQUEST: "http.request",
   HTTP_HANDLER: "http.handler",
 
+  // Rendering pipeline
   RENDER_PAGE: "render.page",
   RENDER_COMPONENT: "render.component",
   RENDER_LAYOUT: "render.layout",
   RENDER_SSR: "render.ssr",
   RENDER_RSC: "render.rsc",
+  RENDER_LOAD_MODULES: "render.load_modules",
+  RENDER_FETCH_DATA: "render.fetch_data",
 
+  // Data operations
   DATA_FETCH: "data.fetch",
   DATA_CACHE_GET: "data.cache.get",
   DATA_CACHE_SET: "data.cache.set",
 
+  // Cache operations
+  CACHE_CHECK_SPECULATIVE: "cache.check_speculative",
+
+  // Build pipeline
   BUILD_BUNDLE: "build.bundle",
   BUILD_SPLIT: "build.split",
   BUILD_OPTIMIZE: "build.optimize",
   BUILD_COMPILE: "build.compile",
 
+  // RSC (React Server Components)
   RSC_RENDER: "rsc.render",
   RSC_SERIALIZE: "rsc.serialize",
   RSC_STREAM: "rsc.stream",
 
+  // Router
   ROUTER_MATCH: "router.match",
   ROUTER_RESOLVE: "router.resolve",
 
@@ -40,7 +51,7 @@ export const SpanNames = {
   MDX_CACHE_GET: "mdx.cache.get",
   MDX_CACHE_SET: "mdx.cache.set",
 
-  // API file operations
+  // API operations
   API_REQUEST: "api.request",
   API_GET_FILE: "api.get_file",
   API_LIST_FILES: "api.list_files",
