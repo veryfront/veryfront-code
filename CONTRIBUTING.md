@@ -45,7 +45,6 @@ Place utilities in `src/{module}/utils/` when they:
 
 **Examples:**
 ```typescript
-// ai/utils/          - AI-specific (tool registry, discovery)
 // build/utils/       - Build-specific (asset utils, file types)
 // rendering/utils/   - Rendering helpers (React, streams)
 // server/handlers/utils/ - Handler utilities (content-types, etag)
@@ -91,7 +90,13 @@ import { createRenderer } from "../../../../rendering/index.ts";
 - `@veryfront/build` - Build system
 - `@veryfront/transforms` - Code transformations
 - `@veryfront/server` - Servers
-- `@veryfront/ai` - AI agent runtime
+- `@veryfront/agent` - AI agent runtime
+- `@veryfront/tool` - Tool definitions and registry
+- `@veryfront/workflow` - Durable workflow engine
+- `@veryfront/prompt` - Prompt templates
+- `@veryfront/resource` - Resource definitions
+- `@veryfront/mcp` - MCP protocol server
+- `@veryfront/provider` - AI model providers
 - `@veryfront/observability` - Metrics/tracing
 
 ### File Naming Conventions
