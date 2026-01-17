@@ -1,26 +1,28 @@
 /**
- * Transform Cache - Redis-First Architecture
+ * Transform Cache - Backend-Abstracted Architecture
  *
- * Caches ESM-transformed code with Redis as primary storage.
- * Optimized for ephemeral pods with limited memory.
+ * Caches ESM-transformed code with secure multi-tenant support.
  *
  * Strategy:
- * - Redis: Primary storage for transformed code (shared across pods)
- * - Memory: Disabled by default to conserve pod memory
+ * - Uses CacheBackend abstraction for backend selection
+ * - API Mode (production): Uses veryfront-api for centralized cache
+ * - Redis Mode (local dev/open source): Direct Redis access
+ * - Memory Mode (fallback): In-memory cache
  *
- * For local development without Redis, falls back to memory cache.
+ * Security: In production, renderer has no Redis credentials.
+ * All cache access goes through the API which enforces tenant isolation.
  */
 
 import { registerCache } from "@veryfront/core/memory/index.ts";
 import { logger } from "@veryfront/utils/logger/logger.ts";
+import { buildTransformCacheKey } from "../../../core/cache/keys.ts";
 import {
-  getRedisClient,
-  isRedisConfigured,
-  type RedisClient,
-} from "@veryfront/utils/redis-client.ts";
-import { buildRedisTransformKey, buildTransformCacheKey } from "../../../core/cache/keys.ts";
+  type CacheBackend,
+  CacheBackends,
+  MemoryCacheBackend,
+} from "../../../core/cache/backend.ts";
 
-const DEFAULT_TTL_SECONDS = 300; // 5 minutes for Redis
+const DEFAULT_TTL_SECONDS = 300; // 5 minutes
 
 export interface TransformCacheEntry {
   code: string;
@@ -28,69 +30,66 @@ export interface TransformCacheEntry {
   timestamp: number;
 }
 
-// Fallback memory cache (only used when Redis is not available)
-const fallbackCache = new Map<string, TransformCacheEntry>();
-const FALLBACK_MAX_ENTRIES = 500; // Small fallback for local dev
+// Cache backend (initialized lazily)
+let cacheBackend: CacheBackend | null = null;
+let cacheInitialized = false;
+let cacheInitPromise: Promise<void> | null = null;
 
-// Redis state
-let redisEnabled = false;
-let redisClient: RedisClient | null = null;
-let redisInitialized = false;
-let redisInitPromise: Promise<void> | null = null;
+// Local fallback for sync operations (small, for local dev)
+const localFallback = new Map<string, TransformCacheEntry>();
+const FALLBACK_MAX_ENTRIES = 500;
 
 // Register with memory profiler
 registerCache("transform-cache", () => ({
   name: "transform-cache",
-  entries: fallbackCache.size,
+  entries: localFallback.size,
   maxEntries: FALLBACK_MAX_ENTRIES,
-  redisEnabled,
-  mode: redisEnabled ? "redis-only" : "fallback-memory",
+  backend: cacheBackend?.type ?? "uninitialized",
 }));
 
 /**
- * Initialize Redis for transform cache.
- * Call this at startup if you want to enable Redis caching.
+ * Initialize transform cache.
+ * Uses CacheBackend factory to select appropriate backend.
  */
-export async function initializeRedisCache(): Promise<boolean> {
-  if (redisInitialized) {
-    return redisEnabled;
+export async function initializeTransformCache(): Promise<boolean> {
+  if (cacheInitialized) {
+    return cacheBackend?.type !== "memory";
   }
 
-  if (redisInitPromise) {
-    await redisInitPromise;
-    return redisEnabled;
+  if (cacheInitPromise) {
+    await cacheInitPromise;
+    return cacheBackend?.type !== "memory";
   }
 
-  redisInitPromise = (async () => {
-    if (!isRedisConfigured()) {
-      logger.debug("[TransformCache] Redis not configured, using fallback memory cache");
-      redisInitialized = true;
-      return;
-    }
-
+  cacheInitPromise = (async () => {
     try {
-      redisClient = await getRedisClient();
-      redisEnabled = true;
-      redisInitialized = true;
-      logger.info("[TransformCache] Redis-only mode enabled");
+      cacheBackend = await CacheBackends.transform();
+      cacheInitialized = true;
+      logger.info("[TransformCache] Initialized", { backend: cacheBackend.type });
     } catch (error) {
-      logger.warn("[TransformCache] Redis unavailable, using fallback memory cache", { error });
-      redisEnabled = false;
-      redisInitialized = true;
+      logger.warn("[TransformCache] Backend init failed, using memory", { error });
+      cacheBackend = new MemoryCacheBackend(FALLBACK_MAX_ENTRIES);
+      cacheInitialized = true;
     }
   })();
 
-  await redisInitPromise;
-  redisInitPromise = null;
-  return redisEnabled;
+  await cacheInitPromise;
+  cacheInitPromise = null;
+  return cacheBackend?.type !== "memory";
 }
 
 /**
- * Check if Redis caching is enabled.
+ * Check if distributed caching (API or Redis) is enabled.
  */
-export function isRedisCacheEnabled(): boolean {
-  return redisEnabled && redisClient !== null;
+export function isDistributedCacheEnabled(): boolean {
+  return cacheBackend !== null && cacheBackend.type !== "memory";
 }
+
+/** @deprecated Use initializeTransformCache instead */
+export const initializeRedisCache = initializeTransformCache;
+
+/** @deprecated Use isDistributedCacheEnabled instead */
+export const isRedisCacheEnabled = isDistributedCacheEnabled;
 
 /**
  * Generate a content-addressable cache key for transforms.
@@ -107,50 +106,44 @@ export function generateCacheKey(
   return buildTransformCacheKey(filePath, contentHash, ssr, studioEmbed);
 }
 
-function redisKey(key: string): string {
-  return buildRedisTransformKey(key);
-}
-
 /**
- * Get cached transform from Redis (primary) or fallback memory cache.
+ * Get cached transform from backend or local fallback.
  */
 export async function getCachedTransformAsync(
   key: string,
 ): Promise<TransformCacheEntry | undefined> {
-  // Redis-only mode: only check Redis
-  if (redisEnabled && redisClient) {
+  // Try backend first
+  if (cacheBackend) {
     try {
-      const raw = await redisClient.get(redisKey(key));
+      const raw = await cacheBackend.get(`transform:${key}`);
       if (raw) {
         return JSON.parse(raw) as TransformCacheEntry;
       }
-      return undefined;
     } catch (error) {
-      logger.debug("[TransformCache] Redis get failed", { key, error });
-      return undefined;
+      logger.debug("[TransformCache] Backend get failed", { key, error });
     }
   }
 
-  // Fallback mode: use memory cache (local dev without Redis)
-  return getCachedTransform(key);
+  // Fall back to local memory for sync compatibility
+  return localFallback.get(key);
 }
 
 /**
- * Get cached transform from fallback memory cache (synchronous).
- * Only used when Redis is not available.
+ * Get cached transform from local fallback (synchronous).
+ * Only used when distributed cache is not available or for sync callers.
  */
 export function getCachedTransform(key: string): TransformCacheEntry | undefined {
-  // In Redis mode, always return undefined for sync calls
+  // In distributed mode, return undefined for sync calls
   // Callers should use getCachedTransformAsync instead
-  if (redisEnabled) {
+  if (cacheBackend && cacheBackend.type !== "memory") {
     return undefined;
   }
 
-  return fallbackCache.get(key);
+  return localFallback.get(key);
 }
 
 /**
- * Set cached transform in Redis (primary) or fallback memory cache.
+ * Set cached transform in backend.
  */
 export async function setCachedTransformAsync(
   key: string,
@@ -164,28 +157,24 @@ export async function setCachedTransformAsync(
     timestamp: Date.now(),
   };
 
-  // Redis-only mode: only write to Redis
-  if (redisEnabled && redisClient) {
+  // Write to backend
+  if (cacheBackend) {
     try {
-      await redisClient.set(redisKey(key), JSON.stringify(entry), {
-        EX: ttlSeconds > 0 ? ttlSeconds : DEFAULT_TTL_SECONDS,
-      });
+      const ttl = ttlSeconds > 0 ? ttlSeconds : DEFAULT_TTL_SECONDS;
+      await cacheBackend.set(`transform:${key}`, JSON.stringify(entry), ttl);
+      return;
     } catch (error) {
-      logger.debug("[TransformCache] Redis set failed", { key, error });
+      logger.debug("[TransformCache] Backend set failed", { key, error });
     }
-    return;
   }
 
-  // Fallback mode: use memory cache (local dev without Redis)
-  fallbackCache.set(key, entry);
-  if (fallbackCache.size > FALLBACK_MAX_ENTRIES) {
-    pruneFallbackCache();
-  }
+  // Fallback to local memory
+  setLocalFallback(key, entry);
 }
 
 /**
  * Set cached transform (fire-and-forget).
- * Writes to Redis if enabled, otherwise to fallback memory cache.
+ * Writes to backend or local fallback.
  */
 export function setCachedTransform(
   key: string,
@@ -199,39 +188,45 @@ export function setCachedTransform(
     timestamp: Date.now(),
   };
 
-  // Redis-only mode: fire-and-forget write to Redis
-  if (redisEnabled && redisClient) {
-    redisClient
-      .set(redisKey(key), JSON.stringify(entry), {
-        EX: ttlSeconds > 0 ? ttlSeconds : DEFAULT_TTL_SECONDS,
-      })
-      .catch((error) => {
-        logger.debug("[TransformCache] Redis set failed", { key, error });
-      });
+  // Fire-and-forget write to backend
+  if (cacheBackend) {
+    const ttl = ttlSeconds > 0 ? ttlSeconds : DEFAULT_TTL_SECONDS;
+    cacheBackend.set(`transform:${key}`, JSON.stringify(entry), ttl).catch((error) => {
+      logger.debug("[TransformCache] Backend set failed", { key, error });
+    });
+
+    // Also store locally for sync access
+    if (cacheBackend.type === "memory") {
+      setLocalFallback(key, entry);
+    }
     return;
   }
 
-  // Fallback mode: use memory cache (local dev without Redis)
-  fallbackCache.set(key, entry);
-  if (fallbackCache.size > FALLBACK_MAX_ENTRIES) {
-    pruneFallbackCache();
+  // Fallback to local memory
+  setLocalFallback(key, entry);
+}
+
+function setLocalFallback(key: string, entry: TransformCacheEntry): void {
+  localFallback.set(key, entry);
+  if (localFallback.size > FALLBACK_MAX_ENTRIES) {
+    pruneLocalFallback();
+  }
+}
+
+function pruneLocalFallback(): void {
+  const entries = Array.from(localFallback.entries()).sort(
+    ([, a], [, b]) => a.timestamp - b.timestamp,
+  );
+
+  const excess = localFallback.size - FALLBACK_MAX_ENTRIES;
+  for (let i = 0; i < excess; i++) {
+    const [key] = entries[i]!;
+    localFallback.delete(key);
   }
 }
 
 export function destroyTransformCache(): void {
-  fallbackCache.clear();
-}
-
-function pruneFallbackCache(): void {
-  const entries = Array.from(fallbackCache.entries()).sort(
-    ([, a], [, b]) => a.timestamp - b.timestamp,
-  );
-
-  const excess = fallbackCache.size - FALLBACK_MAX_ENTRIES;
-  for (let i = 0; i < excess; i++) {
-    const [key] = entries[i]!;
-    fallbackCache.delete(key);
-  }
+  localFallback.clear();
 }
 
 /**
@@ -240,13 +235,11 @@ function pruneFallbackCache(): void {
 export function getTransformCacheStats(): {
   fallbackEntries: number;
   maxFallbackEntries: number;
-  redisEnabled: boolean;
-  mode: string;
+  backend: string;
 } {
   return {
-    fallbackEntries: fallbackCache.size,
+    fallbackEntries: localFallback.size,
     maxFallbackEntries: FALLBACK_MAX_ENTRIES,
-    redisEnabled,
-    mode: redisEnabled ? "redis-only" : "fallback-memory",
+    backend: cacheBackend?.type ?? "uninitialized",
   };
 }
