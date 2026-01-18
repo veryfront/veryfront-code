@@ -41,9 +41,14 @@ export class TokenManager {
   /**
    * Get a valid token for the given scope and project.
    * Returns cached token if valid, otherwise fetches a new one.
+   * Can use either projectSlug or customDomain to identify the project.
    */
-  async getToken(scope: TokenScope, projectId?: string): Promise<string> {
-    const cacheKey = this.getCacheKey(scope, projectId);
+  async getToken(
+    scope: TokenScope,
+    projectSlug?: string,
+    customDomain?: string,
+  ): Promise<string> {
+    const cacheKey = this.getCacheKey(scope, projectSlug || customDomain);
     const cached = await this.cache.get(cacheKey);
 
     if (cached && this.isTokenValid(cached)) {
@@ -56,7 +61,7 @@ export class TokenManager {
       return pending;
     }
 
-    const tokenPromise = this.fetchAndCacheToken(scope, projectId);
+    const tokenPromise = this.fetchAndCacheToken(scope, projectSlug, customDomain);
     this.pendingRequests.set(cacheKey, tokenPromise);
 
     try {
@@ -69,8 +74,8 @@ export class TokenManager {
   /**
    * Invalidate a cached token, forcing refresh on next request.
    */
-  async invalidateToken(scope: TokenScope, projectId?: string): Promise<void> {
-    const cacheKey = this.getCacheKey(scope, projectId);
+  async invalidateToken(scope: TokenScope, projectSlug?: string): Promise<void> {
+    const cacheKey = this.getCacheKey(scope, projectSlug);
     await this.cache.delete(cacheKey);
   }
 
@@ -95,8 +100,8 @@ export class TokenManager {
     await this.cache.close();
   }
 
-  private getCacheKey(scope: TokenScope, projectId?: string): string {
-    return `${scope}:${projectId || "global"}`;
+  private getCacheKey(scope: TokenScope, projectSlug?: string): string {
+    return `${scope}:${projectSlug || "global"}`;
   }
 
   private isTokenValid(cached: TokenCacheEntry): boolean {
@@ -105,7 +110,8 @@ export class TokenManager {
 
   private async fetchAndCacheToken(
     scope: TokenScope,
-    projectId?: string,
+    projectSlug?: string,
+    customDomain?: string,
   ): Promise<string> {
     const clientId = scope === "preview" ? this.config.previewClientId : this.config.clientId;
     const clientSecret = scope === "preview"
@@ -116,16 +122,17 @@ export class TokenManager {
       apiBaseUrl: this.config.apiBaseUrl,
       clientId,
       clientSecret,
-      projectId,
+      projectSlug,
+      customDomain,
     });
 
     const expiresAt = this.calculateExpiresAt(response);
 
-    await this.cache.set(this.getCacheKey(scope, projectId), {
+    await this.cache.set(this.getCacheKey(scope, projectSlug || customDomain), {
       token: response.access_token,
       expiresAt,
       scope,
-      projectId,
+      projectSlug: projectSlug || customDomain,
     });
 
     return response.access_token;
