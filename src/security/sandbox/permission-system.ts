@@ -1,3 +1,21 @@
+/**
+ * Cross-runtime Permission System
+ *
+ * This module provides a unified permission API that wraps Deno's native
+ * permission system. On non-Deno runtimes (Node.js, Bun), permission requests
+ * return "denied" as these runtimes don't have a built-in permission model.
+ *
+ * @module security/sandbox/permission-system
+ *
+ * @example
+ * ```ts
+ * import { requestPermission } from "./permission-system.ts";
+ *
+ * // On Deno: prompts user for permission
+ * // On Node/Bun: returns { state: "denied" }
+ * const result = await requestPermission({ name: "read", path: "./data" });
+ * ```
+ */
 import { serverLogger } from "@veryfront/utils";
 import { isDeno } from "@veryfront/platform/compat/runtime.ts";
 

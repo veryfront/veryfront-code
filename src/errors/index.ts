@@ -71,4 +71,4 @@ export type { ErrorSolution as UserFriendlyErrorSolution } from "./user-friendly
 
 export type { ErrorCodeType } from "./error-codes.ts";
 
-export { ensureError, getErrorMessage } from "./veryfront-error.ts";
+export { createError, ensureError, getErrorMessage, toError } from "./veryfront-error.ts";

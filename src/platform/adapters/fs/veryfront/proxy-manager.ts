@@ -9,7 +9,7 @@ import {
   invalidateModulePaths,
 } from "../../../../transforms/mdx/esm-module-loader/cache/index.ts";
 import { clearSnippetCache } from "../../../../rendering/snippet-renderer.ts";
-import { buildProxyManagerCacheKey } from "../../../../cache/keys.ts";
+import { buildProxyManagerCacheKey } from "@veryfront/cache";
 
 interface ProjectAdapter {
   adapter: VeryfrontFSAdapter;

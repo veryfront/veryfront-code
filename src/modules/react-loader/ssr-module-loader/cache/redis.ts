@@ -13,7 +13,7 @@ import {
   type RedisClient,
 } from "@veryfront/utils/redis-client.ts";
 import { REDIS_TTL_SECONDS } from "../constants.ts";
-import { buildRedisSSRModuleKey } from "../../../../cache/keys.ts";
+import { buildRedisSSRModuleKey } from "@veryfront/cache";
 
 // Redis state
 let redisEnabled = false;
