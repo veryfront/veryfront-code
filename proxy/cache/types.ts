@@ -9,7 +9,7 @@ export interface TokenCacheEntry {
   token: string;
   expiresAt: number; // Unix timestamp in ms
   scope: "preview" | "production";
-  projectId?: string;
+  projectSlug?: string;
 }
 
 export interface TokenCache {
