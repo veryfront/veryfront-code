@@ -7,7 +7,6 @@ WORKDIR /app
 COPY deno.json deno.lock* ./
 COPY veryfront.config.ts ./
 COPY src/ ./src/
-COPY lib/ ./lib/
 
 # Cache dependencies
 RUN deno cache src/server/production-server.ts
