@@ -3,12 +3,12 @@
  * Tests invalid configs, missing files, malformed input, and error scenarios
  */
 
-import { assertEquals, assertExists, assertRejects } from "std/assert/mod.ts";
-import { assertStringIncludes } from "std/assert/assert_string_includes.ts";
-import { describe } from "std/testing/bdd.ts";
+import { assertEquals, assertExists, assertRejects } from "@std/assert";
+import { assertStringIncludes } from "@std/assert";
+import { describe } from "@std/testing/bdd";
 import { clearConfigCache, getConfig } from "@veryfront/config";
 import { createMockAdapter } from "@veryfront/platform/adapters/mock.ts";
-import { join } from "std/path/mod.ts";
+import { join } from "@std/path";
 
 // Helper to write config files to temp directory for testing
 async function setupConfigTest(

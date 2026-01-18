@@ -1,5 +1,5 @@
-import { describe, it } from "std/testing/bdd.ts";
-import { assert, assertEquals, assertStringIncludes } from "std/assert/mod.ts";
+import { describe, it } from "@std/testing/bdd";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { extractHeadElements, wrapInHTMLShell } from "./html-shell-generator.ts";
 import type { RenderMetadata } from "@veryfront/types";
 import type { HTMLGenerationOptions } from "./types.ts";

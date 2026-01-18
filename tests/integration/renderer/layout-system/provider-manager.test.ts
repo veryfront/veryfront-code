@@ -5,8 +5,8 @@
 // Disable LRU intervals during testing to prevent resource leaks
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 
-import { assertEquals } from "jsr:@std/assert@1";
-import { join } from "https://deno.land/std@0.220.0/path/mod.ts";
+import { assertEquals } from "@std/assert";
+import { join } from "@std/path";
 import { ProviderManager } from "../../../../src/rendering/layouts/provider-manager.ts";
 import { DenoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
 import type { MdxBundle } from "@veryfront/types";

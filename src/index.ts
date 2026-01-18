@@ -87,3 +87,34 @@ export type { VeryfrontConfig } from "@veryfront/config";
 // ============================================================================
 
 export type { ComponentProps, MDXFrontmatter, PageContext } from "@veryfront/types";
+
+// ============================================================================
+// AI Modules (Unified Entry Point)
+// For advanced use, import from specific modules:
+// - `veryfront/agent`   → Agent runtime, factory, memory
+// - `veryfront/tool`    → Tool definition, registry, execution
+// - `veryfront/workflow`→ Durable workflow engine
+// - `veryfront/prompt`  → Prompt templates
+// - `veryfront/resource`→ Resource definitions
+// - `veryfront/mcp`     → Model Context Protocol server
+// ============================================================================
+
+// Agent
+export { agent } from "@veryfront/agent";
+export type { Agent, AgentConfig } from "@veryfront/agent";
+
+// Tool
+export { executeTool, tool } from "@veryfront/tool";
+export type { Tool, ToolConfig } from "@veryfront/tool";
+
+// Workflow
+export { branch, parallel, step, waitForApproval, workflow } from "@veryfront/workflow";
+export type { WorkflowDefinition, WorkflowRun } from "@veryfront/workflow";
+
+// Prompt
+export { prompt } from "@veryfront/prompt";
+export type { Prompt, PromptConfig } from "@veryfront/prompt";
+
+// Resource
+export { resource } from "@veryfront/resource";
+export type { Resource, ResourceConfig } from "@veryfront/resource";

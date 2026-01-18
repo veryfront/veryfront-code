@@ -3,8 +3,8 @@
  * Serves veryfront client modules from /_veryfront/lib/* endpoint
  * for self-hosted mode (when config.client.moduleResolution === 'self-hosted')
  *
- * This handler enables projects to serve veryfront/ai/* modules from their
- * own server instead of relying on CDN. The modules are read from
+ * This handler enables projects to serve veryfront agent, components, and primitives
+ * modules from their own server instead of relying on CDN. The modules are read from
  * node_modules/veryfront/dist/ and served with appropriate caching headers.
  */
 
@@ -17,13 +17,13 @@ import {
   HTTP_NOT_FOUND,
   HTTP_OK,
   PRIORITY_MEDIUM_LIB_MODULES,
-} from "@veryfront/core/constants/index.ts";
+} from "@veryfront/utils/constants/index.ts";
 
 /** Allowed module paths that can be served */
 const ALLOWED_MODULES = new Set([
-  "ai/react.js",
-  "ai/components.js",
-  "ai/primitives.js",
+  "agent/react.js",
+  "components/ai.js",
+  "primitives.js",
 ]);
 
 export class LibModulesHandler extends BaseHandler {
@@ -168,7 +168,7 @@ export class LibModulesHandler extends BaseHandler {
 
   /**
    * Resolve module path to absolute file path
-   * Maps: ai/react.js -> node_modules/veryfront/dist/ai/react.js
+   * Maps: agent/react.js -> node_modules/veryfront/dist/agent/react.js
    */
   private resolveModulePath(module: string, projectDir: string): string | null {
     if (!ALLOWED_MODULES.has(module)) {

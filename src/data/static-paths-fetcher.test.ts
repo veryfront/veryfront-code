@@ -1,5 +1,5 @@
-import { assertEquals, assertExists, assertRejects } from "jsr:@std/assert@1";
-import { describe, it } from "jsr:@std/testing@1/bdd";
+import { assertEquals, assertExists, assertRejects } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import { StaticPathsFetcher } from "./static-paths-fetcher.ts";
 import type { PageWithData } from "./types.ts";
 

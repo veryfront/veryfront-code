@@ -16,7 +16,7 @@ Thank you for your interest in contributing to Veryfront! This document provides
 
 ### Module Structure
 
-Veryfront is organized into **16 core modules**. See [src/README.md](./src/README.md) for detailed module descriptions and [ARCHITECTURE.md](./ARCHITECTURE.md) for design philosophy and system architecture.
+Veryfront is organized into focused modules with clear boundaries. See [src/README.md](./src/README.md) for detailed module descriptions and [ARCHITECTURE.md](./ARCHITECTURE.md) for design philosophy and system architecture.
 
 ### Utils Pattern Guidelines
 
@@ -45,7 +45,6 @@ Place utilities in `src/{module}/utils/` when they:
 
 **Examples:**
 ```typescript
-// ai/utils/          - AI-specific (tool registry, discovery)
 // build/utils/       - Build-specific (asset utils, file types)
 // rendering/utils/   - Rendering helpers (React, streams)
 // server/handlers/utils/ - Handler utilities (content-types, etag)
@@ -91,7 +90,13 @@ import { createRenderer } from "../../../../rendering/index.ts";
 - `@veryfront/build` - Build system
 - `@veryfront/transforms` - Code transformations
 - `@veryfront/server` - Servers
-- `@veryfront/ai` - AI agent runtime
+- `@veryfront/agent` - AI agent runtime
+- `@veryfront/tool` - Tool definitions and registry
+- `@veryfront/workflow` - Durable workflow engine
+- `@veryfront/prompt` - Prompt templates
+- `@veryfront/resource` - Resource definitions
+- `@veryfront/mcp` - MCP protocol server
+- `@veryfront/provider` - AI model providers
 - `@veryfront/observability` - Metrics/tracing
 
 ### File Naming Conventions
@@ -488,7 +493,7 @@ Report security issues to: security@veryfront.com
 
 ## Questions?
 
-- **Documentation**: See [docs/](./docs/)
+- **Documentation**: See [veryfront.com/docs](https://veryfront.com/docs/framework)
 - **Architecture**: See [ARCHITECTURE.md](./ARCHITECTURE.md)
 - **Issues**: https://github.com/veryfront/veryfront/issues
 - **Discussions**: https://github.com/veryfront/veryfront/discussions

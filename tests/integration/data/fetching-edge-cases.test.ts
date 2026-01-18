@@ -3,8 +3,8 @@
  * Tests network failures, timeout scenarios, invalid responses, and error handling
  */
 
-import { assertEquals, assertExists, assertRejects } from "std/assert/mod.ts";
-import { describe } from "std/testing/bdd.ts";
+import { assertEquals, assertExists, assertRejects } from "@std/assert";
+import { describe } from "@std/testing/bdd";
 import { type DataContext, DataFetcher, type PageWithData } from "@veryfront/data/index.ts";
 
 type StaticDataContext = Omit<DataContext, "request" | "query">;

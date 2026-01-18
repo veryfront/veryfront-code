@@ -1,20 +1,20 @@
-import { getMCPRegistry, getMCPStats } from "@veryfront/ai/mcp/registry.ts";
-import { executeTool, toolRegistry } from "@veryfront/ai/utils/tool.ts";
-import { resourceRegistry } from "@veryfront/ai/mcp/resource.ts";
-import { promptRegistry } from "@veryfront/ai/mcp/prompt.ts";
-import { agentRegistry } from "@veryfront/ai/agent/composition.ts";
-import { providerRegistry } from "@veryfront/ai/providers/factory.ts";
-import { workflowRegistry } from "@veryfront/ai/workflow/registry.ts";
-import { WorkflowClient } from "@veryfront/ai/workflow/api/workflow-client.ts";
+import { getMCPRegistry, getMCPStats } from "@veryfront/mcp";
+import { executeTool, toolRegistry } from "@veryfront/tool";
+import { resourceRegistry } from "@veryfront/resource";
+import { promptRegistry } from "@veryfront/prompt";
+import { agentRegistry } from "@veryfront/agent";
+import { providerRegistry } from "@veryfront/provider";
+import { WorkflowClient, workflowRegistry } from "@veryfront/workflow";
 import { metrics } from "@veryfront/observability/simple-metrics/index.ts";
 import {
   checkMemoryPressure,
   getCacheStats,
   getHeapStats,
-} from "@veryfront/core/memory/profiler.ts";
+} from "@veryfront/utils/memory/profiler.ts";
 import { ERROR_CATALOG } from "@veryfront/errors/catalog/index.ts";
-import { TransformStage } from "@veryfront/build/transforms/pipeline/types.ts";
-import { isRSCEnabled } from "@veryfront/core/utils/feature-flags.ts";
+import { TransformStage } from "@veryfront/transforms/pipeline/types.ts";
+import { isRSCEnabled } from "@veryfront/utils/feature-flags.ts";
+import { getEnv } from "@veryfront/platform/compat/process.ts";
 import type { HandlerContext } from "../../types.ts";
 
 const JSON_HEADERS = { "Content-Type": "application/json", "Cache-Control": "no-cache" };
@@ -561,11 +561,11 @@ function handleGetConfig(ctx: HandlerContext): Response {
   ];
 
   const safeEnvVars: Record<string, string | boolean> = {
-    NODE_ENV: Deno.env.get("NODE_ENV") || "development",
-    VERYFRONT_MODE: Deno.env.get("VERYFRONT_MODE") || "development",
-    OPENAI_API_KEY: Deno.env.get("OPENAI_API_KEY") ? "(set)" : "(not set)",
-    ANTHROPIC_API_KEY: Deno.env.get("ANTHROPIC_API_KEY") ? "(set)" : "(not set)",
-    GOOGLE_AI_API_KEY: Deno.env.get("GOOGLE_AI_API_KEY") ? "(set)" : "(not set)",
+    NODE_ENV: getEnv("NODE_ENV") || "development",
+    VERYFRONT_MODE: getEnv("VERYFRONT_MODE") || "development",
+    OPENAI_API_KEY: getEnv("OPENAI_API_KEY") ? "(set)" : "(not set)",
+    ANTHROPIC_API_KEY: getEnv("ANTHROPIC_API_KEY") ? "(set)" : "(not set)",
+    GOOGLE_AI_API_KEY: getEnv("GOOGLE_AI_API_KEY") ? "(set)" : "(not set)",
   };
 
   return jsonResponse({

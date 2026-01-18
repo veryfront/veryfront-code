@@ -2,8 +2,8 @@
  * Tests for Data Fetching System
  */
 
-import { assertEquals, assertExists, assertRejects } from "std/assert/mod.ts";
-import { beforeEach, describe, it } from "std/testing/bdd.ts";
+import { assertEquals, assertExists, assertRejects } from "@std/assert";
+import { beforeEach, describe, it } from "@std/testing/bdd";
 import {
   type DataContext,
   DataFetcher,

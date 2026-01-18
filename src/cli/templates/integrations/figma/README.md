@@ -87,7 +87,7 @@ figma/
 │   ├── app/api/auth/figma/
 │   │   ├── route.ts           # OAuth initiation (14 lines)
 │   │   └── callback/route.ts  # OAuth callback (44 lines)
-│   └── ai/tools/
+│   └── tools/
 │       ├── list-projects.ts   # Project listing (66 lines)
 │       ├── list-files.ts      # File discovery (36 lines)
 │       ├── get-file.ts        # File inspection (46 lines)

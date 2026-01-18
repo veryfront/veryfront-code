@@ -5,13 +5,13 @@
  * and renderer integration for client-side navigation.
  */
 
-import { assertEquals, assertExists } from "std/assert/mod.ts";
+import { assertEquals, assertExists } from "@std/assert";
 import {
   APIServer,
   type APIServerOptions,
   type PageRendererLike,
   type PageRenderResult,
-} from "../../../../src/module-system/server/index.ts";
+} from "../../../../src/modules/server/index.ts";
 
 // Mock renderer for testing
 class MockRenderer implements PageRendererLike {

@@ -64,7 +64,7 @@ outlook/
 │   ├── app/api/auth/outlook/
 │   │   ├── route.ts                 # OAuth initiation
 │   │   └── callback/route.ts        # OAuth callback handler
-│   └── ai/tools/
+│   └── tools/
 │       ├── list-emails.ts           # List recent emails
 │       ├── get-email.ts             # Get email details
 │       ├── send-email.ts            # Send email

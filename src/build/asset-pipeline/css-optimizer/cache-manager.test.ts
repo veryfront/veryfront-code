@@ -2,9 +2,9 @@
  * Tests for CSS Cache Manager
  */
 
-import { assertEquals, assertExists } from "jsr:@std/assert@1";
-import { join } from "std/path/mod.ts";
-import { ensureDir } from "std/fs/mod.ts";
+import { assertEquals, assertExists } from "@std/assert";
+import { join } from "@std/path";
+import { ensureDir } from "@std/fs";
 import { CacheManager, loadCSSManifest } from "./css-bundle-cache.ts";
 import type { CSSBundle } from "@veryfront/types";
 

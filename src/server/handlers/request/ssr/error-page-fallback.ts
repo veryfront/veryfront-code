@@ -12,7 +12,7 @@ import type { HandlerContext } from "../../types.ts";
 import type { ResponseBuilder } from "@veryfront/security/index.ts";
 import { join as joinPath } from "@veryfront/platform/compat/path/index.ts";
 import { serverLogger as logger } from "@veryfront/utils";
-import { buildErrorPageCacheKey } from "../../../../core/cache/keys.ts";
+import { buildErrorPageCacheKey } from "@veryfront/cache";
 
 type ErrorPageType = "404" | "500" | "_error";
 

@@ -13,7 +13,9 @@ function getEnv(key: string): string | undefined {
   return undefined;
 }
 
-import { agent, initializeProviders, tool } from "veryfront/ai";
+import { agent } from "veryfront/agent";
+import { initializeProviders } from "veryfront/provider";
+import { tool } from "veryfront/tool";
 import { z } from "zod";
 
 // Try to initialize real providers

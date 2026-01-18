@@ -15,13 +15,8 @@
  * - Graceful shutdown
  */
 
-import { assert, assertEquals, assertExists } from "jsr:@std/assert@1";
-import {
-  afterEach as _afterEach,
-  beforeEach as _beforeEach,
-  describe,
-  it,
-} from "jsr:@std/testing@1/bdd";
+import { assert, assertEquals, assertExists } from "@std/assert";
+import { afterEach as _afterEach, beforeEach as _beforeEach, describe, it } from "@std/testing/bdd";
 
 // Mock OpenTelemetry API types
 const _mockObservableResult = {

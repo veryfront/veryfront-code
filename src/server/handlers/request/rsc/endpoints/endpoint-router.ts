@@ -7,7 +7,7 @@ import { HTTP_SERVER_ERROR } from "@veryfront/utils";
 import { metrics } from "@veryfront/observability/simple-metrics/index.ts";
 import { serverLogger } from "@veryfront/utils";
 import { isRSCEnabled } from "@veryfront/utils";
-import { HttpStatus, jsonErrorResponse } from "@veryfront/http/responses.ts";
+import { HttpStatus, jsonErrorResponse } from "@veryfront/http/responses";
 import { getRSCHandler } from "./handler-registry.ts";
 import { handleActionRequest } from "./action-handler.ts";
 import { handleClientScript, handleDomScript } from "./script-handlers.ts";

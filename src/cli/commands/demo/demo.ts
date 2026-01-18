@@ -4,7 +4,8 @@
  * @module cli/commands/demo
  */
 
-import { chdir, cwd } from "@veryfront/platform/compat/process.ts";
+import { chdir, cwd, promptSync, writeStdout } from "@veryfront/platform/compat/process.ts";
+import { getStdinReader, setRawMode } from "@veryfront/platform/compat/stdin.ts";
 import { join } from "@veryfront/platform/compat/path/index.ts";
 import { bold, brand, dim, error, muted, success } from "../../ui/colors.ts";
 import { AnimatedDotMatrix } from "../../ui/dot-matrix.ts";
@@ -30,7 +31,7 @@ const CLEAR_SCREEN = `${ESC}[2J`;
 const MOVE_HOME = `${ESC}[H`;
 
 function write(s: string): void {
-  Deno.stdout.writeSync(new TextEncoder().encode(s));
+  writeStdout(s);
 }
 
 function delay(ms: number): Promise<void> {
@@ -105,8 +106,8 @@ async function demoLogin(preselectedMethod?: AuthMethod): Promise<boolean> {
     drawOptions();
 
     // Wait for selection
-    Deno.stdin.setRaw(true);
-    const reader = Deno.stdin.readable.getReader();
+    setRawMode(true);
+    const reader = getStdinReader();
     const dec = new TextDecoder();
 
     try {
@@ -147,7 +148,7 @@ async function demoLogin(preselectedMethod?: AuthMethod): Promise<boolean> {
       }
     } finally {
       reader.releaseLock();
-      Deno.stdin.setRaw(false);
+      setRawMode(false);
     }
   }
 
@@ -161,12 +162,7 @@ async function demoLogin(preselectedMethod?: AuthMethod): Promise<boolean> {
     console.log("  " + dim("You can get a token from veryfront.com/settings/api-keys"));
     console.log();
 
-    const tokenInput = await new Promise<string>((resolve) => {
-      const buf = new Uint8Array(1024);
-      Deno.stdout.writeSync(new TextEncoder().encode("  API token: "));
-      const n = Deno.stdin.readSync(buf);
-      resolve(new TextDecoder().decode(buf.subarray(0, n ?? 0)).trim());
-    });
+    const tokenInput = promptSync("  API token:") ?? "";
 
     if (!tokenInput) {
       console.log();
@@ -278,8 +274,8 @@ async function waitForEnter(prompt?: string): Promise<boolean> {
     console.log("  " + muted(prompt));
   }
 
-  Deno.stdin.setRaw(true);
-  const reader = Deno.stdin.readable.getReader();
+  setRawMode(true);
+  const reader = getStdinReader();
   const dec = new TextDecoder();
 
   try {
@@ -301,7 +297,7 @@ async function waitForEnter(prompt?: string): Promise<boolean> {
     }
   } finally {
     reader.releaseLock();
-    Deno.stdin.setRaw(false);
+    setRawMode(false);
   }
 }
 

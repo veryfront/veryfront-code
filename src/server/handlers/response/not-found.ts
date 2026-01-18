@@ -5,7 +5,7 @@ import {
   HTTP_INTERNAL_SERVER_ERROR,
   HTTP_NOT_FOUND,
   PRIORITY_FALLBACK,
-} from "@veryfront/core/constants/index.ts";
+} from "@veryfront/utils/constants/index.ts";
 import { escapeHtml } from "@veryfront/html/html-escape.ts";
 
 export class NotFoundHandler extends BaseHandler {

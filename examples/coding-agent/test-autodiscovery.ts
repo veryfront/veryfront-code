@@ -4,7 +4,7 @@
  * Verify that tools are automatically discovered from ai/tools/ directory
  */
 
-import { discoverAll, getMCPStats } from "veryfront/ai";
+import { discoverAll, getMCPStats } from "veryfront/mcp";
 
 // Helper for Cross-Platform Compatibility (Deno/Node)
 function exitProcess(code: number) {

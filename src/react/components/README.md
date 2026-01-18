@@ -228,9 +228,8 @@ import { LayoutComponent } from "@veryfront/components";
 
 ## 🔗 See Also
 
-- [@veryfront/routing](../routing/README.md) - Routing system
-- [@veryfront/runtime](../runtime/README.md) - React rendering
-- [Components Guide](../../docs/components.md)
+- [@veryfront/routing](../../routing/README.md) - Routing system
+- [@veryfront/rendering](../../rendering/README.md) - React rendering
 
 ## 📄 License
 

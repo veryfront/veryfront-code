@@ -6,7 +6,7 @@
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { MetricsConfig } from "./types.ts";
 import { memoryUsage as platformMemoryUsage } from "@veryfront/platform/compat/process.ts";
-import { getOtelMetricsConfig } from "@veryfront/core/config/env.ts";
+import { getOtelMetricsConfig } from "@veryfront/config/env.ts";
 
 /**
  * Default metrics collect interval in milliseconds (60 seconds)

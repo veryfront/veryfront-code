@@ -1,5 +1,5 @@
-import { assertEquals } from "std/assert/mod.ts";
-import { beforeEach, describe, it } from "std/testing/bdd.ts";
+import { assertEquals } from "@std/assert";
+import { beforeEach, describe, it } from "@std/testing/bdd";
 import { VeryfrontAPIClient, VeryfrontAPIError } from "./veryfront-api-client/index.ts";
 
 describe("VeryfrontAPIClient", () => {

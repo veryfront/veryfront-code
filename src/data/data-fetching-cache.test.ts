@@ -1,8 +1,8 @@
-import { assertEquals, assertExists } from "jsr:@std/assert@1";
-import { describe, it } from "jsr:@std/testing@1/bdd";
+import { assertEquals, assertExists } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import { CacheManager } from "./data-fetching-cache.ts";
 import type { CacheEntry, DataContext } from "./types.ts";
-import { runWithCacheKeyContext } from "@veryfront/core/cache/cache-key-builder.ts";
+import { runWithCacheKeyContext } from "@veryfront/cache/cache-key-builder.ts";
 
 // Helper to run tests with production mode cache context
 function withProductionContext<T>(fn: () => T): T {

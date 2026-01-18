@@ -1,6 +1,6 @@
 import type { Route, RouteMatch } from "@veryfront/routing/matchers/types.ts";
 import { LRUCache } from "@veryfront/utils/lru-wrapper.ts";
-import { getDisableLruIntervalEnv } from "@veryfront/core/config/env.ts";
+import { getDisableLruIntervalEnv } from "@veryfront/config/env.ts";
 
 export type { Route, RouteMatch };
 

@@ -1,11 +1,12 @@
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="h-full bg-slate-50 dark:bg-slate-900">
-      {children}
-    </div>
+    <html lang="en">
+      <head>
+        <meta charSet="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>AI Chat</title>
+      </head>
+      <body>{children}</body>
+    </html>
   );
 }

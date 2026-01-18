@@ -300,5 +300,5 @@ Deno.test("rate limiter blocks after limit", async () => {
 ## See Also
 
 - [Security Overview](../README.md)
-- [Input Validation](../input-validation/README.md)
+- [Input Validation](../input-validation/)
 - [Path Validation](../path-validation.ts)

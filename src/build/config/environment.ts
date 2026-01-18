@@ -3,7 +3,7 @@
  * Consolidates all environment variable access to reduce proliferation
  */
 
-import { getEnvironmentFromEnv } from "@veryfront/core/config/env.ts";
+import { getEnvironmentFromEnv } from "@veryfront/config/env.ts";
 
 export type Environment = "development" | "production" | "test";
 

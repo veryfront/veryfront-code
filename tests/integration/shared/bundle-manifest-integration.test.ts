@@ -4,7 +4,7 @@
  * Tests bundle manifest integration with the renderer and build process
  */
 
-import { assertEquals, assertExists } from "std/assert/mod.ts";
+import { assertEquals, assertExists } from "@std/assert";
 import {
   type BundleMetadata,
   getBundleManifestStore,

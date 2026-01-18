@@ -15,7 +15,7 @@ import {
   buildRenderCacheKey,
   buildRenderCachePrefix,
   parseRenderCacheKey,
-} from "../../core/cache/keys.ts";
+} from "../../cache/keys.ts";
 
 /**
  * Environment type for rendering context

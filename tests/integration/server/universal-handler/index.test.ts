@@ -18,10 +18,10 @@ import {
   assertEquals,
   assertExists,
   assertRejects as _assertRejects,
-} from "std/assert/mod.ts";
-import { ensureDir as _ensureDir } from "std/fs/mod.ts";
-import { join as _join } from "std/path/mod.ts";
-import { afterAll, describe, it } from "std/testing/bdd.ts";
+} from "@std/assert";
+import { ensureDir as _ensureDir } from "@std/fs";
+import { join as _join } from "@std/path";
+import { afterAll, describe, it } from "@std/testing/bdd";
 import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
 import { createVeryfrontHandler } from "../../../../src/server/universal-handler/index.ts";
 import "../../../_helpers/log-guard.ts";

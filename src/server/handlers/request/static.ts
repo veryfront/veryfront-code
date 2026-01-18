@@ -23,7 +23,7 @@ import {
   HTTP_NOT_FOUND,
   HTTP_OK,
   PRIORITY_MEDIUM_STATIC,
-} from "@veryfront/core/constants/index.ts";
+} from "@veryfront/utils/constants/index.ts";
 import { normalizeChunkPath } from "@veryfront/utils/chunk-utils.ts";
 
 export class StaticHandler extends BaseHandler {

@@ -9,7 +9,7 @@ import { isInteractive as checkIsInteractive } from "@veryfront/platform/compat/
 import { multiSelect, select } from "../../utils/terminal-select.ts";
 import type { IntegrationName } from "../../templates/types.ts";
 import type { InitTemplate } from "./types.ts";
-import { isCiEnv, isDenoTestingEnv } from "@veryfront/core/config/env.ts";
+import { isCiEnv, isDenoTestingEnv } from "@veryfront/config/env.ts";
 
 export interface WizardResult {
   template: InitTemplate;

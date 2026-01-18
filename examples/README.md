@@ -4,7 +4,7 @@ This directory contains working example applications demonstrating various featu
 
 ## AI Examples
 
-### 1. AI Basic (`ai-basic/`)
+### 1. Agent Basic (`agent-basic/`)
 
 **Start here for AI** - Core AI functionality demonstration:
 - Agent creation with tools
@@ -14,11 +14,11 @@ This directory contains working example applications demonstrating various featu
 
 **Run:** `deno run --allow-all example.ts`
 
-[Full README](./ai-basic/README.md)
+[Full README](./agent-basic/README.md)
 
 ---
 
-### 2. AI Auto-Discovery (`ai-autodiscovery/`)
+### 2. Autodiscovery (`autodiscovery/`)
 
 Convention-driven AI component discovery:
 - Auto-discover tools from `ai/tools/`
@@ -28,11 +28,11 @@ Convention-driven AI component discovery:
 
 **Run:** `deno run --allow-all example.ts`
 
-[Full README](./ai-autodiscovery/README.md)
+[Full README](./autodiscovery/README.md)
 
 ---
 
-### 3. AI Memory & Workflow (`ai-memory-workflow/`)
+### 3. Workflow Memory (`workflow-memory/`)
 
 Advanced agent capabilities:
 - Memory strategies (conversation, buffer, summary)
@@ -41,7 +41,7 @@ Advanced agent capabilities:
 
 **Run:** `deno run --allow-all example.ts`
 
-[Full README](./ai-memory-workflow/README.md)
+[Full README](./workflow-memory/README.md)
 
 ---
 
@@ -59,7 +59,7 @@ RAG (Retrieval-Augmented Generation) example:
 
 ---
 
-### 5. AI SDK Integration (`ai-sdk-integration/`)
+### 5. Provider SDK Integration (`provider-sdk-integration/`)
 
 Integration options and flexibility:
 - Vercel AI SDK providers (30+ options)
@@ -68,11 +68,11 @@ Integration options and flexibility:
 
 **Run:** `deno run --allow-all example.ts`
 
-[Full README](./ai-sdk-integration/README.md)
+[Full README](./provider-sdk-integration/README.md)
 
 ---
 
-### 6. AI Dev Tools (`ai-dev-tools/`)
+### 6. Agent Dev Tools (`agent-dev-tools/`)
 
 Testing and debugging utilities:
 - Agent testing with expected behaviors
@@ -82,7 +82,7 @@ Testing and debugging utilities:
 
 **Run:** `deno run --allow-all example.ts`
 
-[Full README](./ai-dev-tools/README.md)
+[Full README](./agent-dev-tools/README.md)
 
 ---
 
@@ -99,7 +99,7 @@ Testing and debugging utilities:
 
 ---
 
-### 8. AI Code Assistant (`ai-code-assistant/`)
+### 8. Agent Code Assistant (`agent-code-assistant/`)
 
 **Production-Ready** Code Assistant:
 - Modern UI with syntax highlighting
@@ -109,7 +109,7 @@ Testing and debugging utilities:
 
 **Run:** `deno task dev` (uses internal CLI)
 
-[Full README](./ai-code-assistant/README.md)
+[Full README](./agent-code-assistant/README.md)
 
 ---
 
@@ -278,12 +278,12 @@ Scalable background job processing:
 - `basic-mdx` - Content-focused sites
 
 **AI & Intelligent Apps:**
-- `ai-basic` - Start here for AI features
-- `ai-autodiscovery` - Convention-driven approach
-- `ai-memory-workflow` - Advanced patterns
-- `ai-dev-tools` - Testing & debugging
-- `ai-sdk-integration` - Integration options
-- `ai-code-assistant` - Production-ready assistant
+- `agent-basic` - Start here for AI features
+- `autodiscovery` - Convention-driven approach
+- `workflow-memory` - Advanced patterns
+- `agent-dev-tools` - Testing & debugging
+- `provider-sdk-integration` - Integration options
+- `agent-code-assistant` - Production-ready assistant
 - `full-demo` - Complete showcase
 - `knowledge-base` - RAG / Chat with docs
 - `durable-workflows` - DAG workflows with approvals
@@ -309,10 +309,10 @@ Most examples support `.env` files for configuration.
 **Setup:**
 ```bash
 # Copy .env file to example directory
-cp .env.example ai-basic/.env
+cp .env.example agent-basic/.env
 
 # Or create from template
-cd ai-basic
+cd agent-basic
 cat > .env << EOF
 OPENAI_API_KEY=sk-your-key-here
 ANTHROPIC_API_KEY=sk-ant-your-key-here
@@ -341,7 +341,7 @@ See root `.env.example` for a complete list of available variables.
 ### AI Examples (Scripts)
 
 ```bash
-cd ai-basic
+cd agent-basic
 deno run --allow-all example.ts
 ```
 
@@ -385,13 +385,13 @@ veryfront dev
 ### Want to build AI apps?
 
 **Start here:**
-1. **`ai-basic`** - Core AI concepts
-2. **`ai-autodiscovery`** - Convention-driven approach
-3. **`ai-memory-workflow`** - Advanced features
+1. **`agent-basic`** - Core AI concepts
+2. **`autodiscovery`** - Convention-driven approach
+3. **`workflow-memory`** - Advanced features
 
 **Then explore:**
-4. **`ai-dev-tools`** - Testing & debugging
-5. **`ai-sdk-integration`** - Integration patterns
+4. **`agent-dev-tools`** - Testing & debugging
+5. **`provider-sdk-integration`** - Integration patterns
 6. **`durable-workflows`** - DAG-based workflows
 7. **`full-demo`** - Complete showcase
 
@@ -425,10 +425,7 @@ deno run --allow-all example.ts
 
 ## Additional Resources
 
-- **[Main Documentation](../docs/README.md)** - Complete framework docs
-- **[AI Documentation](../docs/ai/README.md)** - AI features guide
-- **[Quick Start](../docs/quick-start.md)** - Framework quick start
-- **[API Reference](../docs/api/)** - API documentation
+- **[Documentation](https://veryfront.com/docs/framework)** - Complete framework documentation
 
 ---
 
@@ -476,7 +473,6 @@ See our [Contributing Guide](../CONTRIBUTING.md) for more details.
 ## Need Help?
 
 1. Check the example's README first
-2. Review [main documentation](../docs/README.md)
-3. Check [AI documentation](../docs/ai/README.md) for AI examples
-4. Look at similar examples for patterns
-5. Open an issue on GitHub
+2. Review [documentation](https://veryfront.com/docs/framework)
+3. Look at similar examples for patterns
+4. Open an issue on GitHub

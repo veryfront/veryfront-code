@@ -7,10 +7,10 @@ import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
 import * as BundledReact from "react";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { EntityInfo, PageBundle } from "@veryfront/types";
-import { createError, getErrorMessage, toError } from "../core/errors/veryfront-error.ts";
+import { createError, getErrorMessage, toError } from "../errors/veryfront-error.ts";
 import { getProjectReact } from "@veryfront/react";
-import { injectNodePositions } from "../build/transforms/plugins/babel-node-positions.ts";
-import { buildComponentCacheKey } from "../core/cache/keys.ts";
+import { injectNodePositions } from "../transforms/plugins/babel-node-positions.ts";
+import { buildComponentCacheKey } from "../cache/keys.ts";
 
 export interface ComponentPageResult {
   pageElement: BundledReact.ReactElement;

@@ -3,8 +3,8 @@
  * Tests link prefetching, cache management, and intersection observer
  */
 
-import { assertEquals, assertExists } from "std/assert/mod.ts";
-import { afterEach, beforeEach, describe, it } from "std/testing/bdd.ts";
+import { assertEquals, assertExists } from "@std/assert";
+import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import type { PrefetchOptions } from "@veryfront/rendering/client/prefetch.ts";
 import { PrefetchManager } from "@veryfront/rendering/client/prefetch.ts";
 import type { DOMEnvironment } from "./test-helpers.ts";

@@ -27,8 +27,8 @@ src/
 
 - **New page**: Create `src/pages/about.tsx` → accessible at `/about`
 - **API endpoint**: Create `src/api/users.ts` → accessible at `/api/users`
-- **AI agent**: Create `src/ai/agents/assistant.ts`
-- **MCP tool**: Create `src/ai/tools/search.ts`
+- **AI agent**: Create `agents/assistant.ts`
+- **MCP tool**: Create `tools/search.ts`
 
 ## Conventions
 

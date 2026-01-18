@@ -1,12 +1,12 @@
 import type { FSAdapter, FSAdapterConfig } from "./veryfront/types.ts";
-import { createError, toError } from "../../../core/errors/veryfront-error.ts";
+import { createError, toError } from "../../../errors/veryfront-error.ts";
 import { ReloadNotifier } from "../../../server/reload-notifier.ts";
-import { clearSSRModuleCache } from "../../../module-system/react-loader/ssr-module-loader/cache/index.ts";
+import { clearSSRModuleCache } from "../../../modules/react-loader/ssr-module-loader/cache/index.ts";
 import { clearRouterDetectionCache } from "../../../rendering/router-detection.ts";
 import {
   clearModulePathCache,
   invalidateModulePaths,
-} from "../../../build/transforms/mdx/esm-module-loader/cache/index.ts";
+} from "../../../transforms/mdx/esm-module-loader/cache/index.ts";
 import { clearSnippetCache } from "../../../rendering/snippet-renderer.ts";
 
 export async function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapter> {

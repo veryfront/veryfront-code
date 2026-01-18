@@ -1,4 +1,4 @@
-import { assert } from "std/assert/mod.ts";
+import { assert } from "@std/assert";
 
 Deno.test(
   {

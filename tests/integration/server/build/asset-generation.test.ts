@@ -16,10 +16,10 @@
  * - Special characters in filenames
  */
 
-import { afterAll, describe, it } from "std/testing/bdd.ts";
-import { expect } from "std/expect/mod.ts";
-import { assertRejects } from "std/assert/mod.ts";
-import { join } from "std/path/mod.ts";
+import { afterAll, describe, it } from "@std/testing/bdd";
+import { expect } from "@std/expect";
+import { assertRejects } from "@std/assert";
+import { join } from "@std/path";
 import {
   copyStaticAssets,
   loadClientStyles,

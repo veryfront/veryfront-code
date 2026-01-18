@@ -2,7 +2,7 @@
  * Tests for import transformation utilities
  */
 
-import { describe, it } from "@std/testing/bdd.ts";
+import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { transformFinalImports, transformImports } from "./import-transformer.ts";
 

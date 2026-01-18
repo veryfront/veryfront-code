@@ -8,8 +8,8 @@
  * @module cli/commands/push.integration
  */
 
-import { assertExists } from "jsr:@std/assert@1";
-import { afterAll, beforeAll, describe, it } from "jsr:@std/testing@1/bdd";
+import { assertExists } from "@std/assert";
+import { afterAll, beforeAll, describe, it } from "@std/testing/bdd";
 import { initVCRTest, isRecording, type VCRTestContext } from "../test-utils/vcr.ts";
 import { createBranch } from "./push.ts";
 

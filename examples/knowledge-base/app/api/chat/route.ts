@@ -23,7 +23,9 @@ if (typeof Deno === 'undefined') {
   pathMod = await import('node:path');
 }
 
-import { agent, initializeProviders, tool } from "veryfront/ai";
+import { agent } from "veryfront/agent";
+import { initializeProviders } from "veryfront/provider";
+import { tool } from "veryfront/tool";
 import { z } from "zod";
 
 // Initialize providers

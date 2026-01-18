@@ -1,15 +1,12 @@
 import { cliLogger } from "@veryfront/utils";
-import { getEnv } from "@veryfront/platform/compat/process.ts";
+import { getEnv, writeStdout } from "@veryfront/platform/compat/process.ts";
+import { getStdinReader, setRawMode } from "@veryfront/platform/compat/stdin.ts";
 import { deleteToken, getTokenLocation, hasToken, readToken, saveToken } from "./token-store.ts";
 import { getCallbackUrl, startCallbackServer } from "./callback-server.ts";
 import { canOpenBrowser, openBrowser } from "./browser.ts";
 import { isTTY, promptUser } from "../utils/index.ts";
 import { brand, dim, error, muted, success, warning } from "../ui/colors.ts";
 import { DEFAULT_LOGIN_TIMEOUT_MS, getApiUrl } from "./constants.ts";
-
-function write(s: string): void {
-  Deno.stdout.writeSync(new TextEncoder().encode(s));
-}
 
 export type AuthMethod = "google" | "github" | "microsoft" | "token";
 
@@ -58,8 +55,8 @@ async function promptAuthMethod(): Promise<AuthMethod> {
 
   drawOptions();
 
-  Deno.stdin.setRaw(true);
-  const reader = Deno.stdin.readable.getReader();
+  setRawMode(true);
+  const reader = getStdinReader();
   const dec = new TextDecoder();
   let result: AuthMethod = "google";
 
@@ -87,16 +84,16 @@ async function promptAuthMethod(): Promise<AuthMethod> {
       }
 
       // Redraw options
-      write(`\x1b[${AUTH_OPTIONS.length}A`);
+      writeStdout(`\x1b[${AUTH_OPTIONS.length}A`);
       for (let i = 0; i < AUTH_OPTIONS.length; i++) {
-        write("\x1b[2K\x1b[1B");
+        writeStdout("\x1b[2K\x1b[1B");
       }
-      write(`\x1b[${AUTH_OPTIONS.length}A`);
+      writeStdout(`\x1b[${AUTH_OPTIONS.length}A`);
       drawOptions();
     }
   } finally {
     reader.releaseLock();
-    Deno.stdin.setRaw(false);
+    setRawMode(false);
   }
 
   return result;

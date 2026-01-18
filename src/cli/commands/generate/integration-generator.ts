@@ -8,9 +8,16 @@
 import { join } from "@std/path";
 import { cyan, dim, green } from "@veryfront/compat/console";
 import { cliLogger } from "@veryfront/utils";
-import { createFileSystem, type FileSystem } from "@veryfront/platform/compat/fs.ts";
-import { isInteractive as checkIsInteractive } from "@veryfront/platform/compat/process.ts";
-import { isCiEnv, isDenoTestingEnv } from "@veryfront/core/config/env.ts";
+import {
+  createFileSystem,
+  type FileSystem,
+  isAlreadyExistsError,
+} from "@veryfront/platform/compat/fs.ts";
+import {
+  isInteractive as checkIsInteractive,
+  promptSync,
+} from "@veryfront/platform/compat/process.ts";
+import { isCiEnv, isDenoTestingEnv } from "@veryfront/config/env.ts";
 import { select } from "../../utils/terminal-select.ts";
 
 let fs: FileSystem;
@@ -54,33 +61,13 @@ function canRunPrompts(): boolean {
 }
 
 /**
- * Prompt for text input
+ * Prompt for text input (cross-runtime)
  */
-async function promptText(question: string, defaultValue?: string): Promise<string> {
+function promptText(question: string, defaultValue?: string): Promise<string> {
   const defaultHint = defaultValue ? dim(` (${defaultValue})`) : "";
-  console.log(`${cyan("?")} ${question}${defaultHint}`);
-
-  const buf = new Uint8Array(1024);
-
-  if (typeof Deno !== "undefined") {
-    // @ts-ignore: Deno global
-    const n = await Deno.stdin.read(buf);
-    const input = new TextDecoder().decode(buf.subarray(0, n || 0)).trim();
-    return input || defaultValue || "";
-  } else {
-    // Node.js - synchronous readline
-    return new Promise((resolve) => {
-      const readline = require("readline");
-      const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
-      });
-      rl.question("  > ", (answer: string) => {
-        rl.close();
-        resolve(answer.trim() || defaultValue || "");
-      });
-    });
-  }
+  const fullQuestion = `${cyan("?")} ${question}${defaultHint}`;
+  const input = promptSync(fullQuestion);
+  return Promise.resolve(input?.trim() || defaultValue || "");
 }
 
 /**
@@ -550,7 +537,7 @@ async function createToolSkeletons(baseDir: string, config: IntegrationConfig): 
  * ${tool.name}
  */
 
-import { tool } from "veryfront/ai";
+import { tool } from "veryfront/tool";
 import { z } from "zod";
 import { listItems, getItem, searchItems } from "../lib/${config.name}-client.ts";
 
@@ -660,10 +647,8 @@ async function ensureDir(path: string): Promise<void> {
   try {
     await fs.mkdir(path, { recursive: true });
   } catch (error) {
-    const code = (error as { code?: string })?.code;
-    const isAlreadyExists = code === "EEXIST" ||
-      (typeof Deno !== "undefined" && error instanceof Deno.errors.AlreadyExists);
-    if (!isAlreadyExists) {
+    // Directory might already exist, which is fine
+    if (!isAlreadyExistsError(error)) {
       throw error;
     }
   }

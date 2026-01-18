@@ -10,7 +10,7 @@ import type {
   HandlerPriority,
   HandlerResult,
 } from "../../handlers/types.ts";
-import { HTTP_OK, PRIORITY_HIGH_DEV } from "@veryfront/core/constants/index.ts";
+import { HTTP_OK, PRIORITY_HIGH_DEV } from "@veryfront/utils/constants/index.ts";
 import { generateStudioBridgeScript } from "@veryfront/studio/bridge-template.ts";
 
 export class StudioEndpointsHandler extends BaseHandler {

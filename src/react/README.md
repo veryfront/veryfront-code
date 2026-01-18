@@ -338,7 +338,7 @@ deno task test src/react/compat/ssr-adapter/
 - [`components/`](./components/README.md) - Framework components details
 - [`html/`](../html/README.md) - HTML document generation
 - [`rendering/`](../rendering/README.md) - Page rendering engine
-- [`modules/`](../modules/README.md) - Component loading
+- [`module-system/`](../module-system/README.md) - Component loading
 
 ## Troubleshooting
 

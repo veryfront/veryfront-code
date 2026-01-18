@@ -1,7 +1,7 @@
 import { escapeHTML } from "./html-escape.ts";
 import type { VeryfrontConfig } from "@veryfront/config/types.ts";
 import { REACT_DEFAULT_VERSION, VERYFRONT_VERSION } from "@veryfront/utils/constants/cdn.ts";
-import { getTailwindImportMap } from "@veryfront/build/transforms/esm/package-registry.ts";
+import { getTailwindImportMap } from "@veryfront/transforms/esm/package-registry.ts";
 
 function joinAttributes(attrs: (string | false | undefined | null | "")[]): string {
   return attrs.filter(Boolean).join(" ");
@@ -77,12 +77,12 @@ function getEsmShImportMap(versions: DetectedVersions): Record<string, string> {
     "react-dom/client": `https://esm.sh/react-dom@${react}/client?target=es2022`,
     "react/jsx-runtime": `https://esm.sh/react@${react}/jsx-runtime?target=es2022`,
     "react/jsx-dev-runtime": `https://esm.sh/react@${react}/jsx-dev-runtime?target=es2022`,
-    "veryfront/ai/react":
-      `https://esm.sh/veryfront@${veryfront}/ai/react?external=react&target=es2022`,
-    "veryfront/ai/components":
-      `https://esm.sh/veryfront@${veryfront}/ai/components?external=react&target=es2022`,
-    "veryfront/ai/primitives":
-      `https://esm.sh/veryfront@${veryfront}/ai/primitives?external=react&target=es2022`,
+    "veryfront/agent/react":
+      `https://esm.sh/veryfront@${veryfront}/agent/react?external=react&target=es2022`,
+    "veryfront/components/ai":
+      `https://esm.sh/veryfront@${veryfront}/components/ai?external=react&target=es2022`,
+    "veryfront/primitives":
+      `https://esm.sh/veryfront@${veryfront}/primitives?external=react&target=es2022`,
     // Platform utilities - serve from local module server to match SSR behavior
     // This ensures hydration matches (same code on server and client)
     "veryfront/head": "/_vf_modules/exports/head.js",
@@ -103,9 +103,9 @@ function getUnpkgImportMap(versions: DetectedVersions): Record<string, string> {
     "react-dom/client": `https://unpkg.com/react-dom@${react}/umd/react-dom.production.min.js`,
     "react/jsx-runtime": `https://unpkg.com/react@${react}/jsx-runtime`,
     "react/jsx-dev-runtime": `https://unpkg.com/react@${react}/jsx-dev-runtime`,
-    "veryfront/ai/react": `https://unpkg.com/veryfront@${veryfront}/dist/ai/react.js`,
-    "veryfront/ai/components": `https://unpkg.com/veryfront@${veryfront}/dist/ai/components.js`,
-    "veryfront/ai/primitives": `https://unpkg.com/veryfront@${veryfront}/dist/ai/primitives.js`,
+    "veryfront/agent/react": `https://unpkg.com/veryfront@${veryfront}/dist/agent/react.js`,
+    "veryfront/components/ai": `https://unpkg.com/veryfront@${veryfront}/dist/components/ai.js`,
+    "veryfront/primitives": `https://unpkg.com/veryfront@${veryfront}/dist/primitives.js`,
     // Tailwind CSS - unified version (use esm.sh for ESM compatibility)
     ...getTailwindImportMap(),
   };
@@ -120,11 +120,12 @@ function getJsdelivrImportMap(versions: DetectedVersions): Record<string, string
       `https://cdn.jsdelivr.net/npm/react-dom@${react}/umd/react-dom.production.min.js`,
     "react/jsx-runtime": `https://cdn.jsdelivr.net/npm/react@${react}/jsx-runtime`,
     "react/jsx-dev-runtime": `https://cdn.jsdelivr.net/npm/react@${react}/jsx-dev-runtime`,
-    "veryfront/ai/react": `https://cdn.jsdelivr.net/npm/veryfront@${veryfront}/dist/ai/react.js`,
-    "veryfront/ai/components":
-      `https://cdn.jsdelivr.net/npm/veryfront@${veryfront}/dist/ai/components.js`,
-    "veryfront/ai/primitives":
-      `https://cdn.jsdelivr.net/npm/veryfront@${veryfront}/dist/ai/primitives.js`,
+    "veryfront/agent/react":
+      `https://cdn.jsdelivr.net/npm/veryfront@${veryfront}/dist/agent/react.js`,
+    "veryfront/components/ai":
+      `https://cdn.jsdelivr.net/npm/veryfront@${veryfront}/dist/components/ai.js`,
+    "veryfront/primitives":
+      `https://cdn.jsdelivr.net/npm/veryfront@${veryfront}/dist/primitives.js`,
     // Tailwind CSS - unified version (use esm.sh for ESM compatibility)
     ...getTailwindImportMap(),
   };
@@ -141,9 +142,9 @@ function getSelfHostedImportMap(versions: DetectedVersions): Record<string, stri
     "react/jsx-runtime": `https://esm.sh/react@${react}/jsx-runtime?target=es2022`,
     "react/jsx-dev-runtime": `https://esm.sh/react@${react}/jsx-dev-runtime?target=es2022`,
     // Veryfront modules served from local endpoint
-    "veryfront/ai/react": "/_veryfront/lib/ai/react.js",
-    "veryfront/ai/components": "/_veryfront/lib/ai/components.js",
-    "veryfront/ai/primitives": "/_veryfront/lib/ai/primitives.js",
+    "veryfront/agent/react": "/_veryfront/lib/agent/react.js",
+    "veryfront/components/ai": "/_veryfront/lib/components/ai.js",
+    "veryfront/primitives": "/_veryfront/lib/primitives.js",
     // Platform utilities
     "veryfront/head": "/_veryfront/lib/head.js",
     "veryfront/router": "/_veryfront/lib/router.js",

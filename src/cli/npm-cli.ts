@@ -1,7 +1,7 @@
 import { join } from "@veryfront/platform/compat/path/index.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { cwd, exit, getArgs } from "@veryfront/platform/compat/process.ts";
-import { getVeryfrontVersion } from "@veryfront/core/config/env.ts";
+import { getVeryfrontVersion } from "@veryfront/config/env.ts";
 
 const VERSION = getVeryfrontVersion() || "0.0.0-dev";
 

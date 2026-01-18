@@ -22,6 +22,7 @@ import type { CacheOptions, TokenCache } from "./types.ts";
 import { MemoryCache } from "./memory-cache.ts";
 import { RedisCache } from "./redis-cache.ts";
 import { ResilientCache } from "./resilient-cache.ts";
+import { getEnv } from "../../src/platform/compat/process.ts";
 
 /**
  * Create a token cache based on configuration.
@@ -60,10 +61,10 @@ export function createCache(options: CacheOptions): TokenCache {
  * graceful fallback to memory when Redis is unavailable.
  */
 export function createCacheFromEnv(): TokenCache {
-  const cacheType = Deno.env.get("CACHE_TYPE") || "memory";
+  const cacheType = getEnv("CACHE_TYPE") || "memory";
 
   if (cacheType === "redis") {
-    const url = Deno.env.get("REDIS_URL");
+    const url = getEnv("REDIS_URL");
     if (!url) {
       console.warn("[Cache] CACHE_TYPE=redis but REDIS_URL not set, falling back to memory");
       return new MemoryCache();
@@ -71,7 +72,7 @@ export function createCacheFromEnv(): TokenCache {
 
     const redisCache = new RedisCache({
       url,
-      prefix: Deno.env.get("REDIS_PREFIX") || "vf:token:",
+      prefix: getEnv("REDIS_PREFIX") || "vf:token:",
     });
 
     // Wrap Redis with resilient fallback to memory cache

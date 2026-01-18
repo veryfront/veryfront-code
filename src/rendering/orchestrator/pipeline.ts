@@ -23,7 +23,7 @@ import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
 import {
   extractRelativePath as extractRelativePathShared,
   extractRouteParams as extractRouteParamsShared,
-} from "@veryfront/core/utils/route-path-utils.ts";
+} from "@veryfront/utils/route-path-utils.ts";
 import { join } from "@veryfront/platform/compat/path-helper.ts";
 import type { MdxBundle, PageBundle } from "@veryfront/types";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";

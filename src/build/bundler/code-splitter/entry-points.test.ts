@@ -2,7 +2,7 @@
  * Tests for entry point creation and path conversion utilities
  */
 
-import { describe, it } from "@std/testing/bdd.ts";
+import { describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { convertPathToName, createEntryPoints } from "./entry-points.ts";
 

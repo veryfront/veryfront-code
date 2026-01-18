@@ -25,7 +25,7 @@ confluence/
 │   ├── app/api/auth/confluence/
 │   │   ├── route.ts                        # OAuth initialization endpoint
 │   │   └── callback/route.ts               # OAuth callback handler
-│   └── ai/tools/
+│   └── tools/
 │       ├── search-content.ts               # Search tool
 │       ├── get-page.ts                     # Get page content tool
 │       ├── create-page.ts                  # Create page tool

@@ -2,7 +2,7 @@
  * createRoute wrapper tests
  */
 
-import { assertEquals, assertExists } from "jsr:@std/assert@1";
+import { assertEquals, assertExists } from "@std/assert";
 import { createRoute, z } from "./create-route.ts";
 import { OPENAPI_METADATA, type OpenAPIRouteMetadata } from "./types.ts";
 

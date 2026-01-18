@@ -590,7 +590,6 @@ if (errorRate > 0.01) { // > 1% error rate
 ## References
 
 - [OpenTelemetry Documentation](https://opentelemetry.io/docs/)
-- [Observability Best Practices](../../docs/observability.md)
 - [Jaeger Documentation](https://www.jaegertracing.io/docs/)
 - [Grafana Cloud OTLP](https://grafana.com/docs/grafana-cloud/send-data/otlp/)
 - [Honeycomb Documentation](https://docs.honeycomb.io/)

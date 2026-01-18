@@ -7,7 +7,7 @@
  * - Checkpointing for durability
  */
 
-import { dependsOn, step, workflow } from "veryfront/ai/workflow";
+import { dependsOn, step, workflow } from "veryfront/workflow";
 
 /**
  * Input for the data processing pipeline

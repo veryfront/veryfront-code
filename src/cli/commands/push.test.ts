@@ -3,8 +3,8 @@
  * @module cli/commands/push.test
  */
 
-import { assertEquals, assertMatch } from "jsr:@std/assert@1";
-import { describe, it } from "jsr:@std/testing@1/bdd";
+import { assertEquals, assertMatch } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import { createBranch, generateBranchName, uploadFiles, type UploadOp } from "./push.ts";
 import type { ApiClient } from "../shared/config.ts";
 

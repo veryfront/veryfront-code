@@ -4,8 +4,8 @@
  * Tests getStaticPaths generation, dynamic route handling, and build output
  */
 
-import { assertEquals, assertExists } from "std/assert/mod.ts";
-import { afterAll, beforeEach, describe, it } from "std/testing/bdd.ts";
+import { assertEquals, assertExists } from "@std/assert";
+import { afterAll, beforeEach, describe, it } from "@std/testing/bdd";
 import { DataFetcher, type PageWithData } from "@veryfront/data";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 

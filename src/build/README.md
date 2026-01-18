@@ -227,7 +227,7 @@ deno task test src/build/compiler/
 
 - [`server/`](../server/README.md) - Development server
 - [`rendering/`](../rendering/README.md) - SSR/RSC rendering
-- [`transforms/`](../transforms/README.md) - Code transforms
+- [`transforms/`](./transforms/README.md) - Code transforms
 - [`cli/`](../cli/README.md) - CLI commands
 
 ## Troubleshooting

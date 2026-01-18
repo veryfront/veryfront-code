@@ -26,13 +26,13 @@ This integration provides AI-powered tools to interact with the Anthropic Admin 
   - Singleton pattern with `getAnthropicAdminClient()`
 
 ### AI Tools
-All tools use `import { tool } from 'veryfront/ai'` and Zod schemas:
+All tools use `import { tool } from 'veryfront/tool'` and Zod schemas:
 
-- **files/ai/tools/list-workspaces.ts** - List all workspaces in the organization
-- **files/ai/tools/get-usage.ts** - Get API usage statistics with filtering options
-- **files/ai/tools/list-api-keys.ts** - List API keys for organization or workspace
-- **files/ai/tools/list-members.ts** - List organization members with role breakdown
-- **files/ai/tools/get-organization.ts** - Get organization details and settings
+- **files/tools/list-workspaces.ts** - List all workspaces in the organization
+- **files/tools/get-usage.ts** - Get API usage statistics with filtering options
+- **files/tools/list-api-keys.ts** - List API keys for organization or workspace
+- **files/tools/list-members.ts** - List organization members with role breakdown
+- **files/tools/get-organization.ts** - Get organization details and settings
 
 ## Setup
 

@@ -2,7 +2,7 @@
  * Simple example to verify TestContext works correctly
  */
 
-import { assertEquals } from "std/assert/mod.ts";
+import { assertEquals } from "@std/assert";
 import { withTestContext } from "../../_helpers/context.ts";
 
 Deno.test("TestContext basic functionality", async () => {

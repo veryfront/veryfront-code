@@ -12,9 +12,9 @@ import {
   assertExists,
   assertRejects,
   assertStringIncludes,
-} from "std/assert/mod.ts";
-import { join } from "std/path/mod.ts";
-import { describe, it } from "std/testing/bdd.ts";
+} from "@std/assert";
+import { join } from "@std/path";
+import { describe, it } from "@std/testing/bdd";
 import { createRenderer } from "../../../src/rendering/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import type { VeryfrontRenderer as _VeryfrontRenderer } from "../../../src/rendering/orchestrator/ssr.ts";

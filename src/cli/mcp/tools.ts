@@ -11,7 +11,7 @@
  * - Dev Server: vf_get_errors, vf_get_logs, vf_clear_cache, vf_get_status
  */
 
-import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
+import { z } from "zod";
 import { type DevError, type ErrorType, getErrorCollector } from "./error-collector.ts";
 import { getLogBuffer, type LogEntry, type LogLevel } from "./log-buffer.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";

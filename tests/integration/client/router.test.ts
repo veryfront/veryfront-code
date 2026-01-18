@@ -3,8 +3,8 @@
  * Tests client-side routing, navigation, history management, and DOM interactions
  */
 
-import { assertEquals, assertExists } from "std/assert/mod.ts";
-import { afterEach, beforeEach, describe, it } from "std/testing/bdd.ts";
+import { assertEquals, assertExists } from "@std/assert";
+import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import type { RouterOptions } from "@veryfront/rendering/client/router.ts";
 import { VeryfrontRouter } from "@veryfront/rendering/client/router.ts";
 import type { DOMEnvironment } from "./test-helpers.ts";

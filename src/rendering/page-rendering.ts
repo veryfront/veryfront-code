@@ -6,7 +6,7 @@ import type { EntityInfo, MdxBundle, MDXComponents, MDXModule, PageBundle } from
 import { mdxRenderer } from "@veryfront/transforms/mdx/index.ts";
 import { getProjectReact } from "@veryfront/react";
 import { compileMDXRuntime } from "@veryfront/transforms/mdx/compiler/index.ts";
-import { ensureError, getErrorMessage } from "../core/errors/veryfront-error.ts";
+import { ensureError, getErrorMessage } from "../errors/veryfront-error.ts";
 
 export interface MDXPageResult {
   pageElement: BundledReact.ReactElement;

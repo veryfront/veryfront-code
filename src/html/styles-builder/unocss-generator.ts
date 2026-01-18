@@ -7,7 +7,7 @@
 import { createGenerator, type UnoGenerator } from "@unocss/core";
 import presetWind from "@unocss/preset-wind";
 import { serverLogger as logger } from "@veryfront/utils";
-import { getUnoCSSTailwindResetUrl } from "@veryfront/core/utils/constants/cdn.ts";
+import { getUnoCSSTailwindResetUrl } from "@veryfront/utils/constants/cdn.ts";
 import type { VeryfrontConfig } from "@veryfront/config/types.ts";
 
 type TailwindConfig = VeryfrontConfig["tailwind"];

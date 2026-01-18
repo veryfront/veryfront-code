@@ -1,6 +1,7 @@
 import type { Middleware } from "./types.ts";
 import { getRequest } from "./types.ts";
 import { serverLogger } from "@veryfront/utils";
+import { getEnv } from "@veryfront/platform/compat/process.ts";
 
 const DEFAULT_TIMEOUT_MS = 30000;
 const HTTP_GATEWAY_TIMEOUT = 504;
@@ -79,7 +80,7 @@ const TIMEOUT_SENTINEL = Symbol("timeout");
  * Gets timeout from environment variable REQUEST_TIMEOUT_MS
  */
 export function getTimeoutFromEnv(): number {
-  const envTimeout = Deno.env.get("REQUEST_TIMEOUT_MS");
+  const envTimeout = getEnv("REQUEST_TIMEOUT_MS");
   if (envTimeout) {
     const parsed = parseInt(envTimeout, 10);
     if (!isNaN(parsed) && parsed > 0) {

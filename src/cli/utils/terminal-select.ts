@@ -4,7 +4,9 @@
  */
 
 import { cyan, dim, green } from "@veryfront/compat/console";
+import { writeStdout } from "@veryfront/platform/compat/process.ts";
 import { isDeno } from "@veryfront/platform/compat/runtime.ts";
+import { getStdinReader, setRawMode } from "@veryfront/platform/compat/stdin.ts";
 
 export interface SelectOption {
   value: string;
@@ -47,14 +49,12 @@ export async function select(
 
   const clearOptions = () => {
     for (let i = 0; i < options.length; i++) {
-      process.stdout?.write?.(MOVE_UP + CLEAR_LINE) ??
-        Deno?.stdout?.writeSync?.(new TextEncoder().encode(MOVE_UP + CLEAR_LINE));
+      writeStdout(MOVE_UP + CLEAR_LINE);
     }
   };
 
   // Initial render
-  process.stdout?.write?.(HIDE_CURSOR) ??
-    Deno?.stdout?.writeSync?.(new TextEncoder().encode(HIDE_CURSOR));
+  writeStdout(HIDE_CURSOR);
   renderOptions();
 
   try {
@@ -84,8 +84,7 @@ export async function select(
 
     return result;
   } finally {
-    process.stdout?.write?.(SHOW_CURSOR) ??
-      Deno?.stdout?.writeSync?.(new TextEncoder().encode(SHOW_CURSOR));
+    writeStdout(SHOW_CURSOR);
   }
 }
 
@@ -120,14 +119,12 @@ export async function multiSelect(
 
   const clearOptions = () => {
     for (let i = 0; i < options.length; i++) {
-      process.stdout?.write?.(MOVE_UP + CLEAR_LINE) ??
-        Deno?.stdout?.writeSync?.(new TextEncoder().encode(MOVE_UP + CLEAR_LINE));
+      writeStdout(MOVE_UP + CLEAR_LINE);
     }
   };
 
   // Initial render
-  process.stdout?.write?.(HIDE_CURSOR) ??
-    Deno?.stdout?.writeSync?.(new TextEncoder().encode(HIDE_CURSOR));
+  writeStdout(HIDE_CURSOR);
   renderOptions();
 
   try {
@@ -168,8 +165,7 @@ export async function multiSelect(
 
     return Array.from(selected);
   } finally {
-    process.stdout?.write?.(SHOW_CURSOR) ??
-      Deno?.stdout?.writeSync?.(new TextEncoder().encode(SHOW_CURSOR));
+    writeStdout(SHOW_CURSOR);
   }
 }
 
@@ -186,20 +182,18 @@ function readKeypress<T>(handler: KeyHandler<T>): Promise<T> {
 }
 
 /**
- * Deno implementation of keypress reading
+ * Deno implementation of keypress reading (using platform abstraction)
  */
 async function readKeypressDeno<T>(handler: KeyHandler<T>): Promise<T> {
-  // @ts-ignore: Deno global
-  Deno.stdin.setRaw(true);
+  setRawMode(true);
+  const reader = getStdinReader();
 
   try {
-    const buf = new Uint8Array(8);
     while (true) {
-      // @ts-ignore: Deno global
-      const n = await Deno.stdin.read(buf);
-      if (n === null) break;
+      const { value, done } = await reader.read();
+      if (done || !value) break;
 
-      const key = parseKeySequence(buf.subarray(0, n));
+      const key = parseKeySequence(value);
       const result = handler(key);
       if (result !== undefined) {
         return result;
@@ -207,8 +201,8 @@ async function readKeypressDeno<T>(handler: KeyHandler<T>): Promise<T> {
     }
     throw new Error("stdin closed");
   } finally {
-    // @ts-ignore: Deno global
-    Deno.stdin.setRaw(false);
+    reader.releaseLock();
+    setRawMode(false);
   }
 }
 

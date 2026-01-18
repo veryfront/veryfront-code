@@ -1,6 +1,6 @@
 import * as React from "https://esm.sh/react@18.3.1";
-import { assert, assertEquals } from "std/assert/mod.ts";
-import { describe, it } from "std/testing/bdd.ts";
+import { assert, assertEquals } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import { mdxRenderer, clearMDXRendererCache } from "@veryfront/transforms/mdx/index.ts";
 import { runWithCacheDir } from "@veryfront/utils/cache-dir.ts";
 

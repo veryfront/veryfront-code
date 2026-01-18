@@ -28,23 +28,25 @@ import {
 } from "./tracing.ts";
 import { proxyLogger } from "./logger.ts";
 import { parseProjectDomain } from "../src/server/utils/domain-parser.ts";
+import { exit, getEnv, onSignal } from "../src/platform/compat/process.ts";
+import { createHttpServer, upgradeWebSocket } from "../src/platform/compat/http/index.ts";
 
 // Configuration from environment variables
 const config: ProxyConfig = {
-  apiBaseUrl: Deno.env.get("VERYFRONT_API_BASE_URL") ||
+  apiBaseUrl: getEnv("VERYFRONT_API_BASE_URL") ||
     "http://api.lvh.me:4000",
-  clientId: Deno.env.get("API_CLIENT_ID_VERYFRONT_RENDERER_PROXY") || "",
-  clientSecret: Deno.env.get("API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY") || "",
+  clientId: getEnv("API_CLIENT_ID_VERYFRONT_RENDERER_PROXY") || "",
+  clientSecret: getEnv("API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY") || "",
   // Preview uses same service account (scopes determine access)
-  previewClientId: Deno.env.get("API_CLIENT_ID_VERYFRONT_RENDERER_PROXY") || "",
-  previewClientSecret: Deno.env.get("API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY") || "",
-  localProjects: Deno.env.get("LOCAL_PROJECTS")
-    ? JSON.parse(Deno.env.get("LOCAL_PROJECTS")!)
+  previewClientId: getEnv("API_CLIENT_ID_VERYFRONT_RENDERER_PROXY") || "",
+  previewClientSecret: getEnv("API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY") || "",
+  localProjects: getEnv("LOCAL_PROJECTS")
+    ? JSON.parse(getEnv("LOCAL_PROJECTS")!)
     : {},
 };
 
-const RENDERER_URL = Deno.env.get("RENDERER_URL") || "http://localhost:3001";
-const PORT = parseInt(Deno.env.get("PORT") || "8080");
+const RENDERER_URL = getEnv("RENDERER_URL") || "http://localhost:3001";
+const PORT = parseInt(getEnv("PORT") || "8080");
 const WS_CONNECT_TIMEOUT_MS = 30000;
 
 // Initialize cache and proxy handler
@@ -102,7 +104,7 @@ function handleWebSocketUpgrade(req: Request): Response {
     targetUrl: targetUrl.toString(),
   });
 
-  const { socket: clientSocket, response } = Deno.upgradeWebSocket(req);
+  const { socket: clientSocket, response } = upgradeWebSocket(req);
 
   let rendererSocket: WebSocket | null = null;
   let connectTimeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -384,11 +386,11 @@ async function shutdown(): Promise<void> {
   await proxyHandler.close();
   await shutdownOTLP();
   proxyLogger.info("Closed connections");
-  Deno.exit(0);
+  exit(0);
 }
 
-Deno.addSignalListener("SIGINT", shutdown);
-Deno.addSignalListener("SIGTERM", shutdown);
+onSignal("SIGINT", shutdown);
+onSignal("SIGTERM", shutdown);
 
 // Initialize tracing and start server
 await initializeOTLPWithApis();
@@ -399,4 +401,6 @@ proxyLogger.debug("Starting proxy server (split mode)", {
   apiBaseUrl: config.apiBaseUrl,
 });
 
-Deno.serve({ port: PORT, onListen: () => {} }, router);
+// Create and start the HTTP server
+const server = createHttpServer();
+await server.serve(router, { port: PORT });

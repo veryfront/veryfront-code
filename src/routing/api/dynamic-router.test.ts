@@ -1,5 +1,5 @@
-import { assert, assertEquals, assertExists } from "std/testing/asserts.ts";
-import { afterEach, describe, it } from "std/testing/bdd.ts";
+import { assert, assertEquals, assertExists } from "@std/assert";
+import { afterEach, describe, it } from "@std/testing/bdd";
 import { DynamicRouter } from "./api-route-matcher.ts";
 
 const routers: DynamicRouter[] = [];

@@ -3,9 +3,9 @@
  * Tests MDX compilation, import resolution, and cross-module imports
  */
 
-import { assert, assertEquals, assertStringIncludes } from "std/assert/mod.ts";
-import { join } from "std/path/mod.ts";
-import { describe, it } from "std/testing/bdd.ts";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { join } from "@std/path";
+import { describe, it } from "@std/testing/bdd";
 import { compileMDXRuntime } from "@veryfront/transforms/mdx/compiler/mdx-compiler.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 

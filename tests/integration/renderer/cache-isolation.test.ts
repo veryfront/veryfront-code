@@ -3,9 +3,9 @@
  * Verifies that caches are properly cleared between renderer instances
  */
 
-import { assert, assertStringIncludes } from "std/assert/mod.ts";
-import { join } from "std/path/mod.ts";
-import { afterAll, describe, it } from "std/testing/bdd.ts";
+import { assert, assertStringIncludes } from "@std/assert";
+import { join } from "@std/path";
+import { afterAll, describe, it } from "@std/testing/bdd";
 import { createRenderer } from "../../../src/rendering/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";

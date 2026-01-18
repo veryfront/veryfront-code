@@ -3,7 +3,8 @@
  * Shared UI for new/dev commands with collapsible logs
  */
 
-import { writeStdout } from "@veryfront/platform/compat/process.ts";
+import { getTerminalSize, writeStdout } from "@veryfront/platform/compat/process.ts";
+import { getStdinReader, setRawMode } from "@veryfront/platform/compat/stdin.ts";
 import { brand, dim, error, muted, success } from "./colors.ts";
 import { ANSI_REGEX, cursor, getSpinnerFrame, screen, SPINNER_FRAMES } from "./ansi.ts";
 import {
@@ -43,7 +44,7 @@ const write = writeStdout;
 
 function getSize() {
   try {
-    const { rows, columns } = Deno.consoleSize();
+    const { rows, columns } = getTerminalSize();
     termH = rows;
     termW = columns;
   } catch { /* use defaults */ }
@@ -251,8 +252,8 @@ export async function handleInput(tui: Tui, opts: {
   onEnter?: () => void;
   onExit?: () => void;
 }) {
-  Deno.stdin.setRaw(true);
-  const reader = Deno.stdin.readable.getReader();
+  setRawMode(true);
+  const reader = getStdinReader();
   const dec = new TextDecoder();
 
   try {
@@ -275,6 +276,6 @@ export async function handleInput(tui: Tui, opts: {
     }
   } finally {
     reader.releaseLock();
-    Deno.stdin.setRaw(false);
+    setRawMode(false);
   }
 }

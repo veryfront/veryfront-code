@@ -6,8 +6,8 @@
  * Instead, callers must use the scoped modules (e.g. '@veryfront/internal/logger').
  */
 
-import { walk } from "std/fs/walk.ts";
-import { relative } from "std/path/mod.ts";
+import { walk } from "@std/fs";
+import { relative } from "@std/path";
 
 const INTERNAL_PREFIX = "@veryfront/internal";
 const ROOTS_TO_SCAN = ["src", "packages", "scripts", "examples"];

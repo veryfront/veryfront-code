@@ -1,5 +1,5 @@
-import { assertEquals, assertExists, assertThrows } from "jsr:@std/assert@1";
-import { describe, it } from "jsr:@std/testing@1/bdd";
+import { assertEquals, assertExists, assertThrows } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import { NodeBasedShellAdapter } from "./node-based-shell-adapter.ts";
 
 describe("NodeBasedShellAdapter", () => {
