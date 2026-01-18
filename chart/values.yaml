@@ -185,8 +185,7 @@ renderer:
     OTEL_METRICS_EXPORTER: "otlp"
     # Uses same endpoint as traces (Grafana OTLP gateway accepts both)
 
-  # Secret must contain: REDIS_URL, OTEL_EXPORTER_OTLP_HEADERS
-  # REDIS_URL enables cross-pod caching (transform, SSR module, file caches)
+  # Secret must contain: OTEL_EXPORTER_OTLP_HEADERS
   envFrom:
     - secretRef:
         name: veryfront-renderer-secret
