@@ -47,6 +47,7 @@ const config: ProxyConfig = {
 
 const RENDERER_URL = getEnv("RENDERER_URL") || "http://localhost:3001";
 const PORT = parseInt(getEnv("PORT") || "8080");
+const HOST = getEnv("HOST") || "0.0.0.0"; // Default to 0.0.0.0 for Kubernetes
 const WS_CONNECT_TIMEOUT_MS = 30000;
 
 // Initialize cache and proxy handler
@@ -403,4 +404,4 @@ proxyLogger.debug("Starting proxy server (split mode)", {
 
 // Create and start the HTTP server
 const server = createHttpServer();
-await server.serve(router, { port: PORT });
+await server.serve(router, { port: PORT, hostname: HOST });
