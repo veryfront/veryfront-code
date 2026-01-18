@@ -4,10 +4,11 @@
  * Tests the race condition fix by simulating concurrent requests
  * for components with deep dependency trees.
  *
- * Run with: deno test --allow-all src/modules/react-loader/ssr-module-loader.stress-test.ts
+ * Run with: deno test --allow-all src/modules/react-loader/ssr-module-loader.stress.test.ts
  */
 
 import { assertEquals } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import { join } from "@veryfront/platform/compat/path/index.ts";
 import { clearSSRModuleCache, SSRModuleLoader } from "./ssr-module-loader/index.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
@@ -94,9 +95,8 @@ export default function ${name}() {
 `;
 }
 
-Deno.test({
-  name: "SSRModuleLoader - concurrent requests for same file should not race",
-  async fn() {
+describe("SSRModuleLoader Stress Tests", { sanitizeResources: false, sanitizeOps: false }, () => {
+  it("concurrent requests for same file should not race", async () => {
     clearSSRModuleCache();
 
     const projectDir = await createTempProjectDir();
@@ -134,14 +134,9 @@ Deno.test({
     } finally {
       await createFileSystem().remove(projectDir, { recursive: true });
     }
-  },
-  sanitizeResources: false,
-  sanitizeOps: false,
-});
+  });
 
-Deno.test({
-  name: "SSRModuleLoader - deep dependency tree should not deadlock",
-  async fn() {
+  it("deep dependency tree should not deadlock", async () => {
     clearSSRModuleCache();
 
     const projectDir = await createTempProjectDir();
@@ -227,14 +222,9 @@ Deno.test({
     } finally {
       await createFileSystem().remove(projectDir, { recursive: true });
     }
-  },
-  sanitizeResources: false,
-  sanitizeOps: false,
-});
+  });
 
-Deno.test({
-  name: "SSRModuleLoader - wide dependency tree should complete",
-  async fn() {
+  it("wide dependency tree should complete", async () => {
     clearSSRModuleCache();
 
     const projectDir = await createTempProjectDir();
@@ -290,16 +280,5 @@ Deno.test({
     } finally {
       await createFileSystem().remove(projectDir, { recursive: true });
     }
-  },
-  sanitizeResources: false,
-  sanitizeOps: false,
+  });
 });
-
-// Run a quick sanity check
-if (import.meta.main) {
-  console.log("Running SSR Module Loader stress tests...\n");
-  console.log("These tests verify:");
-  console.log("1. No race condition when multiple requests hit same file");
-  console.log("2. No deadlock with deep dependency trees");
-  console.log("3. Wide dependency trees complete without issues\n");
-}

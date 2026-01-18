@@ -1,4 +1,4 @@
-import { createError, toError } from "../../../../errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors";
 import { logger } from "@veryfront/utils";
 import type { FileCache } from "../cache/file-cache.ts";
 import type { GitHubAPIClient } from "./github-api-client.ts";
@@ -7,7 +7,7 @@ import {
   buildGitHubResolveCacheKey,
   buildGitHubStatCacheKey,
   buildGitHubTreeCacheKey,
-} from "../../../../cache/keys.ts";
+} from "@veryfront/cache";
 
 const LOG_PREFIX = "[GitHubStatOperations]";
 
