@@ -169,11 +169,9 @@ jobs:
           export-env: true
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          # Proxy OAuth
-          OAUTH_CLIENT_ID: op://VERYFRONT_CI/PROXY_OAUTH_LIVE_PRODUCTION/client_id
-          OAUTH_CLIENT_SECRET: op://VERYFRONT_CI/PROXY_OAUTH_LIVE_PRODUCTION/client_secret
-          OAUTH_PREVIEW_CLIENT_ID: op://VERYFRONT_CI/PROXY_OAUTH_PREVIEW_PRODUCTION/client_id
-          OAUTH_PREVIEW_CLIENT_SECRET: op://VERYFRONT_CI/PROXY_OAUTH_PREVIEW_PRODUCTION/client_secret
+          # Service Account OAuth (renderer proxy -> API)
+          API_CLIENT_ID_VERYFRONT_RENDERER_PROXY: op://VERYFRONT_CI/Veryfront Renderer Proxy OAuth/API_CLIENT_ID_VERYFRONT_RENDERER_PROXY
+          API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY: op://VERYFRONT_CI/Veryfront Renderer Proxy OAuth/API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY
           # Cache
           REDIS_URL: op://VERYFRONT_CI/UPSTASH_REDIS_PRODUCTION/url
           # Observability
@@ -183,10 +181,8 @@ jobs:
         run: |
           kubectl create secret generic veryfront-proxy-secret \
             --namespace veryfront-production \
-            --from-literal=OAUTH_CLIENT_ID="$OAUTH_CLIENT_ID" \
-            --from-literal=OAUTH_CLIENT_SECRET="$OAUTH_CLIENT_SECRET" \
-            --from-literal=OAUTH_PREVIEW_CLIENT_ID="$OAUTH_PREVIEW_CLIENT_ID" \
-            --from-literal=OAUTH_PREVIEW_CLIENT_SECRET="$OAUTH_PREVIEW_CLIENT_SECRET" \
+            --from-literal=API_CLIENT_ID_VERYFRONT_RENDERER_PROXY="$API_CLIENT_ID_VERYFRONT_RENDERER_PROXY" \
+            --from-literal=API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY="$API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY" \
             --from-literal=REDIS_URL="$REDIS_URL" \
             --from-literal=VERYFRONT_API_BASE_URL="https://api.veryfront.com" \
             --from-literal=OTEL_EXPORTER_OTLP_HEADERS="$OTEL_EXPORTER_OTLP_HEADERS" \
