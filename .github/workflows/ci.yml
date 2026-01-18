@@ -173,7 +173,7 @@ jobs:
           API_CLIENT_ID_VERYFRONT_RENDERER_PROXY: op://VERYFRONT_CI/Veryfront Renderer Proxy OAuth/API_CLIENT_ID_VERYFRONT_RENDERER_PROXY
           API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY: op://VERYFRONT_CI/Veryfront Renderer Proxy OAuth/API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY
           # Cache
-          REDIS_URL: op://VERYFRONT_CI/UPSTASH_REDIS_PRODUCTION/url
+          REDIS_URL: op://VERYFRONT_CI/UPSTASH_REDIS_VERYFRONT_RENDERER_PROXY/url
           # Observability
           OTEL_EXPORTER_OTLP_HEADERS: op://VERYFRONT_CI/GRAFANA/otlp_auth
 
@@ -191,7 +191,6 @@ jobs:
           kubectl create secret generic veryfront-renderer-secret \
             --namespace veryfront-production \
             --from-literal=VERYFRONT_API_BASE_URL="https://api.veryfront.com" \
-            --from-literal=REDIS_URL="$REDIS_URL" \
             --from-literal=OTEL_EXPORTER_OTLP_HEADERS="$OTEL_EXPORTER_OTLP_HEADERS" \
             --dry-run=client -o yaml | kubectl apply -f -
 
