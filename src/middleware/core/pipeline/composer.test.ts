@@ -1,5 +1,5 @@
-import { assertEquals, assertRejects } from "jsr:@std/assert@1";
-import { describe, it } from "jsr:@std/testing@1/bdd";
+import { assertEquals, assertRejects } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import { composeMiddleware } from "./composer.ts";
 import { MiddlewareContext } from "../context.ts";
 import type { MiddlewareHandler } from "../types.ts";

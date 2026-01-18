@@ -2,7 +2,7 @@
  * Tests for MDX compiler validator functions
  */
 
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import { expect } from "@std/expect";
 import { pathExists, validateCompileParams, validateFileExists } from "./validator.ts";
 import type { CompileOptions } from "./types.ts";

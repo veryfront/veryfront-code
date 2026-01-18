@@ -6,7 +6,7 @@ import { rendererLogger as logger } from "@veryfront/utils";
 import { dirname, join } from "@veryfront/platform/compat/path/index.ts";
 import { cwd } from "@veryfront/platform/compat/process.ts";
 import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
-import { createError, toError } from "../core/errors/veryfront-error.ts";
+import { createError, toError } from "../errors/veryfront-error.ts";
 import type {
   ComponentProps,
   EntityInfo,
@@ -22,7 +22,7 @@ import { getContentHash } from "./utils/index.ts";
 import { type HTMLGenerationOptions, wrapInHTMLShell } from "@veryfront/html";
 import { extractHTMLMetadata, injectHTMLContent, isFullHTMLDocument } from "@veryfront/html";
 import { createFileSystem } from "../platform/compat/fs.ts";
-import { getEsbuildLoader } from "../core/utils/path-utils.ts";
+import { getEsbuildLoader } from "../utils/path-utils.ts";
 
 /**
  * Handle plain TS/JS script pages - no React required

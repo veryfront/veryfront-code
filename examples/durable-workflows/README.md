@@ -89,7 +89,7 @@ Access the dev dashboard at `http://localhost:3002/_dev` to:
 ```typescript
 import {
   workflow, step, parallel, branch, waitForApproval
-} from 'veryfront/ai/workflow';
+} from 'veryfront/workflow';
 
 const myWorkflow = workflow({
   id: 'my-workflow',
@@ -116,7 +116,7 @@ import {
   useWorkflowStart,
   useApproval,
   useWorkflowList,
-} from 'veryfront/ai/workflow/react';
+} from 'veryfront/workflow/react';
 
 // Start a workflow
 const { start, isStarting } = useWorkflowStart({

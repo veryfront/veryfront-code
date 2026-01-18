@@ -1,5 +1,5 @@
-import { assertEquals } from "std/assert/mod.ts";
-import { describe, it } from "std/testing/bdd.ts";
+import { assertEquals } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import { parseProjectDomain } from "../src/server/utils/domain-parser.ts";
 
 describe("Proxy WebSocket Handler Tests", () => {

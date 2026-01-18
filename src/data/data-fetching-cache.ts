@@ -4,8 +4,8 @@ import {
   DATA_FETCHING_TTL_MS,
 } from "@veryfront/utils/constants/cache.ts";
 import type { CacheEntry, DataContext } from "./types.ts";
-import { getDisableLruIntervalEnv } from "@veryfront/core/config/env.ts";
-import { getProjectScopedKey } from "@veryfront/core/cache/cache-key-builder.ts";
+import { getDisableLruIntervalEnv } from "@veryfront/config/env.ts";
+import { getProjectScopedKey } from "@veryfront/cache/cache-key-builder.ts";
 
 function isLruIntervalDisabled(): boolean {
   if ((globalThis as Record<string, unknown>).__vfDisableLruInterval === true) {

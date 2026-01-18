@@ -1,5 +1,5 @@
 import { FileSystemError } from "@veryfront/errors";
-import { createError, toError } from "../../../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors";
 import type {
   DirEntry,
   FileChangeEvent,

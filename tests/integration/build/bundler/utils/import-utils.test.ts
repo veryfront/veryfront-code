@@ -9,8 +9,8 @@
  * - Edge cases and error handling
  */
 
-import { assertEquals, assertExists } from "std/assert/mod.ts";
-import { describe, it } from "std/testing/bdd.ts";
+import { assertEquals, assertExists } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import {
   extractImports,
   findComponent,
@@ -18,7 +18,7 @@ import {
   resolveImportPath,
 } from "../../../../../src/build/renderer/utils/import-utils.ts";
 import { withTestContext } from "../../../../_helpers/context.ts";
-import { join } from "std/path/mod.ts";
+import { join } from "@std/path";
 
 describe("Import Utils", () => {
   describe("extractImports", () => {

@@ -14,14 +14,10 @@
  */
 
 import { logger } from "@veryfront/utils";
-import { registerCache } from "@veryfront/core/memory/index.ts";
+import { registerCache } from "@veryfront/utils/memory/index.ts";
 import type { CacheEntry, CacheStats, FileCacheOptions } from "./types.ts";
 import { estimateSize } from "./size-estimator.ts";
-import {
-  type CacheBackend,
-  CacheBackends,
-  MemoryCacheBackend,
-} from "../../../../core/cache/backend.ts";
+import { type CacheBackend, CacheBackends, MemoryCacheBackend } from "@veryfront/cache";
 
 // Register with memory profiler
 // Note: entries shows backend size when available, -1 for distributed backends

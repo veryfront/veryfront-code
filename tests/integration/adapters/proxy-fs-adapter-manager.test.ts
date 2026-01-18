@@ -5,8 +5,8 @@
  * concurrent preview and production requests.
  */
 
-import { assert, assertEquals } from "std/assert/mod.ts";
-import { describe, it } from "std/testing/bdd.ts";
+import { assert, assertEquals } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import { ProxyFSAdapterManager } from "@veryfront/platform/adapters/fs/veryfront/proxy-manager.ts";
 
 describe("ProxyFSAdapterManager - Cache Isolation", () => {

@@ -10,8 +10,8 @@
  * - Runtime behavior
  */
 
-import { assert, assertEquals, assertExists } from "std/assert/mod.ts";
-import { afterAll, describe, it } from "std/testing/bdd.ts";
+import { assert, assertEquals, assertExists } from "@std/assert";
+import { afterAll, describe, it } from "@std/testing/bdd";
 import {
   generateHMRRuntimeScript as generateRuntimeScript,
   type HMRRuntimeOptions,

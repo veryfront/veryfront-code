@@ -28,11 +28,11 @@ A complete, production-ready Figma integration for Veryfront following the estab
 - `app/api/auth/figma/callback/route.ts` (44 lines) - OAuth callback handler
 
 ### AI Tools
-1. `ai/tools/list-projects.ts` (66 lines) - Team and project browsing
-2. `ai/tools/list-files.ts` (36 lines) - File discovery
-3. `ai/tools/get-file.ts` (46 lines) - Deep file inspection
-4. `ai/tools/get-comments.ts` (71 lines) - Comment thread reading
-5. `ai/tools/post-comment.ts` (47 lines) - Comment posting
+1. `tools/list-projects.ts` (66 lines) - Team and project browsing
+2. `tools/list-files.ts` (36 lines) - File discovery
+3. `tools/get-file.ts` (46 lines) - Deep file inspection
+4. `tools/get-comments.ts` (71 lines) - Comment thread reading
+5. `tools/post-comment.ts` (47 lines) - Comment posting
 
 ### Documentation
 - `README.md` (783 lines) - Comprehensive documentation
@@ -298,7 +298,7 @@ describe('FigmaClient', () => {
 
 ### Integration Tests
 ```typescript
-// ai/tools/get-file.test.ts
+// tools/get-file.test.ts
 describe('get-file tool', () => {
   it('should return file summary')
   it('should include components when requested')

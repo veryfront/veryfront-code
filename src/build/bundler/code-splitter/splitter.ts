@@ -5,7 +5,7 @@
 
 import { bundlerLogger as logger } from "@veryfront/utils";
 import type { Metafile } from "esbuild/mod.js";
-import { ensureDir } from "std/fs/mod.ts";
+import { ensureDir } from "@std/fs";
 import { relative } from "@veryfront/platform/compat/path/index.ts";
 import type { ChunkInfo, SplitOptions, SplitResult } from "./types.ts";
 import { createEntryPoints } from "./entry-points.ts";

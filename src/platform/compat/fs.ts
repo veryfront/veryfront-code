@@ -22,7 +22,7 @@
  */
 
 import type { FileInfo } from "@veryfront/platform/adapters/base.ts";
-import { createError, toError } from "../../core/errors/veryfront-error.ts";
+import { createError, toError } from "../../errors/veryfront-error.ts";
 import { isBun, isDeno, isNode } from "./runtime.ts";
 
 /**
@@ -40,6 +40,7 @@ export interface FileSystem {
   readDir(path: string): AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }>;
   remove(path: string, options?: { recursive?: boolean }): Promise<void>;
   makeTempDir(options?: { prefix?: string }): Promise<string>; // New for temp dirs
+  chmod(path: string, mode: number): Promise<void>; // File permissions (Unix octal mode)
 }
 
 // ============================================================================
@@ -74,6 +75,7 @@ interface NodeFsPromises {
     }>
   >;
   rm(path: string, options?: { recursive?: boolean; force?: boolean }): Promise<void>;
+  chmod(path: string, mode: number): Promise<void>;
 }
 
 class NodeFileSystem implements FileSystem {
@@ -189,6 +191,15 @@ class NodeFileSystem implements FileSystem {
     await this.fs!.mkdir(tempDir, { recursive: true });
     return tempDir;
   }
+
+  async chmod(path: string, mode: number): Promise<void> {
+    await this.ensureInitialized();
+    try {
+      await this.fs!.chmod(path, mode);
+    } catch {
+      // Ignore errors on Windows where chmod is not fully supported
+    }
+  }
 }
 
 // ============================================================================
@@ -269,6 +280,15 @@ class DenoFileSystem implements FileSystem {
     // @ts-ignore - Deno global
     return await Deno.makeTempDir({ prefix: options?.prefix });
   }
+
+  async chmod(path: string, mode: number): Promise<void> {
+    try {
+      // @ts-ignore - Deno global
+      await Deno.chmod(path, mode);
+    } catch {
+      // Ignore errors on Windows where chmod is not fully supported
+    }
+  }
 }
 
 /**
@@ -288,4 +308,135 @@ class DenoFileSystem implements FileSystem {
 export function createFileSystem(): FileSystem {
   // Node.js or Bun falls through to NodeFileSystem
   return isDeno ? new DenoFileSystem() : new NodeFileSystem();
+}
+
+// Singleton filesystem instance for convenience functions
+let _fs: FileSystem | null = null;
+function getFs(): FileSystem {
+  if (!_fs) {
+    _fs = createFileSystem();
+  }
+  return _fs;
+}
+
+// ============================================================================
+// Convenience Functions
+// These provide a simpler API for common filesystem operations without
+// needing to create a FileSystem instance.
+// ============================================================================
+
+/**
+ * Read a text file and return its contents as a string
+ */
+export function readTextFile(path: string): Promise<string> {
+  return getFs().readTextFile(path);
+}
+
+/**
+ * Read a file and return its contents as a Uint8Array
+ */
+export function readFile(path: string): Promise<Uint8Array> {
+  return getFs().readFile(path);
+}
+
+/**
+ * Write text content to a file
+ */
+export function writeTextFile(path: string, data: string): Promise<void> {
+  return getFs().writeTextFile(path, data);
+}
+
+/**
+ * Write binary content to a file
+ */
+export function writeFile(path: string, data: Uint8Array): Promise<void> {
+  return getFs().writeFile(path, data);
+}
+
+/**
+ * Check if a file or directory exists
+ */
+export function exists(path: string): Promise<boolean> {
+  return getFs().exists(path);
+}
+
+/**
+ * Get file/directory information
+ */
+export function stat(path: string): Promise<FileInfo> {
+  return getFs().stat(path);
+}
+
+/**
+ * Create a directory
+ */
+export function mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
+  return getFs().mkdir(path, options);
+}
+
+/**
+ * Remove a file or directory
+ */
+export function remove(path: string, options?: { recursive?: boolean }): Promise<void> {
+  return getFs().remove(path, options);
+}
+
+/**
+ * Read directory entries
+ */
+export function readDir(
+  path: string,
+): AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }> {
+  return getFs().readDir(path);
+}
+
+/**
+ * Create a temporary directory
+ */
+export function makeTempDir(options?: { prefix?: string }): Promise<string> {
+  return getFs().makeTempDir(options);
+}
+
+/**
+ * Change file permissions (Unix octal mode)
+ * Note: This is a no-op on Windows where permissions work differently
+ */
+export function chmod(path: string, mode: number): Promise<void> {
+  return getFs().chmod(path, mode);
+}
+
+// ============================================================================
+// Error Type Checking Helpers
+// ============================================================================
+
+/**
+ * Check if an error is a "not found" error (file/directory doesn't exist).
+ * Works across Deno (Deno.errors.NotFound) and Node.js/Bun (ENOENT).
+ */
+export function isNotFoundError(error: unknown): boolean {
+  // Deno NotFound error
+  if (isDeno && error instanceof (globalThis as any).Deno.errors.NotFound) {
+    return true;
+  }
+  // Node.js/Bun ENOENT
+  if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Check if an error is an "already exists" error (file/directory already exists).
+ * Works across Deno (Deno.errors.AlreadyExists) and Node.js/Bun (EEXIST).
+ */
+export function isAlreadyExistsError(error: unknown): boolean {
+  // Deno AlreadyExists error
+  if (isDeno && error instanceof (globalThis as any).Deno.errors.AlreadyExists) {
+    return true;
+  }
+  // Node.js/Bun EEXIST
+  if ((error as NodeJS.ErrnoException)?.code === "EEXIST") {
+    return true;
+  }
+  return false;
 }

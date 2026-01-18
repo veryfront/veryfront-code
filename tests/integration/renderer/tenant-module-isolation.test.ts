@@ -1,8 +1,8 @@
-import { assertEquals } from "std/assert/mod.ts";
-import { join } from "std/path/mod.ts";
-import { describe, it } from "std/testing/bdd.ts";
+import { assertEquals } from "@std/assert";
+import { join } from "@std/path";
+import { describe, it } from "@std/testing/bdd";
 import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
-import { loadComponentFromSource } from "../../../src/module-system/react-loader/index.ts";
+import { loadComponentFromSource } from "../../../src/modules/react-loader/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
 describe(

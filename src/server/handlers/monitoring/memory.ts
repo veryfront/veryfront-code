@@ -15,14 +15,14 @@ import {
   HTTP_INTERNAL_SERVER_ERROR,
   HTTP_OK,
   PRIORITY_HIGH,
-} from "@veryfront/core/constants/index.ts";
+} from "@veryfront/utils/constants/index.ts";
 import {
   checkMemoryPressure,
   forceGC,
   getCacheStats,
   getHeapStats,
   getMemorySnapshot,
-} from "@veryfront/core/memory/index.ts";
+} from "@veryfront/utils/memory/index.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 
 export class MemoryDebugHandler extends BaseHandler {

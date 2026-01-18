@@ -257,6 +257,22 @@ export function getRuntimeVersion(): string {
 }
 
 /**
+ * Get the operating system type
+ * Returns: "darwin" (macOS), "linux", "windows", or the raw platform string
+ */
+export function getOsType(): string {
+  if (IS_DENO) {
+    return Deno.build.os;
+  }
+  if (hasNodeProcess) {
+    // Node/Bun uses process.platform which returns "win32" for Windows
+    const platform = nodeProcess!.platform;
+    return platform === "win32" ? "windows" : platform;
+  }
+  return "unknown";
+}
+
+/**
  * Register a signal handler (SIGINT, SIGTERM) for graceful shutdown
  */
 export function onSignal(signal: "SIGINT" | "SIGTERM", handler: () => void): void {
@@ -374,7 +390,7 @@ export function getStdout(): { write: (data: string) => void } | null {
 }
 
 /**
- * Write text directly to stdout
+ * Write text directly to stdout (sync)
  * No-op if stdout is not available
  */
 export function writeStdout(text: string): void {
@@ -382,6 +398,25 @@ export function writeStdout(text: string): void {
   if (stdout) {
     stdout.write(text);
   }
+}
+
+/**
+ * Write data to stdout asynchronously
+ * Returns a promise that resolves when the write is complete
+ */
+export async function writeStdoutAsync(data: Uint8Array): Promise<number> {
+  if (IS_DENO) {
+    return await Deno.stdout.write(data);
+  }
+  if (hasNodeProcess && nodeProcess!.stdout) {
+    return new Promise((resolve, reject) => {
+      nodeProcess!.stdout.write(data, (err) => {
+        if (err) reject(err);
+        else resolve(data.length);
+      });
+    });
+  }
+  return 0;
 }
 
 // Cached Node.js modules for synchronous prompt
@@ -446,4 +481,122 @@ export function promptSync(message?: string): string | null {
   }
 
   return null;
+}
+
+// ============================================================================
+// Command Execution
+// ============================================================================
+
+export interface CommandResult {
+  success: boolean;
+  code: number;
+  stdout?: string;
+  stderr?: string;
+}
+
+export interface CommandOptions {
+  args?: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+  /** Capture stdout/stderr to return in result */
+  capture?: boolean;
+  /** Inherit stdio from parent process (shows output in terminal) */
+  inherit?: boolean;
+  /** Use shell to run the command (needed for .cmd files on Windows) */
+  shell?: boolean;
+}
+
+/**
+ * Run a command and return the result.
+ * Works across Deno, Node.js, and Bun.
+ *
+ * @param cmd - Command to run
+ * @param options - Command options
+ * @param options.capture - Capture stdout/stderr to return in result
+ * @param options.inherit - Inherit stdio from parent (shows output in terminal)
+ * @param options.shell - Use shell to run command (needed for .cmd on Windows)
+ */
+export async function runCommand(
+  cmd: string,
+  options: CommandOptions = {},
+): Promise<CommandResult> {
+  const { args = [], cwd: cmdCwd, env: cmdEnv, capture = false, inherit = false, shell = false } =
+    options;
+
+  // Determine stdio mode: inherit > capture > null
+  const stdioMode = inherit ? "inherit" : capture ? "piped" : "null";
+
+  if (IS_DENO) {
+    const command = new Deno.Command(cmd, {
+      args,
+      cwd: cmdCwd,
+      env: cmdEnv,
+      stdout: stdioMode,
+      stderr: stdioMode,
+    });
+
+    const output = await command.output();
+    const decoder = new TextDecoder();
+
+    return {
+      success: output.success,
+      code: output.code,
+      stdout: capture ? decoder.decode(output.stdout) : undefined,
+      stderr: capture ? decoder.decode(output.stderr) : undefined,
+    };
+  }
+
+  if (hasNodeProcess) {
+    const { spawn } = await import("node:child_process");
+
+    // Map stdio mode to Node.js format
+    const nodeStdio: [
+      "ignore" | "inherit" | "pipe",
+      "ignore" | "inherit" | "pipe",
+      "ignore" | "inherit" | "pipe",
+    ] = inherit
+      ? ["inherit", "inherit", "inherit"]
+      : capture
+      ? ["ignore", "pipe", "pipe"]
+      : ["ignore", "ignore", "ignore"];
+
+    return new Promise((resolve) => {
+      const child = spawn(cmd, args, {
+        cwd: cmdCwd,
+        env: cmdEnv ? { ...nodeProcess!.env, ...cmdEnv } : undefined,
+        stdio: nodeStdio,
+        shell,
+      });
+
+      let stdout = "";
+      let stderr = "";
+
+      if (capture) {
+        child.stdout?.on("data", (data: Uint8Array) => {
+          stdout += new TextDecoder().decode(data);
+        });
+        child.stderr?.on("data", (data: Uint8Array) => {
+          stderr += new TextDecoder().decode(data);
+        });
+      }
+
+      child.on("close", (code) => {
+        resolve({
+          success: code === 0,
+          code: code ?? 1,
+          stdout: capture ? stdout : undefined,
+          stderr: capture ? stderr : undefined,
+        });
+      });
+
+      child.on("error", () => {
+        resolve({
+          success: false,
+          code: 1,
+        });
+      });
+    });
+  }
+
+  return { success: false, code: 1 };
 }

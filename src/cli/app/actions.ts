@@ -2,16 +2,12 @@
  * CLI App Actions
  *
  * Handlers for opening projects in browser, Studio, and IDE.
- *
- * Note: This module uses Deno-specific APIs (Deno.Command, Deno.remove) for subprocess
- * execution and file removal. This is acceptable for CLI tools that run exclusively in Deno.
- * If cross-runtime support is needed in the future, these should be abstracted into the
- * platform/compat layer.
+ * Uses cross-runtime platform abstractions for filesystem and command execution.
  */
 
 import { openBrowser } from "../auth/browser.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
-import { getEnv } from "@veryfront/platform/compat/process.ts";
+import { getEnv, getOsType, runCommand } from "@veryfront/platform/compat/process.ts";
 import { join } from "@veryfront/platform/compat/path/index.ts";
 import type { ProjectInfo } from "./state.ts";
 
@@ -67,18 +63,13 @@ function formatError(error: unknown): string {
 
 /**
  * Check if a command exists on the system
- * Uses Deno.Command which is Deno-specific but acceptable for CLI tools
+ * Uses cross-runtime command execution
  */
 async function commandExists(cmd: string): Promise<boolean> {
   try {
-    const whichCmd = Deno.build.os === "windows" ? "where" : "which";
-    const command = new Deno.Command(whichCmd, {
-      args: [cmd],
-      stdout: "null",
-      stderr: "null",
-    });
-    const { success } = await command.output();
-    return success;
+    const whichCmd = getOsType() === "windows" ? "where" : "which";
+    const result = await runCommand(whichCmd, { args: [cmd] });
+    return result.success;
   } catch {
     return false;
   }
@@ -86,17 +77,12 @@ async function commandExists(cmd: string): Promise<boolean> {
 
 /**
  * Run a command and return success status
- * Uses Deno.Command which is Deno-specific but acceptable for CLI tools
+ * Uses cross-runtime command execution
  */
-async function runCommand(cmd: string, args: string[]): Promise<boolean> {
+async function runCommandLocal(cmd: string, args: string[]): Promise<boolean> {
   try {
-    const command = new Deno.Command(cmd, {
-      args,
-      stdout: "null",
-      stderr: "null",
-    });
-    const { success } = await command.output();
-    return success;
+    const result = await runCommand(cmd, { args });
+    return result.success;
   } catch {
     return false;
   }
@@ -178,7 +164,7 @@ async function openPathInIDE(path: string, ide?: IDE): Promise<ActionResult> {
   const cmd = IDE_COMMANDS[targetIDE];
   const name = IDE_NAMES[targetIDE];
 
-  const success = await runCommand(cmd, [path]);
+  const success = await runCommandLocal(cmd, [path]);
 
   if (success) {
     return { success: true, message: `Opened in ${name}` };
@@ -213,15 +199,16 @@ export function openFileInIDE(filePath: string, ide?: IDE): Promise<ActionResult
 
 /**
  * Clear caches for a project
- * Uses Deno.remove which is Deno-specific but acceptable for CLI tools
+ * Uses cross-runtime filesystem abstraction
  */
 export async function clearProjectCache(project: ProjectInfo): Promise<ActionResult> {
+  const fs = createFileSystem();
   let cleared = 0;
 
   for (const relativeDir of PROJECT_CACHE_DIRS) {
     const dir = join(project.path, relativeDir);
     try {
-      await Deno.remove(dir, { recursive: true });
+      await fs.remove(dir, { recursive: true });
       cleared++;
     } catch {
       // Directory doesn't exist

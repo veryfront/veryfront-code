@@ -4,7 +4,7 @@
  */
 
 import { z } from "zod";
-import { MAX_URL_LENGTH_FOR_VALIDATION } from "@veryfront/core/constants/index.ts";
+import { MAX_URL_LENGTH_FOR_VALIDATION } from "@veryfront/utils/constants/index.ts";
 
 /**
  * Collection of commonly used validation schemas

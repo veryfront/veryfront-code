@@ -9,7 +9,7 @@ import { mdxRenderer } from "@veryfront/transforms/mdx/index.ts";
 import { loadComponentFromSource } from "@veryfront/modules/react-loader/component-loader.ts";
 import { getProjectReact } from "@veryfront/react";
 import { ensureValidChild } from "./ensure-valid-child.ts";
-import { buildLayoutComponentCacheKey } from "../../../core/cache/keys.ts";
+import { buildLayoutComponentCacheKey } from "../../../cache/keys.ts";
 
 export interface LayoutComponentCache {
   get(key: string): BundledReact.ComponentType | undefined;

@@ -1,5 +1,5 @@
 import { expect } from "@std/expect";
-import { describe, it } from "@std/testing/bdd.ts";
+import { describe, it } from "@std/testing/bdd";
 import { OptimizedFileWatcher } from "./file-watcher.ts";
 
 function createDeferred<T = void>() {

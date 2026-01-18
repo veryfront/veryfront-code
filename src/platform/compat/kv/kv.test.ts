@@ -1,4 +1,4 @@
-import { assert, assertEquals } from "std/assert/mod.ts";
+import { assert, assertEquals } from "@std/assert";
 import { openKv } from "./index.ts";
 
 Deno.test("openKv list operations", async () => {

@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertExists, assertNotEquals } from "jsr:@std/assert@1";
+import { assert, assertEquals, assertExists, assertNotEquals } from "@std/assert";
 import * as React from "react";
 import { renderToString } from "react-dom/server";
 import {

@@ -8,7 +8,7 @@ import {
   DEFAULT_MAX_FILE_SIZE_BYTES,
   DEFAULT_MAX_HEADER_SIZE_BYTES,
   DEFAULT_MAX_URL_LENGTH_BYTES,
-} from "@veryfront/core/constants/index.ts";
+} from "@veryfront/utils/constants/index.ts";
 
 /**
  * Request size limits configuration

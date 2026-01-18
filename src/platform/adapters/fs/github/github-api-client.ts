@@ -1,4 +1,4 @@
-import { createError, toError } from "../../../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors";
 import { logger } from "@veryfront/utils";
 import type { ResolvedGitHubConfig } from "./types.ts";
 import {

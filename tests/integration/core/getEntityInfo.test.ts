@@ -1,12 +1,12 @@
-import { assertEquals, assertExists } from "std/assert/mod.ts";
-import { join } from "std/path/mod.ts";
-import { describe, it } from "std/testing/bdd.ts";
+import { assertEquals, assertExists } from "@std/assert";
+import { join } from "@std/path";
+import { describe, it } from "@std/testing/bdd";
 import {
   getEntityBySlug,
   getEntityInfo,
   getLayoutEntity,
   getProviderEntities,
-} from "../../../src/core/types/entities/getEntityInfo.ts";
+} from "../../../src/types/entities/getEntityInfo.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
 async function createTestFile(path: string, content: string): Promise<void> {

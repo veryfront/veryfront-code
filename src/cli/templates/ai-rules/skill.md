@@ -39,8 +39,8 @@ src/
 
 - **New page**: Create `src/pages/about.tsx` → `/about`
 - **API endpoint**: Create `src/api/users.ts` → `/api/users`
-- **AI agent**: Create `src/ai/agents/assistant.ts`
-- **MCP tool**: Create `src/ai/tools/search.ts`
+- **AI agent**: Create `agents/assistant.ts`
+- **MCP tool**: Create `tools/search.ts`
 
 ## Code Examples
 

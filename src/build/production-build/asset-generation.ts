@@ -5,7 +5,7 @@
 
 import { serverLogger as logger } from "@veryfront/utils";
 import { dirname, join, relative } from "@veryfront/platform/compat/path/index.ts";
-import { walk } from "std/fs/mod.ts";
+import { walk } from "@std/fs";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { CLIENT_STYLES } from "./templates.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
@@ -28,12 +28,17 @@ function isNotFoundError(error: unknown): boolean {
   return err.code === "ENOENT";
 }
 
+/**
+ * Converts various file info formats to a normalized PathStat.
+ * Supports both property-based (Deno-style) and method-based (Node.js-style) file info.
+ */
 function toPathStat(
-  info: Deno.FileInfo | PathStat | {
+  info: PathStat | {
     size: number;
-    isFile(): boolean;
-    isDirectory(): boolean;
-    isSymbolicLink(): boolean;
+    isFile: boolean | (() => boolean);
+    isDirectory: boolean | (() => boolean);
+    isSymlink?: boolean;
+    isSymbolicLink?: () => boolean;
   },
 ): PathStat {
   if ("isFile" in info && typeof info.isFile === "boolean") {
@@ -46,27 +51,25 @@ function toPathStat(
     };
   }
 
-  if (typeof (info as { isFile(): boolean }).isFile === "function") {
-    const stats = info as {
-      size: number;
-      isFile(): boolean;
-      isDirectory(): boolean;
-      isSymbolicLink(): boolean;
-    };
+  // Handle method-based file info (Node.js style)
+  if (typeof info.isFile === "function") {
+    const isFileFn = info.isFile as () => boolean;
+    const isDirFn = info.isDirectory as () => boolean;
+    const isSymlinkFn = (info as { isSymbolicLink?: () => boolean }).isSymbolicLink;
     return {
-      isFile: stats.isFile(),
-      isDirectory: stats.isDirectory(),
-      isSymlink: stats.isSymbolicLink(),
-      size: stats.size,
+      isFile: isFileFn(),
+      isDirectory: isDirFn(),
+      isSymlink: isSymlinkFn ? isSymlinkFn() : false,
+      size: info.size,
     };
   }
 
-  const denoInfo = info as unknown as Deno.FileInfo;
+  // Handle property-based file info (Deno style)
   return {
-    isFile: denoInfo.isFile,
-    isDirectory: denoInfo.isDirectory,
-    isSymlink: denoInfo.isSymlink,
-    size: denoInfo.size ?? 0,
+    isFile: info.isFile as boolean,
+    isDirectory: info.isDirectory as boolean,
+    isSymlink: (info as { isSymlink?: boolean }).isSymlink ?? false,
+    size: info.size ?? 0,
   };
 }
 

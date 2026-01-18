@@ -1,8 +1,8 @@
-import { assert, assertEquals, assertMatch, assertStringIncludes } from "std/assert/mod.ts";
-import { afterAll, describe, it } from "std/testing/bdd.ts";
+import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
+import { afterAll, describe, it } from "@std/testing/bdd";
 import "../../../_helpers/log-guard.ts";
 
-import { join } from "std/path/mod.ts";
+import { join } from "@std/path";
 import { startUniversalServer } from "../../../../src/server/production-server.ts";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";

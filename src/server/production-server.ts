@@ -14,8 +14,8 @@ import {
   getMemorySnapshot,
   startMemoryMonitoring,
   stopMemoryMonitoring,
-} from "@veryfront/core/memory/index.ts";
-import { initializeRedisCaches } from "@veryfront/core/cache/redis-init.ts";
+} from "@veryfront/utils/memory/index.ts";
+import { initializeRedisCaches } from "@veryfront/cache/redis-init.ts";
 import { setServerInitialized } from "./handlers/monitoring/health.ts";
 import {
   enableSSRClientOnlyFetching,

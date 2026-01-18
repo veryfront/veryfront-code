@@ -3,6 +3,7 @@
  * To add a new IDE: just add an entry to AI_TOOLS array
  */
 
+import { readTextFile } from "@veryfront/platform/compat/fs.ts";
 import { type AITool, type AIToolId, AIToolIdSchema, AIToolSchema } from "./types.ts";
 
 const AI_TOOLS_RAW = [
@@ -70,6 +71,7 @@ export function isValidToolId(id: string): id is AIToolId {
 
 export async function getTemplateContent(toolId: string): Promise<string> {
   const tool = getToolById(toolId);
-  const templatePath = new URL(`../../templates/ai-rules/${tool.template}`, import.meta.url);
-  return await Deno.readTextFile(templatePath);
+  const templatePath =
+    new URL(`../../templates/ai-rules/${tool.template}`, import.meta.url).pathname;
+  return await readTextFile(templatePath);
 }

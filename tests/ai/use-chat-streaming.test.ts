@@ -2,8 +2,8 @@
  * Tests for useChat v5 stream protocol handling
  * Following AI SDK v5 UI Message types and patterns
  */
-import { describe, it } from "std/testing/bdd.ts";
-import { assertEquals, assertExists } from "std/assert/mod.ts";
+import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "@std/assert";
 
 // Import AI SDK v5 compatible types for testing
 import type {
@@ -11,7 +11,7 @@ import type {
   ToolUIPart,
   UIMessage,
   UIMessagePart,
-} from "../../src/ai/react/hooks/use-chat/index.ts";
+} from "../../src/agent/react/use-chat/index.ts";
 
 /**
  * Internal tool tracking during streaming (mirrors implementation)

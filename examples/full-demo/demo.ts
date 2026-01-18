@@ -4,32 +4,23 @@
  * Demonstrates all 8 phases working together in a production-ready setup.
  */
 
+// Core
+import { agent, createWorkflow, agentAsTool } from 'veryfront/agent';
+import { initializeProviders } from 'veryfront/provider';
+import { detectPlatform, getPlatformCapabilities } from 'veryfront';
+
+// Discovery & MCP
+import { discoverAll, createMCPServer, getMCPStats } from 'veryfront/mcp';
+
+// Production features
 import {
-  // Core
-  agent,
-  initializeProviders,
-  detectPlatform,
-  getPlatformCapabilities,
-
-  // Discovery & MCP
-  discoverAll,
-  createMCPServer,
-  getMCPStats,
-
-  // Composition
-  createWorkflow,
-  agentAsTool,
-
-  // Production features
   rateLimitMiddleware,
   cacheMiddleware,
   costTrackingMiddleware,
   securityMiddleware,
   COMMON_BLOCKED_PATTERNS,
   createCostTracker,
-
-  // Dev tools
-} from 'veryfront/ai';
+} from 'veryfront/agent/middleware';
 
 import {
   testAgent,
@@ -37,7 +28,7 @@ import {
   inspectAgent,
   printInspectionReport,
   printRegistryOverview,
-} from 'veryfront/ai/dev';
+} from 'veryfront/agent/testing';
 
 // Helper for Cross-Platform Compatibility (Deno/Node)
 function getEnv(key: string): string | undefined {
@@ -237,7 +228,7 @@ const calculatorTool = discoveryResult.tools.get('calculate');
 if (calculatorTool) {
   console.log('Testing calculator tool...');
 
-  const { testTool, printToolTestResults } = await import('veryfront/ai/dev');
+  const { testTool, printToolTestResults } = await import('veryfront/agent/testing');
 
   const toolResults = await testTool(calculatorTool, [
     {

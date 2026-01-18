@@ -5,7 +5,7 @@
  * through cache key generation and context creation.
  */
 
-import { assertEquals, assertThrows } from "jsr:@std/assert";
+import { assertEquals, assertThrows } from "@std/assert";
 import {
   createCacheKey,
   createRenderContext,
@@ -14,7 +14,7 @@ import {
   type RenderContext,
 } from "../../src/rendering/context/render-context.ts";
 import type { HandlerContext } from "../../src/server/handlers/types.ts";
-import { VERSION } from "../../src/core/utils/version.ts";
+import { VERSION } from "../../src/utils/version.ts";
 
 // Mock adapter for testing
 const mockAdapter = {

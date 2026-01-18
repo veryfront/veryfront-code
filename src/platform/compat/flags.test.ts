@@ -1,4 +1,4 @@
-import { assert, assertEquals } from "std/assert/mod.ts";
+import { assert, assertEquals } from "@std/assert";
 import { parse } from "./flags.ts";
 
 Deno.test("Flags Compat | parse basic flags", () => {

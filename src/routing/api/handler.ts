@@ -4,7 +4,7 @@ import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { getConfig } from "@veryfront/config";
 import { LRUCache } from "@veryfront/utils/lru-wrapper.ts";
 import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
-import { badGateway, internalServerError, notFound } from "@veryfront/http/responses.ts";
+import { badGateway, internalServerError, notFound } from "@veryfront/http/responses";
 import type { CORSConfig } from "@veryfront/security";
 import { applyCORSHeaders, handleCORSPreflight } from "@veryfront/security";
 import { type APIContext } from "./context-builder.ts";
@@ -268,4 +268,4 @@ export {
   notFound,
   redirectResponse as redirect,
   unauthorized,
-} from "@veryfront/http/responses.ts";
+} from "@veryfront/http/responses";

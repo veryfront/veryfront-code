@@ -1,13 +1,10 @@
-import { createError, toError } from "../../../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors";
 import { logger } from "@veryfront/utils";
 import type { FileCache } from "../cache/file-cache.ts";
 import type { GitHubAPIClient } from "./github-api-client.ts";
 import type { GitHubStatOperations } from "./stat-operations.ts";
 import type { GitHubContentItem, ResolvedGitHubConfig } from "./types.ts";
-import {
-  buildGitHubBytesCacheKey,
-  buildGitHubContentCacheKey,
-} from "../../../../core/cache/keys.ts";
+import { buildGitHubBytesCacheKey, buildGitHubContentCacheKey } from "@veryfront/cache";
 
 const LOG_PREFIX = "[GitHubReadOperations]";
 

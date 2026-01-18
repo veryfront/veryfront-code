@@ -9,7 +9,7 @@ import type {
 import { ResponseBuilder } from "@veryfront/security/index.ts";
 import { joinPath } from "@veryfront/utils/path-utils.ts";
 import { getConfig } from "@veryfront/config";
-import { PRIORITY_VERY_HIGH } from "@veryfront/core/constants/index.ts";
+import { PRIORITY_VERY_HIGH } from "@veryfront/utils/constants/index.ts";
 
 export class CorsHandler extends BaseHandler {
   metadata: HandlerMetadata = {

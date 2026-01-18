@@ -1,5 +1,5 @@
 import type { ServerAdapter, WebSocketUpgrade } from "../../base.ts";
-import { createError, toError } from "../../../../core/errors/veryfront-error.ts";
+import { createError, toError } from "@veryfront/errors";
 
 export class BunServerAdapter implements ServerAdapter {
   upgradeWebSocket(request: Request): WebSocketUpgrade {

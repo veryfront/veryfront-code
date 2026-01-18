@@ -1,5 +1,5 @@
-import { assert, assertEquals, assertExists, assertRejects } from "std/assert/mod.ts";
-import { join } from "std/path/mod.ts";
+import { assert, assertEquals, assertExists, assertRejects } from "@std/assert";
+import { join } from "@std/path";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 
 const TEST_DIR = await Deno.makeTempDir({ prefix: "veryfront_fs_test_" });

@@ -4,8 +4,8 @@
  * Total: 6 tests
  */
 
-import { assertEquals, assertExists } from "std/assert/mod.ts";
-import { describe, it } from "std/testing/bdd.ts";
+import { assertEquals, assertExists } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import {
   collectAncestorDirs,
   createErrorBoundary,

@@ -1,6 +1,7 @@
 import { DEFAULT_SANDBOX_TIMEOUT_MS } from "./constants.ts";
 import { serverLogger } from "@veryfront/utils";
 import { isCompiledBinary } from "@veryfront/utils";
+import { isDeno, isNode } from "@veryfront/platform/compat/runtime.ts";
 
 export interface SandboxOptions {
   timeoutMs?: number;
@@ -19,7 +20,7 @@ type ExtendedWorkerOptions = WorkerOptions & {
 
 export function runInWorker<T = unknown>(code: string, options: SandboxOptions = {}): Promise<T> {
   const workerOptions: ExtendedWorkerOptions = { type: "module" };
-  if (typeof Deno !== "undefined") {
+  if (isDeno) {
     workerOptions.deno = { permissions: "none" };
   }
 
@@ -31,11 +32,7 @@ export function runInWorker<T = unknown>(code: string, options: SandboxOptions =
       );
     }
 
-    const processGlobal = (globalThis as { process?: { versions?: { node?: string } } }).process;
-    const isNodeRuntime = typeof Deno === "undefined" &&
-      typeof processGlobal?.versions?.node === "string";
-
-    if (!isNodeRuntime) {
+    if (!isNode) {
       return Promise.reject(
         new Error("Sandbox memory limits are not supported in this runtime"),
       );

@@ -7,9 +7,9 @@
  * @module routing/api/openapi/mcp-tools
  */
 
-import { dynamicTool } from "@veryfront/ai/utils/tool.ts";
+import { dynamicTool } from "@veryfront/tool";
 import { z } from "zod";
-import type { Tool } from "@veryfront/ai/types/tool.ts";
+import type { Tool } from "@veryfront/tool";
 import type { OpenAPIOperation, OpenAPIParameter, OpenAPISpec } from "./types.ts";
 import { logger } from "@veryfront/utils";
 

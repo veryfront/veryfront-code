@@ -2,6 +2,7 @@
  * Directory-based template loader
  *
  * Loads templates from actual file directories instead of inline strings.
+ * Uses cross-runtime platform abstractions for filesystem operations.
  * Benefits:
  * - IDE support (syntax highlighting, linting, formatting)
  * - Easier to maintain and test templates
@@ -9,7 +10,11 @@
  * - Can use real file extensions (.tsx, .mdx, etc.)
  */
 
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import {
+  createFileSystem,
+  type FileSystem,
+  isNotFoundError,
+} from "@veryfront/platform/compat/fs.ts";
 import * as pathHelper from "@veryfront/platform/compat/path-helper.ts";
 import { isDeno } from "@veryfront/platform/compat/runtime.ts";
 import type { TemplateFile } from "./types.ts";
@@ -43,11 +48,7 @@ export async function loadTemplateFromDirectory(
     await walkDirectory(templateDir, templateDir, files, fs);
   } catch (error) {
     // If directory doesn't exist, return empty array
-    if (isDeno && error instanceof Deno.errors.NotFound) {
-      return [];
-    }
-    // Node.js ENOENT
-    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+    if (isNotFoundError(error)) {
       return [];
     }
     throw error;
@@ -59,55 +60,30 @@ export async function loadTemplateFromDirectory(
 
 /**
  * Recursively walk a directory and collect files.
+ * Uses cross-runtime filesystem abstraction.
  */
 async function walkDirectory(
   baseDir: string,
   currentDir: string,
   files: TemplateFile[],
-  fs: ReturnType<typeof createFileSystem>,
+  fs: FileSystem,
 ): Promise<void> {
-  if (isDeno) {
-    // Deno path
-    for await (const entry of Deno.readDir(currentDir)) {
-      const entryPath = pathHelper.join(currentDir, entry.name);
+  for await (const entry of fs.readDir(currentDir)) {
+    const entryPath = pathHelper.join(currentDir, entry.name);
 
-      if (entry.isDirectory) {
-        await walkDirectory(baseDir, entryPath, files, fs);
-      } else if (entry.isFile) {
-        let relativePath = pathHelper.relative(baseDir, entryPath);
+    if (entry.isDirectory) {
+      await walkDirectory(baseDir, entryPath, files, fs);
+    } else if (entry.isFile) {
+      let relativePath = pathHelper.relative(baseDir, entryPath);
 
-        // Apply file name mappings (e.g., _gitignore -> .gitignore)
-        const fileName = relativePath.split("/").pop() || "";
-        if (FILE_NAME_MAPPINGS[fileName]) {
-          relativePath = relativePath.replace(fileName, FILE_NAME_MAPPINGS[fileName]);
-        }
-
-        const content = await fs.readTextFile(entryPath);
-        files.push({ path: relativePath, content });
+      // Apply file name mappings (e.g., _gitignore -> .gitignore)
+      const fileName = relativePath.split("/").pop() || "";
+      if (FILE_NAME_MAPPINGS[fileName]) {
+        relativePath = relativePath.replace(fileName, FILE_NAME_MAPPINGS[fileName]);
       }
-    }
-  } else {
-    // Node.js path
-    const nodeFs = await import("node:fs/promises");
-    const entries = await nodeFs.readdir(currentDir, { withFileTypes: true });
 
-    for (const entry of entries) {
-      const entryPath = pathHelper.join(currentDir, entry.name);
-
-      if (entry.isDirectory()) {
-        await walkDirectory(baseDir, entryPath, files, fs);
-      } else if (entry.isFile()) {
-        let relativePath = pathHelper.relative(baseDir, entryPath);
-
-        // Apply file name mappings (e.g., _gitignore -> .gitignore)
-        const fileName = relativePath.split("/").pop() || "";
-        if (FILE_NAME_MAPPINGS[fileName]) {
-          relativePath = relativePath.replace(fileName, FILE_NAME_MAPPINGS[fileName]);
-        }
-
-        const content = await fs.readTextFile(entryPath);
-        files.push({ path: relativePath, content });
-      }
+      const content = await fs.readTextFile(entryPath);
+      files.push({ path: relativePath, content });
     }
   }
 }

@@ -5,7 +5,7 @@
  * and runtime overlay functionality in development mode.
  */
 
-import { assertEquals, assertExists, assertStringIncludes } from "std/assert/mod.ts";
+import { assertEquals, assertExists, assertStringIncludes } from "@std/assert";
 import {
   type ErrorInfo,
   ErrorOverlay,

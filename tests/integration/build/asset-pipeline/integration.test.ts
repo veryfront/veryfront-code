@@ -2,7 +2,7 @@
  * Integration tests for Asset Pipeline
  */
 
-import { assertEquals, assertExists } from "std/assert/mod.ts";
+import { assertEquals, assertExists } from "@std/assert";
 import {
   type AssetPipelineOptions,
   checkAssetPipelineDependencies,

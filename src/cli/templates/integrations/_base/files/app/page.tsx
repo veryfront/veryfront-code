@@ -1,7 +1,7 @@
 'use client'
 
-import { Chat } from 'veryfront/ai/components'
-import { useChat } from 'veryfront/ai/react'
+import { Chat } from 'veryfront/components/ai'
+import { useChat } from 'veryfront/agent/react'
 import { ServiceConnections } from './components/ServiceConnections'
 
 // Define services for this project - automatically populated by scaffolding

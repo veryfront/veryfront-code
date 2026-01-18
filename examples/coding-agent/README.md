@@ -118,8 +118,10 @@ export default defineConfig({
   resolve: {
     importMap: {
       imports: {
-        "veryfront/ai": "../../src/ai/index.ts",
-        "veryfront/ai/": "../../src/ai/",
+        "veryfront/agent": "../../src/agent/index.ts",
+        "veryfront/tool": "../../src/tool/index.ts",
+        "veryfront/mcp": "../../src/mcp/index.ts",
+        "veryfront/provider": "../../src/provider/index.ts",
       },
     },
   },
@@ -130,7 +132,7 @@ export default defineConfig({
 });
 ```
 
-The Import Map Plugin (at `src/routing/api/module-loader/loader.ts:35-184`) uses this configuration to resolve bare imports like `'veryfront/ai'` during API route bundling. It uses `RuntimeAdapter.fs.readFile()` for file loading, which works with both real and virtual filesystems.
+The Import Map Plugin (at `src/routing/api/module-loader/loader.ts:35-184`) uses this configuration to resolve bare imports like `'veryfront/agent'` during API route bundling. It uses `RuntimeAdapter.fs.readFile()` for file loading, which works with both real and virtual filesystems.
 
 ## How It Works
 
@@ -172,7 +174,7 @@ Command execution (`runCommand`) only works on platforms with real filesystems.
 Consider adding rate limiting using Veryfront's production features:
 
 ```typescript
-import { rateLimitMiddleware } from "veryfront/ai";
+import { rateLimitMiddleware } from "veryfront/agent/middleware";
 
 const agent = agent({
   // ... config
@@ -187,7 +189,7 @@ const agent = agent({
 Enable caching to reduce costs:
 
 ```typescript
-import { cacheMiddleware } from "veryfront/ai";
+import { cacheMiddleware } from "veryfront/agent/middleware";
 
 const agent = agent({
   // ... config
@@ -202,7 +204,7 @@ const agent = agent({
 Track API usage:
 
 ```typescript
-import { costTrackingMiddleware } from "veryfront/ai";
+import { costTrackingMiddleware } from "veryfront/agent/middleware";
 
 const agent = agent({
   // ... config

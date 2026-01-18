@@ -8,8 +8,8 @@
  * - Edge cases and error handling
  */
 
-import { assertEquals } from "jsr:@std/assert@1";
-import { describe, it } from "jsr:@std/testing@1/bdd";
+import { assertEquals } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import { getFileType, getLoaderFromPath, getSlugFromPath } from "./loader-utils.ts";
 
 describe("Loader Utils", () => {

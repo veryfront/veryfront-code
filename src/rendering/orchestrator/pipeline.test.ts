@@ -4,8 +4,8 @@
  * Tests the rendering pipeline configuration and types.
  */
 
-import { assertEquals, assertExists } from "jsr:@std/assert@1";
-import { describe, it } from "jsr:@std/testing@1/bdd";
+import { assertEquals, assertExists } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import type { RenderPipelineConfig } from "./pipeline.ts";
 
 describe("RenderPipeline", () => {

@@ -6,8 +6,8 @@
  * @module cli/commands/new.integration.test
  */
 
-import { assertEquals, assertExists } from "jsr:@std/assert@1";
-import { afterEach, describe, it } from "jsr:@std/testing@1/bdd";
+import { assertEquals, assertExists } from "@std/assert";
+import { afterEach, describe, it } from "@std/testing/bdd";
 import { join } from "@veryfront/platform/compat/path/index.ts";
 
 const TEST_DIR = Deno.makeTempDirSync({ prefix: "veryfront-new-test-" });
@@ -92,11 +92,11 @@ describe("new command integration", () => {
 
       await command.output();
 
-      // AI template should create an `ai` directory
-      const aiDirExists = await Deno.stat(join(projectDir, "ai"))
+      // AI template should create an `agents` directory
+      const agentsDirExists = await Deno.stat(join(projectDir, "agents"))
         .then((s) => s.isDirectory)
         .catch(() => false);
-      assertEquals(aiDirExists, true);
+      assertEquals(agentsDirExists, true);
 
       // .env should contain OPENAI_API_KEY placeholder
       const envContent = await Deno.readTextFile(join(projectDir, ".env"));
@@ -417,10 +417,10 @@ describe("new command integration", () => {
       assertEquals(output.includes("What would you like to build?"), false);
 
       // Project should use default AI template when integrations provided without template
-      const aiDirExists = await Deno.stat(join(projectDir, "ai"))
+      const agentsDirExists = await Deno.stat(join(projectDir, "agents"))
         .then((s) => s.isDirectory)
         .catch(() => false);
-      assertEquals(aiDirExists, true);
+      assertEquals(agentsDirExists, true);
     });
 
     it("should skip wizard in non-TTY environment", async () => {
@@ -445,10 +445,10 @@ describe("new command integration", () => {
       assertEquals(code, 0);
 
       // Project should be created with default AI template
-      const aiDirExists = await Deno.stat(join(projectDir, "ai"))
+      const agentsDirExists = await Deno.stat(join(projectDir, "agents"))
         .then((s) => s.isDirectory)
         .catch(() => false);
-      assertEquals(aiDirExists, true);
+      assertEquals(agentsDirExists, true);
     });
   });
 });

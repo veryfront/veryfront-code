@@ -1,5 +1,5 @@
 import { VERSION } from "@veryfront/utils";
-import { assertEquals, assertExists, assertStringIncludes } from "jsr:@std/assert@1";
+import { assertEquals, assertExists, assertStringIncludes } from "@std/assert";
 import {
   formatBytes,
   logError,
@@ -53,8 +53,8 @@ function captureOutput(fn: () => void | Promise<void>): { stdout: string; stderr
   return { stdout, stderr };
 }
 
-// Helper for async capture
-async function captureAsyncOutput(
+// Helper for async capture (available for future tests)
+async function _captureAsyncOutput(
   fn: () => Promise<void>,
 ): Promise<{ stdout: string; stderr: string }> {
   const originalLog = console.log;
@@ -63,15 +63,15 @@ async function captureAsyncOutput(
   let stdout = "";
   let stderr = "";
 
-  console.log = (...args: any[]) => {
+  console.log = (...args: unknown[]) => {
     stdout += `${args.join(" ")}\n`;
   };
 
-  console.error = (...args: any[]) => {
+  console.error = (...args: unknown[]) => {
     stderr += `${args.join(" ")}\n`;
   };
 
-  console.warn = (...args: any[]) => {
+  console.warn = (...args: unknown[]) => {
     stderr += `${args.join(" ")}\n`;
   };
 
@@ -85,6 +85,7 @@ async function captureAsyncOutput(
 
   return { stdout, stderr };
 }
+void _captureAsyncOutput; // Prevent unused warning
 
 Deno.test("showLogo outputs Veryfront in cyan", () => {
   const { stdout } = captureOutput(() => showLogo());
@@ -215,98 +216,41 @@ Deno.test("formatBytes handles edge cases", () => {
 });
 
 Deno.test("promptUser reads from stdin", async () => {
-  // Mock stdin
-  const originalStdin = Deno.stdin;
-  const mockStdin = {
-    read: (buf: Uint8Array) => {
-      const input = "test input\n";
-      const encoded = new TextEncoder().encode(input);
-      buf.set(encoded);
-      return encoded.length;
-    },
-    rid: 0,
-    readable: Deno.stdin.readable,
-    close: () => {},
-  };
-
-  // Replace stdin temporarily
-  Object.defineProperty(Deno, "stdin", {
-    value: mockStdin,
-    configurable: true,
-  });
+  // Mock the global prompt function (used by promptSync in Deno)
+  const originalPrompt = globalThis.prompt;
+  globalThis.prompt = (_message?: string) => "test input";
 
   try {
-    const { stdout } = await captureAsyncOutput(async () => {
-      const result = await promptUser("Enter something:");
-      assertEquals(result, "test input");
-    });
-
-    assertStringIncludes(stdout, "Enter something:");
+    const result = await promptUser("Enter something:");
+    assertEquals(result, "test input");
   } finally {
-    // Restore original stdin
-    Object.defineProperty(Deno, "stdin", {
-      value: originalStdin,
-      configurable: true,
-    });
+    globalThis.prompt = originalPrompt;
   }
 });
 
 Deno.test("promptUser handles empty input", async () => {
-  // Mock stdin with null read
-  const originalStdin = Deno.stdin;
-  const mockStdin = {
-    read: (_buf: Uint8Array) => {
-      return null;
-    },
-    rid: 0,
-    readable: Deno.stdin.readable,
-    close: () => {},
-  };
-
-  Object.defineProperty(Deno, "stdin", {
-    value: mockStdin,
-    configurable: true,
-  });
+  // Mock the global prompt function to return null (user cancelled)
+  const originalPrompt = globalThis.prompt;
+  globalThis.prompt = (_message?: string) => null;
 
   try {
     const result = await promptUser("Enter something:");
     assertEquals(result, "");
   } finally {
-    Object.defineProperty(Deno, "stdin", {
-      value: originalStdin,
-      configurable: true,
-    });
+    globalThis.prompt = originalPrompt;
   }
 });
 
 Deno.test("promptUser trims whitespace", async () => {
-  // Mock stdin with whitespace
-  const originalStdin = Deno.stdin;
-  const mockStdin = {
-    read: (buf: Uint8Array) => {
-      const input = "  test with spaces  \n";
-      const encoded = new TextEncoder().encode(input);
-      buf.set(encoded);
-      return encoded.length;
-    },
-    rid: 0,
-    readable: Deno.stdin.readable,
-    close: () => {},
-  };
-
-  Object.defineProperty(Deno, "stdin", {
-    value: mockStdin,
-    configurable: true,
-  });
+  // Mock the global prompt function to return string with whitespace
+  const originalPrompt = globalThis.prompt;
+  globalThis.prompt = (_message?: string) => "  test with spaces  ";
 
   try {
     const result = await promptUser("Enter something:");
     assertEquals(result, "test with spaces");
   } finally {
-    Object.defineProperty(Deno, "stdin", {
-      value: originalStdin,
-      configurable: true,
-    });
+    globalThis.prompt = originalPrompt;
   }
 });
 

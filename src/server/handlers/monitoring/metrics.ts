@@ -6,7 +6,7 @@ import {
   HTTP_INTERNAL_SERVER_ERROR,
   HTTP_OK,
   PRIORITY_HIGH,
-} from "@veryfront/core/constants/index.ts";
+} from "@veryfront/utils/constants/index.ts";
 import { memoryUsage, uptime } from "@veryfront/platform/compat/process.ts";
 
 export class MetricsHandler extends BaseHandler {
