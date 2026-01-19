@@ -187,7 +187,7 @@ describe(
           const server = await startUniversalServer({
             projectDir: dir,
             port,
-            hostname: "127.0.0.1",
+            bindAddress: "127.0.0.1",
             adapter,
           });
           await server.ready;
@@ -240,7 +240,7 @@ describe(
           const handle = await startNode({
             projectDir: dir,
             port,
-            hostname: "127.0.0.1",
+            bindAddress: "127.0.0.1",
           });
 
           assertExists(handle);
