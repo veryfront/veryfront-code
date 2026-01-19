@@ -1,7 +1,5 @@
-// Log guard for tests: fail on unexpected logs
-// Usage: import './log-guard.ts' in test files that want strict log checking
-
-import { afterEach, beforeEach } from "@veryfront/testing/bdd";
+// Global log guard for tests: fail on unexpected logs
+// Usage: import './log-guard.ts' once in test entry or in individual files
 
 const original = {
   log: console.log,
@@ -251,27 +249,21 @@ function isAllowed(args: unknown[]): boolean {
   return allowedWarnings.some((s) => text.includes(s));
 }
 
-let installed = false;
+// Install log guard immediately at module load
+console.warn = ((...args: unknown[]) => {
+  if (!args.length || !isAllowed(args)) {
+    // Fail fast with explicit error
+    throw new Error(`Unexpected console.warn in test: ${args.map((a) => String(a)).join(" ")}`);
+  }
+  return original.warn.apply(console, args as Parameters<typeof console.warn>);
+}) as typeof console.warn;
 
-function installLogGuard(): void {
-  if (installed) return;
-  installed = true;
-
-  console.warn = ((...args: unknown[]) => {
-    if (!args.length || !isAllowed(args)) {
-      // Fail fast with explicit error
-      throw new Error(`Unexpected console.warn in test: ${args.map((a) => String(a)).join(" ")}`);
-    }
-    return original.warn.apply(console, args as any);
-  }) as typeof console.warn;
-
-  console.error = ((...args: unknown[]) => {
-    if (!args.length || !isAllowed(args)) {
-      throw new Error(`Unexpected console.error in test: ${args.map((a) => String(a)).join(" ")}`);
-    }
-    return original.error.apply(console, args as any);
-  }) as typeof console.error;
-}
+console.error = ((...args: unknown[]) => {
+  if (!args.length || !isAllowed(args)) {
+    throw new Error(`Unexpected console.error in test: ${args.map((a) => String(a)).join(" ")}`);
+  }
+  return original.error.apply(console, args as Parameters<typeof console.error>);
+}) as typeof console.error;
 
 export function restoreLogs() {
   console.log = original.log;
@@ -279,8 +271,4 @@ export function restoreLogs() {
   console.error = original.error;
   console.info = original.info;
   console.debug = original.debug;
-  installed = false;
 }
-
-beforeEach(() => installLogGuard());
-afterEach(() => restoreLogs());

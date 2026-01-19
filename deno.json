@@ -157,7 +157,7 @@
 
     "@veryfront/testing": "./src/testing/index.ts",
     "@veryfront/testing/assert": "./src/testing/assert.ts",
-    "@veryfront/testing/bdd": "./src/testing/bdd.ts",
+    "@veryfront/testing/bdd": "./src/testing/bdd.deno.ts",
     "@veryfront/testing/deno-compat": "./src/testing/deno-compat.ts",
     "@veryfront/testing/utils": "./src/testing/utils.ts",
 

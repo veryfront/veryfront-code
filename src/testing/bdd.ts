@@ -1,22 +1,29 @@
 /**
  * Portable BDD testing utilities (describe, it, beforeEach, afterEach).
  *
- * In Deno: Uses @std/testing/bdd
+ * In Deno: Direct re-export from @std/testing/bdd (no wrapper)
  * In Node.js: Uses node:test
  * In Bun: Uses bun:test
- *
- * IMPORTANT: Import from @veryfront/testing (index.ts) to ensure init.ts runs first.
  *
  * @module
  */
 
-import "./init.ts";
 import { isBun, isDeno } from "../platform/compat/runtime.ts";
-import { getEnvOverlayStorage } from "../platform/compat/process.ts";
-import { installTestIsolation } from "./isolation.ts";
 
 // ============================================================================
-// Type definitions
+// Deno: Direct re-export (no wrapper, no side effects)
+// ============================================================================
+
+if (isDeno) {
+  // Direct re-export for Deno - no top-level await, no wrapper
+  // This file is replaced at runtime by the export below
+}
+
+// For Deno, we use conditional exports in deno.json to map to bdd.deno.ts
+// This file contains the Node/Bun implementations
+
+// ============================================================================
+// Type definitions (for Node/Bun implementations)
 // ============================================================================
 
 /** Test function that can be sync or async */
@@ -24,42 +31,12 @@ type TestFn = () => void | Promise<void>;
 
 /** Test options for Deno sanitizers (ignored in Node/Bun) */
 export interface TestOptions {
-  /**
-   * Deno resource sanitizer - checks for leaked resources.
-   * Ignored in Node.js and Bun.
-   */
   sanitizeResources?: boolean;
-
-  /**
-   * Deno ops sanitizer - checks for incomplete async operations.
-   * Ignored in Node.js and Bun.
-   */
   sanitizeOps?: boolean;
-
-  /**
-   * Deno exit sanitizer - checks for unexpected process exits.
-   * Ignored in Node.js and Bun.
-   */
   sanitizeExit?: boolean;
-
-  /**
-   * Skip this test.
-   */
   skip?: boolean;
-
-  /**
-   * Only run this test (and others marked only).
-   */
   only?: boolean;
-
-  /**
-   * Ignore failures (test still runs but won't fail the suite).
-   */
   ignore?: boolean;
-
-  /**
-   * Test timeout in milliseconds.
-   */
   timeout?: number;
 }
 
@@ -75,7 +52,7 @@ export interface BddTestContext {
 type HookFn = (ctx?: BddTestContext) => void | Promise<void>;
 
 // ============================================================================
-// BDD implementation interface
+// Implementation getter (lazy initialization for Node/Bun)
 // ============================================================================
 
 interface BddImpl {
@@ -95,80 +72,23 @@ interface BddImpl {
   afterAll(fn: HookFn): void;
 }
 
-// ============================================================================
-// Deno implementation
-// ============================================================================
+let _impl: BddImpl | null = null;
 
-/** Check if any test options are set */
-function hasOptions(options: TestOptions): boolean {
-  return Object.values(options).some((v) => v !== undefined);
-}
-
-/** Normalize Deno options, converting skip to ignore */
-function normalizeDenoOptions(options: TestOptions): TestOptions {
-  if (!options.skip) return options;
-  const { skip: _skip, ...rest } = options;
-  return { ...rest, ignore: true };
-}
-
-/** Parse overloaded BDD function arguments into name, options, and function. */
+/** Parse overloaded BDD function arguments */
 function parseBddArgs<T extends TestFn | (() => void)>(
   nameOrOptions: string | (TestOptions & { name: string }),
   optionsOrFn?: TestOptions | T,
   fn?: T,
 ): { name: string; options: TestOptions; testFn: T | undefined } {
   const name = typeof nameOrOptions === "string" ? nameOrOptions : nameOrOptions.name;
-
   let options: TestOptions = {};
   if (typeof nameOrOptions === "object") {
     options = nameOrOptions;
   } else if (typeof optionsOrFn === "object" && typeof optionsOrFn !== "function") {
     options = optionsOrFn;
   }
-
   const testFn = typeof optionsOrFn === "function" ? optionsOrFn : fn;
   return { name, options, testFn };
-}
-
-function createDenoImpl(denoBdd: typeof import("#std/testing/bdd.ts")): BddImpl {
-  return {
-    describe(
-      nameOrOptions: string | (TestOptions & { name: string }),
-      optionsOrFn?: TestOptions | (() => void),
-      fn?: () => void,
-    ): void {
-      const { name, options, testFn } = parseBddArgs(nameOrOptions, optionsOrFn, fn);
-      if (!testFn) {
-        throw new Error("describe requires a test function");
-      }
-      const denoOptions = normalizeDenoOptions(options);
-      if (hasOptions(denoOptions)) {
-        denoBdd.describe({ name, ...denoOptions }, testFn);
-      } else {
-        denoBdd.describe(name, testFn);
-      }
-    },
-    it(
-      nameOrOptions: string | (TestOptions & { name: string }),
-      optionsOrFn?: TestOptions | TestFn,
-      fn?: TestFn,
-    ): void {
-      const { name, options, testFn } = parseBddArgs(nameOrOptions, optionsOrFn, fn);
-      if (!testFn) {
-        throw new Error("it requires a test function");
-      }
-      const denoOptions = normalizeDenoOptions(options);
-      if (hasOptions(denoOptions)) {
-        denoBdd.it({ name, ...denoOptions }, testFn);
-      } else {
-        denoBdd.it(name, testFn);
-      }
-    },
-    beforeEach: denoBdd.beforeEach,
-    afterEach: denoBdd.afterEach,
-    beforeAll: denoBdd.beforeAll,
-    afterAll: denoBdd.afterAll,
-  };
 }
 
 // ============================================================================
@@ -196,9 +116,7 @@ function createNodeImpl(nodeTest: {
       fn?: () => void,
     ): void {
       const { name, options, testFn } = parseBddArgs(nameOrOptions, optionsOrFn, fn);
-      if (!testFn) {
-        throw new Error("describe requires a test function");
-      }
+      if (!testFn) throw new Error("describe requires a test function");
       if (options.skip || options.ignore) {
         nodeTest.describe.skip(name, testFn);
       } else if (options.only && nodeTest.describe.only) {
@@ -213,15 +131,13 @@ function createNodeImpl(nodeTest: {
       fn?: TestFn,
     ): void {
       const { name, options, testFn } = parseBddArgs(nameOrOptions, optionsOrFn, fn);
-      if (!testFn) {
-        throw new Error("it requires a test function");
-      }
+      if (!testFn) throw new Error("it requires a test function");
       const isSkip = options.skip || options.ignore;
       if (isSkip) {
         nodeTest.it.skip(name, testFn);
       } else if (options.only && nodeTest.it.only) {
         nodeTest.it.only(name, testFn);
-      } else if (!isSkip && options.timeout !== undefined) {
+      } else if (options.timeout !== undefined) {
         nodeTest.it(name, { timeout: options.timeout } as never, testFn);
       } else {
         nodeTest.it(name, testFn);
@@ -235,8 +151,10 @@ function createNodeImpl(nodeTest: {
 }
 
 // ============================================================================
-// Bun implementation (uses bun:test module)
+// Bun implementation
 // ============================================================================
+
+import { getEnvOverlayStorage } from "../platform/compat/process.ts";
 
 interface BunTestModule {
   describe: ((name: string, fn: () => void) => void) & {
@@ -244,10 +162,6 @@ interface BunTestModule {
     only?: (name: string, fn: () => void) => void;
   };
   it: ((name: string, optionsOrFn: { timeout?: number } | TestFn, fn?: TestFn) => void) & {
-    skip?: (name: string, fn: TestFn) => void;
-    only?: (name: string, fn: TestFn) => void;
-  };
-  test: ((name: string, optionsOrFn: { timeout?: number } | TestFn, fn?: TestFn) => void) & {
     skip?: (name: string, fn: TestFn) => void;
     only?: (name: string, fn: TestFn) => void;
   };
@@ -266,6 +180,7 @@ function createBunImpl(bunTest: BunTestModule): BddImpl {
     const parsed = Number(raw);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 30000;
   })();
+
   const withEnvOverlay = (fn: TestFn): TestFn => {
     return async () => {
       const overlay = getEnvOverlayStorage();
@@ -286,9 +201,7 @@ function createBunImpl(bunTest: BunTestModule): BddImpl {
       fn?: () => void,
     ): void {
       const { name, options, testFn } = parseBddArgs(nameOrOptions, optionsOrFn, fn);
-      if (!testFn) {
-        throw new Error("describe requires a test function");
-      }
+      if (!testFn) throw new Error("describe requires a test function");
       if ((options.skip || options.ignore) && bunTest.describe.skip) {
         bunTest.describe.skip(name, testFn);
       } else if (options.only && bunTest.describe.only) {
@@ -303,12 +216,9 @@ function createBunImpl(bunTest: BunTestModule): BddImpl {
       fn?: TestFn,
     ): void {
       const { name, options, testFn } = parseBddArgs(nameOrOptions, optionsOrFn, fn);
-      if (!testFn) {
-        throw new Error("it requires a test function");
-      }
+      if (!testFn) throw new Error("it requires a test function");
       const testWithEnv = withEnvOverlay(testFn);
       const isSkip = options.skip || options.ignore;
-      // Use flexible type to accommodate skip/only variants with different signatures
       type TestRunner = (
         name: string,
         optionsOrFn: { timeout?: number } | TestFn,
@@ -327,8 +237,7 @@ function createBunImpl(bunTest: BunTestModule): BddImpl {
         return;
       }
       const timeout = options.timeout ?? defaultTimeout;
-      const shouldTimeout = Number.isFinite(timeout) && timeout > 0;
-      if (shouldTimeout) {
+      if (Number.isFinite(timeout) && timeout > 0) {
         runner(name, { timeout }, testWithEnv);
       } else {
         runner(name, testWithEnv);
@@ -342,70 +251,64 @@ function createBunImpl(bunTest: BunTestModule): BddImpl {
 }
 
 // ============================================================================
-// Create implementation based on runtime
+// Lazy initialization (only for Node/Bun - Deno uses direct re-export)
 // ============================================================================
 
-let impl: BddImpl;
+async function getImpl(): Promise<BddImpl> {
+  if (_impl) return _impl;
 
-if (isDeno) {
-  // Deno: Use @std/testing/bdd
-  const denoBdd = await import("#std/testing/bdd.ts");
-  impl = createDenoImpl(denoBdd);
-} else if (isBun) {
-  // Bun: Use bun:test
-  // Use Function constructor to prevent Deno/Node from statically analyzing the import
-  const importBunTest = new Function("return import('bun:test')") as () => Promise<{
-    default: BunTestModule;
-  }>;
-  const bunTestModule = await importBunTest();
-  impl = createBunImpl(bunTestModule.default);
-} else {
-  // Node.js: Use node:test
-  // Use Function constructor to prevent Bun from statically analyzing the import
-  const importNodeTest = new Function("return import('node:test')") as () => Promise<unknown>;
-  const nodeTest = await importNodeTest();
-  impl = createNodeImpl(
-    nodeTest as unknown as {
-      describe: ((name: string, fn: () => void) => void) & {
-        skip: (name: string, fn: () => void) => void;
-        only?: (name: string, fn: () => void) => void;
-      };
-      it: ((name: string, optionsOrFn: { timeout?: number } | TestFn, fn?: TestFn) => void) & {
-        skip: (name: string, fn: TestFn) => void;
-        only?: (name: string, fn: TestFn) => void;
-      };
-      before: (fn: HookFn) => void;
-      after: (fn: HookFn) => void;
-      beforeEach: (fn: HookFn) => void;
-      afterEach: (fn: HookFn) => void;
-    },
-  );
+  if (isBun) {
+    const importBunTest = new Function("return import('bun:test')") as () => Promise<{
+      default: BunTestModule;
+    }>;
+    const bunTestModule = await importBunTest();
+    _impl = createBunImpl(bunTestModule.default);
+  } else {
+    // Node.js
+    const importNodeTest = new Function("return import('node:test')") as () => Promise<unknown>;
+    const nodeTest = await importNodeTest();
+    _impl = createNodeImpl(
+      nodeTest as {
+        describe: ((name: string, fn: () => void) => void) & {
+          skip: (name: string, fn: () => void) => void;
+          only?: (name: string, fn: () => void) => void;
+        };
+        it: ((name: string, optionsOrFn: { timeout?: number } | TestFn, fn?: TestFn) => void) & {
+          skip: (name: string, fn: TestFn) => void;
+          only?: (name: string, fn: TestFn) => void;
+        };
+        before: (fn: HookFn) => void;
+        after: (fn: HookFn) => void;
+        beforeEach: (fn: HookFn) => void;
+        afterEach: (fn: HookFn) => void;
+      },
+    );
+  }
+
+  return _impl;
 }
 
-await installTestIsolation({
-  beforeEach: impl.beforeEach,
-  afterEach: impl.afterEach,
-});
-
 // ============================================================================
-// Public exports
+// Public exports (for Node/Bun only - Deno uses bdd.deno.ts)
 // ============================================================================
 
-/**
- * Describes a test suite.
- */
+// For Deno, these are never used because deno.json maps to bdd.deno.ts
+// For Node/Bun, these wrap the lazy-initialized implementations
+
 export function describe(
   nameOrOptions: string | (TestOptions & { name: string }),
   optionsOrFn?: TestOptions | (() => void),
   fn?: () => void,
 ): void {
-  impl.describe(nameOrOptions, optionsOrFn, fn);
+  // Synchronous wrapper - implementation must be initialized first
+  if (!_impl) {
+    throw new Error(
+      "BDD implementation not initialized. For Node/Bun, call initBdd() first, or import from @veryfront/testing which auto-initializes.",
+    );
+  }
+  _impl.describe(nameOrOptions, optionsOrFn, fn);
 }
 
-/**
- * Skips a test suite.
- * Note: In Deno's @std/testing/bdd, skipping uses the `ignore` property.
- */
 describe.skip = function skip(
   nameOrOptions: string | (TestOptions & { name: string }),
   optionsOrFn?: TestOptions | (() => void),
@@ -413,32 +316,13 @@ describe.skip = function skip(
 ): void {
   const name = typeof nameOrOptions === "string" ? nameOrOptions : nameOrOptions.name;
   const testFn = typeof optionsOrFn === "function" ? optionsOrFn : fn;
-  if (!testFn) {
-    throw new Error("describe.skip requires a test function");
-  }
-  // Use 'ignore' for Deno compatibility - 'skip' is not a standard Deno option
-  impl.describe({ name, ignore: true }, testFn);
+  if (!testFn) throw new Error("describe.skip requires a test function");
+  if (!_impl) throw new Error("BDD implementation not initialized");
+  _impl.describe({ name, ignore: true }, testFn);
 };
 
-/**
- * Marks a test suite as ignored (runs but failures don't fail the suite).
- */
-describe.ignore = function ignore(
-  nameOrOptions: string | (TestOptions & { name: string }),
-  optionsOrFn?: TestOptions | (() => void),
-  fn?: () => void,
-): void {
-  const name = typeof nameOrOptions === "string" ? nameOrOptions : nameOrOptions.name;
-  const testFn = typeof optionsOrFn === "function" ? optionsOrFn : fn;
-  if (!testFn) {
-    throw new Error("describe.ignore requires a test function");
-  }
-  impl.describe({ name, ignore: true }, testFn);
-};
+describe.ignore = describe.skip;
 
-/**
- * Runs only this suite (and others marked only).
- */
 describe.only = function only(
   nameOrOptions: string | (TestOptions & { name: string }),
   optionsOrFn?: TestOptions | (() => void),
@@ -446,27 +330,24 @@ describe.only = function only(
 ): void {
   const name = typeof nameOrOptions === "string" ? nameOrOptions : nameOrOptions.name;
   const testFn = typeof optionsOrFn === "function" ? optionsOrFn : fn;
-  if (!testFn) {
-    throw new Error("describe.only requires a test function");
-  }
-  impl.describe({ name, only: true }, testFn);
+  if (!testFn) throw new Error("describe.only requires a test function");
+  if (!_impl) throw new Error("BDD implementation not initialized");
+  _impl.describe({ name, only: true }, testFn);
 };
 
-/**
- * Defines a test case.
- */
 export function it(
   nameOrOptions: string | (TestOptions & { name: string }),
   optionsOrFn?: TestOptions | TestFn,
   fn?: TestFn,
 ): void {
-  impl.it(nameOrOptions, optionsOrFn, fn);
+  if (!_impl) {
+    throw new Error(
+      "BDD implementation not initialized. For Node/Bun, call initBdd() first, or import from @veryfront/testing which auto-initializes.",
+    );
+  }
+  _impl.it(nameOrOptions, optionsOrFn, fn);
 }
 
-/**
- * Skips a test case.
- * Note: In Deno's @std/testing/bdd, skipping uses the `ignore` property.
- */
 it.skip = function skip(
   nameOrOptions: string | (TestOptions & { name: string }),
   optionsOrFn?: TestOptions | TestFn,
@@ -474,32 +355,13 @@ it.skip = function skip(
 ): void {
   const name = typeof nameOrOptions === "string" ? nameOrOptions : nameOrOptions.name;
   const testFn = typeof optionsOrFn === "function" ? optionsOrFn : fn;
-  if (!testFn) {
-    throw new Error("it.skip requires a test function");
-  }
-  // Use 'ignore' for Deno compatibility - 'skip' is not a standard Deno option
-  impl.it({ name, ignore: true }, testFn);
+  if (!testFn) throw new Error("it.skip requires a test function");
+  if (!_impl) throw new Error("BDD implementation not initialized");
+  _impl.it({ name, ignore: true }, testFn);
 };
 
-/**
- * Marks a test as ignored (runs but failures don't fail the suite).
- */
-it.ignore = function ignore(
-  nameOrOptions: string | (TestOptions & { name: string }),
-  optionsOrFn?: TestOptions | TestFn,
-  fn?: TestFn,
-): void {
-  const name = typeof nameOrOptions === "string" ? nameOrOptions : nameOrOptions.name;
-  const testFn = typeof optionsOrFn === "function" ? optionsOrFn : fn;
-  if (!testFn) {
-    throw new Error("it.ignore requires a test function");
-  }
-  impl.it({ name, ignore: true }, testFn);
-};
+it.ignore = it.skip;
 
-/**
- * Runs only this test (and others marked only).
- */
 it.only = function only(
   nameOrOptions: string | (TestOptions & { name: string }),
   optionsOrFn?: TestOptions | TestFn,
@@ -507,41 +369,39 @@ it.only = function only(
 ): void {
   const name = typeof nameOrOptions === "string" ? nameOrOptions : nameOrOptions.name;
   const testFn = typeof optionsOrFn === "function" ? optionsOrFn : fn;
-  if (!testFn) {
-    throw new Error("it.only requires a test function");
-  }
-  impl.it({ name, only: true }, testFn);
+  if (!testFn) throw new Error("it.only requires a test function");
+  if (!_impl) throw new Error("BDD implementation not initialized");
+  _impl.it({ name, only: true }, testFn);
 };
 
-/**
- * Runs before each test in the current suite.
- */
 export function beforeEach(fn: HookFn): void {
-  impl.beforeEach(fn);
+  if (!_impl) throw new Error("BDD implementation not initialized");
+  _impl.beforeEach(fn);
 }
 
-/**
- * Runs after each test in the current suite.
- */
 export function afterEach(fn: HookFn): void {
-  impl.afterEach(fn);
+  if (!_impl) throw new Error("BDD implementation not initialized");
+  _impl.afterEach(fn);
 }
 
-/**
- * Runs once before all tests in the current suite.
- */
 export function beforeAll(fn: HookFn): void {
-  impl.beforeAll(fn);
+  if (!_impl) throw new Error("BDD implementation not initialized");
+  _impl.beforeAll(fn);
 }
 
-/**
- * Runs once after all tests in the current suite.
- */
 export function afterAll(fn: HookFn): void {
-  impl.afterAll(fn);
+  if (!_impl) throw new Error("BDD implementation not initialized");
+  _impl.afterAll(fn);
 }
 
-/**
- * Alias for `it` - defines a test case.
- */
 export const test = it;
+
+/** Initialize the BDD implementation (required for Node/Bun before using BDD functions) */
+export async function initBdd(): Promise<void> {
+  await getImpl();
+}
+
+// Auto-initialize for Node/Bun (but not at module level to avoid top-level await)
+// Callers should either:
+// 1. Import from @veryfront/testing (which initializes in index.ts)
+// 2. Call initBdd() explicitly before using BDD functions

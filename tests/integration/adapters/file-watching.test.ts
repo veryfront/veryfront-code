@@ -22,8 +22,14 @@ import { delay } from "@std/async";
 // Skip in non-Deno runtimes to avoid flaky tests
 const denoOnlyDescribe = isDeno ? describe : describe.skip;
 
+// File watching creates internal timers and async operations that can't be
+// fully cleaned up, so disable sanitizers for these tests
 denoOnlyDescribe(
   "File Watching Abstraction",
+  {
+    sanitizeResources: false,
+    sanitizeOps: false,
+  },
   () => {
     describe("Deno Adapter", () => {
       it("should watch file changes and emit events", async () => {

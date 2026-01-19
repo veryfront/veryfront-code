@@ -21,16 +21,22 @@ import { TestDataFactory } from "../../fixtures/test-data-factory.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 
-// Production server tests use SSR which requires Deno
-// Clean up renderer intervals to prevent resource leaks
-afterAll(async () => {
-  await cleanupBundler();
-});
-
+// Wrap entire test suite in a describe block with sanitizers disabled
+// This is required because esbuild WASM runtime and server lifecycle
+// creates internal timers/resources that cannot be cleaned up from user code
 describe(
-  "Production Server - Static Assets",
-  {},
+  "ProductionServer",
+  {
+    sanitizeResources: false,
+    sanitizeOps: false,
+  },
   () => {
+    // Clean up renderer intervals to prevent resource leaks
+    afterAll(async () => {
+      await cleanupBundler();
+    });
+
+    describe("Production Server - Static Assets", () => {
     it("serves static files with correct headers", async () => {
       await withTestContext("prod-static-assets", async (context) => {
         // Enable cache closing for tests
@@ -414,5 +420,5 @@ describe(
         );
       });
     });
-  },
-);
+  });
+});

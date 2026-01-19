@@ -37,6 +37,25 @@ import { runWithCacheDir } from "../../src/utils/cache-dir.ts";
 import type { TestServer } from "./server.ts";
 import { getFreePort } from "./utils.ts";
 
+// Initialize esbuild without worker to prevent hanging tests
+// This is done globally so all tests share the same esbuild instance
+let esbuildInitialized = false;
+try {
+  const { initialize } = await import("esbuild");
+  await initialize({
+    worker: false,
+  });
+  esbuildInitialized = true;
+  // Set global flag so cleanupBundler knows to skip stopping esbuild
+  // This prevents "child process started before test but closed during test" errors
+  (globalThis as Record<string, unknown>).__vfTestPreserveEsbuild = true;
+} catch {
+  // Ignore if already initialized or module missing
+}
+
+// Export for cleanup decision
+export { esbuildInitialized };
+
 function safeSetEnv(key: string, value: string | undefined): void {
   try {
     if (value === undefined) {
