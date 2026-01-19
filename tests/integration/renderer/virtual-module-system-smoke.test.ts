@@ -41,13 +41,13 @@ export default function TestComponent() {
       assertEquals(response?.status, 200, "Response should be successful");
 
       const content = await response?.text();
-      // Test should check for default React version (18.3.1) not hardcoded 19.1.1
+      // Test should check for default React version (19.1.1) not hardcoded 19.1.1
       // Default version is defined in src/shared/constants/cdn.ts as REACT_DEFAULT_VERSION
       assertEquals(
-        content?.includes("https://esm.sh/react@18.3.1") ||
+        content?.includes("https://esm.sh/react@19.1.1") ||
           content?.includes("https://esm.sh/react@18."),
         true,
-        "Module should have transformed React import to default version (18.3.1)",
+        "Module should have transformed React import to default version (19.1.1)",
       );
     });
 

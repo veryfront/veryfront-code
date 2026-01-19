@@ -51,6 +51,12 @@ const reactDOMClient = await loadReactDOMClient();
 // deno-lint-ignore no-explicit-any
 type Any = any;
 
+// Re-export the whole module as default for `import ReactDOM from "react-dom/client"` style
+export default reactDOMClient;
+
 // Named exports with explicit type annotations to avoid circular type inference
 export const createRoot = reactDOMClient.createRoot as Any;
 export const hydrateRoot = reactDOMClient.hydrateRoot as Any;
+
+// Re-export types for TypeScript consumers
+export type { Container, Root, RootOptions } from "https://esm.sh/@types/react-dom@18.3.7/client";

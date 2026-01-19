@@ -59,7 +59,7 @@ const React = await loadReact();
 export default React;
 
 // Import types from @types/react for proper type annotations
-import type * as ReactTypes from "https://esm.sh/@types/react@19";
+import type * as ReactTypes from "https://esm.sh/@types/react@18.3.27";
 
 // Named exports for tree-shaking support
 // Explicitly typed to preserve React's generic type signatures
@@ -99,37 +99,62 @@ export const useSyncExternalStore: typeof ReactTypes.useSyncExternalStore =
 export const useTransition: typeof ReactTypes.useTransition = React.useTransition;
 export const version: string = React.version;
 
-// Re-export types from esm.sh directly (avoid circular import via import map)
+// Re-export types from @types/react for consistency
 // This ensures TypeScript can resolve types when "react" points to this module
 export type {
+  AnchorHTMLAttributes,
+  Attributes,
+  ButtonHTMLAttributes,
+  ChangeEvent,
+  ClassAttributes,
   ComponentClass,
   ComponentProps,
+  ComponentPropsWithoutRef,
+  ComponentPropsWithRef,
   ComponentType,
   Consumer,
   Context,
   CSSProperties,
   DependencyList,
+  DetailedHTMLProps,
   Dispatch,
   EffectCallback,
   ErrorInfo,
   FC,
+  FormEvent,
+  FormHTMLAttributes,
   FunctionComponent,
-  JSX,
+  HTMLAttributes,
+  ImgHTMLAttributes,
+  InputHTMLAttributes,
   JSXElementConstructor,
   Key,
+  KeyboardEvent,
   LegacyRef,
+  MouseEvent,
   MutableRefObject,
+  PointerEvent,
   PropsWithChildren,
   PropsWithRef,
   Provider,
-  ReactChild,
   ReactElement,
-  ReactFragment,
   ReactNode,
-  ReactPortal,
-  ReactText,
+  Reducer,
+  ReducerAction,
+  ReducerState,
   Ref,
+  RefAttributes,
   RefCallback,
   RefObject,
   SetStateAction,
+  SourceHTMLAttributes,
+  SyntheticEvent,
+  TextareaHTMLAttributes,
+  TouchEvent,
+  UIEvent,
+  WheelEvent,
 } from "https://esm.sh/@types/react@18.3.27";
+
+// Re-export JSX namespace for JSX type checking
+// JSX is a namespace, not a value, so we use 'export type'
+export type { JSX } from "https://esm.sh/@types/react@18.3.27";

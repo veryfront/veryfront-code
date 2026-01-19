@@ -1,5 +1,6 @@
 import { rendererLogger as logger } from "#veryfront/utils";
 import ReactDOM from "react-dom/client";
+import type { Root } from "react-dom/client";
 import type { GlobalWithReactDOM } from "#veryfront/types/global-guards.ts";
 import { extractPageDataFromScript } from "#veryfront/routing";
 import { NavigationHandlers } from "#veryfront/routing";
@@ -45,7 +46,7 @@ export interface RouterOptions {
 export class VeryfrontRouter {
   private baseUrl: string;
   private currentPath: string;
-  private root: ReactDOM.Root | null = null;
+  private root: Root | null = null;
   private options: RouterOptions;
   private spaMode: boolean;
   private spaNavigationHandler: SpaNavigationHandler | null = null;
