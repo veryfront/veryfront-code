@@ -32,9 +32,25 @@ export async function compileMDXRuntime(
     let { body } = extracted;
     const { frontmatter: extractedFrontmatter } = extracted;
 
+    // TEMPORARY: Log body BEFORE import rewriting for debugging acorn errors
+    const bodyBeforeRewrite = body;
+
     if (filePath && (target === "browser" || target === "server")) {
       body = rewriteBodyImports(body, { filePath, target, baseUrl, projectDir });
     }
+
+    // Log at INFO level to be visible in production logs
+    logger.info("[MDX Compiler] Body preview:", {
+      filePath,
+      target,
+      contentLength: content.length,
+      bodyBeforeLength: bodyBeforeRewrite.length,
+      bodyAfterLength: body.length,
+      bodyFirst500: body.substring(0, 500).replace(/\n/g, "\\n"),
+      bodyLast500: body.substring(Math.max(0, body.length - 500)).replace(/\n/g, "\\n"),
+      hasImport: body.includes("import"),
+      importMatch: body.match(/^import\s+/m)?.[0] || "none",
+    });
 
     const allRehypePlugins: PluggableList = [
       ...rehypePlugins,

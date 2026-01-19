@@ -166,11 +166,15 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       }
 
       // Fall back to OAuth client credentials if no user token
+      // Use projectSlug if available, otherwise use custom domain for lookup
       if (!token && config.clientId && config.clientSecret) {
-        try {
-          token = await tokenManager.getToken(scope);
-        } catch (error) {
-          logger?.error("Token fetch failed", error as Error);
+        const customDomain = !projectSlug ? host : undefined;
+        if (projectSlug || customDomain) {
+          try {
+            token = await tokenManager.getToken(scope, projectSlug, customDomain);
+          } catch (error) {
+            logger?.error("Token fetch failed", error as Error, { projectSlug, customDomain });
+          }
         }
       }
     } else {
@@ -195,6 +199,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     const host = req.headers.get("host") || "";
     const parsedDomain = parseProjectDomain(host);
     const scope = getScope(parsedDomain.environment);
+    const projectSlug = parsedDomain.slug || undefined;
 
     // Try user token first for preview
     if (scope === "preview") {
@@ -203,12 +208,15 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       if (userToken) return userToken;
     }
 
-    // Fall back to OAuth
+    // Fall back to OAuth (requires projectSlug or customDomain for project-scoped tokens)
     if (config.clientId && config.clientSecret) {
-      try {
-        return await tokenManager.getToken(scope);
-      } catch (error) {
-        logger?.error("Token fetch failed for API", error as Error);
+      const customDomain = !projectSlug ? host : undefined;
+      if (projectSlug || customDomain) {
+        try {
+          return await tokenManager.getToken(scope, projectSlug, customDomain);
+        } catch (error) {
+          logger?.error("Token fetch failed for API", error as Error, { projectSlug, customDomain });
+        }
       }
     }
 

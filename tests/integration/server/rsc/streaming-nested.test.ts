@@ -45,7 +45,7 @@ describe("RSC Stream Nested Tests", { sanitizeOps: false, sanitizeResources: fal
           h = await startProductionServer({
             projectDir: context.projectDir,
             port,
-            hostname: "127.0.0.1",
+            bindAddress: "127.0.0.1",
           });
           await h.ready;
 

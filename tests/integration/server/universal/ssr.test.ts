@@ -45,7 +45,7 @@ describe(
         const server = await startUniversalServer({
           projectDir: context.projectDir,
           port,
-          hostname: "127.0.0.1",
+          bindAddress: "127.0.0.1",
         });
         context.trackResource(server);
         await server.ready;
@@ -105,7 +105,7 @@ describe(
         const server = await startUniversalServer({
           projectDir: context.projectDir,
           port,
-          hostname: "127.0.0.1",
+          bindAddress: "127.0.0.1",
         });
         context.trackResource(server);
         await server.ready;
@@ -146,7 +146,7 @@ describe(
         const server = await startUniversalServer({
           projectDir: context.projectDir,
           port,
-          hostname: "127.0.0.1",
+          bindAddress: "127.0.0.1",
         });
         context.trackResource(server);
         await server.ready;
@@ -177,7 +177,7 @@ describe(
         const server = await startUniversalServer({
           projectDir: context.projectDir,
           port,
-          hostname: "127.0.0.1",
+          bindAddress: "127.0.0.1",
         });
         context.trackResource(server);
         await server.ready;
@@ -210,7 +210,7 @@ describe(
         const server = await startUniversalServer({
           projectDir: context.projectDir,
           port,
-          hostname: "127.0.0.1",
+          bindAddress: "127.0.0.1",
         });
         context.trackResource(server);
         await server.ready;
@@ -239,7 +239,7 @@ describe(
         const server = await startUniversalServer({
           projectDir: context.projectDir,
           port,
-          hostname: "127.0.0.1",
+          bindAddress: "127.0.0.1",
         });
         context.trackResource(server);
         await server.ready;

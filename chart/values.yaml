@@ -160,6 +160,8 @@ renderer:
 
   env:
     PORT: "20000"
+    # 0.0.0.0 = all interfaces (required for port-forward)
+    BIND_ADDRESS: "0.0.0.0"
     PROXY_MODE: "1"
     # API URL for domain lookups and other internal API calls
     # Use internal K8s service for performance (no public internet roundtrip)
@@ -185,8 +187,7 @@ renderer:
     OTEL_METRICS_EXPORTER: "otlp"
     # Uses same endpoint as traces (Grafana OTLP gateway accepts both)
 
-  # Secret must contain: REDIS_URL, OTEL_EXPORTER_OTLP_HEADERS
-  # REDIS_URL enables cross-pod caching (transform, SSR module, file caches)
+  # Secret must contain: OTEL_EXPORTER_OTLP_HEADERS
   envFrom:
     - secretRef:
         name: veryfront-renderer-secret

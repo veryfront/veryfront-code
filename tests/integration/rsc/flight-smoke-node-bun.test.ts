@@ -33,7 +33,7 @@ describe("RSC Flight Smoke Tests", { sanitizeOps: false, sanitizeResources: fals
           h = await startProductionServer({
             projectDir: context.projectDir,
             port,
-            hostname: "127.0.0.1",
+            bindAddress: "127.0.0.1",
           });
           await h.ready;
           await delay(400);

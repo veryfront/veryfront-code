@@ -193,13 +193,13 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
 
           const projectDir = cwd();
           const port = args.port ?? DEFAULT_DEV_SERVER_PORT;
-          const hostname = String(args.hostname || args.host || "0.0.0.0");
+          const bindAddress = String(args.hostname || args.host || "0.0.0.0");
           const debug = Boolean(args.debug);
           const shutdownController = new AbortController();
           const server = await startUniversalServer({
             projectDir,
             port,
-            hostname,
+            bindAddress,
             debug,
             adapter,
             signal: shutdownController.signal,

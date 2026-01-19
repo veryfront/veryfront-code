@@ -1,5 +1,4 @@
 import { serverLogger as logger } from "@veryfront/utils";
-import { LOCALHOST } from "@veryfront/config";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import { createVeryfrontHandler } from "./universal-handler/index.ts";
@@ -26,7 +25,8 @@ import {
 interface ServerOptions {
   projectDir: string;
   port: number;
-  hostname?: string;
+  /** 0.0.0.0 = all interfaces, 127.0.0.1 = localhost only */
+  bindAddress?: string;
   signal?: AbortSignal;
 }
 
@@ -42,7 +42,7 @@ export async function startUniversalServer(
     mode?: "development" | "production";
   },
 ): Promise<ServerHandle> {
-  const { projectDir, port, hostname = "0.0.0.0", signal, debug, mode = "production" } = options;
+  const { projectDir, port, bindAddress = "0.0.0.0", signal, debug, mode = "production" } = options;
   const baseAdapter = options.adapter ?? (await getAdapter());
 
   // Bootstrap framework to initialize FSAdapter if configured
@@ -63,7 +63,7 @@ export async function startUniversalServer(
   // the actual data client-side after hydration.
   enableSSRClientOnlyFetching();
 
-  logger.info("Starting universal production server", { projectDir, port, hostname });
+  logger.info("Starting universal production server", { projectDir, port, bindAddress });
 
   const handler = createVeryfrontHandler(projectDir, adapter, {
     projectDir,
@@ -85,7 +85,7 @@ export async function startUniversalServer(
 
   const server = await adapter.serve(handler, {
     port,
-    hostname,
+    hostname: bindAddress, // Deno uses "hostname" for bind address
     signal,
     onListen: (params) => {
       try {
@@ -162,12 +162,14 @@ if (import.meta.main) {
     const port = Number(
       adapter.env.get("PORT") ?? adapter.env.get("VERYFRONT_PORT") ?? 3000,
     );
-    const hostname = adapter.env.get("HOST") ?? adapter.env.get("HOSTNAME") ?? LOCALHOST.IPV4;
+    // BIND_ADDRESS: 0.0.0.0 = all interfaces, 127.0.0.1 = localhost only
+    // Note: Don't use HOSTNAME - K8s sets it to pod name which resolves to pod IP
+    const bindAddress = adapter.env.get("BIND_ADDRESS") ?? "0.0.0.0";
 
     const server = await startUniversalServer({
       projectDir,
       port,
-      hostname,
+      bindAddress,
       debug: isDebugEnabled(adapter.env),
       adapter, // Pass adapter to avoid re-detection
       signal: shutdownController.signal,

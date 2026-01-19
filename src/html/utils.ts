@@ -85,18 +85,17 @@ function getEsmShImportMap(versions: DetectedVersions): Record<string, string> {
       `https://esm.sh/veryfront@${veryfront}/primitives?external=react&target=es2022`,
     // Platform utilities - serve from local module server to match SSR behavior
     // This ensures hydration matches (same code on server and client)
-    "veryfront/head": "/_vf_modules/exports/head.js",
-    "veryfront/router": "/_vf_modules/exports/router.js",
+    "veryfront/head": "/_vf_modules/react/components/Head.js",
+    "veryfront/router": "/_vf_modules/react/router/index.js",
     // CRITICAL: veryfront/context must use local module to share React context with SSR
     // Using esm.sh creates a separate context instance causing usePageContext to return undefined
-    "veryfront/context": "/_vf_modules/exports/context.js",
-    "veryfront/fonts": `https://esm.sh/veryfront@${veryfront}/fonts?external=react&target=es2022`,
+    "veryfront/context": "/_vf_modules/react/context/index.js",
+    "veryfront/fonts": "/_vf_modules/react/fonts/index.js",
     // React-prefixed aliases (veryfront/react/*) - same modules, alternative import paths
-    "veryfront/react/head": "/_vf_modules/exports/head.js",
-    "veryfront/react/router": "/_vf_modules/exports/react/router.js",
-    "veryfront/react/context": "/_vf_modules/exports/context.js",
-    "veryfront/react/fonts":
-      `https://esm.sh/veryfront@${veryfront}/fonts?external=react&target=es2022`,
+    "veryfront/react/head": "/_vf_modules/react/components/Head.js",
+    "veryfront/react/router": "/_vf_modules/react/router/index.js",
+    "veryfront/react/context": "/_vf_modules/react/context/index.js",
+    "veryfront/react/fonts": "/_vf_modules/react/fonts/index.js",
     ...getTailwindImportMap(),
   };
 }
@@ -152,10 +151,10 @@ function getSelfHostedImportMap(versions: DetectedVersions): Record<string, stri
     "veryfront/components/ai": "/_veryfront/lib/components/ai.js",
     "veryfront/primitives": "/_veryfront/lib/primitives.js",
     // Platform utilities
-    "veryfront/head": "/_veryfront/lib/head.js",
-    "veryfront/router": "/_veryfront/lib/router.js",
-    "veryfront/context": "/_veryfront/lib/context.js",
-    "veryfront/fonts": "/_veryfront/lib/fonts.js",
+    "veryfront/head": "/_vf_modules/react/components/Head.js",
+    "veryfront/router": "/_vf_modules/react/router/index.js",
+    "veryfront/context": "/_vf_modules/react/context/index.js",
+    "veryfront/fonts": "/_vf_modules/react/fonts/index.js",
     ...getTailwindImportMap(),
   };
 }

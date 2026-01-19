@@ -51,7 +51,7 @@ describe(
               h = await startProductionServer({
                 projectDir: context.projectDir,
                 port,
-                hostname: "127.0.0.1",
+                bindAddress: "127.0.0.1",
                 signal: controller.signal,
               });
               await h.ready;

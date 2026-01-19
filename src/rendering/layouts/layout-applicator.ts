@@ -16,10 +16,10 @@ import {
 import { detectAppRouter } from "../router-detection.ts";
 import { getProjectReact } from "@veryfront/react";
 import { extract } from "@std/front-matter/yaml";
-// Import using bare specifiers that match user code imports
+// Import using bare specifiers that match browser import map
 // This ensures SSR and client use the same module instance (same React context)
-import { RouterProvider } from "veryfront/react/router";
-import { PageContextProvider } from "veryfront/react/context";
+import { RouterProvider } from "veryfront/router";
+import { PageContextProvider } from "veryfront/context";
 
 export interface LayoutApplicationOptions {
   projectDir: string;

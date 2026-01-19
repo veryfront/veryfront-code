@@ -246,7 +246,7 @@ export class TestContext {
     const server = await startProductionServer({
       projectDir: this.projectDir,
       port,
-      hostname,
+      bindAddress: hostname,
       signal: controller.signal,
     });
 

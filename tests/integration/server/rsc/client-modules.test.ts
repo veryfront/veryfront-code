@@ -60,7 +60,7 @@ describe("RSC Client Modules Tests", { sanitizeOps: false, sanitizeResources: fa
           h = await startProductionServer({
             projectDir: context.projectDir,
             port,
-            hostname: "127.0.0.1",
+            bindAddress: "127.0.0.1",
           });
           await h.ready;
           const res = await fetch(

@@ -16,7 +16,8 @@ export interface OAuthTokenConfig {
   apiBaseUrl: string;
   clientId: string;
   clientSecret: string;
-  projectId?: string;
+  projectSlug?: string;
+  customDomain?: string;
   timeoutMs?: number;
 }
 
@@ -41,7 +42,8 @@ export async function fetchOAuthToken(
         grant_type: "client_credentials",
         client_id: config.clientId,
         client_secret: config.clientSecret,
-        ...(config.projectId && { projectId: config.projectId }),
+        ...(config.projectSlug && { project_slug: config.projectSlug }),
+        ...(config.customDomain && { custom_domain: config.customDomain }),
       }),
       signal: controller.signal,
     });

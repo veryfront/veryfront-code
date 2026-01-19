@@ -282,7 +282,7 @@ export async function createTestProductionServer(options: {
   const server = await startProductionServer({
     projectDir: options.projectDir,
     port,
-    hostname: options.hostname || "127.0.0.1",
+    bindAddress: options.hostname || "127.0.0.1",
   });
 
   // Add port and hostname to the server object for test consistency
