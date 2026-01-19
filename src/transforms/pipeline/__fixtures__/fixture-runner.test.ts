@@ -67,18 +67,16 @@ describe("transform pipeline fixtures", { sanitizeResources: false, sanitizeOps:
       // Should transform JSX
       assertStringIncludes(result.code, "jsx");
 
-      // SSR caches React from esm.sh to local file:// paths.
+      // SSR in Bun/Node resolves React to local file:// paths from node_modules.
       // This ensures the same React instance is used by both user components and react-dom-server,
       // preventing "Objects are not valid as a React child" errors from mismatched instances.
-      // The shared React facades (src/react/shared-*.ts) handle cross-runtime loading.
+      // (Deno SSR uses esm.sh URLs which are later cached to file:// paths.)
       assertStringIncludes(result.code, "file://");
-      // Verify the http-bundle cache directory is used (modules cached from esm.sh)
-      assertStringIncludes(result.code, "veryfront-http-bundle");
+      assertStringIncludes(result.code, "node_modules");
+      assertStringIncludes(result.code, "react");
 
       // Should NOT have bare "react" import (would fail in Docker)
       assertEquals(result.code.includes('from "react"'), false);
-      // Should NOT have esm.sh URLs (all cached to local file:// paths)
-      assertEquals(result.code.includes("esm.sh"), false);
     });
   });
 

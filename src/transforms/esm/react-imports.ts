@@ -1,5 +1,7 @@
 import { replaceSpecifiers } from "./lexer.ts";
 import { getReactImportMap, REACT_VERSION } from "./package-registry.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { getLocalReactPaths } from "#veryfront/platform/compat/react-paths.ts";
 
 /**
  * Get the src directory path for resolving veryfront modules.
@@ -21,9 +23,12 @@ function getVeryfrontModulePaths(): Record<string, string> {
 /**
  * Resolve React imports based on target environment.
  *
- * SSR: Transform React to esm.sh URLs which are later cached to local file://
- * paths by the ssrHttpCachePlugin. This keeps SSR runtime-agnostic (works in
- * Deno, Node, and Bun) without requiring loader hooks.
+ * SSR in Deno: Transform React to esm.sh URLs which are later cached to file://
+ * during the SSR HTTP cache stage for runtime-agnostic loading.
+ *
+ * SSR in Bun/Node: Keep React as local file:// paths to node_modules,
+ * ensuring the same React instance is used by both user components and react-dom-server.
+ * This prevents "Objects are not valid as a React child" errors from mismatched instances.
  *
  * Browser: Transform to esm.sh URLs (via browser import map in HTML).
  */
@@ -35,11 +40,10 @@ export async function resolveReactImports(code: string, forSSR: boolean = false)
     return replaceSpecifiers(code, (specifier) => reactImports[specifier] || null);
   }
 
-  // SSR: Resolve to esm.sh URLs for React (cached to file:// by ssrHttpCachePlugin)
-  // and file:// paths for veryfront modules
+  // SSR: Resolve veryfront module imports + React paths
   const ssrImports: Record<string, string> = {
     ...getVeryfrontModulePaths(),
-    ...getReactImportMap(),
+    ...(isDeno ? getReactImportMap() : getLocalReactPaths()),
   };
 
   return replaceSpecifiers(code, (specifier) => ssrImports[specifier] || null);
