@@ -3,128 +3,58 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   convertTailwindConfigForBrowser,
   generateTailwindConfig,
+  generateTailwindV4Theme,
   getTailwindCDNUrl,
 } from "./tailwind-config.ts";
 
 describe("tailwind-config", () => {
   describe("getTailwindCDNUrl", () => {
-    it("should return base URL without plugins", () => {
-      assertEquals(getTailwindCDNUrl(), "https://cdn.tailwindcss.com");
+    it("should return Tailwind v4 CDN URL", () => {
+      assertEquals(getTailwindCDNUrl(), "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4");
     });
 
-    it("should return base URL for empty config", () => {
-      assertEquals(getTailwindCDNUrl({}), "https://cdn.tailwindcss.com");
-    });
-
-    it("should return base URL for config without plugins", () => {
+    it("should return same URL regardless of config", () => {
+      // Tailwind v4 doesn't use plugin params in URL - plugins are configured in CSS
       assertEquals(
-        getTailwindCDNUrl({ theme: { extend: {} } }),
-        "https://cdn.tailwindcss.com",
+        getTailwindCDNUrl({}),
+        "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4",
       );
-    });
-
-    it("should append single plugin", () => {
       assertEquals(
         getTailwindCDNUrl({ plugins: ["forms"] }),
-        "https://cdn.tailwindcss.com?plugins=forms",
+        "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4",
       );
-    });
-
-    it("should append multiple plugins", () => {
       assertEquals(
-        getTailwindCDNUrl({ plugins: ["forms", "typography", "aspect-ratio"] }),
-        "https://cdn.tailwindcss.com?plugins=forms,typography,aspect-ratio",
-      );
-    });
-
-    it("should handle empty plugins array", () => {
-      assertEquals(
-        getTailwindCDNUrl({ plugins: [] }),
-        "https://cdn.tailwindcss.com",
+        getTailwindCDNUrl({ plugins: ["forms", "typography"] }),
+        "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4",
       );
     });
   });
 
   describe("convertTailwindConfigForBrowser", () => {
-    it("should convert export default to tailwind.config", () => {
+    it("should return empty string for Tailwind v4 (JS config deprecated)", () => {
+      // Tailwind v4 uses CSS @theme directive instead of JS config
       const input = `export default {
   theme: {
     extend: {}
   }
 }`;
       const result = convertTailwindConfigForBrowser(input);
-      assertStringIncludes(result, "tailwind.config = {");
-      assertEquals(result.includes("export default"), false);
-    });
-
-    it("should convert module.exports to tailwind.config", () => {
-      const input = `module.exports = {
-  theme: {
-    extend: {}
-  }
-}`;
-      const result = convertTailwindConfigForBrowser(input);
-      assertStringIncludes(result, "tailwind.config = {");
-      assertEquals(result.includes("module.exports"), false);
+      assertEquals(result, "");
     });
 
     it("should handle empty string", () => {
       assertEquals(convertTailwindConfigForBrowser(""), "");
     });
-
-    it("should preserve content after conversion", () => {
-      const input = `export default {
-  content: ["./src/**/*.{js,ts,jsx,tsx}"],
-  theme: {
-    extend: {
-      colors: {
-        brand: "#ff0000"
-      }
-    }
-  }
-}`;
-      const result = convertTailwindConfigForBrowser(input);
-      assertStringIncludes(result, "content:");
-      assertStringIncludes(result, "brand:");
-    });
   });
 
   describe("generateTailwindConfig", () => {
-    it("should generate valid JavaScript assignment", () => {
+    it("should return empty string for Tailwind v4 (JS config deprecated)", () => {
+      // Tailwind v4 uses @theme CSS instead of JavaScript config
       const result = generateTailwindConfig();
-      assertStringIncludes(result, "tailwind.config = ");
+      assertEquals(result, "");
     });
 
-    it("should include darkMode configuration", () => {
-      const result = generateTailwindConfig();
-      assertStringIncludes(result, "darkMode");
-      // JSON.stringify escapes quotes, so the string contains \"dark\"
-      assertStringIncludes(result, '[data-theme=\\"dark\\"]');
-    });
-
-    it("should include container configuration", () => {
-      const result = generateTailwindConfig();
-      assertStringIncludes(result, "container");
-      assertStringIncludes(result, "center");
-      assertStringIncludes(result, "padding");
-    });
-
-    it("should include default theme colors", () => {
-      const result = generateTailwindConfig();
-      assertStringIncludes(result, "background");
-      assertStringIncludes(result, "foreground");
-      assertStringIncludes(result, "primary");
-      assertStringIncludes(result, "secondary");
-      assertStringIncludes(result, "hsl(var(--");
-    });
-
-    it("should include default border radius", () => {
-      const result = generateTailwindConfig();
-      assertStringIncludes(result, "borderRadius");
-      assertStringIncludes(result, "var(--radius)");
-    });
-
-    it("should merge user theme extensions", () => {
+    it("should return empty string with user config (deprecated)", () => {
       const result = generateTailwindConfig({
         theme: {
           extend: {
@@ -134,27 +64,45 @@ describe("tailwind-config", () => {
           },
         },
       });
-      assertStringIncludes(result, "custom");
-      assertStringIncludes(result, "#ff0000");
-      // Should still have defaults
-      assertStringIncludes(result, "primary");
+      assertEquals(result, "");
+    });
+  });
+
+  describe("generateTailwindV4Theme", () => {
+    it("should generate @theme CSS directive", () => {
+      const result = generateTailwindV4Theme();
+      assertStringIncludes(result, "@theme {");
     });
 
-    it("should deep merge nested theme extensions", () => {
-      const result = generateTailwindConfig({
-        theme: {
-          extend: {
-            colors: {
-              primary: {
-                light: "#aaaaaa",
-              },
-            },
-          },
-        },
+    it("should include color CSS variables", () => {
+      const result = generateTailwindV4Theme();
+      assertStringIncludes(result, "--color-background");
+      assertStringIncludes(result, "--color-foreground");
+      assertStringIncludes(result, "--color-primary");
+      assertStringIncludes(result, "--color-secondary");
+      assertStringIncludes(result, "hsl(var(--");
+    });
+
+    it("should include font family variables", () => {
+      const result = generateTailwindV4Theme();
+      assertStringIncludes(result, "--font-sans");
+      assertStringIncludes(result, "--font-serif");
+      assertStringIncludes(result, "--font-mono");
+    });
+
+    it("should include border radius variables", () => {
+      const result = generateTailwindV4Theme();
+      assertStringIncludes(result, "--radius-sm");
+      assertStringIncludes(result, "--radius-md");
+      assertStringIncludes(result, "--radius-lg");
+      assertStringIncludes(result, "var(--radius)");
+    });
+
+    it("should include custom CSS from config", () => {
+      const result = generateTailwindV4Theme({
+        customCSS: ".custom-class { color: red; }",
       });
-      // User's primary.light should be merged
-      assertStringIncludes(result, "light");
-      assertStringIncludes(result, "#aaaaaa");
+      assertStringIncludes(result, ".custom-class { color: red; }");
     });
   });
 });

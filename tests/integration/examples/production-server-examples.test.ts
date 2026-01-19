@@ -17,7 +17,9 @@ import { describe, it } from "@veryfront/testing/bdd";
 import { writeTextFile } from "@veryfront/compat/fs.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
-describe("ProductionServer", () => {
+// Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
+// See: https://github.com/facebook/react/issues/24669
+describe("ProductionServer", { sanitizeResources: false, sanitizeOps: false }, () => {
   describe("Static Asset Serving", () => {
     it("should serve static files with correct headers and caching", async () => {
       /**
@@ -132,7 +134,8 @@ describe("ProductionServer", () => {
 });
 
 // Example of a performance-aware test
-describe("Performance", () => {
+// Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
+describe("Performance", { sanitizeResources: false, sanitizeOps: false }, () => {
   it("should serve static assets within acceptable time limits", async () => {
     /**
      * Test scenario:
