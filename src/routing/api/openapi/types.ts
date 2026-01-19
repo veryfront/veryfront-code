@@ -7,7 +7,7 @@
  */
 
 import type { z } from "zod";
-import type { JsonSchema } from "@veryfront/tool/schema";
+import type { JsonSchema } from "#veryfront/tool/schema";
 import type { AppRouteHandler } from "../module-loader/types.ts";
 
 /**

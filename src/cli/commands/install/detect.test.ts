@@ -1,38 +1,39 @@
-import { assertEquals } from "@std/assert";
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { detectAITools, formatDetectionHint } from "./detect.ts";
+import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/platform/compat/fs.ts";
 
 describe("detectAITools", () => {
   let tempDir: string;
 
   beforeEach(async () => {
-    tempDir = await Deno.makeTempDir();
+    tempDir = await makeTempDir();
   });
 
   afterEach(async () => {
-    await Deno.remove(tempDir, { recursive: true });
+    await remove(tempDir, { recursive: true });
   });
 
   it("should detect cursor from .cursor directory", async () => {
-    await Deno.mkdir(`${tempDir}/.cursor`);
+    await mkdir(`${tempDir}/.cursor`);
     const detected = await detectAITools({ cwd: tempDir });
     assertEquals(detected.includes("cursor"), true);
   });
 
   it("should detect claude-code from .claude directory", async () => {
-    await Deno.mkdir(`${tempDir}/.claude`);
+    await mkdir(`${tempDir}/.claude`);
     const detected = await detectAITools({ cwd: tempDir });
     assertEquals(detected.includes("claude-code"), true);
   });
 
   it("should detect copilot from .github directory", async () => {
-    await Deno.mkdir(`${tempDir}/.github`);
+    await mkdir(`${tempDir}/.github`);
     const detected = await detectAITools({ cwd: tempDir });
     assertEquals(detected.includes("copilot"), true);
   });
 
   it("should detect windsurf from .windsurfrules file", async () => {
-    await Deno.writeTextFile(`${tempDir}/.windsurfrules`, "");
+    await writeTextFile(`${tempDir}/.windsurfrules`, "");
     const detected = await detectAITools({ cwd: tempDir });
     assertEquals(detected.includes("windsurf"), true);
   });
@@ -48,9 +49,9 @@ describe("detectAITools", () => {
   });
 
   it("should detect multiple tools", async () => {
-    await Deno.mkdir(`${tempDir}/.cursor`);
-    await Deno.mkdir(`${tempDir}/.claude`);
-    await Deno.mkdir(`${tempDir}/.github`);
+    await mkdir(`${tempDir}/.cursor`);
+    await mkdir(`${tempDir}/.claude`);
+    await mkdir(`${tempDir}/.github`);
     const detected = await detectAITools({ cwd: tempDir });
     assertEquals(detected.includes("cursor"), true);
     assertEquals(detected.includes("claude-code"), true);

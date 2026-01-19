@@ -9,12 +9,12 @@
  * - Static asset copying
  */
 
-import { serverLogger as logger } from "@veryfront/utils";
-import { join } from "@veryfront/platform/compat/path/index.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/index.ts";
-import type { ChunkManifest } from "@veryfront/build/bundler/index.ts";
-import type { AppRouteInfo, BuildStats, RouteInfo } from "@veryfront/server/build-types.ts";
-import { generateServiceWorker } from "@veryfront/server/build-service-worker.ts";
+import { serverLogger as logger } from "#veryfront/utils";
+import { join } from "#veryfront/platform/compat/path/index.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/index.ts";
+import type { ChunkManifest } from "#veryfront/build/bundler/index.ts";
+import type { AppRouteInfo, BuildStats, RouteInfo } from "#veryfront/server/build-types.ts";
+import { generateServiceWorker } from "#veryfront/server/build-service-worker.ts";
 import { copyStaticAssets } from "../asset-generation.ts";
 import {
   generateAppModule,

@@ -1,4 +1,4 @@
-import { logger } from "@veryfront/utils";
+import { logger } from "#veryfront/utils";
 
 export interface FallbackOptions {
   operationName: string;

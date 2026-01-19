@@ -1,4 +1,4 @@
-import { cyan, green, yellow } from "@veryfront/compat/console";
+import { cyan, green, yellow } from "#veryfront/compat/console";
 
 export function getDevTips(): string {
   return (

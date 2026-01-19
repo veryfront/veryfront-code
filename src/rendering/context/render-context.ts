@@ -8,8 +8,8 @@
  * @module rendering/context/render-context
  */
 
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import type { VeryfrontConfig } from "@veryfront/config";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 import type { HandlerContext } from "../../server/handlers/types.ts";
 import {
   buildRenderCacheKey,

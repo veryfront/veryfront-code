@@ -848,9 +848,52 @@ export function setupDOMEnvironment(options: DOMEnvironmentOptions = {}): DOMEnv
   const originalLocation = global.location;
   const originalHistory = global.history;
   const originalReactDOM = global.ReactDOM;
+  const originalAddEventListener = globalThis.addEventListener;
+  const originalRemoveEventListener = globalThis.removeEventListener;
+  const originalScrollTo = (globalThis as any).scrollTo;
 
-  // Setup mock document if it doesn't exist or is not functional
-  if (!originalDocument || typeof originalDocument.createElement !== "function") {
+  // Setup globalThis.addEventListener/removeEventListener for Node.js
+  // (these don't exist in Node.js but are used by browser code)
+  const eventListeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
+  if (typeof globalThis.addEventListener !== "function") {
+    (globalThis as any).addEventListener = (type: string, listener: EventListenerOrEventListenerObject) => {
+      if (!eventListeners.has(type)) {
+        eventListeners.set(type, new Set());
+      }
+      eventListeners.get(type)!.add(listener);
+    };
+  }
+  if (typeof globalThis.removeEventListener !== "function") {
+    (globalThis as any).removeEventListener = (type: string, listener: EventListenerOrEventListenerObject) => {
+      eventListeners.get(type)?.delete(listener);
+    };
+  }
+  if (typeof globalThis.dispatchEvent !== "function") {
+    (globalThis as any).dispatchEvent = (event: Event) => {
+      const listeners = eventListeners.get(event.type);
+      if (listeners) {
+        for (const listener of listeners) {
+          if (typeof listener === "function") {
+            listener(event);
+          } else {
+            listener.handleEvent(event);
+          }
+        }
+      }
+      return true;
+    };
+  }
+
+  // Setup scrollTo mock for Node.js (used by router)
+  if (typeof (globalThis as any).scrollTo !== "function") {
+    (globalThis as any).scrollTo = (_x: number, _y: number) => {
+      // No-op in tests
+    };
+  }
+
+  // Setup mock document if it doesn't exist, is not functional, or is an SSR stub
+  const isSSRStubDocument = (originalDocument as any)?.__veryfrontSSRStub === true;
+  if (!originalDocument || typeof originalDocument.createElement !== "function" || isSSRStubDocument) {
     global.document = createMinimalDocument() as unknown as Document;
   }
 
@@ -919,9 +962,27 @@ export function setupDOMEnvironment(options: DOMEnvironmentOptions = {}): DOMEnv
     global.history = originalHistory;
     global.ReactDOM = originalReactDOM;
 
+    // Restore addEventListener/removeEventListener/scrollTo
+    if (originalAddEventListener) {
+      (globalThis as any).addEventListener = originalAddEventListener;
+    } else {
+      delete (globalThis as any).addEventListener;
+    }
+    if (originalRemoveEventListener) {
+      (globalThis as any).removeEventListener = originalRemoveEventListener;
+    } else {
+      delete (globalThis as any).removeEventListener;
+    }
+    if (originalScrollTo) {
+      (globalThis as any).scrollTo = originalScrollTo;
+    } else {
+      delete (globalThis as any).scrollTo;
+    }
+
     fetchMock.uninstall();
     mockObservers.length = 0;
     mockRoots.clear();
+    eventListeners.clear();
   };
 
   return {

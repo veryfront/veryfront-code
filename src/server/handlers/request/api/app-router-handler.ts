@@ -8,9 +8,9 @@ import type { HandlerContext } from "../../types.ts";
 import type { HandlerFn, RouteHandlerModule } from "./types.ts";
 import { resolveAppRouteFile } from "./app-router-resolver.ts";
 import { applySecurityHeaders } from "./security-headers.ts";
-import { applyCORSHeaders } from "@veryfront/security";
-import { serverLogger } from "@veryfront/utils";
-import { methodNotAllowed } from "@veryfront/http/responses";
+import { applyCORSHeaders } from "#veryfront/security";
+import { serverLogger } from "#veryfront/utils";
+import { methodNotAllowed } from "#veryfront/http/responses";
 
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
 

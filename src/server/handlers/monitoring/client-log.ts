@@ -1,9 +1,9 @@
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
-import { ResponseBuilder } from "@veryfront/security/index.ts";
-import { serverLogger } from "@veryfront/utils";
-import { HTTP_OK, PRIORITY_HIGH_CLIENT_LOG } from "@veryfront/utils/constants/index.ts";
-import { getErrorMessage } from "@veryfront/errors/veryfront-error.ts";
+import { ResponseBuilder } from "#veryfront/security/index.ts";
+import { serverLogger } from "#veryfront/utils";
+import { HTTP_OK, PRIORITY_HIGH_CLIENT_LOG } from "#veryfront/utils/constants/index.ts";
+import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 
 export class ClientLogHandler extends BaseHandler {
   metadata: HandlerMetadata = {

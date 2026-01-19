@@ -5,7 +5,7 @@ import type {
   HandlerPriority,
   HandlerResult,
 } from "../../types.ts";
-import { HTTP_OK, PRIORITY_HIGH_DEV } from "@veryfront/utils/constants/index.ts";
+import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
 import { DASHBOARD_SHELL_HTML } from "./html-shell.ts";
 import { handleDashboardAPI } from "./api.ts";
 import { handleDashboardUI } from "./ui-handler.ts";

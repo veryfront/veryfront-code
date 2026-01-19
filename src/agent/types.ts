@@ -2,7 +2,7 @@
  * Agent type definitions
  */
 
-import type { Tool } from "@veryfront/tool";
+import type { Tool } from "#veryfront/tool";
 import type { Platform } from "../platform/core-platform.ts";
 import type { Memory } from "./memory/index.ts";
 

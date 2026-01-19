@@ -3,7 +3,7 @@
  * @module
  */
 
-import { serverLogger as logger } from "@veryfront/utils";
+import { serverLogger as logger } from "#veryfront/utils";
 import type { ObservabilityMetrics } from "./types.ts";
 
 let observabilityMetrics: ObservabilityMetrics | null = null;

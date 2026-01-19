@@ -1,5 +1,5 @@
-import { assertEquals, assertExists, assertRejects } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ServerDataFetcher } from "./server-data-fetcher.ts";
 import type { DataContext, PageWithData } from "./types.ts";
 

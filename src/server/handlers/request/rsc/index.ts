@@ -10,11 +10,11 @@ import type {
   HandlerPriority,
   HandlerResult,
 } from "../../types.ts";
-import { isRSCEnabled } from "@veryfront/utils";
+import { isRSCEnabled } from "#veryfront/utils";
 import { handleRSCEndpoint } from "./endpoints/index.ts";
 import { applySecurityHeaders } from "../api/security-headers.ts";
-import { applyCORSHeaders } from "@veryfront/security";
-import { HTTP_NOT_FOUND, PRIORITY_MEDIUM } from "@veryfront/utils/constants/index.ts";
+import { applyCORSHeaders } from "#veryfront/security";
+import { HTTP_NOT_FOUND, PRIORITY_MEDIUM } from "#veryfront/utils/constants/index.ts";
 
 export class RSCHandler extends BaseHandler {
   metadata: HandlerMetadata = {

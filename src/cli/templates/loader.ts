@@ -14,9 +14,9 @@ import {
   createFileSystem,
   type FileSystem,
   isNotFoundError,
-} from "@veryfront/platform/compat/fs.ts";
-import * as pathHelper from "@veryfront/platform/compat/path-helper.ts";
-import { isDeno } from "@veryfront/platform/compat/runtime.ts";
+} from "#veryfront/platform/compat/fs.ts";
+import * as pathHelper from "#veryfront/platform/compat/path-helper.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import type { TemplateFile } from "./types.ts";
 
 /**

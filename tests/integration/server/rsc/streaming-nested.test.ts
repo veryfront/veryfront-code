@@ -1,10 +1,12 @@
-import { assertEquals } from "@std/assert";
-import { afterAll, describe, it } from "@std/testing/bdd";
+import { assertEquals } from "@veryfront/testing/assert";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
 import { assertDrained, drainEventLoop } from "../../../_helpers/utils.ts";
 import "../../../_helpers/log-guard.ts";
-import { join } from "@std/path";
+import { join } from "@veryfront/compat/path";
+import { mkdir, remove, writeTextFile } from "@veryfront/compat/fs.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
+import { isDeno } from "../../../../src/platform/compat/runtime.ts";
 
 describe("RSC Stream Nested Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
   // Clean up renderer intervals to prevent resource leaks
@@ -16,7 +18,7 @@ describe("RSC Stream Nested Tests", { sanitizeOps: false, sanitizeResources: fal
     it("with loading/error returns 200", async () => {
       await withTestContext("rsc-stream-nested", async (context) => {
         // Enable RSC via config instead of env var
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
           `export default { experimental: { rsc: true } };`,
         );
@@ -28,15 +30,15 @@ describe("RSC Stream Nested Tests", { sanitizeOps: false, sanitizeResources: fal
         let h: Awaited<ReturnType<typeof startProductionServer>> | null = null;
         try {
           // Remove default app directory and create pages structure
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
-          await Deno.remove(join(context.projectDir, "pages"), {
+          await remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "pages"), {
             recursive: true,
           });
 
-          await Deno.mkdir(join(context.projectDir, "pages"), {
+          await mkdir(join(context.projectDir, "pages"), {
             recursive: true,
           });
-          await Deno.writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home");
+          await writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home");
 
           const { getFreePort } = await import("../../../_helpers/utils.ts");
           const port = await getFreePort();

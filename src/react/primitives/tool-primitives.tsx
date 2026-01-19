@@ -7,7 +7,7 @@
  */
 
 import * as React from "react";
-import type { DynamicToolUIPart, ToolState, ToolUIPart } from "@veryfront/agent/react";
+import type { DynamicToolUIPart, ToolState, ToolUIPart } from "#veryfront/agent/react";
 
 export interface ToolInvocationProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Tool name */

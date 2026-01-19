@@ -4,17 +4,18 @@
  */
 
 import type { Meter } from "@opentelemetry/api";
-import { serverLogger as logger } from "@veryfront/utils";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { serverLogger as logger } from "#veryfront/utils";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { loadConfig } from "./config.ts";
 import { initializeInstruments } from "../instruments/index.ts";
 import { MetricsRecorder } from "./recorder.ts";
 import type { MetricsConfig, MetricsInstruments, OpenTelemetryAPI, RuntimeState } from "./types.ts";
 
 /**
- * Metrics manager singleton state
+ * Metrics manager class
+ * Exported for testing - use metricsManager singleton for production
  */
-class MetricsManager {
+export class MetricsManager {
   private initialized = false;
   private meter: Meter | null = null;
   private api: OpenTelemetryAPI | null = null;

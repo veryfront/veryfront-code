@@ -1,4 +1,4 @@
-import { logger } from "@veryfront/utils";
+import { logger } from "#veryfront/utils";
 import { SHARP_CDN_URL } from "./constants.ts";
 import type { SharpConstructor } from "./types.ts";
 

@@ -1,4 +1,4 @@
-import * as esbuild from "esbuild/mod.js"; // Native esbuild
+import * as esbuild from "esbuild"; // Native esbuild
 import type { CompileOptions } from "./types.ts";
 
 export async function transpileCode(code: string, options: CompileOptions): Promise<string> {

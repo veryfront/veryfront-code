@@ -6,12 +6,13 @@
 // Disable LRU intervals during testing to prevent resource leaks
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 
-import { assertEquals, assertExists } from "@std/assert";
-import { join } from "@std/path";
-import { afterAll, describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { writeTextFile } from "@veryfront/compat/fs.ts";
+import { join } from "@veryfront/compat/path";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
 import { VeryfrontRenderer } from "../../../../src/rendering/orchestrator/ssr.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
-import { DenoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
+import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
 describe("Core Integration Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
@@ -22,7 +23,7 @@ describe("Core Integration Tests", { sanitizeOps: false, sanitizeResources: fals
 
   it("Full rendering pipeline with new architecture", async () => {
     await withTestContext("core-full-pipeline", async (context) => {
-      await Deno.writeTextFile(
+      await writeTextFile(
         join(context.projectDir, "pages/test.mdx"),
         `---
 title: Test Page
@@ -32,12 +33,12 @@ title: Test Page
 
 This is a test.`,
       );
-      await Deno.writeTextFile(
+      await writeTextFile(
         join(context.projectDir, "veryfront.config.ts"),
         `export default { mode: "development" as const };`,
       );
 
-      const adapter = new DenoAdapter();
+      const adapter = await getAdapter();
       const renderer = new VeryfrontRenderer({
         projectDir: context.projectDir,
         mode: "development",
@@ -60,8 +61,8 @@ This is a test.`,
 
   it("Configuration manager properly initialized", async () => {
     await withTestContext("core-config-manager", async (context) => {
-      await Deno.writeTextFile(join(context.projectDir, "pages/test.mdx"), "# Test");
-      await Deno.writeTextFile(
+      await writeTextFile(join(context.projectDir, "pages/test.mdx"), "# Test");
+      await writeTextFile(
         join(context.projectDir, "veryfront.config.ts"),
         `export default {
         mode: "development" as const,
@@ -69,7 +70,7 @@ This is a test.`,
       };`,
       );
 
-      const adapter = new DenoAdapter();
+      const adapter = await getAdapter();
       const renderer = new VeryfrontRenderer({
         projectDir: context.projectDir,
         mode: "development",
@@ -89,15 +90,15 @@ This is a test.`,
 
   it("Lifecycle initialization of all services", async () => {
     await withTestContext("core-lifecycle-init", async (context) => {
-      await Deno.writeTextFile(join(context.projectDir, "pages/simple.mdx"), "# Simple");
-      await Deno.writeTextFile(
+      await writeTextFile(join(context.projectDir, "pages/simple.mdx"), "# Simple");
+      await writeTextFile(
         join(context.projectDir, "components/Button.tsx"),
         `export default function Button() {
         return <button>Click me</button>;
       }`,
       );
 
-      const adapter = new DenoAdapter();
+      const adapter = await getAdapter();
       const renderer = new VeryfrontRenderer({
         projectDir: context.projectDir,
         mode: "development",
@@ -121,7 +122,7 @@ This is a test.`,
 
   it("Cache management through lifecycle", async () => {
     await withTestContext("core-cache-management", async (context) => {
-      await Deno.writeTextFile(
+      await writeTextFile(
         join(context.projectDir, "pages/cached.mdx"),
         `---
 title: Cached Page
@@ -130,7 +131,7 @@ title: Cached Page
 # Cached Page`,
       );
 
-      const adapter = new DenoAdapter();
+      const adapter = await getAdapter();
       const renderer = new VeryfrontRenderer({
         projectDir: context.projectDir,
         mode: "development",
@@ -160,7 +161,7 @@ title: Cached Page
 
   it("MDX compilation through new architecture", async () => {
     await withTestContext("core-mdx-compilation", async (context) => {
-      await Deno.writeTextFile(
+      await writeTextFile(
         join(context.projectDir, "pages/mdx-test.mdx"),
         `---
 title: MDX Test
@@ -178,7 +179,7 @@ Some content here.
 More content.`,
       );
 
-      const adapter = new DenoAdapter();
+      const adapter = await getAdapter();
       const renderer = new VeryfrontRenderer({
         projectDir: context.projectDir,
         mode: "development",
@@ -203,15 +204,15 @@ More content.`,
 
   it("Component initialization", async () => {
     await withTestContext("core-component-init", async (context) => {
-      await Deno.writeTextFile(join(context.projectDir, "pages/test.mdx"), "# Test");
-      await Deno.writeTextFile(
+      await writeTextFile(join(context.projectDir, "pages/test.mdx"), "# Test");
+      await writeTextFile(
         join(context.projectDir, "components/TestComponent.tsx"),
         `export default function TestComponent() {
         return <div>Test Component</div>;
       }`,
       );
 
-      const adapter = new DenoAdapter();
+      const adapter = await getAdapter();
       const renderer = new VeryfrontRenderer({
         projectDir: context.projectDir,
         mode: "development",
@@ -230,9 +231,9 @@ More content.`,
 
   it("Proper cleanup with destroy()", async () => {
     await withTestContext("core-cleanup-destroy", async (context) => {
-      await Deno.writeTextFile(join(context.projectDir, "pages/cleanup.mdx"), "# Cleanup Test");
+      await writeTextFile(join(context.projectDir, "pages/cleanup.mdx"), "# Cleanup Test");
 
-      const adapter = new DenoAdapter();
+      const adapter = await getAdapter();
       const renderer = new VeryfrontRenderer({
         projectDir: context.projectDir,
         mode: "development",

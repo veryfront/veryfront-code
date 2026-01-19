@@ -4,10 +4,11 @@
  * Reusable handler for initiating OAuth flows.
  */
 
-import { OAuthService } from "../providers/base.ts";
+import { type EnvReader, OAuthService } from "../providers/base.ts";
 import type { AuthorizationUrlOptions, OAuthServiceConfig, TokenStore } from "../types.ts";
 import { memoryTokenStore } from "../token-store/memory.ts";
-import { getEnv } from "@veryfront/platform/compat/process.ts";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 
 export interface OAuthInitHandlerOptions {
   /** Token store to use (defaults to memory store) */
@@ -18,6 +19,12 @@ export interface OAuthInitHandlerOptions {
 
   /** Additional authorization options */
   authOptions?: AuthorizationUrlOptions;
+
+  /** RuntimeEnv for test isolation (defaults to getRuntimeEnv()) */
+  env?: RuntimeEnv;
+
+  /** EnvReader for dynamic env vars (defaults to getEnv) */
+  envReader?: EnvReader;
 }
 
 /**
@@ -36,10 +43,16 @@ export function createOAuthInitHandler(
   config: OAuthServiceConfig,
   options: OAuthInitHandlerOptions = {},
 ): () => Promise<Response> {
-  const { tokenStore = memoryTokenStore, baseUrl, authOptions = {} } = options;
+  const {
+    tokenStore = memoryTokenStore,
+    baseUrl,
+    authOptions = {},
+    env = getRuntimeEnv(),
+    envReader = getEnv,
+  } = options;
 
   return async (): Promise<Response> => {
-    const service = new OAuthService(config, tokenStore);
+    const service = new OAuthService(config, tokenStore, envReader);
 
     if (!service.isConfigured()) {
       return Response.json(
@@ -52,10 +65,7 @@ export function createOAuthInitHandler(
     }
 
     // Use APP_URL from env, or default to localhost:3000 (the standard veryfront dev port)
-    const appUrl = baseUrl ||
-      getEnv("APP_URL") ||
-      getEnv("NEXT_PUBLIC_APP_URL") ||
-      "http://localhost:3000";
+    const appUrl = baseUrl || env.appUrl || "http://localhost:3000";
 
     const redirectUri = `${appUrl}/api/auth/${config.serviceId}/callback`;
 
@@ -82,6 +92,14 @@ export function createOAuthInitHandler(
   };
 }
 
+export interface OAuthStatusHandlerOptions {
+  /** Token store to use (defaults to memory store) */
+  tokenStore?: TokenStore;
+
+  /** EnvReader for dynamic env vars (defaults to getEnv) */
+  envReader?: EnvReader;
+}
+
 /**
  * Create an OAuth status check handler
  *
@@ -96,9 +114,9 @@ export function createOAuthInitHandler(
  */
 export function createOAuthStatusHandler(
   config: OAuthServiceConfig,
-  options: { tokenStore?: TokenStore } = {},
+  options: OAuthStatusHandlerOptions = {},
 ): () => Promise<Response> {
-  const { tokenStore = memoryTokenStore } = options;
+  const { tokenStore = memoryTokenStore, envReader = getEnv } = options;
 
   return async (): Promise<Response> => {
     const tokens = await tokenStore.getTokens(config.serviceId);
@@ -111,7 +129,7 @@ export function createOAuthStatusHandler(
       service: config.serviceId,
       displayName: config.displayName,
       connected: isConnected && (!isExpired || hasRefreshToken),
-      configured: !!(getEnv(config.clientIdEnvVar) && getEnv(config.clientSecretEnvVar)),
+      configured: !!(envReader(config.clientIdEnvVar) && envReader(config.clientSecretEnvVar)),
       expiresAt: tokens?.expiresAt,
       hasRefreshToken,
     });

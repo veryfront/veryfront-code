@@ -1,4 +1,4 @@
-import { logger } from "@veryfront/utils";
+import { logger } from "#veryfront/utils";
 import { requestWithRetry, type RetryConfig } from "./retry-handler.ts";
 import { VeryfrontAPIError } from "./types.ts";
 import {
@@ -16,8 +16,8 @@ import {
   ProjectSchema,
   ReleaseFileDetailSchema,
 } from "./schemas.ts";
-import { withSpan } from "@veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "@veryfront/observability/tracing/span-names.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 
 /**
  * Token provider function - can return static token or dynamic per-request token.

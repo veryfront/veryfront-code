@@ -2,8 +2,8 @@
  * Workflow DSL Tests
  */
 
-import { assertEquals, assertExists, assertThrows } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { dag, dependsOn, sequence, workflow } from "./workflow.ts";
 import { step } from "./step.ts";
 

@@ -1,5 +1,5 @@
-import { assertEquals, assertExists } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { HIDE_CURSOR, SHOW_CURSOR, type TypewriterOptions } from "./animated-text.ts";
 
 describe("ANSI cursor codes", () => {

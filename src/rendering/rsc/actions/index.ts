@@ -6,7 +6,7 @@
  *
  * @example
  * ```typescript
- * import { processServerAction } from '@veryfront/rendering/rsc/actions'
+ * import { processServerAction } from "#veryfront/rendering/rsc/actions'
  *
  * const result = await processServerAction(actionId, args)
  * ```

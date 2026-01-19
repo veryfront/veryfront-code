@@ -12,14 +12,17 @@
  * - Caching and ETags
  */
 
-import { assert, assertEquals, assertExists, assertMatch } from "@std/assert";
-import { join } from "@std/path";
-import { afterAll, describe, it } from "@std/testing/bdd";
+import { assert, assertEquals, assertExists, assertMatch } from "@veryfront/testing/assert";
+import { join } from "@veryfront/compat/path";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
+import { mkdir, writeTextFile } from "@veryfront/testing/deno-compat";
 import { createDevServer } from "../../../src/server/dev-server.ts";
 import { TestDataFactory } from "../../fixtures/test-data-factory.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { drainEventLoop } from "../../_helpers/utils.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
+import { isDeno } from "../../../src/platform/compat/runtime.ts";
+import { delay } from "@std/async";
 
 describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: false }, () => {
   // Clean up renderer intervals to prevent resource leaks
@@ -45,7 +48,7 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
          */
         await withTestContext("dev-basic-mdx", async (context) => {
           // Create a test page
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "index.mdx"),
             "# Home Page\n\nWelcome to the development server test.",
           );
@@ -104,7 +107,7 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
          */
         await withTestContext("dev-security-allowlist", async (context) => {
           // Configure security allow-list
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "veryfront.config.js"),
             TestDataFactory.createConfig({
               security: {
@@ -114,10 +117,10 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
           );
 
           // Create API route that imports from allowed host
-          await Deno.mkdir(join(context.projectDir, "app", "api", "allowed"), {
+          await mkdir(join(context.projectDir, "app", "api", "allowed"), {
             recursive: true,
           });
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "api", "allowed", "route.ts"),
             `export const GET = async () => {
           const m = await import('https://esm.sh/nanoid@5.0.4');
@@ -128,10 +131,10 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
           );
 
           // Create API route that imports from blocked host
-          await Deno.mkdir(join(context.projectDir, "app", "api", "blocked"), {
+          await mkdir(join(context.projectDir, "app", "api", "blocked"), {
             recursive: true,
           });
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "api", "blocked", "route.ts"),
             `export const GET = async () => {
           await import('https://example.com/malicious.js');
@@ -208,15 +211,15 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
          */
         await withTestContext("dev-static-files", async (context) => {
           // Create static files
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "public", "styles.css"),
             "body { margin: 0; padding: 0; }",
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "public", "script.js"),
             "console.log('Hello from static JS');",
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "public", "data.json"),
             JSON.stringify({ message: "Static JSON data" }),
           );
@@ -261,8 +264,8 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
       it("static caching headers and 304 semantics", async () => {
         await withTestContext("dev-static-cache", async (context) => {
           // Create unhashed and hashed assets
-          await Deno.writeTextFile(join(context.projectDir, "public", "plain.txt"), "plain");
-          await Deno.writeTextFile(
+          await writeTextFile(join(context.projectDir, "public", "plain.txt"), "plain");
+          await writeTextFile(
             join(context.projectDir, "public", "app.12345678.js"),
             "console.log('x')",
           );
@@ -306,7 +309,7 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
     () => {
       it("SSR caching headers and HEAD support", async () => {
         await withTestContext("dev-ssr-etag-head", async (context) => {
-          await Deno.writeTextFile(join(context.projectDir, "app", "page.mdx"), "# Home");
+          await writeTextFile(join(context.projectDir, "app", "page.mdx"), "# Home");
 
           const controller = new AbortController();
           const server = await context.createDevServer({
@@ -347,10 +350,10 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
       it("method handling and OPTIONS Allow header (route.ts)", async () => {
         await withTestContext("dev-method-allow", async (context) => {
           // Create POST-only app route
-          await Deno.mkdir(join(context.projectDir, "app", "admin"), {
+          await mkdir(join(context.projectDir, "app", "admin"), {
             recursive: true,
           });
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "admin", "route.ts"),
             `export const POST = () => new Response('ok');`,
           );
@@ -399,7 +402,7 @@ describe("Dev Server Integration", { sanitizeOps: false, sanitizeResources: fals
         await withTestContext("dev-pages-tsx", async (context) => {
           // Create MDX page with basic content
           // Note: MDX with JSX exports requires proper scoping - test basic rendering first
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "index.mdx"),
             `# Pages Router Test
 
@@ -435,11 +438,11 @@ This is a test page for the Pages Router.
          * Tests Pages Router API routes with various HTTP methods
          */
         await withTestContext("dev-api-methods", async (context) => {
-          await Deno.mkdir(join(context.projectDir, "pages", "api"), {
+          await mkdir(join(context.projectDir, "pages", "api"), {
             recursive: true,
           });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "api", "test.ts"),
             TestDataFactory.createAPIHandler({
               methods: ["GET", "POST", "PUT", "DELETE"],
@@ -485,12 +488,12 @@ This is a test page for the Pages Router.
          */
         await withTestContext("dev-app-router", async (context) => {
           // Create App Router structure
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "layout.tsx"),
             TestDataFactory.createAppLayout({ title: "Dev Test App" }),
           );
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "page.tsx"),
             `export default function HomePage() {
           return <h1>App Router Home</h1>;
@@ -517,22 +520,22 @@ This is a test page for the Pages Router.
       it("handles nested App Router routes", async () => {
         await withTestContext("dev-app-nested", async (context) => {
           // Create nested structure
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "layout.tsx"),
             TestDataFactory.createAppLayout(),
           );
 
-          await Deno.mkdir(join(context.projectDir, "app", "blog", "[slug]"), {
+          await mkdir(join(context.projectDir, "app", "blog", "[slug]"), {
             recursive: true,
           });
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "blog", "layout.tsx"),
             `export default function BlogLayout({ children }: { children: React.ReactNode }) {
           return <div className="blog-layout">{children}</div>;
         }`,
           );
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "blog", "[slug]", "page.tsx"),
             `export default function BlogPost() {
           return <article>Blog Post Content</article>;
@@ -562,16 +565,16 @@ This is a test page for the Pages Router.
          */
         await withTestContext("dev-error-boundaries", async (context) => {
           // Create app with error boundary
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "layout.tsx"),
             TestDataFactory.createAppLayout(),
           );
 
-          await Deno.mkdir(join(context.projectDir, "app", "error-test"), {
+          await mkdir(join(context.projectDir, "app", "error-test"), {
             recursive: true,
           });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "error-test", "error.tsx"),
             `'use client';
         export default function ErrorBoundary({ error }: { error: Error }) {
@@ -579,7 +582,7 @@ This is a test page for the Pages Router.
         }`,
           );
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "error-test", "page.tsx"),
             `export default function ErrorPage() {
           throw new Error('Intentional error for testing');
@@ -611,28 +614,28 @@ This is a test page for the Pages Router.
          * Tests loading UI with Suspense boundaries
          */
         await withTestContext("dev-loading-ui", async (context) => {
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "layout.tsx"),
             TestDataFactory.createAppLayout(),
           );
 
-          await Deno.mkdir(join(context.projectDir, "app", "async"), {
+          await mkdir(join(context.projectDir, "app", "async"), {
             recursive: true,
           });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "async", "loading.tsx"),
             `export default function Loading() {
           return <div className="loading-ui">Loading...</div>;
         }`,
           );
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "async", "page.tsx"),
             `import { Suspense } from 'react';
 
         async function SlowComponent() {
-          await new Promise(resolve => setTimeout(resolve, 10));
+          await delay(10);
           return <div>Loaded Content</div>;
         }
 
@@ -662,7 +665,7 @@ This is a test page for the Pages Router.
           );
 
           // Wait a bit to ensure any timers from streaming complete
-          await new Promise((resolve) => setTimeout(resolve, 50));
+          await delay(50);
 
           controller.abort();
         });
@@ -681,9 +684,9 @@ This is a test page for the Pages Router.
       it.ignore("serves component and page virtual modules as ESM", async () => {
         await withTestContext("dev-virtual-mods", async (context) => {
           // Create a page in pages/
-          await Deno.writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home\n");
+          await writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home\n");
           // Create a component for virtual resolve
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "components", "Hello.tsx"),
             [
               "import React from 'https://esm.sh/react@19.1.1'",

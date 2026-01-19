@@ -31,8 +31,8 @@
  * @module rendering/renderer
  */
 
-import { rendererLogger as logger } from "@veryfront/utils";
-import { MDXCacheAdapter } from "@veryfront/transforms/mdx/index.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { MDXCacheAdapter } from "#veryfront/transforms/mdx/index.ts";
 import {
   createRenderContext,
   type CreateRenderContextOptions,

@@ -1,15 +1,16 @@
+import process from "node:process";
 import type { EnvironmentAdapter } from "../../base.ts";
 
 export class BunEnvironmentAdapter implements EnvironmentAdapter {
   get(key: string): string | undefined {
-    return Bun.env[key];
+    return process.env[key];
   }
 
   set(key: string, value: string): void {
-    Bun.env[key] = value;
+    process.env[key] = value;
   }
 
   toObject(): Record<string, string> {
-    return { ...Bun.env };
+    return { ...process.env } as Record<string, string>;
   }
 }

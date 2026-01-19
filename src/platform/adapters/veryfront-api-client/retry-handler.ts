@@ -1,5 +1,5 @@
-import { logger } from "@veryfront/utils";
-import { injectContext, withSpan } from "@veryfront/observability/tracing/otlp-setup.ts";
+import { logger } from "#veryfront/utils";
+import { injectContext, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { VeryfrontAPIError } from "./types.ts";
 
 export interface RetryConfig {

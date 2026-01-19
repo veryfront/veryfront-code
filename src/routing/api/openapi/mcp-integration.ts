@@ -8,12 +8,12 @@
  * @module routing/api/openapi/mcp-integration
  */
 
-import { registerResource, registerTool } from "@veryfront/mcp";
+import { registerResource, registerTool } from "#veryfront/mcp";
 import { createOpenAPIResource } from "./mcp-resource.ts";
 import { generateMCPToolsFromSpec } from "./mcp-tools.ts";
 import type { OpenAPISpec } from "./types.ts";
-import type { Resource } from "@veryfront/resource";
-import { logger } from "@veryfront/utils";
+import type { Resource } from "#veryfront/resource";
+import { logger } from "#veryfront/utils";
 
 /**
  * Configuration for OpenAPI MCP integration.

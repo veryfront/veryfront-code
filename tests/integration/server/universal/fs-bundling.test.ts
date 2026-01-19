@@ -1,8 +1,11 @@
-import { assert, assertEquals, assertMatch } from "@std/assert";
-import { join } from "@std/path";
-import { afterAll, describe, it } from "@std/testing/bdd";
+import { assert, assertEquals, assertMatch } from "@veryfront/testing/assert";
+import { writeTextFile } from "@veryfront/compat/fs.ts";
+import { join } from "@veryfront/compat/path";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
+import { isDeno } from "../../../../src/platform/compat/runtime.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
+import { delay } from "@std/async";
 
 // Tests the universal /_veryfront/fs/<b64>.js bundling endpoint
 
@@ -21,7 +24,7 @@ describe(
       await withTestContext("universal-fs-bundle", async (context) => {
         // Create a simple TSX file
         const file = join(context.projectDir, "components", "Widget.tsx");
-        await Deno.writeTextFile(
+        await writeTextFile(
           file,
           [
             "import React from 'https://esm.sh/react@19.1.1'",
@@ -64,7 +67,7 @@ describe(
         } finally {
           await server.stop();
           // Give the server time to clean up
-          await new Promise((resolve) => setTimeout(resolve, 100));
+          await delay(100);
         }
       });
     });

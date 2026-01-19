@@ -6,4 +6,4 @@
  * New code should import directly from @veryfront/security.
  */
 
-export { BaseHandler } from "@veryfront/security";
+export { BaseHandler } from "#veryfront/security";

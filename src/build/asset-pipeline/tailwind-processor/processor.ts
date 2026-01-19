@@ -8,13 +8,13 @@
  * @module
  */
 
-import { dirname } from "@veryfront/platform/compat/path/index.ts";
-import { logger } from "@veryfront/utils";
+import { dirname } from "#veryfront/platform/compat/path/index.ts";
+import { logger } from "#veryfront/utils";
 import type { TailwindProcessorOptions, TailwindProcessResult } from "./types.ts";
 import { autoDetectContentPaths, isTailwindV4File } from "./detector.ts";
 import { countUtilities } from "./css-utils.ts";
 import { processWithLightningCSS } from "./lightning-processor.ts";
-import { createSecureFs } from "@veryfront/security";
+import { createSecureFs } from "#veryfront/security";
 
 /**
  * Tailwind CSS v4 Processor with Lightning CSS

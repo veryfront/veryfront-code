@@ -1,23 +1,23 @@
-import { assertEquals } from "@std/assert";
-import { join } from "@std/path";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { join } from "#veryfront/compat/path";
 import { clearModulePathCache, getModulePathCache, saveModulePathCache } from "./index.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
+import { remove, writeTextFile } from "#veryfront/compat/fs.ts";
 
-Deno.test({
-  name: "MDX module path cache isolates per cache dir",
-  sanitizeResources: false,
-  sanitizeOps: false,
-  async fn() {
+describe("MDX module path cache", () => {
+  it("isolates per cache dir", async () => {
     clearModulePathCache();
 
-    const cacheDirA = await Deno.makeTempDir({ prefix: "vf-mdx-cache-a-" });
-    const cacheDirB = await Deno.makeTempDir({ prefix: "vf-mdx-cache-b-" });
+    const cacheDirA = await makeTempDir({ prefix: "vf-mdx-cache-a-" });
+    const cacheDirB = await makeTempDir({ prefix: "vf-mdx-cache-b-" });
 
     try {
-      await Deno.writeTextFile(
+      await writeTextFile(
         join(cacheDirA, "_index.json"),
         JSON.stringify({ "_vf_modules/pages/index.js": "/tmp/a.mjs" }),
       );
-      await Deno.writeTextFile(
+      await writeTextFile(
         join(cacheDirB, "_index.json"),
         JSON.stringify({ "_vf_modules/pages/index.js": "/tmp/b.mjs" }),
       );
@@ -33,9 +33,9 @@ Deno.test({
 
       assertEquals(cacheB.get("_vf_modules/pages/about.js"), undefined);
     } finally {
-      await Deno.remove(cacheDirA, { recursive: true });
-      await Deno.remove(cacheDirB, { recursive: true });
+      await remove(cacheDirA, { recursive: true });
+      await remove(cacheDirB, { recursive: true });
       clearModulePathCache();
     }
-  },
+  });
 });

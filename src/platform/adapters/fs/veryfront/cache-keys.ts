@@ -14,7 +14,7 @@ import {
   buildFileListCacheKey as buildFileListCacheKeyCore,
   buildStatCacheKeyPrefix as buildStatCacheKeyPrefixCore,
   type FileOperationContext,
-} from "@veryfront/cache";
+} from "#veryfront/cache";
 
 /**
  * Convert ResolvedContentContext to FileOperationContext.

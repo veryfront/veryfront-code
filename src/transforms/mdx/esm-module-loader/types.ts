@@ -6,8 +6,8 @@
  * @module build/transforms/mdx/esm-module-loader/types
  */
 
-import type { LRUCache } from "@veryfront/utils/lru-wrapper.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import type { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { MDXModule } from "../types.ts";
 
 /**
@@ -22,7 +22,7 @@ export interface ESMLoaderContext {
   adapter?: RuntimeAdapter;
   /** Project identifier for cache isolation */
   projectId?: string;
-  /** Project directory for file resolution (required for multi-project mode) */
+  /** Project directory for file resolution (required for deterministic import map resolution) */
   projectDir?: string;
   /** Project slug for HTTP fallback URLs (multi-project mode) */
   projectSlug?: string;

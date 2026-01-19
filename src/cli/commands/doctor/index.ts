@@ -1,6 +1,6 @@
 import type { DiagnosticResult } from "./types.ts";
 import { checkDenoVersion, checkReactCompatibility } from "./version-checks.ts";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import {
   checkCacheSystem,
   checkConfiguration,

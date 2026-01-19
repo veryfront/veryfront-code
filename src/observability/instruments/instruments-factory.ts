@@ -6,7 +6,7 @@
  */
 
 import type { Meter } from "@opentelemetry/api";
-import { serverLogger as logger } from "@veryfront/utils";
+import { serverLogger as logger } from "#veryfront/utils";
 import type { MetricsConfig, MetricsInstruments, RuntimeState } from "../metrics/types.ts";
 import { createBuildInstruments } from "./build-instruments.ts";
 import { createCacheInstruments } from "./cache-instruments.ts";

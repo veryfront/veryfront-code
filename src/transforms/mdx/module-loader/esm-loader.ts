@@ -1,5 +1,5 @@
 import type { MDXModule } from "./types.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
 export async function loadESMModule(
   moduleCode: string,

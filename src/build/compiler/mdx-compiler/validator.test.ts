@@ -2,10 +2,16 @@
  * Tests for MDX compiler validator functions
  */
 
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
-import { expect } from "@std/expect";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { expect } from "#std/expect.ts";
 import { pathExists, validateCompileParams, validateFileExists } from "./validator.ts";
 import type { CompileOptions } from "./types.ts";
+import {
+  makeTempDir,
+  makeTempFile,
+  remove,
+  writeTextFile,
+} from "#veryfront/testing/deno-compat.ts";
 
 describe("MDX compiler validator", () => {
   const validOptions: CompileOptions = {
@@ -119,13 +125,13 @@ describe("MDX compiler validator", () => {
     let tempFile: string;
 
     beforeEach(async () => {
-      tempFile = await Deno.makeTempFile({ prefix: "mdx-test-" });
-      await Deno.writeTextFile(tempFile, "# Test content");
+      tempFile = await makeTempFile({ prefix: "mdx-test-" });
+      await writeTextFile(tempFile, "# Test content");
     });
 
     afterEach(async () => {
       try {
-        await Deno.remove(tempFile);
+        await remove(tempFile);
       } catch {
         // Ignore cleanup errors
       }
@@ -160,14 +166,14 @@ describe("MDX compiler validator", () => {
     let tempDir: string;
 
     beforeEach(async () => {
-      tempFile = await Deno.makeTempFile({ prefix: "path-test-" });
-      tempDir = await Deno.makeTempDir({ prefix: "path-test-" });
+      tempFile = await makeTempFile({ prefix: "path-test-" });
+      tempDir = await makeTempDir({ prefix: "path-test-" });
     });
 
     afterEach(async () => {
       try {
-        await Deno.remove(tempFile);
-        await Deno.remove(tempDir);
+        await remove(tempFile);
+        await remove(tempDir);
       } catch {
         // Ignore cleanup errors
       }

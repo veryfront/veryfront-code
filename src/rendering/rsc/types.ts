@@ -6,4 +6,4 @@ export type {
   RSCNode,
   RSCPayload,
   RSCRendererOptions,
-} from "@veryfront/types/rsc.ts";
+} from "#veryfront/types/rsc.ts";

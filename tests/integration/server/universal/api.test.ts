@@ -1,10 +1,12 @@
-import { assertEquals } from "@std/assert";
-import { afterAll, describe, it } from "@std/testing/bdd";
+import { assertEquals } from "@veryfront/testing/assert";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
 import "../../../_helpers/log-guard.ts";
 
-import { join } from "@std/path";
+import { mkdir, remove, writeTextFile } from "@veryfront/compat/fs.ts";
+import { join } from "@veryfront/compat/path";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
+import { delay } from "@std/async";
 
 // Wrap entire test suite in a describe block with sanitizers disabled
 // This is required because esbuild WASM runtime (used by API routes)
@@ -31,15 +33,15 @@ describe(
         it("handles pages/api and app route handlers (GET/POST)", async () => {
           await withTestContext("universal-server-api", async (context: TestContext) => {
             // Enable RSC via config instead of env var
-            await Deno.writeTextFile(
+            await writeTextFile(
               join(context.projectDir, "veryfront.config.js"),
               `export default { experimental: { rsc: true } };`,
             );
 
             // pages/api/hello.ts
             const pagesApiDir = join(context.projectDir, "pages", "api");
-            await Deno.mkdir(pagesApiDir, { recursive: true });
-            await Deno.writeTextFile(
+            await mkdir(pagesApiDir, { recursive: true });
+            await writeTextFile(
               join(pagesApiDir, "hello.ts"),
               `
         export async function GET() {
@@ -50,8 +52,8 @@ describe(
 
             // app/api/echo/route.ts
             const appApiEchoDir = join(context.projectDir, "app", "api", "echo");
-            await Deno.mkdir(appApiEchoDir, { recursive: true });
-            await Deno.writeTextFile(
+            await mkdir(appApiEchoDir, { recursive: true });
+            await writeTextFile(
               join(appApiEchoDir, "route.ts"),
               `
         export async function POST(req: Request) {
@@ -79,9 +81,9 @@ describe(
             assertEquals(bj.youSent.ok, true);
 
             // app router SSR root (write file before fetch)
-            await Deno.writeTextFile(join(context.projectDir, "app", "page.mdx"), `# Hello World`);
+            await writeTextFile(join(context.projectDir, "app", "page.mdx"), `# Hello World`);
             // Re-issue readiness (renderer caches on first call); small delay for fs
-            await new Promise((r) => setTimeout(r, 50));
+            await delay(50);
             const p = await fetch(`http://127.0.0.1:${server.port}/`);
             assertEquals(p.status, 200);
             const html = await p.text();
@@ -121,31 +123,31 @@ describe(
             async (context: TestContext) => {
               // Create dynamic route with GET only
               const postDir = join(context.projectDir, "app", "post", "[slug]");
-              await Deno.mkdir(postDir, { recursive: true });
-              await Deno.writeTextFile(
+              await mkdir(postDir, { recursive: true });
+              await writeTextFile(
                 join(postDir, "route.ts"),
                 `export async function GET(_req: Request, { params }: any){ return Response.json({ slug: params.slug }); }`,
               );
               // Create route with POST only
               const adminDir = join(context.projectDir, "app", "admin");
-              await Deno.mkdir(adminDir, { recursive: true });
-              await Deno.writeTextFile(
+              await mkdir(adminDir, { recursive: true });
+              await writeTextFile(
                 join(adminDir, "route.ts"),
                 `export async function POST(_req: Request){ return new Response('ok'); }`,
               );
 
               // Catch-all route returns joined parts
               const docsDir = join(context.projectDir, "app", "docs", "[...parts]");
-              await Deno.mkdir(docsDir, { recursive: true });
-              await Deno.writeTextFile(
+              await mkdir(docsDir, { recursive: true });
+              await writeTextFile(
                 join(docsDir, "route.ts"),
                 `export async function GET(_req: Request, { params }: any){ return Response.json({ parts: params.parts }); }`,
               );
 
               // Optional catch-all route
               const optDir = join(context.projectDir, "app", "opt", "[[...rest]]");
-              await Deno.mkdir(optDir, { recursive: true });
-              await Deno.writeTextFile(
+              await mkdir(optDir, { recursive: true });
+              await writeTextFile(
                 join(optDir, "route.ts"),
                 `export async function GET(_req: Request, { params }: any){ return Response.json({ rest: params.rest ?? '' }); }`,
               );

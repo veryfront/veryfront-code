@@ -4,7 +4,7 @@
  */
 
 import type { AppRouteInfo, BuildStats, RouteInfo } from "../../server/build-types.ts";
-import { bundlerLogger } from "@veryfront/utils";
+import { bundlerLogger } from "#veryfront/utils";
 
 /** Chunk info for service worker and manifest generation */
 export interface ManifestChunkInfo {

@@ -1,7 +1,7 @@
 import * as React from "react";
-import { rendererLogger as logger } from "@veryfront/utils";
+import { rendererLogger as logger } from "#veryfront/utils";
 import type { InvalidObjectDetails } from "./types.ts";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import {
   getElementTypeName,
   getObjectKeys,

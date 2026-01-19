@@ -1,4 +1,4 @@
-import * as esbuild from "esbuild/mod.js"; // Use native esbuild, not WASM
+import * as esbuild from "esbuild"; // Use native esbuild, not WASM
 import { generateCacheKey, getCachedTransform, setCachedTransform } from "./transform-cache.ts";
 import { computeContentHash, getLoaderFromPath } from "./transform-utils.ts";
 import { addDepsToEsmShUrls, resolveReactImports } from "./react-imports.ts";
@@ -13,15 +13,15 @@ import {
 import { rewriteBareImports, rewriteVendorImports } from "./import-rewriter.ts";
 import { bundleHttpImports } from "./http-bundler.ts";
 import type { TransformOptions } from "./types.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { compileMDXRuntime } from "../mdx/compiler/mdx-compiler.ts";
-import { rendererLogger as logger } from "@veryfront/utils";
-import { getHttpBundleCacheDir } from "@veryfront/utils/cache-dir.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import {
   getDefaultImportMap,
   transformImportsWithMap,
-} from "@veryfront/modules/import-map/index.ts";
-import { getApiBaseUrlEnv } from "@veryfront/config/env.ts";
+} from "#veryfront/modules/import-map/index.ts";
+import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
 
 export async function transformToESM(
   source: string,

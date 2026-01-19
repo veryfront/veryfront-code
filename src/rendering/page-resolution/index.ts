@@ -24,4 +24,4 @@ export {
   pathToSlug,
   type RouteParams,
   slugToPath,
-} from "@veryfront/routing";
+} from "#veryfront/routing";

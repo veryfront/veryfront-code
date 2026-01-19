@@ -10,20 +10,20 @@
 
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
-import { ResponseBuilder } from "@veryfront/security/index.ts";
+import { ResponseBuilder } from "#veryfront/security/index.ts";
 import {
   HTTP_INTERNAL_SERVER_ERROR,
   HTTP_OK,
   PRIORITY_HIGH,
-} from "@veryfront/utils/constants/index.ts";
+} from "#veryfront/utils/constants/index.ts";
 import {
   checkMemoryPressure,
   forceGC,
   getCacheStats,
   getHeapStats,
   getMemorySnapshot,
-} from "@veryfront/utils/memory/index.ts";
-import { rendererLogger as logger } from "@veryfront/utils";
+} from "#veryfront/utils/memory/index.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
 
 export class MemoryDebugHandler extends BaseHandler {
   metadata: HandlerMetadata = {

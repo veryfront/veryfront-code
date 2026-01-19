@@ -1,6 +1,6 @@
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/index.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/index.ts";
 import type { APIContext } from "../context-builder.ts";
-import type { VeryfrontConfig } from "@veryfront/config";
+import type { VeryfrontConfig } from "#veryfront/config";
 
 export interface AppRouteContext {
   params: Record<string, string>;

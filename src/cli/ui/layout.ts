@@ -5,7 +5,7 @@
  * Runtime-agnostic: works on Deno, Node.js, and Bun.
  */
 
-import { getTerminalSize as getSize, isStdoutTTY } from "@veryfront/platform/compat/process.ts";
+import { getTerminalSize as getSize, isStdoutTTY } from "#veryfront/platform/compat/process.ts";
 import { ANSI_REGEX, RESET } from "./ansi.ts";
 
 /**

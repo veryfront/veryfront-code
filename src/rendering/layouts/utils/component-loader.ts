@@ -1,13 +1,13 @@
-import { rendererLogger as logger } from "@veryfront/utils";
-import { getContentHash, TSX_LAYOUT_MAX_ENTRIES } from "@veryfront/utils";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { getContentHash, TSX_LAYOUT_MAX_ENTRIES } from "#veryfront/utils";
 import * as BundledReact from "react";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import type { LayoutItem, MdxBundle, MDXComponents, MDXModule } from "@veryfront/types";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
-import { loadImportMap, transformImportsWithMap } from "@veryfront/modules/import-map/index.ts";
-import { mdxRenderer } from "@veryfront/transforms/mdx/index.ts";
-import { loadComponentFromSource } from "@veryfront/modules/react-loader/component-loader.ts";
-import { getProjectReact } from "@veryfront/react";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { LayoutItem, MdxBundle, MDXComponents, MDXModule } from "#veryfront/types";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { loadImportMap, transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
+import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
+import { loadComponentFromSource } from "#veryfront/modules/react-loader/component-loader.ts";
+import { getProjectReact } from "#veryfront/react";
 import { ensureValidChild } from "./ensure-valid-child.ts";
 import { buildLayoutComponentCacheKey } from "../../../cache/keys.ts";
 

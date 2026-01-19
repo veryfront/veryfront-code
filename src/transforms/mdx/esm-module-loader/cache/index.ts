@@ -6,14 +6,14 @@
  * @module build/transforms/mdx/esm-module-loader/cache
  */
 
-import { join } from "@std/path";
-import { rendererLogger as logger } from "@veryfront/utils";
-import { getMdxEsmCacheDir } from "@veryfront/utils/cache-dir.ts";
+import { join } from "#std/path.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import {
   createFileSystem,
   type FileSystem,
   isNotFoundError,
-} from "@veryfront/platform/compat/fs.ts";
+} from "#veryfront/platform/compat/fs.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 
 // Local filesystem for cache operations (not project's FSAdapter which may be remote/read-only)

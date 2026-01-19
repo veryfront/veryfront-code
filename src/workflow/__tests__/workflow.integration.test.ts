@@ -9,13 +9,15 @@
  * - Approval flow
  */
 
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
-import { expect } from "@std/expect";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { expect } from "#std/expect.ts";
 import { createWorkflowClient, WorkflowClient } from "../api/workflow-client.ts";
 import { branch, loop, parallel, step, waitForApproval, workflow } from "../dsl/index.ts";
 import { MemoryBackend } from "../backends/memory.ts";
-import type { Tool } from "@veryfront/tool";
+import type { Tool } from "#veryfront/tool";
 import { z } from "zod";
+import { delay } from "#std/async.ts";
+import { scaleMs } from "#veryfront/testing";
 
 // Mock tool for testing
 const createMockTool = (name: string, handler: (input: any) => any): Tool => ({
@@ -37,7 +39,7 @@ async function waitForStatus(
   while (Date.now() - start < timeout) {
     const run = await client.getRun(runId);
     if (run?.status === expectedStatus) return;
-    await new Promise((r) => setTimeout(r, 50));
+    await delay(50);
   }
   throw new Error(`Timeout waiting for status "${expectedStatus}"`);
 }
@@ -53,7 +55,7 @@ async function waitForApprovals(
   while (Date.now() - start < timeout) {
     const approvals = await client.getPendingApprovals(runId);
     if (approvals.length >= count) return;
-    await new Promise((r) => setTimeout(r, 50));
+    await delay(50);
   }
   throw new Error(`Timeout waiting for ${count} approvals`);
 }
@@ -107,13 +109,13 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
       const executionOrder: string[] = [];
 
       const tool1 = createMockTool("tool1", async () => {
-        await new Promise((r) => setTimeout(r, 50));
+        await delay(50);
         executionOrder.push("tool1");
         return { tool: 1 };
       });
 
       const tool2 = createMockTool("tool2", async () => {
-        await new Promise((r) => setTimeout(r, 10));
+        await delay(10);
         executionOrder.push("tool2");
         return { tool: 2 };
       });
@@ -349,7 +351,7 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
       const slowTool = createMockTool("slow", async () => {
         try {
           await new Promise((resolve) => {
-            timeoutId = setTimeout(resolve, 5000);
+            timeoutId = setTimeout(resolve, scaleMs(5000));
           });
           return { result: "done" };
         } catch {

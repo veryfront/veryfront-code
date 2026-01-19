@@ -1,6 +1,6 @@
-import { logger } from "@veryfront/utils";
-import type { CriticalCSSResult, CSSOptimizationOptions } from "@veryfront/types";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { logger } from "#veryfront/utils";
+import type { CriticalCSSResult, CSSOptimizationOptions } from "#veryfront/types";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { basicMinify, extractSelectorsFromHTML } from "./utils.ts";
 
 const fs = createFileSystem();

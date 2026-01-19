@@ -66,6 +66,20 @@ export interface VeryfrontConfig {
     };
   };
   security?: {
+    /**
+     * Authentication configuration (basic or bearer).
+     * Prefer using config for auth to avoid env cross-test leakage.
+     */
+    auth?: {
+      basic?: {
+        username: string;
+        password: string;
+        realm?: string;
+      };
+      bearer?: {
+        token: string;
+      };
+    };
     csp?: Partial<Record<string, string[]>>;
     remoteHosts?: string[];
     cors?: boolean | { origin?: string };

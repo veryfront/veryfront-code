@@ -3,8 +3,8 @@ import type {
   FileInfo,
   FileWatcher,
   RuntimeAdapter,
-} from "@veryfront/platform/adapters/base.ts";
-import { logger } from "@veryfront/utils";
+} from "#veryfront/platform/adapters/base.ts";
+import { logger } from "#veryfront/utils";
 import {
   sanitizePathForDisplay,
   validatePath,

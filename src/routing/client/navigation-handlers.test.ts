@@ -1,6 +1,8 @@
-import { assertEquals, assertExists } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
-import { NavigationCallbacks, NavigationHandlers } from "./navigation-handlers.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { NavigationHandlers } from "./navigation-handlers.ts";
+import type { NavigationCallbacks } from "./navigation-handlers.ts";
+import { delay } from "#std/async.ts";
 
 interface MockElement {
   tagName?: string;
@@ -399,7 +401,7 @@ describe("NavigationHandlers", () => {
 
       mouseOverHandler(event);
 
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await delay(100);
 
       assertEquals(prefetchedUrl, "/page", "Should prefetch link after delay");
       mocks.cleanup();
@@ -426,7 +428,7 @@ describe("NavigationHandlers", () => {
 
       mouseOverHandler(event);
 
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await delay(100);
 
       assertEquals(prefetchCalled, false, "Should not prefetch for non-anchor elements");
       mocks.cleanup();
@@ -453,7 +455,7 @@ describe("NavigationHandlers", () => {
 
       mouseOverHandler(event);
 
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await delay(100);
 
       assertEquals(prefetchCalled, false, "Should not prefetch external links");
       mocks.cleanup();
@@ -480,7 +482,7 @@ describe("NavigationHandlers", () => {
 
       mouseOverHandler(event);
 
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await delay(100);
 
       assertEquals(prefetchCalled, false, "Should not prefetch hash links");
       mocks.cleanup();
@@ -507,7 +509,7 @@ describe("NavigationHandlers", () => {
 
       mouseOverHandler(event);
 
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await delay(100);
 
       assertEquals(prefetchCalled, false, "Should not prefetch when data-prefetch=false");
       mocks.cleanup();
@@ -534,7 +536,7 @@ describe("NavigationHandlers", () => {
 
       mouseOverHandler(event);
 
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await delay(100);
 
       assertEquals(prefetchedUrl, "/page", "Should prefetch when data-prefetch=true");
       mocks.cleanup();
@@ -563,7 +565,7 @@ describe("NavigationHandlers", () => {
       mouseOverHandler(event);
       mouseOverHandler(event);
 
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      await delay(150);
 
       assertEquals(prefetchCount, 1, "Should only prefetch once for concurrent hovers");
       mocks.cleanup();
@@ -590,11 +592,11 @@ describe("NavigationHandlers", () => {
 
       mouseOverHandler(event);
 
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await delay(100);
 
       mouseOverHandler(event);
 
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await delay(100);
 
       assertEquals(prefetchCount, 2, "Should allow prefetch again after removal from queue");
       mocks.cleanup();
@@ -771,10 +773,10 @@ describe("NavigationHandlers", () => {
 
       mouseOverHandler(event);
 
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await delay(50);
       handlers.clear();
 
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await delay(100);
 
       assertEquals(handlers.isPopState(), false, "Should reset state after clear");
       mocks.cleanup();

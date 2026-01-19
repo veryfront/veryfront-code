@@ -1,6 +1,6 @@
-import { exists } from "@std/fs";
-import { join } from "@veryfront/platform/compat/path/index.ts";
-import { getConfig } from "@veryfront/config";
+import { exists } from "#std/fs.ts";
+import { join } from "#veryfront/platform/compat/path/index.ts";
+import { getConfig } from "#veryfront/config";
 import type { DiagnosticResult } from "./types.ts";
 
 /**
@@ -38,7 +38,7 @@ export async function checkProjectStructure(projectDir: string): Promise<Diagnos
  */
 export async function checkConfiguration(projectDir: string): Promise<DiagnosticResult> {
   try {
-    const { getAdapter } = await import("@veryfront/platform/adapters/detect.ts");
+    const { getAdapter } = await import("#veryfront/platform/adapters/detect.ts");
     const adapter = await getAdapter();
     const config = await getConfig(projectDir, adapter);
     const reactConfig = (config as { react?: { version?: string } }).react;

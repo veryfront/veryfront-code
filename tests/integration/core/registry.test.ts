@@ -1,7 +1,8 @@
-import { assert, assertEquals, assertExists } from "@std/assert";
-import { join } from "@std/path";
-import { describe, it } from "@std/testing/bdd";
-import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
+import { assert, assertEquals, assertExists } from "@veryfront/testing/assert";
+import { join } from "@veryfront/compat/path";
+import { describe, it } from "@veryfront/testing/bdd";
+import { mkdir, remove, writeTextFile } from "@veryfront/testing/deno-compat";
+import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import { ComponentRegistry } from "@veryfront/modules/component-registry/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
@@ -16,19 +17,19 @@ describe(
       it("should discover all components in directory", async () => {
         await withTestContext("registry-discover", async (context) => {
           const componentsDir = join(context.projectDir, "components");
-          await Deno.mkdir(componentsDir, { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(componentsDir, { recursive: true });
+          await writeTextFile(
             join(componentsDir, "Header.tsx"),
             "export default function Header(){return null}",
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(componentsDir, "Footer.tsx"),
             "export default function Footer(){return null}",
           );
 
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -43,15 +44,15 @@ describe(
         await withTestContext("registry-nested", async (context) => {
           const componentsDir = join(context.projectDir, "components");
           const nestedDir = join(componentsDir, "layout", "headers");
-          await Deno.mkdir(nestedDir, { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(nestedDir, { recursive: true });
+          await writeTextFile(
             join(nestedDir, "MainHeader.tsx"),
             "export default function MainHeader(){return null}",
           );
 
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -65,18 +66,18 @@ describe(
       it("should filter out non-component files", async () => {
         await withTestContext("registry-filter", async (context) => {
           const componentsDir = join(context.projectDir, "components");
-          await Deno.mkdir(componentsDir, { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(componentsDir, { recursive: true });
+          await writeTextFile(
             join(componentsDir, "Component.tsx"),
             "export default function C(){}",
           );
-          await Deno.writeTextFile(join(componentsDir, "readme.md"), "# Readme");
-          await Deno.writeTextFile(join(componentsDir, "types.ts"), "export type T = {}");
-          await Deno.writeTextFile(join(componentsDir, "config.json"), "{}");
+          await writeTextFile(join(componentsDir, "readme.md"), "# Readme");
+          await writeTextFile(join(componentsDir, "types.ts"), "export type T = {}");
+          await writeTextFile(join(componentsDir, "config.json"), "{}");
 
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -89,19 +90,19 @@ describe(
       it("should handle .tsx and .jsx files", async () => {
         await withTestContext("registry-extensions", async (context) => {
           const componentsDir = join(context.projectDir, "components");
-          await Deno.mkdir(componentsDir, { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(componentsDir, { recursive: true });
+          await writeTextFile(
             join(componentsDir, "TsxComponent.tsx"),
             "export default function T(){}",
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(componentsDir, "JsxComponent.jsx"),
             "export default function J(){}",
           );
 
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -113,17 +114,17 @@ describe(
       it("should skip test files and directories", async () => {
         await withTestContext("registry-skip-tests", async (context) => {
           const componentsDir = join(context.projectDir, "components");
-          await Deno.mkdir(componentsDir, { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(componentsDir, { recursive: true });
+          await writeTextFile(
             join(componentsDir, "Component.tsx"),
             "export default function C(){}",
           );
-          await Deno.writeTextFile(join(componentsDir, "Component.test.tsx"), "test code");
-          await Deno.writeTextFile(join(componentsDir, "Component.spec.tsx"), "spec code");
+          await writeTextFile(join(componentsDir, "Component.test.tsx"), "test code");
+          await writeTextFile(join(componentsDir, "Component.spec.tsx"), "spec code");
 
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -136,16 +137,16 @@ describe(
       it("should skip index files", async () => {
         await withTestContext("registry-skip-index", async (context) => {
           const componentsDir = join(context.projectDir, "components");
-          await Deno.mkdir(componentsDir, { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(componentsDir, { recursive: true });
+          await writeTextFile(
             join(componentsDir, "Component.tsx"),
             "export default function C(){}",
           );
-          await Deno.writeTextFile(join(componentsDir, "index.tsx"), "export all");
+          await writeTextFile(join(componentsDir, "index.tsx"), "export all");
 
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -158,11 +159,11 @@ describe(
       it("should handle empty directories gracefully", async () => {
         await withTestContext("registry-empty", async (context) => {
           const componentsDir = join(context.projectDir, "components");
-          await Deno.mkdir(componentsDir, { recursive: true });
+          await mkdir(componentsDir, { recursive: true });
 
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -175,7 +176,7 @@ describe(
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
             componentDirs: ["nonexistent-dir"],
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           // Should not throw, just warn
@@ -188,19 +189,19 @@ describe(
         await withTestContext("registry-node-modules", async (context) => {
           const componentsDir = join(context.projectDir, "components");
           const nodeModules = join(componentsDir, "node_modules");
-          await Deno.mkdir(nodeModules, { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(nodeModules, { recursive: true });
+          await writeTextFile(
             join(componentsDir, "Component.tsx"),
             "export default function C(){}",
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(nodeModules, "ShouldNotDiscover.tsx"),
             "export default function X(){}",
           );
 
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -213,17 +214,17 @@ describe(
         await withTestContext("registry-multi-dirs", async (context) => {
           const componentsDir = join(context.projectDir, "components");
           const islandsDir = join(context.projectDir, "islands");
-          await Deno.mkdir(componentsDir, { recursive: true });
-          await Deno.mkdir(islandsDir, { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(componentsDir, { recursive: true });
+          await mkdir(islandsDir, { recursive: true });
+          await writeTextFile(
             join(componentsDir, "Component.tsx"),
             "export default function C(){}",
           );
-          await Deno.writeTextFile(join(islandsDir, "Island.tsx"), "export default function I(){}");
+          await writeTextFile(join(islandsDir, "Island.tsx"), "export default function I(){}");
 
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -241,13 +242,13 @@ describe(
       it("should load and cache component", async () => {
         await withTestContext("registry-load", async (context) => {
           const componentsDir = join(context.projectDir, "components");
-          await Deno.mkdir(componentsDir, { recursive: true });
+          await mkdir(componentsDir, { recursive: true });
           const content = "export default function Header(){return null}";
-          await Deno.writeTextFile(join(componentsDir, "Header.tsx"), content);
+          await writeTextFile(join(componentsDir, "Header.tsx"), content);
 
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -261,15 +262,15 @@ describe(
       it("should return cached component on second load", async () => {
         await withTestContext("registry-cache", async (context) => {
           const componentsDir = join(context.projectDir, "components");
-          await Deno.mkdir(componentsDir, { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(componentsDir, { recursive: true });
+          await writeTextFile(
             join(componentsDir, "Header.tsx"),
             "export default function Header(){return null}",
           );
 
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -287,7 +288,7 @@ describe(
         await withTestContext("registry-not-found", async (context) => {
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -299,15 +300,15 @@ describe(
       it("should handle concurrent loads of same component", async () => {
         await withTestContext("registry-concurrent", async (context) => {
           const componentsDir = join(context.projectDir, "components");
-          await Deno.mkdir(componentsDir, { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(componentsDir, { recursive: true });
+          await writeTextFile(
             join(componentsDir, "Header.tsx"),
             "export default function Header(){return null}",
           );
 
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -329,19 +330,19 @@ describe(
       it("should load all components with loadAll", async () => {
         await withTestContext("registry-load-all", async (context) => {
           const componentsDir = join(context.projectDir, "components");
-          await Deno.mkdir(componentsDir, { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(componentsDir, { recursive: true });
+          await writeTextFile(
             join(componentsDir, "Header.tsx"),
             "export default function H(){}",
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(componentsDir, "Footer.tsx"),
             "export default function F(){}",
           );
 
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -359,17 +360,17 @@ describe(
       it("should handle file read errors gracefully", async () => {
         await withTestContext("registry-read-error", async (context) => {
           const componentsDir = join(context.projectDir, "components");
-          await Deno.mkdir(componentsDir, { recursive: true });
-          await Deno.writeTextFile(join(componentsDir, "Component.tsx"), "content");
+          await mkdir(componentsDir, { recursive: true });
+          await writeTextFile(join(componentsDir, "Component.tsx"), "content");
 
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
           // Delete the file after discovery
-          await Deno.remove(join(componentsDir, "Component.tsx"));
+          await remove(join(componentsDir, "Component.tsx"));
 
           const component = await reg.loadComponent("Component");
           assertEquals(component, null);
@@ -379,15 +380,15 @@ describe(
       it("should wait for discovery to complete before loading", async () => {
         await withTestContext("registry-wait-discover", async (context) => {
           const componentsDir = join(context.projectDir, "components");
-          await Deno.mkdir(componentsDir, { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(componentsDir, { recursive: true });
+          await writeTextFile(
             join(componentsDir, "Component.tsx"),
             "export default function C(){}",
           );
 
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           // Start discovery but don't await it
@@ -414,7 +415,7 @@ describe(
         await withTestContext("registry-add", async (context) => {
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -433,7 +434,7 @@ describe(
         await withTestContext("registry-add-path", async (context) => {
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -452,7 +453,7 @@ describe(
         await withTestContext("registry-add-exports", async (context) => {
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -468,15 +469,15 @@ describe(
       it("should remove component", async () => {
         await withTestContext("registry-remove", async (context) => {
           const componentsDir = join(context.projectDir, "components");
-          await Deno.mkdir(componentsDir, { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(componentsDir, { recursive: true });
+          await writeTextFile(
             join(componentsDir, "Component.tsx"),
             "export default function C(){}",
           );
 
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -489,19 +490,19 @@ describe(
       it("should clear all components", async () => {
         await withTestContext("registry-clear", async (context) => {
           const componentsDir = join(context.projectDir, "components");
-          await Deno.mkdir(componentsDir, { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(componentsDir, { recursive: true });
+          await writeTextFile(
             join(componentsDir, "Header.tsx"),
             "export default function H(){}",
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(componentsDir, "Footer.tsx"),
             "export default function F(){}",
           );
 
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -514,15 +515,15 @@ describe(
       it("should check component existence with has()", async () => {
         await withTestContext("registry-has", async (context) => {
           const componentsDir = join(context.projectDir, "components");
-          await Deno.mkdir(componentsDir, { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(componentsDir, { recursive: true });
+          await writeTextFile(
             join(componentsDir, "Component.tsx"),
             "export default function C(){}",
           );
 
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -534,15 +535,15 @@ describe(
       it("should retrieve component with get()", async () => {
         await withTestContext("registry-get", async (context) => {
           const componentsDir = join(context.projectDir, "components");
-          await Deno.mkdir(componentsDir, { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(componentsDir, { recursive: true });
+          await writeTextFile(
             join(componentsDir, "Component.tsx"),
             "export default function C(){}",
           );
 
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -557,7 +558,7 @@ describe(
         await withTestContext("registry-get-missing", async (context) => {
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -569,19 +570,19 @@ describe(
       it("should list all component names", async () => {
         await withTestContext("registry-names", async (context) => {
           const componentsDir = join(context.projectDir, "components");
-          await Deno.mkdir(componentsDir, { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(componentsDir, { recursive: true });
+          await writeTextFile(
             join(componentsDir, "Header.tsx"),
             "export default function H(){}",
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(componentsDir, "Footer.tsx"),
             "export default function F(){}",
           );
 
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -595,15 +596,15 @@ describe(
       it("should get all components as map", async () => {
         await withTestContext("registry-getall", async (context) => {
           const componentsDir = join(context.projectDir, "components");
-          await Deno.mkdir(componentsDir, { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(componentsDir, { recursive: true });
+          await writeTextFile(
             join(componentsDir, "Component.tsx"),
             "export default function C(){}",
           );
 
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -617,15 +618,15 @@ describe(
       it("should list components with metadata", async () => {
         await withTestContext("registry-list", async (context) => {
           const componentsDir = join(context.projectDir, "components");
-          await Deno.mkdir(componentsDir, { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(componentsDir, { recursive: true });
+          await writeTextFile(
             join(componentsDir, "Component.tsx"),
             "export default function C(){}",
           );
 
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -645,7 +646,7 @@ describe(
         await withTestContext("registry-list-stat-error", async (context) => {
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -662,13 +663,13 @@ describe(
       it("should track registry size correctly", async () => {
         await withTestContext("registry-size", async (context) => {
           const componentsDir = join(context.projectDir, "components");
-          await Deno.mkdir(componentsDir, { recursive: true });
-          await Deno.writeTextFile(join(componentsDir, "A.tsx"), "export default function A(){}");
-          await Deno.writeTextFile(join(componentsDir, "B.tsx"), "export default function B(){}");
+          await mkdir(componentsDir, { recursive: true });
+          await writeTextFile(join(componentsDir, "A.tsx"), "export default function A(){}");
+          await writeTextFile(join(componentsDir, "B.tsx"), "export default function B(){}");
 
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -694,15 +695,15 @@ describe(
       it("should handle race conditions during initialization", async () => {
         await withTestContext("registry-race", async (context) => {
           const componentsDir = join(context.projectDir, "components");
-          await Deno.mkdir(componentsDir, { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(componentsDir, { recursive: true });
+          await writeTextFile(
             join(componentsDir, "Component.tsx"),
             "export default function C(){}",
           );
 
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           // Start multiple discovery operations simultaneously
@@ -719,13 +720,13 @@ describe(
       it("should handle large component trees efficiently", async () => {
         await withTestContext("registry-large-tree", async (context) => {
           const componentsDir = join(context.projectDir, "components");
-          await Deno.mkdir(componentsDir, { recursive: true });
+          await mkdir(componentsDir, { recursive: true });
 
           // Create 50 components in nested structure
           for (let i = 0; i < 50; i++) {
             const dir = join(componentsDir, `level${Math.floor(i / 10)}`);
-            await Deno.mkdir(dir, { recursive: true });
-            await Deno.writeTextFile(
+            await mkdir(dir, { recursive: true });
+            await writeTextFile(
               join(dir, `Component${i}.tsx`),
               `export default function C${i}(){}`,
             );
@@ -733,7 +734,7 @@ describe(
 
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const startTime = Date.now();
@@ -751,14 +752,14 @@ describe(
           const componentsDir = join(context.projectDir, "components");
           const dir1 = join(componentsDir, "dir1");
           const dir2 = join(componentsDir, "dir2");
-          await Deno.mkdir(dir1, { recursive: true });
-          await Deno.mkdir(dir2, { recursive: true });
-          await Deno.writeTextFile(join(dir1, "Component.tsx"), "export default function C1(){}");
-          await Deno.writeTextFile(join(dir2, "Component.tsx"), "export default function C2(){}");
+          await mkdir(dir1, { recursive: true });
+          await mkdir(dir2, { recursive: true });
+          await writeTextFile(join(dir1, "Component.tsx"), "export default function C1(){}");
+          await writeTextFile(join(dir2, "Component.tsx"), "export default function C2(){}");
 
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -772,7 +773,7 @@ describe(
         await withTestContext("registry-invalid-path", async (context) => {
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -791,7 +792,7 @@ describe(
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
             componentDirs: ["missing-components"],
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           // Should not throw
@@ -804,20 +805,20 @@ describe(
         await withTestContext("registry-same-name", async (context) => {
           const componentsDir = join(context.projectDir, "components");
           const islandsDir = join(context.projectDir, "islands");
-          await Deno.mkdir(componentsDir, { recursive: true });
-          await Deno.mkdir(islandsDir, { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(componentsDir, { recursive: true });
+          await mkdir(islandsDir, { recursive: true });
+          await writeTextFile(
             join(componentsDir, "Button.tsx"),
             "export default function B1(){}",
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(islandsDir, "Button.tsx"),
             "export default function B2(){}",
           );
 
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -829,15 +830,15 @@ describe(
       it("should handle re-discovery after clear", async () => {
         await withTestContext("registry-rediscover", async (context) => {
           const componentsDir = join(context.projectDir, "components");
-          await Deno.mkdir(componentsDir, { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(componentsDir, { recursive: true });
+          await writeTextFile(
             join(componentsDir, "Component.tsx"),
             "export default function C(){}",
           );
 
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
           assertEquals(reg.getComponentNames().length, 1);
@@ -855,7 +856,7 @@ describe(
         await withTestContext("registry-get-before-init", async (_context) => {
           const reg = new ComponentRegistry({
             projectDir: _context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           // Call get before discover
@@ -867,12 +868,12 @@ describe(
       it("should handle empty component file", async () => {
         await withTestContext("registry-empty-file", async (context) => {
           const componentsDir = join(context.projectDir, "components");
-          await Deno.mkdir(componentsDir, { recursive: true });
-          await Deno.writeTextFile(join(componentsDir, "Empty.tsx"), "");
+          await mkdir(componentsDir, { recursive: true });
+          await writeTextFile(join(componentsDir, "Empty.tsx"), "");
 
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -887,12 +888,12 @@ describe(
         await withTestContext("registry-long-path", async (context) => {
           const componentsDir = join(context.projectDir, "components");
           const deepPath = join(componentsDir, "a", "b", "c", "d", "e", "f", "g");
-          await Deno.mkdir(deepPath, { recursive: true });
-          await Deno.writeTextFile(join(deepPath, "Deep.tsx"), "export default function D(){}");
+          await mkdir(deepPath, { recursive: true });
+          await writeTextFile(join(deepPath, "Deep.tsx"), "export default function D(){}");
 
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -906,13 +907,13 @@ describe(
       it("should handle custom component directories", async () => {
         await withTestContext("registry-custom-dirs", async (context) => {
           const customDir = join(context.projectDir, "my-custom-components");
-          await Deno.mkdir(customDir, { recursive: true });
-          await Deno.writeTextFile(join(customDir, "Custom.tsx"), "export default function C(){}");
+          await mkdir(customDir, { recursive: true });
+          await writeTextFile(join(customDir, "Custom.tsx"), "export default function C(){}");
 
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
             componentDirs: ["my-custom-components"],
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -924,7 +925,7 @@ describe(
         await withTestContext("registry-loader", async (context) => {
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           // Before discovery, loader should be undefined
@@ -942,15 +943,15 @@ describe(
       it("should handle component with special characters in name", async () => {
         await withTestContext("registry-special-chars", async (context) => {
           const componentsDir = join(context.projectDir, "components");
-          await Deno.mkdir(componentsDir, { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(componentsDir, { recursive: true });
+          await writeTextFile(
             join(componentsDir, "My-Component_v2.tsx"),
             "export default function C(){}",
           );
 
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
           await reg.discover();
 
@@ -962,7 +963,7 @@ describe(
         await withTestContext("registry-existing", async (context) => {
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           // Add a manual component before discovery
@@ -970,8 +971,8 @@ describe(
           assertEquals(reg.has("Manual"), true);
 
           const componentsDir = join(context.projectDir, "components");
-          await Deno.mkdir(componentsDir, { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(componentsDir, { recursive: true });
+          await writeTextFile(
             join(componentsDir, "Discovered.tsx"),
             "export default function D(){}",
           );
@@ -994,7 +995,7 @@ describe(
         await withTestContext("registry-loader-init", async (context) => {
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           await reg.discover();
@@ -1010,7 +1011,7 @@ describe(
         await withTestContext("registry-loader-fail", async (context) => {
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           // Even if loader fails to initialize, discovery should succeed
@@ -1023,7 +1024,7 @@ describe(
         await withTestContext("registry-loader-preserve", async (context) => {
           const reg = new ComponentRegistry({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           await reg.discover();

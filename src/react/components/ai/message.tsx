@@ -6,7 +6,7 @@
 
 import * as React from "react";
 import { MessageContent, MessageItem, MessageRole } from "../../primitives/index.ts";
-import type { ToolUIPart, UIMessage, UIMessagePart } from "@veryfront/agent/react";
+import type { ToolUIPart, UIMessage, UIMessagePart } from "#veryfront/agent/react";
 import { type ChatTheme, cn, defaultChatTheme, mergeThemes } from "./theme.ts";
 
 export interface MessageProps {

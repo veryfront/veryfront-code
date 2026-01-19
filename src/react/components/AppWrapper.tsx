@@ -1,5 +1,5 @@
 import type * as React from "react";
-import type { MDXComponents, PageContext as TypedPageContext } from "@veryfront/types";
+import type { MDXComponents, PageContext as TypedPageContext } from "#veryfront/types";
 import type { MdxBundle } from "./LayoutComponent.tsx";
 import { LayoutComponent } from "./LayoutComponent.tsx";
 import { ProviderComponent } from "./ProviderComponent.tsx";

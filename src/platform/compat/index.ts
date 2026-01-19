@@ -12,6 +12,6 @@ export * from "./stdin.ts";
 export * from "./path-helper.ts";
 
 // NOTE: For http and path submodules, import directly:
-// - import { ... } from "@veryfront/platform/compat/http/index.ts"
-// - import { ... } from "@veryfront/platform/compat/path/index.ts"
+// - import { ... } from "#veryfront/platform/compat/http/index.ts"
+// - import { ... } from "#veryfront/platform/compat/path/index.ts"
 // These are not re-exported to avoid name collisions with adapters module.

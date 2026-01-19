@@ -1,5 +1,5 @@
-import { assert, assertEquals, assertExists } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { DynamicRouter } from "./matchers/index.ts";
 
 describe("DynamicRouter", () => {

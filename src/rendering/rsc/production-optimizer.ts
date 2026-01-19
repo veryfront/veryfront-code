@@ -1,5 +1,5 @@
 import type { RSCPayload } from "./types.ts";
-import { HASH_SEED_FNV1A } from "@veryfront/utils";
+import { HASH_SEED_FNV1A } from "#veryfront/utils";
 
 export class RSCProductionOptimizer {
   static optimizePayload(payload: RSCPayload): RSCPayload {

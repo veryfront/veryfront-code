@@ -1,4 +1,4 @@
-import { serverLogger as logger } from "@veryfront/utils";
+import { serverLogger as logger } from "#veryfront/utils";
 import type { FileWatcherMetrics } from "./types.ts";
 
 export class OptimizedFileWatcher {

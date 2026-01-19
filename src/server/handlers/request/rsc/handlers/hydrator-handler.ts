@@ -1,11 +1,11 @@
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
-import * as pathHelper from "@veryfront/platform/compat/path-helper.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import * as pathHelper from "#veryfront/platform/compat/path-helper.ts";
 
 const compatFs = createFileSystem();
 
-import { serverLogger as logger } from "@veryfront/utils";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
-import type { FileSystemAdapter } from "@veryfront/platform/adapters/base.ts";
+import { serverLogger as logger } from "#veryfront/utils";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 
 export class HydratorHandler {
   constructor(private fsAdapter?: FileSystemAdapter) {}
@@ -30,7 +30,7 @@ export class HydratorHandler {
 
   private async bundleHydrator(path: string): Promise<string> {
     // Use native esbuild for proper file system access during bundling
-    const { build, stop } = await import("esbuild/mod.js");
+    const { build, stop } = await import("esbuild");
 
     try {
       const source = this.fsAdapter

@@ -3,7 +3,7 @@
  * Orchestrates the generation of HMR runtime script
  */
 
-import { HMR_CLIENT_RELOAD_DELAY_MS } from "@veryfront/utils";
+import { HMR_CLIENT_RELOAD_DELAY_MS } from "#veryfront/utils";
 import { generateHMRClientTemplate } from "./templates.ts";
 
 /**

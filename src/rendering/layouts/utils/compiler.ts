@@ -1,6 +1,6 @@
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import type { LayoutItem, MdxBundle } from "@veryfront/types";
-import { parallelMap } from "@veryfront/utils";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { LayoutItem, MdxBundle } from "#veryfront/types";
+import { parallelMap } from "#veryfront/utils";
 
 export async function compileMDXLayouts(
   layouts: LayoutItem[],

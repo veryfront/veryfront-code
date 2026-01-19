@@ -1,8 +1,8 @@
 import { LRUCacheAdapter } from "./cache/stores/memory/lru-cache-adapter.ts";
 import type { LRUCacheOptions } from "./cache/stores/memory/types.ts";
-import { DEFAULT_LRU_MAX_ENTRIES } from "@veryfront/utils";
-import { unrefTimer } from "@veryfront/platform/compat/process.ts";
-import { getDisableLruIntervalEnv } from "@veryfront/config/env.ts";
+import { DEFAULT_LRU_MAX_ENTRIES } from "#veryfront/utils";
+import { unrefTimer } from "#veryfront/platform/compat/process.ts";
+import { getDisableLruIntervalEnv } from "#veryfront/config/env.ts";
 
 export interface LRUOptions {
   maxEntries?: number;

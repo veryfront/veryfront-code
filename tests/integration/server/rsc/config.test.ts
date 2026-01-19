@@ -7,11 +7,13 @@
  * - All RSC endpoints work correctly when enabled
  */
 
-import { assert, assertEquals } from "@std/assert";
-import { afterAll, describe, it } from "@std/testing/bdd";
-import { join } from "@std/path";
+import { assert, assertEquals } from "@veryfront/testing/assert";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
+import { join } from "@veryfront/compat/path";
+import { mkdir, writeTextFile } from "@veryfront/compat/fs.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
+import { isDeno } from "../../../../src/platform/compat/runtime.ts";
 
 describe("RSC Config Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
   // Clean up renderer intervals to prevent resource leaks
@@ -26,13 +28,13 @@ describe("RSC Config Tests", { sanitizeOps: false, sanitizeResources: false }, (
      */
     await withTestContext("rsc-disabled", async (context) => {
       // Explicitly disable RSC in config to ensure isolation from other tests
-      await Deno.writeTextFile(
+      await writeTextFile(
         join(context.projectDir, "veryfront.config.js"),
         `export default { experimental: { rsc: false } };`,
       );
 
       // Create minimal project structure
-      await Deno.writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home Page");
+      await writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home Page");
 
       const server = await context.createProductionServer();
 
@@ -56,13 +58,13 @@ describe("RSC Config Tests", { sanitizeOps: false, sanitizeResources: false }, (
      */
     await withTestContext("rsc-enabled", async (context) => {
       // Enable RSC via config file (not env var - for parallel test isolation)
-      await Deno.writeTextFile(
+      await writeTextFile(
         join(context.projectDir, "veryfront.config.js"),
         `export default { experimental: { rsc: true } };`,
       );
 
       // Create App Router structure for RSC
-      await Deno.writeTextFile(
+      await writeTextFile(
         join(context.projectDir, "app", "layout.tsx"),
         `export default function RootLayout({ children }: { children: React.ReactNode }) {
           return (
@@ -73,10 +75,10 @@ describe("RSC Config Tests", { sanitizeOps: false, sanitizeResources: false }, (
         }`,
       );
 
-      await Deno.mkdir(join(context.projectDir, "app", "hello"), {
+      await mkdir(join(context.projectDir, "app", "hello"), {
         recursive: true,
       });
-      await Deno.writeTextFile(
+      await writeTextFile(
         join(context.projectDir, "app", "hello", "page.tsx"),
         `export default function HelloPage({ searchParams }: { searchParams: { name?: string } }) {
           const name = searchParams?.name || 'World';
@@ -90,10 +92,10 @@ describe("RSC Config Tests", { sanitizeOps: false, sanitizeResources: false }, (
       );
 
       // Add API route for manifest
-      await Deno.mkdir(join(context.projectDir, "app", "api", "echo"), {
+      await mkdir(join(context.projectDir, "app", "api", "echo"), {
         recursive: true,
       });
-      await Deno.writeTextFile(
+      await writeTextFile(
         join(context.projectDir, "app", "api", "echo", "route.ts"),
         `export const GET = () => Response.json({ ok: true });`,
       );

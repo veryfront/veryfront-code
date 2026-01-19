@@ -7,10 +7,10 @@
  * @module cli/commands/push
  */
 
-import { join, relative } from "@veryfront/platform/compat/path/index.ts";
-import { cliLogger } from "@veryfront/utils";
-import { cwd } from "@veryfront/platform/compat/process.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { join, relative } from "#veryfront/platform/compat/path/index.ts";
+import { cliLogger } from "#veryfront/utils";
+import { cwd } from "#veryfront/platform/compat/process.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import {
   type ApiClient,
   createApiClient,

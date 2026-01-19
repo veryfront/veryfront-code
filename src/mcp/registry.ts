@@ -7,12 +7,12 @@
  */
 
 import type { MCPRegistry, MCPStats } from "./types.ts";
-import type { Tool } from "@veryfront/tool";
-import type { Resource } from "@veryfront/resource";
-import type { Prompt } from "@veryfront/prompt";
-import { toolRegistry } from "@veryfront/tool";
-import { resourceRegistry } from "@veryfront/resource";
-import { promptRegistry } from "@veryfront/prompt";
+import type { Tool } from "#veryfront/tool";
+import type { Resource } from "#veryfront/resource";
+import type { Prompt } from "#veryfront/prompt";
+import { toolRegistry } from "#veryfront/tool";
+import { resourceRegistry } from "#veryfront/resource";
+import { promptRegistry } from "#veryfront/prompt";
 
 /**
  * Get the global MCP registry

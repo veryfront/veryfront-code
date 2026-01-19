@@ -16,14 +16,15 @@
  * - Route priority and ordering
  */
 
-import { assert, assertEquals, assertExists } from "@std/assert";
-import { join } from "@std/path";
-import { afterAll, describe, it } from "@std/testing/bdd";
+import { assert, assertEquals, assertExists } from "@veryfront/testing/assert";
+import { join } from "@veryfront/compat/path";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
+import { mkdir, remove, writeTextFile } from "@veryfront/testing/deno-compat";
 import "../../_helpers/log-guard.ts";
 import { collectAppRoutes, collectPagesRoutes } from "../../../src/server/build-routes.ts";
 import type { AppRouteInfo, RouteInfo } from "../../../src/server/build-types.ts";
 import { withTestContext } from "../../_helpers/context.ts";
-import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
+import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 
 describe("Route Discovery Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
@@ -38,13 +39,13 @@ describe("Route Discovery Tests", { sanitizeOps: false, sanitizeResources: false
       it("should collect basic index route", async () => {
         await withTestContext("routes-pages-index", async (context) => {
           // Arrange
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "index.tsx"),
             "export default function Home() { return <div>Home</div> }",
           );
 
           // Act
-          const routes = await collectPagesRoutes(denoAdapter, context.projectDir);
+          const routes = await collectPagesRoutes(await getAdapter(), context.projectDir);
 
           // Assert
           assertEquals(routes.length, 1);
@@ -57,18 +58,18 @@ describe("Route Discovery Tests", { sanitizeOps: false, sanitizeResources: false
       it("should collect nested routes", async () => {
         await withTestContext("routes-pages-nested", async (context) => {
           // Arrange
-          await Deno.mkdir(join(context.projectDir, "pages", "blog"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "pages", "blog"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "pages", "blog", "index.tsx"),
             "export default function Blog() { return <div>Blog</div> }",
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "blog", "post.tsx"),
             "export default function Post() { return <div>Post</div> }",
           );
 
           // Act
-          const routes = await collectPagesRoutes(denoAdapter, context.projectDir);
+          const routes = await collectPagesRoutes(await getAdapter(), context.projectDir);
 
           // Assert
           assertEquals(routes.length, 2);
@@ -81,14 +82,14 @@ describe("Route Discovery Tests", { sanitizeOps: false, sanitizeResources: false
         await withTestContext("routes-pages-deep-nested", async (context) => {
           // Arrange
           const deepPath = join(context.projectDir, "pages", "a", "b", "c", "d");
-          await Deno.mkdir(deepPath, { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(deepPath, { recursive: true });
+          await writeTextFile(
             join(deepPath, "page.tsx"),
             "export default function Deep() { return <div>Deep</div> }",
           );
 
           // Act
-          const routes = await collectPagesRoutes(denoAdapter, context.projectDir);
+          const routes = await collectPagesRoutes(await getAdapter(), context.projectDir);
 
           // Assert
           assertEquals(routes.length, 1);
@@ -99,25 +100,25 @@ describe("Route Discovery Tests", { sanitizeOps: false, sanitizeResources: false
       it("should handle multiple file extensions", async () => {
         await withTestContext("routes-pages-extensions", async (context) => {
           // Arrange
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "tsx-page.tsx"),
             "export default function TsxPage() {}",
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "jsx-page.jsx"),
             "export default function JsxPage() {}",
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "ts-page.ts"),
             "export default function TsPage() {}",
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "mdx-page.mdx"),
             "# MDX Page",
           );
 
           // Act
-          const routes = await collectPagesRoutes(denoAdapter, context.projectDir);
+          const routes = await collectPagesRoutes(await getAdapter(), context.projectDir);
 
           // Assert
           assertEquals(routes.length, 4);
@@ -129,26 +130,26 @@ describe("Route Discovery Tests", { sanitizeOps: false, sanitizeResources: false
       it("should ignore non-page files", async () => {
         await withTestContext("routes-pages-ignore-non-pages", async (context) => {
           // Arrange
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "page.tsx"),
             "export default function Page() {}",
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "styles.css"),
             "body { margin: 0; }",
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "data.json"),
             '{"key": "value"}',
           );
           // NOTE: .md is a valid page extension, use .txt for non-page file
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "README.txt"),
             "# README",
           );
 
           // Act
-          const routes = await collectPagesRoutes(denoAdapter, context.projectDir);
+          const routes = await collectPagesRoutes(await getAdapter(), context.projectDir);
 
           // Assert
           assertEquals(routes.length, 1);
@@ -159,10 +160,10 @@ describe("Route Discovery Tests", { sanitizeOps: false, sanitizeResources: false
       it("should handle missing pages directory gracefully", async () => {
         await withTestContext("routes-pages-missing-dir", async (context) => {
           // Arrange - remove pages directory
-          await Deno.remove(join(context.projectDir, "pages"), { recursive: true });
+          await remove(join(context.projectDir, "pages"), { recursive: true });
 
           // Act
-          const routes = await collectPagesRoutes(denoAdapter, context.projectDir);
+          const routes = await collectPagesRoutes(await getAdapter(), context.projectDir);
 
           // Assert
           assertEquals(routes.length, 0);
@@ -172,20 +173,20 @@ describe("Route Discovery Tests", { sanitizeOps: false, sanitizeResources: false
       it("should filter routes with include pattern", async () => {
         await withTestContext("routes-pages-include", async (context) => {
           // Arrange
-          await Deno.mkdir(join(context.projectDir, "pages", "blog"), { recursive: true });
-          await Deno.mkdir(join(context.projectDir, "pages", "docs"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "pages", "blog"), { recursive: true });
+          await mkdir(join(context.projectDir, "pages", "docs"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "pages", "blog", "post.tsx"),
             "export default function Post() {}",
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "docs", "guide.tsx"),
             "export default function Guide() {}",
           );
 
           // Act
           const routes = await collectPagesRoutes(
-            denoAdapter,
+            await getAdapter(),
             context.projectDir,
             ["/blog"],
           );
@@ -199,20 +200,20 @@ describe("Route Discovery Tests", { sanitizeOps: false, sanitizeResources: false
       it("should filter routes with exclude pattern", async () => {
         await withTestContext("routes-pages-exclude", async (context) => {
           // Arrange
-          await Deno.mkdir(join(context.projectDir, "pages", "blog"), { recursive: true });
-          await Deno.mkdir(join(context.projectDir, "pages", "admin"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "pages", "blog"), { recursive: true });
+          await mkdir(join(context.projectDir, "pages", "admin"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "pages", "blog", "post.tsx"),
             "export default function Post() {}",
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "admin", "dashboard.tsx"),
             "export default function Dashboard() {}",
           );
 
           // Act
           const routes = await collectPagesRoutes(
-            denoAdapter,
+            await getAdapter(),
             context.projectDir,
             undefined,
             ["/admin"],
@@ -227,17 +228,17 @@ describe("Route Discovery Tests", { sanitizeOps: false, sanitizeResources: false
       it("should handle special characters in filenames", async () => {
         await withTestContext("routes-pages-special-chars", async (context) => {
           // Arrange
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "hello-world.tsx"),
             "export default function HelloWorld() {}",
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "my_page.tsx"),
             "export default function MyPage() {}",
           );
 
           // Act
-          const routes = await collectPagesRoutes(denoAdapter, context.projectDir);
+          const routes = await collectPagesRoutes(await getAdapter(), context.projectDir);
 
           // Assert
           assertEquals(routes.length, 2);
@@ -249,14 +250,14 @@ describe("Route Discovery Tests", { sanitizeOps: false, sanitizeResources: false
       it("should handle index routes in subdirectories", async () => {
         await withTestContext("routes-pages-subdirectory-index", async (context) => {
           // Arrange
-          await Deno.mkdir(join(context.projectDir, "pages", "products"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "pages", "products"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "pages", "products", "index.tsx"),
             "export default function Products() {}",
           );
 
           // Act
-          const routes = await collectPagesRoutes(denoAdapter, context.projectDir);
+          const routes = await collectPagesRoutes(await getAdapter(), context.projectDir);
 
           // Assert
           assertEquals(routes.length, 1);
@@ -273,13 +274,13 @@ describe("Route Discovery Tests", { sanitizeOps: false, sanitizeResources: false
       it("should collect root page route", async () => {
         await withTestContext("routes-app-root", async (context) => {
           // Arrange
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "page.tsx"),
             "export default function Home() { return <div>Home</div> }",
           );
 
           // Act
-          const routes = await collectAppRoutes(denoAdapter, context.projectDir);
+          const routes = await collectAppRoutes(await getAdapter(), context.projectDir);
 
           // Assert
           assertEquals(routes.length, 1);
@@ -292,14 +293,14 @@ describe("Route Discovery Tests", { sanitizeOps: false, sanitizeResources: false
       it("should collect nested app routes", async () => {
         await withTestContext("routes-app-nested", async (context) => {
           // Arrange
-          await Deno.mkdir(join(context.projectDir, "app", "blog"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "app", "blog"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "app", "blog", "page.tsx"),
             "export default function Blog() {}",
           );
 
           // Act
-          const routes = await collectAppRoutes(denoAdapter, context.projectDir);
+          const routes = await collectAppRoutes(await getAdapter(), context.projectDir);
 
           // Assert
           assertEquals(routes.length, 1);
@@ -311,19 +312,19 @@ describe("Route Discovery Tests", { sanitizeOps: false, sanitizeResources: false
       it("should skip dynamic segment routes - [id]", async () => {
         await withTestContext("routes-app-dynamic-segment", async (context) => {
           // Arrange
-          await Deno.mkdir(join(context.projectDir, "app", "posts"), { recursive: true });
-          await Deno.mkdir(join(context.projectDir, "app", "posts", "[id]"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "app", "posts"), { recursive: true });
+          await mkdir(join(context.projectDir, "app", "posts", "[id]"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "app", "posts", "page.tsx"),
             "export default function Posts() {}",
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "posts", "[id]", "page.tsx"),
             "export default function Post() {}",
           );
 
           // Act
-          const routes = await collectAppRoutes(denoAdapter, context.projectDir);
+          const routes = await collectAppRoutes(await getAdapter(), context.projectDir);
 
           // Assert - dynamic routes should be skipped
           assertEquals(routes.length, 1);
@@ -334,17 +335,17 @@ describe("Route Discovery Tests", { sanitizeOps: false, sanitizeResources: false
       it("should skip catch-all routes - [...slug]", async () => {
         await withTestContext("routes-app-catch-all", async (context) => {
           // Arrange
-          await Deno.mkdir(join(context.projectDir, "app", "docs"), { recursive: true });
-          await Deno.mkdir(join(context.projectDir, "app", "docs", "[...slug]"), {
+          await mkdir(join(context.projectDir, "app", "docs"), { recursive: true });
+          await mkdir(join(context.projectDir, "app", "docs", "[...slug]"), {
             recursive: true,
           });
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "docs", "[...slug]", "page.tsx"),
             "export default function Docs() {}",
           );
 
           // Act
-          const routes = await collectAppRoutes(denoAdapter, context.projectDir);
+          const routes = await collectAppRoutes(await getAdapter(), context.projectDir);
 
           // Assert - catch-all routes should be skipped
           assertEquals(routes.length, 0);
@@ -354,17 +355,17 @@ describe("Route Discovery Tests", { sanitizeOps: false, sanitizeResources: false
       it("should skip optional catch-all routes - [[...slug]]", async () => {
         await withTestContext("routes-app-optional-catch-all", async (context) => {
           // Arrange
-          await Deno.mkdir(join(context.projectDir, "app", "shop"), { recursive: true });
-          await Deno.mkdir(join(context.projectDir, "app", "shop", "[[...slug]]"), {
+          await mkdir(join(context.projectDir, "app", "shop"), { recursive: true });
+          await mkdir(join(context.projectDir, "app", "shop", "[[...slug]]"), {
             recursive: true,
           });
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "shop", "[[...slug]]", "page.tsx"),
             "export default function Shop() {}",
           );
 
           // Act
-          const routes = await collectAppRoutes(denoAdapter, context.projectDir);
+          const routes = await collectAppRoutes(await getAdapter(), context.projectDir);
 
           // Assert - optional catch-all routes should be skipped
           assertEquals(routes.length, 0);
@@ -374,15 +375,15 @@ describe("Route Discovery Tests", { sanitizeOps: false, sanitizeResources: false
       it("should detect and skip force-dynamic routes", async () => {
         await withTestContext("routes-app-force-dynamic", async (context) => {
           // Arrange
-          await Deno.mkdir(join(context.projectDir, "app", "api-data"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "app", "api-data"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "app", "api-data", "page.tsx"),
             `export const dynamic = 'force-dynamic'
 export default function ApiData() {}`,
           );
 
           // Act
-          const routes = await collectAppRoutes(denoAdapter, context.projectDir);
+          const routes = await collectAppRoutes(await getAdapter(), context.projectDir);
 
           // Assert - force-dynamic routes should be skipped
           assertEquals(routes.length, 0);
@@ -392,15 +393,15 @@ export default function ApiData() {}`,
       it("should include static routes without force-dynamic", async () => {
         await withTestContext("routes-app-static", async (context) => {
           // Arrange
-          await Deno.mkdir(join(context.projectDir, "app", "about"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "app", "about"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "app", "about", "page.tsx"),
             `export const dynamic = 'auto'
 export default function About() {}`,
           );
 
           // Act
-          const routes = await collectAppRoutes(denoAdapter, context.projectDir);
+          const routes = await collectAppRoutes(await getAdapter(), context.projectDir);
 
           // Assert
           assertEquals(routes.length, 1);
@@ -411,10 +412,10 @@ export default function About() {}`,
       it("should handle missing app directory gracefully", async () => {
         await withTestContext("routes-app-missing-dir", async (context) => {
           // Arrange - remove app directory
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
           // Act
-          const routes = await collectAppRoutes(denoAdapter, context.projectDir);
+          const routes = await collectAppRoutes(await getAdapter(), context.projectDir);
 
           // Assert
           assertEquals(routes.length, 0);
@@ -424,18 +425,18 @@ export default function About() {}`,
       it("should prefer page.tsx over other page extensions", async () => {
         await withTestContext("routes-app-page-preference", async (context) => {
           // Arrange
-          await Deno.mkdir(join(context.projectDir, "app", "test"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "app", "test"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "app", "test", "page.tsx"),
             "export default function Test() {}",
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "test", "page.jsx"),
             "export default function Test() {}",
           );
 
           // Act
-          const routes = await collectAppRoutes(denoAdapter, context.projectDir);
+          const routes = await collectAppRoutes(await getAdapter(), context.projectDir);
 
           // Assert
           assertEquals(routes.length, 1);
@@ -446,14 +447,14 @@ export default function About() {}`,
       it("should handle page.jsx when page.tsx not present", async () => {
         await withTestContext("routes-app-page-jsx", async (context) => {
           // Arrange
-          await Deno.mkdir(join(context.projectDir, "app", "jsx-only"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "app", "jsx-only"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "app", "jsx-only", "page.jsx"),
             "export default function JsxOnly() {}",
           );
 
           // Act
-          const routes = await collectAppRoutes(denoAdapter, context.projectDir);
+          const routes = await collectAppRoutes(await getAdapter(), context.projectDir);
 
           // Assert
           assertEquals(routes.length, 1);
@@ -464,14 +465,14 @@ export default function About() {}`,
       it("should handle page.ts when other extensions not present", async () => {
         await withTestContext("routes-app-page-ts", async (context) => {
           // Arrange
-          await Deno.mkdir(join(context.projectDir, "app", "ts-only"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "app", "ts-only"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "app", "ts-only", "page.ts"),
             "export default function TsOnly() {}",
           );
 
           // Act
-          const routes = await collectAppRoutes(denoAdapter, context.projectDir);
+          const routes = await collectAppRoutes(await getAdapter(), context.projectDir);
 
           // Assert
           assertEquals(routes.length, 1);
@@ -482,14 +483,14 @@ export default function About() {}`,
       it("should handle page.js when other extensions not present", async () => {
         await withTestContext("routes-app-page-js", async (context) => {
           // Arrange
-          await Deno.mkdir(join(context.projectDir, "app", "js-only"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "app", "js-only"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "app", "js-only", "page.js"),
             "export default function JsOnly() {}",
           );
 
           // Act
-          const routes = await collectAppRoutes(denoAdapter, context.projectDir);
+          const routes = await collectAppRoutes(await getAdapter(), context.projectDir);
 
           // Assert
           assertEquals(routes.length, 1);
@@ -500,18 +501,18 @@ export default function About() {}`,
       it("should ignore layout.tsx files", async () => {
         await withTestContext("routes-app-ignore-layout", async (context) => {
           // Arrange
-          await Deno.mkdir(join(context.projectDir, "app", "with-layout"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "app", "with-layout"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "app", "with-layout", "layout.tsx"),
             "export default function Layout() {}",
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "with-layout", "page.tsx"),
             "export default function Page() {}",
           );
 
           // Act
-          const routes = await collectAppRoutes(denoAdapter, context.projectDir);
+          const routes = await collectAppRoutes(await getAdapter(), context.projectDir);
 
           // Assert - only page.tsx should be collected
           assertEquals(routes.length, 1);
@@ -522,20 +523,20 @@ export default function About() {}`,
       it("should filter app routes with include pattern", async () => {
         await withTestContext("routes-app-include", async (context) => {
           // Arrange
-          await Deno.mkdir(join(context.projectDir, "app", "public-area"), { recursive: true });
-          await Deno.mkdir(join(context.projectDir, "app", "private-area"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "app", "public-area"), { recursive: true });
+          await mkdir(join(context.projectDir, "app", "private-area"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "app", "public-area", "page.tsx"),
             "export default function Public() {}",
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "private-area", "page.tsx"),
             "export default function Private() {}",
           );
 
           // Act
           const routes = await collectAppRoutes(
-            denoAdapter,
+            await getAdapter(),
             context.projectDir,
             ["/public-area"],
           );
@@ -549,20 +550,20 @@ export default function About() {}`,
       it("should filter app routes with exclude pattern", async () => {
         await withTestContext("routes-app-exclude", async (context) => {
           // Arrange
-          await Deno.mkdir(join(context.projectDir, "app", "blog"), { recursive: true });
-          await Deno.mkdir(join(context.projectDir, "app", "admin"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "app", "blog"), { recursive: true });
+          await mkdir(join(context.projectDir, "app", "admin"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "app", "blog", "page.tsx"),
             "export default function Blog() {}",
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "admin", "page.tsx"),
             "export default function Admin() {}",
           );
 
           // Act
           const routes = await collectAppRoutes(
-            denoAdapter,
+            await getAdapter(),
             context.projectDir,
             undefined,
             ["/admin"],
@@ -578,14 +579,14 @@ export default function About() {}`,
         await withTestContext("routes-app-deep-nested", async (context) => {
           // Arrange
           const deepPath = join(context.projectDir, "app", "a", "b", "c", "d");
-          await Deno.mkdir(deepPath, { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(deepPath, { recursive: true });
+          await writeTextFile(
             join(deepPath, "page.tsx"),
             "export default function Deep() {}",
           );
 
           // Act
-          const routes = await collectAppRoutes(denoAdapter, context.projectDir);
+          const routes = await collectAppRoutes(await getAdapter(), context.projectDir);
 
           // Assert
           assertEquals(routes.length, 1);
@@ -597,23 +598,23 @@ export default function About() {}`,
       it("should handle multiple routes at different levels", async () => {
         await withTestContext("routes-app-multiple-levels", async (context) => {
           // Arrange
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "page.tsx"),
             "export default function Home() {}",
           );
-          await Deno.mkdir(join(context.projectDir, "app", "about"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "app", "about"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "app", "about", "page.tsx"),
             "export default function About() {}",
           );
-          await Deno.mkdir(join(context.projectDir, "app", "about", "team"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "app", "about", "team"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "app", "about", "team", "page.tsx"),
             "export default function Team() {}",
           );
 
           // Act
-          const routes = await collectAppRoutes(denoAdapter, context.projectDir);
+          const routes = await collectAppRoutes(await getAdapter(), context.projectDir);
 
           // Assert
           assertEquals(routes.length, 3);
@@ -625,14 +626,14 @@ export default function About() {}`,
       it("should track segment directories correctly", async () => {
         await withTestContext("routes-app-segment-dirs", async (context) => {
           // Arrange
-          await Deno.mkdir(join(context.projectDir, "app", "blog", "posts"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "app", "blog", "posts"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "app", "blog", "posts", "page.tsx"),
             "export default function Posts() {}",
           );
 
           // Act
-          const routes = await collectAppRoutes(denoAdapter, context.projectDir);
+          const routes = await collectAppRoutes(await getAdapter(), context.projectDir);
 
           // Assert
           assertEquals(routes.length, 1);
@@ -644,21 +645,21 @@ export default function About() {}`,
       it("should handle force-dynamic with different quote styles", async () => {
         await withTestContext("routes-app-force-dynamic-quotes", async (context) => {
           // Arrange - single quotes
-          await Deno.mkdir(join(context.projectDir, "app", "single"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "app", "single"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "app", "single", "page.tsx"),
             `export const dynamic = 'force-dynamic'`,
           );
 
           // double quotes
-          await Deno.mkdir(join(context.projectDir, "app", "double"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "app", "double"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "app", "double", "page.tsx"),
             `export const dynamic = "force-dynamic"`,
           );
 
           // Act
-          const routes = await collectAppRoutes(denoAdapter, context.projectDir);
+          const routes = await collectAppRoutes(await getAdapter(), context.projectDir);
 
           // Assert - both should be skipped
           assertEquals(routes.length, 0);
@@ -668,28 +669,28 @@ export default function About() {}`,
       it("should handle mixed dynamic and static nested routes", async () => {
         await withTestContext("routes-app-mixed-routes", async (context) => {
           // Arrange
-          await Deno.mkdir(join(context.projectDir, "app", "products"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "app", "products"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "app", "products", "page.tsx"),
             "export default function Products() {}",
           );
-          await Deno.mkdir(join(context.projectDir, "app", "products", "featured"), {
+          await mkdir(join(context.projectDir, "app", "products", "featured"), {
             recursive: true,
           });
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "products", "featured", "page.tsx"),
             "export default function Featured() {}",
           );
-          await Deno.mkdir(join(context.projectDir, "app", "products", "[id]"), {
+          await mkdir(join(context.projectDir, "app", "products", "[id]"), {
             recursive: true,
           });
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "products", "[id]", "page.tsx"),
             "export default function Product() {}",
           );
 
           // Act
-          const routes = await collectAppRoutes(denoAdapter, context.projectDir);
+          const routes = await collectAppRoutes(await getAdapter(), context.projectDir);
 
           // Assert - only static routes
           assertEquals(routes.length, 2);
@@ -703,7 +704,7 @@ export default function About() {}`,
           // Arrange - app directory exists but has no pages
 
           // Act
-          const routes = await collectAppRoutes(denoAdapter, context.projectDir);
+          const routes = await collectAppRoutes(await getAdapter(), context.projectDir);
 
           // Assert
           assertEquals(routes.length, 0);
@@ -713,19 +714,19 @@ export default function About() {}`,
       it("should skip directories without page files", async () => {
         await withTestContext("routes-app-no-page-files", async (context) => {
           // Arrange
-          await Deno.mkdir(join(context.projectDir, "app", "components"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "app", "components"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "app", "components", "Button.tsx"),
             "export default function Button() {}",
           );
-          await Deno.mkdir(join(context.projectDir, "app", "utils"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "app", "utils"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "app", "utils", "helpers.ts"),
             "export function helper() {}",
           );
 
           // Act
-          const routes = await collectAppRoutes(denoAdapter, context.projectDir);
+          const routes = await collectAppRoutes(await getAdapter(), context.projectDir);
 
           // Assert - no routes since no page files
           assertEquals(routes.length, 0);

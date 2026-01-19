@@ -7,10 +7,8 @@
  */
 
 import { rewriteBareImports, rewriteVendorImports } from "../../esm/import-rewriter.ts";
-import {
-  getDefaultImportMap,
-  transformImportsWithMap,
-} from "@veryfront/modules/import-map/index.ts";
+import { loadImportMap, transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/index.ts";
 import { isBrowser, isSSR } from "../context.ts";
 import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
 
@@ -28,9 +26,14 @@ export const resolveBarePlugin: TransformPlugin = {
       // SSR: Apply import map to normalize remaining bare specifiers
       // This ensures all imports of the same package use the same module instance,
       // preventing React context mismatch issues
+      const cachedMap = ctx.metadata.get("importMap") as ImportMapConfig | undefined;
+      const importMap = cachedMap ?? await loadImportMap(ctx.projectDir);
+      if (!cachedMap) {
+        ctx.metadata.set("importMap", importMap);
+      }
       code = transformImportsWithMap(
         code,
-        getDefaultImportMap(),
+        importMap,
         undefined,
         { resolveBare: true },
       );

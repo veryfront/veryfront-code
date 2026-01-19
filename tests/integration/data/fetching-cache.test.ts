@@ -1,14 +1,9 @@
-import { assertEquals } from "@std/assert";
+import { assertEquals } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
 import { DataFetcher } from "@veryfront/data/index.ts";
 
-Deno.test(
-  {
-    name: "DataFetcher LRU/TTL basic behavior",
-    permissions: { env: true },
-    sanitizeResources: false, // DataFetcher cache has cleanup interval
-    sanitizeOps: false,
-  },
-  async () => {
+describe("DataFetcher LRU/TTL basic behavior", () => {
+  it("caches and clears data correctly", async () => {
     const fetcher = new DataFetcher();
     const baseUrl = new URL("http://localhost/products/1");
     const pageModule: any = {
@@ -42,5 +37,5 @@ Deno.test(
     fetcher.clearCache("/products/1");
     const r4 = await fetcher.fetchData(pageModule, makeCtx("1"), "production");
     assertEquals((r4.props as any).id, "1");
-  },
-);
+  });
+});

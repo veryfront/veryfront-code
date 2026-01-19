@@ -1,4 +1,4 @@
-import { logger } from "@veryfront/utils";
+import { logger } from "#veryfront/utils";
 import { VeryfrontFSAdapter } from "./index.ts";
 import type { CacheStats, FSAdapterConfig, ResolvedContentContext } from "./types.ts";
 import { ReloadNotifier } from "../../../../server/reload-notifier.ts";
@@ -9,7 +9,7 @@ import {
   invalidateModulePaths,
 } from "../../../../transforms/mdx/esm-module-loader/cache/index.ts";
 import { clearSnippetCache } from "../../../../rendering/snippet-renderer.ts";
-import { buildProxyManagerCacheKey } from "@veryfront/cache";
+import { buildProxyManagerCacheKey } from "#veryfront/cache";
 
 interface ProjectAdapter {
   adapter: VeryfrontFSAdapter;

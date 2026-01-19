@@ -14,7 +14,7 @@ export interface FluentMethodsContext {
   isDev: boolean;
   nonce: string;
   cspUserHeader: string | null;
-  adapter: import("@veryfront/platform/adapters/base.ts").RuntimeAdapter | undefined;
+  adapter: import("#veryfront/platform/adapters/base.ts").RuntimeAdapter | undefined;
   isVeryfrontDomain: boolean;
 }
 

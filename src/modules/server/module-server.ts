@@ -1,21 +1,20 @@
 /** Module Server - serves transformed ESM modules at /_vf_modules/* URLs */
 
-import { join } from "@veryfront/platform/compat/path/index.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
-import { type TransformOptions, transformToESM } from "@veryfront/transforms/esm-transform.ts";
-import { serverLogger, serverLogger as logger } from "@veryfront/utils";
-import { HTTP_NOT_FOUND, HTTP_OK, HTTP_SERVER_ERROR } from "@veryfront/utils";
-import { getContentTypeForPath } from "@veryfront/server/handlers/utils/content-types.ts";
-import { createSecureFs } from "@veryfront/security";
-import { getErrorMessage } from "@veryfront/errors/veryfront-error.ts";
-import { getApiBaseUrlEnv } from "@veryfront/config/env.ts";
-import { injectContext } from "@veryfront/observability/tracing/otlp-setup.ts";
-import { injectNodePositions } from "@veryfront/transforms/plugins/babel-node-positions.ts";
-import { parseProjectDomain } from "@veryfront/server/utils/domain-parser.ts";
+import { join } from "#veryfront/platform/compat/path/index.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { type TransformOptions, transformToESM } from "#veryfront/transforms/esm-transform.ts";
+import { serverLogger, serverLogger as logger } from "#veryfront/utils";
+import { HTTP_NOT_FOUND, HTTP_OK, HTTP_SERVER_ERROR } from "#veryfront/utils";
+import { getContentTypeForPath } from "#veryfront/server/handlers/utils/content-types.ts";
+import { createSecureFs } from "#veryfront/security";
+import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
+import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
+import { injectContext } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { injectNodePositions } from "#veryfront/transforms/plugins/babel-node-positions.ts";
+import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import { applySSRImportRewrites } from "./ssr-import-rewriter.ts";
-import { addHMRTimestamps } from "@veryfront/transforms/esm/import-rewriter.ts";
-// Note: React imports are kept as bare specifiers for SSR, resolved via deno.json to esm.sh
+import { addHMRTimestamps } from "#veryfront/transforms/esm/import-rewriter.ts";
 
 const DEV_MODULE_PREFIX = /^\/(?:_vf_modules|_veryfront\/modules)\//;
 const SNIPPET_MODULE_PREFIX = /^\/_vf_modules\/_snippets\/([a-f0-9]+)\.js/;
@@ -593,24 +592,35 @@ async function findSourceFile(
     }
   }
 
-  // Framework file lookup configuration: [prefix, frameworkDir, logLabel]
+  // Framework file lookup configuration: [prefix, frameworkDir, logLabel, stripPrefix]
   // Order matters: more specific prefixes should come first
-  const frameworkLookups: [string, string, string][] = [
-    ["lib/", join(FRAMEWORK_ROOT, "src"), "lib"],
+  // stripPrefix: if true, removes the prefix from path when looking up (for virtual prefixes like _veryfront/)
+  const frameworkLookups: [string, string, string, boolean][] = [
+    // _veryfront/ prefix is for #veryfront imports rewritten by the transform pipeline
+    // e.g., #veryfront/react/head-collector.ts → /_vf_modules/_veryfront/react/head-collector.js
+    // The _veryfront/ prefix is stripped because it's virtual - actual files are at src/react/...
+    ["_veryfront/", join(FRAMEWORK_ROOT, "src"), "_veryfront", true],
+    ["lib/", join(FRAMEWORK_ROOT, "src"), "lib", false],
     // Support both "exports/" and "src/exports/" paths for context module resolution
     // This is needed because lib/usePageContext.tsx imports "../src/exports/context.ts"
     // which becomes "src/exports/context.js" when resolved from "lib/usePageContext.js"
-    ["src/exports/", FRAMEWORK_ROOT, "src/exports"],
-    ["exports/", join(FRAMEWORK_ROOT, "src"), "exports"],
-    ["react/", join(FRAMEWORK_ROOT, "src"), "react"],
+    ["src/exports/", FRAMEWORK_ROOT, "src/exports", false],
+    ["exports/", join(FRAMEWORK_ROOT, "src"), "exports", false],
+    ["react/", join(FRAMEWORK_ROOT, "src"), "react", false],
   ];
 
   const platformFs = createFileSystem();
-  for (const [prefix, frameworkDir, label] of frameworkLookups) {
+  for (const [prefix, frameworkDir, label, stripPrefix] of frameworkLookups) {
     if (!basePathWithoutExt.startsWith(prefix)) continue;
 
+    // Strip the prefix if configured (for virtual prefixes like _veryfront/)
+    // e.g., "_veryfront/react/head-collector" → "react/head-collector"
+    const pathWithinFramework = stripPrefix
+      ? basePathWithoutExt.slice(prefix.length)
+      : basePathWithoutExt;
+
     for (const ext of extensions) {
-      const frameworkPath = join(frameworkDir, basePathWithoutExt + ext);
+      const frameworkPath = join(frameworkDir, pathWithinFramework + ext);
       try {
         const stat = await platformFs.stat(frameworkPath);
         if (stat.isFile) {

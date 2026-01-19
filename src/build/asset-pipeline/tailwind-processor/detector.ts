@@ -3,10 +3,10 @@
  * Uses secure filesystem wrapper to prevent path traversal attacks.
  */
 
-import { join } from "@veryfront/platform/compat/path/index.ts";
-import { logger } from "@veryfront/utils";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { createSecureFs } from "@veryfront/security";
+import { join } from "#veryfront/platform/compat/path/index.ts";
+import { logger } from "#veryfront/utils";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { createSecureFs } from "#veryfront/security";
 
 /** Detect if a CSS file uses Tailwind v4 (@import "tailwindcss" syntax) */
 export async function isTailwindV4File(

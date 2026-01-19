@@ -1,4 +1,4 @@
-import { serverLogger as logger } from "@veryfront/utils";
+import { serverLogger as logger } from "#veryfront/utils";
 import type { Span, SpanKind } from "./types.ts";
 import type { OpenTelemetryAPI, SpanOptions } from "./types.ts";
 

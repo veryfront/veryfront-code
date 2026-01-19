@@ -6,7 +6,7 @@
  *
  * @example
  * ```typescript
- * import { copyStaticAssets, generateManifest, buildPagesRoutes } from '@veryfront/server/build'
+ * import { copyStaticAssets, generateManifest, buildPagesRoutes } from "#veryfront/server/build'
  *
  * // Copy static assets
  * await copyStaticAssets(adapter, projectDir, publicDir)

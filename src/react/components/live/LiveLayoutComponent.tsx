@@ -1,4 +1,4 @@
-import type { Entity, MDXGlobals } from "@veryfront/types";
+import type { Entity, MDXGlobals } from "#veryfront/types";
 import type * as React from "react";
 import type { MdxBundle } from "../LayoutComponent.tsx";
 import { LayoutComponent } from "../LayoutComponent.tsx";

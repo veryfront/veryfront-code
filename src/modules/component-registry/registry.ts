@@ -1,6 +1,6 @@
-import { serverLogger as logger } from "@veryfront/utils";
-import { basename, join } from "@veryfront/platform/compat/path/index.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { serverLogger as logger } from "#veryfront/utils";
+import { basename, join } from "#veryfront/platform/compat/path/index.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type * as React from "react";
 
 export interface ComponentExports {

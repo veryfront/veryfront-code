@@ -1,6 +1,6 @@
 import type { RouteMatch } from "./api-route-matcher.ts";
-import type { FileSystemAdapter } from "@veryfront/platform/adapters/base.ts";
-import { parseCookies } from "@veryfront/utils/cookie-utils.ts";
+import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
+import { parseCookies } from "#veryfront/utils/cookie-utils.ts";
 
 export { parseCookies };
 

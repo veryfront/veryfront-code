@@ -10,7 +10,7 @@ import {
   createWatcherIterator,
   setupNodeFsWatcher,
 } from "../shared/shared-watcher.ts";
-import { serverLogger } from "@veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import type { FileChangeEvent } from "../../base.ts";
 
 export class NodeFileSystemAdapter implements FileSystemAdapter {
@@ -116,7 +116,6 @@ export class NodeFileSystemAdapter implements FileSystemAdapter {
 
     const iterator = createWatcherIterator(
       eventQueue,
-      () => resolver,
       (r) => {
         resolver = r;
       },

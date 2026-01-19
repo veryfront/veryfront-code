@@ -1,12 +1,12 @@
 import type * as React from "react";
-import { serverLogger as logger } from "@veryfront/utils";
-import { RSCProductionOptimizer } from "@veryfront/rendering/rsc/production-optimizer.ts";
-import type { RSCRenderer } from "@veryfront/rendering/rsc/server-renderer/index.ts";
-import type { RSCPayload } from "@veryfront/rendering/rsc/types.ts";
+import { serverLogger as logger } from "#veryfront/utils";
+import { RSCProductionOptimizer } from "#veryfront/rendering/rsc/production-optimizer.ts";
+import type { RSCRenderer } from "#veryfront/rendering/rsc/server-renderer/index.ts";
+import type { RSCPayload } from "#veryfront/rendering/rsc/types.ts";
 import { extractParams, resolveComponentPath } from "./component-resolver.ts";
 import { isProductionMode } from "./environment.ts";
 import type { RenderProps } from "./types.ts";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 export class RenderHandler {
   constructor(

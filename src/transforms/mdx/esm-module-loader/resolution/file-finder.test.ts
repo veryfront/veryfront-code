@@ -5,15 +5,15 @@
  * properly resolved from the framework source directory, consistent with
  * the module server's findSourceFile behavior.
  */
-import { assertEquals, assertExists } from "@std/assert";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { resolveModuleFile } from "./file-finder.ts";
-import { createMockAdapter } from "@veryfront/platform/adapters/mock.ts";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 
 const mockAdapter = createMockAdapter();
 
-Deno.test({
-  name: "resolveModuleFile resolves framework react/* files",
-  async fn() {
+describe("resolveModuleFile", () => {
+  it("resolves framework react/* files", async () => {
     // react/router/index.js should resolve to src/react/router/index.ts
     const result = await resolveModuleFile(
       "_vf_modules/react/router/index.js",
@@ -33,12 +33,9 @@ Deno.test({
       true,
       "Should contain useRouter export",
     );
-  },
-});
+  });
 
-Deno.test({
-  name: "resolveModuleFile resolves framework react/context files",
-  async fn() {
+  it("resolves framework react/context files", async () => {
     const result = await resolveModuleFile(
       "_vf_modules/react/context/index.js",
       mockAdapter,
@@ -57,12 +54,9 @@ Deno.test({
       true,
       "Should contain usePageContext export",
     );
-  },
-});
+  });
 
-Deno.test({
-  name: "resolveModuleFile resolves framework react/components/Head files",
-  async fn() {
+  it("resolves framework react/components/Head files", async () => {
     const result = await resolveModuleFile(
       "_vf_modules/react/components/Head.js",
       mockAdapter,
@@ -81,12 +75,9 @@ Deno.test({
       true,
       "Should contain Head export",
     );
-  },
-});
+  });
 
-Deno.test({
-  name: "resolveModuleFile resolves framework lib/* files",
-  async fn() {
+  it("resolves framework lib/* files", async () => {
     const result = await resolveModuleFile(
       "_vf_modules/lib/Router.js",
       mockAdapter,
@@ -100,12 +91,9 @@ Deno.test({
       `Expected path to end with src/lib/Router.tsx, got: ${result.actualFilePath}`,
     );
     assertExists(result.sourceCode, "Should have source code");
-  },
-});
+  });
 
-Deno.test({
-  name: "resolveModuleFile resolves framework react/fonts files",
-  async fn() {
+  it("resolves framework react/fonts files", async () => {
     const result = await resolveModuleFile(
       "_vf_modules/react/fonts/index.js",
       mockAdapter,
@@ -119,5 +107,5 @@ Deno.test({
       `Expected path to end with src/react/fonts/index.ts, got: ${result.actualFilePath}`,
     );
     assertExists(result.sourceCode, "Should have source code");
-  },
+  });
 });

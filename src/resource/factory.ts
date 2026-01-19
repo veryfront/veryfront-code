@@ -7,7 +7,7 @@
  */
 
 import type { Resource, ResourceConfig } from "./types.ts";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 /**
  * Create an MCP resource

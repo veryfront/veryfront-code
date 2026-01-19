@@ -1,6 +1,6 @@
-import { buildClientManifest } from "@veryfront/rendering/rsc/component-analyzer.ts";
-import { RSCRenderer } from "@veryfront/rendering/rsc/server-renderer/index.ts";
-import type { ClientComponentMeta } from "@veryfront/rendering/rsc/types.ts";
+import { buildClientManifest } from "#veryfront/rendering/rsc/component-analyzer.ts";
+import { RSCRenderer } from "#veryfront/rendering/rsc/server-renderer/index.ts";
+import type { ClientComponentMeta } from "#veryfront/rendering/rsc/types.ts";
 import { HydratorHandler } from "./hydrator-handler.ts";
 import { ManifestHandler } from "./manifest-handler.ts";
 import { PageHandler } from "./page-handler.ts";

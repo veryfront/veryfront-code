@@ -4,23 +4,29 @@ import {
   assertExists,
   assertMatch,
   assertStringIncludes,
-} from "@std/assert";
-import { afterAll, describe, it } from "@std/testing/bdd";
+} from "@veryfront/testing/assert";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
 import "../../../_helpers/log-guard.ts";
 
-import { join } from "@std/path";
+import { isNotFoundError, mkdir, remove, writeTextFile } from "@veryfront/compat/fs.ts";
+import { join } from "@veryfront/compat/path";
+import { isDeno } from "../../../../src/platform/compat/runtime.ts";
 import { startUniversalServer } from "../../../../src/server/production-server.ts";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
-import { assertDrained, withEnv } from "../../../_helpers/utils.ts";
+import { assertDrained } from "../../../_helpers/utils.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
+import { delay } from "@std/async";
 
 // Add handler for intentional test errors from boom pages
-globalThis.addEventListener("unhandledrejection", (event) => {
-  const reason = event.reason;
-  if (reason instanceof Error && (reason.message === "boom" || reason.message === "fail")) {
-    event.preventDefault(); // Prevent test failure for intentional errors
-  }
-});
+// Only register if addEventListener is available (Deno, browsers)
+if (typeof globalThis.addEventListener === "function") {
+  globalThis.addEventListener("unhandledrejection", (event) => {
+    const reason = (event as PromiseRejectionEvent).reason;
+    if (reason instanceof Error && (reason.message === "boom" || reason.message === "fail")) {
+      event.preventDefault(); // Prevent test failure for intentional errors
+    }
+  });
+}
 
 describe(
   "Universal Server (adapter-backed)",
@@ -72,7 +78,7 @@ describe(
     it("serves static files from public/ and exposes metrics and CORS", async () => {
       await withTestContext("universal-server-static", async (context: TestContext) => {
         // create public file
-        await Deno.writeTextFile(`${context.projectDir}/public/hello.txt`, "hi");
+        await writeTextFile(`${context.projectDir}/public/hello.txt`, "hi");
         const port = await context.allocatePort();
         const controller = new AbortController();
         const server = await startUniversalServer({
@@ -125,15 +131,15 @@ describe(
     it("handles pages/api and app route handlers (GET/POST)", async () => {
       await withTestContext("universal-server-api", async (context: TestContext) => {
         // Enable RSC via config instead of env var
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
           `export default { experimental: { rsc: true } };`,
         );
 
         // pages/api/hello.ts
         const pagesApiDir = join(context.projectDir, "pages", "api");
-        await Deno.mkdir(pagesApiDir, { recursive: true });
-        await Deno.writeTextFile(
+        await mkdir(pagesApiDir, { recursive: true });
+        await writeTextFile(
           join(pagesApiDir, "hello.ts"),
           `
         export async function GET() {
@@ -144,8 +150,8 @@ describe(
 
         // app/api/echo/route.ts
         const appApiEchoDir = join(context.projectDir, "app", "api", "echo");
-        await Deno.mkdir(appApiEchoDir, { recursive: true });
-        await Deno.writeTextFile(
+        await mkdir(appApiEchoDir, { recursive: true });
+        await writeTextFile(
           join(appApiEchoDir, "route.ts"),
           `
         export async function POST(req: Request) {
@@ -181,9 +187,9 @@ describe(
         assertEquals(bj.youSent.ok, true);
 
         // app router SSR root (write file before fetch)
-        await Deno.writeTextFile(join(context.projectDir, "app", "page.mdx"), `# Hello World`);
+        await writeTextFile(join(context.projectDir, "app", "page.mdx"), `# Hello World`);
         // Re-issue readiness (renderer caches on first call); small delay for fs
-        await new Promise((r) => setTimeout(r, 50));
+        await delay(50);
         const p = await fetch(`http://127.0.0.1:${port}/`);
         assertEquals(p.status, 200);
         const html = await p.text();
@@ -223,13 +229,13 @@ describe(
     it("serves hydrate.js alias and RSC render ETag/304", async () => {
       await withTestContext("universal-server-rsc-hydrate-etag", async (context: TestContext) => {
         // Enable RSC via config instead of env var
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
           `export default { experimental: { rsc: true } };`,
         );
         const dir = join(context.projectDir, "app");
-        await Deno.mkdir(dir, { recursive: true });
-        await Deno.writeTextFile(
+        await mkdir(dir, { recursive: true });
+        await writeTextFile(
           join(dir, "page.ts"),
           `export default async function Page(){ return '<div>Hi</div>'; }`,
         );
@@ -269,9 +275,9 @@ describe(
     it("returns 500 HTML fallback with security headers on SSR error", async () => {
       await withTestContext("universal-server-500-fallback", async (context: TestContext) => {
         const dir = join(context.projectDir, "app");
-        await Deno.mkdir(dir, { recursive: true });
+        await mkdir(dir, { recursive: true });
         // Create a page that throws to trigger SSR error path
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(dir, "boom.tsx"),
           `export default function Page(){ throw new Error('fail'); }`,
         );
@@ -302,34 +308,36 @@ describe(
       await withTestContext("universal-server-app-loading-error", async (context: TestContext) => {
         // Clean and set up app router structure
         try {
-          await Deno.remove(join(context.projectDir, "app"), {
+          await remove(join(context.projectDir, "app"), {
             recursive: true,
           });
         } catch (e) {
-          console.warn("[TEST] cleanup: failed to remove app dir", e);
+          if (!isNotFoundError(e)) {
+            console.warn("[TEST] cleanup: failed to remove app dir", e);
+          }
         }
-        await Deno.mkdir(join(context.projectDir, "app", "a", "b"), {
+        await mkdir(join(context.projectDir, "app", "a", "b"), {
           recursive: true,
         });
 
         // Root layout with <main>
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "app", "layout.tsx"),
           `export default function Root({ children }: any){ return (<html><body><main data-router-focus>{children}</main></body></html>); }`,
         );
 
         // Segment A loading and error
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "app", "a", "loading.tsx"),
           `export default function Loading(){ return <p>Loading A...</p>; }`,
         );
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "app", "a", "error.tsx"),
           `export default function Error({ error }: any){ return <p>ErrA:{String(error&&error.message||error)}</p>; }`,
         );
 
         // Segment B page that throws
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "app", "a", "b", "page.tsx"),
           `export default async function Page(){ await new Promise(r=>setTimeout(r, 20)); throw new Error('boom'); }`,
         );
@@ -360,15 +368,17 @@ describe(
       await withTestContext("universal-server-app-not-found", async (context: TestContext) => {
         // Ensure clean app dir and create not-found in segment
         try {
-          await Deno.remove(join(context.projectDir, "app"), {
+          await remove(join(context.projectDir, "app"), {
             recursive: true,
           });
         } catch (e) {
-          console.warn("[TEST] cleanup: failed to remove app dir", e);
+          if (!isNotFoundError(e)) {
+            console.warn("[TEST] cleanup: failed to remove app dir", e);
+          }
         }
         const segDir = join(context.projectDir, "app", "a", "b");
-        await Deno.mkdir(segDir, { recursive: true });
-        await Deno.writeTextFile(
+        await mkdir(segDir, { recursive: true });
+        await writeTextFile(
           join(segDir, "not-found.tsx"),
           `export default function NotFound(){ return <p>Missing B</p>; }`,
         );
@@ -398,8 +408,8 @@ describe(
       await withTestContext("universal-server-metadata", async (context: TestContext) => {
         // Create App Router root page with frontmatter metadata
         const appDir = join(context.projectDir, "app");
-        await Deno.mkdir(appDir, { recursive: true });
-        await Deno.writeTextFile(
+        await mkdir(appDir, { recursive: true });
+        await writeTextFile(
           join(appDir, "page.mdx"),
           `---\ntitle: Custom Title\ndescription: Custom Description\n---\n\n# Hello\n`,
         );
@@ -428,8 +438,8 @@ describe(
     it("applies generateMetadata() from App Router script page", async () => {
       await withTestContext("universal-server-generate-metadata", async (context: TestContext) => {
         const metaDir = join(context.projectDir, "app", "meta");
-        await Deno.mkdir(metaDir, { recursive: true });
-        await Deno.writeTextFile(
+        await mkdir(metaDir, { recursive: true });
+        await writeTextFile(
           join(metaDir, "page.ts"),
           `export async function generateMetadata(){
            return { title: 'GM Title', description: 'GM Desc', meta: [{ name: 'keywords', content: 'foo,bar' }] };
@@ -462,14 +472,14 @@ describe(
     it("streams RSC NDJSON with root and sidebar slots in order", async () => {
       await withTestContext("universal-server-rsc-stream-order", async (context: TestContext) => {
         // Enable RSC via config instead of env var
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
           `export default { experimental: { rsc: true } };`,
         );
 
         const dir = join(context.projectDir, "app", "rsc");
-        await Deno.mkdir(dir, { recursive: true });
-        await Deno.writeTextFile(
+        await mkdir(dir, { recursive: true });
+        await writeTextFile(
           join(dir, "page.ts"),
           `export default async function Page(){ return '<div>RSC Stream</div>'; }`,
         );
@@ -490,10 +500,18 @@ describe(
         const reader = resp.body.getReader();
         const dec = new TextDecoder();
         let buf = "";
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buf += dec.decode(value);
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += dec.decode(value);
+          }
+        } finally {
+          try {
+            await reader.cancel();
+          } catch {
+            // ignore stream cancellation errors
+          }
         }
         const lines = buf.split(/\n+/).filter((l) => l.trim().startsWith("{"));
         const events = lines
@@ -530,8 +548,8 @@ describe(
       await withTestContext("universal-server-ssr-caching-head", async (context: TestContext) => {
         // App Router home page
         const appDir = join(context.projectDir, "app");
-        await Deno.mkdir(appDir, { recursive: true });
-        await Deno.writeTextFile(join(appDir, "page.mdx"), `# Home SSR\n\nContent here.`);
+        await mkdir(appDir, { recursive: true });
+        await writeTextFile(join(appDir, "page.mdx"), `# Home SSR\n\nContent here.`);
 
         const port = await context.allocatePort();
         const controller = new AbortController();
@@ -567,31 +585,31 @@ describe(
       await withTestContext("universal-server-app-route-methods", async (context: TestContext) => {
         // Create dynamic route with GET only
         const postDir = join(context.projectDir, "app", "post", "[slug]");
-        await Deno.mkdir(postDir, { recursive: true });
-        await Deno.writeTextFile(
+        await mkdir(postDir, { recursive: true });
+        await writeTextFile(
           join(postDir, "route.ts"),
           `export async function GET(_req: Request, { params }: any){ return Response.json({ slug: params.slug }); }`,
         );
         // Create route with POST only
         const adminDir = join(context.projectDir, "app", "admin");
-        await Deno.mkdir(adminDir, { recursive: true });
-        await Deno.writeTextFile(
+        await mkdir(adminDir, { recursive: true });
+        await writeTextFile(
           join(adminDir, "route.ts"),
           `export async function POST(_req: Request){ return new Response('ok'); }`,
         );
 
         // Catch-all route returns joined parts
         const docsDir = join(context.projectDir, "app", "docs", "[...parts]");
-        await Deno.mkdir(docsDir, { recursive: true });
-        await Deno.writeTextFile(
+        await mkdir(docsDir, { recursive: true });
+        await writeTextFile(
           join(docsDir, "route.ts"),
           `export async function GET(_req: Request, { params }: any){ return Response.json({ parts: params.parts }); }`,
         );
 
         // Optional catch-all route
         const optDir = join(context.projectDir, "app", "opt", "[[...rest]]");
-        await Deno.mkdir(optDir, { recursive: true });
-        await Deno.writeTextFile(
+        await mkdir(optDir, { recursive: true });
+        await writeTextFile(
           join(optDir, "route.ts"),
           `export async function GET(_req: Request, { params }: any){ return Response.json({ rest: params.rest ?? '' }); }`,
         );
@@ -655,15 +673,18 @@ describe(
 
     it("serves RSC render/page endpoints for App Router page", async () => {
       await withTestContext("universal-server-rsc-endpoints", async (context: TestContext) => {
-        const restore = withEnv({ VERYFRONT_EXPERIMENTAL_RSC: "1" });
         // Setup: create an app route that returns simple HTML string (no TSX) and a client component
         const dir = join(context.projectDir, "app", "rsc");
-        await Deno.mkdir(dir, { recursive: true });
-        await Deno.writeTextFile(
+        await mkdir(dir, { recursive: true });
+        await writeTextFile(
+          join(context.projectDir, "veryfront.config.js"),
+          `export default { experimental: { rsc: true } };`,
+        );
+        await writeTextFile(
           join(dir, "page.ts"),
           `export default async function Page(){ return '<div id="rsc-hello">RSC Hello</div>'; }`,
         );
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(dir, "Button.client.tsx"),
           `"use client"\nexport default function Button(){ return <button id="btn">Click</button>; }`,
         );
@@ -735,13 +756,19 @@ describe(
         assertEquals(s.status, 200);
         assertExists(s.body);
         const reader = s.body.getReader();
-        const { value } = await reader.read();
-        if (!value || value.length === 0) throw new Error("empty stream");
-        await reader.cancel();
+        try {
+          const { value } = await reader.read();
+          if (!value || value.length === 0) throw new Error("empty stream");
+        } finally {
+          try {
+            await reader.cancel();
+          } catch {
+            // ignore stream cancellation errors
+          }
+        }
 
         controller.abort();
         await server.stop();
-        restore();
         await assertDrained();
       });
     });

@@ -1,6 +1,6 @@
 import type { Tool, ToolDefinition } from "./types.ts";
 import { zodToJsonSchema } from "./schema/zod-json-schema.ts";
-import { agentLogger } from "@veryfront/utils/logger/logger.ts";
+import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 
 /**
  * Tool registry for managing tools

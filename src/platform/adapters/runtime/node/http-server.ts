@@ -1,6 +1,6 @@
 import type { ServeOptions, Server } from "../../base.ts";
 import type { NodeHttpServer, WSWebSocket, WSWebSocketServer } from "./types.ts";
-import { DEFAULT_PORT } from "@veryfront/config";
+import { DEFAULT_PORT } from "#veryfront/config";
 
 // Track pending WebSocket upgrades by request ID
 const pendingWebSocketUpgrades = new Map<string, {
@@ -119,7 +119,7 @@ export async function createNodeServer(
 
       _res.end();
     } catch (_error) {
-      const { serverLogger } = await import("@veryfront/utils");
+      const { serverLogger } = await import("#veryfront/utils");
       serverLogger.error("Request handler error:", _error);
       _res.statusCode = 500;
       _res.end("Internal Server Error");
@@ -160,7 +160,7 @@ export async function createNodeServer(
             .emit("connection", ws, request);
         });
     } catch (error) {
-      const { serverLogger } = await import("@veryfront/utils");
+      const { serverLogger } = await import("#veryfront/utils");
       serverLogger.error("WebSocket upgrade error:", error);
       socket.destroy();
     }

@@ -1,5 +1,5 @@
-import { assertExists } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertExists } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createHttpServer } from "./factory.ts";
 
 describe("createHttpServer", () => {

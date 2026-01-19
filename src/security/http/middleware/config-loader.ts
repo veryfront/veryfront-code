@@ -4,9 +4,9 @@
  * @module security/middleware/config-loader
  */
 
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/index.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/index.ts";
 import type { SecurityConfig } from "./types.ts";
-import { serverLogger } from "@veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 
 /**
  * Validates security configuration structure
@@ -60,7 +60,7 @@ export async function loadSecurityConfig(
   adapter: RuntimeAdapter,
 ): Promise<SecurityConfig | null> {
   try {
-    const { getConfig } = await import("@veryfront/config");
+    const { getConfig } = await import("#veryfront/config");
     const cfg = await getConfig(projectDir, adapter);
     const securityConfig = (cfg as Record<string, unknown>)?.security;
 

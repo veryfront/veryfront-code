@@ -1,6 +1,6 @@
 import type React from "react";
 import { useEffect, useState } from "react";
-import type { PageContext } from "@veryfront/types";
+import type { PageContext } from "#veryfront/types";
 import type { MdxBundle } from "../LayoutComponent.tsx";
 import { LiveDataProvider } from "./LiveDataProvider.tsx";
 import { LiveDependenciesProvider } from "./LiveDependenciesProvider.tsx";

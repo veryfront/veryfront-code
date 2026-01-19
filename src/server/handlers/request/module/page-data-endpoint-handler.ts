@@ -6,7 +6,7 @@
 
 import type { HandlerContext, HandlerResult } from "../../types.ts";
 import { computeEtag, hasMatchingEtag } from "../../utils/etag.ts";
-import { ResponseBuilder } from "@veryfront/security/index.ts";
+import { ResponseBuilder } from "#veryfront/security/index.ts";
 import { getRendererForProject } from "../../../shared/renderer-factory.ts";
 
 /**

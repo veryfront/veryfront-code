@@ -1,5 +1,5 @@
 import type { ParsedVersion } from "./types.ts";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 export function parseVersion(versionString: string): ParsedVersion {
   const match = versionString.match(/^(\d+)\.(\d+)\.(\d+)/);

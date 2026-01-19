@@ -1,9 +1,9 @@
-import { logger } from "@veryfront/utils";
+import { logger } from "#veryfront/utils";
 import type { FileInfo } from "../../base.ts";
 import type { ProjectFile, VeryfrontAPIClient } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
-import { createError, toError } from "@veryfront/errors";
+import { createError, toError } from "#veryfront/errors";
 import type { ContentContextProvider } from "./read-operations.ts";
 import { buildFileListCacheKey, buildStatCacheKeyPrefix } from "./cache-keys.ts";
 

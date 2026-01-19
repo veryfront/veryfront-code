@@ -14,4 +14,4 @@ export {
   PROSE_MAX_WIDTH,
   Z_INDEX_DEV_INDICATOR,
   Z_INDEX_ERROR_OVERLAY,
-} from "@veryfront/utils";
+} from "#veryfront/utils";

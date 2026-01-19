@@ -14,7 +14,7 @@ import {
   ToolList,
   ToolResult,
 } from "../../primitives/index.ts";
-import type { AgentStatus, Message, ToolCall } from "@veryfront/agent";
+import type { AgentStatus, Message, ToolCall } from "#veryfront/agent";
 import { type AgentTheme, cn, defaultAgentTheme, mergeThemes } from "./theme.ts";
 
 export interface AgentCardProps {

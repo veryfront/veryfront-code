@@ -1,5 +1,5 @@
 import type { Handler, HandlerContext, RouteRegistryConfig } from "./types.ts";
-import { serverLogger } from "@veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 
 export class RouteRegistry {
   private handlers: Handler[] = [];

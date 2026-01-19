@@ -2,6 +2,7 @@
 export * from "./compat/index.ts";
 export * from "./components/index.ts";
 export * from "./primitives/index.ts";
+export * from "./head-collector.ts";
 
 // Context and routing
 export { PageContextProvider, usePageContext } from "./context/index.ts";

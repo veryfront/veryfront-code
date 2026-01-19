@@ -9,8 +9,8 @@
  * - OTEL_EXPORTER_OTLP_HEADERS: Auth headers (e.g., Authorization=Basic ...)
  */
 
-import { serverLogger as logger } from "@veryfront/utils";
-import { getOtelTracingConfig } from "@veryfront/config/env.ts";
+import { serverLogger as logger } from "#veryfront/utils";
+import { getOtelTracingConfig } from "#veryfront/config/env.ts";
 
 let initialized = false;
 

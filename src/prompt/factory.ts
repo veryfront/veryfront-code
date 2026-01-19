@@ -7,7 +7,7 @@
  */
 
 import type { Prompt, PromptConfig } from "./types.ts";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 /**
  * Create a prompt template

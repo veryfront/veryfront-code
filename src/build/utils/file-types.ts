@@ -3,7 +3,7 @@
  * Consolidates all file type checking logic in one place
  */
 
-import { extname } from "@veryfront/platform/compat/path/index.ts";
+import { extname } from "#veryfront/platform/compat/path/index.ts";
 
 /**
  * Supported image formats

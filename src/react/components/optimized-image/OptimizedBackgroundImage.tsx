@@ -1,5 +1,5 @@
 import React from "react";
-import { RESPONSIVE_IMAGE_WIDTH_LG } from "@veryfront/utils/constants/network.ts";
+import { RESPONSIVE_IMAGE_WIDTH_LG } from "#veryfront/utils/constants/network.ts";
 import { getOptimizedPath } from "./helpers.ts";
 
 export function OptimizedBackgroundImage({

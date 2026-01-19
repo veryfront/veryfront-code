@@ -1,4 +1,4 @@
-import { Z_INDEX_ERROR_OVERLAY } from "@veryfront/utils";
+import { Z_INDEX_ERROR_OVERLAY } from "#veryfront/utils";
 
 export function getDevStyles(nonce?: string): string {
   const nonceAttr = nonce ? ` nonce="${nonce}"` : "";

@@ -1,4 +1,5 @@
-import { assertEquals, assertExists } from "@std/assert";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   checkVersionCompatibility,
   detectReactVersion,
@@ -7,8 +8,8 @@ import {
   hasFeature,
 } from "../index.ts";
 
-Deno.test("React version detection", async (t) => {
-  await t.step("should detect React version", () => {
+describe("React version detection", () => {
+  it("should detect React version", () => {
     const info = detectReactVersion();
 
     assertExists(info.version);
@@ -20,7 +21,7 @@ Deno.test("React version detection", async (t) => {
     assertEquals(typeof info.isReact19, "boolean");
   });
 
-  await t.step("should detect React features", () => {
+  it("should detect React features", () => {
     const info = getReactVersionInfo();
 
     assertExists(info.features);
@@ -29,7 +30,7 @@ Deno.test("React version detection", async (t) => {
     assertEquals(typeof info.features.renderToString, "boolean");
   });
 
-  await t.step("should cache version info", () => {
+  it("should cache version info", () => {
     const info1 = getReactVersionInfo();
     const info2 = getReactVersionInfo();
 
@@ -37,8 +38,8 @@ Deno.test("React version detection", async (t) => {
   });
 });
 
-Deno.test("Feature detection", async (t) => {
-  await t.step("should check if feature exists", () => {
+describe("Feature detection", () => {
+  it("should check if feature exists", () => {
     assertEquals(hasFeature("renderToString"), true);
     assertEquals(hasFeature("renderToStaticMarkup"), true);
 
@@ -55,8 +56,8 @@ Deno.test("Feature detection", async (t) => {
   });
 });
 
-Deno.test("SSR method recommendation", async (t) => {
-  await t.step("should recommend appropriate SSR method", () => {
+describe("SSR method recommendation", () => {
+  it("should recommend appropriate SSR method", () => {
     const method = getRecommendedSSRMethod();
     const info = getReactVersionInfo();
 
@@ -70,8 +71,8 @@ Deno.test("SSR method recommendation", async (t) => {
   });
 });
 
-Deno.test("Version compatibility check", async (t) => {
-  await t.step("should check compatibility for required features", () => {
+describe("Version compatibility check", () => {
+  it("should check compatibility for required features", () => {
     const info = getReactVersionInfo();
 
     const basicCheck = checkVersionCompatibility(["renderToString"]);

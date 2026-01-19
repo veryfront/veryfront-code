@@ -3,12 +3,15 @@
  * Tests the main rendering engine and page compilation
  */
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
-import { describe, it } from "@std/testing/bdd";
+import { assert, assertEquals, assertStringIncludes } from "@veryfront/testing/assert";
+import { join } from "@veryfront/compat/path";
+import { mkdir, remove, writeTextFile } from "@veryfront/compat/fs.ts";
+import { describe, it } from "@veryfront/testing/bdd";
+
 import { createRenderer } from "../../../src/rendering/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
+// Skip tests on non-Deno runtimes (SSR uses URL-based imports)
 // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
 // See: https://github.com/facebook/react/issues/24669
 describe(
@@ -22,10 +25,10 @@ describe(
       it("should initialize renderer successfully", async () => {
         await withTestContext("renderer-init", async (context) => {
           // Remove default app directory to use Pages Router
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
           // Create a basic test page
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "index.mdx"),
             `---
 title: Home Page
@@ -52,9 +55,9 @@ This is the home page content.
       it("should render basic MDX page", async () => {
         await withTestContext("renderer-mdx", async (context) => {
           // Remove default app directory to use Pages Router
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "index.mdx"),
             `---
 title: Home Page
@@ -116,15 +119,15 @@ This is the home page content.
       it("should render page with layout", async () => {
         await withTestContext("renderer-layout", async (context) => {
           // Remove default app directory to use Pages Router
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
           // Create project structure
-          await Deno.mkdir(join(context.projectDir, "layouts"), {
+          await mkdir(join(context.projectDir, "layouts"), {
             recursive: true,
           });
 
           // Create a layout
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "layouts", "main.mdx"),
             `---
 isLayout: true
@@ -144,7 +147,7 @@ export default function MainLayout({ children }) {
 
           // Create a page that uses the layout
           // Note: filename must not contain "layout" as it triggers layout detection
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "styled-page.mdx"),
             `---
 title: Page with Layout
@@ -173,20 +176,20 @@ Here is a paragraph with more text to make sure it renders.
       it("should render page with layout (ESM)", async () => {
         await withTestContext("renderer-layout-esm", async (context) => {
           // Remove default app directory to use Pages Router
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.mkdir(join(context.projectDir, "layouts"), {
+          await mkdir(join(context.projectDir, "layouts"), {
             recursive: true,
           });
 
           // enable esmLayouts via config file
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "veryfront.config.js"),
             `export default { experimental: { esmLayouts: true } };`,
           );
 
           // Create a layout
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "layouts", "main.mdx"),
             `---
 isLayout: true
@@ -206,7 +209,7 @@ export default function MainLayout({ children }) {
 
           // Create a page that uses the layout
           // Note: filename must not contain "layout" as it triggers layout detection
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "styled-page.mdx"),
             `---
 title: Page with Layout
@@ -232,11 +235,11 @@ This content should be wrapped by the layout.
       it("should apply nested directory layouts from pages subfolders", async () => {
         await withTestContext("renderer-nested-layouts", async (context) => {
           // Remove default app directory to use Pages Router
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
           const blogDir = join(context.projectDir, "pages", "blog");
           const postDir = join(blogDir, "post");
-          await Deno.mkdir(postDir, { recursive: true });
+          await mkdir(postDir, { recursive: true });
 
           const outerLayout =
             `---\nisLayout: true\n---\nexport default function OuterLayout({ children }) { return (<div className="outer"><main>{children}</main></div>); }`;
@@ -244,9 +247,9 @@ This content should be wrapped by the layout.
             `---\nisLayout: true\n---\nexport default function InnerLayout({ children }) { return (<div className="inner">{children}</div>); }`;
           const page = `# Nested Layout Page\n\nContent inside nested layouts.`;
 
-          await Deno.writeTextFile(join(blogDir, "layout.mdx"), outerLayout);
-          await Deno.writeTextFile(join(postDir, "layout.mdx"), innerLayout);
-          await Deno.writeTextFile(join(postDir, "index.mdx"), page);
+          await writeTextFile(join(blogDir, "layout.mdx"), outerLayout);
+          await writeTextFile(join(postDir, "layout.mdx"), innerLayout);
+          await writeTextFile(join(postDir, "index.mdx"), page);
 
           const renderer = await createRenderer({
             projectDir: context.projectDir,
@@ -271,10 +274,10 @@ This content should be wrapped by the layout.
       it.skip("should honor nested metadata object in MDX frontmatter", async () => {
         await withTestContext("renderer-mdx-metadata", async (context) => {
           // Remove default app directory to use Pages Router
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
           // MDX with frontmatter title and exported nested metadata overriding title
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "mdxmeta.mdx"),
             `---\n` +
               `title: Front Title\n` +
@@ -302,15 +305,15 @@ This content should be wrapped by the layout.
       it.skip("should render page with provider", async () => {
         await withTestContext("renderer-provider", async (context) => {
           // Remove default app directory to use Pages Router
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
           // Create project structure
-          await Deno.mkdir(join(context.projectDir, "providers"), {
+          await mkdir(join(context.projectDir, "providers"), {
             recursive: true,
           });
 
           // Create a provider
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "providers", "theme.mdx"),
             `---
 isProvider: true
@@ -326,7 +329,7 @@ export default function ThemeProvider({ children }) {
           );
 
           // Create a page
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "themed.mdx"),
             `---
 title: Themed Page
@@ -354,19 +357,19 @@ This should be wrapped by the theme provider.
       it.skip("should render page with provider (ESM)", async () => {
         await withTestContext("renderer-provider-esm", async (context) => {
           // Remove default app directory to use Pages Router
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.mkdir(join(context.projectDir, "providers"), {
+          await mkdir(join(context.projectDir, "providers"), {
             recursive: true,
           });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "veryfront.config.js"),
             `export default { experimental: { esmLayouts: true } };`,
           );
 
           // Create a provider
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "providers", "theme.mdx"),
             `---
 isProvider: true
@@ -382,7 +385,7 @@ export default function ThemeProvider({ children }) {
           );
 
           // Create a page
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "themed.mdx"),
             `---
 title: Themed Page
@@ -410,10 +413,10 @@ This should be wrapped by the theme provider.
       it("should handle MDX compilation errors", async () => {
         await withTestContext("renderer-error", async (context) => {
           // Remove default app directory to use Pages Router
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
           // Create a page with syntax error
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "broken.mdx"),
             `---
 title: Broken Page
@@ -447,9 +450,9 @@ title: Broken Page
       it("should cache rendered pages", async () => {
         await withTestContext("renderer-cache", async (context) => {
           // Remove default app directory to use Pages Router
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "cached.mdx"),
             `---
 title: Cached Page
@@ -482,10 +485,10 @@ This should be cached after first render.
       it("should clear cache when requested", async () => {
         await withTestContext("renderer-cache-clear", async (context) => {
           // Remove default app directory to use Pages Router
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
           const timestamp1 = Date.now();
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "cached.mdx"),
             `---
 title: Cached Page
@@ -509,7 +512,7 @@ timestamp: ${timestamp1}
 
           // Update the file
           const timestamp2 = Date.now() + 1000;
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "cached.mdx"),
             `---
 title: Updated Cached Page
@@ -531,24 +534,24 @@ timestamp: ${timestamp2}
       it("should render app router page with nested layouts", async () => {
         await withTestContext("renderer-app-router", async (context) => {
           // Create app router structure
-          await Deno.mkdir(join(context.projectDir, "app", "blog", "post"), {
+          await mkdir(join(context.projectDir, "app", "blog", "post"), {
             recursive: true,
           });
 
           // Root layout
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "layout.mdx"),
             `---\nisLayout: true\n---\nexport default function RootLayout({ children }) { return (<div className="root-layout"><main>{children}</main></div>); }`,
           );
 
           // Blog layout (tsx)
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "blog", "layout.tsx"),
             `export default function BlogLayout({ children }) { return (<div className="blog-layout">{children}</div>); }`,
           );
 
           // Page at app/blog/post/page.mdx
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "blog", "post", "page.mdx"),
             `# App Router Page\n\nHello from App Router page.`,
           );
@@ -575,34 +578,34 @@ timestamp: ${timestamp2}
       it("should apply reserved loading and error components in App Router", async () => {
         await withTestContext("renderer-app-router-reserved", async (context) => {
           // Create app router structure
-          await Deno.mkdir(join(context.projectDir, "app", "blog", "post"), {
+          await mkdir(join(context.projectDir, "app", "blog", "post"), {
             recursive: true,
           });
 
           // Root layout
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "layout.mdx"),
             `---\nisLayout: true\n---\nexport default function RootLayout({ children }) { return (<div className="root-layout"><main>{children}</main></div>); }`,
           );
 
           // Blog layout (tsx)
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "blog", "layout.tsx"),
             `export default function BlogLayout({ children }) { return (<div className="blog-layout">{children}</div>); }`,
           );
 
           // Page at app/blog/post/page.mdx
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "blog", "post", "page.mdx"),
             `# App Router Page\n\nHello from App Router page.`,
           );
 
           // Add reserved loading.tsx and error.tsx at app root
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "loading.tsx"),
             `export default function Loading(){ return (<div className="loading">Loading...</div>); }`,
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "error.tsx"),
             `export default function Err(){ return (<div className="err">Error</div>); }`,
           );

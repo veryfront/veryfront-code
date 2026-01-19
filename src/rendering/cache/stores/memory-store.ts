@@ -1,6 +1,6 @@
-import { LRUCache } from "@veryfront/utils/lru-wrapper.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import type { CachePayload, CacheStore } from "../types.ts";
-import { getDisableLruIntervalEnv } from "@veryfront/config/env.ts";
+import { getDisableLruIntervalEnv } from "#veryfront/config/env.ts";
 
 /**
  * Default max entries for render cache.

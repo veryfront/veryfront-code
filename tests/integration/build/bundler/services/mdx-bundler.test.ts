@@ -10,9 +10,10 @@
  * - Dependency tracking
  */
 
-import { assertEquals, assertExists } from "@std/assert";
-import { join } from "@std/path";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { join } from "@veryfront/compat/path";
+import { describe, it } from "@veryfront/testing/bdd";
+import { writeTextFile } from "@veryfront/testing/deno-compat";
 import {
   bundleMdx,
   bundleMDXWithOptions,
@@ -180,7 +181,7 @@ No frontmatter here.`;
         await withTestContext("mdx-imports", async (context) => {
           // Create imported MDX file
           const importedContent = `# Imported Content`;
-          await Deno.writeTextFile(join(context.projectDir, "imported.mdx"), importedContent);
+          await writeTextFile(join(context.projectDir, "imported.mdx"), importedContent);
 
           const content = `---
 title: Main Page

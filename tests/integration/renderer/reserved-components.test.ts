@@ -1,9 +1,12 @@
-import { assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
-import { describe, it } from "@std/testing/bdd";
+import { assertStringIncludes } from "@veryfront/testing/assert";
+import { join } from "@veryfront/compat/path";
+import { mkdir, writeTextFile } from "@veryfront/compat/fs.ts";
+import { describe, it } from "@veryfront/testing/bdd";
+
 import { createRenderer } from "../../../src/rendering/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
+// Skip tests on non-Deno runtimes (SSR uses URL-based imports)
 // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
 // See: https://github.com/facebook/react/issues/24669
 describe(
@@ -26,10 +29,10 @@ describe(
         // Setup App Router structure
         const appDir = join(context.projectDir, "app");
         const blogDir = join(appDir, "blog");
-        await Deno.mkdir(blogDir, { recursive: true });
+        await mkdir(blogDir, { recursive: true });
 
         // Create blog page
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(blogDir, "page.tsx"),
           `export default function Page() { 
           return <div>App Router Page</div>; 
@@ -37,14 +40,14 @@ describe(
         );
 
         // Create reserved components at root level
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(appDir, "loading.tsx"),
           `export default function Loading() { 
           return <div className="loading">Loading...</div>; 
         }`,
         );
 
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(appDir, "error.tsx"),
           `export default function Error() { 
           return <div className="err">Error</div>; 
@@ -61,7 +64,7 @@ describe(
         assertStringIncludes(result.html, "App Router Page", "Should render the page component");
 
         // Test 2: Nested segment should shadow parent reserved components
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(blogDir, "loading.tsx"),
           `export default function BlogLoading() { 
           return <div className="loading">Blog Loading</div>; 

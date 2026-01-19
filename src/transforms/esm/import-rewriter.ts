@@ -1,6 +1,6 @@
 import { parseImports, replaceSpecifiers, rewriteImports } from "./lexer.ts";
-import { REACT_DEFAULT_VERSION, TAILWIND_VERSION } from "@veryfront/utils/constants/cdn.ts";
-import { rendererLogger as logger } from "@veryfront/utils";
+import { REACT_DEFAULT_VERSION, TAILWIND_VERSION } from "#veryfront/utils/constants/cdn.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
 
 /**
  * Add HMR cache-busting timestamps to all local imports.
@@ -87,6 +87,7 @@ function shouldSkipRewrite(specifier: string): boolean {
     specifier.startsWith("../") ||
     specifier.startsWith("/") ||
     specifier.startsWith("@/") ||
+    specifier.startsWith("#") || // Package subpath imports (Node.js/Bun)
     specifier.startsWith("veryfront")
   );
 }

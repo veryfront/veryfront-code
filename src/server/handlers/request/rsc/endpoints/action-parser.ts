@@ -3,8 +3,8 @@
  * @module rsc-endpoints/action-parser
  */
 
-import { serverLogger } from "@veryfront/utils";
-import { HttpStatus, jsonErrorResponse } from "@veryfront/http/responses";
+import { serverLogger } from "#veryfront/utils";
+import { HttpStatus, jsonErrorResponse } from "#veryfront/http/responses";
 import type { ActionBody } from "./types.ts";
 
 /** Validates action ID format to prevent traversal and malformed ids */

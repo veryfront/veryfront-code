@@ -3,19 +3,19 @@
  * @module rsc-endpoints/endpoint-router
  */
 
-import { HTTP_SERVER_ERROR } from "@veryfront/utils";
-import { metrics } from "@veryfront/observability/simple-metrics/index.ts";
-import { serverLogger } from "@veryfront/utils";
-import { isRSCEnabled } from "@veryfront/utils";
-import { HttpStatus, jsonErrorResponse } from "@veryfront/http/responses";
+import { HTTP_SERVER_ERROR } from "#veryfront/utils";
+import { metrics } from "#veryfront/observability/simple-metrics/index.ts";
+import { serverLogger } from "#veryfront/utils";
+import { isRSCEnabled } from "#veryfront/utils";
+import { HttpStatus, jsonErrorResponse } from "#veryfront/http/responses";
 import { getRSCHandler } from "./handler-registry.ts";
 import { handleActionRequest } from "./action-handler.ts";
 import { handleClientScript, handleDomScript } from "./script-handlers.ts";
 import type { RSCEndpointParams } from "./types.ts";
 import type { RSCDevServerHandler } from "../handlers/index.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { isWithinDirectory, joinPath } from "@veryfront/utils/path-utils.ts";
-import { escapeHtml } from "@veryfront/html/html-escape.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { isWithinDirectory, joinPath } from "#veryfront/utils/path-utils.ts";
+import { escapeHtml } from "#veryfront/html/html-escape.ts";
 
 /**
  * Handle RSC endpoints

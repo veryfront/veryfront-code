@@ -1,12 +1,12 @@
-import { describe, it } from "@std/testing/bdd";
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import {
   buildContentAttributes,
   buildImportMapJson,
   buildRootAttributes,
   shouldDisableLayout,
 } from "./utils.ts";
-import { getDefaultImportMap } from "@veryfront/modules/import-map/default-import-map.ts";
+import { getDefaultImportMap } from "#veryfront/modules/import-map/default-import-map.ts";
 
 describe("html-generation/utils", () => {
   describe("buildRootAttributes", () => {
@@ -74,6 +74,7 @@ describe("html-generation/utils", () => {
       const map = config.imports;
 
       assert(map !== undefined);
+      if (!map) return; // TypeScript type guard
       // Veryfront exports are included for SSR transforms
       assert(map["veryfront/head"] !== undefined);
       assert(map["veryfront/router"] !== undefined);
@@ -86,6 +87,7 @@ describe("html-generation/utils", () => {
       const map = config.imports;
 
       assert(map !== undefined);
+      if (!map) return; // TypeScript type guard
       // React is NOT included - bare specifiers stay bare so bundleHttpImports
       // can externalize them, then Deno resolves via deno.json
       assertEquals(map.react, undefined);
@@ -112,8 +114,8 @@ describe("html-generation/utils", () => {
 
       assertStringIncludes(result, '"react"');
       assertStringIncludes(result, '"react-dom"');
-      // In Deno, uses npm: specifiers; in true Node, uses esm.sh CDN
-      assert(result.includes("npm:") || result.includes("esm.sh"));
+      // Uses esm.sh URLs across runtimes
+      assertStringIncludes(result, "esm.sh");
     });
 
     it("should format JSON with proper indentation", async () => {

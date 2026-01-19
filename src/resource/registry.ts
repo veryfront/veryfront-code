@@ -7,7 +7,7 @@
  */
 
 import type { Resource } from "./types.ts";
-import { agentLogger } from "@veryfront/utils/logger/logger.ts";
+import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 
 /**
  * Resource registry for managing resources and pattern matching

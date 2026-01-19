@@ -6,8 +6,8 @@
  * @module server/shared/renderer/memory/pressure
  */
 
-import { rendererLogger } from "@veryfront/utils";
-import { getHeapStats } from "@veryfront/utils/memory/index.ts";
+import { rendererLogger } from "#veryfront/utils";
+import { getHeapStats } from "#veryfront/utils/memory/index.ts";
 
 /**
  * Check if memory is too high to safely process a request.

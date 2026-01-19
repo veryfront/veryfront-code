@@ -5,10 +5,10 @@
  * Provides per-project vendor bundle management with automatic invalidation.
  */
 
-import { LRUCache } from "@veryfront/utils/lru-wrapper.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import type { VendorBundleResult } from "./vendor-bundle.ts";
 import { getBuildConfig } from "./config/environment.ts";
-import { getDisableLruIntervalEnv } from "@veryfront/config/env.ts";
+import { getDisableLruIntervalEnv } from "#veryfront/config/env.ts";
 
 interface VendorCacheEntry {
   bundle: VendorBundleResult;

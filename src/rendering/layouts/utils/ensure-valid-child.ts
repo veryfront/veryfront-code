@@ -1,4 +1,4 @@
-import { rendererLogger as logger } from "@veryfront/utils";
+import { rendererLogger as logger } from "#veryfront/utils";
 import * as BundledReact from "react";
 import {
   getElementDebugInfo,

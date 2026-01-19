@@ -20,7 +20,7 @@ import {
   HTTP_INTERNAL_SERVER_ERROR,
   HTTP_NOT_FOUND,
   PRIORITY_MEDIUM_DEV_FILES,
-} from "@veryfront/utils/constants/index.ts";
+} from "#veryfront/utils/constants/index.ts";
 
 /**
  * Development File Handler Class

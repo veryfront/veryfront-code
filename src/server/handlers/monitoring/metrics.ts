@@ -1,13 +1,13 @@
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
-import { metrics } from "@veryfront/observability/simple-metrics/index.ts";
-import { ResponseBuilder } from "@veryfront/security/index.ts";
+import { metrics } from "#veryfront/observability/simple-metrics/index.ts";
+import { ResponseBuilder } from "#veryfront/security/index.ts";
 import {
   HTTP_INTERNAL_SERVER_ERROR,
   HTTP_OK,
   PRIORITY_HIGH,
-} from "@veryfront/utils/constants/index.ts";
-import { memoryUsage, uptime } from "@veryfront/platform/compat/process.ts";
+} from "#veryfront/utils/constants/index.ts";
+import { memoryUsage, uptime } from "#veryfront/platform/compat/process.ts";
 
 export class MetricsHandler extends BaseHandler {
   metadata: HandlerMetadata = {

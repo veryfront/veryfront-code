@@ -1,5 +1,5 @@
-import { assertEquals, assertMatch } from "@std/assert";
-import { afterAll, describe, it } from "@std/testing/bdd";
+import { assertEquals, assertMatch } from "@veryfront/testing/assert";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
 import "../../../_helpers/log-guard.ts";
 
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";

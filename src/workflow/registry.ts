@@ -10,7 +10,7 @@
 
 import type { WorkflowDefinition, WorkflowNode } from "./types.ts";
 import type { Workflow } from "./dsl/workflow.ts";
-import { zodToJsonSchema } from "@veryfront/tool/schema";
+import { zodToJsonSchema } from "#veryfront/tool/schema";
 
 /**
  * Serializable node information for the registry

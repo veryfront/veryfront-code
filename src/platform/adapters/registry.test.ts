@@ -1,7 +1,17 @@
-import { assertEquals, assertExists, assertRejects, assertThrows } from "@std/assert";
-import { afterEach, describe, it } from "@std/testing/bdd";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getLocalAdapter, resetLocalAdapter, runtime } from "./registry.ts";
 import { createMockAdapter } from "./mock.ts";
+import { isBun, isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
+import type { RuntimeId } from "./base.ts";
+
+// Get the expected runtime based on actual environment
+const expectedRuntime: RuntimeId = isDeno ? "deno" : isNode ? "node" : isBun ? "bun" : "deno";
 
 describe("registry.ts", () => {
   describe("runtime registry", () => {
@@ -26,9 +36,9 @@ describe("registry.ts", () => {
       assertEquals(adapter1, adapter2);
     });
 
-    it("should detect deno runtime", async () => {
+    it("should detect current runtime", async () => {
       const adapter = await runtime.get();
-      assertEquals(adapter.id, "deno");
+      assertEquals(adapter.id, expectedRuntime);
     });
 
     it("should report initialized status", async () => {
@@ -52,7 +62,7 @@ describe("registry.ts", () => {
 
       const adapter = runtime.getSync();
       assertExists(adapter);
-      assertEquals(adapter.id, "deno");
+      assertEquals(adapter.id, expectedRuntime);
     });
   });
 
@@ -82,7 +92,7 @@ describe("registry.ts", () => {
 
     it("should replace existing adapter", async () => {
       await runtime.get(); // Initialize with auto-detected
-      assertEquals((await runtime.get()).id, "deno");
+      assertEquals((await runtime.get()).id, expectedRuntime);
 
       const mockAdapter = createMockAdapter();
       await runtime.set(mockAdapter);
@@ -119,7 +129,7 @@ describe("registry.ts", () => {
       const adapter = await getLocalAdapter();
 
       assertExists(adapter);
-      assertEquals(adapter.id, "deno");
+      assertEquals(adapter.id, expectedRuntime);
     });
 
     it("should return same instance on multiple calls", async () => {
@@ -137,7 +147,7 @@ describe("registry.ts", () => {
 
       // Main registry has mock, local has real
       assertEquals((await runtime.get()).id, "memory");
-      assertEquals(localAdapter.id, "deno");
+      assertEquals(localAdapter.id, expectedRuntime);
     });
   });
 

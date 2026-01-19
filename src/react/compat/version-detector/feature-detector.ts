@@ -1,5 +1,5 @@
-import { rendererLogger as logger } from "@veryfront/utils";
-import { readTextFile } from "@veryfront/platform/compat/fs.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { readTextFile } from "#veryfront/platform/compat/fs.ts";
 import * as React from "react";
 import type { ReactFeatures, ReactVersionInfo } from "./types.ts";
 import { isReact17, isReact18, isReact19, parseVersion } from "./version-parser.ts";

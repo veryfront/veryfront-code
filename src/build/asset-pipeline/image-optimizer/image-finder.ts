@@ -1,6 +1,6 @@
-import { walk } from "@std/fs";
-import { extname } from "@veryfront/platform/compat/path/index.ts";
-import { logger } from "@veryfront/utils";
+import { walk } from "#std/fs.ts";
+import { extname } from "#veryfront/platform/compat/path/index.ts";
+import { logger } from "#veryfront/utils";
 import { SUPPORTED_EXTENSIONS } from "./constants.ts";
 
 const supportedExtensionsSet = new Set(SUPPORTED_EXTENSIONS);

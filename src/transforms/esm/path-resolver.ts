@@ -1,6 +1,6 @@
 import { replaceSpecifiers } from "./lexer.ts";
-import { rendererLogger as logger } from "@veryfront/utils";
-import { stat } from "@veryfront/platform/compat/fs.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { stat } from "#veryfront/platform/compat/fs.ts";
 
 export interface BlockExternalUrlResult {
   code: string;
@@ -145,6 +145,37 @@ export function resolveVeryfrontImports(code: string): Promise<string> {
     }
     if (specifier === "@veryfront") {
       return "veryfront";
+    }
+    return null;
+  }));
+}
+
+/**
+ * Rewrite #veryfront/* imports to module server URLs for browser.
+ * SSR mode leaves imports as-is (Deno's import map handles them).
+ *
+ * Browser mode transforms:
+ *   import { collectHead } from "#veryfront/react/head-collector.ts"
+ * To:
+ *   import { collectHead } from "/_vf_modules/_veryfront/react/head-collector.js"
+ */
+export function resolveVeryfrontSubpathImports(
+  code: string,
+  ssr = false,
+): Promise<string> {
+  // SSR mode: leave as-is (Deno's import map resolves #veryfront)
+  if (ssr) {
+    return Promise.resolve(code);
+  }
+
+  // Browser mode: rewrite to module server URL
+  return Promise.resolve(replaceSpecifiers(code, (specifier) => {
+    if (specifier.startsWith("#veryfront/")) {
+      // #veryfront/react/head-collector.ts -> /_vf_modules/_veryfront/react/head-collector.js
+      const path = specifier.substring("#veryfront/".length);
+      // Normalize extension to .js for browser
+      const normalizedPath = path.replace(/\.(tsx?|jsx)$/, ".js");
+      return `/_vf_modules/_veryfront/${normalizedPath}`;
     }
     return null;
   }));

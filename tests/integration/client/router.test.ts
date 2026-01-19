@@ -3,12 +3,13 @@
  * Tests client-side routing, navigation, history management, and DOM interactions
  */
 
-import { assertEquals, assertExists } from "@std/assert";
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
 import type { RouterOptions } from "@veryfront/rendering/client/router.ts";
 import { VeryfrontRouter } from "@veryfront/rendering/client/router.ts";
 import type { DOMEnvironment } from "./test-helpers.ts";
 import { mockRoots, setupDOMEnvironment } from "./test-helpers.ts";
+import { delay } from "@std/async";
 
 describe("Veryfront Router", () => {
   let env: DOMEnvironment;
@@ -337,7 +338,7 @@ describe("Veryfront Router", () => {
       link.dispatchEvent(clickEvent);
 
       // Give time for navigation
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await delay(100);
 
       document.body.removeChild(link);
       router.destroy();
@@ -429,7 +430,7 @@ describe("Veryfront Router", () => {
       globalThis.dispatchEvent(popstateEvent);
 
       // Give time for navigation
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await delay(100);
 
       router.destroy();
     });
@@ -450,7 +451,7 @@ describe("Veryfront Router", () => {
       globalThis.dispatchEvent(popstateEvent);
 
       // Give time for scroll restoration
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await delay(200);
 
       router.destroy();
     });
@@ -478,7 +479,7 @@ describe("Veryfront Router", () => {
       link.dispatchEvent(mouseoverEvent);
 
       // Wait for prefetch delay
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await delay(100);
 
       document.body.removeChild(link);
       router.destroy();
@@ -508,7 +509,7 @@ describe("Veryfront Router", () => {
       link.dispatchEvent(mouseoverEvent);
 
       // Wait for prefetch
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await delay(200);
 
       document.body.removeChild(link);
       router.destroy();
@@ -539,7 +540,7 @@ describe("Veryfront Router", () => {
 
       link.dispatchEvent(mouseoverEvent);
 
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await delay(200);
 
       assertEquals(fetchCount, 0);
 
@@ -567,7 +568,7 @@ describe("Veryfront Router", () => {
       await router.navigate("/page");
 
       // Give time for transition
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await delay(200);
 
       assertEquals(document.title, "New Title");
 
@@ -592,7 +593,7 @@ describe("Veryfront Router", () => {
       await router.navigate("/page");
 
       // Give time for meta tag updates
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await delay(200);
 
       const metaTag = document.querySelector('meta[name="description"]');
       assertExists(metaTag);
@@ -609,7 +610,7 @@ describe("Veryfront Router", () => {
       await router.navigate("/error");
 
       // Give time for error display
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await delay(200);
 
       router.destroy();
     });
@@ -631,7 +632,7 @@ describe("Veryfront Router", () => {
       const navigationPromise = router.navigate("/slow");
 
       // Check loading state
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await delay(50);
 
       await navigationPromise;
 

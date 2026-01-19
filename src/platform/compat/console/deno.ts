@@ -17,7 +17,7 @@ import {
   underline,
   white,
   yellow,
-} from "@std/fmt/colors";
+} from "#std/fmt/colors.ts";
 
 import type { ConsoleStyler } from "./types.ts";
 

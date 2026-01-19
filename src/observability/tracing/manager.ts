@@ -1,11 +1,15 @@
-import { serverLogger as logger } from "@veryfront/utils";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { serverLogger as logger } from "#veryfront/utils";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { OpenTelemetryAPI, TracingConfig, TracingState } from "./types.ts";
 import { loadConfig } from "./config.ts";
 import { SpanOperations } from "./span-operations.ts";
 import { ContextPropagation } from "./context-propagation.ts";
 
-class TracingManager {
+/**
+ * Tracing manager class
+ * Exported for testing - use tracingManager singleton for production
+ */
+export class TracingManager {
   private state: TracingState = {
     initialized: false,
     degraded: false,

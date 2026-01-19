@@ -1,8 +1,8 @@
-import { wrapError } from "@veryfront/errors/index.ts";
-import type { MdxBundle } from "@veryfront/types";
-import type { MDXCacheAdapter } from "@veryfront/transforms/mdx/index.ts";
-import { withSpan } from "@veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "@veryfront/observability/tracing/span-names.ts";
+import { wrapError } from "#veryfront/errors/index.ts";
+import type { MdxBundle } from "#veryfront/types";
+import type { MDXCacheAdapter } from "#veryfront/transforms/mdx/index.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 
 export interface MDXCompilerConfig {
   projectDir: string;
@@ -62,7 +62,7 @@ export class MDXCompiler {
       nodeMap?: Map<number, unknown>;
     }
   > {
-    const { compileMDXRuntime } = await import("@veryfront/transforms/mdx/compiler/index.ts");
+    const { compileMDXRuntime } = await import("#veryfront/transforms/mdx/compiler/index.ts");
 
     try {
       // Node positions for Studio Navigator are injected via rehype plugin

@@ -1,12 +1,12 @@
-import { join } from "@veryfront/platform/compat/path-helper.ts";
-import { rendererLogger as logger } from "@veryfront/utils";
-import { MDXCacheAdapter } from "@veryfront/transforms/mdx/index.ts";
-import { isCompiledBinary } from "@veryfront/utils";
-import { DEFAULT_CACHE_DIR } from "@veryfront/utils/constants/server.ts";
+import { join } from "#veryfront/platform/compat/path-helper.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { MDXCacheAdapter } from "#veryfront/transforms/mdx/index.ts";
+import { isCompiledBinary } from "#veryfront/utils";
+import { DEFAULT_CACHE_DIR } from "#veryfront/utils/constants/server.ts";
 import { ComponentRegistry } from "../ssr/component-registry.ts";
 import { VirtualModuleSystem } from "../virtual-module-system.ts";
 import { CacheCoordinator } from "../cache/index.ts";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import {
   FilesystemCacheStore,
   KVCacheStore,
@@ -20,8 +20,8 @@ import { PageResolver } from "../page-resolution/index.ts";
 import { ElementValidator } from "../element-validator/index.ts";
 import { SSRRenderer } from "../ssr-renderer.ts";
 import type { ConfigurationManager } from "./config.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import type { MdxBundle } from "@veryfront/types";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { MdxBundle } from "#veryfront/types";
 import { CompilerService } from "./compiler-service.ts";
 
 export interface LifecycleOptions {
@@ -71,7 +71,7 @@ export class RendererLifecycle {
     // Get or detect adapter
     this.adapter = this.configManager.getAdapter();
     if (!this.adapter) {
-      const { getAdapter } = await import("@veryfront/platform/adapters/detect.ts");
+      const { getAdapter } = await import("#veryfront/platform/adapters/detect.ts");
       this.adapter = await getAdapter();
     }
 

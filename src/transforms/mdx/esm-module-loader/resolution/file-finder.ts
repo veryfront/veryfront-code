@@ -7,9 +7,9 @@
  * @module build/transforms/mdx/esm-module-loader/resolution/file-finder
  */
 
-import { join } from "@std/path";
-import { rendererLogger as logger } from "@veryfront/utils";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { join } from "#std/path.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   DIRECTORY_PREFIXES,
   FRAMEWORK_ROOT,

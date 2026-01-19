@@ -9,7 +9,7 @@
  * - Runtime-agnostic: works on Deno, Node.js, and Bun
  */
 
-import { env as getEnvObject, isStdoutTTY } from "@veryfront/platform/compat/process.ts";
+import { env as getEnvObject, isStdoutTTY } from "#veryfront/platform/compat/process.ts";
 import { ESC, RESET } from "./ansi.ts";
 
 /**

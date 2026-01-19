@@ -1,4 +1,5 @@
-import { getEnv, getOsType, runCommand } from "@veryfront/platform/compat/process.ts";
+import { getOsType, runCommand } from "#veryfront/platform/compat/process.ts";
+import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 
 function getOpenCommand(): { cmd: string; args: string[] } {
   const platform = getOsType();
@@ -19,12 +20,17 @@ export async function openBrowser(url: string): Promise<void> {
   await runCommand(cmd, { args: [...args, url] });
 }
 
-export function canOpenBrowser(): boolean {
-  const isCI = Boolean(getEnv("CI") || getEnv("CONTINUOUS_INTEGRATION"));
-  const isSSH = Boolean(getEnv("SSH_CLIENT") || getEnv("SSH_TTY"));
+/**
+ * Check if browser can be opened in current environment.
+ *
+ * @param env - Optional RuntimeEnv for test isolation
+ */
+export function canOpenBrowser(env: RuntimeEnv = getRuntimeEnv()): boolean {
+  const isCI = env.ci || env.continuousIntegration;
+  const isSSH = Boolean(env.sshClient || env.sshTty);
 
   if (getOsType() === "linux") {
-    const hasDisplay = Boolean(getEnv("DISPLAY") || getEnv("WAYLAND_DISPLAY"));
+    const hasDisplay = Boolean(env.display || env.waylandDisplay);
     if (!hasDisplay) return false;
   }
 

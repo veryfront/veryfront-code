@@ -1,12 +1,13 @@
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
-import { expect } from "@std/expect";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { expect } from "#std/expect.ts";
+import { delay } from "#std/async.ts";
 import { MDXCacheAdapter } from "./mdx-cache-adapter.ts";
-import type { VeryfrontConfig } from "@veryfront/config";
+import type { VeryfrontConfig } from "#veryfront/config";
 import {
   type BundleManifestStore,
   InMemoryBundleManifestStore,
   setBundleManifestStore,
-} from "@veryfront/utils/bundle-manifest.ts";
+} from "#veryfront/utils/bundle-manifest.ts";
 
 describe("MDXCacheAdapter", () => {
   let adapter: MDXCacheAdapter;
@@ -173,7 +174,7 @@ describe("MDXCacheAdapter", () => {
       const cached1 = await shortAdapter.getCachedBundle(content);
       expect(cached1).toBeDefined();
 
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      await delay(150);
 
       const cached2 = await shortAdapter.getCachedBundle(content);
       expect(cached2).toBeUndefined();
@@ -320,9 +321,8 @@ describe("MDXCacheAdapter", () => {
         nodeMap: new Map(),
       };
 
-      await expect(
-        adapter.setCachedBundle("# Test", bundle, "test.mdx"),
-      ).resolves.not.toThrow();
+      // Should not throw - just call and await
+      await adapter.setCachedBundle("# Test", bundle, "test.mdx");
     });
 
     it("should handle invalidation errors gracefully", async () => {
@@ -333,8 +333,9 @@ describe("MDXCacheAdapter", () => {
       };
       setBundleManifestStore(failingStore);
 
-      await expect(adapter.invalidateBundle("# Test")).resolves.not.toThrow();
-      await expect(adapter.invalidateSource("/path/to/file")).resolves.not.toThrow();
+      // Should not throw - just call and await
+      await adapter.invalidateBundle("# Test");
+      await adapter.invalidateSource("/path/to/file");
     });
 
     it("should handle getStats errors gracefully", async () => {

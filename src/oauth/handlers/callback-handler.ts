@@ -4,10 +4,11 @@
  * Reusable handler for OAuth callback routes.
  */
 
-import { OAuthService } from "../providers/base.ts";
+import { type EnvReader, OAuthService } from "../providers/base.ts";
 import type { OAuthServiceConfig, TokenStore } from "../types.ts";
 import { memoryTokenStore } from "../token-store/memory.ts";
-import { getEnv } from "@veryfront/platform/compat/process.ts";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 
 export interface OAuthCallbackHandlerOptions {
   /** Token store to use (defaults to memory store) */
@@ -27,6 +28,12 @@ export interface OAuthCallbackHandlerOptions {
 
   /** Custom error callback */
   onError?: (serviceId: string, error: string) => void | Promise<void>;
+
+  /** RuntimeEnv for test isolation (defaults to getRuntimeEnv()) */
+  env?: RuntimeEnv;
+
+  /** EnvReader for dynamic env vars (defaults to getEnv) */
+  envReader?: EnvReader;
 }
 
 /**
@@ -52,6 +59,8 @@ export function createOAuthCallbackHandler(
     errorRedirect = "/",
     onSuccess,
     onError,
+    env = getRuntimeEnv(),
+    envReader = getEnv,
   } = options;
 
   return async (request: Request): Promise<Response> => {
@@ -61,10 +70,7 @@ export function createOAuthCallbackHandler(
     const error = url.searchParams.get("error");
     const errorDescription = url.searchParams.get("error_description");
 
-    const appUrl = baseUrl ||
-      getEnv("APP_URL") ||
-      getEnv("NEXT_PUBLIC_APP_URL") ||
-      "http://localhost:3000";
+    const appUrl = baseUrl || env.appUrl || "http://localhost:3000";
 
     function redirectWithError(
       errorCode: string,
@@ -112,7 +118,7 @@ export function createOAuthCallbackHandler(
       }
     }
 
-    const service = new OAuthService(config, tokenStore);
+    const service = new OAuthService(config, tokenStore, envReader);
     const redirectUri = `${appUrl}/api/auth/${config.serviceId}/callback`;
 
     try {

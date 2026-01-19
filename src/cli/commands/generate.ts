@@ -1,12 +1,12 @@
-import { join } from "@std/path";
-import { getConfig } from "@veryfront/config";
-import { cliLogger } from "@veryfront/utils";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { join } from "#std/path.ts";
+import { getConfig } from "#veryfront/config";
+import { cliLogger } from "#veryfront/utils";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import {
   createFileSystem,
   type FileSystem,
   isAlreadyExistsError,
-} from "@veryfront/platform/compat/fs.ts";
+} from "#veryfront/platform/compat/fs.ts";
 import { generateIntegration } from "./generate/integration-generator.ts";
 
 let fs: FileSystem;
@@ -34,7 +34,7 @@ export async function generateCommand(projectDir: string, type: string, name: st
   fs = createFileSystem();
   let preferred: "pages-router" | "app-router" = "pages-router";
   try {
-    const { getAdapter } = await import("@veryfront/platform/adapters/detect.ts");
+    const { getAdapter } = await import("#veryfront/platform/adapters/detect.ts");
 
     const adapter = await getAdapter();
     const cfg = await getConfig(projectDir, adapter);

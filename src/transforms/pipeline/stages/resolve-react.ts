@@ -1,8 +1,8 @@
 /**
- * Resolve React stage - react/jsx-runtime → esm.sh or npm: URLs.
+ * Resolve React stage - react/jsx-runtime → esm.sh URLs.
  *
  * Handles React-specific import resolution based on target environment.
- * For SSR: Resolves to file:// URLs or npm: specifiers
+ * For SSR: Resolves React to esm.sh URLs (later cached to file://) and veryfront modules to file:// URLs
  * For browser: Resolves to esm.sh URLs
  */
 
@@ -20,11 +20,11 @@ export const resolveReactPlugin: TransformPlugin = {
   async transform(ctx: TransformContext): Promise<string> {
     let code = ctx.code;
 
-    // Resolve react imports based on target
-    code = await resolveReactImports(code, isSSR(ctx));
+    // Resolve react imports based on target, using project's React version
+    code = await resolveReactImports(code, isSSR(ctx), ctx.reactVersion);
 
     // Add deps to esm.sh URLs for consistent React versions
-    code = await addDepsToEsmShUrls(code, isSSR(ctx));
+    code = await addDepsToEsmShUrls(code, isSSR(ctx), ctx.reactVersion);
 
     // In dev mode for browser, rewrite hardcoded project domain URLs
     // to use current origin for local dev server compatibility

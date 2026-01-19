@@ -7,19 +7,21 @@ import {
   PREFETCH_DEFAULT_DELAY_MS,
   PREFETCH_DEFAULT_TIMEOUT_MS,
   PREFETCH_MAX_SIZE_BYTES,
-} from "@veryfront/utils";
+} from "#veryfront/utils";
 
 export type { ResourceHint };
 
 declare global {
   interface Window {
     veryFrontPrefetch?: PrefetchManager;
+    __VERYFRONT_PREFETCH__?: PrefetchAutoInitSetting;
   }
 }
 
 /** Global interface for prefetch manager */
 interface GlobalWithPrefetch {
   veryFrontPrefetch?: PrefetchManager;
+  __VERYFRONT_PREFETCH__?: PrefetchAutoInitSetting;
 }
 
 export interface PrefetchOptions {
@@ -30,6 +32,8 @@ export interface PrefetchOptions {
   maxSize?: number;
   timeout?: number;
 }
+
+type PrefetchAutoInitSetting = boolean | PrefetchOptions;
 
 interface ResolvedPrefetchOptions {
   rootMargin: string;
@@ -126,8 +130,8 @@ export class PrefetchManager {
   }
 }
 
-if (typeof window !== "undefined") {
-  const prefetchManager = new PrefetchManager();
+export function initPrefetch(options?: PrefetchOptions): PrefetchManager {
+  const prefetchManager = new PrefetchManager(options);
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => prefetchManager.init());
@@ -136,4 +140,29 @@ if (typeof window !== "undefined") {
   }
 
   (globalThis as unknown as GlobalWithPrefetch).veryFrontPrefetch = prefetchManager;
+  return prefetchManager;
+}
+
+function resolveAutoInitOptions(): PrefetchOptions | null {
+  const setting = (globalThis as unknown as GlobalWithPrefetch).__VERYFRONT_PREFETCH__;
+  if (!setting) return null;
+  if (setting === true) return {};
+  if (typeof setting === "object") return setting;
+  return null;
+}
+
+function shouldAutoInitPrefetch(options: PrefetchOptions | null): options is PrefetchOptions {
+  if (!options) return false;
+  if (typeof window === "undefined" || typeof document === "undefined") return false;
+  const win = window as unknown as { __veryfrontSSRStub?: boolean };
+  const doc = document as unknown as { __veryfrontSSRStub?: boolean };
+  if (win.__veryfrontSSRStub || doc.__veryfrontSSRStub) return false;
+  if (typeof IntersectionObserver === "undefined") return false;
+  if (typeof MutationObserver === "undefined") return false;
+  return true;
+}
+
+const autoInitOptions = resolveAutoInitOptions();
+if (shouldAutoInitPrefetch(autoInitOptions)) {
+  initPrefetch(autoInitOptions);
 }

@@ -1,5 +1,5 @@
-import { createError, toError } from "@veryfront/errors";
-import { logger } from "@veryfront/utils";
+import { createError, toError } from "#veryfront/errors";
+import { logger } from "#veryfront/utils";
 import type { ResolvedGitHubConfig } from "./types.ts";
 import {
   type GitHubBlobResponse,

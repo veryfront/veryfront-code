@@ -3,8 +3,8 @@
  * @module cli/commands/new/reserve-slug.test
  */
 
-import { assertEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 
 // Test the slug auto-increment logic
 describe("reserve-slug", () => {

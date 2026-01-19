@@ -25,10 +25,10 @@ export {
   redirect,
   serverError,
   unauthorized,
-} from "@veryfront/routing";
+} from "#veryfront/routing";
 
 // Routing exports (primary exports for Route, RouteMatch, DynamicRouter)
-export * from "@veryfront/routing";
+export * from "#veryfront/routing";
 
 // Observability exports
-export * from "@veryfront/observability";
+export * from "#veryfront/observability";

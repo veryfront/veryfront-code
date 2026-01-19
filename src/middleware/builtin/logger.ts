@@ -8,7 +8,7 @@ import {
   HTTP_STATUS_SUCCESS_MIN,
   MS_PER_SECOND,
   serverLogger,
-} from "@veryfront/utils";
+} from "#veryfront/utils";
 
 export type LogFormat = "combined" | "common" | "dev" | "short" | "tiny" | "json";
 

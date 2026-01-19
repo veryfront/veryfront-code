@@ -6,12 +6,23 @@
  * @module cli/commands/new.integration.test
  */
 
-import { assertEquals, assertExists } from "@std/assert";
-import { afterEach, describe, it } from "@std/testing/bdd";
-import { join } from "@veryfront/platform/compat/path/index.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { join } from "#veryfront/platform/compat/path/index.ts";
+import {
+  env,
+  exists,
+  makeTempDir,
+  mkdir,
+  readTextFile,
+  remove,
+  stat,
+  writeTextFile,
+} from "#veryfront/testing/deno-compat.ts";
+import { runCommand } from "#veryfront/compat/process.ts";
 
-const TEST_DIR = Deno.makeTempDirSync({ prefix: "veryfront-new-test-" });
-const randomSuffix = () => Math.random().toString(36).substring(2, 8);
+const TEST_DIR = await makeTempDir({ prefix: "veryfront-new-test-" });
+const randomSuffix = (): string => Math.random().toString(36).substring(2, 8);
 
 describe("new command integration", () => {
   const projectName = `test-demo-${randomSuffix()}`;
@@ -20,7 +31,7 @@ describe("new command integration", () => {
   afterEach(async () => {
     // Clean up test project
     try {
-      await Deno.remove(projectDir, { recursive: true });
+      await remove(projectDir, { recursive: true });
     } catch {
       // Ignore if doesn't exist
     }
@@ -30,105 +41,67 @@ describe("new command integration", () => {
     it("should scaffold a project without API calls", async () => {
       // Run the new command with --skip-deploy
       const cliPath = new URL("../main.ts", import.meta.url).pathname;
-      const command = new Deno.Command("deno", {
-        args: [
-          "run",
-          "--allow-all",
-          cliPath,
-          "new",
-          projectName,
-          "--skip-deploy",
-        ],
+      const result = await runCommand("deno", {
+        args: ["run", "--allow-all", cliPath, "new", projectName, "--skip-deploy"],
         cwd: TEST_DIR,
-        stdout: "piped",
-        stderr: "piped",
+        capture: true,
       });
 
-      const { stdout, stderr } = await command.output();
-      const output = new TextDecoder().decode(stdout);
-      const errors = new TextDecoder().decode(stderr);
+      const output = (result.stdout ?? "") + (result.stderr ?? "");
 
       // Check output contains expected messages
-      assertExists(output.includes("Veryfront") || errors.includes("Veryfront"));
-      assertExists(output.includes("Created") || errors.includes("Created"));
+      assertExists(output.includes("Veryfront") || output.includes("Created"));
 
       // Check project was created
-      const stat = await Deno.stat(projectDir);
-      assertEquals(stat.isDirectory, true);
+      const statResult = await stat(projectDir);
+      assertEquals(statResult.isDirectory, true);
 
       // Check veryfront.config.ts exists with correct content
-      const configContent = await Deno.readTextFile(join(projectDir, "veryfront.config.ts"));
+      const configContent = await readTextFile(join(projectDir, "veryfront.config.ts"));
       // The slug includes a random suffix, so just check it starts with the project name
       assertExists(configContent.includes(`projectSlug: "${projectName}-`));
 
       // Check .env exists
-      const envExists = await Deno.stat(join(projectDir, ".env"))
-        .then(() => true)
-        .catch(() => false);
+      const envExists = await exists(join(projectDir, ".env"));
       assertEquals(envExists, true);
 
       // Check veryfront.config.ts exists
-      const configExists = await Deno.stat(join(projectDir, "veryfront.config.ts"))
-        .then(() => true)
-        .catch(() => false);
+      const configExists = await exists(join(projectDir, "veryfront.config.ts"));
       assertEquals(configExists, true);
     });
 
     it("should use AI template by default", async () => {
       const cliPath = new URL("../main.ts", import.meta.url).pathname;
-      const command = new Deno.Command("deno", {
-        args: [
-          "run",
-          "--allow-all",
-          cliPath,
-          "new",
-          projectName,
-          "--skip-deploy",
-        ],
+      await runCommand("deno", {
+        args: ["run", "--allow-all", cliPath, "new", projectName, "--skip-deploy"],
         cwd: TEST_DIR,
-        stdout: "piped",
-        stderr: "piped",
+        capture: true,
       });
 
-      await command.output();
-
       // AI template should create an `agents` directory
-      const agentsDirExists = await Deno.stat(join(projectDir, "agents"))
-        .then((s) => s.isDirectory)
-        .catch(() => false);
+      const agentsDirStat = await stat(join(projectDir, "agents")).catch(() => null);
+      const agentsDirExists = agentsDirStat?.isDirectory ?? false;
       assertEquals(agentsDirExists, true);
 
       // .env should contain OPENAI_API_KEY placeholder
-      const envContent = await Deno.readTextFile(join(projectDir, ".env"));
+      const envContent = await readTextFile(join(projectDir, ".env"));
       assertExists(envContent.includes("OPENAI_API_KEY"));
     });
 
     it("should support different templates", async () => {
       const cliPath = new URL("../main.ts", import.meta.url).pathname;
-      const command = new Deno.Command("deno", {
-        args: [
-          "run",
-          "--allow-all",
-          cliPath,
-          "new",
-          projectName,
-          "--skip-deploy",
-          "-t",
-          "minimal",
-        ],
+      await runCommand("deno", {
+        args: ["run", "--allow-all", cliPath, "new", projectName, "--skip-deploy", "-t", "minimal"],
         cwd: TEST_DIR,
-        stdout: "piped",
-        stderr: "piped",
+        capture: true,
       });
 
-      await command.output();
-
       // Project should be created
-      const stat = await Deno.stat(projectDir);
-      assertEquals(stat.isDirectory, true);
+      const statResult = await stat(projectDir);
+      assertEquals(statResult.isDirectory, true);
 
       // veryfront.config.ts should exist with project slug
-      const configContent = await Deno.readTextFile(join(projectDir, "veryfront.config.ts"));
+      const configContent = await readTextFile(join(projectDir, "veryfront.config.ts"));
       assertExists(configContent.includes(`projectSlug: "${projectName}-`));
     });
   });
@@ -136,7 +109,7 @@ describe("new command integration", () => {
   describe("validation", () => {
     it("should reject invalid project names", async () => {
       const cliPath = new URL("../main.ts", import.meta.url).pathname;
-      const command = new Deno.Command("deno", {
+      const result = await runCommand("deno", {
         args: [
           "run",
           "--allow-all",
@@ -146,44 +119,33 @@ describe("new command integration", () => {
           "--skip-deploy",
         ],
         cwd: TEST_DIR,
-        stdout: "piped",
-        stderr: "piped",
+        capture: true,
       });
 
-      const { code } = await command.output();
-      assertEquals(code, 1); // Should fail with invalid name
+      assertEquals(result.code, 1); // Should fail with invalid name
     });
 
     it("should reject existing directories without --force", async () => {
       // Create directory first
-      await Deno.mkdir(projectDir);
+      await mkdir(projectDir);
 
       const cliPath = new URL("../main.ts", import.meta.url).pathname;
-      const command = new Deno.Command("deno", {
-        args: [
-          "run",
-          "--allow-all",
-          cliPath,
-          "new",
-          projectName,
-          "--skip-deploy",
-        ],
+      const result = await runCommand("deno", {
+        args: ["run", "--allow-all", cliPath, "new", projectName, "--skip-deploy"],
         cwd: TEST_DIR,
-        stdout: "piped",
-        stderr: "piped",
+        capture: true,
       });
 
-      const { code } = await command.output();
-      assertEquals(code, 1); // Should fail because directory exists
+      assertEquals(result.code, 1); // Should fail because directory exists
     });
 
     it("should overwrite with --force flag", async () => {
       // Create directory first
-      await Deno.mkdir(projectDir);
-      await Deno.writeTextFile(join(projectDir, "existing.txt"), "old content");
+      await mkdir(projectDir);
+      await writeTextFile(join(projectDir, "existing.txt"), "old content");
 
       const cliPath = new URL("../main.ts", import.meta.url).pathname;
-      const command = new Deno.Command("deno", {
+      const result = await runCommand("deno", {
         args: [
           "run",
           "--allow-all",
@@ -194,15 +156,13 @@ describe("new command integration", () => {
           "--force",
         ],
         cwd: TEST_DIR,
-        stdout: "piped",
-        stderr: "piped",
+        capture: true,
       });
 
-      const { code } = await command.output();
-      assertEquals(code, 0); // Should succeed with --force
+      assertEquals(result.code, 0); // Should succeed with --force
 
       // veryfront.config.ts should exist (project was scaffolded)
-      const configContent = await Deno.readTextFile(join(projectDir, "veryfront.config.ts"));
+      const configContent = await readTextFile(join(projectDir, "veryfront.config.ts"));
       assertExists(configContent.includes(`projectSlug: "${projectName}-`));
     });
   });
@@ -210,7 +170,7 @@ describe("new command integration", () => {
   describe("--integrations flag", () => {
     it("should scaffold project with single integration", async () => {
       const cliPath = new URL("../main.ts", import.meta.url).pathname;
-      const command = new Deno.Command("deno", {
+      const result = await runCommand("deno", {
         args: [
           "run",
           "--allow-all",
@@ -224,36 +184,34 @@ describe("new command integration", () => {
           "github",
         ],
         cwd: TEST_DIR,
-        stdout: "piped",
-        stderr: "piped",
+        capture: true,
       });
 
-      const { code } = await command.output();
-      assertEquals(code, 0);
+      assertEquals(result.code, 0);
 
       // Project should be created
-      const stat = await Deno.stat(projectDir);
-      assertEquals(stat.isDirectory, true);
+      const statResult = await stat(projectDir);
+      assertEquals(statResult.isDirectory, true);
 
       // GitHub integration files should exist
       // Check for the GitHub client library
-      const githubClientExists = await Deno.stat(join(projectDir, "lib", "github-client.ts"))
-        .then((s) => s.isFile)
-        .catch(() => false);
+      const githubClientStat = await stat(join(projectDir, "lib", "github-client.ts")).catch(
+        () => null,
+      );
+      const githubClientExists = githubClientStat?.isFile ?? false;
       assertEquals(githubClientExists, true);
 
       // Check for GitHub OAuth routes
-      const githubAuthRouteExists = await Deno.stat(
+      const githubAuthRouteStat = await stat(
         join(projectDir, "app", "api", "auth", "github"),
-      )
-        .then((s) => s.isDirectory)
-        .catch(() => false);
+      ).catch(() => null);
+      const githubAuthRouteExists = githubAuthRouteStat?.isDirectory ?? false;
       assertEquals(githubAuthRouteExists, true);
     });
 
     it("should scaffold project with multiple integrations (comma-separated)", async () => {
       const cliPath = new URL("../main.ts", import.meta.url).pathname;
-      const command = new Deno.Command("deno", {
+      const result = await runCommand("deno", {
         args: [
           "run",
           "--allow-all",
@@ -267,29 +225,29 @@ describe("new command integration", () => {
           "github,slack",
         ],
         cwd: TEST_DIR,
-        stdout: "piped",
-        stderr: "piped",
+        capture: true,
       });
 
-      const { code } = await command.output();
-      assertEquals(code, 0);
+      assertEquals(result.code, 0);
 
       // GitHub integration files should be scaffolded
-      const githubClientExists = await Deno.stat(join(projectDir, "lib", "github-client.ts"))
-        .then((s) => s.isFile)
-        .catch(() => false);
+      const githubClientStat = await stat(join(projectDir, "lib", "github-client.ts")).catch(
+        () => null,
+      );
+      const githubClientExists = githubClientStat?.isFile ?? false;
       assertEquals(githubClientExists, true);
 
       // Slack integration files should be scaffolded
-      const slackClientExists = await Deno.stat(join(projectDir, "lib", "slack-client.ts"))
-        .then((s) => s.isFile)
-        .catch(() => false);
+      const slackClientStat = await stat(join(projectDir, "lib", "slack-client.ts")).catch(
+        () => null,
+      );
+      const slackClientExists = slackClientStat?.isFile ?? false;
       assertEquals(slackClientExists, true);
     });
 
     it("should include integration env vars in .env", async () => {
       const cliPath = new URL("../main.ts", import.meta.url).pathname;
-      const command = new Deno.Command("deno", {
+      const result = await runCommand("deno", {
         args: [
           "run",
           "--allow-all",
@@ -303,15 +261,13 @@ describe("new command integration", () => {
           "github",
         ],
         cwd: TEST_DIR,
-        stdout: "piped",
-        stderr: "piped",
+        capture: true,
       });
 
-      const { code } = await command.output();
-      assertEquals(code, 0);
+      assertEquals(result.code, 0);
 
       // .env should contain integration env vars
-      const envContent = await Deno.readTextFile(join(projectDir, ".env"));
+      const envContent = await readTextFile(join(projectDir, ".env"));
       // GitHub integration requires GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET
       assertExists(
         envContent.includes("GITHUB_CLIENT_ID") || envContent.includes("OPENAI_API_KEY"),
@@ -320,7 +276,7 @@ describe("new command integration", () => {
 
     it("should include integration env vars in .env.example", async () => {
       const cliPath = new URL("../main.ts", import.meta.url).pathname;
-      const command = new Deno.Command("deno", {
+      const result = await runCommand("deno", {
         args: [
           "run",
           "--allow-all",
@@ -334,15 +290,13 @@ describe("new command integration", () => {
           "github",
         ],
         cwd: TEST_DIR,
-        stdout: "piped",
-        stderr: "piped",
+        capture: true,
       });
 
-      const { code } = await command.output();
-      assertEquals(code, 0);
+      assertEquals(result.code, 0);
 
       // .env.example should exist and contain integration documentation
-      const envExampleContent = await Deno.readTextFile(join(projectDir, ".env.example"));
+      const envExampleContent = await readTextFile(join(projectDir, ".env.example"));
       assertExists(
         envExampleContent.includes("Integration") || envExampleContent.includes("OPENAI"),
       );
@@ -352,7 +306,7 @@ describe("new command integration", () => {
   describe("wizard behavior", () => {
     it("should skip wizard when --template flag is provided", async () => {
       const cliPath = new URL("../main.ts", import.meta.url).pathname;
-      const command = new Deno.Command("deno", {
+      const result = await runCommand("deno", {
         args: [
           "run",
           "--allow-all",
@@ -364,31 +318,29 @@ describe("new command integration", () => {
           "minimal",
         ],
         cwd: TEST_DIR,
-        stdout: "piped",
-        stderr: "piped",
+        capture: true,
         env: {
-          ...Deno.env.toObject(),
+          ...env(),
           // Disable TTY to prevent wizard attempts
           DENO_NO_PROMPT: "1",
         },
       });
 
-      const { code, stdout, stderr } = await command.output();
-      const output = new TextDecoder().decode(stdout) + new TextDecoder().decode(stderr);
+      const output = (result.stdout ?? "") + (result.stderr ?? "");
 
-      assertEquals(code, 0);
+      assertEquals(result.code, 0);
 
       // Should not show wizard prompts (no "What would you like to build?")
       assertEquals(output.includes("What would you like to build?"), false);
 
       // Project should be created with minimal template
-      const stat = await Deno.stat(projectDir);
-      assertEquals(stat.isDirectory, true);
+      const statResult = await stat(projectDir);
+      assertEquals(statResult.isDirectory, true);
     });
 
     it("should skip wizard when --integrations flag is provided", async () => {
       const cliPath = new URL("../main.ts", import.meta.url).pathname;
-      const command = new Deno.Command("deno", {
+      const result = await runCommand("deno", {
         args: [
           "run",
           "--allow-all",
@@ -400,54 +352,39 @@ describe("new command integration", () => {
           "github",
         ],
         cwd: TEST_DIR,
-        stdout: "piped",
-        stderr: "piped",
+        capture: true,
         env: {
-          ...Deno.env.toObject(),
+          ...env(),
           DENO_NO_PROMPT: "1",
         },
       });
 
-      const { code, stdout, stderr } = await command.output();
-      const output = new TextDecoder().decode(stdout) + new TextDecoder().decode(stderr);
+      const output = (result.stdout ?? "") + (result.stderr ?? "");
 
-      assertEquals(code, 0);
+      assertEquals(result.code, 0);
 
       // Should not show wizard prompts
       assertEquals(output.includes("What would you like to build?"), false);
 
       // Project should use default AI template when integrations provided without template
-      const agentsDirExists = await Deno.stat(join(projectDir, "agents"))
-        .then((s) => s.isDirectory)
-        .catch(() => false);
+      const agentsDirStat = await stat(join(projectDir, "agents")).catch(() => null);
+      const agentsDirExists = agentsDirStat?.isDirectory ?? false;
       assertEquals(agentsDirExists, true);
     });
 
     it("should skip wizard in non-TTY environment", async () => {
       const cliPath = new URL("../main.ts", import.meta.url).pathname;
-      const command = new Deno.Command("deno", {
-        args: [
-          "run",
-          "--allow-all",
-          cliPath,
-          "new",
-          projectName,
-          "--skip-deploy",
-        ],
+      const result = await runCommand("deno", {
+        args: ["run", "--allow-all", cliPath, "new", projectName, "--skip-deploy"],
         cwd: TEST_DIR,
-        stdout: "piped",
-        stderr: "piped",
-        // Non-TTY: stdin is piped, not a terminal
-        stdin: "null",
+        capture: true,
       });
 
-      const { code } = await command.output();
-      assertEquals(code, 0);
+      assertEquals(result.code, 0);
 
       // Project should be created with default AI template
-      const agentsDirExists = await Deno.stat(join(projectDir, "agents"))
-        .then((s) => s.isDirectory)
-        .catch(() => false);
+      const agentsDirStat = await stat(join(projectDir, "agents")).catch(() => null);
+      const agentsDirExists = agentsDirStat?.isDirectory ?? false;
       assertEquals(agentsDirExists, true);
     });
   });

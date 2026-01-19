@@ -12,7 +12,7 @@ import type {
   HandlerResult,
 } from "../../types.ts";
 import { getApiHandler } from "./pages-api-handler.ts";
-import { PRIORITY_MEDIUM_API } from "@veryfront/utils/constants/index.ts";
+import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 
 /**
  * API handler wrapper for Pages and App Router
@@ -29,7 +29,7 @@ import { PRIORITY_MEDIUM_API } from "@veryfront/utils/constants/index.ts";
  */
 export class ApiHandlerWrapper extends BaseHandler {
   private projectDir: string;
-  private adapter: import("@veryfront/platform/adapters/base.ts").RuntimeAdapter;
+  private adapter: import("#veryfront/platform/adapters/base.ts").RuntimeAdapter;
   private initPromise: Promise<void> | null = null;
 
   metadata: HandlerMetadata = {
@@ -43,7 +43,7 @@ export class ApiHandlerWrapper extends BaseHandler {
 
   constructor(
     projectDir: string,
-    adapter: import("@veryfront/platform/adapters/base.ts").RuntimeAdapter,
+    adapter: import("#veryfront/platform/adapters/base.ts").RuntimeAdapter,
   ) {
     super();
     this.projectDir = projectDir;

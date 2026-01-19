@@ -4,8 +4,8 @@
  * Handles HTTP communication with the Veryfront Cloud token storage API.
  */
 
-import { logger } from "@veryfront/utils";
-import { injectContext } from "@veryfront/observability/tracing/otlp-setup.ts";
+import { logger } from "#veryfront/utils";
+import { injectContext } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { TokenStorageError, type VeryfrontTokenConfig } from "./types.ts";
 
 export class TokenStorageAPIClient {

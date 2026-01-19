@@ -5,9 +5,9 @@
  */
 
 import type { Agent } from "../types.ts";
-import type { Tool } from "@veryfront/tool";
+import type { Tool } from "#veryfront/tool";
 import { z } from "zod";
-import { agentLogger } from "@veryfront/utils/logger/logger.ts";
+import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 
 /**
  * Convert an agent to a tool that can be called by other agents

@@ -1,6 +1,6 @@
-import type { VeryfrontConfig } from "@veryfront/config";
+import type { VeryfrontConfig } from "#veryfront/config";
 
-export type { HTMLMetadata, MDXFrontmatter } from "@veryfront/transforms/mdx/types.ts";
+export type { HTMLMetadata, MDXFrontmatter } from "#veryfront/transforms/mdx/types.ts";
 
 export interface HTMLGenerationOptions {
   mode: "development" | "production";
@@ -40,7 +40,7 @@ export interface HTMLGenerationOptions {
   headings?: Array<{ id: string; text: string; level: number }>;
 }
 
-export type { ImportMapConfig } from "@veryfront/modules/import-map/types.ts";
+export type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 
 export interface HydrationData {
   slug: string;

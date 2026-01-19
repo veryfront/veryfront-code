@@ -6,7 +6,7 @@
  *
  * @example
  * ```typescript
- * import { buildProduction, type BuildOptions } from '@veryfront/server/build/build'
+ * import { buildProduction, type BuildOptions } from "#veryfront/server/build/build'
  *
  * // Run production build
  * const stats = await buildProduction({

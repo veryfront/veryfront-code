@@ -1,7 +1,8 @@
-import { assertEquals } from "@std/assert";
-import { afterAll, describe, it } from "@std/testing/bdd";
+import { assertEquals } from "@veryfront/testing/assert";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
 import "../../../_helpers/log-guard.ts";
 
+import { writeTextFile } from "@veryfront/compat/fs.ts";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
@@ -17,7 +18,7 @@ describe(
     it("serves static files from public/ and exposes metrics and CORS", async () => {
       await withTestContext("universal-server-static", async (context: TestContext) => {
         // create public file
-        await Deno.writeTextFile(`${context.projectDir}/public/hello.txt`, "hi");
+        await writeTextFile(`${context.projectDir}/public/hello.txt`, "hi");
         const server = await context.createProductionServer();
 
         // static

@@ -6,7 +6,7 @@
  * @module module-system/react-loader/ssr-module-loader/constants
  */
 
-import { getSsrMaxConcurrentTransformsEnv } from "@veryfront/config/env.ts";
+import { getSsrMaxConcurrentTransformsEnv } from "#veryfront/config/env.ts";
 
 /** Maximum entries in the module cache */
 export const SSR_MODULE_CACHE_MAX_ENTRIES = 2000;

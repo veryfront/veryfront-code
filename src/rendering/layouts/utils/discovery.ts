@@ -2,10 +2,10 @@ import {
   memoizeAsync,
   memoizeHash as simpleHash,
   rendererLogger as logger,
-} from "@veryfront/utils";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import type { LayoutItem } from "@veryfront/types";
-import { dirname, extname, join } from "@veryfront/platform/compat/path-helper.ts";
+} from "#veryfront/utils";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { LayoutItem } from "#veryfront/types";
+import { dirname, extname, join } from "#veryfront/platform/compat/path-helper.ts";
 import { LAYOUT_EXTENSIONS } from "../types.ts";
 
 async function discoverNestedLayoutsImpl(

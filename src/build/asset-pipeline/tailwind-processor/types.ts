@@ -4,7 +4,7 @@
  * @module
  */
 
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
 /**
  * Configuration options for Tailwind CSS v4 processor

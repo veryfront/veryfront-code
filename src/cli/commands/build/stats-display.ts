@@ -4,8 +4,8 @@
  * Handles displaying build statistics and completion messages.
  */
 
-import { bold, cyan, dim, green, yellow } from "@veryfront/compat/console";
-import { cliLogger } from "@veryfront/utils";
+import { bold, cyan, dim, green, yellow } from "#veryfront/compat/console";
+import { cliLogger } from "#veryfront/utils";
 import type { BuildStats } from "./types.ts";
 
 /**

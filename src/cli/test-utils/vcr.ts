@@ -8,11 +8,12 @@
  * @module cli/test-utils/vcr
  */
 
-import { load } from "@std/dotenv";
-import { cliLogger } from "@veryfront/utils";
-import { cwd, getEnv } from "@veryfront/platform/compat/process.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { load } from "#std/dotenv.ts";
+import { cliLogger } from "#veryfront/utils";
+import { cwd } from "#veryfront/platform/compat/process.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { ApiClient } from "../shared/config.ts";
+import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 
 // Load .env.local for credentials in record mode (skip validation against .env.example)
 try {
@@ -46,9 +47,10 @@ export async function createVCRClient(
   cassetteName: string,
   realClient?: ApiClient,
   projectSlug?: string,
+  env: RuntimeEnv = getRuntimeEnv(),
 ): Promise<{ client: ApiClient; save: () => Promise<void>; projectSlug: string }> {
   const fs = createFileSystem();
-  const recording = getEnv("VCR") === "record";
+  const recording = env.vcr === "record";
   const fixturesDir = new URL("../commands/fixtures", import.meta.url).pathname;
   const cassettePath = `${fixturesDir}/${cassetteName}.json`;
 
@@ -166,8 +168,8 @@ export async function createVCRClient(
 /**
  * Check if running in record mode
  */
-export function isRecording(): boolean {
-  return getEnv("VCR") === "record";
+export function isRecording(env: RuntimeEnv = getRuntimeEnv()): boolean {
+  return env.vcr === "record";
 }
 
 /**
@@ -206,17 +208,19 @@ export interface VCRTestContext {
  * });
  * ```
  */
-export async function initVCRTest(cassetteName: string): Promise<VCRTestContext> {
-  if (isRecording()) {
-    const slug = getEnv("VERYFRONT_PROJECT_SLUG");
-    if (!slug) {
+export async function initVCRTest(
+  cassetteName: string,
+  env: RuntimeEnv = getRuntimeEnv(),
+): Promise<VCRTestContext> {
+  if (isRecording(env)) {
+    if (!env.projectSlug) {
       throw new Error("VCR=record requires VERYFRONT_PROJECT_SLUG");
     }
     // Dynamic import to avoid loading config module in playback mode
     const { createApiClient, resolveConfig } = await import("../shared/config.ts");
     const config = await resolveConfig(cwd());
     const realClient = createApiClient(config);
-    const vcr = await createVCRClient(cassetteName, realClient, slug);
+    const vcr = await createVCRClient(cassetteName, realClient, env.projectSlug, env);
     return {
       client: vcr.client,
       projectSlug: vcr.projectSlug,

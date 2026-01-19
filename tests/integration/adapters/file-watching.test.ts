@@ -8,14 +8,28 @@
  * - Cloudflare: Not supported (should throw NotSupportedError)
  */
 
-import { assert, assertEquals } from "@std/assert";
-import { join } from "@std/path";
-import { describe, it } from "@std/testing/bdd";
-import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
+import { assert, assertEquals } from "@veryfront/testing/assert";
+import { join } from "@veryfront/compat/path";
+import { describe, it } from "@veryfront/testing/bdd";
+import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import { withTestContext } from "../../_helpers/context.ts";
+import { mkdir, writeTextFile } from "@veryfront/testing/deno-compat";
+import { isDeno } from "../../../src/platform/compat/runtime.ts";
+import { scaleMs } from "@veryfront/testing";
+import { delay } from "@std/async";
 
-describe(
+// File watching tests are timing-sensitive and behave differently across runtimes
+// Skip in non-Deno runtimes to avoid flaky tests
+const denoOnlyDescribe = isDeno ? describe : describe.skip;
+
+// File watching creates internal timers and async operations that can't be
+// fully cleaned up, so disable sanitizers for these tests
+denoOnlyDescribe(
   "File Watching Abstraction",
+  {
+    sanitizeResources: false,
+    sanitizeOps: false,
+  },
   () => {
     describe("Deno Adapter", () => {
       it("should watch file changes and emit events", async () => {
@@ -23,12 +37,12 @@ describe(
           const testFile = join(context.projectDir, "test.txt");
 
           // Give test context time to finish setup
-          await new Promise((resolve) => setTimeout(resolve, 300));
+          await delay(300);
 
           const controller = new AbortController();
 
           // Start watching after context is fully set up
-          const watcher = denoAdapter.fs.watch(context.projectDir, {
+          const watcher = await (await getAdapter()).fs.watch(context.projectDir, {
             recursive: true,
             signal: controller.signal,
           });
@@ -45,10 +59,10 @@ describe(
           })();
 
           // Give watcher time to initialize
-          await new Promise((resolve) => setTimeout(resolve, 200));
+          await delay(200);
 
           // Create a file to trigger an event
-          await Deno.writeTextFile(testFile, "Hello World");
+          await writeTextFile(testFile, "Hello World");
 
           // Wait for event or timeout
           let timeoutId: number | undefined;
@@ -56,7 +70,7 @@ describe(
             await Promise.race([
               watchPromise,
               new Promise((resolve) => {
-                timeoutId = setTimeout(resolve, 2000);
+                timeoutId = setTimeout(resolve, scaleMs(2000));
               }),
             ]);
           } finally {
@@ -83,13 +97,13 @@ describe(
         await withTestContext("file-watch-deno-multi", async (context) => {
           const dir1 = join(context.projectDir, "dir1");
           const dir2 = join(context.projectDir, "dir2");
-          await Deno.mkdir(dir1, { recursive: true });
-          await Deno.mkdir(dir2, { recursive: true });
+          await mkdir(dir1, { recursive: true });
+          await mkdir(dir2, { recursive: true });
 
           const controller = new AbortController();
 
           // Watch multiple paths
-          const watcher = denoAdapter.fs.watch([dir1, dir2], {
+          const watcher = await (await getAdapter()).fs.watch([dir1, dir2], {
             recursive: true,
             signal: controller.signal,
           });
@@ -103,12 +117,12 @@ describe(
           })();
 
           // Give watcher time to initialize
-          await new Promise((resolve) => setTimeout(resolve, 100));
+          await delay(100);
 
           // Trigger changes in both directories
-          await Deno.writeTextFile(join(dir1, "file1.txt"), "content1");
-          await new Promise((resolve) => setTimeout(resolve, 50));
-          await Deno.writeTextFile(join(dir2, "file2.txt"), "content2");
+          await writeTextFile(join(dir1, "file1.txt"), "content1");
+          await delay(50);
+          await writeTextFile(join(dir2, "file2.txt"), "content2");
 
           // Wait for events or timeout
           let timeoutId: number | undefined;
@@ -116,7 +130,7 @@ describe(
             await Promise.race([
               watchPromise,
               new Promise((resolve) => {
-                timeoutId = setTimeout(resolve, 1500);
+                timeoutId = setTimeout(resolve, scaleMs(1500));
               }),
             ]);
           } finally {
@@ -135,7 +149,7 @@ describe(
         await withTestContext("file-watch-deno-abort", async (context) => {
           const controller = new AbortController();
 
-          const watcher = denoAdapter.fs.watch(context.projectDir, {
+          const watcher = await (await getAdapter()).fs.watch(context.projectDir, {
             recursive: true,
             signal: controller.signal,
           });
@@ -152,15 +166,15 @@ describe(
           watcher.close();
 
           // Wait a bit to ensure no more events
-          await new Promise((resolve) => setTimeout(resolve, 100));
+          await delay(100);
 
           // Should not throw and should stop watching
           await watchPromise;
 
           // Verify watcher stopped (no events after abort)
           const initialCount = eventCount;
-          await Deno.writeTextFile(join(context.projectDir, "test.txt"), "content");
-          await new Promise((resolve) => setTimeout(resolve, 100));
+          await writeTextFile(join(context.projectDir, "test.txt"), "content");
+          await delay(100);
           assertEquals(eventCount, initialCount, "Should not capture events after abort");
         });
       });
@@ -168,7 +182,7 @@ describe(
       it("should have a close method", async () => {
         // deno-lint-ignore require-await
         await withTestContext("file-watch-deno-close", async (context) => {
-          const watcher = denoAdapter.fs.watch(context.projectDir, { recursive: true });
+          const watcher = await (await getAdapter()).fs.watch(context.projectDir, { recursive: true });
 
           // Verify close method exists
           assertEquals(typeof watcher.close, "function", "Should have close method");
@@ -183,7 +197,7 @@ describe(
           const testFile = join(context.projectDir, "test.txt");
           const controller = new AbortController();
 
-          const watcher = denoAdapter.fs.watch(context.projectDir, {
+          const watcher = await (await getAdapter()).fs.watch(context.projectDir, {
             recursive: true,
             signal: controller.signal,
           });
@@ -197,14 +211,14 @@ describe(
           })();
 
           // Give watcher time to initialize
-          await new Promise((resolve) => setTimeout(resolve, 100));
+          await delay(100);
 
           // Create file (should emit 'create')
-          await Deno.writeTextFile(testFile, "initial content");
-          await new Promise((resolve) => setTimeout(resolve, 50));
+          await writeTextFile(testFile, "initial content");
+          await delay(50);
 
           // Modify file (should emit 'modify')
-          await Deno.writeTextFile(testFile, "modified content");
+          await writeTextFile(testFile, "modified content");
 
           // Wait for events or timeout
           let timeoutId: number | undefined;
@@ -212,7 +226,7 @@ describe(
             await Promise.race([
               watchPromise,
               new Promise((resolve) => {
-                timeoutId = setTimeout(resolve, 1500);
+                timeoutId = setTimeout(resolve, scaleMs(1500));
               }),
             ]);
           } finally {

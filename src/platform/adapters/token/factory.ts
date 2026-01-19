@@ -6,7 +6,7 @@
  * from token/integration.ts instead.
  */
 
-import { logger } from "@veryfront/utils";
+import { logger } from "#veryfront/utils";
 import { createError, toError } from "../../../errors/veryfront-error.ts";
 import type { TokenStorageAdapter, TokenStorageAdapterConfig } from "./veryfront/types.ts";
 

@@ -9,7 +9,7 @@
 
 import type { HandlerContext } from "../../types.ts";
 import type { BuildResult } from "esbuild";
-import { getDirectory, getEsbuildLoader } from "@veryfront/utils/path-utils.ts";
+import { getDirectory, getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
 import { createBareExternalPlugin, createRelativeFsPlugin } from "./esbuild-plugins.ts";
 
 /**

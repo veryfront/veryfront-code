@@ -1,4 +1,4 @@
-import { logger } from "@veryfront/utils";
+import { logger } from "#veryfront/utils";
 
 export class PathNormalizer {
   constructor(private readonly projectDir?: string) {}

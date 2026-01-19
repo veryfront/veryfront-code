@@ -1,7 +1,7 @@
 import type { ServeOptions, Server } from "../../base.ts";
 import type { BunServer as BunServerType } from "./types.ts";
-import { DEFAULT_PORT } from "@veryfront/config";
-import { serverLogger } from "@veryfront/utils";
+import { DEFAULT_PORT } from "#veryfront/config";
+import { serverLogger } from "#veryfront/utils";
 
 export class BunServer implements Server {
   constructor(

@@ -4,10 +4,10 @@
  * @module cli/utils/package-manager
  */
 
-import { join } from "@veryfront/platform/compat/path/index.ts";
-import { cliLogger as logger } from "@veryfront/utils";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
-import { getOsType, runCommand } from "@veryfront/platform/compat/process.ts";
+import { join } from "#veryfront/platform/compat/path/index.ts";
+import { cliLogger as logger } from "#veryfront/utils";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { getOsType, runCommand } from "#veryfront/platform/compat/process.ts";
 
 export type PackageManager = "npm" | "yarn" | "pnpm" | "bun";
 

@@ -1,10 +1,10 @@
-import { serverLogger as logger } from "@veryfront/utils";
+import { serverLogger as logger } from "#veryfront/utils";
 import {
   HMR_CLOSE_MESSAGE_TOO_LARGE,
   HMR_CLOSE_NORMAL,
   HMR_CLOSE_RATE_LIMIT,
-} from "@veryfront/utils";
-import type { WebSocketContext } from "@veryfront/server/dev-server/hmr-types.ts";
+} from "#veryfront/utils";
+import type { WebSocketContext } from "#veryfront/server/dev-server/hmr-types.ts";
 
 export function setupWebSocketHandlers(
   socket: WebSocket,

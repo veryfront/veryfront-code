@@ -5,8 +5,8 @@
  */
 
 import type { z } from "zod";
-import type { Agent } from "@veryfront/agent";
-import type { Tool } from "@veryfront/tool";
+import type { Agent } from "#veryfront/agent";
+import type { Tool } from "#veryfront/tool";
 import type { BlobRef, BlobStorage } from "./blob/types.ts";
 
 // ============================================================================

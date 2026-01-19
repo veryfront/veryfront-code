@@ -6,8 +6,8 @@
  * @module rendering/orchestrator/file-resolver
  */
 
-import { rendererLogger as logger } from "@veryfront/utils";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { buildCandidatePaths, findFirstExisting } from "./candidates.ts";
 
 // Re-export utilities

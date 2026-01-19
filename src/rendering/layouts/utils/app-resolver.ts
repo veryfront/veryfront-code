@@ -1,8 +1,8 @@
-import { join } from "@veryfront/platform/compat/path-helper.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { isExtendedFSAdapter } from "@veryfront/platform/adapters/fs/wrapper.ts";
-import type { VeryfrontConfig } from "@veryfront/config";
-import { rendererLogger as logger } from "@veryfront/utils";
+import { join } from "#veryfront/platform/compat/path-helper.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
+import { rendererLogger as logger } from "#veryfront/utils";
 
 const VALID_EXTENSIONS = ["tsx", "jsx", "ts", "js", "mdx", "md"];
 

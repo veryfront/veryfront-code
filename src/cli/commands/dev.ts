@@ -2,13 +2,13 @@
  * Dev Command - Development server with HMR
  */
 
-import { compileAllMDX, watchMDX } from "@veryfront/build/compiler/mdx-compiler/index.ts";
-import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
-import { join } from "@veryfront/platform/compat/path/index.ts";
-import { getEnv } from "@veryfront/platform/compat/process.ts";
-import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
-import { getConfig } from "@veryfront/config";
-import { createDevServer } from "@veryfront/server/dev-server.ts";
+import { compileAllMDX, watchMDX } from "#veryfront/build/compiler/mdx-compiler/index.ts";
+import { ErrorCode, VeryfrontError } from "#veryfront/errors/index.ts";
+import { join } from "#veryfront/platform/compat/path/index.ts";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
+import { getConfig } from "#veryfront/config";
+import { getRuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { createDevServer } from "#veryfront/server/dev-server.ts";
 import { runAIConfigValidation } from "../discovery/config-validator.ts";
 import { discoverAll } from "../discovery/index.ts";
 import { exitProcess, registerTerminationSignals } from "../utils/index.ts";
@@ -63,8 +63,9 @@ export async function devCommand(options: DevOptions): Promise<DevCommandResult>
   const finalPort = port !== DEFAULT_DEV_PORT ? port : (config?.dev?.port || port);
   const enableHMR = config?.dev?.hmr !== false && hmr;
   // Check both config and env var for proxy mode (dev-server.ts sets PROXY_MODE env var)
-  const isProxyMode = config?.fs?.veryfront?.proxyMode === true || getEnv("PROXY_MODE") === "1";
-  const projectSlug = config?.fs?.veryfront?.projectSlug || getEnv("VERYFRONT_PROJECT_SLUG");
+  const env = getRuntimeEnv();
+  const isProxyMode = config?.fs?.veryfront?.proxyMode === true || env.proxyMode;
+  const projectSlug = config?.fs?.veryfront?.projectSlug || env.projectSlug;
 
   // Validate AI configuration
   if (config) {

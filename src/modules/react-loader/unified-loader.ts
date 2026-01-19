@@ -1,8 +1,8 @@
-import { join } from "@veryfront/platform/compat/path/index.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { transformToESM } from "@veryfront/transforms/esm/index.ts";
-import type { TransformOptions } from "@veryfront/transforms/esm/types.ts";
-import { rendererLogger as logger } from "@veryfront/utils";
+import { join } from "#veryfront/platform/compat/path/index.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { transformToESM } from "#veryfront/transforms/esm/index.ts";
+import type { TransformOptions } from "#veryfront/transforms/esm/types.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
 import { getProjectTmpDir } from "./temp-directory.ts";
 import type { ComponentMap, ComponentSource, LoadComponentOptions } from "./types.ts";
 

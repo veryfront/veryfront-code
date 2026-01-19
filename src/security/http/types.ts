@@ -9,7 +9,7 @@ export type {
   HandlerMetadata,
   HandlerPriority,
   HandlerResult,
-} from "@veryfront/types";
+} from "#veryfront/types";
 
 // Re-export security-specific types
 export type { CORSConfig, SecurityConfig } from "./middleware/index.ts";

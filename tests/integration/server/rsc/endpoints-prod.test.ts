@@ -1,10 +1,12 @@
-import { assertEquals } from "@std/assert";
-import { afterAll, describe, it } from "@std/testing/bdd";
-import { join } from "@std/path";
+import { assertEquals } from "@veryfront/testing/assert";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
+import { join } from "@veryfront/compat/path";
+import { mkdir, remove, writeTextFile } from "@veryfront/compat/fs.ts";
 import "../../../_helpers/log-guard.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { assertDrained, drainEventLoop } from "../../../_helpers/utils.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
+import { isDeno } from "../../../../src/platform/compat/runtime.ts";
 
 describe(
   "RSC Prod Server Endpoints Tests",
@@ -22,7 +24,7 @@ describe(
         it("return 200 (page/stream/payload/manifest)", async () => {
           await withTestContext("rsc-prod-endpoints", async (context) => {
             // Enable RSC via config instead of env var
-            await Deno.writeTextFile(
+            await writeTextFile(
               join(context.projectDir, "veryfront.config.js"),
               `export default { experimental: { rsc: true } };`,
             );
@@ -35,11 +37,11 @@ describe(
             const controller = new AbortController();
             try {
               // Create proper app directory structure for RSC
-              await Deno.remove(`${context.projectDir}/app`, { recursive: true }).catch(() => {});
-              await Deno.remove(`${context.projectDir}/pages`, { recursive: true }).catch(() => {});
+              await remove(`${context.projectDir}/app`, { recursive: true }).catch(() => {});
+              await remove(`${context.projectDir}/pages`, { recursive: true }).catch(() => {});
 
-              await Deno.mkdir(`${context.projectDir}/app`, { recursive: true });
-              await Deno.writeTextFile(
+              await mkdir(`${context.projectDir}/app`, { recursive: true });
+              await writeTextFile(
                 `${context.projectDir}/app/page.tsx`,
                 `import React from "react";\nexport default function Page() { return <div>Home</div>; }`,
               );

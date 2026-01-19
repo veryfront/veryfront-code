@@ -1,12 +1,12 @@
-import { join } from "@veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/platform/compat/path/index.ts";
 import type * as React from "react";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { transformToESM } from "@veryfront/transforms/esm/index.ts";
-import type { TransformOptions } from "@veryfront/transforms/esm/types.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { transformToESM } from "#veryfront/transforms/esm/index.ts";
+import type { TransformOptions } from "#veryfront/transforms/esm/types.ts";
 import { getProjectTmpDir } from "./temp-directory.ts";
 import { normalizeModulePath, resolveRelativePath } from "./path-resolver.ts";
 import type { LoadComponentOptions } from "./types.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { SSRModuleLoader } from "./ssr-module-loader/index.ts";
 import { extractComponent } from "./extract-component.ts";
 

@@ -3,6 +3,7 @@ export { generateThemeVariables } from "./theme-variables.ts";
 export {
   convertTailwindConfigForBrowser,
   generateTailwindConfig,
+  generateTailwindV4Theme,
   getTailwindCDNUrl,
 } from "./tailwind-config.ts";
 

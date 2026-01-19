@@ -1,5 +1,5 @@
 import React from "react";
-import { RESPONSIVE_IMAGE_WIDTH_LG, RESPONSIVE_IMAGE_WIDTHS } from "@veryfront/utils";
+import { RESPONSIVE_IMAGE_WIDTH_LG, RESPONSIVE_IMAGE_WIDTHS } from "#veryfront/utils";
 import { generateSrcSet, getExtension, getOptimizedPath } from "./helpers.ts";
 
 export interface OptimizedImageProps {

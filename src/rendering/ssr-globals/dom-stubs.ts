@@ -60,6 +60,7 @@ export const createElementStub = () => ({
  * - document.querySelector
  */
 export const createDocumentStub = () => ({
+  __veryfrontSSRStub: true,
   // Fullscreen API (video.js, etc.)
   exitFullscreen: undefined,
   webkitExitFullscreen: undefined,
@@ -114,6 +115,7 @@ export const createDocumentStub = () => ({
  * Minimal window stub for SSR
  */
 export const createWindowStub = () => ({
+  __veryfrontSSRStub: true,
   // Common properties
   document: createDocumentStub(),
   navigator: {

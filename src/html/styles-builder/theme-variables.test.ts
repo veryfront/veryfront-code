@@ -1,5 +1,5 @@
-import { assertStringIncludes } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateThemeVariables } from "./theme-variables.ts";
 
 describe("theme-variables", () => {

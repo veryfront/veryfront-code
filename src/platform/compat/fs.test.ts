@@ -4,8 +4,8 @@
  * These tests verify the cross-runtime filesystem abstractions work correctly.
  */
 
-import { assertEquals, assertExists } from "@std/assert";
-import { afterAll, beforeAll, describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   chmod,
   createFileSystem,
@@ -80,7 +80,12 @@ describe("Filesystem Compat", () => {
       await writeFile(filePath, content);
       const readContent = await readFile(filePath);
 
-      assertEquals(readContent, content);
+      // Compare as Uint8Array to handle Node.js Buffer vs Uint8Array differences
+      const readAsUint8 = new Uint8Array(readContent);
+      assertEquals(readAsUint8.length, content.length);
+      for (let i = 0; i < content.length; i++) {
+        assertEquals(readAsUint8[i], content[i]);
+      }
     });
   });
 

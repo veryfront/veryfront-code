@@ -7,7 +7,7 @@
  */
 
 import type { ParsedArgs } from "./types.ts";
-import { DEFAULT_PORT } from "@veryfront/config/defaults.ts";
+import { DEFAULT_PORT } from "#veryfront/config/defaults.ts";
 
 /** Flags that should accumulate values instead of replacing */
 const ARRAY_FLAGS = new Set(["with"]);

@@ -8,8 +8,8 @@
  */
 
 import { z } from "zod";
-import { cliLogger } from "@veryfront/utils";
-import { cwd } from "@veryfront/platform/compat/process.ts";
+import { cliLogger } from "#veryfront/utils";
+import { cwd } from "#veryfront/platform/compat/process.ts";
 import { type ApiClient, createApiClient, resolveConfig } from "../shared/config.ts";
 import { confirmPrompt, createSpinner, logInfo, logSuccess } from "../utils/index.ts";
 import type { ParsedArgs } from "../index/types.ts";

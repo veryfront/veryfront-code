@@ -2,8 +2,8 @@ import {
   assert,
   assertEquals as _assertEquals,
   assertStringIncludes,
-} from "@std/assert";
-import { afterAll, describe, it } from "@std/testing/bdd";
+} from "@veryfront/testing/assert";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
 import {
   generateAppModule,
   generateImportMap,
@@ -137,11 +137,11 @@ describe("Client Runtime Generation", { sanitizeOps: false, sanitizeResources: f
       assertStringIncludes(html, "/jsx-dev-runtime");
     });
 
-    it("should use React 18.3.1", async () => {
+    it("should use React 19.1.1", async () => {
       const html = await generateImportMap();
 
-      assertStringIncludes(html, "react@18.3.1");
-      assertStringIncludes(html, "react-dom@18.3.1");
+      assertStringIncludes(html, "react@19.1.1");
+      assertStringIncludes(html, "react-dom@19.1.1");
     });
 
     it("should have valid JSON structure", async () => {
@@ -189,7 +189,7 @@ describe("Client Runtime Generation", { sanitizeOps: false, sanitizeResources: f
       const importMap = await generateImportMap();
       const appCode = generateAppModule();
 
-      assert(importMap.includes("18.3.1"));
+      assert(importMap.includes("19.1.1"));
       assertStringIncludes(appCode, "2.0.0");
     });
   });

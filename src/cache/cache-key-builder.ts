@@ -20,7 +20,7 @@ import type { HandlerContext } from "../types/server.ts";
 import {
   getCurrentRequestContext,
   type RequestContext as MultiProjectRequestContextType,
-} from "@veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+} from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 
 // ============================================================================
 // ZOD SCHEMAS FOR VALIDATION

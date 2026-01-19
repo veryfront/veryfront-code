@@ -1,8 +1,10 @@
-import { assertEquals } from "@std/assert";
-import { join } from "@std/path";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { join } from "#veryfront/compat/path";
 import { detectAppRouter } from "./router-detection.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import type { VeryfrontConfig } from "@veryfront/config";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
+import { makeTempDir, mkdir, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 
 // Adapter stub that forces router-detection to use compat fs fallback
 const failingAdapter: RuntimeAdapter = {
@@ -102,17 +104,19 @@ const failingAdapter: RuntimeAdapter = {
   },
 };
 
-Deno.test("detectAppRouter falls back to compat fs when adapter fails", async () => {
-  const tmpDir = await Deno.makeTempDir();
-  const appDir = join(tmpDir, "app");
-  await Deno.mkdir(appDir, { recursive: true });
-  await Deno.writeTextFile(
-    join(appDir, "page.tsx"),
-    "export default function Page() { return null; }",
-  );
+describe("detectAppRouter", () => {
+  it("falls back to compat fs when adapter fails", async () => {
+    const tmpDir = await makeTempDir();
+    const appDir = join(tmpDir, "app");
+    await mkdir(appDir, { recursive: true });
+    await writeTextFile(
+      join(appDir, "page.tsx"),
+      "export default function Page() { return null; }",
+    );
 
-  const config = {} as VeryfrontConfig;
-  const result = await detectAppRouter(tmpDir, config, failingAdapter);
+    const config = {} as VeryfrontConfig;
+    const result = await detectAppRouter(tmpDir, config, failingAdapter);
 
-  assertEquals(result, true, "should detect app router using compat fs fallback");
+    assertEquals(result, true, "should detect app router using compat fs fallback");
+  });
 });

@@ -8,7 +8,7 @@
  * - Source map generation
  */
 
-import { logger } from "@veryfront/utils";
+import { logger } from "#veryfront/utils";
 import type {
   CSSOptimizationOptions,
   CSSOptimizationStrategy,

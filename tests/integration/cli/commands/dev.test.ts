@@ -1,9 +1,12 @@
-import { assertEquals, assertExists } from "@std/assert";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
 import { ensureDir } from "@std/fs";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "@veryfront/testing/bdd";
+import { writeTextFile } from "@veryfront/compat/fs.ts";
 import type { DevCommandOptions } from "../../../../src/cli/commands/dev.ts";
 import { clearConfigCache } from "@veryfront/config";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
+import { delay } from "@std/async";
+import { scaleMs } from "@veryfront/testing";
 
 // Create a mock dev command that captures arguments and logs output
 // Uses AbortSignal to allow proper cleanup and prevent hanging tests
@@ -41,7 +44,7 @@ const createMockDevCommand = () => {
       signal?.addEventListener("abort", cleanup);
       // Auto-resolve after 100ms if no abort signal provided (for test safety)
       if (!signal) {
-        setTimeout(resolve, 100);
+        setTimeout(resolve, scaleMs(100));
       }
     });
   };
@@ -66,7 +69,7 @@ describe("devCommand", () => {
       await ensureDir(`${context.projectDir}/src`);
 
       // Create a mock config file
-      await Deno.writeTextFile(
+      await writeTextFile(
         `${context.projectDir}/veryfront.config.js`,
         `
 export default {
@@ -89,7 +92,7 @@ export default {
         });
 
         // Give it a moment to start and log messages
-        await new Promise((resolve) => setTimeout(resolve, 50));
+        await delay(50);
 
         // Note: Console output assertions removed as dev command no longer logs to console
 
@@ -120,7 +123,7 @@ export default {
         const devPromise = devCommand(options);
 
         // Give it a moment to start
-        await new Promise((resolve) => setTimeout(resolve, 50));
+        await delay(50);
 
         // Note: When no config file exists, DEFAULT_CONFIG.dev.port (3002) is used
 
@@ -148,7 +151,7 @@ export default {
         });
 
         // Give it a moment to start
-        await new Promise((resolve) => setTimeout(resolve, 50));
+        await delay(50);
 
         // Should use default port 3002
 
@@ -167,7 +170,7 @@ export default {
       clearConfigCache();
 
       // Create a minimal config file without dev.port
-      await Deno.writeTextFile(
+      await writeTextFile(
         `${context.projectDir}/veryfront.config.js`,
         `
 export default {
@@ -186,7 +189,7 @@ export default {
         });
 
         // Give it a moment to start
-        await new Promise((resolve) => setTimeout(resolve, 50));
+        await delay(50);
 
         // Note: Due to config merging with DEFAULT_CONFIG, even minimal configs get dev.port = 3002
         // The CLI --port option is only used when DEFAULT_CONFIG.dev.port is not set

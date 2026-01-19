@@ -3,8 +3,8 @@
  * @module cli/commands/studio.test
  */
 
-import { assertEquals, assertStringIncludes } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { buildStudioUrl } from "./studio.ts";
 
 describe("buildStudioUrl", () => {

@@ -4,9 +4,9 @@
  * @module cli/index/command-router
  */
 
-import { handleError } from "@veryfront/errors";
-import { formatErrorBox } from "@veryfront/errors/user-friendly/index.ts";
-import { cliLogger, DEFAULT_DEV_SERVER_PORT, VERSION } from "@veryfront/utils";
+import { handleError } from "#veryfront/errors";
+import { formatErrorBox } from "#veryfront/errors/user-friendly/index.ts";
+import { cliLogger, DEFAULT_DEV_SERVER_PORT, VERSION } from "#veryfront/utils";
 import { z } from "zod";
 import { analyzeChunksCommand } from "../commands/analyze-chunks.ts";
 import { cleanCommand } from "../commands/clean.ts";
@@ -39,9 +39,9 @@ import { handleStudioCommand } from "./studio-handler.ts";
 import type { ParsedArgs } from "./types.ts";
 import type { InitTemplate } from "../commands/init/types.ts";
 import type { IntegrationName } from "../templates/types.ts";
-import { cwd } from "@veryfront/platform/compat/process.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
-import { join } from "@veryfront/platform/compat/path/index.ts";
+import { cwd } from "#veryfront/platform/compat/process.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { join } from "#veryfront/platform/compat/path/index.ts";
 import { showCommandHelp, showMainHelp } from "../help/index.ts";
 import { createMCPServer } from "../mcp/server.ts";
 
@@ -187,9 +187,9 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
       case "serve":
         showLogo();
         {
-          const { getAdapter } = await import("@veryfront/platform/adapters/detect.ts");
+          const { getAdapter } = await import("#veryfront/platform/adapters/detect.ts");
           const adapter = await getAdapter();
-          const { startUniversalServer } = await import("@veryfront/server/production-server.ts");
+          const { startUniversalServer } = await import("#veryfront/server/production-server.ts");
 
           const projectDir = cwd();
           const port = args.port ?? DEFAULT_DEV_SERVER_PORT;

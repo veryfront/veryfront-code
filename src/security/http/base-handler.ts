@@ -9,9 +9,9 @@ import type {
   HandlerMetadata,
   HandlerResult,
   RoutePattern,
-} from "@veryfront/types";
+} from "#veryfront/types";
 import { ResponseBuilder } from "./response/index.ts";
-import { serverLogger } from "@veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 
 /**
  * Pre-bound handler helper methods.

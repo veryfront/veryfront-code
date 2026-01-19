@@ -1,38 +1,35 @@
-import { assertEquals } from "@std/assert";
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
-import { join } from "@veryfront/platform/compat/path/index.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { join } from "#veryfront/platform/compat/path/index.ts";
+import {
+  exists,
+  makeTempDir,
+  readTextFile,
+  remove,
+  writeTextFile,
+} from "#veryfront/platform/compat/fs.ts";
+import { runCommand } from "#veryfront/platform/compat/process.ts";
 
 describe("install command integration", () => {
   let tempDir: string;
 
   beforeEach(async () => {
-    tempDir = await Deno.makeTempDir({ prefix: "veryfront-install-test-" });
+    tempDir = await makeTempDir({ prefix: "veryfront-install-test-" });
   });
 
   afterEach(async () => {
-    await Deno.remove(tempDir, { recursive: true });
+    await remove(tempDir, { recursive: true });
   });
 
   async function runInstall(target: string): Promise<{ code: number; output: string }> {
     const cliPath = new URL("../../main.ts", import.meta.url).pathname;
-    const command = new Deno.Command("deno", {
+    const result = await runCommand("deno", {
       args: ["run", "--allow-all", cliPath, "install", "--target", target, "--force"],
       cwd: tempDir,
-      stdout: "piped",
-      stderr: "piped",
+      capture: true,
     });
-    const { code, stdout, stderr } = await command.output();
-    const output = new TextDecoder().decode(stdout) + new TextDecoder().decode(stderr);
-    return { code, output };
-  }
-
-  async function exists(path: string): Promise<boolean> {
-    try {
-      await Deno.stat(path);
-      return true;
-    } catch {
-      return false;
-    }
+    const output = (result.stdout ?? "") + (result.stderr ?? "");
+    return { code: result.code, output };
   }
 
   describe("cursor", () => {
@@ -41,7 +38,7 @@ describe("install command integration", () => {
       assertEquals(code, 0);
       assertEquals(await exists(join(tempDir, ".cursorrules")), true);
 
-      const content = await Deno.readTextFile(join(tempDir, ".cursorrules"));
+      const content = await readTextFile(join(tempDir, ".cursorrules"));
       assertEquals(content.includes("Veryfront"), true);
       assertEquals(content.includes("veryfront dev"), true);
       assertEquals(content.includes("src/pages/"), true);
@@ -54,7 +51,7 @@ describe("install command integration", () => {
       assertEquals(code, 0);
       assertEquals(await exists(join(tempDir, ".claude/CLAUDE.md")), true);
 
-      const content = await Deno.readTextFile(join(tempDir, ".claude/CLAUDE.md"));
+      const content = await readTextFile(join(tempDir, ".claude/CLAUDE.md"));
       assertEquals(content.includes("Veryfront"), true);
       assertEquals(content.includes("veryfront dev"), true);
     });
@@ -66,7 +63,7 @@ describe("install command integration", () => {
       assertEquals(code, 0);
       assertEquals(await exists(join(tempDir, "SKILL.md")), true);
 
-      const content = await Deno.readTextFile(join(tempDir, "SKILL.md"));
+      const content = await readTextFile(join(tempDir, "SKILL.md"));
       assertEquals(content.startsWith("---"), true);
       assertEquals(content.includes("name: veryfront"), true);
       assertEquals(content.includes("description:"), true);
@@ -80,7 +77,7 @@ describe("install command integration", () => {
       assertEquals(code, 0);
       assertEquals(await exists(join(tempDir, ".github/copilot-instructions.md")), true);
 
-      const content = await Deno.readTextFile(join(tempDir, ".github/copilot-instructions.md"));
+      const content = await readTextFile(join(tempDir, ".github/copilot-instructions.md"));
       assertEquals(content.includes("Veryfront"), true);
       assertEquals(content.includes("veryfront dev"), true);
     });
@@ -92,7 +89,7 @@ describe("install command integration", () => {
       assertEquals(code, 0);
       assertEquals(await exists(join(tempDir, ".windsurfrules")), true);
 
-      const content = await Deno.readTextFile(join(tempDir, ".windsurfrules"));
+      const content = await readTextFile(join(tempDir, ".windsurfrules"));
       assertEquals(content.includes("Veryfront"), true);
       assertEquals(content.includes("veryfront dev"), true);
     });
@@ -104,7 +101,7 @@ describe("install command integration", () => {
       assertEquals(code, 0);
       assertEquals(await exists(join(tempDir, "AGENTS.md")), true);
 
-      const content = await Deno.readTextFile(join(tempDir, "AGENTS.md"));
+      const content = await readTextFile(join(tempDir, "AGENTS.md"));
       assertEquals(content.includes("Veryfront"), true);
       assertEquals(content.includes("npx veryfront"), true);
     });
@@ -139,12 +136,12 @@ describe("install command integration", () => {
 
   describe("force flag", () => {
     it("should overwrite existing files with --force", async () => {
-      await Deno.writeTextFile(join(tempDir, ".cursorrules"), "existing content");
+      await writeTextFile(join(tempDir, ".cursorrules"), "existing content");
 
       const { code } = await runInstall("cursor");
       assertEquals(code, 0);
 
-      const content = await Deno.readTextFile(join(tempDir, ".cursorrules"));
+      const content = await readTextFile(join(tempDir, ".cursorrules"));
       assertEquals(content.includes("Veryfront"), true);
     });
   });

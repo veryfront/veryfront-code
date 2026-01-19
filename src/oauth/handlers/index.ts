@@ -14,4 +14,5 @@ export {
   createOAuthInitHandler,
   createOAuthStatusHandler,
   type OAuthInitHandlerOptions,
+  type OAuthStatusHandlerOptions,
 } from "./init-handler.ts";

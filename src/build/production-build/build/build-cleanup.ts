@@ -1,6 +1,6 @@
-import { serverLogger as logger } from "@veryfront/utils";
-import type { VeryfrontRenderer } from "@veryfront/rendering/index.ts";
-import type { BuildStats } from "@veryfront/server/build-types.ts";
+import { serverLogger as logger } from "#veryfront/utils";
+import type { VeryfrontRenderer } from "#veryfront/rendering/index.ts";
+import type { BuildStats } from "#veryfront/server/build-types.ts";
 
 export async function cleanupRenderer(renderer: VeryfrontRenderer): Promise<void> {
   if (typeof renderer.destroy === "function") {

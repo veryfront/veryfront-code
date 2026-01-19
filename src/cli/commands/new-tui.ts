@@ -3,8 +3,8 @@
  * Standard select/multi-select with Veryfront agent logo
  */
 
-import { writeStdout } from "@veryfront/platform/compat/process.ts";
-import { getStdinReader, setRawMode } from "@veryfront/platform/compat/stdin.ts";
+import { writeStdout } from "#veryfront/platform/compat/process.ts";
+import { getStdinReader, setRawMode } from "#veryfront/platform/compat/stdin.ts";
 import type { InitTemplate } from "./init/types.ts";
 import type { IntegrationName } from "../templates/types.ts";
 

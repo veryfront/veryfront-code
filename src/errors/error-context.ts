@@ -1,6 +1,6 @@
 /** Structured error handling with logging for silent failure operations */
 
-import { serverLogger } from "@veryfront/utils/logger/logger.ts";
+import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { getErrorMessage } from "./veryfront-error.ts";
 
 export interface ErrorContext {

@@ -8,7 +8,7 @@
  * @module rendering/shared/context-aware-cache
  */
 
-import { rendererLogger as logger } from "@veryfront/utils";
+import { rendererLogger as logger } from "#veryfront/utils";
 import type { RenderResult } from "../orchestrator/types.ts";
 import type { CacheStore } from "../cache/types.ts";
 import { MemoryCacheStore, type MemoryCacheStoreOptions } from "../cache/stores/index.ts";

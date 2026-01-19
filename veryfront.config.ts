@@ -28,7 +28,7 @@ class ConfigError extends Error {
 // (e.g., PROXY_MODE=1 set by server.ts would be overwritten by PROXY_MODE=0 from .env)
 let env: Record<string, string> = {};
 try {
-  const { load } = await import("https://deno.land/std@0.220.0/dotenv/mod.ts");
+  const { load } = await import("@std/dotenv");
   // examplePath: null skips validation against .env.example (which requires all vars)
   env = await load({ envPath: ".env", examplePath: null });
 } catch {

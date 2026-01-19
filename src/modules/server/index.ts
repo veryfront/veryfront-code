@@ -6,7 +6,7 @@
  *
  * @example
  * ```typescript
- * import { APIServer, serveModule, RateLimiter } from '@veryfront/modules/server'
+ * import { APIServer, serveModule, RateLimiter } from "#veryfront/modules/server'
  *
  * // Create API server
  * const apiServer = new APIServer({ projectDir, adapter })

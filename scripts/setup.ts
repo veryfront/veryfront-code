@@ -7,38 +7,51 @@
  * Run: deno task setup
  */
 
-import { createFileSystem, FileSystem } from "../src/platform/compat/fs.ts";
-import { getArgs, exitProcess, isDeno, getRuntimeVersion } from "../src/platform/compat/process.ts";
+import { createFileSystem } from "../src/platform/compat/fs.ts";
+import { exit, getArgs } from "../src/platform/compat/process.ts";
+import { isDeno } from "../src/platform/compat/runtime.ts";
 
-// Conditional imports for path module and command parsing
-let pathMod: typeof import('node:path') | undefined;
-let childProcess: typeof import('node:child_process') | undefined;
-let util: typeof import('node:util') | undefined;
-let parseArgs: typeof import("mri");
+type ParseArgsFn = (
+  args: string[],
+  options?: Record<string, unknown>,
+) => { _: Array<string | number>; [key: string]: unknown };
 
-// @ts-ignore - Deno global
-if (typeof Deno === 'undefined') {
-  pathMod = require('node:path');
-  childProcess = require('node:child_process');
-  util = require('node:util');
-  parseArgs = require("mri");
-} else {
-  // @ts-ignore - Deno global
-  pathMod = await import("jsr:@std/path");
-  // @ts-ignore - Deno global
-  ({ parseArgs } = await import("std/flags/mod.ts"));
+type ChildProcessModule = {
+  execFile: (file: string, args?: string[], options?: Record<string, unknown>) => unknown;
+};
+
+type UtilModule = {
+  promisify: (fn: (...args: unknown[]) => unknown) => (...args: unknown[]) => Promise<unknown>;
+};
+
+let childProcess: ChildProcessModule | null = null;
+let util: UtilModule | null = null;
+let parseArgsFn: ParseArgsFn | null = null;
+
+async function loadDeps(): Promise<void> {
+  if (isDeno) {
+    const { parseArgs } = await import("std/flags/mod.ts");
+    parseArgsFn = parseArgs as ParseArgsFn;
+    return;
+  }
+
+  const [childProcessModule, utilModule, mriModule] = await Promise.all([
+    import("node:child_process"),
+    import("node:util"),
+    import("mri"),
+  ]);
+
+  childProcess = childProcessModule as ChildProcessModule;
+  util = utilModule as UtilModule;
+  parseArgsFn = (mriModule as { default?: ParseArgsFn }).default ?? (mriModule as ParseArgsFn);
 }
 
-// Helper to get path functions
-const getPath = () => {
-  if (pathMod) {
-    return pathMod;
-  } else {
-    // Fallback for Deno, should already be globally available or imported via import maps
-    // @ts-ignore - Deno global
-    return require("std/path/mod.ts");
+function getParseArgs(): ParseArgsFn {
+  if (!parseArgsFn) {
+    throw new Error("Argument parser not initialized");
   }
-};
+  return parseArgsFn;
+}
 
 const fs = createFileSystem();
 
@@ -106,9 +119,8 @@ async function runCommand(cmd: string[], cwd?: string): Promise<{ success: boole
         stderr: String(error.stderr || ''),
       };
     }
-  } else {
-    return { success: false, stdout: '', stderr: 'Unsupported runtime for command execution.' };
   }
+  return { success: false, stdout: "", stderr: "Unsupported runtime for command execution." };
 }
 
 // Helper to get Deno version (if running in Deno)
@@ -390,11 +402,11 @@ async function runSetup() {
   if (!allPassed) {
     error("\nSetup validation failed!");
     log("\nPlease fix the issues above and run setup again.");
-    exitProcess(1);
+    exit(1);
   }
 
   // Optional steps
-  const args = parseArgs(getArgs(), { boolean: ["skip-cache", "skip-check"] });
+  const args = getParseArgs()(getArgs(), { boolean: ["skip-cache", "skip-check"] });
 
   if (!args["skip-cache"]) {
     const cachePassed = await cacheDependencies();
@@ -414,5 +426,14 @@ async function runSetup() {
   printNextSteps();
 }
 
-// Run setup
-await runSetup();
+async function main() {
+  await loadDeps();
+  await runSetup();
+}
+
+if (import.meta.main) {
+  main().catch((err) => {
+    error(`Setup failed: ${err?.message ?? err}`);
+    exit(1);
+  });
+}

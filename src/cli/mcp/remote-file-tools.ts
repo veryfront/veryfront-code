@@ -10,8 +10,8 @@
  */
 
 import { z } from "zod";
-import { getEnv } from "@veryfront/platform/compat/process.ts";
 import type { MCPTool } from "./tools.ts";
+import { getRuntimeEnv } from "#veryfront/config/runtime-env.ts";
 
 // ============================================================================
 // Configuration
@@ -20,11 +20,11 @@ import type { MCPTool } from "./tools.ts";
 const DEFAULT_API_URL = "http://api.lvh.me:4000";
 
 function getApiBaseUrl(): string {
-  return getEnv("VERYFRONT_API_BASE_URL") || DEFAULT_API_URL;
+  return getRuntimeEnv().apiBaseUrl || DEFAULT_API_URL;
 }
 
 function getApiToken(): string | undefined {
-  return getEnv("VERYFRONT_API_TOKEN");
+  return getRuntimeEnv().apiToken;
 }
 
 /**

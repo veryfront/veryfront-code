@@ -1,24 +1,34 @@
-import { assertEquals } from "@std/assert";
+import { assertEquals } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
+import { createTestRuntimeEnv } from "@veryfront/config/runtime-env.ts";
+import { isRSCEnabled } from "@veryfront/utils/feature-flags.ts";
 
-Deno.test("flags | isRSCEnabled toggles with env", async () => {
-  const prev = Deno.env.get("VERYFRONT_EXPERIMENTAL_RSC");
-  try {
-    // unset -> false
-    if (prev !== undefined) Deno.env.delete("VERYFRONT_EXPERIMENTAL_RSC");
-    const { isRSCEnabled } = await import("@veryfront/utils/feature-flags.ts?x=1");
-    assertEquals(isRSCEnabled(), false);
+describe("flags", () => {
+  describe("isRSCEnabled", () => {
+    it("returns false when experimentalRsc is false", () => {
+      const env = createTestRuntimeEnv({ experimentalRsc: false });
+      assertEquals(isRSCEnabled(undefined, env), false);
+    });
 
-    // truthy -> true
-    Deno.env.set("VERYFRONT_EXPERIMENTAL_RSC", "1");
-    const { isRSCEnabled: is2 } = await import("@veryfront/utils/feature-flags.ts?x=2");
-    assertEquals(is2(), true);
+    it("returns true when experimentalRsc is true", () => {
+      const env = createTestRuntimeEnv({ experimentalRsc: true });
+      assertEquals(isRSCEnabled(undefined, env), true);
+    });
 
-    // empty string still considered falsey in our implementation
-    Deno.env.set("VERYFRONT_EXPERIMENTAL_RSC", "");
-    const { isRSCEnabled: is3 } = await import("@veryfront/utils/feature-flags.ts?x=3");
-    assertEquals(is3(), false);
-  } finally {
-    if (prev === undefined) Deno.env.delete("VERYFRONT_EXPERIMENTAL_RSC");
-    else Deno.env.set("VERYFRONT_EXPERIMENTAL_RSC", prev);
-  }
+    it("config.experimental.rsc takes precedence over env", () => {
+      const env = createTestRuntimeEnv({ experimentalRsc: true });
+      assertEquals(isRSCEnabled({ experimental: { rsc: false } }, env), false);
+
+      const env2 = createTestRuntimeEnv({ experimentalRsc: false });
+      assertEquals(isRSCEnabled({ experimental: { rsc: true } }, env2), true);
+    });
+
+    it("falls back to env when config is not provided", () => {
+      const envEnabled = createTestRuntimeEnv({ experimentalRsc: true });
+      assertEquals(isRSCEnabled({}, envEnabled), true);
+
+      const envDisabled = createTestRuntimeEnv({ experimentalRsc: false });
+      assertEquals(isRSCEnabled({}, envDisabled), false);
+    });
+  });
 });

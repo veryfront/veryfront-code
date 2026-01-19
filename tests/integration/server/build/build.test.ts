@@ -10,14 +10,21 @@
  * - Dynamic vs static route detection
  */
 
-import { assert, assertEquals, assertExists } from "@std/assert";
-import { ensureDir } from "@std/fs";
-import { join } from "@std/path";
-import { afterAll, describe, it } from "@std/testing/bdd";
+import { assert, assertEquals, assertExists } from "@veryfront/testing/assert";
+import { join } from "@veryfront/compat/path";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
+import {
+  mkdir,
+  readDir,
+  remove,
+  stat,
+  writeTextFile,
+} from "@veryfront/compat/fs.ts";
 import { buildProduction } from "../../../../src/build/production-build/index.ts";
 import type { BuildStats } from "../../../../src/server/build-types.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
+import { isDeno } from "../../../../src/platform/compat/runtime.ts";
 
 describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
   // Clean up renderer intervals to prevent resource leaks
@@ -38,12 +45,12 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
           const outputDir = join(context.projectDir, "dist");
 
           // Remove app directory to use Pages Router
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
           // Create a simple project structure
           const pagesDir = join(context.projectDir, "pages");
-          await ensureDir(pagesDir);
-          await Deno.writeTextFile(join(pagesDir, "index.mdx"), "# Home Page");
+          await mkdir(pagesDir, { recursive: true });
+          await writeTextFile(join(pagesDir, "index.mdx"), "# Home Page");
 
           // Run build
           const _stats = await buildProduction({
@@ -68,12 +75,12 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
           const outputDir = join(context.projectDir, "dist");
 
           // Remove app directory to use Pages Router
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
           // Create a pages route but disable SSG
           const pagesDir = join(context.projectDir, "pages");
-          await ensureDir(pagesDir);
-          await Deno.writeTextFile(join(pagesDir, "index.mdx"), "# Home Page");
+          await mkdir(pagesDir, { recursive: true });
+          await writeTextFile(join(pagesDir, "index.mdx"), "# Home Page");
 
           // Run build with ssg=false
           const stats = await buildProduction({
@@ -88,13 +95,17 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
           assertExists(stats);
 
           // Dist may or may not exist when ssg=false (no files written)
-          const outputExists = await Deno.stat(outputDir)
-            .then(() => true)
-            .catch(() => false);
+          let outputExists = false;
+          try {
+            await stat(outputDir);
+            outputExists = true;
+          } catch {
+            outputExists = false;
+          }
           if (outputExists) {
             // Ensure no HTML files present
             let htmlCount = 0;
-            for await (const e of Deno.readDir(outputDir)) {
+            for await (const e of readDir(outputDir)) {
               if (e.isFile && e.name.endsWith(".html")) htmlCount++;
             }
             assertEquals(htmlCount, 0);
@@ -110,13 +121,13 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
           const outputDir = join(context.projectDir, "dist");
 
           // Remove app directory to use Pages Router
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
           // Create pages
           const pagesDir = join(context.projectDir, "pages");
-          await ensureDir(pagesDir);
-          await Deno.writeTextFile(join(pagesDir, "index.mdx"), "# Home");
-          await Deno.writeTextFile(join(pagesDir, "about.mdx"), "# About");
+          await mkdir(pagesDir, { recursive: true });
+          await writeTextFile(join(pagesDir, "index.mdx"), "# Home");
+          await writeTextFile(join(pagesDir, "about.mdx"), "# About");
 
           // Run build
           const stats = await buildProduction({
@@ -138,18 +149,18 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
           const outputDir = join(context.projectDir, "dist");
 
           // Remove app directory to use Pages Router
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
           // Create pages first (required)
           const pagesDir = join(context.projectDir, "pages");
-          await ensureDir(pagesDir);
-          await Deno.writeTextFile(join(pagesDir, "index.mdx"), "# Home");
+          await mkdir(pagesDir, { recursive: true });
+          await writeTextFile(join(pagesDir, "index.mdx"), "# Home");
 
           // Create static assets
           const publicDir = join(context.projectDir, "public");
-          await ensureDir(publicDir);
-          await Deno.writeTextFile(join(publicDir, "robots.txt"), "User-agent: *\nAllow: /");
-          await Deno.writeTextFile(join(publicDir, "style.css"), "body { margin: 0; }");
+          await mkdir(publicDir, { recursive: true });
+          await writeTextFile(join(publicDir, "robots.txt"), "User-agent: *\nAllow: /");
+          await writeTextFile(join(publicDir, "style.css"), "body { margin: 0; }");
 
           // Run build
           const stats = await buildProduction({
@@ -171,8 +182,8 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
           const outputDir = join(context.projectDir, "dist");
 
           // Remove default directories created by TestContext
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
-          await Deno.remove(join(context.projectDir, "pages"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "pages"), { recursive: true });
 
           // Run build on empty project (no pages directory)
           const stats = await buildProduction({
@@ -195,13 +206,13 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
           const outputDir = join(context.projectDir, "dist");
 
           // Create app router structure
-          await ensureDir(join(context.projectDir, "app"));
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "app"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "app", "page.tsx"),
             `export default function P(){return <h1>App Root</h1>}`,
           );
-          await ensureDir(join(context.projectDir, "app", "blog"));
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "app", "blog"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "app", "blog", "page.tsx"),
             `export default function P(){return <div>Blog Index</div>}`,
           );
@@ -223,14 +234,14 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
           const outputDir = join(context.projectDir, "dist");
 
           // / (force-static via hint)
-          await ensureDir(join(context.projectDir, "app"));
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "app"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "app", "page.tsx"),
             `export const dynamic = "force-static"; export default function P(){return <h1>Root</h1>}`,
           );
           // /live (force-dynamic)
-          await ensureDir(join(context.projectDir, "app", "live"));
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "app", "live"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "app", "live", "page.tsx"),
             `export const dynamic = "force-dynamic"; export default function P(){return <h1>Live</h1>}`,
           );
@@ -257,14 +268,14 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
       it("smoke: >= 3 pages/sec throughput", async () => {
         await withTestContext("ssg-throughput", async (context) => {
           // Remove default app directory to use Pages Router
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
           const pagesDir = join(context.projectDir, "pages");
 
           const totalPages = 20;
-          await Deno.writeTextFile(join(pagesDir, "index.mdx"), "# Home\n\n");
+          await writeTextFile(join(pagesDir, "index.mdx"), "# Home\n\n");
           for (let i = 0; i < totalPages; i++) {
-            await Deno.writeTextFile(
+            await writeTextFile(
               join(pagesDir, `p${i}.mdx`),
               `# Page ${i}\n\nThis is page ${i}.`,
             );
@@ -305,31 +316,31 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
       it("dry-run SSG includes/excludes and app router detection", async () => {
         await withTestContext("build-ssg-dryrun", async (context) => {
           // Remove default app and pages directories
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
-          await Deno.remove(join(context.projectDir, "pages"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "pages"), { recursive: true });
 
           // pages router
           const pages = join(context.projectDir, "pages");
-          await Deno.mkdir(pages, { recursive: true });
-          await Deno.writeTextFile(join(pages, "index.mdx"), "# Home\n");
-          await Deno.writeTextFile(join(pages, "blog.mdx"), "# Blog\n");
+          await mkdir(pages, { recursive: true });
+          await writeTextFile(join(pages, "index.mdx"), "# Home\n");
+          await writeTextFile(join(pages, "blog.mdx"), "# Blog\n");
 
           // app router
           const app = join(context.projectDir, "app/docs");
-          await Deno.mkdir(app, { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(app, { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "app/layout.tsx"),
             "export default function R({children}:{children:any}){return children}",
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(app, "page.tsx"),
             "export default function P(){return null}",
           );
 
           // dynamic route should be ignored by SSG
           const dyn = join(context.projectDir, "app/items/[id]");
-          await Deno.mkdir(dyn, { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(dyn, { recursive: true });
+          await writeTextFile(
             join(dyn, "page.tsx"),
             "export default function P(){return null}",
           );
@@ -404,12 +415,12 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
       it("handles malformed MDX files gracefully", async () => {
         await withTestContext("build-malformed-mdx", async (context) => {
           const outputDir = join(context.projectDir, "dist");
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
           const pagesDir = join(context.projectDir, "pages");
-          await ensureDir(pagesDir);
-          await Deno.writeTextFile(join(pagesDir, "index.mdx"), "# Home");
-          await Deno.writeTextFile(
+          await mkdir(pagesDir, { recursive: true });
+          await writeTextFile(join(pagesDir, "index.mdx"), "# Home");
+          await writeTextFile(
             join(pagesDir, "broken.mdx"),
             "# Broken\n\n<Component with={invalid syntax",
           );
@@ -431,14 +442,14 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
       it("handles deeply nested page structures", async () => {
         await withTestContext("build-nested", async (context) => {
           const outputDir = join(context.projectDir, "dist");
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
           const pagesDir = join(context.projectDir, "pages");
-          await ensureDir(join(pagesDir, "blog", "posts", "tech"));
-          await Deno.writeTextFile(join(pagesDir, "index.mdx"), "# Home");
-          await Deno.writeTextFile(join(pagesDir, "blog", "index.mdx"), "# Blog");
-          await Deno.writeTextFile(join(pagesDir, "blog", "posts", "first.mdx"), "# First Post");
-          await Deno.writeTextFile(join(pagesDir, "blog", "posts", "tech", "ai.mdx"), "# AI Post");
+          await mkdir(join(pagesDir, "blog", "posts", "tech"), { recursive: true });
+          await writeTextFile(join(pagesDir, "index.mdx"), "# Home");
+          await writeTextFile(join(pagesDir, "blog", "index.mdx"), "# Blog");
+          await writeTextFile(join(pagesDir, "blog", "posts", "first.mdx"), "# First Post");
+          await writeTextFile(join(pagesDir, "blog", "posts", "tech", "ai.mdx"), "# AI Post");
 
           const stats = await buildProduction({
             projectDir: context.projectDir,
@@ -456,14 +467,14 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
       it("handles files with special characters in names", async () => {
         await withTestContext("build-special-chars", async (context) => {
           const outputDir = join(context.projectDir, "dist");
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
           const pagesDir = join(context.projectDir, "pages");
-          await ensureDir(pagesDir);
-          await Deno.writeTextFile(join(pagesDir, "index.mdx"), "# Home");
-          await Deno.writeTextFile(join(pagesDir, "hello-world.mdx"), "# Hello World");
-          await Deno.writeTextFile(join(pagesDir, "foo_bar.mdx"), "# Foo Bar");
-          await Deno.writeTextFile(join(pagesDir, "2024-01-01.mdx"), "# New Year");
+          await mkdir(pagesDir, { recursive: true });
+          await writeTextFile(join(pagesDir, "index.mdx"), "# Home");
+          await writeTextFile(join(pagesDir, "hello-world.mdx"), "# Hello World");
+          await writeTextFile(join(pagesDir, "foo_bar.mdx"), "# Foo Bar");
+          await writeTextFile(join(pagesDir, "2024-01-01.mdx"), "# New Year");
 
           const stats = await buildProduction({
             projectDir: context.projectDir,
@@ -485,11 +496,11 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
           const outputDir = join(context.projectDir, "dist");
 
           const pagesDir = join(context.projectDir, "pages");
-          await ensureDir(pagesDir);
-          await Deno.writeTextFile(join(pagesDir, "index.mdx"), "# Pages Home");
+          await mkdir(pagesDir, { recursive: true });
+          await writeTextFile(join(pagesDir, "index.mdx"), "# Pages Home");
 
-          await ensureDir(join(context.projectDir, "app"));
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "app"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "app", "page.tsx"),
             "export default function P(){return <h1>App Home</h1>}",
           );
@@ -511,14 +522,14 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
       it("handles very large number of pages", async () => {
         await withTestContext("build-large-scale", async (context) => {
           const outputDir = join(context.projectDir, "dist");
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
           const pagesDir = join(context.projectDir, "pages");
-          await ensureDir(pagesDir);
+          await mkdir(pagesDir, { recursive: true });
 
           // Reduced from 100 to 25 pages - sufficient to test scaling without excessive overhead
           for (let i = 0; i < 25; i++) {
-            await Deno.writeTextFile(join(pagesDir, `page-${i}.mdx`), `# Page ${i}`);
+            await writeTextFile(join(pagesDir, `page-${i}.mdx`), `# Page ${i}`);
           }
 
           const stats = await buildProduction({
@@ -537,12 +548,12 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
       it("handles empty frontmatter", async () => {
         await withTestContext("build-empty-frontmatter", async (context) => {
           const outputDir = join(context.projectDir, "dist");
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
           const pagesDir = join(context.projectDir, "pages");
-          await ensureDir(pagesDir);
+          await mkdir(pagesDir, { recursive: true });
           // Test with valid MDX content (no frontmatter is fine, but empty frontmatter delimiters can be fragile)
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(pagesDir, "index.mdx"),
             "# Home\n\nContent without frontmatter data.",
           );
@@ -564,11 +575,11 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
       it("handles concurrent dry-run builds", async () => {
         await withTestContext("build-concurrent", async (context) => {
           const outputDir = join(context.projectDir, "dist");
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
           const pagesDir = join(context.projectDir, "pages");
-          await ensureDir(pagesDir);
-          await Deno.writeTextFile(join(pagesDir, "index.mdx"), "# Home");
+          await mkdir(pagesDir, { recursive: true });
+          await writeTextFile(join(pagesDir, "index.mdx"), "# Home");
 
           const builds: BuildStats[] = await Promise.all([
             buildProduction({
@@ -607,11 +618,11 @@ describe("Build Production Tests", { sanitizeOps: false, sanitizeResources: fals
       it("handles build with compression enabled", async () => {
         await withTestContext("build-compression", async (context) => {
           const outputDir = join(context.projectDir, "dist");
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
           const pagesDir = join(context.projectDir, "pages");
-          await ensureDir(pagesDir);
-          await Deno.writeTextFile(
+          await mkdir(pagesDir, { recursive: true });
+          await writeTextFile(
             join(pagesDir, "index.mdx"),
             "# Home\n\nLong content to compress.",
           );

@@ -7,8 +7,8 @@
  * Results are cached to avoid API calls on every request.
  */
 
-import { logger } from "@veryfront/utils";
-import { injectContext } from "@veryfront/observability/tracing/otlp-setup.ts";
+import { logger } from "#veryfront/utils";
+import { injectContext } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 export interface DomainLookupResult {
   project_id: string;

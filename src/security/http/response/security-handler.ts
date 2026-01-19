@@ -3,8 +3,8 @@
  */
 
 import type { SecurityConfig } from "./types.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { recordSecurityHeaders } from "@veryfront/observability";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { recordSecurityHeaders } from "#veryfront/observability";
 
 /** Generate cryptographic nonce for CSP */
 export function generateNonce(): string {

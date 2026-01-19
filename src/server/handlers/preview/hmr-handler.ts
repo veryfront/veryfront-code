@@ -7,12 +7,12 @@
  * Only enabled when proxyEnvironment === "preview" (not production).
  */
 
-import { serverLogger as logger } from "@veryfront/utils";
+import { serverLogger as logger } from "#veryfront/utils";
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { ReloadNotifier } from "../../reload-notifier.ts";
-import { RateLimiter, setupWebSocketHandlers } from "@veryfront/modules/server/index.ts";
-import { HMR_MAX_MESSAGE_SIZE_BYTES, HMR_MAX_MESSAGES_PER_MINUTE } from "@veryfront/utils";
+import { RateLimiter, setupWebSocketHandlers } from "#veryfront/modules/server/index.ts";
+import { HMR_MAX_MESSAGE_SIZE_BYTES, HMR_MAX_MESSAGES_PER_MINUTE } from "#veryfront/utils";
 
 // Priority between auth (0) and cors (50)
 const PRIORITY_HMR = 25 as HandlerPriority;

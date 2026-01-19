@@ -1,5 +1,5 @@
-import { assertEquals, assertRejects, assertThrows } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "./mock.ts";
 
 describe("MockAdapter", () => {
