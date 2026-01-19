@@ -46,7 +46,8 @@ export async function compileMDXRuntime(
       contentLength: content.length,
       bodyBeforeLength: bodyBeforeRewrite.length,
       bodyAfterLength: body.length,
-      bodyFirst300: body.substring(0, 300).replace(/\n/g, "\\n"),
+      bodyFirst500: body.substring(0, 500).replace(/\n/g, "\\n"),
+      bodyLast500: body.substring(Math.max(0, body.length - 500)).replace(/\n/g, "\\n"),
       hasImport: body.includes("import"),
       importMatch: body.match(/^import\s+/m)?.[0] || "none",
     });
