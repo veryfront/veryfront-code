@@ -7,11 +7,12 @@
  * - Browser resolves via HTML import map to /_vf_modules/exports/context.js
  * - Using relative path creates different module URLs = different React contexts = broken hooks
  */
+// Note: Use "veryfront/context" (not "veryfront/react/context") to match browser import map
 export {
   PageContextProvider,
   type PageContextValue as PageContext,
   usePageContext,
-} from "veryfront/react/context";
+} from "veryfront/context";
 
 // Default export for compatibility
-export { usePageContext as default } from "veryfront/react/context";
+export { usePageContext as default } from "veryfront/context";
