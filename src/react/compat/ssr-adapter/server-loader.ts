@@ -164,7 +164,7 @@ export async function getProjectReact(): Promise<typeof React> {
   }
 
   // For Deno: use the import map which maps to esm.sh React URLs
-  // This ensures consistency with third-party packages like @tanstack/react-query
+  // This ensures consistency with framework components that also use the import map
   if (!IS_TRUE_NODE) {
     const npmReact = await import("react");
     // Handle both ESM default export and CJS module.exports

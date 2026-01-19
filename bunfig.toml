@@ -15,7 +15,8 @@ root = ["./src", "./tests", "./proxy"]
 # Concurrency for parallel test execution
 # Tests use AsyncLocalStorage-based isolation for globals (document, window, etc.)
 # See: https://bun.sh/docs/cli/test#concurrency
-concurrency = 64
+# Note: concurrency=64 causes resource exhaustion on some systems; 32 is more stable
+concurrency = 32
 
 [install]
 # Use exact versions

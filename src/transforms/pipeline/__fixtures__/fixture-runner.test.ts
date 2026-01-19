@@ -54,7 +54,7 @@ describe("transform pipeline fixtures", { sanitizeResources: false, sanitizeOps:
       assertEquals(result.code.includes('from "react"'), false);
     });
 
-    it("keeps React as esm.sh URLs for SSR (same instance as react-dom/server)", async () => {
+    it("keeps React as esm.sh URLs for SSR (same instance as framework components)", async () => {
       const input = await readFixture("react-only", "input.tsx");
 
       const result = await runPipeline(
@@ -67,8 +67,9 @@ describe("transform pipeline fixtures", { sanitizeResources: false, sanitizeOps:
       // Should transform JSX
       assertStringIncludes(result.code, "jsx");
 
-      // SSR keeps React as esm.sh URLs to share the same instance with react-dom/server
-      // This prevents "Cannot read properties of null (useContext)" errors
+      // SSR keeps React as esm.sh URLs to share the same instance with framework components
+      // (Head.tsx, etc.) and react-dom/server which also use esm.sh via import map.
+      // This prevents "Cannot read properties of null (useContext)" errors.
       assertStringIncludes(result.code, "esm.sh/react");
 
       // Should NOT have bare "react" import (would fail in Docker)

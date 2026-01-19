@@ -40,12 +40,16 @@ function isHttpUrl(specifier: string): boolean {
  * Check if a URL is for React core packages that should NOT be cached.
  *
  * React modules must NOT be cached to file:// because:
- * 1. react-dom/server (used for SSR) imports React directly from esm.sh
- * 2. If components use cached React but react-dom/server uses esm.sh React,
+ * 1. Framework components (Head.tsx, etc.) import React via Deno's import map (esm.sh)
+ * 2. react-dom/server is imported via import map (esm.sh)
+ * 3. If user components use cached React but framework uses esm.sh React,
  *    they get different React instances → "Cannot read properties of null (useContext)"
  *
- * By keeping React as esm.sh URLs, both components and react-dom/server
- * share the same React instance.
+ * By keeping React as esm.sh URLs, all code shares the same React instance.
+ *
+ * NOTE: For true cross-runtime support (Node/Bun without loader hooks), we would need
+ * to also cache React AND update all framework components to use the cached version.
+ * This is tracked as a future enhancement.
  */
 function isReactCoreUrl(url: string): boolean {
   try {
@@ -144,7 +148,7 @@ function resolveBareSpecifier(specifier: string, importMap: ImportMapConfig): st
 async function cacheHttpModule(url: string, options: CacheOptions): Promise<string | null> {
   const normalizedUrl = normalizeHttpUrl(url);
 
-  // Don't cache React core modules - they must use the same instance as react-dom/server
+  // Don't cache React core modules - they must use the same instance as framework components
   if (isReactCoreUrl(normalizedUrl)) {
     logger.debug("[HTTP-CACHE] Skipping React core module (prevents multiple instances)", {
       url: normalizedUrl,
@@ -327,4 +331,32 @@ export async function cacheHttpImportsToLocal(
   });
 
   return await replaceSpecifiers(code, (specifier) => replacements.get(specifier) ?? null);
+}
+
+/**
+ * Cache a specific HTTP module URL and return its local file:// path.
+ * Used by server-loader.ts to cache react-dom/server and ensure the same
+ * React instance is used by both components and the SSR renderer.
+ *
+ * @param url - The HTTP URL to cache (e.g., https://esm.sh/react-dom@18.3.1/server)
+ * @param cacheDir - The cache directory path
+ * @returns The local file:// URL path, or the original URL if caching fails
+ */
+export async function cacheModuleToLocal(
+  url: string,
+  cacheDir: string,
+): Promise<string> {
+  if (!isHttpUrl(url)) {
+    return url;
+  }
+
+  const importMap = { imports: {}, scopes: {} };
+  const cached = await cacheHttpModule(url, { cacheDir, importMap });
+
+  if (cached) {
+    return `file://${cached}`;
+  }
+
+  // Fallback to original URL if caching fails
+  return url;
 }
