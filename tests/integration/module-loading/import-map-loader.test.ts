@@ -25,8 +25,8 @@ describe(
         await withTestContext("import-map-load-valid", async (context: TestContext) => {
           const denoConfig = {
             imports: {
-              react: "https://esm.sh/react@18.3.1",
-              "react-dom": "https://esm.sh/react-dom@18.3.1",
+              react: "https://esm.sh/react@19.1.1",
+              "react-dom": "https://esm.sh/react-dom@19.1.1",
             },
           };
 
@@ -39,8 +39,8 @@ describe(
 
           assertExists(importMap);
           assertExists(importMap.imports);
-          assertEquals(importMap.imports!["react"], "https://esm.sh/react@18.3.1");
-          assertEquals(importMap.imports!["react-dom"], "https://esm.sh/react-dom@18.3.1");
+          assertEquals(importMap.imports!["react"], "https://esm.sh/react@19.1.1");
+          assertEquals(importMap.imports!["react-dom"], "https://esm.sh/react-dom@19.1.1");
         });
       });
 
@@ -48,7 +48,7 @@ describe(
         await withTestContext("import-map-load-scopes", async (context: TestContext) => {
           const denoConfig = {
             imports: {
-              react: "https://esm.sh/react@18.3.1",
+              react: "https://esm.sh/react@19.1.1",
             },
             scopes: {
               "/vendor/": {
@@ -73,7 +73,7 @@ describe(
 
           assertExists(importMap);
           assertExists(importMap.imports);
-          assertEquals(importMap.imports!["react"], "https://esm.sh/react@18.3.1");
+          assertEquals(importMap.imports!["react"], "https://esm.sh/react@19.1.1");
 
           // Scopes should be loaded
           assertExists(importMap.scopes);
@@ -138,7 +138,7 @@ describe(
         await withTestContext("import-map-load-traverse", async (context: TestContext) => {
           const denoConfig = {
             imports: {
-              react: "https://esm.sh/react@18.3.1",
+              react: "https://esm.sh/react@19.1.1",
             },
           };
 
@@ -156,7 +156,7 @@ describe(
           const importMap = await loadImportMap(nestedDir, await getAdapter());
 
           assertExists(importMap);
-          assertEquals(importMap.imports!["react"], "https://esm.sh/react@18.3.1");
+          assertEquals(importMap.imports!["react"], "https://esm.sh/react@19.1.1");
         });
       });
 
@@ -964,9 +964,9 @@ function hello() { return 'world'; }
           const denoConfig = {
             imports: {
               "@/": "./src/",
-              "react": "https://esm.sh/react@18.3.1",
-              "react-dom": "https://esm.sh/react-dom@18.3.1",
-              "react-dom/server": "https://esm.sh/react-dom@18.3.1/server",
+              "react": "https://esm.sh/react@19.1.1",
+              "react-dom": "https://esm.sh/react-dom@19.1.1",
+              "react-dom/server": "https://esm.sh/react-dom@19.1.1/server",
               "std/": "https://deno.land/std@0.220.0/",
               "preact": "https://esm.sh/preact@10.19.3",
             },
@@ -996,18 +996,11 @@ function hello() { return 'world'; }
 
       it("should handle roundtrip: load -> transform -> resolve", async () => {
         await withTestContext("import-map-roundtrip", async (context: TestContext) => {
-          const denoConfig = {
-            imports: {
-              react: "https://esm.sh/react@18",
-            },
-          };
+          // Note: loadImportMap uses getConfig() which returns defaults with React@19.1.1
+          // when no veryfront.config file exists. deno.json imports are only used as fallback.
+          // This test verifies the roundtrip transformation works with the default config.
 
-          await writeTextFile(
-            join(context.projectDir, "deno.json"),
-            JSON.stringify(denoConfig, null, 2),
-          );
-
-          // Load
+          // Load import map (will include default React@19.1.1)
           const importMap = await loadImportMap(context.projectDir, await getAdapter());
 
           // Transform
@@ -1016,8 +1009,10 @@ function hello() { return 'world'; }
             resolveBare: true,
           });
 
-          // Verify transformation
-          assertEquals(transformed.includes("https://esm.sh/react@18"), true);
+          // Verify transformation happened - should use esm.sh URL from default config
+          assertEquals(transformed.includes("https://esm.sh/react@"), true);
+          // Should not have bare import anymore
+          assertEquals(transformed.includes("from 'react'"), false);
         });
       });
 

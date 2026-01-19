@@ -78,7 +78,8 @@ import ReactDOM from "react-dom"`;
       expect(result).toBe(
         'import { jsx } from "https://esm.sh/react@19.1.1/jsx-runtime?target=es2022"',
       );
-      expect(result).not.toContain("https://esm.sh/react@19.1.1/jsx-runtime@18.3.1");
+      // Should not have double versioned URL like /jsx-runtime@version
+      expect(result).not.toContain("/jsx-runtime@");
     });
 
     it("should handle whitespace in imports", async () => {
