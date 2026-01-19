@@ -2,13 +2,12 @@ import { join } from "#veryfront/platform/compat/path-helper.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { HTMLGenerationOptions } from "#veryfront/html";
 import {
-  extractHeadElements,
   extractHTMLMetadata,
   generateHTMLShellParts,
   injectHTMLContent,
   isFullHTMLDocument,
-  wrapInHTMLShell,
 } from "#veryfront/html";
+import type { CollectedHead } from "#veryfront/react/head-collector.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type {
   EntityInfo,
@@ -42,6 +41,7 @@ export interface HTMLGenerationContext {
   slug: string;
   ssrHash: string;
   options?: RenderOptions;
+  collectedHead?: CollectedHead;
 }
 
 export class HTMLGenerator {
@@ -74,41 +74,21 @@ export class HTMLGenerator {
     reactStream: ReadableStream,
     context: Omit<HTMLGenerationContext, "html">,
   ): Promise<ReadableStream> {
-    logger.debug("[HTMLGenerator] generateHTMLStream context.options", {
-      studioEmbed: context.options?.studioEmbed,
-      projectId: context.options?.projectId,
-      pageId: context.options?.pageId,
-      hasOptions: !!context.options,
-    });
-    const mergedFrontmatter = this.mergeFrontmatter(
-      context as HTMLGenerationContext,
-    );
-    const htmlOptions = await this.buildHTMLOptions(
-      context as HTMLGenerationContext,
-      mergedFrontmatter,
-    );
+    const mergedFrontmatter = this.mergeFrontmatter(context as HTMLGenerationContext);
+    const htmlOptions = await this.buildHTMLOptions(context as HTMLGenerationContext, mergedFrontmatter);
 
-    // Buffer the React stream to extract head elements
-    // This is necessary because head elements need to be moved from body to <head>
+    // Buffer stream to string (needed for Tailwind CSS generation)
     const response = new Response(reactStream);
-    const reactContent = await response.text();
+    const reactContent = (await response.text()).trim();
 
-    // Extract head elements from React content (moves <link>, <meta>, etc. from body to head)
-    const { headElements, cleanedContent: rawCleanedContent, metadata } = extractHeadElements(
-      reactContent,
-    );
-    // Trim leading/trailing whitespace to prevent hydration mismatch
-    // React's virtual DOM doesn't include whitespace at container boundaries
-    const cleanedContent = rawCleanedContent.trim();
-
-    // HEAD RECONCILIATION: Use extracted metadata to override frontmatter defaults
-    // This ensures <Head> component values take precedence and avoids duplicate titles
-    const effectiveTitle = metadata.title || mergedFrontmatter.title || "Veryfront App";
-    const effectiveDescription = metadata.description || mergedFrontmatter.description || "";
+    // Use collected head data from HeadCollector (collected during SSR render)
+    const head = context.collectedHead;
+    const effectiveTitle = head?.title || mergedFrontmatter.title || "Veryfront App";
+    const effectiveDescription = head?.description || mergedFrontmatter.description || "";
     const enrichedFrontmatter = {
       ...mergedFrontmatter,
-      ...(metadata.title && { title: metadata.title }),
-      ...(metadata.description && { description: metadata.description }),
+      ...(head?.title && { title: head.title }),
+      ...(head?.description && { description: head.description }),
     };
 
     const { start, end } = await generateHTMLShellParts(
@@ -123,24 +103,57 @@ export class HTMLGenerator {
       htmlOptions,
       context.options?.params,
       context.options?.props,
-      cleanedContent, // Pass cleaned content for Tailwind CSS generation
+      reactContent,
     );
 
-    // Inject extracted head elements into the <head> section (before </head>)
+    // Build additional head elements from collected data
+    const headElements = this.buildHeadElements(head);
     const startWithHeadElements = headElements
       ? start.replace("</head>", `  ${headElements}\n</head>`)
       : start;
 
     const encoder = new TextEncoder();
-    const fullHtml = `${startWithHeadElements}${cleanedContent}${end}`;
-    const htmlChunk = encoder.encode(fullHtml);
+    const fullHtml = `${startWithHeadElements}${reactContent}${end}`;
 
     return new ReadableStream({
       start(controller) {
-        controller.enqueue(htmlChunk);
+        controller.enqueue(encoder.encode(fullHtml));
         controller.close();
       },
     });
+  }
+
+  /** Convert collected head data to HTML string for injection into <head>. */
+  private buildHeadElements(head?: CollectedHead): string {
+    if (!head) return "";
+
+    const parts: string[] = [];
+
+    // Add meta tags (skip description - handled by shell)
+    for (const meta of head.metas) {
+      if (meta.name === "description") continue;
+      const attrs: string[] = [];
+      if (meta.name) attrs.push(`name="${meta.name}"`);
+      if (meta.property) attrs.push(`property="${meta.property}"`);
+      if (meta.content) attrs.push(`content="${meta.content}"`);
+      if (attrs.length) parts.push(`<meta ${attrs.join(" ")}>`);
+    }
+
+    // Add link tags
+    for (const link of head.links) {
+      const attrs = Object.entries(link)
+        .filter(([_, v]) => v != null)
+        .map(([k, v]) => `${k}="${v}"`)
+        .join(" ");
+      if (attrs) parts.push(`<link ${attrs}>`);
+    }
+
+    // Add style tags
+    for (const style of head.styles) {
+      parts.push(`<style>${style}</style>`);
+    }
+
+    return parts.join("\n  ");
   }
 
   private async handleFullHTMLDocument(
@@ -184,24 +197,41 @@ export class HTMLGenerator {
     context: HTMLGenerationContext,
   ): Promise<string> {
     const mergedFrontmatter = this.mergeFrontmatter(context);
-    logger.debug("Merged frontmatter for wrapInHTMLShell:", mergedFrontmatter);
-
     const htmlOptions = await this.buildHTMLOptions(context, mergedFrontmatter);
+    const reactContent = context.html.trim();
 
-    return await wrapInHTMLShell(
-      context.html,
+    // Use collected head data from HeadCollector
+    const head = context.collectedHead;
+    const effectiveTitle = head?.title || mergedFrontmatter.title || "Veryfront App";
+    const effectiveDescription = head?.description || mergedFrontmatter.description || "";
+    const enrichedFrontmatter = {
+      ...mergedFrontmatter,
+      ...(head?.title && { title: head.title }),
+      ...(head?.description && { description: head.description }),
+    };
+
+    const { start, end } = await generateHTMLShellParts(
       {
-        title: mergedFrontmatter.title || "Veryfront App",
-        description: mergedFrontmatter.description || "",
+        title: effectiveTitle,
+        description: effectiveDescription,
         slug: context.slug,
-        frontmatter: mergedFrontmatter,
+        frontmatter: enrichedFrontmatter,
         layoutFrontmatter: context.layoutBundle?.frontmatter,
         ssrHash: context.ssrHash,
       },
       htmlOptions,
       context.options?.params,
       context.options?.props,
+      reactContent,
     );
+
+    // Build additional head elements from collected data
+    const headElements = this.buildHeadElements(head);
+    const startWithHeadElements = headElements
+      ? start.replace("</head>", `  ${headElements}\n</head>`)
+      : start;
+
+    return `${startWithHeadElements}${reactContent}${end}`;
   }
 
   private mergeFrontmatter(context: HTMLGenerationContext): MDXFrontmatter {

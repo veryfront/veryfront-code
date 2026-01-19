@@ -23,6 +23,7 @@ import { getLocalReactPaths, isReactSpecifier } from "#veryfront/platform/compat
 import {
   ESBUILD_JSX_FACTORY,
   ESBUILD_JSX_FRAGMENT,
+  FRAMEWORK_ROOT,
   JSX_IMPORT_PATTERN,
   LOG_PREFIX_MDX_LOADER,
   LOG_PREFIX_MDX_RENDERER,
@@ -278,8 +279,11 @@ async function transformJsxImports(
           // Not cached, proceed with transform
         }
 
-        // Read and transform
-        const jsxCode = await adapter!.fs.readFile(filePath);
+        // Read and transform - use local fs for framework files, adapter for project files
+        const isFrameworkFile = filePath.startsWith(FRAMEWORK_ROOT);
+        const jsxCode = isFrameworkFile
+          ? await getLocalFs().readTextFile(filePath)
+          : await adapter!.fs.readFile(filePath);
         const result = await transform(jsxCode as string, {
           loader: ext === "tsx" ? "tsx" : "jsx",
           jsx: "transform",

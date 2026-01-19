@@ -80,6 +80,9 @@ export function setupSSRGlobals(): void {
   // Self-reference
   setGlobal("self", windowStub);
 
+  // SSR flag for components to detect server rendering
+  setGlobal("__VERYFRONT_SSR__", true);
+
   // DOM Element classes - needed by framer-motion and other animation libraries
   // These check `instanceof SVGElement` etc to determine element types
   if (typeof globalThis.Element === "undefined") {

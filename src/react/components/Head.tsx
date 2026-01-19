@@ -1,106 +1,108 @@
 import React, { useEffect, useRef } from "react";
+import { collectHead } from "#veryfront/react/head-collector.ts";
 
-// Detect SSR vs browser environment
-const isServer = typeof window === "undefined";
+function isServerEnvironment(): boolean {
+  const ssrFlag = (globalThis as Record<string, unknown>).__VERYFRONT_SSR__;
+  if (ssrFlag === true) return true;
+  if (typeof window === "undefined") return true;
+  return false;
+}
 
 /**
- * Head component for declaring head elements (title, meta, link, etc.)
+ * Head component for declaring head elements (title, meta, link, style)
  *
- * Works with React 19's native document metadata support.
+ * SSR: Collects metadata via HeadCollector, renders empty wrapper.
+ * Client: Adds elements to document.head via useEffect.
  *
- * SSR PHASE:
- * 1. Renders hidden div with children: <div data-veryfront-head><title>...</title></div>
- * 2. extractHeadElements() parses title/description and passes to shell generator
- * 3. Shell generator uses extracted title (overrides frontmatter default)
- * 4. Remaining elements injected before </head>
- * 5. Wrapper left empty: <div data-veryfront-head></div>
- *
- * HEAD RECONCILIATION:
- * - Title from <Head> overrides frontmatter title (no duplicates)
- * - Description from <Head> overrides frontmatter description
- * - Other meta tags (og:*, twitter:*) are injected alongside frontmatter meta
- *
- * CLIENT PHASE:
- * 1. Initial render: empty wrapper (matches SSR cleaned output) - no hydration mismatch
- * 2. After mount: useEffect adds elements directly to document.head
- * 3. React 19 handles subsequent updates to title/meta natively
- *
- * CSR NAVIGATION:
- * - Server-rendered HTML includes children in wrapper
- * - applyHeadDirectives() (dom-utils.ts) extracts and applies to document.head
+ * Usage:
+ *   <Head>
+ *     <title>Page Title</title>
+ *     <meta name="description" content="..." />
+ *     <link rel="stylesheet" href="..." />
+ *   </Head>
  */
 export function Head({ children }: { children: React.ReactNode }) {
   const mountedRef = useRef(false);
+  const isSSR = isServerEnvironment();
 
-  // After mount, add head elements directly to document.head
-  useEffect(() => {
-    mountedRef.current = true;
-
-    if (!children) return;
-
-    // Convert children to DOM elements and add to head
-    const childArray = React.Children.toArray(children);
-    const addedElements: Element[] = [];
-
-    childArray.forEach((child) => {
+  // SSR: Collect metadata instead of rendering
+  if (isSSR && children) {
+    React.Children.forEach(children, (child) => {
       if (!React.isValidElement(child)) return;
 
       const { type, props } = child;
       if (typeof type !== "string") return;
+      if (type === "body") return; // Skip body elements
 
-      // Skip body elements (invalid in head)
-      if (type === "body") return;
-
-      // Handle title specially
       if (type === "title") {
-        document.title = props.children || "";
+        collectHead({ title: String(props.children || "") });
+      } else if (type === "meta") {
+        collectHead({
+          metas: [{
+            name: props.name as string | undefined,
+            property: props.property as string | undefined,
+            content: String(props.content || ""),
+          }],
+        });
+      } else if (type === "link") {
+        const link: Record<string, string> = {};
+        for (const [key, value] of Object.entries(props)) {
+          if (value != null) link[key] = String(value);
+        }
+        collectHead({ links: [link] });
+      } else if (type === "style") {
+        collectHead({ styles: [String(props.children || "")] });
+      }
+    });
+  }
+
+  // Client: Add elements to document.head after mount
+  useEffect(() => {
+    mountedRef.current = true;
+    if (!children) return;
+
+    const addedElements: Element[] = [];
+
+    React.Children.forEach(children, (child) => {
+      if (!React.isValidElement(child)) return;
+
+      const { type, props } = child;
+      if (typeof type !== "string" || type === "body") return;
+
+      if (type === "title") {
+        document.title = String(props.children || "");
         return;
       }
 
-      // Create DOM element
       const element = document.createElement(type);
 
-      // Set attributes
-      Object.entries(props).forEach(([key, value]) => {
-        if (key === "children") return;
-        if (key === "className") {
-          element.setAttribute("class", String(value));
-        } else if (key === "htmlFor") {
-          element.setAttribute("for", String(value));
-        } else if (typeof value === "boolean") {
-          if (value) element.setAttribute(key, "");
+      for (const [key, value] of Object.entries(props)) {
+        if (key === "children") continue;
+        const attrName = key === "className" ? "class" : key === "htmlFor" ? "for" : key;
+        if (typeof value === "boolean") {
+          if (value) element.setAttribute(attrName, "");
         } else if (value != null) {
-          element.setAttribute(key, String(value));
+          element.setAttribute(attrName, String(value));
         }
-      });
+      }
 
-      // Set text content if any
       if (props.children && typeof props.children === "string") {
         element.textContent = props.children;
       }
 
-      // Mark as managed by veryfront for cleanup
       element.setAttribute("data-veryfront-managed", "1");
-
       document.head.appendChild(element);
       addedElements.push(element);
     });
 
-    // Cleanup on unmount
     return () => {
       addedElements.forEach((el) => el.remove());
     };
   }, [children]);
 
-  // SSR: Render wrapper WITH children (for extraction to <head>)
-  // Client: Render EMPTY wrapper (matches SSR after extraction)
-  // This ensures hydration sees matching empty wrappers on both sides
-  return React.createElement(
-    "div",
-    {
-      "data-veryfront-head": "1",
-      style: { display: "none" },
-    },
-    isServer ? children : null,
-  );
+  // Render empty wrapper - no children needed since we collect metadata directly
+  return React.createElement("div", {
+    "data-veryfront-head": "1",
+    style: { display: "none" },
+  });
 }
