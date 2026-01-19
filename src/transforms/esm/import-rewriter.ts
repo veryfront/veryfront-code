@@ -87,6 +87,7 @@ function shouldSkipRewrite(specifier: string): boolean {
     specifier.startsWith("../") ||
     specifier.startsWith("/") ||
     specifier.startsWith("@/") ||
+    specifier.startsWith("#") || // Package subpath imports (Node.js/Bun)
     specifier.startsWith("veryfront")
   );
 }

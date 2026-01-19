@@ -58,6 +58,19 @@ let cachedDebugFlag: string | undefined;
 let cachedEnvFormat: string | undefined;
 let cachedEnvMode: string | undefined;
 
+/**
+ * Reset the cached logger configuration.
+ * This is only intended for testing purposes to ensure fresh config evaluation.
+ * @internal
+ */
+export function __resetLoggerConfigForTesting(): void {
+  cachedConfig = null;
+  cachedEnvLevel = undefined;
+  cachedDebugFlag = undefined;
+  cachedEnvFormat = undefined;
+  cachedEnvMode = undefined;
+}
+
 function resolveLoggerConfig(): LoggerConfig {
   const envLevel = getEnvironmentVariable("LOG_LEVEL");
   const debugFlag = getEnvironmentVariable("VERYFRONT_DEBUG");
@@ -419,7 +432,12 @@ function parseLogLevel(levelString: string | undefined): LogLevel | undefined {
   return LOG_LEVEL_MAP[levelString.toUpperCase()];
 }
 
-function getDefaultLevel(
+/**
+ * Determine the log level based on environment variables.
+ * Exported for testing purposes.
+ * @internal
+ */
+export function getDefaultLevel(
   envLevel: string | undefined = getEnvironmentVariable("LOG_LEVEL"),
   debugFlag: string | undefined = getEnvironmentVariable("VERYFRONT_DEBUG"),
 ): LogLevel {

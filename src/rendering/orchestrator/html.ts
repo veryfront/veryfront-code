@@ -75,7 +75,10 @@ export class HTMLGenerator {
     context: Omit<HTMLGenerationContext, "html">,
   ): Promise<ReadableStream> {
     const mergedFrontmatter = this.mergeFrontmatter(context as HTMLGenerationContext);
-    const htmlOptions = await this.buildHTMLOptions(context as HTMLGenerationContext, mergedFrontmatter);
+    const htmlOptions = await this.buildHTMLOptions(
+      context as HTMLGenerationContext,
+      mergedFrontmatter,
+    );
 
     // Buffer stream to string (needed for Tailwind CSS generation)
     const response = new Response(reactStream);
