@@ -62,7 +62,15 @@ export { deepEquals, safeStringify } from "./utils.ts";
 // BDD Testing
 // ============================================================================
 
-export { afterAll, afterEach, beforeAll, beforeEach, describe, it, test } from "@veryfront/testing/bdd";
+export {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  it,
+  test,
+} from "@veryfront/testing/bdd";
 
 export type { BddTestContext, TestOptions } from "@veryfront/testing/bdd";
 

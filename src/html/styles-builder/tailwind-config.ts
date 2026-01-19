@@ -85,7 +85,7 @@ export function convertTailwindConfigForBrowser(code: string): string {
 /**
  * @deprecated Use generateTailwindV4Theme instead
  */
-export function generateTailwindConfig(userConfig?: TailwindConfig): string {
+export function generateTailwindConfig(_userConfig?: TailwindConfig): string {
   // For backwards compatibility, return empty
   // v4 uses @theme CSS, not JavaScript config
   return "";
