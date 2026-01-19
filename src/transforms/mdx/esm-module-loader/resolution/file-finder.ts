@@ -144,17 +144,27 @@ export async function resolveModuleFile(
     });
   }
 
-  // FALLBACK: For lib/* imports not found in project, check framework lib directory (src/lib/)
-  // This provides framework utilities like lib/Router, lib/Head, lib/usePageContext
-  if (filePathWithoutJs.startsWith("lib/")) {
-    const localFs = getLocalFs();
+  // Framework file lookup - consistent with module-server.ts findSourceFile
+  // These paths resolve to framework source files (veryfront-renderer/src/*)
+  const frameworkLookups: [string, string][] = [
+    ["lib/", join(FRAMEWORK_ROOT, "src")],
+    ["src/exports/", FRAMEWORK_ROOT],
+    ["exports/", join(FRAMEWORK_ROOT, "src")],
+    ["react/", join(FRAMEWORK_ROOT, "src")],
+  ];
+
+  const localFs = getLocalFs();
+  for (const [prefix, frameworkDir] of frameworkLookups) {
+    if (!filePathWithoutJs.startsWith(prefix)) continue;
+
     for (const ext of MODULE_EXTENSIONS) {
-      const frameworkPath = join(FRAMEWORK_ROOT, "src", filePathWithoutJs + ext);
+      const frameworkPath = join(frameworkDir, filePathWithoutJs + ext);
       try {
         const stat = await localFs.stat(frameworkPath);
         if (stat?.isFile) {
           const content = await localFs.readTextFile(frameworkPath);
-          logger.debug(`${LOG_PREFIX_MDX_LOADER} Found framework lib file (fallback)`, {
+          logger.debug(`${LOG_PREFIX_MDX_LOADER} Found framework file`, {
+            prefix,
             basePath: filePathWithoutJs,
             resolvedPath: frameworkPath,
           });

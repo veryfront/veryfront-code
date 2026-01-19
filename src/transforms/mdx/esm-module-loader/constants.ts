@@ -13,10 +13,10 @@ export const IS_TRUE_NODE = isNode && !isDeno;
 
 /**
  * Framework root directory (veryfront-renderer/)
- * Computed from this file's location: src/build/transforms/mdx/esm-module-loader/constants.ts
- * Go up 5 levels to reach the framework root
+ * Computed from this file's location: src/transforms/mdx/esm-module-loader/constants.ts
+ * Go up 4 levels to reach the framework root
  */
-export const FRAMEWORK_ROOT = new URL("../../../../..", import.meta.url).pathname;
+export const FRAMEWORK_ROOT = new URL("../../../..", import.meta.url).pathname;
 
 /** Log prefix for MDX loader operations */
 export const LOG_PREFIX_MDX_LOADER = "[mdx-loader]";
