@@ -37,33 +37,18 @@ function isHttpUrl(specifier: string): boolean {
 }
 
 /**
- * Check if a URL is for React core packages that should NOT be cached.
+ * Check if a URL is for React core packages.
  *
- * React modules must NOT be cached to file:// because:
- * 1. Framework components (Head.tsx, etc.) import React via Deno's import map (esm.sh)
- * 2. react-dom/server is imported via import map (esm.sh)
- * 3. If user components use cached React but framework uses esm.sh React,
- *    they get different React instances → "Cannot read properties of null (useContext)"
+ * Previously, React modules were NOT cached to prevent multiple React instances.
+ * Now with shared React facades (src/react/shared-*.ts), all code uses the same
+ * cached React instance, so this check always returns false to enable caching.
  *
- * By keeping React as esm.sh URLs, all code shares the same React instance.
- *
- * NOTE: For true cross-runtime support (Node/Bun without loader hooks), we would need
- * to also cache React AND update all framework components to use the cached version.
- * This is tracked as a future enhancement.
+ * @see src/react/shared-react.ts - Cross-runtime React facade
  */
-function isReactCoreUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    if (parsed.hostname !== "esm.sh") return false;
-    const pathname = parsed.pathname.replace(/^\/+/, "");
-    // Match react@version, react-dom@version, and their subpaths
-    return pathname.startsWith("react@") ||
-      pathname.startsWith("react-dom@") ||
-      pathname.startsWith("react/") ||
-      pathname.startsWith("react-dom/");
-  } catch {
-    return false;
-  }
+function isReactCoreUrl(_url: string): boolean {
+  // With shared React facades, all React modules can be safely cached.
+  // The facades ensure a single React instance across all runtimes.
+  return false;
 }
 
 function isExternalScheme(specifier: string): boolean {

@@ -54,7 +54,7 @@ describe("transform pipeline fixtures", { sanitizeResources: false, sanitizeOps:
       assertEquals(result.code.includes('from "react"'), false);
     });
 
-    it("keeps React as esm.sh URLs for SSR (same instance as framework components)", async () => {
+    it("resolves React to local file:// paths for SSR in Bun/Node", async () => {
       const input = await readFixture("react-only", "input.tsx");
 
       const result = await runPipeline(
@@ -67,13 +67,18 @@ describe("transform pipeline fixtures", { sanitizeResources: false, sanitizeOps:
       // Should transform JSX
       assertStringIncludes(result.code, "jsx");
 
-      // SSR keeps React as esm.sh URLs to share the same instance with framework components
-      // (Head.tsx, etc.) and react-dom/server which also use esm.sh via import map.
-      // This prevents "Cannot read properties of null (useContext)" errors.
-      assertStringIncludes(result.code, "esm.sh/react");
+      // SSR in Bun/Node resolves React to local file:// paths.
+      // This ensures the same React instance is used by both user components and react-dom-server,
+      // preventing "Objects are not valid as a React child" errors from mismatched instances.
+      // React modules are cached from esm.sh to local file:// paths with hashed names.
+      assertStringIncludes(result.code, "file://");
+      // Verify the cache directory is used (veryfront-http-bundle)
+      assertStringIncludes(result.code, "veryfront-http-bundle");
 
       // Should NOT have bare "react" import (would fail in Docker)
       assertEquals(result.code.includes('from "react"'), false);
+      // Should NOT have esm.sh URLs (all cached to file://)
+      assertEquals(result.code.includes("esm.sh"), false);
     });
   });
 

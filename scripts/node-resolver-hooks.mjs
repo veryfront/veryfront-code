@@ -1,17 +1,29 @@
-// Custom Node.js ESM resolver hooks for Deno-style imports
+/**
+ * Simplified Node.js ESM resolver hooks for import aliasing.
+ *
+ * This hook now ONLY handles:
+ * 1. @veryfront/* aliases → ./src/* paths
+ * 2. @std/* aliases → ./src/platform/compat/std/* shims
+ * 3. npm: protocol stripping (for Deno compat)
+ *
+ * React and HTTP modules are now handled by shared facades (src/react/shared-*.ts)
+ * which pre-cache esm.sh modules to file:// paths.
+ *
+ * Note: To fully eliminate this hook, migrate imports to use # prefix:
+ * - @veryfront/* → #veryfront/*
+ * - @std/* → #std/*
+ * Then package.json imports field will work natively.
+ */
+
 import { readFileSync, existsSync, statSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
-import { tmpdir } from 'node:os';
-import { resolve as pathResolve, dirname, extname, join } from 'node:path';
+import { resolve as pathResolve, dirname } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = pathResolve(__dirname, '..');
 
-// Read deno.json to get import map (split local file vs URL-based imports)
+// Build import map from deno.json and package.json
 const fileImportMap = {};
-const urlImportMap = {};
 
 function addImports(denoImports, options = { includeFile: true }) {
   const includeFile = options?.includeFile ?? true;
@@ -19,8 +31,6 @@ function addImports(denoImports, options = { includeFile: true }) {
     if (typeof value !== 'string') continue;
     if (includeFile && (value.startsWith('./') || value.startsWith('../'))) {
       fileImportMap[key] = value;
-    } else if (value.startsWith('http://') || value.startsWith('https://')) {
-      urlImportMap[key] = value;
     }
   }
 }
@@ -33,15 +43,6 @@ try {
   console.warn('Could not read deno.json:', e.message);
 }
 
-try {
-  const cwdDenoJsonPath = pathResolve(process.cwd(), 'deno.json');
-  const cwdDenoJson = JSON.parse(readFileSync(cwdDenoJsonPath, 'utf-8'));
-  addImports(cwdDenoJson.imports, { includeFile: false });
-} catch {
-  // Ignore missing or invalid cwd deno.json
-}
-
-// Read package.json imports (these take priority for @std/* since they point to shims)
 try {
   const packageJsonPath = pathResolve(projectRoot, 'package.json');
   const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
@@ -68,7 +69,6 @@ function resolveFromImportMap(specifier) {
     if (prefix.endsWith('/*') && specifier.startsWith(prefix.slice(0, -1))) {
       let suffix = specifier.slice(prefix.length - 1);
       // If target ends with *.ts and suffix also ends with .ts, strip .ts from suffix
-      // to avoid double extensions (e.g., env.ts -> env.ts.ts)
       if (target.endsWith('*.ts') && suffix.endsWith('.ts')) {
         suffix = suffix.slice(0, -3);
       }
@@ -87,31 +87,6 @@ function resolveFromImportMap(specifier) {
   return null;
 }
 
-function resolveFromUrlImportMap(specifier) {
-  // 1. Direct match (highest priority)
-  if (urlImportMap[specifier]) {
-    return urlImportMap[specifier];
-  }
-
-  // 2. Prefix match with wildcard
-  for (const [prefix, target] of Object.entries(urlImportMap)) {
-    if (prefix.endsWith('/*') && specifier.startsWith(prefix.slice(0, -1))) {
-      const suffix = specifier.slice(prefix.length - 1);
-      return target.replace('*', suffix);
-    }
-  }
-
-  // 3. Prefix match without wildcard
-  for (const [prefix, target] of Object.entries(urlImportMap)) {
-    if (prefix.endsWith('/') && !prefix.endsWith('/*') && specifier.startsWith(prefix)) {
-      const suffix = specifier.slice(prefix.length);
-      return target + suffix;
-    }
-  }
-
-  return null;
-}
-
 function findActualFile(relativePath) {
   const fullPath = pathResolve(projectRoot, relativePath);
 
@@ -119,7 +94,6 @@ function findActualFile(relativePath) {
   if (existsSync(fullPath)) {
     const stats = statSync(fullPath);
     if (stats.isFile()) return fullPath;
-    // If it's a directory, try index.ts or index.tsx
     if (stats.isDirectory()) {
       if (existsSync(pathResolve(fullPath, 'index.ts'))) return pathResolve(fullPath, 'index.ts');
       if (existsSync(pathResolve(fullPath, 'index.tsx'))) return pathResolve(fullPath, 'index.tsx');
@@ -133,10 +107,9 @@ function findActualFile(relativePath) {
 
   // Try index.ts in directory
   if (existsSync(pathResolve(fullPath, 'index.ts'))) return pathResolve(fullPath, 'index.ts');
-  // Try index.tsx in directory
   if (existsSync(pathResolve(fullPath, 'index.tsx'))) return pathResolve(fullPath, 'index.tsx');
 
-  // If path ends with .ts, try without it (might be directory)
+  // If path ends with .ts, try without it
   if (relativePath.endsWith('.ts')) {
     const withoutTs = relativePath.slice(0, -3);
     const dirPath = pathResolve(projectRoot, withoutTs);
@@ -149,155 +122,32 @@ function findActualFile(relativePath) {
   return null;
 }
 
-const DEBUG = process.env.DEBUG_RESOLVER === '1';
-
-// Lazy-load esbuild for .tsx transformation
-let esbuild = null;
-async function getEsbuild() {
-  if (!esbuild) {
-    esbuild = await import('esbuild');
-  }
-  return esbuild;
-}
-
-const HTTP_CACHE_DIR = join(tmpdir(), 'veryfront-http-cache');
-
-function getHttpCacheKey(url) {
-  return createHash('sha256').update(url).digest('hex').slice(0, 16);
-}
-
-function getHttpCachePath(url) {
-  let ext = '.mjs';
-  try {
-    const pathname = new URL(url).pathname;
-    const pathExt = extname(pathname);
-    if (pathExt) ext = pathExt;
-  } catch {
-    // Ignore URL parse errors, keep default extension
-  }
-  return join(HTTP_CACHE_DIR, `${getHttpCacheKey(url)}${ext}`);
-}
-
-async function readFromHttpCache(url) {
-  try {
-    return await readFile(getHttpCachePath(url), 'utf-8');
-  } catch {
-    return null;
-  }
-}
-
-async function writeToHttpCache(url, content) {
-  try {
-    await mkdir(HTTP_CACHE_DIR, { recursive: true });
-    await writeFile(getHttpCachePath(url), content, 'utf-8');
-  } catch (error) {
-    if (DEBUG) {
-      console.error(`[http-cache] Failed to cache ${url}:`, error.message || error);
-    }
-  }
-}
-
-async function fetchHttpModule(url) {
-  const cached = await readFromHttpCache(url);
-  if (cached) return cached;
-
-  const response = await fetch(url, {
-    headers: {
-      Accept: 'application/javascript, text/javascript, */*',
-      'User-Agent': 'veryfront-node-loader/1.0',
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
-  }
-
-  const content = await response.text();
-  await writeToHttpCache(url, content);
-  return content;
-}
-
 export async function resolve(specifier, context, nextResolve) {
-  // Strip query strings from specifier for matching (used by dynamic imports like ?ts=...)
+  // Strip query strings from specifier for matching
   let cleanSpecifier = specifier;
   const queryIndex = specifier.indexOf('?');
   if (queryIndex > 0) {
     cleanSpecifier = specifier.slice(0, queryIndex);
   }
 
-  // Handle HTTP(S) URLs
-  if (cleanSpecifier.startsWith('https://') || cleanSpecifier.startsWith('http://')) {
-    return {
-      shortCircuit: true,
-      url: specifier,
-      format: 'module',
-    };
-  }
-
   // Handle npm: protocol (Deno-specific) -> strip npm: prefix
   if (cleanSpecifier.startsWith('npm:')) {
     const packageSpec = cleanSpecifier.slice(4);
-    // Handle npm:package@version -> package
-    const atIndex = packageSpec.indexOf('@', 1); // Skip potential @scope
+    const atIndex = packageSpec.indexOf('@', 1);
     const packageName = atIndex > 0 ? packageSpec.slice(0, atIndex) : packageSpec;
     return nextResolve(packageName, context);
   }
 
-  const hasHttpParent = context.parentURL?.startsWith('https://') ||
-    context.parentURL?.startsWith('http://');
-
-  if (hasHttpParent) {
-    // Resolve relative/absolute paths from HTTP parents
-    if (
-      cleanSpecifier.startsWith('./') ||
-      cleanSpecifier.startsWith('../') ||
-      cleanSpecifier.startsWith('/')
-    ) {
-      const resolved = new URL(specifier, context.parentURL).href;
-      return {
-        shortCircuit: true,
-        url: resolved,
-        format: 'module',
-      };
-    }
-
-    // Allow built-ins to resolve normally
-    if (
-      cleanSpecifier.startsWith('node:') ||
-      cleanSpecifier.startsWith('data:') ||
-      cleanSpecifier.startsWith('file:') ||
-      cleanSpecifier.startsWith('bun:')
-    ) {
-      return nextResolve(specifier, context);
-    }
-
-    // Map bare specifiers from HTTP modules using import map, fallback to esm.sh
-    const mappedUrl = resolveFromUrlImportMap(cleanSpecifier);
-    const fallbackUrl = `https://esm.sh/${specifier}`;
-    return {
-      shortCircuit: true,
-      url: mappedUrl ?? fallbackUrl,
-      format: 'module',
-    };
-  }
-
-  // Debug: log all specifiers containing certain keywords
-  if (DEBUG && (cleanSpecifier.includes('veryfront') || cleanSpecifier.includes('errors') || cleanSpecifier.includes('@std'))) {
-    console.error(`[resolver] CHECKING: "${cleanSpecifier}" from ${context.parentURL || 'unknown'}`);
-  }
-
-  // Handle @veryfront and @std imports
-  if (cleanSpecifier.startsWith('@veryfront/') || cleanSpecifier.startsWith('@veryfront') ||
-      cleanSpecifier.startsWith('@std/') || cleanSpecifier.startsWith('veryfront/')) {
+  // Handle @veryfront/* and @std/* imports via import map
+  if (
+    cleanSpecifier.startsWith('@veryfront/') ||
+    cleanSpecifier.startsWith('@veryfront') ||
+    cleanSpecifier.startsWith('@std/') ||
+    cleanSpecifier.startsWith('veryfront/')
+  ) {
     const mapped = resolveFromImportMap(cleanSpecifier);
-    if (DEBUG) {
-      console.error(`[resolver] ${cleanSpecifier} -> mapped: ${mapped}`);
-    }
     if (mapped) {
       const actualPath = findActualFile(mapped.replace(/^\.\//, ''));
-      if (DEBUG) {
-        console.error(`[resolver] ${cleanSpecifier} -> actualPath: ${actualPath}`);
-      }
       if (actualPath) {
         return {
           shortCircuit: true,
@@ -307,65 +157,10 @@ export async function resolve(specifier, context, nextResolve) {
     }
   }
 
-  // Apply URL import map for bare specifiers (esm.sh URLs in deno.json)
-  const isBare = !cleanSpecifier.startsWith('.') &&
-    !cleanSpecifier.startsWith('/') &&
-    !cleanSpecifier.startsWith('file:') &&
-    !cleanSpecifier.startsWith('data:') &&
-    !cleanSpecifier.startsWith('node:') &&
-    !cleanSpecifier.startsWith('bun:');
-  if (isBare) {
-    const mappedUrl = resolveFromUrlImportMap(cleanSpecifier);
-    if (mappedUrl) {
-      if (DEBUG) {
-        console.error(`[resolver] URL import map: ${cleanSpecifier} -> ${mappedUrl}`);
-      }
-      return {
-        shortCircuit: true,
-        url: mappedUrl,
-        format: 'module',
-      };
-    }
-  }
-
+  // Let Node.js handle everything else (including react, react-dom via node_modules)
   return nextResolve(specifier, context);
 }
 
-export async function load(url, context, nextLoad) {
-  if (url.startsWith('https://') || url.startsWith('http://')) {
-    const source = await fetchHttpModule(url);
-    return {
-      shortCircuit: true,
-      format: 'module',
-      source,
-    };
-  }
-
-  // Handle .tsx files - transform with esbuild
-  if (url.startsWith('file://') && url.endsWith('.tsx')) {
-    const filePath = fileURLToPath(url);
-    const source = readFileSync(filePath, 'utf-8');
-
-    try {
-      const es = await getEsbuild();
-      const result = await es.transform(source, {
-        loader: 'tsx',
-        format: 'esm',
-        target: 'esnext',
-        jsx: 'automatic',
-        sourcefile: filePath,
-      });
-
-      return {
-        shortCircuit: true,
-        format: 'module',
-        source: result.code,
-      };
-    } catch (error) {
-      console.error(`[loader] Failed to transform ${filePath}:`, error.message);
-      throw error;
-    }
-  }
-
-  return nextLoad(url, context);
-}
+// No custom load hook needed anymore:
+// - React/HTTP modules are handled by shared facades
+// - .tsx files are handled by --experimental-transform-types
