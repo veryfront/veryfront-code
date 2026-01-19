@@ -475,6 +475,7 @@ describe(
             // Use createMockAdapter to avoid mutating the global singleton
             const adapter = await createMockAdapter();
             const handler = createVeryfrontHandler(tempDir, adapter, {
+              projectDir: tempDir,
               config: {
                 security: {
                   auth: {
@@ -523,6 +524,7 @@ describe(
             // Use createMockAdapter to avoid mutating the global singleton
             const adapter = await createMockAdapter();
             const handler = createVeryfrontHandler(tempDir, adapter, {
+              projectDir: tempDir,
               config: {
                 security: {
                   auth: {
@@ -564,6 +566,7 @@ describe(
             // Use createMockAdapter to avoid mutating the global singleton
             const adapter = await createMockAdapter();
             const handler = createVeryfrontHandler(tempDir, adapter, {
+              projectDir: tempDir,
               config: {
                 security: {
                   auth: {
@@ -595,6 +598,7 @@ describe(
             // Use createMockAdapter to avoid mutating the global singleton
             const adapter = await createMockAdapter();
             const handler = createVeryfrontHandler(tempDir, adapter, {
+              projectDir: tempDir,
               config: {
                 security: {
                   auth: {
