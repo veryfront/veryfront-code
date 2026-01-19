@@ -60,6 +60,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private contentSource: ContentSource;
   /** Resolved content context after initialization (includes resolved releaseId for env/domain) */
   private contentContext: ResolvedContentContext | null = null;
+  /** Whether running in proxy mode (shared adapter with per-request OAuth tokens) */
+  private proxyMode: boolean;
 
   constructor(config: FSAdapterConfig) {
     // Store invalidation callbacks with no-op defaults
@@ -70,6 +72,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.apiToken = veryfrontConfig.apiToken;
     this.projectSlug = veryfrontConfig.projectSlug;
     this.contentSource = veryfrontConfig.contentSource;
+    this.proxyMode = veryfrontConfig.proxyMode ?? false;
 
     this.client = new VeryfrontAPIClient({
       apiBaseUrl: veryfrontConfig.apiBaseUrl,
@@ -170,13 +173,23 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     // Connect to WebSocket for real-time cache invalidation (branch mode only)
     // Environment/release/domain modes serve immutable published content
+    // Skip WebSocket in proxy mode - the adapter is shared across requests with different
+    // OAuth tokens, causing permission errors when tokens don't have project access
     if (this.contentContext.sourceType === "branch") {
       logger.debug("[VeryfrontFSAdapter] Initialized (branch mode)", {
         projectId: this.client.getProjectId(),
         files: files.length,
         branch: this.contentContext.branch,
+        proxyMode: this.proxyMode,
       });
-      this.connectWebSocket(projectId);
+      if (this.proxyMode) {
+        logger.debug("[VeryfrontFSAdapter] Skipping WebSocket in proxy mode", {
+          projectId: this.client.getProjectId(),
+          reason: "Shared adapter with per-request OAuth tokens",
+        });
+      } else {
+        this.connectWebSocket(projectId);
+      }
     } else {
       logger.debug("[VeryfrontFSAdapter] Initialized (published mode)", {
         projectId: this.client.getProjectId(),
@@ -774,11 +787,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
    * Set a per-request token from proxy headers.
    * This token takes priority over the config token for API calls.
    * Used when running behind the Deno proxy with OAuth tokens.
+   * Note: We don't update this.apiToken because WebSocket connections
+   * should use the original token, not per-request tokens that may
+   * belong to users without project access.
    */
   setRequestToken(token: string): void {
     this.client.setRequestToken(token);
-    // Update stored token for WebSocket reconnection
-    this.apiToken = token;
   }
 
   /**
