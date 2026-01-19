@@ -2,7 +2,7 @@
  * Debug Context Handler
  *
  * Shows the current request context for debugging token/context propagation issues.
- * Only enabled in development mode.
+ * Available in all modes - endpoint is internal-only (not publicly routable).
  *
  * Endpoint: /_vf_debug/context
  */
@@ -16,7 +16,6 @@ export class DebugContextHandler extends BaseHandler {
     name: "DebugContextHandler",
     priority: PRIORITY_HIGH_DEV as HandlerPriority,
     patterns: [{ pattern: "/_vf_debug/context", exact: true }],
-    enabled: (ctx) => ctx.mode === "development",
   };
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
