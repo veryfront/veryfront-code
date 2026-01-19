@@ -160,9 +160,8 @@ renderer:
 
   env:
     PORT: "20000"
-    # Bind to all interfaces (0.0.0.0) for port-forward compatibility
-    # Note: K8s sets HOSTNAME to pod name, which would bind to pod IP only
-    HOST: "0.0.0.0"
+    # 0.0.0.0 = all interfaces (required for port-forward)
+    BIND_ADDRESS: "0.0.0.0"
     PROXY_MODE: "1"
     # API URL for domain lookups and other internal API calls
     # Use internal K8s service for performance (no public internet roundtrip)
