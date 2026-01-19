@@ -38,7 +38,7 @@ describe(
         const server = await startUniversalServer({
           projectDir: context.projectDir,
           port,
-          hostname: "127.0.0.1",
+          bindAddress: "127.0.0.1",
           mode: "development",
         });
         await server.ready;

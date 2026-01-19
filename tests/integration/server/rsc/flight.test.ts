@@ -35,7 +35,7 @@ describe("RSC Flight Tests", { sanitizeOps: false, sanitizeResources: false }, (
           h = await startProductionServer({
             projectDir: context.projectDir,
             port,
-            hostname: "127.0.0.1",
+            bindAddress: "127.0.0.1",
           });
           await h.ready;
           await new Promise((r) => setTimeout(r, 200));
