@@ -690,4 +690,63 @@ export const COMMANDS: CommandRegistry = {
       "  • vf_trigger_hmr          - Force browser refresh",
     ],
   },
+  sdlc: {
+    name: "sdlc",
+    description: "Manage SDLC resources (tasks, issues, plans, milestones, RFCs)",
+    usage: "veryfront sdlc <subcommand> [options]",
+    options: [
+      {
+        flag: "--title <string>",
+        description: "Resource title (for create)",
+      },
+      {
+        flag: "--status <status>",
+        description: "Status: todo, in_progress, blocked, in_review, done, cancelled",
+      },
+      {
+        flag: "--priority <level>",
+        description: "Priority: low, medium, high, critical",
+      },
+      {
+        flag: "--milestone <id>",
+        description: "Milestone ID",
+      },
+      {
+        flag: "--assignee <name>",
+        description: "Assignee name",
+      },
+      {
+        flag: "--kind <type>",
+        description: "Issue kind: bug, feature, enhancement, documentation",
+      },
+      {
+        flag: "--json",
+        description: "Output as JSON",
+      },
+    ],
+    examples: [
+      "veryfront sdlc create task --title 'Implement JWT auth' --priority high",
+      "veryfront sdlc list task",
+      "veryfront sdlc list issue --status in_progress",
+      "veryfront sdlc show TASK-001",
+      "veryfront sdlc update TASK-001 --status done",
+      "veryfront sdlc delete TASK-001",
+      "veryfront sdlc stats",
+      "veryfront sdlc discover",
+    ],
+    notes: [
+      "Resources stored as markdown + YAML frontmatter in .veryfront/sdlc/",
+      "Subcommands:",
+      "  • create <type>     - Create new resource (task, issue, plan, milestone, rfc)",
+      "  • list [type]       - List resources (optionally filter by type)",
+      "  • show <id>         - Show resource details",
+      "  • update <id>       - Update resource metadata",
+      "  • delete <id>       - Delete resource",
+      "  • stats             - Show statistics",
+      "  • discover          - Discover all resources",
+      "",
+      "All resources are git-friendly and AI-native",
+      "Use --json flag for programmatic access",
+    ],
+  },
 };

@@ -44,6 +44,7 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/platform/compat/path/index.ts";
 import { showCommandHelp, showMainHelp } from "../help/index.ts";
 import { createMCPServer } from "../mcp/server.ts";
+import { sdlcCommand } from "../commands/sdlc.ts";
 
 /**
  * Handle validation errors using central COMMANDS registry for usage
@@ -468,6 +469,12 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
           });
           await server.stop();
         }
+        break;
+
+      case "sdlc":
+        // SDLC resource management
+        showLogo();
+        await sdlcCommand(cwd(), args._.slice(1).map(String));
         break;
 
       case "help":
