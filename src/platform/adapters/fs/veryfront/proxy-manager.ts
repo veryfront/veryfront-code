@@ -10,6 +10,7 @@ import {
 } from "../../../../transforms/mdx/esm-module-loader/cache/index.ts";
 import { clearSnippetCache } from "../../../../rendering/snippet-renderer.ts";
 import { buildProxyManagerCacheKey } from "#veryfront/cache";
+import { z } from "zod";
 
 interface ProjectAdapter {
   adapter: VeryfrontFSAdapter;
@@ -23,6 +24,33 @@ interface ProxyFSAdapterManagerConfig {
   cleanupIntervalMs?: number;
   maxIdleMs?: number;
 }
+
+// Input validation schema for getAdapter parameters
+const GetAdapterParamsSchema = z.object({
+  projectSlug: z.string().min(1, "projectSlug must be non-empty"),
+  token: z.string().min(1, "token must be non-empty"),
+  projectId: z.string().optional(),
+  productionMode: z.boolean(),
+  releaseId: z.string().nullable().optional(),
+  environmentName: z.string().nullable().optional(),
+  branch: z.string().nullable().optional(),
+}).refine(
+  (data) => {
+    // Production mode must have releaseId or environmentName
+    if (data.productionMode === true) {
+      return data.releaseId != null || data.environmentName != null;
+    }
+    // Preview mode must have branch
+    if (data.productionMode === false) {
+      return data.branch != null;
+    }
+    // productionMode must be explicitly true or false, not undefined
+    return false;
+  },
+  {
+    message: "Production mode requires releaseId or environmentName; preview mode requires branch; productionMode must be explicitly set",
+  }
+);
 
 // Use centralized buildProxyManagerCacheKey from core/cache/keys.ts
 
@@ -60,11 +88,35 @@ export class ProxyFSAdapterManager {
     environmentName?: string | null,
     branch?: string | null,
   ): Promise<VeryfrontFSAdapter> {
-    const effectiveToken = token || this.baseConfig.veryfront?.apiToken || "";
+    // Normalize productionMode - must be explicitly set
     const effectiveProductionMode = productionMode ?? false;
     const effectiveReleaseId = releaseId ?? null;
     const effectiveEnvironmentName = environmentName ?? null;
     const effectiveBranch = branch ?? null;
+
+    // Validate input parameters
+    const validationResult = GetAdapterParamsSchema.safeParse({
+      projectSlug,
+      token,
+      projectId,
+      productionMode: effectiveProductionMode,
+      releaseId: effectiveReleaseId,
+      environmentName: effectiveEnvironmentName,
+      branch: effectiveBranch,
+    });
+
+    if (!validationResult.success) {
+      const error = new Error(
+        `[ProxyFSAdapterManager] Invalid getAdapter parameters: ${validationResult.error.message}`
+      );
+      logger.error("[ProxyFSAdapterManager] Validation failed", {
+        errors: validationResult.error.errors,
+        params: { projectSlug, productionMode: effectiveProductionMode, releaseId: effectiveReleaseId, environmentName: effectiveEnvironmentName, branch: effectiveBranch },
+      });
+      throw error;
+    }
+
+    // No fallback for token - validation ensures it's non-empty
 
     // Cache key includes productionMode, releaseId, and branch to prevent race conditions
     const cacheKey = buildProxyManagerCacheKey(
@@ -89,7 +141,74 @@ export class ProxyFSAdapterManager {
 
     if (existing) {
       existing.lastAccessed = Date.now();
-      existing.adapter.setRequestToken(effectiveToken);
+      existing.adapter.setRequestToken(token);
+
+      // Verify content context matches expected parameters
+      // If there's a mismatch, this is a critical bug - fail fast
+      const currentContext = existing.adapter.getContentContext();
+
+      // Context must exist
+      if (!currentContext) {
+        const error = new Error(
+          `[ProxyFSAdapterManager] FATAL: Cached adapter has null context. ` +
+          `This indicates a critical bug in adapter initialization. ` +
+          `CacheKey: ${cacheKey}`
+        );
+        logger.error("[ProxyFSAdapterManager] Null context detected", {
+          cacheKey,
+        });
+        throw error;
+      }
+
+      // Check if context matches expectations
+      let contextMismatch = false;
+      let mismatchReason = "";
+
+      if (effectiveProductionMode) {
+        // Production mode: sourceType must be "release" or "environment"
+        if (currentContext.sourceType !== "release" && currentContext.sourceType !== "environment") {
+          contextMismatch = true;
+          mismatchReason = `Expected sourceType "release" or "environment", got "${currentContext.sourceType}"`;
+        } else if (currentContext.sourceType === "release" && currentContext.releaseId !== effectiveReleaseId) {
+          contextMismatch = true;
+          mismatchReason = `Expected releaseId "${effectiveReleaseId}", got "${currentContext.releaseId}"`;
+        } else if (currentContext.sourceType === "environment" && currentContext.environmentName !== effectiveEnvironmentName) {
+          contextMismatch = true;
+          mismatchReason = `Expected environmentName "${effectiveEnvironmentName}", got "${currentContext.environmentName}"`;
+        }
+      } else {
+        // Preview mode: sourceType must be "branch"
+        if (currentContext.sourceType !== "branch") {
+          contextMismatch = true;
+          mismatchReason = `Expected sourceType "branch", got "${currentContext.sourceType}"`;
+        } else if (currentContext.branch !== effectiveBranch) {
+          contextMismatch = true;
+          mismatchReason = `Expected branch "${effectiveBranch}", got "${currentContext.branch}"`;
+        }
+      }
+
+      if (contextMismatch) {
+        const error = new Error(
+          `[ProxyFSAdapterManager] FATAL: Context mismatch for cached adapter. ` +
+          `This indicates a critical bug in adapter caching. ` +
+          `Reason: ${mismatchReason}. ` +
+          `Expected: ${JSON.stringify({ productionMode: effectiveProductionMode, branch: effectiveBranch, releaseId: effectiveReleaseId, environmentName: effectiveEnvironmentName })} ` +
+          `Got: ${JSON.stringify(currentContext)} ` +
+          `CacheKey: ${cacheKey}`
+        );
+        logger.error("[ProxyFSAdapterManager] Context mismatch detected", {
+          cacheKey,
+          currentContext,
+          expected: {
+            productionMode: effectiveProductionMode,
+            branch: effectiveBranch,
+            releaseId: effectiveReleaseId,
+            environmentName: effectiveEnvironmentName,
+          },
+          mismatchReason,
+        });
+        throw error;
+      }
 
       logger.debug("[ProxyFSAdapterManager] Reusing cached adapter", {
         cacheKey,
@@ -107,7 +226,7 @@ export class ProxyFSAdapterManager {
     const pending = this.pendingAdapters.get(cacheKey);
     if (pending) {
       const adapter = await pending;
-      adapter.setRequestToken(effectiveToken);
+      adapter.setRequestToken(token);
       return adapter;
     }
 
