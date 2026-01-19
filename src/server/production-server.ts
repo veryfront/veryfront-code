@@ -1,5 +1,4 @@
 import { serverLogger as logger } from "@veryfront/utils";
-import { LOCALHOST } from "@veryfront/config";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import { createVeryfrontHandler } from "./universal-handler/index.ts";
