@@ -22,8 +22,8 @@
   },
   "dependencies": {
     "gray-matter": "^4.0.3",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
     "veryfront": "^0.0.63",
     "zod": "^3.24.0"
   },

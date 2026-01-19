@@ -29,7 +29,11 @@ export const ssrHttpCachePlugin: TransformPlugin = {
     }
 
     const cacheDir = getHttpBundleCacheDir();
-    const updated = await cacheHttpImportsToLocal(ctx.code, { cacheDir, importMap });
+    const updated = await cacheHttpImportsToLocal(ctx.code, {
+      cacheDir,
+      importMap,
+      reactVersion: ctx.reactVersion,
+    });
 
     if (updated !== ctx.code) {
       logger.debug(`${LOG_PREFIX} Cached HTTP imports for ${ctx.filePath.slice(-40)}`);

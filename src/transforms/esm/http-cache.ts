@@ -20,6 +20,8 @@ import { parseImports, replaceSpecifiers } from "./lexer.ts";
 type CacheOptions = {
   cacheDir: string;
   importMap: ImportMapConfig;
+  /** React version to use for esm.sh URLs (defaults to REACT_VERSION) */
+  reactVersion?: string;
 };
 
 const inFlight = new Map<string, Promise<string>>();
@@ -106,20 +108,24 @@ function toEsmShUrlFromNpm(specifier: string): string {
   return `https://esm.sh/${specifier.slice(4)}`;
 }
 
-function resolveBareSpecifier(specifier: string, importMap: ImportMapConfig): string {
+function resolveBareSpecifier(
+  specifier: string,
+  importMap: ImportMapConfig,
+  reactVersion: string = REACT_VERSION,
+): string {
   // All bare specifiers (including React) go through esm.sh and get cached to file://
   // This ensures cross-runtime compatibility without loader hooks.
-  const reactMap = getReactImportMap();
+  const reactMap = getReactImportMap(reactVersion);
   if (reactMap[specifier]) return reactMap[specifier]!;
 
   if (specifier.startsWith("react/")) {
     const subpath = specifier.slice("react/".length);
-    return `https://esm.sh/react@${REACT_VERSION}/${subpath}?target=es2022`;
+    return `https://esm.sh/react@${reactVersion}/${subpath}?target=es2022`;
   }
 
   if (specifier.startsWith("react-dom/")) {
     const subpath = specifier.slice("react-dom/".length);
-    return `https://esm.sh/react-dom@${REACT_VERSION}/${subpath}?target=es2022`;
+    return `https://esm.sh/react-dom@${reactVersion}/${subpath}?target=es2022`;
   }
 
   const mapped = resolveImport(specifier, importMap);
@@ -244,7 +250,7 @@ async function resolveSpecifier(
     return null;
   }
 
-  const mapped = resolveBareSpecifier(specifier, options.importMap);
+  const mapped = resolveBareSpecifier(specifier, options.importMap, options.reactVersion);
   if (mapped === specifier) {
     return null;
   }

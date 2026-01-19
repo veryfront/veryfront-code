@@ -59,7 +59,7 @@ const React = await loadReact();
 export default React;
 
 // Import types from @types/react for proper type annotations
-import type * as ReactTypes from "https://esm.sh/@types/react@18.3.27";
+import type * as ReactTypes from "https://esm.sh/@types/react@19";
 
 // Named exports for tree-shaking support
 // Explicitly typed to preserve React's generic type signatures

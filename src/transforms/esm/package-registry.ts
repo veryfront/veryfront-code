@@ -5,7 +5,7 @@
  * SSR resolves to esm.sh URLs (then cached to file://), browser uses esm.sh URLs.
  */
 
-export const REACT_VERSION = "18.3.1";
+export const REACT_VERSION = "19.1.1";
 export const TAILWIND_VERSION = "4.1.8";
 
 /**
@@ -33,15 +33,17 @@ export function getEsmShUrl(pkg: string, version: string, external?: readonly st
  * Get React esm.sh URLs with consistent versioning.
  * Used by both SSR and browser for full-stack consistency.
  * Uses ?target=es2022 to ensure identical builds (esm.sh auto-detects target otherwise).
+ *
+ * @param version - React version to use (defaults to REACT_VERSION)
  */
-export function getReactUrls() {
+export function getReactUrls(version: string = REACT_VERSION) {
   return {
-    react: `https://esm.sh/react@${REACT_VERSION}?target=es2022`,
-    "react-dom": `https://esm.sh/react-dom@${REACT_VERSION}?target=es2022`,
-    "react-dom/client": `https://esm.sh/react-dom@${REACT_VERSION}/client?target=es2022`,
-    "react-dom/server": `https://esm.sh/react-dom@${REACT_VERSION}/server?target=es2022`,
-    "react/jsx-runtime": `https://esm.sh/react@${REACT_VERSION}/jsx-runtime?target=es2022`,
-    "react/jsx-dev-runtime": `https://esm.sh/react@${REACT_VERSION}/jsx-dev-runtime?target=es2022`,
+    react: `https://esm.sh/react@${version}?target=es2022`,
+    "react-dom": `https://esm.sh/react-dom@${version}?target=es2022`,
+    "react-dom/client": `https://esm.sh/react-dom@${version}/client?target=es2022`,
+    "react-dom/server": `https://esm.sh/react-dom@${version}/server?target=es2022`,
+    "react/jsx-runtime": `https://esm.sh/react@${version}/jsx-runtime?target=es2022`,
+    "react/jsx-dev-runtime": `https://esm.sh/react@${version}/jsx-dev-runtime?target=es2022`,
   };
 }
 
@@ -52,12 +54,14 @@ export function getReactUrls() {
  *
  * Works in Deno, Node, and Bun since esm.sh URLs are standard HTTPS imports.
  * Uses ?target=es2022 to ensure identical builds across all runtimes.
+ *
+ * @param version - React version to use (defaults to REACT_VERSION)
  */
-export function getReactImportMap(): Record<string, string> {
+export function getReactImportMap(version: string = REACT_VERSION): Record<string, string> {
   return {
-    ...getReactUrls(),
+    ...getReactUrls(version),
     // Prefix match for any react/* subpath imports
-    "react/": `https://esm.sh/react@${REACT_VERSION}/?target=es2022`,
+    "react/": `https://esm.sh/react@${version}/?target=es2022`,
   };
 }
 

@@ -53,6 +53,8 @@ export interface TransformOptions {
   apiBaseUrl?: string;
   /** Enable node position injection for Studio Navigator */
   studioEmbed?: boolean;
+  /** React version to use (detected from project package.json if not provided) */
+  reactVersion?: string;
 }
 
 /**
@@ -92,6 +94,8 @@ export interface TransformContext {
   metadata: Map<string, unknown>;
   /** Enable node position injection for Studio Navigator */
   studioEmbed?: boolean;
+  /** React version to use for esm.sh URLs */
+  reactVersion: string;
 }
 
 /**
