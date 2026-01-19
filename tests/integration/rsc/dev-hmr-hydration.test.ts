@@ -1,7 +1,9 @@
-import { assertEquals } from "@std/assert";
-import { join } from "@std/path";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals } from "@veryfront/testing/assert";
+import { join } from "@veryfront/compat/path";
+import { writeTextFile } from "@veryfront/compat/fs.ts";
+import { describe, it } from "@veryfront/testing/bdd";
 import { withTestContext } from "../../_helpers/context.ts";
+import { delay } from "@std/async";
 
 // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
 // See: https://github.com/facebook/react/issues/24669
@@ -15,23 +17,23 @@ describe(
     it("client boundary re-hydrates after file change", async () => {
       await withTestContext("rsc-dev-hmr-hydration", async (context) => {
         // Enable RSC via config instead of env var
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
           `export default { experimental: { rsc: true } };`,
         );
 
         // Create app structure
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "app", "page.tsx"),
           `export default function Page(){ return <div data-client-ref="/app/Client.client.tsx#default">INIT</div>; }`,
         );
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "app", "Client.client.tsx"),
           `'use client'\nexport default function C(){ return <span>V1</span>; }`,
         );
 
         const server = await context.createDevServer({ enableHMR: true });
-        await new Promise((r) => setTimeout(r, 500));
+        await delay(500);
 
         try {
           // First load (simulate hydration by requesting page shell+manifest+hydrator in browser normally)
@@ -40,11 +42,11 @@ describe(
           await res1.body?.cancel();
 
           // Change client component
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "Client.client.tsx"),
             `'use client'\nexport default function C(){ return <span>V2</span>; }`,
           );
-          await new Promise((r) => setTimeout(r, 400));
+          await delay(400);
 
           // Second load
           const res2 = await fetch(`http://127.0.0.1:${server.port}/_veryfront/rsc/page`);
@@ -53,7 +55,7 @@ describe(
         } finally {
           await server.stop();
           // Give server time to clean up
-          await new Promise((resolve) => setTimeout(resolve, 100));
+          await delay(100);
         }
       });
     });

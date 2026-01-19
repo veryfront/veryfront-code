@@ -12,9 +12,10 @@ import { MetricsRecorder } from "./recorder.ts";
 import type { MetricsConfig, MetricsInstruments, OpenTelemetryAPI, RuntimeState } from "./types.ts";
 
 /**
- * Metrics manager singleton state
+ * Metrics manager class
+ * Exported for testing - use metricsManager singleton for production
  */
-class MetricsManager {
+export class MetricsManager {
   private initialized = false;
   private meter: Meter | null = null;
   private api: OpenTelemetryAPI | null = null;

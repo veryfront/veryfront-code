@@ -16,15 +16,15 @@ export enum TransformStage {
   COMPILE = 1,
   /** @/ alias resolution */
   RESOLVE_ALIASES = 2,
-  /** react/jsx-runtime → esm.sh or npm: URLs */
+  /** react/jsx-runtime → esm.sh URLs (cached to file:// for SSR later) */
   RESOLVE_REACT = 3,
   /** Context packages (@tanstack/react-query, etc.) → unified URLs */
   RESOLVE_CONTEXT = 4,
   /** ./relative imports → full paths or module server URLs */
   RESOLVE_RELATIVE = 5,
-  /** Bare npm imports → esm.sh URLs */
+  /** Bare npm imports → esm.sh URLs (cached to file:// for SSR later) */
   RESOLVE_BARE = 6,
-  /** Final cleanup, caching, HTTP bundling */
+  /** Final cleanup, caching, HTTP normalization */
   FINALIZE = 7,
 }
 

@@ -10,21 +10,36 @@ import {
   assert,
   assertEquals,
   assertExists,
-  assertRejects as _assertRejects,
-} from "@std/assert";
-import { join } from "@std/path";
-import { describe, it } from "@std/testing/bdd";
-import { DenoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
+} from "@veryfront/testing/assert";
+import { symlink } from "@veryfront/compat/fs.ts";
+import { join } from "@veryfront/compat/path";
+import { describe, it } from "@veryfront/testing/bdd";
 import { withTestContext } from "../../_helpers/context.ts";
+import { chdir, cwd } from "@veryfront/compat/process.ts";
+import { mkdir, writeTextFile } from "@veryfront/testing/deno-compat";
+import { getLocalAdapter } from "@veryfront/platform/adapters/registry.ts";
+import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+
+type ShellRuntimeAdapter = RuntimeAdapter & {
+  shell: NonNullable<RuntimeAdapter["shell"]>;
+};
+
+const getShellAdapter = async (): Promise<ShellRuntimeAdapter> => {
+  const adapter = await getLocalAdapter();
+  if (!adapter.shell) {
+    throw new Error("Shell adapter is not available in this runtime");
+  }
+  return adapter as ShellRuntimeAdapter;
+};
 
 describe("ShellAdapter - statSync()", () => {
   it("returns file stats synchronously", async () => {
     await withTestContext("shell-stat-file", async (context) => {
-      const adapter = new DenoAdapter();
+      const adapter = await getShellAdapter();
 
       // Create a test file
       const testFile = join(context.projectDir, "test.txt");
-      await Deno.writeTextFile(testFile, "test content");
+      await writeTextFile(testFile, "test content");
 
       // Get stats synchronously
       const stats = adapter.shell.statSync(testFile);
@@ -37,11 +52,11 @@ describe("ShellAdapter - statSync()", () => {
 
   it("identifies directories correctly", async () => {
     await withTestContext("shell-stat-directory", async (context) => {
-      const adapter = new DenoAdapter();
+      const adapter = await getShellAdapter();
 
       // Create a test directory
       const testDir = join(context.projectDir, "test-dir");
-      await Deno.mkdir(testDir);
+      await mkdir(testDir);
 
       // Get stats synchronously
       const stats = adapter.shell.statSync(testDir);
@@ -52,8 +67,8 @@ describe("ShellAdapter - statSync()", () => {
     });
   });
 
-  it("throws error for non-existent files", () => {
-    const adapter = new DenoAdapter();
+  it("throws error for non-existent files", async () => {
+    const adapter = await getShellAdapter();
 
     // Should throw for non-existent file
     try {
@@ -70,16 +85,16 @@ describe("ShellAdapter - statSync()", () => {
 
   it("works with relative paths", async () => {
     await withTestContext("shell-stat-relative", async (context) => {
-      const adapter = new DenoAdapter();
+      const adapter = await getShellAdapter();
 
       // Create file in current directory
       const testFile = join(context.projectDir, "relative-test.txt");
-      await Deno.writeTextFile(testFile, "content");
+      await writeTextFile(testFile, "content");
 
       // Change to test directory
-      const originalDir = Deno.cwd();
+      const originalDir = cwd();
       try {
-        Deno.chdir(context.projectDir);
+        chdir(context.projectDir);
 
         // Stat with relative path
         const stats = adapter.shell.statSync("./relative-test.txt");
@@ -87,23 +102,23 @@ describe("ShellAdapter - statSync()", () => {
         assertExists(stats);
         assertEquals(stats.isFile, true);
       } finally {
-        Deno.chdir(originalDir);
+        chdir(originalDir);
       }
     });
   });
 
   it("handles symlinks", async () => {
     await withTestContext("shell-stat-symlink", async (context) => {
-      const adapter = new DenoAdapter();
+      const adapter = await getShellAdapter();
 
       // Create a file and symlink
       const testFile = join(context.projectDir, "original.txt");
       const symlinkPath = join(context.projectDir, "link.txt");
 
-      await Deno.writeTextFile(testFile, "content");
+      await writeTextFile(testFile, "content");
 
       try {
-        await Deno.symlink(testFile, symlinkPath);
+        await symlink(testFile, symlinkPath);
 
         // Stat the symlink (should follow to the file)
         const stats = adapter.shell.statSync(symlinkPath);
@@ -123,12 +138,12 @@ describe("ShellAdapter - statSync()", () => {
 describe("ShellAdapter - readFileSync()", () => {
   it("reads file content synchronously", async () => {
     await withTestContext("shell-read-file", async (context) => {
-      const adapter = new DenoAdapter();
+      const adapter = await getShellAdapter();
 
       // Create a test file
       const testFile = join(context.projectDir, "read-test.txt");
       const testContent = "Hello, World!";
-      await Deno.writeTextFile(testFile, testContent);
+      await writeTextFile(testFile, testContent);
 
       // Read synchronously
       const content = adapter.shell.readFileSync(testFile);
@@ -139,12 +154,12 @@ describe("ShellAdapter - readFileSync()", () => {
 
   it("reads TypeScript files correctly", async () => {
     await withTestContext("shell-read-ts", async (context) => {
-      const adapter = new DenoAdapter();
+      const adapter = await getShellAdapter();
 
       // Create a TypeScript file
       const testFile = join(context.projectDir, "test.ts");
       const tsContent = 'export function test(): string { return "test" }';
-      await Deno.writeTextFile(testFile, tsContent);
+      await writeTextFile(testFile, tsContent);
 
       // Read synchronously
       const content = adapter.shell.readFileSync(testFile);
@@ -156,12 +171,12 @@ describe("ShellAdapter - readFileSync()", () => {
 
   it("reads large files correctly", async () => {
     await withTestContext("shell-read-large", async (context) => {
-      const adapter = new DenoAdapter();
+      const adapter = await getShellAdapter();
 
       // Create a large file (1MB)
       const testFile = join(context.projectDir, "large.txt");
       const largeContent = "x".repeat(1024 * 1024);
-      await Deno.writeTextFile(testFile, largeContent);
+      await writeTextFile(testFile, largeContent);
 
       // Read synchronously
       const content = adapter.shell.readFileSync(testFile);
@@ -170,8 +185,8 @@ describe("ShellAdapter - readFileSync()", () => {
     });
   });
 
-  it("throws error for non-existent files", () => {
-    const adapter = new DenoAdapter();
+  it("throws error for non-existent files", async () => {
+    const adapter = await getShellAdapter();
 
     // Should throw for non-existent file
     try {
@@ -188,12 +203,12 @@ describe("ShellAdapter - readFileSync()", () => {
 
   it("handles UTF-8 content correctly", async () => {
     await withTestContext("shell-read-utf8", async (context) => {
-      const adapter = new DenoAdapter();
+      const adapter = await getShellAdapter();
 
       // Create file with UTF-8 content
       const testFile = join(context.projectDir, "utf8.txt");
       const utf8Content = "Hello 世界 🌍 مرحبا";
-      await Deno.writeTextFile(testFile, utf8Content);
+      await writeTextFile(testFile, utf8Content);
 
       // Read synchronously
       const content = adapter.shell.readFileSync(testFile);
@@ -204,11 +219,11 @@ describe("ShellAdapter - readFileSync()", () => {
 
   it("reads empty files correctly", async () => {
     await withTestContext("shell-read-empty", async (context) => {
-      const adapter = new DenoAdapter();
+      const adapter = await getShellAdapter();
 
       // Create empty file
       const testFile = join(context.projectDir, "empty.txt");
-      await Deno.writeTextFile(testFile, "");
+      await writeTextFile(testFile, "");
 
       // Read synchronously
       const content = adapter.shell.readFileSync(testFile);
@@ -219,12 +234,12 @@ describe("ShellAdapter - readFileSync()", () => {
 
   it("handles files with line breaks", async () => {
     await withTestContext("shell-read-multiline", async (context) => {
-      const adapter = new DenoAdapter();
+      const adapter = await getShellAdapter();
 
       // Create multi-line file
       const testFile = join(context.projectDir, "multiline.txt");
       const multilineContent = "Line 1\nLine 2\nLine 3\n";
-      await Deno.writeTextFile(testFile, multilineContent);
+      await writeTextFile(testFile, multilineContent);
 
       // Read synchronously
       const content = adapter.shell.readFileSync(testFile);
@@ -236,23 +251,23 @@ describe("ShellAdapter - readFileSync()", () => {
 
   it("works with relative paths", async () => {
     await withTestContext("shell-read-relative", async (context) => {
-      const adapter = new DenoAdapter();
+      const adapter = await getShellAdapter();
 
       // Create file
       const testFile = join(context.projectDir, "relative-read.txt");
-      await Deno.writeTextFile(testFile, "content");
+      await writeTextFile(testFile, "content");
 
       // Change to test directory
-      const originalDir = Deno.cwd();
+      const originalDir = cwd();
       try {
-        Deno.chdir(context.projectDir);
+        chdir(context.projectDir);
 
         // Read with relative path
         const content = adapter.shell.readFileSync("./relative-read.txt");
 
         assertEquals(content, "content");
       } finally {
-        Deno.chdir(originalDir);
+        chdir(originalDir);
       }
     });
   });
@@ -261,14 +276,14 @@ describe("ShellAdapter - readFileSync()", () => {
 describe("ShellAdapter - esbuild Plugin Integration", () => {
   it("statSync can be used in esbuild plugins", async () => {
     await withTestContext("shell-esbuild-stat", async (context) => {
-      const adapter = new DenoAdapter();
+      const adapter = await getShellAdapter();
 
       // Create test files
       const tsFile = join(context.projectDir, "component.tsx");
       const jsFile = join(context.projectDir, "utils.js");
 
-      await Deno.writeTextFile(tsFile, "export const Component = () => <div/>");
-      await Deno.writeTextFile(jsFile, "export const util = () => {}");
+      await writeTextFile(tsFile, "export const Component = () => <div/>");
+      await writeTextFile(jsFile, "export const util = () => {}");
 
       // Simulate esbuild plugin resolution
       const candidates = [
@@ -299,12 +314,12 @@ describe("ShellAdapter - esbuild Plugin Integration", () => {
 
   it("readFileSync can load module content for esbuild", async () => {
     await withTestContext("shell-esbuild-read", async (context) => {
-      const adapter = new DenoAdapter();
+      const adapter = await getShellAdapter();
 
       // Create module file
       const moduleFile = join(context.projectDir, "module.ts");
       const moduleContent = "export const value = 42;";
-      await Deno.writeTextFile(moduleFile, moduleContent);
+      await writeTextFile(moduleFile, moduleContent);
 
       // Simulate esbuild plugin onLoad
       const content = adapter.shell.readFileSync(moduleFile);
@@ -316,13 +331,13 @@ describe("ShellAdapter - esbuild Plugin Integration", () => {
 
   it("handles rapid sequential file operations", async () => {
     await withTestContext("shell-rapid-operations", async (context) => {
-      const adapter = new DenoAdapter();
+      const adapter = await getShellAdapter();
 
       // Create multiple files
       const files = [];
       for (let i = 0; i < 10; i++) {
         const filePath = join(context.projectDir, `file${i}.ts`);
-        await Deno.writeTextFile(filePath, `export const value${i} = ${i}`);
+        await writeTextFile(filePath, `export const value${i} = ${i}`);
         files.push(filePath);
       }
 
@@ -346,8 +361,8 @@ describe("ShellAdapter - esbuild Plugin Integration", () => {
 });
 
 describe("ShellAdapter - Error Handling", () => {
-  it("provides clear error messages", () => {
-    const adapter = new DenoAdapter();
+  it("provides clear error messages", async () => {
+    const adapter = await getShellAdapter();
 
     try {
       adapter.shell.statSync("/nonexistent/path/file.txt");
@@ -372,7 +387,7 @@ describe("ShellAdapter - Error Handling", () => {
 
     // deno-lint-ignore require-await
     await withTestContext("shell-permission-error", async (_context) => {
-      const adapter = new DenoAdapter();
+      const adapter = await getShellAdapter();
 
       try {
         // Try to read a system file that might have restricted permissions

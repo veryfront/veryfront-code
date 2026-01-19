@@ -1,5 +1,5 @@
 import { dirname, join, relative, SEPARATOR } from "@veryfront/platform/compat/path/index.ts";
-import { walk } from "@std/fs";
+import { walk } from "@veryfront/compat/std/fs.ts";
 import { logger } from "@veryfront/utils";
 import type { BrowserTargets } from "@veryfront/types";
 import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
@@ -72,7 +72,10 @@ export function getOutputPath(inputPath: string, outputDir: string): string {
   const nameWithoutExt = filename.replace(".css", "");
   const outputFilename = `${nameWithoutExt}.min.css`;
 
-  const relativePath = relative(cwd(), dir);
+  // If dir is already relative (doesn't start with / or drive letter), use it directly
+  // Otherwise compute relative path from cwd
+  const isAbsolute = dir.startsWith("/") || /^[a-zA-Z]:/.test(dir);
+  const relativePath = isAbsolute ? relative(cwd(), dir) : dir;
   return join(outputDir, relativePath, outputFilename);
 }
 

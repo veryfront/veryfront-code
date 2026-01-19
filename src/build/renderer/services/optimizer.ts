@@ -3,7 +3,7 @@
  */
 
 import { bundlerLogger as logger } from "@veryfront/utils";
-import * as esbuild from "esbuild/mod.js"; // Native esbuild
+import * as esbuild from "esbuild"; // Native esbuild
 import type { BundleResult, BundlerOptions } from "../types/bundler-types.ts";
 
 /**

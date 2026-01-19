@@ -11,43 +11,7 @@ import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { EntityInfo, Frontmatter } from "@veryfront/types";
 import { isDynamicSegment } from "@veryfront/utils/route-path-utils.ts";
 import { join } from "../platform/compat/path-helper.ts";
-import { serverLogger as logger } from "@veryfront/utils";
-
-// Conditional import for front-matter extraction
-let extractYaml: ((content: string) => any) | undefined;
-let jsYamlModule: typeof import("js-yaml") | null = null;
-
-// Initialize extractYaml based on runtime
-// @ts-ignore - Deno global
-if (typeof Deno === "undefined") {
-  // Node.js environment - use lazy loading for js-yaml
-  extractYaml = (content: string) => {
-    const frontMatterRegex = /^---\n([\s\S]*?)\n---/; // Basic regex for YAML front matter
-    const match = content.match(frontMatterRegex);
-    if (match && match[1]) {
-      // Synchronous parsing with cached module
-      if (jsYamlModule) {
-        const attrs = jsYamlModule.load(match[1]);
-        const body = content.slice(match[0].length);
-        return { attrs, body };
-      }
-      // Fallback: return content without parsing if module not loaded
-      return { attrs: {}, body: content };
-    }
-    return { attrs: {}, body: content };
-  };
-
-  // Eagerly load js-yaml module
-  import("js-yaml").then((mod) => {
-    jsYamlModule = mod;
-  }).catch((e) => {
-    logger.warn("Could not import js-yaml for Node.js frontmatter parsing.", e);
-  });
-} else {
-  // @ts-ignore - Deno global
-  const { extract } = await import("std/front_matter/yaml.ts");
-  extractYaml = extract;
-}
+import { extract } from "@std/front-matter/yaml";
 
 export async function getAppRouteEntity(
   projectDir: string,
@@ -173,44 +137,53 @@ async function tryLoadPageFile(
   slug: string,
   adapter: RuntimeAdapter,
 ): Promise<EntityInfo | null> {
+  let info: { isFile: boolean };
   try {
-    const info = await adapter.fs.stat(file);
-    if (!info.isFile) return null;
-
-    const raw = await adapter.fs.readFile(file);
-    let content = raw;
-    let fm: Record<string, unknown> = {};
-
-    try {
-      if (raw.trim().startsWith("---") && extractYaml) {
-        const ex = extractYaml(raw);
-        content = ex.body;
-        fm = (ex.attrs as Record<string, unknown>) || {};
-      }
-    } catch {
-      /* best-effort frontmatter extraction */
-    }
-
-    const coercedFm: Record<string, unknown> = { ...fm };
-    if (typeof coercedFm.layout === "boolean") {
-      coercedFm.layout = coercedFm.layout ? "default" : "false";
-    }
-
-    return {
-      entity: {
-        id: file,
-        path: file,
-        slug,
-        type: "page",
-        isPage: true,
-        isLayout: false,
-        isProvider: false,
-        isComponent: false,
-        content,
-        frontmatter: coercedFm as Frontmatter,
-      },
-    };
+    info = await adapter.fs.stat(file);
   } catch {
     return null;
   }
+  if (!info.isFile) return null;
+
+  let raw: string;
+  try {
+    raw = await adapter.fs.readFile(file);
+  } catch {
+    return null;
+  }
+
+  let content = raw;
+  let fm: Record<string, unknown> = {};
+
+  if (raw.trim().startsWith("---")) {
+    try {
+      const ex = extract(raw);
+      content = ex.body;
+      fm = (ex.attrs as Record<string, unknown>) || {};
+    } catch {
+      // Malformed frontmatter - use raw content as-is
+      // This allows pages with invalid YAML to still render
+      content = raw;
+    }
+  }
+
+  const coercedFm: Record<string, unknown> = { ...fm };
+  if (typeof coercedFm.layout === "boolean") {
+    coercedFm.layout = coercedFm.layout ? "default" : "false";
+  }
+
+  return {
+    entity: {
+      id: file,
+      path: file,
+      slug,
+      type: "page",
+      isPage: true,
+      isLayout: false,
+      isProvider: false,
+      isComponent: false,
+      content,
+      frontmatter: coercedFm as Frontmatter,
+    },
+  };
 }

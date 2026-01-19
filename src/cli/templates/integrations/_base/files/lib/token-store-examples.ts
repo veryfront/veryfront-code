@@ -9,10 +9,11 @@
 
 import {
   createTokenStore,
-  encryptToken,
   decryptToken,
-  type TokenStore,
+  encryptToken,
+  tokenStore,
   type OAuthToken,
+  type TokenStore,
 } from "./token-store.ts";
 
 // ============================================================================
@@ -429,7 +430,5 @@ export function createAutoStore(): TokenStore {
     "Set DATABASE_URL, KV_REST_API_URL, or REDIS_URL for production."
   );
 
-  // Return in-memory store from main module
-  const { tokenStore } = require("./token-store");
   return tokenStore;
 }

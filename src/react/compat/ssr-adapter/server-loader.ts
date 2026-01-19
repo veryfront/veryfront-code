@@ -3,6 +3,7 @@ import { rendererLogger as logger } from "@veryfront/utils";
 import { getReactVersionInfo } from "../version-detector/index.ts";
 import { isDeno, isNode } from "@veryfront/platform/compat/runtime.ts";
 import { cwd } from "@veryfront/platform/compat/process.ts";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 // True Node.js runtime (not Deno with Node.js compat)
 const IS_TRUE_NODE = isNode && !isDeno;
@@ -21,6 +22,42 @@ let projectReactCache: typeof React | null = null;
 let useProjectReact: boolean | null = null;
 let reactDOMServerCache: ReactDOMServer | null = null;
 
+type ImportMetaWithResolve = ImportMeta & {
+  resolve?: (specifier: string, parent?: string) => string;
+};
+
+const IMPORT_META_RESOLVE_ERROR = "ImportMetaResolveUnavailable";
+
+function rethrowIfImportMetaResolveMissing(error: unknown): void {
+  if (error instanceof Error && error.name === IMPORT_META_RESOLVE_ERROR) {
+    throw error;
+  }
+}
+
+function resolveWithImportMeta(specifier: string, parentUrl: string): string | null {
+  const metaResolve = (import.meta as ImportMetaWithResolve).resolve;
+  if (typeof metaResolve !== "function") {
+    const error = new Error(
+      "import.meta.resolve is required for Node ESM resolution (Node >= 22).",
+    );
+    error.name = IMPORT_META_RESOLVE_ERROR;
+    throw error;
+  }
+  try {
+    return metaResolve(specifier, parentUrl);
+  } catch {
+    return null;
+  }
+}
+
+function resolveFromProject(specifier: string): string | null {
+  return resolveWithImportMeta(specifier, pathToFileURL(cwd() + "/").href);
+}
+
+function resolveFromCli(specifier: string): string | null {
+  return resolveWithImportMeta(specifier, import.meta.url);
+}
+
 /**
  * Reset all cached React and ReactDOM instances.
  * This is critical for test isolation when running parallel tests
@@ -37,7 +74,7 @@ export function resetReactCache(): void {
  * This ensures we use a consistent set of React packages to avoid
  * the "multiple React instances" hook error.
  */
-async function canResolveReactFromProject(): Promise<boolean> {
+function canResolveReactFromProject(): boolean {
   if (useProjectReact !== null) {
     return useProjectReact;
   }
@@ -48,21 +85,22 @@ async function canResolveReactFromProject(): Promise<boolean> {
   }
 
   try {
-    const { createRequire } = await import("node:module");
-    const { pathToFileURL } = await import("node:url");
-    const projectRequire = createRequire(pathToFileURL(cwd() + "/").href);
-
     // Check that BOTH react and react-dom can be resolved from project
-    const reactPath = projectRequire.resolve("react");
-    const reactDomPath = projectRequire.resolve("react-dom/server");
+    const reactUrl = resolveFromProject("react");
+    const reactDomUrl = resolveFromProject("react-dom/server");
+    if (!reactUrl || !reactDomUrl) {
+      useProjectReact = false;
+      return false;
+    }
 
     logger.debug("Project has both react and react-dom", {
-      react: reactPath,
-      reactDom: reactDomPath,
+      react: fileURLToPath(reactUrl),
+      reactDom: fileURLToPath(reactDomUrl),
     });
     useProjectReact = true;
     return true;
   } catch (error) {
+    rethrowIfImportMetaResolveMissing(error);
     logger.debug(
       "Project missing react and/or react-dom, using bundled versions for consistency",
       error,
@@ -92,15 +130,16 @@ export async function getProjectReact(): Promise<typeof React> {
 
   if (canUseProject) {
     try {
-      const { createRequire } = await import("node:module");
-      const { pathToFileURL } = await import("node:url");
-      const projectRequire = createRequire(pathToFileURL(cwd() + "/").href);
-      const reactPath = projectRequire.resolve("react");
-      logger.debug("Resolved react from project", { path: reactPath });
-      const projectReact = await import(pathToFileURL(reactPath).href);
-      projectReactCache = projectReact.default || projectReact;
-      return projectReactCache as typeof React;
+      const reactUrl = resolveFromProject("react");
+      if (reactUrl) {
+        logger.debug("Resolved react from project", { path: fileURLToPath(reactUrl) });
+        const projectReact = await import(reactUrl);
+        projectReactCache = projectReact.default || projectReact;
+        return projectReactCache as typeof React;
+      }
+      logger.warn("Failed to resolve react from project, falling back to bundled");
     } catch (error) {
+      rethrowIfImportMetaResolveMissing(error);
       logger.warn("Failed to resolve react from project, falling back to bundled", error);
     }
   }
@@ -110,20 +149,21 @@ export async function getProjectReact(): Promise<typeof React> {
   // as user code that was transformed by react-imports.ts
   if (IS_TRUE_NODE) {
     try {
-      const { createRequire } = await import("node:module");
-      const { pathToFileURL } = await import("node:url");
-      const cliRequire = createRequire(import.meta.url);
-      const bundledReactPath = cliRequire.resolve("react");
-      logger.debug("Resolved bundled react", { path: bundledReactPath });
-      const bundledReact = await import(pathToFileURL(bundledReactPath).href);
-      projectReactCache = bundledReact.default || bundledReact;
-      return projectReactCache as typeof React;
+      const bundledReactUrl = resolveFromCli("react");
+      if (bundledReactUrl) {
+        logger.debug("Resolved bundled react", { path: fileURLToPath(bundledReactUrl) });
+        const bundledReact = await import(bundledReactUrl);
+        projectReactCache = bundledReact.default || bundledReact;
+        return projectReactCache as typeof React;
+      }
+      logger.warn("Failed to resolve bundled react via file URL");
     } catch (error) {
+      rethrowIfImportMetaResolveMissing(error);
       logger.warn("Failed to resolve bundled react via file URL", error);
     }
   }
 
-  // For Deno: use the deno.json import map which maps to npm:react@18.3.1
+  // For Deno: use the import map which maps to esm.sh React URLs
   // This ensures consistency with third-party packages like @tanstack/react-query
   if (!IS_TRUE_NODE) {
     const npmReact = await import("react");
@@ -145,13 +185,16 @@ async function importReactDOMServerFromProject(): Promise<
 
   if (canUseProject) {
     try {
-      const { createRequire } = await import("node:module");
-      const { pathToFileURL } = await import("node:url");
-      const projectRequire = createRequire(pathToFileURL(cwd() + "/").href);
-      const reactDomServerPath = projectRequire.resolve("react-dom/server");
-      logger.debug("Resolved react-dom/server from project", { path: reactDomServerPath });
-      return await import(pathToFileURL(reactDomServerPath).href);
+      const reactDomServerUrl = resolveFromProject("react-dom/server");
+      if (reactDomServerUrl) {
+        logger.debug("Resolved react-dom/server from project", {
+          path: fileURLToPath(reactDomServerUrl),
+        });
+        return await import(reactDomServerUrl);
+      }
+      logger.warn("Failed to resolve react-dom from project, falling back to bundled");
     } catch (error) {
+      rethrowIfImportMetaResolveMissing(error);
       logger.warn("Failed to resolve react-dom from project, falling back to bundled", error);
     }
   }
@@ -160,21 +203,21 @@ async function importReactDOMServerFromProject(): Promise<
   // This ensures react-dom uses the same React instance as components
   if (IS_TRUE_NODE) {
     try {
-      const { createRequire } = await import("node:module");
-      const { pathToFileURL } = await import("node:url");
-      const cliRequire = createRequire(import.meta.url);
-      const bundledPath = cliRequire.resolve("react-dom/server");
-      logger.debug("Resolved bundled react-dom/server", { path: bundledPath });
-      return await import(pathToFileURL(bundledPath).href);
+      const bundledUrl = resolveFromCli("react-dom/server");
+      if (bundledUrl) {
+        logger.debug("Resolved bundled react-dom/server", { path: fileURLToPath(bundledUrl) });
+        return await import(bundledUrl);
+      }
+      logger.warn("Failed to resolve bundled react-dom/server via file URL");
     } catch (error) {
+      rethrowIfImportMetaResolveMissing(error);
       logger.warn("Failed to resolve bundled react-dom/server via file URL", error);
     }
   }
 
-  // For Deno: use npm: specifiers to match React used by third-party packages
-  // Third-party packages like @tanstack/react-query always use npm:react,
-  // so we must use npm:react-dom/server for consistent React instances.
-  // Use deno.json import map which explicitly maps to server.node build
+  // For Deno: use the import map React resolution for consistent instances.
+  // Third-party packages use bare react specifiers, so the import map keeps them aligned.
+  // Use deno.json import map which explicitly maps to the server build
   return await import("react-dom/server");
 }
 

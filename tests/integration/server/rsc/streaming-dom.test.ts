@@ -1,10 +1,12 @@
-import { assert } from "@std/assert";
-import { afterAll, describe, it } from "@std/testing/bdd";
+import { assert } from "@veryfront/testing/assert";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
 import "../../../_helpers/log-guard.ts";
-import { join } from "@std/path";
+import { join } from "@veryfront/compat/path";
+import { mkdir, remove, writeTextFile } from "@veryfront/compat/fs.ts";
 import { consumeNdjsonStream, getContainer } from "../../../../src/rendering/rsc/client-dom.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
+import { delay } from "@std/async";
 
 function createDocument(): Document {
   const ids = new Map<string, any>();
@@ -66,17 +68,17 @@ describe("RSC Stream DOM Tests", { sanitizeOps: false, sanitizeResources: false 
     () => {
       it("applies interleaved slots to DOM (prod)", async () => {
         await withTestContext("rsc-stream-dom-prod", async (context) => {
-          // Set RSC environment variable
-          context.setEnv({
-            VERYFRONT_EXPERIMENTAL_RSC: "1",
-          });
-
+          // Enable RSC via config
           // Remove default app directory and create pages structure
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
-          await Deno.remove(join(context.projectDir, "pages"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "pages"), { recursive: true });
 
-          await Deno.mkdir(join(context.projectDir, "pages"), { recursive: true });
-          await Deno.writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home\n");
+          await mkdir(join(context.projectDir, "pages"), { recursive: true });
+          await writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home\n");
+          await writeTextFile(
+            join(context.projectDir, "veryfront.config.js"),
+            `export default { experimental: { rsc: true } };`,
+          );
 
           const server = await context.createProductionServer({
             hostname: "127.0.0.1",
@@ -99,18 +101,14 @@ describe("RSC Stream DOM Tests", { sanitizeOps: false, sanitizeResources: false 
 
       it("ignores malformed NDJSON lines (dev)", async () => {
         await withTestContext("rsc-stream-dom-dev", async (context) => {
-          // Set RSC environment variable
-          context.setEnv({
-            VERYFRONT_EXPERIMENTAL_RSC: "1",
-          });
-
+          // Enable RSC via config
           // Remove default pages directory
-          await Deno.remove(join(context.projectDir, "pages"), { recursive: true });
+          await remove(join(context.projectDir, "pages"), { recursive: true });
 
-          await Deno.mkdir(join(context.projectDir, "pages"), { recursive: true });
-          await Deno.writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home\n");
+          await mkdir(join(context.projectDir, "pages"), { recursive: true });
+          await writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home\n");
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "deno.json"),
             JSON.stringify({
               compilerOptions: {
@@ -119,15 +117,19 @@ describe("RSC Stream DOM Tests", { sanitizeOps: false, sanitizeResources: false 
               },
             }),
           );
+          await writeTextFile(
+            join(context.projectDir, "veryfront.config.js"),
+            `export default { experimental: { rsc: true } };`,
+          );
 
           // Add app router for RSC
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "layout.tsx"),
             `export default function RootLayout({ children }: { children: React.ReactNode }) {
             return <html><body>{children}</body></html>;
           }`,
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "page.tsx"),
             `export default function Page() { return <div>App Home</div>; }`,
           );
@@ -151,7 +153,7 @@ describe("RSC Stream DOM Tests", { sanitizeOps: false, sanitizeResources: false 
             } catch (_e) {
               console.debug?.("[test] /readyz check failed");
             }
-            await new Promise((r) => setTimeout(r, 100));
+            await delay(100);
           }
           if (!ok) throw new Error("Server reported not-ready via /readyz");
 

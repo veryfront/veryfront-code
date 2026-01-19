@@ -1,50 +1,39 @@
-import { assertEquals } from "@std/assert";
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
+import { assertEquals } from "@veryfront/testing/assert";
+import { afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
 import { join } from "@veryfront/platform/compat/path/index.ts";
+import { exists, makeTempDir, remove } from "@veryfront/platform/compat/fs.ts";
+import { runCommand } from "@veryfront/platform/compat/process.ts";
 
 describe("uninstall command integration", () => {
   let tempDir: string;
 
   beforeEach(async () => {
-    tempDir = await Deno.makeTempDir({ prefix: "veryfront-uninstall-test-" });
+    tempDir = await makeTempDir({ prefix: "veryfront-uninstall-test-" });
   });
 
   afterEach(async () => {
-    await Deno.remove(tempDir, { recursive: true });
+    await remove(tempDir, { recursive: true });
   });
 
   async function runInstall(target: string): Promise<{ code: number }> {
     const cliPath = new URL("../../main.ts", import.meta.url).pathname;
-    const command = new Deno.Command("deno", {
+    const result = await runCommand("deno", {
       args: ["run", "--allow-all", cliPath, "install", "--target", target],
       cwd: tempDir,
-      stdout: "piped",
-      stderr: "piped",
+      capture: true,
     });
-    const { code } = await command.output();
-    return { code };
+    return { code: result.code };
   }
 
   async function runUninstall(target: string): Promise<{ code: number; output: string }> {
     const cliPath = new URL("../../main.ts", import.meta.url).pathname;
-    const command = new Deno.Command("deno", {
+    const result = await runCommand("deno", {
       args: ["run", "--allow-all", cliPath, "uninstall", "--target", target],
       cwd: tempDir,
-      stdout: "piped",
-      stderr: "piped",
+      capture: true,
     });
-    const { code, stdout, stderr } = await command.output();
-    const output = new TextDecoder().decode(stdout) + new TextDecoder().decode(stderr);
-    return { code, output };
-  }
-
-  async function exists(path: string): Promise<boolean> {
-    try {
-      await Deno.stat(path);
-      return true;
-    } catch {
-      return false;
-    }
+    const output = (result.stdout ?? "") + (result.stderr ?? "");
+    return { code: result.code, output };
   }
 
   describe("cursor", () => {

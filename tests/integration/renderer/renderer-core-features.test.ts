@@ -12,13 +12,16 @@ import {
   assertExists,
   assertRejects,
   assertStringIncludes,
-} from "@std/assert";
-import { join } from "@std/path";
-import { describe, it } from "@std/testing/bdd";
+} from "@veryfront/testing/assert";
+import { join } from "@veryfront/compat/path";
+import { mkdir, remove, writeTextFile } from "@veryfront/compat/fs.ts";
+import { describe, it } from "@veryfront/testing/bdd";
+
 import { createRenderer } from "../../../src/rendering/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import type { VeryfrontRenderer as _VeryfrontRenderer } from "../../../src/rendering/orchestrator/ssr.ts";
 
+// Skip tests on non-Deno runtimes (SSR uses URL-based imports)
 // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
 // See: https://github.com/facebook/react/issues/24669
 describe(
@@ -31,16 +34,16 @@ describe(
     describe("App Router Specific Features", () => {
       it("should apply loading component in App Router", async () => {
         await withTestContext("renderer-core-loading", async (context) => {
-          await Deno.mkdir(join(context.projectDir, "app", "test"), { recursive: true });
+          await mkdir(join(context.projectDir, "app", "test"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "loading.tsx"),
             `export default function Loading() {
               return <div className="loading">Loading...</div>;
             }`,
           );
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "test", "page.mdx"),
             `# Test Page`,
           );
@@ -58,16 +61,16 @@ describe(
 
       it("should apply error boundary in App Router", async () => {
         await withTestContext("renderer-core-error-boundary", async (context) => {
-          await Deno.mkdir(join(context.projectDir, "app", "test"), { recursive: true });
+          await mkdir(join(context.projectDir, "app", "test"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "error.tsx"),
             `export default function Error() {
               return <div className="error">Error occurred</div>;
             }`,
           );
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "test", "page.mdx"),
             `# Test Page`,
           );
@@ -85,16 +88,16 @@ describe(
 
       it("should search ancestor directories for reserved components", async () => {
         await withTestContext("renderer-core-ancestor-search", async (context) => {
-          await Deno.mkdir(join(context.projectDir, "app", "blog", "post"), { recursive: true });
+          await mkdir(join(context.projectDir, "app", "blog", "post"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "loading.tsx"),
             `export default function Loading() {
               return <div className="app-loading">Loading...</div>;
             }`,
           );
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "blog", "post", "page.mdx"),
             `# Blog Post`,
           );
@@ -113,9 +116,9 @@ describe(
     describe("HTML Generation", () => {
       it("should wrap content in HTML shell", async () => {
         await withTestContext("renderer-core-html-shell", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "test.mdx"),
             `---
 title: Test Page
@@ -143,9 +146,9 @@ description: Test description
 
       it("should preserve full HTML documents", async () => {
         await withTestContext("renderer-core-full-html", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "full.tsx"),
             `export default function FullPage() {
               return (
@@ -170,9 +173,9 @@ description: Test description
 
       it("should include metadata in HTML head", async () => {
         await withTestContext("renderer-core-metadata", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "meta.mdx"),
             `---
 title: Meta Test
@@ -203,11 +206,11 @@ export const metadata = {
     describe("getAllPages", () => {
       it("should list all pages in pages directory", async () => {
         await withTestContext("renderer-core-get-pages", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(join(context.projectDir, "pages", "index.mdx"), `# Home`);
-          await Deno.writeTextFile(join(context.projectDir, "pages", "about.mdx"), `# About`);
-          await Deno.writeTextFile(
+          await writeTextFile(join(context.projectDir, "pages", "index.mdx"), `# Home`);
+          await writeTextFile(join(context.projectDir, "pages", "about.mdx"), `# About`);
+          await writeTextFile(
             join(context.projectDir, "pages", "contact.tsx"),
             `export default function Contact() { return <div>Contact</div>; }`,
           );
@@ -228,9 +231,9 @@ export const metadata = {
 
       it("should handle root-level pages", async () => {
         await withTestContext("renderer-core-root-pages", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(join(context.projectDir, "index.mdx"), `# Root Index`);
+          await writeTextFile(join(context.projectDir, "index.mdx"), `# Root Index`);
 
           const renderer = await createRenderer({
             projectDir: context.projectDir,
@@ -246,7 +249,7 @@ export const metadata = {
     describe("Virtual Module System", () => {
       it("should provide access to virtual module system", async () => {
         await withTestContext("renderer-core-vms", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
           const renderer = await createRenderer({
             projectDir: context.projectDir,
@@ -263,9 +266,9 @@ export const metadata = {
     describe("Error Handling", () => {
       it("should handle MDX with syntax errors", async () => {
         await withTestContext("renderer-core-syntax-error", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "broken.mdx"),
             `---
 title: Broken
@@ -289,9 +292,9 @@ title: Broken
 
       it("should handle component loading errors gracefully", async () => {
         await withTestContext("renderer-core-component-error", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "error-page.tsx"),
             `export default function ErrorPage() {
               throw new Error('Component error');
@@ -315,9 +318,9 @@ title: Broken
     describe("Default MDX Components", () => {
       it("should provide default HTML element components for MDX", async () => {
         await withTestContext("renderer-core-default-components", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "markdown.mdx"),
             `# Heading 1
 
@@ -353,9 +356,9 @@ const code = 'block';
     describe("RenderResult Validation", () => {
       it("should return valid RenderResult with all required fields", async () => {
         await withTestContext("renderer-core-result-validation", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "validation-test-page.mdx"),
             `---
 title: Validation Test
@@ -387,9 +390,9 @@ description: Test description
 
       it("should handle empty frontmatter gracefully", async () => {
         await withTestContext("renderer-core-empty-frontmatter", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "no-frontmatter.mdx"),
             `# Just Content`,
           );
@@ -407,9 +410,9 @@ description: Test description
 
       it("should handle malformed frontmatter fields", async () => {
         await withTestContext("renderer-core-malformed-frontmatter", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "malformed.mdx"),
             `---
 title: 123
@@ -433,9 +436,9 @@ layout: true
 
       it("should validate CSS field when present", async () => {
         await withTestContext("renderer-core-css-field", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "test.mdx"),
             `# Test`,
           );
@@ -454,7 +457,7 @@ layout: true
     describe("Cache Boundary Tests (RENDERER_CORE_MAX_ENTRIES)", () => {
       it("should handle cache near max capacity", async () => {
         await withTestContext("renderer-core-cache-boundary", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
           const renderer = await createRenderer({
             projectDir: context.projectDir,
@@ -464,7 +467,7 @@ layout: true
           // Create multiple pages (not hitting full limit to keep test fast)
           const pageCount = 10;
           for (let i = 0; i < pageCount; i++) {
-            await Deno.writeTextFile(
+            await writeTextFile(
               join(context.projectDir, "pages", `page-${i}.mdx`),
               `---
 title: Page ${i}
@@ -489,7 +492,7 @@ title: Page ${i}
 
       it("should evict oldest entries when cache exceeds max", async () => {
         await withTestContext("renderer-core-cache-eviction", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
           const renderer = await createRenderer({
             projectDir: context.projectDir,
@@ -497,11 +500,11 @@ title: Page ${i}
           });
 
           // Create test pages
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "first.mdx"),
             `# First Page`,
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "second.mdx"),
             `# Second Page`,
           );
@@ -519,9 +522,9 @@ title: Page ${i}
 
       it("should clear cache properly to prevent memory leaks", async () => {
         await withTestContext("renderer-core-memory-cleanup", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "test.mdx"),
             `# Test`,
           );
@@ -549,9 +552,9 @@ title: Page ${i}
     describe("Streaming Error Recovery", () => {
       it("should return stream when streaming delivery is requested", async () => {
         await withTestContext("renderer-core-stream-fallback", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "test.mdx"),
             `# Stream Test`,
           );
@@ -585,9 +588,9 @@ title: Page ${i}
 
       it("should handle streaming with Suspense components", async () => {
         await withTestContext("renderer-core-stream-suspense", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "suspense.tsx"),
             `import { Suspense } from 'react';
 
@@ -615,9 +618,9 @@ export default function SuspensePage() {
 
       it("should handle null stream gracefully", async () => {
         await withTestContext("renderer-core-null-stream", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "test.mdx"),
             `# Test`,
           );
@@ -636,10 +639,10 @@ export default function SuspensePage() {
     describe("Layout Compilation Failure Handling", () => {
       it("should handle layout with syntax errors", async () => {
         await withTestContext("renderer-core-layout-error", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.mkdir(join(context.projectDir, "layouts"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "layouts"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "layouts", "broken.mdx"),
             `---
 isLayout: true
@@ -650,7 +653,7 @@ export default function BrokenLayout({ children }) {
 }`,
           );
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "test.mdx"),
             `---
 layout: broken
@@ -674,9 +677,9 @@ layout: broken
 
       it("should handle missing layout gracefully", async () => {
         await withTestContext("renderer-core-missing-layout", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "test.mdx"),
             `---
 layout: nonexistent
@@ -703,10 +706,10 @@ layout: nonexistent
       // Investigation: RENDERER_CORE_TEST_INVESTIGATION.md (Session 36-37)
       it.skip("should handle layout with runtime errors", async () => {
         await withTestContext("renderer-core-layout-runtime", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.mkdir(join(context.projectDir, "layouts"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "layouts"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "layouts", "runtime-error.tsx"),
             `export default function RuntimeErrorLayout({ children }) {
               const obj = null;
@@ -715,7 +718,7 @@ layout: nonexistent
             }`,
           );
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "test.mdx"),
             `---
 layout: runtime-error

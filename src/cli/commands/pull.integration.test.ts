@@ -8,8 +8,8 @@
  * @module cli/commands/pull.integration
  */
 
-import { assertEquals, assertExists } from "@std/assert";
-import { afterAll, beforeAll, describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { afterAll, beforeAll, describe, it } from "@veryfront/testing/bdd";
 import { initVCRTest, type VCRTestContext } from "../test-utils/vcr.ts";
 import { getFileContent, listAllFiles, type PullSource } from "./pull.ts";
 

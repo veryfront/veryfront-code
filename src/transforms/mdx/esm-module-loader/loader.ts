@@ -2,7 +2,7 @@
  * ESM Module Loader
  *
  * Main coordinator for loading MDX modules as ESM.
- * Handles import transformation, bundling, and module execution.
+ * Handles import transformation, caching, and module execution.
  *
  * @module build/transforms/mdx/esm-module-loader/loader
  */
@@ -11,25 +11,18 @@ import { join } from "@std/path";
 import React from "react";
 import { rendererLogger as logger } from "@veryfront/utils";
 import { getCacheNamespace } from "@veryfront/utils/cache/keys/namespace.ts";
-import { getMdxEsmCacheDir } from "@veryfront/utils/cache-dir.ts";
-import {
-  getDefaultImportMap,
-  transformImportsWithMap,
-} from "@veryfront/modules/import-map/index.ts";
-import { cwd } from "@veryfront/platform/compat/process.ts";
-import {
-  bundleHttpImports as processEsmShImports,
-  createHTTPPlugin,
-  hasHttpImports,
-  stripDenoShim,
-} from "../../esm/http-bundler.ts";
+import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "@veryfront/utils/cache-dir.ts";
+import { loadImportMap, transformImportsWithMap } from "@veryfront/modules/import-map/index.ts";
+import type { ImportMapConfig } from "@veryfront/modules/import-map/index.ts";
+import { cacheHttpImportsToLocal } from "../../esm/http-cache.ts";
+import { replaceSpecifiers } from "../../esm/lexer.ts";
 import { setupSSRGlobals } from "../../../rendering/ssr-globals.ts";
 import type { MDXFrontmatter, MDXModule } from "../types.ts";
 import type { ESMLoaderContext } from "./types.ts";
+import { getLocalReactPaths, isReactSpecifier } from "@veryfront/platform/compat/react-paths.ts";
 import {
   ESBUILD_JSX_FACTORY,
   ESBUILD_JSX_FRAGMENT,
-  IS_TRUE_NODE,
   JSX_IMPORT_PATTERN,
   LOG_PREFIX_MDX_LOADER,
   LOG_PREFIX_MDX_RENDERER,
@@ -38,9 +31,18 @@ import {
 } from "./constants.ts";
 import { getLocalFs } from "./cache/index.ts";
 import { hashString } from "./utils/hash.ts";
-import { transformReactImportsToAbsolute } from "./utils/react-transforms.ts";
 import { createStubModule } from "./utils/stub-module.ts";
 import { createModuleFetcherContext, fetchAndCacheModule } from "./module-fetcher/index.ts";
+
+function resolveProjectDir(context: ESMLoaderContext): string {
+  if (context.projectDir) return context.projectDir;
+  const envProjectDir = context.adapter?.env.get("VERYFRONT_PROJECT_DIR") ??
+    context.adapter?.env.get("VF_PROJECT_DIR");
+  if (envProjectDir) return envProjectDir;
+  throw new Error(
+    "[MDX] projectDir is required for import map resolution. Pass it explicitly to loadModuleESM.",
+  );
+}
 
 /**
  * Initialize the ESM cache directory.
@@ -82,18 +84,55 @@ function rewriteProjectAliasImports(code: string): string {
 }
 
 /**
- * Transform imports based on runtime.
+ * Transform bare React specifiers to local file:// paths for Bun/Node.
+ * This ensures the same React instance as react-dom-server.
+ * For Deno, getLocalReactPaths() returns an empty object, so this is a no-op.
  */
-async function transformImports(code: string): Promise<string> {
-  if (IS_TRUE_NODE) {
-    // On Node.js, transform react imports to absolute file:// paths
-    return await transformReactImportsToAbsolute(code);
+async function transformReactToLocalPaths(code: string): Promise<string> {
+  const localPaths = getLocalReactPaths();
+  if (Object.keys(localPaths).length === 0) return code;
+
+  return await replaceSpecifiers(code, (specifier) => {
+    return localPaths[specifier] || null;
+  });
+}
+
+function stripReactFromImportMap(importMap: ImportMapConfig): ImportMapConfig {
+  const imports = importMap.imports ? { ...importMap.imports } : undefined;
+  if (imports) {
+    for (const key of Object.keys(imports)) {
+      if (isReactSpecifier(key)) {
+        delete imports[key];
+      }
+    }
   }
 
-  // On Deno/browser, transform to esm.sh URLs
+  const scopes = importMap.scopes
+    ? Object.fromEntries(
+      Object.entries(importMap.scopes).map(([scope, mappings]) => {
+        const filtered = { ...mappings };
+        for (const key of Object.keys(filtered)) {
+          if (isReactSpecifier(key)) {
+            delete filtered[key];
+          }
+        }
+        return [scope, filtered];
+      }),
+    )
+    : undefined;
+
+  return { imports, scopes };
+}
+
+/**
+ * Transform imports using project import maps.
+ * React is intentionally left as a bare specifier for SSR consistency.
+ */
+function transformImports(code: string, importMap: ImportMapConfig): string {
+  const sanitized = stripReactFromImportMap(importMap);
   return transformImportsWithMap(
     code,
-    getDefaultImportMap(),
+    sanitized,
     undefined,
     { resolveBare: true },
   );
@@ -180,7 +219,7 @@ async function transformJsxImports(
   adapter: ESMLoaderContext["adapter"],
   esmCacheDir: string,
 ): Promise<string> {
-  const { transform } = await import("esbuild/mod.js");
+  const { transform } = await import("esbuild");
 
   // First, collect all JSX imports to process
   const importsToProcess: Array<{
@@ -292,71 +331,14 @@ async function transformJsxImports(
 }
 
 /**
- * Bundle HTTP imports via esbuild.
- *
- * IMPORTANT: React is NOT aliased to esm.sh - it's kept as bare specifiers.
- * This ensures Deno's import map resolves React to npm:react@18.3.1,
- * the same instance used by react-dom-server (preventing multi-instance issues).
+ * Cache HTTP imports to local file:// paths for runtime-agnostic SSR.
  */
-async function bundleHttpImports(
+async function cacheHttpImports(
   code: string,
-  esmCacheDir: string,
-  adapter: ESMLoaderContext["adapter"],
+  importMap: ImportMapConfig,
 ): Promise<string> {
-  if (!hasHttpImports(code)) {
-    return code;
-  }
-
-  logger.debug(`${LOG_PREFIX_MDX_LOADER} Bundling HTTP imports via esbuild`);
-  const { build } = await import("esbuild/mod.js");
-
-  const tempSourcePath = join(esmCacheDir, `temp-${hashString(code)}.mjs`);
-  await getLocalFs().writeTextFile(tempSourcePath, code);
-
-  try {
-    const result = await build({
-      entryPoints: [tempSourcePath],
-      bundle: true,
-      format: "esm",
-      platform: "neutral",
-      target: "es2020",
-      write: false,
-      plugins: [createHTTPPlugin()],
-      // NO alias for React - keep as bare specifiers so Deno's import map
-      // resolves them to npm:react (same as react-dom-server)
-      external: [
-        // React bare specifiers - Deno resolves via import map to npm:react
-        "react",
-        "react/jsx-runtime",
-        "react/jsx-dev-runtime",
-        "react-dom",
-        "react-dom/server",
-        "react-dom/client",
-        // Other externals
-        "file://*",
-        "veryfront/*",
-      ],
-    });
-
-    const bundledCode = result.outputFiles?.[0]?.text;
-    if (bundledCode) {
-      logger.debug(`${LOG_PREFIX_MDX_LOADER} Successfully bundled HTTP imports`);
-      // Process esm.sh URLs to add target=es2022 and external=react
-      // This ensures all esm.sh packages use the same React instance
-      const processedCode = processEsmShImports(bundledCode, esmCacheDir, hashString(bundledCode));
-      return typeof processedCode === "string" ? processedCode : await processedCode;
-    }
-    return code;
-  } catch (bundleError) {
-    logger.error(`${LOG_PREFIX_MDX_LOADER} Failed to bundle HTTP imports`, bundleError);
-    return code;
-  } finally {
-    try {
-      await adapter?.fs.remove(tempSourcePath);
-    } catch {
-      // Ignore cleanup errors
-    }
-  }
+  const cacheDir = getHttpBundleCacheDir();
+  return await cacheHttpImportsToLocal(code, { cacheDir, importMap });
 }
 
 /**
@@ -364,10 +346,11 @@ async function bundleHttpImports(
  *
  * This function:
  * 1. Transforms @/ aliases to /_vf_modules/ paths
- * 2. Transforms imports using import maps (esm.sh for Deno, file:// for Node)
+ * 2. Transforms imports using project import maps (React left bare)
  * 3. Fetches and caches /_vf_modules/ imports
  * 4. Transforms JSX imports
- * 5. Bundles HTTP imports
+ * 5. Caches HTTP imports to local file:// paths
+ * 5.5. Transforms React imports to local file:// paths (Bun/Node only)
  * 6. Caches and loads the final module
  */
 export async function loadModuleESM(
@@ -390,12 +373,14 @@ export async function loadModuleESM(
     // Step 1: Rewrite @/ aliases to /_vf_modules/ paths
     let rewritten = rewriteProjectAliasImports(compiledProgramCode);
 
-    // Step 2: Transform imports based on runtime
-    rewritten = await transformImports(rewritten);
+    const projectDir = resolveProjectDir(context);
+    const importMap = await loadImportMap(projectDir, adapter);
+
+    // Step 2: Transform imports using project import map
+    rewritten = transformImports(rewritten, importMap);
 
     // Step 3: Find and process /_vf_modules/ imports
     const vfModuleImports = findVfModuleImports(rewritten);
-    const projectDir = context.projectDir || cwd();
     rewritten = await processVfModuleImports(rewritten, vfModuleImports, context, projectDir);
 
     // Step 4: Transform JSX imports
@@ -406,15 +391,12 @@ export async function loadModuleESM(
       rewritten += "\nexport { MDXLayout as __vfLayout };\n";
     }
 
-    // Step 5: Bundle HTTP imports
-    logger.debug(`${LOG_PREFIX_MDX_LOADER} HTTP imports check`, {
-      hasHttpImports: hasHttpImports(rewritten),
-      codePreview: rewritten.substring(0, 500),
-    });
-    rewritten = await bundleHttpImports(rewritten, esmCacheDir, adapter);
+    // Step 5: Cache HTTP imports to local file:// paths
+    rewritten = await cacheHttpImports(rewritten, importMap);
 
-    // Strip Deno shim from esm.sh bundled code
-    rewritten = stripDenoShim(rewritten);
+    // Step 5.5: Transform React imports to local file:// paths for Bun/Node
+    // This ensures the same React instance as react-dom-server
+    rewritten = await transformReactToLocalPaths(rewritten);
 
     // Step 6: Check cache and load module
     const codeHash = hashString(rewritten);

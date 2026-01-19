@@ -1,4 +1,4 @@
-import { getEnvironmentVariable, isProductionEnvironment } from "./env.ts";
+import { getEnvironmentVariable } from "./env.ts";
 import { hasDenoRuntime, hasNodeProcess } from "../runtime-guards.ts";
 
 export enum LogLevel {
@@ -47,41 +47,59 @@ export interface Logger {
   child(context: Record<string, unknown>): Logger;
 }
 
-const originalConsole = {
-  debug: console.debug,
-  log: console.log,
-  warn: console.warn,
-  error: console.error,
+type LoggerConfig = {
+  level: LogLevel;
+  format: LogFormat;
 };
 
-let cachedLogLevel: LogLevel | undefined;
-let cachedLogFormat: LogFormat | undefined;
+let cachedConfig: LoggerConfig | null = null;
+let cachedEnvLevel: string | undefined;
+let cachedDebugFlag: string | undefined;
+let cachedEnvFormat: string | undefined;
+let cachedEnvMode: string | undefined;
 
-function resolveLogLevel(force = false): LogLevel {
-  if (force || cachedLogLevel === undefined) {
-    cachedLogLevel = getDefaultLevel();
-  }
-  return cachedLogLevel;
-}
+function resolveLoggerConfig(): LoggerConfig {
+  const envLevel = getEnvironmentVariable("LOG_LEVEL");
+  const debugFlag = getEnvironmentVariable("VERYFRONT_DEBUG");
+  const envFormat = getEnvironmentVariable("LOG_FORMAT");
+  const envMode = getEnvironmentVariable("NODE_ENV");
 
-function resolveLogFormat(force = false): LogFormat {
-  if (force || cachedLogFormat === undefined) {
-    cachedLogFormat = getDefaultFormat();
+  if (
+    cachedConfig &&
+    envLevel === cachedEnvLevel &&
+    debugFlag === cachedDebugFlag &&
+    envFormat === cachedEnvFormat &&
+    envMode === cachedEnvMode
+  ) {
+    return cachedConfig;
   }
-  return cachedLogFormat;
+
+  cachedEnvLevel = envLevel;
+  cachedDebugFlag = debugFlag;
+  cachedEnvFormat = envFormat;
+  cachedEnvMode = envMode;
+
+  cachedConfig = {
+    level: getDefaultLevel(envLevel, debugFlag),
+    format: getDefaultFormat(envFormat, envMode),
+  };
+
+  return cachedConfig;
 }
 
 /**
  * Determine log format from environment.
  * Defaults to JSON in production for Grafana compatibility.
  */
-function getDefaultFormat(): LogFormat {
-  const envFormat = getEnvironmentVariable("LOG_FORMAT");
+function getDefaultFormat(
+  envFormat: string | undefined = getEnvironmentVariable("LOG_FORMAT"),
+  envMode: string | undefined = getEnvironmentVariable("NODE_ENV"),
+): LogFormat {
   if (envFormat === "json" || envFormat === "text") {
     return envFormat;
   }
   // Default to JSON in production for structured logging
-  return isProductionEnvironment() ? "json" : "text";
+  return envMode === "production" ? "json" : "text";
 }
 
 /**
@@ -268,34 +286,16 @@ class ConsoleLogger implements Logger {
 
   constructor(
     private prefix: string,
-    private level: LogLevel = resolveLogLevel(),
-    private format: LogFormat = resolveLogFormat(),
     boundContext?: Record<string, unknown>,
   ) {
     this.boundContext = boundContext ?? {};
-  }
-
-  setLevel(level: LogLevel): void {
-    this.level = level;
-  }
-
-  getLevel(): LogLevel {
-    return this.level;
-  }
-
-  setFormat(format: LogFormat): void {
-    this.format = format;
-  }
-
-  getFormat(): LogFormat {
-    return this.format;
   }
 
   /**
    * Create a child logger with additional bound context.
    */
   child(context: Record<string, unknown>): Logger {
-    return new ConsoleLogger(this.prefix, this.level, this.format, {
+    return new ConsoleLogger(this.prefix, {
       ...this.boundContext,
       ...context,
     });
@@ -367,9 +367,9 @@ class ConsoleLogger implements Logger {
     message: string,
     args: unknown[],
   ): void {
-    if (this.level > logLevel) return;
-
-    if (this.format === "json") {
+    const { level: resolvedLevel, format: resolvedFormat } = resolveLoggerConfig();
+    if (resolvedLevel > logLevel) return;
+    if (resolvedFormat === "json") {
       consoleFn(this.formatJson(level, message, args));
     } else {
       consoleFn(this.formatTextLine(level, message, args));
@@ -419,23 +419,20 @@ function parseLogLevel(levelString: string | undefined): LogLevel | undefined {
   return LOG_LEVEL_MAP[levelString.toUpperCase()];
 }
 
-const getDefaultLevel = (): LogLevel => {
-  const envLevel = getEnvironmentVariable("LOG_LEVEL");
+function getDefaultLevel(
+  envLevel: string | undefined = getEnvironmentVariable("LOG_LEVEL"),
+  debugFlag: string | undefined = getEnvironmentVariable("VERYFRONT_DEBUG"),
+): LogLevel {
   const parsedLevel = parseLogLevel(envLevel);
   if (parsedLevel !== undefined) return parsedLevel;
 
-  const debugFlag = getEnvironmentVariable("VERYFRONT_DEBUG");
   if (debugFlag === "1" || debugFlag === "true") return LogLevel.DEBUG;
 
   return LogLevel.INFO;
-};
-
-const trackedLoggers = new Set<ConsoleLogger>();
+}
 
 function createLogger(prefix: string): ConsoleLogger {
-  const logger = new ConsoleLogger(prefix);
-  trackedLoggers.add(logger);
-  return logger;
+  return new ConsoleLogger(prefix);
 }
 
 export const cliLogger = createLogger("CLI");
@@ -446,26 +443,6 @@ export const agentLogger = createLogger("AGENT");
 export const proxyLogger = createLogger("PROXY");
 
 export const logger = createLogger("VERYFRONT");
-
-type LoggerResetOptions = {
-  restoreConsole?: boolean;
-};
-
-export function __loggerResetForTests(options: LoggerResetOptions = {}): void {
-  const updatedLevel = resolveLogLevel(true);
-  const updatedFormat = resolveLogFormat(true);
-  for (const instance of trackedLoggers) {
-    instance.setLevel(updatedLevel);
-    instance.setFormat(updatedFormat);
-  }
-
-  if (options.restoreConsole) {
-    console.debug = originalConsole.debug;
-    console.log = originalConsole.log;
-    console.warn = originalConsole.warn;
-    console.error = originalConsole.error;
-  }
-}
 
 /**
  * Create a logger for a specific request context.

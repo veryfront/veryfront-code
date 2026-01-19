@@ -21,40 +21,21 @@
  * ```
  */
 
-import { join } from "@std/path";
+import { join } from "@veryfront/compat/path";
+import {
+  isNotFoundError,
+  makeTempDir,
+  mkdir,
+  remove,
+  writeTextFile,
+} from "../../src/platform/compat/fs.ts";
+import { deleteEnv, getEnv, setEnv } from "../../src/platform/compat/process.ts";
 import { createDevServer } from "../../src/server/dev-server.ts";
 import { startProductionServer } from "../../src/server/production-server.ts";
 import { resetApiHandler } from "../../src/server/handlers/request/api/index.ts";
 import { runWithCacheDir } from "../../src/utils/cache-dir.ts";
 import type { TestServer } from "./server.ts";
 import { getFreePort } from "./utils.ts";
-
-// Initialize esbuild without worker to prevent hanging tests
-// This is done globally so all tests share the same esbuild instance
-let esbuildInitialized = false;
-try {
-  const { initialize } = await import("esbuild");
-  await initialize({
-    worker: false,
-  });
-  esbuildInitialized = true;
-  // Set global flag so cleanupBundler knows to skip stopping esbuild
-  // This prevents "child process started before test but closed during test" errors
-  (globalThis as Record<string, unknown>).__vfTestPreserveEsbuild = true;
-} catch {
-  // Ignore if already initialized or module missing
-}
-
-// Export for cleanup decision
-export { esbuildInitialized };
-
-function safeGetEnv(key: string): string | undefined {
-  try {
-    return process.env[key];
-  } catch (_error) {
-    return undefined;
-  }
-}
 
 function safeSetEnv(key: string, value: string | undefined): void {
   try {
@@ -68,11 +49,9 @@ function safeSetEnv(key: string, value: string | undefined): void {
   }
 }
 
-const _ORIGINAL_DISABLE_LRU_INTERVAL = safeGetEnv("VF_DISABLE_LRU_INTERVAL");
-const _ORIGINAL_DISABLE_LRU_GLOBAL = (globalThis as Record<string, unknown>).__vfDisableLruInterval;
+// Initialize global LRU disable flag to prevent resource leaks during tests
 safeSetEnv("VF_DISABLE_LRU_INTERVAL", "1");
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
-const _activeLruDisableContexts = 0;
 
 // Global port allocator to prevent conflicts
 class PortAllocator {
@@ -82,10 +61,10 @@ class PortAllocator {
   // Wide default range for parallel worktree safety
   // Override via TEST_PORT_MIN / TEST_PORT_MAX env vars
   private get MIN_PORT(): number {
-    return parseInt(Deno.env.get("TEST_PORT_MIN") || "10000", 10);
+    return parseInt(getEnv("TEST_PORT_MIN") || "10000", 10);
   }
   private get MAX_PORT(): number {
-    return parseInt(Deno.env.get("TEST_PORT_MAX") || "60000", 10);
+    return parseInt(getEnv("TEST_PORT_MAX") || "60000", 10);
   }
 
   static getInstance(): PortAllocator {
@@ -95,9 +74,9 @@ class PortAllocator {
     return PortAllocator.instance;
   }
 
-  allocate(): Promise<number> {
+  async allocate(): Promise<number> {
     // Delegate to shared helper - it also respects TEST_PORT_MIN/MAX
-    const port = getFreePort();
+    const port = await getFreePort();
     if (this.usedPorts.has(port)) {
       // Extremely unlikely, but ensure uniqueness within this process
       for (let p = this.MIN_PORT; p <= this.MAX_PORT; p++) {
@@ -148,17 +127,17 @@ export class TestContext {
   async setup(): Promise<void> {
     // Create isolated temp directory
     const prefix = `veryfront_test_${this.testName}_`;
-    this.tempDir = await Deno.makeTempDir({ prefix });
+    this.tempDir = await makeTempDir({ prefix });
 
     // Create isolated cache directory for test isolation during parallel execution
     // This prevents race conditions when multiple tests write to .cache/veryfront-mdx-esm
-    this.cacheDir = await Deno.makeTempDir({ prefix: `veryfront_cache_${this.testName}_` });
+    this.cacheDir = await makeTempDir({ prefix: `veryfront_cache_${this.testName}_` });
 
     // NOTE: We intentionally do NOT set VF_CACHE_DIR env var here anymore.
     // Setting a global env var causes race conditions in parallel tests.
     // Instead, we rely entirely on AsyncLocalStorage via runWithCacheDir().
     // Save original for any code that might read it (legacy behavior)
-    this.originalCacheDir = Deno.env.get("VF_CACHE_DIR");
+    this.originalCacheDir = getEnv("VF_CACHE_DIR");
 
     // Set up standard project structure
     await this.createProjectStructure();
@@ -200,21 +179,23 @@ export class TestContext {
    * VF_CACHE_DIR is automatically isolated per test to prevent cache conflicts.
    * For other env vars, ensure tests with different requirements don't conflict.
    */
-  setEnv(vars: Record<string, string>): void {
+  setTestEnv(vars: Record<string, string>): void {
     for (const [key, value] of Object.entries(vars)) {
       if (!this.originalEnv.has(key)) {
-        // Store original value from Deno.env if available, fallback to process.env
-        const originalValue = typeof Deno !== "undefined" && Deno.env
-          ? Deno.env.get(key)
-          : process.env[key];
+        // Store original value using portable env getter
+        const originalValue = getEnv(key);
         this.originalEnv.set(key, originalValue);
       }
-      // Set in both Deno.env and process.env for maximum compatibility
-      if (typeof Deno !== "undefined" && Deno.env) {
-        Deno.env.set(key, value);
-      }
-      process.env[key] = value;
+      // Set using portable env setter (handles both Deno and Node/Bun)
+      setEnv(key, value);
     }
+  }
+
+  /**
+   * Alias for setTestEnv - Sets environment variables with automatic cleanup
+   */
+  setEnv(vars: Record<string, string>): void {
+    this.setTestEnv(vars);
   }
 
   /**
@@ -347,8 +328,6 @@ export class TestContext {
     this.servers.length = 0;
 
     // Clean up renderers and caches to prevent resource leaks
-    // Note: cleanupBundler checks __vfTestPreserveEsbuild to skip stopping esbuild
-    // when it was initialized globally for tests
     try {
       const { cleanupBundler } = await import("../../src/rendering/cleanup.ts");
       await cleanupBundler();
@@ -368,20 +347,12 @@ export class TestContext {
       portAllocator.release(port);
     }
 
-    // Restore environment variables
+    // Restore environment variables using portable env functions
     for (const [key, originalValue] of this.originalEnv) {
       if (originalValue === undefined) {
-        delete process.env[key];
-        // Also delete from Deno.env if available
-        if (typeof Deno !== "undefined" && Deno.env) {
-          Deno.env.delete(key);
-        }
+        deleteEnv(key);
       } else {
-        process.env[key] = originalValue;
-        // Also restore in Deno.env if available
-        if (typeof Deno !== "undefined" && Deno.env) {
-          Deno.env.set(key, originalValue);
-        }
+        setEnv(key, originalValue);
       }
     }
 
@@ -408,9 +379,9 @@ export class TestContext {
     // Remove cache directory
     if (this.cacheDir) {
       try {
-        await Deno.remove(this.cacheDir, { recursive: true });
+        await remove(this.cacheDir, { recursive: true });
       } catch (error) {
-        if (!(error instanceof Deno.errors.NotFound)) {
+        if (!isNotFoundError(error)) {
           errors.push(error as Error);
         }
       }
@@ -419,9 +390,9 @@ export class TestContext {
     // Remove temp directory
     if (this.tempDir) {
       try {
-        await Deno.remove(this.tempDir, { recursive: true });
+        await remove(this.tempDir, { recursive: true });
       } catch (error) {
-        if (!(error instanceof Deno.errors.NotFound)) {
+        if (!isNotFoundError(error)) {
           errors.push(error as Error);
         }
       }
@@ -448,11 +419,11 @@ export class TestContext {
       "src/islands",
     ];
     for (const dir of dirs) {
-      await Deno.mkdir(join(this.projectDir, dir), { recursive: true });
+      await mkdir(join(this.projectDir, dir), { recursive: true });
     }
 
     // Create default config
-    await Deno.writeTextFile(
+    await writeTextFile(
       join(this.projectDir, "veryfront.config.js"),
       `export default {
   title: "Test Site",

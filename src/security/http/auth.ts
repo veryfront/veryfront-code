@@ -81,6 +81,12 @@ export class AuthHandler extends BaseHandler {
   }
 
   private loadAuthConfig(ctx: HandlerContext): void {
+    // Reset per-request auth state to avoid leaking config across requests.
+    this.basicUser = null;
+    this.basicPass = null;
+    this.basicRealm = "Secure Area";
+    this.bearerToken = null;
+
     // Priority 1: Config file security.auth (allows proper test isolation)
     const authConfig = ctx.securityConfig?.auth as AuthConfig | undefined;
 
@@ -93,6 +99,12 @@ export class AuthHandler extends BaseHandler {
 
     if (authConfig?.bearer) {
       this.bearerToken = authConfig.bearer.token;
+      return;
+    }
+
+    const isTestEnv = (globalThis as Record<string, unknown>).__vfTestEnv === true;
+    if (isTestEnv) {
+      // In tests, never source auth from host env vars.
       return;
     }
 

@@ -8,7 +8,8 @@ import { loadSecurityConfig } from "./security-config.ts";
 import type { APIRoute, LoadModuleOptions } from "./types.ts";
 import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 import { getEsbuildLoader } from "@veryfront/utils/path-utils.ts";
-import { createFileSystem, FileSystem } from "@veryfront/platform/compat/fs.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import type { FileSystem } from "@veryfront/platform/compat/fs.ts";
 import * as pathHelper from "@veryfront/platform/compat/path-helper.ts";
 import { isDeno, isNode } from "@veryfront/platform/compat/runtime.ts";
 

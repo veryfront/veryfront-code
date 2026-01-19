@@ -8,14 +8,16 @@
  * - Relative imports
  */
 
-import { assertEquals, assertStringIncludes } from "@std/assert";
+import { assertEquals, assertStringIncludes } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
+import { readTextFile } from "@veryfront/testing/deno-compat";
 import { runPipeline } from "../index.ts";
 
 const FIXTURES_DIR = new URL(".", import.meta.url).pathname;
 
 async function readFixture(name: string, file: string): Promise<string> {
   const path = `${FIXTURES_DIR}${name}/${file}`;
-  return await Deno.readTextFile(path);
+  return await readTextFile(path);
 }
 
 const TEST_OPTIONS = {
@@ -24,156 +26,124 @@ const TEST_OPTIONS = {
   moduleServerUrl: "http://localhost:3001/_vf_modules",
 };
 
-// Note: esbuild spawns subprocesses that cause resource leaks in Deno tests
-// We disable resource/ops sanitization for these tests
-const testOpts = { sanitizeResources: false, sanitizeOps: false };
+describe("transform pipeline fixtures", { sanitizeResources: false, sanitizeOps: false }, () => {
+  describe("react-only", () => {
+    it("transforms JSX and uses esm.sh React imports for browser", async () => {
+      const input = await readFixture("react-only", "input.tsx");
 
-// ============================================================================
-// React-only fixture tests
-// ============================================================================
+      const result = await runPipeline(
+        input,
+        "/project/components/Counter.tsx",
+        "/project",
+        { ...TEST_OPTIONS, ssr: false },
+      );
 
-Deno.test({
-  name: "transform: react-only (browser)",
-  ...testOpts,
-  async fn() {
-    const input = await readFixture("react-only", "input.tsx");
+      // Should transform JSX
+      assertStringIncludes(result.code, "jsx");
 
-    const result = await runPipeline(
-      input,
-      "/project/components/Counter.tsx",
-      "/project",
-      { ...TEST_OPTIONS, ssr: false },
-    );
+      // Should have esm.sh React imports for browser
+      assertStringIncludes(result.code, "esm.sh/react");
 
-    // Should transform JSX
-    assertStringIncludes(result.code, "jsx");
+      // Should not have bare "react" import
+      assertEquals(result.code.includes('from "react"'), false);
+    });
 
-    // Should have esm.sh React imports for browser
-    assertStringIncludes(result.code, "esm.sh/react");
+    it("uses esm.sh URLs for SSR (Docker-compatible)", async () => {
+      const input = await readFixture("react-only", "input.tsx");
 
-    // Should not have bare "react" import
-    assertEquals(result.code.includes('from "react"'), false);
-  },
-});
+      const result = await runPipeline(
+        input,
+        "/project/components/Counter.tsx",
+        "/project",
+        { ...TEST_OPTIONS, ssr: true },
+      );
 
-Deno.test({
-  name: "transform: react-only (ssr)",
-  ...testOpts,
-  async fn() {
-    const input = await readFixture("react-only", "input.tsx");
+      // Should transform JSX
+      assertStringIncludes(result.code, "jsx");
 
-    const result = await runPipeline(
-      input,
-      "/project/components/Counter.tsx",
-      "/project",
-      { ...TEST_OPTIONS, ssr: true },
-    );
+      // SSR uses esm.sh URLs (same as browser) for Docker compatibility
+      // This ensures imports work without needing node_modules
+      assertStringIncludes(result.code, "esm.sh/react");
 
-    // Should transform JSX
-    assertStringIncludes(result.code, "jsx");
+      // Should NOT have bare "react" import (would fail in Docker)
+      assertEquals(result.code.includes('from "react"'), false);
+    });
+  });
 
-    // SSR now uses esm.sh URLs (same as browser) for dynamic file:// import compatibility
-    // This ensures imports work in Docker without needing node_modules
-    assertStringIncludes(result.code, "esm.sh/react@18.3.1");
+  describe("react-query (npm packages)", () => {
+    it("converts to esm.sh URL with React externalized for browser", async () => {
+      const input = await readFixture("react-query", "input.tsx");
 
-    // Should NOT have bare "react" import (would fail in Docker)
-    assertEquals(result.code.includes('from "react"'), false);
-  },
-});
+      const result = await runPipeline(
+        input,
+        "/project/components/UserProfile.tsx",
+        "/project",
+        { ...TEST_OPTIONS, ssr: false },
+      );
 
-// ============================================================================
-// React Query fixture tests (npm packages)
-// ============================================================================
+      // NPM packages should be converted to esm.sh URLs with React externalized
+      assertStringIncludes(result.code, "esm.sh/@tanstack/react-query");
+      assertStringIncludes(result.code, "external=react");
+    });
 
-Deno.test({
-  name: "transform: react-query converts to esm.sh URL (browser)",
-  ...testOpts,
-  async fn() {
-    const input = await readFixture("react-query", "input.tsx");
+    it("caches npm packages to file:// URLs for SSR", async () => {
+      const input = await readFixture("react-query", "input.tsx");
 
-    const result = await runPipeline(
-      input,
-      "/project/components/UserProfile.tsx",
-      "/project",
-      { ...TEST_OPTIONS, ssr: false },
-    );
+      const result = await runPipeline(
+        input,
+        "/project/components/UserProfile.tsx",
+        "/project",
+        { ...TEST_OPTIONS, ssr: true },
+      );
 
-    // NPM packages should be converted to esm.sh URLs with React externalized
-    assertStringIncludes(result.code, "esm.sh/@tanstack/react-query");
-    assertStringIncludes(result.code, "external=react");
-  },
-});
+      // SSR caches npm packages to local file:// paths for runtime-agnostic loading
+      assertStringIncludes(result.code, "file://");
+      // Should NOT have bare specifier (not resolvable in Docker without node_modules)
+      assertEquals(result.code.includes('@tanstack/react-query"'), false);
+      // Should NOT keep esm.sh URL (cached locally)
+      assertEquals(result.code.includes("esm.sh/@tanstack/react-query"), false);
+    });
+  });
 
-Deno.test({
-  name: "transform: react-query leaves bare specifier for SSR (deno resolves)",
-  ...testOpts,
-  async fn() {
-    const input = await readFixture("react-query", "input.tsx");
+  describe("relative imports", () => {
+    it("resolves @/ alias to module server URLs for browser", async () => {
+      const input = await readFixture("relative-imports", "input.tsx");
 
-    const result = await runPipeline(
-      input,
-      "/project/components/UserProfile.tsx",
-      "/project",
-      { ...TEST_OPTIONS, ssr: true },
-    );
+      const result = await runPipeline(
+        input,
+        "/project/pages/index.tsx",
+        "/project",
+        { ...TEST_OPTIONS, ssr: false },
+      );
 
-    // SSR leaves npm packages as bare specifiers for Deno's import map to resolve
-    assertStringIncludes(result.code, '@tanstack/react-query"');
-    // Should NOT be converted to esm.sh URL (Deno resolves via its import map)
-    assertEquals(result.code.includes("esm.sh/@tanstack/react-query"), false);
-  },
-});
+      // @/ imports should be transformed to module server URLs
+      // Original: import { formatDate } from "@/lib/utils";
+      // Should NOT contain bare @/ import
+      assertEquals(result.code.includes('from "@/'), false);
+    });
+  });
 
-// ============================================================================
-// Relative imports fixture tests
-// ============================================================================
+  describe("pipeline result", () => {
+    it("returns code, content hash, and timing", async () => {
+      const input = await readFixture("react-only", "input.tsx");
 
-Deno.test({
-  name: "transform: relative-imports resolves @/ alias (browser)",
-  ...testOpts,
-  async fn() {
-    const input = await readFixture("relative-imports", "input.tsx");
+      const result = await runPipeline(
+        input,
+        "/project/components/Counter.tsx",
+        "/project",
+        { ...TEST_OPTIONS, ssr: false },
+      );
 
-    const result = await runPipeline(
-      input,
-      "/project/pages/index.tsx",
-      "/project",
-      { ...TEST_OPTIONS, ssr: false },
-    );
+      // Should return code
+      assertEquals(typeof result.code, "string");
+      assertEquals(result.code.length > 0, true);
 
-    // @/ imports should be transformed to module server URLs
-    // Original: import { formatDate } from "@/lib/utils";
-    // Should NOT contain bare @/ import
-    assertEquals(result.code.includes('from "@/'), false);
-  },
-});
+      // Should have content hash
+      assertEquals(typeof result.contentHash, "string");
+      assertEquals(result.contentHash.length > 0, true);
 
-// ============================================================================
-// Pipeline result tests
-// ============================================================================
-
-Deno.test({
-  name: "transform: pipeline returns code",
-  ...testOpts,
-  async fn() {
-    const input = await readFixture("react-only", "input.tsx");
-
-    const result = await runPipeline(
-      input,
-      "/project/components/Counter.tsx",
-      "/project",
-      { ...TEST_OPTIONS, ssr: false },
-    );
-
-    // Should return code
-    assertEquals(typeof result.code, "string");
-    assertEquals(result.code.length > 0, true);
-
-    // Should have content hash
-    assertEquals(typeof result.contentHash, "string");
-    assertEquals(result.contentHash.length > 0, true);
-
-    // Should have timing
-    assertEquals(result.totalMs >= 0, true);
-  },
+      // Should have timing
+      assertEquals(result.totalMs >= 0, true);
+    });
+  });
 });

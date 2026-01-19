@@ -1,6 +1,7 @@
-import { assert, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
-import { describe, it } from "@std/testing/bdd";
+import { assert, assertStringIncludes } from "@veryfront/testing/assert";
+import { join } from "@veryfront/compat/path";
+import { writeTextFile } from "@veryfront/compat/fs.ts";
+import { describe, it } from "@veryfront/testing/bdd";
 import { createRenderer } from "../../../src/rendering/index.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 import { withTestContext } from "../../_helpers/context.ts";
@@ -12,13 +13,13 @@ describe(
     it("isolates MDX module caches per projectId", async () => {
       await withTestContext("tenant-mdx-a", async (contextA) => {
         await withTestContext("tenant-mdx-b", async (contextB) => {
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(contextA.projectDir, "pages", "index.mdx"),
             `# Project A
 
 Content from tenant A`,
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(contextB.projectDir, "pages", "index.mdx"),
             `# Project B
 

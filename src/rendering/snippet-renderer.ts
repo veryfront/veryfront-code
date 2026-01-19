@@ -124,7 +124,7 @@ export async function renderSnippet(
 
     // 2. Store RAW compiled code in cache - no import transformations
     // module-server.ts will apply transformToESM to handle imports properly
-    // for both SSR (npm: specifiers) and browser (esm.sh URLs) contexts
+    // for both SSR (cached file://) and browser (esm.sh URLs) contexts
     const hash = await hashContent(mdxContent + (options.projectSlug || ""));
     snippetCache.set(hash, {
       code: bundle.compiledCode,

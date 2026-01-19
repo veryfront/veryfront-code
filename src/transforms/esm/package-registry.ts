@@ -2,7 +2,7 @@
  * Central package version and URL registry.
  *
  * Single source of truth for all package versions used in both SSR and browser transforms.
- * SSR uses npm: specifiers (Deno resolves locally), browser uses esm.sh URLs.
+ * SSR resolves to esm.sh URLs (then cached to file://), browser uses esm.sh URLs.
  */
 
 export const REACT_VERSION = "18.3.1";

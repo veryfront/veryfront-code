@@ -1,6 +1,7 @@
-import { afterAll, beforeEach, describe, it } from "@std/testing/bdd";
+import { afterAll, beforeEach, describe, it } from "@veryfront/testing/bdd";
 import { expect } from "@std/expect";
 import { RSCDevServerHandler } from "./handler.ts";
+import { delay } from "@std/async";
 
 // esbuild spawns a subprocess for bundling that requires time to shut down
 // Disable sanitizers to avoid flaky test failures from async cleanup
@@ -9,10 +10,12 @@ describe(
   { sanitizeResources: false, sanitizeOps: false },
   () => {
     afterAll(async () => {
-      // Give esbuild subprocess time to fully terminate
-      const { stop } = await import("esbuild/mod.js");
-      await stop();
-      await new Promise((r) => setTimeout(r, 100));
+      // Only stop esbuild if a test explicitly opted to keep it alive
+      if (!(globalThis as Record<string, unknown>).__vfTestPreserveEsbuild) {
+        const { stop } = await import("esbuild");
+        await stop();
+        await delay(100);
+      }
     });
     let handler: RSCDevServerHandler;
 
@@ -21,13 +24,13 @@ describe(
       handler = new RSCDevServerHandler("/tmp/test-project");
     });
 
-    describe("constructor", () => {
+    describe("constructor", { sanitizeOps: false, sanitizeResources: false }, () => {
       it("should create handler with project directory", () => {
         expect(handler).toBeDefined();
       });
     });
 
-    describe("handlePage", () => {
+    describe("handlePage", { sanitizeOps: false, sanitizeResources: false }, () => {
       it("should return page response for valid pathname", () => {
         const response = handler.handlePage("/test", new URLSearchParams());
 
@@ -50,7 +53,7 @@ describe(
       });
     });
 
-    describe("handleHydratorScript", () => {
+    describe("handleHydratorScript", { sanitizeOps: false, sanitizeResources: false }, () => {
       it("should return hydrator script response", async () => {
         const response = await handler.handleHydratorScript();
 
@@ -59,7 +62,7 @@ describe(
       });
     });
 
-    describe("handleManifest", () => {
+    describe("handleManifest", { sanitizeOps: false, sanitizeResources: false }, () => {
       it("should return manifest response", async () => {
         const response = await handler.handleManifest();
 

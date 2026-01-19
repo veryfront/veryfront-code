@@ -10,15 +10,42 @@
 import { logger } from "@veryfront/utils";
 import { runtime } from "../platform/adapters/registry.ts";
 import { tryGetCacheKeyContext } from "./cache-key-builder.ts";
+import {
+  getRuntimeEnv,
+  isRuntimeEnvInitialized,
+  type RuntimeEnv,
+} from "../config/runtime-env.ts";
 
-/** Runtime-agnostic environment variable getter. */
-function getEnv(key: string): string | undefined {
+/** Runtime-agnostic environment variable getter with RuntimeEnv support. */
+function getEnvValue(key: string, env?: RuntimeEnv): string | undefined {
+  // If RuntimeEnv is provided or initialized, use it for better test isolation
+  if (env) {
+    return getEnvFromRuntimeEnv(key, env);
+  }
+  if (isRuntimeEnvInitialized()) {
+    return getEnvFromRuntimeEnv(key, getRuntimeEnv());
+  }
+  // Fallback for bootstrap scenarios before RuntimeEnv is initialized
   if (runtime.isInitialized()) {
     return runtime.getSync().env.get(key);
   }
   // deno-lint-ignore no-explicit-any
   const g = globalThis as any;
   return g.Deno?.env?.get(key) ?? g.process?.env?.[key];
+}
+
+/** Map env var names to RuntimeEnv properties. */
+function getEnvFromRuntimeEnv(key: string, env: RuntimeEnv): string | undefined {
+  switch (key) {
+    case "VERYFRONT_API_BASE_URL":
+      return env.apiBaseUrl;
+    case "VERYFRONT_API_TOKEN":
+      return env.apiToken;
+    case "PROXY_MODE":
+      return env.proxyMode ? "1" : undefined;
+    default:
+      return undefined;
+  }
 }
 
 /** Cache backend interface. */
@@ -200,14 +227,18 @@ export class ApiCacheBackend implements CacheBackend {
   private apiBaseUrl: string;
   private keyPrefix: string;
   private timeoutMs: number;
+  private env?: RuntimeEnv;
 
   constructor(options: {
     apiBaseUrl?: string;
     keyPrefix?: string;
     timeoutMs?: number;
+    /** Optional RuntimeEnv for test isolation */
+    env?: RuntimeEnv;
   } = {}) {
+    this.env = options.env;
     this.apiBaseUrl = options.apiBaseUrl ||
-      getEnv("VERYFRONT_API_BASE_URL") ||
+      getEnvValue("VERYFRONT_API_BASE_URL", this.env) ||
       "https://api.veryfront.com";
     this.keyPrefix = options.keyPrefix || "";
     this.timeoutMs = options.timeoutMs || 5000;
@@ -218,7 +249,7 @@ export class ApiCacheBackend implements CacheBackend {
   }
 
   private getAuthToken(): string | null {
-    return getEnv("VERYFRONT_API_TOKEN") || null;
+    return getEnvValue("VERYFRONT_API_TOKEN", this.env) || null;
   }
 
   private getProjectSlug(): string | null {
@@ -315,11 +346,13 @@ export interface CacheBackendConfig {
   preferredBackend?: "api" | "redis" | "memory";
   /** API base URL for API backend */
   apiBaseUrl?: string;
+  /** Optional RuntimeEnv for test isolation */
+  env?: RuntimeEnv;
 }
 
 /** Check if API cache backend is available (proxy mode with API URL). */
-function isApiCacheAvailable(): boolean {
-  return getEnv("PROXY_MODE") === "1" && !!getEnv("VERYFRONT_API_BASE_URL");
+function isApiCacheAvailable(env?: RuntimeEnv): boolean {
+  return getEnvValue("PROXY_MODE", env) === "1" && !!getEnvValue("VERYFRONT_API_BASE_URL", env);
 }
 
 /**
@@ -329,12 +362,12 @@ function isApiCacheAvailable(): boolean {
 export async function createCacheBackend(
   config: CacheBackendConfig = {},
 ): Promise<CacheBackend> {
-  const { keyPrefix = "", memoryMaxEntries = 500, preferredBackend, apiBaseUrl } = config;
+  const { keyPrefix = "", memoryMaxEntries = 500, preferredBackend, apiBaseUrl, env } = config;
 
   // If preferred backend is specified, try that first
-  if (preferredBackend === "api" || (!preferredBackend && isApiCacheAvailable())) {
+  if (preferredBackend === "api" || (!preferredBackend && isApiCacheAvailable(env))) {
     logger.debug("[CacheBackend] Using API backend (centralized cache)");
-    return new ApiCacheBackend({ keyPrefix, apiBaseUrl });
+    return new ApiCacheBackend({ keyPrefix, apiBaseUrl, env });
   }
 
   if (preferredBackend === "redis" || (!preferredBackend && isRedisConfigured())) {

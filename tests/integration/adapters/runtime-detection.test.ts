@@ -1,5 +1,5 @@
-import { assertEquals, assertExists, assertRejects } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists, assertRejects } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
 import {
   bunAdapter,
   denoAdapter,
@@ -7,12 +7,15 @@ import {
   getAdapter,
   nodeAdapter,
 } from "@veryfront/platform/adapters/detect.ts";
+import { isDeno, isNode, isBun } from "../../../src/platform/compat/runtime.ts";
 
 describe("Runtime detection", () => {
   describe("detectRuntime", () => {
-    it("should detect Deno runtime", () => {
+    it("should detect current runtime correctly", () => {
       const runtime = detectRuntime();
-      assertEquals(runtime, "deno");
+      if (isDeno) assertEquals(runtime, "deno");
+      else if (isNode) assertEquals(runtime, "node");
+      else if (isBun) assertEquals(runtime, "bun");
     });
 
     it("should return string type", () => {
@@ -23,9 +26,11 @@ describe("Runtime detection", () => {
   });
 
   describe("getAdapter", () => {
-    it("should return denoAdapter in Deno runtime", async () => {
+    it("should return correct adapter for current runtime", async () => {
       const adapter = await getAdapter();
-      assertEquals(adapter, denoAdapter);
+      if (isDeno) assertEquals(adapter, denoAdapter);
+      else if (isNode) assertEquals(adapter, nodeAdapter);
+      else if (isBun) assertEquals(adapter, bunAdapter);
     });
 
     it("should return valid adapter structure", async () => {

@@ -1,4 +1,4 @@
-import * as esbuild from "esbuild/mod.js"; // Native esbuild
+import * as esbuild from "esbuild"; // Native esbuild
 import { parseImports } from "./lexer.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { getLoaderFromPath } from "./transform-utils.ts";

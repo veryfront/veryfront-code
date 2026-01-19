@@ -1,5 +1,5 @@
-import { assertEquals, assertRejects } from "@std/assert";
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
+import { assertEquals, assertRejects } from "@veryfront/testing/assert";
+import { afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
 import { GitHubFSAdapter } from "./adapter.ts";
 import { createGitHubConfig } from "./types.ts";
 

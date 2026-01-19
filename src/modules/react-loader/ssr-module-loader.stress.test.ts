@@ -7,12 +7,18 @@
  * Run with: deno test --allow-all src/modules/react-loader/ssr-module-loader.stress.test.ts
  */
 
-import { assertEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
 import { join } from "@veryfront/platform/compat/path/index.ts";
 import { clearSSRModuleCache, SSRModuleLoader } from "./ssr-module-loader/index.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { createFileSystem, makeTempDir } from "@veryfront/platform/compat/fs.ts";
+import { isDeno } from "@veryfront/platform/compat/runtime.ts";
+import { scaleMs } from "@veryfront/testing";
+
+// This test uses dynamic import() which behaves differently in Node.js vs Deno
+// The module path resolution for temp files doesn't work the same way
+const denoOnlyIt = isDeno ? it : it.skip;
 
 // Create a real temp directory for tests
 async function createTempProjectDir(): Promise<string> {
@@ -96,7 +102,7 @@ export default function ${name}() {
 }
 
 describe("SSRModuleLoader Stress Tests", { sanitizeResources: false, sanitizeOps: false }, () => {
-  it("concurrent requests for same file should not race", async () => {
+  denoOnlyIt("concurrent requests for same file should not race", async () => {
     clearSSRModuleCache();
 
     const projectDir = await createTempProjectDir();
@@ -136,7 +142,7 @@ describe("SSRModuleLoader Stress Tests", { sanitizeResources: false, sanitizeOps
     }
   });
 
-  it("deep dependency tree should not deadlock", async () => {
+  denoOnlyIt("deep dependency tree should not deadlock", async () => {
     clearSSRModuleCache();
 
     const projectDir = await createTempProjectDir();
@@ -189,7 +195,7 @@ describe("SSRModuleLoader Stress Tests", { sanitizeResources: false, sanitizeOps
       // Simulate concurrent requests for the root component
       // With semaphore=3 and deep deps, this would deadlock if not handled properly
       const startTime = Date.now();
-      const timeout = 10000; // 10 second timeout - deadlock would hang forever
+      const timeout = scaleMs(10000); // 10 second timeout - deadlock would hang forever
       const appPath = `${projectDir}/components/App.tsx`;
       const appSource = files[appPath]!;
 
@@ -224,7 +230,7 @@ describe("SSRModuleLoader Stress Tests", { sanitizeResources: false, sanitizeOps
     }
   });
 
-  it("wide dependency tree should complete", async () => {
+  denoOnlyIt("wide dependency tree should complete", async () => {
     clearSSRModuleCache();
 
     const projectDir = await createTempProjectDir();

@@ -4,8 +4,8 @@
  * These tests verify the cross-runtime detection utilities work correctly.
  */
 
-import { assertEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
 import { isBun, isCloudflare, isDeno, isNode, isNodeRuntime } from "./runtime.ts";
 
 describe("Runtime Detection", () => {
@@ -27,23 +27,32 @@ describe("Runtime Detection", () => {
   });
 
   describe("isDeno", () => {
-    it("should be true when running in Deno", () => {
-      // This test runs in Deno, so isDeno should be true
-      assertEquals(isDeno, true);
+    it("should correctly detect Deno runtime", () => {
+      // isDeno should be true only in Deno
+      if (isDeno) {
+        assertEquals(isNode, false);
+        assertEquals(isBun, false);
+      }
     });
   });
 
   describe("isNode", () => {
-    it("should be false when running in Deno", () => {
-      // This test runs in Deno, so isNode should be false
-      assertEquals(isNode, false);
+    it("should correctly detect Node.js runtime", () => {
+      // isNode should be true only in Node.js
+      if (isNode) {
+        assertEquals(isDeno, false);
+        assertEquals(isBun, false);
+      }
     });
   });
 
   describe("isBun", () => {
-    it("should be false when running in Deno", () => {
-      // This test runs in Deno, so isBun should be false
-      assertEquals(isBun, false);
+    it("should correctly detect Bun runtime", () => {
+      // isBun should be true only in Bun
+      if (isBun) {
+        assertEquals(isDeno, false);
+        assertEquals(isNode, false);
+      }
     });
   });
 

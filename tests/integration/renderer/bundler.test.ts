@@ -3,9 +3,10 @@
  * Tests MDX compilation, import resolution, and cross-module imports
  */
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
-import { describe, it } from "@std/testing/bdd";
+import { assert, assertEquals, assertStringIncludes } from "@veryfront/testing/assert";
+import { join } from "@veryfront/compat/path";
+import { mkdir, writeTextFile } from "@veryfront/compat/fs.ts";
+import { describe, it } from "@veryfront/testing/bdd";
 import { compileMDXRuntime } from "@veryfront/transforms/mdx/compiler/mdx-compiler.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
@@ -90,10 +91,10 @@ custom: value
     it("should preserve named exports from imported MDX", async () => {
       await withTestContext("mdx-cross-import-named", async (context) => {
         // Create provider directory
-        await Deno.mkdir(join(context.projectDir, "providers"), {
+        await mkdir(join(context.projectDir, "providers"), {
           recursive: true,
         });
-        await Deno.mkdir(join(context.projectDir, "pages"), {
+        await mkdir(join(context.projectDir, "pages"), {
           recursive: true,
         });
 
@@ -115,7 +116,7 @@ export default function TestProvider({ children }) {
 `;
 
         const providerPath = join(context.projectDir, "providers", "TestProvider.mdx");
-        await Deno.writeTextFile(providerPath, providerContent);
+        await writeTextFile(providerPath, providerContent);
 
         // Compile MDX and assert it contains key symbols
         const result = await compileMDXRuntime(
@@ -135,10 +136,10 @@ export default function TestProvider({ children }) {
     it("should handle MDX compilation with imports", async () => {
       await withTestContext("mdx-cross-import-bundle", async (context) => {
         // Create provider and pages directories
-        await Deno.mkdir(join(context.projectDir, "providers"), {
+        await mkdir(join(context.projectDir, "providers"), {
           recursive: true,
         });
-        await Deno.mkdir(join(context.projectDir, "pages"), {
+        await mkdir(join(context.projectDir, "pages"), {
           recursive: true,
         });
 
@@ -155,7 +156,7 @@ export default function TestProvider({ children }) {
 `;
 
         const providerPath = join(context.projectDir, "providers", "TestProvider.mdx");
-        await Deno.writeTextFile(providerPath, providerContent);
+        await writeTextFile(providerPath, providerContent);
 
         // Create a page that imports from an MDX provider
         const pageContent = `---
@@ -170,7 +171,7 @@ This page imports from an MDX provider.
 `;
 
         const pagePath = join(context.projectDir, "pages", "test-page.mdx");
-        await Deno.writeTextFile(pagePath, pageContent);
+        await writeTextFile(pagePath, pageContent);
 
         // Compile the page
         const result = await compileMDXRuntime(

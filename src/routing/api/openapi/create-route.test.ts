@@ -2,12 +2,13 @@
  * createRoute wrapper tests
  */
 
-import { assertEquals, assertExists } from "@std/assert";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
 import { createRoute, z } from "./create-route.ts";
 import { OPENAPI_METADATA, type OpenAPIRouteMetadata } from "./types.ts";
 
-Deno.test("createRoute", async (t) => {
-  await t.step("should attach metadata to handler", () => {
+describe("createRoute", () => {
+  it("should attach metadata to handler", () => {
     const handler = createRoute({
       summary: "Get user",
       handler: () => new Response("ok"),
@@ -18,7 +19,7 @@ Deno.test("createRoute", async (t) => {
     assertEquals(metadata.summary, "Get user");
   });
 
-  await t.step("should convert params schema to JSON Schema", () => {
+  it("should convert params schema to JSON Schema", () => {
     const handler = createRoute({
       params: z.object({
         id: z.string().uuid(),
@@ -32,7 +33,7 @@ Deno.test("createRoute", async (t) => {
     assertExists(metadata.params.properties?.id);
   });
 
-  await t.step("should convert query schema to JSON Schema", () => {
+  it("should convert query schema to JSON Schema", () => {
     const handler = createRoute({
       query: z.object({
         page: z.coerce.number().optional(),
@@ -48,7 +49,7 @@ Deno.test("createRoute", async (t) => {
     assertExists(metadata.query.properties?.limit);
   });
 
-  await t.step("should convert body schema to JSON Schema", () => {
+  it("should convert body schema to JSON Schema", () => {
     const handler = createRoute({
       body: z.object({
         name: z.string(),
@@ -64,7 +65,7 @@ Deno.test("createRoute", async (t) => {
     assertExists(metadata.body.properties?.email);
   });
 
-  await t.step("should handle response with schema only", () => {
+  it("should handle response with schema only", () => {
     const handler = createRoute({
       response: {
         200: z.object({ id: z.string() }),
@@ -78,7 +79,7 @@ Deno.test("createRoute", async (t) => {
     assertEquals(metadata.responses["200"].description, "Successful response");
   });
 
-  await t.step("should handle response with schema and description", () => {
+  it("should handle response with schema and description", () => {
     const handler = createRoute({
       response: {
         200: {
@@ -101,7 +102,7 @@ Deno.test("createRoute", async (t) => {
     assertEquals(metadata.responses["404"]!.description, "User not found");
   });
 
-  await t.step("should preserve tags and deprecated flag", () => {
+  it("should preserve tags and deprecated flag", () => {
     const handler = createRoute({
       tags: ["Users", "Admin"],
       deprecated: true,
@@ -113,7 +114,7 @@ Deno.test("createRoute", async (t) => {
     assertEquals(metadata.deprecated, true);
   });
 
-  await t.step("should return callable handler", async () => {
+  it("should return callable handler", async () => {
     const handler = createRoute({
       handler: () => new Response("success"),
     });

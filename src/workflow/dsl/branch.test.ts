@@ -2,8 +2,8 @@
  * Branch DSL Tests
  */
 
-import { assertEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
 import { branch, unless, when } from "./branch.ts";
 import { step } from "./step.ts";
 import type { BranchNodeConfig } from "../types.ts";

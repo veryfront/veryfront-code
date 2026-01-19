@@ -15,7 +15,6 @@ import { injectNodePositions } from "@veryfront/transforms/plugins/babel-node-po
 import { parseProjectDomain } from "@veryfront/server/utils/domain-parser.ts";
 import { applySSRImportRewrites } from "./ssr-import-rewriter.ts";
 import { addHMRTimestamps } from "@veryfront/transforms/esm/import-rewriter.ts";
-// Note: React imports are kept as bare specifiers for SSR, resolved via deno.json to esm.sh
 
 const DEV_MODULE_PREFIX = /^\/(?:_vf_modules|_veryfront\/modules)\//;
 const SNIPPET_MODULE_PREFIX = /^\/_vf_modules\/_snippets\/([a-f0-9]+)\.js/;

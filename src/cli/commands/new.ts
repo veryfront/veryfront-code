@@ -2,10 +2,11 @@
  * New command - Lightning-fast project creation
  */
 
-import { chdir, cwd, getEnv } from "@veryfront/platform/compat/process.ts";
+import { chdir, cwd } from "@veryfront/platform/compat/process.ts";
 import { join } from "@veryfront/platform/compat/path/index.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { z } from "zod";
+import { getRuntimeEnv, type RuntimeEnv } from "@veryfront/config/runtime-env.ts";
 
 import { readToken, validateToken } from "../auth/index.ts";
 import { canOpenBrowser, openBrowser } from "../auth/browser.ts";
@@ -70,6 +71,7 @@ function randomSuffix(len = 6): string {
 export async function newCommand(
   name: string,
   options: Partial<NewOptions> = {},
+  env: RuntimeEnv = getRuntimeEnv(),
 ): Promise<void> {
   let {
     template,
@@ -87,7 +89,7 @@ export async function newCommand(
   const fs = createFileSystem();
 
   // Auth
-  const token = getEnv("VERYFRONT_API_TOKEN") || await readToken();
+  const token = env.apiToken || await readToken();
   const userInfo = token ? await validateToken(token) : null;
 
   // Wizard (if no template)

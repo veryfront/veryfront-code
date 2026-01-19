@@ -3,12 +3,12 @@
  * Tests queue management, concurrent prefetching, and resource callback handling
  */
 
-import { assertEquals, assertExists } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
-import {
-  PrefetchQueue,
-  PrefetchQueueOptions,
-} from "@veryfront/rendering/client/prefetch/prefetch-queue.ts";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
+import { PrefetchQueue } from "@veryfront/rendering/client/prefetch/prefetch-queue.ts";
+import type { PrefetchQueueOptions } from "@veryfront/rendering/client/prefetch/prefetch-queue.ts";
+import { delay as sleep } from "@std/async";
+import { scaleMs } from "@veryfront/testing";
 
 // Mock fetch function
 interface MockFetchOptions {
@@ -30,7 +30,7 @@ const createMockFetch = (options: MockFetchOptions = {}) => {
 
   return async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
     if (delay > 0) {
-      await new Promise((resolve) => setTimeout(resolve, delay));
+      await sleep(delay);
     }
 
     if (shouldAbort && init?.signal) {
@@ -378,7 +378,7 @@ describe("PrefetchQueue", () => {
 
       mocks.setMockFetch(async (url, init) => {
         await new Promise((resolve, reject) => {
-          const timeoutId = setTimeout(resolve, 100);
+          const timeoutId = setTimeout(resolve, scaleMs(100));
           init?.signal?.addEventListener("abort", () => {
             clearTimeout(timeoutId);
             reject(new DOMException("The operation was aborted", "AbortError"));
@@ -406,7 +406,7 @@ describe("PrefetchQueue", () => {
       queue.prefetchLink(link3);
 
       // Wait a bit for queue to process
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await sleep(50);
 
       // Should have skipped the third one
       assertEquals(queue.getConcurrentCount() <= 2, true);
@@ -586,7 +586,7 @@ describe("PrefetchQueue", () => {
       const mocks = setupMocks();
 
       mocks.setMockFetch(async (url, init) => {
-        await new Promise((resolve) => setTimeout(resolve, 200));
+        await sleep(200);
 
         if (init?.signal?.aborted) {
           throw new DOMException("The operation was aborted", "AbortError");
@@ -673,7 +673,7 @@ describe("PrefetchQueue", () => {
       let abortedCount = 0;
       mocks.setMockFetch(async (url, init) => {
         await new Promise((resolve, reject) => {
-          const timeoutId = setTimeout(resolve, 100);
+          const timeoutId = setTimeout(resolve, scaleMs(100));
           init?.signal?.addEventListener("abort", () => {
             clearTimeout(timeoutId);
             reject(new DOMException("The operation was aborted", "AbortError"));
@@ -704,12 +704,12 @@ describe("PrefetchQueue", () => {
       queue.prefetchLink(link2);
 
       // Wait a bit for queue to start
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await sleep(10);
 
       queue.stopAll();
 
       // Wait for aborts to process
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await sleep(50);
 
       assertEquals(abortedCount >= 0, true);
 
@@ -721,7 +721,7 @@ describe("PrefetchQueue", () => {
 
       mocks.setMockFetch(async (url, init) => {
         await new Promise((resolve, reject) => {
-          const timeoutId = setTimeout(resolve, 100);
+          const timeoutId = setTimeout(resolve, scaleMs(100));
           init?.signal?.addEventListener("abort", () => {
             clearTimeout(timeoutId);
             reject(new DOMException("The operation was aborted", "AbortError"));
@@ -743,7 +743,7 @@ describe("PrefetchQueue", () => {
 
       queue.prefetchLink(link);
 
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await sleep(10);
 
       queue.stopAll();
 
@@ -757,7 +757,7 @@ describe("PrefetchQueue", () => {
 
       mocks.setMockFetch(async (url, init) => {
         await new Promise((resolve, reject) => {
-          const timeoutId = setTimeout(resolve, 100);
+          const timeoutId = setTimeout(resolve, scaleMs(100));
           init?.signal?.addEventListener("abort", () => {
             clearTimeout(timeoutId);
             reject(new DOMException("The operation was aborted", "AbortError"));
@@ -779,7 +779,7 @@ describe("PrefetchQueue", () => {
 
       queue.prefetchLink(link);
 
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await sleep(10);
 
       queue.stopAll();
 

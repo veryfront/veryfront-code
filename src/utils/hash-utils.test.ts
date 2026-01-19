@@ -1,5 +1,5 @@
-import { assertEquals, assertNotEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertNotEquals } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
 import {
   computeCodeHash,
   computeContentHash,

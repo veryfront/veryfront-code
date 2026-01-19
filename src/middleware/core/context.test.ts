@@ -1,5 +1,5 @@
-import { assertEquals, assertInstanceOf } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assert, assertEquals, assertInstanceOf } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
 import { MiddlewareContext } from "./context.ts";
 
 describe("MiddlewareContext", () => {
@@ -47,7 +47,12 @@ describe("MiddlewareContext", () => {
       const response = ctx.json({ message: "hello" });
 
       assertInstanceOf(response, Response);
-      assertEquals(response.headers.get("content-type"), "application/json");
+      // Content-Type may include charset (e.g., "application/json;charset=utf-8" in Bun)
+      const contentType = response.headers.get("content-type") || "";
+      assert(
+        contentType.startsWith("application/json"),
+        `Expected application/json, got ${contentType}`,
+      );
       assertEquals(await response.json(), { message: "hello" });
     });
 

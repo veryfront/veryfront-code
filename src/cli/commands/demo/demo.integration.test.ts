@@ -1,7 +1,11 @@
-import { assertStringIncludes } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertStringIncludes } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
+import { isDeno } from "@veryfront/platform/compat/runtime.ts";
 
-describe("demo command integration", () => {
+// This test uses Deno.Command directly - skip in Node.js/Bun
+const denoOnlyDescribe = isDeno ? describe : describe.skip;
+
+denoOnlyDescribe("demo command integration", () => {
   async function runDemo(args: string[] = []): Promise<{ code: number; output: string }> {
     const cliPath = new URL("../../main.ts", import.meta.url).pathname;
     const command = new Deno.Command("deno", {

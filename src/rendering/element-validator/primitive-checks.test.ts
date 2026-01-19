@@ -2,7 +2,7 @@
  * Tests for primitive-checks utility functions
  */
 
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "@veryfront/testing/bdd";
 import { expect } from "@std/expect";
 import * as React from "react";
 import {

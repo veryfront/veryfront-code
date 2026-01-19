@@ -2,17 +2,19 @@
  * Tests for CSS Optimization Strategies
  */
 
-import { assertEquals, assertExists as _assertExists } from "@std/assert";
-import { join } from "@std/path";
-import { ensureDir } from "@std/fs";
+import { assertEquals } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
+import { join } from "@veryfront/compat/path";
+import { remove, writeTextFile } from "@veryfront/compat/fs.ts";
+import { ensureDir } from "@veryfront/compat/std/fs.ts";
 import { LightningCSSStrategy, MinificationStrategy, PurgeStrategy } from "./strategies/index.ts";
 import type { CSSOptimizationOptions } from "@veryfront/types";
 
 const TEST_DIR = "./.veryfront/test-strategies";
 
-async function cleanupTestDir() {
+async function cleanupTestDir(): Promise<void> {
   try {
-    await Deno.remove(TEST_DIR, { recursive: true });
+    await remove(TEST_DIR, { recursive: true });
   } catch {
     // Directory doesn't exist
   }
@@ -31,136 +33,144 @@ const TEST_CSS = `
 }
 `;
 
-Deno.test("MinificationStrategy - canProcess", () => {
-  const strategy = new MinificationStrategy();
+describe("MinificationStrategy", () => {
+  it("canProcess returns true when enabled and minify is true", () => {
+    const strategy = new MinificationStrategy();
 
-  assertEquals(strategy.canProcess({ enabled: true, minify: true }), true);
-  assertEquals(strategy.canProcess({ enabled: false }), false);
-  assertEquals(strategy.canProcess({ enabled: true, minify: false }), false);
+    assertEquals(strategy.canProcess({ enabled: true, minify: true }), true);
+    assertEquals(strategy.canProcess({ enabled: false }), false);
+    assertEquals(strategy.canProcess({ enabled: true, minify: false }), false);
+  });
+
+  it("process removes comments", async () => {
+    const strategy = new MinificationStrategy();
+    const options: CSSOptimizationOptions = { enabled: true, minify: true };
+
+    const result = await strategy.process(TEST_CSS, "test.css", options);
+
+    assertEquals(result.code.includes("/*"), false);
+    assertEquals(result.sourceMap, undefined);
+  });
+
+  it("process removes whitespace", async () => {
+    const strategy = new MinificationStrategy();
+    const options: CSSOptimizationOptions = { enabled: true, minify: true };
+
+    const css = ".button   {   color:   red;   }";
+    const result = await strategy.process(css, "test.css", options);
+
+    assertEquals(result.code, ".button{color:red}");
+  });
 });
 
-Deno.test("MinificationStrategy - process removes comments", async () => {
-  const strategy = new MinificationStrategy();
-  const options: CSSOptimizationOptions = { enabled: true, minify: true };
+describe("LightningCSSStrategy", () => {
+  it("canProcess returns false when not initialized", () => {
+    const strategy = new LightningCSSStrategy();
 
-  const result = await strategy.process(TEST_CSS, "test.css", options);
+    // Before initialization, should return false
+    assertEquals(strategy.canProcess({ enabled: true }), false);
+  });
 
-  assertEquals(result.code.includes("/*"), false);
-  assertEquals(result.sourceMap, undefined);
+  it("init attempts to load", async () => {
+    const strategy = new LightningCSSStrategy();
+    const success = await strategy.init();
+
+    // Should return boolean (true if loaded, false if not available)
+    assertEquals(typeof success, "boolean");
+  });
 });
 
-Deno.test("MinificationStrategy - process removes whitespace", async () => {
-  const strategy = new MinificationStrategy();
-  const options: CSSOptimizationOptions = { enabled: true, minify: true };
+describe("PurgeStrategy", () => {
+  it("canProcess returns true when enabled and purge is true", () => {
+    const strategy = new PurgeStrategy();
 
-  const css = ".button   {   color:   red;   }";
-  const result = await strategy.process(css, "test.css", options);
+    assertEquals(strategy.canProcess({ enabled: true, purge: true }), true);
+    assertEquals(strategy.canProcess({ enabled: true, purge: false }), false);
+    assertEquals(strategy.canProcess({ enabled: false, purge: true }), false);
+  });
 
-  assertEquals(result.code, ".button{color:red}");
-});
+  it("analyzeContent extracts selectors", async () => {
+    await cleanupTestDir();
+    await ensureDir(join(TEST_DIR, "src"));
 
-Deno.test("LightningCSSStrategy - canProcess when not initialized", () => {
-  const strategy = new LightningCSSStrategy();
+    await writeTextFile(
+      join(TEST_DIR, "src", "component.tsx"),
+      '<div className="button card">Test</div>',
+    );
 
-  // Before initialization, should return false
-  assertEquals(strategy.canProcess({ enabled: true }), false);
-});
+    const strategy = new PurgeStrategy();
+    await strategy.analyzeContent([`${TEST_DIR}/src/**/*.tsx`]);
 
-Deno.test("LightningCSSStrategy - init attempts to load", async () => {
-  const strategy = new LightningCSSStrategy();
-  const success = await strategy.init();
+    const selectors = strategy.getUsedSelectors();
 
-  // Should return boolean (true if loaded, false if not available)
-  assertEquals(typeof success, "boolean");
-});
+    assertEquals(selectors.has(".button"), true);
+    assertEquals(selectors.has(".card"), true);
 
-Deno.test("PurgeStrategy - canProcess", () => {
-  const strategy = new PurgeStrategy();
+    await cleanupTestDir();
+  });
 
-  assertEquals(strategy.canProcess({ enabled: true, purge: true }), true);
-  assertEquals(strategy.canProcess({ enabled: true, purge: false }), false);
-  assertEquals(strategy.canProcess({ enabled: false, purge: true }), false);
-});
+  it("process removes unused rules", async () => {
+    await cleanupTestDir();
+    await ensureDir(join(TEST_DIR, "src"));
 
-Deno.test("PurgeStrategy - analyzeContent extracts selectors", async () => {
-  await cleanupTestDir();
-  await ensureDir(join(TEST_DIR, "src"));
+    await writeTextFile(
+      join(TEST_DIR, "src", "component.tsx"),
+      '<div className="button">Test</div>',
+    );
 
-  await Deno.writeTextFile(
-    join(TEST_DIR, "src", "component.tsx"),
-    '<div className="button card">Test</div>',
-  );
-
-  const strategy = new PurgeStrategy();
-  await strategy.analyzeContent([`${TEST_DIR}/src/**/*.tsx`]);
-
-  const selectors = strategy.getUsedSelectors();
-
-  assertEquals(selectors.has(".button"), true);
-  assertEquals(selectors.has(".card"), true);
-
-  await cleanupTestDir();
-});
-
-Deno.test("PurgeStrategy - process removes unused rules", async () => {
-  await cleanupTestDir();
-  await ensureDir(join(TEST_DIR, "src"));
-
-  await Deno.writeTextFile(
-    join(TEST_DIR, "src", "component.tsx"),
-    '<div className="button">Test</div>',
-  );
-
-  const css = `
+    const css = `
 .button { color: blue; }
 .unused { color: red; }
 `;
 
-  const strategy = new PurgeStrategy();
-  const options: CSSOptimizationOptions = {
-    enabled: true,
-    purge: true,
-    purgeContent: [`${TEST_DIR}/src/**/*.tsx`],
-  };
+    const strategy = new PurgeStrategy();
+    const options: CSSOptimizationOptions = {
+      enabled: true,
+      purge: true,
+      purgeContent: [`${TEST_DIR}/src/**/*.tsx`],
+    };
 
-  const result = await strategy.process(css, "test.css", options);
+    const result = await strategy.process(css, "test.css", options);
 
-  assertEquals(result.code.includes(".button"), true);
-  // Note: Our basic purging implementation may not perfectly remove all unused rules
-  // but it should attempt to filter them
+    assertEquals(result.code.includes(".button"), true);
+    // Note: Our basic purging implementation may not perfectly remove all unused rules
+    // but it should attempt to filter them
 
-  await cleanupTestDir();
+    await cleanupTestDir();
+  });
+
+  it("clearCache resets used selectors", async () => {
+    await cleanupTestDir();
+    await ensureDir(join(TEST_DIR, "src"));
+
+    await writeTextFile(
+      join(TEST_DIR, "src", "component.tsx"),
+      '<div className="button">Test</div>',
+    );
+
+    const strategy = new PurgeStrategy();
+    await strategy.analyzeContent([`${TEST_DIR}/src/**/*.tsx`]);
+
+    assertEquals(strategy.getUsedSelectors().size > 0, true);
+
+    strategy.clearCache();
+    assertEquals(strategy.getUsedSelectors().size, 0);
+
+    await cleanupTestDir();
+  });
 });
 
-Deno.test("PurgeStrategy - clearCache", async () => {
-  await cleanupTestDir();
-  await ensureDir(join(TEST_DIR, "src"));
+describe("Strategy priority ordering", () => {
+  it("strategies have correct priority order", () => {
+    const lightning = new LightningCSSStrategy();
+    const minification = new MinificationStrategy();
+    const purge = new PurgeStrategy();
 
-  await Deno.writeTextFile(
-    join(TEST_DIR, "src", "component.tsx"),
-    '<div className="button">Test</div>',
-  );
+    // Lightning should have highest priority
+    assertEquals(lightning.priority > purge.priority, true);
+    assertEquals(lightning.priority > minification.priority, true);
 
-  const strategy = new PurgeStrategy();
-  await strategy.analyzeContent([`${TEST_DIR}/src/**/*.tsx`]);
-
-  assertEquals(strategy.getUsedSelectors().size > 0, true);
-
-  strategy.clearCache();
-  assertEquals(strategy.getUsedSelectors().size, 0);
-
-  await cleanupTestDir();
-});
-
-Deno.test("Strategy priority ordering", () => {
-  const lightning = new LightningCSSStrategy();
-  const minification = new MinificationStrategy();
-  const purge = new PurgeStrategy();
-
-  // Lightning should have highest priority
-  assertEquals(lightning.priority > purge.priority, true);
-  assertEquals(lightning.priority > minification.priority, true);
-
-  // Purge should be medium priority
-  assertEquals(purge.priority > minification.priority, true);
+    // Purge should be medium priority
+    assertEquals(purge.priority > minification.priority, true);
+  });
 });

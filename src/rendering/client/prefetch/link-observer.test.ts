@@ -3,9 +3,11 @@
  * Tests intersection observer-based link prefetching functionality
  */
 
-import { assertEquals, assertExists } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
-import { LinkObserver, LinkObserverOptions } from "./link-observer.ts";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
+import { LinkObserver } from "./link-observer.ts";
+import type { LinkObserverOptions } from "./link-observer.ts";
+import { delay } from "@std/async";
 
 // Mock IntersectionObserver
 class MockIntersectionObserver {
@@ -545,7 +547,7 @@ describe("LinkObserver", () => {
       mockIO.triggerIntersection(link as any, true);
 
       // Wait for callback to be called
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await delay(10);
 
       assertEquals(callbackCalled, true);
 
@@ -590,7 +592,7 @@ describe("LinkObserver", () => {
       mockIO.triggerIntersection(link as any, true);
 
       // Wait for delay
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await delay(100);
 
       const elapsed = callbackTime - startTime;
       assertEquals(elapsed >= 50, true);
@@ -634,7 +636,7 @@ describe("LinkObserver", () => {
       const mockIO = mocks.getMockIntersectionObserver();
       mockIO.triggerIntersection(link as any, false);
 
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await delay(10);
 
       assertEquals(callbackCalled, false);
 
@@ -911,7 +913,7 @@ describe("LinkObserver", () => {
       mockIO.triggerIntersection(link1 as any, true);
       mockIO.triggerIntersection(link2 as any, true);
 
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await delay(10);
 
       assertEquals(calledLinks.length, 2);
 

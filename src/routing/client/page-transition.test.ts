@@ -1,7 +1,8 @@
-import { assertEquals, assertExists } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
 import { PageTransition } from "./page-transition.ts";
 import type { RouteData } from "./page-loader.ts";
+import { delay } from "@std/async";
 
 interface MockElement {
   id?: string;
@@ -316,7 +317,7 @@ describe("PageTransition", () => {
 
       pageTransition.updatePage(data, false, 0);
 
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await delay(200);
 
       assertEquals(
         mocks.mockRoot.innerHTML,
@@ -410,7 +411,7 @@ describe("PageTransition", () => {
 
       pageTransition.updatePage(data, false, 0);
 
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await delay(200);
 
       assertEquals(
         mocks.mockRoot.style!.opacity,
@@ -434,7 +435,7 @@ describe("PageTransition", () => {
 
       pageTransition.updatePage(data, false, 0);
 
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await delay(200);
 
       const scrollPos = mocks.getScrollPosition();
       assertEquals(scrollPos.y, 0, "Should scroll to top for forward navigation");
@@ -456,7 +457,7 @@ describe("PageTransition", () => {
       const savedScrollY = 500;
       pageTransition.updatePage(data, true, savedScrollY);
 
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await delay(200);
 
       const scrollPos = mocks.getScrollPosition();
       assertEquals(
@@ -484,7 +485,7 @@ describe("PageTransition", () => {
 
       pageTransition.updatePage(data, false, 0);
 
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await delay(200);
 
       mocks.cleanup();
     });

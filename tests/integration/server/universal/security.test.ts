@@ -1,12 +1,15 @@
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { afterAll, describe, it } from "@std/testing/bdd";
+import { assert, assertEquals, assertStringIncludes } from "@veryfront/testing/assert";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
 import "../../../_helpers/log-guard.ts";
-import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
+
+import { mkdir, writeTextFile } from "@veryfront/compat/fs.ts";
+import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 
 import { createVeryfrontHandler } from "../../../../src/server/universal-handler/index.ts";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
+// Universal security tests use SSR which requires Deno
 describe(
   "Universal Security (config)",
   {
@@ -19,18 +22,17 @@ describe(
       await cleanupBundler();
     });
 
-    // TODO: Fix this test - the /_metrics endpoint returns 500
-    // Investigation needed:
-    // 1. Config file naming (.js vs .ts) was fixed
-    // 2. Security config is loaded, but something in the request handling
-    //    chain is causing a 500 error
-    // 3. Need to investigate ResponseBuilder.json or securityConfig access
+    // TODO: Fix this test - security config not applied to production server
+    // Investigation (2026-01-19): The test passes status check (200) but CORS headers
+    // are not being applied from veryfront.config.js. The security.cors.origin config
+    // is not being read/applied by the production server handler. Need to trace config
+    // loading path in createProductionServer and security middleware initialization.
     it.skip("applies config-driven CORS, CSP, and CO* headers", async () => {
       await withTestContext("universal-security", async (context: TestContext) => {
         // Overwrite the default veryfront.config.js with security settings
         // Note: Must use .js since TestContext creates veryfront.config.js and
         // the config loader tries .js before .ts
-        await Deno.writeTextFile(
+        await writeTextFile(
           `${context.projectDir}/veryfront.config.js`,
           `export default {
           security: {
@@ -86,16 +88,16 @@ describe(
     it("adds CORS/security headers on RSC assets (universal path)", async () => {
       await withTestContext("universal-security-rsc", async (context: TestContext) => {
         // Enable RSC via config instead of env var
-        await Deno.writeTextFile(
+        await writeTextFile(
           `${context.projectDir}/veryfront.config.js`,
           `export default { experimental: { rsc: true } };`,
         );
 
         // Minimal project to satisfy handler
-        await Deno.mkdir(`${context.projectDir}/app`, { recursive: true });
-        await Deno.writeTextFile(`${context.projectDir}/app/page.mdx`, "# RSC Headers Test");
+        await mkdir(`${context.projectDir}/app`, { recursive: true });
+        await writeTextFile(`${context.projectDir}/app/page.mdx`, "# RSC Headers Test");
 
-        const handler = createVeryfrontHandler(context.projectDir, denoAdapter, {
+        const handler = createVeryfrontHandler(context.projectDir, await getAdapter(), {
           projectDir: context.projectDir,
         });
 
@@ -119,7 +121,7 @@ describe(
     it("enforces basic auth when configured", async () => {
       await withTestContext("universal-security-basic", async (context: TestContext) => {
         // Configure basic auth via config file (allows parallel test isolation)
-        await Deno.writeTextFile(
+        await writeTextFile(
           `${context.projectDir}/veryfront.config.js`,
           `export default {
             security: {
@@ -157,7 +159,7 @@ describe(
     it("enforces bearer auth when configured", async () => {
       await withTestContext("universal-security-bearer", async (context: TestContext) => {
         // Configure bearer auth via config file (allows parallel test isolation)
-        await Deno.writeTextFile(
+        await writeTextFile(
           `${context.projectDir}/veryfront.config.js`,
           `export default {
             security: {

@@ -1,5 +1,5 @@
-import { assertEquals, assertGreater } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertGreater } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
 import { getSpecificityScore, parseRoute } from "./route-parser.ts";
 
 describe("route-parser", () => {

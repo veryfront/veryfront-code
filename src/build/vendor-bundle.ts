@@ -5,7 +5,7 @@
  * Ensures single React instance across SSR and dynamic imports.
  */
 
-import * as esbuild from "esbuild/mod.js"; // Native esbuild
+import * as esbuild from "esbuild"; // Native esbuild
 import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
 
 export interface VendorBundleConfig {

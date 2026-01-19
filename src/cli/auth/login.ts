@@ -1,6 +1,7 @@
 import { cliLogger } from "@veryfront/utils";
-import { getEnv, writeStdout } from "@veryfront/platform/compat/process.ts";
+import { writeStdout } from "@veryfront/platform/compat/process.ts";
 import { getStdinReader, setRawMode } from "@veryfront/platform/compat/stdin.ts";
+import { getRuntimeEnv, type RuntimeEnv } from "@veryfront/config/runtime-env.ts";
 import { deleteToken, getTokenLocation, hasToken, readToken, saveToken } from "./token-store.ts";
 import { getCallbackUrl, startCallbackServer } from "./callback-server.ts";
 import { canOpenBrowser, openBrowser } from "./browser.ts";
@@ -28,7 +29,11 @@ export async function validateToken(token: string): Promise<UserInfo | null> {
     const response = await fetch(`${getApiUrl()}/me`, {
       headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
     });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      // Consume response body to prevent resource leak
+      await response.body?.cancel();
+      return null;
+    }
     return await response.json() as UserInfo;
   } catch {
     return null;
@@ -209,10 +214,11 @@ export async function login(method?: AuthMethod): Promise<UserInfo | null> {
   return userInfo;
 }
 
-export async function ensureAuthenticated(): Promise<UserInfo | null> {
-  const envToken = getEnv("VERYFRONT_API_TOKEN");
-  if (envToken) {
-    const userInfo = await validateToken(envToken);
+export async function ensureAuthenticated(
+  env: RuntimeEnv = getRuntimeEnv(),
+): Promise<UserInfo | null> {
+  if (env.apiToken) {
+    const userInfo = await validateToken(env.apiToken);
     if (userInfo) return userInfo;
     console.log("  " + warning("Warning: VERYFRONT_API_TOKEN is invalid"));
   }
@@ -239,10 +245,9 @@ export async function logout(): Promise<void> {
   console.log("  " + success("✓") + " Logged out");
 }
 
-export async function whoami(): Promise<UserInfo | null> {
-  const envToken = getEnv("VERYFRONT_API_TOKEN");
-  if (envToken) {
-    const userInfo = await validateToken(envToken);
+export async function whoami(env: RuntimeEnv = getRuntimeEnv()): Promise<UserInfo | null> {
+  if (env.apiToken) {
+    const userInfo = await validateToken(env.apiToken);
     if (userInfo) {
       console.log();
       console.log("  " + success("✓") + " Logged in as " + brand(userInfo.email));

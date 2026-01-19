@@ -28,6 +28,23 @@ export const DEFAULT_CONFIG: MetricsConfig = {
 /**
  * Load metrics configuration from environment and options
  */
+/**
+ * Get an environment variable from the adapter, supporting both
+ * Deno-style (env.get(key)) and Node.js-style (env[key]) adapters.
+ */
+function getEnvVar(
+  env: unknown,
+  key: string,
+): string | undefined {
+  const envObj = env as Record<string, unknown>;
+  if (typeof envObj?.get === "function") {
+    return (envObj.get as (k: string) => string | undefined)(key);
+  }
+  // Node.js style - direct property access
+  const value = envObj?.[key];
+  return typeof value === "string" ? value : undefined;
+}
+
 export function loadConfig(
   config: Partial<MetricsConfig>,
   adapter?: RuntimeAdapter,
@@ -37,21 +54,22 @@ export function loadConfig(
   // Check environment variables for configuration
   if (adapter?.env) {
     const envAdapter = adapter.env;
-    const otelEnabled = envAdapter.get("OTEL_METRICS_ENABLED");
-    const veryfrontOtel = envAdapter.get("VERYFRONT_OTEL");
+    const otelEnabled = getEnvVar(envAdapter, "OTEL_METRICS_ENABLED");
+    const veryfrontOtel = getEnvVar(envAdapter, "VERYFRONT_OTEL");
 
     finalConfig.enabled = otelEnabled === "true" ||
       veryfrontOtel === "1" ||
       finalConfig.enabled;
 
-    const otlpEndpoint = envAdapter.get("OTEL_EXPORTER_OTLP_ENDPOINT");
-    const metricsEndpoint = envAdapter.get(
+    const otlpEndpoint = getEnvVar(envAdapter, "OTEL_EXPORTER_OTLP_ENDPOINT");
+    const metricsEndpoint = getEnvVar(
+      envAdapter,
       "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
     );
     finalConfig.endpoint = otlpEndpoint || metricsEndpoint ||
       finalConfig.endpoint;
 
-    const exporterType = envAdapter.get("OTEL_METRICS_EXPORTER");
+    const exporterType = getEnvVar(envAdapter, "OTEL_METRICS_EXPORTER");
     if (
       exporterType === "prometheus" || exporterType === "otlp" ||
       exporterType === "console"

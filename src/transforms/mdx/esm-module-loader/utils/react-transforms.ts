@@ -8,28 +8,61 @@
  * @module build/transforms/mdx/esm-module-loader/utils/react-transforms
  */
 
+import { fileURLToPath } from "node:url";
 import { IS_TRUE_NODE } from "../constants.ts";
+
+type ImportMetaWithResolve = ImportMeta & {
+  resolve?: (specifier: string, parent?: string) => string;
+};
+
+const IMPORT_META_RESOLVE_ERROR = "ImportMetaResolveUnavailable";
+
+function rethrowIfImportMetaResolveMissing(error: unknown): void {
+  if (error instanceof Error && error.name === IMPORT_META_RESOLVE_ERROR) {
+    throw error;
+  }
+}
+
+function resolveWithImportMeta(specifier: string, parentUrl: string): string | null {
+  const metaResolve = (import.meta as ImportMetaWithResolve).resolve;
+  if (typeof metaResolve !== "function") {
+    const error = new Error(
+      "import.meta.resolve is required for Node ESM resolution (Node >= 22).",
+    );
+    error.name = IMPORT_META_RESOLVE_ERROR;
+    throw error;
+  }
+  try {
+    return metaResolve(specifier, parentUrl);
+  } catch {
+    return null;
+  }
+}
 
 // Cache for resolved react package paths (Node.js only)
 const _resolvedPaths: Record<string, string | null> = {};
 
 /**
- * Resolve a Node.js package path using require.resolve.
+ * Resolve a Node.js package path using import.meta.resolve.
  * Returns null if resolution fails.
  */
-export async function resolveNodePackage(packageSpec: string): Promise<string | null> {
+export function resolveNodePackage(packageSpec: string): string | null {
   if (!IS_TRUE_NODE) return null;
   if (packageSpec in _resolvedPaths) return _resolvedPaths[packageSpec]!;
 
   try {
-    // Use Node.js createRequire to resolve the package from THIS file's location
+    // Resolve the package from THIS file's location using import.meta.resolve
     // This ensures react is found from veryfront's node_modules, not the project's
-    const { createRequire } = await import("node:module");
-    const require = createRequire(import.meta.url);
-    const resolved = require.resolve(packageSpec);
-    _resolvedPaths[packageSpec] = resolved;
-    return resolved;
-  } catch {
+    const resolvedUrl = resolveWithImportMeta(packageSpec, import.meta.url);
+    if (!resolvedUrl) {
+      _resolvedPaths[packageSpec] = null;
+      return null;
+    }
+    const resolvedPath = fileURLToPath(resolvedUrl);
+    _resolvedPaths[packageSpec] = resolvedPath;
+    return resolvedPath;
+  } catch (error) {
+    rethrowIfImportMetaResolveMissing(error);
     _resolvedPaths[packageSpec] = null;
     return null;
   }

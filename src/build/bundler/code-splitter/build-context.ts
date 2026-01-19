@@ -3,7 +3,7 @@
  * @module code-splitter/build-context
  */
 
-import { type BuildContext, context } from "esbuild/mod.js";
+import { type BuildContext, context } from "esbuild";
 import { join } from "@veryfront/platform/compat/path/index.ts";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "@veryfront/utils";
 import type { SplitOptions } from "./types.ts";

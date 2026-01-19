@@ -9,9 +9,9 @@
  * - handleServerError()
  */
 
-import { assert, assertEquals, assertExists } from "@std/assert";
-import { delay as _delay } from "@std/async";
-import { afterAll, describe, it } from "@std/testing/bdd";
+import { assert, assertEquals, assertExists } from "@veryfront/testing/assert";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
+import { mkdir, writeTextFile } from "@veryfront/testing/deno-compat";
 import { DevServer } from "../../../src/server/dev-server.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { drainEventLoop } from "../../_helpers/utils.ts";
@@ -289,8 +289,8 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
         await withTestContext("dev-server-page-requests", async (context) => {
           // Create a simple page
           const pagesDir = `${context.projectDir}/pages`;
-          await Deno.mkdir(pagesDir, { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(pagesDir, { recursive: true });
+          await writeTextFile(
             `${pagesDir}/test.tsx`,
             "export default function Test() { return <div>Test Page</div> }",
           );
@@ -313,8 +313,8 @@ describe("DevServer Handler Tests", { sanitizeOps: false, sanitizeResources: fal
         await withTestContext("dev-server-api-routes", async (context) => {
           // Create an API route
           const apiDir = `${context.projectDir}/pages/api`;
-          await Deno.mkdir(apiDir, { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(apiDir, { recursive: true });
+          await writeTextFile(
             `${apiDir}/test.ts`,
             'export async function GET() { return new Response("API Response") }',
           );

@@ -31,8 +31,14 @@ export function basename(path: string, ext?: string): string {
     return ext !== undefined ? nodePath!.basename(path, ext) : nodePath!.basename(path);
   }
 
-  const lastSlash = path.lastIndexOf("/");
-  let base = lastSlash === -1 ? path : path.slice(lastSlash + 1);
+  // Strip trailing slashes for consistent behavior with Node/Bun
+  let normalizedPath = path;
+  while (normalizedPath.length > 1 && normalizedPath.endsWith("/")) {
+    normalizedPath = normalizedPath.slice(0, -1);
+  }
+
+  const lastSlash = normalizedPath.lastIndexOf("/");
+  let base = lastSlash === -1 ? normalizedPath : normalizedPath.slice(lastSlash + 1);
 
   if (ext && base.endsWith(ext)) {
     base = base.slice(0, -ext.length);

@@ -4,7 +4,7 @@
  * Uses esbuild to transform JSX/TSX to plain JavaScript with ES modules.
  */
 
-import * as esbuild from "esbuild/mod.js";
+import * as esbuild from "esbuild";
 import { getLoaderFromPath } from "../../esm/transform-utils.ts";
 import { rendererLogger as logger } from "@veryfront/utils";
 import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";

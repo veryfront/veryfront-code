@@ -285,21 +285,29 @@ async function rewriteDiscoveryImports(
     );
 
     // Helper to resolve a package to absolute file:// URL
+    // Walks up the directory tree to find node_modules
     const resolvePackageToFileUrl = async (packageName: string): Promise<string | null> => {
-      const packagePath = pathHelper.join(projectDir, "node_modules", packageName);
-      const packageJsonPath = pathHelper.join(packagePath, "package.json");
+      let searchDir = projectDir;
+      for (let i = 0; i < 10; i++) {
+        const packagePath = pathHelper.join(searchDir, "node_modules", packageName);
+        const packageJsonPath = pathHelper.join(packagePath, "package.json");
 
-      try {
-        const pkgJson = JSON.parse(await fs.readTextFile(packageJsonPath));
-        const dotExport = pkgJson.exports?.["."];
-        const entryPoint =
-          (typeof dotExport === "string" ? dotExport : dotExport?.import ?? dotExport?.default) ??
-            pkgJson.module ?? pkgJson.main ?? "index.js";
-        const resolvedPath = pathHelper.join(packagePath, entryPoint);
-        return pathToFileURL(resolvedPath).href;
-      } catch {
-        return null;
+        try {
+          const pkgJson = JSON.parse(await fs.readTextFile(packageJsonPath));
+          const dotExport = pkgJson.exports?.["."];
+          const entryPoint =
+            (typeof dotExport === "string" ? dotExport : dotExport?.import ?? dotExport?.default) ??
+              pkgJson.module ?? pkgJson.main ?? "index.js";
+          const resolvedPath = pathHelper.join(packagePath, entryPoint);
+          return pathToFileURL(resolvedPath).href;
+        } catch {
+          // Not found in this directory, try parent
+          const parent = pathHelper.dirname(searchDir);
+          if (parent === searchDir) break; // Reached root
+          searchDir = parent;
+        }
       }
+      return null;
     };
 
     // Rewrite package imports to resolved file:// URLs
@@ -336,24 +344,48 @@ async function rewriteDiscoveryImports(
     }
 
     // Resolve veryfront imports
-    const vfPackagePath = pathHelper.join(projectDir, "node_modules", "veryfront");
-    const vfPackageJsonPath = pathHelper.join(vfPackagePath, "package.json");
+    // First try node_modules, then fall back to local deno.json exports
+    let vfPackagePath = pathHelper.join(projectDir, "node_modules", "veryfront");
+    let exportsMap: Record<string, string | { import?: string }> = {};
 
-    let exportsMap: Record<string, { import?: string }> = {};
     try {
+      const vfPackageJsonPath = pathHelper.join(vfPackagePath, "package.json");
       const pkgJson = JSON.parse(await fs.readTextFile(vfPackageJsonPath));
       exportsMap = pkgJson.exports || {};
     } catch {
-      // Ignore - veryfront may not be in node_modules
+      // veryfront not in node_modules - try to find local deno.json
+      // Walk up from projectDir to find deno.json with veryfront exports
+      let searchDir = projectDir;
+      for (let i = 0; i < 5; i++) {
+        try {
+          const denoJsonPath = pathHelper.join(searchDir, "deno.json");
+          const denoJson = JSON.parse(await fs.readTextFile(denoJsonPath));
+          if (denoJson.name === "veryfront" && denoJson.exports) {
+            exportsMap = denoJson.exports;
+            vfPackagePath = searchDir;
+            break;
+          }
+        } catch {
+          // Continue searching
+        }
+        searchDir = pathHelper.dirname(searchDir);
+      }
     }
+
+    // Helper to get the resolved path from an export entry
+    const getExportPath = (entry: string | { import?: string } | undefined): string | null => {
+      if (!entry) return null;
+      if (typeof entry === "string") return entry;
+      return entry.import ?? null;
+    };
 
     transformed = transformed.replace(
       /from\s+["'](veryfront\/[^"']+)["']/g,
       (_match, fullSpecifier: string) => {
         const subpath = "./" + fullSpecifier.replace("veryfront/", "");
-        const exportEntry = exportsMap[subpath];
-        if (exportEntry?.import) {
-          const resolvedPath = pathHelper.join(vfPackagePath, exportEntry.import);
+        const exportPath = getExportPath(exportsMap[subpath]);
+        if (exportPath) {
+          const resolvedPath = pathHelper.join(vfPackagePath, exportPath);
           return `from "${pathToFileURL(resolvedPath).href}"`;
         }
         return _match;
@@ -363,9 +395,9 @@ async function rewriteDiscoveryImports(
     transformed = transformed.replace(
       /from\s+["']veryfront["']/g,
       () => {
-        const exportEntry = exportsMap["."];
-        if (exportEntry?.import) {
-          const resolvedPath = pathHelper.join(vfPackagePath, exportEntry.import);
+        const exportPath = getExportPath(exportsMap["."]);
+        if (exportPath) {
+          const resolvedPath = pathHelper.join(vfPackagePath, exportPath);
           return `from "${pathToFileURL(resolvedPath).href}"`;
         }
         return 'from "veryfront"';

@@ -85,7 +85,7 @@ async function transformImport(
   imp: AliasImport,
   fs: FSAdapter,
   esmCacheDir: string,
-  transform: typeof import("esbuild/mod.js").transform,
+  transform: typeof import("esbuild").transform,
 ): Promise<{ original: string; replacement: string } | null> {
   const readFile = createFileReader(fs);
   const resolved = await resolveFileWithExtension(imp.relativePath, readFile);
@@ -169,7 +169,7 @@ export async function transformProjectAliasImports(
 
   logger.debug(`${LOG_PREFIX_MDX_LOADER} Found ${imports.length} @/ imports to transform`);
 
-  const { transform } = await import("esbuild/mod.js");
+  const { transform } = await import("esbuild");
   let result = code;
 
   for (const imp of imports) {
@@ -201,7 +201,7 @@ export async function transformModuleServerImports(
     `${LOG_PREFIX_MDX_LOADER} Found ${imports.length} /_vf_modules/ imports to transform`,
   );
 
-  const { transform } = await import("esbuild/mod.js");
+  const { transform } = await import("esbuild");
   let result = code;
 
   for (const imp of imports) {

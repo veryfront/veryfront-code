@@ -5,10 +5,11 @@
 
 import { canOpenBrowser, openBrowser } from "../auth/browser.ts";
 import { readConfigFile } from "../shared/config.ts";
-import { cwd, getEnv } from "@veryfront/platform/compat/process.ts";
+import { cwd } from "@veryfront/platform/compat/process.ts";
 import { join } from "@veryfront/platform/compat/path/index.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 import { brand, dim, muted, success } from "../ui/colors.ts";
+import { getRuntimeEnv, type RuntimeEnv } from "@veryfront/config/runtime-env.ts";
 
 /**
  * Build Studio URL with optional query params
@@ -28,10 +29,12 @@ export function buildStudioUrl(
 /**
  * Resolve project slug from environment, config, or directory
  */
-async function resolveProjectSlug(projectDir: string): Promise<string> {
+async function resolveProjectSlug(
+  projectDir: string,
+  env: RuntimeEnv = getRuntimeEnv(),
+): Promise<string> {
   // 1. Environment variable
-  const envSlug = getEnv("VERYFRONT_PROJECT_SLUG");
-  if (envSlug) return envSlug;
+  if (env.projectSlug) return env.projectSlug;
 
   // 2. Config file
   const config = await readConfigFile(projectDir);
@@ -64,13 +67,16 @@ async function resolveProjectSlug(projectDir: string): Promise<string> {
 /**
  * Open Veryfront Studio in browser
  */
-export async function studioCommand(options: {
-  project?: string;
-  branch?: string;
-  file?: string;
-} = {}): Promise<{ url: string; opened: boolean }> {
+export async function studioCommand(
+  options: {
+    project?: string;
+    branch?: string;
+    file?: string;
+  } = {},
+  env: RuntimeEnv = getRuntimeEnv(),
+): Promise<{ url: string; opened: boolean }> {
   // Resolve project (explicit or auto-detect)
-  const project = options.project ?? (await resolveProjectSlug(cwd()));
+  const project = options.project ?? (await resolveProjectSlug(cwd(), env));
   const url = buildStudioUrl(project, options);
 
   // Open browser or print URL

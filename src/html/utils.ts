@@ -91,6 +91,12 @@ function getEsmShImportMap(versions: DetectedVersions): Record<string, string> {
     // Using esm.sh creates a separate context instance causing usePageContext to return undefined
     "veryfront/context": "/_vf_modules/exports/context.js",
     "veryfront/fonts": `https://esm.sh/veryfront@${veryfront}/fonts?external=react&target=es2022`,
+    // React-prefixed aliases (veryfront/react/*) - same modules, alternative import paths
+    "veryfront/react/head": "/_vf_modules/exports/head.js",
+    "veryfront/react/router": "/_vf_modules/exports/react/router.js",
+    "veryfront/react/context": "/_vf_modules/exports/context.js",
+    "veryfront/react/fonts":
+      `https://esm.sh/veryfront@${veryfront}/fonts?external=react&target=es2022`,
     ...getTailwindImportMap(),
   };
 }

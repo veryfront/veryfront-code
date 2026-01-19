@@ -2,9 +2,10 @@
  * Callback Server Tests
  */
 
-import { assertEquals, assertExists } from "@std/assert";
-import { afterEach, describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { afterEach, describe, it } from "@veryfront/testing/bdd";
 import { type CallbackServer, getCallbackUrl, startCallbackServer } from "./callback-server.ts";
+import { scaleMs } from "@veryfront/testing";
 
 describe("Callback Server", { sanitizeOps: false, sanitizeResources: false }, () => {
   let server: CallbackServer | null = null;
@@ -16,7 +17,7 @@ describe("Callback Server", { sanitizeOps: false, sanitizeResources: false }, ()
     }
   });
 
-  describe("getCallbackUrl", () => {
+  describe("getCallbackUrl", { sanitizeOps: false, sanitizeResources: false }, () => {
     it("should return correct callback URL format", () => {
       const url = getCallbackUrl(9876);
       assertEquals(url, "http://localhost:9876/callback");
@@ -28,7 +29,7 @@ describe("Callback Server", { sanitizeOps: false, sanitizeResources: false }, ()
     });
   });
 
-  describe("startCallbackServer", () => {
+  describe("startCallbackServer", { sanitizeOps: false, sanitizeResources: false }, () => {
     it("should start a server on available port", async () => {
       server = await startCallbackServer(9876);
       assertExists(server);
@@ -64,18 +65,19 @@ describe("Callback Server", { sanitizeOps: false, sanitizeResources: false }, ()
     });
   });
 
-  describe("callback handling", () => {
+  describe("callback handling", { sanitizeOps: false, sanitizeResources: false }, () => {
     it("should receive token from callback", async () => {
       server = await startCallbackServer(9876);
       const callbackUrl = getCallbackUrl(server.port);
 
       // Simulate OAuth callback with token
-      const callbackPromise = server.waitForCallback(5000);
+      const callbackPromise = server.waitForCallback(scaleMs(5000));
 
       // Make request to callback endpoint
       setTimeout(async () => {
-        await fetch(`${callbackUrl}?token=test-oauth-token`);
-      }, 100);
+        const resp = await fetch(`${callbackUrl}?token=test-oauth-token`);
+        await resp.body?.cancel(); // Consume response to prevent leak
+      }, scaleMs(100));
 
       const result = await callbackPromise;
       assertEquals(result.token, "test-oauth-token");
@@ -86,11 +88,12 @@ describe("Callback Server", { sanitizeOps: false, sanitizeResources: false }, ()
       server = await startCallbackServer(9876);
       const callbackUrl = getCallbackUrl(server.port);
 
-      const callbackPromise = server.waitForCallback(5000);
+      const callbackPromise = server.waitForCallback(scaleMs(5000));
 
       setTimeout(async () => {
-        await fetch(`${callbackUrl}?error=access_denied`);
-      }, 100);
+        const resp = await fetch(`${callbackUrl}?error=access_denied`);
+        await resp.body?.cancel(); // Consume response to prevent leak
+      }, scaleMs(100));
 
       const result = await callbackPromise;
       assertEquals(result.token, "");
@@ -101,11 +104,12 @@ describe("Callback Server", { sanitizeOps: false, sanitizeResources: false }, ()
       server = await startCallbackServer(9876);
       const callbackUrl = getCallbackUrl(server.port);
 
-      const callbackPromise = server.waitForCallback(5000);
+      const callbackPromise = server.waitForCallback(scaleMs(5000));
 
       setTimeout(async () => {
-        await fetch(callbackUrl);
-      }, 100);
+        const resp = await fetch(callbackUrl);
+        await resp.body?.cancel(); // Consume response to prevent leak
+      }, scaleMs(100));
 
       const result = await callbackPromise;
       assertEquals(result.token, "");
@@ -116,6 +120,7 @@ describe("Callback Server", { sanitizeOps: false, sanitizeResources: false }, ()
       server = await startCallbackServer(9876);
       const response = await fetch(`http://localhost:${server.port}/other-path`);
       assertEquals(response.status, 404);
+      await response.body?.cancel(); // Consume response to prevent leak
     });
   });
 });

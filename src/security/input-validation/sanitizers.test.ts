@@ -4,8 +4,8 @@
  * Tests for XSS and prototype pollution prevention
  */
 
-import { describe, it } from "@std/testing/bdd";
-import { assertEquals } from "@std/assert";
+import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals } from "@veryfront/testing/assert";
 import { sanitizeData } from "./sanitizers.ts";
 
 describe("sanitizeData", () => {
@@ -110,7 +110,8 @@ describe("sanitizeData", () => {
     it("should remove __proto__ keys", () => {
       const malicious = JSON.parse('{"__proto__": {"polluted": true}}');
       const result = sanitizeData(malicious) as Record<string, unknown>;
-      assertEquals(result.__proto__, undefined);
+      // Check __proto__ is not an own property (not that it's undefined - .__proto__ is always the prototype)
+      assertEquals(Object.hasOwn(result, "__proto__"), false);
       assertEquals("polluted" in result, false);
     });
 
@@ -123,7 +124,7 @@ describe("sanitizeData", () => {
     it("should remove prototype keys", () => {
       const malicious = { prototype: { value: "bad" } };
       const result = sanitizeData(malicious) as Record<string, unknown>;
-      assertEquals(result.prototype, undefined);
+      assertEquals(Object.hasOwn(result, "prototype"), false);
     });
 
     it("should sanitize keys to alphanumeric, dots, underscores, hyphens", () => {

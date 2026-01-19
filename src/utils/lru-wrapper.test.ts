@@ -1,6 +1,7 @@
-import { assert, assertEquals } from "@std/assert";
-import { afterEach, describe, it } from "@std/testing/bdd";
+import { assert, assertEquals } from "@veryfront/testing/assert";
+import { afterEach, describe, it } from "@veryfront/testing/bdd";
 import { LRUCache } from "./lru-wrapper.ts";
+import { delay } from "@std/async";
 
 describe("LRUCache", () => {
   const caches: LRUCache<unknown, unknown>[] = [];
@@ -83,7 +84,7 @@ describe("LRUCache", () => {
       cache.set("a", 1);
       assertEquals(cache.get("a"), 1);
 
-      await new Promise((r) => setTimeout(r, 80));
+      await delay(80);
 
       cache.cleanup();
 
@@ -95,7 +96,7 @@ describe("LRUCache", () => {
       cache.set("a", 1);
       assertEquals(cache.has("a"), true);
 
-      await new Promise((r) => setTimeout(r, 80));
+      await delay(80);
 
       cache.cleanup();
 
@@ -107,13 +108,9 @@ describe("LRUCache", () => {
       cache.set("a", 1);
       cache.set("b", 2);
 
-      await new Promise((resolve) => {
-        setTimeout(() => {
-          assertEquals(cache.get("a"), 1);
-          assertEquals(cache.get("b"), 2);
-          resolve(undefined);
-        }, 10);
-      });
+      await delay(10);
+      assertEquals(cache.get("a"), 1);
+      assertEquals(cache.get("b"), 2);
     });
   });
 
@@ -121,17 +118,17 @@ describe("LRUCache", () => {
     it("prune respects maxEntries (LRU order)", async () => {
       const cache = createCache<string, number>({ maxEntries: 2, ttlMs: 1000 });
       cache.set("a", 1);
-      await new Promise((r) => setTimeout(r, 2));
+      await delay(2);
       cache.set("b", 2);
-      await new Promise((r) => setTimeout(r, 2));
+      await delay(2);
       assert(cache.get("a") !== undefined);
-      await new Promise((r) => setTimeout(r, 2));
+      await delay(2);
       cache.set("c", 3);
       assertEquals(cache.get("b"), undefined);
       assertEquals(cache.get("a"), 1);
       assertEquals(cache.get("c"), 3);
       assert(cache.get("c") !== undefined);
-      await new Promise((r) => setTimeout(r, 2));
+      await delay(2);
       cache.set("d", 4);
       assertEquals(cache.get("a"), undefined);
       assertEquals(cache.get("c"), 3);
@@ -170,7 +167,7 @@ describe("LRUCache", () => {
       cache.set("exp1", 1);
       cache.set("exp2", 2);
 
-      await new Promise((r) => setTimeout(r, 80));
+      await delay(80);
 
       cache.cleanup();
 

@@ -1,8 +1,9 @@
 import type { VeryfrontConfig } from "./types.ts";
 import { findUnknownTopLevelKeys, validateVeryfrontConfig } from "./schema.ts";
-import { dirname, join } from "@veryfront/platform/compat/path/index.ts";
+import { dirname, extname, join } from "@veryfront/platform/compat/path/index.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { isExtendedFSAdapter } from "@veryfront/platform/adapters/fs/wrapper.ts";
+import { isBun } from "@veryfront/platform/compat/runtime.ts";
 import { serverLogger } from "@veryfront/utils/logger/logger.ts";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "@veryfront/utils/constants/cdn.ts";
 import { DEFAULT_CACHE_DIR } from "@veryfront/utils/constants/server.ts";
@@ -293,6 +294,25 @@ async function loadAndMergeConfig(
   // Check if using virtual filesystem
   if (isVirtualFilesystem(adapter)) {
     return loadConfigFromVirtualFS(configPath, projectDir, adapter);
+  }
+
+  if (isBun) {
+    // Bun caches file:// imports by path only (query params are ignored).
+    // Copy to a temp file each load to ensure we get fresh config content.
+    const fs = createFileSystem();
+    const extension = extname(configPath) || ".mjs";
+    const tempDir = await fs.makeTempDir({ prefix: "vf-config-" });
+    const tempFile = join(tempDir, `config${extension}`);
+
+    try {
+      const source = await fs.readTextFile(configPath);
+      await fs.writeTextFile(tempFile, source);
+      const configModule = await import(`file://${tempFile}`);
+      const userConfig = configModule.default || configModule;
+      return validateAndCacheConfig(userConfig, projectDir);
+    } finally {
+      await fs.remove(tempDir, { recursive: true });
+    }
   }
 
   // Local filesystem - use direct import

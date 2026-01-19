@@ -28,7 +28,7 @@ export async function compileMDXRuntime(
     const remarkPlugins = (await getRemarkPlugins()) as unknown as PluggableList;
     const rehypePlugins = (await getRehypePlugins()) as unknown as PluggableList;
 
-    const extracted = await extractFrontmatter(content, frontmatter);
+    const extracted = extractFrontmatter(content, frontmatter);
     let { body } = extracted;
     const { frontmatter: extractedFrontmatter } = extracted;
 

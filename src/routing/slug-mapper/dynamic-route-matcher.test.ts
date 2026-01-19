@@ -1,4 +1,4 @@
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "@veryfront/testing/bdd";
 import { expect } from "@std/expect";
 import { extractParams, isDynamicRoute, matchesPattern } from "./dynamic-route-matcher.ts";
 

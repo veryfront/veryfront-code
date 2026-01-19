@@ -12,8 +12,9 @@
  * - Edge cases and error scenarios
  */
 
-import { assertEquals, assertExists } from "@std/assert";
-import { beforeEach, describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { beforeEach, describe, it } from "@veryfront/testing/bdd";
+import { delay } from "@std/async";
 
 // Import the module once (no cache-busting needed!)
 import {
@@ -315,7 +316,7 @@ describe("Auto-Instrumentation", () => {
 
     it("should measure request duration", async () => {
       const handler = async () => {
-        await new Promise((r) => setTimeout(r, 10));
+        await delay(10);
         return new Response("OK");
       };
       const instrumented = instrumentHttpHandler(handler);
@@ -507,7 +508,7 @@ describe("Auto-Instrumentation", () => {
       const originalFetch = globalThis.fetch;
 
       globalThis.fetch = async () => {
-        await new Promise((r) => setTimeout(r, 10));
+        await delay(10);
         return new Response("OK");
       };
       instrumentFetch();
@@ -554,7 +555,7 @@ describe("Auto-Instrumentation", () => {
 
     it("should instrument async render function", async () => {
       const renderFn = async () => {
-        await new Promise((r) => setTimeout(r, 10));
+        await delay(10);
         return "<div>Async</div>";
       };
       const result = await instrumentReactRender(renderFn, "AsyncComponent");
@@ -571,7 +572,7 @@ describe("Auto-Instrumentation", () => {
 
     it("should measure render duration", async () => {
       const renderFn = async () => {
-        await new Promise((r) => setTimeout(r, 10));
+        await delay(10);
         return "rendered";
       };
 
@@ -716,7 +717,7 @@ describe("Auto-Instrumentation", () => {
 
     it("should measure operation duration", async () => {
       const fn = async () => {
-        await new Promise((r) => setTimeout(r, 10));
+        await delay(10);
         return "done";
       };
       const instrumented = instrument(fn, "slow.operation");
@@ -951,7 +952,7 @@ describe("Auto-Instrumentation", () => {
 
     it("should handle concurrent requests", async () => {
       const handler = async () => {
-        await new Promise((r) => setTimeout(r, 10));
+        await delay(10);
         return new Response("OK");
       };
       const instrumented = instrumentHttpHandler(handler);

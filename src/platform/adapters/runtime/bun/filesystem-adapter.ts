@@ -36,8 +36,15 @@ export class BunFileSystemAdapter implements FileSystemAdapter {
   }
 
   async exists(path: string): Promise<boolean> {
-    const file = Bun.file(path);
-    return await file.exists();
+    // Use node:fs stat to check existence for both files and directories
+    // Bun.file().exists() only works for files, not directories
+    try {
+      const { stat } = await import("node:fs/promises");
+      await stat(path);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async *readDir(path: string): AsyncIterable<DirEntry> {
@@ -55,17 +62,19 @@ export class BunFileSystemAdapter implements FileSystemAdapter {
   }
 
   async stat(path: string): Promise<FileInfo> {
-    const file = Bun.file(path);
-    const exists = await file.exists();
-    if (!exists) {
+    // Use node:fs stat directly for both files and directories
+    // Bun.file().exists() only works for files, not directories
+    const { stat } = await import("node:fs/promises");
+
+    let stats;
+    try {
+      stats = await stat(path);
+    } catch {
       throw new FileSystemError(`File not found: ${path}`, { path });
     }
 
-    const { stat } = await import("node:fs/promises");
-    const stats = await stat(path);
-
     return {
-      size: file.size,
+      size: stats.size,
       isFile: stats.isFile(),
       isDirectory: stats.isDirectory(),
       isSymlink: stats.isSymbolicLink(),
@@ -150,7 +159,6 @@ export class BunFileSystemAdapter implements FileSystemAdapter {
 
     const iterator = createWatcherIterator(
       eventQueue,
-      () => resolver,
       (r) => {
         resolver = r;
       },

@@ -3,8 +3,8 @@
  * @module cli/commands/new/fast-scaffold.test
  */
 
-import { assertEquals, assertExists } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
 import type { ScaffoldResult } from "./fast-scaffold.ts";
 
 // Test the scaffolding result structure

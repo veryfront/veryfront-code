@@ -24,60 +24,65 @@
  *   deno task release patch --dry-run
  */
 
-import { createFileSystem, FileSystem } from "../src/platform/compat/fs.ts";
-import { getArgs, exit } from "../src/platform/compat/process.ts";
-
-// @ts-ignore - Deno global
-const isDeno = typeof Deno !== 'undefined';
+import { createFileSystem } from "../src/platform/compat/fs.ts";
+import { exit, getArgs } from "../src/platform/compat/process.ts";
 import { promptUser } from "../src/cli/utils/index.ts";
 
-// Conditional imports for path module
-let pathMod: typeof import('node:path') | undefined;
-let childProcess: typeof import('node:child_process') | undefined;
-let util: typeof import('node:util') | undefined;
-let parseArgs: typeof import("mri");
-
-// @ts-ignore - Deno global
-if (typeof Deno === 'undefined') {
-  pathMod = require('node:path');
-  childProcess = require('node:child_process');
-  util = require('node:util');
-  parseArgs = require("mri");
-} else {
-  // @ts-ignore - Deno global
-  pathMod = await import("jsr:@std/path");
-  // @ts-ignore - Deno global
-  ({ parseArgs } = await import("jsr:@std/cli/parse-args"));
-}
-
-// Helper to get path functions
-const getPath = () => {
-  if (pathMod) {
-    return pathMod;
-  } else {
-    // Fallback for Deno, should already be globally available or imported via import maps
-    // @ts-ignore - Deno global
-    return require("std/path/mod.ts");
-  }
+type PathModule = {
+  resolve: (...paths: string[]) => string;
+  join: (...paths: string[]) => string;
 };
 
-const fs = createFileSystem();
+type ParseArgsFn = (
+  args: string[],
+  options?: Record<string, unknown>,
+) => { _: Array<string | number>; [key: string]: unknown };
 
-const args = parseArgs(getArgs(), {
-	boolean: ["dry-run", "no-test", "no-build", "no-publish", "yes"],
-	alias: { d: "dry-run", y: "yes" },
-});
+type ChildProcessModule = {
+  spawn: (
+    command: string,
+    args?: string[],
+    options?: Record<string, unknown>,
+  ) => { on: (event: string, listener: (...args: unknown[]) => void) => void };
+};
 
-const versionArg = args._[0]?.toString();
+const isDenoRuntime = typeof Deno !== "undefined";
 
-if (!versionArg) {
-	console.error(
-		"Error: Please provide a version argument (patch, minor, major, or specific version)",
-	);
-	exit(1);
+let pathMod: PathModule | null = null;
+let childProcess: ChildProcessModule | null = null;
+let parseArgsFn: ParseArgsFn | null = null;
+let args: ReturnType<ParseArgsFn>;
+let versionArg: string | null = null;
+let DRY_RUN = false;
+
+async function loadDeps(): Promise<void> {
+  if (isDenoRuntime) {
+    const pathModule = await import("jsr:@std/path");
+    const { parseArgs } = await import("jsr:@std/cli/parse-args");
+    pathMod = pathModule;
+    parseArgsFn = parseArgs as ParseArgsFn;
+    return;
+  }
+
+  const [pathModule, childProcessModule, mriModule] = await Promise.all([
+    import("node:path"),
+    import("node:child_process"),
+    import("mri"),
+  ]);
+
+  pathMod = pathModule;
+  childProcess = childProcessModule as ChildProcessModule;
+  parseArgsFn = (mriModule as { default?: ParseArgsFn }).default ?? (mriModule as ParseArgsFn);
 }
 
-const DRY_RUN = args["dry-run"];
+function getPath(): PathModule {
+  if (!pathMod) {
+    throw new Error("Path module not initialized");
+  }
+  return pathMod;
+}
+
+const fs = createFileSystem();
 
 async function runCommand(cmd: string[], cwd?: string) {
 	console.log(`$ ${cmd.join(" ")}`);
@@ -87,7 +92,7 @@ async function runCommand(cmd: string[], cwd?: string) {
 		throw new Error("Command cannot be empty");
 	}
 
-  if (isDeno) {
+  if (isDenoRuntime) {
     // @ts-ignore - Deno global
     const command = new Deno.Command(cmd[0], {
       args: cmd.slice(1),
@@ -101,15 +106,25 @@ async function runCommand(cmd: string[], cwd?: string) {
       console.error(`Command failed: ${cmd.join(" ")}`);
       exit(1);
     }
-  } else if (childProcess && util) {
+  } else if (childProcess) {
     // Node.js
-    const execFile = util.promisify(childProcess.execFile);
-    try {
-      await execFile(cmd[0], cmd.slice(1), { cwd, stdio: 'inherit' });
-    } catch (error: any) {
-      console.error(`Command failed: ${cmd.join(" ")}\n`, error.stderr || error.message);
+    await new Promise<void>((resolve, reject) => {
+      const child = childProcess.spawn(cmd[0], cmd.slice(1), {
+        cwd,
+        stdio: "inherit",
+      });
+      child.on("error", (error) => reject(error));
+      child.on("close", (code) => {
+        if (code === 0) {
+          resolve();
+        } else {
+          reject(new Error(`Command failed with exit code ${code}`));
+        }
+      });
+    }).catch((error) => {
+      console.error(`Command failed: ${cmd.join(" ")}\n`, error.message ?? error);
       exit(1);
-    }
+    });
   } else {
     throw new Error("Unsupported runtime for command execution.");
   }
@@ -245,7 +260,7 @@ async function updateTemplates(newVersion: string) {
 	}
 }
 
-async function main() {
+async function runRelease() {
 	const denoJsonPath = getPath().resolve("deno.json");
 	const denoJson = JSON.parse(await fs.readTextFile(denoJsonPath));
 	const currentVersion = denoJson.version;
@@ -290,7 +305,7 @@ async function main() {
 	if (!args["no-build"]) {
 		console.log("\n📦 Building npm package...");
 		// @ts-ignore - Deno global
-		if (isDeno) Deno.env.set("VERYFRONT_VERSION", newVersion);
+		if (isDenoRuntime) Deno.env.set("VERYFRONT_VERSION", newVersion);
 		await runCommand(["deno", "task", "build:npm"]);
 	}
 
@@ -313,4 +328,35 @@ async function main() {
 	console.log("\n✨ Release complete!");
 }
 
-main();
+async function main() {
+	await loadDeps();
+
+	if (!parseArgsFn) {
+		throw new Error("Argument parser not initialized");
+	}
+
+	args = parseArgsFn(getArgs(), {
+		boolean: ["dry-run", "no-test", "no-build", "no-publish", "yes"],
+		alias: { d: "dry-run", y: "yes" },
+	});
+
+	versionArg = args._[0]?.toString() ?? null;
+
+	if (!versionArg) {
+		console.error(
+			"Error: Please provide a version argument (patch, minor, major, or specific version)",
+		);
+		exit(1);
+	}
+
+	DRY_RUN = Boolean(args["dry-run"]);
+
+	await runRelease();
+}
+
+if (import.meta.main) {
+	main().catch((error) => {
+		console.error("Release script failed:", error);
+		exit(1);
+	});
+}

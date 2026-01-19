@@ -1,5 +1,5 @@
-import { assertEquals, assertExists } from "@std/assert";
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
 import { LRUTracker } from "./lru-tracker.ts";
 
 describe("LRUTracker", () => {

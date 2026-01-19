@@ -1,8 +1,11 @@
-import { assertEquals, assertMatch } from "@std/assert";
-import { join } from "@std/path";
+import { assertEquals, assertMatch } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
+import { join } from "@veryfront/compat/path";
 import { loadHandlerModule } from "./loader.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { env, getEnv, setEnv } from "@veryfront/compat/process.ts";
+import { makeTempDir } from "@veryfront/testing/deno-compat";
 
 /**
  * Minimal adapter stub that reads files from the real fs via compat,
@@ -53,13 +56,13 @@ const adapter: RuntimeAdapter = {
   },
   env: {
     get(key: string) {
-      return Deno.env.get(key);
+      return getEnv(key);
     },
     set(key: string, value: string) {
-      Deno.env.set(key, value);
+      setEnv(key, value);
     },
     toObject() {
-      return Deno.env.toObject();
+      return env();
     },
   },
   server: {
@@ -73,40 +76,42 @@ const adapter: RuntimeAdapter = {
   },
 };
 
-Deno.test("loadHandlerModule loads .ts file with explicit extension", async () => {
-  const tmpDir = await Deno.makeTempDir();
-  const modulePath = join(tmpDir, "handler.ts");
+describe("loadHandlerModule", () => {
+  it("loads .ts file with explicit extension", async () => {
+    const tmpDir = await makeTempDir();
+    const modulePath = join(tmpDir, "handler.ts");
 
-  await fs.writeTextFile(
-    modulePath,
-    `export const GET = () => new Response("ok");`,
-  );
+    await fs.writeTextFile(
+      modulePath,
+      `export const GET = () => new Response("ok");`,
+    );
 
-  const route = await loadHandlerModule({
-    projectDir: tmpDir,
-    modulePath,
-    adapter,
-    config: undefined,
-  });
-
-  assertEquals(typeof route?.GET, "function");
-});
-
-Deno.test("loadHandlerModule throws on missing file", async () => {
-  const tmpDir = await Deno.makeTempDir();
-  const modulePath = join(tmpDir, "missing");
-
-  let caught = "";
-  try {
-    await loadHandlerModule({
+    const route = await loadHandlerModule({
       projectDir: tmpDir,
       modulePath,
       adapter,
       config: undefined,
     });
-  } catch (error) {
-    caught = error instanceof Error ? error.message : String(error);
-  }
 
-  assertMatch(caught, /Failed to load API handler/i);
+    assertEquals(typeof route?.GET, "function");
+  });
+
+  it("throws on missing file", async () => {
+    const tmpDir = await makeTempDir();
+    const modulePath = join(tmpDir, "missing");
+
+    let caught = "";
+    try {
+      await loadHandlerModule({
+        projectDir: tmpDir,
+        modulePath,
+        adapter,
+        config: undefined,
+      });
+    } catch (error) {
+      caught = error instanceof Error ? error.message : String(error);
+    }
+
+    assertMatch(caught, /Failed to load API handler/i);
+  });
 });

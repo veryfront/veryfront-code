@@ -17,6 +17,16 @@ export interface ParsedDomain {
 }
 
 export interface SecurityConfig {
+  auth?: {
+    basic?: {
+      username: string;
+      password: string;
+      realm?: string;
+    };
+    bearer?: {
+      token: string;
+    };
+  };
   cors?: boolean | {
     origin?: string | string[] | ((origin: string) => boolean);
     credentials?: boolean;

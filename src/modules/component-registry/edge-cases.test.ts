@@ -1,11 +1,11 @@
-import { assertEquals, assertExists } from "@std/assert";
-import { describe } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
 import { ComponentRegistry } from "./index.ts";
 import { createMockAdapter } from "@veryfront/platform/adapters/mock.ts";
 
 describe("ComponentRegistry - Edge Cases and Error Handling", () => {
   describe("Missing directories", () => {
-    Deno.test("should handle completely missing component directories", async () => {
+    it("should handle completely missing component directories", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/no-components";
 
@@ -20,7 +20,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       assertEquals(registry.getAll().size, 0);
     });
 
-    Deno.test("should handle partially missing directories", async () => {
+    it("should handle partially missing directories", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/partial-dirs";
 
@@ -40,7 +40,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       assertEquals(registry.has("Button"), true);
     });
 
-    Deno.test("should handle empty component directories", async () => {
+    it("should handle empty component directories", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/empty-dirs";
 
@@ -57,7 +57,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       assertEquals(registry.getAll().size, 0);
     });
 
-    Deno.test("should handle deep directory nesting", async () => {
+    it("should handle deep directory nesting", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/deep-nesting";
 
@@ -78,7 +78,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
   });
 
   describe("File discovery edge cases", () => {
-    Deno.test("should skip node_modules directories", async () => {
+    it("should skip node_modules directories", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/node-modules";
 
@@ -102,7 +102,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       assertEquals(registry.has("Component"), false);
     });
 
-    Deno.test("should skip test files", async () => {
+    it("should skip test files", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/test-files";
 
@@ -131,7 +131,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       assertEquals(all.size, 1);
     });
 
-    Deno.test("should skip index files", async () => {
+    it("should skip index files", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/index-files";
 
@@ -152,7 +152,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       assertEquals(registry.has("index"), false);
     });
 
-    Deno.test("should handle files with same name in different directories", async () => {
+    it("should handle files with same name in different directories", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/duplicate-names";
 
@@ -176,7 +176,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       assertEquals(registry.has("Button"), true);
     });
 
-    Deno.test("should only match tsx and jsx extensions", async () => {
+    it("should only match tsx and jsx extensions", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/extensions";
 
@@ -205,7 +205,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
   });
 
   describe("Component loading edge cases", () => {
-    Deno.test("should handle loading nonexistent component", async () => {
+    it("should handle loading nonexistent component", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/nonexistent";
 
@@ -220,7 +220,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       assertEquals(component, null);
     });
 
-    Deno.test("should handle file read errors", async () => {
+    it("should handle file read errors", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/read-error";
 
@@ -245,7 +245,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       assertEquals(component, null);
     });
 
-    Deno.test("should cache loaded components", async () => {
+    it("should cache loaded components", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/caching";
 
@@ -269,7 +269,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       assertEquals(component1, component2);
     });
 
-    Deno.test("should handle loading all components", async () => {
+    it("should handle loading all components", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/load-all";
 
@@ -290,7 +290,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       assertEquals(registry.get("Input")?.isLoaded, true);
     });
 
-    Deno.test("should handle concurrent component loads", async () => {
+    it("should handle concurrent component loads", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/concurrent-load";
 
@@ -321,7 +321,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
   });
 
   describe("Manual component management", () => {
-    Deno.test("should add virtual components", async () => {
+    it("should add virtual components", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/virtual";
 
@@ -343,7 +343,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       assertEquals(component?.path, "virtual:VirtualButton");
     });
 
-    Deno.test("should remove components", async () => {
+    it("should remove components", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/remove";
 
@@ -361,7 +361,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       assertEquals(registry.has("Button"), false);
     });
 
-    Deno.test("should clear all components", async () => {
+    it("should clear all components", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/clear";
 
@@ -380,7 +380,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       assertEquals(registry.getAll().size, 0);
     });
 
-    Deno.test("should rediscover after clear", async () => {
+    it("should rediscover after clear", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/rediscover";
 
@@ -403,7 +403,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
   });
 
   describe("Component metadata", () => {
-    Deno.test("should list components with metadata", async () => {
+    it("should list components with metadata", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/metadata";
 
@@ -424,7 +424,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       assertEquals(components[0]?.type, "component");
     });
 
-    Deno.test("should handle stat errors gracefully", async () => {
+    it("should handle stat errors gracefully", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/stat-error";
 
@@ -451,7 +451,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       assertEquals(components[0]?.name, "Button");
     });
 
-    Deno.test("should get component names", async () => {
+    it("should get component names", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/names";
 
@@ -474,7 +474,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
   });
 
   describe("Edge cases in component names", () => {
-    Deno.test("should handle components with special characters in name", async () => {
+    it("should handle components with special characters in name", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/special-names";
 
@@ -498,7 +498,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       assertEquals(registry.has("My_Component"), true);
     });
 
-    Deno.test("should handle components with numbers in name", async () => {
+    it("should handle components with numbers in name", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/numbers";
 
@@ -516,7 +516,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       assertEquals(registry.has("Card3D"), true);
     });
 
-    Deno.test("should handle very long component names", async () => {
+    it("should handle very long component names", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/long-names";
 
@@ -538,7 +538,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
   });
 
   describe("Race conditions and timing", () => {
-    Deno.test("should handle get before discover completes", async () => {
+    it("should handle get before discover completes", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/race";
 
@@ -558,7 +558,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       assertExists(component !== undefined ? component : "timing-dependent");
     });
 
-    Deno.test("should handle loadComponent before discover", async () => {
+    it("should handle loadComponent before discover", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/load-before-discover";
 
@@ -579,7 +579,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       assertExists(componentAfter);
     });
 
-    Deno.test("should handle concurrent discover calls", async () => {
+    it("should handle concurrent discover calls", async () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/concurrent-discover";
 

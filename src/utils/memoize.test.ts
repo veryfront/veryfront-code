@@ -1,6 +1,7 @@
-import { assertEquals, assertNotEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertNotEquals } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
 import { MemoCache, memoize, memoizeAsync, simpleHash } from "./memoize.ts";
+import { delay } from "@std/async";
 
 describe("memoize", () => {
   describe("MemoCache", () => {
@@ -128,7 +129,7 @@ describe("memoize", () => {
 
     it("should handle promise resolution", async () => {
       const fn = async (msg: string) => {
-        await new Promise((r) => setTimeout(r, 1));
+        await delay(1);
         return `processed: ${msg}`;
       };
       const memoized = memoizeAsync(fn, (msg) => msg);

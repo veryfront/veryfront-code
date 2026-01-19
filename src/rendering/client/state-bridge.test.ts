@@ -3,8 +3,8 @@
  * Tests client-server state synchronization and persistence
  */
 
-import { assertEquals, assertExists } from "@std/assert";
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
 import type { DependencyList, Dispatch, EffectCallback, SetStateAction } from "react";
 import {
   __resetBridgeForTesting,
@@ -12,6 +12,10 @@ import {
   SharedState,
   useBridgedState,
 } from "./state-bridge.ts";
+
+// Browser-only tests (dispatchEvent doesn't exist in Node.js)
+const isBrowser = typeof globalThis.dispatchEvent === "function";
+const browserOnlyIt = isBrowser ? it : it.skip;
 
 // Mock sessionStorage
 class MockSessionStorage {
@@ -511,7 +515,8 @@ describe("State Bridge", () => {
   });
 
   describe("beforeunload Event", () => {
-    it("should save state on beforeunload", () => {
+    // dispatchEvent doesn't exist in Node.js
+    browserOnlyIt("should save state on beforeunload", () => {
       const bridge = getStateBridge();
       bridge.set("key1", "value1");
       bridge.persist("key1");

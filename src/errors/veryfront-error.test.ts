@@ -1,5 +1,5 @@
-import { assert, assertEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assert, assertEquals } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
 import {
   createError,
   ensureError,

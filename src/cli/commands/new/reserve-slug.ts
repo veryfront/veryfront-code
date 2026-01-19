@@ -6,7 +6,7 @@
  * @module cli/commands/new/reserve-slug
  */
 
-import { getEnv } from "@veryfront/platform/compat/process.ts";
+import { getRuntimeEnv, type RuntimeEnv } from "@veryfront/config/runtime-env.ts";
 
 // ============================================================================
 // Types
@@ -29,8 +29,8 @@ interface ApiError {
 
 const MAX_SLUG_ATTEMPTS = 10;
 
-function getApiUrl(): string {
-  return getEnv("VERYFRONT_API_URL") || "https://api.veryfront.com";
+function getApiUrl(env: RuntimeEnv = getRuntimeEnv()): string {
+  return env.apiUrl || "https://api.veryfront.com";
 }
 
 // ============================================================================
@@ -43,17 +43,19 @@ function getApiUrl(): string {
  *
  * @param slug - Desired project slug
  * @param token - API authentication token
+ * @param env - Runtime environment (for testing)
  * @returns Reserve result with actual slug used
  */
 export async function reserveProjectSlug(
   slug: string,
   token: string,
+  env: RuntimeEnv = getRuntimeEnv(),
 ): Promise<ReserveResult> {
   let currentSlug = slug;
   let attempt = 1;
 
   while (attempt <= MAX_SLUG_ATTEMPTS) {
-    const result = await tryCreateProject(currentSlug, token);
+    const result = await tryCreateProject(currentSlug, token, env);
 
     if (result.success) {
       return {
@@ -95,9 +97,10 @@ interface CreateProjectResult {
 async function tryCreateProject(
   slug: string,
   token: string,
+  env: RuntimeEnv = getRuntimeEnv(),
 ): Promise<CreateProjectResult> {
   try {
-    const response = await fetch(`${getApiUrl()}/projects`, {
+    const response = await fetch(`${getApiUrl(env)}/projects`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
@@ -148,9 +151,10 @@ async function tryCreateProject(
 export async function isSlugAvailable(
   slug: string,
   token: string,
+  env: RuntimeEnv = getRuntimeEnv(),
 ): Promise<boolean> {
   try {
-    const response = await fetch(`${getApiUrl()}/projects/${slug}`, {
+    const response = await fetch(`${getApiUrl(env)}/projects/${slug}`, {
       method: "HEAD",
       headers: {
         Authorization: `Bearer ${token}`,

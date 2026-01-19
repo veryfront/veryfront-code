@@ -1,5 +1,6 @@
-import { assert, assertEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assert, assertEquals } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
+import { mkdir, writeTextFile } from "@veryfront/testing/deno-compat";
 import {
   analyzeProjectChunks,
   type ChunkAnalysis,
@@ -543,12 +544,12 @@ describe(
         const pagesDir = `${context.projectDir}/pages`;
         const nestedDir = `${pagesDir}/features/auth`;
 
-        await Deno.mkdir(nestedDir, { recursive: true });
-        await Deno.writeTextFile(
+        await mkdir(nestedDir, { recursive: true });
+        await writeTextFile(
           `${pagesDir}/index.mdx`,
           `import { Component } from './Component.tsx'\nimport React from 'react'`,
         );
-        await Deno.writeTextFile(
+        await writeTextFile(
           `${nestedDir}/login.mdx`,
           `import { AuthForm } from './AuthForm.tsx'\nimport React from 'react'`,
         );

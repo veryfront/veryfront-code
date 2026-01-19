@@ -10,33 +10,50 @@
  * - Authentication security
  */
 
-// Disable LRU cache intervals to prevent resource leaks in tests
-Deno.env.set("VF_DISABLE_LRU_INTERVAL", "1");
-
+import { assert, assertEquals, assertExists } from "@veryfront/testing/assert";
+import { symlink } from "@veryfront/compat/fs.ts";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
 import {
-  assert,
-  assertEquals,
-  assertExists,
-  assertRejects as _assertRejects,
-} from "@std/assert";
-import { ensureDir as _ensureDir } from "@std/fs";
-import { join as _join } from "@std/path";
-import { afterAll, describe, it } from "@std/testing/bdd";
-import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
+  getEnv,
+  makeTempDir,
+  mkdir,
+  remove,
+  setEnv,
+  writeTextFile,
+} from "@veryfront/testing/deno-compat";
+import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
+import type { VeryfrontConfig } from "@veryfront/config";
 import { createVeryfrontHandler } from "../../../../src/server/universal-handler/index.ts";
 import "../../../_helpers/log-guard.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
+// Disable LRU cache intervals to prevent resource leaks in tests
+setEnv("VF_DISABLE_LRU_INTERVAL", "1");
+
+/**
+ * Creates a symlink if the platform supports it.
+ * Returns false if symlinks are not supported (e.g., Windows without admin).
+ */
+async function trySymlink(target: string, path: string): Promise<boolean> {
+  try {
+    await symlink(target, path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Mock adapter for testing - returns RuntimeAdapter with custom env
-function createMockAdapter(envVars: Record<string, string> = {}) {
+async function createMockAdapter(envVars: Record<string, string> = {}) {
+  const baseAdapter = await getAdapter();
   const customEnv = {
-    get: (key: string) => envVars[key] ?? Deno.env.get(key),
-    set: denoAdapter.env.set,
-    toObject: denoAdapter.env.toObject,
+    get: (key: string) => envVars[key] ?? getEnv(key),
+    set: baseAdapter.env.set,
+    toObject: baseAdapter.env.toObject,
   };
 
   // Return a new adapter with overridden env
-  return Object.assign(Object.create(Object.getPrototypeOf(denoAdapter)), denoAdapter, {
+  return Object.assign(Object.create(Object.getPrototypeOf(baseAdapter)), baseAdapter, {
     env: customEnv,
   });
 }
@@ -55,13 +72,13 @@ describe(
       {},
       () => {
         it("blocks basic path traversal with ../", async () => {
-          const tempDir = await Deno.makeTempDir({ prefix: "vf_path_traversal_basic_" });
+          const tempDir = await makeTempDir({ prefix: "vf_path_traversal_basic_" });
           try {
-            await Deno.mkdir(`${tempDir}/public`, { recursive: true });
-            await Deno.writeTextFile(`${tempDir}/public/safe.txt`, "safe content");
-            await Deno.writeTextFile(`${tempDir}/secret.txt`, "SECRET DATA");
+            await mkdir(`${tempDir}/public`, { recursive: true });
+            await writeTextFile(`${tempDir}/public/safe.txt`, "safe content");
+            await writeTextFile(`${tempDir}/secret.txt`, "SECRET DATA");
 
-            const adapter = denoAdapter;
+            const adapter = await getAdapter();
             const handler = createVeryfrontHandler(tempDir, adapter);
 
             const res = await handler(new Request("http://localhost:8000/../secret.txt"));
@@ -70,17 +87,17 @@ describe(
             const body = await res.text();
             assert(!body.includes("SECRET"), "Should not leak secret data");
           } finally {
-            await Deno.remove(tempDir, { recursive: true });
+            await remove(tempDir, { recursive: true });
           }
         });
 
         it("blocks deeply nested path traversal", async () => {
-          const tempDir = await Deno.makeTempDir({ prefix: "vf_path_deep_traversal_" });
+          const tempDir = await makeTempDir({ prefix: "vf_path_deep_traversal_" });
           try {
-            await Deno.mkdir(`${tempDir}/public`, { recursive: true });
-            await Deno.writeTextFile(`${tempDir}/secret.txt`, "SECRET");
+            await mkdir(`${tempDir}/public`, { recursive: true });
+            await writeTextFile(`${tempDir}/secret.txt`, "SECRET");
 
-            const adapter = denoAdapter;
+            const adapter = await getAdapter();
             const handler = createVeryfrontHandler(tempDir, adapter);
 
             const attacks = [
@@ -98,17 +115,17 @@ describe(
               assert(!body.includes("SECRET"), `Should not leak via: ${attack}`);
             }
           } finally {
-            await Deno.remove(tempDir, { recursive: true });
+            await remove(tempDir, { recursive: true });
           }
         });
 
         it("blocks URL-encoded path traversal", async () => {
-          const tempDir = await Deno.makeTempDir({ prefix: "vf_path_encoded_" });
+          const tempDir = await makeTempDir({ prefix: "vf_path_encoded_" });
           try {
-            await Deno.mkdir(`${tempDir}/public`, { recursive: true });
-            await Deno.writeTextFile(`${tempDir}/secret.txt`, "SECRET");
+            await mkdir(`${tempDir}/public`, { recursive: true });
+            await writeTextFile(`${tempDir}/secret.txt`, "SECRET");
 
-            const adapter = denoAdapter;
+            const adapter = await getAdapter();
             const handler = createVeryfrontHandler(tempDir, adapter);
 
             const encodedAttacks = [
@@ -123,17 +140,17 @@ describe(
               assertEquals(res.status, 404, `Should block encoded: ${attack}`);
             }
           } finally {
-            await Deno.remove(tempDir, { recursive: true });
+            await remove(tempDir, { recursive: true });
           }
         });
 
         it("blocks double-encoded path traversal", async () => {
-          const tempDir = await Deno.makeTempDir({ prefix: "vf_path_double_encoded_" });
+          const tempDir = await makeTempDir({ prefix: "vf_path_double_encoded_" });
           try {
-            await Deno.mkdir(`${tempDir}/public`, { recursive: true });
-            await Deno.writeTextFile(`${tempDir}/secret.txt`, "SECRET");
+            await mkdir(`${tempDir}/public`, { recursive: true });
+            await writeTextFile(`${tempDir}/secret.txt`, "SECRET");
 
-            const adapter = denoAdapter;
+            const adapter = await getAdapter();
             const handler = createVeryfrontHandler(tempDir, adapter);
 
             // Double URL encoding: . = %2e, then % = %25
@@ -143,17 +160,17 @@ describe(
 
             assertEquals(res.status, 404, "Should block double-encoded traversal");
           } finally {
-            await Deno.remove(tempDir, { recursive: true });
+            await remove(tempDir, { recursive: true });
           }
         });
 
         it("blocks backslash path traversal (Windows-style)", async () => {
-          const tempDir = await Deno.makeTempDir({ prefix: "vf_path_backslash_" });
+          const tempDir = await makeTempDir({ prefix: "vf_path_backslash_" });
           try {
-            await Deno.mkdir(`${tempDir}/public`, { recursive: true });
-            await Deno.writeTextFile(`${tempDir}/secret.txt`, "SECRET");
+            await mkdir(`${tempDir}/public`, { recursive: true });
+            await writeTextFile(`${tempDir}/secret.txt`, "SECRET");
 
-            const adapter = denoAdapter;
+            const adapter = await getAdapter();
             const handler = createVeryfrontHandler(tempDir, adapter);
 
             const backslashAttacks = [
@@ -167,17 +184,17 @@ describe(
               assertEquals(res.status, 404, `Should block backslash: ${attack}`);
             }
           } finally {
-            await Deno.remove(tempDir, { recursive: true });
+            await remove(tempDir, { recursive: true });
           }
         });
 
         it("allows safe relative paths within public directory", async () => {
-          const tempDir = await Deno.makeTempDir({ prefix: "vf_safe_paths_" });
+          const tempDir = await makeTempDir({ prefix: "vf_safe_paths_" });
           try {
-            await Deno.mkdir(`${tempDir}/public/assets/images`, { recursive: true });
-            await Deno.writeTextFile(`${tempDir}/public/assets/images/logo.png`, "PNG DATA");
+            await mkdir(`${tempDir}/public/assets/images`, { recursive: true });
+            await writeTextFile(`${tempDir}/public/assets/images/logo.png`, "PNG DATA");
 
-            const adapter = denoAdapter;
+            const adapter = await getAdapter();
             const handler = createVeryfrontHandler(tempDir, adapter);
 
             const res = await handler(new Request("http://localhost:8000/assets/images/logo.png"));
@@ -186,7 +203,7 @@ describe(
             const content = await res.text();
             assertEquals(content, "PNG DATA", "Should serve correct content");
           } finally {
-            await Deno.remove(tempDir, { recursive: true });
+            await remove(tempDir, { recursive: true });
           }
         });
       },
@@ -197,13 +214,13 @@ describe(
       {},
       () => {
         it("prevents directory listing", async () => {
-          const tempDir = await Deno.makeTempDir({ prefix: "vf_dir_listing_" });
+          const tempDir = await makeTempDir({ prefix: "vf_dir_listing_" });
           try {
-            await Deno.mkdir(`${tempDir}/public/assets`, { recursive: true });
-            await Deno.writeTextFile(`${tempDir}/public/assets/file1.txt`, "content1");
-            await Deno.writeTextFile(`${tempDir}/public/assets/file2.txt`, "content2");
+            await mkdir(`${tempDir}/public/assets`, { recursive: true });
+            await writeTextFile(`${tempDir}/public/assets/file1.txt`, "content1");
+            await writeTextFile(`${tempDir}/public/assets/file2.txt`, "content2");
 
-            const adapter = denoAdapter;
+            const adapter = await getAdapter();
             const handler = createVeryfrontHandler(tempDir, adapter);
 
             const res = await handler(new Request("http://localhost:8000/assets/"));
@@ -215,17 +232,17 @@ describe(
               "Should not list files",
             );
           } finally {
-            await Deno.remove(tempDir, { recursive: true });
+            await remove(tempDir, { recursive: true });
           }
         });
 
         it("serves files from dist/ with immutable cache for hashed files", async () => {
-          const tempDir = await Deno.makeTempDir({ prefix: "vf_dist_cache_" });
+          const tempDir = await makeTempDir({ prefix: "vf_dist_cache_" });
           try {
-            await Deno.mkdir(`${tempDir}/dist`, { recursive: true });
-            await Deno.writeTextFile(`${tempDir}/dist/bundle.a1b2c3d4.js`, "bundled code");
+            await mkdir(`${tempDir}/dist`, { recursive: true });
+            await writeTextFile(`${tempDir}/dist/bundle.a1b2c3d4.js`, "bundled code");
 
-            const adapter = denoAdapter;
+            const adapter = await getAdapter();
             const handler = createVeryfrontHandler(tempDir, adapter);
 
             const res = await handler(new Request("http://localhost:8000/bundle.a1b2c3d4.js"));
@@ -238,19 +255,19 @@ describe(
               "Should set long max-age for hashed files",
             );
           } finally {
-            await Deno.remove(tempDir, { recursive: true });
+            await remove(tempDir, { recursive: true });
           }
         });
 
         it("validates file extensions for proper content-type", async () => {
-          const tempDir = await Deno.makeTempDir({ prefix: "vf_content_type_" });
+          const tempDir = await makeTempDir({ prefix: "vf_content_type_" });
           try {
-            await Deno.mkdir(`${tempDir}/public`, { recursive: true });
-            await Deno.writeTextFile(`${tempDir}/public/test.js`, 'console.log("test")');
-            await Deno.writeTextFile(`${tempDir}/public/style.css`, "body { margin: 0; }");
-            await Deno.writeTextFile(`${tempDir}/public/data.json`, '{"key":"value"}');
+            await mkdir(`${tempDir}/public`, { recursive: true });
+            await writeTextFile(`${tempDir}/public/test.js`, 'console.log("test")');
+            await writeTextFile(`${tempDir}/public/style.css`, "body { margin: 0; }");
+            await writeTextFile(`${tempDir}/public/data.json`, '{"key":"value"}');
 
-            const adapter = denoAdapter;
+            const adapter = await getAdapter();
             const handler = createVeryfrontHandler(tempDir, adapter);
 
             const tests = [
@@ -268,18 +285,18 @@ describe(
               );
             }
           } finally {
-            await Deno.remove(tempDir, { recursive: true });
+            await remove(tempDir, { recursive: true });
           }
         });
 
         it("prevents null byte injection in file paths", async () => {
-          const tempDir = await Deno.makeTempDir({ prefix: "vf_null_byte_" });
+          const tempDir = await makeTempDir({ prefix: "vf_null_byte_" });
           try {
-            await Deno.mkdir(`${tempDir}/public`, { recursive: true });
-            await Deno.writeTextFile(`${tempDir}/public/safe.txt`, "safe");
-            await Deno.writeTextFile(`${tempDir}/secret.txt`, "SECRET");
+            await mkdir(`${tempDir}/public`, { recursive: true });
+            await writeTextFile(`${tempDir}/public/safe.txt`, "safe");
+            await writeTextFile(`${tempDir}/secret.txt`, "SECRET");
 
-            const adapter = denoAdapter;
+            const adapter = await getAdapter();
             const handler = createVeryfrontHandler(tempDir, adapter);
 
             // Null byte attack to bypass extension check
@@ -287,25 +304,27 @@ describe(
 
             assertEquals(res.status, 404, "Should block null byte injection");
           } finally {
-            await Deno.remove(tempDir, { recursive: true });
+            await remove(tempDir, { recursive: true });
           }
         });
 
         it("handles symbolic link attacks safely", async () => {
-          const tempDir = await Deno.makeTempDir({ prefix: "vf_symlink_" });
+          const tempDir = await makeTempDir({ prefix: "vf_symlink_" });
           try {
-            await Deno.mkdir(`${tempDir}/public`, { recursive: true });
-            await Deno.writeTextFile(`${tempDir}/secret.txt`, "SECRET");
+            await mkdir(`${tempDir}/public`, { recursive: true });
+            await writeTextFile(`${tempDir}/secret.txt`, "SECRET");
 
             // Create symlink from public to parent directory
-            try {
-              await Deno.symlink(`${tempDir}/secret.txt`, `${tempDir}/public/link.txt`);
-            } catch {
+            const symlinkCreated = await trySymlink(
+              `${tempDir}/secret.txt`,
+              `${tempDir}/public/link.txt`,
+            );
+            if (!symlinkCreated) {
               // Skip test if symlinks not supported
               return;
             }
 
-            const adapter = denoAdapter;
+            const adapter = await getAdapter();
             const handler = createVeryfrontHandler(tempDir, adapter);
 
             const res = await handler(new Request("http://localhost:8000/link.txt"));
@@ -319,7 +338,11 @@ describe(
               assertEquals(res.status, 404, "Should block symlink traversal");
             }
           } finally {
-            await Deno.remove(tempDir, { recursive: true }).catch(() => {});
+            try {
+              await remove(tempDir, { recursive: true });
+            } catch {
+              // Ignore cleanup errors
+            }
           }
         });
       },
@@ -330,9 +353,9 @@ describe(
       {},
       () => {
         it("handles malformed URLs gracefully", async () => {
-          const tempDir = await Deno.makeTempDir({ prefix: "vf_malformed_url_" });
+          const tempDir = await makeTempDir({ prefix: "vf_malformed_url_" });
           try {
-            const adapter = denoAdapter;
+            const adapter = await getAdapter();
             const handler = createVeryfrontHandler(tempDir, adapter);
 
             const malformedUrls = [
@@ -347,14 +370,14 @@ describe(
               assert(res.status >= 200 && res.status < 500, `Should handle: ${url}`);
             }
           } finally {
-            await Deno.remove(tempDir, { recursive: true });
+            await remove(tempDir, { recursive: true });
           }
         });
 
         it("handles extremely long URLs", async () => {
-          const tempDir = await Deno.makeTempDir({ prefix: "vf_long_url_" });
+          const tempDir = await makeTempDir({ prefix: "vf_long_url_" });
           try {
-            const adapter = denoAdapter;
+            const adapter = await getAdapter();
             const handler = createVeryfrontHandler(tempDir, adapter);
 
             const longPath = "/path/" + "a".repeat(10000);
@@ -362,14 +385,14 @@ describe(
 
             assert(res.status >= 200 && res.status < 500, "Should handle long URL");
           } finally {
-            await Deno.remove(tempDir, { recursive: true });
+            await remove(tempDir, { recursive: true });
           }
         });
 
         it("handles invalid HTTP methods gracefully", async () => {
-          const tempDir = await Deno.makeTempDir({ prefix: "vf_invalid_method_" });
+          const tempDir = await makeTempDir({ prefix: "vf_invalid_method_" });
           try {
-            const adapter = denoAdapter;
+            const adapter = await getAdapter();
             const handler = createVeryfrontHandler(tempDir, adapter);
 
             // Standard methods should work
@@ -388,14 +411,14 @@ describe(
               // Some environments may reject invalid methods at the Request level
             }
           } finally {
-            await Deno.remove(tempDir, { recursive: true });
+            await remove(tempDir, { recursive: true });
           }
         });
 
         it("prevents HTTP request smuggling via malformed headers", async () => {
-          const tempDir = await Deno.makeTempDir({ prefix: "vf_smuggling_" });
+          const tempDir = await makeTempDir({ prefix: "vf_smuggling_" });
           try {
-            const adapter = denoAdapter;
+            const adapter = await getAdapter();
             const handler = createVeryfrontHandler(tempDir, adapter);
 
             // Attempt request smuggling with Transfer-Encoding and Content-Length
@@ -412,14 +435,14 @@ describe(
 
             assert(res.status >= 200 && res.status < 500, "Should handle without smuggling");
           } finally {
-            await Deno.remove(tempDir, { recursive: true });
+            await remove(tempDir, { recursive: true });
           }
         });
 
         it("validates query parameter injection", async () => {
-          const tempDir = await Deno.makeTempDir({ prefix: "vf_query_injection_" });
+          const tempDir = await makeTempDir({ prefix: "vf_query_injection_" });
           try {
-            const adapter = denoAdapter;
+            const adapter = await getAdapter();
             const handler = createVeryfrontHandler(tempDir, adapter);
 
             const injectionAttempts = [
@@ -436,7 +459,7 @@ describe(
               assert(!body.includes("<script>"), "Should not reflect script tags");
             }
           } finally {
-            await Deno.remove(tempDir, { recursive: true });
+            await remove(tempDir, { recursive: true });
           }
         });
       },
@@ -447,16 +470,22 @@ describe(
       {},
       () => {
         it("enforces Basic Auth when configured", async () => {
-          const tempDir = await Deno.makeTempDir({ prefix: "vf_basic_auth_" });
+          const tempDir = await makeTempDir({ prefix: "vf_basic_auth_" });
           try {
-            const adapter = denoAdapter;
-            adapter.env.get = (key: string) => {
-              if (key === "VERYFRONT_BASIC_USER") return "admin";
-              if (key === "VERYFRONT_BASIC_PASS") return "secret123";
-              return undefined;
-            };
-
-            const handler = createVeryfrontHandler(tempDir, adapter);
+            // Use createMockAdapter to avoid mutating the global singleton
+            const adapter = await createMockAdapter();
+            const handler = createVeryfrontHandler(tempDir, adapter, {
+              config: {
+                security: {
+                  auth: {
+                    basic: {
+                      username: "admin",
+                      password: "secret123",
+                    },
+                  },
+                },
+              } as VeryfrontConfig,
+            });
 
             // Request without auth
             const res1 = await handler(new Request("http://localhost:8000/healthz"));
@@ -484,20 +513,26 @@ describe(
             );
             assertEquals(res3.status, 401, "Should reject incorrect auth");
           } finally {
-            await Deno.remove(tempDir, { recursive: true });
+            await remove(tempDir, { recursive: true });
           }
         });
 
         it("enforces Bearer token when configured", async () => {
-          const tempDir = await Deno.makeTempDir({ prefix: "vf_bearer_auth_" });
+          const tempDir = await makeTempDir({ prefix: "vf_bearer_auth_" });
           try {
-            const adapter = denoAdapter;
-            adapter.env.get = (key: string) => {
-              if (key === "VERYFRONT_BEARER_TOKEN") return "secret-token-123";
-              return undefined;
-            };
-
-            const handler = createVeryfrontHandler(tempDir, adapter);
+            // Use createMockAdapter to avoid mutating the global singleton
+            const adapter = await createMockAdapter();
+            const handler = createVeryfrontHandler(tempDir, adapter, {
+              config: {
+                security: {
+                  auth: {
+                    bearer: {
+                      token: "secret-token-123",
+                    },
+                  },
+                },
+              } as VeryfrontConfig,
+            });
 
             // Request without token
             const res1 = await handler(new Request("http://localhost:8000/healthz"));
@@ -519,21 +554,27 @@ describe(
             );
             assertEquals(res3.status, 401, "Should reject incorrect token");
           } finally {
-            await Deno.remove(tempDir, { recursive: true });
+            await remove(tempDir, { recursive: true });
           }
         });
 
         it("allows OPTIONS requests without auth (CORS preflight)", async () => {
-          const tempDir = await Deno.makeTempDir({ prefix: "vf_auth_options_" });
+          const tempDir = await makeTempDir({ prefix: "vf_auth_options_" });
           try {
-            const adapter = denoAdapter;
-            adapter.env.get = (key: string) => {
-              if (key === "VERYFRONT_BASIC_USER") return "admin";
-              if (key === "VERYFRONT_BASIC_PASS") return "secret";
-              return undefined;
-            };
-
-            const handler = createVeryfrontHandler(tempDir, adapter);
+            // Use createMockAdapter to avoid mutating the global singleton
+            const adapter = await createMockAdapter();
+            const handler = createVeryfrontHandler(tempDir, adapter, {
+              config: {
+                security: {
+                  auth: {
+                    basic: {
+                      username: "admin",
+                      password: "secret",
+                    },
+                  },
+                },
+              } as VeryfrontConfig,
+            });
 
             // OPTIONS should bypass auth for CORS preflight
             const res = await handler(
@@ -544,20 +585,26 @@ describe(
 
             assertEquals(res.status, 204, "Should allow OPTIONS without auth");
           } finally {
-            await Deno.remove(tempDir, { recursive: true });
+            await remove(tempDir, { recursive: true });
           }
         });
 
         it("prevents timing attacks on auth comparison", async () => {
-          const tempDir = await Deno.makeTempDir({ prefix: "vf_auth_timing_" });
+          const tempDir = await makeTempDir({ prefix: "vf_auth_timing_" });
           try {
-            const adapter = denoAdapter;
-            adapter.env.get = (key: string) => {
-              if (key === "VERYFRONT_BEARER_TOKEN") return "a".repeat(32);
-              return undefined;
-            };
-
-            const handler = createVeryfrontHandler(tempDir, adapter);
+            // Use createMockAdapter to avoid mutating the global singleton
+            const adapter = await createMockAdapter();
+            const handler = createVeryfrontHandler(tempDir, adapter, {
+              config: {
+                security: {
+                  auth: {
+                    bearer: {
+                      token: "a".repeat(32),
+                    },
+                  },
+                },
+              } as VeryfrontConfig,
+            });
 
             // Measure timing for correct vs incorrect tokens
             const timings: number[] = [];
@@ -591,7 +638,7 @@ describe(
             const diff = Math.abs(correctAvg - incorrectAvg);
             assert(diff < 10, "Timing should be similar to prevent timing attacks");
           } finally {
-            await Deno.remove(tempDir, { recursive: true });
+            await remove(tempDir, { recursive: true });
           }
         });
       },
@@ -602,14 +649,14 @@ describe(
       {},
       () => {
         it("validates /_veryfront/fs/ endpoint security", async () => {
-          const tempDir = await Deno.makeTempDir({ prefix: "vf_fs_endpoint_" });
+          const tempDir = await makeTempDir({ prefix: "vf_fs_endpoint_" });
           try {
-            await Deno.writeTextFile(`${tempDir}/secret.ts`, 'export const SECRET = "leaked"');
-            await Deno.mkdir(`${tempDir}/app`, { recursive: true });
-            await Deno.writeTextFile(`${tempDir}/app/safe.ts`, 'export const SAFE = "ok"');
+            await writeTextFile(`${tempDir}/secret.ts`, 'export const SECRET = "leaked"');
+            await mkdir(`${tempDir}/app`, { recursive: true });
+            await writeTextFile(`${tempDir}/app/safe.ts`, 'export const SAFE = "ok"');
 
             // Ensure no auth pollution - use development mode for /_veryfront/fs/
-            const adapter = createMockAdapter({});
+            const adapter = await createMockAdapter({});
             const handler = createVeryfrontHandler(tempDir, adapter, {
               projectDir: tempDir,
               mode: "development",
@@ -636,15 +683,15 @@ describe(
 
             assertEquals(res2.status, 200, "Should serve safe file");
           } finally {
-            await Deno.remove(tempDir, { recursive: true });
+            await remove(tempDir, { recursive: true });
           }
         });
 
         it("prevents metrics endpoint information disclosure", async () => {
-          const tempDir = await Deno.makeTempDir({ prefix: "vf_metrics_disclosure_" });
+          const tempDir = await makeTempDir({ prefix: "vf_metrics_disclosure_" });
           try {
             // Ensure no auth pollution
-            const adapter = createMockAdapter({});
+            const adapter = await createMockAdapter({});
             const handler = createVeryfrontHandler(tempDir, adapter);
 
             const res = await handler(new Request("http://localhost:8000/_metrics"));
@@ -655,15 +702,15 @@ describe(
             assertExists(data.counters, "Should have counters");
             // Memory and uptime are OK to expose in metrics
           } finally {
-            await Deno.remove(tempDir, { recursive: true });
+            await remove(tempDir, { recursive: true });
           }
         });
 
         it("validates health endpoint security headers", async () => {
-          const tempDir = await Deno.makeTempDir({ prefix: "vf_health_security_" });
+          const tempDir = await makeTempDir({ prefix: "vf_health_security_" });
           try {
             // Ensure no auth pollution
-            const adapter = createMockAdapter({});
+            const adapter = await createMockAdapter({});
             const handler = createVeryfrontHandler(tempDir, adapter);
 
             const res = await handler(new Request("http://localhost:8000/_health"));
@@ -680,7 +727,7 @@ describe(
               "Should have X-Content-Type-Options",
             );
           } finally {
-            await Deno.remove(tempDir, { recursive: true });
+            await remove(tempDir, { recursive: true });
           }
         });
       },
@@ -691,12 +738,12 @@ describe(
       {},
       () => {
         it("uses x-forwarded-host for domain parsing when present", async () => {
-          const tempDir = await Deno.makeTempDir({ prefix: "vf_proxy_header_" });
+          const tempDir = await makeTempDir({ prefix: "vf_proxy_header_" });
           try {
-            await Deno.mkdir(`${tempDir}/app`, { recursive: true });
-            await Deno.writeTextFile(`${tempDir}/app/page.tsx`, `export default function Page() { return <div>Test</div>; }`);
+            await mkdir(`${tempDir}/app`, { recursive: true });
+            await writeTextFile(`${tempDir}/app/page.tsx`, `export default function Page() { return <div>Test</div>; }`);
 
-            const adapter = createMockAdapter({});
+            const adapter = await createMockAdapter({});
             const handler = createVeryfrontHandler(tempDir, adapter, {
               projectDir: tempDir,
               mode: "production",
@@ -714,14 +761,14 @@ describe(
 
             assertEquals(res.status, 200, "Should handle proxied request");
           } finally {
-            await Deno.remove(tempDir, { recursive: true });
+            await remove(tempDir, { recursive: true });
           }
         });
 
         it("falls back to host header when x-forwarded-host is absent", async () => {
-          const tempDir = await Deno.makeTempDir({ prefix: "vf_no_proxy_header_" });
+          const tempDir = await makeTempDir({ prefix: "vf_no_proxy_header_" });
           try {
-            const adapter = createMockAdapter({});
+            const adapter = await createMockAdapter({});
             const handler = createVeryfrontHandler(tempDir, adapter, {
               projectDir: tempDir,
               mode: "production",
@@ -738,17 +785,17 @@ describe(
 
             assertEquals(res.status, 200, "Should handle direct request");
           } finally {
-            await Deno.remove(tempDir, { recursive: true });
+            await remove(tempDir, { recursive: true });
           }
         });
 
         it("prefers x-forwarded-host over host header for Veryfront domain detection", async () => {
-          const tempDir = await Deno.makeTempDir({ prefix: "vf_proxy_vf_domain_" });
+          const tempDir = await makeTempDir({ prefix: "vf_proxy_vf_domain_" });
           try {
-            await Deno.mkdir(`${tempDir}/app`, { recursive: true });
-            await Deno.writeTextFile(`${tempDir}/app/page.tsx`, `export default function Page() { return <div>Test</div>; }`);
+            await mkdir(`${tempDir}/app`, { recursive: true });
+            await writeTextFile(`${tempDir}/app/page.tsx`, `export default function Page() { return <div>Test</div>; }`);
 
-            const adapter = createMockAdapter({});
+            const adapter = await createMockAdapter({});
             const handler = createVeryfrontHandler(tempDir, adapter, {
               projectDir: tempDir,
               mode: "production",
@@ -766,7 +813,7 @@ describe(
 
             assertEquals(res.status, 200, "Should correctly parse Veryfront domain from x-forwarded-host");
           } finally {
-            await Deno.remove(tempDir, { recursive: true });
+            await remove(tempDir, { recursive: true });
           }
         });
       },
@@ -777,10 +824,10 @@ describe(
       {},
       () => {
         it("handles rapid concurrent requests", async () => {
-          const tempDir = await Deno.makeTempDir({ prefix: "vf_concurrent_" });
+          const tempDir = await makeTempDir({ prefix: "vf_concurrent_" });
           try {
             // Ensure no auth pollution
-            const adapter = createMockAdapter({});
+            const adapter = await createMockAdapter({});
             const handler = createVeryfrontHandler(tempDir, adapter);
 
             // Send 50 concurrent requests
@@ -796,14 +843,14 @@ describe(
               assertEquals(res.status, 200, "Should handle concurrent requests");
             }
           } finally {
-            await Deno.remove(tempDir, { recursive: true });
+            await remove(tempDir, { recursive: true });
           }
         });
 
         it("handles large request bodies safely", async () => {
-          const tempDir = await Deno.makeTempDir({ prefix: "vf_large_body_" });
+          const tempDir = await makeTempDir({ prefix: "vf_large_body_" });
           try {
-            const adapter = denoAdapter;
+            const adapter = await getAdapter();
             const handler = createVeryfrontHandler(tempDir, adapter);
 
             // Create a large body (1MB)
@@ -819,14 +866,14 @@ describe(
 
             assert(res.status >= 200 && res.status < 500, "Should handle large body");
           } finally {
-            await Deno.remove(tempDir, { recursive: true });
+            await remove(tempDir, { recursive: true });
           }
         });
 
         it("prevents slowloris-style attacks with streaming", async () => {
-          const tempDir = await Deno.makeTempDir({ prefix: "vf_slowloris_" });
+          const tempDir = await makeTempDir({ prefix: "vf_slowloris_" });
           try {
-            const adapter = denoAdapter;
+            const adapter = await getAdapter();
             const handler = createVeryfrontHandler(tempDir, adapter);
 
             // Simulate slow request with chunked encoding
@@ -862,6 +909,8 @@ describe(
                 method: "POST",
                 body: stream,
                 headers: { "Content-Type": "text/plain" },
+                // @ts-expect-error - duplex is required for streaming in Node.js
+                duplex: "half",
               }),
             );
 
@@ -871,7 +920,7 @@ describe(
             // Wait for request body stream to complete
             await streamCompletePromise;
           } finally {
-            await Deno.remove(tempDir, { recursive: true });
+            await remove(tempDir, { recursive: true });
           }
         });
       },

@@ -3,9 +3,10 @@
  * Tests network failures, timeout scenarios, invalid responses, and error handling
  */
 
-import { assertEquals, assertExists, assertRejects } from "@std/assert";
-import { describe } from "@std/testing/bdd";
+import { assertEquals, assertExists, assertRejects } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
 import { type DataContext, DataFetcher, type PageWithData } from "@veryfront/data/index.ts";
+import { delay } from "@std/async";
 
 type StaticDataContext = Omit<DataContext, "request" | "query">;
 
@@ -19,16 +20,10 @@ function makeContext(url: string, params: Record<string, string> = {}): DataCont
   };
 }
 
-// Each test creates DataFetcher which has internal cleanup intervals
-// Disable resource sanitization for all tests in this suite
-Deno.test({
-  name: "DataFetcher - Edge Cases and Error Handling",
-  sanitizeResources: false,
-  sanitizeOps: false,
-  fn: () => {
-    describe("DataFetcher - Edge Cases and Error Handling", () => {
-      describe("Invalid page modules", () => {
-        Deno.test("should handle page with no data fetching methods", async () => {
+describe("DataFetcher - Edge Cases and Error Handling", () => {
+  describe("DataFetcher - Edge Cases and Error Handling", () => {
+    describe("Invalid page modules", () => {
+      it("should handle page with no data fetching methods", async () => {
           const fetcher = new DataFetcher();
           const page: PageWithData = {
             default: () => null,
@@ -39,7 +34,7 @@ Deno.test({
           assertEquals(result.props, {});
         });
 
-        Deno.test("should handle page with null getServerData", async () => {
+        it("should handle page with null getServerData", async () => {
           const fetcher = new DataFetcher();
           const page: PageWithData = {
             default: () => null,
@@ -51,7 +46,7 @@ Deno.test({
           assertEquals(result.props, {});
         });
 
-        Deno.test("should handle page with undefined getStaticData", async () => {
+        it("should handle page with undefined getStaticData", async () => {
           const fetcher = new DataFetcher();
           const page: PageWithData = {
             default: () => null,
@@ -67,7 +62,7 @@ Deno.test({
           assertEquals(result.props, {});
         });
 
-        Deno.test("should handle page with non-function data methods", async () => {
+        it("should handle page with non-function data methods", async () => {
           const fetcher = new DataFetcher();
           const page: PageWithData = {
             default: () => null,
@@ -81,7 +76,7 @@ Deno.test({
       });
 
       describe("Data fetching errors", () => {
-        Deno.test("should propagate getServerData errors", async () => {
+        it("should propagate getServerData errors", async () => {
           const fetcher = new DataFetcher();
           const page: PageWithData = {
             default: () => null,
@@ -97,7 +92,7 @@ Deno.test({
           );
         });
 
-        Deno.test("should propagate getStaticData errors", async () => {
+        it("should propagate getStaticData errors", async () => {
           const fetcher = new DataFetcher();
           const page: PageWithData = {
             default: () => null,
@@ -113,7 +108,7 @@ Deno.test({
           );
         });
 
-        Deno.test("should handle async errors in getServerData", async () => {
+        it("should handle async errors in getServerData", async () => {
           const fetcher = new DataFetcher();
           const page: PageWithData = {
             default: () => null,
@@ -130,7 +125,7 @@ Deno.test({
           );
         });
 
-        Deno.test("should handle async errors in getStaticData", async () => {
+        it("should handle async errors in getStaticData", async () => {
           const fetcher = new DataFetcher();
           const page: PageWithData = {
             default: () => null,
@@ -147,7 +142,7 @@ Deno.test({
           );
         });
 
-        Deno.test("should handle errors in getStaticPaths", async () => {
+        it("should handle errors in getStaticPaths", async () => {
           const fetcher = new DataFetcher();
           const page: PageWithData = {
             default: () => null,
@@ -165,7 +160,7 @@ Deno.test({
       });
 
       describe("Invalid data results", () => {
-        Deno.test("should handle null props", async () => {
+        it("should handle null props", async () => {
           const fetcher = new DataFetcher();
           const page: PageWithData = {
             default: () => null,
@@ -179,7 +174,7 @@ Deno.test({
           assertEquals(result.props, {});
         });
 
-        Deno.test("should handle undefined props", async () => {
+        it("should handle undefined props", async () => {
           const fetcher = new DataFetcher();
           const page: PageWithData = {
             default: () => null,
@@ -193,7 +188,7 @@ Deno.test({
           assertEquals(result.props, {});
         });
 
-        Deno.test("should handle props with circular references", async () => {
+        it("should handle props with circular references", async () => {
           const fetcher = new DataFetcher();
           const circular: any = { value: "test" };
           circular.self = circular;
@@ -210,7 +205,7 @@ Deno.test({
           assertExists(result.props);
         });
 
-        Deno.test("should handle very large props", async () => {
+        it("should handle very large props", async () => {
           const fetcher = new DataFetcher();
           const largeProps = {
             data: "x".repeat(1000000), // 1MB string
@@ -228,7 +223,7 @@ Deno.test({
           assertEquals((result.props as any)?.data.length, 1000000);
         });
 
-        Deno.test("should handle props with special types", async () => {
+        it("should handle props with special types", async () => {
           const fetcher = new DataFetcher();
           const specialProps = {
             date: new Date(),
@@ -253,7 +248,7 @@ Deno.test({
       });
 
       describe("Redirect handling", () => {
-        Deno.test("should handle redirect without permanent flag", async () => {
+        it("should handle redirect without permanent flag", async () => {
           const fetcher = new DataFetcher();
           const page: PageWithData = {
             default: () => null,
@@ -270,7 +265,7 @@ Deno.test({
           assertEquals(result.redirect?.permanent, undefined);
         });
 
-        Deno.test("should handle redirect with empty destination", async () => {
+        it("should handle redirect with empty destination", async () => {
           const fetcher = new DataFetcher();
           const page: PageWithData = {
             default: () => null,
@@ -286,7 +281,7 @@ Deno.test({
           assertEquals(result.redirect?.destination, "");
         });
 
-        Deno.test("should handle redirect with special characters", async () => {
+        it("should handle redirect with special characters", async () => {
           const fetcher = new DataFetcher();
           const page: PageWithData = {
             default: () => null,
@@ -302,7 +297,7 @@ Deno.test({
           assertEquals(result.redirect?.destination, "/path?query=value&other=test#anchor");
         });
 
-        Deno.test("should handle redirect with both props and redirect", async () => {
+        it("should handle redirect with both props and redirect", async () => {
           const fetcher = new DataFetcher();
           const page: PageWithData = {
             default: () => null,
@@ -323,7 +318,7 @@ Deno.test({
       });
 
       describe("Not found handling", () => {
-        Deno.test("should handle notFound with props", async () => {
+        it("should handle notFound with props", async () => {
           const fetcher = new DataFetcher();
           const page: PageWithData = {
             default: () => null,
@@ -339,7 +334,7 @@ Deno.test({
           assertEquals(result.props, undefined);
         });
 
-        Deno.test("should handle notFound with redirect", async () => {
+        it("should handle notFound with redirect", async () => {
           const fetcher = new DataFetcher();
           const page: PageWithData = {
             default: () => null,
@@ -358,7 +353,7 @@ Deno.test({
       });
 
       describe("Revalidation edge cases", () => {
-        Deno.test("should handle revalidate with zero", async () => {
+        it("should handle revalidate with zero", async () => {
           const fetcher = new DataFetcher();
           const page: PageWithData = {
             default: () => null,
@@ -377,7 +372,7 @@ Deno.test({
           assertEquals(result.revalidate, 0);
         });
 
-        Deno.test("should handle revalidate with negative number", async () => {
+        it("should handle revalidate with negative number", async () => {
           const fetcher = new DataFetcher();
           const page: PageWithData = {
             default: () => null,
@@ -396,7 +391,7 @@ Deno.test({
           assertEquals(result.revalidate, -100);
         });
 
-        Deno.test("should handle very large revalidate values", async () => {
+        it("should handle very large revalidate values", async () => {
           const fetcher = new DataFetcher();
           const page: PageWithData = {
             default: () => null,
@@ -415,7 +410,7 @@ Deno.test({
           assertEquals(result.revalidate, Number.MAX_SAFE_INTEGER);
         });
 
-        Deno.test("should handle revalidate with fractional seconds", async () => {
+        it("should handle revalidate with fractional seconds", async () => {
           const fetcher = new DataFetcher();
           const page: PageWithData = {
             default: () => null,
@@ -431,7 +426,7 @@ Deno.test({
           assertEquals((result1.props as any)?.count, 1);
 
           // Wait for revalidation
-          await new Promise((r) => setTimeout(r, 600));
+          await delay(600);
 
           const result2 = await fetcher.fetchData(page, context, "production");
 
@@ -440,7 +435,7 @@ Deno.test({
       });
 
       describe("Cache edge cases", () => {
-        Deno.test("should handle cache with complex params", async () => {
+        it("should handle cache with complex params", async () => {
           const fetcher = new DataFetcher();
           const page: PageWithData = {
             default: () => null,
@@ -459,7 +454,7 @@ Deno.test({
           assertEquals((result1.props as any)?.params, (result2.props as any)?.params);
         });
 
-        Deno.test("should differentiate cache by URL path", async () => {
+        it("should differentiate cache by URL path", async () => {
           const fetcher = new DataFetcher();
           let callCount = 0;
 
@@ -477,7 +472,7 @@ Deno.test({
           assertEquals(callCount, 2); // Different paths = different cache entries
         });
 
-        Deno.test("should handle cache clear with pattern", async () => {
+        it("should handle cache clear with pattern", async () => {
           const fetcher = new DataFetcher();
           const page: PageWithData = {
             default: () => null,
@@ -500,7 +495,7 @@ Deno.test({
           assertExists(blogResult.props);
         });
 
-        Deno.test("should handle concurrent cache access", async () => {
+        it("should handle concurrent cache access", async () => {
           const fetcher = new DataFetcher();
           let callCount = 0;
 
@@ -508,7 +503,7 @@ Deno.test({
             default: () => null,
             getStaticData: async () => {
               callCount++;
-              await new Promise((r) => setTimeout(r, 10));
+              await delay(10);
               return { props: { count: callCount } };
             },
           };
@@ -530,7 +525,7 @@ Deno.test({
       });
 
       describe("Static paths edge cases", () => {
-        Deno.test("should handle getStaticPaths with empty paths", async () => {
+        it("should handle getStaticPaths with empty paths", async () => {
           const fetcher = new DataFetcher();
           const page: PageWithData = {
             default: () => null,
@@ -546,7 +541,7 @@ Deno.test({
           assertEquals(paths?.fallback, false);
         });
 
-        Deno.test("should handle getStaticPaths with fallback blocking", async () => {
+        it("should handle getStaticPaths with fallback blocking", async () => {
           const fetcher = new DataFetcher();
           const page: PageWithData = {
             default: () => null,
@@ -561,7 +556,7 @@ Deno.test({
           assertEquals(paths?.fallback, "blocking");
         });
 
-        Deno.test("should handle getStaticPaths with array params", async () => {
+        it("should handle getStaticPaths with array params", async () => {
           const fetcher = new DataFetcher();
           const page: PageWithData = {
             default: () => null,
@@ -576,7 +571,7 @@ Deno.test({
           assertEquals(Array.isArray(paths?.paths[0]?.params.slug), true);
         });
 
-        Deno.test("should handle getStaticPaths returning null", async () => {
+        it("should handle getStaticPaths returning null", async () => {
           const fetcher = new DataFetcher();
           const page: PageWithData = {
             default: () => null,
@@ -589,7 +584,7 @@ Deno.test({
           assertExists(paths !== undefined ? paths : null);
         });
 
-        Deno.test("should handle async getStaticPaths errors", async () => {
+        it("should handle async getStaticPaths errors", async () => {
           const fetcher = new DataFetcher();
           const page: PageWithData = {
             default: () => null,
@@ -606,7 +601,7 @@ Deno.test({
           );
         });
 
-        Deno.test("should handle very large number of paths", async () => {
+        it("should handle very large number of paths", async () => {
           const fetcher = new DataFetcher();
           const largePaths = Array.from({ length: 10000 }, (_, i) => ({
             params: { id: String(i) },
@@ -627,7 +622,7 @@ Deno.test({
       });
 
       describe("Context edge cases", () => {
-        Deno.test("should handle empty params", async () => {
+        it("should handle empty params", async () => {
           const fetcher = new DataFetcher();
           const page: PageWithData = {
             default: () => null,
@@ -641,7 +636,7 @@ Deno.test({
           assertEquals((result.props as any)?.params, {});
         });
 
-        Deno.test("should handle params with special characters", async () => {
+        it("should handle params with special characters", async () => {
           const fetcher = new DataFetcher();
           const page: PageWithData = {
             default: () => null,
@@ -658,7 +653,7 @@ Deno.test({
           assertEquals((result.props as any)?.slug, "test-\n\t-special");
         });
 
-        Deno.test("should handle query params with arrays", async () => {
+        it("should handle query params with arrays", async () => {
           const fetcher = new DataFetcher();
           const page: PageWithData = {
             default: () => null,
@@ -673,7 +668,7 @@ Deno.test({
           assertEquals((result.props as any)?.tags, ["a", "b", "c"]);
         });
 
-        Deno.test("should handle malformed URLs in context", async () => {
+        it("should handle malformed URLs in context", async () => {
           const fetcher = new DataFetcher();
           const page: PageWithData = {
             default: () => null,
@@ -692,5 +687,4 @@ Deno.test({
         });
       });
     });
-  }, // End of Deno.test fn
-}); // End of Deno.test
+});

@@ -23,16 +23,25 @@ export function runWithCacheDir<T>(cacheDir: string, fn: () => T): T {
 }
 
 /**
+ * Get the cache directory from AsyncLocalStorage, if set.
+ * Useful for consumers that need to respect per-test isolation
+ * but still apply their own config/env resolution logic.
+ */
+export function getCacheDirFromContext(): string | undefined {
+  return cacheStorage.getStore();
+}
+
+/**
  * Get the base cache directory path.
  *
  * Priority:
  * 1. AsyncLocalStorage context (for test isolation)
- * 2. VF_CACHE_DIR environment variable
+ * 2. VERYFRONT_CACHE_DIR / VF_CACHE_DIR environment variable
  * 3. .cache in current working directory
  */
 export function getCacheBaseDir(): string {
   // First check AsyncLocalStorage context (highest priority for isolation)
-  const contextCacheDir = cacheStorage.getStore();
+  const contextCacheDir = getCacheDirFromContext();
   if (contextCacheDir) {
     return contextCacheDir;
   }
@@ -55,7 +64,7 @@ export function getMdxEsmCacheDir(): string {
 }
 
 /**
- * Get the HTTP bundle cache directory path.
+ * Get the HTTP cache directory path.
  */
 export function getHttpBundleCacheDir(): string {
   return join(getCacheBaseDir(), "veryfront-http-bundle");

@@ -3,7 +3,7 @@
  * @module code-splitter/types
  */
 
-import type { Metafile } from "esbuild/mod.js";
+import type { Metafile } from "esbuild";
 
 /**
  * Type alias for esbuild metafile output structure

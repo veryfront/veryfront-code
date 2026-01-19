@@ -183,9 +183,17 @@ export class DevServer {
     );
 
     // Create handler with optional request interceptor (for combined proxy mode)
+    // NOTE: WebSocket upgrade requests MUST NOT be intercepted because the interceptor
+    // creates a new Request object, which breaks Deno.upgradeWebSocket() - it needs
+    // the original request to maintain the connection.
     const baseHandler = (req: Request) => this.pipeline.execute(req, this.adapter.env.toObject());
     const handler = this.options.requestInterceptor
       ? async (req: Request) => {
+        // Skip interceptor for WebSocket upgrade requests
+        const isWebSocketUpgrade = req.headers.get("upgrade")?.toLowerCase() === "websocket";
+        if (isWebSocketUpgrade) {
+          return baseHandler(req);
+        }
         const interceptedReq = await this.options.requestInterceptor!(req);
         return baseHandler(interceptedReq);
       }

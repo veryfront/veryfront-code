@@ -14,10 +14,10 @@
  * - Concurrent operations and resource management
  */
 
-import { assert, assertEquals, assertExists, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertExists, assertStringIncludes } from "@veryfront/testing/assert";
 import { delay } from "@std/async";
-import { join as _join } from "@std/path";
-import { afterAll, describe, it } from "@std/testing/bdd";
+import { join as _join } from "@veryfront/compat/path";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import { HMRServer as ModuleHMRServer } from "../../../../src/server/dev-server/hmr-server.ts";
 import { ErrorOverlay } from "../../../../src/server/dev-server/error-overlay/index.ts";
@@ -25,6 +25,10 @@ import { APIServer } from "../../../../src/modules/server/index.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { drainEventLoop } from "../../../_helpers/utils.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
+import { isDeno } from "../../../../src/platform/compat/runtime.ts";
+
+// WebSocket tests only work in Deno - Bun's WebSocket API requires different integration
+const wsIt = isDeno ? it : it.skip;
 
 // Helper to create mock renderer for API server
 function createMockRenderer() {
@@ -59,7 +63,7 @@ describe(
         sanitizeOps: true,
       },
       () => {
-        it("broadcasts file changes to all connected clients", async () => {
+        wsIt("broadcasts file changes to all connected clients", async () => {
           await withTestContext("hmr-broadcast-multiple-clients", async (context) => {
             const adapter = await getAdapter();
             const port = await context.allocatePort();
@@ -121,7 +125,7 @@ describe(
           });
         });
 
-        it("handles WebSocket connection errors gracefully", async () => {
+        wsIt("handles WebSocket connection errors gracefully", async () => {
           await withTestContext("hmr-connection-errors", async (context) => {
             const adapter = await getAdapter();
             const port = await context.allocatePort();
@@ -164,7 +168,7 @@ describe(
           });
         });
 
-        it("manages multiple clients connecting and disconnecting", async () => {
+        wsIt("manages multiple clients connecting and disconnecting", async () => {
           await withTestContext("hmr-client-lifecycle", async (context) => {
             const adapter = await getAdapter();
             const port = await context.allocatePort();
@@ -216,7 +220,7 @@ describe(
           });
         });
 
-        it("broadcasts updates only to connected clients", async () => {
+        wsIt("broadcasts updates only to connected clients", async () => {
           await withTestContext("hmr-selective-broadcast", async (context) => {
             const adapter = await getAdapter();
             const port = await context.allocatePort();
@@ -507,7 +511,7 @@ describe(
           });
         });
 
-        it("handles concurrent HMR updates and API requests", async () => {
+        wsIt("handles concurrent HMR updates and API requests", async () => {
           await withTestContext("concurrent-operations", async (context) => {
             const adapter = await getAdapter();
             const port = await context.allocatePort();
@@ -655,7 +659,7 @@ describe(
           });
         });
 
-        it("handles graceful shutdown with active connections", async () => {
+        wsIt("handles graceful shutdown with active connections", async () => {
           await withTestContext("graceful-shutdown", async (context) => {
             const adapter = await getAdapter();
             const port = await context.allocatePort();

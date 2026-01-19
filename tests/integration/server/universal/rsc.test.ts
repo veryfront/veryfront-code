@@ -1,8 +1,9 @@
-import { assertEquals, assertExists, assertMatch } from "@std/assert";
-import { afterAll, describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists, assertMatch } from "@veryfront/testing/assert";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
 import "../../../_helpers/log-guard.ts";
 
-import { join } from "@std/path";
+import { mkdir, writeTextFile } from "@veryfront/compat/fs.ts";
+import { join } from "@veryfront/compat/path";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
 import { assertDrained } from "../../../_helpers/utils.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
@@ -19,14 +20,14 @@ describe(
     it("serves hydrate.js alias and RSC render ETag/304", async () => {
       await withTestContext("universal-server-rsc-hydrate-etag", async (context: TestContext) => {
         // Enable RSC via config instead of env var
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
           `export default { experimental: { rsc: true } };`,
         );
 
         const dir = join(context.projectDir, "app");
-        await Deno.mkdir(dir, { recursive: true });
-        await Deno.writeTextFile(
+        await mkdir(dir, { recursive: true });
+        await writeTextFile(
           join(dir, "page.ts"),
           `export default async function Page(){ return '<div>Hi</div>'; }`,
         );
@@ -56,14 +57,14 @@ describe(
     it("streams RSC NDJSON with root and sidebar slots in order", async () => {
       await withTestContext("universal-server-rsc-stream-order", async (context: TestContext) => {
         // Enable RSC via config instead of env var
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
           `export default { experimental: { rsc: true } };`,
         );
 
         const dir = join(context.projectDir, "app", "rsc");
-        await Deno.mkdir(dir, { recursive: true });
-        await Deno.writeTextFile(
+        await mkdir(dir, { recursive: true });
+        await writeTextFile(
           join(dir, "page.ts"),
           `export default async function Page(){ return '<div>RSC Stream</div>'; }`,
         );
@@ -76,10 +77,18 @@ describe(
         const reader = resp.body.getReader();
         const dec = new TextDecoder();
         let buf = "";
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buf += dec.decode(value);
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += dec.decode(value);
+          }
+        } finally {
+          try {
+            await reader.cancel();
+          } catch {
+            // ignore stream cancellation errors
+          }
         }
         const lines = buf.split(/\n+/).filter((l) => l.trim().startsWith("{"));
         const events = lines
@@ -112,19 +121,19 @@ describe(
     it("serves RSC render/page endpoints for App Router page", async () => {
       await withTestContext("universal-server-rsc-endpoints", async (context: TestContext) => {
         // Enable RSC via config instead of env var
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
           `export default { experimental: { rsc: true } };`,
         );
 
         // Setup: create an app route that returns simple HTML string (no TSX) and a client component
         const dir = join(context.projectDir, "app", "rsc");
-        await Deno.mkdir(dir, { recursive: true });
-        await Deno.writeTextFile(
+        await mkdir(dir, { recursive: true });
+        await writeTextFile(
           join(dir, "page.ts"),
           `export default async function Page(){ return '<div id="rsc-hello">RSC Hello</div>'; }`,
         );
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(dir, "Button.client.tsx"),
           `"use client"\nexport default function Button(){ return <button id="btn">Click</button>; }`,
         );
@@ -188,9 +197,16 @@ describe(
         assertEquals(s.status, 200);
         assertExists(s.body);
         const reader = s.body.getReader();
-        const { value } = await reader.read();
-        if (!value || value.length === 0) throw new Error("empty stream");
-        await reader.cancel();
+        try {
+          const { value } = await reader.read();
+          if (!value || value.length === 0) throw new Error("empty stream");
+        } finally {
+          try {
+            await reader.cancel();
+          } catch {
+            // ignore stream cancellation errors
+          }
+        }
 
         await assertDrained();
       });

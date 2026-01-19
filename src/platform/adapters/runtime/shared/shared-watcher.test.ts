@@ -1,5 +1,5 @@
-import { assertEquals, assertExists } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
 import {
   createFileWatcher,
   createWatcherIterator,
@@ -23,11 +23,10 @@ describe("shared-watcher", () => {
 
     it("should create an async iterator", () => {
       const eventQueue: any[] = [];
-      let resolver: any = null;
+      let _resolver: any = null;
       const iterator = createWatcherIterator(
         eventQueue,
-        () => resolver,
-        (r) => (resolver = r),
+        (r) => (_resolver = r),
         () => false,
         () => false,
       );
@@ -38,11 +37,10 @@ describe("shared-watcher", () => {
 
     it("should return done when closed", async () => {
       const eventQueue: any[] = [];
-      let resolver: any = null;
+      let _resolver: any = null;
       const iterator = createWatcherIterator(
         eventQueue,
-        () => resolver,
-        (r) => (resolver = r),
+        (r) => (_resolver = r),
         () => true,
         () => false,
       );
@@ -53,11 +51,10 @@ describe("shared-watcher", () => {
     it("should return events from queue", async () => {
       const event = { kind: "modify" as const, paths: ["/test/file.ts"] };
       const eventQueue: any[] = [event];
-      let resolver: any = null;
+      let _resolver: any = null;
       const iterator = createWatcherIterator(
         eventQueue,
-        () => resolver,
-        (r) => (resolver = r),
+        (r) => (_resolver = r),
         () => false,
         () => false,
       );

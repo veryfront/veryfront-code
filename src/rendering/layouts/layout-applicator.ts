@@ -15,6 +15,7 @@ import {
 } from "../app-reserved.ts";
 import { detectAppRouter } from "../router-detection.ts";
 import { getProjectReact } from "@veryfront/react";
+import { extract } from "@std/front-matter/yaml";
 // Import using bare specifiers that match user code imports
 // This ensures SSR and client use the same module instance (same React context)
 import { RouterProvider } from "veryfront/react/router";
@@ -259,7 +260,6 @@ export class LayoutApplicator {
   ): Promise<React.ComponentType<Record<string, unknown>> | null> {
     try {
       const { compile } = await import("@mdx-js/mdx");
-      const { extract } = await import("std/front_matter/yaml.ts");
       const { getRehypePlugins, getRemarkPlugins } = await import(
         "@veryfront/transforms/plugins/plugin-loader.ts"
       );

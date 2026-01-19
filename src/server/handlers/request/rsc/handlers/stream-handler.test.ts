@@ -1,4 +1,4 @@
-import { beforeEach, describe, it } from "@std/testing/bdd";
+import { beforeEach, describe, it } from "@veryfront/testing/bdd";
 import { expect } from "@std/expect";
 import { StreamHandler } from "./stream-handler.ts";
 import type { RenderHandler } from "./render-handler.ts";

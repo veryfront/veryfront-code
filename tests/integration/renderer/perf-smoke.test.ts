@@ -1,6 +1,7 @@
-import { assertEquals } from "@std/assert";
-import { join } from "@std/path";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals } from "@veryfront/testing/assert";
+import { join } from "@veryfront/compat/path";
+import { mkdir, writeTextFile } from "@veryfront/compat/fs.ts";
+import { describe, it } from "@veryfront/testing/bdd";
 import { createRenderer } from "../../../src/rendering/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
@@ -18,14 +19,14 @@ describe(
       await withTestContext("perf-smoke", async (context) => {
         // Prepare a large MDX page using app router structure
         const appLongDir = join(context.projectDir, "app", "long");
-        await Deno.mkdir(appLongDir, { recursive: true });
+        await mkdir(appLongDir, { recursive: true });
 
         const para = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras pretium.\n\n";
         const content = ["# Perf Test\n\n"]
           .concat(Array.from({ length: 2000 }, () => para))
           .join("");
 
-        await Deno.writeTextFile(join(appLongDir, "page.mdx"), content);
+        await writeTextFile(join(appLongDir, "page.mdx"), content);
 
         const renderer = await createRenderer({
           projectDir: context.projectDir,

@@ -119,4 +119,8 @@ export function withSpanSync<T>(
   );
 }
 
+// Export singleton for production use
 export { tracingManager } from "./manager.ts";
+
+// Export class for testing - tests can create isolated instances
+export { TracingManager } from "./manager.ts";

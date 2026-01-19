@@ -1,6 +1,13 @@
-import { assertEquals, assertThrows } from "@std/assert";
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
+import { assertEquals, assertThrows } from "@veryfront/testing/assert";
+import { afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
 import { installTargets, parseTargetFlag } from "./install.ts";
+import {
+  exists,
+  makeTempDir,
+  readTextFile,
+  remove,
+  writeTextFile,
+} from "@veryfront/platform/compat/fs.ts";
 
 describe("parseTargetFlag", () => {
   it("should parse single target", () => {
@@ -53,46 +60,46 @@ describe("installTargets", () => {
   let tempDir: string;
 
   beforeEach(async () => {
-    tempDir = await Deno.makeTempDir();
+    tempDir = await makeTempDir();
   });
 
   afterEach(async () => {
-    await Deno.remove(tempDir, { recursive: true });
+    await remove(tempDir, { recursive: true });
   });
 
   it("should install cursor rules", async () => {
     await installTargets(["cursor"], { cwd: tempDir, force: true });
-    const content = await Deno.readTextFile(`${tempDir}/.cursorrules`);
+    const content = await readTextFile(`${tempDir}/.cursorrules`);
     assertEquals(content.includes("Veryfront"), true);
   });
 
   it("should install claude-code with nested directory", async () => {
     await installTargets(["claude-code"], { cwd: tempDir, force: true });
-    const content = await Deno.readTextFile(`${tempDir}/.claude/CLAUDE.md`);
+    const content = await readTextFile(`${tempDir}/.claude/CLAUDE.md`);
     assertEquals(content.includes("Veryfront"), true);
   });
 
   it("should install skill.md", async () => {
     await installTargets(["skill"], { cwd: tempDir, force: true });
-    const content = await Deno.readTextFile(`${tempDir}/SKILL.md`);
+    const content = await readTextFile(`${tempDir}/SKILL.md`);
     assertEquals(content.startsWith("---"), true);
   });
 
   it("should install copilot with nested directory", async () => {
     await installTargets(["copilot"], { cwd: tempDir, force: true });
-    const content = await Deno.readTextFile(`${tempDir}/.github/copilot-instructions.md`);
+    const content = await readTextFile(`${tempDir}/.github/copilot-instructions.md`);
     assertEquals(content.includes("Veryfront"), true);
   });
 
   it("should install windsurf rules", async () => {
     await installTargets(["windsurf"], { cwd: tempDir, force: true });
-    const content = await Deno.readTextFile(`${tempDir}/.windsurfrules`);
+    const content = await readTextFile(`${tempDir}/.windsurfrules`);
     assertEquals(content.includes("Veryfront"), true);
   });
 
   it("should install agents.md", async () => {
     await installTargets(["agents"], { cwd: tempDir, force: true });
-    const content = await Deno.readTextFile(`${tempDir}/AGENTS.md`);
+    const content = await readTextFile(`${tempDir}/AGENTS.md`);
     assertEquals(content.includes("Veryfront"), true);
   });
 
@@ -104,16 +111,16 @@ describe("installTargets", () => {
   });
 
   it("should not overwrite without force", async () => {
-    await Deno.writeTextFile(`${tempDir}/.cursorrules`, "existing content");
+    await writeTextFile(`${tempDir}/.cursorrules`, "existing content");
     await installTargets(["cursor"], { cwd: tempDir, force: false });
-    const content = await Deno.readTextFile(`${tempDir}/.cursorrules`);
+    const content = await readTextFile(`${tempDir}/.cursorrules`);
     assertEquals(content, "existing content");
   });
 
   it("should overwrite with force", async () => {
-    await Deno.writeTextFile(`${tempDir}/.cursorrules`, "existing content");
+    await writeTextFile(`${tempDir}/.cursorrules`, "existing content");
     await installTargets(["cursor"], { cwd: tempDir, force: true });
-    const content = await Deno.readTextFile(`${tempDir}/.cursorrules`);
+    const content = await readTextFile(`${tempDir}/.cursorrules`);
     assertEquals(content.includes("Veryfront"), true);
   });
 
@@ -137,12 +144,3 @@ describe("installTargets", () => {
     assertEquals(error !== null, true);
   });
 });
-
-async function exists(path: string): Promise<boolean> {
-  try {
-    await Deno.stat(path);
-    return true;
-  } catch {
-    return false;
-  }
-}

@@ -1,9 +1,9 @@
 import { bundlerLogger as logger } from "@veryfront/utils";
 import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
-import * as esbuild from "esbuild/mod.js";
+import * as esbuild from "esbuild";
 import { join } from "@veryfront/platform/compat/path/index.ts";
 import { compileMDXToJS } from "../compiler/index.ts";
-import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
+import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import type { EmbeddedBundleManifest } from "../renderer/types/bundler-types.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
 
@@ -26,6 +26,7 @@ export async function buildEmbeddedPreset(
   const { projectDir, outDir } = options;
   const embeddedDir = join(outDir, "embedded");
   const fs = createFileSystem();
+  const adapter = await getAdapter();
   await fs.mkdir(embeddedDir, { recursive: true });
   await fs.mkdir(join(embeddedDir, "rsc"), { recursive: true });
 
@@ -170,7 +171,7 @@ export async function buildEmbeddedPreset(
       const compiled = await compileMDXToJS(r.sourcePath, mdxContent, {
         projectDir,
         mode: "production",
-        adapter: denoAdapter,
+        adapter,
       });
       await fs.mkdir(r.filePath.slice(0, r.filePath.lastIndexOf("/")), { recursive: true });
       await fs.writeTextFile(r.filePath, compiled.code);

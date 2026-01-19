@@ -1,7 +1,14 @@
-import { isDeno as IS_DENO } from "./runtime.ts";
+import { readSync as nodeReadSync } from "node:fs";
+import { isBun as IS_BUN, isDeno as IS_DENO } from "./runtime.ts";
 
 const nodeProcess = (globalThis as { process?: typeof import("node:process") }).process;
 const hasNodeProcess = !!nodeProcess?.versions?.node;
+
+// Dynamic import helper to avoid static analysis by bundlers
+// This prevents Bun from trying to resolve node:child_process at compile time
+const dynamicImport = new Function("specifier", "return import(specifier)") as <T>(
+  specifier: string,
+) => Promise<T>;
 
 export function getArgs(): string[] {
   if (IS_DENO) {
@@ -99,6 +106,26 @@ export function deleteEnv(key: string): void {
     return;
   }
   throw new Error("deleteEnv() is not supported in this runtime");
+}
+
+type EnvOverlayStorage = {
+  getStore: () => unknown;
+  run?: <T>(store: unknown, fn: () => T) => T;
+  enterWith?: (store: unknown) => void;
+};
+
+/**
+ * Get an AsyncLocalStorage-based env overlay storage if installed.
+ * This enables per-async-context env isolation (e.g., in tests).
+ */
+export function getEnvOverlayStorage(): EnvOverlayStorage | null {
+  const globalAny = globalThis as Record<string, unknown>;
+  const overlay =
+    (globalAny["__vfTestDenoEnvOverlay"] as { storage?: EnvOverlayStorage } | undefined) ||
+    (globalAny["__vfTestEnvOverlay"] as { storage?: EnvOverlayStorage } | undefined);
+  if (!overlay?.storage) return null;
+  if (typeof overlay.storage.getStore !== "function") return null;
+  return overlay.storage;
 }
 
 export function pid(): number {
@@ -218,11 +245,13 @@ export async function getNetworkInterfaces(): Promise<
     }));
   }
 
-  if (!hasNodeProcess) {
+  // Bun and Node.js both support node:os
+  if (!hasNodeProcess && !IS_BUN) {
     throw new Error("networkInterfaces() is not supported in this runtime");
   }
 
-  const os = await import("node:os");
+  // Use dynamicImport to avoid static analysis by bundlers
+  const os = await dynamicImport<typeof import("node:os")>("node:os");
   const interfaces = os.networkInterfaces();
   const result: Array<{ name: string; address: string; family: "IPv4" | "IPv6" }> = [];
 
@@ -419,43 +448,21 @@ export async function writeStdoutAsync(data: Uint8Array): Promise<number> {
   return 0;
 }
 
-// Cached Node.js modules for synchronous prompt
-let cachedNodeFs: typeof import("node:fs") | null = null;
-
 /**
- * Synchronous prompt function that works across Deno and Node.js
+ * Synchronous prompt function that works across Deno, Bun, and Node.js
  * Displays a message and reads user input from stdin
  */
 export function promptSync(message?: string): string | null {
-  if (IS_DENO) {
-    // Deno has a built-in prompt() function
-    return prompt(message);
+  // Use globalThis.prompt when available (Deno, Bun, browsers)
+  // This check comes first to allow tests to mock globalThis.prompt
+  if (typeof globalThis.prompt === "function") {
+    return globalThis.prompt(message ?? "") ?? null;
   }
 
   if (hasNodeProcess) {
     // Print the message
     if (message) {
       nodeProcess!.stdout.write(message + " ");
-    }
-
-    // Lazy load fs module
-    if (!cachedNodeFs) {
-      // Dynamic import converted to sync require for bundling
-      // @ts-ignore - dynamic require for Node.js
-      cachedNodeFs = globalThis.require?.("node:fs") || null;
-      if (!cachedNodeFs) {
-        // Try alternative approach
-        try {
-          // @ts-ignore: __require is injected by bundlers for Node.js require
-          cachedNodeFs = __require("node:fs");
-        } catch {
-          return null;
-        }
-      }
-    }
-
-    if (!cachedNodeFs) {
-      return null;
     }
 
     // Read synchronously using fs
@@ -467,7 +474,7 @@ export function promptSync(message?: string): string | null {
 
     try {
       // Read from stdin (fd 0) synchronously
-      const bytesRead = cachedNodeFs.readSync(0, uint8Array, 0, bufferSize, null);
+      const bytesRead = nodeReadSync(0, uint8Array, 0, bufferSize, null);
       if (bytesRead > 0) {
         const decoder = new TextDecoder("utf-8");
         input = decoder.decode(uint8Array.subarray(0, bytesRead)).trim();
@@ -546,8 +553,93 @@ export async function runCommand(
     };
   }
 
+  // Bun: Use Bun.spawn() API
+  if (IS_BUN) {
+    const bunGlobal = globalThis as unknown as {
+      Bun: {
+        spawn: (options: {
+          cmd: string[];
+          cwd?: string;
+          env?: Record<string, string>;
+          stdout?: "pipe" | "inherit" | "ignore";
+          stderr?: "pipe" | "inherit" | "ignore";
+        }) => {
+          // Note: exitCode is sync (null until done), exited is the Promise
+          exited: Promise<number>;
+          stdout: ReadableStream<Uint8Array> | null;
+          stderr: ReadableStream<Uint8Array> | null;
+        };
+      };
+    };
+
+    const bunStdio = inherit ? "inherit" : capture ? "pipe" : "ignore";
+
+    const proc = bunGlobal.Bun.spawn({
+      cmd: shell ? ["sh", "-c", [cmd, ...args].join(" ")] : [cmd, ...args],
+      cwd: cmdCwd,
+      env: cmdEnv,
+      stdout: bunStdio,
+      stderr: bunStdio,
+    });
+
+    // Use 'exited' Promise, not 'exitCode' (which is sync and null until done)
+    const code = await proc.exited;
+    let stdout: string | undefined;
+    let stderr: string | undefined;
+
+    if (capture) {
+      const decoder = new TextDecoder();
+      if (proc.stdout) {
+        const chunks: Uint8Array[] = [];
+        const reader = proc.stdout.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) chunks.push(value);
+        }
+        const total = chunks.reduce((acc, c) => acc + c.length, 0);
+        const merged = new Uint8Array(total);
+        let offset = 0;
+        for (const chunk of chunks) {
+          merged.set(chunk, offset);
+          offset += chunk.length;
+        }
+        stdout = decoder.decode(merged);
+      }
+      if (proc.stderr) {
+        const chunks: Uint8Array[] = [];
+        const reader = proc.stderr.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) chunks.push(value);
+        }
+        const total = chunks.reduce((acc, c) => acc + c.length, 0);
+        const merged = new Uint8Array(total);
+        let offset = 0;
+        for (const chunk of chunks) {
+          merged.set(chunk, offset);
+          offset += chunk.length;
+        }
+        stderr = decoder.decode(merged);
+      }
+    }
+
+    return {
+      success: code === 0,
+      code,
+      stdout,
+      stderr,
+    };
+  }
+
+  // Node.js: Use child_process.spawn()
+  // Use dynamicImport to avoid static analysis by bundlers
   if (hasNodeProcess) {
-    const { spawn } = await import("node:child_process");
+    const childProcess = await dynamicImport<typeof import("node:child_process")>(
+      "node:child_process",
+    );
+    const { spawn } = childProcess;
 
     // Map stdio mode to Node.js format
     const nodeStdio: [

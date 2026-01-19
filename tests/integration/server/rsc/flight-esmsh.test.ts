@@ -1,9 +1,12 @@
-import { assertEquals } from "@std/assert";
-import { afterAll, describe, it } from "@std/testing/bdd";
+import { assertEquals } from "@veryfront/testing/assert";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
+import { mkdir, remove, writeTextFile } from "@veryfront/compat/fs.ts";
 import "../../../_helpers/log-guard.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { assertDrained, drainEventLoop } from "../../../_helpers/utils.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
+import { isDeno } from "../../../../src/platform/compat/runtime.ts";
+import { delay } from "@std/async";
 
 describe("RSC Flight ESM.sh Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
   // Clean up renderer intervals to prevent resource leaks
@@ -26,11 +29,11 @@ describe("RSC Flight ESM.sh Tests", { sanitizeOps: false, sanitizeResources: fal
         let h: Awaited<ReturnType<typeof startProductionServer>> | null = null;
         try {
           // Remove default app directory and create pages structure
-          await Deno.remove(`${context.projectDir}/app`, { recursive: true });
-          await Deno.remove(`${context.projectDir}/pages`, { recursive: true });
+          await remove(`${context.projectDir}/app`, { recursive: true });
+          await remove(`${context.projectDir}/pages`, { recursive: true });
 
-          await Deno.mkdir(`${context.projectDir}/pages`, { recursive: true });
-          await Deno.writeTextFile(`${context.projectDir}/pages/index.mdx`, "# Home\n");
+          await mkdir(`${context.projectDir}/pages`, { recursive: true });
+          await writeTextFile(`${context.projectDir}/pages/index.mdx`, "# Home\n");
 
           const { getFreePort } = await import("../../../_helpers/utils.ts");
           const port = await getFreePort();
@@ -49,7 +52,7 @@ describe("RSC Flight ESM.sh Tests", { sanitizeOps: false, sanitizeResources: fal
             await h.stop();
           }
           // Give the server time to clean up
-          await new Promise((resolve) => setTimeout(resolve, 100));
+          await delay(100);
           await drainEventLoop(3, 15);
           await assertDrained({
             allowResources: [/MessagePort/i],

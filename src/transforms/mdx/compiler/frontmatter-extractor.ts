@@ -1,16 +1,16 @@
 import { rendererLogger as logger } from "@veryfront/utils";
+import { extract } from "@veryfront/compat/std/front-matter-yaml.ts";
 
 export interface FrontmatterExtractionResult {
   body: string;
   frontmatter: Record<string, unknown>;
 }
 
-async function extractYamlFrontmatter(content: string): Promise<FrontmatterExtractionResult> {
+function extractYamlFrontmatter(content: string): FrontmatterExtractionResult {
   if (!content.trim().startsWith("---")) {
     return { body: content, frontmatter: {} };
   }
 
-  const { extract } = await import("std/front_matter/yaml.ts");
   const extracted = extract(content);
   return {
     body: extracted.body,
@@ -56,17 +56,17 @@ function extractExportConstants(body: string): { body: string; exports: Record<s
   return { body: cleanedBody, exports };
 }
 
-export async function extractFrontmatter(
+export function extractFrontmatter(
   content: string,
   providedFrontmatter?: Record<string, unknown>,
-): Promise<FrontmatterExtractionResult> {
+): FrontmatterExtractionResult {
   let body = content;
   let frontmatter: Record<string, unknown> = {};
 
   // Always extract YAML frontmatter from content if present
   // This ensures the body is stripped of frontmatter markers regardless of providedFrontmatter
   if (content.trim().startsWith("---")) {
-    const yamlResult = await extractYamlFrontmatter(content);
+    const yamlResult = extractYamlFrontmatter(content);
     body = yamlResult.body;
     frontmatter = yamlResult.frontmatter;
   }

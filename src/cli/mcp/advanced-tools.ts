@@ -8,11 +8,12 @@
 import { z } from "zod";
 import { createFileSystem, type FileSystem } from "@veryfront/platform/compat/fs.ts";
 import { join } from "@veryfront/platform/compat/path/index.ts";
-import { cwd, getEnv } from "@veryfront/platform/compat/process.ts";
+import { cwd } from "@veryfront/platform/compat/process.ts";
 import type { MCPTool } from "./tools.ts";
 import { ReloadNotifier } from "../../server/reload-notifier.ts";
 import { getErrorCollector } from "./error-collector.ts";
 import { getLogBuffer } from "./log-buffer.ts";
+import { getRuntimeEnv } from "@veryfront/config/runtime-env.ts";
 
 // ============================================================================
 // Types
@@ -2051,9 +2052,9 @@ export const vfGetFlywheelStatus: MCPTool<GetFlywheelStatusInput, FlywheelStatus
     const logCounts = logBuffer.countByLevel();
 
     // Calculate uptime if we have a start time in env
-    const startTimeStr = getEnv("VERYFRONT_SERVER_START_TIME");
-    if (startTimeStr) {
-      uptime = Date.now() - parseInt(startTimeStr, 10);
+    const env = getRuntimeEnv();
+    if (env.serverStartTime) {
+      uptime = Date.now() - parseInt(env.serverStartTime, 10);
     }
 
     return {

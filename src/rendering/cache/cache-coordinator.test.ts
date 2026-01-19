@@ -1,6 +1,8 @@
-import { assertEquals, assertObjectMatch } from "@std/assert";
+import { assertEquals, assertObjectMatch } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
 import { CacheCoordinator } from "./cache-coordinator.ts";
 import type { RenderResult } from "../orchestrator/types.ts";
+import { delay } from "@std/async";
 
 function makeResult(html: string): RenderResult {
   return {
@@ -13,37 +15,39 @@ function makeResult(html: string): RenderResult {
   };
 }
 
-Deno.test("CacheCoordinator returns cached result on second lookup", async () => {
-  const coordinator = new CacheCoordinator({
-    ttlMs: 10_000,
+describe("CacheCoordinator", () => {
+  it("returns cached result on second lookup", async () => {
+    const coordinator = new CacheCoordinator({
+      ttlMs: 10_000,
+    });
+
+    const slug = "home";
+
+    const lookupMiss = await coordinator.checkCache(slug);
+    assertEquals(lookupMiss.cachedResult, undefined);
+
+    const render = makeResult("<html>hello</html>");
+    await coordinator.persistResult(render, slug);
+
+    const lookupHit = await coordinator.checkCache(slug);
+    assertObjectMatch(lookupHit.cachedResult ?? {}, { html: "<html>hello</html>" });
+
+    await coordinator.destroy();
   });
 
-  const slug = "home";
+  it("respects TTL", async () => {
+    const coordinator = new CacheCoordinator({
+      ttlMs: 1,
+    });
 
-  const lookupMiss = await coordinator.checkCache(slug);
-  assertEquals(lookupMiss.cachedResult, undefined);
+    const slug = "ttl-test";
+    await coordinator.persistResult(makeResult("first"), slug);
 
-  const render = makeResult("<html>hello</html>");
-  await coordinator.persistResult(render, slug);
+    await delay(5);
 
-  const lookupHit = await coordinator.checkCache(slug);
-  assertObjectMatch(lookupHit.cachedResult ?? {}, { html: "<html>hello</html>" });
+    const lookup = await coordinator.checkCache(slug);
+    assertEquals(lookup.cachedResult, undefined);
 
-  await coordinator.destroy();
-});
-
-Deno.test("CacheCoordinator respects TTL", async () => {
-  const coordinator = new CacheCoordinator({
-    ttlMs: 1,
+    await coordinator.destroy();
   });
-
-  const slug = "ttl-test";
-  await coordinator.persistResult(makeResult("first"), slug);
-
-  await new Promise((resolve) => setTimeout(resolve, 5));
-
-  const lookup = await coordinator.checkCache(slug);
-  assertEquals(lookup.cachedResult, undefined);
-
-  await coordinator.destroy();
 });

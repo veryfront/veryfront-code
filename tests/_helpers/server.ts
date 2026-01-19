@@ -1,16 +1,13 @@
-import { join } from "@std/path";
+import { join } from "@veryfront/compat/path";
+import { isNotFoundError, makeTempDir, mkdir, remove } from "../../src/platform/compat/fs.ts";
 import { createDevServer } from "../../src/server/dev-server.ts";
 import { startProductionServer } from "../../src/server/production-server.ts";
 import { resetApiHandler } from "../../src/server/handlers/request/api/index.ts";
 import { getFreePort } from "./utils.ts";
+import { testDelay } from "@veryfront/testing";
 
 async function sleep(ms: number): Promise<void> {
-  await new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      clearTimeout(timer);
-      resolve(undefined);
-    }, ms);
-  });
+  await testDelay(ms);
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeout: number, label: string): Promise<T> {
@@ -200,7 +197,7 @@ export async function createTestDevServer(options: {
   enableHMR?: boolean;
   fileWatcherDebounceMs?: number;
 }): Promise<TestServer> {
-  const port = options.port ?? getFreePort();
+  const port = options.port ?? await getFreePort();
   const server = await createDevServer({
     projectDir: options.projectDir,
     port,
@@ -249,9 +246,9 @@ export function assertResponseStatus(
  */
 export async function cleanupTestDir(dir: string): Promise<void> {
   try {
-    await Deno.remove(dir, { recursive: true });
+    await remove(dir, { recursive: true });
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) {
+    if (isNotFoundError(error)) {
       // Already removed, ignore
       return;
     }
@@ -263,12 +260,12 @@ export async function cleanupTestDir(dir: string): Promise<void> {
  * Create a test project directory with standard structure
  */
 export async function createTestProjectDir(): Promise<string> {
-  const dir = await Deno.makeTempDir({ prefix: "veryfront_test_" });
+  const dir = await makeTempDir({ prefix: "veryfront_test_" });
 
   // Create standard directories
-  await Deno.mkdir(join(dir, "pages"), { recursive: true });
-  await Deno.mkdir(join(dir, "components"), { recursive: true });
-  await Deno.mkdir(join(dir, "public"), { recursive: true });
+  await mkdir(join(dir, "pages"), { recursive: true });
+  await mkdir(join(dir, "components"), { recursive: true });
+  await mkdir(join(dir, "public"), { recursive: true });
 
   return dir;
 }
@@ -281,7 +278,7 @@ export async function createTestProductionServer(options: {
   port?: number;
   hostname?: string;
 }): Promise<TestServer> {
-  const port = options.port ?? getFreePort();
+  const port = options.port ?? await getFreePort();
   const server = await startProductionServer({
     projectDir: options.projectDir,
     port,

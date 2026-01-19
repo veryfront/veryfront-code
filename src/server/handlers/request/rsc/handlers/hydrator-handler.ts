@@ -30,7 +30,7 @@ export class HydratorHandler {
 
   private async bundleHydrator(path: string): Promise<string> {
     // Use native esbuild for proper file system access during bundling
-    const { build, stop } = await import("esbuild/mod.js");
+    const { build, stop } = await import("esbuild");
 
     try {
       const source = this.fsAdapter

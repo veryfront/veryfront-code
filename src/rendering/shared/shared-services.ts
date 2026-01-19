@@ -12,7 +12,7 @@
  */
 
 import { rendererLogger as logger } from "@veryfront/utils";
-import { initialize as initializeEsbuild } from "esbuild/mod.js";
+import { initialize as initializeEsbuild } from "esbuild";
 import { ElementValidator, type ValidationOptions } from "../element-validator/index.ts";
 import { type CompileMDXFunction, CompilerService } from "../orchestrator/compiler-service.ts";
 

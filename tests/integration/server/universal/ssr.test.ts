@@ -1,19 +1,24 @@
-import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
-import { afterAll, describe, it } from "@std/testing/bdd";
+import { assert, assertEquals, assertMatch, assertStringIncludes } from "@veryfront/testing/assert";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
 import "../../../_helpers/log-guard.ts";
 
-import { join } from "@std/path";
+import { isNotFoundError, mkdir, remove, writeTextFile } from "@veryfront/compat/fs.ts";
+import { join } from "@veryfront/compat/path";
+import { isDeno } from "../../../../src/platform/compat/runtime.ts";
 import { startUniversalServer } from "../../../../src/server/production-server.ts";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
 // Add handler for intentional test errors from boom pages
-globalThis.addEventListener("unhandledrejection", (event) => {
-  const reason = event.reason;
-  if (reason instanceof Error && (reason.message === "boom" || reason.message === "fail")) {
-    event.preventDefault(); // Prevent test failure for intentional errors
-  }
-});
+// Only register if addEventListener is available (Deno, browsers)
+if (typeof globalThis.addEventListener === "function") {
+  globalThis.addEventListener("unhandledrejection", (event) => {
+    const reason = (event as PromiseRejectionEvent).reason;
+    if (reason instanceof Error && (reason.message === "boom" || reason.message === "fail")) {
+      event.preventDefault(); // Prevent test failure for intentional errors
+    }
+  });
+}
 
 describe(
   "Universal Server - SSR",
@@ -29,9 +34,9 @@ describe(
     it("returns 500 HTML fallback with security headers on SSR error", async () => {
       await withTestContext("universal-server-500-fallback", async (context: TestContext) => {
         const dir = join(context.projectDir, "app");
-        await Deno.mkdir(dir, { recursive: true });
+        await mkdir(dir, { recursive: true });
         // Create a page that throws to trigger SSR error path
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(dir, "boom.tsx"),
           `export default function Page(){ throw new Error('fail'); }`,
         );
@@ -62,34 +67,36 @@ describe(
       await withTestContext("universal-server-app-loading-error", async (context: TestContext) => {
         // Clean and set up app router structure
         try {
-          await Deno.remove(join(context.projectDir, "app"), {
+          await remove(join(context.projectDir, "app"), {
             recursive: true,
           });
         } catch (e) {
-          console.warn("[TEST] cleanup: failed to remove app dir", e);
+          if (!isNotFoundError(e)) {
+            console.warn("[TEST] cleanup: failed to remove app dir", e);
+          }
         }
-        await Deno.mkdir(join(context.projectDir, "app", "a", "b"), {
+        await mkdir(join(context.projectDir, "app", "a", "b"), {
           recursive: true,
         });
 
         // Root layout with <main>
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "app", "layout.tsx"),
           `export default function Root({ children }: any){ return (<html><body><main data-router-focus>{children}</main></body></html>); }`,
         );
 
         // Segment A loading and error
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "app", "a", "loading.tsx"),
           `export default function Loading(){ return <p>Loading A...</p>; }`,
         );
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "app", "a", "error.tsx"),
           `export default function Error({ error }: any){ return <p>ErrA:{String(error&&error.message||error)}</p>; }`,
         );
 
         // Segment B page that throws
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "app", "a", "b", "page.tsx"),
           `export default async function Page(){ await new Promise(r=>setTimeout(r, 20)); throw new Error('boom'); }`,
         );
@@ -120,15 +127,17 @@ describe(
       await withTestContext("universal-server-app-not-found", async (context: TestContext) => {
         // Ensure clean app dir and create not-found in segment
         try {
-          await Deno.remove(join(context.projectDir, "app"), {
+          await remove(join(context.projectDir, "app"), {
             recursive: true,
           });
         } catch (e) {
-          console.warn("[TEST] cleanup: failed to remove app dir", e);
+          if (!isNotFoundError(e)) {
+            console.warn("[TEST] cleanup: failed to remove app dir", e);
+          }
         }
         const segDir = join(context.projectDir, "app", "a", "b");
-        await Deno.mkdir(segDir, { recursive: true });
-        await Deno.writeTextFile(
+        await mkdir(segDir, { recursive: true });
+        await writeTextFile(
           join(segDir, "not-found.tsx"),
           `export default function NotFound(){ return <p>Missing B</p>; }`,
         );
@@ -158,8 +167,8 @@ describe(
       await withTestContext("universal-server-metadata", async (context: TestContext) => {
         // Create App Router root page with frontmatter metadata
         const appDir = join(context.projectDir, "app");
-        await Deno.mkdir(appDir, { recursive: true });
-        await Deno.writeTextFile(
+        await mkdir(appDir, { recursive: true });
+        await writeTextFile(
           join(appDir, "page.mdx"),
           `---\ntitle: Custom Title\ndescription: Custom Description\n---\n\n# Hello\n`,
         );
@@ -188,8 +197,8 @@ describe(
     it("applies generateMetadata() from App Router script page", async () => {
       await withTestContext("universal-server-generate-metadata", async (context: TestContext) => {
         const metaDir = join(context.projectDir, "app", "meta");
-        await Deno.mkdir(metaDir, { recursive: true });
-        await Deno.writeTextFile(
+        await mkdir(metaDir, { recursive: true });
+        await writeTextFile(
           join(metaDir, "page.ts"),
           `export async function generateMetadata(){
            return { title: 'GM Title', description: 'GM Desc', meta: [{ name: 'keywords', content: 'foo,bar' }] };
@@ -223,8 +232,8 @@ describe(
       await withTestContext("universal-server-ssr-caching-head", async (context: TestContext) => {
         // App Router home page
         const appDir = join(context.projectDir, "app");
-        await Deno.mkdir(appDir, { recursive: true });
-        await Deno.writeTextFile(join(appDir, "page.mdx"), `# Home SSR\n\nContent here.`);
+        await mkdir(appDir, { recursive: true });
+        await writeTextFile(join(appDir, "page.mdx"), `# Home SSR\n\nContent here.`);
 
         const port = await context.allocatePort();
         const server = await startUniversalServer({

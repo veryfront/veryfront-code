@@ -1,0 +1,22 @@
+# Bun configuration for cross-runtime tests
+# See: https://bun.sh/docs/runtime/bunfig
+
+[test]
+# Timeout for each test (in ms)
+timeout = 30000
+
+# Preload the resolver plugin
+preload = ["./scripts/bun-preload.ts"]
+
+# Root directories for test file discovery
+# Bun test needs explicit root paths since tests are in src/ and tests/
+root = ["./src", "./tests", "./proxy"]
+
+# Concurrency for parallel test execution
+# Tests use AsyncLocalStorage-based isolation for globals (document, window, etc.)
+# See: https://bun.sh/docs/cli/test#concurrency
+concurrency = 64
+
+[install]
+# Use exact versions
+exact = true

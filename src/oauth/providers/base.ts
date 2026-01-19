@@ -10,6 +10,12 @@ import type {
 } from "../types.ts";
 import { getEnv } from "@veryfront/platform/compat/process.ts";
 
+/**
+ * Environment variable reader function type.
+ * Allows dependency injection for test isolation.
+ */
+export type EnvReader = (key: string) => string | undefined;
+
 function generateRandomString(length: number): string {
   const array = new Uint8Array(length);
   crypto.getRandomValues(array);
@@ -32,17 +38,19 @@ async function generateCodeChallenge(verifier: string): Promise<string> {
 
 export class OAuthProvider {
   protected config: OAuthProviderConfig;
+  protected envReader: EnvReader;
 
-  constructor(config: OAuthProviderConfig) {
+  constructor(config: OAuthProviderConfig, envReader: EnvReader = getEnv) {
     this.config = config;
+    this.envReader = envReader;
   }
 
   getClientId(): string | null {
-    return getEnv(this.config.clientIdEnvVar) || null;
+    return this.envReader(this.config.clientIdEnvVar) || null;
   }
 
   getClientSecret(): string | null {
-    return getEnv(this.config.clientSecretEnvVar) || null;
+    return this.envReader(this.config.clientSecretEnvVar) || null;
   }
 
   isConfigured(): boolean {
@@ -259,8 +267,8 @@ export class OAuthService extends OAuthProvider {
   protected serviceConfig: OAuthServiceConfig;
   protected tokenStore?: TokenStore;
 
-  constructor(config: OAuthServiceConfig, tokenStore?: TokenStore) {
-    super(config);
+  constructor(config: OAuthServiceConfig, tokenStore?: TokenStore, envReader?: EnvReader) {
+    super(config, envReader);
     this.serviceConfig = config;
     this.tokenStore = tokenStore;
   }

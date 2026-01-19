@@ -1,6 +1,7 @@
 import { expect } from "@std/expect";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "@veryfront/testing/bdd";
 import { OptimizedFileWatcher } from "./file-watcher.ts";
+import { delay } from "@std/async";
 
 function createDeferred<T = void>() {
   let resolve!: (value: T) => void;
@@ -11,7 +12,7 @@ function createDeferred<T = void>() {
 }
 
 function waitFor(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return delay(ms);
 }
 
 describe("OptimizedFileWatcher", () => {

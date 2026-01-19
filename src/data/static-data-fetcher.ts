@@ -12,7 +12,7 @@ export class StaticDataFetcher {
   ) {}
 
   async fetch(pageModule: PageWithData, context: DataContext): Promise<DataResult> {
-    if (!pageModule.getStaticData) {
+    if (!pageModule.getStaticData || typeof pageModule.getStaticData !== "function") {
       return { props: {} };
     }
 

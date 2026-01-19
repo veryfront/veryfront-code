@@ -1,7 +1,8 @@
-import { assert, assertEquals, assertExists } from "@std/assert";
-import { join } from "@std/path";
-import { describe, it } from "@std/testing/bdd";
-import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
+import { assert, assertEquals, assertExists } from "@veryfront/testing/assert";
+import { join } from "@veryfront/compat/path";
+import { describe, it } from "@veryfront/testing/bdd";
+import { mkdir, writeTextFile } from "@veryfront/testing/deno-compat";
+import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import { ModuleResolver } from "@veryfront/modules";
 import { withTestContext } from "../../_helpers/context.ts";
 
@@ -12,16 +13,16 @@ describe(
       it("resolves virtual, mapped, file, absolute and npm", async () => {
         await withTestContext("module-resolver", async (context) => {
           const filePath = join(context.projectDir, "src", "lib", "util.ts");
-          await Deno.mkdir(join(context.projectDir, "src", "lib"), {
+          await mkdir(join(context.projectDir, "src", "lib"), {
             recursive: true,
           });
-          await Deno.writeTextFile(filePath, "export const x=1\n");
+          await writeTextFile(filePath, "export const x=1\n");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
             importMap: { "@alias": "/src/lib/util.ts" },
             virtualModules: new Map([["virtual:mod", "export const v=1"]]),
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           // virtual
@@ -60,7 +61,7 @@ describe(
           const r = new ModuleResolver({
             projectDir: context.projectDir,
             virtualModules: new Map([["virtual:config", "export const cfg = {}"]]),
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("virtual:config");
@@ -75,7 +76,7 @@ describe(
         await withTestContext("virtual-missing", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           // Virtual modules that don't exist get treated as npm packages
@@ -89,7 +90,7 @@ describe(
         await withTestContext("virtual-add", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           // Initially not present - resolves as npm package
@@ -112,7 +113,7 @@ describe(
           const r = new ModuleResolver({
             projectDir: context.projectDir,
             virtualModules: new Map([["virtual:data", "export const v = 1"]]),
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const first = await r.resolve("virtual:data");
@@ -131,7 +132,7 @@ describe(
           const r = new ModuleResolver({
             projectDir: context.projectDir,
             virtualModules: new Map([["virtual:temp", "export const t = 1"]]),
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           // Initially exists
@@ -153,7 +154,7 @@ describe(
           const r = new ModuleResolver({
             projectDir: context.projectDir,
             virtualModules: new Map([["virtual:empty", ""]]),
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("virtual:empty");
@@ -172,7 +173,7 @@ describe(
               ["virtual:b", "export const b = 2"],
               ["virtual:c", "export const c = 3"],
             ]),
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const a = await r.resolve("virtual:a");
@@ -190,13 +191,13 @@ describe(
       it("should resolve import map to file path", async () => {
         await withTestContext("importmap-file", async (context) => {
           const filePath = join(context.projectDir, "src", "utils.ts");
-          await Deno.mkdir(join(context.projectDir, "src"), { recursive: true });
-          await Deno.writeTextFile(filePath, "export const util = 1");
+          await mkdir(join(context.projectDir, "src"), { recursive: true });
+          await writeTextFile(filePath, "export const util = 1");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
             importMap: { "@utils": "/src/utils.ts" },
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("@utils");
@@ -211,7 +212,7 @@ describe(
           const r = new ModuleResolver({
             projectDir: context.projectDir,
             importMap: { "http-lib": "http://example.com/lib.js" },
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("http-lib");
@@ -226,7 +227,7 @@ describe(
           const r = new ModuleResolver({
             projectDir: context.projectDir,
             importMap: { "cdn-lib": "https://cdn.example.com/lib.js" },
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("cdn-lib");
@@ -245,7 +246,7 @@ describe(
               "@lib2": "https://cdn.com/lib2.js",
               "@lib3": "https://cdn.com/lib3.js",
             },
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const lib1 = await r.resolve("@lib1");
@@ -262,7 +263,7 @@ describe(
         await withTestContext("no-importmap", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("react");
@@ -276,12 +277,12 @@ describe(
       it("should resolve relative import with ./ prefix", async () => {
         await withTestContext("relative-dot", async (context) => {
           const filePath = join(context.projectDir, "src", "lib.ts");
-          await Deno.mkdir(join(context.projectDir, "src"), { recursive: true });
-          await Deno.writeTextFile(filePath, "export const lib = 1");
+          await mkdir(join(context.projectDir, "src"), { recursive: true });
+          await writeTextFile(filePath, "export const lib = 1");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("./lib", "src/main.ts");
@@ -294,14 +295,14 @@ describe(
       it("should resolve relative import with ../ prefix", async () => {
         await withTestContext("relative-parent", async (context) => {
           const filePath = join(context.projectDir, "src", "util.ts");
-          await Deno.mkdir(join(context.projectDir, "src", "components"), {
+          await mkdir(join(context.projectDir, "src", "components"), {
             recursive: true,
           });
-          await Deno.writeTextFile(filePath, "export const util = 1");
+          await writeTextFile(filePath, "export const util = 1");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("../util", "src/components/Button.tsx");
@@ -314,12 +315,12 @@ describe(
       it("should resolve relative import with .ts extension", async () => {
         await withTestContext("relative-ts-ext", async (context) => {
           const filePath = join(context.projectDir, "src", "data.ts");
-          await Deno.mkdir(join(context.projectDir, "src"), { recursive: true });
-          await Deno.writeTextFile(filePath, "export const data = {}");
+          await mkdir(join(context.projectDir, "src"), { recursive: true });
+          await writeTextFile(filePath, "export const data = {}");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("./data.ts", "src/main.ts");
@@ -331,12 +332,12 @@ describe(
       it("should resolve relative import with .tsx extension", async () => {
         await withTestContext("relative-tsx-ext", async (context) => {
           const filePath = join(context.projectDir, "src", "App.tsx");
-          await Deno.mkdir(join(context.projectDir, "src"), { recursive: true });
-          await Deno.writeTextFile(filePath, "export default function App() {}");
+          await mkdir(join(context.projectDir, "src"), { recursive: true });
+          await writeTextFile(filePath, "export default function App() {}");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("./App.tsx", "src/index.ts");
@@ -348,12 +349,12 @@ describe(
       it("should resolve relative import with .js extension", async () => {
         await withTestContext("relative-js-ext", async (context) => {
           const filePath = join(context.projectDir, "src", "legacy.js");
-          await Deno.mkdir(join(context.projectDir, "src"), { recursive: true });
-          await Deno.writeTextFile(filePath, "export const legacy = true");
+          await mkdir(join(context.projectDir, "src"), { recursive: true });
+          await writeTextFile(filePath, "export const legacy = true");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("./legacy.js", "src/main.ts");
@@ -365,12 +366,12 @@ describe(
       it("should resolve relative import with .jsx extension", async () => {
         await withTestContext("relative-jsx-ext", async (context) => {
           const filePath = join(context.projectDir, "src", "Component.jsx");
-          await Deno.mkdir(join(context.projectDir, "src"), { recursive: true });
-          await Deno.writeTextFile(filePath, "export const Component = () => {}");
+          await mkdir(join(context.projectDir, "src"), { recursive: true });
+          await writeTextFile(filePath, "export const Component = () => {}");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("./Component.jsx", "src/main.ts");
@@ -382,12 +383,12 @@ describe(
       it("should resolve relative import with .mjs extension", async () => {
         await withTestContext("relative-mjs-ext", async (context) => {
           const filePath = join(context.projectDir, "src", "module.mjs");
-          await Deno.mkdir(join(context.projectDir, "src"), { recursive: true });
-          await Deno.writeTextFile(filePath, "export const mod = 1");
+          await mkdir(join(context.projectDir, "src"), { recursive: true });
+          await writeTextFile(filePath, "export const mod = 1");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("./module.mjs", "src/main.ts");
@@ -399,12 +400,12 @@ describe(
       it("should auto-add .ts extension when missing", async () => {
         await withTestContext("relative-auto-ts", async (context) => {
           const filePath = join(context.projectDir, "src", "helper.ts");
-          await Deno.mkdir(join(context.projectDir, "src"), { recursive: true });
-          await Deno.writeTextFile(filePath, "export const help = 1");
+          await mkdir(join(context.projectDir, "src"), { recursive: true });
+          await writeTextFile(filePath, "export const help = 1");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("./helper", "src/main.ts");
@@ -417,7 +418,7 @@ describe(
         await withTestContext("relative-missing", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("./nonexistent", "src/main.ts");
@@ -428,11 +429,11 @@ describe(
       it("should resolve relative import from project root when no referrer", async () => {
         await withTestContext("relative-no-referrer", async (context) => {
           const filePath = join(context.projectDir, "lib.ts");
-          await Deno.writeTextFile(filePath, "export const lib = 1");
+          await writeTextFile(filePath, "export const lib = 1");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("./lib");
@@ -444,14 +445,14 @@ describe(
       it("should handle deep relative paths", async () => {
         await withTestContext("relative-deep", async (context) => {
           const filePath = join(context.projectDir, "src", "core", "utils", "string.ts");
-          await Deno.mkdir(join(context.projectDir, "src", "core", "utils"), {
+          await mkdir(join(context.projectDir, "src", "core", "utils"), {
             recursive: true,
           });
-          await Deno.writeTextFile(filePath, "export const str = 1");
+          await writeTextFile(filePath, "export const str = 1");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve(
@@ -468,11 +469,11 @@ describe(
       it("should resolve absolute import from project root", async () => {
         await withTestContext("absolute-root", async (context) => {
           const filePath = join(context.projectDir, "config.ts");
-          await Deno.writeTextFile(filePath, "export const config = {}");
+          await writeTextFile(filePath, "export const config = {}");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("/config.ts");
@@ -485,14 +486,14 @@ describe(
       it("should resolve absolute import from nested directory", async () => {
         await withTestContext("absolute-nested", async (context) => {
           const filePath = join(context.projectDir, "src", "lib", "utils.ts");
-          await Deno.mkdir(join(context.projectDir, "src", "lib"), {
+          await mkdir(join(context.projectDir, "src", "lib"), {
             recursive: true,
           });
-          await Deno.writeTextFile(filePath, "export const utils = 1");
+          await writeTextFile(filePath, "export const utils = 1");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("/src/lib/utils.ts");
@@ -505,7 +506,7 @@ describe(
         await withTestContext("absolute-missing", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("/nonexistent.ts");
@@ -519,7 +520,7 @@ describe(
         await withTestContext("npm-basic", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("lodash");
@@ -533,7 +534,7 @@ describe(
         await withTestContext("npm-scoped", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("@babel/core");
@@ -547,7 +548,7 @@ describe(
         await withTestContext("npm-version", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("react@18.2.0");
@@ -561,7 +562,7 @@ describe(
         await withTestContext("npm-subpath", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("lodash/debounce");
@@ -575,7 +576,7 @@ describe(
         await withTestContext("npm-scoped-subpath", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("@babel/parser/lib/index.js");
@@ -589,7 +590,7 @@ describe(
         await withTestContext("npm-tag", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("react@next");
@@ -604,12 +605,12 @@ describe(
       it("should cache resolved modules", async () => {
         await withTestContext("cache-basic", async (context) => {
           const filePath = join(context.projectDir, "src", "cached.ts");
-          await Deno.mkdir(join(context.projectDir, "src"), { recursive: true });
-          await Deno.writeTextFile(filePath, "export const cached = 1");
+          await mkdir(join(context.projectDir, "src"), { recursive: true });
+          await writeTextFile(filePath, "export const cached = 1");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           // First resolution
@@ -625,7 +626,7 @@ describe(
         await withTestContext("cache-referrer", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const npm1 = await r.resolve("react", "src/app.ts");
@@ -643,7 +644,7 @@ describe(
           const r = new ModuleResolver({
             projectDir: context.projectDir,
             virtualModules: new Map([["virtual:a", "a"], ["virtual:b", "b"]]),
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           // Populate cache
@@ -669,7 +670,7 @@ describe(
               ["virtual:config", "config"],
               ["virtual:data", "data"],
             ]),
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           // Populate cache
@@ -691,7 +692,7 @@ describe(
         await withTestContext("cache-invalidate-add", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           // First, resolves as npm package
@@ -714,7 +715,7 @@ describe(
           const r = new ModuleResolver({
             projectDir: context.projectDir,
             virtualModules: new Map([["virtual:temp", "temp"]]),
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           // Initially resolves as virtual
@@ -735,7 +736,7 @@ describe(
         await withTestContext("cache-concurrent", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           // Resolve multiple packages concurrently
@@ -760,7 +761,7 @@ describe(
         await withTestContext("edge-empty-specifier", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           // Empty specifier gets treated as npm package
@@ -774,7 +775,7 @@ describe(
         await withTestContext("edge-malformed-relative", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           // Malformed path './' may resolve to directory if it exists
@@ -787,11 +788,11 @@ describe(
       it("should handle path with multiple extensions", async () => {
         await withTestContext("edge-double-ext", async (context) => {
           const filePath = join(context.projectDir, "file.test.ts");
-          await Deno.writeTextFile(filePath, "export const test = 1");
+          await writeTextFile(filePath, "export const test = 1");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("/file.test.ts");
@@ -803,11 +804,11 @@ describe(
       it("should handle file with special characters in name", async () => {
         await withTestContext("edge-special-chars", async (context) => {
           const filePath = join(context.projectDir, "my-file_v2.ts");
-          await Deno.writeTextFile(filePath, "export const special = 1");
+          await writeTextFile(filePath, "export const special = 1");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("/my-file_v2.ts");
@@ -821,12 +822,12 @@ describe(
           // Create both 'file' (no ext) and 'file.ts'
           const noExtPath = join(context.projectDir, "file");
           const tsPath = join(context.projectDir, "file.ts");
-          await Deno.writeTextFile(noExtPath, "no extension");
-          await Deno.writeTextFile(tsPath, "with extension");
+          await writeTextFile(noExtPath, "no extension");
+          await writeTextFile(tsPath, "with extension");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("/file");
@@ -847,14 +848,14 @@ describe(
             "e",
             "deep.ts",
           );
-          await Deno.mkdir(join(context.projectDir, "a", "b", "c", "d", "e"), {
+          await mkdir(join(context.projectDir, "a", "b", "c", "d", "e"), {
             recursive: true,
           });
-          await Deno.writeTextFile(filePath, "export const deep = 1");
+          await writeTextFile(filePath, "export const deep = 1");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve(
@@ -873,7 +874,7 @@ describe(
             virtualModules: new Map([
               ["virtual:@config/app", "export const config = {}"],
             ]),
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("virtual:@config/app");
@@ -886,7 +887,7 @@ describe(
         await withTestContext("edge-long-npm", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const longName = "@very-long-org-name/super-long-package-name-that-goes-on-forever";
@@ -901,7 +902,7 @@ describe(
         await withTestContext("edge-url-like", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           // Should be treated as npm package (not URL)
@@ -915,7 +916,7 @@ describe(
         await withTestContext("edge-root-referrer", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("react", "");
@@ -930,7 +931,7 @@ describe(
         await withTestContext("error-fs", async (_context) => {
           const r = new ModuleResolver({
             projectDir: "/nonexistent/path/that/does/not/exist",
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           // Should not throw, just return null
@@ -943,7 +944,7 @@ describe(
         await withTestContext("error-no-referrer", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           // Relative import without referrer should resolve from project root
@@ -957,12 +958,12 @@ describe(
         await withTestContext("error-circular", async (context) => {
           const fileA = join(context.projectDir, "a.ts");
           const fileB = join(context.projectDir, "b.ts");
-          await Deno.writeTextFile(fileA, "import './b'");
-          await Deno.writeTextFile(fileB, "import './a'");
+          await writeTextFile(fileA, "import './b'");
+          await writeTextFile(fileB, "import './a'");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           // Should resolve both without error (circular detection is not resolver's job)
@@ -978,12 +979,12 @@ describe(
       it("should normalize paths with double slashes", async () => {
         await withTestContext("normalize-double-slash", async (context) => {
           const filePath = join(context.projectDir, "src", "lib.ts");
-          await Deno.mkdir(join(context.projectDir, "src"), { recursive: true });
-          await Deno.writeTextFile(filePath, "export const lib = 1");
+          await mkdir(join(context.projectDir, "src"), { recursive: true });
+          await writeTextFile(filePath, "export const lib = 1");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("/src//lib.ts");
@@ -995,12 +996,12 @@ describe(
       it("should handle paths with ./ in the middle", async () => {
         await withTestContext("normalize-dot-middle", async (context) => {
           const filePath = join(context.projectDir, "src", "lib.ts");
-          await Deno.mkdir(join(context.projectDir, "src"), { recursive: true });
-          await Deno.writeTextFile(filePath, "export const lib = 1");
+          await mkdir(join(context.projectDir, "src"), { recursive: true });
+          await writeTextFile(filePath, "export const lib = 1");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("/src/./lib.ts");
@@ -1012,12 +1013,12 @@ describe(
       it("should handle Windows-style paths", async () => {
         await withTestContext("normalize-windows", async (context) => {
           const filePath = join(context.projectDir, "src", "win.ts");
-          await Deno.mkdir(join(context.projectDir, "src"), { recursive: true });
-          await Deno.writeTextFile(filePath, "export const win = 1");
+          await mkdir(join(context.projectDir, "src"), { recursive: true });
+          await writeTextFile(filePath, "export const win = 1");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           // Note: This tests that the resolver doesn't break with backslashes
@@ -1032,14 +1033,14 @@ describe(
       it("should handle mixed resolution types in sequence", async () => {
         await withTestContext("integration-mixed", async (context) => {
           const filePath = join(context.projectDir, "src", "local.ts");
-          await Deno.mkdir(join(context.projectDir, "src"), { recursive: true });
-          await Deno.writeTextFile(filePath, "export const local = 1");
+          await mkdir(join(context.projectDir, "src"), { recursive: true });
+          await writeTextFile(filePath, "export const local = 1");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
             importMap: { "@config": "https://cdn.com/config.js" },
             virtualModules: new Map([["virtual:env", "export const env = {}"]]),
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const virtual = await r.resolve("virtual:env");
@@ -1059,7 +1060,7 @@ describe(
           const r = new ModuleResolver({
             projectDir: context.projectDir,
             virtualModules: new Map([["virtual:state", "export const v = 1"]]),
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           // Initial state
@@ -1082,7 +1083,7 @@ describe(
         await withTestContext("integration-concurrent-large", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           // Create 50 concurrent resolutions
@@ -1107,12 +1108,12 @@ describe(
       it("should prioritize virtual modules over filesystem modules", async () => {
         await withTestContext("virtual-priority", async (context) => {
           const filePath = join(context.projectDir, "config.ts");
-          await Deno.writeTextFile(filePath, "export const fs = true");
+          await writeTextFile(filePath, "export const fs = true");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
             virtualModules: new Map([["config.ts", "export const virtual = true"]]),
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("config.ts");
@@ -1129,7 +1130,7 @@ describe(
             virtualModules: new Map([
               ["virtual:app/config/database", "export const db = {}"],
             ]),
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("virtual:app/config/database");
@@ -1144,7 +1145,7 @@ describe(
           const r = new ModuleResolver({
             projectDir: context.projectDir,
             virtualModules: new Map([["react", "export const CustomReact = {}"]]),
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("react");
@@ -1161,7 +1162,7 @@ describe(
             virtualModules: new Map([
               ["virtual:config.json", '{"key": "value", "nested": {"data": 123}}'],
             ]),
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("virtual:config.json");
@@ -1177,7 +1178,7 @@ describe(
           const r = new ModuleResolver({
             projectDir: context.projectDir,
             virtualModules: new Map([["virtual:large", largeContent]]),
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("virtual:large");
@@ -1191,7 +1192,7 @@ describe(
         await withTestContext("virtual-sequential", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           r.addVirtualModule("virtual:a", "a");
@@ -1218,7 +1219,7 @@ describe(
               "lib": "https://cdn.com/lib.js",
               "lib/utils": "https://cdn.com/lib-utils.js",
             },
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const lib = await r.resolve("lib");
@@ -1236,7 +1237,7 @@ describe(
             importMap: {
               "@lib/": "https://cdn.com/lib/",
             },
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           // Exact match needed
@@ -1253,7 +1254,7 @@ describe(
             importMap: {
               "@lib": "https://cdn.com/lib.js",
             },
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("@other");
@@ -1269,7 +1270,7 @@ describe(
             importMap: {
               "empty": "",
             },
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("empty");
@@ -1283,15 +1284,15 @@ describe(
       it("should handle import map with relative path remapping", async () => {
         await withTestContext("importmap-relative-remap", async (context) => {
           const filePath = join(context.projectDir, "dist", "bundle.js");
-          await Deno.mkdir(join(context.projectDir, "dist"), { recursive: true });
-          await Deno.writeTextFile(filePath, "export const bundle = 1");
+          await mkdir(join(context.projectDir, "dist"), { recursive: true });
+          await writeTextFile(filePath, "export const bundle = 1");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
             importMap: {
               "@bundle": "/dist/bundle.js",
             },
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("@bundle");
@@ -1308,7 +1309,7 @@ describe(
             importMap: {
               "lodash": "https://cdn.skypack.dev/lodash",
             },
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("lodash");
@@ -1325,7 +1326,7 @@ describe(
             importMap: {
               "@org/pkg-v2.0": "https://cdn.com/pkg.js",
             },
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("@org/pkg-v2.0");
@@ -1339,14 +1340,14 @@ describe(
       it("should resolve relative imports with different referrer base paths", async () => {
         await withTestContext("relative-different-bases", async (context) => {
           const sharedPath = join(context.projectDir, "shared", "utils.ts");
-          await Deno.mkdir(join(context.projectDir, "shared"), { recursive: true });
-          await Deno.mkdir(join(context.projectDir, "app"), { recursive: true });
-          await Deno.mkdir(join(context.projectDir, "lib"), { recursive: true });
-          await Deno.writeTextFile(sharedPath, "export const shared = 1");
+          await mkdir(join(context.projectDir, "shared"), { recursive: true });
+          await mkdir(join(context.projectDir, "app"), { recursive: true });
+          await mkdir(join(context.projectDir, "lib"), { recursive: true });
+          await writeTextFile(sharedPath, "export const shared = 1");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const fromApp = await r.resolve("../shared/utils", "app/main.ts");
@@ -1362,14 +1363,14 @@ describe(
       it("should handle multiple ../ traversals", async () => {
         await withTestContext("relative-multi-parent", async (context) => {
           const rootPath = join(context.projectDir, "root.ts");
-          await Deno.mkdir(join(context.projectDir, "a", "b", "c"), {
+          await mkdir(join(context.projectDir, "a", "b", "c"), {
             recursive: true,
           });
-          await Deno.writeTextFile(rootPath, "export const root = 1");
+          await writeTextFile(rootPath, "export const root = 1");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("../../../root", "a/b/c/deep.ts");
@@ -1381,11 +1382,11 @@ describe(
       it("should handle relative import from project root directory", async () => {
         await withTestContext("relative-from-root", async (context) => {
           const filePath = join(context.projectDir, "config.ts");
-          await Deno.writeTextFile(filePath, "export const cfg = 1");
+          await writeTextFile(filePath, "export const cfg = 1");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("./config", "index.ts");
@@ -1397,14 +1398,14 @@ describe(
       it("should handle relative imports with mixed slashes and dots", async () => {
         await withTestContext("relative-mixed", async (context) => {
           const filePath = join(context.projectDir, "src", "lib", "utils.ts");
-          await Deno.mkdir(join(context.projectDir, "src", "lib"), {
+          await mkdir(join(context.projectDir, "src", "lib"), {
             recursive: true,
           });
-          await Deno.writeTextFile(filePath, "export const utils = 1");
+          await writeTextFile(filePath, "export const utils = 1");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve(".././lib/utils", "src/app/main.ts");
@@ -1417,7 +1418,7 @@ describe(
         await withTestContext("relative-escape-root", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           // Try to escape project directory with excessive traversal
@@ -1438,12 +1439,12 @@ describe(
       it("should resolve absolute path with .ts extension", async () => {
         await withTestContext("absolute-ts-ext", async (context) => {
           const filePath = join(context.projectDir, "src", "module.ts");
-          await Deno.mkdir(join(context.projectDir, "src"), { recursive: true });
-          await Deno.writeTextFile(filePath, "export const mod = 1");
+          await mkdir(join(context.projectDir, "src"), { recursive: true });
+          await writeTextFile(filePath, "export const mod = 1");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("/src/module.ts");
@@ -1455,11 +1456,11 @@ describe(
       it("should resolve absolute path without extension", async () => {
         await withTestContext("absolute-no-ext", async (context) => {
           const filePath = join(context.projectDir, "index.ts");
-          await Deno.writeTextFile(filePath, "export const index = 1");
+          await writeTextFile(filePath, "export const index = 1");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("/index.ts");
@@ -1478,15 +1479,15 @@ describe(
             "services",
             "auth.service.ts",
           );
-          await Deno.mkdir(
+          await mkdir(
             join(context.projectDir, "src", "features", "auth", "services"),
             { recursive: true },
           );
-          await Deno.writeTextFile(filePath, "export class AuthService {}");
+          await writeTextFile(filePath, "export class AuthService {}");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("/src/features/auth/services/auth.service.ts");
@@ -1499,7 +1500,7 @@ describe(
         await withTestContext("absolute-traversal", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           // Absolute path still joins with projectDir, preventing escape
@@ -1514,7 +1515,7 @@ describe(
         await withTestContext("npm-deep-subpath", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("lodash/fp/curry");
@@ -1528,7 +1529,7 @@ describe(
         await withTestContext("npm-scoped-version-subpath", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("@babel/core@7.20.0/lib/index.js");
@@ -1542,7 +1543,7 @@ describe(
         await withTestContext("npm-jsx-runtime", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("react/jsx-runtime");
@@ -1556,7 +1557,7 @@ describe(
         await withTestContext("npm-prerelease", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("next@14.0.0-canary.0");
@@ -1570,7 +1571,7 @@ describe(
         await withTestContext("npm-complex-name", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("vue-router-4");
@@ -1586,7 +1587,7 @@ describe(
         await withTestContext("cache-referrer-keys", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           await r.resolve("react", "app/main.ts");
@@ -1604,7 +1605,7 @@ describe(
           const opts = {
             projectDir: context.projectDir,
             importMap: { "lib": "https://cdn.com/v1.js" },
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           };
           const r = new ModuleResolver(opts);
 
@@ -1623,7 +1624,7 @@ describe(
         await withTestContext("cache-edge-keys", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           await r.resolve("");
@@ -1642,7 +1643,7 @@ describe(
         await withTestContext("cache-high-volume", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           // Resolve 100 unique packages
@@ -1662,15 +1663,15 @@ describe(
       it("should prioritize .ts over .tsx over .js over .jsx over .mjs", async () => {
         await withTestContext("edge-extension-priority", async (context) => {
           // Create files with same name but different extensions
-          await Deno.writeTextFile(join(context.projectDir, "module.mjs"), "mjs");
-          await Deno.writeTextFile(join(context.projectDir, "module.jsx"), "jsx");
-          await Deno.writeTextFile(join(context.projectDir, "module.js"), "js");
-          await Deno.writeTextFile(join(context.projectDir, "module.tsx"), "tsx");
-          await Deno.writeTextFile(join(context.projectDir, "module.ts"), "ts");
+          await writeTextFile(join(context.projectDir, "module.mjs"), "mjs");
+          await writeTextFile(join(context.projectDir, "module.jsx"), "jsx");
+          await writeTextFile(join(context.projectDir, "module.js"), "js");
+          await writeTextFile(join(context.projectDir, "module.tsx"), "tsx");
+          await writeTextFile(join(context.projectDir, "module.ts"), "ts");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           // Resolver checks extensions in order: '', '.ts', '.tsx', '.js', '.jsx', '.mjs'
@@ -1685,11 +1686,11 @@ describe(
       it("should handle module path with spaces", async () => {
         await withTestContext("edge-path-spaces", async (context) => {
           const filePath = join(context.projectDir, "my module.ts");
-          await Deno.writeTextFile(filePath, "export const spaced = 1");
+          await writeTextFile(filePath, "export const spaced = 1");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("/my module.ts");
@@ -1701,11 +1702,11 @@ describe(
       it("should handle module path with unicode characters", async () => {
         await withTestContext("edge-unicode", async (context) => {
           const filePath = join(context.projectDir, "モジュール.ts");
-          await Deno.writeTextFile(filePath, "export const unicode = 1");
+          await writeTextFile(filePath, "export const unicode = 1");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("/モジュール.ts");
@@ -1726,14 +1727,14 @@ describe(
             "/" +
             "file.ts";
           const fullPath = join(context.projectDir, longPath);
-          await Deno.mkdir(join(context.projectDir, ...longPath.split("/").slice(0, -1)), {
+          await mkdir(join(context.projectDir, ...longPath.split("/").slice(0, -1)), {
             recursive: true,
           });
-          await Deno.writeTextFile(fullPath, "export const long = 1");
+          await writeTextFile(fullPath, "export const long = 1");
 
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("/" + longPath);
@@ -1752,7 +1753,7 @@ describe(
           const r = new ModuleResolver({
             projectDir: context.projectDir,
             importMap: largeImportMap,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("@lib50");
@@ -1765,7 +1766,7 @@ describe(
         await withTestContext("edge-empty-referrer", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const resolved = await r.resolve("react", "");
@@ -1778,7 +1779,7 @@ describe(
         await withTestContext("edge-undefined-null", async (context) => {
           const r = new ModuleResolver({
             projectDir: context.projectDir,
-            adapter: denoAdapter,
+            adapter: await getAdapter(),
           });
 
           const withUndefined = await r.resolve("react", undefined);

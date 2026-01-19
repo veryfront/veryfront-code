@@ -405,6 +405,22 @@ export function chmod(path: string, mode: number): Promise<void> {
   return getFs().chmod(path, mode);
 }
 
+/**
+ * Create a symbolic link
+ * @param target The path the symlink will point to
+ * @param path The path where the symlink will be created
+ */
+export async function symlink(target: string, path: string): Promise<void> {
+  if (isDeno) {
+    // @ts-ignore - Deno global
+    await Deno.symlink(target, path);
+  } else {
+    // Node.js/Bun
+    const fs = await import("node:fs/promises");
+    await fs.symlink(target, path);
+  }
+}
+
 // ============================================================================
 // Error Type Checking Helpers
 // ============================================================================

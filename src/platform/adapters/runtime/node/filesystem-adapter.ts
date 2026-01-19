@@ -116,7 +116,6 @@ export class NodeFileSystemAdapter implements FileSystemAdapter {
 
     const iterator = createWatcherIterator(
       eventQueue,
-      () => resolver,
       (r) => {
         resolver = r;
       },

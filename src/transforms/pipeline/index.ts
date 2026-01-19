@@ -28,6 +28,7 @@ import {
   resolveContextPlugin,
   resolveReactPlugin,
   resolveRelativePlugin,
+  ssrHttpCachePlugin,
   ssrHttpStubPlugin,
 } from "./stages/index.ts";
 
@@ -44,6 +45,7 @@ const SSR_PIPELINE: TransformPlugin[] = [
   ssrHttpStubPlugin, // Stub browser-only HTTP imports during SSR
   resolveRelativePlugin,
   resolveBarePlugin,
+  ssrHttpCachePlugin, // Cache HTTP imports to local file:// for SSR
   finalizePlugin,
 ];
 

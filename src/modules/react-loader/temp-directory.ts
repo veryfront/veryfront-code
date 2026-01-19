@@ -1,7 +1,9 @@
-import { join } from "@veryfront/platform/compat/path/index.ts";
+import { isAbsolute, join } from "@veryfront/platform/compat/path/index.ts";
 import { cwd } from "@veryfront/platform/compat/process.ts";
+import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { getCacheBaseDir } from "@veryfront/utils/cache-dir.ts";
 
-let globalTmpDir: string | null = null;
+const globalTmpDirs = new Map<string, string>();
 const projectTmpDirs = new Map<string, string>();
 
 /**
@@ -22,35 +24,39 @@ function normalizeProjectKey(projectId: string): string {
 }
 
 export async function getGlobalTmpDir(): Promise<string> {
-  if (!globalTmpDir) {
-    const fs = await import("node:fs/promises");
-    // Use .cache outside node_modules to avoid triggering Node.js module resolution
-    // When modules are in node_modules, Deno uses Node.js resolution which doesn't
-    // support https:// imports (esm.sh URLs). Using .cache at project root ensures
-    // Deno uses its native resolution which supports HTTP imports.
-    const projectDir = cwd();
-    globalTmpDir = join(projectDir, ".cache", "veryfront-modules");
-    await fs.mkdir(globalTmpDir, { recursive: true });
+  const cacheBaseDir = getCacheBaseDir();
+  const baseDir = isAbsolute(cacheBaseDir) ? cacheBaseDir : join(cwd(), cacheBaseDir);
+  const cached = globalTmpDirs.get(baseDir);
+  if (cached) {
+    return cached;
   }
-  return globalTmpDir;
+
+  // Use a cache dir outside node_modules to avoid triggering Node.js module resolution.
+  // Any cache base dir works as long as it is outside node_modules.
+  const tmpDir = join(baseDir, "veryfront-modules");
+  const fs = createFileSystem();
+  await fs.mkdir(tmpDir, { recursive: true });
+  globalTmpDirs.set(baseDir, tmpDir);
+  return tmpDir;
 }
 
 export async function getProjectTmpDir(projectId: string): Promise<string> {
   const normalizedKey = normalizeProjectKey(projectId);
-  const existing = projectTmpDirs.get(normalizedKey);
+  const baseDir = await getGlobalTmpDir();
+  const cacheKey = `${baseDir}:${normalizedKey}`;
+  const existing = projectTmpDirs.get(cacheKey);
   if (existing) {
     return existing;
   }
 
-  const baseDir = await getGlobalTmpDir();
-  const fs = await import("node:fs/promises");
+  const fs = createFileSystem();
   const projectTmpDir = join(baseDir, normalizedKey);
   await fs.mkdir(projectTmpDir, { recursive: true });
-  projectTmpDirs.set(normalizedKey, projectTmpDir);
+  projectTmpDirs.set(cacheKey, projectTmpDir);
   return projectTmpDir;
 }
 
 export function resetGlobalTmpDir(): void {
-  globalTmpDir = null;
+  globalTmpDirs.clear();
   projectTmpDirs.clear();
 }

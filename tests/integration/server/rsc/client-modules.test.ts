@@ -1,10 +1,13 @@
-import { join } from "@std/path";
-import { afterAll, describe, it } from "@std/testing/bdd";
+import { join } from "@veryfront/compat/path";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
 import "../../../_helpers/log-guard.ts";
-import { assert } from "@std/assert";
+import { assert } from "@veryfront/testing/assert";
+import { mkdir, remove, writeTextFile } from "@veryfront/compat/fs.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { assertDrained, drainEventLoop } from "../../../_helpers/utils.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
+import { isDeno } from "../../../../src/platform/compat/runtime.ts";
+import { delay } from "@std/async";
 
 describe("RSC Client Modules Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
   // Clean up renderer intervals to prevent resource leaks
@@ -16,7 +19,7 @@ describe("RSC Client Modules Tests", { sanitizeOps: false, sanitizeResources: fa
     it("endpoint bundles app client component", async () => {
       await withTestContext("rsc-client-module", async (context) => {
         // Enable RSC via config instead of env var
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
           `export default { experimental: { rsc: true } };`,
         );
@@ -28,20 +31,20 @@ describe("RSC Client Modules Tests", { sanitizeOps: false, sanitizeResources: fa
         let h: Awaited<ReturnType<typeof startProductionServer>> | null = null;
         try {
           // Remove default app directory and recreate structure
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
-          await Deno.remove(join(context.projectDir, "pages"), {
+          await remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "pages"), {
             recursive: true,
           });
 
-          await Deno.mkdir(join(context.projectDir, "pages"), {
+          await mkdir(join(context.projectDir, "pages"), {
             recursive: true,
           });
-          await Deno.writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home\n");
-          await Deno.mkdir(join(context.projectDir, "app", "comp"), {
+          await writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home\n");
+          await mkdir(join(context.projectDir, "app", "comp"), {
             recursive: true,
           });
           // Simple client component
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "comp", "Widget.tsx"),
             [
               "'use client'",
@@ -74,7 +77,7 @@ describe("RSC Client Modules Tests", { sanitizeOps: false, sanitizeResources: fa
             await h.stop();
           }
           // Give the server time to clean up
-          await new Promise((resolve) => setTimeout(resolve, 500));
+          await delay(500);
           await drainEventLoop(10, 50);
           await assertDrained({
             allowResources: [/MessagePort/i, /Timer/i, /^fetch/i],

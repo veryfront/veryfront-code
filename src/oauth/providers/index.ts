@@ -5,7 +5,7 @@
  */
 
 // Base classes
-export { OAuthProvider, OAuthService } from "./base.ts";
+export { type EnvReader, OAuthProvider, OAuthService } from "./base.ts";
 
 // Google services
 export {

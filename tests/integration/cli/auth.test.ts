@@ -5,19 +5,30 @@
  * callback server, and login commands.
  */
 
-import { assertEquals, assertExists } from "@std/assert";
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, it } from "@veryfront/testing/bdd";
+import { makeTempDir, remove } from "@veryfront/compat/fs.ts";
+import { deleteEnv, getEnv, setEnv } from "@veryfront/compat/process.ts";
 import { deleteToken, readToken, saveToken } from "../../../src/cli/auth/token-store.ts";
 import {
   getCallbackUrl,
   startCallbackServer,
   type CallbackServer,
 } from "../../../src/cli/auth/callback-server.ts";
+import { scaleMs } from "@veryfront/testing";
 
 describe("CLI Auth Integration", { sanitizeOps: false, sanitizeResources: false }, () => {
   let server: CallbackServer | null = null;
+  let tempDir: string;
+  let originalXdgConfig: string | undefined;
+
+  beforeAll(async () => {
+    tempDir = await makeTempDir({ prefix: "cli-auth-integration-" });
+    originalXdgConfig = getEnv("XDG_CONFIG_HOME");
+  });
 
   beforeEach(async () => {
+    setEnv("XDG_CONFIG_HOME", tempDir);
     // Clean up any existing token
     try {
       await deleteToken();
@@ -38,6 +49,15 @@ describe("CLI Auth Integration", { sanitizeOps: false, sanitizeResources: false 
     } catch {
       // Ignore
     }
+    if (originalXdgConfig !== undefined) {
+      setEnv("XDG_CONFIG_HOME", originalXdgConfig);
+    } else {
+      deleteEnv("XDG_CONFIG_HOME");
+    }
+  });
+
+  afterAll(async () => {
+    await remove(tempDir, { recursive: true });
   });
 
   describe("Complete OAuth flow simulation", () => {
@@ -47,7 +67,7 @@ describe("CLI Auth Integration", { sanitizeOps: false, sanitizeResources: false 
       const callbackUrl = getCallbackUrl(server.port);
 
       // 2. Set up promise to wait for callback
-      const callbackPromise = server.waitForCallback(5000);
+      const callbackPromise = server.waitForCallback(scaleMs(5000));
 
       // 3. Simulate OAuth redirect with token (like browser would do)
       const testToken = "oauth-test-token-xyz";
@@ -57,7 +77,7 @@ describe("CLI Auth Integration", { sanitizeOps: false, sanitizeResources: false 
         const html = await response.text();
         // Verify success page is returned
         assertEquals(html.includes("Logged in"), true);
-      }, 100);
+      }, scaleMs(100));
 
       // 4. Wait for callback to complete
       const result = await callbackPromise;
@@ -75,7 +95,7 @@ describe("CLI Auth Integration", { sanitizeOps: false, sanitizeResources: false 
       server = await startCallbackServer(9876);
       const callbackUrl = getCallbackUrl(server.port);
 
-      const callbackPromise = server.waitForCallback(5000);
+      const callbackPromise = server.waitForCallback(scaleMs(5000));
 
       // Simulate error from OAuth provider
       setTimeout(async () => {
@@ -85,7 +105,7 @@ describe("CLI Auth Integration", { sanitizeOps: false, sanitizeResources: false 
         // Verify error page is returned
         assertEquals(html.includes("Login failed"), true);
         assertEquals(html.includes("access_denied"), true);
-      }, 100);
+      }, scaleMs(100));
 
       const result = await callbackPromise;
       assertEquals(result.token, "");

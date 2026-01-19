@@ -1,6 +1,6 @@
 import type { Root as HastRoot } from "hast";
 import type { Root as MdastRoot } from "mdast";
-import type { Pluggable } from "npm:unified@11";
+import type { Pluggable } from "unified";
 import { rehypeAddClasses, rehypeMdxComponents, rehypePreserveNodeIds } from "./rehype-utils.ts";
 import { remarkMdxHeadings } from "./remark-headings.ts";
 import {

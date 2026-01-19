@@ -8,7 +8,10 @@ import { dirname, join, relative } from "@veryfront/platform/compat/path/index.t
 import { walk } from "@std/fs";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import { CLIENT_STYLES } from "./templates.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import {
+  createFileSystem,
+  isNotFoundError as _isNotFoundErrorCompat,
+} from "@veryfront/platform/compat/fs.ts";
 
 export interface AssetStats {
   assets: number;
@@ -22,10 +25,17 @@ interface PathStat {
   size: number;
 }
 
+/**
+ * Check if an error is a "not found" error.
+ * Handles Node.js ENOENT, Deno NotFound, and Veryfront FILE_NOT_FOUND errors.
+ */
 function isNotFoundError(error: unknown): boolean {
+  // First check the shared compat function
+  if (_isNotFoundErrorCompat(error)) return true;
+  // Also check for Veryfront's FILE_NOT_FOUND error code
   if (!error || typeof error !== "object") return false;
   const err = error as { code?: string };
-  return err.code === "ENOENT";
+  return err.code === "FILE_NOT_FOUND";
 }
 
 /**

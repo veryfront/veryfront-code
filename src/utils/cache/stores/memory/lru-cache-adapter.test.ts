@@ -1,6 +1,7 @@
-import { beforeEach, describe, it } from "@std/testing/bdd";
+import { beforeEach, describe, it } from "@veryfront/testing/bdd";
 import { expect } from "@std/expect";
 import { LRUCacheAdapter } from "./lru-cache-adapter.ts";
+import { delay } from "@std/async";
 
 describe("LRUCacheAdapter", () => {
   let cache: LRUCacheAdapter;
@@ -86,11 +87,12 @@ describe("LRUCacheAdapter", () => {
 
   describe("TTL expiration", () => {
     it("should expire entries after TTL", async () => {
-      cache.set("expire-me", "value", 50); // 50ms TTL
+      cache.set("expire-me", "value", 100); // 100ms TTL
 
       expect(cache.get("expire-me")).toBe("value");
 
-      await new Promise((r) => setTimeout(r, 60));
+      // Wait with sufficient margin for concurrent execution stability
+      await delay(200);
 
       expect(cache.get("expire-me")).toBeUndefined();
     });
@@ -106,11 +108,12 @@ describe("LRUCacheAdapter", () => {
     });
 
     it("should cleanup expired entries", async () => {
-      cache.set("expire1", "value1", 30);
-      cache.set("expire2", "value2", 30);
+      cache.set("expire1", "value1", 80);
+      cache.set("expire2", "value2", 80);
       cache.set("keep", "value3", 5000);
 
-      await new Promise((r) => setTimeout(r, 50));
+      // Wait with sufficient margin for concurrent execution stability
+      await delay(200);
 
       const cleaned = cache.cleanupExpired();
       expect(cleaned).toBe(2);
@@ -256,9 +259,10 @@ describe("LRUCacheAdapter", () => {
 
     it("should update TTL for existing key", async () => {
       cache.set("key", "value", 1000);
-      cache.set("key", "value", 50); // Update with shorter TTL
+      cache.set("key", "value", 100); // Update with shorter TTL
 
-      await new Promise((r) => setTimeout(r, 60));
+      // Wait with sufficient margin for concurrent execution stability
+      await delay(200);
 
       expect(cache.get("key")).toBeUndefined();
     });

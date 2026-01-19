@@ -1,4 +1,4 @@
-import * as esbuild from "esbuild/mod.js"; // Use native esbuild, not WASM
+import * as esbuild from "esbuild"; // Use native esbuild, not WASM
 import { generateCacheKey, getCachedTransform, setCachedTransform } from "./transform-cache.ts";
 import { computeContentHash, getLoaderFromPath } from "./transform-utils.ts";
 import { addDepsToEsmShUrls, resolveReactImports } from "./react-imports.ts";

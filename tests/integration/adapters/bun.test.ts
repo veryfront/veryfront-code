@@ -1,9 +1,10 @@
-import { assertEquals, assertExists } from "@std/assert";
-import { join } from "@std/path";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { join } from "@veryfront/compat/path";
+import { describe, it } from "@veryfront/testing/bdd";
 import { BunAdapter } from "@veryfront/platform/adapters/runtime/bun/index.ts";
 import { startUniversalServer } from "../../../src/server/production-server.ts";
 import { getFreePort } from "../../_helpers/utils.ts";
+import { makeTempDir, mkdir, remove, writeTextFile } from "@veryfront/testing/deno-compat";
 
 const isBunRuntime = typeof (globalThis as any).Bun !== "undefined";
 
@@ -25,7 +26,7 @@ describe(
         async () => {
           const adapter = new BunAdapter();
           let hit = 0;
-          const port = getFreePort();
+          const port = await getFreePort();
 
           const server = await adapter.serve(
             (_req: Request) => {
@@ -56,15 +57,15 @@ describe(
         },
         async () => {
           const adapter = new BunAdapter();
-          const dir = await Deno.makeTempDir({ prefix: "vf_bun_universal_" });
+          const dir = await makeTempDir({ prefix: "vf_bun_universal_" });
 
           try {
-            await Deno.mkdir(join(dir, "public"), { recursive: true });
-            await Deno.writeTextFile(join(dir, "public", "hello.txt"), "hi");
-            await Deno.mkdir(join(dir, "app"), { recursive: true });
-            await Deno.writeTextFile(join(dir, "app", "page.mdx"), "# Home");
+            await mkdir(join(dir, "public"), { recursive: true });
+            await writeTextFile(join(dir, "public", "hello.txt"), "hi");
+            await mkdir(join(dir, "app"), { recursive: true });
+            await writeTextFile(join(dir, "app", "page.mdx"), "# Home");
 
-            const port = getFreePort();
+            const port = await getFreePort();
             const server = await startUniversalServer({
               projectDir: dir,
               port,
@@ -76,6 +77,7 @@ describe(
             try {
               const health = await fetch(`http://127.0.0.1:${port}/healthz`);
               assertEquals(health.status, 200);
+              await health.text();
 
               const staticFile = await fetch(`http://127.0.0.1:${port}/hello.txt`);
               assertEquals(await staticFile.text(), "hi");
@@ -87,7 +89,7 @@ describe(
               await server.stop();
             }
           } finally {
-            await Deno.remove(dir, { recursive: true }).catch(() => {});
+            await remove(dir, { recursive: true }).catch(() => {});
           }
         },
       );
@@ -101,7 +103,7 @@ describe(
           const { startUniversalServer: startBun } = await import(
             "../../../src/server/production-server.ts"
           );
-          const dir = await Deno.makeTempDir({ prefix: "vf_bun_wrap_" });
+          const dir = await makeTempDir({ prefix: "vf_bun_wrap_" });
 
           try {
             const port = 9150 + Math.floor(Math.random() * 100);
@@ -115,7 +117,7 @@ describe(
             assertEquals(typeof handle.stop, "function");
             await handle.stop();
           } finally {
-            await Deno.remove(dir, { recursive: true }).catch(() => {});
+            await remove(dir, { recursive: true }).catch(() => {});
           }
         },
       );

@@ -1,10 +1,22 @@
-import { assert, assertEquals, assertExists } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assert, assertEquals, assertExists } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
 import { VirtualModuleSystem } from "../../../src/rendering/virtual-module-system.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import {
+  exists,
+  isNotFoundError,
+  makeTempDir,
+  mkdir,
+  readDir,
+  readTextFile,
+  remove,
+  stat,
+  writeTextFile,
+} from "@veryfront/compat/fs.ts";
+import { cwd, deleteEnv, env, getEnv, setEnv } from "@veryfront/compat/process.ts";
 
-// Mock adapter for testing
+// Mock adapter for testing using portable fs APIs
 function createMockAdapter(): RuntimeAdapter {
   return {
     name: "test",
@@ -14,31 +26,26 @@ function createMockAdapter(): RuntimeAdapter {
     },
     fs: {
       readFile: async (path: string) => {
-        return await Deno.readTextFile(path);
+        return await readTextFile(path);
       },
       writeFile: async (path: string, content: string) => {
-        await Deno.writeTextFile(path, content);
+        await writeTextFile(path, content);
       },
       exists: async (path: string) => {
-        try {
-          await Deno.stat(path);
-          return true;
-        } catch {
-          return false;
-        }
+        return await exists(path);
       },
       readDir: async function* (path: string) {
-        for await (const entry of Deno.readDir(path)) {
+        for await (const entry of readDir(path)) {
           yield {
             name: entry.name,
             isFile: entry.isFile,
             isDirectory: entry.isDirectory,
-            isSymlink: entry.isSymlink,
+            isSymlink: false,
           };
         }
       },
       stat: async (path: string) => {
-        const info = await Deno.stat(path);
+        const info = await stat(path);
         return {
           size: info.size,
           isFile: info.isFile,
@@ -48,22 +55,22 @@ function createMockAdapter(): RuntimeAdapter {
         };
       },
       mkdir: async (path: string, options?: { recursive?: boolean }) => {
-        await Deno.mkdir(path, options);
+        await mkdir(path, options);
       },
       remove: async (path: string, options?: { recursive?: boolean }) => {
-        await Deno.remove(path, options);
+        await remove(path, options);
       },
       makeTempDir: async (prefix: string) => {
-        return await Deno.makeTempDir({ prefix });
+        return await makeTempDir({ prefix });
       },
       watch: () => {
         throw new Error("Not implemented");
       },
     },
     env: {
-      get: (key: string) => Deno.env.get(key),
-      set: (key: string, value: string) => Deno.env.set(key, value),
-      toObject: () => Deno.env.toObject(),
+      get: (key: string) => getEnv(key),
+      set: (key: string, value: string) => setEnv(key, value),
+      toObject: () => env(),
     },
     features: {
       websocket: true,
@@ -93,7 +100,7 @@ describe(
       import * as React from "react";
       export default function X(){ return <div>Hello</div>; }
     `;
-      const url = await vms.registerModule("component:X", src, Deno.cwd());
+      const url = await vms.registerModule("component:X", src, cwd());
       // url should start with base
       assertEquals(url.startsWith("/_vf/modules"), true);
       const req = new Request(`http://localhost${url}`);
@@ -170,7 +177,7 @@ describe(
       const vms = new VirtualModuleSystem(customBasePath, adapter);
       const src = `export const test = "custom";`;
 
-      const url = await vms.registerModule("test:module", src, Deno.cwd());
+      const url = await vms.registerModule("test:module", src, cwd());
       assertEquals(url.startsWith(customBasePath), true);
 
       const res = vms.handleRequest(new Request(`http://localhost${url}`));

@@ -10,8 +10,8 @@
  * 3. Selective invalidation clears specific paths and their stat/dir caches
  */
 
-import { assertEquals, assertStringIncludes } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertStringIncludes } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
 import {
   buildFileCacheKeyPrefix,
   buildStatCacheKeyPrefix,

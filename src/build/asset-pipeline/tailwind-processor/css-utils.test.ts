@@ -2,7 +2,7 @@
  * Tests for CSS utility functions
  */
 
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "@veryfront/testing/bdd";
 import { expect } from "@std/expect";
 import { countUtilities, minifyCSS } from "./css-utils.ts";
 

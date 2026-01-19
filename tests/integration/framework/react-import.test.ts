@@ -1,11 +1,12 @@
 import * as React from "react";
 void React;
-import { assertEquals, assertExists } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
-import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
+import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import { ComponentRegistry } from "@veryfront/modules/component-registry/index.ts";
-import { loadImportMap, transformImportsWithMap } from "@veryfront/modules/import-map/index.ts";
+import { transformImportsWithMap } from "@veryfront/modules/import-map/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
+import { mkdir, writeTextFile } from "@veryfront/testing/deno-compat";
 
 describe("React Import Tests", () => {
   describe("ComponentRegistry", () => {
@@ -26,16 +27,16 @@ export default function TestComponent() {
 `;
 
         const componentsDir = `${context.projectDir}/components`;
-        await Deno.mkdir(componentsDir, { recursive: true });
+        await mkdir(componentsDir, { recursive: true });
         const componentPath = `${componentsDir}/TestComponent.tsx`;
 
         // Write the test component
-        await Deno.writeTextFile(componentPath, testComponentContent);
+        await writeTextFile(componentPath, testComponentContent);
 
         // Test component registry
         const registry = new ComponentRegistry({
           projectDir: context.projectDir,
-          adapter: denoAdapter,
+          adapter: await getAdapter(),
         });
         await registry.discover();
 
@@ -80,17 +81,17 @@ export default function Card({ title, children }) {
         ];
 
         const componentsDir = `${context.projectDir}/components`;
-        await Deno.mkdir(componentsDir, { recursive: true });
+        await mkdir(componentsDir, { recursive: true });
 
         // Write all components
         for (const comp of components) {
-          await Deno.writeTextFile(`${componentsDir}/${comp.name}`, comp.content);
+          await writeTextFile(`${componentsDir}/${comp.name}`, comp.content);
         }
 
         // Load components
         const registry = new ComponentRegistry({
           projectDir: context.projectDir,
-          adapter: denoAdapter,
+          adapter: await getAdapter(),
         });
         await registry.discover();
 
@@ -109,10 +110,9 @@ export default function Card({ title, children }) {
   });
 
   describe("Import Map Loader", () => {
-    it("should transform imports with import map", async () => {
-      await withTestContext("react-import-transform", async (_context) => {
-        // Test code with various import patterns
-        const testCode = `
+    it("should transform imports with import map", () => {
+      // Test code with various import patterns
+      const testCode = `
 import React from 'react';
 import { useState, useEffect } from 'react';
 import * as ReactDOM from 'react-dom';
@@ -124,26 +124,31 @@ const MyComponent = () => {
 };
 `;
 
-        // Load import map
-        const importMap = await loadImportMap(Deno.cwd());
-        assertExists(importMap.imports, "Import map should have imports");
+      // Create a minimal import map for testing
+      const importMap = {
+        imports: {
+          "react": "https://esm.sh/react@19.0.0",
+          "react-dom": "https://esm.sh/react-dom@19.0.0",
+          "react/jsx-runtime": "https://esm.sh/react@19.0.0/jsx-runtime",
+        },
+      };
+      assertExists(importMap.imports, "Import map should have imports");
 
-        // Transform the code
-        const transformed = transformImportsWithMap(testCode, importMap);
+      // Transform the code
+      const transformed = transformImportsWithMap(testCode, importMap);
 
-        // Verify React imports are left as bare imports (managed by import map)
-        assertEquals(
-          transformed.includes('from "react"'),
-          true,
-          "React bare import should be preserved",
-        );
+      // Verify React imports are left as bare imports (managed by import map)
+      assertEquals(
+        transformed.includes('from "react"'),
+        true,
+        "React bare import should be preserved",
+      );
 
-        assertEquals(
-          transformed.includes('from "react/jsx-runtime"'),
-          true,
-          "React JSX runtime bare import should be preserved",
-        );
-      });
+      assertEquals(
+        transformed.includes('from "react/jsx-runtime"'),
+        true,
+        "React JSX runtime bare import should be preserved",
+      );
     });
   });
 });

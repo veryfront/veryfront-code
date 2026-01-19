@@ -157,7 +157,7 @@ export function createVeryfrontHandler(
   logDebug("[universal] handler initialized", { projectDir });
 
   // Initialize security config loader
-  const securityLoader = new SecurityConfigLoader(projectDir, adapter);
+  const securityLoader = new SecurityConfigLoader(projectDir, adapter, opts.config);
 
   // Use pre-loaded config if provided, otherwise load eagerly
   // In proxy mode, config must be pre-loaded since we can't read files at startup

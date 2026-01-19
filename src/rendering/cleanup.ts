@@ -1,9 +1,7 @@
 /**
  * Cleanup bundler and related caches
  *
- * When running in test mode with globally initialized esbuild,
- * the __vfTestPreserveEsbuild flag prevents stopping esbuild
- * to avoid triggering Deno's resource leak detection.
+ * Clears renderer caches and handlers for test and runtime cleanup.
  */
 export async function cleanupBundler() {
   const { clearMDXRendererCache } = await import("@veryfront/transforms/mdx/index.ts");
@@ -15,6 +13,16 @@ export async function cleanupBundler() {
   // Clean up the shared renderer (for testing)
   const { destroyRendererAdapter } = await import("../server/shared/index.ts");
   await destroyRendererAdapter();
+
+  // Clean up RSC handler cache and stop interval to prevent resource leaks
+  try {
+    const { __destroyRSCHandlerForTests } = await import(
+      "../server/handlers/request/rsc/endpoints/handler-registry.ts"
+    );
+    __destroyRSCHandlerForTests();
+  } catch {
+    // RSC handler registry might not be loaded
+  }
 }
 
 export async function configureRendererNamespace(namespace: string) {

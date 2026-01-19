@@ -1,5 +1,5 @@
-import { assertEquals, assertExists, assertThrows } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists, assertThrows } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
 import { NodeBasedShellAdapter } from "./node-based-shell-adapter.ts";
 
 describe("NodeBasedShellAdapter", () => {

@@ -107,7 +107,6 @@ async function walkAppSSG(
   segDirs: string[],
   collected: AppRouteInfo[],
 ): Promise<void> {
-  const { join } = await import("std/path/mod.ts");
   const baseName = dir.split("/").pop() || "";
 
   if (isDynamicSegment(baseName)) {

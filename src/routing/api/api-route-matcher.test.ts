@@ -2,8 +2,8 @@
  * Tests for Dynamic Router
  */
 
-import { assertEquals, assertExists, assertStrictEquals } from "@std/assert";
-import { afterEach, describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists, assertStrictEquals } from "@veryfront/testing/assert";
+import { afterEach, describe, it } from "@veryfront/testing/bdd";
 import { DynamicRouter } from "./api-route-matcher.ts";
 
 // Track all routers to clean up after tests

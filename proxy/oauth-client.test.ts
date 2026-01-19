@@ -1,5 +1,7 @@
-import { assertEquals, assertRejects } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertRejects } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
+import { getLocalAdapter } from "@veryfront/platform/adapters/registry.ts";
+import { getFreePort } from "../tests/_helpers/utils.ts";
 
 describe("OAuth Client", () => {
   describe("fetchOAuthToken", () => {
@@ -24,16 +26,18 @@ describe("OAuth Client", () => {
       const { fetchOAuthToken } = await import("./oauth-client.ts");
 
       // Mock server that returns 401
-      const server = Deno.serve({ port: 0 }, () => {
-        return new Response("Unauthorized", { status: 401 });
-      });
+      const adapter = await getLocalAdapter();
+      const port = await getFreePort();
+      const server = await adapter.serve(
+        () => new Response("Unauthorized", { status: 401 }),
+        { port, hostname: "127.0.0.1" },
+      );
 
       try {
-        const addr = server.addr as Deno.NetAddr;
         await assertRejects(
           () =>
             fetchOAuthToken({
-              apiBaseUrl: `http://localhost:${addr.port}`,
+              apiBaseUrl: `http://127.0.0.1:${port}`,
               clientId: "test",
               clientSecret: "test",
             }),
@@ -41,28 +45,31 @@ describe("OAuth Client", () => {
           "401"
         );
       } finally {
-        await server.shutdown();
+        await server.stop();
       }
     });
 
     it("parses successful response", async () => {
       const { fetchOAuthToken } = await import("./oauth-client.ts");
 
-      const server = Deno.serve({ port: 0 }, () => {
-        return new Response(
-          JSON.stringify({
-            access_token: "test-token",
-            token_type: "Bearer",
-            expires_in: 3600,
-          }),
-          { headers: { "Content-Type": "application/json" } }
-        );
-      });
+      const adapter = await getLocalAdapter();
+      const port = await getFreePort();
+      const server = await adapter.serve(
+        () =>
+          new Response(
+            JSON.stringify({
+              access_token: "test-token",
+              token_type: "Bearer",
+              expires_in: 3600,
+            }),
+            { headers: { "Content-Type": "application/json" } },
+          ),
+        { port, hostname: "127.0.0.1" },
+      );
 
       try {
-        const addr = server.addr as Deno.NetAddr;
         const result = await fetchOAuthToken({
-          apiBaseUrl: `http://localhost:${addr.port}`,
+          apiBaseUrl: `http://127.0.0.1:${port}`,
           clientId: "test",
           clientSecret: "test",
         });
@@ -71,7 +78,7 @@ describe("OAuth Client", () => {
         assertEquals(result.token_type, "Bearer");
         assertEquals(result.expires_in, 3600);
       } finally {
-        await server.shutdown();
+        await server.stop();
       }
     });
   });

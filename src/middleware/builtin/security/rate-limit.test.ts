@@ -1,7 +1,8 @@
-import { assertEquals, assertExists } from "@std/assert";
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
 import { MemoryRateLimitStore, rateLimit } from "./rate-limit.ts";
 import { MiddlewareContext } from "../../core/context.ts";
+import { delay } from "@std/async";
 
 // Disable LRU interval during tests
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
@@ -41,13 +42,13 @@ describe("MemoryRateLimitStore", () => {
     });
 
     it("should reset expired entries", async () => {
-      // Use a very short window for testing
-      const shortWindow = 10;
+      // Use a short window for testing with sufficient margin for concurrent execution
+      const shortWindow = 50;
       const entry1 = await store.increment("test-key", shortWindow);
       assertEquals(entry1.count, 1);
 
-      // Wait for window to expire
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      // Wait for window to expire (2x margin for concurrent execution stability)
+      await delay(120);
 
       // Should reset to 1 after expiry
       const entry2 = await store.increment("test-key", shortWindow);

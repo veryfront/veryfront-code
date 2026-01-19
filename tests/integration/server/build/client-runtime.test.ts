@@ -2,8 +2,8 @@ import {
   assert,
   assertEquals as _assertEquals,
   assertStringIncludes,
-} from "@std/assert";
-import { afterAll, describe, it } from "@std/testing/bdd";
+} from "@veryfront/testing/assert";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
 import {
   generateAppModule,
   generateImportMap,

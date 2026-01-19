@@ -147,6 +147,24 @@ class ReloadNotifierImpl {
       activeInvalidateListeners: this.invalidateListeners.size,
     };
   }
+
+  /**
+   * Reset the notifier state (for testing only)
+   */
+  reset(): void {
+    this.listeners.clear();
+    this.invalidateListeners.clear();
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+    }
+    this.pendingChangedPaths.clear();
+    this.metrics = {
+      triggerCalls: 0,
+      broadcastsSent: 0,
+      lastTriggerTime: 0,
+    };
+  }
 }
 
 // Singleton instance

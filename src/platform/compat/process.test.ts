@@ -4,8 +4,8 @@
  * These tests verify the cross-runtime process abstractions work correctly.
  */
 
-import { assertEquals, assertExists } from "@std/assert";
-import { afterEach, describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { afterEach, describe, it } from "@veryfront/testing/bdd";
 import {
   cwd,
   deleteEnv,
@@ -180,7 +180,9 @@ describe("Process Compat", () => {
     it("should return stdout object with write method", () => {
       const stdout = getStdout();
       assertExists(stdout);
-      assertEquals(typeof stdout.write, "function");
+      if (stdout) {
+        assertEquals(typeof stdout.write, "function");
+      }
     });
   });
 

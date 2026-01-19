@@ -9,8 +9,8 @@
  * - Edge cases and error handling
  */
 
-import { assertEquals, assertExists } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
 import {
   extractImports,
   findComponent,
@@ -18,7 +18,8 @@ import {
   resolveImportPath,
 } from "../../../../../src/build/renderer/utils/import-utils.ts";
 import { withTestContext } from "../../../../_helpers/context.ts";
-import { join } from "@std/path";
+import { join } from "@veryfront/compat/path";
+import { mkdir, writeTextFile } from "../../../../../src/platform/compat/fs.ts";
 
 describe("Import Utils", () => {
   describe("extractImports", () => {
@@ -228,7 +229,7 @@ describe("Import Utils", () => {
     it("finds component with .tsx extension", async () => {
       await withTestContext("find-component-tsx", async (context) => {
         const componentPath = join(context.projectDir, "Button.tsx");
-        await Deno.writeTextFile(componentPath, "export const Button = () => <div />");
+        await writeTextFile(componentPath, "export const Button = () => <div />");
 
         const found = findComponent(join(context.projectDir, "Button"), context.projectDir);
 
@@ -240,7 +241,7 @@ describe("Import Utils", () => {
     it("finds component with .ts extension", async () => {
       await withTestContext("find-component-ts", async (context) => {
         const componentPath = join(context.projectDir, "utils.ts");
-        await Deno.writeTextFile(componentPath, "export const helper = () => {}");
+        await writeTextFile(componentPath, "export const helper = () => {}");
 
         const found = findComponent(join(context.projectDir, "utils"), context.projectDir);
 
@@ -252,7 +253,7 @@ describe("Import Utils", () => {
     it("finds component with .jsx extension", async () => {
       await withTestContext("find-component-jsx", async (context) => {
         const componentPath = join(context.projectDir, "Button.jsx");
-        await Deno.writeTextFile(componentPath, "export const Button = () => <div />");
+        await writeTextFile(componentPath, "export const Button = () => <div />");
 
         const found = findComponent(join(context.projectDir, "Button"), context.projectDir);
 
@@ -264,7 +265,7 @@ describe("Import Utils", () => {
     it("finds component with .js extension", async () => {
       await withTestContext("find-component-js", async (context) => {
         const componentPath = join(context.projectDir, "utils.js");
-        await Deno.writeTextFile(componentPath, "export const helper = () => {}");
+        await writeTextFile(componentPath, "export const helper = () => {}");
 
         const found = findComponent(join(context.projectDir, "utils"), context.projectDir);
 
@@ -276,7 +277,7 @@ describe("Import Utils", () => {
     it("finds component with .mdx extension", async () => {
       await withTestContext("find-component-mdx", async (context) => {
         const componentPath = join(context.projectDir, "article.mdx");
-        await Deno.writeTextFile(componentPath, "# Article Title");
+        await writeTextFile(componentPath, "# Article Title");
 
         const found = findComponent(join(context.projectDir, "article"), context.projectDir);
 
@@ -288,9 +289,9 @@ describe("Import Utils", () => {
     it("finds index.tsx when path is directory", async () => {
       await withTestContext("find-component-index-tsx", async (context) => {
         const dirPath = join(context.projectDir, "components");
-        await Deno.mkdir(dirPath, { recursive: true });
+        await mkdir(dirPath, { recursive: true });
         const indexPath = join(dirPath, "index.tsx");
-        await Deno.writeTextFile(indexPath, 'export * from "./Button"');
+        await writeTextFile(indexPath, 'export * from "./Button"');
 
         const found = findComponent(join(context.projectDir, "components"), context.projectDir);
 
@@ -303,12 +304,12 @@ describe("Import Utils", () => {
       await withTestContext("find-component-prefer-direct", async (context) => {
         // Create both a direct file and an index file
         const directPath = join(context.projectDir, "Button.tsx");
-        await Deno.writeTextFile(directPath, "export const Button = () => <div />");
+        await writeTextFile(directPath, "export const Button = () => <div />");
 
         const dirPath = join(context.projectDir, "Button");
-        await Deno.mkdir(dirPath, { recursive: true });
+        await mkdir(dirPath, { recursive: true });
         const indexPath = join(dirPath, "index.tsx");
-        await Deno.writeTextFile(indexPath, "export const Button = () => <div />");
+        await writeTextFile(indexPath, "export const Button = () => <div />");
 
         const found = findComponent(join(context.projectDir, "Button"), context.projectDir);
 

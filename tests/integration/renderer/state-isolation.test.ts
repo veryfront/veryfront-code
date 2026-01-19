@@ -3,13 +3,16 @@
  * Ensures that state from one test doesn't leak into another
  */
 
-import { assert, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
-import { describe, it } from "@std/testing/bdd";
+import { assert, assertStringIncludes } from "@veryfront/testing/assert";
+import { join } from "@veryfront/compat/path";
+import { mkdir, remove, writeTextFile } from "@veryfront/compat/fs.ts";
+import { describe, it } from "@veryfront/testing/bdd";
+
 import { createRenderer } from "../../../src/rendering/index.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
+// Skip tests on non-Deno runtimes (SSR uses URL-based imports)
 // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
 // See: https://github.com/facebook/react/issues/24669
 describe(
@@ -24,17 +27,17 @@ describe(
       await withTestContext("state-isolation-1", async (context1) => {
         await withTestContext("state-isolation-2", async (context2) => {
           // Setup first app router project
-          await Deno.mkdir(join(context1.projectDir, "app", "blog"), {
+          await mkdir(join(context1.projectDir, "app", "blog"), {
             recursive: true,
           });
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context1.projectDir, "app", "layout.mdx"),
             `---
 isLayout: true
 ---
 export default function Layout1({ children }) { return (<div className="layout-1">{children}</div>); }`,
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context1.projectDir, "app", "blog", "page.mdx"),
             `# Blog 1
 
@@ -42,17 +45,17 @@ Content from project 1`,
           );
 
           // Setup second app router project with different layout
-          await Deno.mkdir(join(context2.projectDir, "app", "blog"), {
+          await mkdir(join(context2.projectDir, "app", "blog"), {
             recursive: true,
           });
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context2.projectDir, "app", "layout.mdx"),
             `---
 isLayout: true
 ---
 export default function Layout2({ children }) { return (<div className="layout-2">{children}</div>); }`,
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context2.projectDir, "app", "blog", "page.mdx"),
             `# Blog 2
 
@@ -107,15 +110,15 @@ Content from project 2`,
       // First test - pages router with layout
       await withTestContext("seq-test-pages", async (context) => {
         // Remove app directory to force Pages Router
-        await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+        await remove(join(context.projectDir, "app"), { recursive: true });
 
         // Setup pages router project
-        await Deno.mkdir(join(context.projectDir, "pages"), { recursive: true });
-        await Deno.mkdir(join(context.projectDir, "layouts"), {
+        await mkdir(join(context.projectDir, "pages"), { recursive: true });
+        await mkdir(join(context.projectDir, "layouts"), {
           recursive: true,
         });
 
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "layouts", "main.mdx"),
           `---
 isLayout: true
@@ -123,7 +126,7 @@ isLayout: true
 export default function MainLayout({ children }) { return (<div className="pages-layout">{children}</div>); }`,
         );
 
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "pages", "index.mdx"),
           `---
 layout: main
@@ -152,12 +155,12 @@ Using pages router`,
       // Second test - app router with nested layouts
       await withTestContext("seq-test-app", async (context) => {
         // Create app router structure
-        await Deno.mkdir(join(context.projectDir, "app", "blog", "post"), {
+        await mkdir(join(context.projectDir, "app", "blog", "post"), {
           recursive: true,
         });
 
         // Root layout
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "app", "layout.mdx"),
           `---
 isLayout: true
@@ -166,13 +169,13 @@ export default function RootLayout({ children }) { return (<div className="root-
         );
 
         // Blog layout (tsx)
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "app", "blog", "layout.tsx"),
           `export default function BlogLayout({ children }) { return (<div className="blog-layout">{children}</div>); }`,
         );
 
         // Page at app/blog/post/page.mdx
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "app", "blog", "post", "page.mdx"),
           `# App Router Page
 

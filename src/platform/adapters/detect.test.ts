@@ -1,7 +1,11 @@
-import { assertEquals, assertExists } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
 import { detectRuntime, getAdapter } from "./detect.ts";
 import type { RuntimeId } from "./base.ts";
+import { isBun, isDeno, isNode } from "@veryfront/platform/compat/runtime.ts";
+
+// Get the expected runtime based on actual environment
+const expectedRuntime: RuntimeId = isDeno ? "deno" : isNode ? "node" : isBun ? "bun" : "deno";
 
 describe("detect.ts", () => {
   describe("detectRuntime", () => {
@@ -18,10 +22,10 @@ describe("detect.ts", () => {
       assertEquals(validRuntimes.includes(runtime), true);
     });
 
-    it("should detect deno runtime in this test environment", () => {
-      // Since tests run in Deno, this should return "deno"
+    it("should detect current runtime in this test environment", () => {
+      // Should return the current runtime
       const runtime = detectRuntime();
-      assertEquals(runtime, "deno");
+      assertEquals(runtime, expectedRuntime);
     });
 
     it("should return string type", () => {
@@ -43,10 +47,10 @@ describe("detect.ts", () => {
       assertExists(adapter.serve);
     });
 
-    it("should return denoAdapter in Deno environment", async () => {
+    it("should return adapter matching current runtime", async () => {
       const adapter = await getAdapter();
-      assertEquals(adapter.id, "deno");
-      assertEquals(adapter.name, "deno");
+      assertEquals(adapter.id, expectedRuntime);
+      assertEquals(adapter.name, expectedRuntime);
     });
 
     it("should return adapter with correct capabilities", async () => {

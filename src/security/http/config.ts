@@ -15,11 +15,15 @@ export class SecurityConfigLoader {
   private cspUserHeader: string | null = null;
   private isLoaded = false;
   private loadPromise: Promise<void> | null = null;
+  private configOverride?: VeryfrontConfig;
 
   constructor(
     private projectDir: string,
     private adapter: RuntimeAdapter,
-  ) {}
+    configOverride?: VeryfrontConfig,
+  ) {
+    this.configOverride = configOverride;
+  }
 
   /**
    * Ensure security config is loaded (singleton pattern)
@@ -44,43 +48,48 @@ export class SecurityConfigLoader {
    */
   private async load(): Promise<void> {
     try {
-      const cfg = await getConfig(this.projectDir, this.adapter) as VeryfrontConfig;
-
-      const baseSecurity = cfg?.security
-        ? { ...cfg.security } as SecurityConfig
-        : {} as SecurityConfig;
-
-      if (baseSecurity.headers) {
-        baseSecurity.headers = { ...baseSecurity.headers };
-      }
-
-      if (baseSecurity.cors === undefined) {
-        baseSecurity.cors = true;
-      }
-
-      this.securityConfig = baseSecurity;
-
-      // Parse CSP from config
-      const cfgCsp = this.securityConfig?.csp;
-      if (cfgCsp && typeof cfgCsp === "object") {
-        const pieces: string[] = [];
-        for (const [k, v] of Object.entries(cfgCsp)) {
-          if (v === undefined) continue;
-          const key = String(k).replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
-          const val = Array.isArray(v) ? v.join(" ") : String(v);
-          pieces.push(`${key} ${val}`);
-        }
-        if (pieces.length > 0) {
-          this.cspUserHeader = pieces.join("; ");
-        }
-      }
-
-      this.isLoaded = true;
+      const cfg = this.configOverride ??
+        await getConfig(this.projectDir, this.adapter) as VeryfrontConfig;
+      this.applyConfig(cfg);
     } catch (error) {
       // Config is optional, so we don't throw
       serverLogger.debug("[SecurityConfigLoader] Failed to load config:", error);
       this.isLoaded = true; // Mark as loaded even on error to prevent retry
     }
+  }
+
+  private applyConfig(cfg?: VeryfrontConfig): void {
+    const baseSecurity = cfg?.security
+      ? { ...cfg.security } as SecurityConfig
+      : {} as SecurityConfig;
+
+    if (baseSecurity.headers) {
+      baseSecurity.headers = { ...baseSecurity.headers };
+    }
+
+    if (baseSecurity.cors === undefined) {
+      baseSecurity.cors = true;
+    }
+
+    this.securityConfig = baseSecurity;
+    this.cspUserHeader = null;
+
+    // Parse CSP from config
+    const cfgCsp = this.securityConfig?.csp;
+    if (cfgCsp && typeof cfgCsp === "object") {
+      const pieces: string[] = [];
+      for (const [k, v] of Object.entries(cfgCsp)) {
+        if (v === undefined) continue;
+        const key = String(k).replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
+        const val = Array.isArray(v) ? v.join(" ") : String(v);
+        pieces.push(`${key} ${val}`);
+      }
+      if (pieces.length > 0) {
+        this.cspUserHeader = pieces.join("; ");
+      }
+    }
+
+    this.isLoaded = true;
   }
 
   /**

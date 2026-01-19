@@ -3,12 +3,14 @@
  * Tests link prefetching, cache management, and intersection observer
  */
 
-import { assertEquals, assertExists } from "@std/assert";
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
 import type { PrefetchOptions } from "@veryfront/rendering/client/prefetch.ts";
 import { PrefetchManager } from "@veryfront/rendering/client/prefetch.ts";
 import type { DOMEnvironment } from "./test-helpers.ts";
 import { setupDOMEnvironment } from "./test-helpers.ts";
+import { delay } from "@std/async";
+import { scaleMs } from "@veryfront/testing";
 
 describe("Prefetch Manager", () => {
   let env: DOMEnvironment;
@@ -168,7 +170,7 @@ describe("Prefetch Manager", () => {
       const concurrentFetch = async () => {
         activeFetches++;
         maxActiveFetches = Math.max(maxActiveFetches, activeFetches);
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        await delay(100);
         activeFetches--;
         return new Response("OK", { status: 200 });
       };
@@ -222,7 +224,7 @@ describe("Prefetch Manager", () => {
         return new Promise((resolve, reject) => {
           const timeoutId = setTimeout(() => {
             resolve(new Response("OK", { status: 200 }));
-          }, 10000);
+          }, scaleMs(10000));
 
           options?.signal?.addEventListener("abort", () => {
             clearTimeout(timeoutId);
@@ -232,7 +234,7 @@ describe("Prefetch Manager", () => {
       });
 
       const manager = createManager({
-        timeout: 100,
+        timeout: scaleMs(100),
       });
 
       // Should timeout quickly
@@ -345,7 +347,7 @@ describe("Prefetch Manager", () => {
       env.fetchMock.set("/test", async (_url: string, options?: RequestInit) => {
         try {
           await new Promise((resolve, reject) => {
-            const timeoutId = setTimeout(resolve, 1000);
+            const timeoutId = setTimeout(resolve, scaleMs(1000));
             options?.signal?.addEventListener("abort", () => {
               clearTimeout(timeoutId);
               aborted = true;
@@ -417,7 +419,7 @@ describe("Prefetch Manager", () => {
       }
 
       // Give time for prefetch
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await delay(100);
 
       // Cleanup
       document.body.removeChild(link);
@@ -451,7 +453,7 @@ describe("Prefetch Manager", () => {
       });
 
       const manager = createManager({
-        delay: 100,
+        delay: scaleMs(100),
       });
       manager.init();
 
@@ -465,7 +467,7 @@ describe("Prefetch Manager", () => {
       assertEquals(prefetchStarted, false);
 
       // Wait for delay
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      await delay(150);
 
       // Cleanup
       document.body.removeChild(link);

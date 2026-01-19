@@ -6,7 +6,7 @@ export class ServerDataFetcher {
   constructor(private adapter?: RuntimeAdapter) {}
 
   async fetch(pageModule: PageWithData, context: DataContext): Promise<DataResult> {
-    if (!pageModule.getServerData) {
+    if (!pageModule.getServerData || typeof pageModule.getServerData !== "function") {
       return { props: {} };
     }
 

@@ -14,7 +14,7 @@ import {
 import { ERROR_CATALOG } from "@veryfront/errors/catalog/index.ts";
 import { TransformStage } from "@veryfront/transforms/pipeline/types.ts";
 import { isRSCEnabled } from "@veryfront/utils/feature-flags.ts";
-import { getEnv } from "@veryfront/platform/compat/process.ts";
+import { getRuntimeEnv } from "@veryfront/config/runtime-env.ts";
 import type { HandlerContext } from "../../types.ts";
 
 const JSON_HEADERS = { "Content-Type": "application/json", "Cache-Control": "no-cache" };
@@ -560,12 +560,13 @@ function handleGetConfig(ctx: HandlerContext): Response {
     },
   ];
 
+  const env = getRuntimeEnv();
   const safeEnvVars: Record<string, string | boolean> = {
-    NODE_ENV: getEnv("NODE_ENV") || "development",
-    VERYFRONT_MODE: getEnv("VERYFRONT_MODE") || "development",
-    OPENAI_API_KEY: getEnv("OPENAI_API_KEY") ? "(set)" : "(not set)",
-    ANTHROPIC_API_KEY: getEnv("ANTHROPIC_API_KEY") ? "(set)" : "(not set)",
-    GOOGLE_AI_API_KEY: getEnv("GOOGLE_AI_API_KEY") ? "(set)" : "(not set)",
+    NODE_ENV: env.nodeEnv,
+    VERYFRONT_MODE: env.veryfrontMode,
+    OPENAI_API_KEY: env.openaiApiKey ? "(set)" : "(not set)",
+    ANTHROPIC_API_KEY: env.anthropicApiKey ? "(set)" : "(not set)",
+    GOOGLE_AI_API_KEY: env.googleApiKey ? "(set)" : "(not set)",
   };
 
   return jsonResponse({

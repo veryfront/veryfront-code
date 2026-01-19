@@ -19,14 +19,14 @@ import { ensureValidChild } from "./ensure-valid-child.ts";
 const IS_DENO = typeof (globalThis as { Deno?: unknown }).Deno !== "undefined";
 
 /**
- * Transform bare npm imports to npm: specifiers for Deno SSR.
+ * Transform bare npm imports to esm.sh URLs for Deno SSR.
  *
- * IMPORTANT: React packages are NOT transformed to npm: specifiers.
- * They stay as bare specifiers so Deno resolves them via deno.json's import map.
+ * IMPORTANT: React packages are NOT transformed to HTTP URLs.
+ * They stay as bare specifiers so Deno resolves them via the import map.
  * This ensures all React code (page, providers, layouts) uses the same React instance,
  * preventing Symbol mismatches (React error #31).
  */
-function transformBareImportsToNpm(code: string): string {
+function transformBareImportsToEsm(code: string): string {
   if (!IS_DENO) return code;
 
   return code.replace(
@@ -54,8 +54,9 @@ function transformBareImportsToNpm(code: string): string {
       ) {
         return `from "${specifier}"`;
       }
-      logger.debug("[applicator] Transforming bare import to npm:", { specifier });
-      return `from "npm:${specifier}"`;
+      logger.debug("[applicator] Transforming bare import to esm.sh:", { specifier });
+      const separator = specifier.includes("?") ? "&" : "?";
+      return `from "https://esm.sh/${specifier}${separator}external=react&target=es2022"`;
     },
   );
 }
@@ -314,7 +315,7 @@ async function applyProviders(
           providerItem.bundle.compiledCode,
           providerImportMap,
         );
-        providerCode = transformBareImportsToNpm(providerCode);
+        providerCode = transformBareImportsToEsm(providerCode);
         providerCode = transformLocalFileImportsToModuleServer(providerCode);
         const providerModule = await mdxRenderer.loadModuleESM(
           providerCode,

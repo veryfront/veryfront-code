@@ -2,13 +2,14 @@
  * DAG Executor Tests
  */
 
-import { assertEquals } from "@std/assert";
-import { beforeEach, describe, it } from "@std/testing/bdd";
+import { assertEquals } from "@veryfront/testing/assert";
+import { beforeEach, describe, it } from "@veryfront/testing/bdd";
 import { DAGExecutor } from "./dag-executor.ts";
 import { StepExecutor } from "./step-executor.ts";
 import { step } from "../dsl/step.ts";
 import { dependsOn } from "../dsl/workflow.ts";
 import type { WorkflowContext, WorkflowNode, WorkflowRun } from "../types.ts";
+import { delay } from "@std/async";
 
 /**
  * Creates a mock StepExecutor that tracks execution order
@@ -97,7 +98,7 @@ describe("DAGExecutor", () => {
 
       stepExecutor.execute = async (node: WorkflowNode, _context: WorkflowContext) => {
         startTimes[node.id] = Date.now();
-        await new Promise((r) => setTimeout(r, 50));
+        await delay(50);
         return {
           success: true,
           output: {},

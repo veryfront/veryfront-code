@@ -10,16 +10,18 @@
  * - Performance and concurrency
  */
 
-import { assert, assertEquals, assertExists } from "@std/assert";
-import { ensureDir } from "@std/fs";
-import { join } from "@std/path";
-import { afterAll, describe, it } from "@std/testing/bdd";
+import { assert, assertEquals, assertExists } from "@veryfront/testing/assert";
+import { join } from "@veryfront/compat/path";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
+import { mkdir, writeTextFile } from "@veryfront/testing/deno-compat";
+
 import "../../_helpers/log-guard.ts";
 import { buildProduction } from "../../../src/build/production-build/index.ts";
 import { TestDataFactory } from "../../fixtures/test-data-factory.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 
+// Production server tests use SSR which requires Deno
 // Clean up renderer intervals to prevent resource leaks
 afterAll(async () => {
   await cleanupBundler();
@@ -35,11 +37,11 @@ describe(
         context.setEnv({ VF_CACHE_ALLOW_CLOSE: "1" });
 
         // Arrange
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "public", "test.txt"),
           "This is a test static file",
         );
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "public", "styles.css"),
           "body { margin: 0; }",
         );
@@ -98,7 +100,7 @@ describe(
       await withTestContext("prod-concurrent", async (context) => {
         // Create multiple assets
         for (let i = 0; i < 5; i++) {
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "public", `file${i}.txt`),
             `Content ${i}`,
           );
@@ -142,12 +144,12 @@ describe(
         context.setEnv({ VF_CACHE_ALLOW_CLOSE: "1" });
 
         // Create App Router structure
-        await Deno.mkdir(join(context.projectDir, "app"), { recursive: true });
-        await Deno.writeTextFile(
+        await mkdir(join(context.projectDir, "app"), { recursive: true });
+        await writeTextFile(
           join(context.projectDir, "app", "layout.tsx"),
           TestDataFactory.createAppLayout(),
         );
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "app", "page.tsx"),
           `export default function HomePage() {
         return <h1>App Router Home</h1>;
@@ -182,8 +184,8 @@ describe(
     it("handles API routes", async () => {
       await withTestContext("production-basic-api", async (context) => {
         // Create an App Router API route
-        await ensureDir(join(context.projectDir, "app", "api", "hello"));
-        await Deno.writeTextFile(
+        await mkdir(join(context.projectDir, "app", "api", "hello"), { recursive: true });
+        await writeTextFile(
           join(context.projectDir, "app", "api", "hello", "route.ts"),
           `export function GET() {
           return Response.json({ message: "Hello API" });
@@ -208,7 +210,7 @@ describe(
     it("does not set CSP by default (allows user content)", async () => {
       await withTestContext("prod-csp-nonce", async (context) => {
         // Create a simple page so the server has something to serve
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "pages", "index.tsx"),
           `export default function Home() { return <h1>CSP Test</h1>; }`,
         );
@@ -227,7 +229,7 @@ describe(
     it("sets security headers", async () => {
       await withTestContext("production-basic-security", async (context) => {
         // Create a simple App Router page
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "app", "page.tsx"),
           `export default function Page() { return <div>Security Test</div>; }`,
         );
@@ -275,10 +277,10 @@ describe(
     it("handles CORS preflight requests", async () => {
       await withTestContext("prod-cors-preflight", async (context) => {
         // Create an API route
-        await Deno.mkdir(join(context.projectDir, "pages", "api"), {
+        await mkdir(join(context.projectDir, "pages", "api"), {
           recursive: true,
         });
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "pages", "api", "hello.ts"),
           `export const GET = () => Response.json({ message: "Hello" });`,
         );
@@ -322,7 +324,7 @@ describe(
           },
         });
 
-        await Deno.writeTextFile(join(context.projectDir, "pages", "test.mdx"), mdxContent);
+        await writeTextFile(join(context.projectDir, "pages", "test.mdx"), mdxContent);
 
         const server = await context.createProductionServer();
 
@@ -350,7 +352,7 @@ describe(
         context.setEnv({ VF_CACHE_ALLOW_CLOSE: "1" });
 
         // Create a minimal index page
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "pages", "index.tsx"),
           `export default function Home() { return <h1>Home</h1>; }`,
         );
@@ -385,7 +387,7 @@ describe(
         context.setEnv({ VF_CACHE_ALLOW_CLOSE: "1", NODE_ENV: "production" });
 
         // Create a page that throws during render
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "pages", "error.mdx"),
           `# Error Page\n\n<UndefinedComponent />`,
         );

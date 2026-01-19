@@ -1,7 +1,7 @@
 /**
  * Module Loader
  *
- * Loads and transforms modules for SSR, handling @/ imports and esm.sh dependencies.
+ * Loads and transforms modules for SSR, handling @/ imports and cached HTTP dependencies.
  *
  * @module rendering/orchestrator/module-loader
  */

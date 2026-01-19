@@ -1,8 +1,10 @@
-import { assert } from "@std/assert";
-import { ensureDir } from "@std/fs";
-import { join } from "@std/path";
-import { describe, it } from "@std/testing/bdd";
+import { assert } from "@veryfront/testing/assert";
+import { mkdir, remove, writeTextFile } from "@veryfront/compat/fs.ts";
+import { join } from "@veryfront/compat/path";
+import { describe, it } from "@veryfront/testing/bdd";
 import { withTestContext } from "../../_helpers/context.ts";
+import { delay } from "@std/async";
+import { scaleMs } from "@veryfront/testing";
 
 // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
 // See: https://github.com/facebook/react/issues/24669
@@ -19,43 +21,43 @@ describe(
     it.skip("nested loading+error streaming", async () => {
       await withTestContext("app-router-nested-streaming", async (context) => {
         // Remove default app and pages directories
-        await Deno.remove(join(context.projectDir, "app"), { recursive: true });
-        await Deno.remove(join(context.projectDir, "pages"), { recursive: true });
+        await remove(join(context.projectDir, "app"), { recursive: true });
+        await remove(join(context.projectDir, "pages"), { recursive: true });
 
         // Create minimal pages dir for fallback
-        await ensureDir(join(context.projectDir, "pages"));
-        await Deno.writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home\n");
+        await mkdir(join(context.projectDir, "pages"), { recursive: true });
+        await writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home\n");
 
         // Create nested app router structure: /a/b
         const segA = join(context.projectDir, "app", "a");
         const segB = join(segA, "b");
-        await ensureDir(segB);
+        await mkdir(segB, { recursive: true });
 
         // Root layout with main
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "app", "layout.tsx"),
           `export default function Root({ children }: any){ return (<html><body><main data-router-focus>{children}</main></body></html>); }`,
         );
 
         // Segment A loading and error components
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(segA, "loading.tsx"),
           `export default function Loading(){ return <p>Loading A...</p>; }`,
         );
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(segA, "error.tsx"),
           `export default function Error({ error }: any){ return <p>ErrA:{String(error&&error.message||error)}</p>; }`,
         );
 
         // Segment B page that throws synchronously (async errors aren't caught by error boundaries in React)
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(segB, "page.tsx"),
           `export default function Page(){ throw new Error('boom'); }`,
         );
 
         const { getFreePort } = await import("../../_helpers/utils.ts");
         const { withTestServer, createTestDevServer } = await import("../../_helpers/server.ts");
-        const port = getFreePort();
+        const port = await getFreePort();
 
         await withTestServer(
           () =>
@@ -66,11 +68,11 @@ describe(
             }),
           async (_server) => {
             // Give server time to fully initialize routes
-            await new Promise((resolve) => setTimeout(resolve, 500));
+            await delay(500);
 
             // Fetch with timeout to avoid hanging test environments
             const ctrl = new AbortController();
-            const timer = setTimeout(() => ctrl.abort(), 5000);
+            const timer = setTimeout(() => ctrl.abort(), scaleMs(5000));
             const res = await fetch(`http://127.0.0.1:${port}/a/b`, {
               signal: ctrl.signal,
             }).catch(() => new Response("", { status: 599 }));

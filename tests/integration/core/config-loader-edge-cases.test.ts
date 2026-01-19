@@ -3,19 +3,20 @@
  * Tests invalid configs, missing files, malformed input, and error scenarios
  */
 
-import { assertEquals, assertExists, assertRejects } from "@std/assert";
-import { assertStringIncludes } from "@std/assert";
-import { describe } from "@std/testing/bdd";
+import { assertEquals, assertExists, assertRejects } from "@veryfront/testing/assert";
+import { assertStringIncludes } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
 import { clearConfigCache, getConfig } from "@veryfront/config";
 import { createMockAdapter } from "@veryfront/platform/adapters/mock.ts";
-import { join } from "@std/path";
+import { join } from "@veryfront/compat/path";
+import { makeTempDir, remove, writeTextFile } from "@veryfront/testing/deno-compat";
 
 // Helper to write config files to temp directory for testing
 async function setupConfigTest(
   configs: { content: string; filename?: string }[] | string,
   options?: { useAdapter?: boolean },
 ): Promise<{ projectDir: string; adapter: any; cleanup: () => Promise<void> }> {
-  const tempDir = await Deno.makeTempDir({ prefix: "veryfront-test-" });
+  const tempDir = await makeTempDir({ prefix: "veryfront-test-" });
   const adapter = options?.useAdapter !== false ? createMockAdapter() : null;
 
   const configArray = typeof configs === "string" ? [{ content: configs }] : configs;
@@ -23,7 +24,7 @@ async function setupConfigTest(
   // Write actual files to disk so they can be imported
   for (const { content, filename = "veryfront.config.js" } of configArray) {
     const configPath = join(tempDir, filename);
-    await Deno.writeTextFile(configPath, content);
+    await writeTextFile(configPath, content);
     if (adapter) {
       await adapter.fs.writeFile(configPath, content);
     }
@@ -34,7 +35,7 @@ async function setupConfigTest(
     adapter: adapter || createMockAdapter(),
     cleanup: async () => {
       try {
-        await Deno.remove(tempDir, { recursive: true });
+        await remove(tempDir, { recursive: true });
       } catch {
         // Ignore errors during cleanup
       }
@@ -44,7 +45,7 @@ async function setupConfigTest(
 
 describe("Config Loader - Edge Cases and Error Handling", () => {
   describe("Invalid config structure", () => {
-    Deno.test("should reject non-object config exports", async () => {
+    it("should reject non-object config exports", async () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest(
         `export default "not an object";`,
       );
@@ -62,7 +63,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       }
     });
 
-    Deno.test("should reject null config export", async () => {
+    it("should reject null config export", async () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest("export default null;");
 
       try {
@@ -74,7 +75,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       }
     });
 
-    Deno.test("should reject undefined config export", async () => {
+    it("should reject undefined config export", async () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest("export default undefined;");
 
       try {
@@ -86,7 +87,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       }
     });
 
-    Deno.test("should handle config with syntax errors", async () => {
+    it("should handle config with syntax errors", async () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest(
         `export default { invalid syntax here`,
       );
@@ -101,7 +102,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       }
     });
 
-    Deno.test("should handle config with runtime errors", async () => {
+    it("should handle config with runtime errors", async () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest(`
         throw new Error('Runtime error');
         export default {};
@@ -118,7 +119,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
   });
 
   describe("Invalid CORS configuration", () => {
-    Deno.test("should reject invalid cors.origin type", async () => {
+    it("should reject invalid cors.origin type", async () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest(`
         export default {
           security: {
@@ -137,7 +138,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       }
     });
 
-    Deno.test("should reject array as cors.origin", async () => {
+    it("should reject array as cors.origin", async () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest(`
         export default {
           security: {
@@ -158,7 +159,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       }
     });
 
-    Deno.test("should reject object as cors.origin", async () => {
+    it("should reject object as cors.origin", async () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest(`
         export default {
           security: {
@@ -179,7 +180,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       }
     });
 
-    Deno.test("should accept valid cors.origin string", async () => {
+    it("should accept valid cors.origin string", async () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest(`
         export default {
           security: {
@@ -201,7 +202,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       }
     });
 
-    Deno.test("should handle cors as array (invalid)", async () => {
+    it("should handle cors as array (invalid)", async () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest(`
         export default {
           security: {
@@ -223,7 +224,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       }
     });
 
-    Deno.test("should handle cors as non-object", async () => {
+    it("should handle cors as non-object", async () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest(`
         export default {
           security: {
@@ -244,7 +245,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
   });
 
   describe("Unknown config keys", () => {
-    Deno.test("should warn about unknown top-level keys", async () => {
+    it("should warn about unknown top-level keys", async () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest(`
         export default {
           title: 'My App',
@@ -265,7 +266,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       }
     });
 
-    Deno.test("should handle config with only unknown keys", async () => {
+    it("should handle config with only unknown keys", async () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest(`
         export default {
           unknownKey1: 'value',
@@ -286,8 +287,8 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
   });
 
   describe("Missing config files", () => {
-    Deno.test("should use defaults when no config file exists", async () => {
-      const tempDir = await Deno.makeTempDir({ prefix: "veryfront-test-" });
+    it("should use defaults when no config file exists", async () => {
+      const tempDir = await makeTempDir({ prefix: "veryfront-test-" });
       const adapter = createMockAdapter();
 
       try {
@@ -299,12 +300,12 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
         assertExists(config.build);
         assertEquals(config.title, "Veryfront App");
       } finally {
-        await Deno.remove(tempDir, { recursive: true }).catch(() => {});
+        await remove(tempDir, { recursive: true }).catch(() => {});
         clearConfigCache();
       }
     });
 
-    Deno.test("should try all config file variants", async () => {
+    it("should try all config file variants", async () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest([
         { content: 'export default { title: "From MJS" };', filename: "veryfront.config.mjs" },
       ]);
@@ -318,7 +319,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       }
     });
 
-    Deno.test("should prioritize .js over .ts and .mjs", async () => {
+    it("should prioritize .js over .ts and .mjs", async () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest([
         { content: 'export default { title: "JS" };', filename: "veryfront.config.js" },
         { content: 'export default { title: "TS" };', filename: "veryfront.config.ts" },
@@ -336,7 +337,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
   });
 
   describe("Config merging edge cases", () => {
-    Deno.test("should deep merge nested config objects", async () => {
+    it("should deep merge nested config objects", async () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest(`
         export default {
           dev: {
@@ -356,7 +357,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       }
     });
 
-    Deno.test("should merge import maps correctly", async () => {
+    it("should merge import maps correctly", async () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest(`
         export default {
           resolve: {
@@ -383,7 +384,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       }
     });
 
-    Deno.test("should handle undefined nested properties", async () => {
+    it("should handle undefined nested properties", async () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest(`
         export default {
           dev: undefined,
@@ -403,7 +404,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       }
     });
 
-    Deno.test("should handle null nested properties", async () => {
+    it("should handle null nested properties", async () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest(`
         export default {
           theme: null
@@ -425,13 +426,13 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
   });
 
   describe("Config caching", () => {
-    Deno.test("should cache config per project directory", async () => {
-      const tempDir1 = await Deno.makeTempDir({ prefix: "veryfront-test-" });
-      const tempDir2 = await Deno.makeTempDir({ prefix: "veryfront-test-" });
+    it("should cache config per project directory", async () => {
+      const tempDir1 = await makeTempDir({ prefix: "veryfront-test-" });
+      const tempDir2 = await makeTempDir({ prefix: "veryfront-test-" });
       const adapter = createMockAdapter();
 
       try {
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(tempDir1, "veryfront.config.js"),
           'export default { title: "Project 1" };',
         );
@@ -439,7 +440,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
           join(tempDir1, "veryfront.config.js"),
           'export default { title: "Project 1" };',
         );
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(tempDir2, "veryfront.config.js"),
           'export default { title: "Project 2" };',
         );
@@ -461,19 +462,19 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
         assertEquals(config1Cached.title, "Project 1");
         assertEquals(config2Cached.title, "Project 2");
       } finally {
-        await Deno.remove(tempDir1, { recursive: true }).catch(() => {});
-        await Deno.remove(tempDir2, { recursive: true }).catch(() => {});
+        await remove(tempDir1, { recursive: true }).catch(() => {});
+        await remove(tempDir2, { recursive: true }).catch(() => {});
         clearConfigCache();
       }
     });
 
-    Deno.test("should clear cache correctly", async () => {
-      const tempDir = await Deno.makeTempDir({ prefix: "veryfront-test-" });
+    it("should clear cache correctly", async () => {
+      const tempDir = await makeTempDir({ prefix: "veryfront-test-" });
       const adapter = createMockAdapter();
       const configPath = join(tempDir, "veryfront.config.js");
 
       try {
-        await Deno.writeTextFile(configPath, 'export default { title: "Original" };');
+        await writeTextFile(configPath, 'export default { title: "Original" };');
         await adapter.fs.writeFile(configPath, 'export default { title: "Original" };');
 
         const config1 = await getConfig(tempDir, adapter);
@@ -482,18 +483,18 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
         clearConfigCache();
 
         // Update config file
-        await Deno.writeTextFile(configPath, 'export default { title: "Updated" };');
+        await writeTextFile(configPath, 'export default { title: "Updated" };');
         await adapter.fs.writeFile(configPath, 'export default { title: "Updated" };');
 
         const config2 = await getConfig(tempDir, adapter);
         assertEquals(config2.title, "Updated");
       } finally {
-        await Deno.remove(tempDir, { recursive: true }).catch(() => {});
+        await remove(tempDir, { recursive: true }).catch(() => {});
         clearConfigCache();
       }
     });
 
-    Deno.test("should handle concurrent config loads", async () => {
+    it("should handle concurrent config loads", async () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest(
         'export default { title: "Concurrent" };',
       );
@@ -516,7 +517,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
   });
 
   describe("Config validation edge cases", () => {
-    Deno.test("should handle very large config objects", async () => {
+    it("should handle very large config objects", async () => {
       const largeTheme: Record<string, string> = {};
       for (let i = 0; i < 1000; i++) {
         largeTheme[`color${i}`] = `#${i.toString(16).padStart(6, "0")}`;
@@ -539,7 +540,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       }
     });
 
-    Deno.test("should handle config with circular references", async () => {
+    it("should handle config with circular references", async () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest(`
         const config = { title: 'Circular' };
         config.self = config;
@@ -555,7 +556,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       }
     });
 
-    Deno.test("should handle config with functions", async () => {
+    it("should handle config with functions", async () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest(`
         export default {
           title: 'Functions',
@@ -575,7 +576,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       }
     });
 
-    Deno.test("should handle config with special characters", async () => {
+    it("should handle config with special characters", async () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest(`
         export default {
           title: 'Test \\n\\t\\r\u{1F600}',
@@ -592,7 +593,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       }
     });
 
-    Deno.test("should handle empty config object", async () => {
+    it("should handle empty config object", async () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest("export default {};");
 
       try {
@@ -607,7 +608,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       }
     });
 
-    Deno.test("should handle config export as named export", async () => {
+    it("should handle config export as named export", async () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest(`
         export const config = { title: 'Named' };
         export default config;
@@ -624,7 +625,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
   });
 
   describe("TypeScript config handling", () => {
-    Deno.test("should load TypeScript config files", async () => {
+    it("should load TypeScript config files", async () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest(
         [
           {
@@ -648,7 +649,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       }
     });
 
-    Deno.test("should handle TS config with type errors", async () => {
+    it("should handle TS config with type errors", async () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest(
         [
           {

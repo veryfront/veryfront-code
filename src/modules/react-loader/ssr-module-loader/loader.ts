@@ -6,7 +6,7 @@
  * @module module-system/react-loader/ssr-module-loader/loader
  */
 
-import { join } from "@veryfront/platform/compat/path/index.ts";
+import { isAbsolute, join } from "@veryfront/platform/compat/path/index.ts";
 import { cwd } from "@veryfront/platform/compat/process.ts";
 import type * as React from "react";
 import { transformToESM } from "@veryfront/transforms/esm/index.ts";
@@ -38,6 +38,7 @@ import {
   transformSemaphore,
 } from "./cache/index.ts";
 import type { ModuleCacheEntry, SSRModuleLoaderOptions } from "./types.ts";
+import { getCacheBaseDir } from "@veryfront/utils/cache-dir.ts";
 
 /**
  * SSR Module Loader with Redis Support.
@@ -520,18 +521,20 @@ export class SSRModuleLoader {
       projectDir = join(cwd(), projectDir);
     }
 
-    const cacheKey = buildSSRModuleProjectKey(projectDir, projectId);
+    const cacheBaseDir = getCacheBaseDir();
+    const baseDir = isAbsolute(cacheBaseDir) ? cacheBaseDir : join(cwd(), cacheBaseDir);
+    const cacheKey = `${baseDir}|${buildSSRModuleProjectKey(projectDir, projectId)}`;
 
     const existingDir = globalTmpDirs.get(cacheKey);
     if (existingDir) {
       return existingDir;
     }
 
+    const projectKey = projectId ? this.hashCode(projectId) : "default";
     const tmpDir = join(
-      projectDir,
-      ".cache",
+      baseDir,
       "veryfront-ssr",
-      projectId || "default",
+      projectKey,
     );
 
     await this.fs.mkdir(tmpDir, { recursive: true });

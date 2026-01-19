@@ -1,6 +1,6 @@
 import { compile as compileMdx } from "@mdx-js/mdx";
 import { bundlerLogger as logger } from "@veryfront/utils";
-import * as esbuild from "esbuild/mod.js"; // Native esbuild
+import * as esbuild from "esbuild"; // Native esbuild
 import { extract } from "@std/front-matter/yaml";
 import { dirname, join } from "@veryfront/platform/compat/path/index.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";

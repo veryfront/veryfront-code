@@ -1,124 +1,189 @@
 /**
  * Centralized environment accessors.
+ *
  * Runtime code should depend on these helpers rather than calling getEnv directly.
+ * All functions accept an optional RuntimeEnv parameter for test isolation.
+ *
+ * @module
  */
 
-import { getEnv } from "@veryfront/platform/compat/process.ts";
-import { isTruthyEnvValue } from "@veryfront/utils/constants/env.ts";
+import { getRuntimeEnv, type RuntimeEnv } from "./runtime-env.ts";
 
-export function getDisableLruIntervalEnv(): boolean {
-  return getEnv("VF_DISABLE_LRU_INTERVAL") === "1";
+/**
+ * Check if LRU interval cleanup is disabled.
+ */
+export function getDisableLruIntervalEnv(env: RuntimeEnv = getRuntimeEnv()): boolean {
+  return env.disableLruInterval;
 }
 
-export function getApiBaseUrlEnv(): string {
-  return getEnv("VERYFRONT_API_BASE_URL") ||
-    getEnv("VERYFRONT_API_URL")?.replace("/graphql", "/api") ||
-    "http://api.lvh.me:4000";
+/**
+ * Get the API base URL.
+ */
+export function getApiBaseUrlEnv(env: RuntimeEnv = getRuntimeEnv()): string {
+  return env.apiBaseUrl;
 }
 
-export function getSsrMaxConcurrentTransformsEnv(defaultValue = 3): number {
-  const raw = getEnv("SSR_MAX_CONCURRENT_TRANSFORMS");
-  const parsed = raw ? parseInt(raw, 10) : NaN;
-  return Number.isFinite(parsed) ? parsed : defaultValue;
+/**
+ * Get max concurrent SSR transforms.
+ */
+export function getSsrMaxConcurrentTransformsEnv(
+  defaultValue = 3,
+  env: RuntimeEnv = getRuntimeEnv(),
+): number {
+  return env.ssrMaxConcurrentTransforms || defaultValue;
 }
 
-export function getRedisUrlEnv(): string | undefined {
-  return getEnv("REDIS_URL");
+/**
+ * Get Redis URL if configured.
+ */
+export function getRedisUrlEnv(env: RuntimeEnv = getRuntimeEnv()): string | undefined {
+  return env.redisUrl;
 }
 
-export function getV8FlagsEnv(): string {
-  return getEnv("DENO_V8_FLAGS") ?? "";
+/**
+ * Get Deno V8 flags.
+ */
+export function getV8FlagsEnv(env: RuntimeEnv = getRuntimeEnv()): string {
+  return env.denoV8Flags;
 }
 
-export function getCacheDirEnv(): string | undefined {
-  return getEnv("VF_CACHE_DIR");
+/**
+ * Get cache directory path.
+ */
+export function getCacheDirEnv(env: RuntimeEnv = getRuntimeEnv()): string | undefined {
+  return env.cacheDir;
 }
 
-export function isPerfEnabledEnv(): boolean {
-  return getEnv("VERYFRONT_PERF") === "1";
+/**
+ * Check if performance logging is enabled.
+ */
+export function isPerfEnabledEnv(env: RuntimeEnv = getRuntimeEnv()): boolean {
+  return env.perfEnabled;
 }
 
-export function getGithubEnvConfig(): {
+/**
+ * Get GitHub configuration from environment.
+ */
+export function getGithubEnvConfig(env: RuntimeEnv = getRuntimeEnv()): {
   token?: string;
   owner?: string;
   repo?: string;
   ref?: string;
 } {
   return {
-    token: getEnv("GITHUB_TOKEN") || undefined,
-    owner: getEnv("GITHUB_OWNER") || undefined,
-    repo: getEnv("GITHUB_REPO") || undefined,
-    ref: getEnv("GITHUB_REF") || undefined,
+    token: env.githubToken,
+    owner: env.githubOwner,
+    repo: env.githubRepo,
+    ref: env.githubRef,
   };
 }
 
-export function getApiTokenEnv(): string | undefined {
-  return getEnv("VERYFRONT_API_TOKEN");
+/**
+ * Get API token.
+ */
+export function getApiTokenEnv(env: RuntimeEnv = getRuntimeEnv()): string | undefined {
+  return env.apiToken;
 }
 
-export function getOpenAIEnvConfig(): {
+/**
+ * Get OpenAI configuration from environment.
+ */
+export function getOpenAIEnvConfig(env: RuntimeEnv = getRuntimeEnv()): {
   apiKey?: string;
   baseURL?: string;
   organizationId?: string;
 } {
   return {
-    apiKey: getEnv("OPENAI_API_KEY") || undefined,
-    baseURL: getEnv("OPENAI_BASE_URL") || undefined,
-    organizationId: getEnv("OPENAI_ORGANIZATION_ID") || undefined,
+    apiKey: env.openaiApiKey,
+    baseURL: env.openaiBaseUrl,
+    organizationId: undefined, // Not in RuntimeEnv, kept for interface compatibility
   };
 }
 
-export function getAnthropicEnvConfig(): {
+/**
+ * Get Anthropic configuration from environment.
+ */
+export function getAnthropicEnvConfig(env: RuntimeEnv = getRuntimeEnv()): {
   apiKey?: string;
   baseURL?: string;
 } {
   return {
-    apiKey: getEnv("ANTHROPIC_API_KEY") || undefined,
-    baseURL: getEnv("ANTHROPIC_BASE_URL") || undefined,
+    apiKey: env.anthropicApiKey,
+    baseURL: env.anthropicBaseUrl,
   };
 }
 
-export function getGoogleGenAIEnvConfig(): {
+/**
+ * Get Google Generative AI configuration from environment.
+ */
+export function getGoogleGenAIEnvConfig(env: RuntimeEnv = getRuntimeEnv()): {
   apiKey?: string;
 } {
   return {
-    apiKey: getEnv("GOOGLE_API_KEY") || getEnv("GOOGLE_GENERATIVE_AI_API_KEY") || undefined,
+    apiKey: env.googleApiKey,
   };
 }
 
-export function isDebugEnvEnabled(): boolean {
-  return isTruthyEnvValue(getEnv("VERYFRONT_DEBUG"));
+/**
+ * Check if debug mode is enabled.
+ */
+export function isDebugEnvEnabled(env: RuntimeEnv = getRuntimeEnv()): boolean {
+  return env.debug;
 }
 
-export function isCiEnv(): boolean {
-  return getEnv("CI") === "1";
+/**
+ * Check if running in CI environment.
+ */
+export function isCiEnv(env: RuntimeEnv = getRuntimeEnv()): boolean {
+  return env.ci;
 }
 
-export function isDenoTestingEnv(): boolean {
-  return getEnv("DENO_TESTING") === "1";
+/**
+ * Check if running in Deno test environment.
+ */
+export function isDenoTestingEnv(env: RuntimeEnv = getRuntimeEnv()): boolean {
+  return env.denoTesting;
 }
 
-export function getNoColorEnv(): string | undefined {
-  return getEnv("NO_COLOR");
+/**
+ * Get NO_COLOR environment value.
+ */
+export function getNoColorEnv(env: RuntimeEnv = getRuntimeEnv()): string | undefined {
+  return env.noColor ? "1" : undefined;
 }
 
-export function getForceColorEnv(): string | undefined {
-  return getEnv("FORCE_COLOR");
+/**
+ * Get FORCE_COLOR environment value.
+ */
+export function getForceColorEnv(env: RuntimeEnv = getRuntimeEnv()): string | undefined {
+  return env.forceColor ? "1" : undefined;
 }
 
-export function isRscExperimentalEnabled(): boolean {
-  return getEnv("VERYFRONT_EXPERIMENTAL_RSC") === "1";
+/**
+ * Check if RSC experimental feature is enabled.
+ */
+export function isRscExperimentalEnabled(env: RuntimeEnv = getRuntimeEnv()): boolean {
+  return env.experimentalRsc;
 }
 
-export function getVeryfrontVersion(): string | undefined {
-  return getEnv("VERYFRONT_VERSION");
+/**
+ * Get Veryfront version.
+ */
+export function getVeryfrontVersion(env: RuntimeEnv = getRuntimeEnv()): string | undefined {
+  return env.veryfrontVersion;
 }
 
-export function getEnvironmentFromEnv(): string | undefined {
-  return getEnv("VERYFRONT_ENV") || getEnv("NODE_ENV") || getEnv("DENO_ENV");
+/**
+ * Get environment name (development, production, test).
+ */
+export function getEnvironmentFromEnv(env: RuntimeEnv = getRuntimeEnv()): string | undefined {
+  return env.veryfrontEnv || env.nodeEnv;
 }
 
-export function getOtelTracingConfig(): {
+/**
+ * Get OpenTelemetry tracing configuration from environment.
+ */
+export function getOtelTracingConfig(env: RuntimeEnv = getRuntimeEnv()): {
   enabledFlag?: string;
   veryfrontFlag?: string;
   serviceName?: string;
@@ -129,18 +194,21 @@ export function getOtelTracingConfig(): {
   tracesHeaders?: string;
 } {
   return {
-    enabledFlag: getEnv("OTEL_TRACES_ENABLED"),
-    veryfrontFlag: getEnv("VERYFRONT_OTEL"),
-    serviceName: getEnv("OTEL_SERVICE_NAME") || undefined,
-    endpoint: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT") || undefined,
-    tracesEndpoint: getEnv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") || undefined,
-    exporter: getEnv("OTEL_TRACES_EXPORTER") || undefined,
-    headers: getEnv("OTEL_EXPORTER_OTLP_HEADERS") || undefined,
-    tracesHeaders: getEnv("OTEL_EXPORTER_OTLP_TRACES_HEADERS") || undefined,
+    enabledFlag: env.otelEnabled ? "1" : undefined,
+    veryfrontFlag: env.otelEnabled ? "1" : undefined,
+    serviceName: env.otelServiceName,
+    endpoint: env.otelEndpoint,
+    tracesEndpoint: env.otelTracesEndpoint,
+    exporter: env.otelTracesExporter,
+    headers: undefined, // Not currently in RuntimeEnv
+    tracesHeaders: undefined, // Not currently in RuntimeEnv
   };
 }
 
-export function getOtelMetricsConfig(): {
+/**
+ * Get OpenTelemetry metrics configuration from environment.
+ */
+export function getOtelMetricsConfig(env: RuntimeEnv = getRuntimeEnv()): {
   enabledFlag?: string;
   veryfrontFlag?: string;
   endpoint?: string;
@@ -148,10 +216,10 @@ export function getOtelMetricsConfig(): {
   exporter?: string;
 } {
   return {
-    enabledFlag: getEnv("OTEL_METRICS_ENABLED"),
-    veryfrontFlag: getEnv("VERYFRONT_OTEL"),
-    endpoint: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT") || undefined,
-    metricsEndpoint: getEnv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") || undefined,
-    exporter: getEnv("OTEL_METRICS_EXPORTER") || undefined,
+    enabledFlag: env.otelMetricsEnabled ? "1" : undefined,
+    veryfrontFlag: env.otelEnabled ? "1" : undefined,
+    endpoint: env.otelEndpoint,
+    metricsEndpoint: env.otelMetricsEndpoint,
+    exporter: env.otelMetricsExporter,
   };
 }

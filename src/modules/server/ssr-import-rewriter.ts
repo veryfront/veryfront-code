@@ -1,4 +1,5 @@
-import { REACT_VERSION } from "@veryfront/transforms/esm/package-registry.ts";
+import { isDeno } from "@veryfront/platform/compat/runtime.ts";
+import { getReactImportMap, REACT_VERSION } from "@veryfront/transforms/esm/package-registry.ts";
 
 export interface SSRRewriteOptions {
   /** Project slug for multi-project routing */
@@ -28,7 +29,7 @@ function shouldKeepBareSpecifier(specifier: string): boolean {
     return true;
   }
 
-  // Keep React as bare specifiers - deno.json resolves to npm:react
+  // Keep React as bare specifiers - deno.json resolves to esm.sh
   // This ensures same React instance as react-dom/server
   if (specifier === "react" || specifier.startsWith("react/")) {
     return true;
@@ -45,10 +46,32 @@ function shouldKeepBareSpecifier(specifier: string): boolean {
   return false;
 }
 
+function resolveReactForRuntime(specifier: string): string | null {
+  if (isDeno) return null;
+
+  const reactMap = getReactImportMap();
+  if (reactMap[specifier]) {
+    return reactMap[specifier]!;
+  }
+  if (specifier.startsWith("react/")) {
+    const subpath = specifier.slice("react/".length);
+    return `https://esm.sh/react@${REACT_VERSION}/${subpath}?target=es2022`;
+  }
+  if (specifier.startsWith("react-dom/")) {
+    const subpath = specifier.slice("react-dom/".length);
+    return `https://esm.sh/react-dom@${REACT_VERSION}/${subpath}?target=es2022`;
+  }
+  return null;
+}
+
 function rewriteBareImports(code: string): string {
   return code.replace(
     /from\s+["']([^"'./][^"']*)["']/g,
     (_match, specifier) => {
+      const reactUrl = resolveReactForRuntime(specifier);
+      if (reactUrl) {
+        return `from "${reactUrl}"`;
+      }
       if (shouldKeepBareSpecifier(specifier)) {
         return `from "${specifier}"`;
       }

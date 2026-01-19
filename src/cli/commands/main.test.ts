@@ -2,8 +2,8 @@
  * Tests for main.ts
  */
 
-import { assertEquals, assertMatch } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertMatch } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
 
 // Test the random name generation pattern
 describe("main", () => {

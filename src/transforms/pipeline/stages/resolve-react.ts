@@ -1,8 +1,8 @@
 /**
- * Resolve React stage - react/jsx-runtime → esm.sh or npm: URLs.
+ * Resolve React stage - react/jsx-runtime → esm.sh URLs.
  *
  * Handles React-specific import resolution based on target environment.
- * For SSR: Resolves to file:// URLs or npm: specifiers
+ * For SSR: Resolves React to esm.sh URLs (later cached to file://) and veryfront modules to file:// URLs
  * For browser: Resolves to esm.sh URLs
  */
 

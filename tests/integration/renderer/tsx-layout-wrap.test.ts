@@ -1,8 +1,10 @@
-import { assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
-import { describe, it } from "@std/testing/bdd";
+import { assertStringIncludes } from "@veryfront/testing/assert";
+import { mkdir, remove, writeTextFile } from "@veryfront/compat/fs.ts";
+import { join } from "@veryfront/compat/path";
+import { describe, it } from "@veryfront/testing/bdd";
 import { createRenderer } from "../../../src/rendering/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
+import { isDeno } from "../../../src/platform/compat/runtime.ts";
 
 // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
 // See: https://github.com/facebook/react/issues/24669
@@ -16,12 +18,12 @@ describe(
     it("nested layout wraps page content", async () => {
       await withTestContext("tsx-layout-wrap", async (context) => {
         // Remove default app directory to use Pages Router
-        await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+        await remove(join(context.projectDir, "app"), { recursive: true });
 
         const pages = join(context.projectDir, "pages", "blog");
-        await Deno.mkdir(pages, { recursive: true });
+        await mkdir(pages, { recursive: true });
 
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "pages", "layout.tsx"),
           `
         export default function RootLayout({ children }){
@@ -30,7 +32,7 @@ describe(
       `,
         );
 
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(pages, "layout.tsx"),
           `
         export default function BlogLayout({ children }){
@@ -39,7 +41,7 @@ describe(
       `,
         );
 
-        await Deno.writeTextFile(join(pages, "index.mdx"), `# Hello from Blog`);
+        await writeTextFile(join(pages, "index.mdx"), `# Hello from Blog`);
 
         const renderer = await createRenderer({
           projectDir: context.projectDir,

@@ -15,9 +15,9 @@ import { z } from "zod";
 import { type DevError, type ErrorType, getErrorCollector } from "./error-collector.ts";
 import { getLogBuffer, type LogEntry, type LogLevel } from "./log-buffer.ts";
 import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
-import { getEnv } from "@veryfront/platform/compat/process.ts";
 import { advancedTools } from "./advanced-tools.ts";
 import { remoteFileTools } from "./remote-file-tools.ts";
+import { getRuntimeEnv, type RuntimeEnv } from "@veryfront/config/runtime-env.ts";
 
 // ============================================================================
 // Types
@@ -44,7 +44,7 @@ const CACHE_DIRS: Record<string, string[]> = {
 };
 
 /** Default server port */
-const DEFAULT_PORT = "8080";
+const DEFAULT_PORT = 8080;
 
 // ============================================================================
 // State
@@ -185,27 +185,33 @@ interface ServerStatus {
   uptime: number;
 }
 
-export const vfGetStatus: MCPTool<GetStatusInput, ServerStatus> = {
-  name: "vf_get_status",
-  description: "Get the current status of the dev server including error counts and uptime.",
-  inputSchema: getStatusInput,
-  execute: () => {
-    const errors = getErrorCollector();
-    const logs = getLogBuffer();
-    const counts = errors.countByType();
-    const port = getEnv("PORT") || DEFAULT_PORT;
+export function createVfGetStatus(
+  env: RuntimeEnv = getRuntimeEnv(),
+): MCPTool<GetStatusInput, ServerStatus> {
+  return {
+    name: "vf_get_status",
+    description: "Get the current status of the dev server including error counts and uptime.",
+    inputSchema: getStatusInput,
+    execute: () => {
+      const errors = getErrorCollector();
+      const logs = getLogBuffer();
+      const counts = errors.countByType();
+      const port = env.port || DEFAULT_PORT;
 
-    return Promise.resolve({
-      running: true,
-      url: `http://lvh.me:${port}`,
-      port: parseInt(port, 10),
-      errorCount: counts.compile + counts.runtime + counts.bundle,
-      warningCount: logs.query({ level: "warn" }).length,
-      logCount: logs.count,
-      uptime: Date.now() - serverStartTime,
-    });
-  },
-};
+      return Promise.resolve({
+        running: true,
+        url: `http://lvh.me:${port}`,
+        port,
+        errorCount: counts.compile + counts.runtime + counts.bundle,
+        warningCount: logs.query({ level: "warn" }).length,
+        logCount: logs.count,
+        uptime: Date.now() - serverStartTime,
+      });
+    },
+  };
+}
+
+export const vfGetStatus = createVfGetStatus();
 
 // ============================================================================
 // Tool: vf_clear_errors

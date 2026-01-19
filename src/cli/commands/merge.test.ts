@@ -3,8 +3,8 @@
  * @module cli/commands/merge.test
  */
 
-import { assertEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
 import { getBranchByName, MergeArgsSchema, mergeBranch, parseMergeArgs } from "./merge.ts";
 import type { ApiClient } from "../shared/config.ts";
 import type { ParsedArgs } from "../index/types.ts";

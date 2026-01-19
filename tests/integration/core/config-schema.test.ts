@@ -1,6 +1,7 @@
-import { assertRejects } from "@std/assert";
-import { join } from "@std/path";
-import { describe, it } from "@std/testing/bdd";
+import { assertRejects } from "@veryfront/testing/assert";
+import { join } from "@veryfront/compat/path";
+import { describe, it } from "@veryfront/testing/bdd";
+import { remove, writeTextFile } from "@veryfront/testing/deno-compat";
 import { getAdapter } from "@veryfront/platform";
 import { clearConfigCache, getConfig } from "@veryfront/config";
 import { withTestContext } from "../../_helpers/context.ts";
@@ -10,9 +11,9 @@ describe("Config validation", () => {
     await withTestContext("config-invalid-cors", async (context) => {
       const adapter = await getAdapter();
       // Remove the default config created by TestContext
-      await Deno.remove(join(context.projectDir, "veryfront.config.js"));
+      await remove(join(context.projectDir, "veryfront.config.js"));
 
-      await Deno.writeTextFile(
+      await writeTextFile(
         join(context.projectDir, "veryfront.config.ts"),
         `export default {
         security: { cors: { origin: 123 } }
@@ -33,9 +34,9 @@ describe("Config validation", () => {
     await withTestContext("config-unknown-keys", async (context) => {
       const adapter = await getAdapter();
       // Remove the default config created by TestContext
-      await Deno.remove(join(context.projectDir, "veryfront.config.js"));
+      await remove(join(context.projectDir, "veryfront.config.js"));
 
-      await Deno.writeTextFile(
+      await writeTextFile(
         join(context.projectDir, "veryfront.config.ts"),
         `export default {
         router: "pages",
