@@ -16,85 +16,6 @@ import { resolveImport } from "@veryfront/modules/import-map/resolver.ts";
 import type { ImportMapConfig } from "@veryfront/modules/import-map/types.ts";
 import { getReactImportMap, REACT_VERSION } from "./package-registry.ts";
 import { parseImports, replaceSpecifiers } from "./lexer.ts";
-import { isBun, isDeno, isNode } from "@veryfront/platform/compat/runtime.ts";
-import { pathToFileURL } from "node:url";
-
-/**
- * Cache for resolved local React paths for Bun/Node.
- */
-let localReactPathsCache: Record<string, string> | null = null;
-
-type ImportMetaWithResolve = ImportMeta & {
-  resolve?: (specifier: string, parent?: string) => string;
-};
-
-const IMPORT_META_RESOLVE_ERROR = "ImportMetaResolveUnavailable";
-
-function rethrowIfImportMetaResolveMissing(error: unknown): void {
-  if (error instanceof Error && error.name === IMPORT_META_RESOLVE_ERROR) {
-    throw error;
-  }
-}
-
-function resolveWithImportMeta(specifier: string, parentUrl: string): string | null {
-  const metaResolve = (import.meta as ImportMetaWithResolve).resolve;
-  if (typeof metaResolve !== "function") {
-    const error = new Error(
-      "import.meta.resolve is required for Node ESM resolution (Node >= 22).",
-    );
-    error.name = IMPORT_META_RESOLVE_ERROR;
-    throw error;
-  }
-  try {
-    return metaResolve(specifier, parentUrl);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Get local React paths for Bun/Node SSR.
- */
-function getLocalReactPaths(): Record<string, string> {
-  if (localReactPathsCache) return localReactPathsCache;
-
-  const specifiers = [
-    "react",
-    "react-dom",
-    "react-dom/client",
-    "react-dom/server",
-    "react/jsx-runtime",
-    "react/jsx-dev-runtime",
-  ];
-
-  const paths: Record<string, string> = {};
-  const parentUrl = isNode ? pathToFileURL(cwd() + "/").href : "";
-
-  for (const specifier of specifiers) {
-    try {
-      if (isBun && typeof Bun !== "undefined" && "resolveSync" in Bun) {
-        const resolved = (Bun as { resolveSync: (s: string, p: string) => string }).resolveSync(
-          specifier,
-          cwd(),
-        );
-        paths[specifier] = `file://${resolved}`;
-        continue;
-      }
-      if (isNode) {
-        const resolved = resolveWithImportMeta(specifier, parentUrl);
-        if (!resolved) continue;
-        paths[specifier] = resolved;
-        continue;
-      }
-    } catch (error) {
-      rethrowIfImportMetaResolveMissing(error);
-      // Module not found, skip
-    }
-  }
-
-  localReactPathsCache = paths;
-  return paths;
-}
 
 type CacheOptions = {
   cacheDir: string;
@@ -117,7 +38,14 @@ function isHttpUrl(specifier: string): boolean {
 
 /**
  * Check if a URL is for React core packages that should NOT be cached.
- * Caching React modules causes multiple React instance issues.
+ *
+ * React modules must NOT be cached to file:// because:
+ * 1. react-dom/server (used for SSR) imports React directly from esm.sh
+ * 2. If components use cached React but react-dom/server uses esm.sh React,
+ *    they get different React instances → "Cannot read properties of null (useContext)"
+ *
+ * By keeping React as esm.sh URLs, both components and react-dom/server
+ * share the same React instance.
  */
 function isReactCoreUrl(url: string): boolean {
   try {
@@ -189,28 +117,9 @@ function toEsmShUrlFromNpm(specifier: string): string {
   return `https://esm.sh/${specifier.slice(4)}`;
 }
 
-/**
- * Check if a specifier is a React-related package.
- */
-function isReactSpecifier(specifier: string): boolean {
-  return specifier === "react" ||
-    specifier === "react-dom" ||
-    specifier.startsWith("react/") ||
-    specifier.startsWith("react-dom/");
-}
-
 function resolveBareSpecifier(specifier: string, importMap: ImportMapConfig): string {
-  // In Bun/Node, resolve React imports to local file:// paths.
-  // This ensures the same React instance as react-dom-server.
-  if (!isDeno && isReactSpecifier(specifier)) {
-    const localPaths = getLocalReactPaths();
-    if (localPaths[specifier]) {
-      return localPaths[specifier];
-    }
-    // Fallback: return unchanged - may fail at import time
-    return specifier;
-  }
-
+  // All bare specifiers (including React) go through esm.sh and get cached to file://
+  // This ensures cross-runtime compatibility without loader hooks.
   const reactMap = getReactImportMap();
   if (reactMap[specifier]) return reactMap[specifier]!;
 
@@ -237,7 +146,9 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
 
   // Don't cache React core modules - they must use the same instance as react-dom/server
   if (isReactCoreUrl(normalizedUrl)) {
-    logger.debug("[HTTP-CACHE] Skipping React core module", { url: normalizedUrl });
+    logger.debug("[HTTP-CACHE] Skipping React core module (prevents multiple instances)", {
+      url: normalizedUrl,
+    });
     return null;
   }
 

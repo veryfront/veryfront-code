@@ -8,6 +8,7 @@
  */
 
 import { isBun, isDeno } from "../runtime.ts";
+import { deepEquals, safeStringify } from "@veryfront/testing/utils";
 
 // ============================================================================
 // Types
@@ -72,47 +73,6 @@ type ExpectFn = <T>(actual: T) => Matchers<T> & Record<string, any>;
 // ============================================================================
 
 function createNodeExpect(): ExpectFn {
-  function deepEqual(actual: unknown, expected: unknown): boolean {
-    if (actual === expected) return true;
-    if (actual === null || expected === null) return actual === expected;
-    if (typeof actual !== "object" || typeof expected !== "object") return false;
-
-    if (Array.isArray(actual) && Array.isArray(expected)) {
-      if (actual.length !== expected.length) return false;
-      return actual.every((item, index) => deepEqual(item, expected[index]));
-    }
-
-    if (Array.isArray(actual) || Array.isArray(expected)) return false;
-
-    const actualKeys = Object.keys(actual as object);
-    const expectedKeys = Object.keys(expected as object);
-
-    if (actualKeys.length !== expectedKeys.length) return false;
-
-    return actualKeys.every((key) =>
-      deepEqual(
-        (actual as Record<string, unknown>)[key],
-        (expected as Record<string, unknown>)[key],
-      )
-    );
-  }
-
-  // Safe stringify that handles circular references
-  function safeStringify(value: unknown): string {
-    try {
-      return JSON.stringify(value);
-    } catch {
-      if (value === null) return "null";
-      if (value === undefined) return "undefined";
-      if (typeof value === "function") return "[Function]";
-      if (typeof value === "object") {
-        const name = value.constructor?.name || "Object";
-        return `[${name}]`;
-      }
-      return String(value);
-    }
-  }
-
   function createMatchers<T>(actual: T, isNot = false, isAsync = false): Matchers<T> {
     const check = (condition: boolean, message: string) => {
       const result = isNot ? !condition : condition;
@@ -133,7 +93,7 @@ function createNodeExpect(): ExpectFn {
 
       toEqual(expected: T) {
         check(
-          deepEqual(actual, expected),
+          deepEquals(actual, expected),
           isNot
             ? `Expected ${safeStringify(actual)} not to equal ${safeStringify(expected)}`
             : `Expected ${safeStringify(actual)} to equal ${safeStringify(expected)}`,
@@ -142,7 +102,7 @@ function createNodeExpect(): ExpectFn {
 
       toStrictEqual(expected: T) {
         check(
-          deepEqual(actual, expected),
+          deepEquals(actual, expected),
           isNot
             ? `Expected ${safeStringify(actual)} not to strictly equal ${safeStringify(expected)}`
             : `Expected ${safeStringify(actual)} to strictly equal ${safeStringify(expected)}`,
@@ -275,7 +235,8 @@ function createNodeExpect(): ExpectFn {
       },
 
       toContainEqual(expected: unknown) {
-        const contains = Array.isArray(actual) && actual.some((item) => deepEqual(item, expected));
+        const contains = Array.isArray(actual) &&
+          actual.some((item) => deepEquals(item, expected));
         check(
           contains,
           isNot
@@ -309,7 +270,7 @@ function createNodeExpect(): ExpectFn {
         }
 
         if (value !== undefined && hasProperty) {
-          hasProperty = deepEqual(current, value);
+          hasProperty = deepEquals(current, value);
         }
 
         check(
@@ -335,7 +296,7 @@ function createNodeExpect(): ExpectFn {
       toMatchObject(expected: Record<string, unknown>) {
         const actualObj = actual as Record<string, unknown>;
         const matches = Object.keys(expected).every((key) =>
-          deepEqual(actualObj[key], expected[key])
+          deepEquals(actualObj[key], expected[key])
         );
         check(
           matches,
@@ -481,10 +442,10 @@ function createNodeExpect(): ExpectFn {
               if (!isNot) throw new Error(`Expected promise to reject`);
             } catch (e) {
               if (isNot) {
-                if (deepEqual(e, expected)) {
+                if (deepEquals(e, expected)) {
                   throw new Error(`Expected promise not to reject with ${safeStringify(expected)}`);
                 }
-              } else if (!deepEqual(e, expected)) {
+              } else if (!deepEquals(e, expected)) {
                 throw new Error(
                   `Expected promise to reject with ${safeStringify(expected)}, got ${
                     safeStringify(e)

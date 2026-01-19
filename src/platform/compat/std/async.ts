@@ -8,23 +8,7 @@
  */
 
 import { isDeno } from "../runtime.ts";
-import { getEnv } from "../process.ts";
-
-const DEFAULT_SCALE = 1;
-
-function readScale(): number {
-  const raw = getEnv("VF_TEST_TIME_SCALE");
-  if (!raw) return DEFAULT_SCALE;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_SCALE;
-  return parsed;
-}
-
-function scaleDelay(ms: number): number {
-  const scale = readScale();
-  if (scale === 1) return ms;
-  return Math.max(1, Math.round(ms * scale));
-}
+import { scaleMs } from "../../../testing/timing.ts";
 
 // ============================================================================
 // Node.js/Bun implementation
@@ -32,9 +16,10 @@ function scaleDelay(ms: number): number {
 
 /**
  * Delays execution for a specified number of milliseconds.
+ * Uses scaleMs from testing/timing.ts for consistent time scaling.
  */
 function nodeDelay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, scaleDelay(ms)));
+  return new Promise((resolve) => setTimeout(resolve, scaleMs(ms)));
 }
 
 // ============================================================================
@@ -44,9 +29,9 @@ function nodeDelay(ms: number): Promise<void> {
 export let delay: (ms: number) => Promise<void>;
 
 if (isDeno) {
-  // Deno: Use @std/async
+  // Deno: Use @std/async with time scaling
   const stdAsync = await import("@std/async");
-  delay = (ms: number) => stdAsync.delay(scaleDelay(ms));
+  delay = (ms: number) => stdAsync.delay(scaleMs(ms));
 } else {
   // Node.js/Bun: Use our implementation
   delay = nodeDelay;

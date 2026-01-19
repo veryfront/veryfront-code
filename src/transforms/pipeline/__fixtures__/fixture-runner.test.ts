@@ -9,9 +9,10 @@
  */
 
 import { assertEquals, assertStringIncludes } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
 import { readTextFile } from "@veryfront/testing/deno-compat";
 import { runPipeline } from "../index.ts";
+import * as esbuild from "esbuild";
 
 const FIXTURES_DIR = new URL(".", import.meta.url).pathname;
 
@@ -27,6 +28,11 @@ const TEST_OPTIONS = {
 };
 
 describe("transform pipeline fixtures", { sanitizeResources: false, sanitizeOps: false }, () => {
+  // Clean up esbuild subprocess to prevent resource leaks
+  afterAll(async () => {
+    await esbuild.stop();
+  });
+
   describe("react-only", () => {
     it("transforms JSX and uses esm.sh React imports for browser", async () => {
       const input = await readFixture("react-only", "input.tsx");
@@ -48,7 +54,7 @@ describe("transform pipeline fixtures", { sanitizeResources: false, sanitizeOps:
       assertEquals(result.code.includes('from "react"'), false);
     });
 
-    it("uses esm.sh URLs for SSR (Docker-compatible)", async () => {
+    it("keeps React as esm.sh URLs for SSR (same instance as react-dom/server)", async () => {
       const input = await readFixture("react-only", "input.tsx");
 
       const result = await runPipeline(
@@ -61,8 +67,8 @@ describe("transform pipeline fixtures", { sanitizeResources: false, sanitizeOps:
       // Should transform JSX
       assertStringIncludes(result.code, "jsx");
 
-      // SSR uses esm.sh URLs (same as browser) for Docker compatibility
-      // This ensures imports work without needing node_modules
+      // SSR keeps React as esm.sh URLs to share the same instance with react-dom/server
+      // This prevents "Cannot read properties of null (useContext)" errors
       assertStringIncludes(result.code, "esm.sh/react");
 
       // Should NOT have bare "react" import (would fail in Docker)

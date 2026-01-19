@@ -117,6 +117,7 @@
     "@veryfront/testing/assert": "./src/testing/assert.ts",
     "@veryfront/testing/bdd": "./src/testing/bdd.ts",
     "@veryfront/testing/deno-compat": "./src/testing/deno-compat.ts",
+    "@veryfront/testing/utils": "./src/testing/utils.ts",
 
     "std/": "https://deno.land/std@0.220.0/",
     "@std/path": "https://deno.land/std@0.220.0/path/mod.ts",
