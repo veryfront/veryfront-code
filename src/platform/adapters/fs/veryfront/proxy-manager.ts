@@ -76,8 +76,10 @@ export class ProxyFSAdapterManager {
     // Normalize productionMode - must be explicitly set
     const effectiveProductionMode = productionMode ?? false;
     const effectiveReleaseId = releaseId ?? null;
-    const effectiveEnvironmentName = environmentName ?? null;
-    const effectiveBranch = branch ?? null;
+    // Apply defaults early so cache key and context verification use the same values
+    const effectiveEnvironmentName = environmentName ??
+      (effectiveProductionMode ? "production" : null);
+    const effectiveBranch = branch ?? (effectiveProductionMode ? null : "main");
 
     // Validate input parameters
     const validationResult = GetAdapterParamsSchema.safeParse({
@@ -301,16 +303,12 @@ export class ProxyFSAdapterManager {
     const adapter = new VeryfrontFSAdapter(config);
 
     // Set content context based on production mode before initialization
-    // Use actual environment name from API lookup instead of hardcoding "production"
-    // This fixes the issue where API has environments named "Development" but we were looking for "production"
-    const resolvedEnvironmentName = environmentName || "production";
-    // Use branch from URL or fall back to "main"
-    const resolvedBranch = branch ?? "main";
+    // Note: environmentName and branch already have defaults applied by getAdapter()
     const context: ResolvedContentContext = productionMode
       ? releaseId
         ? { sourceType: "release", projectSlug, releaseId }
-        : { sourceType: "environment", projectSlug, environmentName: resolvedEnvironmentName }
-      : { sourceType: "branch", projectSlug, branch: resolvedBranch };
+        : { sourceType: "environment", projectSlug, environmentName: environmentName! }
+      : { sourceType: "branch", projectSlug, branch: branch! };
 
     logger.debug("[ProxyFSAdapterManager] Setting content context for new adapter", {
       cacheKey,
@@ -318,7 +316,7 @@ export class ProxyFSAdapterManager {
       productionMode,
       releaseId,
       environmentName,
-      resolvedEnvironmentName,
+      branch,
       context,
     });
 
