@@ -1,6 +1,6 @@
 import * as BundledReact from "react";
-import { rendererLogger as logger } from "@veryfront/utils";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
 type ReservedComponent = BundledReact.ComponentType<unknown>;
 

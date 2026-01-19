@@ -7,7 +7,7 @@
  */
 
 import type { AgentContext, AgentResponse } from "../../types.ts";
-import { agentLogger } from "@veryfront/utils/logger/logger.ts";
+import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 
 export interface CostConfig {
   /** Provider pricing (cost per 1M tokens) */

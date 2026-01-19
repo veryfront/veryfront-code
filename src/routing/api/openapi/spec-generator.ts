@@ -6,8 +6,8 @@
  * @module routing/api/openapi/spec-generator
  */
 
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import type { VeryfrontConfig } from "@veryfront/config";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 import type { DynamicRouter, RouteEntry } from "../api-route-matcher.ts";
 import { loadHandlerModule } from "../module-loader/loader.ts";
 import {
@@ -20,7 +20,7 @@ import {
   type WrappedHandler,
 } from "./types.ts";
 import { extractPathParams, generateOperationId, toOpenAPIPath } from "./path-utils.ts";
-import { logger } from "@veryfront/utils";
+import { logger } from "#veryfront/utils";
 
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
 type HttpMethod = (typeof HTTP_METHODS)[number];

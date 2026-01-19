@@ -1,5 +1,5 @@
-import { assert, assertEquals, assertThrows } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assert, assertEquals, assertThrows } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
 import {
   createReactVersionSwitcher,
   detectReactVersionFromConfig,
@@ -11,6 +11,7 @@ import {
 } from "@veryfront/react/compat/config-generator.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import type { TestContext } from "../../../_helpers/context.ts";
+import { readTextFile, stat, writeTextFile } from "@veryfront/testing/deno-compat";
 
 describe(
   "React Config Generator",
@@ -18,14 +19,14 @@ describe(
     describe("Config Generation", () => {
       it("generates valid React 17 config", async () => {
         await withTestContext("config-gen-17", async (context: TestContext) => {
-          await Deno.writeTextFile(
+          await writeTextFile(
             `${context.projectDir}/deno.json`,
             JSON.stringify({ imports: {} }, null, 2),
           );
 
           await generateReactVersionConfig(context.projectDir, "17");
           const path = `${context.projectDir}/deno.react17.json`;
-          const text = await Deno.readTextFile(path);
+          const text = await readTextFile(path);
           const config = JSON.parse(text);
 
           assertEquals(typeof config.imports.react, "string");
@@ -36,14 +37,14 @@ describe(
 
       it("generates valid React 18 config", async () => {
         await withTestContext("config-gen-18", async (context: TestContext) => {
-          await Deno.writeTextFile(
+          await writeTextFile(
             `${context.projectDir}/deno.json`,
             JSON.stringify({ imports: {} }, null, 2),
           );
 
           await generateReactVersionConfig(context.projectDir, "18");
           const path = `${context.projectDir}/deno.react18.json`;
-          const text = await Deno.readTextFile(path);
+          const text = await readTextFile(path);
           const config = JSON.parse(text);
 
           assertEquals(typeof config.imports.react, "string");
@@ -54,14 +55,14 @@ describe(
 
       it("generates valid React 19 config", async () => {
         await withTestContext("config-gen-19", async (context: TestContext) => {
-          await Deno.writeTextFile(
+          await writeTextFile(
             `${context.projectDir}/deno.json`,
             JSON.stringify({ imports: {} }, null, 2),
           );
 
           await generateReactVersionConfig(context.projectDir, "19");
           const path = `${context.projectDir}/deno.react19.json`;
-          const text = await Deno.readTextFile(path);
+          const text = await readTextFile(path);
           const config = JSON.parse(text);
 
           assertEquals(typeof config.imports.react, "string");
@@ -71,14 +72,14 @@ describe(
 
       it("includes all required React imports", async () => {
         await withTestContext("config-gen-imports", async (context: TestContext) => {
-          await Deno.writeTextFile(
+          await writeTextFile(
             `${context.projectDir}/deno.json`,
             JSON.stringify({ imports: {} }, null, 2),
           );
 
           await generateReactVersionConfig(context.projectDir, "18");
           const path = `${context.projectDir}/deno.react18.json`;
-          const text = await Deno.readTextFile(path);
+          const text = await readTextFile(path);
           const config = JSON.parse(text);
 
           assertEquals(typeof config.imports.react, "string");
@@ -91,7 +92,7 @@ describe(
 
       it("merges with existing deno.json config", async () => {
         await withTestContext("config-gen-merge", async (context: TestContext) => {
-          await Deno.writeTextFile(
+          await writeTextFile(
             `${context.projectDir}/deno.json`,
             JSON.stringify(
               {
@@ -105,7 +106,7 @@ describe(
 
           await generateReactVersionConfig(context.projectDir, "18");
           const path = `${context.projectDir}/deno.react18.json`;
-          const text = await Deno.readTextFile(path);
+          const text = await readTextFile(path);
           const config = JSON.parse(text);
 
           assertEquals(config.imports["my-lib"], "https://example.com/lib.ts");
@@ -116,7 +117,7 @@ describe(
 
       it("generates all version configs", async () => {
         await withTestContext("config-gen-all", async (context: TestContext) => {
-          await Deno.writeTextFile(
+          await writeTextFile(
             `${context.projectDir}/deno.json`,
             JSON.stringify({ imports: {} }, null, 2),
           );
@@ -125,7 +126,7 @@ describe(
 
           for (const version of ["17", "18", "19"]) {
             const path = `${context.projectDir}/deno.react${version}.json`;
-            const text = await Deno.readTextFile(path);
+            const text = await readTextFile(path);
             const config = JSON.parse(text);
             assertEquals(typeof config.imports.react, "string");
           }
@@ -170,7 +171,7 @@ describe(
     describe("Version Detection from Config", () => {
       it("detects React 17 from exact version", async () => {
         await withTestContext("detect-17-exact", async (context: TestContext) => {
-          await Deno.writeTextFile(
+          await writeTextFile(
             `${context.projectDir}/deno.json`,
             JSON.stringify({ imports: { react: REACT_CONFIGS["17"].imports.react } }, null, 2),
           );
@@ -182,7 +183,7 @@ describe(
 
       it("detects React 18 from exact version", async () => {
         await withTestContext("detect-18-exact", async (context: TestContext) => {
-          await Deno.writeTextFile(
+          await writeTextFile(
             `${context.projectDir}/deno.json`,
             JSON.stringify({ imports: { react: REACT_CONFIGS["18"].imports.react } }, null, 2),
           );
@@ -194,7 +195,7 @@ describe(
 
       it("detects version from major version only", async () => {
         await withTestContext("detect-major", async (context: TestContext) => {
-          await Deno.writeTextFile(
+          await writeTextFile(
             `${context.projectDir}/deno.json`,
             JSON.stringify({ imports: { react: "https://esm.sh/react@18" } }, null, 2),
           );
@@ -206,7 +207,7 @@ describe(
 
       it("returns null when no React import", async () => {
         await withTestContext("detect-none", async (context: TestContext) => {
-          await Deno.writeTextFile(
+          await writeTextFile(
             `${context.projectDir}/deno.json`,
             JSON.stringify({ imports: { other: "https://example.com" } }, null, 2),
           );
@@ -225,7 +226,7 @@ describe(
 
       it("handles malformed deno.json", async () => {
         await withTestContext("detect-malformed", async (context: TestContext) => {
-          await Deno.writeTextFile(
+          await writeTextFile(
             `${context.projectDir}/deno.json`,
             "invalid json {",
           );
@@ -239,7 +240,7 @@ describe(
     describe("Version Switcher", () => {
       it("creates switcher with available versions", async () => {
         await withTestContext("switcher-create", async (context: TestContext) => {
-          await Deno.writeTextFile(
+          await writeTextFile(
             `${context.projectDir}/deno.json`,
             JSON.stringify({ imports: {} }, null, 2),
           );
@@ -257,7 +258,7 @@ describe(
 
       it("switches to React version", async () => {
         await withTestContext("switcher-switch", async (context: TestContext) => {
-          await Deno.writeTextFile(
+          await writeTextFile(
             `${context.projectDir}/deno.json`,
             JSON.stringify({ imports: {} }, null, 2),
           );
@@ -266,14 +267,14 @@ describe(
           await switcher.switchTo("18");
 
           const configPath = `${context.projectDir}/deno.react18.json`;
-          const exists = await Deno.stat(configPath);
+          const exists = await stat(configPath);
           assertEquals(exists.isFile, true);
         });
       });
 
       it("gets current version from config", async () => {
         await withTestContext("switcher-current", async (context: TestContext) => {
-          await Deno.writeTextFile(
+          await writeTextFile(
             `${context.projectDir}/deno.json`,
             JSON.stringify({ imports: { react: REACT_CONFIGS["18"].imports.react } }, null, 2),
           );
@@ -286,7 +287,7 @@ describe(
 
       it("reuses existing config when switching", async () => {
         await withTestContext("switcher-reuse", async (context: TestContext) => {
-          await Deno.writeTextFile(
+          await writeTextFile(
             `${context.projectDir}/deno.json`,
             JSON.stringify({ imports: {} }, null, 2),
           );
@@ -297,7 +298,7 @@ describe(
           await switcher.switchTo("17");
 
           const configPath = `${context.projectDir}/deno.react17.json`;
-          const exists = await Deno.stat(configPath);
+          const exists = await stat(configPath);
           assertEquals(exists.isFile, true);
         });
       });
@@ -306,7 +307,7 @@ describe(
     describe("Extended Configuration Options", () => {
       it("extends from custom base config", async () => {
         await withTestContext("config-extends", async (context: TestContext) => {
-          await Deno.writeTextFile(
+          await writeTextFile(
             `${context.projectDir}/base.json`,
             JSON.stringify(
               {
@@ -322,7 +323,7 @@ describe(
           });
 
           const path = `${context.projectDir}/deno.react18.json`;
-          const text = await Deno.readTextFile(path);
+          const text = await readTextFile(path);
           const config = JSON.parse(text);
 
           assertEquals(config.compilerOptions.jsx, "react-jsx");
@@ -332,7 +333,7 @@ describe(
 
       it("merges additional imports", async () => {
         await withTestContext("config-additional", async (context: TestContext) => {
-          await Deno.writeTextFile(
+          await writeTextFile(
             `${context.projectDir}/deno.json`,
             JSON.stringify({ imports: {} }, null, 2),
           );
@@ -346,7 +347,7 @@ describe(
           });
 
           const path = `${context.projectDir}/deno.react18.json`;
-          const text = await Deno.readTextFile(path);
+          const text = await readTextFile(path);
           const config = JSON.parse(text);
 
           assertEquals(config.imports["custom-lib"], "https://example.com/lib.ts");
@@ -361,7 +362,7 @@ describe(
           });
 
           const path = `${context.projectDir}/deno.react18.json`;
-          const text = await Deno.readTextFile(path);
+          const text = await readTextFile(path);
           const config = JSON.parse(text);
 
           assertEquals(typeof config.imports.react, "string");

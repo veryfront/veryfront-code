@@ -1,7 +1,8 @@
-import { assertEquals } from "@std/assert";
-import { afterAll, describe, it } from "@std/testing/bdd";
+import { assertEquals } from "@veryfront/testing/assert";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
 import "../../../_helpers/log-guard.ts";
-import { join } from "@std/path";
+import { join } from "@veryfront/compat/path";
+import { mkdir, writeTextFile } from "@veryfront/compat/fs.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
@@ -13,18 +14,17 @@ describe("RSC Actions Dev Tests", { sanitizeOps: false, sanitizeResources: false
 
   it("Dev server: RSC action endpoint basic validations (zod or fallback)", async () => {
     await withTestContext("rsc-dev-act", async (context) => {
-      // Set environment variables for RSC mode
+      // Set environment variables for dev mode
       context.setEnv({
-        VERYFRONT_EXPERIMENTAL_RSC: "1",
         MODE: "development",
       });
 
       // Minimal project to boot dev server
-      await Deno.mkdir(join(context.projectDir, "pages"), { recursive: true });
-      await Deno.writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home");
+      await mkdir(join(context.projectDir, "pages"), { recursive: true });
+      await writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home");
 
       // Add deno.json for JSX configuration
-      await Deno.writeTextFile(
+      await writeTextFile(
         join(context.projectDir, "deno.json"),
         JSON.stringify(
           {
@@ -43,16 +43,19 @@ describe("RSC Actions Dev Tests", { sanitizeOps: false, sanitizeResources: false
         ),
       );
 
-      // Add veryfront.config.js
-      await Deno.writeTextFile(
+      // Add veryfront.config.js with RSC explicitly enabled
+      await writeTextFile(
         join(context.projectDir, "veryfront.config.js"),
-        `export default { title: "RSC Test Site" };`,
+        `export default {
+          title: "RSC Test Site",
+          experimental: { rsc: true }
+        };`,
       );
 
-      await Deno.mkdir(join(context.projectDir, "app", "actions"), {
+      await mkdir(join(context.projectDir, "app", "actions"), {
         recursive: true,
       });
-      await Deno.writeTextFile(
+      await writeTextFile(
         join(context.projectDir, "app", "actions", "echo.ts"),
         "export default async function echo(x){ return `ok:${x}` }\n",
       );

@@ -11,10 +11,11 @@
  * - ChangedPaths support for smart HMR
  */
 
-import { assert, assertEquals } from "@std/assert";
-import { afterAll, afterEach, beforeEach, describe, it } from "@std/testing/bdd";
+import { assert, assertEquals } from "@veryfront/testing/assert";
+import { afterAll, afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
 import { ReloadNotifier } from "../../../../src/server/reload-notifier.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
+import { delay } from "@std/async";
 
 describe("ReloadNotifier Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
   afterAll(async () => {
@@ -98,7 +99,7 @@ describe("ReloadNotifier Tests", { sanitizeOps: false, sanitizeResources: false 
       ReloadNotifier.triggerReload(["pages/index.mdx", "components/Button.tsx"]);
 
       // Wait for debounce (300ms + buffer)
-      await new Promise((resolve) => setTimeout(resolve, 400));
+      await delay(400);
 
       assertEquals(receivedPaths?.length, 2);
       assert(receivedPaths?.includes("pages/index.mdx"));
@@ -116,13 +117,13 @@ describe("ReloadNotifier Tests", { sanitizeOps: false, sanitizeResources: false 
 
       // Trigger multiple times within debounce window
       ReloadNotifier.triggerReload(["pages/index.mdx"]);
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await delay(100);
       ReloadNotifier.triggerReload(["components/Button.tsx"]);
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await delay(100);
       ReloadNotifier.triggerReload(["lib/utils.ts"]);
 
       // Wait for debounce to complete
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await delay(500);
 
       // Should have all accumulated paths
       assertEquals(receivedPaths?.length, 3);
@@ -142,13 +143,13 @@ describe("ReloadNotifier Tests", { sanitizeOps: false, sanitizeResources: false 
 
       // Trigger same path multiple times
       ReloadNotifier.triggerReload(["pages/index.mdx"]);
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await delay(50);
       ReloadNotifier.triggerReload(["pages/index.mdx"]);
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await delay(50);
       ReloadNotifier.triggerReload(["pages/index.mdx"]);
 
       // Wait for debounce
-      await new Promise((resolve) => setTimeout(resolve, 400));
+      await delay(400);
 
       // Should only have one entry (deduplicated via Set)
       assertEquals(receivedPaths?.length, 1);
@@ -167,7 +168,7 @@ describe("ReloadNotifier Tests", { sanitizeOps: false, sanitizeResources: false 
       ReloadNotifier.triggerReload([]);
 
       // Wait for debounce
-      await new Promise((resolve) => setTimeout(resolve, 400));
+      await delay(400);
 
       // Should be undefined when no paths provided
       assertEquals(receivedPaths, undefined);
@@ -185,7 +186,7 @@ describe("ReloadNotifier Tests", { sanitizeOps: false, sanitizeResources: false 
       ReloadNotifier.triggerReload();
 
       // Wait for debounce
-      await new Promise((resolve) => setTimeout(resolve, 400));
+      await delay(400);
 
       // Should be undefined when no paths provided
       assertEquals(receivedPaths, undefined);
@@ -209,7 +210,7 @@ describe("ReloadNotifier Tests", { sanitizeOps: false, sanitizeResources: false 
       ReloadNotifier.triggerReload();
 
       // Wait for debounce
-      await new Promise((resolve) => setTimeout(resolve, 400));
+      await delay(400);
 
       // Second listener should still be called
       assertEquals(secondListenerCalled, true);

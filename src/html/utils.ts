@@ -1,7 +1,7 @@
 import { escapeHTML } from "./html-escape.ts";
-import type { VeryfrontConfig } from "@veryfront/config/types.ts";
-import { REACT_DEFAULT_VERSION, VERYFRONT_VERSION } from "@veryfront/utils/constants/cdn.ts";
-import { getTailwindImportMap } from "@veryfront/transforms/esm/package-registry.ts";
+import type { VeryfrontConfig } from "#veryfront/config/types.ts";
+import { REACT_DEFAULT_VERSION, VERYFRONT_VERSION } from "#veryfront/utils/constants/cdn.ts";
+import { getTailwindImportMap } from "#veryfront/transforms/esm/package-registry.ts";
 
 function joinAttributes(attrs: (string | false | undefined | null | "")[]): string {
   return attrs.filter(Boolean).join(" ");
@@ -91,6 +91,11 @@ function getEsmShImportMap(versions: DetectedVersions): Record<string, string> {
     // Using esm.sh creates a separate context instance causing usePageContext to return undefined
     "veryfront/context": "/_vf_modules/react/context/index.js",
     "veryfront/fonts": "/_vf_modules/react/fonts/index.js",
+    // React-prefixed aliases (veryfront/react/*) - same modules, alternative import paths
+    "veryfront/react/head": "/_vf_modules/react/components/Head.js",
+    "veryfront/react/router": "/_vf_modules/react/router/index.js",
+    "veryfront/react/context": "/_vf_modules/react/context/index.js",
+    "veryfront/react/fonts": "/_vf_modules/react/fonts/index.js",
     ...getTailwindImportMap(),
   };
 }

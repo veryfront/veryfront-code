@@ -4,12 +4,7 @@ export { isFullHTMLDocument } from "./html-detection.ts";
 export { buildAttributes, escapeHTML, escapeHtml } from "./html-escape.ts";
 export type { InjectHTMLContentOptions } from "./html-injection.ts";
 export { injectHTMLContent } from "./html-injection.ts";
-export {
-  extractHeadElements,
-  generateHTMLShellParts,
-  wrapInHTMLShell,
-} from "./html-shell-generator.ts";
-export type { ExtractedHeadMetadata } from "./html-shell-generator.ts";
+export { generateHTMLShellParts, wrapInHTMLShell } from "./html-shell-generator.ts";
 export {
   generateHydrationData,
   getDevScripts,

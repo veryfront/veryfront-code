@@ -1,5 +1,5 @@
-import type { MdxBundle } from "@veryfront/types";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import type { MdxBundle } from "#veryfront/types";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 export type CompileMDXFunction = (
   content: string,

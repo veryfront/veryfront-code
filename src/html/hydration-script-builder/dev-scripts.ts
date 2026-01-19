@@ -1,5 +1,5 @@
-import type { ComponentProps } from "@veryfront/types";
-import type { VeryfrontConfig } from "@veryfront/config";
+import type { ComponentProps } from "#veryfront/types";
+import type { VeryfrontConfig } from "#veryfront/config";
 import { generateDevErrorLoggerScript } from "./dev-error-logger.ts";
 import { generateDevComponentManifestScript } from "./dev-component-manifest.ts";
 import { generateDevClientRendererScript } from "./dev-client-renderer.ts";

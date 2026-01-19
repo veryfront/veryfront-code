@@ -1,6 +1,6 @@
 import type { ToolExecutionContext } from "./types.ts";
 import { toolRegistry } from "./registry.ts";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 /**
  * Execute a tool by ID

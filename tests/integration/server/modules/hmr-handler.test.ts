@@ -10,8 +10,8 @@
  * - Client management
  */
 
-import { assert, assertEquals, assertExists } from "@std/assert";
-import { afterAll, afterEach, beforeEach, describe, it } from "@std/testing/bdd";
+import { assert, assertEquals, assertExists } from "@veryfront/testing/assert";
+import { afterAll, afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
 import { HMRHandler } from "../../../../src/server/handlers/preview/hmr-handler.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 

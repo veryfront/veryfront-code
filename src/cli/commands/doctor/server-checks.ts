@@ -1,5 +1,5 @@
 import type { DiagnosticResult } from "./types.ts";
-import { cliLogger } from "@veryfront/utils";
+import { cliLogger } from "#veryfront/utils";
 
 const FETCH_TIMEOUT_MS = 2000;
 
@@ -38,7 +38,7 @@ async function fetchWithTimeout(
  */
 export async function checkRSCFlag(): Promise<DiagnosticResult> {
   try {
-    const { isRscExperimentalEnabled } = await import("@veryfront/config/env.ts");
+    const { isRscExperimentalEnabled } = await import("#veryfront/config/env.ts");
     const isEnabled = isRscExperimentalEnabled();
     return {
       name: "RSC Flag",

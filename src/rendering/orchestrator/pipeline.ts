@@ -14,29 +14,29 @@
  * @module rendering/orchestrator/pipeline
  */
 
-import { rendererLogger as logger } from "@veryfront/utils";
-import { timeAsync } from "@veryfront/utils";
-import { createBuildVersion } from "@veryfront/utils/version.ts";
-import { withSpan } from "@veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "@veryfront/observability/tracing/span-names.ts";
-import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { timeAsync } from "#veryfront/utils";
+import { createBuildVersion } from "#veryfront/utils/version.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
+import { ErrorCode, VeryfrontError } from "#veryfront/errors/index.ts";
 import {
   extractRelativePath as extractRelativePathShared,
   extractRouteParams as extractRouteParamsShared,
-} from "@veryfront/utils/route-path-utils.ts";
-import { join } from "@veryfront/platform/compat/path-helper.ts";
-import type { MdxBundle, PageBundle } from "@veryfront/types";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { isExtendedFSAdapter } from "@veryfront/platform/adapters/fs/wrapper.ts";
+} from "#veryfront/utils/route-path-utils.ts";
+import { join } from "#veryfront/platform/compat/path-helper.ts";
+import type { MdxBundle, PageBundle } from "#veryfront/types";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import type { CacheCoordinator } from "../cache/cache-coordinator.ts";
 import type { PageRenderer } from "../page-renderer.ts";
 import type { PageResolver } from "../page-resolution/index.ts";
 import type { LayoutOrchestrator } from "./layout.ts";
 import type { SSROrchestrator } from "./ssr-orchestrator.ts";
 import type { PageDataResponse, RenderOptions, RenderResult } from "./types.ts";
-import { DataFetcher } from "@veryfront/data/index.ts";
-import type { DataContext } from "@veryfront/data/types.ts";
-import { clearSSRModuleCacheForProject } from "@veryfront/modules/react-loader/index.ts";
+import { DataFetcher } from "#veryfront/data/index.ts";
+import type { DataContext } from "#veryfront/data/types.ts";
+import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/index.ts";
 import { setupSSRGlobals } from "../ssr-globals.ts";
 import { LAYOUT_EXTENSIONS } from "../layouts/types.ts";
 

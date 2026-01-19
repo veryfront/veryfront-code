@@ -5,8 +5,8 @@
  */
 
 import { useCallback, useRef, useState } from "react";
-import type { AgentStatus, Message, ToolCall } from "@veryfront/agent/types.ts";
-import { createError, ensureError, toError } from "@veryfront/errors/veryfront-error.ts";
+import type { AgentStatus, Message, ToolCall } from "#veryfront/agent/types.ts";
+import { createError, ensureError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 export interface UseAgentOptions {
   /** Agent ID or endpoint */

@@ -1,4 +1,5 @@
-import { assertEquals } from "@std/assert";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isProductionMode } from "./ssr-handler.ts";
 import type { HandlerContext } from "../../types.ts";
 
@@ -15,13 +16,13 @@ function createContext(overrides: Partial<HandlerContext> = {}): HandlerContext 
 
 const prodConfig = { fs: { veryfront: { apiBaseUrl: "http://test", productionMode: true } } };
 
-Deno.test("isProductionMode", async (t) => {
-  await t.step("returns true when config.productionMode is true", () => {
+describe("isProductionMode", () => {
+  it("returns true when config.productionMode is true", () => {
     const ctx = createContext({ config: prodConfig });
     assertEquals(isProductionMode(ctx), true);
   });
 
-  await t.step("config.productionMode takes priority over domain", () => {
+  it("config.productionMode takes priority over domain", () => {
     const ctx = createContext({
       config: prodConfig,
       parsedDomain: {
@@ -36,7 +37,7 @@ Deno.test("isProductionMode", async (t) => {
     assertEquals(isProductionMode(ctx), true);
   });
 
-  await t.step("returns true for veryfront domain when isDraft is false", () => {
+  it("returns true for veryfront domain when isDraft is false", () => {
     const ctx = createContext({
       parsedDomain: {
         isVeryfrontDomain: true,
@@ -50,7 +51,7 @@ Deno.test("isProductionMode", async (t) => {
     assertEquals(isProductionMode(ctx), true);
   });
 
-  await t.step("returns false for veryfront domain when isDraft is true", () => {
+  it("returns false for veryfront domain when isDraft is true", () => {
     const ctx = createContext({
       parsedDomain: {
         isVeryfrontDomain: true,
@@ -64,7 +65,7 @@ Deno.test("isProductionMode", async (t) => {
     assertEquals(isProductionMode(ctx), false);
   });
 
-  await t.step("returns true for custom domain with production proxy environment", () => {
+  it("returns true for custom domain with production proxy environment", () => {
     const ctx = createContext({
       parsedDomain: {
         isVeryfrontDomain: false,
@@ -79,7 +80,7 @@ Deno.test("isProductionMode", async (t) => {
     assertEquals(isProductionMode(ctx), true);
   });
 
-  await t.step("returns false for custom domain with preview proxy environment", () => {
+  it("returns false for custom domain with preview proxy environment", () => {
     const ctx = createContext({
       parsedDomain: {
         isVeryfrontDomain: false,
@@ -94,12 +95,12 @@ Deno.test("isProductionMode", async (t) => {
     assertEquals(isProductionMode(ctx), false);
   });
 
-  await t.step("returns false when no indicators present", () => {
+  it("returns false when no indicators present", () => {
     const ctx = createContext({});
     assertEquals(isProductionMode(ctx), false);
   });
 
-  await t.step("works without URL parameter (backward compatible)", () => {
+  it("works without URL parameter (backward compatible)", () => {
     const ctx = createContext({
       parsedDomain: {
         isVeryfrontDomain: true,

@@ -2,7 +2,7 @@ import {
   FORBIDDEN_PATH_PATTERNS,
   MAX_PATH_LENGTH,
   MAX_PATH_TRAVERSAL_DEPTH,
-} from "@veryfront/utils";
+} from "#veryfront/utils";
 
 export function validatePathSecurity(path: string): boolean {
   if (path == null) return false;

@@ -3,11 +3,11 @@
  * Handles rendering pages to static HTML
  */
 
-import { serverLogger as logger } from "@veryfront/utils";
-import { dirname, join } from "@veryfront/platform/compat/path/index.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { serverLogger as logger } from "#veryfront/utils";
+import { dirname, join } from "#veryfront/platform/compat/path/index.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontRenderer } from "../../rendering/orchestrator/ssr.ts";
-import type { VeryfrontConfig } from "@veryfront/config";
+import type { VeryfrontConfig } from "#veryfront/config";
 import type { ChunkManifest } from "../../build/bundler/index.ts";
 import { renderAppRouteToHTML } from "../../server/build-app-route-renderer.ts";
 import type { AppRouteInfo, RouteInfo } from "../../server/build-types.ts";

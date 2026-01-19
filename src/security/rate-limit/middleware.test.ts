@@ -2,8 +2,8 @@
  * Rate Limiting Middleware Tests
  */
 
-import { assertEquals, assertExists } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createRateLimiter, RateLimitPresets } from "./middleware.ts";
 import { MemoryRateLimitStore } from "./memory-store.ts";
 

@@ -10,13 +10,14 @@ import {
   assertEquals as _assertEquals,
   assertExists,
   assertStringIncludes,
-} from "@std/assert";
-import { join } from "@std/path";
-import { afterAll, describe, it } from "@std/testing/bdd";
+} from "@veryfront/testing/assert";
+import { join } from "@veryfront/compat/path";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
+import { mkdir, writeTextFile } from "@veryfront/testing/deno-compat";
 import { VeryfrontRenderer } from "../../../../src/rendering/orchestrator/ssr.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
-import { DenoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
+import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 
 describe("Layout System Integration", { sanitizeOps: false, sanitizeResources: false }, () => {
   // Clean up bundler intervals to prevent resource leaks
@@ -27,10 +28,10 @@ describe("Layout System Integration", { sanitizeOps: false, sanitizeResources: f
   it("nested layouts with App Router", async () => {
     await withTestContext("layout-nested-app-router", async (context) => {
       // Create App Router structure with nested layouts
-      await Deno.mkdir(join(context.projectDir, "app/blog"), { recursive: true });
+      await mkdir(join(context.projectDir, "app/blog"), { recursive: true });
 
       // Root layout
-      await Deno.writeTextFile(
+      await writeTextFile(
         join(context.projectDir, "app/layout.tsx"),
         `export default function RootLayout({ children }) {
   return <div id="root-layout">{children}</div>;
@@ -38,7 +39,7 @@ describe("Layout System Integration", { sanitizeOps: false, sanitizeResources: f
       );
 
       // Blog layout
-      await Deno.writeTextFile(
+      await writeTextFile(
         join(context.projectDir, "app/blog/layout.tsx"),
         `export default function BlogLayout({ children }) {
   return <div id="blog-layout">{children}</div>;
@@ -46,7 +47,7 @@ describe("Layout System Integration", { sanitizeOps: false, sanitizeResources: f
       );
 
       // Page
-      await Deno.writeTextFile(
+      await writeTextFile(
         join(context.projectDir, "app/blog/page.mdx"),
         `---
 title: Blog Post
@@ -59,14 +60,14 @@ This is a test post.
       );
 
       // Config
-      await Deno.writeTextFile(
+      await writeTextFile(
         join(context.projectDir, "veryfront.config.ts"),
         `export default {
   router: 'app',
 };`,
       );
 
-      const adapter = new DenoAdapter();
+      const adapter = await getAdapter();
       const renderer = new VeryfrontRenderer({
         projectDir: context.projectDir,
         mode: "development",
@@ -88,8 +89,8 @@ This is a test post.
   it("named layout with providers", async () => {
     await withTestContext("layout-named-providers", async (context) => {
       // Create named layout
-      await Deno.mkdir(join(context.projectDir, "layouts"), { recursive: true });
-      await Deno.writeTextFile(
+      await mkdir(join(context.projectDir, "layouts"), { recursive: true });
+      await writeTextFile(
         join(context.projectDir, "layouts/main.mdx"),
         `# Main Layout
 
@@ -97,8 +98,8 @@ This is a test post.
       );
 
       // Create provider
-      await Deno.mkdir(join(context.projectDir, "providers"), { recursive: true });
-      await Deno.writeTextFile(
+      await mkdir(join(context.projectDir, "providers"), { recursive: true });
+      await writeTextFile(
         join(context.projectDir, "providers/theme.mdx"),
         `export default function ThemeProvider({ children }) {
   return <div className="theme-provider">{children}</div>;
@@ -106,7 +107,7 @@ This is a test post.
       );
 
       // Create page with layout
-      await Deno.writeTextFile(
+      await writeTextFile(
         join(context.projectDir, "pages/test.mdx"),
         `---
 title: Test Page
@@ -117,7 +118,7 @@ layout: main
 `,
       );
 
-      const adapter = new DenoAdapter();
+      const adapter = await getAdapter();
       const renderer = new VeryfrontRenderer({
         projectDir: context.projectDir,
         mode: "development",
@@ -139,10 +140,10 @@ layout: main
   it("App Router reserved components", async () => {
     await withTestContext("layout-reserved-components", async (context) => {
       // Create App Router structure
-      await Deno.mkdir(join(context.projectDir, "app/products"), { recursive: true });
+      await mkdir(join(context.projectDir, "app/products"), { recursive: true });
 
       // Loading component
-      await Deno.writeTextFile(
+      await writeTextFile(
         join(context.projectDir, "app/products/loading.tsx"),
         `export default function Loading() {
   return <div>Loading products...</div>;
@@ -150,7 +151,7 @@ layout: main
       );
 
       // Error component
-      await Deno.writeTextFile(
+      await writeTextFile(
         join(context.projectDir, "app/products/error.tsx"),
         `export default function Error({ error }) {
   return <div>Error: {error?.message}</div>;
@@ -158,7 +159,7 @@ layout: main
       );
 
       // Page
-      await Deno.writeTextFile(
+      await writeTextFile(
         join(context.projectDir, "app/products/page.mdx"),
         `---
 title: Products
@@ -169,14 +170,14 @@ title: Products
       );
 
       // Config
-      await Deno.writeTextFile(
+      await writeTextFile(
         join(context.projectDir, "veryfront.config.ts"),
         `export default {
   router: 'app',
 };`,
       );
 
-      const adapter = new DenoAdapter();
+      const adapter = await getAdapter();
       const renderer = new VeryfrontRenderer({
         projectDir: context.projectDir,
         mode: "development",
@@ -198,7 +199,7 @@ title: Products
   it("Pages Router with App component", async () => {
     await withTestContext("layout-pages-router-app", async (context) => {
       // Create App component
-      await Deno.writeTextFile(
+      await writeTextFile(
         join(context.projectDir, "components/app.tsx"),
         `export default function App({ children }) {
   return (
@@ -212,7 +213,7 @@ title: Products
       );
 
       // Create page
-      await Deno.writeTextFile(
+      await writeTextFile(
         join(context.projectDir, "pages/index.mdx"),
         `---
 title: Home
@@ -222,7 +223,7 @@ title: Home
 `,
       );
 
-      const adapter = new DenoAdapter();
+      const adapter = await getAdapter();
       const renderer = new VeryfrontRenderer({
         projectDir: context.projectDir,
         mode: "development",

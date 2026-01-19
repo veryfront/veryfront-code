@@ -4,7 +4,7 @@
  */
 
 import { type ErrorInfo, formatErrorType } from "./error-formatter.ts";
-import { escapeHtml } from "@veryfront/html/html-escape.ts";
+import { escapeHtml } from "#veryfront/html/html-escape.ts";
 
 /**
  * Generates runtime script for browser error overlay

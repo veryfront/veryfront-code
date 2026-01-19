@@ -1,6 +1,6 @@
-import { join } from "@veryfront/platform/compat/path/index.ts";
-import { logger } from "@veryfront/utils";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { join } from "#veryfront/platform/compat/path/index.ts";
+import { logger } from "#veryfront/utils";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { MANIFEST_FILENAME } from "./constants.ts";
 import type { OptimizedImageMetadata } from "./types.ts";
 

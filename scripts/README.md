@@ -6,12 +6,29 @@ Utility scripts for development, testing, and maintenance.
 
 | Script | Purpose |
 |--------|---------|
+| **`run-bun-tests.mjs`** | Runs Bun tests with concurrency defaults |
+| **`run-node-tests.mjs`** | Runs Node tests with concurrency defaults |
+| **`run-concurrent-tests.mjs`** | Runs Bun + Node tests in parallel with split defaults |
+| **`run-affected-tests.mjs`** | Runs tests that match changed files (tight feedback loop) |
 | **`test-batches.ts`** | Worker-based test runner with memory isolation and concurrency control |
 | **`run-tests-isolated.ts`** | Runs tests in complete isolation (one at a time) |
 | **`check-test-isolation.ts`** | Validates test isolation and detects shared state issues |
 | **`analyze-test-timings.ts`** | Analyzes test execution times to identify slow tests |
 
 ## Code Quality Scripts
+
+## Test Performance Tips
+
+- `VF_TEST_CONCURRENCY` / `BUN_TEST_CONCURRENCY` / `NODE_TEST_CONCURRENCY` control intra-runner parallelism.
+- `VF_TEST_CONCURRENCY_TOTAL` caps total CPU usage when running Bun + Node in parallel.
+- `VF_TEST_SHARDS` (or `BUN_TEST_SHARDS` / `NODE_TEST_SHARDS`) splits test files across multiple processes.
+- `run-concurrent-tests.mjs` auto-sets shard counts when not provided.
+- `run-bun-tests.mjs` and `run-node-tests.mjs` auto-shard when no shard env is set.
+- `--fast` on the concurrent runner skips heavy integration/AI/rendering suites via excludes.
+- `VF_TEST_TIME_SCALE` scales test delays (e.g., `0.25` runs timer-based waits ~4x faster). `run-bun-tests.mjs` and `run-node-tests.mjs` default this to `0.25` unless overridden; `--fast` also sets it.
+- `VF_TEST_INCLUDE` lets you run only specific globs (comma-separated). `test:smoke` uses this for sub-1 minute loops.
+- `VF_TEST_FAIL_FAST=1` stops sibling runners when one fails (useful for CI).
+- `test:loop` uses git status/diff to run affected tests, falling back to `--fast` if none are found.
 
 | Script | Purpose |
 |--------|---------|

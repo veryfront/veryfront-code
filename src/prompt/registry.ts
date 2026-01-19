@@ -7,8 +7,8 @@
  */
 
 import type { Prompt } from "./types.ts";
-import { agentLogger } from "@veryfront/utils/logger/logger.ts";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { agentLogger } from "#veryfront/utils/logger/logger.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 /**
  * Prompt registry for managing prompt templates

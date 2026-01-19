@@ -2,7 +2,7 @@ import type { RuntimeAdapter } from "../base.ts";
 import type { FSAdapter, FSAdapterConfig } from "./veryfront/types.ts";
 import { createFSAdapter } from "./factory.ts";
 import { wrapFSAdapter } from "./wrapper.ts";
-import { logger } from "@veryfront/utils";
+import { logger } from "#veryfront/utils";
 
 /**
  * Minimal config interface for FS integration.

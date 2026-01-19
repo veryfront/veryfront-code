@@ -1,7 +1,7 @@
-import { assertEquals, assertStringIncludes } from "@std/assert";
-import { ensureDir } from "@std/fs";
-import { join } from "@std/path";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertStringIncludes } from "@veryfront/testing/assert";
+import { mkdir, writeTextFile } from "@veryfront/compat/fs.ts";
+import { join } from "@veryfront/compat/path";
+import { describe, it } from "@veryfront/testing/bdd";
 import { createRenderer } from "../../../src/rendering/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
@@ -17,10 +17,10 @@ describe(
     it("should render TSX layouts in app router", async () => {
       await withTestContext("tsx-layout-app-router", async (context) => {
         // Create app router structure with TSX layouts
-        await ensureDir(join(context.projectDir, "app", "blog"));
+        await mkdir(join(context.projectDir, "app", "blog"), { recursive: true });
 
         // Root layout (TSX)
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "app", "layout.tsx"),
           `export default function RootLayout({ children }) {
   return (
@@ -37,7 +37,7 @@ describe(
         );
 
         // Blog layout (TSX)
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "app", "blog", "layout.tsx"),
           `export default function BlogLayout({ children }) {
   return (
@@ -50,7 +50,7 @@ describe(
         );
 
         // Blog page (MDX)
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "app", "blog", "page.mdx"),
           `# Blog Post
 

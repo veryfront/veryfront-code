@@ -14,7 +14,7 @@ export {
   unauthorized,
 } from "./responses.ts";
 
-export { applyCORSHeaders, handleCORSPreflight } from "@veryfront/security";
+export { applyCORSHeaders, handleCORSPreflight } from "#veryfront/security";
 
 export type { APIContext as APIContextType } from "./context-builder.ts";
 export { createContext, normalizeParams, parseCookies } from "./context-builder.ts";

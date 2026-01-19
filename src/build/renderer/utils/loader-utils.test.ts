@@ -8,8 +8,8 @@
  * - Edge cases and error handling
  */
 
-import { assertEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { getFileType, getLoaderFromPath, getSlugFromPath } from "./loader-utils.ts";
 
 describe("Loader Utils", () => {

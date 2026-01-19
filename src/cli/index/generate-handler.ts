@@ -8,7 +8,7 @@ import { generateCommand } from "../commands/generate.ts";
 import { showCommandHelp } from "../help/index.ts";
 import { exitProcess } from "../utils/index.ts";
 import type { GenerateCommandArgs } from "./types.ts";
-import { cwd } from "@veryfront/platform/compat/process.ts";
+import { cwd } from "#veryfront/platform/compat/process.ts";
 
 /**
  * Handle the generate command execution

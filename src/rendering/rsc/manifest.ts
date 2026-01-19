@@ -1,5 +1,5 @@
-import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
-import { HASH_SEED_DJB2 } from "@veryfront/utils";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
+import { HASH_SEED_DJB2 } from "#veryfront/utils";
 import { extractExportNames } from "./export-extractor.ts";
 
 export interface GraphIds {

@@ -2,8 +2,11 @@
  * Tests for Data Fetching System
  */
 
-import { assertEquals, assertExists, assertRejects } from "@std/assert";
-import { beforeEach, describe, it } from "@std/testing/bdd";
+// Disable LRU interval to prevent resource leaks in tests
+(globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
+
+import { assertEquals, assertExists, assertRejects } from "@veryfront/testing/assert";
+import { beforeEach, describe, it } from "@veryfront/testing/bdd";
 import {
   type DataContext,
   DataFetcher,
@@ -11,8 +14,18 @@ import {
   type PageWithData,
   redirect,
 } from "@veryfront/data/index.ts";
+import { runWithCacheKeyContext } from "@veryfront/cache/cache-key-builder.ts";
+import { delay } from "@std/async";
 
 type StaticDataContext = Omit<DataContext, "request" | "query">;
+
+// Helper to run tests with production mode cache context
+function withProductionContext<T>(fn: () => T | Promise<T>): T | Promise<T> {
+  return runWithCacheKeyContext(
+    { projectId: "test-project", mode: "production", versionId: "rel_test" },
+    fn,
+  );
+}
 
 function makeContext(url: string): DataContext {
   const u = new URL(url);
@@ -24,13 +37,8 @@ function makeContext(url: string): DataContext {
   } as const;
 }
 
-// DataFetcher has internal cleanup intervals - disable resource sanitization
-Deno.test({
-  name: "DataFetcher",
-  sanitizeResources: false,
-  sanitizeOps: false,
-  fn: () => {
-    describe("DataFetcher", () => {
+describe("DataFetcher", () => {
+  describe("DataFetcher", () => {
       let fetcher: DataFetcher;
       let context: DataContext;
 
@@ -136,76 +144,82 @@ Deno.test({
         });
 
         it("caches static data", async () => {
-          let callCount = 0;
+          await withProductionContext(async () => {
+            let callCount = 0;
 
-          const pageModule: PageWithData = {
-            default: () => null,
-            getStaticData: () => {
-              callCount++;
-              return {
-                props: { count: callCount },
-              };
-            },
-          };
+            const pageModule: PageWithData = {
+              default: () => null,
+              getStaticData: () => {
+                callCount++;
+                return {
+                  props: { count: callCount },
+                };
+              },
+            };
 
-          const result1 = await fetcher.fetchData(pageModule, context, "production");
-          assertEquals((result1.props as any)?.count, 1);
+            const result1 = await fetcher.fetchData(pageModule, context, "production");
+            assertEquals((result1.props as any)?.count, 1);
 
-          const result2 = await fetcher.fetchData(pageModule, context, "production");
-          assertEquals((result2.props as any)?.count, 1);
-          assertEquals(callCount, 1);
+            const result2 = await fetcher.fetchData(pageModule, context, "production");
+            assertEquals((result2.props as any)?.count, 1);
+            assertEquals(callCount, 1);
+          });
         });
 
         it("respects revalidate time", async () => {
-          let callCount = 0;
+          await withProductionContext(async () => {
+            let callCount = 0;
 
-          const pageModule: PageWithData = {
-            default: () => null,
-            getStaticData: () => {
-              callCount++;
-              return {
-                props: { count: callCount },
-                revalidate: 0.1,
-              };
-            },
-          };
+            const pageModule: PageWithData = {
+              default: () => null,
+              getStaticData: () => {
+                callCount++;
+                return {
+                  props: { count: callCount },
+                  revalidate: 0.1,
+                };
+              },
+            };
 
-          const result1 = await fetcher.fetchData(pageModule, context, "production");
-          assertEquals((result1.props as any)?.count, 1);
+            const result1 = await fetcher.fetchData(pageModule, context, "production");
+            assertEquals((result1.props as any)?.count, 1);
 
-          const result2 = await fetcher.fetchData(pageModule, context, "production");
-          assertEquals((result2.props as any)?.count, 1);
+            const result2 = await fetcher.fetchData(pageModule, context, "production");
+            assertEquals((result2.props as any)?.count, 1);
 
-          await new Promise((resolve) => setTimeout(resolve, 150));
+            await delay(150);
 
-          const result3 = await fetcher.fetchData(pageModule, context, "production");
-          assertEquals((result3.props as any)?.count, 1);
+            const result3 = await fetcher.fetchData(pageModule, context, "production");
+            assertEquals((result3.props as any)?.count, 1);
 
-          await new Promise((resolve) => setTimeout(resolve, 50));
+            await delay(50);
 
-          const result4 = await fetcher.fetchData(pageModule, context, "production");
-          assertEquals((result4.props as any)?.count, 2);
+            const result4 = await fetcher.fetchData(pageModule, context, "production");
+            assertEquals((result4.props as any)?.count, 2);
+          });
         });
 
         it("handles revalidate: false (never revalidate)", async () => {
-          let callCount = 0;
+          await withProductionContext(async () => {
+            let callCount = 0;
 
-          const pageModule: PageWithData = {
-            default: () => null,
-            getStaticData: () => {
-              callCount++;
-              return {
-                props: { count: callCount },
-                revalidate: false,
-              };
-            },
-          };
+            const pageModule: PageWithData = {
+              default: () => null,
+              getStaticData: () => {
+                callCount++;
+                return {
+                  props: { count: callCount },
+                  revalidate: false,
+                };
+              },
+            };
 
-          await fetcher.fetchData(pageModule, context, "production");
-          await fetcher.fetchData(pageModule, context, "production");
-          await fetcher.fetchData(pageModule, context, "production");
+            await fetcher.fetchData(pageModule, context, "production");
+            await fetcher.fetchData(pageModule, context, "production");
+            await fetcher.fetchData(pageModule, context, "production");
 
-          assertEquals(callCount, 1);
+            assertEquals(callCount, 1);
+          });
         });
       });
 
@@ -240,40 +254,42 @@ Deno.test({
             sanitizeOps: false,
           },
           async () => {
-            const testFetcher = new DataFetcher();
+            await withProductionContext(async () => {
+              const testFetcher = new DataFetcher();
 
-            const pageDev: PageWithData<{ a: number }> = {
-              default: () => null,
-              getServerData() {
-                return { props: { a: 1 } };
-              },
-              getStaticData() {
-                return { props: { a: 2 } };
-              },
-            };
-            const resDev = await testFetcher.fetchData(
-              pageDev,
-              makeContext("http://x"),
-              "development",
-            );
-            assertEquals(resDev.props, { a: 1 });
+              const pageDev: PageWithData<{ a: number }> = {
+                default: () => null,
+                getServerData() {
+                  return { props: { a: 1 } };
+                },
+                getStaticData() {
+                  return { props: { a: 2 } };
+                },
+              };
+              const resDev = await testFetcher.fetchData(
+                pageDev,
+                makeContext("http://x"),
+                "development",
+              );
+              assertEquals(resDev.props, { a: 1 });
 
-            let _staticCalls = 0;
-            const pageProd: PageWithData<{ t: number }> = {
-              default: () => null,
-              getStaticData() {
-                _staticCalls++;
-                return { props: { t: Date.now() }, revalidate: 0.001 };
-              },
-            };
-            const url = "http://x/path";
-            const c = makeContext(url);
-            const first = await testFetcher.fetchData(pageProd, c, "production");
-            const second = await testFetcher.fetchData(pageProd, c, "production");
-            assertEquals((second.props as any)?.t === (first.props as any)?.t, true);
-            await new Promise((r) => setTimeout(r, 5));
-            const third = await testFetcher.fetchData(pageProd, c, "production");
-            assertEquals((third.props as any)?.t === (first.props as any)?.t, true);
+              let _staticCalls = 0;
+              const pageProd: PageWithData<{ t: number }> = {
+                default: () => null,
+                getStaticData() {
+                  _staticCalls++;
+                  return { props: { t: Date.now() }, revalidate: 0.001 };
+                },
+              };
+              const url = "http://x/path";
+              const c = makeContext(url);
+              const first = await testFetcher.fetchData(pageProd, c, "production");
+              const second = await testFetcher.fetchData(pageProd, c, "production");
+              assertEquals((second.props as any)?.t === (first.props as any)?.t, true);
+              await delay(5);
+              const third = await testFetcher.fetchData(pageProd, c, "production");
+              assertEquals((third.props as any)?.t === (first.props as any)?.t, true);
+            });
           },
         );
       });
@@ -323,50 +339,54 @@ Deno.test({
 
       describe("Cache management", () => {
         it("clears all cache", async () => {
-          const pageModule: PageWithData = {
-            default: () => null,
-            getStaticData: () => ({
-              props: { timestamp: Date.now() },
-            }),
-          };
+          await withProductionContext(async () => {
+            const pageModule: PageWithData = {
+              default: () => null,
+              getStaticData: () => ({
+                props: { timestamp: Date.now() },
+              }),
+            };
 
-          const result1 = await fetcher.fetchData(pageModule, context, "production");
-          const timestamp1 = (result1.props as any)?.timestamp;
+            const result1 = await fetcher.fetchData(pageModule, context, "production");
+            const timestamp1 = (result1.props as any)?.timestamp;
 
-          fetcher.clearCache();
+            fetcher.clearCache();
 
-          await new Promise((resolve) => setTimeout(resolve, 10));
-          const result2 = await fetcher.fetchData(pageModule, context, "production");
-          const timestamp2 = (result2.props as any)?.timestamp;
+            await delay(10);
+            const result2 = await fetcher.fetchData(pageModule, context, "production");
+            const timestamp2 = (result2.props as any)?.timestamp;
 
-          assert(timestamp2 > timestamp1);
+            assert(timestamp2 > timestamp1);
+          });
         });
 
         it("clears cache by pattern", async () => {
-          const context1 = { ...context, url: new URL("http://localhost/page1") };
-          const context2 = { ...context, url: new URL("http://localhost/page2") };
+          await withProductionContext(async () => {
+            const context1 = { ...context, url: new URL("http://localhost/page1") };
+            const context2 = { ...context, url: new URL("http://localhost/page2") };
 
-          let callCount = 0;
-          const pageModule: PageWithData = {
-            default: () => null,
-            getStaticData: () => {
-              callCount++;
-              return {
-                props: { count: callCount },
-              };
-            },
-          };
+            let callCount = 0;
+            const pageModule: PageWithData = {
+              default: () => null,
+              getStaticData: () => {
+                callCount++;
+                return {
+                  props: { count: callCount },
+                };
+              },
+            };
 
-          await fetcher.fetchData(pageModule, context1, "production");
-          await fetcher.fetchData(pageModule, context2, "production");
+            await fetcher.fetchData(pageModule, context1, "production");
+            await fetcher.fetchData(pageModule, context2, "production");
 
-          fetcher.clearCache("page1");
+            fetcher.clearCache("page1");
 
-          const result1 = await fetcher.fetchData(pageModule, context1, "production");
-          const result2 = await fetcher.fetchData(pageModule, context2, "production");
+            const result1 = await fetcher.fetchData(pageModule, context1, "production");
+            const result2 = await fetcher.fetchData(pageModule, context2, "production");
 
-          assertEquals((result1.props as any)?.count, 3);
-          assertEquals((result2.props as any)?.count, 2);
+            assertEquals((result1.props as any)?.count, 3);
+            assertEquals((result2.props as any)?.count, 2);
+          });
         });
       });
 
@@ -413,5 +433,4 @@ Deno.test({
         }
       }
     });
-  }, // End of Deno.test fn
-}); // End of Deno.test
+});

@@ -1,9 +1,9 @@
-import { join } from "@std/path";
-import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
-import { APIRouteHandler, DynamicRouter } from "@veryfront/routing/api/index.ts";
-import { getConfig } from "@veryfront/config";
-import { cliLogger } from "@veryfront/utils";
-import { createFileSystem, type FileSystem } from "@veryfront/platform/compat/fs.ts";
+import { join } from "#std/path.ts";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
+import { APIRouteHandler, DynamicRouter } from "#veryfront/routing/api/index.ts";
+import { getConfig } from "#veryfront/config";
+import { cliLogger } from "#veryfront/utils";
+import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
 
 let fs: FileSystem;
 

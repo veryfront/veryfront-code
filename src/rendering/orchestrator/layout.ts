@@ -1,14 +1,14 @@
 import * as React from "react";
-import type { EntityInfo } from "@veryfront/types";
-import type { LayoutItem, MdxBundle, MDXComponents, ProviderItem } from "@veryfront/types";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import type { VeryfrontConfig } from "@veryfront/config";
+import type { EntityInfo } from "#veryfront/types";
+import type { LayoutItem, MdxBundle, MDXComponents, ProviderItem } from "#veryfront/types";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 import { LayoutApplicator } from "../layouts/index.ts";
 import { createDefaultMDXComponents } from "../utils/index.ts";
 import type { LayoutCollector, LayoutCompiler, ProviderManager } from "../layouts/index.ts";
 import type { LayoutComponentCache } from "../layouts/utils/component-loader.ts";
-import { clearSSRModuleCacheForProject } from "@veryfront/modules/react-loader/index.ts";
-import { rendererLogger as logger } from "@veryfront/utils";
+import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/index.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
 
 export interface LayoutOrchestratorConfig {
   projectDir: string;

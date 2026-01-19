@@ -4,9 +4,9 @@
  * @module cli/commands/demo
  */
 
-import { chdir, cwd, promptSync, writeStdout } from "@veryfront/platform/compat/process.ts";
-import { getStdinReader, setRawMode } from "@veryfront/platform/compat/stdin.ts";
-import { join } from "@veryfront/platform/compat/path/index.ts";
+import { chdir, cwd, promptSync, writeStdout } from "#veryfront/platform/compat/process.ts";
+import { getStdinReader, setRawMode } from "#veryfront/platform/compat/stdin.ts";
+import { join } from "#veryfront/platform/compat/path/index.ts";
 import { bold, brand, dim, error, muted, success } from "../../ui/colors.ts";
 import { AnimatedDotMatrix } from "../../ui/dot-matrix.ts";
 import { HIDE_CURSOR, SHOW_CURSOR, typeCommand, typeLine } from "../../ui/animated-text.ts";

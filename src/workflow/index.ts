@@ -220,7 +220,7 @@ export {
   useWorkflow,
   useWorkflowList,
   useWorkflowStart,
-} from "@veryfront/workflow/react";
+} from "#veryfront/workflow/react";
 
 export type {
   UseApprovalOptions,
@@ -231,4 +231,4 @@ export type {
   UseWorkflowResult,
   UseWorkflowStartOptions,
   UseWorkflowStartResult,
-} from "@veryfront/workflow/react";
+} from "#veryfront/workflow/react";

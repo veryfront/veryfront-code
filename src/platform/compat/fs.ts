@@ -13,7 +13,7 @@
  *
  * For CLI commands and standalone utilities, use createFileSystem():
  * ```ts
- * import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+ * import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
  * const fs = createFileSystem();
  * const content = await fs.readTextFile(path);
  * ```
@@ -21,7 +21,7 @@
  * @module
  */
 
-import type { FileInfo } from "@veryfront/platform/adapters/base.ts";
+import type { FileInfo } from "#veryfront/platform/adapters/base.ts";
 import { createError, toError } from "../../errors/veryfront-error.ts";
 import { isBun, isDeno, isNode } from "./runtime.ts";
 
@@ -403,6 +403,22 @@ export function makeTempDir(options?: { prefix?: string }): Promise<string> {
  */
 export function chmod(path: string, mode: number): Promise<void> {
   return getFs().chmod(path, mode);
+}
+
+/**
+ * Create a symbolic link
+ * @param target The path the symlink will point to
+ * @param path The path where the symlink will be created
+ */
+export async function symlink(target: string, path: string): Promise<void> {
+  if (isDeno) {
+    // @ts-ignore - Deno global
+    await Deno.symlink(target, path);
+  } else {
+    // Node.js/Bun
+    const fs = await import("node:fs/promises");
+    await fs.symlink(target, path);
+  }
 }
 
 // ============================================================================

@@ -1,5 +1,5 @@
 import type * as React from "react";
-import type { Entity, MDXGlobals } from "@veryfront/types";
+import type { Entity, MDXGlobals } from "#veryfront/types";
 import type { MdxBundle } from "../LayoutComponent.tsx";
 import { ProviderComponent } from "../ProviderComponent.tsx";
 import { useLiveData } from "./LiveDataProvider.tsx";

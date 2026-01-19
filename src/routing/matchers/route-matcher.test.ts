@@ -1,5 +1,5 @@
-import { assertEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { matchRoute } from "./route-matcher.ts";
 import { parseRoute } from "./route-parser.ts";
 

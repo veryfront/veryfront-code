@@ -2,11 +2,12 @@
  * Uninstall Command - Remove AI assistant integrations
  */
 
-import { dirname, join } from "@veryfront/platform/compat/path/index.ts";
-import { cwd as getCwd, getEnv, writeStdout } from "@veryfront/platform/compat/process.ts";
-import { exists, readDir, remove } from "@veryfront/platform/compat/fs.ts";
-import { getStdinReader, setRawMode } from "@veryfront/platform/compat/stdin.ts";
+import { dirname, join } from "#veryfront/platform/compat/path/index.ts";
+import { cwd as getCwd, writeStdout } from "#veryfront/platform/compat/process.ts";
+import { exists, readDir, remove } from "#veryfront/platform/compat/fs.ts";
+import { getStdinReader, setRawMode } from "#veryfront/platform/compat/stdin.ts";
 import { z } from "zod";
+import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import { bold, brand, dim, muted, success, warning } from "../../ui/colors.ts";
 import { isTTY } from "../../utils/index.ts";
 import { AI_TOOLS, getToolById, isValidToolId } from "./registry.ts";
@@ -150,9 +151,10 @@ export function parseTargetFlag(target: string): AIToolId[] {
 
 export async function findInstalledTools(
   options: Pick<UninstallOptions, "cwd" | "global">,
+  env: RuntimeEnv = getRuntimeEnv(),
 ): Promise<AIToolId[]> {
   const cwd = options.cwd ?? getCwd();
-  const homeDir = getEnv("HOME") ?? getEnv("USERPROFILE")!;
+  const homeDir = env.homeDir!;
   const installed: AIToolId[] = [];
 
   for (const tool of AI_TOOLS) {
@@ -168,11 +170,12 @@ export async function findInstalledTools(
 export async function uninstallTargets(
   targets: AIToolId[],
   options: Pick<UninstallOptions, "cwd" | "global">,
+  env: RuntimeEnv = getRuntimeEnv(),
 ): Promise<void> {
   z.array(AIToolIdSchema).min(1).parse(targets);
 
   const cwd = options.cwd ?? getCwd();
-  const homeDir = getEnv("HOME") ?? getEnv("USERPROFILE")!;
+  const homeDir = env.homeDir!;
 
   console.log();
   console.log("  " + bold("Removing AI integrations..."));
@@ -192,7 +195,7 @@ export async function uninstallTargets(
     // Try to remove empty parent directories (but not cwd itself)
     try {
       const parent = dirname(dest);
-      const baseDir = options.global ? (getEnv("HOME") ?? getEnv("USERPROFILE")!) : cwd;
+      const baseDir = options.global ? homeDir : cwd;
       // Only remove parent if it's not the base directory
       if (parent !== baseDir) {
         const entries = [];
@@ -200,7 +203,8 @@ export async function uninstallTargets(
           entries.push(entry);
         }
         if (entries.length === 0) {
-          await remove(parent);
+          // Node.js requires recursive: true to remove directories
+          await remove(parent, { recursive: true });
         }
       }
     } catch {

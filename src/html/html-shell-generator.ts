@@ -1,4 +1,4 @@
-import type { ComponentProps, RenderMetadata } from "@veryfront/types";
+import type { ComponentProps, RenderMetadata } from "#veryfront/types";
 import { escapeHTML } from "./html-escape.ts";
 import {
   generateHydrationData,
@@ -8,8 +8,7 @@ import {
 import { getStudioScripts } from "./dev-scripts.ts";
 import { processMetadata } from "./metadata-builder.ts";
 import {
-  convertTailwindConfigForBrowser,
-  generateTailwindConfig,
+  generateTailwindV4Theme,
   generateThemeVariables,
   getDevStyles,
   getProductionStyles,
@@ -23,108 +22,11 @@ import {
   buildRootAttributes,
   shouldDisableLayout,
 } from "./utils.ts";
-import { resolveRelativePath } from "@veryfront/modules/react-loader/path-resolver.ts";
+import { resolveRelativePath } from "#veryfront/modules/react-loader/path-resolver.ts";
 import {
   generateModulePreloadHintsFromManifest,
   getRouteManifest,
 } from "../modules/manifest/route-module-manifest.ts";
-
-/**
- * Metadata extracted from Head component for reconciliation with shell defaults.
- * These values override frontmatter/default metadata when present.
- */
-export interface ExtractedHeadMetadata {
-  title?: string;
-  description?: string;
-  metas: Array<{ name?: string; property?: string; content: string }>;
-}
-
-/**
- * Extract head elements from React SSR content and return them separately.
- *
- * React's Head component renders a hidden div with data-veryfront-head attribute.
- * The browser's HTML parser hoists elements like <link>, <meta>, <title> out of divs,
- * causing hydration mismatch. This function extracts those elements to inject
- * into the actual <head>, and removes them from the body content.
- *
- * HEAD RECONCILIATION: This function also parses the extracted content to identify
- * title, description, and other meta tags. These are returned separately so the
- * shell generator can use them to REPLACE defaults (not duplicate them).
- *
- * @param content - The React SSR rendered HTML content
- * @returns Object with extracted head elements, cleaned content, and parsed metadata
- */
-export function extractHeadElements(
-  content: string,
-): { headElements: string; cleanedContent: string; metadata: ExtractedHeadMetadata } {
-  // Match data-veryfront-head wrappers and extract their inner content
-  // Pattern: <div data-veryfront-head="1" style="display:none">...</div>
-  // Also handles <template data-veryfront-head="1">...</template>
-  const headPattern = /<(div|template)(\s+data-veryfront-head="1"[^>]*)>([\s\S]*?)<\/\1>/gi;
-
-  const headElements: string[] = [];
-  const metadata: ExtractedHeadMetadata = { metas: [] };
-
-  const cleanedContent = content.replace(headPattern, (_match, tagName, attrs, innerContent) => {
-    // Extract valid head elements from the inner content
-    // Filter out <body> elements which are invalid in head
-    const validHeadContent = innerContent.replace(/<body[^>]*>.*?<\/body>/gi, "");
-
-    if (validHeadContent.trim()) {
-      // Parse title - extract and remove from head elements (shell will render it)
-      const titleMatch = validHeadContent.match(/<title[^>]*>([^<]*)<\/title>/i);
-      if (titleMatch) {
-        metadata.title = titleMatch[1].trim();
-      }
-
-      // Parse meta tags for deduplication
-      const metaPattern = /<meta\s+([^>]*)>/gi;
-      let metaMatch;
-      while ((metaMatch = metaPattern.exec(validHeadContent)) !== null) {
-        const attrsStr = metaMatch[1] ?? "";
-        const nameMatch = attrsStr.match(/name=["']([^"']+)["']/i);
-        const propertyMatch = attrsStr.match(/property=["']([^"']+)["']/i);
-        const contentMatch = attrsStr.match(/content=["']([^"']+)["']/i);
-
-        if (contentMatch?.[1]) {
-          const name = nameMatch?.[1];
-          const property = propertyMatch?.[1];
-          const content = contentMatch[1];
-
-          // Extract description for shell generator
-          if (name === "description") {
-            metadata.description = content;
-          }
-
-          metadata.metas.push({
-            name,
-            property,
-            content,
-          });
-        }
-      }
-
-      // Remove title and description meta from head elements (shell handles these)
-      // Keep other elements (og:*, twitter:*, link, script, style, etc.)
-      const filteredContent = validHeadContent
-        .replace(/<title[^>]*>[^<]*<\/title>/gi, "")
-        .replace(/<meta\s+[^>]*name=["']description["'][^>]*>/gi, "")
-        .trim();
-
-      if (filteredContent) {
-        headElements.push(filteredContent);
-      }
-    }
-    // Return EMPTY wrapper (not removed) so hydration matches client initial render
-    return `<${tagName}${attrs}></${tagName}>`;
-  });
-
-  return {
-    headElements: headElements.join("\n  "),
-    cleanedContent,
-    metadata,
-  };
-}
 
 /**
  * Convert a source path to a module URL for preloading.
@@ -294,30 +196,20 @@ export async function generateHTMLShellParts(
 
   const syntaxHighlightTheme = options.mode === "development" ? "github-dark" : "github";
 
-  // Use Tailwind CDN for runtime CSS compilation in both dev and production
-  // This ensures all Tailwind classes work correctly, including arbitrary values
-  // UnoCSS pre-generated CSS is still included as a fallback for faster initial render
+  // Tailwind v4 CDN for runtime CSS compilation
+  // Uses CSS-first configuration with @theme directive instead of JavaScript config
   const tailwindCDNUrl = getTailwindCDNUrl(tailwindConfig);
 
-  // Use project's tailwind.config.js if available, otherwise fall back to generated config
-  const tailwindConfigScript = options.tailwindConfigJs
-    ? convertTailwindConfigForBrowser(options.tailwindConfigJs)
-    : generateTailwindConfig(tailwindConfig);
+  // Generate Tailwind v4 @theme CSS with default design tokens
+  const tailwindV4Theme = generateTailwindV4Theme(tailwindConfig);
 
-  // Project's tailwind.config.js may use ESM imports, so use type="module"
-  const configScriptType = options.tailwindConfigJs ? ' type="module"' : "";
-
-  // Always include Tailwind CDN for both dev and production
-  // This provides runtime CSS generation for any classes UnoCSS might miss
+  // Build Tailwind v4 CDN setup:
+  // 1. Tailwind v4 CDN script
+  // 2. @theme CSS with design tokens (colors, fonts, spacing)
   const tailwindCDN = `<script src="${tailwindCDNUrl}"${nonce ? ` nonce="${nonce}"` : ""}></script>
-  <script${configScriptType}${nonce ? ` nonce="${nonce}"` : ""}>${tailwindConfigScript}</script>${
-    tailwindConfig?.customCSS
-      ? `
   <style type="text/tailwindcss"${nonce ? ` nonce="${nonce}"` : ""}>
-${tailwindConfig.customCSS}
-  </style>`
-      : ""
-  }`;
+${tailwindV4Theme}
+  </style>`;
 
   // Generate modulepreload hints for page and layout modules (faster cold start)
   const modulePreloadHints = generateModulePreloadHints(options);
@@ -452,6 +344,11 @@ ${options.globalCSS || generateThemeVariables()}
   return { start, end };
 }
 
+/**
+ * Wrap HTML content in a complete HTML shell.
+ * Used for script pages and snippets that don't use the Head component.
+ * For normal pages, use HTMLGenerator which uses HeadCollector directly.
+ */
 export async function wrapInHTMLShell(
   content: string,
   meta: RenderMetadata,
@@ -459,42 +356,15 @@ export async function wrapInHTMLShell(
   params?: Record<string, string | string[]>,
   props?: ComponentProps,
 ): Promise<string> {
-  // Extract head elements from React content to inject into actual <head>
-  // This fixes hydration mismatch caused by browser hoisting <link>/<meta> out of <div>
-  const { headElements, cleanedContent: rawCleanedContent, metadata } = extractHeadElements(
-    content,
-  );
-  // Trim leading/trailing whitespace to prevent hydration mismatch
-  // React's virtual DOM doesn't include whitespace at container boundaries
-  const cleanedContent = rawCleanedContent.trim();
-
-  // HEAD RECONCILIATION: Use extracted metadata to override frontmatter defaults
-  // This ensures <Head> component values take precedence and avoids duplicate titles
-  const enrichedMeta: RenderMetadata = {
-    ...meta,
-    // If Head component provided a title, use it (overrides frontmatter default)
-    title: metadata.title || meta.title,
-    frontmatter: {
-      ...meta.frontmatter,
-      // Override frontmatter title/description with Head component values
-      ...(metadata.title && { title: metadata.title }),
-      ...(metadata.description && { description: metadata.description }),
-    },
-  };
+  const cleanedContent = content.trim();
 
   const { start, end } = await generateHTMLShellParts(
-    enrichedMeta,
+    meta,
     options,
     params,
     props,
-    cleanedContent, // Pass cleaned content for Tailwind CSS generation
+    cleanedContent,
   );
 
-  // Inject extracted head elements into the <head> section (before </head>)
-  // Note: title and description are already handled by shell via enrichedMeta
-  const startWithHeadElements = headElements
-    ? start.replace("</head>", `  ${headElements}\n</head>`)
-    : start;
-
-  return `${startWithHeadElements}${cleanedContent}${end}`;
+  return `${start}${cleanedContent}${end}`;
 }

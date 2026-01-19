@@ -1,9 +1,11 @@
-import { assertEquals, assertExists } from "@std/assert";
-import { join } from "@std/path";
-import { afterAll, describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { join } from "@veryfront/compat/path";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
+import { mkdir, writeTextFile } from "@veryfront/compat/fs.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { assertDrained, drainEventLoop } from "../../../_helpers/utils.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
+import { isDeno } from "../../../../src/platform/compat/runtime.ts";
 
 describe("RSC Streaming Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
   // Clean up renderer intervals to prevent resource leaks
@@ -28,16 +30,16 @@ describe("RSC Streaming Tests", { sanitizeOps: false, sanitizeResources: false }
 
         await withTestContext("rsc-stream", async (context) => {
           // Enable RSC via config instead of env var
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "veryfront.config.js"),
             `export default { experimental: { rsc: true } };`,
           );
 
           // Create App Router RSC component
           const appDir = join(context.projectDir, "app");
-          await Deno.mkdir(appDir, { recursive: true });
+          await mkdir(appDir, { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(appDir, "page.tsx"),
             `import React from 'react';
 
@@ -67,27 +69,35 @@ export default function HomePage({ searchParams }: { searchParams: { name?: stri
           let buffer = "";
           const events: Array<{ id: string; html: string }> = [];
 
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
 
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split("\n");
-            buffer = lines.pop() || "";
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split("\n");
+              buffer = lines.pop() || "";
 
-            for (const line of lines) {
-              if (!line.trim()) continue;
-              try {
-                const message = JSON.parse(line);
-                if (message.type === "slot") {
-                  events.push({
-                    id: String(message.id),
-                    html: String(message.html),
-                  });
+              for (const line of lines) {
+                if (!line.trim()) continue;
+                try {
+                  const message = JSON.parse(line);
+                  if (message.type === "slot") {
+                    events.push({
+                      id: String(message.id),
+                      html: String(message.html),
+                    });
+                  }
+                } catch {
+                  // Skip malformed JSON lines
                 }
-              } catch {
-                // Skip malformed JSON lines
               }
+            }
+          } finally {
+            try {
+              await reader.cancel();
+            } catch {
+              // ignore stream cancellation errors
             }
           }
 

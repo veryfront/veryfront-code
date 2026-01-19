@@ -1,4 +1,4 @@
-import { IMAGE_OPTIMIZATION } from "@veryfront/utils";
+import { IMAGE_OPTIMIZATION } from "#veryfront/utils";
 import type { ImageOptimizationOptions } from "./types.ts";
 
 export const DEFAULT_OPTIONS: Required<ImageOptimizationOptions> = {

@@ -32,6 +32,24 @@ import { isSSRGlobalsActive, markSSRGlobalsInitialized } from "./context.ts";
 import { createElementClass, createWindowStub } from "./dom-stubs.ts";
 
 /**
+ * Safely set a global property, using Object.defineProperty as fallback
+ * for read-only properties (e.g., navigator in Node.js 21+)
+ */
+function setGlobal(name: string, value: unknown): void {
+  try {
+    (globalThis as Record<string, unknown>)[name] = value;
+  } catch {
+    // Property might be read-only (e.g., navigator in Node.js 21+)
+    // Use Object.defineProperty to override
+    Object.defineProperty(globalThis, name, {
+      value,
+      writable: true,
+      configurable: true,
+    });
+  }
+}
+
+/**
  * Set up browser globals for SSR
  * Safe to call multiple times - only initializes once
  */
@@ -46,21 +64,24 @@ export function setupSSRGlobals(): void {
 
   const windowStub = createWindowStub();
 
-  // Set globals
-  (globalThis as Record<string, unknown>).window = windowStub;
-  (globalThis as Record<string, unknown>).document = windowStub.document;
-  (globalThis as Record<string, unknown>).navigator = windowStub.navigator;
-  (globalThis as Record<string, unknown>).location = windowStub.location;
-  (globalThis as Record<string, unknown>).history = windowStub.history;
-  (globalThis as Record<string, unknown>).localStorage = windowStub.localStorage;
-  (globalThis as Record<string, unknown>).sessionStorage = windowStub.sessionStorage;
-  (globalThis as Record<string, unknown>).matchMedia = windowStub.matchMedia;
-  (globalThis as Record<string, unknown>).getComputedStyle = windowStub.getComputedStyle;
-  (globalThis as Record<string, unknown>).requestAnimationFrame = windowStub.requestAnimationFrame;
-  (globalThis as Record<string, unknown>).cancelAnimationFrame = windowStub.cancelAnimationFrame;
+  // Set globals (using setGlobal for properties that might be read-only in Node.js 21+)
+  setGlobal("window", windowStub);
+  setGlobal("document", windowStub.document);
+  setGlobal("navigator", windowStub.navigator);
+  setGlobal("location", windowStub.location);
+  setGlobal("history", windowStub.history);
+  setGlobal("localStorage", windowStub.localStorage);
+  setGlobal("sessionStorage", windowStub.sessionStorage);
+  setGlobal("matchMedia", windowStub.matchMedia);
+  setGlobal("getComputedStyle", windowStub.getComputedStyle);
+  setGlobal("requestAnimationFrame", windowStub.requestAnimationFrame);
+  setGlobal("cancelAnimationFrame", windowStub.cancelAnimationFrame);
 
   // Self-reference
-  (globalThis as Record<string, unknown>).self = windowStub;
+  setGlobal("self", windowStub);
+
+  // SSR flag for components to detect server rendering
+  setGlobal("__VERYFRONT_SSR__", true);
 
   // DOM Element classes - needed by framer-motion and other animation libraries
   // These check `instanceof SVGElement` etc to determine element types

@@ -5,9 +5,10 @@
  * @module cli/shared/config
  */
 
-import { join } from "@veryfront/platform/compat/path/index.ts";
-import { cwd, getEnv } from "@veryfront/platform/compat/process.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { join } from "#veryfront/platform/compat/path/index.ts";
+import { cwd } from "#veryfront/platform/compat/process.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import { readToken } from "../auth/token-store.ts";
 
 /**
@@ -107,19 +108,21 @@ async function inferProjectSlug(projectDir: string): Promise<string | null> {
  * Resolve full configuration from environment, config file, and defaults
  *
  * @param projectDir - The project directory (defaults to cwd)
+ * @param env - Optional RuntimeEnv for test isolation
  * @returns Resolved configuration or throws if required values are missing
  */
 export async function resolveConfig(
   projectDir?: string,
+  env: RuntimeEnv = getRuntimeEnv(),
 ): Promise<ResolvedConfig> {
   const dir = projectDir || cwd();
   const configFile = await readConfigFile(dir);
 
   // API URL: env var > config file > default
-  const apiUrl = getEnv("VERYFRONT_API_URL") || configFile?.apiUrl || DEFAULT_API_URL;
+  const apiUrl = env.apiUrl || configFile?.apiUrl || DEFAULT_API_URL;
 
   // API Token: env var > global token > config file
-  let apiToken = getEnv("VERYFRONT_API_TOKEN") || configFile?.apiToken;
+  let apiToken = env.apiToken || configFile?.apiToken;
 
   // If no token from env or config, try global token store
   if (!apiToken) {
@@ -136,7 +139,7 @@ export async function resolveConfig(
   }
 
   // Project Slug: env var > config file > inferred
-  let projectSlug: string | undefined = getEnv("VERYFRONT_PROJECT_SLUG") || configFile?.projectSlug;
+  let projectSlug: string | undefined = env.projectSlug || configFile?.projectSlug;
 
   if (!projectSlug) {
     const inferred = await inferProjectSlug(dir);

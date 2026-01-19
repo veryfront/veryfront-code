@@ -8,8 +8,8 @@
  * @module build/transforms/mdx/esm-module-loader/utils/stub-module
  */
 
-import { join } from "@std/path";
-import { rendererLogger as logger } from "@veryfront/utils";
+import { join } from "#std/path.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { hashString } from "./hash.ts";
 import { getLocalFs } from "../cache/index.ts";

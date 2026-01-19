@@ -1,7 +1,7 @@
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import type { MDXFrontmatter } from "@veryfront/types";
-import type { VeryfrontConfig } from "@veryfront/config";
-import type { BuildVersion } from "@veryfront/utils/version.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { MDXFrontmatter } from "#veryfront/types";
+import type { VeryfrontConfig } from "#veryfront/config";
+import type { BuildVersion } from "#veryfront/utils/version.ts";
 
 export interface RendererOptions {
   projectDir: string;

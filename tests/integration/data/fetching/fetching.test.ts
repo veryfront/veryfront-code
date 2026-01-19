@@ -13,8 +13,11 @@
  * - RuntimeAdapter integration
  */
 
-import { assertEquals, assertExists, assertRejects } from "@std/assert";
-import { beforeEach, describe, it } from "@std/testing/bdd";
+// Disable LRU interval to prevent resource leaks in tests
+(globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
+
+import { assertEquals, assertExists, assertRejects } from "@veryfront/testing/assert";
+import { beforeEach, describe, it } from "@veryfront/testing/bdd";
 import {
   type DataContext,
   DataFetcher,
@@ -24,8 +27,18 @@ import {
   redirect,
 } from "@veryfront/data/index.ts";
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { runWithCacheKeyContext } from "@veryfront/cache/cache-key-builder.ts";
+import { delay } from "@std/async";
 
 type StaticDataContext = Omit<DataContext, "request" | "query">;
+
+// Helper to run tests with production mode cache context
+function withProductionContext<T>(fn: () => T | Promise<T>): T | Promise<T> {
+  return runWithCacheKeyContext(
+    { projectId: "test-project", mode: "production", versionId: "rel_test" },
+    fn,
+  );
+}
 
 // Test utilities
 function makeContext(
@@ -59,14 +72,8 @@ function getProp<T>(obj: any, key: string): T {
   return obj?.[key];
 }
 
-// All DataFetcher tests create instances with internal cleanup intervals
-// Wrap all test suites to disable resource sanitization
-Deno.test({
-  name: "DataFetcher - Comprehensive Tests",
-  sanitizeResources: false,
-  sanitizeOps: false,
-  fn: () => {
-    describe("DataFetcher - Basic Initialization", () => {
+describe("DataFetcher - Comprehensive Tests", () => {
+  describe("DataFetcher - Basic Initialization", () => {
       it("should create a DataFetcher without adapter", () => {
         const fetcher = new DataFetcher();
         assertExists(fetcher);
@@ -254,7 +261,7 @@ Deno.test({
         const pageModule: PageWithData = {
           default: () => null,
           getServerData: async () => {
-            await new Promise((resolve) => setTimeout(resolve, 10));
+            await delay(10);
             return { props: { async: true } };
           },
         };
@@ -360,7 +367,7 @@ Deno.test({
         const pageModule: PageWithData = {
           default: () => null,
           getServerData: async () => {
-            await new Promise((resolve) => setTimeout(resolve, 10));
+            await delay(10);
             throw new Error("Async server error");
           },
         };
@@ -459,7 +466,7 @@ Deno.test({
         const pageModule: PageWithData = {
           default: () => null,
           getStaticData: async () => {
-            await new Promise((resolve) => setTimeout(resolve, 10));
+            await delay(10);
             return { props: { async: true } };
           },
         };
@@ -488,7 +495,7 @@ Deno.test({
         const pageModule: PageWithData = {
           default: () => null,
           getStaticData: async () => {
-            await new Promise((resolve) => setTimeout(resolve, 10));
+            await delay(10);
             throw new Error("Async static error");
           },
         };
@@ -529,24 +536,26 @@ Deno.test({
       });
 
       it("should cache static data results", async () => {
-        let callCount = 0;
+        await withProductionContext(async () => {
+          let callCount = 0;
 
-        const pageModule: PageWithData = {
-          default: () => null,
-          getStaticData: () => {
-            callCount++;
-            return { props: { count: callCount } };
-          },
-        };
+          const pageModule: PageWithData = {
+            default: () => null,
+            getStaticData: () => {
+              callCount++;
+              return { props: { count: callCount } };
+            },
+          };
 
-        const result1 = await fetcher.fetchData(pageModule, context, "production");
-        const result2 = await fetcher.fetchData(pageModule, context, "production");
-        const result3 = await fetcher.fetchData(pageModule, context, "production");
+          const result1 = await fetcher.fetchData(pageModule, context, "production");
+          const result2 = await fetcher.fetchData(pageModule, context, "production");
+          const result3 = await fetcher.fetchData(pageModule, context, "production");
 
-        assertEquals(getProp<number>(result1.props, "count"), 1);
-        assertEquals(getProp<number>(result2.props, "count"), 1);
-        assertEquals(getProp<number>(result3.props, "count"), 1);
-        assertEquals(callCount, 1);
+          assertEquals(getProp<number>(result1.props, "count"), 1);
+          assertEquals(getProp<number>(result2.props, "count"), 1);
+          assertEquals(getProp<number>(result3.props, "count"), 1);
+          assertEquals(callCount, 1);
+        });
       });
 
       it("should not cache server data results", async () => {
@@ -571,149 +580,161 @@ Deno.test({
       });
 
       it("should use different cache keys for different URLs", async () => {
-        let callCount = 0;
+        await withProductionContext(async () => {
+          let callCount = 0;
 
-        const pageModule: PageWithData = {
-          default: () => null,
-          getStaticData: () => {
-            callCount++;
-            return { props: { count: callCount } };
-          },
-        };
+          const pageModule: PageWithData = {
+            default: () => null,
+            getStaticData: () => {
+              callCount++;
+              return { props: { count: callCount } };
+            },
+          };
 
-        const context1 = makeContext("http://localhost/page1", { id: "1" });
-        const context2 = makeContext("http://localhost/page2", { id: "1" });
+          const context1 = makeContext("http://localhost/page1", { id: "1" });
+          const context2 = makeContext("http://localhost/page2", { id: "1" });
 
-        const result1 = await fetcher.fetchData(pageModule, context1, "production");
-        const result2 = await fetcher.fetchData(pageModule, context2, "production");
+          const result1 = await fetcher.fetchData(pageModule, context1, "production");
+          const result2 = await fetcher.fetchData(pageModule, context2, "production");
 
-        assertEquals(getProp<number>(result1.props, "count"), 1);
-        assertEquals(getProp<number>(result2.props, "count"), 2);
-        assertEquals(callCount, 2);
+          assertEquals(getProp<number>(result1.props, "count"), 1);
+          assertEquals(getProp<number>(result2.props, "count"), 2);
+          assertEquals(callCount, 2);
+        });
       });
 
       it("should use different cache keys for different params", async () => {
-        let callCount = 0;
+        await withProductionContext(async () => {
+          let callCount = 0;
 
-        const pageModule: PageWithData = {
-          default: () => null,
-          getStaticData: () => {
-            callCount++;
-            return { props: { count: callCount } };
-          },
-        };
+          const pageModule: PageWithData = {
+            default: () => null,
+            getStaticData: () => {
+              callCount++;
+              return { props: { count: callCount } };
+            },
+          };
 
-        const context1 = makeContext("http://localhost/page", { id: "1" });
-        const context2 = makeContext("http://localhost/page", { id: "2" });
+          const context1 = makeContext("http://localhost/page", { id: "1" });
+          const context2 = makeContext("http://localhost/page", { id: "2" });
 
-        const result1 = await fetcher.fetchData(pageModule, context1, "production");
-        const result2 = await fetcher.fetchData(pageModule, context2, "production");
+          const result1 = await fetcher.fetchData(pageModule, context1, "production");
+          const result2 = await fetcher.fetchData(pageModule, context2, "production");
 
-        assertEquals(getProp<number>(result1.props, "count"), 1);
-        assertEquals(getProp<number>(result2.props, "count"), 2);
-        assertEquals(callCount, 2);
+          assertEquals(getProp<number>(result1.props, "count"), 1);
+          assertEquals(getProp<number>(result2.props, "count"), 2);
+          assertEquals(callCount, 2);
+        });
       });
 
       it("should use same cache key for same URL and params", async () => {
-        let callCount = 0;
+        await withProductionContext(async () => {
+          let callCount = 0;
 
-        const pageModule: PageWithData = {
-          default: () => null,
-          getStaticData: () => {
-            callCount++;
-            return { props: { count: callCount } };
-          },
-        };
+          const pageModule: PageWithData = {
+            default: () => null,
+            getStaticData: () => {
+              callCount++;
+              return { props: { count: callCount } };
+            },
+          };
 
-        const context1 = makeContext("http://localhost/page", { id: "1" });
-        const context2 = makeContext("http://localhost/page", { id: "1" });
+          const context1 = makeContext("http://localhost/page", { id: "1" });
+          const context2 = makeContext("http://localhost/page", { id: "1" });
 
-        const result1 = await fetcher.fetchData(pageModule, context1, "production");
-        const result2 = await fetcher.fetchData(pageModule, context2, "production");
+          const result1 = await fetcher.fetchData(pageModule, context1, "production");
+          const result2 = await fetcher.fetchData(pageModule, context2, "production");
 
-        assertEquals(getProp<number>(result1.props, "count"), 1);
-        assertEquals(getProp<number>(result2.props, "count"), 1);
-        assertEquals(callCount, 1);
+          assertEquals(getProp<number>(result1.props, "count"), 1);
+          assertEquals(getProp<number>(result2.props, "count"), 1);
+          assertEquals(callCount, 1);
+        });
       });
 
       it("should handle cache keys with complex params", async () => {
-        let callCount = 0;
+        await withProductionContext(async () => {
+          let callCount = 0;
 
-        const pageModule: PageWithData = {
-          default: () => null,
-          getStaticData: () => {
-            callCount++;
-            return { props: { count: callCount } };
-          },
-        };
+          const pageModule: PageWithData = {
+            default: () => null,
+            getStaticData: () => {
+              callCount++;
+              return { props: { count: callCount } };
+            },
+          };
 
-        const context1 = makeContext("http://localhost/page", {
-          category: "tech",
-          tag: "javascript",
+          const context1 = makeContext("http://localhost/page", {
+            category: "tech",
+            tag: "javascript",
+          });
+          const context2 = makeContext("http://localhost/page", {
+            category: "tech",
+            tag: "javascript",
+          });
+
+          const result1 = await fetcher.fetchData(pageModule, context1, "production");
+          const result2 = await fetcher.fetchData(pageModule, context2, "production");
+
+          assertEquals(getProp<number>(result1.props, "count"), 1);
+          assertEquals(getProp<number>(result2.props, "count"), 1);
+          assertEquals(callCount, 1);
         });
-        const context2 = makeContext("http://localhost/page", {
-          category: "tech",
-          tag: "javascript",
-        });
-
-        const result1 = await fetcher.fetchData(pageModule, context1, "production");
-        const result2 = await fetcher.fetchData(pageModule, context2, "production");
-
-        assertEquals(getProp<number>(result1.props, "count"), 1);
-        assertEquals(getProp<number>(result2.props, "count"), 1);
-        assertEquals(callCount, 1);
       });
 
       it("should handle cache keys with array params", async () => {
-        let callCount = 0;
+        await withProductionContext(async () => {
+          let callCount = 0;
 
-        const pageModule: PageWithData = {
-          default: () => null,
-          getStaticData: () => {
-            callCount++;
-            return { props: { count: callCount } };
-          },
-        };
+          const pageModule: PageWithData = {
+            default: () => null,
+            getStaticData: () => {
+              callCount++;
+              return { props: { count: callCount } };
+            },
+          };
 
-        const context1 = makeContext("http://localhost/page", {
-          path: ["a", "b", "c"],
+          const context1 = makeContext("http://localhost/page", {
+            path: ["a", "b", "c"],
+          });
+          const context2 = makeContext("http://localhost/page", {
+            path: ["a", "b", "c"],
+          });
+
+          const result1 = await fetcher.fetchData(pageModule, context1, "production");
+          const result2 = await fetcher.fetchData(pageModule, context2, "production");
+
+          assertEquals(getProp<number>(result1.props, "count"), 1);
+          assertEquals(getProp<number>(result2.props, "count"), 1);
+          assertEquals(callCount, 1);
         });
-        const context2 = makeContext("http://localhost/page", {
-          path: ["a", "b", "c"],
-        });
-
-        const result1 = await fetcher.fetchData(pageModule, context1, "production");
-        const result2 = await fetcher.fetchData(pageModule, context2, "production");
-
-        assertEquals(getProp<number>(result1.props, "count"), 1);
-        assertEquals(getProp<number>(result2.props, "count"), 1);
-        assertEquals(callCount, 1);
       });
 
       it("should differentiate array params with different values", async () => {
-        let callCount = 0;
+        await withProductionContext(async () => {
+          let callCount = 0;
 
-        const pageModule: PageWithData = {
-          default: () => null,
-          getStaticData: () => {
-            callCount++;
-            return { props: { count: callCount } };
-          },
-        };
+          const pageModule: PageWithData = {
+            default: () => null,
+            getStaticData: () => {
+              callCount++;
+              return { props: { count: callCount } };
+            },
+          };
 
-        const context1 = makeContext("http://localhost/page", {
-          path: ["a", "b", "c"],
+          const context1 = makeContext("http://localhost/page", {
+            path: ["a", "b", "c"],
+          });
+          const context2 = makeContext("http://localhost/page", {
+            path: ["a", "b", "d"],
+          });
+
+          const result1 = await fetcher.fetchData(pageModule, context1, "production");
+          const result2 = await fetcher.fetchData(pageModule, context2, "production");
+
+          assertEquals(getProp<number>(result1.props, "count"), 1);
+          assertEquals(getProp<number>(result2.props, "count"), 2);
+          assertEquals(callCount, 2);
         });
-        const context2 = makeContext("http://localhost/page", {
-          path: ["a", "b", "d"],
-        });
-
-        const result1 = await fetcher.fetchData(pageModule, context1, "production");
-        const result2 = await fetcher.fetchData(pageModule, context2, "production");
-
-        assertEquals(getProp<number>(result1.props, "count"), 1);
-        assertEquals(getProp<number>(result2.props, "count"), 2);
-        assertEquals(callCount, 2);
       });
     });
 
@@ -727,181 +748,193 @@ Deno.test({
       });
 
       it("should respect revalidate: false (never revalidate)", async () => {
-        let callCount = 0;
+        await withProductionContext(async () => {
+          let callCount = 0;
 
-        const pageModule: PageWithData = {
-          default: () => null,
-          getStaticData: () => {
-            callCount++;
-            return {
-              props: { count: callCount },
-              revalidate: false,
-            };
-          },
-        };
+          const pageModule: PageWithData = {
+            default: () => null,
+            getStaticData: () => {
+              callCount++;
+              return {
+                props: { count: callCount },
+                revalidate: false,
+              };
+            },
+          };
 
-        await fetcher.fetchData(pageModule, context, "production");
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        await fetcher.fetchData(pageModule, context, "production");
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        await fetcher.fetchData(pageModule, context, "production");
+          await fetcher.fetchData(pageModule, context, "production");
+          await delay(100);
+          await fetcher.fetchData(pageModule, context, "production");
+          await delay(100);
+          await fetcher.fetchData(pageModule, context, "production");
 
-        assertEquals(callCount, 1);
+          assertEquals(callCount, 1);
+        });
       });
 
       it("should revalidate after specified time", async () => {
-        let callCount = 0;
+        await withProductionContext(async () => {
+          let callCount = 0;
 
-        const pageModule: PageWithData = {
-          default: () => null,
-          getStaticData: () => {
-            callCount++;
-            return {
-              props: { count: callCount },
-              revalidate: 0.05, // 50ms
-            };
-          },
-        };
+          const pageModule: PageWithData = {
+            default: () => null,
+            getStaticData: () => {
+              callCount++;
+              return {
+                props: { count: callCount },
+                revalidate: 0.05, // 50ms
+              };
+            },
+          };
 
-        const result1 = await fetcher.fetchData(pageModule, context, "production");
-        assertEquals(getProp<number>(result1.props, "count"), 1);
+          const result1 = await fetcher.fetchData(pageModule, context, "production");
+          assertEquals(getProp<number>(result1.props, "count"), 1);
 
-        // Within revalidation window - should return cached
-        const result2 = await fetcher.fetchData(pageModule, context, "production");
-        assertEquals(getProp<number>(result2.props, "count"), 1);
+          // Within revalidation window - should return cached
+          const result2 = await fetcher.fetchData(pageModule, context, "production");
+          assertEquals(getProp<number>(result2.props, "count"), 1);
 
-        // Wait for revalidation window to pass
-        await new Promise((resolve) => setTimeout(resolve, 60));
+          // Wait for revalidation window to pass
+          await delay(60);
 
-        // Should trigger background revalidation but return stale
-        const result3 = await fetcher.fetchData(pageModule, context, "production");
-        assertEquals(getProp<number>(result3.props, "count"), 1);
+          // Should trigger background revalidation but return stale
+          const result3 = await fetcher.fetchData(pageModule, context, "production");
+          assertEquals(getProp<number>(result3.props, "count"), 1);
 
-        // Wait for background revalidation to complete
-        await new Promise((resolve) => setTimeout(resolve, 50));
+          // Wait for background revalidation to complete
+          await delay(50);
 
-        // Should now have fresh data
-        const result4 = await fetcher.fetchData(pageModule, context, "production");
-        assertEquals(getProp<number>(result4.props, "count"), 2);
+          // Should now have fresh data
+          const result4 = await fetcher.fetchData(pageModule, context, "production");
+          assertEquals(getProp<number>(result4.props, "count"), 2);
+        });
       });
 
       it("should implement stale-while-revalidate pattern", async () => {
-        let callCount = 0;
+        await withProductionContext(async () => {
+          let callCount = 0;
 
-        const pageModule: PageWithData = {
-          default: () => null,
-          getStaticData: async () => {
-            callCount++;
-            await new Promise((resolve) => setTimeout(resolve, 30));
-            return {
-              props: { count: callCount, timestamp: Date.now() },
-              revalidate: 0.05, // 50ms
-            };
-          },
-        };
+          const pageModule: PageWithData = {
+            default: () => null,
+            getStaticData: async () => {
+              callCount++;
+              await delay(30);
+              return {
+                props: { count: callCount, timestamp: Date.now() },
+                revalidate: 0.05, // 50ms
+              };
+            },
+          };
 
-        const result1 = await fetcher.fetchData(pageModule, context, "production");
-        const timestamp1 = getProp<number>(result1.props, "timestamp");
+          const result1 = await fetcher.fetchData(pageModule, context, "production");
+          const timestamp1 = getProp<number>(result1.props, "timestamp");
 
-        await new Promise((resolve) => setTimeout(resolve, 60));
+          await delay(60);
 
-        // Should return stale data immediately
-        const result2 = await fetcher.fetchData(pageModule, context, "production");
-        assertEquals(getProp<number>(result2.props, "timestamp"), timestamp1);
-        assertEquals(getProp<number>(result2.props, "count"), 1);
+          // Should return stale data immediately
+          const result2 = await fetcher.fetchData(pageModule, context, "production");
+          assertEquals(getProp<number>(result2.props, "timestamp"), timestamp1);
+          assertEquals(getProp<number>(result2.props, "count"), 1);
 
-        // Wait for background revalidation
-        await new Promise((resolve) => setTimeout(resolve, 50));
+          // Wait for background revalidation
+          await delay(50);
 
-        // Should have new data
-        const result3 = await fetcher.fetchData(pageModule, context, "production");
-        assertEquals(getProp<number>(result3.props, "count"), 2);
+          // Should have new data
+          const result3 = await fetcher.fetchData(pageModule, context, "production");
+          assertEquals(getProp<number>(result3.props, "count"), 2);
+        });
       });
 
       it("should not start multiple background revalidations", async () => {
-        let callCount = 0;
+        await withProductionContext(async () => {
+          let callCount = 0;
 
-        const pageModule: PageWithData = {
-          default: () => null,
-          getStaticData: async () => {
-            callCount++;
-            await new Promise((resolve) => setTimeout(resolve, 50));
-            return {
-              props: { count: callCount },
-              revalidate: 0.01, // 10ms
-            };
-          },
-        };
+          const pageModule: PageWithData = {
+            default: () => null,
+            getStaticData: async () => {
+              callCount++;
+              await delay(50);
+              return {
+                props: { count: callCount },
+                revalidate: 0.01, // 10ms
+              };
+            },
+          };
 
-        await fetcher.fetchData(pageModule, context, "production");
-        await new Promise((resolve) => setTimeout(resolve, 20));
+          await fetcher.fetchData(pageModule, context, "production");
+          await delay(20);
 
-        // Make multiple requests during revalidation
-        await Promise.all([
-          fetcher.fetchData(pageModule, context, "production"),
-          fetcher.fetchData(pageModule, context, "production"),
-          fetcher.fetchData(pageModule, context, "production"),
-        ]);
+          // Make multiple requests during revalidation
+          await Promise.all([
+            fetcher.fetchData(pageModule, context, "production"),
+            fetcher.fetchData(pageModule, context, "production"),
+            fetcher.fetchData(pageModule, context, "production"),
+          ]);
 
-        // Wait for revalidation to complete
-        await new Promise((resolve) => setTimeout(resolve, 100));
+          // Wait for revalidation to complete
+          await delay(100);
 
-        // Should only have been called twice (initial + one revalidation)
-        assertEquals(callCount, 2);
+          // Should only have been called twice (initial + one revalidation)
+          assertEquals(callCount, 2);
+        });
       });
 
       it("should handle revalidation with no revalidate value", async () => {
-        let callCount = 0;
+        await withProductionContext(async () => {
+          let callCount = 0;
 
-        const pageModule: PageWithData = {
-          default: () => null,
-          getStaticData: () => {
-            callCount++;
-            return {
-              props: { count: callCount },
-            };
-          },
-        };
+          const pageModule: PageWithData = {
+            default: () => null,
+            getStaticData: () => {
+              callCount++;
+              return {
+                props: { count: callCount },
+              };
+            },
+          };
 
-        await fetcher.fetchData(pageModule, context, "production");
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        await fetcher.fetchData(pageModule, context, "production");
+          await fetcher.fetchData(pageModule, context, "production");
+          await delay(100);
+          await fetcher.fetchData(pageModule, context, "production");
 
-        assertEquals(callCount, 1);
+          assertEquals(callCount, 1);
+        });
       });
 
       it("should handle errors during background revalidation", async () => {
-        let callCount = 0;
+        await withProductionContext(async () => {
+          let callCount = 0;
 
-        const pageModule: PageWithData = {
-          default: () => null,
-          getStaticData: () => {
-            callCount++;
-            if (callCount === 2) {
-              throw new Error("Revalidation error");
-            }
-            return {
-              props: { count: callCount },
-              revalidate: 0.05,
-            };
-          },
-        };
+          const pageModule: PageWithData = {
+            default: () => null,
+            getStaticData: () => {
+              callCount++;
+              if (callCount === 2) {
+                throw new Error("Revalidation error");
+              }
+              return {
+                props: { count: callCount },
+                revalidate: 0.05,
+              };
+            },
+          };
 
-        const result1 = await fetcher.fetchData(pageModule, context, "production");
-        assertEquals(getProp<number>(result1.props, "count"), 1);
+          const result1 = await fetcher.fetchData(pageModule, context, "production");
+          assertEquals(getProp<number>(result1.props, "count"), 1);
 
-        await new Promise((resolve) => setTimeout(resolve, 60));
+          await delay(60);
 
-        // Should return stale data
-        const result2 = await fetcher.fetchData(pageModule, context, "production");
-        assertEquals(getProp<number>(result2.props, "count"), 1);
+          // Should return stale data
+          const result2 = await fetcher.fetchData(pageModule, context, "production");
+          assertEquals(getProp<number>(result2.props, "count"), 1);
 
-        // Wait for failed revalidation
-        await new Promise((resolve) => setTimeout(resolve, 50));
+          // Wait for failed revalidation
+          await delay(50);
 
-        // Should still have old data
-        const result3 = await fetcher.fetchData(pageModule, context, "production");
-        assertEquals(getProp<number>(result3.props, "count"), 1);
+          // Should still have old data
+          const result3 = await fetcher.fetchData(pageModule, context, "production");
+          assertEquals(getProp<number>(result3.props, "count"), 1);
+        });
       });
     });
 
@@ -915,108 +948,116 @@ Deno.test({
       });
 
       it("should clear all cache", async () => {
-        const pageModule: PageWithData = {
-          default: () => null,
-          getStaticData: () => ({
-            props: { timestamp: Date.now() },
-          }),
-        };
+        await withProductionContext(async () => {
+          const pageModule: PageWithData = {
+            default: () => null,
+            getStaticData: () => ({
+              props: { timestamp: Date.now() },
+            }),
+          };
 
-        const result1 = await fetcher.fetchData(pageModule, context, "production");
-        const timestamp1 = getProp<number>(result1.props, "timestamp");
+          const result1 = await fetcher.fetchData(pageModule, context, "production");
+          const timestamp1 = getProp<number>(result1.props, "timestamp");
 
-        fetcher.clearCache();
+          fetcher.clearCache();
 
-        await new Promise((resolve) => setTimeout(resolve, 10));
+          await delay(10);
 
-        const result2 = await fetcher.fetchData(pageModule, context, "production");
-        const timestamp2 = getProp<number>(result2.props, "timestamp");
+          const result2 = await fetcher.fetchData(pageModule, context, "production");
+          const timestamp2 = getProp<number>(result2.props, "timestamp");
 
-        assertEquals(timestamp2 > timestamp1, true);
+          assertEquals(timestamp2 > timestamp1, true);
+        });
       });
 
       it("should clear cache by pattern", async () => {
-        const pageModule: PageWithData = {
-          default: () => null,
-          getStaticData: () => ({
-            props: { timestamp: Date.now() },
-          }),
-        };
+        await withProductionContext(async () => {
+          const pageModule: PageWithData = {
+            default: () => null,
+            getStaticData: () => ({
+              props: { timestamp: Date.now() },
+            }),
+          };
 
-        const context1 = makeContext("http://localhost/page1", { id: "1" });
-        const context2 = makeContext("http://localhost/page2", { id: "2" });
+          const context1 = makeContext("http://localhost/page1", { id: "1" });
+          const context2 = makeContext("http://localhost/page2", { id: "2" });
 
-        const result1 = await fetcher.fetchData(pageModule, context1, "production");
-        const result2 = await fetcher.fetchData(pageModule, context2, "production");
+          const result1 = await fetcher.fetchData(pageModule, context1, "production");
+          const result2 = await fetcher.fetchData(pageModule, context2, "production");
 
-        const timestamp1 = getProp<number>(result1.props, "timestamp");
-        const timestamp2 = getProp<number>(result2.props, "timestamp");
+          const timestamp1 = getProp<number>(result1.props, "timestamp");
+          const timestamp2 = getProp<number>(result2.props, "timestamp");
 
-        fetcher.clearCache("page1");
+          fetcher.clearCache("page1");
 
-        await new Promise((resolve) => setTimeout(resolve, 10));
+          await delay(10);
 
-        const result3 = await fetcher.fetchData(pageModule, context1, "production");
-        const result4 = await fetcher.fetchData(pageModule, context2, "production");
+          const result3 = await fetcher.fetchData(pageModule, context1, "production");
+          const result4 = await fetcher.fetchData(pageModule, context2, "production");
 
-        assertEquals(getProp<number>(result3.props, "timestamp") > timestamp1, true);
-        assertEquals(getProp<number>(result4.props, "timestamp"), timestamp2);
+          assertEquals(getProp<number>(result3.props, "timestamp") > timestamp1, true);
+          assertEquals(getProp<number>(result4.props, "timestamp"), timestamp2);
+        });
       });
 
       it("should clear multiple entries matching pattern", async () => {
-        const pageModule: PageWithData = {
-          default: () => null,
-          getStaticData: () => ({
-            props: { timestamp: Date.now() },
-          }),
-        };
+        await withProductionContext(async () => {
+          const pageModule: PageWithData = {
+            default: () => null,
+            getStaticData: () => ({
+              props: { timestamp: Date.now() },
+            }),
+          };
 
-        const contexts = [
-          makeContext("http://localhost/blog/post-1", { slug: "post-1" }),
-          makeContext("http://localhost/blog/post-2", { slug: "post-2" }),
-          makeContext("http://localhost/about", { id: "1" }),
-        ];
+          const contexts = [
+            makeContext("http://localhost/blog/post-1", { slug: "post-1" }),
+            makeContext("http://localhost/blog/post-2", { slug: "post-2" }),
+            makeContext("http://localhost/about", { id: "1" }),
+          ];
 
-        await Promise.all(
-          contexts.map((ctx: DataContext) => fetcher.fetchData(pageModule, ctx, "production")),
-        );
+          await Promise.all(
+            contexts.map((ctx: DataContext) => fetcher.fetchData(pageModule, ctx, "production")),
+          );
 
-        fetcher.clearCache("blog");
+          fetcher.clearCache("blog");
 
-        let callCount = 0;
-        const countingModule: PageWithData = {
-          default: () => null,
-          getStaticData: () => {
-            callCount++;
-            return { props: { count: callCount } };
-          },
-        };
+          let callCount = 0;
+          const countingModule: PageWithData = {
+            default: () => null,
+            getStaticData: () => {
+              callCount++;
+              return { props: { count: callCount } };
+            },
+          };
 
-        await fetcher.fetchData(countingModule, contexts[0]!, "production");
-        await fetcher.fetchData(countingModule, contexts[1]!, "production");
-        await fetcher.fetchData(countingModule, contexts[2]!, "production");
+          await fetcher.fetchData(countingModule, contexts[0]!, "production");
+          await fetcher.fetchData(countingModule, contexts[1]!, "production");
+          await fetcher.fetchData(countingModule, contexts[2]!, "production");
 
-        assertEquals(callCount, 2);
+          assertEquals(callCount, 2);
+        });
       });
 
       it("should not affect cache when pattern does not match", async () => {
-        let callCount = 0;
+        await withProductionContext(async () => {
+          let callCount = 0;
 
-        const pageModule: PageWithData = {
-          default: () => null,
-          getStaticData: () => {
-            callCount++;
-            return { props: { count: callCount } };
-          },
-        };
+          const pageModule: PageWithData = {
+            default: () => null,
+            getStaticData: () => {
+              callCount++;
+              return { props: { count: callCount } };
+            },
+          };
 
-        await fetcher.fetchData(pageModule, context, "production");
+          await fetcher.fetchData(pageModule, context, "production");
 
-        fetcher.clearCache("nonexistent");
+          fetcher.clearCache("nonexistent");
 
-        await fetcher.fetchData(pageModule, context, "production");
+          await fetcher.fetchData(pageModule, context, "production");
 
-        assertEquals(callCount, 1);
+          assertEquals(callCount, 1);
+        });
       });
 
       it("should handle clearing empty cache", () => {
@@ -1059,7 +1100,7 @@ Deno.test({
         const pageModule: PageWithData = {
           default: () => null,
           getStaticPaths: async () => {
-            await new Promise((resolve) => setTimeout(resolve, 10));
+            await delay(10);
             return {
               paths: [{ params: { slug: "test" } }],
               fallback: "blocking",
@@ -1184,7 +1225,7 @@ Deno.test({
         const pageModule: PageWithData = {
           default: () => null,
           getStaticPaths: async () => {
-            await new Promise((resolve) => setTimeout(resolve, 10));
+            await delay(10);
             throw new Error("Async static paths error");
           },
         };
@@ -1255,168 +1296,182 @@ Deno.test({
       });
 
       it("should handle revalidate: 0", async () => {
-        let callCount = 0;
+        await withProductionContext(async () => {
+          let callCount = 0;
 
-        const pageModule: PageWithData = {
-          default: () => null,
-          getStaticData: () => {
-            callCount++;
-            return {
-              props: { count: callCount },
-              revalidate: 0,
-            };
-          },
-        };
+          const pageModule: PageWithData = {
+            default: () => null,
+            getStaticData: () => {
+              callCount++;
+              return {
+                props: { count: callCount },
+                revalidate: 0,
+              };
+            },
+          };
 
-        const result1 = await fetcher.fetchData(pageModule, context, "production");
-        assertEquals(getProp<number>(result1.props, "count"), 1);
+          const result1 = await fetcher.fetchData(pageModule, context, "production");
+          assertEquals(getProp<number>(result1.props, "count"), 1);
 
-        await new Promise((resolve) => setTimeout(resolve, 10));
+          await delay(10);
 
-        const result2 = await fetcher.fetchData(pageModule, context, "production");
-        assertEquals(getProp<number>(result2.props, "count"), 1);
+          const result2 = await fetcher.fetchData(pageModule, context, "production");
+          assertEquals(getProp<number>(result2.props, "count"), 1);
 
-        await new Promise((resolve) => setTimeout(resolve, 10));
+          await delay(10);
 
-        const result3 = await fetcher.fetchData(pageModule, context, "production");
-        assertEquals(getProp<number>(result3.props, "count"), 2);
+          const result3 = await fetcher.fetchData(pageModule, context, "production");
+          assertEquals(getProp<number>(result3.props, "count"), 2);
+        });
       });
 
       it("should handle large revalidate values", async () => {
-        const pageModule: PageWithData = {
-          default: () => null,
-          getStaticData: () => ({
-            props: { data: "test" },
-            revalidate: 86400, // 24 hours
-          }),
-        };
+        await withProductionContext(async () => {
+          const pageModule: PageWithData = {
+            default: () => null,
+            getStaticData: () => ({
+              props: { data: "test" },
+              revalidate: 86400, // 24 hours
+            }),
+          };
 
-        const result = await fetcher.fetchData(pageModule, context, "production");
+          const result = await fetcher.fetchData(pageModule, context, "production");
 
-        assertEquals(getProp<string>(result.props, "data"), "test");
+          assertEquals(getProp<string>(result.props, "data"), "test");
+        });
       });
 
       it("should handle special characters in cache keys", async () => {
-        let callCount = 0;
+        await withProductionContext(async () => {
+          let callCount = 0;
 
-        const pageModule: PageWithData = {
-          default: () => null,
-          getStaticData: () => {
-            callCount++;
-            return { props: { count: callCount } };
-          },
-        };
+          const pageModule: PageWithData = {
+            default: () => null,
+            getStaticData: () => {
+              callCount++;
+              return { props: { count: callCount } };
+            },
+          };
 
-        const specialContext = makeContext("http://localhost/page?query=test", {
-          slug: "hello-world@2024",
+          const specialContext = makeContext("http://localhost/page?query=test", {
+            slug: "hello-world@2024",
+          });
+
+          const result1 = await fetcher.fetchData(
+            pageModule,
+            specialContext,
+            "production",
+          );
+          const result2 = await fetcher.fetchData(
+            pageModule,
+            specialContext,
+            "production",
+          );
+
+          assertEquals(getProp<number>(result1.props, "count"), 1);
+          assertEquals(getProp<number>(result2.props, "count"), 1);
+          assertEquals(callCount, 1);
         });
-
-        const result1 = await fetcher.fetchData(
-          pageModule,
-          specialContext,
-          "production",
-        );
-        const result2 = await fetcher.fetchData(
-          pageModule,
-          specialContext,
-          "production",
-        );
-
-        assertEquals(getProp<number>(result1.props, "count"), 1);
-        assertEquals(getProp<number>(result2.props, "count"), 1);
-        assertEquals(callCount, 1);
       });
 
       it("should handle URLs with different protocols (same cache key)", async () => {
-        let callCount = 0;
+        await withProductionContext(async () => {
+          let callCount = 0;
 
-        const pageModule: PageWithData = {
-          default: () => null,
-          getStaticData: () => {
-            callCount++;
-            return { props: { count: callCount } };
-          },
-        };
+          const pageModule: PageWithData = {
+            default: () => null,
+            getStaticData: () => {
+              callCount++;
+              return { props: { count: callCount } };
+            },
+          };
 
-        const context1 = makeContext("http://localhost/page", { id: "1" });
-        const context2 = makeContext("https://localhost/page", { id: "1" });
+          const context1 = makeContext("http://localhost/page", { id: "1" });
+          const context2 = makeContext("https://localhost/page", { id: "1" });
 
-        const result1 = await fetcher.fetchData(pageModule, context1, "production");
-        const result2 = await fetcher.fetchData(pageModule, context2, "production");
+          const result1 = await fetcher.fetchData(pageModule, context1, "production");
+          const result2 = await fetcher.fetchData(pageModule, context2, "production");
 
-        // Cache key is based on pathname and params, not protocol, so they share cache
-        assertEquals(callCount, 1);
-        assertEquals(getProp<number>(result1.props, "count"), 1);
-        assertEquals(getProp<number>(result2.props, "count"), 1);
+          // Cache key is based on pathname and params, not protocol, so they share cache
+          assertEquals(callCount, 1);
+          assertEquals(getProp<number>(result1.props, "count"), 1);
+          assertEquals(getProp<number>(result2.props, "count"), 1);
+        });
       });
 
       it("should handle URLs with different hosts (same cache key)", async () => {
-        let callCount = 0;
+        await withProductionContext(async () => {
+          let callCount = 0;
 
-        const pageModule: PageWithData = {
-          default: () => null,
-          getStaticData: () => {
-            callCount++;
-            return { props: { count: callCount } };
-          },
-        };
+          const pageModule: PageWithData = {
+            default: () => null,
+            getStaticData: () => {
+              callCount++;
+              return { props: { count: callCount } };
+            },
+          };
 
-        const context1 = makeContext("http://localhost/page", { id: "1" });
-        const context2 = makeContext("http://example.com/page", { id: "1" });
+          const context1 = makeContext("http://localhost/page", { id: "1" });
+          const context2 = makeContext("http://example.com/page", { id: "1" });
 
-        const result1 = await fetcher.fetchData(pageModule, context1, "production");
-        const result2 = await fetcher.fetchData(pageModule, context2, "production");
+          const result1 = await fetcher.fetchData(pageModule, context1, "production");
+          const result2 = await fetcher.fetchData(pageModule, context2, "production");
 
-        // Cache key is based on pathname and params, not host, so they share cache
-        assertEquals(callCount, 1);
-        assertEquals(getProp<number>(result1.props, "count"), 1);
-        assertEquals(getProp<number>(result2.props, "count"), 1);
+          // Cache key is based on pathname and params, not host, so they share cache
+          assertEquals(callCount, 1);
+          assertEquals(getProp<number>(result1.props, "count"), 1);
+          assertEquals(getProp<number>(result2.props, "count"), 1);
+        });
       });
 
       it("should handle concurrent requests to same resource", async () => {
-        let callCount = 0;
+        await withProductionContext(async () => {
+          let callCount = 0;
 
-        const pageModule: PageWithData = {
-          default: () => null,
-          getStaticData: async () => {
-            callCount++;
-            await new Promise((resolve) => setTimeout(resolve, 30));
-            return { props: { count: callCount } };
-          },
-        };
+          const pageModule: PageWithData = {
+            default: () => null,
+            getStaticData: async () => {
+              callCount++;
+              await delay(30);
+              return { props: { count: callCount } };
+            },
+          };
 
-        const results = await Promise.all([
-          fetcher.fetchData(pageModule, context, "production"),
-          fetcher.fetchData(pageModule, context, "production"),
-          fetcher.fetchData(pageModule, context, "production"),
-        ]);
+          const results = await Promise.all([
+            fetcher.fetchData(pageModule, context, "production"),
+            fetcher.fetchData(pageModule, context, "production"),
+            fetcher.fetchData(pageModule, context, "production"),
+          ]);
 
-        // All concurrent requests race - they don't wait for each other, so all execute
-        // First one to finish sets cache, but others may have already started
-        assertEquals(callCount >= 1, true);
-        // All results should have values (whether from concurrent executions or cache)
-        assertExists(getProp<number>(results[0]?.props, "count"));
-        assertExists(getProp<number>(results[1]?.props, "count"));
-        assertExists(getProp<number>(results[2]?.props, "count"));
+          // All concurrent requests race - they don't wait for each other, so all execute
+          // First one to finish sets cache, but others may have already started
+          assertEquals(callCount >= 1, true);
+          // All results should have values (whether from concurrent executions or cache)
+          assertExists(getProp<number>(results[0]?.props, "count"));
+          assertExists(getProp<number>(results[1]?.props, "count"));
+          assertExists(getProp<number>(results[2]?.props, "count"));
+        });
       });
 
       it("should handle empty params", async () => {
-        const pageModule: PageWithData = {
-          default: () => null,
-          getStaticData: (ctx: StaticDataContext) => ({
-            props: { params: ctx.params },
-          }),
-        };
+        await withProductionContext(async () => {
+          const pageModule: PageWithData = {
+            default: () => null,
+            getStaticData: (ctx: StaticDataContext) => ({
+              props: { params: ctx.params },
+            }),
+          };
 
-        const emptyContext = makeContext("http://localhost/page", {});
+          const emptyContext = makeContext("http://localhost/page", {});
 
-        const result = await fetcher.fetchData(
-          pageModule,
-          emptyContext,
-          "production",
-        );
+          const result = await fetcher.fetchData(
+            pageModule,
+            emptyContext,
+            "production",
+          );
 
-        assertEquals(getProp<Record<string, unknown>>(result.props, "params"), {});
+          assertEquals(getProp<Record<string, unknown>>(result.props, "params"), {});
+        });
       });
     });
 
@@ -1472,5 +1527,4 @@ Deno.test({
         assertEquals(getProp<{ id: number; name: string }>(result.props, "data").name, "Test Post");
       });
     });
-  }, // End of Deno.test fn
-}); // End of Deno.test
+});

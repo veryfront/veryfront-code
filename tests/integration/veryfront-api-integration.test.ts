@@ -2,12 +2,13 @@
  * @file Integration tests for Veryfront API FSAdapter
  */
 
-import { assertEquals, assertExists } from "@std/assert";
-import { afterEach, describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { afterEach, describe, it } from "@veryfront/testing/bdd";
 import { bootstrap } from "@veryfront/server/bootstrap.ts";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import type { VeryfrontConfig } from "@veryfront/config";
 import { cleanupBundler } from "@veryfront/rendering/cleanup.ts";
+import { cwd } from "@veryfront/compat/process.ts";
 
 // Disable sanitizers for this integration test suite as the MultiProjectFSAdapter
 // starts background intervals for cleanup that are managed by the adapter lifecycle
@@ -17,11 +18,11 @@ describe("Veryfront API Integration", { sanitizeResources: false, sanitizeOps: f
     await cleanupBundler();
   });
   describe("bootstrap", () => {
-    // FIXME: This test incorrectly uses Deno.cwd() which has veryfront.config.ts with fs.type="veryfront-api"
+    // FIXME: This test incorrectly uses cwd() which has veryfront.config.ts with fs.type="veryfront-api"
     // It should use a temp directory without any config to test local filesystem mode
     it.ignore("should use local filesystem when no fs config", async () => {
       const adapter = await getAdapter();
-      const projectDir = Deno.cwd();
+      const projectDir = cwd();
 
       const result = await bootstrap(projectDir, adapter);
 
@@ -32,7 +33,7 @@ describe("Veryfront API Integration", { sanitizeResources: false, sanitizeOps: f
 
     it("should handle veryfront-api configuration", async () => {
       const adapter = await getAdapter();
-      const projectDir = Deno.cwd();
+      const projectDir = cwd();
 
       // Mock config by setting it directly (in real scenario, this would be in veryfront.config.ts)
       const _mockConfig: Partial<VeryfrontConfig> = {

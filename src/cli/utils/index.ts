@@ -1,6 +1,6 @@
-import { VERSION } from "@veryfront/utils";
-import { bold, cyan, dim, green, red, yellow } from "@veryfront/compat/console";
-import { cliLogger } from "@veryfront/utils";
+import { VERSION } from "#veryfront/utils";
+import { bold, cyan, dim, green, red, yellow } from "#veryfront/compat/console";
+import { cliLogger } from "#veryfront/utils";
 import {
   exit,
   isInteractive,
@@ -8,8 +8,8 @@ import {
   onSignal,
   promptSync,
   writeStdout,
-} from "@veryfront/platform/compat/process.ts";
-import { getForceColorEnv, getNoColorEnv } from "@veryfront/config/env.ts";
+} from "#veryfront/platform/compat/process.ts";
+import { getForceColorEnv, getNoColorEnv } from "#veryfront/config/env.ts";
 
 // ============================================================================
 // TTY and Color Detection (clig.dev compliance)
@@ -388,4 +388,4 @@ export function exitProcess(code: number): void {
 }
 
 // Re-export formatBytes from shared format utils for backward compatibility
-export { formatBytes } from "@veryfront/utils";
+export { formatBytes } from "#veryfront/utils";

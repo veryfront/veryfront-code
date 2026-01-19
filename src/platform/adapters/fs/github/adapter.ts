@@ -1,4 +1,4 @@
-import { logger } from "@veryfront/utils";
+import { logger } from "#veryfront/utils";
 import { FileCache } from "../cache/file-cache.ts";
 import type { FSAdapter, FSAdapterConfig } from "../veryfront/types.ts";
 import { GitHubAPIClient } from "./github-api-client.ts";
@@ -12,7 +12,7 @@ import {
   type GitHubConfig,
   type ResolvedGitHubConfig,
 } from "./types.ts";
-import { getGithubEnvConfig } from "@veryfront/config/env.ts";
+import { getGithubEnvConfig } from "#veryfront/config/env.ts";
 
 const LOG_PREFIX = "[GitHubFSAdapter]";
 

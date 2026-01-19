@@ -1,4 +1,4 @@
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { tracingManager } from "./manager.ts";
 import type { Context, Span, SpanOptions, TracingConfig } from "./types.ts";
 
@@ -119,4 +119,8 @@ export function withSpanSync<T>(
   );
 }
 
+// Export singleton for production use
 export { tracingManager } from "./manager.ts";
+
+// Export class for testing - tests can create isolated instances
+export { TracingManager } from "./manager.ts";

@@ -1,6 +1,6 @@
-import { cliLogger as logger } from "@veryfront/utils";
-import { bold, cyan, red, yellow } from "@veryfront/compat/console";
-import type { VeryfrontConfig } from "@veryfront/config/types.ts";
+import { cliLogger as logger } from "#veryfront/utils";
+import { bold, cyan, red, yellow } from "#veryfront/compat/console";
+import type { VeryfrontConfig } from "#veryfront/config/types.ts";
 
 export interface ValidationResult {
   valid: boolean;

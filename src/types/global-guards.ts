@@ -1,5 +1,5 @@
-export type { GlobalWithBun, GlobalWithDeno, GlobalWithProcess } from "@veryfront/utils";
-export { hasBunRuntime, hasDenoRuntime, hasNodeProcess } from "@veryfront/utils";
+export type { GlobalWithBun, GlobalWithDeno, GlobalWithProcess } from "#veryfront/utils";
+export { hasBunRuntime, hasDenoRuntime, hasNodeProcess } from "#veryfront/utils";
 
 export interface GlobalWithReactDOM {
   ReactDOM?: typeof import("react-dom/client");

@@ -11,14 +11,14 @@
  * 4. Reload config using enhanced adapter (in case config itself is remote)
  */
 
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { clearConfigCache, getConfig } from "@veryfront/config";
-import { enhanceAdapterWithFS } from "@veryfront/platform/adapters/fs/integration.ts";
-import type { VeryfrontConfig } from "@veryfront/config";
-import { logger } from "@veryfront/utils";
-import { loadEnv, supportsEnvFiles } from "@veryfront/utils/env-loader.ts";
-import { isDebugEnabled } from "@veryfront/utils/constants/env.ts";
-import { getErrorMessage } from "@veryfront/errors/veryfront-error.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { clearConfigCache, getConfig } from "#veryfront/config";
+import { enhanceAdapterWithFS } from "#veryfront/platform/adapters/fs/integration.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
+import { logger } from "#veryfront/utils";
+import { loadEnv, supportsEnvFiles } from "#veryfront/utils/env-loader.ts";
+import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
+import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 
 export interface BootstrapResult {
   /** Enhanced runtime adapter (with FSAdapter if configured) */

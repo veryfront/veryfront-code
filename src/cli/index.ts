@@ -6,7 +6,7 @@
  *
  * @example
  * ```typescript
- * import { main } from '@veryfront/cli'
+ * import { main } from "#veryfront/cli'
  *
  * // Run the CLI
  * await main()

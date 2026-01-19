@@ -1,8 +1,10 @@
-import { assertNotEquals } from "@std/assert";
-import { afterAll, describe, it } from "@std/testing/bdd";
-import { join } from "@std/path";
+import { assertNotEquals } from "@veryfront/testing/assert";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
+import { join } from "@veryfront/compat/path";
+import { writeTextFile } from "@veryfront/compat/fs.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
+import { isDeno } from "../../../../src/platform/compat/runtime.ts";
 
 describe("RSC Handler Isolation Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
   // Clean up renderer intervals to prevent resource leaks
@@ -16,7 +18,7 @@ describe("RSC Handler Isolation Tests", { sanitizeOps: false, sanitizeResources:
     it("creates a fresh handler after reset for different projectDir", async () => {
       await withTestContext("rsc-iso-1", async (ctx1) => {
         // Enable RSC via config instead of env var
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(ctx1.projectDir, "veryfront.config.js"),
           `export default { experimental: { rsc: true } };`,
         );
@@ -34,7 +36,7 @@ describe("RSC Handler Isolation Tests", { sanitizeOps: false, sanitizeResources:
 
       await withTestContext("rsc-iso-2", async (ctx2) => {
         // Enable RSC via config instead of env var
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(ctx2.projectDir, "veryfront.config.js"),
           `export default { experimental: { rsc: true } };`,
         );

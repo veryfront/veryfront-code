@@ -6,7 +6,7 @@
  */
 
 import * as React from "react";
-import type { AgentStatus as AgentStatusType } from "@veryfront/agent";
+import type { AgentStatus as AgentStatusType } from "#veryfront/agent";
 
 export interface AgentContainerProps extends React.HTMLAttributes<HTMLDivElement> {
   children: React.ReactNode;

@@ -1,4 +1,4 @@
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/index.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/index.ts";
 import { CacheManager } from "./data-fetching-cache.ts";
 import { ServerDataFetcher } from "./server-data-fetcher.ts";
 import { StaticDataFetcher } from "./static-data-fetcher.ts";

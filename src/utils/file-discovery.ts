@@ -5,9 +5,30 @@
  * for route discovery, build asset scanning, and module discovery.
  */
 
-import { join } from "@veryfront/platform/compat/path/index.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
+import { join } from "#veryfront/platform/compat/path/index.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { isBun, isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
+
+/**
+ * Get the default runtime adapter for the current environment
+ */
+async function getDefaultAdapter(): Promise<RuntimeAdapter> {
+  if (isDeno) {
+    const { denoAdapter } = await import("#veryfront/platform/adapters/runtime/deno/index.ts");
+    return denoAdapter;
+  }
+  if (isBun) {
+    const { bunAdapter } = await import("#veryfront/platform/adapters/runtime/bun/index.ts");
+    return bunAdapter;
+  }
+  if (isNode) {
+    const { nodeAdapter } = await import("#veryfront/platform/adapters/runtime/node/index.ts");
+    return nodeAdapter;
+  }
+  // Fallback to Node adapter (compatible with most runtimes)
+  const { nodeAdapter } = await import("#veryfront/platform/adapters/runtime/node/index.ts");
+  return nodeAdapter;
+}
 
 export interface FileDiscoveryOptions {
   /**
@@ -147,8 +168,11 @@ export async function* discoverFiles(
     ignorePatterns,
     includeDirs = false,
     followSymlinks = false,
-    adapter = denoAdapter,
+    adapter,
   } = options;
+
+  // Get the appropriate adapter for the current runtime
+  const runtimeAdapter = adapter ?? await getDefaultAdapter();
 
   yield* walkDirectory(
     baseDir,
@@ -160,7 +184,7 @@ export async function* discoverFiles(
     includeDirs,
     recursive,
     followSymlinks,
-    adapter,
+    runtimeAdapter,
   );
 }
 

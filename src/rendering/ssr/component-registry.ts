@@ -4,12 +4,12 @@
  */
 
 import { dirname, join } from "../../platform/compat/path-helper.ts";
-import { rendererLogger as logger } from "@veryfront/utils";
+import { rendererLogger as logger } from "#veryfront/utils";
 import * as React from "react";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { DEFAULT_DASHBOARD_PORT } from "@veryfront/utils";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { DEFAULT_DASHBOARD_PORT } from "#veryfront/utils";
 import { VirtualModuleSystem } from "../virtual-module-system.ts";
-import { loadComponentFromSource } from "@veryfront/modules/react-loader/component-loader.ts";
+import { loadComponentFromSource } from "#veryfront/modules/react-loader/component-loader.ts";
 
 interface DeferredComponentSource {
   source: string;

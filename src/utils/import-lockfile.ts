@@ -21,7 +21,7 @@
 
 import { computeHash } from "./hash-utils.ts";
 import { serverLogger as logger } from "./logger/index.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 
 export interface LockfileEntry {
   resolved: string;

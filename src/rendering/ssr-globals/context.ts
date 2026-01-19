@@ -81,3 +81,14 @@ export function enableSSRClientOnlyFetching(): void {
 export function disableSSRClientOnlyFetching(): void {
   ssrClientOnlyFetching = false;
 }
+
+/**
+ * Reset SSR globals state for tests.
+ * Clears initialization flag and per-test context values.
+ */
+export function resetSSRGlobalsState(): void {
+  ssrGlobalsInitialized = false;
+  ssrServerPort = null;
+  ssrProjectDomain = null;
+  ssrClientOnlyFetching = false;
+}

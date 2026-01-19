@@ -1,5 +1,5 @@
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import type { VeryfrontConfig } from "@veryfront/config";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 
 export interface ParsedDomain {
   /** Project slug extracted from host (e.g., "my-project" from "my-project.preview.veryfront.dev") */
@@ -17,6 +17,16 @@ export interface ParsedDomain {
 }
 
 export interface SecurityConfig {
+  auth?: {
+    basic?: {
+      username: string;
+      password: string;
+      realm?: string;
+    };
+    bearer?: {
+      token: string;
+    };
+  };
   cors?: boolean | {
     origin?: string | string[] | ((origin: string) => boolean);
     credentials?: boolean;

@@ -1,4 +1,4 @@
-import type { VeryfrontConfig } from "@veryfront/config";
+import type { VeryfrontConfig } from "#veryfront/config";
 
 export function generateDevComponentManifestScript(
   config: VeryfrontConfig,

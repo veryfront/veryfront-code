@@ -15,21 +15,21 @@
 // React Components (Most Common)
 // ============================================================================
 
-export { Link } from "@veryfront/components";
-export type { LinkProps } from "@veryfront/components";
+export { Link } from "#veryfront/components";
+export type { LinkProps } from "#veryfront/components";
 
-export { Head } from "@veryfront/components";
+export { Head } from "#veryfront/components";
 
-export { MDXProvider, useMDXComponents } from "@veryfront/components";
-export type { MDXProviderProps } from "@veryfront/components";
+export { MDXProvider, useMDXComponents } from "#veryfront/components";
+export type { MDXProviderProps } from "#veryfront/components";
 
 // Optimized Images
 export {
   OptimizedBackgroundImage,
   OptimizedImage,
   SimpleOptimizedImage,
-} from "@veryfront/components";
-export type { OptimizedImageProps } from "@veryfront/components";
+} from "#veryfront/components";
+export type { OptimizedImageProps } from "#veryfront/components";
 
 // ============================================================================
 // Data Fetching
@@ -40,16 +40,16 @@ export type {
   InferGetServerDataProps,
   PageWithData,
   StaticPathsResult,
-} from "@veryfront/data";
+} from "#veryfront/data";
 
 // Data helpers (notFound/redirect for getServerData)
-export { notFound, redirect } from "@veryfront/data";
+export { notFound, redirect } from "#veryfront/data";
 
 // ============================================================================
 // API Routes
 // ============================================================================
 
-export type { APIContext, APIHandler, APIResponse, APIRoute } from "@veryfront/routing";
+export type { APIContext, APIHandler, APIResponse, APIRoute } from "#veryfront/routing";
 
 // Response helpers
 export {
@@ -60,7 +60,7 @@ export {
   redirect as apiRedirect,
   serverError,
   unauthorized,
-} from "@veryfront/routing";
+} from "#veryfront/routing";
 
 // Input validation (for API routes)
 export {
@@ -73,20 +73,20 @@ export {
   type ValidatedHandlerConfig,
   type ValidatedHandlerFunction,
   ValidationError,
-} from "@veryfront/security";
+} from "#veryfront/security";
 
 // ============================================================================
 // Configuration
 // ============================================================================
 
-export { defineConfig } from "@veryfront/config";
-export type { VeryfrontConfig } from "@veryfront/config";
+export { defineConfig } from "#veryfront/config";
+export type { VeryfrontConfig } from "#veryfront/config";
 
 // ============================================================================
 // Common Types
 // ============================================================================
 
-export type { ComponentProps, MDXFrontmatter, PageContext } from "@veryfront/types";
+export type { ComponentProps, MDXFrontmatter, PageContext } from "#veryfront/types";
 
 // ============================================================================
 // AI Modules (Unified Entry Point)
@@ -100,21 +100,21 @@ export type { ComponentProps, MDXFrontmatter, PageContext } from "@veryfront/typ
 // ============================================================================
 
 // Agent
-export { agent } from "@veryfront/agent";
-export type { Agent, AgentConfig } from "@veryfront/agent";
+export { agent } from "#veryfront/agent";
+export type { Agent, AgentConfig } from "#veryfront/agent";
 
 // Tool
-export { executeTool, tool } from "@veryfront/tool";
-export type { Tool, ToolConfig } from "@veryfront/tool";
+export { executeTool, tool } from "#veryfront/tool";
+export type { Tool, ToolConfig } from "#veryfront/tool";
 
 // Workflow
-export { branch, parallel, step, waitForApproval, workflow } from "@veryfront/workflow";
-export type { WorkflowDefinition, WorkflowRun } from "@veryfront/workflow";
+export { branch, parallel, step, waitForApproval, workflow } from "#veryfront/workflow";
+export type { WorkflowDefinition, WorkflowRun } from "#veryfront/workflow";
 
 // Prompt
-export { prompt } from "@veryfront/prompt";
-export type { Prompt, PromptConfig } from "@veryfront/prompt";
+export { prompt } from "#veryfront/prompt";
+export type { Prompt, PromptConfig } from "#veryfront/prompt";
 
 // Resource
-export { resource } from "@veryfront/resource";
-export type { Resource, ResourceConfig } from "@veryfront/resource";
+export { resource } from "#veryfront/resource";
+export type { Resource, ResourceConfig } from "#veryfront/resource";

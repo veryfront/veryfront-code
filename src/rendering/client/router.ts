@@ -1,12 +1,13 @@
-import { rendererLogger as logger } from "@veryfront/utils";
+import { rendererLogger as logger } from "#veryfront/utils";
 import ReactDOM from "react-dom/client";
-import type { GlobalWithReactDOM } from "@veryfront/types/global-guards.ts";
-import { extractPageDataFromScript } from "@veryfront/routing";
-import { NavigationHandlers } from "@veryfront/routing";
-import type { RouteData, SpaPageData } from "@veryfront/routing";
-import { PageLoader } from "@veryfront/routing";
-import { PageTransition } from "@veryfront/routing";
-import { ViewportPrefetch } from "@veryfront/routing";
+import type { Root } from "react-dom/client";
+import type { GlobalWithReactDOM } from "#veryfront/types/global-guards.ts";
+import { extractPageDataFromScript } from "#veryfront/routing";
+import { NavigationHandlers } from "#veryfront/routing";
+import type { RouteData, SpaPageData } from "#veryfront/routing";
+import { PageLoader } from "#veryfront/routing";
+import { PageTransition } from "#veryfront/routing";
+import { ViewportPrefetch } from "#veryfront/routing";
 
 export type SpaNavigationHandler = (data: SpaPageData) => Promise<void>;
 
@@ -45,7 +46,7 @@ export interface RouterOptions {
 export class VeryfrontRouter {
   private baseUrl: string;
   private currentPath: string;
-  private root: ReactDOM.Root | null = null;
+  private root: Root | null = null;
   private options: RouterOptions;
   private spaMode: boolean;
   private spaNavigationHandler: SpaNavigationHandler | null = null;

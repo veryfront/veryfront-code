@@ -1,13 +1,15 @@
-import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
-import { afterAll, describe, it } from "@std/testing/bdd";
+import { assert, assertEquals, assertMatch, assertStringIncludes } from "@veryfront/testing/assert";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
 import "../../../_helpers/log-guard.ts";
 
-import { join } from "@std/path";
-import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
+import { mkdir, writeTextFile } from "@veryfront/compat/fs.ts";
+import { join } from "@veryfront/compat/path";
+import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import { createVeryfrontHandler } from "../../../../src/server/universal-handler/index.ts";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 import { setServerInitialized } from "../../../../src/server/handlers/monitoring/health.ts";
+import { isDeno } from "../../../../src/platform/compat/runtime.ts";
 
 describe(
   "Universal Handler (scaffold)",
@@ -22,7 +24,7 @@ describe(
     });
     it("serves /healthz and /readyz and returns 501 for others", async () => {
       await withTestContext("universal-handler", async (context: TestContext) => {
-        const handler = createVeryfrontHandler(context.projectDir, denoAdapter, {
+        const handler = createVeryfrontHandler(context.projectDir, await getAdapter(), {
           projectDir: context.projectDir,
           debug: true,
         });
@@ -53,15 +55,15 @@ describe(
     it("App Router route.ts HEAD shim and OPTIONS Allow headers", async () => {
       await withTestContext("universal-head-options", async (context: TestContext) => {
         // Setup app route with only GET
-        await Deno.mkdir(join(context.projectDir, "app", "api", "ping"), {
+        await mkdir(join(context.projectDir, "app", "api", "ping"), {
           recursive: true,
         });
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "app", "api", "ping", "route.ts"),
           `export function GET(){ return new Response('pong') }`,
         );
 
-        const handler = createVeryfrontHandler(context.projectDir, denoAdapter, {
+        const handler = createVeryfrontHandler(context.projectDir, await getAdapter(), {
           projectDir: context.projectDir,
         });
 
@@ -88,15 +90,15 @@ describe(
 
     it("App Router route.ts returns 405 with Allow when method missing", async () => {
       await withTestContext("universal-405-allow", async (context: TestContext) => {
-        await Deno.mkdir(join(context.projectDir, "app", "api", "onlypost"), {
+        await mkdir(join(context.projectDir, "app", "api", "onlypost"), {
           recursive: true,
         });
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "app", "api", "onlypost", "route.ts"),
           `export function POST(){ return new Response('posted') }`,
         );
 
-        const handler = createVeryfrontHandler(context.projectDir, denoAdapter, {
+        const handler = createVeryfrontHandler(context.projectDir, await getAdapter(), {
           projectDir: context.projectDir,
         });
 
@@ -109,15 +111,15 @@ describe(
 
     it("App Router route.ts preserves response body for implemented methods", async () => {
       await withTestContext("universal-body-pass", async (context: TestContext) => {
-        await Deno.mkdir(join(context.projectDir, "app", "api", "put"), {
+        await mkdir(join(context.projectDir, "app", "api", "put"), {
           recursive: true,
         });
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "app", "api", "put", "route.ts"),
           `export function PUT(){ return new Response(JSON.stringify({ ok: true }), { headers: { 'content-type': 'application/json' } }) }`,
         );
 
-        const handler = createVeryfrontHandler(context.projectDir, denoAdapter, {
+        const handler = createVeryfrontHandler(context.projectDir, await getAdapter(), {
           projectDir: context.projectDir,
         });
 
@@ -130,12 +132,12 @@ describe(
 
     it("SSR caching headers on page HTML via universal handler", async () => {
       await withTestContext("universal-ssr-caching", async (context: TestContext) => {
-        await Deno.mkdir(join(context.projectDir, "pages"), {
+        await mkdir(join(context.projectDir, "pages"), {
           recursive: true,
         });
-        await Deno.writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Hello World\n");
+        await writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Hello World\n");
 
-        const handler = createVeryfrontHandler(context.projectDir, denoAdapter, {
+        const handler = createVeryfrontHandler(context.projectDir, await getAdapter(), {
           projectDir: context.projectDir,
         });
 
@@ -157,16 +159,16 @@ describe(
     it("SSR for dynamic slug and app router fallback", async () => {
       await withTestContext("universal-ssr-dynamic", async (context: TestContext) => {
         // pages router dynamic
-        await Deno.mkdir(join(context.projectDir, "pages", "blog"), {
+        await mkdir(join(context.projectDir, "pages", "blog"), {
           recursive: true,
         });
-        await Deno.writeTextFile(join(context.projectDir, "pages", "blog", "post.mdx"), "# Post\n");
+        await writeTextFile(join(context.projectDir, "pages", "blog", "post.mdx"), "# Post\n");
 
         // app router not-found reserved component to ensure fallback is safe in Deno path only
-        await Deno.mkdir(join(context.projectDir, "app"), { recursive: true });
-        await Deno.writeTextFile(join(context.projectDir, "app", "not-found.mdx"), "# Missing\n");
+        await mkdir(join(context.projectDir, "app"), { recursive: true });
+        await writeTextFile(join(context.projectDir, "app", "not-found.mdx"), "# Missing\n");
 
-        const handler = createVeryfrontHandler(context.projectDir, denoAdapter, {
+        const handler = createVeryfrontHandler(context.projectDir, await getAdapter(), {
           projectDir: context.projectDir,
         });
 
@@ -186,13 +188,13 @@ describe(
       await withTestContext("universal-handler-app-not-found", async (context: TestContext) => {
         // Place reserved not-found.tsx under a segment
         const segDir = join(context.projectDir, "app", "blog");
-        await Deno.mkdir(segDir, { recursive: true });
-        await Deno.writeTextFile(
+        await mkdir(segDir, { recursive: true });
+        await writeTextFile(
           join(segDir, "not-found.tsx"),
           `export default function NotFound(){ return <p>Blog Missing</p>; }`,
         );
 
-        const handler = createVeryfrontHandler(context.projectDir, denoAdapter, {
+        const handler = createVeryfrontHandler(context.projectDir, await getAdapter(), {
           projectDir: context.projectDir,
         });
 
@@ -205,15 +207,15 @@ describe(
 
     it("SSR caching headers on nested page slug via universal handler", async () => {
       await withTestContext("universal-ssr-caching-nested", async (context: TestContext) => {
-        await Deno.mkdir(join(context.projectDir, "pages", "blog"), {
+        await mkdir(join(context.projectDir, "pages", "blog"), {
           recursive: true,
         });
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "pages", "blog", "post2.mdx"),
           "# Nested Page\n",
         );
 
-        const handler = createVeryfrontHandler(context.projectDir, denoAdapter, {
+        const handler = createVeryfrontHandler(context.projectDir, await getAdapter(), {
           projectDir: context.projectDir,
         });
 

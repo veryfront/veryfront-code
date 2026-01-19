@@ -4,8 +4,8 @@
  * Tests the build executor types and configuration.
  */
 
-import { assertEquals, assertExists } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { BuildExecutorOptions, BuildResult } from "./build-executor.ts";
 
 describe("BuildExecutor", () => {

@@ -1,8 +1,10 @@
-import { assertEquals, assertMatch } from "@std/assert";
-import { afterAll, describe, it } from "@std/testing/bdd";
-import { join } from "@std/path";
+import { assertEquals, assertMatch } from "@veryfront/testing/assert";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
+import { join } from "@veryfront/compat/path";
+import { writeTextFile } from "@veryfront/compat/fs.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
+import { isDeno } from "../../../../src/platform/compat/runtime.ts";
 
 describe("RSC Hydration Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
   // Clean up renderer intervals to prevent resource leaks
@@ -16,7 +18,7 @@ describe("RSC Hydration Tests", { sanitizeOps: false, sanitizeResources: false }
     it("serves javascript and no-cache headers", async () => {
       await withTestContext("rsc-hydrator", async (context) => {
         // Enable RSC via config instead of env var
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
           `export default { experimental: { rsc: true } };`,
         );

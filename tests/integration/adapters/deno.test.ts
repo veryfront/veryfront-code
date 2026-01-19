@@ -1,8 +1,22 @@
-import { assert, assertEquals } from "@std/assert";
-import { join } from "@std/path";
-import { describe, it } from "@std/testing/bdd";
-import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
+import { assert, assertEquals } from "@veryfront/testing/assert";
+import { join } from "@veryfront/compat/path";
+import { describe, it } from "@veryfront/testing/bdd";
+import { isDeno } from "../../../src/platform/compat/runtime.ts";
 import { withTestContext } from "../../_helpers/context.ts";
+
+// Skip all tests if not running in Deno
+if (!isDeno) {
+  describe("DenoAdapter", { skip: true }, () => {
+    it("skipped - not running in Deno", () => {});
+  });
+} else {
+
+// This test file specifically tests Deno adapter - skip in other runtimes
+// Lazy load denoAdapter only when running in Deno
+const getDenoAdapter = async () => {
+  const { denoAdapter } = await import("@veryfront/platform/adapters/runtime/deno/index.ts");
+  return denoAdapter;
+};
 
 describe(
   "DenoAdapter",
@@ -12,18 +26,18 @@ describe(
         await withTestContext("deno-adapter-fs-exists", async (context) => {
           const fp = join(context.projectDir, "test.txt");
 
-          assertEquals(await denoAdapter.fs.exists(fp), false);
-          await denoAdapter.fs.writeFile(fp, "hello");
-          assertEquals(await denoAdapter.fs.exists(fp), true);
+          assertEquals(await (await getDenoAdapter()).fs.exists(fp), false);
+          await (await getDenoAdapter()).fs.writeFile(fp, "hello");
+          assertEquals(await (await getDenoAdapter()).fs.exists(fp), true);
         });
       });
 
       it("should write and read files", async () => {
         await withTestContext("deno-adapter-fs-readwrite", async (context) => {
           const fp = join(context.projectDir, "test.txt");
-          await denoAdapter.fs.writeFile(fp, "hello");
+          await (await getDenoAdapter()).fs.writeFile(fp, "hello");
 
-          const content = await denoAdapter.fs.readFile(fp);
+          const content = await (await getDenoAdapter()).fs.readFile(fp);
           assertEquals(content, "hello");
         });
       });
@@ -31,9 +45,9 @@ describe(
       it("should stat files", async () => {
         await withTestContext("deno-adapter-fs-stat", async (context) => {
           const fp = join(context.projectDir, "test.txt");
-          await denoAdapter.fs.writeFile(fp, "hello");
+          await (await getDenoAdapter()).fs.writeFile(fp, "hello");
 
-          const st = await denoAdapter.fs.stat(fp);
+          const st = await (await getDenoAdapter()).fs.stat(fp);
           assert(st.isFile);
         });
       });
@@ -41,10 +55,10 @@ describe(
       it("should read directories", async () => {
         await withTestContext("deno-adapter-fs-readdir", async (context) => {
           const fp = join(context.projectDir, "test.txt");
-          await denoAdapter.fs.writeFile(fp, "hello");
+          await (await getDenoAdapter()).fs.writeFile(fp, "hello");
 
           const names: string[] = [];
-          for await (const entry of denoAdapter.fs.readDir(context.projectDir)) {
+          for await (const entry of (await getDenoAdapter()).fs.readDir(context.projectDir)) {
             names.push(entry.name);
           }
           assert(names.includes("test.txt"));
@@ -54,11 +68,11 @@ describe(
       it("should create and remove directories", async () => {
         await withTestContext("deno-adapter-fs-mkdir", async (context) => {
           const sub = join(context.projectDir, "sub");
-          await denoAdapter.fs.mkdir(sub, { recursive: true });
-          assertEquals((await denoAdapter.fs.stat(sub)).isDirectory, true);
+          await (await getDenoAdapter()).fs.mkdir(sub, { recursive: true });
+          assertEquals((await (await getDenoAdapter()).fs.stat(sub)).isDirectory, true);
 
-          await denoAdapter.fs.remove(sub, { recursive: true });
-          assertEquals(await denoAdapter.fs.exists(sub), false);
+          await (await getDenoAdapter()).fs.remove(sub, { recursive: true });
+          assertEquals(await (await getDenoAdapter()).fs.exists(sub), false);
         });
       });
     });
@@ -68,9 +82,9 @@ describe(
         // deno-lint-ignore require-await
         await withTestContext("deno-adapter-env", async (context) => {
           context.setEnv({ VF_TEST_ENV: "42" });
-          assertEquals(denoAdapter.env.get("VF_TEST_ENV"), "42");
+          assertEquals((await getDenoAdapter()).env.get("VF_TEST_ENV"), "42");
 
-          const all = denoAdapter.env.toObject();
+          const all = (await getDenoAdapter()).env.toObject();
           assertEquals(all.VF_TEST_ENV, "42");
         });
       });
@@ -85,7 +99,7 @@ describe(
           resolveReady = resolve;
         });
 
-        const server = await denoAdapter.serve(
+        const server = await (await getDenoAdapter()).serve(
           (_req: Request) => {
             throw new Error("boom");
           },
@@ -115,3 +129,5 @@ describe(
     });
   },
 );
+
+} // end else isDeno

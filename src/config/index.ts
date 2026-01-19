@@ -9,6 +9,30 @@ export { defineConfig } from "./define-config.ts";
 
 export type { VeryfrontConfig } from "./types.ts";
 
+// Runtime configuration (env-decoupled)
+export type { RuntimeEnv } from "./runtime-env.ts";
+export {
+  _resetRuntimeEnv,
+  _setRuntimeEnvForTesting,
+  createTestRuntimeEnv,
+  getRuntimeEnv,
+  initRuntimeEnv,
+  isRuntimeEnvInitialized,
+} from "./runtime-env.ts";
+
+export type { RuntimeConfig, RuntimeInfo } from "./runtime-config.ts";
+export {
+  _resetRuntimeConfig,
+  _setRuntimeConfigForTesting,
+  createRuntimeConfig,
+  createTestConfig,
+  DEFAULT_CONFIG,
+  getRuntimeConfig,
+  initRuntimeConfig,
+  isRuntimeConfigInitialized,
+  updateRuntimeConfig,
+} from "./runtime-config.ts";
+
 export {
   findUnknownTopLevelKeys,
   validateVeryfrontConfig,

@@ -1,7 +1,8 @@
-import { assertEquals } from "@std/assert";
-import { join } from "@std/path";
-import { describe, it } from "@std/testing/bdd";
-import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
+import { assertEquals } from "@veryfront/testing/assert";
+import { join } from "@veryfront/compat/path";
+import { writeTextFile } from "@veryfront/compat/fs.ts";
+import { describe, it } from "@veryfront/testing/bdd";
+import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import { loadComponentFromSource } from "../../../src/modules/react-loader/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
@@ -18,14 +19,14 @@ describe(
           const sourceA = "export default function WidgetA() { return null; }";
           const sourceB = "export default function WidgetB() { return null; }";
 
-          await Deno.writeTextFile(filePathA, sourceA);
-          await Deno.writeTextFile(filePathB, sourceB);
+          await writeTextFile(filePathA, sourceA);
+          await writeTextFile(filePathB, sourceB);
 
           const componentA = await loadComponentFromSource(
             sourceA,
             filePathA,
             contextA.projectDir,
-            denoAdapter,
+            await getAdapter(),
             { dev: true, ssr: false, projectId: "project-a" },
           );
 
@@ -33,7 +34,7 @@ describe(
             sourceB,
             filePathB,
             contextB.projectDir,
-            denoAdapter,
+            await getAdapter(),
             { dev: true, ssr: false, projectId: "project-b" },
           );
 
@@ -41,7 +42,7 @@ describe(
             sourceA,
             filePathA,
             contextA.projectDir,
-            denoAdapter,
+            await getAdapter(),
             { dev: true, ssr: false, projectId: "project-a" },
           );
 

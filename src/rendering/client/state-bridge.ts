@@ -1,6 +1,6 @@
 import * as React from "react";
 import type { DependencyList, Dispatch, EffectCallback, SetStateAction } from "react";
-import { rendererLogger } from "@veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 
 export interface StateStore {
   get<T = unknown>(key: string): T | undefined;
@@ -172,7 +172,14 @@ export function useBridgedState<T>(
   options?: { persist?: boolean },
   testReact?: ReactHooksSubset, // Use the new subset type
 ): [T, (value: T) => void] {
-  const { useState, useEffect, useCallback } = testReact || React;
+  const reactHooks = testReact || React;
+  const { useState, useEffect } = reactHooks;
+  // Type assertion needed due to subtle differences between ReactHooksSubset and React's useCallback signature
+  // deno-lint-ignore no-explicit-any
+  const useCallback = reactHooks.useCallback as <T extends (...args: any[]) => any>(
+    callback: T,
+    deps: DependencyList,
+  ) => T;
   const bridge = getStateBridge();
 
   const initialState = bridge.get(key) ?? initialValue;

@@ -1,135 +1,92 @@
-import type { VeryfrontConfig } from "@veryfront/config/types.ts";
+import type { VeryfrontConfig } from "#veryfront/config/types.ts";
 
 type TailwindConfig = VeryfrontConfig["tailwind"];
 
 /**
- * Deep merge two objects, with source values overwriting target values
+ * Get the Tailwind v4 CDN URL
+ * Uses the new @tailwindcss/browser package
  */
-function deepMerge<T extends Record<string, unknown>>(
-  target: T,
-  source: Partial<T>,
-): T {
-  const result = { ...target };
-  for (const key of Object.keys(source) as Array<keyof T>) {
-    const sourceValue = source[key];
-    const targetValue = target[key];
-    if (
-      sourceValue &&
-      typeof sourceValue === "object" &&
-      !Array.isArray(sourceValue) &&
-      targetValue &&
-      typeof targetValue === "object" &&
-      !Array.isArray(targetValue)
-    ) {
-      result[key] = deepMerge(
-        targetValue as Record<string, unknown>,
-        sourceValue as Record<string, unknown>,
-      ) as T[keyof T];
-    } else if (sourceValue !== undefined) {
-      result[key] = sourceValue as T[keyof T];
-    }
-  }
-  return result;
+export function getTailwindCDNUrl(_userConfig?: TailwindConfig): string {
+  return "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4";
 }
 
 /**
- * Get the Tailwind CDN URL with plugins
+ * Default veryfront theme using Tailwind v4 @theme directive
+ * Defines CSS variables for colors, fonts, and other design tokens
  */
-export function getTailwindCDNUrl(userConfig?: TailwindConfig): string {
-  const baseUrl = "https://cdn.tailwindcss.com";
-  const plugins = userConfig?.plugins;
+export function generateTailwindV4Theme(userConfig?: TailwindConfig): string {
+  // Base theme variables
+  const themeVars = `
+  /* Colors - CSS variable based for light/dark mode support */
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-highlight: hsl(var(--highlight));
+  --color-highlight-foreground: hsl(var(--highlight-foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-panel: hsl(var(--panel));
+  --color-panel-foreground: hsl(var(--panel-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-border: hsl(var(--border));
+  --color-divider: hsl(var(--divider));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --color-success: hsl(var(--success));
 
-  return plugins?.length ? `${baseUrl}?plugins=${plugins.join(",")}` : baseUrl;
+  /* Font families */
+  --font-sans: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --font-serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  --font-display: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+
+  /* Border radius */
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-DEFAULT: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
+  --radius-xl: calc(var(--radius) + 4px);
+`;
+
+  // Include custom CSS from config if provided
+  const customCSS = userConfig?.customCSS || "";
+
+  return `@theme {
+${themeVars}
+}
+${customCSS}`;
 }
 
 /**
- * Default veryfront theme colors (CSS variable based)
- */
-const defaultThemeExtend = {
-  colors: {
-    background: "hsl(var(--background))",
-    foreground: "hsl(var(--foreground))",
-    muted: {
-      DEFAULT: "hsl(var(--muted))",
-      foreground: "hsl(var(--muted-foreground))",
-    },
-    primary: {
-      DEFAULT: "hsl(var(--primary))",
-      foreground: "hsl(var(--primary-foreground))",
-    },
-    secondary: {
-      DEFAULT: "hsl(var(--secondary))",
-      foreground: "hsl(var(--secondary-foreground))",
-    },
-    highlight: {
-      DEFAULT: "hsl(var(--highlight))",
-      foreground: "hsl(var(--highlight-foreground))",
-    },
-    card: {
-      DEFAULT: "hsl(var(--card))",
-      foreground: "hsl(var(--card-foreground))",
-    },
-    panel: {
-      DEFAULT: "hsl(var(--panel))",
-      foreground: "hsl(var(--panel-foreground))",
-    },
-    popover: {
-      DEFAULT: "hsl(var(--popover))",
-      foreground: "hsl(var(--popover-foreground))",
-    },
-    destructive: {
-      DEFAULT: "hsl(var(--destructive))",
-      foreground: "hsl(var(--destructive-foreground))",
-    },
-    border: "hsl(var(--border))",
-    divider: "hsl(var(--divider))",
-    input: "hsl(var(--input))",
-    ring: "hsl(var(--ring))",
-    success: "hsl(var(--success))",
-  },
-  borderRadius: {
-    DEFAULT: "var(--radius)",
-    sm: "calc(var(--radius) - 4px)",
-    md: "calc(var(--radius) - 2px)",
-    lg: "calc(var(--radius) + 2px)",
-    xl: "calc(var(--radius) + 4px)",
-  },
-};
-
-/**
- * Convert project's tailwind.config.js (export default or module.exports)
- * to browser-compatible format (tailwind.config = {...})
- * This matches how veryfront-frontend handles tailwind configs
+ * Convert project's tailwind.config.js to Tailwind v4 @theme format
+ * This is a compatibility layer - projects should migrate to @theme CSS
+ *
+ * @deprecated Projects should use @theme CSS directly instead
  */
 export function convertTailwindConfigForBrowser(code: string): string {
   if (!code) return "";
 
-  return code
-    .replace(/export\s+default\s*{/g, "tailwind.config = {")
-    .replace(/module\.exports\s*=\s*{/g, "tailwind.config = {");
+  // For v4, we don't use JavaScript config anymore
+  // Return empty - project should define @theme in CSS
+  console.warn(
+    "[Tailwind v4] JavaScript config is deprecated. Use @theme CSS directive instead.",
+  );
+  return "";
 }
 
-export function generateTailwindConfig(userConfig?: TailwindConfig): string {
-  // Merge user theme extensions with defaults
-  const userExtend = userConfig?.theme?.extend || {};
-  const mergedExtend = deepMerge(
-    defaultThemeExtend as Record<string, unknown>,
-    userExtend as Record<string, unknown>,
-  );
-
-  // Build the config object
-  const configObject = {
-    darkMode: ["class", '[data-theme="dark"]'],
-    theme: {
-      container: {
-        center: true,
-        padding: "1rem",
-      },
-      extend: mergedExtend,
-    },
-  };
-
-  // Tailwind CDN has its own built-in MutationObserver that watches for DOM changes
-  // and re-processes styles automatically. No need for manual refresh calls.
-  return `tailwind.config = ${JSON.stringify(configObject, null, 6)}`;
+/**
+ * @deprecated Use generateTailwindV4Theme instead
+ */
+export function generateTailwindConfig(_userConfig?: TailwindConfig): string {
+  // For backwards compatibility, return empty
+  // v4 uses @theme CSS, not JavaScript config
+  return "";
 }

@@ -7,7 +7,7 @@
  * @module
  */
 
-import { logger } from "@veryfront/utils";
+import { logger } from "#veryfront/utils";
 import type { LightningCSSOptions } from "./types.ts";
 import { minifyCSS } from "./css-utils.ts";
 

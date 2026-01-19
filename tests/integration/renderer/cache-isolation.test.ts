@@ -3,12 +3,14 @@
  * Verifies that caches are properly cleared between renderer instances
  */
 
-import { assert, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
-import { afterAll, describe, it } from "@std/testing/bdd";
+import { assert, assertStringIncludes } from "@veryfront/testing/assert";
+import { join } from "@veryfront/compat/path";
+import { mkdir, writeTextFile } from "@veryfront/compat/fs.ts";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
 import { createRenderer } from "../../../src/rendering/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
+import { delay } from "@std/async";
 
 // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
 // See: https://github.com/facebook/react/issues/24669
@@ -36,18 +38,18 @@ describe(
         // Test project 1
         await withTestContext("cache-isolation-mdx-1", async (context1) => {
           // Project 1: MDX layout with specific class using app router
-          await Deno.mkdir(join(context1.projectDir, "app", "test"), {
+          await mkdir(join(context1.projectDir, "app", "test"), {
             recursive: true,
           });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context1.projectDir, "app", "layout.tsx"),
             `export default function Layout1({ children }) {
   return <div className="project1-layout">{children}</div>;
 }`,
           );
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context1.projectDir, "app", "test", "page.mdx"),
             `# Project 1 Page`,
           );
@@ -75,18 +77,18 @@ describe(
         // Test project 2 (separate context, no nesting)
         await withTestContext("cache-isolation-mdx-2", async (context2) => {
           // Project 2: Different MDX layout using app router
-          await Deno.mkdir(join(context2.projectDir, "app", "test"), {
+          await mkdir(join(context2.projectDir, "app", "test"), {
             recursive: true,
           });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context2.projectDir, "app", "layout.tsx"),
             `export default function Layout2({ children }) {
   return <div className="project2-layout">{children}</div>;
 }`,
           );
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context2.projectDir, "app", "test", "page.mdx"),
             `# Project 2 Page`,
           );
@@ -117,19 +119,19 @@ describe(
       it.skip("should clear TSX layout module cache properly", async () => {
         await withTestContext("cache-isolation-tsx", async (context) => {
           // Create app router with TSX layout
-          await Deno.mkdir(join(context.projectDir, "app", "test"), {
+          await mkdir(join(context.projectDir, "app", "test"), {
             recursive: true,
           });
 
           // Create a TSX layout file
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "layout.tsx"),
             `export default function TestLayout({ children }) {
   return <div className="test-layout-v1">{children}</div>;
 }`,
           );
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "test", "page.mdx"),
             `# Test Page`,
           );
@@ -144,7 +146,7 @@ describe(
           assertStringIncludes(result1.html, "test-layout-v1");
 
           // Update the layout file
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "layout.tsx"),
             `export default function TestLayout({ children }) {
   return <div className="test-layout-v2">{children}</div>;
@@ -153,13 +155,13 @@ describe(
 
           // Ensure filesystem mtime changes across platforms
           // Use longer delay for CI environments where filesystem can be slower
-          await new Promise((r) => setTimeout(r, 2000));
+          await delay(2000);
 
           // Clear cache and force module invalidation
           renderer.clearCache();
 
           // Additional delay to ensure cache clearing propagates
-          await new Promise((r) => setTimeout(r, 100));
+          await delay(100);
 
           // Re-render - should see updated layout
           const result2 = await renderer.renderPage("test");

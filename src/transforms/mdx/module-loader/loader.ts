@@ -1,14 +1,14 @@
-import { rendererLogger as logger } from "@veryfront/utils";
+import { rendererLogger as logger } from "#veryfront/utils";
 import type { MDXModule } from "./types.ts";
 import { isESMModule, loadESMModule } from "./esm-loader.ts";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 export async function loadMDXModule(
   modulePath: string,
   projectDir: string,
 ): Promise<MDXModule | null> {
   try {
-    const { getAdapter } = await import("@veryfront/platform/adapters/detect.ts");
+    const { getAdapter } = await import("#veryfront/platform/adapters/detect.ts");
 
     const adapter = await getAdapter();
 

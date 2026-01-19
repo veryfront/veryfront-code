@@ -6,9 +6,9 @@
  * @module ai/agent/runtime/tool-helpers
  */
 
-import type { Tool, ToolDefinition } from "@veryfront/tool";
-import { toolRegistry, toolToProviderDefinition } from "@veryfront/tool";
-import { serverLogger as logger } from "@veryfront/utils";
+import type { Tool, ToolDefinition } from "#veryfront/tool";
+import { toolRegistry, toolToProviderDefinition } from "#veryfront/tool";
+import { serverLogger as logger } from "#veryfront/utils";
 
 /**
  * Result of parsing tool arguments.

@@ -13,9 +13,9 @@
  * @module module-system/react-loader/ssr-module-loader/cache/memory
  */
 
-import { registerCache } from "@veryfront/utils/memory/index.ts";
-import { registerMapCache } from "@veryfront/cache/keys.ts";
-import { rendererLogger as logger } from "@veryfront/utils";
+import { registerCache } from "#veryfront/utils/memory/index.ts";
+import { registerMapCache } from "#veryfront/cache/keys.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
 import { MAX_CONCURRENT_TRANSFORMS, SSR_TMP_DIRS_MAX_ENTRIES } from "../constants.ts";
 import { Semaphore } from "../concurrency/semaphore.ts";
 import type { FailureRecord, ModuleCacheEntry } from "../types.ts";

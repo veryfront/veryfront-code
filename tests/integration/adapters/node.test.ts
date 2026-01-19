@@ -1,9 +1,10 @@
-import { assertEquals, assertExists } from "@std/assert";
-import { join } from "@std/path";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { join } from "@veryfront/compat/path";
+import { describe, it } from "@veryfront/testing/bdd";
 import { NodeAdapter, nodeAdapter } from "@veryfront/platform/adapters/runtime/node/index.ts";
 import { startUniversalServer } from "../../../src/server/production-server.ts";
 import { getFreePort } from "../../_helpers/utils.ts";
+import { makeTempDir, mkdir, remove, writeTextFile } from "@veryfront/testing/deno-compat";
 
 // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
 // See: https://github.com/facebook/react/issues/24669
@@ -14,7 +15,7 @@ describe(
     sanitizeOps: false,
   },
   () => {
-    describe("Structure and exports", () => {
+    describe("Structure and exports", { sanitizeOps: false, sanitizeResources: false }, () => {
       it("should export NodeAdapter class and singleton", () => {
         assertExists(NodeAdapter);
         assertExists(nodeAdapter);
@@ -54,7 +55,7 @@ describe(
       });
     });
 
-    describe("File system adapter", () => {
+    describe("File system adapter", { sanitizeOps: false, sanitizeResources: false }, () => {
       it("should have all required methods", () => {
         const adapter = new NodeAdapter();
         const fs = adapter.fs;
@@ -86,7 +87,7 @@ describe(
       });
     });
 
-    describe("Environment adapter", () => {
+    describe("Environment adapter", { sanitizeOps: false, sanitizeResources: false }, () => {
       it("should have all required methods", () => {
         const adapter = new NodeAdapter();
         const env = adapter.env;
@@ -126,7 +127,7 @@ describe(
       });
     });
 
-    describe("Server operations", () => {
+    describe("Server operations", { sanitizeOps: false, sanitizeResources: false }, () => {
       it("should have serve method with correct signature", () => {
         const adapter = new NodeAdapter();
 
@@ -145,7 +146,7 @@ describe(
       it("should create functional server", async () => {
         const adapter = new NodeAdapter();
         let hit = 0;
-        const port = getFreePort();
+        const port = await getFreePort();
 
         const server = await adapter.serve(
           (_req) => {
@@ -167,22 +168,22 @@ describe(
       });
     });
 
-    describe("Universal server integration", () => {
+    describe("Universal server integration", { sanitizeOps: false, sanitizeResources: false }, () => {
       it("should run with universal server", async () => {
-        const dir = await Deno.makeTempDir({ prefix: "vf_node_universal_" });
+        const dir = await makeTempDir({ prefix: "vf_node_universal_" });
 
         try {
-          await Deno.mkdir(join(dir, "public"), { recursive: true });
-          await Deno.writeTextFile(join(dir, "public", "hello.txt"), "hi");
-          await Deno.mkdir(join(dir, "app"), { recursive: true });
-          await Deno.writeTextFile(join(dir, "app", "page.mdx"), "# Home");
-          await Deno.mkdir(join(dir, "app", "api", "echo"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(dir, "public"), { recursive: true });
+          await writeTextFile(join(dir, "public", "hello.txt"), "hi");
+          await mkdir(join(dir, "app"), { recursive: true });
+          await writeTextFile(join(dir, "app", "page.mdx"), "# Home");
+          await mkdir(join(dir, "app", "api", "echo"), { recursive: true });
+          await writeTextFile(
             join(dir, "app", "api", "echo", "route.ts"),
             `export async function POST(req: Request){ const d = await req.json(); return Response.json(d); }`,
           );
 
-          const port = getFreePort();
+          const port = await getFreePort();
           const adapter = new NodeAdapter();
           const server = await startUniversalServer({
             projectDir: dir,
@@ -197,6 +198,8 @@ describe(
             const ready = await fetch(`http://127.0.0.1:${port}/readyz`);
             assertEquals(health.status, 200);
             assertEquals(ready.status, 200);
+            await health.body?.cancel(); // Consume response to prevent leak
+            await ready.body?.cancel(); // Consume response to prevent leak
 
             const staticFile = await fetch(`http://127.0.0.1:${port}/hello.txt`);
             assertEquals(await staticFile.text(), "hi");
@@ -210,7 +213,7 @@ describe(
               headers: { "content-type": "application/json" },
               body: JSON.stringify({ ok: true }),
             });
-            const apiJson = await apiResponse.clone().json().catch(() => ({}));
+            const apiJson = await apiResponse.json().catch(() => ({}));
             assertEquals(apiJson.ok, true);
 
             const etag = staticFile.headers.get("etag");
@@ -225,7 +228,7 @@ describe(
             await server.stop();
           }
         } finally {
-          await Deno.remove(dir, { recursive: true }).catch(() => {});
+          await remove(dir, { recursive: true }).catch(() => {});
         }
       });
 
@@ -233,7 +236,7 @@ describe(
         const { startUniversalServer: startNode } = await import(
           "../../../src/server/production-server.ts"
         );
-        const dir = await Deno.makeTempDir({ prefix: "vf_node_wrap_" });
+        const dir = await makeTempDir({ prefix: "vf_node_wrap_" });
 
         try {
           const port = 9050 + Math.floor(Math.random() * 100);
@@ -247,12 +250,12 @@ describe(
           assertEquals(typeof handle.stop, "function");
           await handle.stop();
         } finally {
-          await Deno.remove(dir, { recursive: true }).catch(() => {});
+          await remove(dir, { recursive: true }).catch(() => {});
         }
       });
     });
 
-    describe("Singleton instance", () => {
+    describe("Singleton instance", { sanitizeOps: false, sanitizeResources: false }, () => {
       it("should have same properties as new instance", () => {
         assertEquals(nodeAdapter.name, "node");
         assertEquals(nodeAdapter.capabilities.websocket, true);

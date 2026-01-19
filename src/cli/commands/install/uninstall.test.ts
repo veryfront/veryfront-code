@@ -1,6 +1,13 @@
-import { assertEquals, assertThrows } from "@std/assert";
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { findInstalledTools, parseTargetFlag, uninstallTargets } from "./uninstall.ts";
+import {
+  exists,
+  makeTempDir,
+  mkdir,
+  remove,
+  writeTextFile,
+} from "#veryfront/platform/compat/fs.ts";
 
 describe("parseTargetFlag", () => {
   it("should parse single target", () => {
@@ -28,11 +35,11 @@ describe("findInstalledTools", () => {
   let tempDir: string;
 
   beforeEach(async () => {
-    tempDir = await Deno.makeTempDir();
+    tempDir = await makeTempDir();
   });
 
   afterEach(async () => {
-    await Deno.remove(tempDir, { recursive: true });
+    await remove(tempDir, { recursive: true });
   });
 
   it("should return empty array when no files exist", async () => {
@@ -41,16 +48,16 @@ describe("findInstalledTools", () => {
   });
 
   it("should find installed cursor rules", async () => {
-    await Deno.writeTextFile(`${tempDir}/.cursorrules`, "test");
+    await writeTextFile(`${tempDir}/.cursorrules`, "test");
     const installed = await findInstalledTools({ cwd: tempDir });
     assertEquals(installed.includes("cursor"), true);
   });
 
   it("should find multiple installed tools", async () => {
-    await Deno.writeTextFile(`${tempDir}/.cursorrules`, "test");
-    await Deno.mkdir(`${tempDir}/.claude`);
-    await Deno.writeTextFile(`${tempDir}/.claude/CLAUDE.md`, "test");
-    await Deno.writeTextFile(`${tempDir}/SKILL.md`, "test");
+    await writeTextFile(`${tempDir}/.cursorrules`, "test");
+    await mkdir(`${tempDir}/.claude`);
+    await writeTextFile(`${tempDir}/.claude/CLAUDE.md`, "test");
+    await writeTextFile(`${tempDir}/SKILL.md`, "test");
 
     const installed = await findInstalledTools({ cwd: tempDir });
     assertEquals(installed.includes("cursor"), true);
@@ -63,22 +70,22 @@ describe("uninstallTargets", () => {
   let tempDir: string;
 
   beforeEach(async () => {
-    tempDir = await Deno.makeTempDir();
+    tempDir = await makeTempDir();
   });
 
   afterEach(async () => {
-    await Deno.remove(tempDir, { recursive: true });
+    await remove(tempDir, { recursive: true });
   });
 
   it("should remove cursor rules file", async () => {
-    await Deno.writeTextFile(`${tempDir}/.cursorrules`, "test");
+    await writeTextFile(`${tempDir}/.cursorrules`, "test");
     await uninstallTargets(["cursor"], { cwd: tempDir });
     assertEquals(await exists(`${tempDir}/.cursorrules`), false);
   });
 
   it("should remove claude-code and empty parent directory", async () => {
-    await Deno.mkdir(`${tempDir}/.claude`);
-    await Deno.writeTextFile(`${tempDir}/.claude/CLAUDE.md`, "test");
+    await mkdir(`${tempDir}/.claude`);
+    await writeTextFile(`${tempDir}/.claude/CLAUDE.md`, "test");
     await uninstallTargets(["claude-code"], { cwd: tempDir });
     assertEquals(await exists(`${tempDir}/.claude/CLAUDE.md`), false);
     assertEquals(await exists(`${tempDir}/.claude`), false);
@@ -90,9 +97,9 @@ describe("uninstallTargets", () => {
   });
 
   it("should remove multiple targets", async () => {
-    await Deno.writeTextFile(`${tempDir}/.cursorrules`, "test");
-    await Deno.writeTextFile(`${tempDir}/SKILL.md`, "test");
-    await Deno.writeTextFile(`${tempDir}/AGENTS.md`, "test");
+    await writeTextFile(`${tempDir}/.cursorrules`, "test");
+    await writeTextFile(`${tempDir}/SKILL.md`, "test");
+    await writeTextFile(`${tempDir}/AGENTS.md`, "test");
 
     await uninstallTargets(["cursor", "skill", "agents"], { cwd: tempDir });
 
@@ -121,12 +128,3 @@ describe("uninstallTargets", () => {
     assertEquals(error !== null, true);
   });
 });
-
-async function exists(path: string): Promise<boolean> {
-  try {
-    await Deno.stat(path);
-    return true;
-  } catch {
-    return false;
-  }
-}

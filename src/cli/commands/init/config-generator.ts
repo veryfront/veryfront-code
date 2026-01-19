@@ -3,9 +3,9 @@
  * @module
  */
 
-import { cliLogger as logger } from "@veryfront/utils";
-import { join } from "@veryfront/platform/compat/path/index.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { cliLogger as logger } from "#veryfront/utils";
+import { join } from "#veryfront/platform/compat/path/index.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 
 /**
  * Creates a package.json file with ES module support

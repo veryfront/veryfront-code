@@ -4,8 +4,8 @@
  * Tests the allowed modules whitelist and module path resolution logic.
  */
 
-import { assertEquals, assertExists } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { LibModulesHandler } from "./lib-modules-handler.ts";
 
 /** Helper to get pattern as RegExp (throws if not RegExp) */

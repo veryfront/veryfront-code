@@ -1,17 +1,17 @@
-import { join } from "@veryfront/platform/compat/path-helper.ts";
-import { rendererLogger as logger } from "@veryfront/utils";
-import { parallelFind } from "@veryfront/utils/parallel.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { isExtendedFSAdapter } from "@veryfront/platform/adapters/fs/wrapper.ts";
-import type { EntityInfo } from "@veryfront/types";
-import type { LayoutItem, MdxBundle } from "@veryfront/types";
-import type { VeryfrontConfig } from "@veryfront/config";
-import { getLayoutEntity } from "@veryfront/types/entities/getEntityInfo.ts";
+import { join } from "#veryfront/platform/compat/path-helper.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { parallelFind } from "#veryfront/utils/parallel.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import type { EntityInfo } from "#veryfront/types";
+import type { LayoutItem, MdxBundle } from "#veryfront/types";
+import type { VeryfrontConfig } from "#veryfront/config";
+import { getLayoutEntity } from "#veryfront/types/entities/getEntityInfo.ts";
 import { discoverNestedLayouts } from "./utils/discovery.ts";
 import { detectAppRouter } from "../router-detection.ts";
 import { LAYOUT_EXTENSIONS } from "./types.ts";
-import { withSpan } from "@veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "@veryfront/observability/tracing/span-names.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 
 /**
  * Determine layout kind based on file extension.

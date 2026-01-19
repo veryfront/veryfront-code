@@ -12,10 +12,11 @@
  * - Cache integration
  */
 
-import { assertEquals, assertExists } from "@std/assert";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { join } from "@veryfront/compat/path";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
+import { writeTextFile } from "@veryfront/testing/deno-compat";
 import * as esbuild from "esbuild";
-import { join } from "@std/path";
-import { afterAll, describe, it } from "@std/testing/bdd";
 import { bundleScript } from "../../../../../src/build/renderer/services/script-bundler.ts";
 import type {
   BundleResult,
@@ -28,10 +29,13 @@ describe(
   { sanitizeOps: false, sanitizeResources: false },
   () => {
     afterAll(async () => {
-      await esbuild.stop();
+      // Only stop esbuild if a test explicitly opted to keep it alive
+      if (!(globalThis as Record<string, unknown>).__vfTestPreserveEsbuild) {
+        await esbuild.stop();
+      }
     });
 
-    describe("bundleScript", () => {
+    describe("bundleScript", { sanitizeOps: false, sanitizeResources: false }, () => {
       it("bundles all file types (JS/TS/JSX/TSX)", async () => {
         // Batched test for all file type bundling - reduces esbuild invocation overhead
         await withTestContext("script-all-types", async (context) => {
@@ -357,7 +361,7 @@ describe(
       it("handles CSS imports via plugin", async () => {
         await withTestContext("script-css-import", async (context) => {
           // Create CSS file
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "styles.css"),
             ".button { color: blue; }",
           );

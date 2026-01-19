@@ -1,6 +1,6 @@
 import * as React from "react";
-import { rendererLogger as logger } from "@veryfront/utils";
-import { ensureError } from "@veryfront/errors/veryfront-error.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { ensureError } from "#veryfront/errors/veryfront-error.ts";
 import { normalizeChild } from "../utils/index.ts";
 import { deepInspectElement, type InspectionOptions } from "./element-inspector.ts";
 import { getElementTypeName, isReactElement } from "./primitive-checks.ts";

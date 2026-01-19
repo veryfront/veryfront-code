@@ -5,8 +5,8 @@
  * Tests against OWASP attack vectors and known CVEs.
  */
 
-import { assertEquals, assertExists } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createValidator,
   PathValidationError,

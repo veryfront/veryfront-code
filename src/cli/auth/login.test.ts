@@ -2,14 +2,34 @@
  * Login Module Tests
  */
 
-import { assertEquals, assertExists } from "@std/assert";
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
-import { deleteEnv, getEnv, setEnv } from "@veryfront/platform/compat/process.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  it,
+} from "#veryfront/testing/bdd.ts";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { deleteToken, readToken, saveToken } from "./token-store.ts";
+import { makeTempDir, remove } from "#veryfront/platform/compat/fs.ts";
 import type { UserInfo } from "./login.ts";
 
 describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () => {
+  let tempDir: string;
+  let originalXdgConfig: string | undefined;
+
+  beforeAll(async () => {
+    // Create isolated temp directory for this test file
+    tempDir = await makeTempDir({ prefix: "login-test-" });
+    // Save original XDG_CONFIG_HOME for per-test restore
+    originalXdgConfig = getEnv("XDG_CONFIG_HOME");
+  });
+
   beforeEach(async () => {
+    // Isolate config home per test to avoid cross-test env clashes
+    setEnv("XDG_CONFIG_HOME", tempDir);
     // Clean up any existing token
     try {
       await deleteToken();
@@ -24,9 +44,20 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
     } catch {
       // Ignore
     }
+    // Restore original XDG_CONFIG_HOME
+    if (originalXdgConfig !== undefined) {
+      setEnv("XDG_CONFIG_HOME", originalXdgConfig);
+    } else {
+      deleteEnv("XDG_CONFIG_HOME");
+    }
   });
 
-  describe("Token validation", () => {
+  afterAll(async () => {
+    // Clean up temp directory
+    await remove(tempDir, { recursive: true });
+  });
+
+  describe("Token validation", { sanitizeOps: false, sanitizeResources: false }, () => {
     it("should detect invalid token format", async () => {
       // Import validateToken dynamically to get the actual function
       const { validateToken } = await import("./login.ts");
@@ -37,7 +68,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
     });
   });
 
-  describe("User info from token", () => {
+  describe("User info from token", { sanitizeOps: false, sanitizeResources: false }, () => {
     it("should return null for invalid JWT", async () => {
       const { validateToken } = await import("./login.ts");
 
@@ -47,7 +78,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
     });
   });
 
-  describe("ensureAuthenticated", () => {
+  describe("ensureAuthenticated", { sanitizeOps: false, sanitizeResources: false }, () => {
     it("should use existing valid token from env", async () => {
       const originalToken = getEnv("VERYFRONT_API_TOKEN");
       try {
@@ -69,7 +100,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
     });
   });
 
-  describe("logout", () => {
+  describe("logout", { sanitizeOps: false, sanitizeResources: false }, () => {
     it("should clear stored token", async () => {
       // Save a token first
       await saveToken("test-token");
@@ -88,7 +119,7 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
     });
   });
 
-  describe("UserInfo type", () => {
+  describe("UserInfo type", { sanitizeOps: false, sanitizeResources: false }, () => {
     it("should have correct structure", () => {
       const userInfo: UserInfo = {
         id: "user-123",

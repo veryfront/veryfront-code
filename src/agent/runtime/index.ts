@@ -21,18 +21,18 @@ import {
   type MessagePart,
   type ToolCall,
 } from "../types.ts";
-import type { Provider } from "@veryfront/provider";
-import { getProviderFromModel } from "@veryfront/provider";
-import { executeTool } from "@veryfront/tool";
+import type { Provider } from "#veryfront/provider";
+import { getProviderFromModel } from "#veryfront/provider";
+import { executeTool } from "#veryfront/tool";
 import { generateId } from "../../utils/id.ts";
 import { detectPlatform, getPlatformCapabilities } from "../../platform/core-platform.ts";
 import { createMemory, type Memory } from "../memory/index.ts";
-import { serverLogger as logger } from "@veryfront/utils";
+import { serverLogger as logger } from "#veryfront/utils";
 import {
   addSpanEvent,
   setSpanAttributes,
   withSpan,
-} from "@veryfront/observability/tracing/index.ts";
+} from "#veryfront/observability/tracing/index.ts";
 import { convertMessageToProvider } from "./message-converter.ts";
 import { MiddlewareChain } from "../middleware/chain.ts";
 

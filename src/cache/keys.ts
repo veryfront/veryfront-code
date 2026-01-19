@@ -62,7 +62,7 @@
  * @module core/cache/keys
  */
 
-import { VERSION } from "@veryfront/utils/version.ts";
+import { VERSION } from "#veryfront/utils/version.ts";
 
 // ============================================================================
 // CACHE KEY PREFIXES (Constants)

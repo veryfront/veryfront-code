@@ -5,8 +5,9 @@
  * tracking cache sizes, and detecting memory leaks.
  */
 
-import { rendererLogger as logger } from "@veryfront/utils";
-import { getArgs, getEnv, memoryUsage } from "@veryfront/platform/compat/process.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { getArgs, memoryUsage } from "#veryfront/platform/compat/process.ts";
+import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 
 // Registry of all tracked caches for memory monitoring
 const cacheRegistry = new Map<string, () => CacheStats>();
@@ -91,12 +92,12 @@ export function getHeapStats(): HeapStats {
 
 /**
  * Get configured heap limit from V8 flags or environment
+ *
+ * @param env - Optional RuntimeEnv for test isolation
  */
-function getConfiguredHeapLimit(): number {
+function getConfiguredHeapLimit(env: RuntimeEnv = getRuntimeEnv()): number {
   // Check for --max-old-space-size in command args or environment
   const args = getArgs().join(" ");
-  const envHeapSize = getEnv("V8_MAX_OLD_SPACE_SIZE");
-  const denoV8Flags = getEnv("DENO_V8_FLAGS");
 
   // Parse from args: --v8-flags=--max-old-space-size=2800
   const v8FlagsMatch = args.match(/--max-old-space-size=(\d+)/);
@@ -105,16 +106,16 @@ function getConfiguredHeapLimit(): number {
   }
 
   // Parse from DENO_V8_FLAGS environment variable
-  if (denoV8Flags) {
-    const denoV8Match = denoV8Flags.match(/--max-old-space-size=(\d+)/);
+  if (env.denoV8Flags) {
+    const denoV8Match = env.denoV8Flags.match(/--max-old-space-size=(\d+)/);
     if (denoV8Match && denoV8Match[1]) {
       return parseInt(denoV8Match[1], 10);
     }
   }
 
   // Parse from V8_MAX_OLD_SPACE_SIZE environment
-  if (envHeapSize) {
-    return parseInt(envHeapSize, 10);
+  if (env.v8MaxOldSpaceSize !== undefined && env.v8MaxOldSpaceSize > 0) {
+    return env.v8MaxOldSpaceSize;
   }
 
   // Default V8 heap limit (approximately 4GB on 64-bit systems)

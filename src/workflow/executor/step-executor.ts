@@ -4,8 +4,8 @@
  * Executes individual workflow steps (agents and tools)
  */
 
-import type { Agent, AgentResponse } from "@veryfront/agent";
-import type { Tool } from "@veryfront/tool";
+import type { Agent, AgentResponse } from "#veryfront/agent";
+import type { Tool } from "#veryfront/tool";
 import type {
   NodeState,
   RetryConfig,

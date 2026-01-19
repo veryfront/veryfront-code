@@ -4,8 +4,8 @@
  * Handles Pages Router API routes (under /api/ directory).
  */
 
-import { APIRouteHandler } from "@veryfront/routing";
-import { serverLogger } from "@veryfront/utils";
+import { APIRouteHandler } from "#veryfront/routing";
+import { serverLogger } from "#veryfront/utils";
 import type { HandlerContext } from "../../types.ts";
 
 /**

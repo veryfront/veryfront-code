@@ -1,11 +1,11 @@
-import { serverLogger as logger } from "@veryfront/utils";
-import { join } from "@veryfront/platform/compat/path/index.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import type { DynamicRouter } from "@veryfront/routing/api/index.ts";
-import type { VeryfrontConfig } from "@veryfront/config";
+import { serverLogger as logger } from "#veryfront/utils";
+import { join } from "#veryfront/platform/compat/path/index.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { DynamicRouter } from "#veryfront/routing/api/index.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 import type { RouteDirectory } from "./types.ts";
-import { withFallback } from "@veryfront/platform/adapters/index.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { withFallback } from "#veryfront/platform/adapters/index.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 
 /** Directories within .veryfront that should be excluded from routing */
 const VERYFRONT_EXCLUDED_DIRS = new Set([

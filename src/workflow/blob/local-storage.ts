@@ -4,20 +4,23 @@
  * Stores blobs as files on the local disk
  */
 
-import { dirname, join } from "@veryfront/platform/compat/path-helper.ts";
-import { createFileSystem, FileSystem } from "@veryfront/platform/compat/fs.ts";
+import { dirname, join } from "#veryfront/platform/compat/path-helper.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { BlobRef, BlobStorage, StoreBlobOptions } from "./types.ts";
-import { agentLogger as logger } from "@veryfront/utils";
+import { agentLogger as logger } from "#veryfront/utils";
 
 export class LocalBlobStorage implements BlobStorage {
   private rootDir: string;
   private baseUrl?: string;
   private fs: FileSystem;
+  private now: () => Date;
 
-  constructor(rootDir: string, baseUrl?: string) {
+  constructor(rootDir: string, baseUrl?: string, options?: { now?: () => Date }) {
     this.rootDir = rootDir;
     this.baseUrl = baseUrl;
     this.fs = createFileSystem();
+    this.now = options?.now ?? (() => new Date());
   }
 
   private getPath(id: string): string {
@@ -61,13 +64,15 @@ export class LocalBlobStorage implements BlobStorage {
       throw new Error("Unsupported data type for LocalBlobStorage");
     }
 
+    const createdAt = this.now();
+    const expiresAt = options.ttl ? new Date(createdAt.getTime() + options.ttl * 1000) : undefined;
     const ref: BlobRef = {
       __kind: "blob",
       id,
       size,
       mimeType: options.mimeType || "application/octet-stream",
-      createdAt: new Date(),
-      expiresAt: options.ttl ? new Date(Date.now() + options.ttl * 1000) : undefined,
+      createdAt,
+      expiresAt,
       metadata: options.metadata,
       url: this.baseUrl ? `${this.baseUrl}/${id}` : undefined,
     };
@@ -156,7 +161,7 @@ export class LocalBlobStorage implements BlobStorage {
           if (entry.isFile && entry.name.endsWith(".meta.json")) {
             const id = entry.name.replace(".meta.json", "");
             const blobRef = await this.stat(id);
-            if (blobRef?.expiresAt && blobRef.expiresAt < new Date()) {
+            if (blobRef?.expiresAt && blobRef.expiresAt < this.now()) {
               logger.debug(`[LocalBlobStorage] Deleting expired blob: ${id}`);
               await this.delete(id);
             }

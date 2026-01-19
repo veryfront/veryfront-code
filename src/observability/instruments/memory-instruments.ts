@@ -8,7 +8,7 @@
 import type { Meter, ObservableGauge, ObservableResult } from "@opentelemetry/api";
 import { getMemoryUsage } from "../metrics/config.ts";
 import type { MetricsConfig } from "../metrics/types.ts";
-import { getV8FlagsEnv } from "@veryfront/config/env.ts";
+import { getV8FlagsEnv } from "#veryfront/config/env.ts";
 
 // V8 heap limit from DENO_V8_FLAGS or default
 const V8_HEAP_LIMIT_MB = (() => {

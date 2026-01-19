@@ -2,8 +2,9 @@
  * Tests for CLI colors
  */
 
-import { assertEquals, assertStringIncludes } from "@std/assert";
-import { afterAll, beforeAll, describe, it } from "@std/testing/bdd";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import {
   bold,
   brand,
@@ -19,16 +20,26 @@ import {
 describe("colors", () => {
   // Force TrueColor mode for testing
   let originalForceColor: string | undefined;
+  let originalNoColor: string | undefined;
   beforeAll(() => {
-    originalForceColor = Deno.env.get("FORCE_COLOR");
-    Deno.env.set("FORCE_COLOR", "3");
+    originalForceColor = getEnv("FORCE_COLOR");
+    originalNoColor = getEnv("NO_COLOR");
+    if (originalNoColor !== undefined) {
+      deleteEnv("NO_COLOR");
+    }
+    setEnv("FORCE_COLOR", "3");
     resetColorCache(); // Clear cache so new setting takes effect
   });
   afterAll(() => {
     if (originalForceColor !== undefined) {
-      Deno.env.set("FORCE_COLOR", originalForceColor);
+      setEnv("FORCE_COLOR", originalForceColor);
     } else {
-      Deno.env.delete("FORCE_COLOR");
+      deleteEnv("FORCE_COLOR");
+    }
+    if (originalNoColor !== undefined) {
+      setEnv("NO_COLOR", originalNoColor);
+    } else {
+      deleteEnv("NO_COLOR");
     }
     resetColorCache(); // Clear cache after tests
   });

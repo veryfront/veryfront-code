@@ -10,7 +10,7 @@
  * @module module-system/manifest/route-module-manifest
  */
 
-import { serverLogger as logger } from "@veryfront/utils";
+import { serverLogger as logger } from "#veryfront/utils";
 
 /**
  * Single module entry with metadata

@@ -8,9 +8,11 @@
  * - Method restrictions
  */
 
-import { assertEquals } from "@std/assert";
-import { afterAll, describe, it } from "@std/testing/bdd";
-import { join } from "@std/path";
+import { assertEquals } from "@veryfront/testing/assert";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
+import { join } from "@veryfront/compat/path";
+import { mkdir, writeTextFile } from "@veryfront/compat/fs.ts";
+import { deleteEnv, getEnv, setEnv } from "@veryfront/compat/process.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 
@@ -28,22 +30,22 @@ describe("RSC Actions Tests", { sanitizeOps: false, sanitizeResources: false }, 
      * - Action parameter passing
      */
     // Enable cache closing for tests
-    const originalAllowClose = Deno.env.get("VF_CACHE_ALLOW_CLOSE");
-    Deno.env.set("VF_CACHE_ALLOW_CLOSE", "1");
+    const originalAllowClose = getEnv("VF_CACHE_ALLOW_CLOSE");
+    setEnv("VF_CACHE_ALLOW_CLOSE", "1");
 
     try {
       await withTestContext("rsc-actions", async (context) => {
         // Enable RSC via config instead of env var
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
           `export default { experimental: { rsc: true } };`,
         );
 
         // Create a simple server action
-        await Deno.mkdir(join(context.projectDir, "app", "actions"), {
+        await mkdir(join(context.projectDir, "app", "actions"), {
           recursive: true,
         });
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "app", "actions", "echo.ts"),
           `export default async function echo(input: string): Promise<string> {
           return \`ok:\${input}\`;
@@ -51,7 +53,7 @@ describe("RSC Actions Tests", { sanitizeOps: false, sanitizeResources: false }, 
         );
 
         // Also create a page to ensure server starts properly
-        await Deno.writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# RSC Test Home");
+        await writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# RSC Test Home");
 
         const server = await context.createProductionServer();
 
@@ -70,9 +72,9 @@ describe("RSC Actions Tests", { sanitizeOps: false, sanitizeResources: false }, 
     } finally {
       // Restore original env values
       if (originalAllowClose === undefined) {
-        Deno.env.delete("VF_CACHE_ALLOW_CLOSE");
+        deleteEnv("VF_CACHE_ALLOW_CLOSE");
       } else {
-        Deno.env.set("VF_CACHE_ALLOW_CLOSE", originalAllowClose);
+        setEnv("VF_CACHE_ALLOW_CLOSE", originalAllowClose);
       }
     }
   });
@@ -84,18 +86,18 @@ describe("RSC Actions Tests", { sanitizeOps: false, sanitizeResources: false }, 
      * - Invalid JSON returns 400
      * - Proper error messages
      */
-    const originalAllowClose = Deno.env.get("VF_CACHE_ALLOW_CLOSE");
-    Deno.env.set("VF_CACHE_ALLOW_CLOSE", "1");
+    const originalAllowClose = getEnv("VF_CACHE_ALLOW_CLOSE");
+    setEnv("VF_CACHE_ALLOW_CLOSE", "1");
 
     try {
       await withTestContext("rsc-validation", async (context) => {
         // Enable RSC via config instead of env var
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
           `export default { experimental: { rsc: true } };`,
         );
 
-        await Deno.writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home");
+        await writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home");
 
         const server = await context.createProductionServer();
 
@@ -115,9 +117,9 @@ describe("RSC Actions Tests", { sanitizeOps: false, sanitizeResources: false }, 
       });
     } finally {
       if (originalAllowClose === undefined) {
-        Deno.env.delete("VF_CACHE_ALLOW_CLOSE");
+        deleteEnv("VF_CACHE_ALLOW_CLOSE");
       } else {
-        Deno.env.set("VF_CACHE_ALLOW_CLOSE", originalAllowClose);
+        setEnv("VF_CACHE_ALLOW_CLOSE", originalAllowClose);
       }
     }
   });
@@ -128,18 +130,18 @@ describe("RSC Actions Tests", { sanitizeOps: false, sanitizeResources: false }, 
      * - Returns 404 status
      * - Doesn't expose internal errors
      */
-    const originalAllowClose = Deno.env.get("VF_CACHE_ALLOW_CLOSE");
-    Deno.env.set("VF_CACHE_ALLOW_CLOSE", "1");
+    const originalAllowClose = getEnv("VF_CACHE_ALLOW_CLOSE");
+    setEnv("VF_CACHE_ALLOW_CLOSE", "1");
 
     try {
       await withTestContext("rsc-not-found", async (context) => {
         // Enable RSC via config instead of env var
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
           `export default { experimental: { rsc: true } };`,
         );
 
-        await Deno.writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home");
+        await writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home");
 
         const server = await context.createProductionServer();
 
@@ -156,9 +158,9 @@ describe("RSC Actions Tests", { sanitizeOps: false, sanitizeResources: false }, 
       });
     } finally {
       if (originalAllowClose === undefined) {
-        Deno.env.delete("VF_CACHE_ALLOW_CLOSE");
+        deleteEnv("VF_CACHE_ALLOW_CLOSE");
       } else {
-        Deno.env.set("VF_CACHE_ALLOW_CLOSE", originalAllowClose);
+        setEnv("VF_CACHE_ALLOW_CLOSE", originalAllowClose);
       }
     }
   });
@@ -170,18 +172,18 @@ describe("RSC Actions Tests", { sanitizeOps: false, sanitizeResources: false }, 
      * - GET, PUT, DELETE return 405
      * - Proper Allow header in response
      */
-    const originalAllowClose = Deno.env.get("VF_CACHE_ALLOW_CLOSE");
-    Deno.env.set("VF_CACHE_ALLOW_CLOSE", "1");
+    const originalAllowClose = getEnv("VF_CACHE_ALLOW_CLOSE");
+    setEnv("VF_CACHE_ALLOW_CLOSE", "1");
 
     try {
       await withTestContext("rsc-method-restriction", async (context) => {
         // Enable RSC via config instead of env var
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
           `export default { experimental: { rsc: true } };`,
         );
 
-        await Deno.writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home");
+        await writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home");
 
         const server = await context.createProductionServer();
 
@@ -203,9 +205,9 @@ describe("RSC Actions Tests", { sanitizeOps: false, sanitizeResources: false }, 
       });
     } finally {
       if (originalAllowClose === undefined) {
-        Deno.env.delete("VF_CACHE_ALLOW_CLOSE");
+        deleteEnv("VF_CACHE_ALLOW_CLOSE");
       } else {
-        Deno.env.set("VF_CACHE_ALLOW_CLOSE", originalAllowClose);
+        setEnv("VF_CACHE_ALLOW_CLOSE", originalAllowClose);
       }
     }
   });

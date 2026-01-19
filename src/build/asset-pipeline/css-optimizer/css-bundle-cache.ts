@@ -1,8 +1,8 @@
-import { join } from "@veryfront/platform/compat/path/index.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
-import { logger } from "@veryfront/utils";
-import { BYTES_PER_KB } from "@veryfront/utils";
-import type { CSSBundle } from "@veryfront/types";
+import { join } from "#veryfront/platform/compat/path/index.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { logger } from "#veryfront/utils";
+import { BYTES_PER_KB } from "#veryfront/utils";
+import type { CSSBundle } from "#veryfront/types";
 
 const fs = createFileSystem();
 

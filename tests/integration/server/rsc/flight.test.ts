@@ -1,9 +1,12 @@
-import { assertEquals } from "@std/assert";
-import { afterAll, describe, it } from "@std/testing/bdd";
+import { assertEquals } from "@veryfront/testing/assert";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
+import { remove, writeTextFile } from "@veryfront/compat/fs.ts";
 import "../../../_helpers/log-guard.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { assertDrained, drainEventLoop } from "../../../_helpers/utils.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
+import { isDeno } from "../../../../src/platform/compat/runtime.ts";
+import { delay } from "@std/async";
 
 describe("RSC Flight Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
   // Clean up renderer intervals to prevent resource leaks
@@ -26,9 +29,9 @@ describe("RSC Flight Tests", { sanitizeOps: false, sanitizeResources: false }, (
         let h: Awaited<ReturnType<typeof startProductionServer>> | null = null;
         try {
           // Remove default app directory
-          await Deno.remove(`${context.projectDir}/app`, { recursive: true });
+          await remove(`${context.projectDir}/app`, { recursive: true });
 
-          await Deno.writeTextFile(`${context.projectDir}/pages/index.mdx`, "# Home");
+          await writeTextFile(`${context.projectDir}/pages/index.mdx`, "# Home");
 
           const { getFreePort } = await import("../../../_helpers/utils.ts");
           const port = await getFreePort();
@@ -38,7 +41,7 @@ describe("RSC Flight Tests", { sanitizeOps: false, sanitizeResources: false }, (
             bindAddress: "127.0.0.1",
           });
           await h.ready;
-          await new Promise((r) => setTimeout(r, 200));
+          await delay(200);
           const res = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/flight_page?name=Neo`);
           assertEquals(res.status, 410);
           await res.text().catch((e) => console.debug?.("[test] flight_page text read failed", e));
@@ -47,7 +50,7 @@ describe("RSC Flight Tests", { sanitizeOps: false, sanitizeResources: false }, (
             await h.stop();
           }
           // Give the server time to clean up
-          await new Promise((resolve) => setTimeout(resolve, 500));
+          await delay(500);
           // Deterministically drain and verify; give more attempts for Flight
           await drainEventLoop(10, 50);
           await assertDrained({

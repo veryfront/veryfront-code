@@ -6,14 +6,14 @@
  * @module module-system/react-loader/ssr-module-loader/cache/redis
  */
 
-import { rendererLogger as logger } from "@veryfront/utils";
+import { rendererLogger as logger } from "#veryfront/utils";
 import {
   getRedisClient,
   isRedisConfigured,
   type RedisClient,
-} from "@veryfront/utils/redis-client.ts";
+} from "#veryfront/utils/redis-client.ts";
 import { REDIS_TTL_SECONDS } from "../constants.ts";
-import { buildRedisSSRModuleKey } from "@veryfront/cache";
+import { buildRedisSSRModuleKey } from "#veryfront/cache";
 
 // Redis state
 let redisEnabled = false;

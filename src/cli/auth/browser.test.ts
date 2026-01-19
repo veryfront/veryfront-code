@@ -2,9 +2,9 @@
  * Browser Utility Tests
  */
 
-import { assertEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
-import { deleteEnv, getEnv, setEnv } from "@veryfront/platform/compat/process.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createTestRuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import { canOpenBrowser } from "./browser.ts";
 
 describe("Browser Utility", () => {
@@ -15,50 +15,27 @@ describe("Browser Utility", () => {
     });
 
     it("should detect CI environment", () => {
-      const originalCI = getEnv("CI");
-      try {
-        setEnv("CI", "true");
-        const result = canOpenBrowser();
-        assertEquals(result, false);
-      } finally {
-        if (originalCI) {
-          setEnv("CI", originalCI);
-        } else {
-          deleteEnv("CI");
-        }
-      }
+      const testEnv = createTestRuntimeEnv({ ci: true });
+      const result = canOpenBrowser(testEnv);
+      assertEquals(result, false);
     });
 
     it("should detect SSH session", () => {
-      const originalSSH = getEnv("SSH_CLIENT");
-      try {
-        setEnv("SSH_CLIENT", "192.168.1.1 12345 22");
-        const result = canOpenBrowser();
-        assertEquals(result, false);
-      } finally {
-        if (originalSSH) {
-          setEnv("SSH_CLIENT", originalSSH);
-        } else {
-          deleteEnv("SSH_CLIENT");
-        }
-      }
+      const testEnv = createTestRuntimeEnv({ sshClient: "192.168.1.1 12345 22" });
+      const result = canOpenBrowser(testEnv);
+      assertEquals(result, false);
     });
 
     it("should return true in normal environment", () => {
-      // Clear any CI/SSH env vars that might be set
-      const originalCI = getEnv("CI");
-      const originalSSH = getEnv("SSH_CLIENT");
-      try {
-        deleteEnv("CI");
-        deleteEnv("SSH_CLIENT");
-        // On macOS/Windows, should return true without DISPLAY
-        // On Linux, might return false without DISPLAY
-        const result = canOpenBrowser();
-        assertEquals(typeof result, "boolean");
-      } finally {
-        if (originalCI) setEnv("CI", originalCI);
-        if (originalSSH) setEnv("SSH_CLIENT", originalSSH);
-      }
+      const testEnv = createTestRuntimeEnv({
+        ci: false,
+        continuousIntegration: false,
+        sshClient: undefined,
+        sshTty: undefined,
+        display: "mock-display", // For Linux compatibility
+      });
+      const result = canOpenBrowser(testEnv);
+      assertEquals(result, true);
     });
   });
 });

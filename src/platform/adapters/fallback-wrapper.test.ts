@@ -1,5 +1,6 @@
-import { assertEquals, assertRejects } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { delay } from "#std/async.ts";
 import {
   createAdapterFallback,
   createAdapterFallbackSync,
@@ -97,13 +98,13 @@ describe("fallback-wrapper", () => {
 
       const primary = async () => {
         primaryCalled = true;
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        await delay(10);
         throw new Error("primary-error");
       };
 
       const fallback = async () => {
         fallbackCalled = true;
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        await delay(10);
         return "fallback-success";
       };
 

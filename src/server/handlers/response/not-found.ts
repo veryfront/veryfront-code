@@ -1,12 +1,12 @@
 import { BaseHandler } from "./base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
-import { ResponseBuilder } from "@veryfront/security/index.ts";
+import { ResponseBuilder } from "#veryfront/security/index.ts";
 import {
   HTTP_INTERNAL_SERVER_ERROR,
   HTTP_NOT_FOUND,
   PRIORITY_FALLBACK,
-} from "@veryfront/utils/constants/index.ts";
-import { escapeHtml } from "@veryfront/html/html-escape.ts";
+} from "#veryfront/utils/constants/index.ts";
+import { escapeHtml } from "#veryfront/html/html-escape.ts";
 
 export class NotFoundHandler extends BaseHandler {
   metadata: HandlerMetadata = {

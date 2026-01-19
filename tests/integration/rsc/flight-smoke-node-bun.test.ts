@@ -1,10 +1,13 @@
-import { assertEquals } from "@std/assert";
-import { afterAll, describe, it } from "@std/testing/bdd";
-import { join } from "@std/path";
+import { assertEquals } from "@veryfront/testing/assert";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
+import { join } from "@veryfront/compat/path";
+import { writeTextFile } from "@veryfront/compat/fs.ts";
 import "../../_helpers/log-guard.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { assertDrained, drainEventLoop } from "../../_helpers/utils.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
+import { delay } from "@std/async";
+import { scaleMs } from "@veryfront/testing";
 
 describe("RSC Flight Smoke Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
   // Clean up renderer intervals to prevent resource leaks
@@ -16,7 +19,7 @@ describe("RSC Flight Smoke Tests", { sanitizeOps: false, sanitizeResources: fals
     it("returns 410 (removed endpoint)", async () => {
       await withTestContext("rsc-flight-smoke", async (context) => {
         // Enable RSC via config instead of env var
-        await Deno.writeTextFile(
+        await writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
           `export default { experimental: { rsc: true } };`,
         );
@@ -33,10 +36,10 @@ describe("RSC Flight Smoke Tests", { sanitizeOps: false, sanitizeResources: fals
             bindAddress: "127.0.0.1",
           });
           await h.ready;
-          await new Promise((r) => setTimeout(r, 400));
+          await delay(400);
           const url = `http://127.0.0.1:${port}/_veryfront/rsc/flight_page?name=Smoke`;
           const ac = new AbortController();
-          const to = setTimeout(() => ac.abort(), 3000);
+          const to = setTimeout(() => ac.abort(), scaleMs(3000));
           const res = await fetch(url, { signal: ac.signal }).finally(() => clearTimeout(to));
           await res.body?.cancel();
           assertEquals(res.status, 410);
@@ -45,7 +48,7 @@ describe("RSC Flight Smoke Tests", { sanitizeOps: false, sanitizeResources: fals
             await h.stop();
           }
           // Give the server time to clean up
-          await new Promise((resolve) => setTimeout(resolve, 500));
+          await delay(500);
           // Deterministically drain and verify
           await drainEventLoop(10, 50);
           await assertDrained({

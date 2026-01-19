@@ -1,7 +1,7 @@
 import type { Route, RouteMatch } from "./types.ts";
 import { getSpecificityScore, parseRoute } from "./route-parser.ts";
 import { matchRoute } from "./route-matcher.ts";
-import { normalizePath } from "@veryfront/utils/path-utils.ts";
+import { normalizePath } from "#veryfront/utils/path-utils.ts";
 
 export class DynamicRouter {
   private routes: Route[] = [];

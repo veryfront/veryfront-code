@@ -1,6 +1,6 @@
 import type { DiagnosticResult } from "./types.ts";
-import { getConfig } from "@veryfront/config/loader.ts";
-import { createMockAdapter } from "@veryfront/platform/adapters/mock.ts";
+import { getConfig } from "#veryfront/config/loader.ts";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 
 /**
  * Check AI Configuration and API Keys

@@ -13,11 +13,11 @@
  * All cache access goes through the API which enforces tenant isolation.
  */
 
-import { logger } from "@veryfront/utils";
-import { registerCache } from "@veryfront/utils/memory/index.ts";
+import { logger } from "#veryfront/utils";
+import { registerCache } from "#veryfront/utils/memory/index.ts";
 import type { CacheEntry, CacheStats, FileCacheOptions } from "./types.ts";
 import { estimateSize } from "./size-estimator.ts";
-import { type CacheBackend, CacheBackends, MemoryCacheBackend } from "@veryfront/cache";
+import { type CacheBackend, CacheBackends, MemoryCacheBackend } from "#veryfront/cache";
 
 // Register with memory profiler
 // Note: entries shows backend size when available, -1 for distributed backends

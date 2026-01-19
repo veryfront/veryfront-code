@@ -1,10 +1,10 @@
-import { join } from "@veryfront/platform/compat/path/index.ts";
-import { getAdapter } from "@veryfront/platform/adapters/index.ts";
-import { getConfig } from "@veryfront/config";
-import { createRenderer, type VeryfrontRenderer } from "@veryfront/rendering/index.ts";
-import type { BuildOptions, BuildStats } from "@veryfront/server/build-types.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/index.ts";
-import type { VeryfrontConfig } from "@veryfront/config";
+import { join } from "#veryfront/platform/compat/path/index.ts";
+import { getAdapter } from "#veryfront/platform/adapters/index.ts";
+import { getConfig } from "#veryfront/config";
+import { createRenderer, type VeryfrontRenderer } from "#veryfront/rendering/index.ts";
+import type { BuildOptions, BuildStats } from "#veryfront/server/build-types.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/index.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 
 export interface BuildContext {
   adapter: RuntimeAdapter;

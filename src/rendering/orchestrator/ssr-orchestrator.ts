@@ -1,11 +1,12 @@
-import { rendererLogger as logger, timeAsync } from "@veryfront/utils";
+import { rendererLogger as logger, timeAsync } from "#veryfront/utils";
 import type * as React from "react";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import type { ElementValidator } from "../element-validator/index.ts";
 import type { SSRRenderer } from "../ssr-renderer.ts";
 import { getContentHash } from "../utils/index.ts";
 import type { HTMLGenerationContext, HTMLGenerator } from "./html.ts";
 import type { RenderOptions } from "./types.ts";
+import { flushHeadCollector, resetHeadCollector } from "#veryfront/react/head-collector.ts";
 
 export interface SSROrchestratorConfig {
   mode: "development" | "production";
@@ -52,6 +53,9 @@ export class SSROrchestrator {
       validatedType: getElementTypeName(validatedElement),
     });
 
+    // Reset head collector before render
+    resetHeadCollector();
+
     const wantsStream = options?.delivery === "stream";
     const { html, stream } = await timeAsync(
       "ssr-react-render",
@@ -66,6 +70,9 @@ export class SSROrchestrator {
         ),
       "ssr-rendering",
     );
+
+    // Flush collected head data after render
+    const collectedHead = flushHeadCollector();
 
     // Merge options from generationContext with the passed options parameter
     // to avoid losing props that were set in generationContext.options
@@ -95,6 +102,7 @@ export class SSROrchestrator {
         ...generationContext,
         ssrHash,
         options: mergedOptions,
+        collectedHead,
       };
 
       const finalStream = await this.config.htmlGenerator.generateHTMLStream(
@@ -122,6 +130,7 @@ export class SSROrchestrator {
           html,
           ssrHash,
           options: mergedOptions,
+          collectedHead,
         }),
       "ssr-rendering",
     );

@@ -5,7 +5,7 @@
  * catch-all routes, and optional catch-all routes.
  */
 
-import { joinPath } from "@veryfront/utils/path-utils.ts";
+import { joinPath } from "#veryfront/utils/path-utils.ts";
 import type { HandlerContext } from "../../types.ts";
 import type { AppRouteMatch } from "./types.ts";
 

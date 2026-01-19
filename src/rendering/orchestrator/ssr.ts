@@ -1,7 +1,7 @@
-import { rendererLogger as logger } from "@veryfront/utils";
-import { DEFAULT_DASHBOARD_PORT } from "@veryfront/utils";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import type { VeryfrontConfig } from "@veryfront/config";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { DEFAULT_DASHBOARD_PORT } from "#veryfront/utils";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 import { ConfigurationManager } from "./config.ts";
 import { RendererLifecycle, type RendererServices } from "./lifecycle.ts";
 import { MDXCompiler } from "./mdx.ts";
@@ -46,7 +46,7 @@ export class VeryfrontRenderer {
     logger.debug("Initializing VeryfrontRenderer");
 
     if (!this.adapter) {
-      const { getAdapter } = await import("@veryfront/platform/adapters/detect.ts");
+      const { getAdapter } = await import("#veryfront/platform/adapters/detect.ts");
       this.adapter = await getAdapter();
     }
 
@@ -158,7 +158,7 @@ export class VeryfrontRenderer {
     content: string,
     frontmatter?: Record<string, unknown>,
     filePath?: string,
-  ): Promise<import("@veryfront/types").MdxBundle> {
+  ): Promise<import("#veryfront/types").MdxBundle> {
     return this.mdxCompiler.compileMDX(content, frontmatter, filePath);
   }
 

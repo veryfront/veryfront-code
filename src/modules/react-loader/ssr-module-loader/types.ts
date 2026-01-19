@@ -6,7 +6,7 @@
  * @module module-system/react-loader/ssr-module-loader/types
  */
 
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
 /**
  * Options for creating an SSRModuleLoader instance.

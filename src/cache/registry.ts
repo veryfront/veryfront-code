@@ -11,8 +11,8 @@
  * @module core/cache/registry
  */
 
-import { rendererLogger as logger } from "@veryfront/utils";
-import { getRedisClient, isRedisConfigured } from "@veryfront/utils/redis-client.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { getRedisClient, isRedisConfigured } from "#veryfront/utils/redis-client.ts";
 
 /**
  * Interface for cache stores that can be registered.

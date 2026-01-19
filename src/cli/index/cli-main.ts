@@ -8,7 +8,7 @@
 
 import { parseCliArgs } from "./arg-parser.ts";
 import { routeCommand } from "./command-router.ts";
-import { getArgs } from "@veryfront/platform/compat/process.ts";
+import { getArgs } from "#veryfront/platform/compat/process.ts";
 
 /**
  * Main CLI function

@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
-import { expect } from "@std/expect";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { expect } from "#std/expect.ts";
 import {
   defineConfig,
   defineConfigWithEnv,
@@ -7,7 +7,7 @@ import {
   validateConfig,
 } from "./define-config.ts";
 import type { VeryfrontConfig } from "./types.ts";
-import { deleteEnv, getEnv, setEnv } from "../platform/compat/process.ts";
+import { createTestRuntimeEnv } from "./runtime-env.ts";
 
 describe("define-config", () => {
   describe("defineConfig", () => {
@@ -51,74 +51,78 @@ describe("define-config", () => {
   });
 
   describe("defineConfigWithEnv", () => {
-    let originalEnv: string | undefined;
-
-    beforeEach(() => {
-      originalEnv = getEnv("NODE_ENV");
-    });
-
-    afterEach(() => {
-      if (originalEnv !== undefined) {
-        setEnv("NODE_ENV", originalEnv);
-      } else {
-        deleteEnv("NODE_ENV");
-      }
-    });
-
     it("should use development as default environment", () => {
-      deleteEnv("NODE_ENV");
-      const result = defineConfigWithEnv((env) => ({
-        title: `App-${env}`,
-      }));
+      const testEnv = createTestRuntimeEnv({ nodeEnv: "development" });
+      const result = defineConfigWithEnv(
+        (env) => ({
+          title: `App-${env}`,
+        }),
+        testEnv,
+      );
       expect(result.title).toBe("App-development");
     });
 
     it("should use NODE_ENV if set", () => {
-      setEnv("NODE_ENV", "production");
-      const result = defineConfigWithEnv((env) => ({
-        title: `App-${env}`,
-      }));
+      const testEnv = createTestRuntimeEnv({ nodeEnv: "production" });
+      const result = defineConfigWithEnv(
+        (env) => ({
+          title: `App-${env}`,
+        }),
+        testEnv,
+      );
       expect(result.title).toBe("App-production");
     });
 
     it("should allow environment-specific configuration", () => {
-      setEnv("NODE_ENV", "production");
-      const result = defineConfigWithEnv((env) => ({
-        dev: {
-          port: env === "production" ? 8080 : 3002,
-        },
-      }));
+      const testEnv = createTestRuntimeEnv({ nodeEnv: "production" });
+      const result = defineConfigWithEnv(
+        (env) => ({
+          dev: {
+            port: env === "production" ? 8080 : 3002,
+          },
+        }),
+        testEnv,
+      );
       expect(result.dev?.port).toBe(8080);
     });
 
     it("should work with development environment", () => {
-      setEnv("NODE_ENV", "development");
-      const result = defineConfigWithEnv((env) => ({
-        dev: {
-          port: env === "production" ? 8080 : 3002,
-        },
-      }));
+      const testEnv = createTestRuntimeEnv({ nodeEnv: "development" });
+      const result = defineConfigWithEnv(
+        (env) => ({
+          dev: {
+            port: env === "production" ? 8080 : 3002,
+          },
+        }),
+        testEnv,
+      );
       expect(result.dev?.port).toBe(3002);
     });
 
     it("should work with custom environments", () => {
-      setEnv("NODE_ENV", "staging");
-      const result = defineConfigWithEnv((env) => ({
-        title: `Staging-${env}`,
-      }));
+      const testEnv = createTestRuntimeEnv({ nodeEnv: "staging" });
+      const result = defineConfigWithEnv(
+        (env) => ({
+          title: `Staging-${env}`,
+        }),
+        testEnv,
+      );
       expect(result.title).toBe("Staging-staging");
     });
 
     it("should pass full config from factory", () => {
-      setEnv("NODE_ENV", "test");
-      const result = defineConfigWithEnv((env) => ({
-        title: "Test App",
-        description: `Running in ${env}`,
-        dev: {
-          port: 3004,
-          open: false,
-        },
-      }));
+      const testEnv = createTestRuntimeEnv({ nodeEnv: "test" });
+      const result = defineConfigWithEnv(
+        (env) => ({
+          title: "Test App",
+          description: `Running in ${env}`,
+          dev: {
+            port: 3004,
+            open: false,
+          },
+        }),
+        testEnv,
+      );
       expect(result.title).toBe("Test App");
       expect(result.description).toBe("Running in test");
       expect(result.dev?.port).toBe(3004);

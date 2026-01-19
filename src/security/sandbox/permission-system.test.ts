@@ -1,11 +1,15 @@
-import { assertEquals, assertExists, assertRejects as _assertRejects } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import {
   type Permission,
   type PermissionRequest,
   type PermissionResult,
   requestPermission,
 } from "./permission-system.ts";
+
+// Deno-specific validation tests (skip in Node/Bun - they return "granted" for all)
+const denoOnlyIt = isDeno ? it : it.skip;
 
 describe("Permission System", () => {
   describe("Permission Types", () => {
@@ -100,7 +104,8 @@ describe("Permission System", () => {
       assertEquals(result.state, "granted");
     });
 
-    it("should handle net permission with wildcard domain", async () => {
+    // Deno validates wildcard domains and returns "denied"; Node.js just returns "granted"
+    denoOnlyIt("should handle net permission with wildcard domain", async () => {
       const request: PermissionRequest = {
         name: "net",
         host: "*.example.com",
@@ -307,7 +312,8 @@ describe("Permission System", () => {
       assertEquals(result.state, "granted");
     });
 
-    it("should handle special characters in host", async () => {
+    // Deno-specific validation tests - Node.js just returns "granted"
+    denoOnlyIt("should handle special characters in host", async () => {
       const request: PermissionRequest = {
         name: "net",
         host: "evil.com;malicious.com",
@@ -317,7 +323,7 @@ describe("Permission System", () => {
       assertEquals(result.state, "denied");
     });
 
-    it("should handle URL-encoded host", async () => {
+    denoOnlyIt("should handle URL-encoded host", async () => {
       const request: PermissionRequest = {
         name: "net",
         host: "%65%78%61%6D%70%6C%65%2E%63%6F%6D", // "example.com" encoded
@@ -327,7 +333,7 @@ describe("Permission System", () => {
       assertEquals(result.state, "denied");
     });
 
-    it("should handle IPv6 address in host", async () => {
+    denoOnlyIt("should handle IPv6 address in host", async () => {
       const request: PermissionRequest = {
         name: "net",
         host: "::1",

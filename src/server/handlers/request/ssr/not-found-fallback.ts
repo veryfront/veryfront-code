@@ -8,8 +8,8 @@
  */
 
 import type { HandlerContext } from "../../types.ts";
-import type { ResponseBuilder } from "@veryfront/security/index.ts";
-import { join as joinPath } from "@veryfront/platform/compat/path/index.ts";
+import type { ResponseBuilder } from "#veryfront/security/index.ts";
+import { join as joinPath } from "#veryfront/platform/compat/path/index.ts";
 
 /**
  * Try rendering App Router not-found.tsx fallback
@@ -41,10 +41,7 @@ export async function tryNotFoundFallback(
   builder: ResponseBuilder,
 ): Promise<Response | null> {
   try {
-    // Only supported in Deno runtime for now
-    const isDeno = "name" in ctx.adapter && ctx.adapter.name === "deno";
-    if (!isDeno) return null;
-
+    // Works on all runtimes through the adapter pattern
     const appRoot = joinPath(ctx.projectDir, "app");
     try {
       const st = await ctx.adapter.fs.stat(appRoot);

@@ -5,7 +5,7 @@
  * Tokens are encrypted client-side before being sent to the backend.
  */
 
-import { createError, toError } from "@veryfront/errors";
+import { createError, toError } from "#veryfront/errors";
 
 /**
  * Token storage adapter interface

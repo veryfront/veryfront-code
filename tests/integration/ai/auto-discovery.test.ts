@@ -2,11 +2,19 @@
  * Auto-Discovery Integration Tests
  */
 
-import { assertEquals, assertExists } from "@std/assert";
-import { beforeEach, describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { beforeEach, describe, it } from "@veryfront/testing/bdd";
 import { discoverAll } from "../../../src/cli/discovery/index.ts";
 import { toolRegistry } from "@veryfront/tool";
 import { promptRegistry, resourceRegistry } from "@veryfront/mcp";
+import { join, resolve } from "@veryfront/compat/path";
+import { cwd } from "@veryfront/compat/process.ts";
+
+// Resolve path properly for both Deno and Node.js
+// Tests are run from the project root, so use cwd() + relative path
+function getExamplesPath(): string {
+  return resolve(join(cwd(), "examples", "autodiscovery"));
+}
 
 describe("Auto-Discovery Integration", { sanitizeOps: false, sanitizeResources: false }, () => {
   beforeEach(() => {
@@ -18,7 +26,7 @@ describe("Auto-Discovery Integration", { sanitizeOps: false, sanitizeResources: 
 
   it("should discover tools from tools/ directory", async () => {
     const result = await discoverAll({
-      baseDir: new URL("../../../examples/autodiscovery/", import.meta.url).pathname,
+      baseDir: getExamplesPath(),
       verbose: false,
     });
 
@@ -29,7 +37,7 @@ describe("Auto-Discovery Integration", { sanitizeOps: false, sanitizeResources: 
 
   it("should discover resources from resources/ directory", async () => {
     const result = await discoverAll({
-      baseDir: new URL("../../../examples/autodiscovery/", import.meta.url).pathname,
+      baseDir: getExamplesPath(),
       verbose: false,
     });
 
@@ -39,7 +47,7 @@ describe("Auto-Discovery Integration", { sanitizeOps: false, sanitizeResources: 
 
   it("should discover prompts from prompts/ directory", async () => {
     const result = await discoverAll({
-      baseDir: new URL("../../../examples/autodiscovery/", import.meta.url).pathname,
+      baseDir: getExamplesPath(),
       verbose: false,
     });
 
@@ -49,7 +57,7 @@ describe("Auto-Discovery Integration", { sanitizeOps: false, sanitizeResources: 
 
   it("should register discovered tools in registry", async () => {
     await discoverAll({
-      baseDir: new URL("../../../examples/autodiscovery/", import.meta.url).pathname,
+      baseDir: getExamplesPath(),
       verbose: false,
     });
 

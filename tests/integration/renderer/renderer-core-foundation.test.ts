@@ -11,13 +11,16 @@ import {
   assertExists,
   assertRejects,
   assertStringIncludes,
-} from "@std/assert";
-import { join } from "@std/path";
-import { describe, it } from "@std/testing/bdd";
+} from "@veryfront/testing/assert";
+import { join } from "@veryfront/compat/path";
+import { mkdir, remove, writeTextFile } from "@veryfront/compat/fs.ts";
+import { describe, it } from "@veryfront/testing/bdd";
+
 import { createRenderer } from "../../../src/rendering/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import type { VeryfrontRenderer as _VeryfrontRenderer } from "../../../src/rendering/orchestrator/ssr.ts";
 
+// Skip tests on non-Deno runtimes (SSR uses URL-based imports)
 // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
 // See: https://github.com/facebook/react/issues/24669
 describe(
@@ -30,7 +33,7 @@ describe(
     describe("Initialization", () => {
       it("should initialize renderer with required dependencies", async () => {
         await withTestContext("renderer-core-init", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
           const renderer = await createRenderer({
             projectDir: context.projectDir,
@@ -56,9 +59,9 @@ describe(
 
       it("should initialize with custom config", async () => {
         await withTestContext("renderer-core-config", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "veryfront.config.js"),
             `export default {
               title: "Custom Config Test",
@@ -78,10 +81,10 @@ describe(
 
       it("should load component registry on initialization", async () => {
         await withTestContext("renderer-core-components", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
           // Create a test component
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "components", "Button.tsx"),
             `export default function Button({ children }) {
               return <button className="custom-btn">{children}</button>;
@@ -102,9 +105,9 @@ describe(
     describe("Page Entity Resolution", () => {
       it("should find page in pages directory", async () => {
         await withTestContext("renderer-core-pages-dir", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "test.mdx"),
             `---
 title: Test Page
@@ -127,8 +130,8 @@ title: Test Page
 
       it("should find page in app router directory", async () => {
         await withTestContext("renderer-core-app-router", async (context) => {
-          await Deno.mkdir(join(context.projectDir, "app", "test"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "app", "test"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "app", "test", "page.mdx"),
             `---
 title: App Router Page
@@ -151,7 +154,7 @@ title: App Router Page
 
       it("should handle non-existent pages with error", async () => {
         await withTestContext("renderer-core-404", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
           const renderer = await createRenderer({
             projectDir: context.projectDir,
@@ -168,10 +171,10 @@ title: App Router Page
 
       it("should handle dynamic route parameters", async () => {
         await withTestContext("renderer-core-params", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.mkdir(join(context.projectDir, "pages", "blog"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "pages", "blog"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "pages", "blog", "[slug].tsx"),
             `export default function BlogPost({ params }) {
               return <div>Post: {params?.slug}</div>;
@@ -196,10 +199,10 @@ title: App Router Page
     describe("Layout Collection and Application", () => {
       it("should apply named layout from frontmatter", async () => {
         await withTestContext("renderer-core-named-layout", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.mkdir(join(context.projectDir, "layouts"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "layouts"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "layouts", "main.mdx"),
             `---
 isLayout: true
@@ -211,7 +214,7 @@ export default function MainLayout({ children }) {
           );
 
           // Note: filename must not contain "layout" as it triggers layout detection
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "styled-page.mdx"),
             `---
 title: With Layout
@@ -235,15 +238,15 @@ layout: main
 
       it("should disable layout when frontmatter layout is false", async () => {
         await withTestContext("renderer-core-no-layout", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "veryfront.config.js"),
             `export default { defaultLayout: "main" };`,
           );
 
-          await Deno.mkdir(join(context.projectDir, "layouts"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "layouts"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "layouts", "main.mdx"),
             `---
 isLayout: true
@@ -255,7 +258,7 @@ export default function MainLayout({ children }) {
           );
 
           // Note: filename must not contain "layout" as it triggers layout detection
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "raw-page.mdx"),
             `---
 title: No Layout
@@ -278,9 +281,9 @@ layout: false
 
       it("should apply nested layouts in correct order", async () => {
         await withTestContext("renderer-core-nested-layouts", async (context) => {
-          await Deno.mkdir(join(context.projectDir, "app", "blog", "post"), { recursive: true });
+          await mkdir(join(context.projectDir, "app", "blog", "post"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "layout.mdx"),
             `---
 isLayout: true
@@ -291,14 +294,14 @@ export default function RootLayout({ children }) {
 }`,
           );
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "blog", "layout.tsx"),
             `export default function BlogLayout({ children }) {
               return <div className="blog">{children}</div>;
             }`,
           );
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "app", "blog", "post", "page.mdx"),
             `# Post Content`,
           );
@@ -321,15 +324,15 @@ export default function RootLayout({ children }) {
 
       it("should apply layouts with ESM mode enabled", async () => {
         await withTestContext("renderer-core-esm-layouts", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "veryfront.config.js"),
             `export default { experimental: { esmLayouts: true } };`,
           );
 
-          await Deno.mkdir(join(context.projectDir, "layouts"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "layouts"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "layouts", "main.mdx"),
             `---
 isLayout: true
@@ -340,7 +343,7 @@ export default function MainLayout({ children }) {
 }`,
           );
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "esm-test.mdx"),
             `---
 layout: main
@@ -368,10 +371,10 @@ layout: main
     describe.skip("Provider Support", () => {
       it("should wrap page with providers", async () => {
         await withTestContext("renderer-core-providers", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.mkdir(join(context.projectDir, "providers"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "providers"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "providers", "theme.mdx"),
             `---
 isProvider: true
@@ -383,7 +386,7 @@ export default function ThemeProvider({ children }) {
 }`,
           );
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "test.mdx"),
             `# Test Content`,
           );
@@ -401,10 +404,10 @@ export default function ThemeProvider({ children }) {
 
       it("should apply multiple providers in priority order", async () => {
         await withTestContext("renderer-core-multi-providers", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.mkdir(join(context.projectDir, "providers"), { recursive: true });
-          await Deno.writeTextFile(
+          await mkdir(join(context.projectDir, "providers"), { recursive: true });
+          await writeTextFile(
             join(context.projectDir, "providers", "outer.mdx"),
             `---
 isProvider: true
@@ -416,7 +419,7 @@ export default function OuterProvider({ children }) {
 }`,
           );
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "providers", "inner.mdx"),
             `---
 isProvider: true
@@ -428,7 +431,7 @@ export default function InnerProvider({ children }) {
 }`,
           );
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "test.mdx"),
             `# Test`,
           );
@@ -453,9 +456,9 @@ export default function InnerProvider({ children }) {
     describe("SSR Rendering", () => {
       it("should render to HTML string in development mode", async () => {
         await withTestContext("renderer-core-ssr-string", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "test.mdx"),
             `---
 title: SSR Test
@@ -479,9 +482,9 @@ title: SSR Test
 
       it("should support streaming rendering when requested", async () => {
         await withTestContext("renderer-core-ssr-stream", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "test.mdx"),
             `---
 title: Stream Test
@@ -524,9 +527,9 @@ title: Stream Test
 
       it("should use streaming SSR in production mode", async () => {
         await withTestContext("renderer-core-ssr-production", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "test.mdx"),
             `# Production Test`,
           );
@@ -544,9 +547,9 @@ title: Stream Test
 
       it("should include SSR hash in result", async () => {
         await withTestContext("renderer-core-ssr-hash", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "test.mdx"),
             `# Test`,
           );
@@ -566,7 +569,7 @@ title: Stream Test
     describe("MDX Compilation", () => {
       it("should compile MDX content to bundle", async () => {
         await withTestContext("renderer-core-mdx-compile", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
           const renderer = await createRenderer({
             projectDir: context.projectDir,
@@ -586,7 +589,7 @@ title: Stream Test
 
       it("should handle MDX with frontmatter", async () => {
         await withTestContext("renderer-core-mdx-frontmatter", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
           const renderer = await createRenderer({
             projectDir: context.projectDir,
@@ -606,7 +609,7 @@ title: Stream Test
 
       it("should handle MDX compilation errors gracefully", async () => {
         await withTestContext("renderer-core-mdx-error", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
           const renderer = await createRenderer({
             projectDir: context.projectDir,
@@ -629,9 +632,9 @@ title: Stream Test
     describe("Component/TSX Pages", () => {
       it("should render TSX component page", async () => {
         await withTestContext("renderer-core-tsx-page", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "component.tsx"),
             `export default function ComponentPage() {
               return <div className="tsx-page"><h1>TSX Page</h1></div>;
@@ -651,9 +654,9 @@ title: Stream Test
 
       it("should render JSX component page", async () => {
         await withTestContext("renderer-core-jsx-page", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "component.jsx"),
             `export default function ComponentPage() {
               return <div className="jsx-page"><h1>JSX Page</h1></div>;
@@ -673,9 +676,9 @@ title: Stream Test
 
       it("should pass props to component pages", async () => {
         await withTestContext("renderer-core-tsx-props", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "with-props.tsx"),
             `export default function WithProps({ message = 'default' }) {
               return <div>Message: {message}</div>;
@@ -697,9 +700,9 @@ title: Stream Test
 
       it("should handle script pages (ts/js) returning data", async () => {
         await withTestContext("renderer-core-script-page", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "data.ts"),
             `export default function handler() {
               return { message: 'Data from script page' };
@@ -721,10 +724,10 @@ title: Stream Test
     describe("Caching and Manifest", () => {
       it("should cache rendered pages in development", async () => {
         await withTestContext("renderer-core-cache", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
           const timestamp = Date.now();
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "cached.mdx"),
             `---
 title: Cached Page
@@ -749,9 +752,9 @@ timestamp: ${timestamp}
 
       it("should clear specific page from cache", async () => {
         await withTestContext("renderer-core-clear-cache", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "test.mdx"),
             `---
 version: 1
@@ -769,7 +772,7 @@ version: 1
           await renderer.renderPage("test");
           renderer.clearCache("test");
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "test.mdx"),
             `---
 version: 2
@@ -786,9 +789,9 @@ version: 2
 
       it("should clear all state", async () => {
         await withTestContext("renderer-core-clear-all", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "test.mdx"),
             `# Test`,
           );
@@ -809,9 +812,9 @@ version: 2
 
       it("should handle page module cache and manifest", async () => {
         await withTestContext("renderer-core-module-cache", async (context) => {
-          await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+          await remove(join(context.projectDir, "app"), { recursive: true });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "test.mdx"),
             `# Test Page`,
           );

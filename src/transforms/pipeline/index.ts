@@ -10,9 +10,9 @@ import {
   getCachedTransform,
   setCachedTransform,
 } from "../esm/transform-cache.ts";
-import { rendererLogger as logger } from "@veryfront/utils";
+import { rendererLogger as logger } from "#veryfront/utils";
 import { createTransformContext, formatTimingLog, recordStageTiming } from "./context.ts";
-import { withSpan } from "@veryfront/observability/tracing/otlp-setup.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type {
   PipelineConfig,
   TransformOptions,
@@ -28,6 +28,7 @@ import {
   resolveContextPlugin,
   resolveReactPlugin,
   resolveRelativePlugin,
+  ssrHttpCachePlugin,
   ssrHttpStubPlugin,
 } from "./stages/index.ts";
 
@@ -44,6 +45,7 @@ const SSR_PIPELINE: TransformPlugin[] = [
   ssrHttpStubPlugin, // Stub browser-only HTTP imports during SSR
   resolveRelativePlugin,
   resolveBarePlugin,
+  ssrHttpCachePlugin, // Cache HTTP imports to local file:// for SSR
   finalizePlugin,
 ];
 

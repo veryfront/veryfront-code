@@ -1,8 +1,8 @@
-import { serverLogger as logger } from "@veryfront/utils";
+import { serverLogger as logger } from "#veryfront/utils";
 import type { Message, Plugin } from "esbuild";
-import { getDenoStdNodeBase } from "@veryfront/utils";
-import { HTTP_MODULE_FETCH_TIMEOUT_MS, HTTP_NETWORK_CONNECT_TIMEOUT } from "@veryfront/utils";
-import { computeIntegrity, createLockfileManager, type LockfileManager } from "@veryfront/utils";
+import { getDenoStdNodeBase } from "#veryfront/utils";
+import { HTTP_MODULE_FETCH_TIMEOUT_MS, HTTP_NETWORK_CONNECT_TIMEOUT } from "#veryfront/utils";
+import { computeIntegrity, createLockfileManager, type LockfileManager } from "#veryfront/utils";
 
 export interface HTTPPluginOptions {
   allowedHosts: string[];

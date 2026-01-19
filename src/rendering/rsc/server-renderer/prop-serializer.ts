@@ -1,4 +1,4 @@
-import { serverLogger as logger } from "@veryfront/utils";
+import { serverLogger as logger } from "#veryfront/utils";
 
 /**
  * Filters props for client components, removing children and non-serializable values.

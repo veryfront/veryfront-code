@@ -7,7 +7,7 @@
  */
 
 import type { BackendConfig } from "../types.ts";
-import type { RedisAdapter } from "@veryfront/platform/adapters/redis/index.ts";
+import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
 
 // Re-export platform types for convenience
 export type {
@@ -16,7 +16,7 @@ export type {
   NodeRedisClient,
   NodeRedisModule,
   RedisAdapter,
-} from "@veryfront/platform/adapters/redis/index.ts";
+} from "#veryfront/platform/adapters/redis/index.ts";
 
 /**
  * Redis backend configuration

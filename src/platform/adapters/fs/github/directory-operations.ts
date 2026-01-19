@@ -1,8 +1,8 @@
-import { logger } from "@veryfront/utils";
+import { logger } from "#veryfront/utils";
 import type { FileCache } from "../cache/file-cache.ts";
 import type { GitHubStatOperations } from "./stat-operations.ts";
 import type { DirectoryEntry, ResolvedGitHubConfig } from "./types.ts";
-import { buildGitHubDirCacheKey } from "@veryfront/cache";
+import { buildGitHubDirCacheKey } from "#veryfront/cache";
 
 const LOG_PREFIX = "[GitHubDirectoryOperations]";
 

@@ -1,4 +1,4 @@
-import { HASH_SEED_DJB2 } from "@veryfront/utils/constants/hash.ts";
+import { HASH_SEED_DJB2 } from "#veryfront/utils/constants/hash.ts";
 
 /** Compute weak ETag for content using DJB2 hash algorithm */
 export function computeEtag(text: string): string {

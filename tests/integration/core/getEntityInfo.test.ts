@@ -1,6 +1,7 @@
-import { assertEquals, assertExists } from "@std/assert";
-import { join } from "@std/path";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { join, dirname } from "@veryfront/compat/path";
+import { describe, it } from "@veryfront/testing/bdd";
+import { mkdir, writeTextFile } from "@veryfront/testing/deno-compat";
 import {
   getEntityBySlug,
   getEntityInfo,
@@ -10,8 +11,8 @@ import {
 import { withTestContext } from "../../_helpers/context.ts";
 
 async function createTestFile(path: string, content: string): Promise<void> {
-  await Deno.mkdir(join(path, ".."), { recursive: true });
-  await Deno.writeTextFile(path, content);
+  await mkdir(dirname(path), { recursive: true });
+  await writeTextFile(path, content);
 }
 
 describe("getEntityInfo", () => {
@@ -442,7 +443,7 @@ export default function ThemeProvider() {
     await withTestContext("entity-providers-subdir", async (context) => {
       const providersDir = join(context.projectDir, "providers");
       const subDir = join(providersDir, "subdir");
-      await Deno.mkdir(subDir, { recursive: true });
+      await mkdir(subDir, { recursive: true });
 
       // Create a provider in subdirectory (should be skipped)
       await createTestFile(

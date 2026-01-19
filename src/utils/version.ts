@@ -1,5 +1,5 @@
 import denoConfig from "../../deno.json" with { type: "json" };
-import { getVeryfrontVersion } from "@veryfront/config/env.ts";
+import { getVeryfrontVersion } from "#veryfront/config/env.ts";
 
 export const VERSION: string = getVeryfrontVersion() ||
   (typeof denoConfig.version === "string" ? denoConfig.version : "0.0.0");

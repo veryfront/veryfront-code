@@ -1,7 +1,7 @@
 import { DEFAULT_SANDBOX_TIMEOUT_MS } from "./constants.ts";
-import { serverLogger } from "@veryfront/utils";
-import { isCompiledBinary } from "@veryfront/utils";
-import { isDeno, isNode } from "@veryfront/platform/compat/runtime.ts";
+import { serverLogger } from "#veryfront/utils";
+import { isCompiledBinary } from "#veryfront/utils";
+import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 
 export interface SandboxOptions {
   timeoutMs?: number;

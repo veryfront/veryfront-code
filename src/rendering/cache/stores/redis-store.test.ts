@@ -1,5 +1,5 @@
-import { describe, it } from "@std/testing/bdd";
-import { expect } from "@std/expect";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { expect } from "#std/expect.ts";
 import { RedisCacheStore } from "./redis-store.ts";
 
 /**

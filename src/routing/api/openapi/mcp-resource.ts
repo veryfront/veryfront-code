@@ -6,7 +6,7 @@
  * @module routing/api/openapi/mcp-resource
  */
 
-import { resource } from "@veryfront/resource";
+import { resource } from "#veryfront/resource";
 import { z } from "zod";
 import type { OpenAPISpec } from "./types.ts";
 

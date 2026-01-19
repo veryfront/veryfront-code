@@ -1,50 +1,15 @@
-// Conditional imports for front_matter (path is handled via path-helper)
-let extractYaml: ((content: string) => any) | undefined;
-let jsYamlModule: typeof import("js-yaml") | null = null;
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
-import * as pathHelper from "@veryfront/platform/compat/path-helper.ts";
-import { isExtendedFSAdapter } from "@veryfront/platform/adapters/fs/wrapper.ts";
-
-// Initialize extractYaml based on runtime
-// @ts-ignore - Deno global
-if (typeof Deno === "undefined") {
-  // Node.js environment - use lazy loading for js-yaml
-  extractYaml = (content: string) => {
-    const frontMatterRegex = /^---\n([\s\S]*?)\n---/; // Basic regex for YAML front matter
-    const match = content.match(frontMatterRegex);
-    if (match && match[1]) {
-      // Synchronous parsing with cached module
-      if (jsYamlModule) {
-        const attrs = jsYamlModule.load(match[1]);
-        const body = content.slice(match[0].length);
-        return { attrs, body };
-      }
-      // Fallback: return content without parsing if module not loaded
-      return { attrs: {}, body: content };
-    }
-    return { attrs: {}, body: content };
-  };
-
-  // Eagerly load js-yaml module
-  import("js-yaml").then((mod) => {
-    jsYamlModule = mod;
-  }).catch((e) => {
-    console.warn("Could not import js-yaml for Node.js frontmatter parsing.", e);
-  });
-} else {
-  // @ts-ignore - Deno global
-  const { extract } = await import("std/front_matter/yaml.ts");
-  extractYaml = extract;
-}
-
+import { extract } from "#std/front-matter/yaml.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import * as pathHelper from "#veryfront/platform/compat/path-helper.ts";
+import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { detectEntityType } from "../entities.ts";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
-import { createErrorScope } from "@veryfront/errors/error-context.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createErrorScope } from "#veryfront/errors/error-context.ts";
 import type { Entity, EntityInfo, Frontmatter } from "../entities.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 // Import directly from source to avoid circular dependency through barrel
-import { withFallback } from "@veryfront/platform/adapters/fallback-wrapper.ts";
-import { parallelMap } from "@veryfront/utils/parallel.ts";
+import { withFallback } from "#veryfront/platform/adapters/fallback-wrapper.ts";
+import { parallelMap } from "#veryfront/utils/parallel.ts";
 
 const entityInfoScope = createErrorScope("getEntityInfo");
 
@@ -102,9 +67,9 @@ export async function getEntityInfo(
     let frontmatter: Frontmatter = {};
     let body = content;
 
-    if ([".md", ".mdx"].includes(ext) && extractYaml) {
+    if ([".md", ".mdx"].includes(ext)) {
       try {
-        const extracted = extractYaml(content);
+        const extracted = extract(content);
         frontmatter = extracted.attrs as Frontmatter;
         body = extracted.body;
       } catch {
@@ -472,10 +437,38 @@ export async function getProviderEntities(
   for (const { dir, dirExists } of dirChecks) {
     if (dirExists) {
       const entries: { name: string; isFile: boolean; isDirectory: boolean }[] = [];
-      const dirIterator = adapter?.fs.readDir ? adapter.fs.readDir(dir) : fs.readDir(dir);
-      for await (const entry of dirIterator) {
-        entries.push(entry);
-      }
+      // Use withFallback to handle cross-runtime compatibility
+      // The adapter's readDir may not work in all runtimes, so fall back to compat fs
+      const dirIterator = adapter
+        ? await withFallback(
+          async () => {
+            const results: { name: string; isFile: boolean; isDirectory: boolean }[] = [];
+            for await (const entry of adapter.fs.readDir(dir)) {
+              results.push({
+                name: entry.name,
+                isFile: entry.isFile,
+                isDirectory: entry.isDirectory,
+              });
+            }
+            return results;
+          },
+          async () => {
+            const results: { name: string; isFile: boolean; isDirectory: boolean }[] = [];
+            for await (const entry of fs.readDir(dir)) {
+              results.push(entry);
+            }
+            return results;
+          },
+          { operationName: "readDir:getProviderEntities", logError: false },
+        )
+        : await (async () => {
+          const results: { name: string; isFile: boolean; isDirectory: boolean }[] = [];
+          for await (const entry of fs.readDir(dir)) {
+            results.push(entry);
+          }
+          return results;
+        })();
+      entries.push(...dirIterator);
       for (const entry of entries) {
         if (entry.isFile) {
           allFilePaths.push(pathHelper.join(dir, entry.name));

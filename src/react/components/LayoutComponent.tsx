@@ -1,10 +1,10 @@
 import type React from "react";
 import { useMemo, useRef } from "react";
-import { mdxRenderer } from "@veryfront/transforms/mdx/index.ts";
-import type { MdxBundle, MDXComponents, PageContext as TypedPageContext } from "@veryfront/types";
-import { rendererLogger as logger } from "@veryfront/utils";
+import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
+import type { MdxBundle, MDXComponents, PageContext as TypedPageContext } from "#veryfront/types";
+import { rendererLogger as logger } from "#veryfront/utils";
 
-export type { MdxBundle } from "@veryfront/types";
+export type { MdxBundle } from "#veryfront/types";
 
 export interface LayoutComponentProps {
   mdxBundle: MdxBundle;

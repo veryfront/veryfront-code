@@ -4,10 +4,11 @@
  * Tests getStaticPaths generation, dynamic route handling, and build output
  */
 
-import { assertEquals, assertExists } from "@std/assert";
-import { afterAll, beforeEach, describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { afterAll, beforeEach, describe, it } from "@veryfront/testing/bdd";
 import { DataFetcher, type PageWithData } from "@veryfront/data";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
+import { delay } from "@std/async";
 
 describe("SSG - Pages Router", { sanitizeOps: false, sanitizeResources: false }, () => {
   // Clean up renderer intervals to prevent resource leaks
@@ -223,7 +224,7 @@ describe("SSG - Pages Router", { sanitizeOps: false, sanitizeResources: false },
         default: () => null,
         getStaticPaths: async () => {
           // Simulate fetching from API
-          await new Promise((r) => setTimeout(r, 10));
+          await delay(10);
           return {
             paths: [
               { params: { id: "async-1" } },
@@ -244,7 +245,7 @@ describe("SSG - Pages Router", { sanitizeOps: false, sanitizeResources: false },
     it("should handle paths from external API", async () => {
       // Simulate fetching blog posts from CMS
       const fetchPosts = async () => {
-        await new Promise((r) => setTimeout(r, 5));
+        await delay(5);
         return [
           { id: "post-1", slug: "first-post" },
           { id: "post-2", slug: "second-post" },

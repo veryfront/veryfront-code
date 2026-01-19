@@ -7,7 +7,7 @@
 
 import type { ListItem, ListSelectState } from "./components/list-select.ts";
 import { createListState } from "./components/list-select.ts";
-import { getEnv } from "@veryfront/platform/compat/process.ts";
+import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 
 // ============================================================================
 // Types
@@ -404,8 +404,8 @@ export function clearLogs(): StateUpdater {
 /**
  * Shorten path for display (replace home dir with ~)
  */
-function shortenPath(path: string): string {
-  const home = getEnv("HOME") || getEnv("USERPROFILE") || "";
+function shortenPath(path: string, env: RuntimeEnv = getRuntimeEnv()): string {
+  const home = env.homeDir || "";
   if (home && path.startsWith(home)) {
     return "~" + path.slice(home.length);
   }

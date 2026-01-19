@@ -1,4 +1,4 @@
-import type { HTMLMetadata, MDXFrontmatter } from "@veryfront/transforms/mdx/types.ts";
+import type { HTMLMetadata, MDXFrontmatter } from "#veryfront/transforms/mdx/types.ts";
 
 const RESERVED_KEYS = new Set([
   "title",

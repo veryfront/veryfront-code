@@ -1,8 +1,10 @@
 import { LRUCache } from "@veryfront/utils/lru-wrapper.ts";
-import * as React from "https://esm.sh/react@19.1.1";
-import { assert, assertEquals, assertExists, assertRejects } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import * as React from "react";
+import { assert, assertEquals, assertExists, assertRejects } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
+import { mkdir, writeTextFile } from "@veryfront/compat/fs.ts";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
+
 import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
 import type { LayoutItem, MdxBundle, MDXComponents } from "@veryfront/types";
 import {
@@ -116,13 +118,13 @@ describe(
         await withTestContext("layouts-discover-mdx", async (context) => {
           const adapter = await getAdapter();
           const pageDir = `${context.projectDir}/pages/blog`;
-          await Deno.mkdir(pageDir, { recursive: true });
+          await mkdir(pageDir, { recursive: true });
 
           const pageFile = `${pageDir}/post.mdx`;
-          await Deno.writeTextFile(pageFile, "# Hello World");
+          await writeTextFile(pageFile, "# Hello World");
 
           const layoutFile = `${pageDir}/layout.mdx`;
-          await Deno.writeTextFile(
+          await writeTextFile(
             layoutFile,
             `export const MDXLayout = ({ children }) => <div>{children}</div>`,
           );
@@ -144,13 +146,13 @@ describe(
         await withTestContext("layouts-discover-tsx", async (context) => {
           const adapter = await getAdapter();
           const pageDir = `${context.projectDir}/pages/blog`;
-          await Deno.mkdir(pageDir, { recursive: true });
+          await mkdir(pageDir, { recursive: true });
 
           const pageFile = `${pageDir}/post.mdx`;
-          await Deno.writeTextFile(pageFile, "# Hello World");
+          await writeTextFile(pageFile, "# Hello World");
 
           const layoutFile = `${pageDir}/layout.tsx`;
-          await Deno.writeTextFile(
+          await writeTextFile(
             layoutFile,
             `export default function Layout({ children }) { return <div>{children}</div>; }`,
           );
@@ -172,13 +174,13 @@ describe(
         await withTestContext("layouts-discover-jsx", async (context) => {
           const adapter = await getAdapter();
           const pageDir = `${context.projectDir}/pages/docs`;
-          await Deno.mkdir(pageDir, { recursive: true });
+          await mkdir(pageDir, { recursive: true });
 
           const pageFile = `${pageDir}/index.mdx`;
-          await Deno.writeTextFile(pageFile, "# Documentation");
+          await writeTextFile(pageFile, "# Documentation");
 
           const layoutFile = `${pageDir}/layout.jsx`;
-          await Deno.writeTextFile(
+          await writeTextFile(
             layoutFile,
             `export default function Layout({ children }) { return <main>{children}</main>; }`,
           );
@@ -201,24 +203,24 @@ describe(
           const adapter = await getAdapter();
 
           const nestedDir = `${context.projectDir}/pages/blog/2024`;
-          await Deno.mkdir(nestedDir, { recursive: true });
+          await mkdir(nestedDir, { recursive: true });
 
           const pageFile = `${nestedDir}/post.mdx`;
-          await Deno.writeTextFile(pageFile, "# Post");
+          await writeTextFile(pageFile, "# Post");
 
           const rootLayout = `${context.projectDir}/pages/layout.tsx`;
           const blogLayout = `${context.projectDir}/pages/blog/layout.tsx`;
           const yearLayout = `${nestedDir}/layout.tsx`;
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             rootLayout,
             "export default function Root({ children }) { return <div>{children}</div>; }",
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             blogLayout,
             "export default function Blog({ children }) { return <div>{children}</div>; }",
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             yearLayout,
             "export default function Year({ children }) { return <div>{children}</div>; }",
           );
@@ -241,10 +243,10 @@ describe(
         await withTestContext("layouts-no-layouts", async (context) => {
           const adapter = await getAdapter();
           const pageDir = `${context.projectDir}/pages/simple`;
-          await Deno.mkdir(pageDir, { recursive: true });
+          await mkdir(pageDir, { recursive: true });
 
           const pageFile = `${pageDir}/page.mdx`;
-          await Deno.writeTextFile(pageFile, "# Simple Page");
+          await writeTextFile(pageFile, "# Simple Page");
 
           const layouts = await discoverNestedLayouts(
             pageFile,
@@ -261,18 +263,18 @@ describe(
         await withTestContext("layouts-mdx-priority", async (context) => {
           const adapter = await getAdapter();
           const pageDir = `${context.projectDir}/pages/mixed`;
-          await Deno.mkdir(pageDir, { recursive: true });
+          await mkdir(pageDir, { recursive: true });
 
           const pageFile = `${pageDir}/page.mdx`;
-          await Deno.writeTextFile(pageFile, "# Page");
+          await writeTextFile(pageFile, "# Page");
 
           const mdxLayout = `${pageDir}/layout.mdx`;
           const tsxLayout = `${pageDir}/layout.tsx`;
-          await Deno.writeTextFile(
+          await writeTextFile(
             mdxLayout,
             "export const MDXLayout = ({ children }) => <div>{children}</div>",
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             tsxLayout,
             "export default function Layout({ children }) { return <div>{children}</div>; }",
           );
@@ -295,10 +297,10 @@ describe(
         await withTestContext("layouts-app-router", async (context) => {
           const adapter = await getAdapter();
           const appDir = `${context.projectDir}/app/dashboard`;
-          await Deno.mkdir(appDir, { recursive: true });
+          await mkdir(appDir, { recursive: true });
 
           const pageFile = `${appDir}/page.tsx`;
-          await Deno.writeTextFile(
+          await writeTextFile(
             pageFile,
             "export default function Page() { return <div>Dashboard</div>; }",
           );
@@ -306,11 +308,11 @@ describe(
           const rootLayout = `${context.projectDir}/app/layout.tsx`;
           const dashboardLayout = `${appDir}/layout.tsx`;
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             rootLayout,
             "export default function RootLayout({ children }) { return <html><body>{children}</body></html>; }",
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             dashboardLayout,
             "export default function DashboardLayout({ children }) { return <div>{children}</div>; }",
           );
@@ -332,13 +334,13 @@ describe(
         await withTestContext("layouts-deep-nesting", async (context) => {
           const adapter = await getAdapter();
           const deepPath = `${context.projectDir}/pages/a/b/c/d`;
-          await Deno.mkdir(deepPath, { recursive: true });
+          await mkdir(deepPath, { recursive: true });
 
           const pageFile = `${deepPath}/page.mdx`;
-          await Deno.writeTextFile(pageFile, "# Deep Page");
+          await writeTextFile(pageFile, "# Deep Page");
 
           const layoutC = `${context.projectDir}/pages/a/b/c/layout.tsx`;
-          await Deno.writeTextFile(
+          await writeTextFile(
             layoutC,
             "export default function LayoutC({ children }) { return <div>{children}</div>; }",
           );
@@ -359,13 +361,13 @@ describe(
         await withTestContext("layouts-stop-at-root", async (context) => {
           const adapter = await getAdapter();
           const pageDir = `${context.projectDir}/pages`;
-          await Deno.mkdir(pageDir, { recursive: true });
+          await mkdir(pageDir, { recursive: true });
 
           const pageFile = `${pageDir}/index.mdx`;
-          await Deno.writeTextFile(pageFile, "# Index");
+          await writeTextFile(pageFile, "# Index");
 
           const outsideLayout = `${context.projectDir}/layout.tsx`;
-          await Deno.writeTextFile(
+          await writeTextFile(
             outsideLayout,
             "export default function Outside({ children }) { return <div>{children}</div>; }",
           );
@@ -398,7 +400,7 @@ describe(
             },
           ];
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             layouts[0]!.path!,
             'export const MDXLayout = ({ children }) => <div className="layout">{children}</div>',
           );
@@ -446,11 +448,11 @@ describe(
             },
           ];
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             layouts[0]!.path!,
             "export const MDXLayout = ({ children }) => <div>{children}</div>",
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             layouts[1]!.path!,
             "export const MDXLayout = ({ children }) => <section>{children}</section>",
           );
@@ -503,7 +505,7 @@ describe(
             },
           ];
 
-          await Deno.writeTextFile(layouts[0]!.path!, "broken mdx content");
+          await writeTextFile(layouts[0]!.path!, "broken mdx content");
 
           await assertRejects(
             async () => await compileMDXLayouts(layouts, failingCompileMDX, adapter),
@@ -535,7 +537,7 @@ describe(
           const adapter = await getAdapter();
 
           const layoutPath = `${context.projectDir}/layout.tsx`;
-          await Deno.writeTextFile(
+          await writeTextFile(
             layoutPath,
             "export default function Layout({ children }) { return <div>{children}</div>; }",
           );
@@ -585,7 +587,7 @@ describe(
           };
 
           const layoutPath = `${context.projectDir}/layout.tsx`;
-          await Deno.writeTextFile(
+          await writeTextFile(
             layoutPath,
             "export default function Layout({ children }) { return <div>{children}</div>; }",
           );
@@ -671,7 +673,7 @@ describe(
           const adapter = await getAdapter();
           const cache = new LRUCache<string, any>({ maxEntries: 10 });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             `${context.projectDir}/deno.json`,
             JSON.stringify({
               imports: {
@@ -713,7 +715,7 @@ describe(
           const adapter = await getAdapter();
           const cache = new LRUCache<string, any>({ maxEntries: 10 });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             `${context.projectDir}/deno.json`,
             JSON.stringify({
               imports: {
@@ -794,7 +796,7 @@ describe(
           const adapter = await getAdapter();
           const cache = new LRUCache<string, any>({ maxEntries: 10 });
 
-          await Deno.writeTextFile(
+          await writeTextFile(
             `${context.projectDir}/deno.json`,
             JSON.stringify({
               imports: {
@@ -1162,18 +1164,18 @@ describe(
           const adapter = await getAdapter();
 
           const blogDir = `${context.projectDir}/pages/blog`;
-          await Deno.mkdir(blogDir, { recursive: true });
+          await mkdir(blogDir, { recursive: true });
 
           const pageFile = `${blogDir}/post.mdx`;
           const rootLayout = `${context.projectDir}/pages/layout.tsx`;
           const blogLayout = `${blogDir}/layout.mdx`;
 
-          await Deno.writeTextFile(pageFile, "# Blog Post");
-          await Deno.writeTextFile(
+          await writeTextFile(pageFile, "# Blog Post");
+          await writeTextFile(
             rootLayout,
             'export default function Root({ children }) { return <div id="root">{children}</div>; }',
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             blogLayout,
             'export const MDXLayout = ({ children }) => <div id="blog">{children}</div>',
           );
@@ -1222,18 +1224,18 @@ describe(
           const adapter = await getAdapter();
 
           const docsDir = `${context.projectDir}/pages/docs`;
-          await Deno.mkdir(docsDir, { recursive: true });
+          await mkdir(docsDir, { recursive: true });
 
           const pageFile = `${docsDir}/guide.mdx`;
           const tsxLayout = `${context.projectDir}/pages/layout.tsx`;
           const mdxLayout = `${docsDir}/layout.mdx`;
 
-          await Deno.writeTextFile(pageFile, "# Guide");
-          await Deno.writeTextFile(
+          await writeTextFile(pageFile, "# Guide");
+          await writeTextFile(
             tsxLayout,
             "export default function Layout({ children }) { return <div>{children}</div>; }",
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             mdxLayout,
             "export const MDXLayout = ({ children }) => <section>{children}</section>",
           );

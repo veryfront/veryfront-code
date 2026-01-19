@@ -1,4 +1,4 @@
-import type { ToolDefinition } from "@veryfront/tool";
+import type { ToolDefinition } from "#veryfront/tool";
 
 export interface ProviderConfig {
   /** API key */

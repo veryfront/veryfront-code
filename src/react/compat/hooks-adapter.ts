@@ -1,4 +1,4 @@
-import { rendererLogger as logger } from "@veryfront/utils";
+import { rendererLogger as logger } from "#veryfront/utils";
 import * as React from "react";
 import { getReactVersionInfo, hasFeature } from "./version-detector/index.ts";
 

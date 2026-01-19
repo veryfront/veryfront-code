@@ -10,4 +10,4 @@ export type {
   HMRMessageType,
   HMRReloadMessage,
   HMRUpdateMessage,
-} from "@veryfront/types/hmr.ts";
+} from "#veryfront/types/hmr.ts";

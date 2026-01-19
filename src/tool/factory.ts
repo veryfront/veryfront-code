@@ -2,8 +2,8 @@ import type { Tool, ToolConfig, ToolExecutionContext } from "./types.ts";
 import type { JsonSchema } from "./schema/json-schema.ts";
 import type { z } from "zod";
 import { zodToJsonSchema } from "./schema/zod-json-schema.ts";
-import { agentLogger } from "@veryfront/utils/logger/logger.ts";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { agentLogger } from "#veryfront/utils/logger/logger.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 /**
  * Schema type for checking Zod-like schemas

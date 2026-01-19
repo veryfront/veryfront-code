@@ -1,4 +1,5 @@
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "@veryfront/testing/bdd";
+import { deleteEnv, getEnv, setEnv } from "@veryfront/testing/deno-compat";
 import {
   type AgentConfig,
   getToolArguments,
@@ -64,28 +65,14 @@ function createMockProvider(events: Array<Record<string, unknown>>): Provider {
 
 describe("AgentRuntime streaming JSON buffering", () => {
   it("should parse content and tool events even when JSON is split across chunks", async () => {
-    // Stub Deno.env to avoid permission errors from logger initialization inside AgentRuntime
-    const originalEnv = (Deno as any).env;
-    let restoreEnv: (() => void) | null = null;
-    try {
-      (Deno as any).env = { get: () => undefined, set: () => {} };
-      restoreEnv = () => {
-        (Deno as any).env = originalEnv;
-      };
-    } catch {
-      if (originalEnv) {
-        try {
-          originalEnv.get = () => undefined;
-          originalEnv.set = () => {};
-          restoreEnv = () => {
-            originalEnv.get = Deno.env.get;
-            originalEnv.set = Deno.env.set;
-          };
-        } catch {
-          /* ignore if not writable */
-        }
-      }
-    }
+    // Save original env values to restore later
+    const originalLogLevel = getEnv("LOG_LEVEL");
+    const originalNodeEnv = getEnv("NODE_ENV");
+
+    // Set env to suppress logging during test
+    setEnv("LOG_LEVEL", "silent");
+    setEnv("NODE_ENV", "test");
+
     const { AgentRuntime } = await import("../../src/agent/runtime/index.ts");
 
     const baseConfig: AgentConfig = {
@@ -130,9 +117,17 @@ describe("AgentRuntime streaming JSON buffering", () => {
     const tc = toolCallParts![0]!;
     assertEquals(tc.toolName, "testTool");
     assertEquals(getToolArguments(tc), { x: 1 });
-    // Restore env if we modified it
-    if (restoreEnv) {
-      restoreEnv();
+
+    // Restore original env values
+    if (originalLogLevel === undefined) {
+      deleteEnv("LOG_LEVEL");
+    } else {
+      setEnv("LOG_LEVEL", originalLogLevel);
+    }
+    if (originalNodeEnv === undefined) {
+      deleteEnv("NODE_ENV");
+    } else {
+      setEnv("NODE_ENV", originalNodeEnv);
     }
   });
 });

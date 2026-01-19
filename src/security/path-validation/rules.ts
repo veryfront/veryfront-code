@@ -7,7 +7,7 @@ import {
   FORBIDDEN_PATH_PATTERNS,
   MAX_PATH_LENGTH,
   MAX_PATH_TRAVERSAL_DEPTH,
-} from "@veryfront/utils";
+} from "#veryfront/utils";
 
 import { normalizeSeparators } from "./normalization.ts";
 import { PathValidationError, type ValidationResult } from "./types.ts";

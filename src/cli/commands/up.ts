@@ -11,12 +11,13 @@
  */
 
 import { z } from "zod";
-import { cliLogger } from "@veryfront/utils";
-import { cwd, getEnv } from "@veryfront/platform/compat/process.ts";
-import { join } from "@veryfront/platform/compat/path/index.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
-import { cyan, dim, green, red, yellow } from "@veryfront/compat/console";
+import { cliLogger } from "#veryfront/utils";
+import { cwd } from "#veryfront/platform/compat/process.ts";
+import { join } from "#veryfront/platform/compat/path/index.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { cyan, dim, green, red, yellow } from "#veryfront/compat/console";
 import { ensureAuthenticated, readToken } from "../auth/index.ts";
+import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import { createSpinner, getColorEnabled, isTTY, promptUser } from "../utils/index.ts";
 import { CommonArgs, createArgParser } from "../shared/args.ts";
 import { readConfigFile, type VeryfrontConfig } from "../shared/config.ts";
@@ -138,7 +139,10 @@ async function saveConfig(projectDir: string, config: VeryfrontConfig): Promise<
 /**
  * The main up command
  */
-export async function upCommand(options: Partial<UpOptions> = {}): Promise<void> {
+export async function upCommand(
+  options: Partial<UpOptions> = {},
+  env: RuntimeEnv = getRuntimeEnv(),
+): Promise<void> {
   const { force = false, dryRun = false } = options;
 
   const useColor = getColorEnabled();
@@ -203,9 +207,9 @@ export async function upCommand(options: Partial<UpOptions> = {}): Promise<void>
 
         try {
           // Use configured API URL (env var or default)
-          const apiUrl = getEnv("VERYFRONT_API_URL") || "https://api.veryfront.com";
+          const apiUrl = env.apiUrl || "https://api.veryfront.com";
           // Check env var first (for CI), then stored token
-          const resolvedToken = getEnv("VERYFRONT_API_TOKEN") || await readToken();
+          const resolvedToken = env.apiToken || await readToken();
 
           if (!resolvedToken) {
             projectSpinner.stop();

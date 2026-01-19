@@ -20,27 +20,27 @@ import {
   getRendererForProject,
   shouldRejectDueToMemory,
 } from "../../../shared/renderer-factory.ts";
-import { getHeapStats } from "@veryfront/utils/memory/index.ts";
-import { serverLogger as _logger } from "@veryfront/utils";
-import { endRequest, startRequest, timeAsync } from "@veryfront/utils";
+import { getHeapStats } from "#veryfront/utils/memory/index.ts";
+import { serverLogger as _logger } from "#veryfront/utils";
+import { endRequest, startRequest, timeAsync } from "#veryfront/utils";
 import { computeSSRETag } from "./etag-handler.ts";
 import { tryNotFoundFallback } from "./not-found-fallback.ts";
 import { tryErrorPageFallback } from "./error-page-fallback.ts";
-import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
+import { ErrorCode, VeryfrontError } from "#veryfront/errors/index.ts";
 import {
   HTTP_INTERNAL_SERVER_ERROR,
   HTTP_NOT_FOUND,
   HTTP_OK,
   PRIORITY_LOW,
-} from "@veryfront/utils/constants/index.ts";
-import { generateNonce } from "@veryfront/security/http/response/security-handler.ts";
-import { getColorSchemeFromRequest } from "@veryfront/security/http/client-hints.ts";
-import { isExtendedFSAdapter } from "@veryfront/platform/adapters/fs/wrapper.ts";
+} from "#veryfront/utils/constants/index.ts";
+import { generateNonce } from "#veryfront/security/http/response/security-handler.ts";
+import { getColorSchemeFromRequest } from "#veryfront/security/http/client-hints.ts";
+import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import {
   endRenderSession,
   startRenderSession,
-} from "@veryfront/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
-import { VeryfrontAPIError } from "@veryfront/platform/adapters/veryfront-api-client/types.ts";
+} from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
+import { VeryfrontAPIError } from "#veryfront/platform/adapters/veryfront-api-client/types.ts";
 
 /**
  * Determine if request should serve production (released) content.

@@ -1,5 +1,5 @@
 import * as esbuild from "esbuild";
-import { readTextFile } from "@veryfront/platform/compat/fs.ts";
+import { readTextFile } from "#veryfront/platform/compat/fs.ts";
 
 const moduleCache = new Map<string, { code: string; timestamp: number }>();
 const CACHE_TTL = 5000;

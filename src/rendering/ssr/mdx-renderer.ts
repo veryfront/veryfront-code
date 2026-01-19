@@ -1,6 +1,6 @@
-import { rendererLogger as logger } from "@veryfront/utils";
+import { rendererLogger as logger } from "#veryfront/utils";
 import * as React from "react";
-import { CompilationError } from "@veryfront/errors/index.ts";
+import { CompilationError } from "#veryfront/errors/index.ts";
 import { loadCompiledMDXModule } from "./mdx-module-loader.ts";
 import type { MDXRenderOptions } from "./types.ts";
 

@@ -5,10 +5,10 @@
 import type { Agent, AgentConfig, AgentResponse, Message, ToolCall } from "./types.ts";
 import { AgentRuntime } from "./runtime/index.ts";
 import { detectPlatform, validatePlatformCompatibility } from "../platform/core-platform.ts";
-import { registerTool } from "@veryfront/mcp";
+import { registerTool } from "#veryfront/mcp";
 import { agentRegistry } from "./composition/index.ts";
-import { agentLogger } from "@veryfront/utils/logger/logger.ts";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { agentLogger } from "#veryfront/utils/logger/logger.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 /**
  * Standard headers for Vercel AI SDK compatible streaming responses

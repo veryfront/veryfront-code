@@ -1,6 +1,6 @@
-import { RSC_MANIFEST_CACHE_TTL_MS } from "@veryfront/utils";
-import { buildClientManifest } from "@veryfront/rendering/rsc/component-analyzer.ts";
-import type { ClientComponentMeta } from "@veryfront/rendering/rsc/types.ts";
+import { RSC_MANIFEST_CACHE_TTL_MS } from "#veryfront/utils";
+import { buildClientManifest } from "#veryfront/rendering/rsc/component-analyzer.ts";
+import type { ClientComponentMeta } from "#veryfront/rendering/rsc/types.ts";
 import type { ManifestCacheEntry, ManifestData } from "./types.ts";
 
 export class ManifestHandler {

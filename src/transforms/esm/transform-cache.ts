@@ -13,8 +13,8 @@
  * All cache access goes through the API which enforces tenant isolation.
  */
 
-import { registerCache } from "@veryfront/utils/memory/index.ts";
-import { logger } from "@veryfront/utils/logger/logger.ts";
+import { registerCache } from "#veryfront/utils/memory/index.ts";
+import { logger } from "#veryfront/utils/logger/logger.ts";
 import { buildTransformCacheKey } from "../../cache/keys.ts";
 import { type CacheBackend, CacheBackends, MemoryCacheBackend } from "../../cache/backend.ts";
 

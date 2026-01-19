@@ -61,13 +61,13 @@ export { createMCPServer, MCPServer } from "./server.ts";
 // =============================================================================
 
 // Tool
-export { executeTool, tool, toolRegistry, zodToJsonSchema } from "@veryfront/tool";
-export type { Tool, ToolConfig } from "@veryfront/tool";
+export { executeTool, tool, toolRegistry, zodToJsonSchema } from "#veryfront/tool";
+export type { Tool, ToolConfig } from "#veryfront/tool";
 
 // Prompt
-export { prompt, promptRegistry } from "@veryfront/prompt";
-export type { Prompt, PromptConfig } from "@veryfront/prompt";
+export { prompt, promptRegistry } from "#veryfront/prompt";
+export type { Prompt, PromptConfig } from "#veryfront/prompt";
 
 // Resource
-export { resource, resourceRegistry } from "@veryfront/resource";
-export type { Resource, ResourceConfig } from "@veryfront/resource";
+export { resource, resourceRegistry } from "#veryfront/resource";
+export type { Resource, ResourceConfig } from "#veryfront/resource";

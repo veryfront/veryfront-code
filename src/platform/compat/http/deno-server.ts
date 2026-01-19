@@ -1,5 +1,5 @@
 import type { Handler, HttpServer, ServeOptions } from "./types.ts";
-import { LOCALHOST } from "@veryfront/config";
+import { LOCALHOST } from "#veryfront/config";
 
 export class DenoHttpServer implements HttpServer {
   private abortController?: AbortController;

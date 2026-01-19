@@ -1,10 +1,38 @@
 import { computeContentHash } from "../esm/transform-utils.ts";
+import { REACT_VERSION } from "../esm/package-registry.ts";
 import type {
   TransformContext,
   TransformOptions,
   TransformStage,
   TransformTarget,
 } from "./types.ts";
+
+/**
+ * Detect React version from project's package.json.
+ * Falls back to default REACT_VERSION if not found.
+ */
+async function detectProjectReactVersion(projectDir: string): Promise<string> {
+  try {
+    const packageJsonPath = `${projectDir}/package.json`;
+    const content = await Deno.readTextFile(packageJsonPath);
+    const pkg = JSON.parse(content) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+
+    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+    const reactVersion = deps?.react;
+
+    if (reactVersion) {
+      // Strip ^ or ~ prefix to get the base version
+      return reactVersion.replace(/^[\^~]/, "");
+    }
+  } catch {
+    // Project doesn't have package.json or no React dependency
+  }
+
+  return REACT_VERSION;
+}
 
 /** Build a TransformContext from source, paths, hash, and options */
 function buildContext(
@@ -13,6 +41,7 @@ function buildContext(
   projectDir: string,
   contentHash: string,
   options: TransformOptions,
+  reactVersion: string,
 ): TransformContext {
   const target: TransformTarget = options.ssr ? "ssr" : "browser";
 
@@ -33,6 +62,7 @@ function buildContext(
     debug: false,
     metadata: new Map(),
     studioEmbed: options.studioEmbed,
+    reactVersion,
   };
 }
 
@@ -43,7 +73,9 @@ export async function createTransformContext(
   options: TransformOptions,
 ): Promise<TransformContext> {
   const contentHash = await computeContentHash(source);
-  return buildContext(source, filePath, projectDir, contentHash, options);
+  // Use provided reactVersion or detect from project's package.json
+  const reactVersion = options.reactVersion ?? await detectProjectReactVersion(projectDir);
+  return buildContext(source, filePath, projectDir, contentHash, options, reactVersion);
 }
 
 export function createTransformContextSync(
@@ -53,7 +85,9 @@ export function createTransformContextSync(
   contentHash: string,
   options: TransformOptions,
 ): TransformContext {
-  return buildContext(source, filePath, projectDir, contentHash, options);
+  // Sync version can't detect from package.json, use provided version or default
+  const reactVersion = options.reactVersion ?? REACT_VERSION;
+  return buildContext(source, filePath, projectDir, contentHash, options, reactVersion);
 }
 
 export function recordStageTiming(

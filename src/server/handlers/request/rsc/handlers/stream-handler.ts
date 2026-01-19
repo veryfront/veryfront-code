@@ -1,5 +1,5 @@
-import { serverLogger as logger } from "@veryfront/utils";
-import type { RSCPayload } from "@veryfront/rendering/rsc/types.ts";
+import { serverLogger as logger } from "#veryfront/utils";
+import type { RSCPayload } from "#veryfront/rendering/rsc/types.ts";
 import type { RenderHandler } from "./render-handler.ts";
 import type { StreamSlot } from "./types.ts";
 

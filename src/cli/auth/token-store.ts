@@ -1,20 +1,28 @@
-import { join } from "@veryfront/platform/compat/path/index.ts";
-import { getEnv } from "@veryfront/platform/compat/process.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { join } from "#veryfront/platform/compat/path/index.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import { CONFIG_DIR_NAME, TOKEN_FILE_NAME, TOKEN_FILE_PERMISSIONS } from "./constants.ts";
 
-function getConfigDir(): string {
-  const xdgConfig = getEnv("XDG_CONFIG_HOME");
-  if (xdgConfig) return join(xdgConfig, CONFIG_DIR_NAME);
+/**
+ * Get config directory path.
+ *
+ * @param env - Optional RuntimeEnv for test isolation
+ */
+function getConfigDir(env: RuntimeEnv = getRuntimeEnv()): string {
+  if (env.xdgConfigHome) return join(env.xdgConfigHome, CONFIG_DIR_NAME);
 
-  const home = getEnv("HOME") || getEnv("USERPROFILE");
-  if (!home) throw new Error("Could not determine home directory");
+  if (!env.homeDir) throw new Error("Could not determine home directory");
 
-  return join(home, ".config", CONFIG_DIR_NAME);
+  return join(env.homeDir, ".config", CONFIG_DIR_NAME);
 }
 
-function getTokenPath(): string {
-  return join(getConfigDir(), TOKEN_FILE_NAME);
+/**
+ * Get token file path.
+ *
+ * @param env - Optional RuntimeEnv for test isolation
+ */
+function getTokenPath(env: RuntimeEnv = getRuntimeEnv()): string {
+  return join(getConfigDir(env), TOKEN_FILE_NAME);
 }
 
 export async function readToken(): Promise<string | null> {

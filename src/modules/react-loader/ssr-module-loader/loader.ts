@@ -6,23 +6,23 @@
  * @module module-system/react-loader/ssr-module-loader/loader
  */
 
-import { join } from "@veryfront/platform/compat/path/index.ts";
-import { cwd } from "@veryfront/platform/compat/process.ts";
+import { isAbsolute, join } from "#veryfront/platform/compat/path/index.ts";
+import { cwd } from "#veryfront/platform/compat/process.ts";
 import type * as React from "react";
-import { transformToESM } from "@veryfront/transforms/esm/index.ts";
-import type { TransformOptions } from "@veryfront/transforms/esm/types.ts";
-import { TRANSFORM_CACHE_VERSION } from "@veryfront/transforms/esm/package-registry.ts";
+import { transformToESM } from "#veryfront/transforms/esm/index.ts";
+import type { TransformOptions } from "#veryfront/transforms/esm/types.ts";
+import { TRANSFORM_CACHE_VERSION } from "#veryfront/transforms/esm/package-registry.ts";
 import { buildSSRModuleCacheKey, buildSSRModuleProjectKey } from "../../../cache/keys.ts";
 import {
   type CrossProjectImport,
   type MissingImport,
   parseLocalImports,
-} from "@veryfront/transforms/esm/import-parser.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
-import { rendererLogger as logger } from "@veryfront/utils";
-import { getApiBaseUrlEnv } from "@veryfront/config/env.ts";
-import { injectContext } from "@veryfront/observability/tracing/otlp-setup.ts";
+} from "#veryfront/transforms/esm/import-parser.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
+import { injectContext } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { extractComponent } from "../extract-component.ts";
 import { CIRCUIT_BREAKER_RESET_MS, CIRCUIT_BREAKER_THRESHOLD } from "./constants.ts";
 import {
@@ -38,6 +38,7 @@ import {
   transformSemaphore,
 } from "./cache/index.ts";
 import type { ModuleCacheEntry, SSRModuleLoaderOptions } from "./types.ts";
+import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
 
 /**
  * SSR Module Loader with Redis Support.
@@ -520,18 +521,20 @@ export class SSRModuleLoader {
       projectDir = join(cwd(), projectDir);
     }
 
-    const cacheKey = buildSSRModuleProjectKey(projectDir, projectId);
+    const cacheBaseDir = getCacheBaseDir();
+    const baseDir = isAbsolute(cacheBaseDir) ? cacheBaseDir : join(cwd(), cacheBaseDir);
+    const cacheKey = `${baseDir}|${buildSSRModuleProjectKey(projectDir, projectId)}`;
 
     const existingDir = globalTmpDirs.get(cacheKey);
     if (existingDir) {
       return existingDir;
     }
 
+    const projectKey = projectId ? this.hashCode(projectId) : "default";
     const tmpDir = join(
-      projectDir,
-      ".cache",
+      baseDir,
       "veryfront-ssr",
-      projectId || "default",
+      projectKey,
     );
 
     await this.fs.mkdir(tmpDir, { recursive: true });

@@ -11,7 +11,7 @@
  * When changedPaths are provided, HMR can do smart updates instead of full reload.
  */
 
-import { serverLogger as logger } from "@veryfront/utils";
+import { serverLogger as logger } from "#veryfront/utils";
 
 type ReloadListener = (changedPaths?: string[]) => void;
 type InvalidateListener = () => void;
@@ -145,6 +145,24 @@ class ReloadNotifierImpl {
       ...this.metrics,
       activeReloadListeners: this.listeners.size,
       activeInvalidateListeners: this.invalidateListeners.size,
+    };
+  }
+
+  /**
+   * Reset the notifier state (for testing only)
+   */
+  reset(): void {
+    this.listeners.clear();
+    this.invalidateListeners.clear();
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+    }
+    this.pendingChangedPaths.clear();
+    this.metrics = {
+      triggerCalls: 0,
+      broadcastsSent: 0,
+      lastTriggerTime: 0,
     };
   }
 }

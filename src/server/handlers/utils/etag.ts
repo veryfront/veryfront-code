@@ -1,4 +1,4 @@
-import { HASH_SEED_DJB2 } from "@veryfront/utils";
+import { HASH_SEED_DJB2 } from "#veryfront/utils";
 
 function computeHash(content: string | Uint8Array): number {
   let hash = HASH_SEED_DJB2;

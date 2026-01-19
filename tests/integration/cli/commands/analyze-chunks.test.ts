@@ -1,5 +1,5 @@
-import { assert } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assert } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
 import { analyzeChunksCommand } from "../../../../src/cli/commands/analyze-chunks.ts";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
 

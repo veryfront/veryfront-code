@@ -3,8 +3,8 @@
  * @module rsc-endpoints/script-handlers
  */
 
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { serverLogger } from "@veryfront/utils";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { serverLogger } from "#veryfront/utils";
 
 /**
  * Handle client.js endpoint
@@ -21,9 +21,9 @@ export async function handleClientScript(
     "../../../../../rendering/rsc/client-boot.ts",
     import.meta.url,
   ).pathname;
-  let esbuild: typeof import("esbuild/mod.js") | null = null;
+  let esbuild: typeof import("esbuild") | null = null;
   try {
-    esbuild = await import("esbuild/mod.js");
+    esbuild = await import("esbuild");
     const src = await adapter.fs.readFile(p);
     const result = await esbuild.build({
       bundle: true,
@@ -93,11 +93,11 @@ export async function handleDomScript(
     "../../../../../rendering/rsc/client-dom.ts",
     import.meta.url,
   ).pathname;
-  let esbuild: typeof import("esbuild/mod.js") | null = null;
+  let esbuild: typeof import("esbuild") | null = null;
   try {
     // Use native esbuild for proper file system access during bundling
     // In npm build, this will be replaced by the injected bundle
-    esbuild = await import("esbuild/mod.js");
+    esbuild = await import("esbuild");
     const src = await adapter.fs.readFile(p);
     const result = await esbuild.build({
       bundle: true,

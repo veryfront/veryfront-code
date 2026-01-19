@@ -1,5 +1,5 @@
 import { compile as compileMdx } from "@mdx-js/mdx";
-import { getRehypePlugins, getRemarkPlugins } from "@veryfront/transforms/plugins/plugin-loader.ts";
+import { getRehypePlugins, getRemarkPlugins } from "#veryfront/transforms/plugins/plugin-loader.ts";
 import type { CompileOptions, PluginList } from "./types.ts";
 
 export interface ProcessedMDX {

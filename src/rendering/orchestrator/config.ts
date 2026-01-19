@@ -1,13 +1,14 @@
-import { isAbsolute, join } from "@veryfront/platform/compat/path-helper.ts";
-import { rendererLogger as logger } from "@veryfront/utils";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
-import { handleErrorWithFallback } from "@veryfront/errors/index.ts";
+import { isAbsolute, join } from "#veryfront/platform/compat/path-helper.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { handleErrorWithFallback } from "#veryfront/errors/index.ts";
 import { getContentHash } from "../utils/index.ts";
-import { getConfig } from "@veryfront/config";
-import { initializeBundleManifest } from "@veryfront/utils/bundle-manifest-init.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import type { VeryfrontConfig } from "@veryfront/config";
-import { isAnyDebugEnabled } from "@veryfront/utils/constants/env.ts";
+import { getConfig } from "#veryfront/config";
+import { initializeBundleManifest } from "#veryfront/utils/bundle-manifest-init.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
+import { isAnyDebugEnabled } from "#veryfront/utils/constants/env.ts";
+import { getCacheDirFromContext } from "#veryfront/utils/cache-dir.ts";
 
 export interface ConfigurationOptions {
   projectDir: string;
@@ -74,7 +75,13 @@ export class ConfigurationManager {
   }
 
   getCacheBaseDir(): string {
-    const baseDirFromEnv = this.adapter.env?.get?.("VERYFRONT_CACHE_DIR");
+    const contextCacheDir = getCacheDirFromContext();
+    if (contextCacheDir) {
+      return isAbsolute(contextCacheDir) ? contextCacheDir : join(this.projectDir, contextCacheDir);
+    }
+
+    const baseDirFromEnv = this.adapter.env?.get?.("VERYFRONT_CACHE_DIR") ??
+      this.adapter.env?.get?.("VF_CACHE_DIR");
     const configDir = this.config?.cache?.dir;
 
     // Return cached result if inputs haven't changed

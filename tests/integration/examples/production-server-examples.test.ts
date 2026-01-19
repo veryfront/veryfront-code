@@ -12,11 +12,14 @@
 // Disable LRU intervals during testing to prevent resource leaks
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 
-import { assertEquals, assertExists } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { describe, it } from "@veryfront/testing/bdd";
+import { writeTextFile } from "@veryfront/compat/fs.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
-describe("ProductionServer", () => {
+// Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
+// See: https://github.com/facebook/react/issues/24669
+describe("ProductionServer", { sanitizeResources: false, sanitizeOps: false }, () => {
   describe("Static Asset Serving", () => {
     it("should serve static files with correct headers and caching", async () => {
       /**
@@ -29,7 +32,7 @@ describe("ProductionServer", () => {
       await withTestContext("static-asset-serving", async (context) => {
         // Arrange: Set up test data
         const cssContent = "body { margin: 0; padding: 0; }";
-        await Deno.writeTextFile(`${context.projectDir}/public/styles.css`, cssContent);
+        await writeTextFile(`${context.projectDir}/public/styles.css`, cssContent);
 
         // Act: Start server and make request
         const server = await context.createProductionServer();
@@ -66,7 +69,7 @@ describe("ProductionServer", () => {
        */
       await withTestContext("concurrent-requests", async (context) => {
         // Arrange
-        await Deno.writeTextFile(`${context.projectDir}/public/test.txt`, "Hello, World!");
+        await writeTextFile(`${context.projectDir}/public/test.txt`, "Hello, World!");
 
         const server = await context.createProductionServer();
 
@@ -97,7 +100,7 @@ describe("ProductionServer", () => {
        */
       await withTestContext("error-handling", async (context) => {
         // Arrange: Create a page that throws an error
-        await Deno.writeTextFile(
+        await writeTextFile(
           `${context.projectDir}/pages/error.mdx`,
           `# Error Page\n\nexport default function ErrorPage() {\n  throw new Error('Intentional test error');\n}`,
         );
@@ -131,7 +134,8 @@ describe("ProductionServer", () => {
 });
 
 // Example of a performance-aware test
-describe("Performance", () => {
+// Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
+describe("Performance", { sanitizeResources: false, sanitizeOps: false }, () => {
   it("should serve static assets within acceptable time limits", async () => {
     /**
      * Test scenario:
@@ -140,7 +144,7 @@ describe("Performance", () => {
     await withTestContext("performance-static-assets", async (context) => {
       // Arrange: Create a larger CSS file
       const largeCSS = Array(1000).fill("body { margin: 0; }\n").join("");
-      await Deno.writeTextFile(`${context.projectDir}/public/large.css`, largeCSS);
+      await writeTextFile(`${context.projectDir}/public/large.css`, largeCSS);
 
       const server = await context.createProductionServer();
 
@@ -167,7 +171,7 @@ class TestDataFactory {
   static createMDXPage(options: {
     title: string;
     content: string;
-    frontmatter?: Record<string, any>;
+    frontmatter?: Record<string, unknown>;
   }): string {
     const frontmatterStr = options.frontmatter
       ? `---\n${
@@ -182,7 +186,7 @@ class TestDataFactory {
 
   static createReactComponent(name: string, props: string[] = []): string {
     const propsStr = props.length > 0
-      ? `{ ${props.join(", ")} }: { ${props.map((p) => `${p}: any`).join("; ")} }`
+      ? `{ ${props.join(", ")} }: { ${props.map((p) => `${p}: unknown`).join("; ")} }`
       : "()";
 
     return `
@@ -219,7 +223,7 @@ describe(
           },
         });
 
-        await Deno.writeTextFile(`${context.projectDir}/pages/test.mdx`, mdxContent);
+        await writeTextFile(`${context.projectDir}/pages/test.mdx`, mdxContent);
 
         const server = await context.createDevServer();
 

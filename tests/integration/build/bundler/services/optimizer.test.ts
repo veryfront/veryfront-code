@@ -9,8 +9,9 @@
  * - Development mode skip
  */
 
-import { assertEquals, assertExists } from "@std/assert";
-import * as esbuild from "esbuild/mod.js";
+import { assertEquals, assertExists } from "@veryfront/testing/assert";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
+import * as esbuild from "esbuild";
 import { optimizeBundle } from "../../../../../src/build/renderer/services/optimizer.ts";
 import type {
   BundleResult,
@@ -18,18 +19,18 @@ import type {
 } from "../../../../../src/build/renderer/types/bundler-types.ts";
 import { withTestContext } from "../../../../_helpers/context.ts";
 
-// Register cleanup handler to stop esbuild before process exits
-globalThis.addEventListener("unload", () => {
-  esbuild.stop();
-});
+describe(
+  "Bundle Optimizer",
+  { sanitizeOps: false, sanitizeResources: false },
+  () => {
+    afterAll(async () => {
+      // Only stop esbuild if a test explicitly opted to keep it alive
+      if (!(globalThis as Record<string, unknown>).__vfTestPreserveEsbuild) {
+        await esbuild.stop();
+      }
+    });
 
-// Use Deno.test wrapper to ensure proper cleanup after all tests
-Deno.test({
-  name: "Bundle Optimizer",
-  sanitizeOps: false,
-  sanitizeResources: false,
-  fn: async (t) => {
-    await t.step("optimizes bundle in production mode", async () => {
+    it("optimizes bundle in production mode", async () => {
       await withTestContext("optimizer-production", async (context) => {
         const options: BundlerOptions = {
           sources: [],
@@ -80,7 +81,7 @@ Deno.test({
       });
     });
 
-    await t.step("skips optimization in development mode", async () => {
+    it("skips optimization in development mode", async () => {
       await withTestContext("optimizer-development", async (context) => {
         const originalCode = `
           // Development comment
@@ -121,7 +122,7 @@ Deno.test({
       });
     });
 
-    await t.step("only optimizes JS files", async () => {
+    it("only optimizes JS files", async () => {
       await withTestContext("optimizer-file-types", async (context) => {
         const jsCode = "function test() { return 42; }";
         const cssCode = ".button { padding: 20px; }";
@@ -169,7 +170,7 @@ Deno.test({
       });
     });
 
-    await t.step("handles multiple JS files", async () => {
+    it("handles multiple JS files", async () => {
       await withTestContext("optimizer-multiple", async (context) => {
         const options: BundlerOptions = {
           sources: [],
@@ -228,7 +229,7 @@ Deno.test({
       });
     });
 
-    await t.step("handles modern JavaScript features", async () => {
+    it("handles modern JavaScript features", async () => {
       await withTestContext("optimizer-modern-js", async (context) => {
         const options: BundlerOptions = {
           sources: [],
@@ -278,7 +279,7 @@ Deno.test({
       });
     });
 
-    await t.step("handles syntax errors gracefully", async () => {
+    it("handles syntax errors gracefully", async () => {
       await withTestContext("optimizer-syntax-error", async (context) => {
         const options: BundlerOptions = {
           sources: [],
@@ -316,7 +317,7 @@ Deno.test({
       });
     });
 
-    await t.step("transforms arrow functions", async () => {
+    it("transforms arrow functions", async () => {
       await withTestContext("optimizer-arrows", async (context) => {
         const options: BundlerOptions = {
           sources: [],
@@ -357,7 +358,7 @@ Deno.test({
       });
     });
 
-    await t.step("handles empty output set", async () => {
+    it("handles empty output set", async () => {
       await withTestContext("optimizer-empty", async (context) => {
         const options: BundlerOptions = {
           sources: [],
@@ -379,7 +380,7 @@ Deno.test({
       });
     });
 
-    await t.step("preserves output metadata", async () => {
+    it("preserves output metadata", async () => {
       await withTestContext("optimizer-metadata", async (context) => {
         const options: BundlerOptions = {
           sources: [],
@@ -422,7 +423,7 @@ Deno.test({
       });
     });
 
-    await t.step("handles large files efficiently", async () => {
+    it("handles large files efficiently", async () => {
       await withTestContext("optimizer-large", async (context) => {
         const options: BundlerOptions = {
           sources: [],
@@ -467,4 +468,4 @@ Deno.test({
       });
     });
   },
-});
+);

@@ -6,8 +6,8 @@
  * @module rendering/orchestrator/module-loader/esm-rewriter
  */
 
-import { rendererLogger as logger } from "@veryfront/utils";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { generateHash } from "./cache.ts";
 
 /**

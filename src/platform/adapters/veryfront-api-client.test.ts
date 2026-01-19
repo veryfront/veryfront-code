@@ -1,5 +1,5 @@
-import { assertEquals } from "@std/assert";
-import { beforeEach, describe, it } from "@std/testing/bdd";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontAPIClient, VeryfrontAPIError } from "./veryfront-api-client/index.ts";
 
 describe("VeryfrontAPIClient", () => {
@@ -12,7 +12,14 @@ describe("VeryfrontAPIClient", () => {
   let client: VeryfrontAPIClient;
 
   beforeEach(() => {
-    client = new VeryfrontAPIClient(mockConfig);
+    client = new VeryfrontAPIClient({
+      ...mockConfig,
+      retry: {
+        maxRetries: 2,
+        initialDelay: 5,
+        maxDelay: 25,
+      },
+    });
     // Use branch context for simpler mock responses
     client.setContext({ type: "branch", name: "main" });
   });

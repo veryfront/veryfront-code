@@ -1,4 +1,4 @@
-import { bundlerLogger as logger } from "@veryfront/utils";
+import { bundlerLogger as logger } from "#veryfront/utils";
 import type { CompileOptions, CompileResult, MDXFrontmatter } from "./types.ts";
 import { validateCompileParams, validateFileExists } from "./validator.ts";
 import { extractExports, parseFrontmatter } from "./frontmatter-parser.ts";

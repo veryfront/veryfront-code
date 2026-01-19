@@ -4,8 +4,8 @@
  * Registry for managing and looking up agents in workflow execution
  */
 
-import type { Agent } from "@veryfront/agent";
-import type { Tool } from "@veryfront/tool";
+import type { Agent } from "#veryfront/agent";
+import type { Tool } from "#veryfront/tool";
 import type { AgentRegistry, ToolRegistry } from "../executor/step-executor.ts";
 
 /**

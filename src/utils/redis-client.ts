@@ -6,7 +6,7 @@
  */
 
 import { logger } from "./logger/logger.ts";
-import { getRedisUrlEnv } from "@veryfront/config/env.ts";
+import { getRedisUrlEnv } from "#veryfront/config/env.ts";
 
 export interface RedisClient {
   connect(): Promise<void>;

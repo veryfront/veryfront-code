@@ -5,19 +5,19 @@
  * Creates connector.json, API client, OAuth routes, token store, and tool skeletons.
  */
 
-import { join } from "@std/path";
-import { cyan, dim, green } from "@veryfront/compat/console";
-import { cliLogger } from "@veryfront/utils";
+import { join } from "#std/path.ts";
+import { cyan, dim, green } from "#veryfront/compat/console";
+import { cliLogger } from "#veryfront/utils";
 import {
   createFileSystem,
   type FileSystem,
   isAlreadyExistsError,
-} from "@veryfront/platform/compat/fs.ts";
+} from "#veryfront/platform/compat/fs.ts";
 import {
   isInteractive as checkIsInteractive,
   promptSync,
-} from "@veryfront/platform/compat/process.ts";
-import { isCiEnv, isDenoTestingEnv } from "@veryfront/config/env.ts";
+} from "#veryfront/platform/compat/process.ts";
+import { isCiEnv, isDenoTestingEnv } from "#veryfront/config/env.ts";
 import { select } from "../../utils/terminal-select.ts";
 
 let fs: FileSystem;

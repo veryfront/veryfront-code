@@ -8,7 +8,7 @@
  * - Export to Prometheus, CloudWatch, OTLP, etc.
  */
 
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { metricsManager } from "./manager.ts";
 
 // Re-export types
@@ -164,5 +164,8 @@ export function recordSecurityHeaders(attributes?: Record<string, string>): void
   getRecorder()?.recordSecurityHeaders?.(attributes);
 }
 
-// Export singleton for advanced usage
+// Export singleton for production use
 export { metricsManager } from "./manager.ts";
+
+// Export class for testing - tests can create isolated instances
+export { MetricsManager } from "./manager.ts";

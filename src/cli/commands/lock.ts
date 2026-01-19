@@ -1,5 +1,5 @@
-import { cliLogger } from "@veryfront/utils";
-import { createLockfileManager } from "@veryfront/utils/import-lockfile.ts";
+import { cliLogger } from "#veryfront/utils";
+import { createLockfileManager } from "#veryfront/utils/import-lockfile.ts";
 import { confirmPrompt, createSpinner, logSuccess, logWarning } from "../utils/index.ts";
 
 interface LockOptions {
@@ -101,7 +101,7 @@ async function verifyLockfile(lockfile: ReturnType<typeof createLockfileManager>
   let failed = 0;
   const failures: Array<{ url: string; reason: string }> = [];
 
-  const { computeIntegrity } = await import("@veryfront/utils/import-lockfile.ts");
+  const { computeIntegrity } = await import("#veryfront/utils/import-lockfile.ts");
 
   for (const [url, entry] of Object.entries(data.imports)) {
     try {
@@ -163,7 +163,7 @@ async function updateLockfile(
   let updated = 0;
   let failed = 0;
 
-  const { computeIntegrity } = await import("@veryfront/utils/import-lockfile.ts");
+  const { computeIntegrity } = await import("#veryfront/utils/import-lockfile.ts");
 
   for (const [url] of Object.entries(data.imports)) {
     try {

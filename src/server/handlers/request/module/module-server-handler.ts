@@ -8,7 +8,7 @@
  */
 
 import type { HandlerContext, HandlerResult } from "../../types.ts";
-import { ResponseBuilder } from "@veryfront/security/index.ts";
+import { ResponseBuilder } from "#veryfront/security/index.ts";
 
 /**
  * Handles module server requests for ES module serving.
@@ -43,7 +43,7 @@ export async function handleModuleServer(
   getErrorMessage: (error: unknown) => string,
 ): Promise<HandlerResult> {
   try {
-    const { serveModule } = await import("@veryfront/modules/server/index.ts");
+    const { serveModule } = await import("#veryfront/modules/server/index.ts");
     const moduleResponse = await serveModule(req, {
       projectId: ctx.projectId ?? ctx.projectDir,
       projectDir: ctx.projectDir,

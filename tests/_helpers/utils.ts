@@ -1,3 +1,6 @@
+import { deleteEnv, getEnv, setEnv } from "../../src/platform/compat/process.ts";
+import { isBun, isDeno } from "../../src/platform/compat/runtime.ts";
+
 /**
  * Get a free port for testing.
  *
@@ -7,25 +10,64 @@
  * Override via environment variables:
  *   TEST_PORT_MIN=15000 TEST_PORT_MAX=20000 deno task test
  */
-export function getFreePort(start?: number, end?: number): number {
+export async function getFreePort(start?: number, end?: number): Promise<number> {
   // Allow env var override for parallel worktree isolation
-  const minPort = start ?? parseInt(Deno.env.get("TEST_PORT_MIN") || "10000", 10);
-  const maxPort = end ?? parseInt(Deno.env.get("TEST_PORT_MAX") || "60000", 10);
+  const minPort = start ?? parseInt(getEnv("TEST_PORT_MIN") || "10000", 10);
+  const maxPort = end ?? parseInt(getEnv("TEST_PORT_MAX") || "60000", 10);
 
   // Use random port selection to avoid sequential reuse before OS releases ports
   // This helps when tests run quickly in sequence - previously used ports may still be in TIME_WAIT
   const maxAttempts = 100;
+  const net = isDeno || isBun ? null : await import("node:net");
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     // Random port in range
     const port = Math.floor(Math.random() * (maxPort - minPort + 1)) + minPort;
 
-    try {
-      const listener = Deno.listen({ hostname: "127.0.0.1", port });
-      listener.close();
-      return port;
-    } catch {
-      // Port in use; try another random port
+    // Try to bind to the port to check availability
+    if (isDeno) {
+      try {
+        // @ts-ignore - Deno global
+        const listener = Deno.listen({ hostname: "127.0.0.1", port });
+        listener.close();
+        return port;
+      } catch {
+        // Port in use; try another random port
+      }
+    } else if (isBun) {
+      try {
+        const bun = (globalThis as {
+          Bun?: { serve: (options: Record<string, unknown>) => { stop: () => void } };
+        }).Bun;
+        if (!bun) {
+          throw new Error("Bun global not available");
+        }
+        const server = bun.serve({
+          port,
+          hostname: "127.0.0.1",
+          fetch() {
+            return new Response("ok");
+          },
+        });
+        server.stop();
+        return port;
+      } catch {
+        // Port in use or server start failed; try another random port
+      }
+    } else {
+      const isAvailable = await new Promise<boolean>((resolve) => {
+        const server = net!.createServer();
+        server.unref?.();
+        server.once("error", () => {
+          resolve(false);
+        });
+        server.listen({ port, host: "127.0.0.1", exclusive: true }, () => {
+          server.close(() => resolve(true));
+        });
+      });
+      if (isAvailable) {
+        return port;
+      }
     }
   }
 
@@ -35,13 +77,13 @@ export function getFreePort(start?: number, end?: number): number {
 export function withEnv(vars: Record<string, string>): () => void {
   const prev: Record<string, string | undefined> = {};
   for (const [k, v] of Object.entries(vars)) {
-    prev[k] = Deno.env.get(k);
-    Deno.env.set(k, v);
+    prev[k] = getEnv(k);
+    setEnv(k, v);
   }
   return () => {
     for (const [k, v] of Object.entries(prev)) {
-      if (v === undefined) Deno.env.delete(k);
-      else Deno.env.set(k, v);
+      if (v === undefined) deleteEnv(k);
+      else setEnv(k, v);
     }
   };
 }
@@ -69,6 +111,8 @@ export async function drainEventLoop(cycles = 5, extraDelayMs = 50): Promise<voi
 
 /**
  * Assert that no unexpected resources or ops remain. Retries with drains before failing.
+ * Note: This is Deno-specific. In Node.js/Bun, this is a no-op since they don't have
+ * the same resource/ops tracking.
  */
 export async function assertDrained({
   retries = 3,
@@ -81,8 +125,16 @@ export async function assertDrained({
   allowResources?: RegExp[];
   allowOpsDelta?: number;
 } = {}): Promise<void> {
+  // This is Deno-specific - skip in Node.js/Bun
+  if (!isDeno) {
+    await drainEventLoop(2, delayMs);
+    return;
+  }
+
+  // deno-lint-ignore no-explicit-any
   const resourcesFn: (() => Record<number, string>) | null =
     typeof (Deno as any).resources === "function" ? (Deno as any).resources.bind(Deno) : null;
+  // deno-lint-ignore no-explicit-any
   const metricsFn: (() => { opsDispatched: number; opsCompleted: number }) | null =
     typeof (Deno as any).metrics === "function" ? (Deno as any).metrics.bind(Deno) : null;
 

@@ -7,7 +7,7 @@ import {
   getReactCDNUrl,
   getReactDOMClientCDNUrl,
   REACT_DEFAULT_VERSION,
-} from "@veryfront/utils/constants/cdn.ts";
+} from "#veryfront/utils/constants/cdn.ts";
 import { consumeNdjsonStream, getContainer } from "./client-dom.ts";
 import { FS_PATH_PREFIX, HYDRATION_DATA_ID, RSC_PATH_PREFIX, RSC_ROOT_ID } from "./constants.ts";
 

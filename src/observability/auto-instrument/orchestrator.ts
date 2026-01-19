@@ -1,5 +1,5 @@
-import { serverLogger as logger } from "@veryfront/utils";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { serverLogger as logger } from "#veryfront/utils";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { initTracing } from "../tracing/index.ts";
 import { initMetrics } from "../metrics/index.ts";
 import type { AutoInstrumentConfig } from "./types.ts";

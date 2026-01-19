@@ -1,6 +1,6 @@
 import type { Code, Paragraph, Root } from "mdast";
 import type { Data, Node, Parent } from "unist";
-import type { VFile } from "npm:vfile@6";
+import type { VFile } from "vfile";
 import { CONTINUE, SKIP, visit } from "unist-util-visit";
 
 interface MDXJsxElement extends Node {

@@ -11,15 +11,18 @@
  * - Cross-runtime compatibility
  */
 
-import { assert, assertEquals, assertExists } from "@std/assert";
-import { delay } from "@std/async";
-import { join } from "@std/path";
-import { afterAll, describe, it } from "@std/testing/bdd";
+import { assert, assertEquals, assertExists } from "@veryfront/testing/assert";
+import { join } from "@veryfront/compat/path";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
+import { delay, makeTempDir, mkdir, remove, writeTextFile } from "@veryfront/testing/deno-compat";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import { HMRServer, type HMRServerOptions } from "../../../src/server/dev-server/hmr-server.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { drainEventLoop } from "../../_helpers/utils.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
+import { isDeno } from "../../../src/platform/compat/runtime.ts";
+
+const denoOnlyDescribe = isDeno ? describe : describe.skip;
 
 // Helper to create and start HMR server with cleanup
 async function createHMRServer(
@@ -45,7 +48,7 @@ async function createHMRServer(
   return { server, port };
 }
 
-describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
+denoOnlyDescribe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
   // Clean up renderer intervals to prevent resource leaks
   afterAll(async () => {
     await cleanupBundler();
@@ -53,7 +56,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
 
   describe(
     "HMR Server - Initialization and Lifecycle",
-    {},
+    { sanitizeOps: false, sanitizeResources: false },
     () => {
       it("creates HMR server instance with options", async () => {
         const adapter = await getAdapter();
@@ -130,7 +133,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
 
   describe(
     "HMR Server - WebSocket Connection Handling",
-    {},
+    { sanitizeOps: false, sanitizeResources: false },
     () => {
       it("upgrades WebSocket connections successfully", async () => {
         await withTestContext("hmr-websocket-upgrade", async (context) => {
@@ -303,7 +306,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
 
   describe(
     "HMR Server - Client Messages",
-    {},
+    { sanitizeOps: false, sanitizeResources: false },
     () => {
       it("handles ping-pong messages", async () => {
         await withTestContext("hmr-ping-pong", async (context) => {
@@ -429,7 +432,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
 
   describe(
     "HMR Server - HTTP Endpoints",
-    {},
+    { sanitizeOps: false, sanitizeResources: false },
     () => {
       it("serves HMR runtime script", async () => {
         await withTestContext("hmr-runtime-script", async (context) => {
@@ -520,13 +523,13 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
 
   describe(
     "HMR Server - File Change Detection",
-    {},
+    { sanitizeOps: false, sanitizeResources: false },
     () => {
       it("detects file changes and broadcasts updates", async () => {
         await withTestContext("hmr-file-change-detection", async (context) => {
           // Create test file
           const testFile = join(context.projectDir, "pages", "test.tsx");
-          await Deno.writeTextFile(
+          await writeTextFile(
             testFile,
             "export default function Test() { return <div>V1</div> }",
           );
@@ -549,7 +552,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
           await delay(200);
 
           // Modify the file
-          await Deno.writeTextFile(
+          await writeTextFile(
             testFile,
             "export default function Test() { return <div>V2</div> }",
           );
@@ -575,9 +578,9 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
       it("detects CSS file changes", async () => {
         await withTestContext("hmr-css-change", async (context) => {
           // Create CSS file in src directory
-          await Deno.mkdir(join(context.projectDir, "src"), { recursive: true });
+          await mkdir(join(context.projectDir, "src"), { recursive: true });
           const cssFile = join(context.projectDir, "src", "style.css");
-          await Deno.writeTextFile(cssFile, "body { color: red; }");
+          await writeTextFile(cssFile, "body { color: red; }");
 
           const controller = new AbortController();
           const { server, port } = await createHMRServer(context, {}, controller.signal);
@@ -593,7 +596,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
           await delay(200);
 
           // Modify CSS
-          await Deno.writeTextFile(cssFile, "body { color: blue; }");
+          await writeTextFile(cssFile, "body { color: blue; }");
           await delay(600);
 
           // Should receive CSS update (if file watcher is working)
@@ -631,7 +634,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
 
           // Create a new directory
           const newDir = join(context.projectDir, "pages", "new-dir");
-          await Deno.mkdir(newDir);
+          await mkdir(newDir);
           await delay(400);
 
           // Should not receive update for directory creation
@@ -655,14 +658,14 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
 
   describe(
     "HMR Server - Error Handling",
-    {},
+    { sanitizeOps: false, sanitizeResources: false },
     () => {
       it("handles missing project directories gracefully", async () => {
         await withTestContext("hmr-missing-dirs", async (context) => {
           // Use temp dir without standard structure
-          const emptyDir = await Deno.makeTempDir();
+          const emptyDir = await makeTempDir();
           context.addCleanup(async () => {
-            await Deno.remove(emptyDir, { recursive: true });
+            await remove(emptyDir, { recursive: true });
           });
 
           const adapter = await getAdapter();
@@ -752,7 +755,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
 
   describe(
     "HMR Server - Runtime Compatibility",
-    {},
+    { sanitizeOps: false, sanitizeResources: false },
     () => {
       it("works with detected runtime adapter", async () => {
         await withTestContext("hmr-runtime-compat", async (context) => {
@@ -808,7 +811,7 @@ describe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: false }, (
 
   describe(
     "HMR Server - Module Graph",
-    {},
+    { sanitizeOps: false, sanitizeResources: false },
     () => {
       it("maintains module graph across updates", async () => {
         await withTestContext("hmr-module-graph", async (context) => {

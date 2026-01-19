@@ -1,4 +1,4 @@
-import { logger } from "@veryfront/utils";
+import { logger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "./base.ts";
 import { createError, toError } from "../../errors/veryfront-error.ts";
 import { detectRuntime } from "./runtime-detection.ts";
@@ -22,7 +22,7 @@ export { runtime } from "./registry.ts";
  * const adapter = await getAdapter();
  *
  * // New way (recommended)
- * import { runtime } from "@veryfront/platform/adapters/registry.ts";
+ * import { runtime } from "#veryfront/platform/adapters/registry.ts";
  * const adapter = await runtime.get();
  * ```
  *

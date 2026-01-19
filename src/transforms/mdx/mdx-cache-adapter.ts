@@ -1,15 +1,15 @@
-import { rendererLogger as logger } from "@veryfront/utils";
-import { wrapError as _wrapError } from "@veryfront/errors";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { wrapError as _wrapError } from "#veryfront/errors";
 import {
   type BundleCode,
   type BundleMetadata,
   computeCodeHash,
   computeContentHash,
   getBundleManifestStore,
-} from "@veryfront/utils";
-import { getBundleManifestTTL } from "@veryfront/utils/bundle-manifest-init.ts";
-import type { VeryfrontConfig } from "@veryfront/config";
-import type { MdxBundle } from "@veryfront/types";
+} from "#veryfront/utils";
+import { getBundleManifestTTL } from "#veryfront/utils/bundle-manifest-init.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
+import type { MdxBundle } from "#veryfront/types";
 
 export interface MDXCompilationResult extends MdxBundle {
   headings?: Array<{ id: string; text: string; level: number }>;

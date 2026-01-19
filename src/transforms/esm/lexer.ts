@@ -8,7 +8,8 @@ let initPromise: Promise<void> | null = null;
 // ============================================================================
 
 // Matches HTTP/HTTPS URLs in string literals (single, double, or backtick quotes)
-const HTTP_URL_PATTERN = /(['"`])(https?:\/\/[^'"`\n]+)\1/g;
+// Uses negative lookbehind to avoid matching URLs inside escaped quotes (like \")
+const HTTP_URL_PATTERN = /(?<!\\)(['"`])(https?:\/\/[^'"`\n\\]+)\1/g;
 
 type UrlMaskResult = {
   masked: string;
@@ -63,7 +64,27 @@ export async function parseImports(code: string): Promise<readonly ImportSpecifi
 
   // Mask HTTP URLs to avoid es-module-lexer parse errors
   const { masked, urlMap } = maskHttpUrls(code);
-  const [imports] = parse(masked);
+
+  let imports: readonly ImportSpecifier[];
+  try {
+    [imports] = parse(masked);
+  } catch (error) {
+    // Log the problematic code around the error location for debugging
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    const match = errorMsg.match(/@:(\d+):(\d+)/);
+    if (match) {
+      const line = parseInt(match[1]!, 10);
+      const col = parseInt(match[2]!, 10);
+      const lines = masked.split("\n");
+      const context = lines.slice(Math.max(0, line - 3), line + 2).map((l, i) => {
+        const lineNum = Math.max(0, line - 3) + i + 1;
+        const prefix = lineNum === line ? ">>> " : "    ";
+        return `${prefix}${lineNum}: ${l.substring(0, 200)}${l.length > 200 ? "..." : ""}`;
+      }).join("\n");
+      console.error(`[es-module-lexer] Parse error at line ${line}, column ${col}:\n${context}`);
+    }
+    throw error;
+  }
 
   // If no URLs were masked, return as-is
   if (urlMap.size === 0) {

@@ -1,6 +1,7 @@
-import { assertEquals } from "@std/assert";
-import { join } from "@std/path";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals } from "@veryfront/testing/assert";
+import { join } from "@veryfront/compat/path";
+import { describe, it } from "@veryfront/testing/bdd";
+import { mkdir, remove, writeTextFile } from "@veryfront/testing/deno-compat";
 import { APIRouteHandler } from "@veryfront/routing/api/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
@@ -10,12 +11,12 @@ describe(
     it("blocks disallowed remote import hosts", async () => {
       await withTestContext("api-allowlist-block", async (context) => {
         // Remove default app directory to use pages router
-        await Deno.remove(join(context.projectDir, "app"), { recursive: true });
+        await remove(join(context.projectDir, "app"), { recursive: true });
 
         // Create pages/api/test.ts that imports a disallowed host
         const apiDir = join(context.projectDir, "pages", "api");
-        await Deno.mkdir(apiDir, { recursive: true });
-        await Deno.writeTextFile(
+        await mkdir(apiDir, { recursive: true });
+        await writeTextFile(
           join(apiDir, "bad.ts"),
           `export async function GET() { await import('https://example.com/x.js'); return new Response('ok'); }`,
         );

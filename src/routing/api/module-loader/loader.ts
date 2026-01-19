@@ -1,16 +1,17 @@
-import { serverLogger as logger } from "@veryfront/utils";
+import { serverLogger as logger } from "#veryfront/utils";
 import type { BuildResult, Plugin } from "esbuild";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/index.ts";
-import type { VeryfrontConfig } from "@veryfront/config";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/index.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 import { createHTTPPlugin } from "./esbuild-plugin.ts";
 import { validateHTTPImports } from "./http-validator.ts";
 import { loadSecurityConfig } from "./security-config.ts";
 import type { APIRoute, LoadModuleOptions } from "./types.ts";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
-import { getEsbuildLoader } from "@veryfront/utils/path-utils.ts";
-import { createFileSystem, FileSystem } from "@veryfront/platform/compat/fs.ts";
-import * as pathHelper from "@veryfront/platform/compat/path-helper.ts";
-import { isDeno, isNode } from "@veryfront/platform/compat/runtime.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
+import * as pathHelper from "#veryfront/platform/compat/path-helper.ts";
+import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 
 export async function loadHandlerModule(options: LoadModuleOptions): Promise<APIRoute | null> {
   const { projectDir, modulePath, adapter, config } = options;

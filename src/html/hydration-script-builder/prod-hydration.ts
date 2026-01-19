@@ -1,4 +1,4 @@
-import type { ComponentProps } from "@veryfront/types";
+import type { ComponentProps } from "#veryfront/types";
 
 export function generateProdHydrationScript(
   slug: string,

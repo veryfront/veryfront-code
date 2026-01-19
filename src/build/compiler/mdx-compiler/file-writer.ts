@@ -1,5 +1,5 @@
-import { join, resolve } from "@veryfront/platform/compat/path/index.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { join, resolve } from "#veryfront/platform/compat/path/index.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { CompileOptions } from "./types.ts";
 
 const fs = createFileSystem();

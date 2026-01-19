@@ -1,11 +1,11 @@
-import { serverLogger as logger } from "@veryfront/utils";
-import { buildLocalhostUrl, LOCALHOST } from "@veryfront/config";
-import type { RuntimeAdapter, Server } from "@veryfront/platform/adapters/base.ts";
-import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
-import { DynamicRouter } from "@veryfront/routing/api/index.ts";
-import { ComponentRegistry } from "@veryfront/modules/component-registry/index.ts";
-import type { VeryfrontConfig } from "@veryfront/config";
-import { MiddlewarePipeline } from "@veryfront/middleware/core/pipeline/index.ts";
+import { serverLogger as logger } from "#veryfront/utils";
+import { buildLocalhostUrl, LOCALHOST } from "#veryfront/config";
+import type { RuntimeAdapter, Server } from "#veryfront/platform/adapters/base.ts";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
+import { DynamicRouter } from "#veryfront/routing/api/index.ts";
+import { ComponentRegistry } from "#veryfront/modules/component-registry/index.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
+import { MiddlewarePipeline } from "#veryfront/middleware/core/pipeline/index.ts";
 import { bootstrapDev } from "../bootstrap.ts";
 import { HMRServer } from "./hmr-server.ts";
 import { ReloadNotifier } from "../reload-notifier.ts";
@@ -18,8 +18,8 @@ import {
   enableSSRClientOnlyFetching,
   enableSSRFetchInterception,
   setSSRServerPort,
-} from "@veryfront/rendering/ssr-globals.ts";
-import { setEnv } from "@veryfront/platform/compat/process.ts";
+} from "#veryfront/rendering/ssr-globals.ts";
+import { setEnv } from "#veryfront/platform/compat/process.ts";
 
 export class DevServer {
   private router: DynamicRouter;
@@ -51,7 +51,7 @@ export class DevServer {
 
   private async logRSCStatus(): Promise<void> {
     try {
-      const { isRSCEnabled } = await import("@veryfront/utils/feature-flags.ts");
+      const { isRSCEnabled } = await import("#veryfront/utils/feature-flags.ts");
       const rsc = isRSCEnabled(this.appConfig);
       const stub = this.adapter.env.get("VERYFRONT_FORCE_FLIGHT_STUB") === "1" ? " (stub)" : "";
       logger.debug(`[RSC] ${rsc ? "enabled" : "disabled"}${rsc ? stub : ""}`);
@@ -183,9 +183,17 @@ export class DevServer {
     );
 
     // Create handler with optional request interceptor (for combined proxy mode)
+    // NOTE: WebSocket upgrade requests MUST NOT be intercepted because the interceptor
+    // creates a new Request object, which breaks Deno.upgradeWebSocket() - it needs
+    // the original request to maintain the connection.
     const baseHandler = (req: Request) => this.pipeline.execute(req, this.adapter.env.toObject());
     const handler = this.options.requestInterceptor
       ? async (req: Request) => {
+        // Skip interceptor for WebSocket upgrade requests
+        const isWebSocketUpgrade = req.headers.get("upgrade")?.toLowerCase() === "websocket";
+        if (isWebSocketUpgrade) {
+          return baseHandler(req);
+        }
         const interceptedReq = await this.options.requestInterceptor!(req);
         return baseHandler(interceptedReq);
       }

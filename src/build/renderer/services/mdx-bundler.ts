@@ -3,13 +3,13 @@
  */
 
 import { compile as compileMdx } from "@mdx-js/mdx";
-import { bundlerLogger as logger } from "@veryfront/utils";
+import { bundlerLogger as logger } from "#veryfront/utils";
 import type { PluggableList } from "unified";
-import { extract } from "@std/front-matter/yaml";
-import { dirname, join } from "@veryfront/platform/compat/path/index.ts";
-import { getRehypePlugins, getRemarkPlugins } from "@veryfront/transforms/plugins/plugin-loader.ts";
-import { ensureError } from "@veryfront/errors/veryfront-error.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { extract } from "#std/front-matter/yaml.ts";
+import { dirname, join } from "#veryfront/platform/compat/path/index.ts";
+import { getRehypePlugins, getRemarkPlugins } from "#veryfront/transforms/plugins/plugin-loader.ts";
+import { ensureError } from "#veryfront/errors/veryfront-error.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type {
   BundleResult,
   BundlerOptions,
@@ -204,7 +204,7 @@ export async function bundleMDXWithOptions(options: MDXBundleOptions): Promise<M
 
     const code = `
 import * as React from "react";
-import { useMDXComponents } from '@veryfront/mdx-components';
+import { useMDXComponents } from "#veryfront/mdx-components';
 ${globalsImport}
 
 ${compiledStr}

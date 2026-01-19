@@ -27,7 +27,7 @@
  * ### Basic Validation
  *
  * ```ts
- * import { ElementValidator } from '@veryfront/render/rendering/element-validator'
+ * import { ElementValidator } from "#veryfront/render/rendering/element-validator'
  *
  * const validator = new ElementValidator()
  * const validElement = validator.ensureValidReactElement(pageElement)

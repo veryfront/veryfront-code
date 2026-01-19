@@ -11,10 +11,10 @@
  * - Performs cleanup
  */
 
-import { serverLogger as logger } from "@veryfront/utils";
-import type { BuildOptions, BuildStats } from "@veryfront/server/build-types.ts";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { serverLogger as logger } from "#veryfront/utils";
+import type { BuildOptions, BuildStats } from "#veryfront/server/build-types.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import {
   cleanupCaches,
   cleanupRenderer,

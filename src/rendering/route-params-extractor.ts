@@ -1,8 +1,8 @@
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { extractParams } from "@veryfront/routing/slug-mapper/dynamic-route-matcher.ts";
-import { EXTENSION_REGEX, isDynamicSegment } from "@veryfront/utils/route-path-utils.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { extractParams } from "#veryfront/routing/slug-mapper/dynamic-route-matcher.ts";
+import { EXTENSION_REGEX, isDynamicSegment } from "#veryfront/utils/route-path-utils.ts";
 import { join } from "../platform/compat/path-helper.ts";
-import { logger, startTimer } from "@veryfront/utils";
+import { logger, startTimer } from "#veryfront/utils";
 
 let fsStatCount = 0;
 let fsReadDirCount = 0;

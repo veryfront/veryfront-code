@@ -8,13 +8,15 @@
  * - Configuration options
  */
 
-import { assert, assertEquals as _assertEquals, assertExists } from "@std/assert";
-import { join } from "@std/path";
-import { afterAll, describe, it } from "@std/testing/bdd";
+import { assert, assertEquals as _assertEquals, assertExists } from "@veryfront/testing/assert";
+import { join } from "@veryfront/compat/path";
+import { afterAll, describe, it } from "@veryfront/testing/bdd";
+import { delay, mkdir, writeTextFile } from "@veryfront/testing/deno-compat";
 import { createDevServer as _createDevServer } from "../../../src/server/dev-server.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import type { TestContext } from "../../_helpers/context.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
+import { scaleMs } from "@veryfront/testing";
 
 type FixtureVariant = "initial" | "updated";
 
@@ -58,12 +60,12 @@ describe("Dev Server Debounce Tests", { sanitizeOps: false, sanitizeResources: f
          */
         await withTestContext("dev-watcher-config", async (context: TestContext) => {
           // Create a test page
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "index.mdx"),
             "# Test Page",
           );
 
-          const customDebounceMs = 200;
+          const customDebounceMs = scaleMs(200);
           const server = await context.createDevServer({
             enableHMR: true,
             fileWatcherDebounceMs: customDebounceMs,
@@ -73,7 +75,7 @@ describe("Dev Server Debounce Tests", { sanitizeOps: false, sanitizeResources: f
           assertExists(server, "Server should be created");
 
           // Wait for initial file watcher events to settle, then reset metrics
-          await new Promise((resolve) => setTimeout(resolve, 500));
+          await delay(500);
 
           // Reset metrics by getting them (this will clear the counters for the test)
           // The actual fix is that we should only check metrics if this is truly the first test
@@ -98,32 +100,32 @@ describe("Dev Server Debounce Tests", { sanitizeOps: false, sanitizeResources: f
          */
         await withTestContext("dev-watcher-batching", async (context: TestContext) => {
           // Create initial pages
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "index.mdx"),
             "# Home",
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "about.mdx"),
             "# About",
           );
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "contact.mdx"),
             "# Contact",
           );
 
           const server = await context.createDevServer({
             enableHMR: true,
-            fileWatcherDebounceMs: 150, // 150ms debounce
+            fileWatcherDebounceMs: scaleMs(150), // 150ms debounce
           });
 
           // Wait for initial setup
-          await new Promise((resolve) => setTimeout(resolve, 200));
+          await delay(200);
 
           // Simulate rapid file changes
           const changes = [];
           for (let i = 0; i < 5; i++) {
             changes.push(
-              Deno.writeTextFile(
+              writeTextFile(
                 join(context.projectDir, "pages", `page${i}.mdx`),
                 `# Page ${i}`,
               ),
@@ -134,7 +136,7 @@ describe("Dev Server Debounce Tests", { sanitizeOps: false, sanitizeResources: f
           await Promise.all(changes);
 
           // Wait for debounce to complete
-          await new Promise((resolve) => setTimeout(resolve, 300));
+          await delay(300);
 
           // Check metrics
           const metrics = server.getFileWatcherMetrics?.();
@@ -157,36 +159,37 @@ describe("Dev Server Debounce Tests", { sanitizeOps: false, sanitizeResources: f
          * Verifies that changes are processed after the debounce period expires
          */
         await withTestContext("dev-watcher-timing", async (context: TestContext) => {
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "index.mdx"),
             "# Initial",
           );
 
-          const debounceMs = 100;
+          const debounceBaseMs = 100;
+          const debounceMs = scaleMs(debounceBaseMs);
           const _server = await context.createDevServer({
             enableHMR: true,
             fileWatcherDebounceMs: debounceMs,
           });
 
           // Wait for initial setup
-          await new Promise((resolve) => setTimeout(resolve, 200));
+          await delay(200);
 
           // Make a change
           const changeTime = Date.now();
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "test.mdx"),
             "# Test Page",
           );
 
           // Wait for slightly more than debounce time
-          await new Promise((resolve) => setTimeout(resolve, debounceMs + 50));
+          await delay(debounceBaseMs + 50);
 
           const processTime = Date.now();
           const elapsed = processTime - changeTime;
 
           // Processing should happen after debounce but not too long after
           assert(
-            elapsed >= debounceMs && elapsed < debounceMs + 200,
+            elapsed >= debounceMs && elapsed < debounceMs + scaleMs(200),
             `Changes should be processed after ${debounceMs}ms, actual: ${elapsed}ms`,
           );
         });
@@ -197,23 +200,23 @@ describe("Dev Server Debounce Tests", { sanitizeOps: false, sanitizeResources: f
          * Verifies that the optimized watcher properly cleans up on shutdown
          */
         await withTestContext("dev-watcher-cleanup", async (context: TestContext) => {
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "index.mdx"),
             "# Test",
           );
 
           const server = await context.createDevServer({
             enableHMR: true,
-            fileWatcherDebounceMs: 100,
+            fileWatcherDebounceMs: scaleMs(100),
           });
 
           // Make some changes to generate metrics
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "new.mdx"),
             "# New Page",
           );
 
-          await new Promise((resolve) => setTimeout(resolve, 200));
+          await delay(200);
 
           // Stop the server - should log final metrics and clean up
           await server.stop();
@@ -228,31 +231,31 @@ describe("Dev Server Debounce Tests", { sanitizeOps: false, sanitizeResources: f
          * Verifies that performance metrics are accurately tracked and reported
          */
         await withTestContext("dev-watcher-metrics", async (context) => {
-          await Deno.writeTextFile(
+          await writeTextFile(
             join(context.projectDir, "pages", "index.mdx"),
             "# Home",
           );
 
           const server = await context.createDevServer({
             enableHMR: true,
-            fileWatcherDebounceMs: 100,
+            fileWatcherDebounceMs: scaleMs(100),
           });
 
           // Wait for setup
-          await new Promise((resolve) => setTimeout(resolve, 200));
+          await delay(200);
 
           // Create a batch of changes
           for (let i = 0; i < 3; i++) {
-            await Deno.writeTextFile(
+            await writeTextFile(
               join(context.projectDir, "pages", `test${i}.mdx`),
               `# Test ${i}`,
             );
             // Small delay between changes but within debounce window
-            await new Promise((resolve) => setTimeout(resolve, 30));
+            await delay(30);
           }
 
           // Wait for processing
-          await new Promise((resolve) => setTimeout(resolve, 200));
+          await delay(200);
 
           const metrics = server.getFileWatcherMetrics?.();
           if (metrics) {
@@ -291,8 +294,8 @@ describe("Dev Server Debounce Tests", { sanitizeOps: false, sanitizeResources: f
             const dir = file.includes("/")
               ? join(context.projectDir, file.substring(0, file.lastIndexOf("/")))
               : context.projectDir;
-            await Deno.mkdir(dir, { recursive: true });
-            await Deno.writeTextFile(
+            await mkdir(dir, { recursive: true });
+            await writeTextFile(
               join(context.projectDir, file),
               getFixtureContent(file, "initial"),
             );
@@ -300,15 +303,15 @@ describe("Dev Server Debounce Tests", { sanitizeOps: false, sanitizeResources: f
 
           const server = await context.createDevServer({
             enableHMR: true,
-            fileWatcherDebounceMs: 100,
+            fileWatcherDebounceMs: scaleMs(100),
           });
 
           // Wait for initial setup
-          await new Promise((resolve) => setTimeout(resolve, 200));
+          await delay(200);
 
           // Simulate git checkout - change all files rapidly
           const changes = initialFiles.map((file) =>
-            Deno.writeTextFile(
+            writeTextFile(
               join(context.projectDir, file),
               getFixtureContent(file, "updated"),
             )
@@ -317,7 +320,7 @@ describe("Dev Server Debounce Tests", { sanitizeOps: false, sanitizeResources: f
           await Promise.all(changes);
 
           // Wait for debounce processing
-          await new Promise((resolve) => setTimeout(resolve, 200));
+          await delay(200);
 
           const metrics = server.getFileWatcherMetrics?.();
           if (metrics && metrics.routeDiscoveryCalls > 0) {

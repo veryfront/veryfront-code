@@ -3,6 +3,14 @@ import type { VeryfrontConfig } from "./types.ts";
 import { type ConfigContext, createError, toError } from "../errors/veryfront-error.ts";
 
 const corsSchema = z.union([z.boolean(), z.object({ origin: z.string().optional() }).strict()]);
+const basicAuthSchema = z.object({
+  username: z.string(),
+  password: z.string(),
+  realm: z.string().optional(),
+});
+const bearerAuthSchema = z.object({
+  token: z.string(),
+});
 
 export const veryfrontConfigSchema = z
   .object({
@@ -12,6 +20,7 @@ export const veryfrontConfigSchema = z
     experimental: z.object({
       esmLayouts: z.boolean().optional(),
       precompileMDX: z.boolean().optional(),
+      rsc: z.boolean().optional(),
     }).partial().optional(),
     router: z.enum(["app", "pages"]).optional(),
     defaultLayout: z.string().optional(),
@@ -76,6 +85,13 @@ export const veryfrontConfigSchema = z
       .optional(),
     security: z
       .object({
+        auth: z
+          .object({
+            basic: basicAuthSchema.optional(),
+            bearer: bearerAuthSchema.optional(),
+          })
+          .partial()
+          .optional(),
         csp: z.record(z.array(z.string())).optional(),
         remoteHosts: z.array(z.string().url()).optional(),
         cors: corsSchema.optional(),

@@ -1,5 +1,5 @@
-import { assertEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { buildAttributes, escapeHTML, escapeHtml } from "./html-escape.ts";
 
 describe("html-escape", () => {

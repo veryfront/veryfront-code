@@ -1,4 +1,4 @@
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
 export interface TracingConfig {
   enabled: boolean;

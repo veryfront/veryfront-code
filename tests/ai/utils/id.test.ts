@@ -1,5 +1,5 @@
-import { describe, it } from "@std/testing/bdd";
-import { assertEquals, assertMatch } from "@std/assert";
+import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertMatch } from "@veryfront/testing/assert";
 import { createIdGenerator, generateId } from "../../../src/utils/id.ts";
 
 describe("generateId", () => {

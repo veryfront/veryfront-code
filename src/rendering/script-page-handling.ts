@@ -2,10 +2,10 @@
  * Script Page Handling (TS/JS files)
  */
 
-import { rendererLogger as logger } from "@veryfront/utils";
-import { dirname, join } from "@veryfront/platform/compat/path/index.ts";
-import { cwd } from "@veryfront/platform/compat/process.ts";
-import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { dirname, join } from "#veryfront/platform/compat/path/index.ts";
+import { cwd } from "#veryfront/platform/compat/process.ts";
+import { ErrorCode, VeryfrontError } from "#veryfront/errors/index.ts";
 import { createError, toError } from "../errors/veryfront-error.ts";
 import type {
   ComponentProps,
@@ -14,13 +14,13 @@ import type {
   PageContext,
   RenderResult,
   ScriptPageModule,
-} from "@veryfront/types";
-import type { VeryfrontConfig } from "@veryfront/config";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { DEFAULT_DASHBOARD_PORT } from "@veryfront/utils";
+} from "#veryfront/types";
+import type { VeryfrontConfig } from "#veryfront/config";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { DEFAULT_DASHBOARD_PORT } from "#veryfront/utils";
 import { getContentHash } from "./utils/index.ts";
-import { type HTMLGenerationOptions, wrapInHTMLShell } from "@veryfront/html";
-import { extractHTMLMetadata, injectHTMLContent, isFullHTMLDocument } from "@veryfront/html";
+import { type HTMLGenerationOptions, wrapInHTMLShell } from "#veryfront/html";
+import { extractHTMLMetadata, injectHTMLContent, isFullHTMLDocument } from "#veryfront/html";
 import { createFileSystem } from "../platform/compat/fs.ts";
 import { getEsbuildLoader } from "../utils/path-utils.ts";
 

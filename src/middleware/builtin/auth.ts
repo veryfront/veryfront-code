@@ -1,5 +1,5 @@
 import type { Context, MiddlewareHandler, Next } from "../core/types.ts";
-import { HTTP_UNAUTHORIZED } from "@veryfront/utils/constants/http.ts";
+import { HTTP_UNAUTHORIZED } from "#veryfront/utils/constants/http.ts";
 
 function unauthorizedResponse(realm?: string): Response {
   const headers: HeadersInit = realm ? { "WWW-Authenticate": `Basic realm="${realm}"` } : {};

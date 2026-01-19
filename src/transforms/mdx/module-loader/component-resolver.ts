@@ -1,5 +1,5 @@
-import { rendererLogger as logger } from "@veryfront/utils";
-import { DEFAULT_DASHBOARD_PORT } from "@veryfront/utils/constants/server.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { DEFAULT_DASHBOARD_PORT } from "#veryfront/utils/constants/server.ts";
 import type { MDXComponentProps } from "./types.ts";
 import * as React from "react";
 

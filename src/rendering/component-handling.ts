@@ -2,13 +2,13 @@
  * Component Page Handling (TSX/JSX files)
  */
 
-import { rendererLogger as logger } from "@veryfront/utils";
-import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { ErrorCode, VeryfrontError } from "#veryfront/errors/index.ts";
 import * as BundledReact from "react";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import type { EntityInfo, PageBundle } from "@veryfront/types";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { EntityInfo, PageBundle } from "#veryfront/types";
 import { createError, getErrorMessage, toError } from "../errors/veryfront-error.ts";
-import { getProjectReact } from "@veryfront/react";
+import { getProjectReact } from "#veryfront/react";
 import { injectNodePositions } from "../transforms/plugins/babel-node-positions.ts";
 import { buildComponentCacheKey } from "../cache/keys.ts";
 
@@ -147,7 +147,7 @@ async function bundleComponentForClient(
     // Use ESM transform instead of bundling (modern dev server pattern)
     // This works because the module server serves all dependencies via HTTP
     // and the browser natively supports ES modules
-    const { transformToESM } = await import("@veryfront/transforms/esm-transform.ts");
+    const { transformToESM } = await import("#veryfront/transforms/esm-transform.ts");
 
     const transformed = await transformToESM(
       source,

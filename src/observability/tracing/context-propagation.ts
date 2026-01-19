@@ -1,4 +1,4 @@
-import { serverLogger as logger } from "@veryfront/utils";
+import { serverLogger as logger } from "#veryfront/utils";
 import type { Context, OpenTelemetryAPI, Span, TextMapPropagator } from "./types.ts";
 
 export class ContextPropagation {

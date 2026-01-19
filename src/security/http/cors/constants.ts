@@ -5,8 +5,8 @@
  * @module core/cors/constants
  */
 
-import { DEV_LOCALHOST_ORIGINS } from "@veryfront/config";
-import { getEnvironment } from "@veryfront/build/config/environment.ts";
+import { DEV_LOCALHOST_ORIGINS } from "#veryfront/config";
+import { getEnvironment } from "#veryfront/build/config/environment.ts";
 
 /**
  * Default allowed HTTP methods for CORS

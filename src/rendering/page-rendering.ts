@@ -1,11 +1,11 @@
-import { rendererLogger as logger } from "@veryfront/utils";
-import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { ErrorCode, VeryfrontError } from "#veryfront/errors/index.ts";
 import * as BundledReact from "react";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import type { EntityInfo, MdxBundle, MDXComponents, MDXModule, PageBundle } from "@veryfront/types";
-import { mdxRenderer } from "@veryfront/transforms/mdx/index.ts";
-import { getProjectReact } from "@veryfront/react";
-import { compileMDXRuntime } from "@veryfront/transforms/mdx/compiler/index.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { EntityInfo, MdxBundle, MDXComponents, MDXModule, PageBundle } from "#veryfront/types";
+import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
+import { getProjectReact } from "#veryfront/react";
+import { compileMDXRuntime } from "#veryfront/transforms/mdx/compiler/index.ts";
 import { ensureError, getErrorMessage } from "../errors/veryfront-error.ts";
 
 export interface MDXPageResult {

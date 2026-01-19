@@ -2,13 +2,13 @@
  * App Route HTML Rendering for Build
  */
 
-import { serverLogger as logger } from "@veryfront/utils";
-import { join } from "@veryfront/platform/compat/path/index.ts";
+import { serverLogger as logger } from "#veryfront/utils";
+import { join } from "#veryfront/platform/compat/path/index.ts";
 import * as React from "react";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { getProjectReact, renderToStringAdapter } from "@veryfront/react";
-import { loadComponentFromSource } from "@veryfront/modules/react-loader/index.ts";
-import { CompilationError } from "@veryfront/errors/index.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { getProjectReact, renderToStringAdapter } from "#veryfront/react";
+import { loadComponentFromSource } from "#veryfront/modules/react-loader/index.ts";
+import { CompilationError } from "#veryfront/errors/index.ts";
 
 /**
  * Render an App Router route to HTML

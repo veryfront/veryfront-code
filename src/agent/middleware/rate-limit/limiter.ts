@@ -7,7 +7,7 @@
  * @module veryfront/agent/middleware/rate-limit
  */
 
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 export interface RateLimitConfig {
   /** Strategy type */

@@ -5,15 +5,18 @@
  * Downloads the correct pre-compiled binary for the user's platform
  */
 
-const os = require('os');
-const fs = require('fs');
-const path = require('path');
-const https = require('https');
-const { execSync } = require('child_process');
+import { createWriteStream, existsSync, mkdirSync, unlinkSync, chmodSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import https from "node:https";
+import os from "node:os";
+import { readFileSync } from "node:fs";
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
 const platform = os.platform();
 const arch = os.arch();
-const version = require('../package.json').version;
+const packageJsonPath = join(__dirname, "..", "package.json");
+const version = JSON.parse(readFileSync(packageJsonPath, "utf-8")).version;
 
 // Map platform/arch to binary names
 const binaryMap = {
@@ -33,12 +36,12 @@ if (!binaryName) {
   process.exit(1);
 }
 
-const binDir = path.join(__dirname, '..', 'bin');
-const binPath = path.join(binDir, platform === 'win32' ? 'veryfront.exe' : 'veryfront');
+const binDir = join(__dirname, "..", "bin");
+const binPath = join(binDir, platform === "win32" ? "veryfront.exe" : "veryfront");
 
 // Create bin directory if it doesn't exist
-if (!fs.existsSync(binDir)) {
-  fs.mkdirSync(binDir, { recursive: true });
+if (!existsSync(binDir)) {
+  mkdirSync(binDir, { recursive: true });
 }
 
 // GitHub release URL (update with your org/repo)
@@ -51,7 +54,7 @@ console.log(`   Version: ${version}`);
 
 function downloadBinary(url, dest) {
   return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(dest);
+    const file = createWriteStream(dest);
 
     https.get(url, (response) => {
       if (response.statusCode === 302 || response.statusCode === 301) {
@@ -74,8 +77,8 @@ function downloadBinary(url, dest) {
       }
     }).on('error', reject);
 
-    file.on('error', (err) => {
-      fs.unlinkSync(dest);
+    file.on("error", (err) => {
+      unlinkSync(dest);
       reject(err);
     });
   });
@@ -87,8 +90,8 @@ async function install() {
     await downloadBinary(url, binPath);
 
     // Make binary executable (Unix systems)
-    if (platform !== 'win32') {
-      fs.chmodSync(binPath, 0o755);
+    if (platform !== "win32") {
+      chmodSync(binPath, 0o755);
     }
 
     console.log('✅ Veryfront CLI installed successfully!');
@@ -97,8 +100,8 @@ async function install() {
     console.log('   npx veryfront create my-app');
 
   } catch (error) {
-    console.error('❌ Installation failed:', error.message);
-    console.error('\n📝 Manual installation:');
+    console.error("❌ Installation failed:", error.message);
+    console.error("\n📝 Manual installation:");
     console.error('   1. Download the binary from GitHub releases');
     console.error('   2. Place it in your PATH as "veryfront"');
     console.error(`   3. URL: ${url}`);

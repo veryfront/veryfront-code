@@ -1,6 +1,6 @@
 import GithubSlugger from "github-slugger";
 import type { Heading, Root } from "mdast";
-import type { VFile } from "npm:vfile@6";
+import type { VFile } from "vfile";
 import { toString } from "mdast-util-to-string";
 import { visit } from "unist-util-visit";
 
