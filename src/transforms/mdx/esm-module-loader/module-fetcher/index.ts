@@ -26,6 +26,35 @@ import { resolveModuleFile } from "../resolution/file-finder.ts";
 import { recordSSRModules } from "../../../../modules/manifest/route-module-manifest.ts";
 
 /**
+ * Map veryfront/* bare specifiers to /_vf_modules/ paths for MDX module loading.
+ * These need to be resolved to file paths because the cached .mjs files are
+ * dynamically imported and don't have access to deno.json import maps.
+ */
+const VERYFRONT_IMPORT_MAP: Record<string, string> = {
+  "veryfront/head": "/_vf_modules/react/components/Head.js",
+  "veryfront/router": "/_vf_modules/react/router/index.js",
+  "veryfront/context": "/_vf_modules/react/context/index.js",
+  "veryfront/fonts": "/_vf_modules/react/fonts/index.js",
+};
+
+/**
+ * Rewrite veryfront/* imports to /_vf_modules/ paths for MDX module loading.
+ */
+function rewriteVeryfrontImports(code: string): string {
+  return code.replace(
+    /from\s+["'](veryfront\/[^"']+)["']/g,
+    (_match, specifier: string) => {
+      const mapped = VERYFRONT_IMPORT_MAP[specifier];
+      if (mapped) {
+        return `from "${mapped}"`;
+      }
+      // For unmapped veryfront/* imports, keep as-is (will fail if not resolvable)
+      return `from "${specifier}"`;
+    },
+  );
+}
+
+/**
  * In-flight tracking to prevent duplicate parallel fetches.
  */
 const inFlight = new Map<string, Promise<string | null>>();
@@ -307,6 +336,9 @@ async function fetchModuleViaHTTP(
 
   let moduleCode = await response.text();
 
+  // Rewrite veryfront/* imports to /_vf_modules/ paths (in case HTTP response has bare specifiers)
+  moduleCode = rewriteVeryfrontImports(moduleCode);
+
   // Find and recursively process nested imports
   const { vfModules, relative } = findNestedImports(moduleCode);
 
@@ -436,6 +468,10 @@ export async function fetchAndCacheModule(
         });
         throw transformError;
       }
+
+      // Rewrite veryfront/* imports to /_vf_modules/ paths so they can be resolved
+      // This is needed because cached .mjs files don't have access to deno.json import maps
+      moduleCode = rewriteVeryfrontImports(moduleCode);
 
       // Find and recursively process nested imports
       const { vfModules, relative } = findNestedImports(moduleCode);
