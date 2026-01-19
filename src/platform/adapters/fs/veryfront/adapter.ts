@@ -173,8 +173,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     // Connect to WebSocket for real-time cache invalidation (branch mode only)
     // Environment/release/domain modes serve immutable published content
-    // Skip WebSocket in proxy mode - the adapter is shared across requests with different
-    // OAuth tokens, causing permission errors when tokens don't have project access
+    // Note: In proxy mode, WebSocket uses the original M2M project-scoped token (this.apiToken),
+    // not per-request user tokens. setRequestToken() only updates the API client, not apiToken.
     if (this.contentContext.sourceType === "branch") {
       logger.debug("[VeryfrontFSAdapter] Initialized (branch mode)", {
         projectId: this.client.getProjectId(),
@@ -182,14 +182,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         branch: this.contentContext.branch,
         proxyMode: this.proxyMode,
       });
-      if (this.proxyMode) {
-        logger.debug("[VeryfrontFSAdapter] Skipping WebSocket in proxy mode", {
-          projectId: this.client.getProjectId(),
-          reason: "Shared adapter with per-request OAuth tokens",
-        });
-      } else {
-        this.connectWebSocket(projectId);
-      }
+      this.connectWebSocket(projectId);
     } else {
       logger.debug("[VeryfrontFSAdapter] Initialized (published mode)", {
         projectId: this.client.getProjectId(),
