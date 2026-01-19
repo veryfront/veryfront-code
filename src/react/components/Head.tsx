@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from "react";
-import { collectHead } from "../head-collector.ts";
+import { collectHead } from "#veryfront/react/head-collector.ts";
 
 function isServerEnvironment(): boolean {
   const ssrFlag = (globalThis as Record<string, unknown>).__VERYFRONT_SSR__;

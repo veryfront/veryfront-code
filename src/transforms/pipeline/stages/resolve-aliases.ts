@@ -6,13 +6,17 @@
  * - Browser: module server URLs
  */
 
-import { resolveCrossProjectImports, resolvePathAliases } from "../../esm/path-resolver.ts";
+import {
+  resolveCrossProjectImports,
+  resolvePathAliases,
+  resolveVeryfrontSubpathImports,
+} from "../../esm/path-resolver.ts";
 import { isSSR } from "../context.ts";
 import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
 import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
 
 /**
- * Resolve aliases plugin - transforms @/ imports.
+ * Resolve aliases plugin - transforms @/ and #veryfront imports.
  */
 export const resolveAliasesPlugin: TransformPlugin = {
   name: "resolve-aliases",
@@ -23,6 +27,9 @@ export const resolveAliasesPlugin: TransformPlugin = {
 
     // Resolve @/ path aliases
     code = await resolvePathAliases(code, ctx.filePath, ctx.projectDir, isSSR(ctx));
+
+    // Resolve #veryfront/* imports (browser → module server URLs, SSR → leave as-is)
+    code = await resolveVeryfrontSubpathImports(code, isSSR(ctx));
 
     // Resolve cross-project versioned imports (e.g., demo@0.0.1/@/components/Button)
     // Must be done before other import rewrites since it transforms to absolute URLs

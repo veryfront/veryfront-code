@@ -592,24 +592,35 @@ async function findSourceFile(
     }
   }
 
-  // Framework file lookup configuration: [prefix, frameworkDir, logLabel]
+  // Framework file lookup configuration: [prefix, frameworkDir, logLabel, stripPrefix]
   // Order matters: more specific prefixes should come first
-  const frameworkLookups: [string, string, string][] = [
-    ["lib/", join(FRAMEWORK_ROOT, "src"), "lib"],
+  // stripPrefix: if true, removes the prefix from path when looking up (for virtual prefixes like _veryfront/)
+  const frameworkLookups: [string, string, string, boolean][] = [
+    // _veryfront/ prefix is for #veryfront imports rewritten by the transform pipeline
+    // e.g., #veryfront/react/head-collector.ts → /_vf_modules/_veryfront/react/head-collector.js
+    // The _veryfront/ prefix is stripped because it's virtual - actual files are at src/react/...
+    ["_veryfront/", join(FRAMEWORK_ROOT, "src"), "_veryfront", true],
+    ["lib/", join(FRAMEWORK_ROOT, "src"), "lib", false],
     // Support both "exports/" and "src/exports/" paths for context module resolution
     // This is needed because lib/usePageContext.tsx imports "../src/exports/context.ts"
     // which becomes "src/exports/context.js" when resolved from "lib/usePageContext.js"
-    ["src/exports/", FRAMEWORK_ROOT, "src/exports"],
-    ["exports/", join(FRAMEWORK_ROOT, "src"), "exports"],
-    ["react/", join(FRAMEWORK_ROOT, "src"), "react"],
+    ["src/exports/", FRAMEWORK_ROOT, "src/exports", false],
+    ["exports/", join(FRAMEWORK_ROOT, "src"), "exports", false],
+    ["react/", join(FRAMEWORK_ROOT, "src"), "react", false],
   ];
 
   const platformFs = createFileSystem();
-  for (const [prefix, frameworkDir, label] of frameworkLookups) {
+  for (const [prefix, frameworkDir, label, stripPrefix] of frameworkLookups) {
     if (!basePathWithoutExt.startsWith(prefix)) continue;
 
+    // Strip the prefix if configured (for virtual prefixes like _veryfront/)
+    // e.g., "_veryfront/react/head-collector" → "react/head-collector"
+    const pathWithinFramework = stripPrefix
+      ? basePathWithoutExt.slice(prefix.length)
+      : basePathWithoutExt;
+
     for (const ext of extensions) {
-      const frameworkPath = join(frameworkDir, basePathWithoutExt + ext);
+      const frameworkPath = join(frameworkDir, pathWithinFramework + ext);
       try {
         const stat = await platformFs.stat(frameworkPath);
         if (stat.isFile) {
