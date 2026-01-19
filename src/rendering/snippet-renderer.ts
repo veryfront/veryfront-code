@@ -5,8 +5,8 @@
  * Works exactly like regular page rendering through the module server.
  */
 
-import { rendererLogger as logger } from "@veryfront/utils";
-import type { RenderMetadata } from "@veryfront/types";
+import { rendererLogger as logger } from "#veryfront/utils";
+import type { RenderMetadata } from "#veryfront/types";
 import type { VeryfrontConfig } from "../config/types.ts";
 import { wrapInHTMLShell } from "../html/html-shell-generator.ts";
 import { LRUCache } from "../utils/lru-wrapper.ts";

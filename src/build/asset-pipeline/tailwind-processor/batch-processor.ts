@@ -1,7 +1,7 @@
-import { join } from "@veryfront/platform/compat/path/index.ts";
-import { logger } from "@veryfront/utils";
-import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { join } from "#veryfront/platform/compat/path/index.ts";
+import { logger } from "#veryfront/utils";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { TailwindProcessorOptions, TailwindProcessResult } from "./types.ts";
 import { TailwindProcessor } from "./processor.ts";
 import { isTailwindV4File } from "./detector.ts";

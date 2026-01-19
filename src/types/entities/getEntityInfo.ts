@@ -1,15 +1,15 @@
-import { extract } from "@std/front-matter/yaml";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
-import * as pathHelper from "@veryfront/platform/compat/path-helper.ts";
-import { isExtendedFSAdapter } from "@veryfront/platform/adapters/fs/wrapper.ts";
+import { extract } from "#std/front-matter/yaml.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import * as pathHelper from "#veryfront/platform/compat/path-helper.ts";
+import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { detectEntityType } from "../entities.ts";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
-import { createErrorScope } from "@veryfront/errors/error-context.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createErrorScope } from "#veryfront/errors/error-context.ts";
 import type { Entity, EntityInfo, Frontmatter } from "../entities.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 // Import directly from source to avoid circular dependency through barrel
-import { withFallback } from "@veryfront/platform/adapters/fallback-wrapper.ts";
-import { parallelMap } from "@veryfront/utils/parallel.ts";
+import { withFallback } from "#veryfront/platform/adapters/fallback-wrapper.ts";
+import { parallelMap } from "#veryfront/utils/parallel.ts";
 
 const entityInfoScope = createErrorScope("getEntityInfo");
 

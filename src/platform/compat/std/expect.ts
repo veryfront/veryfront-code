@@ -8,7 +8,7 @@
  */
 
 import { isBun, isDeno } from "../runtime.ts";
-import { deepEquals, safeStringify } from "@veryfront/testing/utils";
+import { deepEquals, safeStringify } from "#veryfront/testing/utils.ts";
 
 // ============================================================================
 // Types
@@ -651,7 +651,7 @@ let expect: ExpectFn;
 
 if (isDeno) {
   // Deno: Use @std/expect
-  const stdExpect = await import("@std/expect");
+  const stdExpect = await import("#std/expect.ts");
   // Cast to our ExpectFn type - @std/expect is compatible at runtime
   expect = stdExpect.expect as unknown as ExpectFn;
 } else if (isBun) {

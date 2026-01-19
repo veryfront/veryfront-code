@@ -7,8 +7,8 @@
  */
 
 import { rewriteBareImports, rewriteVendorImports } from "../../esm/import-rewriter.ts";
-import { loadImportMap, transformImportsWithMap } from "@veryfront/modules/import-map/index.ts";
-import type { ImportMapConfig } from "@veryfront/modules/import-map/index.ts";
+import { loadImportMap, transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/index.ts";
 import { isBrowser, isSSR } from "../context.ts";
 import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
 

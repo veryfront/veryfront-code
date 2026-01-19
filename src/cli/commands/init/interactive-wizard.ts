@@ -3,13 +3,13 @@
  * Guides users through template and integration selection with arrow key navigation
  */
 
-import { cyan, dim, green } from "@veryfront/compat/console";
-import { cliLogger as logger } from "@veryfront/utils";
-import { isInteractive as checkIsInteractive } from "@veryfront/platform/compat/process.ts";
+import { cyan, dim, green } from "#veryfront/compat/console";
+import { cliLogger as logger } from "#veryfront/utils";
+import { isInteractive as checkIsInteractive } from "#veryfront/platform/compat/process.ts";
 import { multiSelect, select } from "../../utils/terminal-select.ts";
 import type { IntegrationName } from "../../templates/types.ts";
 import type { InitTemplate } from "./types.ts";
-import { isCiEnv, isDenoTestingEnv } from "@veryfront/config/env.ts";
+import { isCiEnv, isDenoTestingEnv } from "#veryfront/config/env.ts";
 
 export interface WizardResult {
   template: InitTemplate;

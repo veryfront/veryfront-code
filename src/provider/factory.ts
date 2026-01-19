@@ -2,13 +2,13 @@ import type { Provider, ProvidersConfig } from "./types.ts";
 import { OpenAIProvider } from "./openai.ts";
 import { AnthropicProvider } from "./anthropic.ts";
 import { GoogleProvider } from "./google.ts";
-import { agentLogger } from "@veryfront/utils/logger/logger.ts";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { agentLogger } from "#veryfront/utils/logger/logger.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import {
   getAnthropicEnvConfig,
   getGoogleGenAIEnvConfig,
   getOpenAIEnvConfig,
-} from "@veryfront/config/env.ts";
+} from "#veryfront/config/env.ts";
 
 class ProviderRegistry {
   private providers = new Map<string, Provider>();

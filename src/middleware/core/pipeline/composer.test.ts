@@ -1,5 +1,5 @@
-import { assertEquals, assertRejects } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { composeMiddleware } from "./composer.ts";
 import { MiddlewareContext } from "../context.ts";
 import type { MiddlewareHandler } from "../types.ts";

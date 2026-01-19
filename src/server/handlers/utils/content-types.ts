@@ -5,7 +5,7 @@ import {
   HTTP_CONTENT_TYPE_IMAGE_PNG,
   HTTP_CONTENT_TYPE_IMAGE_SVG,
   HTTP_CONTENT_TYPE_IMAGE_WEBP,
-} from "@veryfront/utils";
+} from "#veryfront/utils";
 
 export const CONTENT_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",

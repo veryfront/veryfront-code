@@ -8,8 +8,8 @@
  * @module build/transforms/mdx/esm-module-loader/transforms/alias-imports
  */
 
-import { join } from "@std/path";
-import { rendererLogger as logger } from "@veryfront/utils";
+import { join } from "#std/path.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
 import {
   ESBUILD_JSX_FACTORY,
   ESBUILD_JSX_FRAGMENT,

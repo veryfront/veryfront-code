@@ -3,8 +3,8 @@
  * Tests client-server state synchronization and persistence
  */
 
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { DependencyList, Dispatch, EffectCallback, SetStateAction } from "react";
 import {
   __resetBridgeForTesting,

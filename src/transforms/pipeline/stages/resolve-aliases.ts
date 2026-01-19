@@ -9,7 +9,7 @@
 import { resolveCrossProjectImports, resolvePathAliases } from "../../esm/path-resolver.ts";
 import { isSSR } from "../context.ts";
 import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
-import { getApiBaseUrlEnv } from "@veryfront/config/env.ts";
+import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
 
 /**
  * Resolve aliases plugin - transforms @/ imports.

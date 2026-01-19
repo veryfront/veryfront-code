@@ -1,8 +1,8 @@
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { NavigationHandlers } from "./navigation-handlers.ts";
 import type { NavigationCallbacks } from "./navigation-handlers.ts";
-import { delay } from "@std/async";
+import { delay } from "#std/async.ts";
 
 interface MockElement {
   tagName?: string;

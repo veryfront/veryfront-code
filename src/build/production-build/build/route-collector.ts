@@ -7,10 +7,10 @@
  * - Route filtering based on include/exclude patterns
  */
 
-import { serverLogger as logger } from "@veryfront/utils";
-import { collectAppRoutes, collectPagesRoutes } from "@veryfront/server/build-routes.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/index.ts";
-import type { AppRouteInfo, RouteInfo } from "@veryfront/server/build-types.ts";
+import { serverLogger as logger } from "#veryfront/utils";
+import { collectAppRoutes, collectPagesRoutes } from "#veryfront/server/build-routes.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/index.ts";
+import type { AppRouteInfo, RouteInfo } from "#veryfront/server/build-types.ts";
 
 export interface CollectedRoutes {
   pages: RouteInfo[];

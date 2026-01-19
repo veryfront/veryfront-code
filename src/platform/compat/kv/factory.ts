@@ -1,7 +1,7 @@
 import { MemoryKv } from "./memory-adapter.ts";
 import { SqliteKv } from "./sqlite-adapter.ts";
 import type { Kv } from "./types.ts";
-import { serverLogger } from "@veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import { isDeno } from "../runtime.ts";
 
 interface GlobalWithDenoKv {

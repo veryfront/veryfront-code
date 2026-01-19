@@ -2,8 +2,8 @@
  * Tests for stack trace parser
  */
 
-import { describe, it } from "@veryfront/testing/bdd";
-import { expect } from "@std/expect";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { expect } from "#std/expect.ts";
 import { formatStackTrace, hasStackTrace, parseStackTrace } from "./stack-parser.ts";
 
 describe("stack-parser", () => {

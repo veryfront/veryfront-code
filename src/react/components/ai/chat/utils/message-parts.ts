@@ -8,7 +8,7 @@ import type {
   ToolUIPart,
   UIMessage,
   UIMessagePart,
-} from "@veryfront/agent/react";
+} from "#veryfront/agent/react";
 
 /** Get text content from UIMessage parts */
 export function getTextContent(message: UIMessage): string {

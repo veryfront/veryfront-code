@@ -8,8 +8,8 @@
  * @module cli/commands/merge.integration
  */
 
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { afterAll, beforeAll, describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { initVCRTest, isRecording, type VCRTestContext } from "../test-utils/vcr.ts";
 import { getBranchByName } from "./merge.ts";
 

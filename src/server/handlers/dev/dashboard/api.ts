@@ -1,20 +1,20 @@
-import { getMCPRegistry, getMCPStats } from "@veryfront/mcp";
-import { executeTool, toolRegistry } from "@veryfront/tool";
-import { resourceRegistry } from "@veryfront/resource";
-import { promptRegistry } from "@veryfront/prompt";
-import { agentRegistry } from "@veryfront/agent";
-import { providerRegistry } from "@veryfront/provider";
-import { WorkflowClient, workflowRegistry } from "@veryfront/workflow";
-import { metrics } from "@veryfront/observability/simple-metrics/index.ts";
+import { getMCPRegistry, getMCPStats } from "#veryfront/mcp";
+import { executeTool, toolRegistry } from "#veryfront/tool";
+import { resourceRegistry } from "#veryfront/resource";
+import { promptRegistry } from "#veryfront/prompt";
+import { agentRegistry } from "#veryfront/agent";
+import { providerRegistry } from "#veryfront/provider";
+import { WorkflowClient, workflowRegistry } from "#veryfront/workflow";
+import { metrics } from "#veryfront/observability/simple-metrics/index.ts";
 import {
   checkMemoryPressure,
   getCacheStats,
   getHeapStats,
-} from "@veryfront/utils/memory/profiler.ts";
-import { ERROR_CATALOG } from "@veryfront/errors/catalog/index.ts";
-import { TransformStage } from "@veryfront/transforms/pipeline/types.ts";
-import { isRSCEnabled } from "@veryfront/utils/feature-flags.ts";
-import { getRuntimeEnv } from "@veryfront/config/runtime-env.ts";
+} from "#veryfront/utils/memory/profiler.ts";
+import { ERROR_CATALOG } from "#veryfront/errors/catalog/index.ts";
+import { TransformStage } from "#veryfront/transforms/pipeline/types.ts";
+import { isRSCEnabled } from "#veryfront/utils/feature-flags.ts";
+import { getRuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import type { HandlerContext } from "../../types.ts";
 
 const JSON_HEADERS = { "Content-Type": "application/json", "Cache-Control": "no-cache" };

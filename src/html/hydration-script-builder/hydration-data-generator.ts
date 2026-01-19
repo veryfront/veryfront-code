@@ -1,7 +1,7 @@
-import type { ComponentProps } from "@veryfront/types";
+import type { ComponentProps } from "#veryfront/types";
 import type { HTMLGenerationOptions } from "../types.ts";
 import type { HydrationDataStructure } from "./types.ts";
-import { resolveRelativePath } from "@veryfront/modules/react-loader/path-resolver.ts";
+import { resolveRelativePath } from "#veryfront/modules/react-loader/path-resolver.ts";
 
 function toProjectRelativePath(absolutePath: string, projectDir?: string): string {
   if (!absolutePath) return "";

@@ -1,5 +1,5 @@
-import { assert, assertEquals, assertInstanceOf } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assert, assertEquals, assertInstanceOf } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MiddlewareContext } from "./context.ts";
 
 describe("MiddlewareContext", () => {

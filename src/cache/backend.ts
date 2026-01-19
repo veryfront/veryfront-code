@@ -7,7 +7,7 @@
  * - API: Centralized cache via veryfront-api (production)
  */
 
-import { logger } from "@veryfront/utils";
+import { logger } from "#veryfront/utils";
 import { runtime } from "../platform/adapters/registry.ts";
 import { tryGetCacheKeyContext } from "./cache-key-builder.ts";
 import { getRuntimeEnv, isRuntimeEnvInitialized, type RuntimeEnv } from "../config/runtime-env.ts";

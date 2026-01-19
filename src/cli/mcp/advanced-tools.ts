@@ -6,14 +6,14 @@
  */
 
 import { z } from "zod";
-import { createFileSystem, type FileSystem } from "@veryfront/platform/compat/fs.ts";
-import { join } from "@veryfront/platform/compat/path/index.ts";
-import { cwd } from "@veryfront/platform/compat/process.ts";
+import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
+import { join } from "#veryfront/platform/compat/path/index.ts";
+import { cwd } from "#veryfront/platform/compat/process.ts";
 import type { MCPTool } from "./tools.ts";
 import { ReloadNotifier } from "../../server/reload-notifier.ts";
 import { getErrorCollector } from "./error-collector.ts";
 import { getLogBuffer } from "./log-buffer.ts";
-import { getRuntimeEnv } from "@veryfront/config/runtime-env.ts";
+import { getRuntimeEnv } from "#veryfront/config/runtime-env.ts";
 
 // ============================================================================
 // Types

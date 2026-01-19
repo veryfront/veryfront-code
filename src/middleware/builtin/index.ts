@@ -10,7 +10,7 @@ export type {
 
 export { getRequest } from "./types.ts";
 
-export { cors } from "@veryfront/security";
+export { cors } from "#veryfront/security";
 
 export { MemoryRateLimitStore, rateLimit, type RateLimitOptions } from "./security/rate-limit.ts";
 export { type RedisRateLimitOptions, RedisRateLimitStore } from "./security/redis-rate-limit.ts";

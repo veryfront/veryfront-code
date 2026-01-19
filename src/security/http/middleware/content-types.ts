@@ -11,7 +11,7 @@ import {
   HTTP_CONTENT_TYPE_IMAGE_PNG,
   HTTP_CONTENT_TYPE_IMAGE_SVG,
   HTTP_CONTENT_TYPE_IMAGE_WEBP,
-} from "@veryfront/utils/constants/http.ts";
+} from "#veryfront/utils/constants/http.ts";
 
 /**
  * MIME type mappings for common file extensions

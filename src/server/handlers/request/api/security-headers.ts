@@ -13,7 +13,7 @@ import {
   buildCSP as coreBuildCSP,
   generateNonce,
   getSecurityHeader as coreGetSecurityHeader,
-} from "@veryfront/security/http/response/security-handler.ts";
+} from "#veryfront/security/http/response/security-handler.ts";
 
 /**
  * Builds a Content Security Policy string from handler context

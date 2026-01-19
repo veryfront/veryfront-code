@@ -1,8 +1,8 @@
 import * as React from "react";
 import { createRoot, hydrateRoot } from "react-dom/client";
 import { rscLogger } from "../client/browser-logger.ts";
-import { CompilationError, FileSystemError, NetworkError } from "@veryfront/errors/index.ts";
-import { createErrorDisplay } from "@veryfront/security/client/html-sanitizer.ts";
+import { CompilationError, FileSystemError, NetworkError } from "#veryfront/errors/index.ts";
+import { createErrorDisplay } from "#veryfront/security/client/html-sanitizer.ts";
 import type { RSCHydratorOptions } from "./types.ts";
 
 export class RSCHydrator {

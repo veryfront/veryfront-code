@@ -4,8 +4,8 @@
  * Tests for CORS validation utilities
  */
 
-import { describe, it } from "@veryfront/testing/bdd";
-import { assertEquals } from "@veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { validateCORSConfig, validateOrigin, validateOriginSync } from "./validators.ts";
 
 describe("validateOriginSync", () => {

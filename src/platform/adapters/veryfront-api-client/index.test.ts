@@ -1,5 +1,5 @@
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 
 describe("veryfront-api-client/index.ts exports", () => {
   it("should export VeryfrontAPIClient", async () => {

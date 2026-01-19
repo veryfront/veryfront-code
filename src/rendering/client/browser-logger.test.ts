@@ -3,8 +3,8 @@
  * Tests browser-specific logging functionality with conditional log levels
  */
 
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { BrowserLogger } from "./browser-logger.ts";
 import {
   browserLogger,

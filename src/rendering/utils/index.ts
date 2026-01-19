@@ -6,7 +6,7 @@ export {
   type HashBundleCode as BundleCode,
   shortHash,
   simpleHash,
-} from "@veryfront/utils";
+} from "#veryfront/utils";
 
 // React helper functions
 export * from "./react-helpers.ts";

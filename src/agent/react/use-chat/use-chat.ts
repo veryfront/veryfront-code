@@ -9,7 +9,7 @@
  */
 
 import { useCallback, useRef, useState } from "react";
-import { createError, ensureError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { createError, ensureError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 import { handleStreamingResponse } from "./streaming/index.ts";
 import type { TextUIPart, ToolOutput, UIMessage, UseChatOptions, UseChatResult } from "./types.ts";

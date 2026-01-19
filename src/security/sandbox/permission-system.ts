@@ -16,8 +16,8 @@
  * const result = await requestPermission({ name: "read", path: "./data" });
  * ```
  */
-import { serverLogger } from "@veryfront/utils";
-import { isDeno } from "@veryfront/platform/compat/runtime.ts";
+import { serverLogger } from "#veryfront/utils";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 
 export type Permission = "net" | "fs" | "env" | "run" | "read" | "write";
 

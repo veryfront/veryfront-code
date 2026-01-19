@@ -5,9 +5,9 @@ import {
   HTTP_TOO_MANY_REQUESTS,
   MS_PER_MINUTE,
   MS_PER_SECOND,
-} from "@veryfront/utils/constants/http.ts";
-import { CLEANUP_INTERVAL_MULTIPLIER } from "@veryfront/utils/constants/cache.ts";
-import { unrefTimer } from "@veryfront/platform/compat/process.ts";
+} from "#veryfront/utils/constants/http.ts";
+import { CLEANUP_INTERVAL_MULTIPLIER } from "#veryfront/utils/constants/cache.ts";
+import { unrefTimer } from "#veryfront/platform/compat/process.ts";
 
 const DEFAULT_RATE_LIMIT_REQUESTS = 100;
 const DEFAULT_RATE_LIMIT_WINDOW_MS = MS_PER_MINUTE;

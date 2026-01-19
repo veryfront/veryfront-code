@@ -1,12 +1,12 @@
-import { serverLogger as logger } from "@veryfront/utils";
-import { join } from "@veryfront/platform/compat/path/index.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { getConfig } from "@veryfront/config";
-import { LRUCache } from "@veryfront/utils/lru-wrapper.ts";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
-import { badGateway, internalServerError, notFound } from "@veryfront/http/responses";
-import type { CORSConfig } from "@veryfront/security";
-import { applyCORSHeaders, handleCORSPreflight } from "@veryfront/security";
+import { serverLogger as logger } from "#veryfront/utils";
+import { join } from "#veryfront/platform/compat/path/index.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { getConfig } from "#veryfront/config";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { badGateway, internalServerError, notFound } from "#veryfront/http/responses";
+import type { CORSConfig } from "#veryfront/security";
+import { applyCORSHeaders, handleCORSPreflight } from "#veryfront/security";
 import { type APIContext } from "./context-builder.ts";
 import { DynamicRouter, type RouteMatch } from "./api-route-matcher.ts";
 import type { APIRoute } from "./module-loader/types.ts";
@@ -205,7 +205,7 @@ export class APIRouteHandler {
   private async ensureAdapter(): Promise<RuntimeAdapter> {
     if (this.adapter) return this.adapter;
     if (!this.adapterPromise) {
-      const { getAdapter } = await import("@veryfront/platform/adapters/detect.ts");
+      const { getAdapter } = await import("#veryfront/platform/adapters/detect.ts");
 
       this.adapterPromise = getAdapter();
     }
@@ -268,4 +268,4 @@ export {
   notFound,
   redirectResponse as redirect,
   unauthorized,
-} from "@veryfront/http/responses";
+} from "#veryfront/http/responses";

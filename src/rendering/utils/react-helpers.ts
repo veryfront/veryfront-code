@@ -1,5 +1,5 @@
 import * as React from "react";
-import type { MDXComponents } from "@veryfront/types";
+import type { MDXComponents } from "#veryfront/types";
 
 export const normalizeChild = (() => {
   const cache = new WeakMap<object, React.ReactNode>();

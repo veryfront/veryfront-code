@@ -3,4 +3,4 @@ export type {
   HandlerContext,
   HandlerPriority,
   RouteRegistryConfig,
-} from "@veryfront/types";
+} from "#veryfront/types";

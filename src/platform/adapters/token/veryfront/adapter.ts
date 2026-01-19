@@ -5,7 +5,7 @@
  * Tokens are encrypted client-side before being sent to the API.
  */
 
-import { logger } from "@veryfront/utils";
+import { logger } from "#veryfront/utils";
 import { TokenStorageAPIClient } from "./api-client.ts";
 import {
   createTokenConfig,

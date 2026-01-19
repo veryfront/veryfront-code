@@ -5,12 +5,12 @@ import {
   HTTP_SERVER_ERROR,
   HTTP_UNAVAILABLE,
   serverLogger as logger,
-} from "@veryfront/utils";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import type { VeryfrontConfig } from "@veryfront/config";
+} from "#veryfront/utils";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 import { ErrorOverlay } from "./error-overlay/index.ts";
 import type { HMRServer } from "./hmr-server.ts";
-import { createResponseBuilder } from "@veryfront/security/index.ts";
+import { createResponseBuilder } from "#veryfront/security/index.ts";
 import { resetApiHandler } from "../handlers/request/api/pages-api-handler.ts";
 
 export class RequestHandler {
@@ -63,7 +63,7 @@ export class RequestHandler {
   }
 
   private incrementRequestMetrics(): void {
-    import("@veryfront/observability/simple-metrics/index.ts")
+    import("#veryfront/observability/simple-metrics/index.ts")
       .then(({ metrics }) => metrics.incRequest())
       .catch((error) => logger.debug("[dev] metrics.incRequest failed", error));
   }

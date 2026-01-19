@@ -5,9 +5,9 @@
  * properly resolved from the framework source directory, consistent with
  * the module server's findSourceFile behavior.
  */
-import { assertEquals, assertExists } from "@std/assert";
+import { assertEquals, assertExists } from "#std/assert.ts";
 import { resolveModuleFile } from "./file-finder.ts";
-import { createMockAdapter } from "@veryfront/platform/adapters/mock.ts";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 
 const mockAdapter = createMockAdapter();
 

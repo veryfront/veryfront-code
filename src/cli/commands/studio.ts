@@ -5,11 +5,11 @@
 
 import { canOpenBrowser, openBrowser } from "../auth/browser.ts";
 import { readConfigFile } from "../shared/config.ts";
-import { cwd } from "@veryfront/platform/compat/process.ts";
-import { join } from "@veryfront/platform/compat/path/index.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { cwd } from "#veryfront/platform/compat/process.ts";
+import { join } from "#veryfront/platform/compat/path/index.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { brand, dim, muted, success } from "../ui/colors.ts";
-import { getRuntimeEnv, type RuntimeEnv } from "@veryfront/config/runtime-env.ts";
+import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 
 /**
  * Build Studio URL with optional query params

@@ -2,8 +2,8 @@
  * Memory Backend Tests
  */
 
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { beforeEach, describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { MemoryBackend } from "./memory.ts";
 import type { Checkpoint, PendingApproval, WorkflowJob, WorkflowRun } from "../types.ts";
 

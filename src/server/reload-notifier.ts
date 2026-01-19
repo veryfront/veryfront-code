@@ -11,7 +11,7 @@
  * When changedPaths are provided, HMR can do smart updates instead of full reload.
  */
 
-import { serverLogger as logger } from "@veryfront/utils";
+import { serverLogger as logger } from "#veryfront/utils";
 
 type ReloadListener = (changedPaths?: string[]) => void;
 type InvalidateListener = () => void;

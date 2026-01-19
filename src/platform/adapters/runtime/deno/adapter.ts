@@ -1,5 +1,5 @@
-import { createError, toError } from "@veryfront/errors";
-import { join } from "@veryfront/compat/path";
+import { createError, toError } from "#veryfront/errors";
+import { join } from "#veryfront/compat/path";
 import type {
   DirEntry,
   EnvironmentAdapter,
@@ -15,7 +15,7 @@ import type {
   WatchOptions,
   WebSocketUpgrade,
 } from "../../base.ts";
-import { serverLogger } from "@veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 import { getEnvOverlayStorage } from "../../../compat/process.ts";
 import {
   createFileWatcher,

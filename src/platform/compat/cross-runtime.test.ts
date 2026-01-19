@@ -10,8 +10,8 @@
  *   bun test src/platform/compat/cross-runtime.test.ts
  */
 
-import { assert, assertEquals, assertExists } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assert, assertEquals, assertExists } from "#std/assert.ts";
+import { describe, it } from "#std/testing/bdd.ts";
 
 // Import platform compat modules
 import {

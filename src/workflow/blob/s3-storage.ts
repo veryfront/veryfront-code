@@ -9,8 +9,8 @@
  */
 
 import type { BlobRef, BlobStorage, StoreBlobOptions } from "./types.ts";
-import { agentLogger as logger } from "@veryfront/utils";
-import { isDeno } from "@veryfront/platform/compat/runtime.ts";
+import { agentLogger as logger } from "#veryfront/utils";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 
 // Type definitions for AWS SDK (to avoid top-level import)
 type S3ClientType = import("@aws-sdk/client-s3").S3Client;

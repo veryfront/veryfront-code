@@ -8,7 +8,7 @@
  * - Export to Prometheus, CloudWatch, OTLP, etc.
  */
 
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { metricsManager } from "./manager.ts";
 
 // Re-export types

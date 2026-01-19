@@ -1,5 +1,5 @@
-import { assertEquals } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isProductionMode } from "./ssr-handler.ts";
 import type { HandlerContext } from "../../types.ts";
 

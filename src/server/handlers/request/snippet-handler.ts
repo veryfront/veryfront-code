@@ -9,10 +9,10 @@ import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 // Priority 450 - before static (500) to handle @/ component previews first
 const PRIORITY_SNIPPET = 450;
-import { serverLogger as logger } from "@veryfront/utils";
-import { renderSnippet } from "@veryfront/rendering/snippet-renderer.ts";
-import { getErrorMessage } from "@veryfront/errors/veryfront-error.ts";
-import { VeryfrontAPIError } from "@veryfront/platform/adapters/veryfront-api-client/types.ts";
+import { serverLogger as logger } from "#veryfront/utils";
+import { renderSnippet } from "#veryfront/rendering/snippet-renderer.ts";
+import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
+import { VeryfrontAPIError } from "#veryfront/platform/adapters/veryfront-api-client/types.ts";
 
 /**
  * SnippetHandler handles @/ and @components/ prefixed paths.

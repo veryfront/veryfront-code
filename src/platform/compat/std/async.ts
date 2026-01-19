@@ -30,7 +30,7 @@ export let delay: (ms: number) => Promise<void>;
 
 if (isDeno) {
   // Deno: Use @std/async with time scaling
-  const stdAsync = await import("@std/async");
+  const stdAsync = await import("#std/async.ts");
   delay = (ms: number) => stdAsync.delay(scaleMs(ms));
 } else {
   // Node.js/Bun: Use our implementation

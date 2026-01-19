@@ -1,5 +1,5 @@
-import { assert, assertEquals, assertExists } from "@veryfront/testing/assert";
-import { afterEach, describe, it } from "@veryfront/testing/bdd";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { DynamicRouter } from "./api-route-matcher.ts";
 
 const routers: DynamicRouter[] = [];

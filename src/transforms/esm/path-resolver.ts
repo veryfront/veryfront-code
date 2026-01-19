@@ -1,6 +1,6 @@
 import { replaceSpecifiers } from "./lexer.ts";
-import { rendererLogger as logger } from "@veryfront/utils";
-import { stat } from "@veryfront/platform/compat/fs.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { stat } from "#veryfront/platform/compat/fs.ts";
 
 export interface BlockExternalUrlResult {
   code: string;

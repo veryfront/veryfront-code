@@ -1,10 +1,10 @@
-import { join, relative } from "@veryfront/platform/compat/path/index.ts";
-import { serverLogger } from "@veryfront/utils";
-import { toBase64Url } from "@veryfront/utils/path-utils.ts";
-import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
+import { join, relative } from "#veryfront/platform/compat/path/index.ts";
+import { serverLogger } from "#veryfront/utils";
+import { toBase64Url } from "#veryfront/utils/path-utils.ts";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
 import type { ComponentAnalysis, ComponentType } from "./types.ts";
-import type { FileSystemAdapter } from "@veryfront/platform/adapters/base.ts";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { extractExportNames } from "./export-extractor.ts";
 
 export async function analyzeComponent(

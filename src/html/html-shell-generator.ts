@@ -1,4 +1,4 @@
-import type { ComponentProps, RenderMetadata } from "@veryfront/types";
+import type { ComponentProps, RenderMetadata } from "#veryfront/types";
 import { escapeHTML } from "./html-escape.ts";
 import {
   generateHydrationData,
@@ -23,7 +23,7 @@ import {
   buildRootAttributes,
   shouldDisableLayout,
 } from "./utils.ts";
-import { resolveRelativePath } from "@veryfront/modules/react-loader/path-resolver.ts";
+import { resolveRelativePath } from "#veryfront/modules/react-loader/path-resolver.ts";
 import {
   generateModulePreloadHintsFromManifest,
   getRouteManifest,

@@ -1,8 +1,13 @@
-import { assertEquals, assertExists, assertRejects, assertThrows } from "@veryfront/testing/assert";
-import { afterEach, describe, it } from "@veryfront/testing/bdd";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getLocalAdapter, resetLocalAdapter, runtime } from "./registry.ts";
 import { createMockAdapter } from "./mock.ts";
-import { isBun, isDeno, isNode } from "@veryfront/platform/compat/runtime.ts";
+import { isBun, isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import type { RuntimeId } from "./base.ts";
 
 // Get the expected runtime based on actual environment

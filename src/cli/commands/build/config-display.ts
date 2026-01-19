@@ -4,8 +4,8 @@
  * Handles displaying build configuration to the user.
  */
 
-import { bold, cyan, dim, green, red, yellow } from "@veryfront/compat/console";
-import { cliLogger } from "@veryfront/utils";
+import { bold, cyan, dim, green, red, yellow } from "#veryfront/compat/console";
+import { cliLogger } from "#veryfront/utils";
 import type { BuildOptions } from "./types.ts";
 
 /**

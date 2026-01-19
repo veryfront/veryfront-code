@@ -1,13 +1,13 @@
-import { afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
-import { expect } from "@std/expect";
-import { delay } from "@std/async";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { expect } from "#std/expect.ts";
+import { delay } from "#std/async.ts";
 import { MDXCacheAdapter } from "./mdx-cache-adapter.ts";
-import type { VeryfrontConfig } from "@veryfront/config";
+import type { VeryfrontConfig } from "#veryfront/config";
 import {
   type BundleManifestStore,
   InMemoryBundleManifestStore,
   setBundleManifestStore,
-} from "@veryfront/utils/bundle-manifest.ts";
+} from "#veryfront/utils/bundle-manifest.ts";
 
 describe("MDXCacheAdapter", () => {
   let adapter: MDXCacheAdapter;

@@ -1,5 +1,5 @@
-import type { Agent } from "@veryfront/agent";
-import type { Tool } from "@veryfront/tool";
+import type { Agent } from "#veryfront/agent";
+import type { Tool } from "#veryfront/tool";
 import type {
   BaseNodeConfig,
   RetryConfig,

@@ -1,6 +1,6 @@
-import { assertStringIncludes } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { isDeno } from "@veryfront/platform/compat/runtime.ts";
+import { assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 
 // This test uses Deno.Command directly - skip in Node.js/Bun
 const denoOnlyDescribe = isDeno ? describe : describe.skip;

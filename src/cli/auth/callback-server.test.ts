@@ -2,10 +2,10 @@
  * Callback Server Tests
  */
 
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { afterEach, describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { type CallbackServer, getCallbackUrl, startCallbackServer } from "./callback-server.ts";
-import { scaleMs } from "@veryfront/testing";
+import { scaleMs } from "#veryfront/testing";
 
 describe("Callback Server", { sanitizeOps: false, sanitizeResources: false }, () => {
   let server: CallbackServer | null = null;

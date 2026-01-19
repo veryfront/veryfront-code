@@ -116,7 +116,7 @@ export let load: (options?: LoadOptions) => Promise<Record<string, string>>;
 
 if (isDeno) {
   // Deno: Use @std/dotenv
-  const stdDotenv = await import("@std/dotenv");
+  const stdDotenv = await import("#std/dotenv.ts");
   load = stdDotenv.load;
 } else {
   // Node.js/Bun: Use our implementation

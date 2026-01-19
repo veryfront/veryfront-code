@@ -1,11 +1,11 @@
-import { assertEquals, assertMatch } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { join } from "@veryfront/compat/path";
+import { assertEquals, assertMatch } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { join } from "#veryfront/compat/path";
 import { loadHandlerModule } from "./loader.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
-import { env, getEnv, setEnv } from "@veryfront/compat/process.ts";
-import { makeTempDir } from "@veryfront/testing/deno-compat";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { env, getEnv, setEnv } from "#veryfront/compat/process.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
 /**
  * Minimal adapter stub that reads files from the real fs via compat,

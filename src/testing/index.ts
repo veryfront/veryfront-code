@@ -11,15 +11,15 @@
  *
  * ```typescript
  * // Instead of:
- * import { assertEquals } from "@std/assert";
- * import { describe, it } from "@std/testing/bdd";
+ * import { assertEquals } from "#std/assert.ts";
+ * import { describe, it } from "#std/testing/bdd.ts";
  *
  * // Use:
- * import { assertEquals } from "@veryfront/testing/assert";
- * import { describe, it } from "@veryfront/testing/bdd";
+ * import { assertEquals } from "#veryfront/testing/assert.ts";
+ * import { describe, it } from "#veryfront/testing/bdd.ts";
  *
  * // Or import everything from the main module:
- * import { assertEquals, describe, it, makeTempDir } from "@veryfront/testing";
+ * import { assertEquals, describe, it, makeTempDir } from "#veryfront/testing";
  * ```
  *
  * @module

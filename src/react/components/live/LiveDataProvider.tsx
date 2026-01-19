@@ -1,8 +1,8 @@
 import type React from "react";
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
-import type { VeryfrontConfig } from "@veryfront/config";
-import type { ComponentFunction, Entity } from "@veryfront/types";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
+import type { ComponentFunction, Entity } from "#veryfront/types";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 interface LiveData {
   entities: Map<string, Entity>;

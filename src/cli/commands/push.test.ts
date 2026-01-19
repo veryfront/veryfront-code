@@ -3,8 +3,8 @@
  * @module cli/commands/push.test
  */
 
-import { assertEquals, assertMatch } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertMatch } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createBranch, generateBranchName, uploadFiles, type UploadOp } from "./push.ts";
 import type { ApiClient } from "../shared/config.ts";
 

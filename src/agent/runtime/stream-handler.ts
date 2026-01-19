@@ -6,7 +6,7 @@
  * @module ai/agent/runtime/stream-handler
  */
 
-import { serverLogger as logger } from "@veryfront/utils";
+import { serverLogger as logger } from "#veryfront/utils";
 import type { AgentStreamEvent } from "../streaming/index.ts";
 import { AgentStreamEventSchema } from "../streaming/index.ts";
 import { sendSSE } from "./sse-utils.ts";

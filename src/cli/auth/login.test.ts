@@ -2,11 +2,18 @@
  * Login Module Tests
  */
 
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, it } from "@veryfront/testing/bdd";
-import { deleteEnv, getEnv, setEnv } from "@veryfront/platform/compat/process.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  it,
+} from "#veryfront/testing/bdd.ts";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { deleteToken, readToken, saveToken } from "./token-store.ts";
-import { makeTempDir, remove } from "@veryfront/platform/compat/fs.ts";
+import { makeTempDir, remove } from "#veryfront/platform/compat/fs.ts";
 import type { UserInfo } from "./login.ts";
 
 describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () => {

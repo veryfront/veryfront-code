@@ -4,7 +4,7 @@ import {
   BREAKPOINT_SM,
   BREAKPOINT_XL,
   PROSE_MAX_WIDTH,
-} from "@veryfront/utils";
+} from "#veryfront/utils";
 
 export function getProductionStyles(nonce?: string): string {
   const nonceAttr = nonce ? ` nonce="${nonce}"` : "";

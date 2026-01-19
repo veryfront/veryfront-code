@@ -1,5 +1,5 @@
-import { isDeno } from "@veryfront/platform/compat/runtime.ts";
-import { getReactImportMap, REACT_VERSION } from "@veryfront/transforms/esm/package-registry.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { getReactImportMap, REACT_VERSION } from "#veryfront/transforms/esm/package-registry.ts";
 
 export interface SSRRewriteOptions {
   /** Project slug for multi-project routing */

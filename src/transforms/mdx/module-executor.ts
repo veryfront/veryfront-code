@@ -2,7 +2,7 @@ import React, { Fragment } from "react";
 import { jsxDEV as jsxRuntimeJsxDEV } from "react/jsx-dev-runtime";
 import { jsx as jsxRuntimeJsx, jsxs as jsxRuntimeJsxs } from "react/jsx-runtime";
 import type { MDXComponents, MDXExecutionContext, MDXModule, MDXModuleFactory } from "./types.ts";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 export function executeModule(
   factory: MDXModuleFactory | string,

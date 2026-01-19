@@ -2,13 +2,13 @@
  * Dev Command - Development server with HMR
  */
 
-import { compileAllMDX, watchMDX } from "@veryfront/build/compiler/mdx-compiler/index.ts";
-import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
-import { join } from "@veryfront/platform/compat/path/index.ts";
-import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
-import { getConfig } from "@veryfront/config";
-import { getRuntimeEnv } from "@veryfront/config/runtime-env.ts";
-import { createDevServer } from "@veryfront/server/dev-server.ts";
+import { compileAllMDX, watchMDX } from "#veryfront/build/compiler/mdx-compiler/index.ts";
+import { ErrorCode, VeryfrontError } from "#veryfront/errors/index.ts";
+import { join } from "#veryfront/platform/compat/path/index.ts";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
+import { getConfig } from "#veryfront/config";
+import { getRuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { createDevServer } from "#veryfront/server/dev-server.ts";
 import { runAIConfigValidation } from "../discovery/config-validator.ts";
 import { discoverAll } from "../discovery/index.ts";
 import { exitProcess, registerTerminationSignals } from "../utils/index.ts";

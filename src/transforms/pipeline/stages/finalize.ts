@@ -7,7 +7,7 @@
  */
 
 import { bundleHttpImports } from "../../esm/http-bundler.ts";
-import { getHttpBundleCacheDir } from "@veryfront/utils/cache-dir.ts";
+import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { isSSR } from "../context.ts";
 import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
 

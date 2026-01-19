@@ -1,5 +1,5 @@
 import type { Context, MiddlewareHandler, Next } from "../types.ts";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 export function composeMiddleware(
   globalMiddlewares: MiddlewareHandler[],

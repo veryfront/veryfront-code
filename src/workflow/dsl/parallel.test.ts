@@ -2,8 +2,8 @@
  * Parallel DSL Tests
  */
 
-import { assertEquals, assertThrows } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parallel } from "./parallel.ts";
 import { step } from "./step.ts";
 import type { ParallelNodeConfig } from "../types.ts";

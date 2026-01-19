@@ -1,8 +1,8 @@
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { MemoryRateLimitStore, rateLimit } from "./rate-limit.ts";
 import { MiddlewareContext } from "../../core/context.ts";
-import { delay } from "@std/async";
+import { delay } from "#std/async.ts";
 
 // Disable LRU interval during tests
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;

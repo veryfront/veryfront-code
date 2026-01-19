@@ -10,14 +10,14 @@
  * - Preserves universal and pseudo-element rules
  */
 
-import { logger } from "@veryfront/utils";
+import { logger } from "#veryfront/utils";
 import type {
   CSSOptimizationOptions,
   CSSOptimizationStrategy,
   CSSProcessingResult,
 } from "../types/index.ts";
 import { extractSelectors, globFiles, shouldKeepSelector } from "../utils.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 
 const fs = createFileSystem();
 

@@ -1,6 +1,6 @@
 import * as React from "react";
-import { serverLogger as logger } from "@veryfront/utils";
-import { renderToStringAdapter } from "@veryfront/react";
+import { serverLogger as logger } from "#veryfront/utils";
+import { renderToStringAdapter } from "#veryfront/react";
 import type { ClientComponentMeta, RSCNode } from "../types.ts";
 import {
   getComponentId,

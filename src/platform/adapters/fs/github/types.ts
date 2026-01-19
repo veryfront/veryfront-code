@@ -4,7 +4,7 @@
  * Re-exports API response types from schemas.ts and defines config types.
  */
 
-import { createError, toError } from "@veryfront/errors";
+import { createError, toError } from "#veryfront/errors";
 
 // Import and re-export from shared types to avoid circular dependencies
 export type { DirectoryEntry } from "../shared-types.ts";

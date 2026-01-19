@@ -11,9 +11,9 @@ import {
   startRequest,
   startTimer,
   timeAsync,
-} from "@veryfront/utils";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { metrics } from "@veryfront/observability/simple-metrics/index.ts";
+} from "#veryfront/utils";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { metrics } from "#veryfront/observability/simple-metrics/index.ts";
 import {
   endServerSpan,
   extractContext,
@@ -21,17 +21,17 @@ import {
   startServerSpan,
   withContext,
   withSpan,
-} from "@veryfront/observability/tracing/otlp-setup.ts";
-import { SpanNames } from "@veryfront/observability/tracing/span-names.ts";
+} from "#veryfront/observability/tracing/otlp-setup.ts";
+import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { getTimeoutFromEnv } from "../../middleware/builtin/timeout.ts";
 
 // Import handler system (from new location)
 import type { HandlerContext } from "../handlers/types.ts";
 import { parseProjectDomain } from "../utils/domain-parser.ts";
 import { getEnvironmentType, lookupProjectByDomain } from "../utils/domain-lookup.ts";
-import { getErrorMessage } from "@veryfront/errors/veryfront-error.ts";
-import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
-import { cwd } from "@veryfront/platform/compat/process.ts";
+import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
+import { cwd } from "#veryfront/platform/compat/process.ts";
 
 /** Check if host is a private/internal IP address */
 function isInternalHost(host: string): boolean {
@@ -73,13 +73,13 @@ function isMonitoringPath(pathname: string): boolean {
   return MONITORING_PATHS.has(pathname);
 }
 
-import { RouteRegistry } from "@veryfront/routing/registry/index.ts";
-import { SecurityConfigLoader } from "@veryfront/security/http/config.ts";
-import { getConfig } from "@veryfront/config/loader.ts";
-import type { VeryfrontConfig } from "@veryfront/config";
+import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
+import { SecurityConfigLoader } from "#veryfront/security/http/config.ts";
+import { getConfig } from "#veryfront/config/loader.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 
 // Import handlers (from new location)
-import { AuthHandler } from "@veryfront/security/http/auth.ts";
+import { AuthHandler } from "#veryfront/security/http/auth.ts";
 import { CorsHandler } from "../handlers/response/cors.ts";
 import { HealthHandler } from "../handlers/monitoring/health.ts";
 import { MetricsHandler } from "../handlers/monitoring/metrics.ts";
@@ -686,5 +686,5 @@ export function createVeryfrontHandler(
 
 // Re-export types and utilities for backward compatibility
 export type { HandlerContext } from "../handlers/types.ts";
-export { RouteRegistry } from "@veryfront/routing/registry/index.ts";
+export { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 export { BaseHandler } from "../handlers/response/base.ts";

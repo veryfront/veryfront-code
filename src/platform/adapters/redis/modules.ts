@@ -6,7 +6,7 @@
  * @module platform/adapters/redis/modules
  */
 
-import { isDeno } from "@veryfront/platform/compat/runtime.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import type { DenoRedisModule, NodeRedisModule } from "./types.ts";
 
 // Cached Redis client modules (loaded only when Redis is used)

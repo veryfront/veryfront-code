@@ -1,6 +1,6 @@
 import { parseImports, replaceSpecifiers, rewriteImports } from "./lexer.ts";
-import { REACT_DEFAULT_VERSION, TAILWIND_VERSION } from "@veryfront/utils/constants/cdn.ts";
-import { rendererLogger as logger } from "@veryfront/utils";
+import { REACT_DEFAULT_VERSION, TAILWIND_VERSION } from "#veryfront/utils/constants/cdn.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
 
 /**
  * Add HMR cache-busting timestamps to all local imports.

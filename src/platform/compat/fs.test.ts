@@ -4,8 +4,8 @@
  * These tests verify the cross-runtime filesystem abstractions work correctly.
  */
 
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { afterAll, beforeAll, describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   chmod,
   createFileSystem,

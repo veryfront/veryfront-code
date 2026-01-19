@@ -8,9 +8,9 @@
  * - Relative imports
  */
 
-import { assertEquals, assertStringIncludes } from "@veryfront/testing/assert";
-import { afterAll, describe, it } from "@veryfront/testing/bdd";
-import { readTextFile } from "@veryfront/testing/deno-compat";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
+import { readTextFile } from "#veryfront/testing/deno-compat.ts";
 import { runPipeline } from "../index.ts";
 import * as esbuild from "esbuild";
 

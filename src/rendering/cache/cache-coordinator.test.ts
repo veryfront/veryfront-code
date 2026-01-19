@@ -1,8 +1,8 @@
-import { assertEquals, assertObjectMatch } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertObjectMatch } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { CacheCoordinator } from "./cache-coordinator.ts";
 import type { RenderResult } from "../orchestrator/types.ts";
-import { delay } from "@std/async";
+import { delay } from "#std/async.ts";
 
 function makeResult(html: string): RenderResult {
   return {

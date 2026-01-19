@@ -13,9 +13,9 @@
  * - Edge cases: tracing disabled, null spans, missing API
  */
 
-import { assert, assertEquals, assertExists } from "@veryfront/testing/assert";
-import { beforeEach, describe, it } from "@veryfront/testing/bdd";
-import { delay } from "@std/async";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { delay } from "#std/async.ts";
 import { TracingManager } from "./manager.ts";
 
 describe("Tracing Module", () => {

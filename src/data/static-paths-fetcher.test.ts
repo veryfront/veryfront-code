@@ -1,5 +1,5 @@
-import { assertEquals, assertExists, assertRejects } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { StaticPathsFetcher } from "./static-paths-fetcher.ts";
 import type { PageWithData } from "./types.ts";
 

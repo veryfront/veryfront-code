@@ -2,8 +2,8 @@
  * Tests for MDX module code generator
  */
 
-import { describe, it } from "@veryfront/testing/bdd";
-import { expect } from "@std/expect";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { expect } from "#std/expect.ts";
 import { generateModuleCode } from "./code-generator.ts";
 import type { MDXFrontmatter } from "./types.ts";
 

@@ -11,7 +11,7 @@ import {
   isWithinDirectory,
   joinPath,
   normalizePath,
-} from "@veryfront/utils/path-utils.ts";
+} from "#veryfront/utils/path-utils.ts";
 
 const ALLOWED_TOP_LEVEL_DIRS = new Set([
   "app",

@@ -39,7 +39,7 @@ import type {
   PendingApproval,
   WorkflowRun,
   WorkflowStatus,
-} from "@veryfront/workflow/types.ts";
+} from "#veryfront/workflow/types.ts";
 
 /**
  * Options for useWorkflow hook

@@ -3,7 +3,7 @@
  * Shared types for Hot Module Replacement functionality
  */
 
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
 /**
  * Configuration options for the HMR server

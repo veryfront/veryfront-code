@@ -3,8 +3,8 @@
  * @module rsc-endpoints/script-handlers
  */
 
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { serverLogger } from "@veryfront/utils";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { serverLogger } from "#veryfront/utils";
 
 /**
  * Handle client.js endpoint

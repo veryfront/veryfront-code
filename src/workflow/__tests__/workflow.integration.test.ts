@@ -9,15 +9,15 @@
  * - Approval flow
  */
 
-import { afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
-import { expect } from "@std/expect";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { expect } from "#std/expect.ts";
 import { createWorkflowClient, WorkflowClient } from "../api/workflow-client.ts";
 import { branch, loop, parallel, step, waitForApproval, workflow } from "../dsl/index.ts";
 import { MemoryBackend } from "../backends/memory.ts";
-import type { Tool } from "@veryfront/tool";
+import type { Tool } from "#veryfront/tool";
 import { z } from "zod";
-import { delay } from "@std/async";
-import { scaleMs } from "@veryfront/testing";
+import { delay } from "#std/async.ts";
+import { scaleMs } from "#veryfront/testing";
 
 // Mock tool for testing
 const createMockTool = (name: string, handler: (input: any) => any): Tool => ({

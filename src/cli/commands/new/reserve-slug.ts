@@ -6,7 +6,7 @@
  * @module cli/commands/new/reserve-slug
  */
 
-import { getRuntimeEnv, type RuntimeEnv } from "@veryfront/config/runtime-env.ts";
+import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 
 // ============================================================================
 // Types

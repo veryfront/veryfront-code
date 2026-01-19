@@ -3,11 +3,11 @@
  * Tests intersection observer-based link prefetching functionality
  */
 
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { LinkObserver } from "./link-observer.ts";
 import type { LinkObserverOptions } from "./link-observer.ts";
-import { delay } from "@std/async";
+import { delay } from "#std/async.ts";
 
 // Mock IntersectionObserver
 class MockIntersectionObserver {

@@ -106,7 +106,7 @@ export let reset: ColorFn;
 
 if (isDeno) {
   // Deno: Use @std/fmt/colors
-  const stdColors = await import("@std/fmt/colors");
+  const stdColors = await import("#std/fmt/colors.ts");
   red = stdColors.red;
   green = stdColors.green;
   yellow = stdColors.yellow;

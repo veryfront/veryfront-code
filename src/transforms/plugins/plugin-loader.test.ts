@@ -1,9 +1,9 @@
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { join } from "@veryfront/compat/path";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { join } from "#veryfront/compat/path";
 import { getRehypePlugins, getRemarkPlugins } from "./plugin-loader.ts";
-import { makeTempDir } from "@veryfront/testing/deno-compat";
-import { remove, writeTextFile } from "@veryfront/compat/fs.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
+import { remove, writeTextFile } from "#veryfront/compat/fs.ts";
 
 describe("plugin-loader", () => {
   describe("getRemarkPlugins", () => {

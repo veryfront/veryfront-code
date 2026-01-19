@@ -1,5 +1,5 @@
-import { rendererLogger as logger } from "@veryfront/utils";
-import { DEFAULT_PREFETCH_DELAY_MS } from "@veryfront/config";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { DEFAULT_PREFETCH_DELAY_MS } from "#veryfront/config";
 import { findAnchorElement, isInternalLink } from "./dom-utils.ts";
 
 export interface NavigationCallbacks {

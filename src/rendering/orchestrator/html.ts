@@ -1,6 +1,6 @@
-import { join } from "@veryfront/platform/compat/path-helper.ts";
-import type { VeryfrontConfig } from "@veryfront/config";
-import type { HTMLGenerationOptions } from "@veryfront/html";
+import { join } from "#veryfront/platform/compat/path-helper.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
+import type { HTMLGenerationOptions } from "#veryfront/html";
 import {
   extractHeadElements,
   extractHTMLMetadata,
@@ -8,20 +8,20 @@ import {
   injectHTMLContent,
   isFullHTMLDocument,
   wrapInHTMLShell,
-} from "@veryfront/html";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+} from "#veryfront/html";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type {
   EntityInfo,
   LayoutItem,
   MdxBundle,
   MDXFrontmatter,
   PageBundle,
-} from "@veryfront/types";
-import { DEFAULT_DASHBOARD_PORT, rendererLogger as logger } from "@veryfront/utils";
+} from "#veryfront/types";
+import { DEFAULT_DASHBOARD_PORT, rendererLogger as logger } from "#veryfront/utils";
 import type { RenderOptions } from "./types.ts";
-import { injectElementSelectors } from "@veryfront/studio/element-selector-injector.ts";
-import { computeSourceHash } from "@veryfront/studio/hash-utils.ts";
-import { extractRelativePath } from "@veryfront/utils/route-path-utils.ts";
+import { injectElementSelectors } from "#veryfront/studio/element-selector-injector.ts";
+import { computeSourceHash } from "#veryfront/studio/hash-utils.ts";
+import { extractRelativePath } from "#veryfront/utils/route-path-utils.ts";
 import { resolveAppComponentPath } from "../layouts/utils/app-resolver.ts";
 
 export interface HTMLGeneratorConfig {

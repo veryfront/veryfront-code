@@ -2,9 +2,9 @@
  * Browser Utility Tests
  */
 
-import { assertEquals } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { createTestRuntimeEnv } from "@veryfront/config/runtime-env.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createTestRuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import { canOpenBrowser } from "./browser.ts";
 
 describe("Browser Utility", () => {

@@ -16,7 +16,7 @@ import {
   processTailwindCSSInDirectory,
   type TailwindProcessResult,
 } from "./tailwind-processor/index.ts";
-import { logger } from "@veryfront/utils";
+import { logger } from "#veryfront/utils";
 
 export interface TailwindBatchOptions {
   enabled?: boolean;

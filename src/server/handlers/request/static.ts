@@ -13,18 +13,18 @@ import {
   isWithinDirectory,
   joinPath,
   normalizePath,
-} from "@veryfront/utils/path-utils.ts";
+} from "#veryfront/utils/path-utils.ts";
 import { computeEtag, hasMatchingEtag } from "../utils/etag.ts";
 import { getContentType } from "../utils/content-types.ts";
-import type { CacheStrategy } from "@veryfront/security";
-import { createSecureFs } from "@veryfront/security";
-import type { BuildManifest } from "@veryfront/build/production-build/index.ts";
+import type { CacheStrategy } from "#veryfront/security";
+import { createSecureFs } from "#veryfront/security";
+import type { BuildManifest } from "#veryfront/build/production-build/index.ts";
 import {
   HTTP_NOT_FOUND,
   HTTP_OK,
   PRIORITY_MEDIUM_STATIC,
-} from "@veryfront/utils/constants/index.ts";
-import { normalizeChunkPath } from "@veryfront/utils/chunk-utils.ts";
+} from "#veryfront/utils/constants/index.ts";
+import { normalizeChunkPath } from "#veryfront/utils/chunk-utils.ts";
 
 export class StaticHandler extends BaseHandler {
   private static manifestCache = new Map<

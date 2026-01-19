@@ -1,7 +1,7 @@
-import { beforeEach, describe, it } from "@veryfront/testing/bdd";
-import { expect } from "@std/expect";
+import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { expect } from "#std/expect.ts";
 import { LRUCacheAdapter } from "./lru-cache-adapter.ts";
-import { delay } from "@std/async";
+import { delay } from "#std/async.ts";
 
 describe("LRUCacheAdapter", () => {
   let cache: LRUCacheAdapter;

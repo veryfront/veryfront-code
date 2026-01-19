@@ -8,8 +8,8 @@
  */
 
 import type { HandlerContext } from "../../types.ts";
-import type { ResponseBuilder } from "@veryfront/security/index.ts";
-import { join as joinPath } from "@veryfront/platform/compat/path/index.ts";
+import type { ResponseBuilder } from "#veryfront/security/index.ts";
+import { join as joinPath } from "#veryfront/platform/compat/path/index.ts";
 
 /**
  * Try rendering App Router not-found.tsx fallback

@@ -6,7 +6,7 @@
  * @module build/transforms/mdx/esm-module-loader/constants
  */
 
-import { isBun, isDeno, isNode } from "@veryfront/platform/compat/runtime.ts";
+import { isBun, isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 
 /** True Node.js-like runtime (Node.js or Bun, not Deno) that resolves bare imports from node_modules */
 export const IS_TRUE_NODE = (isNode || isBun) && !isDeno;

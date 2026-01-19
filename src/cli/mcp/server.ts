@@ -6,11 +6,11 @@
  * and HTTP transport (for remote access).
  */
 
-import { readTextFile } from "@veryfront/platform/compat/fs.ts";
-import { createHttpServer, type HttpServer } from "@veryfront/platform/compat/http/index.ts";
-import { writeStdoutAsync } from "@veryfront/platform/compat/process.ts";
-import { getStdinReader } from "@veryfront/platform/compat/stdin.ts";
-import type { StdinReader } from "@veryfront/platform/compat/stdin.ts";
+import { readTextFile } from "#veryfront/platform/compat/fs.ts";
+import { createHttpServer, type HttpServer } from "#veryfront/platform/compat/http/index.ts";
+import { writeStdoutAsync } from "#veryfront/platform/compat/process.ts";
+import { getStdinReader } from "#veryfront/platform/compat/stdin.ts";
+import type { StdinReader } from "#veryfront/platform/compat/stdin.ts";
 import { allTools, getTool, setServerStartTime } from "./tools.ts";
 import { getErrorCollector } from "./error-collector.ts";
 import { getLogBuffer } from "./log-buffer.ts";

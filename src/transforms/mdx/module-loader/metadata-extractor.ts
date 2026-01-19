@@ -1,4 +1,4 @@
-import { rendererLogger as logger } from "@veryfront/utils";
+import { rendererLogger as logger } from "#veryfront/utils";
 import type { FrontmatterMetadata, LogContext, MDXModule } from "./types.ts";
 import { extractBalancedBlock, parseJsonish } from "./string-parser.ts";
 

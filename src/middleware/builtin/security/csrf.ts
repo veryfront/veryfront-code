@@ -1,6 +1,6 @@
 import type { Middleware } from "../types.ts";
 import { getRequest } from "../types.ts";
-import { HTTP_FORBIDDEN } from "@veryfront/utils/constants/http.ts";
+import { HTTP_FORBIDDEN } from "#veryfront/utils/constants/http.ts";
 
 const STATE_CHANGING_METHODS = ["POST", "PUT", "PATCH", "DELETE"] as const;
 

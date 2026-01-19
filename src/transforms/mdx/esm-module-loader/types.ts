@@ -6,8 +6,8 @@
  * @module build/transforms/mdx/esm-module-loader/types
  */
 
-import type { LRUCache } from "@veryfront/utils/lru-wrapper.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import type { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { MDXModule } from "../types.ts";
 
 /**

@@ -3,7 +3,7 @@
  * @module security/path-validation/types
  */
 
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
 /**
  * Security validation level

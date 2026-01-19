@@ -1,6 +1,6 @@
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/index.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/index.ts";
 import type { DataContext, DataResult, PageWithData } from "./types.ts";
-import { serverLogger } from "@veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 
 export class ServerDataFetcher {
   constructor(private adapter?: RuntimeAdapter) {}

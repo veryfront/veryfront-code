@@ -1,5 +1,5 @@
 import { prefetchLogger } from "../browser-logger.ts";
-import { PREFETCH_QUEUE_MAX_SIZE_BYTES } from "@veryfront/utils/constants/index.ts";
+import { PREFETCH_QUEUE_MAX_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 
 export interface PrefetchQueueOptions {
   maxConcurrent: number;

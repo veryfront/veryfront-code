@@ -1,12 +1,12 @@
-import { describe, it } from "@veryfront/testing/bdd";
-import { assert, assertEquals, assertStringIncludes } from "@veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import {
   buildContentAttributes,
   buildImportMapJson,
   buildRootAttributes,
   shouldDisableLayout,
 } from "./utils.ts";
-import { getDefaultImportMap } from "@veryfront/modules/import-map/default-import-map.ts";
+import { getDefaultImportMap } from "#veryfront/modules/import-map/default-import-map.ts";
 
 describe("html-generation/utils", () => {
   describe("buildRootAttributes", () => {

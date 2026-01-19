@@ -1,9 +1,9 @@
 import type * as React from "react";
 import { useMemo, useRef } from "react";
-import { mdxRenderer } from "@veryfront/transforms/mdx/index.ts";
-import type { MDXComponents } from "@veryfront/types";
+import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
+import type { MDXComponents } from "#veryfront/types";
 import type { MdxBundle } from "./LayoutComponent.tsx";
-import { rendererLogger as logger } from "@veryfront/utils";
+import { rendererLogger as logger } from "#veryfront/utils";
 
 export interface ProviderComponentProps {
   mdxBundle: MdxBundle;

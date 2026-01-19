@@ -1,4 +1,4 @@
-import type { HTMLMetadata } from "@veryfront/transforms/mdx/types.ts";
+import type { HTMLMetadata } from "#veryfront/transforms/mdx/types.ts";
 import { buildAttributes, escapeHTML } from "./html-escape.ts";
 
 function filterAttrs(

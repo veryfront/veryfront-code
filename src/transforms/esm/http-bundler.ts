@@ -5,13 +5,13 @@
  * the same React instance from deno.json import map.
  */
 
-import { rendererLogger as logger } from "@veryfront/utils";
+import { rendererLogger as logger } from "#veryfront/utils";
 import type { Plugin } from "esbuild";
 import { replaceSpecifiers } from "./lexer.ts";
 import { getReactUrls } from "./package-registry.ts";
-import { isDeno } from "@veryfront/platform/compat/runtime.ts";
-import { getRuntimeEnv, type RuntimeEnv } from "@veryfront/config/runtime-env.ts";
-import { isReactSpecifier } from "@veryfront/platform/compat/react-paths.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { isReactSpecifier } from "#veryfront/platform/compat/react-paths.ts";
 
 const LOG_PREFIX = "[HTTP-HANDLER]";
 

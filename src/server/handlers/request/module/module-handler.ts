@@ -20,7 +20,7 @@ import { handleDataEndpoint } from "./data-endpoint-handler.ts";
 import { handlePageDataEndpoint } from "./page-data-endpoint-handler.ts";
 import { handleVirtualModule } from "./virtual-module-handler.ts";
 import { handleBatchModuleEndpoint } from "./batch-module-handler.ts";
-import { PRIORITY_MEDIUM } from "@veryfront/utils/constants/index.ts";
+import { PRIORITY_MEDIUM } from "#veryfront/utils/constants/index.ts";
 
 /**
  * ModuleHandler class.

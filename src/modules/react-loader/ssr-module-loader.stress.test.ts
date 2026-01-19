@@ -7,14 +7,14 @@
  * Run with: deno test --allow-all src/modules/react-loader/ssr-module-loader.stress.test.ts
  */
 
-import { assertEquals } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { join } from "@veryfront/platform/compat/path/index.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { join } from "#veryfront/platform/compat/path/index.ts";
 import { clearSSRModuleCache, SSRModuleLoader } from "./ssr-module-loader/index.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { createFileSystem, makeTempDir } from "@veryfront/platform/compat/fs.ts";
-import { isDeno } from "@veryfront/platform/compat/runtime.ts";
-import { scaleMs } from "@veryfront/testing";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { createFileSystem, makeTempDir } from "#veryfront/platform/compat/fs.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { scaleMs } from "#veryfront/testing";
 
 // This test uses dynamic import() which behaves differently in Node.js vs Deno
 // The module path resolution for temp files doesn't work the same way

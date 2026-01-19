@@ -3,15 +3,15 @@
  * @module code-splitter/splitter
  */
 
-import { bundlerLogger as logger } from "@veryfront/utils";
+import { bundlerLogger as logger } from "#veryfront/utils";
 import type { Metafile } from "esbuild";
-import { ensureDir } from "@std/fs";
-import { relative } from "@veryfront/platform/compat/path/index.ts";
+import { ensureDir } from "#std/fs.ts";
+import { relative } from "#veryfront/platform/compat/path/index.ts";
 import type { ChunkInfo, SplitOptions, SplitResult } from "./types.ts";
 import { createEntryPoints } from "./entry-points.ts";
 import { createBuildContext } from "./build-context.ts";
 import { buildManifest, getChunkInfo, writeManifest } from "./manifest-builder.ts";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 /**
  * Main code splitter class for bundling and splitting application code

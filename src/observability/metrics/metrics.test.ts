@@ -15,8 +15,8 @@
  * - Graceful shutdown
  */
 
-import { assert, assertEquals, assertExists } from "@veryfront/testing/assert";
-import { beforeEach, describe, it } from "@veryfront/testing/bdd";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { MetricsManager } from "./manager.ts";
 
 // Mock adapter with environment access

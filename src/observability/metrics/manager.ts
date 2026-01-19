@@ -4,8 +4,8 @@
  */
 
 import type { Meter } from "@opentelemetry/api";
-import { serverLogger as logger } from "@veryfront/utils";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { serverLogger as logger } from "#veryfront/utils";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { loadConfig } from "./config.ts";
 import { initializeInstruments } from "../instruments/index.ts";
 import { MetricsRecorder } from "./recorder.ts";

@@ -1,8 +1,8 @@
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createContext, normalizeParams, parseCookies } from "./context-builder.ts";
 import type { RouteMatch } from "./api-route-matcher.ts";
-import type { FileSystemAdapter } from "@veryfront/platform/adapters/base.ts";
+import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 
 // Mock filesystem adapter for tests
 const mockFs: FileSystemAdapter = {

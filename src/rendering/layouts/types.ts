@@ -1,4 +1,4 @@
-import type { LayoutItem } from "@veryfront/types";
+import type { LayoutItem } from "#veryfront/types";
 
 /**
  * Supported layout file extensions in priority order.

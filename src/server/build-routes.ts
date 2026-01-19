@@ -2,12 +2,12 @@
  * Route Collection and Discovery for Build
  */
 
-import { serverLogger as logger } from "@veryfront/utils";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { join, relative } from "@veryfront/platform/compat/path/index.ts";
+import { serverLogger as logger } from "#veryfront/utils";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { join, relative } from "#veryfront/platform/compat/path/index.ts";
 import type { AppRouteInfo, RouteInfo } from "./build-types.ts";
-import { discoverFiles } from "@veryfront/utils/file-discovery.ts";
-import { isDynamicSegment } from "@veryfront/utils/route-path-utils.ts";
+import { discoverFiles } from "#veryfront/utils/file-discovery.ts";
+import { isDynamicSegment } from "#veryfront/utils/route-path-utils.ts";
 
 const PAGE_EXTENSIONS = [".mdx", ".md", ".tsx", ".jsx", ".ts"];
 

@@ -6,9 +6,9 @@
  * @module rendering/orchestrator/module-loader
  */
 
-import { parallelMap, rendererLogger as logger } from "@veryfront/utils";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { getLocalAdapter } from "@veryfront/platform/adapters/registry.ts";
+import { parallelMap, rendererLogger as logger } from "#veryfront/utils";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import { generateHash } from "./cache.ts";
 import { findLocalLibFile, findSourceFile } from "../file-resolver/index.ts";
 
@@ -62,7 +62,7 @@ export async function transformModuleWithDeps(
   if (typeof fileContent !== "string") {
     fileContent = new TextDecoder().decode(fileContent as Uint8Array);
   }
-  const { transformToESM } = await import("@veryfront/transforms/esm-transform.ts");
+  const { transformToESM } = await import("#veryfront/transforms/esm-transform.ts");
 
   // Find all @/ imports BEFORE transforming (transformToESM converts them to relative paths)
   // We need to resolve these first and replace them with file:// paths
@@ -195,7 +195,7 @@ export async function loadModule(
   filePath: string,
   config: ModuleLoaderConfig,
 ): Promise<any> {
-  const { getProjectTmpDir } = await import("@veryfront/modules/react-loader/index.ts");
+  const { getProjectTmpDir } = await import("#veryfront/modules/react-loader/index.ts");
   const tmpDir = await getProjectTmpDir(config.projectId ?? config.projectDir);
   const localAdapter = await getLocalAdapter();
 

@@ -1,11 +1,11 @@
-import { LRUCache } from "@veryfront/utils/lru-wrapper.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import {
   DATA_FETCHING_MAX_ENTRIES,
   DATA_FETCHING_TTL_MS,
-} from "@veryfront/utils/constants/cache.ts";
+} from "#veryfront/utils/constants/cache.ts";
 import type { CacheEntry, DataContext } from "./types.ts";
-import { getDisableLruIntervalEnv } from "@veryfront/config/env.ts";
-import { getProjectScopedKey } from "@veryfront/cache/cache-key-builder.ts";
+import { getDisableLruIntervalEnv } from "#veryfront/config/env.ts";
+import { getProjectScopedKey } from "#veryfront/cache/cache-key-builder.ts";
 
 function isLruIntervalDisabled(): boolean {
   if ((globalThis as Record<string, unknown>).__vfDisableLruInterval === true) {

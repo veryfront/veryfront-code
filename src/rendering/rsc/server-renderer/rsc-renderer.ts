@@ -11,7 +11,7 @@
  */
 
 import type * as React from "react";
-import { serverLogger as logger } from "@veryfront/utils";
+import { serverLogger as logger } from "#veryfront/utils";
 import type { ClientComponentMeta, RSCPayload, RSCRendererOptions } from "../types.ts";
 import { treeToHTML } from "./html-generator.ts";
 import { renderTree } from "./tree-processor.ts";

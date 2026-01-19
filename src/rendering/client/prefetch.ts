@@ -7,7 +7,7 @@ import {
   PREFETCH_DEFAULT_DELAY_MS,
   PREFETCH_DEFAULT_TIMEOUT_MS,
   PREFETCH_MAX_SIZE_BYTES,
-} from "@veryfront/utils";
+} from "#veryfront/utils";
 
 export type { ResourceHint };
 

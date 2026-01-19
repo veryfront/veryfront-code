@@ -1,10 +1,10 @@
-import { assertEquals } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { join } from "@veryfront/compat/path";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { join } from "#veryfront/compat/path";
 import { detectAppRouter } from "./router-detection.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import type { VeryfrontConfig } from "@veryfront/config";
-import { makeTempDir, mkdir, writeTextFile } from "@veryfront/testing/deno-compat";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
+import { makeTempDir, mkdir, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 
 // Adapter stub that forces router-detection to use compat fs fallback
 const failingAdapter: RuntimeAdapter = {

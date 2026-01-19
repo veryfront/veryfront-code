@@ -1,8 +1,8 @@
 import type { Middleware } from "../types.ts";
 import { getRequest } from "../types.ts";
 import type { CORSOptions } from "./types.ts";
-import { validateOriginSync } from "@veryfront/security/http/cors/validators.ts";
-import { HTTP_NO_CONTENT } from "@veryfront/utils/constants/http.ts";
+import { validateOriginSync } from "#veryfront/security/http/cors/validators.ts";
+import { HTTP_NO_CONTENT } from "#veryfront/utils/constants/http.ts";
 
 /** Simple CORS middleware using consolidated validation */
 export function corsSimple(options: CORSOptions | string = "*"): Middleware {

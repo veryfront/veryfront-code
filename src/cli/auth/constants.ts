@@ -1,4 +1,4 @@
-import { getRuntimeEnv, type RuntimeEnv } from "@veryfront/config/runtime-env.ts";
+import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 
 export const DEFAULT_API_URL = "https://api.veryfront.com";
 export const DEFAULT_CALLBACK_PORT = 9876;

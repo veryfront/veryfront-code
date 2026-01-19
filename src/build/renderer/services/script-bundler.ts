@@ -2,14 +2,14 @@
  * JavaScript/TypeScript bundling service
  */
 
-import { bundlerLogger as logger } from "@veryfront/utils";
+import { bundlerLogger as logger } from "#veryfront/utils";
 import type * as esbuild from "esbuild";
 import type { Plugin } from "esbuild";
 import type { BundleResult, BundlerOptions } from "../types/bundler-types.ts";
 import { extractImports } from "../utils/import-utils.ts";
 import { getEsbuildLoader } from "../../utils/file-types.ts";
-import { createError, ensureError, toError } from "@veryfront/errors/veryfront-error.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { createError, ensureError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 
 /**
  * Bundle JavaScript/TypeScript files

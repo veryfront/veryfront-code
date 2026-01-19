@@ -1,20 +1,20 @@
-import { serverLogger as logger } from "@veryfront/utils";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
+import { serverLogger as logger } from "#veryfront/utils";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
 import { createVeryfrontHandler } from "./universal-handler/index.ts";
 import { bootstrapProd } from "./bootstrap.ts";
-import { cwd, onGlobalError, onSignal } from "@veryfront/platform/compat/process.ts";
-import { isDebugEnabled } from "@veryfront/utils/constants/env.ts";
+import { cwd, onGlobalError, onSignal } from "#veryfront/platform/compat/process.ts";
+import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
 import {
   initializeOTLPWithApis,
   shutdownOTLP,
-} from "@veryfront/observability/tracing/otlp-setup.ts";
+} from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
   getMemorySnapshot,
   startMemoryMonitoring,
   stopMemoryMonitoring,
-} from "@veryfront/utils/memory/index.ts";
-import { initializeRedisCaches } from "@veryfront/cache/redis-init.ts";
+} from "#veryfront/utils/memory/index.ts";
+import { initializeRedisCaches } from "#veryfront/cache/redis-init.ts";
 import { setServerInitialized } from "./handlers/monitoring/health.ts";
 import {
   enableSSRClientOnlyFetching,

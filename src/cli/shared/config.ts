@@ -5,10 +5,10 @@
  * @module cli/shared/config
  */
 
-import { join } from "@veryfront/platform/compat/path/index.ts";
-import { cwd } from "@veryfront/platform/compat/process.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
-import { getRuntimeEnv, type RuntimeEnv } from "@veryfront/config/runtime-env.ts";
+import { join } from "#veryfront/platform/compat/path/index.ts";
+import { cwd } from "#veryfront/platform/compat/process.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import { readToken } from "../auth/token-store.ts";
 
 /**

@@ -8,7 +8,7 @@
  * - Character optimization
  */
 
-import { logger } from "@veryfront/utils";
+import { logger } from "#veryfront/utils";
 import type {
   CSSOptimizationOptions,
   CSSOptimizationStrategy,

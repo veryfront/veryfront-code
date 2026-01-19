@@ -2,8 +2,8 @@
  * Workflow Registry Tests
  */
 
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getAllWorkflowIds, getWorkflow, registerWorkflow, workflowRegistry } from "./registry.ts";
 import type { WorkflowDefinition, WorkflowNode } from "./types.ts";
 import { workflow } from "./dsl/workflow.ts";

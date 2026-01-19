@@ -2,9 +2,9 @@
  * Tests for consolidated file discovery utility
  */
 
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { join } from "@veryfront/compat/path";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { join } from "#veryfront/compat/path";
 import { collectFiles, countFiles, discoverFiles, hasMatchingFiles } from "./file-discovery.ts";
 import { cwd } from "../platform/compat/process.ts";
 

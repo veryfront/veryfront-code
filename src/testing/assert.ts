@@ -266,7 +266,7 @@ let impl: AssertImpl;
 
 if (isDeno) {
   // Deno: Use @std/assert
-  const denoAssert = await import("@std/assert");
+  const denoAssert = await import("#std/assert.ts");
   impl = {
     assertEquals: denoAssert.assertEquals,
     assertNotEquals: denoAssert.assertNotEquals,

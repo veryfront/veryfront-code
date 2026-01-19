@@ -3,15 +3,15 @@
  * Handles copying static assets from public directory
  */
 
-import { serverLogger as logger } from "@veryfront/utils";
-import { dirname, join, relative } from "@veryfront/platform/compat/path/index.ts";
-import { walk } from "@std/fs";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { serverLogger as logger } from "#veryfront/utils";
+import { dirname, join, relative } from "#veryfront/platform/compat/path/index.ts";
+import { walk } from "#std/fs.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { CLIENT_STYLES } from "./templates.ts";
 import {
   createFileSystem,
   isNotFoundError as _isNotFoundErrorCompat,
-} from "@veryfront/platform/compat/fs.ts";
+} from "#veryfront/platform/compat/fs.ts";
 
 export interface AssetStats {
   assets: number;

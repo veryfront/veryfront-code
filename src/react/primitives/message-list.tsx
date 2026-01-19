@@ -6,7 +6,7 @@
  */
 
 import * as React from "react";
-import type { UIMessage } from "@veryfront/agent/react";
+import type { UIMessage } from "#veryfront/agent/react";
 
 export interface MessageListProps extends React.HTMLAttributes<HTMLDivElement> {
   children: React.ReactNode;

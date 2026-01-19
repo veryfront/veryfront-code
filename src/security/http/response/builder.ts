@@ -18,7 +18,7 @@ export class ResponseBuilder implements FluentMethodsContext, ResponseMethodsCon
   public isDev: boolean;
   public nonce: string;
   public cspUserHeader: string | null;
-  public adapter: import("@veryfront/platform/adapters/base.ts").RuntimeAdapter | undefined;
+  public adapter: import("#veryfront/platform/adapters/base.ts").RuntimeAdapter | undefined;
   public isVeryfrontDomain: boolean;
 
   constructor(config?: ResponseBuilderConfig) {

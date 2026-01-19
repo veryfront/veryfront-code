@@ -8,8 +8,8 @@
  * @module server/shared/renderer/adapter
  */
 
-import { rendererLogger as logger } from "@veryfront/utils";
-import { getConfig } from "@veryfront/config";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { getConfig } from "#veryfront/config";
 import type { HandlerContext } from "../../handlers/types.ts";
 import {
   createRenderContext,
@@ -25,7 +25,7 @@ import type {
   RenderOptions,
   RenderResult,
 } from "../../../rendering/orchestrator/types.ts";
-import type { MdxBundle } from "@veryfront/types";
+import type { MdxBundle } from "#veryfront/types";
 
 /**
  * Minimal renderer interface that handlers actually use.
@@ -175,7 +175,7 @@ class RendererAdapterImpl implements RendererAdapter {
     // MDX compilation is handled internally by the renderer
     // This is a compatibility shim
     const { MDXCompiler } = await import("../../../rendering/orchestrator/mdx.ts");
-    const { MDXCacheAdapter } = await import("@veryfront/transforms/mdx/index.ts");
+    const { MDXCacheAdapter } = await import("#veryfront/transforms/mdx/index.ts");
 
     const mdxCacheAdapter = new MDXCacheAdapter({
       config: this.ctx.config,

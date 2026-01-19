@@ -4,8 +4,8 @@
  * Tests for XSS and prototype pollution prevention
  */
 
-import { describe, it } from "@veryfront/testing/bdd";
-import { assertEquals } from "@veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { sanitizeData } from "./sanitizers.ts";
 
 describe("sanitizeData", () => {

@@ -1,5 +1,5 @@
-import { assertEquals, assertThrows } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   AI_TOOLS,
   getAllToolIds,

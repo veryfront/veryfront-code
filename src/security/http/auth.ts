@@ -8,13 +8,13 @@
  */
 
 import { BaseHandler } from "./base-handler.ts";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import type {
   HandlerContext,
   HandlerMetadata,
   HandlerPriority,
   HandlerResult,
-} from "@veryfront/types";
+} from "#veryfront/types";
 import type { AuthConfig } from "./middleware/types.ts";
 
 function encodeBase64(value: string): string {

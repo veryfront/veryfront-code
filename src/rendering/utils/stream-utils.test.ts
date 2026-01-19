@@ -2,8 +2,8 @@
  * Tests for Stream Utilities
  */
 
-import { assertEquals } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { streamToString } from "./stream-utils.ts";
 
 describe("streamToString", () => {

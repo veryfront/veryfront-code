@@ -4,8 +4,8 @@
  * Tests for the module dependency tracking system.
  */
 
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   clearAllManifests,
   clearProjectManifests,

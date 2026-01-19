@@ -1,10 +1,10 @@
-import { dirname, join } from "@veryfront/platform/compat/path-helper.ts";
-import { rendererLogger as logger } from "@veryfront/utils";
+import { dirname, join } from "#veryfront/platform/compat/path-helper.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
 import * as BundledReact from "react";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import type { LayoutItem, MdxBundle, MDXComponents, ProviderItem } from "@veryfront/types";
-import type { EntityInfo } from "@veryfront/types";
-import type { VeryfrontConfig } from "@veryfront/config";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { LayoutItem, MdxBundle, MDXComponents, ProviderItem } from "#veryfront/types";
+import type { EntityInfo } from "#veryfront/types";
+import type { VeryfrontConfig } from "#veryfront/config";
 import type { LayoutComponentCache } from "./utils/component-loader.ts";
 import { applyLayoutsESM, applyLayoutsFunctionBody } from "./utils/applicator.ts";
 import { resolveAppComponentPath } from "./utils/app-resolver.ts";
@@ -14,8 +14,8 @@ import {
   tryLoadReservedInDirs,
 } from "../app-reserved.ts";
 import { detectAppRouter } from "../router-detection.ts";
-import { getProjectReact } from "@veryfront/react";
-import { extract } from "@std/front-matter/yaml";
+import { getProjectReact } from "#veryfront/react";
+import { extract } from "#std/front-matter/yaml.ts";
 // Import using bare specifiers that match browser import map
 // This ensures SSR and client use the same module instance (same React context)
 import { RouterProvider } from "veryfront/router";

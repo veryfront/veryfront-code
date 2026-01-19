@@ -1,12 +1,12 @@
-import { getCacheNamespace } from "@veryfront/utils/cache/keys/namespace.ts";
-import { CompilationError, wrapError } from "@veryfront/errors/index.ts";
-import { getAdapter } from "@veryfront/platform/adapters/index.ts";
-import { getLocalAdapter } from "@veryfront/platform/adapters/registry.ts";
-import { rendererLogger as logger } from "@veryfront/utils";
+import { getCacheNamespace } from "#veryfront/utils/cache/keys/namespace.ts";
+import { CompilationError, wrapError } from "#veryfront/errors/index.ts";
+import { getAdapter } from "#veryfront/platform/adapters/index.ts";
+import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
 import type { MDXModule } from "./types.ts";
-import { LRUCache } from "@veryfront/utils/lru-wrapper.ts";
-import { registerCache } from "@veryfront/utils/memory/index.ts";
-import { MDX_RENDERER_MAX_ENTRIES, MDX_RENDERER_TTL_MS } from "@veryfront/utils/constants/cache.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { registerCache } from "#veryfront/utils/memory/index.ts";
+import { MDX_RENDERER_MAX_ENTRIES, MDX_RENDERER_TTL_MS } from "#veryfront/utils/constants/cache.ts";
 
 // Use LRU cache with proper limits to prevent unbounded memory growth
 const mdxModuleCache = new LRUCache<string, MDXModule>({

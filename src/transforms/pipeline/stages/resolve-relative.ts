@@ -12,7 +12,7 @@ import {
   resolveRelativeImportsForSSR,
   resolveVeryfrontImports,
 } from "../../esm/path-resolver.ts";
-import { rendererLogger as logger } from "@veryfront/utils";
+import { rendererLogger as logger } from "#veryfront/utils";
 import { isBrowser, isSSR } from "../context.ts";
 import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
 

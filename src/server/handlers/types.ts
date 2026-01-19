@@ -18,4 +18,4 @@ export type {
   RoutePattern,
   RouteRegistryConfig,
   SecurityConfig,
-} from "@veryfront/types";
+} from "#veryfront/types";

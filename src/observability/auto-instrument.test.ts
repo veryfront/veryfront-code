@@ -12,9 +12,9 @@
  * - Edge cases and error scenarios
  */
 
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { beforeEach, describe, it } from "@veryfront/testing/bdd";
-import { delay } from "@std/async";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { delay } from "#std/async.ts";
 
 // Import the module once (no cache-busting needed!)
 import {

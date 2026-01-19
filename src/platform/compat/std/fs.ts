@@ -168,7 +168,7 @@ export let walk: (root: string, options?: WalkOptions) => AsyncIterableIterator<
 
 if (isDeno) {
   // Deno: Use @std/fs
-  const stdFs = await import("@std/fs");
+  const stdFs = await import("#std/fs.ts");
   ensureDir = stdFs.ensureDir;
   exists = stdFs.exists;
   existsSync = stdFs.existsSync;

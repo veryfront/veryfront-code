@@ -1,5 +1,5 @@
 import type { Loader } from "esbuild";
-import { shortHash } from "@veryfront/utils/hash-utils.ts";
+import { shortHash } from "#veryfront/utils/hash-utils.ts";
 
 export function computeContentHash(content: string): Promise<string> {
   return shortHash(content);

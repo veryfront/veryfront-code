@@ -1,8 +1,8 @@
-import { describe, it } from "@veryfront/testing/bdd";
-import { expect } from "@std/expect";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { expect } from "#std/expect.ts";
 import { addDepsToEsmShUrls, resolveReactImports } from "./react-imports.ts";
 import { rewriteVendorImports } from "./import-rewriter.ts";
-import { isDeno } from "@veryfront/platform/compat/runtime.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 
 // SSR tests are runtime-specific:
 // - Deno SSR: React → esm.sh URLs

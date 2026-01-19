@@ -12,8 +12,8 @@ import {
   isInteractive,
   isStdoutTTY,
   writeStdout,
-} from "@veryfront/platform/compat/process.ts";
-import { getStdinReader, setRawMode } from "@veryfront/platform/compat/stdin.ts";
+} from "#veryfront/platform/compat/process.ts";
+import { getStdinReader, setRawMode } from "#veryfront/platform/compat/stdin.ts";
 import { cursor, screen, SPINNER_FRAMES } from "../ui/ansi.ts";
 import { brand, dim, success } from "../ui/colors.ts";
 import { moveDown, moveUp, selectByNumber } from "./components/list-select.ts";

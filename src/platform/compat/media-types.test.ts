@@ -1,5 +1,5 @@
-import { assertEquals } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { charset, contentType, extension, lookup } from "./media-types.ts";
 
 describe("media types compat", () => {

@@ -1,6 +1,6 @@
-import { assertEquals } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { isDeno } from "@veryfront/platform/compat/runtime.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { runInWorker } from "./deno-sandbox.ts";
 
 const testSuite = isDeno ? describe : describe.skip;

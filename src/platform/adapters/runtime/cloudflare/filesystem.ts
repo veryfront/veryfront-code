@@ -1,4 +1,4 @@
-import { ConfigError, FileSystemError, NotSupportedError } from "@veryfront/errors";
+import { ConfigError, FileSystemError, NotSupportedError } from "#veryfront/errors";
 import type {
   DirEntry,
   FileInfo,

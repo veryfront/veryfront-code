@@ -1,9 +1,9 @@
-import { assertEquals } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { join } from "@veryfront/compat/path";
-import { denoAdapter } from "@veryfront/platform/adapters/runtime/deno/index.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { join } from "#veryfront/compat/path";
+import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import { clearSSRModuleCache, SSRModuleLoader } from "./index.ts";
-import { makeTempDir, mkdir, remove, writeTextFile } from "@veryfront/testing/deno-compat";
+import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 
 describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, () => {
   it("isolates cache by projectId", async () => {

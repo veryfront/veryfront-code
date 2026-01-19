@@ -1,5 +1,5 @@
-import { assertEquals, assertNotEquals } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   computeCodeHash,
   computeContentHash,

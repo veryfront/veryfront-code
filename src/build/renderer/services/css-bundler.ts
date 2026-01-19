@@ -2,8 +2,8 @@
  * CSS bundling service
  */
 
-import { bundlerLogger as logger } from "@veryfront/utils";
-import { ensureError } from "@veryfront/errors/veryfront-error.ts";
+import { bundlerLogger as logger } from "#veryfront/utils";
+import { ensureError } from "#veryfront/errors/veryfront-error.ts";
 import type { BundleResult, BundlerOptions } from "../types/bundler-types.ts";
 
 /**

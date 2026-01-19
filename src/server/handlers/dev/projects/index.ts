@@ -5,7 +5,7 @@ import type {
   HandlerPriority,
   HandlerResult,
 } from "../../types.ts";
-import { HTTP_OK, PRIORITY_HIGH } from "@veryfront/utils/constants/index.ts";
+import { HTTP_OK, PRIORITY_HIGH } from "#veryfront/utils/constants/index.ts";
 import { PROJECTS_SHELL_HTML } from "./html-shell.ts";
 import { handleProjectsAPI } from "./api.ts";
 import { handleProjectsUI } from "./ui-handler.ts";

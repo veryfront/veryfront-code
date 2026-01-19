@@ -7,7 +7,7 @@
  * @module core/utils/parallel
  */
 
-import { Semaphore } from "@veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
+import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
 
 /** Default max concurrent operations */
 const DEFAULT_CONCURRENCY = 10;

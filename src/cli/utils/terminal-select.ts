@@ -3,10 +3,10 @@
  * Supports both Deno and Node.js runtimes
  */
 
-import { cyan, dim, green } from "@veryfront/compat/console";
-import { writeStdout } from "@veryfront/platform/compat/process.ts";
-import { isDeno } from "@veryfront/platform/compat/runtime.ts";
-import { getStdinReader, setRawMode } from "@veryfront/platform/compat/stdin.ts";
+import { cyan, dim, green } from "#veryfront/compat/console";
+import { writeStdout } from "#veryfront/platform/compat/process.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { getStdinReader, setRawMode } from "#veryfront/platform/compat/stdin.ts";
 
 export interface SelectOption {
   value: string;

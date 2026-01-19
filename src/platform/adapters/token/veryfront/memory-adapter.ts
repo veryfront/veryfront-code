@@ -5,7 +5,7 @@
  * Tokens are lost when the process restarts.
  */
 
-import { logger } from "@veryfront/utils";
+import { logger } from "#veryfront/utils";
 import type { TokenStorageAdapter } from "./types.ts";
 
 // Use globalThis to share across esbuild bundles

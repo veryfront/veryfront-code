@@ -4,8 +4,8 @@
  * These tests verify the cross-runtime process abstractions work correctly.
  */
 
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { afterEach, describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   cwd,
   deleteEnv,

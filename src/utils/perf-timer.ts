@@ -5,7 +5,7 @@
  * Enable with VERYFRONT_PERF=1 environment variable.
  */
 
-import { isPerfEnabledEnv } from "@veryfront/config/env.ts";
+import { isPerfEnabledEnv } from "#veryfront/config/env.ts";
 
 function isPerfEnabled(): boolean {
   return isPerfEnabledEnv();

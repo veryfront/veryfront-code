@@ -1,7 +1,7 @@
-import { describe, it } from "@veryfront/testing/bdd";
-import { assertEquals, assertStringIncludes } from "@veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { processMetadata } from "./metadata-builder.ts";
-import type { RenderMetadata } from "@veryfront/types";
+import type { RenderMetadata } from "#veryfront/types";
 
 describe("html-generation/metadata-builder", () => {
   describe("processMetadata", () => {

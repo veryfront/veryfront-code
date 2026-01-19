@@ -1,7 +1,7 @@
-import { assert, assertEquals } from "@veryfront/testing/assert";
-import { afterEach, describe, it } from "@veryfront/testing/bdd";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { LRUCache } from "./lru-wrapper.ts";
-import { delay } from "@std/async";
+import { delay } from "#std/async.ts";
 
 describe("LRUCache", () => {
   const caches: LRUCache<unknown, unknown>[] = [];

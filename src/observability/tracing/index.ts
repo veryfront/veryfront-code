@@ -1,4 +1,4 @@
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { tracingManager } from "./manager.ts";
 import type { Context, Span, SpanOptions, TracingConfig } from "./types.ts";
 

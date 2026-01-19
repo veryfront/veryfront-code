@@ -137,6 +137,42 @@ plugin({
       return undefined;
     });
 
+    // Handle #veryfront/* imports (subpath imports from package.json)
+    build.onResolve({ filter: /^#veryfront\// }, (args) => {
+      const subpath = args.path.replace("#veryfront/", "");
+      const candidates = [
+        `./src/${subpath}.ts`,
+        `./src/${subpath}/index.ts`,
+        `./src/${subpath}`,
+      ];
+
+      for (const candidate of candidates) {
+        const fullPath = resolve(projectRoot, candidate);
+        if (existsSync(fullPath)) {
+          const stat = statSync(fullPath);
+          if (stat.isFile()) {
+            return { path: fullPath };
+          }
+          // Check for index.ts in directory
+          const indexPath = resolve(fullPath, "index.ts");
+          if (existsSync(indexPath) && statSync(indexPath).isFile()) {
+            return { path: indexPath };
+          }
+        }
+      }
+      return undefined;
+    });
+
+    // Handle #std/* imports (subpath imports for Deno std compat)
+    build.onResolve({ filter: /^#std\// }, (args) => {
+      const subpath = args.path.replace("#std/", "");
+      const shimPath = resolve(projectRoot, `./src/platform/compat/std/${subpath}.ts`);
+      if (existsSync(shimPath) && statSync(shimPath).isFile()) {
+        return { path: shimPath };
+      }
+      return undefined;
+    });
+
     // Let Bun handle everything else natively:
     // - react, react-dom → node_modules (package.json dependencies)
     // - HTTP modules → not used in Bun (shared facades use node_modules)

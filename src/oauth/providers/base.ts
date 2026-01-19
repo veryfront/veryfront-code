@@ -8,7 +8,7 @@ import type {
   TokenExchangeResult,
   TokenStore,
 } from "../types.ts";
-import { getEnv } from "@veryfront/platform/compat/process.ts";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
 
 /**
  * Environment variable reader function type.

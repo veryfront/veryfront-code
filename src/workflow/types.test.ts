@@ -2,8 +2,8 @@
  * Workflow Types Tests
  */
 
-import { assertEquals, assertThrows } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateId, parseDuration, validateRetryConfig } from "./types.ts";
 
 describe("parseDuration", () => {

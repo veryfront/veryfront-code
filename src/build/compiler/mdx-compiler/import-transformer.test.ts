@@ -2,8 +2,8 @@
  * Tests for import transformation utilities
  */
 
-import { describe, it } from "@veryfront/testing/bdd";
-import { expect } from "@std/expect";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { expect } from "#std/expect.ts";
 import { transformFinalImports, transformImports } from "./import-transformer.ts";
 
 describe("import-transformer", () => {

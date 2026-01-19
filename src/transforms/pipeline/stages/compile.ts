@@ -6,7 +6,7 @@
 
 import * as esbuild from "esbuild";
 import { getLoaderFromPath } from "../../esm/transform-utils.ts";
-import { rendererLogger as logger } from "@veryfront/utils";
+import { rendererLogger as logger } from "#veryfront/utils";
 import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
 
 /**

@@ -2,8 +2,8 @@
  * Wait DSL Tests
  */
 
-import { assertEquals } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { delay, waitForApproval, waitForEvent } from "./wait.ts";
 import type { WaitNodeConfig } from "../types.ts";
 

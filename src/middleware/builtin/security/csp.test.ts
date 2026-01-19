@@ -1,5 +1,5 @@
-import { assertEquals, assertStringIncludes } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { contentSecurityPolicy } from "./csp.ts";
 import { MiddlewareContext } from "../../core/context.ts";
 

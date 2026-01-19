@@ -130,7 +130,7 @@ function parseBddArgs<T extends TestFn | (() => void)>(
   return { name, options, testFn };
 }
 
-function createDenoImpl(denoBdd: typeof import("@std/testing/bdd")): BddImpl {
+function createDenoImpl(denoBdd: typeof import("#std/testing/bdd.ts")): BddImpl {
   return {
     describe(
       nameOrOptions: string | (TestOptions & { name: string }),
@@ -349,7 +349,7 @@ let impl: BddImpl;
 
 if (isDeno) {
   // Deno: Use @std/testing/bdd
-  const denoBdd = await import("@std/testing/bdd");
+  const denoBdd = await import("#std/testing/bdd.ts");
   impl = createDenoImpl(denoBdd);
 } else if (isBun) {
   // Bun: Use bun:test

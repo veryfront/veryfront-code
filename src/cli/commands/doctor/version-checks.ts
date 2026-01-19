@@ -1,5 +1,5 @@
 import type { DiagnosticResult } from "./types.ts";
-import { getRuntimeVersion } from "@veryfront/platform/compat/process.ts";
+import { getRuntimeVersion } from "#veryfront/platform/compat/process.ts";
 
 /**
  * Create a diagnostic result for runtime version

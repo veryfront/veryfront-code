@@ -4,11 +4,11 @@
  */
 
 import { type BuildContext, context } from "esbuild";
-import { join } from "@veryfront/platform/compat/path/index.ts";
-import { getReactImportMap, REACT_DEFAULT_VERSION } from "@veryfront/utils";
+import { join } from "#veryfront/platform/compat/path/index.ts";
+import { getReactImportMap, REACT_DEFAULT_VERSION } from "#veryfront/utils";
 import type { SplitOptions } from "./types.ts";
 import { createSplitterPlugin } from "./esbuild-plugin.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 
 /** Veryfront client modules that may be externalized based on moduleResolution setting */
 const VERYFRONT_CLIENT_MODULES = [

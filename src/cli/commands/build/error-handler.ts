@@ -4,9 +4,9 @@
  * Handles build errors and displays user-friendly error messages.
  */
 
-import { bold, cyan, dim, red } from "@veryfront/compat/console";
-import { cliLogger } from "@veryfront/utils";
-import { exit, getStdout } from "@veryfront/platform/compat/process.ts";
+import { bold, cyan, dim, red } from "#veryfront/compat/console";
+import { cliLogger } from "#veryfront/utils";
+import { exit, getStdout } from "#veryfront/platform/compat/process.ts";
 
 /**
  * Handle build error with user-friendly messaging

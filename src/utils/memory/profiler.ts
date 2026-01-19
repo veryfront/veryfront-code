@@ -5,9 +5,9 @@
  * tracking cache sizes, and detecting memory leaks.
  */
 
-import { rendererLogger as logger } from "@veryfront/utils";
-import { getArgs, memoryUsage } from "@veryfront/platform/compat/process.ts";
-import { getRuntimeEnv, type RuntimeEnv } from "@veryfront/config/runtime-env.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { getArgs, memoryUsage } from "#veryfront/platform/compat/process.ts";
+import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 
 // Registry of all tracked caches for memory monitoring
 const cacheRegistry = new Map<string, () => CacheStats>();

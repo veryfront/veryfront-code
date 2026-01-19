@@ -2,11 +2,16 @@
  * Tests for MDX compiler validator functions
  */
 
-import { afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
-import { expect } from "@std/expect";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { expect } from "#std/expect.ts";
 import { pathExists, validateCompileParams, validateFileExists } from "./validator.ts";
 import type { CompileOptions } from "./types.ts";
-import { makeTempDir, makeTempFile, remove, writeTextFile } from "@veryfront/testing/deno-compat";
+import {
+  makeTempDir,
+  makeTempFile,
+  remove,
+  writeTextFile,
+} from "#veryfront/testing/deno-compat.ts";
 
 describe("MDX compiler validator", () => {
   const validOptions: CompileOptions = {

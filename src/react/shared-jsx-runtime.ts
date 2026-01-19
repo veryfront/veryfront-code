@@ -7,7 +7,7 @@
  * @module react/shared-jsx-runtime
  */
 
-import { isDeno, isBun, isNode } from "../platform/compat/runtime.ts";
+import { isBun, isDeno, isNode } from "../platform/compat/runtime.ts";
 import { cacheModuleToLocal } from "../transforms/esm/http-cache.ts";
 import { getHttpBundleCacheDir } from "../utils/cache-dir.ts";
 import { getReactUrls } from "../transforms/esm/package-registry.ts";

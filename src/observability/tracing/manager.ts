@@ -1,5 +1,5 @@
-import { serverLogger as logger } from "@veryfront/utils";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { serverLogger as logger } from "#veryfront/utils";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { OpenTelemetryAPI, TracingConfig, TracingState } from "./types.ts";
 import { loadConfig } from "./config.ts";
 import { SpanOperations } from "./span-operations.ts";

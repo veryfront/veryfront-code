@@ -1,6 +1,6 @@
-import type { Tool } from "@veryfront/tool";
-import type { JsonSchema } from "@veryfront/tool/schema";
-import { zodToJsonSchema } from "@veryfront/tool/schema";
+import type { Tool } from "#veryfront/tool";
+import type { JsonSchema } from "#veryfront/tool/schema";
+import { zodToJsonSchema } from "#veryfront/tool/schema";
 
 const MODEL_BRAND = "ai-sdk-model";
 

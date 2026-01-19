@@ -1,5 +1,5 @@
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontFSAdapter } from "./adapter.ts";
 
 describe("VeryfrontFSAdapter", () => {

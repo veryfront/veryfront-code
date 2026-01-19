@@ -1,9 +1,9 @@
-import { assertEquals } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { join } from "@veryfront/compat/path";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { join } from "#veryfront/compat/path";
 import { loadManifest, writeManifest } from "./manifest-manager.ts";
 import type { OptimizedImageMetadata } from "./types.ts";
-import { makeTempDir, readTextFile } from "@veryfront/testing/deno-compat";
+import { makeTempDir, readTextFile } from "#veryfront/testing/deno-compat.ts";
 
 describe("manifest-manager", () => {
   it("writes and loads manifests via compat fs", async () => {

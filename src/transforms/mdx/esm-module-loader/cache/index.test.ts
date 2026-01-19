@@ -1,9 +1,9 @@
-import { assertEquals } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { join } from "@veryfront/compat/path";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { join } from "#veryfront/compat/path";
 import { clearModulePathCache, getModulePathCache, saveModulePathCache } from "./index.ts";
-import { makeTempDir } from "@veryfront/testing/deno-compat";
-import { remove, writeTextFile } from "@veryfront/compat/fs.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
+import { remove, writeTextFile } from "#veryfront/compat/fs.ts";
 
 describe("MDX module path cache", () => {
   it("isolates per cache dir", async () => {

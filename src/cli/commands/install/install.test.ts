@@ -1,5 +1,5 @@
-import { assertEquals, assertThrows } from "@veryfront/testing/assert";
-import { afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { installTargets, parseTargetFlag } from "./install.ts";
 import {
   exists,
@@ -7,7 +7,7 @@ import {
   readTextFile,
   remove,
   writeTextFile,
-} from "@veryfront/platform/compat/fs.ts";
+} from "#veryfront/platform/compat/fs.ts";
 
 describe("parseTargetFlag", () => {
   it("should parse single target", () => {

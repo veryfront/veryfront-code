@@ -1,7 +1,7 @@
-import { rendererLogger as logger } from "@veryfront/utils";
-import { PAGE_TRANSITION_DELAY_MS } from "@veryfront/config";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { PAGE_TRANSITION_DELAY_MS } from "#veryfront/config";
 import { applyHeadDirectives, executeScripts, manageFocus, updateMetaTags } from "./dom-utils.ts";
-import { validateTrustedHtml } from "@veryfront/security/client/html-sanitizer.ts";
+import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
 import type { RouteData } from "./page-loader.ts";
 
 export class PageTransition {

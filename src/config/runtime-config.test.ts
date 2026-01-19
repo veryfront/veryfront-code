@@ -3,8 +3,8 @@
  * @module
  */
 
-import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
-import { expect } from "@std/expect";
+import { afterEach, beforeEach, describe, it } from "#std/testing/bdd.ts";
+import { expect } from "#std/expect.ts";
 import {
   _resetRuntimeConfig,
   _setRuntimeConfigForTesting,

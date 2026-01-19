@@ -1,6 +1,6 @@
 import type { CORSConfig, CORSValidationResult } from "./types.ts";
-import { serverLogger } from "@veryfront/utils/logger/logger.ts";
-import { recordCorsRejection } from "@veryfront/observability";
+import { serverLogger } from "#veryfront/utils/logger/logger.ts";
+import { recordCorsRejection } from "#veryfront/observability";
 
 const NO_CORS_RESULT: CORSValidationResult = { allowedOrigin: null, allowCredentials: false };
 

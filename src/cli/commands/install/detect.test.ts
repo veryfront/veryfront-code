@@ -1,7 +1,7 @@
-import { assertEquals } from "@veryfront/testing/assert";
-import { afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { detectAITools, formatDetectionHint } from "./detect.ts";
-import { makeTempDir, mkdir, remove, writeTextFile } from "@veryfront/platform/compat/fs.ts";
+import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/platform/compat/fs.ts";
 
 describe("detectAITools", () => {
   let tempDir: string;

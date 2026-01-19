@@ -1,8 +1,8 @@
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { detectRuntime, getAdapter } from "./detect.ts";
 import type { RuntimeId } from "./base.ts";
-import { isBun, isDeno, isNode } from "@veryfront/platform/compat/runtime.ts";
+import { isBun, isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 
 // Get the expected runtime based on actual environment
 const expectedRuntime: RuntimeId = isDeno ? "deno" : isNode ? "node" : isBun ? "bun" : "deno";

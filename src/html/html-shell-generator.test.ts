@@ -1,7 +1,7 @@
-import { describe, it } from "@veryfront/testing/bdd";
-import { assert, assertEquals, assertStringIncludes } from "@veryfront/testing/assert";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { extractHeadElements, wrapInHTMLShell } from "./html-shell-generator.ts";
-import type { RenderMetadata } from "@veryfront/types";
+import type { RenderMetadata } from "#veryfront/types";
 import type { HTMLGenerationOptions } from "./types.ts";
 
 describe("html-generation/html-shell-generator", () => {

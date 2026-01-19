@@ -1,5 +1,5 @@
-import { assertExists } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertExists } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 
 describe("compat/index.ts exports", () => {
   it("should export fs functions", async () => {

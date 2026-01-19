@@ -4,11 +4,11 @@
  * Stores blobs as files on the local disk
  */
 
-import { dirname, join } from "@veryfront/platform/compat/path-helper.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
-import type { FileSystem } from "@veryfront/platform/compat/fs.ts";
+import { dirname, join } from "#veryfront/platform/compat/path-helper.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { BlobRef, BlobStorage, StoreBlobOptions } from "./types.ts";
-import { agentLogger as logger } from "@veryfront/utils";
+import { agentLogger as logger } from "#veryfront/utils";
 
 export class LocalBlobStorage implements BlobStorage {
   private rootDir: string;

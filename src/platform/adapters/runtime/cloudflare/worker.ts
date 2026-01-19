@@ -13,7 +13,7 @@ export interface ExecutionContext {
 export function createWorker(
   setup: (
     env: CloudflareEnv,
-  ) => import("@veryfront/middleware/core/pipeline/index.ts").MiddlewarePipeline,
+  ) => import("#veryfront/middleware/core/pipeline/index.ts").MiddlewarePipeline,
 ) {
   return {
     fetch(request: Request, env: CloudflareEnv, ctx: ExecutionContext) {

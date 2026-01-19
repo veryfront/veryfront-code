@@ -7,8 +7,8 @@
 import { type EnvReader, OAuthService } from "../providers/base.ts";
 import type { OAuthServiceConfig, TokenStore } from "../types.ts";
 import { memoryTokenStore } from "../token-store/memory.ts";
-import { getEnv } from "@veryfront/platform/compat/process.ts";
-import { getRuntimeEnv, type RuntimeEnv } from "@veryfront/config/runtime-env.ts";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 
 export interface OAuthCallbackHandlerOptions {
   /** Token store to use (defaults to memory store) */

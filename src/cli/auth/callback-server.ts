@@ -1,4 +1,4 @@
-import { isDeno } from "@veryfront/platform/compat/runtime.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { DEFAULT_CALLBACK_PORT, DEFAULT_LOGIN_TIMEOUT_MS, MAX_PORT_ATTEMPTS } from "./constants.ts";
 
 export interface CallbackResult {

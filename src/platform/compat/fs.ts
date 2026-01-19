@@ -13,7 +13,7 @@
  *
  * For CLI commands and standalone utilities, use createFileSystem():
  * ```ts
- * import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+ * import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
  * const fs = createFileSystem();
  * const content = await fs.readTextFile(path);
  * ```
@@ -21,7 +21,7 @@
  * @module
  */
 
-import type { FileInfo } from "@veryfront/platform/adapters/base.ts";
+import type { FileInfo } from "#veryfront/platform/adapters/base.ts";
 import { createError, toError } from "../../errors/veryfront-error.ts";
 import { isBun, isDeno, isNode } from "./runtime.ts";
 

@@ -1,5 +1,5 @@
-import { join } from "@veryfront/platform/compat/path/index.ts";
-import { HASH_SEED_DJB2 } from "@veryfront/utils";
+import { join } from "#veryfront/platform/compat/path/index.ts";
+import { HASH_SEED_DJB2 } from "#veryfront/utils";
 
 export function computeStableId(relPath: string): string {
   // Simple djb2 hash to base36 for readability

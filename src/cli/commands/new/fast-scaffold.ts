@@ -9,8 +9,8 @@
  * @module cli/commands/new/fast-scaffold
  */
 
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
-import { dirname, join } from "@veryfront/platform/compat/path/index.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { dirname, join } from "#veryfront/platform/compat/path/index.ts";
 import { getTemplate } from "../../templates/index.ts";
 import {
   loadIntegrationBaseFilesFromDirectory,

@@ -1,5 +1,5 @@
-import { rendererLogger as logger } from "@veryfront/utils";
-import { extract } from "@veryfront/compat/std/front-matter-yaml.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { extract } from "#veryfront/compat/std/front-matter-yaml.ts";
 
 export interface FrontmatterExtractionResult {
   body: string;

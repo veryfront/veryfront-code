@@ -2,8 +2,6 @@
 
 import { spawn } from "node:child_process";
 import os from "node:os";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { filterTestFiles, listTestFiles, splitIntoShards } from "./test-file-utils.mjs";
 
 function resolveConcurrency(envKeys) {
@@ -33,9 +31,6 @@ function resolveShardCount(envKeys) {
   return null;
 }
 
-const scriptDir = dirname(fileURLToPath(import.meta.url));
-const resolverPath = resolve(scriptDir, "node-resolver.mjs");
-
 const patterns = process.argv.slice(2);
 const concurrency = resolveConcurrency(["VF_TEST_CONCURRENCY", "NODE_TEST_CONCURRENCY"]);
 const shardOverride = resolveShardCount(["VF_TEST_SHARDS", "NODE_TEST_SHARDS"]);
@@ -54,8 +49,6 @@ const hasFilters = includePatterns.length > 0 || excludePatterns.length > 0;
 function buildNodeArgs(files, perShardConcurrency) {
   return [
     "--experimental-transform-types",
-    "--import",
-    resolverPath,
     "--test",
     "--test-concurrency",
     String(perShardConcurrency),

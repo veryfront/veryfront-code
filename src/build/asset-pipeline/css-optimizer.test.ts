@@ -7,11 +7,11 @@ import {
   assertEquals,
   assertExists,
   assertStringIncludes,
-} from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { join } from "@veryfront/compat/path";
-import { readTextFile, remove, writeTextFile } from "@veryfront/compat/fs.ts";
-import { ensureDir } from "@veryfront/compat/std/fs.ts";
+} from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { join } from "#veryfront/compat/path";
+import { readTextFile, remove, writeTextFile } from "#veryfront/compat/fs.ts";
+import { ensureDir } from "#veryfront/compat/std/fs.ts";
 import {
   type CSSOptimizationOptions,
   CSSOptimizer,

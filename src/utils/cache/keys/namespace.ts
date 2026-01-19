@@ -1,6 +1,6 @@
 import { serverLogger as logger } from "../../logger/logger.ts";
 import { getEnvironmentVariable } from "../../logger/env.ts";
-import type { GlobalWithVeryFrontCache } from "@veryfront/types/global-guards.ts";
+import type { GlobalWithVeryFrontCache } from "#veryfront/types/global-guards.ts";
 
 let cacheNamespace: string | undefined =
   (globalThis as GlobalWithVeryFrontCache).__VF_CACHE_NAMESPACE__ ||

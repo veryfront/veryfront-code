@@ -7,9 +7,9 @@
  * @module build/transforms/mdx/esm-module-loader/module-fetcher
  */
 
-import { join, posix } from "@std/path";
-import { rendererLogger as logger } from "@veryfront/utils";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { join, posix } from "#std/path.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { transformToESM } from "../../../esm-transform.ts";
 import { TRANSFORM_CACHE_VERSION } from "../../../esm/package-registry.ts";
 import {

@@ -6,9 +6,9 @@
  * @module veryfront/mcp
  */
 
-import type { Tool } from "@veryfront/tool";
-import type { Resource } from "@veryfront/resource";
-import type { Prompt } from "@veryfront/prompt";
+import type { Tool } from "#veryfront/tool";
+import type { Resource } from "#veryfront/resource";
+import type { Prompt } from "#veryfront/prompt";
 
 /**
  * MCP registry containing all registered tools, resources, and prompts

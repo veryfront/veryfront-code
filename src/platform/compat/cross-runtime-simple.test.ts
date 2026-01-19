@@ -10,8 +10,8 @@
  *   bun test src/platform/compat/cross-runtime-simple.test.ts
  */
 
-import { assert, assertEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assert, assertEquals } from "#std/assert.ts";
+import { describe, it } from "#std/testing/bdd.ts";
 
 // Use relative imports for cross-runtime compatibility
 // Note: Skip security.ts as it has external deps (@veryfront/utils)

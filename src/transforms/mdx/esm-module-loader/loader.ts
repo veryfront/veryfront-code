@@ -7,19 +7,19 @@
  * @module build/transforms/mdx/esm-module-loader/loader
  */
 
-import { join } from "@std/path";
+import { join } from "#std/path.ts";
 import React from "react";
-import { rendererLogger as logger } from "@veryfront/utils";
-import { getCacheNamespace } from "@veryfront/utils/cache/keys/namespace.ts";
-import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "@veryfront/utils/cache-dir.ts";
-import { loadImportMap, transformImportsWithMap } from "@veryfront/modules/import-map/index.ts";
-import type { ImportMapConfig } from "@veryfront/modules/import-map/index.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { getCacheNamespace } from "#veryfront/utils/cache/keys/namespace.ts";
+import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { loadImportMap, transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/index.ts";
 import { cacheHttpImportsToLocal } from "../../esm/http-cache.ts";
 import { replaceSpecifiers } from "../../esm/lexer.ts";
 import { setupSSRGlobals } from "../../../rendering/ssr-globals.ts";
 import type { MDXFrontmatter, MDXModule } from "../types.ts";
 import type { ESMLoaderContext } from "./types.ts";
-import { getLocalReactPaths, isReactSpecifier } from "@veryfront/platform/compat/react-paths.ts";
+import { getLocalReactPaths, isReactSpecifier } from "#veryfront/platform/compat/react-paths.ts";
 import {
   ESBUILD_JSX_FACTORY,
   ESBUILD_JSX_FRAGMENT,
@@ -362,7 +362,7 @@ export async function loadModuleESM(
   try {
     // Get or detect adapter
     const adapter = context.adapter ?? await (async () => {
-      const { getAdapter } = await import("@veryfront/platform/adapters/detect.ts");
+      const { getAdapter } = await import("#veryfront/platform/adapters/detect.ts");
       return getAdapter();
     })();
     context.adapter = adapter;

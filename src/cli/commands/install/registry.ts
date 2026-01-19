@@ -3,7 +3,7 @@
  * To add a new IDE: just add an entry to AI_TOOLS array
  */
 
-import { readTextFile } from "@veryfront/platform/compat/fs.ts";
+import { readTextFile } from "#veryfront/platform/compat/fs.ts";
 import { type AITool, type AIToolId, AIToolIdSchema, AIToolSchema } from "./types.ts";
 
 const AI_TOOLS_RAW = [

@@ -4,7 +4,7 @@
  * Clears renderer caches and handlers for test and runtime cleanup.
  */
 export async function cleanupBundler() {
-  const { clearMDXRendererCache } = await import("@veryfront/transforms/mdx/index.ts");
+  const { clearMDXRendererCache } = await import("#veryfront/transforms/mdx/index.ts");
   clearMDXRendererCache();
 
   const { clearMDXModuleCache } = await import("./ssr/index.ts");

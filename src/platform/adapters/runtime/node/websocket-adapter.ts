@@ -1,7 +1,7 @@
 import type { ServerAdapter, WebSocketUpgrade } from "../../base.ts";
 import type { WSMessageData, WSWebSocket } from "./types.ts";
-import { createError, toError } from "@veryfront/errors";
-import { serverLogger } from "@veryfront/utils";
+import { createError, toError } from "#veryfront/errors";
+import { serverLogger } from "#veryfront/utils";
 import { registerWebSocketUpgrade } from "./http-server.ts";
 import * as crypto from "node:crypto";
 

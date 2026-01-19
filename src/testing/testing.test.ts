@@ -7,7 +7,7 @@
 import { assert, assertEquals, assertExists, assertThrows } from "./assert.ts";
 import { describe, it } from "./bdd.ts";
 import { makeTempDir, makeTempFile, withTempDir } from "./deno-compat.ts";
-import { remove, stat } from "@veryfront/compat/fs.ts";
+import { remove, stat } from "#veryfront/compat/fs.ts";
 
 describe("testing/assert", () => {
   it("assertEquals works with primitives", () => {

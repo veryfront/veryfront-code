@@ -1,20 +1,20 @@
 /** Module Server - serves transformed ESM modules at /_vf_modules/* URLs */
 
-import { join } from "@veryfront/platform/compat/path/index.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
-import { type TransformOptions, transformToESM } from "@veryfront/transforms/esm-transform.ts";
-import { serverLogger, serverLogger as logger } from "@veryfront/utils";
-import { HTTP_NOT_FOUND, HTTP_OK, HTTP_SERVER_ERROR } from "@veryfront/utils";
-import { getContentTypeForPath } from "@veryfront/server/handlers/utils/content-types.ts";
-import { createSecureFs } from "@veryfront/security";
-import { getErrorMessage } from "@veryfront/errors/veryfront-error.ts";
-import { getApiBaseUrlEnv } from "@veryfront/config/env.ts";
-import { injectContext } from "@veryfront/observability/tracing/otlp-setup.ts";
-import { injectNodePositions } from "@veryfront/transforms/plugins/babel-node-positions.ts";
-import { parseProjectDomain } from "@veryfront/server/utils/domain-parser.ts";
+import { join } from "#veryfront/platform/compat/path/index.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { type TransformOptions, transformToESM } from "#veryfront/transforms/esm-transform.ts";
+import { serverLogger, serverLogger as logger } from "#veryfront/utils";
+import { HTTP_NOT_FOUND, HTTP_OK, HTTP_SERVER_ERROR } from "#veryfront/utils";
+import { getContentTypeForPath } from "#veryfront/server/handlers/utils/content-types.ts";
+import { createSecureFs } from "#veryfront/security";
+import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
+import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
+import { injectContext } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { injectNodePositions } from "#veryfront/transforms/plugins/babel-node-positions.ts";
+import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import { applySSRImportRewrites } from "./ssr-import-rewriter.ts";
-import { addHMRTimestamps } from "@veryfront/transforms/esm/import-rewriter.ts";
+import { addHMRTimestamps } from "#veryfront/transforms/esm/import-rewriter.ts";
 
 const DEV_MODULE_PREFIX = /^\/(?:_vf_modules|_veryfront\/modules)\//;
 const SNIPPET_MODULE_PREFIX = /^\/_vf_modules\/_snippets\/([a-f0-9]+)\.js/;

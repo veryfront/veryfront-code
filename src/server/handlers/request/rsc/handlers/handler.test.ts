@@ -1,7 +1,7 @@
-import { afterAll, beforeEach, describe, it } from "@veryfront/testing/bdd";
-import { expect } from "@std/expect";
+import { afterAll, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { expect } from "#std/expect.ts";
 import { RSCDevServerHandler } from "./handler.ts";
-import { delay } from "@std/async";
+import { delay } from "#std/async.ts";
 
 // esbuild spawns a subprocess for bundling that requires time to shut down
 // Disable sanitizers to avoid flaky test failures from async cleanup

@@ -2,11 +2,11 @@
  * New command - Lightning-fast project creation
  */
 
-import { chdir, cwd } from "@veryfront/platform/compat/process.ts";
-import { join } from "@veryfront/platform/compat/path/index.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { chdir, cwd } from "#veryfront/platform/compat/process.ts";
+import { join } from "#veryfront/platform/compat/path/index.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { z } from "zod";
-import { getRuntimeEnv, type RuntimeEnv } from "@veryfront/config/runtime-env.ts";
+import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 
 import { readToken, validateToken } from "../auth/index.ts";
 import { canOpenBrowser, openBrowser } from "../auth/browser.ts";

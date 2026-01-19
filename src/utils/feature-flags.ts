@@ -1,5 +1,5 @@
-import { isRscExperimentalEnabled } from "@veryfront/config/env.ts";
-import type { RuntimeEnv } from "@veryfront/config/runtime-env.ts";
+import { isRscExperimentalEnabled } from "#veryfront/config/env.ts";
+import type { RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 
 /**
  * Checks if RSC is enabled via config or VERYFRONT_EXPERIMENTAL_RSC env.

@@ -1,5 +1,5 @@
 import type { PageWithData, StaticPathsResult } from "./types.ts";
-import { serverLogger } from "@veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 
 export class StaticPathsFetcher {
   async fetch(pageModule: PageWithData): Promise<StaticPathsResult | null> {

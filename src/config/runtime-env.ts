@@ -12,8 +12,8 @@
  * @module
  */
 
-import { getEnv } from "@veryfront/platform/compat/process.ts";
-import { isTruthyEnvValue } from "@veryfront/utils/constants/env.ts";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
 
 /**
  * Core runtime environment configuration.

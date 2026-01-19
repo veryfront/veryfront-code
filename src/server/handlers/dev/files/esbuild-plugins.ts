@@ -1,6 +1,6 @@
 import type { OnLoadArgs, OnResolveArgs, Plugin, PluginBuild } from "esbuild";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/index.ts";
-import { getDirectory, joinPath } from "@veryfront/utils/path-utils.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/index.ts";
+import { getDirectory, joinPath } from "#veryfront/utils/path-utils.ts";
 import {
   getReactCDNUrl,
   getReactDOMCDNUrl,
@@ -8,13 +8,13 @@ import {
   getReactJSXDevRuntimeCDNUrl,
   getReactJSXRuntimeCDNUrl,
   REACT_DEFAULT_VERSION,
-} from "@veryfront/utils/constants/cdn.ts";
+} from "#veryfront/utils/constants/cdn.ts";
 import {
   computeIntegrity,
   createLockfileManager,
   type LockfileManager,
-} from "@veryfront/utils/import-lockfile.ts";
-import { serverLogger as logger } from "@veryfront/utils/logger/index.ts";
+} from "#veryfront/utils/import-lockfile.ts";
+import { serverLogger as logger } from "#veryfront/utils/logger/index.ts";
 
 type EsbuildLoader = "tsx" | "ts" | "jsx" | "js";
 

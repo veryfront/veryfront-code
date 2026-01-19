@@ -12,7 +12,7 @@ import type {
   WorkflowRun,
 } from "../types.ts";
 import type { BackendConfig, WorkflowBackend } from "./types.ts";
-import { agentLogger as logger } from "@veryfront/utils";
+import { agentLogger as logger } from "#veryfront/utils";
 
 export interface InngestAdapterConfig extends BackendConfig {
   /** Inngest event key */

@@ -1,4 +1,4 @@
-import { parse as denoFlagsParse } from "@std/flags";
+import { parse as denoFlagsParse } from "#std/flags.ts";
 
 export interface ParseOptions {
   alias?: Record<string, string | string[]>;

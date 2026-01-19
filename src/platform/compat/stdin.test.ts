@@ -6,10 +6,10 @@
  * tests focus on the API surface and non-interactive behavior.
  */
 
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { setRawMode, type StdinReader } from "./stdin.ts";
-import { isDeno } from "@veryfront/platform/compat/runtime.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 
 describe("Stdin Compat", () => {
   describe("setRawMode", () => {

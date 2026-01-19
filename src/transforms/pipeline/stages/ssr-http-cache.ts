@@ -10,10 +10,10 @@
 import type { TransformPlugin } from "../types.ts";
 import { TransformStage } from "../types.ts";
 import { cacheHttpImportsToLocal } from "../../esm/http-cache.ts";
-import { getHttpBundleCacheDir } from "@veryfront/utils/cache-dir.ts";
-import { loadImportMap } from "@veryfront/modules/import-map/index.ts";
-import type { ImportMapConfig } from "@veryfront/modules/import-map/index.ts";
-import { rendererLogger as logger } from "@veryfront/utils";
+import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/index.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
 
 const LOG_PREFIX = "[SSR-HTTP-CACHE]";
 

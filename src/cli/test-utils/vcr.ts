@@ -8,12 +8,12 @@
  * @module cli/test-utils/vcr
  */
 
-import { load } from "@std/dotenv";
-import { cliLogger } from "@veryfront/utils";
-import { cwd } from "@veryfront/platform/compat/process.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { load } from "#std/dotenv.ts";
+import { cliLogger } from "#veryfront/utils";
+import { cwd } from "#veryfront/platform/compat/process.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { ApiClient } from "../shared/config.ts";
-import { getRuntimeEnv, type RuntimeEnv } from "@veryfront/config/runtime-env.ts";
+import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 
 // Load .env.local for credentials in record mode (skip validation against .env.example)
 try {

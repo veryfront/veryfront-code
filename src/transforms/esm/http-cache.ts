@@ -7,13 +7,13 @@
  * @module transforms/esm/http-cache
  */
 
-import { createFileSystem, exists } from "@veryfront/platform/compat/fs.ts";
-import { isAbsolute, join } from "@veryfront/platform/compat/path/index.ts";
-import { cwd } from "@veryfront/platform/compat/process.ts";
-import { rendererLogger as logger } from "@veryfront/utils";
-import { simpleHash } from "@veryfront/utils/hash-utils.ts";
-import { resolveImport } from "@veryfront/modules/import-map/resolver.ts";
-import type { ImportMapConfig } from "@veryfront/modules/import-map/types.ts";
+import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
+import { isAbsolute, join } from "#veryfront/platform/compat/path/index.ts";
+import { cwd } from "#veryfront/platform/compat/process.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { simpleHash } from "#veryfront/utils/hash-utils.ts";
+import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import { getReactImportMap, REACT_VERSION } from "./package-registry.ts";
 import { parseImports, replaceSpecifiers } from "./lexer.ts";
 

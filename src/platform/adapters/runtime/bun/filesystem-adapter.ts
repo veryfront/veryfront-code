@@ -1,5 +1,5 @@
-import { FileSystemError } from "@veryfront/errors";
-import { createError, toError } from "@veryfront/errors";
+import { FileSystemError } from "#veryfront/errors";
+import { createError, toError } from "#veryfront/errors";
 import type {
   DirEntry,
   FileChangeEvent,
@@ -16,7 +16,7 @@ import {
   enqueueWatchEvent,
 } from "../shared/shared-watcher.ts";
 import type { BunFSWatcher, BunWatchEvent } from "./types.ts";
-import { serverLogger } from "@veryfront/utils";
+import { serverLogger } from "#veryfront/utils";
 
 export class BunFileSystemAdapter implements FileSystemAdapter {
   async readFile(path: string): Promise<string> {

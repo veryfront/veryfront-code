@@ -1,10 +1,10 @@
 import type { Pluggable } from "unified";
-import { rendererLogger as logger } from "@veryfront/utils";
+import { rendererLogger as logger } from "#veryfront/utils";
 import { getRehypePlugins, getRemarkPlugins } from "../../plugins/plugin-loader.ts";
 import { extractFrontmatter } from "./frontmatter-extractor.ts";
 import { rewriteBodyImports, rewriteCompiledImports } from "./import-rewriter.ts";
 import type { CompilationMode, CompilationTarget, MdxRuntimeBundle } from "./types.ts";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { rehypeNodePositions } from "../../plugins/rehype-node-positions.ts";
 
 type PluggableList = Pluggable[];

@@ -1,6 +1,6 @@
-import { dirname, relative } from "@veryfront/platform/compat/path/index.ts";
-import { logger } from "@veryfront/utils";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { dirname, relative } from "#veryfront/platform/compat/path/index.ts";
+import { logger } from "#veryfront/utils";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { processFormat } from "./format-processor.ts";
 import { calculateAspectRatio, getVariantPath } from "../../utils/asset-utils.ts";
 import type {

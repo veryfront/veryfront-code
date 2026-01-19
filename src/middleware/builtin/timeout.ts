@@ -1,7 +1,7 @@
 import type { Middleware } from "./types.ts";
 import { getRequest } from "./types.ts";
-import { serverLogger } from "@veryfront/utils";
-import { getRuntimeEnv, type RuntimeEnv } from "@veryfront/config/runtime-env.ts";
+import { serverLogger } from "#veryfront/utils";
+import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 
 const DEFAULT_TIMEOUT_MS = 30000;
 const HTTP_GATEWAY_TIMEOUT = 504;

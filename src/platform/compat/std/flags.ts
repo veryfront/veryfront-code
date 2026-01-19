@@ -217,7 +217,7 @@ export let parse: (args: string[], options?: ParseOptions) => Args;
 
 if (isDeno) {
   // Deno: Use @std/flags
-  const stdFlags = await import("@std/flags");
+  const stdFlags = await import("#std/flags.ts");
   parse = stdFlags.parse as (args: string[], options?: ParseOptions) => Args;
 } else {
   // Node.js/Bun: Use our implementation

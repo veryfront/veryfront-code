@@ -1,5 +1,5 @@
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { requestWithRetry } from "./retry-handler.ts";
 
 describe("retry-handler", () => {

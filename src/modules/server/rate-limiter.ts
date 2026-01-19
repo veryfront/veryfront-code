@@ -1,4 +1,4 @@
-import { HMR_RATE_LIMIT_WINDOW_MS } from "@veryfront/utils";
+import { HMR_RATE_LIMIT_WINDOW_MS } from "#veryfront/utils";
 
 export class RateLimiter {
   private messageCounts = new Map<WebSocket, { count: number; resetTime: number }>();

@@ -17,18 +17,18 @@ import type {
   WorkflowStatus,
 } from "../../types.ts";
 import type { WorkflowBackend } from "../types.ts";
-import { agentLogger as logger } from "@veryfront/utils";
+import { agentLogger as logger } from "#veryfront/utils";
 
 // Import from platform adapters
-import type { RedisAdapter } from "@veryfront/platform/adapters/redis/index.ts";
+import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
 import {
   DenoRedisAdapter,
   getRedisModule,
   NodeRedisAdapter,
-} from "@veryfront/platform/adapters/redis/index.ts";
+} from "#veryfront/platform/adapters/redis/index.ts";
 
 // Re-export types
-export type { RedisAdapter } from "@veryfront/platform/adapters/redis/index.ts";
+export type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
 export type { RedisBackendConfig } from "./types.ts";
 
 // Import internal types

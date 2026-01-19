@@ -2,13 +2,13 @@
  * Tests for CSS Cache Manager
  */
 
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { join } from "@veryfront/compat/path";
-import { readTextFile, remove, writeTextFile } from "@veryfront/compat/fs.ts";
-import { ensureDir } from "@veryfront/compat/std/fs.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { join } from "#veryfront/compat/path";
+import { readTextFile, remove, writeTextFile } from "#veryfront/compat/fs.ts";
+import { ensureDir } from "#veryfront/compat/std/fs.ts";
 import { CacheManager, loadCSSManifest } from "./css-bundle-cache.ts";
-import type { CSSBundle } from "@veryfront/types";
+import type { CSSBundle } from "#veryfront/types";
 
 const TEST_DIR = "./.veryfront/test-cache";
 

@@ -49,7 +49,7 @@ export let posix: PosixPath;
 
 if (isDeno) {
   // Deno: Use @std/path
-  const stdPath = await import("@std/path");
+  const stdPath = await import("#std/path.ts");
   posix = stdPath.posix;
 } else {
   // Node.js/Bun: Use node:path/posix

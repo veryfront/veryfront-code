@@ -2,11 +2,11 @@
  * Tests for CSS Optimizer Utilities
  */
 
-import { assert, assertEquals } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { join } from "@veryfront/compat/path";
-import { remove, writeTextFile } from "@veryfront/compat/fs.ts";
-import { ensureDir } from "@veryfront/compat/std/fs.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { join } from "#veryfront/compat/path";
+import { remove, writeTextFile } from "#veryfront/compat/fs.ts";
+import { ensureDir } from "#veryfront/compat/std/fs.ts";
 import {
   basicMinify,
   calculateSavings,

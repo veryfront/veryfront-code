@@ -9,4 +9,4 @@ export type {
   EmbeddedBundleManifest,
   MDXBundleOptions,
   MDXBundleResult,
-} from "@veryfront/types/bundler.ts";
+} from "#veryfront/types/bundler.ts";

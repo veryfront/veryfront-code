@@ -1,7 +1,7 @@
-import type { FileSystemAdapter, RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import type { FileSystemAdapter, RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createContext, normalizeParams } from "./context-builder.ts";
 import type { RouteMatch } from "./api-route-matcher.ts";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import type {
   APIRoute,
   AppRouteContext,
@@ -14,7 +14,7 @@ import {
   createPagesRouteMethodNotAllowed,
 } from "./method-validator.ts";
 import { handleAPIError } from "./error-handler.ts";
-import { isAbsolute, join } from "@veryfront/platform/compat/path/index.ts";
+import { isAbsolute, join } from "#veryfront/platform/compat/path/index.ts";
 
 /**
  * Creates a project-scoped filesystem adapter that resolves relative paths

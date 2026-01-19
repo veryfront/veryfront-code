@@ -1,5 +1,5 @@
-import { assert, assertEquals, assertExists, assertNotEquals } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assert, assertEquals, assertExists, assertNotEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import * as React from "react";
 import { renderToString } from "react-dom/server";
 import {

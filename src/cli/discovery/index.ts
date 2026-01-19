@@ -1,20 +1,20 @@
 import { detectPlatform, type Platform } from "../../platform/core-platform.ts";
 import type { Plugin, PluginBuild } from "esbuild";
-import { registerPrompt, registerResource, registerTool } from "@veryfront/mcp";
-import type { Tool } from "@veryfront/tool";
-import type { Prompt } from "@veryfront/prompt";
-import type { Resource } from "@veryfront/resource";
-import type { Agent } from "@veryfront/agent";
-import { registerAgent } from "@veryfront/agent";
-import { registerWorkflow } from "@veryfront/workflow";
-import type { Workflow } from "@veryfront/workflow";
-import { agentLogger } from "@veryfront/utils/logger/logger.ts";
-import type { FileSystemAdapter } from "@veryfront/platform/adapters/base.ts";
-import { isDeno } from "@veryfront/platform/compat/runtime.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
-import * as pathHelper from "@veryfront/platform/compat/path-helper.ts";
-import { getEsbuildLoader } from "@veryfront/utils/path-utils.ts";
-import { ensureError } from "@veryfront/errors/veryfront-error.ts";
+import { registerPrompt, registerResource, registerTool } from "#veryfront/mcp";
+import type { Tool } from "#veryfront/tool";
+import type { Prompt } from "#veryfront/prompt";
+import type { Resource } from "#veryfront/resource";
+import type { Agent } from "#veryfront/agent";
+import { registerAgent } from "#veryfront/agent";
+import { registerWorkflow } from "#veryfront/workflow";
+import type { Workflow } from "#veryfront/workflow";
+import { agentLogger } from "#veryfront/utils/logger/logger.ts";
+import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import * as pathHelper from "#veryfront/platform/compat/path-helper.ts";
+import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
+import { ensureError } from "#veryfront/errors/veryfront-error.ts";
 
 interface FileDiscoveryContext {
   platform: Platform;

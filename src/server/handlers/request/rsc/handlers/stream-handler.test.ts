@@ -1,5 +1,5 @@
-import { beforeEach, describe, it } from "@veryfront/testing/bdd";
-import { expect } from "@std/expect";
+import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { expect } from "#std/expect.ts";
 import { StreamHandler } from "./stream-handler.ts";
 import type { RenderHandler } from "./render-handler.ts";
 

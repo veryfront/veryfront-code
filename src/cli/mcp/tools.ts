@@ -14,10 +14,10 @@
 import { z } from "zod";
 import { type DevError, type ErrorType, getErrorCollector } from "./error-collector.ts";
 import { getLogBuffer, type LogEntry, type LogLevel } from "./log-buffer.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { advancedTools } from "./advanced-tools.ts";
 import { remoteFileTools } from "./remote-file-tools.ts";
-import { getRuntimeEnv, type RuntimeEnv } from "@veryfront/config/runtime-env.ts";
+import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 
 // ============================================================================
 // Types

@@ -1,7 +1,7 @@
-import { rendererLogger as logger } from "@veryfront/utils";
-import { dirname, join } from "@veryfront/platform/compat/path/index.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { getConfig } from "@veryfront/config";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { dirname, join } from "#veryfront/platform/compat/path/index.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { getConfig } from "#veryfront/config";
 import type { ImportMapConfig } from "./types.ts";
 import { getDefaultImportMap } from "./default-import-map.ts";
 import { mergeImportMaps } from "./merger.ts";
@@ -40,7 +40,7 @@ export async function loadImportMap(
 ): Promise<ImportMapConfig> {
   let runtimeAdapter = adapter;
   if (!runtimeAdapter) {
-    const { getAdapter } = await import("@veryfront/platform/adapters/detect.ts");
+    const { getAdapter } = await import("#veryfront/platform/adapters/detect.ts");
     runtimeAdapter = await getAdapter();
   }
 

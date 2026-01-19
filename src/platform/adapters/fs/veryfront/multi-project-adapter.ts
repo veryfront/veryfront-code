@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { logger } from "@veryfront/utils";
+import { logger } from "#veryfront/utils";
 import type { DirectoryEntry, FSAdapter, FSAdapterConfig } from "./types.ts";
 import type { FileInfo } from "../../base.ts";
 import { ProxyFSAdapterManager } from "./proxy-manager.ts";

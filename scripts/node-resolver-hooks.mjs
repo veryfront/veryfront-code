@@ -1,18 +1,12 @@
 /**
- * Simplified Node.js ESM resolver hooks for import aliasing.
+ * Minimal Node.js ESM resolver hooks for TypeScript extension resolution.
  *
  * This hook now ONLY handles:
- * 1. @veryfront/* aliases → ./src/* paths
- * 2. @std/* aliases → ./src/platform/compat/std/* shims
- * 3. npm: protocol stripping (for Deno compat)
+ * 1. TypeScript extension resolution (.ts, .tsx, index.ts)
+ * 2. npm: protocol stripping (for Deno compat)
  *
- * React and HTTP modules are now handled by shared facades (src/react/shared-*.ts)
- * which pre-cache esm.sh modules to file:// paths.
- *
- * Note: To fully eliminate this hook, migrate imports to use # prefix:
- * - @veryfront/* → #veryfront/*
- * - @std/* → #std/*
- * Then package.json imports field will work natively.
+ * Import aliasing (#veryfront/*, #std/*) is handled by package.json imports field.
+ * React and HTTP modules are handled by shared facades (src/react/shared-*.ts).
  */
 
 import { readFileSync, existsSync, statSync } from 'node:fs';
@@ -138,12 +132,32 @@ export async function resolve(specifier, context, nextResolve) {
     return nextResolve(packageName, context);
   }
 
-  // Handle @veryfront/* and @std/* imports via import map
+  // Handle @veryfront/* and @std/* imports via import map (legacy - being phased out)
   if (
     cleanSpecifier.startsWith('@veryfront/') ||
     cleanSpecifier.startsWith('@veryfront') ||
     cleanSpecifier.startsWith('@std/') ||
     cleanSpecifier.startsWith('veryfront/')
+  ) {
+    const mapped = resolveFromImportMap(cleanSpecifier);
+    if (mapped) {
+      const actualPath = findActualFile(mapped.replace(/^\.\//, ''));
+      if (actualPath) {
+        return {
+          shortCircuit: true,
+          url: pathToFileURL(actualPath).href,
+        };
+      }
+    }
+  }
+
+  // Handle #veryfront/* and #std/* imports via import map for extension resolution
+  // Package.json resolves the alias, but Node doesn't add .ts extensions
+  if (
+    cleanSpecifier.startsWith('#veryfront/') ||
+    cleanSpecifier.startsWith('#veryfront') ||
+    cleanSpecifier.startsWith('#std/') ||
+    cleanSpecifier.startsWith('#testing')
   ) {
     const mapped = resolveFromImportMap(cleanSpecifier);
     if (mapped) {

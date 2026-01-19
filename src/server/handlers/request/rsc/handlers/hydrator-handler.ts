@@ -1,11 +1,11 @@
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
-import * as pathHelper from "@veryfront/platform/compat/path-helper.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import * as pathHelper from "#veryfront/platform/compat/path-helper.ts";
 
 const compatFs = createFileSystem();
 
-import { serverLogger as logger } from "@veryfront/utils";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
-import type { FileSystemAdapter } from "@veryfront/platform/adapters/base.ts";
+import { serverLogger as logger } from "#veryfront/utils";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 
 export class HydratorHandler {
   constructor(private fsAdapter?: FileSystemAdapter) {}

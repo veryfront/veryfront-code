@@ -1,6 +1,6 @@
-import { bundlerLogger as logger } from "@veryfront/utils";
-import { join } from "@veryfront/platform/compat/path/index.ts";
-import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
+import { bundlerLogger as logger } from "#veryfront/utils";
+import { join } from "#veryfront/platform/compat/path/index.ts";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
 import type { CompileOptions } from "./types.ts";
 import { compileMDXFile } from "./compiler.ts";
 

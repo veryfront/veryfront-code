@@ -8,11 +8,11 @@
  */
 
 import { getMCPRegistry } from "./registry.ts";
-import { executeTool, zodToJsonSchema } from "@veryfront/tool";
-import { resourceRegistry } from "@veryfront/resource";
-import { promptRegistry } from "@veryfront/prompt";
+import { executeTool, zodToJsonSchema } from "#veryfront/tool";
+import { resourceRegistry } from "#veryfront/resource";
+import { promptRegistry } from "#veryfront/prompt";
 import type { MCPServerConfig } from "./types.ts";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 /**
  * JSON-RPC 2.0 Params type

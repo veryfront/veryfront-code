@@ -1,14 +1,14 @@
-import { assertEquals } from "@veryfront/testing/assert";
-import { afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
-import { join } from "@veryfront/platform/compat/path/index.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { join } from "#veryfront/platform/compat/path/index.ts";
 import {
   exists,
   makeTempDir,
   readTextFile,
   remove,
   writeTextFile,
-} from "@veryfront/platform/compat/fs.ts";
-import { runCommand } from "@veryfront/platform/compat/process.ts";
+} from "#veryfront/platform/compat/fs.ts";
+import { runCommand } from "#veryfront/platform/compat/process.ts";
 
 describe("install command integration", () => {
   let tempDir: string;

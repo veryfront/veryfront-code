@@ -7,11 +7,11 @@
  * - Page file loading with frontmatter extraction
  */
 
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import type { EntityInfo, Frontmatter } from "@veryfront/types";
-import { isDynamicSegment } from "@veryfront/utils/route-path-utils.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { EntityInfo, Frontmatter } from "#veryfront/types";
+import { isDynamicSegment } from "#veryfront/utils/route-path-utils.ts";
 import { join } from "../platform/compat/path-helper.ts";
-import { extract } from "@std/front-matter/yaml";
+import { extract } from "#std/front-matter/yaml.ts";
 
 export async function getAppRouteEntity(
   projectDir: string,

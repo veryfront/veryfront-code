@@ -1,7 +1,7 @@
 import { initialize, transform } from "esbuild"; // Native esbuild
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createError, toError } from "../errors/veryfront-error.ts";
-import { loadImportMap, transformImportsWithMap } from "@veryfront/modules/import-map/index.ts";
+import { loadImportMap, transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
 
 interface VirtualModule {
   id: string;

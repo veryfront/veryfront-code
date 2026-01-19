@@ -6,9 +6,9 @@
  * @module cli/commands/new.integration.test
  */
 
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { afterEach, describe, it } from "@veryfront/testing/bdd";
-import { join } from "@veryfront/platform/compat/path/index.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { join } from "#veryfront/platform/compat/path/index.ts";
 import {
   env,
   exists,
@@ -18,8 +18,8 @@ import {
   remove,
   stat,
   writeTextFile,
-} from "@veryfront/testing/deno-compat";
-import { runCommand } from "@veryfront/compat/process.ts";
+} from "#veryfront/testing/deno-compat.ts";
+import { runCommand } from "#veryfront/compat/process.ts";
 
 const TEST_DIR = await makeTempDir({ prefix: "veryfront-new-test-" });
 const randomSuffix = (): string => Math.random().toString(36).substring(2, 8);

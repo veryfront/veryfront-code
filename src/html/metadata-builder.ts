@@ -1,4 +1,4 @@
-import type { RenderMetadata } from "@veryfront/types";
+import type { RenderMetadata } from "#veryfront/types";
 // Import directly from source files to avoid circular dependency through barrel
 import { extractHTMLMetadata } from "./metadata-extraction.ts";
 import {

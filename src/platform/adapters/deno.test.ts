@@ -1,6 +1,6 @@
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { isDeno } from "@veryfront/platform/compat/runtime.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 
 // Skip all tests if not running in Deno
 if (!isDeno) {

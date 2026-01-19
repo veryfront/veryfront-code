@@ -1,7 +1,7 @@
 import type { ParsedArgs } from "./types.ts";
 import { studioCommand } from "../commands/studio.ts";
-import { cliLogger } from "@veryfront/utils";
-import { formatUserError } from "@veryfront/errors/user-friendly/index.ts";
+import { cliLogger } from "#veryfront/utils";
+import { formatUserError } from "#veryfront/errors/user-friendly/index.ts";
 import { exitProcess } from "../utils/index.ts";
 
 export async function handleStudioCommand(args: ParsedArgs): Promise<void> {

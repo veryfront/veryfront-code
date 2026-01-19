@@ -1,6 +1,6 @@
-import { assertEquals, assertRejects } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { delay } from "@std/async";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { delay } from "#std/async.ts";
 import {
   createAdapterFallback,
   createAdapterFallbackSync,

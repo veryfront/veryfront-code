@@ -1,6 +1,6 @@
 import type React from "react";
 import { createContext, useContext } from "react";
-import type { MDXComponents } from "@veryfront/types";
+import type { MDXComponents } from "#veryfront/types";
 
 const MDXContext = createContext<MDXComponents>({});
 

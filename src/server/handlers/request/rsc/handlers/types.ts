@@ -1,4 +1,4 @@
-import type { ClientComponentMeta } from "@veryfront/rendering/rsc/types.ts";
+import type { ClientComponentMeta } from "#veryfront/rendering/rsc/types.ts";
 
 export interface ManifestData {
   components: Record<string, string>;

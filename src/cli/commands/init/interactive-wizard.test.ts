@@ -3,8 +3,8 @@
  * @module cli/commands/init/interactive-wizard.test
  */
 
-import { assertEquals } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { shouldRunWizard } from "./interactive-wizard.ts";
 
 describe("interactive-wizard", () => {

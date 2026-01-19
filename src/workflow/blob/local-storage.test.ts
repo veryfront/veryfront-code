@@ -1,9 +1,9 @@
-import { assert, assertEquals, assertExists } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { makeTempDir } from "@veryfront/testing/deno-compat";
-import { join } from "@veryfront/compat/path";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
+import { join } from "#veryfront/compat/path";
 import { LocalBlobStorage } from "./local-storage.ts";
-import { remove, stat } from "@veryfront/compat/fs.ts";
+import { remove, stat } from "#veryfront/compat/fs.ts";
 
 describe("LocalBlobStorage", () => {
   it("put and get text", async () => {

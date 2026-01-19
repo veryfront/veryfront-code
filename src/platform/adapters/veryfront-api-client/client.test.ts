@@ -1,5 +1,5 @@
-import { assertEquals, assertRejects, assertThrows } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontAPIClient } from "./client.ts";
 import { VeryfrontAPIError } from "./types.ts";
 

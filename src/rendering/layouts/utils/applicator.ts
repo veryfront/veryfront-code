@@ -1,19 +1,19 @@
-import { rendererLogger as logger } from "@veryfront/utils";
+import { rendererLogger as logger } from "#veryfront/utils";
 import * as BundledReact from "react";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type {
   LayoutItem,
   MdxBundle,
   MDXComponents,
   MDXModule,
   ProviderItem,
-} from "@veryfront/types";
+} from "#veryfront/types";
 import type { LayoutComponentCache } from "./component-loader.ts";
-import { loadImportMap, transformImportsWithMap } from "@veryfront/modules/import-map/index.ts";
-import { mdxRenderer } from "@veryfront/transforms/mdx/index.ts";
+import { loadImportMap, transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
+import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import { applyMDXLayout, applyTSXLayout, loadTSXComponent } from "./component-loader.ts";
 import { getElementTypeName } from "../../element-validator/primitive-checks.ts";
-import { getProjectReact } from "@veryfront/react";
+import { getProjectReact } from "#veryfront/react";
 import { ensureValidChild } from "./ensure-valid-child.ts";
 
 const IS_DENO = typeof (globalThis as { Deno?: unknown }).Deno !== "undefined";

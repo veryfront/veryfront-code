@@ -1,6 +1,6 @@
-import { getContentHash, rendererLogger as logger } from "@veryfront/utils";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import type { LayoutItem, MdxBundle } from "@veryfront/types";
+import { getContentHash, rendererLogger as logger } from "#veryfront/utils";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { LayoutItem, MdxBundle } from "#veryfront/types";
 
 export async function computeDepsHash(
   layoutBundle: MdxBundle | undefined,

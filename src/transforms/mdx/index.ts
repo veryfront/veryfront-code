@@ -1,7 +1,7 @@
-import { rendererLogger as logger } from "@veryfront/utils";
-import { LRUCache } from "@veryfront/utils/lru-wrapper.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import React from "react";
-import { MDX_RENDERER_MAX_ENTRIES, MDX_RENDERER_TTL_MS } from "@veryfront/utils/constants/cache.ts";
+import { MDX_RENDERER_MAX_ENTRIES, MDX_RENDERER_TTL_MS } from "#veryfront/utils/constants/cache.ts";
 import { type ESMLoaderContext, loadModuleESM } from "./esm-module-loader/index.ts";
 import {
   executeModule as _executeModule,
@@ -41,7 +41,7 @@ export class MDXRenderer {
 
   async loadModuleESM(
     compiledProgramCode: string,
-    adapter?: import("@veryfront/platform/adapters/base.ts").RuntimeAdapter,
+    adapter?: import("#veryfront/platform/adapters/base.ts").RuntimeAdapter,
     projectId?: string,
     projectDir?: string,
     projectSlug?: string,

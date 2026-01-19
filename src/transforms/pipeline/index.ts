@@ -10,9 +10,9 @@ import {
   getCachedTransform,
   setCachedTransform,
 } from "../esm/transform-cache.ts";
-import { rendererLogger as logger } from "@veryfront/utils";
+import { rendererLogger as logger } from "#veryfront/utils";
 import { createTransformContext, formatTimingLog, recordStageTiming } from "./context.ts";
-import { withSpan } from "@veryfront/observability/tracing/otlp-setup.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type {
   PipelineConfig,
   TransformOptions,

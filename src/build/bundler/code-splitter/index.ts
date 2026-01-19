@@ -34,7 +34,7 @@ export { createSplitterPlugin } from "./esbuild-plugin.ts";
 // Factory and utility functions
 import type { ChunkManifest, SplitOptions } from "./types.ts";
 import { CodeSplitter } from "./splitter.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 
 /** Creates a new code splitter instance */
 export function createCodeSplitter(options: SplitOptions): CodeSplitter {

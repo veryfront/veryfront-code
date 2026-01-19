@@ -5,9 +5,6 @@
 # Timeout for each test (in ms)
 timeout = 30000
 
-# Preload the resolver plugin
-preload = ["./scripts/bun-preload.ts"]
-
 # Root directories for test file discovery
 # Bun test needs explicit root paths since tests are in src/ and tests/
 root = ["./src", "./tests", "./proxy"]

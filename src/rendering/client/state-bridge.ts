@@ -1,6 +1,6 @@
 import * as React from "react";
 import type { DependencyList, Dispatch, EffectCallback, SetStateAction } from "react";
-import { rendererLogger } from "@veryfront/utils";
+import { rendererLogger } from "#veryfront/utils";
 
 export interface StateStore {
   get<T = unknown>(key: string): T | undefined;

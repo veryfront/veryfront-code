@@ -1,11 +1,11 @@
-import { bundlerLogger as logger } from "@veryfront/utils";
-import { createError, toError } from "@veryfront/errors/veryfront-error.ts";
+import { bundlerLogger as logger } from "#veryfront/utils";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import * as esbuild from "esbuild";
-import { join } from "@veryfront/platform/compat/path/index.ts";
+import { join } from "#veryfront/platform/compat/path/index.ts";
 import { compileMDXToJS } from "../compiler/index.ts";
-import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
 import type { EmbeddedBundleManifest } from "../renderer/types/bundler-types.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 
 export interface BuildEmbeddedOptions {
   projectDir: string;

@@ -3,11 +3,11 @@
  * Loads and caches security configuration from veryfront.config.ts
  */
 
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/index.ts";
-import type { SecurityConfig } from "@veryfront/types";
-import type { VeryfrontConfig } from "@veryfront/config";
-import { getConfig } from "@veryfront/config";
-import { serverLogger } from "@veryfront/utils";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/index.ts";
+import type { SecurityConfig } from "#veryfront/types";
+import type { VeryfrontConfig } from "#veryfront/config";
+import { getConfig } from "#veryfront/config";
+import { serverLogger } from "#veryfront/utils";
 import { buildCSP, generateNonce } from "./response/security-handler.ts";
 
 export class SecurityConfigLoader {

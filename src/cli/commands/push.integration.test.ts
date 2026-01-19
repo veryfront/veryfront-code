@@ -8,8 +8,8 @@
  * @module cli/commands/push.integration
  */
 
-import { assertExists } from "@veryfront/testing/assert";
-import { afterAll, beforeAll, describe, it } from "@veryfront/testing/bdd";
+import { assertExists } from "#veryfront/testing/assert.ts";
+import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { initVCRTest, isRecording, type VCRTestContext } from "../test-utils/vcr.ts";
 import { createBranch } from "./push.ts";
 

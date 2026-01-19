@@ -1,5 +1,5 @@
-import { describe, it } from "@veryfront/testing/bdd";
-import { expect } from "@std/expect";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { expect } from "#std/expect.ts";
 import { getSlugFromPath, normalizeSlug, pathToSlug, slugToPath } from "./slug-normalizer.ts";
 
 describe("slug-normalizer", () => {

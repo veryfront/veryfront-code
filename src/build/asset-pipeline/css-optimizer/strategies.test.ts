@@ -2,13 +2,13 @@
  * Tests for CSS Optimization Strategies
  */
 
-import { assertEquals } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
-import { join } from "@veryfront/compat/path";
-import { remove, writeTextFile } from "@veryfront/compat/fs.ts";
-import { ensureDir } from "@veryfront/compat/std/fs.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { join } from "#veryfront/compat/path";
+import { remove, writeTextFile } from "#veryfront/compat/fs.ts";
+import { ensureDir } from "#veryfront/compat/std/fs.ts";
 import { LightningCSSStrategy, MinificationStrategy, PurgeStrategy } from "./strategies/index.ts";
-import type { CSSOptimizationOptions } from "@veryfront/types";
+import type { CSSOptimizationOptions } from "#veryfront/types";
 
 const TEST_DIR = "./.veryfront/test-strategies";
 

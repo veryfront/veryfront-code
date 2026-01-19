@@ -1,5 +1,5 @@
 import type { RSCNode } from "../types.ts";
-import { escapeHtml } from "@veryfront/html/html-escape.ts";
+import { escapeHtml } from "#veryfront/html/html-escape.ts";
 import { stringifyProps } from "./prop-serializer.ts";
 
 export { escapeHtml };

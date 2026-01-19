@@ -1,5 +1,5 @@
 import * as React from "react";
-import { rendererLogger as logger } from "@veryfront/utils";
+import { rendererLogger as logger } from "#veryfront/utils";
 import { getReactDOMServer } from "./server-loader.ts";
 import type { SSROptions } from "./types.ts";
 

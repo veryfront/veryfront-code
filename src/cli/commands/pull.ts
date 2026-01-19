@@ -7,10 +7,10 @@
  * @module cli/commands/pull
  */
 
-import { dirname, join, normalize, resolve } from "@veryfront/platform/compat/path/index.ts";
-import { cliLogger } from "@veryfront/utils";
-import { cwd } from "@veryfront/platform/compat/process.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { dirname, join, normalize, resolve } from "#veryfront/platform/compat/path/index.ts";
+import { cliLogger } from "#veryfront/utils";
+import { cwd } from "#veryfront/platform/compat/process.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import {
   createApiClient,
   readConfigFile,
@@ -18,7 +18,7 @@ import {
   type ResolvedConfig,
 } from "../shared/config.ts";
 import { confirmPrompt, createSpinner, logInfo, logSuccess, logWarning } from "../utils/index.ts";
-import { getApiTokenEnv } from "@veryfront/config/env.ts";
+import { getApiTokenEnv } from "#veryfront/config/env.ts";
 
 /**
  * Pull source type - determines which API endpoint to use

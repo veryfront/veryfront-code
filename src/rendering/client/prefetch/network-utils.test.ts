@@ -3,8 +3,8 @@
  * Tests network connection detection and prefetch eligibility based on network conditions
  */
 
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { NetworkUtils } from "./network-utils.ts";
 import type { NetworkInfo } from "./network-utils.ts";
 

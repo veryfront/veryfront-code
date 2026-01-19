@@ -1,8 +1,8 @@
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { PageTransition } from "./page-transition.ts";
 import type { RouteData } from "./page-loader.ts";
-import { delay } from "@std/async";
+import { delay } from "#std/async.ts";
 
 interface MockElement {
   id?: string;

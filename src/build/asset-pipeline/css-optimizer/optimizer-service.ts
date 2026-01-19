@@ -1,13 +1,13 @@
-import { dirname, relative } from "@veryfront/platform/compat/path/index.ts";
-import { logger } from "@veryfront/utils";
+import { dirname, relative } from "#veryfront/platform/compat/path/index.ts";
+import { logger } from "#veryfront/utils";
 import type {
   CSSBundle,
   CSSOptimizationOptions,
   CSSOptimizationStrategy,
   CSSOptimizerStats,
-} from "@veryfront/types";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import { createSecureFs, type SecureFs } from "@veryfront/security/secure-fs.ts";
+} from "#veryfront/types";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { createSecureFs, type SecureFs } from "#veryfront/security/secure-fs.ts";
 import { LightningCSSStrategy, MinificationStrategy, PurgeStrategy } from "./strategies/index.ts";
 import { CacheManager } from "./css-bundle-cache.ts";
 import { basicMinify, calculateSavings, findCSSFiles, getOutputPath } from "./utils.ts";

@@ -1,8 +1,8 @@
-import { rendererLogger as logger } from "@veryfront/utils";
-import { join } from "@std/path";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { join } from "#std/path.ts";
 import * as React from "react";
-import { getErrorMessage } from "@veryfront/errors/veryfront-error.ts";
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
+import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { MDXComponents, MDXFrontmatter, MDXModule } from "./types.ts";
 
 export async function loadCompiledMDX(modulePath: string): Promise<MDXModule | null> {

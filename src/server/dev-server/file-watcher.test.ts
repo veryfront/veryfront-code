@@ -1,7 +1,7 @@
-import { expect } from "@std/expect";
-import { describe, it } from "@veryfront/testing/bdd";
+import { expect } from "#std/expect.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { OptimizedFileWatcher } from "./file-watcher.ts";
-import { delay } from "@std/async";
+import { delay } from "#std/async.ts";
 
 function createDeferred<T = void>() {
   let resolve!: (value: T) => void;

@@ -1,6 +1,6 @@
-import { VERSION } from "@veryfront/utils";
-import { assertEquals, assertExists, assertStringIncludes } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { VERSION } from "#veryfront/utils";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   formatBytes,
   logError,

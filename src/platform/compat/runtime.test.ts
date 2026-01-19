@@ -4,8 +4,8 @@
  * These tests verify the cross-runtime detection utilities work correctly.
  */
 
-import { assertEquals } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isBun, isCloudflare, isDeno, isNode, isNodeRuntime } from "./runtime.ts";
 
 describe("Runtime Detection", () => {

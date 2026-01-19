@@ -8,8 +8,8 @@
  * - Feature validation (requires/conflicts)
  */
 
-import { createFileSystem } from "@veryfront/platform/compat/fs.ts";
-import * as pathHelper from "@veryfront/platform/compat/path-helper.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import * as pathHelper from "#veryfront/platform/compat/path-helper.ts";
 import { loadTemplateFromDirectory } from "./loader.ts";
 import type { FeatureConfig, FeatureName, ResolvedFeature, TemplateFile } from "./types.ts";
 

@@ -1,7 +1,7 @@
-import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ComponentRegistry } from "./index.ts";
-import { createMockAdapter } from "@veryfront/platform/adapters/mock.ts";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 
 describe("ComponentRegistry - Edge Cases and Error Handling", () => {
   describe("Missing directories", () => {

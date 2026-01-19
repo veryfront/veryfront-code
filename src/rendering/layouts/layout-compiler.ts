@@ -1,8 +1,8 @@
-import { rendererLogger as logger } from "@veryfront/utils";
-import { getContentHash } from "@veryfront/utils";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
-import type { LayoutItem, MdxBundle } from "@veryfront/types";
-import type { EntityInfo } from "@veryfront/types";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { getContentHash } from "#veryfront/utils";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { LayoutItem, MdxBundle } from "#veryfront/types";
+import type { EntityInfo } from "#veryfront/types";
 import { compileMDXLayouts } from "./utils/compiler.ts";
 
 export interface LayoutCompilerOptions {

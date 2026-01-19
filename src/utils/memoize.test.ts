@@ -1,7 +1,7 @@
-import { assertEquals, assertNotEquals } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MemoCache, memoize, memoizeAsync, simpleHash } from "./memoize.ts";
-import { delay } from "@std/async";
+import { delay } from "#std/async.ts";
 
 describe("memoize", () => {
   describe("MemoCache", () => {

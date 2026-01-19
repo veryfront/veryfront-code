@@ -2,9 +2,9 @@
  * Tests for CLI colors
  */
 
-import { assertEquals, assertStringIncludes } from "@veryfront/testing/assert";
-import { afterAll, beforeAll, describe, it } from "@veryfront/testing/bdd";
-import { deleteEnv, getEnv, setEnv } from "@veryfront/platform/compat/process.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import {
   bold,
   brand,

@@ -7,11 +7,11 @@
  * @module routing/api/openapi/mcp-tools
  */
 
-import { dynamicTool } from "@veryfront/tool";
+import { dynamicTool } from "#veryfront/tool";
 import { z } from "zod";
-import type { Tool } from "@veryfront/tool";
+import type { Tool } from "#veryfront/tool";
 import type { OpenAPIOperation, OpenAPIParameter, OpenAPISpec } from "./types.ts";
-import { logger } from "@veryfront/utils";
+import { logger } from "#veryfront/utils";
 
 const HTTP_METHODS = ["get", "post", "put", "patch", "delete", "head", "options"] as const;
 type HttpMethod = (typeof HTTP_METHODS)[number];

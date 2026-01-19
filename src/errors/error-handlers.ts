@@ -1,4 +1,4 @@
-import { serverLogger } from "@veryfront/utils/logger/logger.ts";
+import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { ErrorCode, VeryfrontError } from "./types.ts";
 
 /** Default max retries for retry operations */

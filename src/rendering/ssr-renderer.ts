@@ -5,14 +5,14 @@
  * Provides React 18/19 streaming support with fallback to string rendering.
  */
 
-import { ErrorCode, VeryfrontError } from "@veryfront/errors/index.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/base.ts";
+import { ErrorCode, VeryfrontError } from "#veryfront/errors/index.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   getReactVersionInfo,
   renderToStreamAdapter,
   renderToStringAdapter,
-} from "@veryfront/react";
-import { isCompiledBinary, rendererLogger as logger } from "@veryfront/utils";
+} from "#veryfront/react";
+import { isCompiledBinary, rendererLogger as logger } from "#veryfront/utils";
 import type * as React from "react";
 import { streamToString } from "./utils/index.ts";
 import { setupSSRGlobals } from "./ssr-globals.ts";
@@ -142,7 +142,7 @@ export class SSRRenderer {
     }
 
     if (this.projectDir) {
-      const { getReactVersionInfoForProject } = await import("@veryfront/react");
+      const { getReactVersionInfoForProject } = await import("#veryfront/react");
       this.versionInfo = await getReactVersionInfoForProject(this.projectDir);
     } else {
       this.versionInfo = getReactVersionInfo();

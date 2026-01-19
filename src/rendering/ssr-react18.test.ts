@@ -4,8 +4,8 @@
  */
 
 import * as React from "react";
-import { assertEquals, assertStringIncludes } from "@veryfront/testing/assert";
-import { describe, it } from "@veryfront/testing/bdd";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 
 const { Component, Suspense } = React as any;
 

@@ -17,7 +17,7 @@
  * ```
  */
 
-import { logger } from "@veryfront/utils";
+import { logger } from "#veryfront/utils";
 import type { RuntimeAdapter, RuntimeId } from "./base.ts";
 import { detectRuntime } from "./runtime-detection.ts";
 
@@ -218,7 +218,7 @@ class AdapterRegistry {
  *
  * @example
  * ```ts
- * import { runtime } from "@veryfront/platform/adapters/registry.ts";
+ * import { runtime } from "#veryfront/platform/adapters/registry.ts";
  *
  * // Get adapter (auto-detects runtime)
  * const adapter = await runtime.get();

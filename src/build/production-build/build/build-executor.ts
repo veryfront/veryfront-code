@@ -8,13 +8,13 @@
  * - Aggregating build statistics
  */
 
-import { serverLogger as logger } from "@veryfront/utils";
+import { serverLogger as logger } from "#veryfront/utils";
 import { buildAppRoutes, buildPagesRoutes } from "../static-generation.ts";
-import type { RuntimeAdapter } from "@veryfront/platform/adapters/index.ts";
-import type { VeryfrontConfig } from "@veryfront/config";
-import type { VeryfrontRenderer } from "@veryfront/rendering/index.ts";
-import type { AppRouteInfo, RouteInfo } from "@veryfront/server/build-types.ts";
-import type { ChunkManifest } from "@veryfront/build/bundler/index.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/index.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
+import type { VeryfrontRenderer } from "#veryfront/rendering/index.ts";
+import type { AppRouteInfo, RouteInfo } from "#veryfront/server/build-types.ts";
+import type { ChunkManifest } from "#veryfront/build/bundler/index.ts";
 
 export interface BuildExecutorOptions {
   adapter: RuntimeAdapter;

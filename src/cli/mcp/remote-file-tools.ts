@@ -11,7 +11,7 @@
 
 import { z } from "zod";
 import type { MCPTool } from "./tools.ts";
-import { getRuntimeEnv } from "@veryfront/config/runtime-env.ts";
+import { getRuntimeEnv } from "#veryfront/config/runtime-env.ts";
 
 // ============================================================================
 // Configuration

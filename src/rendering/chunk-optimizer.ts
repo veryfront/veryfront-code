@@ -1,5 +1,5 @@
-import { join } from "@veryfront/platform/compat/path/index.ts";
-import { bundlerLogger as logger } from "@veryfront/utils";
+import { join } from "#veryfront/platform/compat/path/index.ts";
+import { bundlerLogger as logger } from "#veryfront/utils";
 import { createFileSystem } from "../platform/compat/fs.ts";
 
 /** Directories within .veryfront that should be excluded from scanning */
