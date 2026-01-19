@@ -162,7 +162,9 @@ if (import.meta.main) {
     const port = Number(
       adapter.env.get("PORT") ?? adapter.env.get("VERYFRONT_PORT") ?? 3000,
     );
-    const hostname = adapter.env.get("HOST") ?? adapter.env.get("HOSTNAME") ?? LOCALHOST.IPV4;
+    // Note: Don't use HOSTNAME env var - Kubernetes sets it to pod name which
+    // resolves to pod IP, preventing localhost port-forward from working
+    const hostname = adapter.env.get("HOST") ?? "0.0.0.0";
 
     const server = await startUniversalServer({
       projectDir,
