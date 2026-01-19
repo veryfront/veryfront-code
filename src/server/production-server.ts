@@ -26,7 +26,8 @@ import {
 interface ServerOptions {
   projectDir: string;
   port: number;
-  hostname?: string;
+  /** Bind address (0.0.0.0 = all interfaces, 127.0.0.1 = localhost only) */
+  host?: string;
   signal?: AbortSignal;
 }
 
@@ -42,7 +43,7 @@ export async function startUniversalServer(
     mode?: "development" | "production";
   },
 ): Promise<ServerHandle> {
-  const { projectDir, port, hostname = "0.0.0.0", signal, debug, mode = "production" } = options;
+  const { projectDir, port, host = "0.0.0.0", signal, debug, mode = "production" } = options;
   const baseAdapter = options.adapter ?? (await getAdapter());
 
   // Bootstrap framework to initialize FSAdapter if configured
@@ -63,7 +64,7 @@ export async function startUniversalServer(
   // the actual data client-side after hydration.
   enableSSRClientOnlyFetching();
 
-  logger.info("Starting universal production server", { projectDir, port, hostname });
+  logger.info("Starting universal production server", { projectDir, port, host });
 
   const handler = createVeryfrontHandler(projectDir, adapter, {
     projectDir,
@@ -85,7 +86,7 @@ export async function startUniversalServer(
 
   const server = await adapter.serve(handler, {
     port,
-    hostname,
+    hostname: host, // Deno API uses "hostname" for bind address
     signal,
     onListen: (params) => {
       try {
@@ -162,14 +163,14 @@ if (import.meta.main) {
     const port = Number(
       adapter.env.get("PORT") ?? adapter.env.get("VERYFRONT_PORT") ?? 3000,
     );
-    // Note: Don't use HOSTNAME env var - Kubernetes sets it to pod name which
-    // resolves to pod IP, preventing localhost port-forward from working
-    const hostname = adapter.env.get("HOST") ?? "0.0.0.0";
+    // HOST = bind address (0.0.0.0 = all interfaces, 127.0.0.1 = localhost only)
+    // Note: Don't use HOSTNAME - K8s sets it to pod name which resolves to pod IP
+    const host = adapter.env.get("HOST") ?? "0.0.0.0";
 
     const server = await startUniversalServer({
       projectDir,
       port,
-      hostname,
+      host,
       debug: isDebugEnabled(adapter.env),
       adapter, // Pass adapter to avoid re-detection
       signal: shutdownController.signal,
