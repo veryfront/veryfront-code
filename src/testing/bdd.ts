@@ -11,19 +11,7 @@
 import { isBun, isDeno } from "../platform/compat/runtime.ts";
 
 // ============================================================================
-// Deno: Direct re-export (no wrapper, no side effects)
-// ============================================================================
-
-if (isDeno) {
-  // Direct re-export for Deno - no top-level await, no wrapper
-  // This file is replaced at runtime by the export below
-}
-
-// For Deno, we use conditional exports in deno.json to map to bdd.deno.ts
-// This file contains the Node/Bun implementations
-
-// ============================================================================
-// Type definitions (for Node/Bun implementations)
+// Type definitions
 // ============================================================================
 
 /** Test function that can be sync or async */
@@ -52,7 +40,22 @@ export interface BddTestContext {
 type HookFn = (ctx?: BddTestContext) => void | Promise<void>;
 
 // ============================================================================
-// Implementation getter (lazy initialization for Node/Bun)
+// Deno: Direct delegation to @std/testing/bdd
+// ============================================================================
+
+// For Deno, we directly use @std/testing/bdd - no wrapper needed
+// This avoids creating a "global" test suite from top-level await
+let denoBdd: typeof import("@std/testing/bdd") | null = null;
+
+if (isDeno) {
+  // Synchronously load the Deno BDD module
+  // This is safe because Deno supports top-level await and we're not
+  // creating any test hooks at module level
+  denoBdd = await import("@std/testing/bdd");
+}
+
+// ============================================================================
+// Node/Bun implementation interface
 // ============================================================================
 
 interface BddImpl {
@@ -251,7 +254,7 @@ function createBunImpl(bunTest: BunTestModule): BddImpl {
 }
 
 // ============================================================================
-// Lazy initialization (only for Node/Bun - Deno uses direct re-export)
+// Lazy initialization for Node/Bun
 // ============================================================================
 
 async function getImpl(): Promise<BddImpl> {
@@ -289,18 +292,39 @@ async function getImpl(): Promise<BddImpl> {
 }
 
 // ============================================================================
-// Public exports (for Node/Bun only - Deno uses bdd.deno.ts)
+// Public exports - delegates to Deno BDD or Node/Bun impl
 // ============================================================================
 
-// For Deno, these are never used because deno.json maps to bdd.deno.ts
-// For Node/Bun, these wrap the lazy-initialized implementations
+/** Check if any test options are set */
+function hasOptions(options: TestOptions): boolean {
+  return Object.values(options).some((v) => v !== undefined);
+}
+
+/** Normalize Deno options, converting skip to ignore */
+function normalizeDenoOptions(options: TestOptions): TestOptions {
+  if (!options.skip) return options;
+  const { skip: _skip, ...rest } = options;
+  return { ...rest, ignore: true };
+}
 
 export function describe(
   nameOrOptions: string | (TestOptions & { name: string }),
   optionsOrFn?: TestOptions | (() => void),
   fn?: () => void,
 ): void {
-  // Synchronous wrapper - implementation must be initialized first
+  if (denoBdd) {
+    // Deno: delegate directly
+    const { name, options, testFn } = parseBddArgs(nameOrOptions, optionsOrFn, fn);
+    if (!testFn) throw new Error("describe requires a test function");
+    const denoOptions = normalizeDenoOptions(options);
+    if (hasOptions(denoOptions)) {
+      denoBdd.describe({ name, ...denoOptions }, testFn);
+    } else {
+      denoBdd.describe(name, testFn);
+    }
+    return;
+  }
+
   if (!_impl) {
     throw new Error(
       "BDD implementation not initialized. For Node/Bun, call initBdd() first, or import from @veryfront/testing which auto-initializes.",
@@ -317,6 +341,12 @@ describe.skip = function skip(
   const name = typeof nameOrOptions === "string" ? nameOrOptions : nameOrOptions.name;
   const testFn = typeof optionsOrFn === "function" ? optionsOrFn : fn;
   if (!testFn) throw new Error("describe.skip requires a test function");
+
+  if (denoBdd) {
+    denoBdd.describe({ name, ignore: true }, testFn);
+    return;
+  }
+
   if (!_impl) throw new Error("BDD implementation not initialized");
   _impl.describe({ name, ignore: true }, testFn);
 };
@@ -331,6 +361,12 @@ describe.only = function only(
   const name = typeof nameOrOptions === "string" ? nameOrOptions : nameOrOptions.name;
   const testFn = typeof optionsOrFn === "function" ? optionsOrFn : fn;
   if (!testFn) throw new Error("describe.only requires a test function");
+
+  if (denoBdd) {
+    denoBdd.describe({ name, only: true }, testFn);
+    return;
+  }
+
   if (!_impl) throw new Error("BDD implementation not initialized");
   _impl.describe({ name, only: true }, testFn);
 };
@@ -340,6 +376,19 @@ export function it(
   optionsOrFn?: TestOptions | TestFn,
   fn?: TestFn,
 ): void {
+  if (denoBdd) {
+    // Deno: delegate directly
+    const { name, options, testFn } = parseBddArgs(nameOrOptions, optionsOrFn, fn);
+    if (!testFn) throw new Error("it requires a test function");
+    const denoOptions = normalizeDenoOptions(options);
+    if (hasOptions(denoOptions)) {
+      denoBdd.it({ name, ...denoOptions }, testFn);
+    } else {
+      denoBdd.it(name, testFn);
+    }
+    return;
+  }
+
   if (!_impl) {
     throw new Error(
       "BDD implementation not initialized. For Node/Bun, call initBdd() first, or import from @veryfront/testing which auto-initializes.",
@@ -356,6 +405,12 @@ it.skip = function skip(
   const name = typeof nameOrOptions === "string" ? nameOrOptions : nameOrOptions.name;
   const testFn = typeof optionsOrFn === "function" ? optionsOrFn : fn;
   if (!testFn) throw new Error("it.skip requires a test function");
+
+  if (denoBdd) {
+    denoBdd.it({ name, ignore: true }, testFn);
+    return;
+  }
+
   if (!_impl) throw new Error("BDD implementation not initialized");
   _impl.it({ name, ignore: true }, testFn);
 };
@@ -370,26 +425,48 @@ it.only = function only(
   const name = typeof nameOrOptions === "string" ? nameOrOptions : nameOrOptions.name;
   const testFn = typeof optionsOrFn === "function" ? optionsOrFn : fn;
   if (!testFn) throw new Error("it.only requires a test function");
+
+  if (denoBdd) {
+    denoBdd.it({ name, only: true }, testFn);
+    return;
+  }
+
   if (!_impl) throw new Error("BDD implementation not initialized");
   _impl.it({ name, only: true }, testFn);
 };
 
 export function beforeEach(fn: HookFn): void {
+  if (denoBdd) {
+    denoBdd.beforeEach(fn);
+    return;
+  }
   if (!_impl) throw new Error("BDD implementation not initialized");
   _impl.beforeEach(fn);
 }
 
 export function afterEach(fn: HookFn): void {
+  if (denoBdd) {
+    denoBdd.afterEach(fn);
+    return;
+  }
   if (!_impl) throw new Error("BDD implementation not initialized");
   _impl.afterEach(fn);
 }
 
 export function beforeAll(fn: HookFn): void {
+  if (denoBdd) {
+    denoBdd.beforeAll(fn);
+    return;
+  }
   if (!_impl) throw new Error("BDD implementation not initialized");
   _impl.beforeAll(fn);
 }
 
 export function afterAll(fn: HookFn): void {
+  if (denoBdd) {
+    denoBdd.afterAll(fn);
+    return;
+  }
   if (!_impl) throw new Error("BDD implementation not initialized");
   _impl.afterAll(fn);
 }
@@ -398,10 +475,6 @@ export const test = it;
 
 /** Initialize the BDD implementation (required for Node/Bun before using BDD functions) */
 export async function initBdd(): Promise<void> {
+  if (denoBdd) return; // Already initialized for Deno
   await getImpl();
 }
-
-// Auto-initialize for Node/Bun (but not at module level to avoid top-level await)
-// Callers should either:
-// 1. Import from @veryfront/testing (which initializes in index.ts)
-// 2. Call initBdd() explicitly before using BDD functions
