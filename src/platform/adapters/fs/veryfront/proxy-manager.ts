@@ -26,6 +26,7 @@ interface ProxyFSAdapterManagerConfig {
 }
 
 // Input validation schema for getAdapter parameters
+// Note: branch and environmentName can be null - they have defaults ("main" and "production")
 const GetAdapterParamsSchema = z.object({
   projectSlug: z.string().min(1, "projectSlug must be non-empty"),
   token: z.string().min(1, "token must be non-empty"),
@@ -34,24 +35,7 @@ const GetAdapterParamsSchema = z.object({
   releaseId: z.string().nullable().optional(),
   environmentName: z.string().nullable().optional(),
   branch: z.string().nullable().optional(),
-}).refine(
-  (data) => {
-    // Production mode must have releaseId or environmentName
-    if (data.productionMode === true) {
-      return data.releaseId != null || data.environmentName != null;
-    }
-    // Preview mode must have branch
-    if (data.productionMode === false) {
-      return data.branch != null;
-    }
-    // productionMode must be explicitly true or false, not undefined
-    return false;
-  },
-  {
-    message:
-      "Production mode requires releaseId or environmentName; preview mode requires branch; productionMode must be explicitly set",
-  },
-);
+});
 
 // Use centralized buildProxyManagerCacheKey from core/cache/keys.ts
 
