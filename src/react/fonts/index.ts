@@ -1,69 +1,120 @@
 /**
  * Font exports for veryfront/fonts
- * Provides Google Fonts component
+ * Provides Google Fonts component that injects into document head
  */
 import React from "react";
+import { Head } from "../components/Head.tsx";
+
+export interface Font {
+  name: string;
+  variable?: string;
+  weights?: Array<string | number>;
+  italics?: boolean;
+}
 
 export interface GoogleFontsProps {
-  fonts: string | string[];
-  display?: "auto" | "block" | "swap" | "fallback" | "optional";
+  fonts: Array<Font>;
+}
+
+function sortMixedArray(arr: Array<string | number>): Array<string | number> {
+  return arr.sort((a, b) => {
+    const numA = typeof a === "string" ? parseFloat(a) : a;
+    const numB = typeof b === "string" ? parseFloat(b) : b;
+    if (isNaN(numA) && isNaN(numB)) return 0;
+    if (isNaN(numA)) return 1;
+    if (isNaN(numB)) return -1;
+    return numA - numB;
+  });
+}
+
+function generateGoogleFontsParam(font: Font): string {
+  if (!font) {
+    return "";
+  }
+
+  const escapedName = font.name.replace(/ /g, "+");
+
+  let param = `family=${escapedName}:`;
+
+  const weights = font.weights ?? [400];
+  const sortedWeights = sortMixedArray(weights);
+
+  if (font.italics) {
+    param += "ital,";
+  }
+
+  const weightParams: Array<string | number> = [];
+
+  if (font.italics) {
+    for (const w of sortedWeights) {
+      weightParams.push(`0,${w}`);
+    }
+    for (const w of sortedWeights) {
+      weightParams.push(`1,${w}`);
+    }
+  } else {
+    for (const w of sortedWeights) {
+      weightParams.push(w);
+    }
+  }
+
+  param += "wght@" + weightParams.join(";");
+  param += "&display=swap";
+
+  return param;
+}
+
+function generateGoogleFontsHref(fonts: Array<Font>): string {
+  if (!fonts?.length) {
+    return "";
+  }
+
+  const families = fonts.map(generateGoogleFontsParam).join("&");
+  return `https://fonts.googleapis.com/css2?${families}`;
+}
+
+function generateCssVariables(fonts: Array<Font>): string {
+  const variables = fonts
+    .filter((font) => !!font.variable)
+    .map((font) => `    ${font.variable}: "${font.name}", ui-sans-serif, system-ui, sans-serif;`)
+    .join("\n");
+
+  if (!variables) {
+    return "";
+  }
+
+  return `
+@layer base {
+  :root {
+${variables}
+  }
+}`.trim();
 }
 
 /**
- * Normalize font input to a string format for Google Fonts URL
- * Handles various input formats:
- * - string: "Inter" or "Inter:wght@400;500"
- * - object: { family: "Inter", weight: 400 } or { name: "Inter" }
+ * GoogleFonts component - loads Google Fonts and generates CSS variables
+ *
+ * Usage:
+ *   <GoogleFonts fonts={[
+ *     { name: "Inter", variable: "--font-sans", weights: [400, 500, 600, 700] },
+ *     { name: "Inter", variable: "--font-display", weights: [600, 700] },
+ *   ]} />
  */
-function normalizeFontToString(font: unknown): string | null {
-  if (typeof font === "string") {
-    return font;
-  }
-  if (font && typeof font === "object") {
-    const fontObj = font as Record<string, unknown>;
-    // Handle { family: "Inter" } or { name: "Inter" } formats
-    const family = fontObj.family || fontObj.name;
-    if (typeof family === "string") {
-      // Optionally append weight if present
-      const weight = fontObj.weight || fontObj.weights;
-      if (weight) {
-        const weightStr = Array.isArray(weight) ? weight.join(";") : String(weight);
-        return `${family}:wght@${weightStr}`;
-      }
-      return family;
-    }
-  }
-  return null;
-}
-
-export function GoogleFonts({ fonts, display = "swap" }: GoogleFontsProps) {
-  const fontList = Array.isArray(fonts) ? fonts : [fonts];
-  const fontParam = fontList
-    .map((font) => {
-      // Normalize font to string, handling objects
-      const fontString = normalizeFontToString(font);
-      if (!fontString) {
-        console.warn("[GoogleFonts] Invalid font format:", font);
-        return null;
-      }
-      const encoded = fontString.replace(/ /g, "+");
-      return `family=${encoded}`;
-    })
-    .filter(Boolean)
-    .join("&");
-
-  const href = `https://fonts.googleapis.com/css2?${fontParam}&display=${display}`;
+export function GoogleFonts({ fonts = [] }: GoogleFontsProps) {
+  const href = generateGoogleFontsHref(fonts);
+  const cssVariables = generateCssVariables(fonts);
 
   return React.createElement(
-    React.Fragment,
+    Head,
     null,
     React.createElement("link", { rel: "preconnect", href: "https://fonts.googleapis.com" }),
     React.createElement("link", {
       rel: "preconnect",
       href: "https://fonts.gstatic.com",
-      crossOrigin: "",
+      crossOrigin: "anonymous",
     }),
-    React.createElement("link", { rel: "stylesheet", href }),
+    href && React.createElement("link", { href, rel: "stylesheet" }),
+    cssVariables && React.createElement("style", null, cssVariables),
   );
 }
 

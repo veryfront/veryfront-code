@@ -8,8 +8,7 @@ import {
 import { getStudioScripts } from "./dev-scripts.ts";
 import { processMetadata } from "./metadata-builder.ts";
 import {
-  convertTailwindConfigForBrowser,
-  generateTailwindConfig,
+  generateTailwindV4Theme,
   generateThemeVariables,
   getDevStyles,
   getProductionStyles,
@@ -197,30 +196,20 @@ export async function generateHTMLShellParts(
 
   const syntaxHighlightTheme = options.mode === "development" ? "github-dark" : "github";
 
-  // Use Tailwind CDN for runtime CSS compilation in both dev and production
-  // This ensures all Tailwind classes work correctly, including arbitrary values
-  // UnoCSS pre-generated CSS is still included as a fallback for faster initial render
+  // Tailwind v4 CDN for runtime CSS compilation
+  // Uses CSS-first configuration with @theme directive instead of JavaScript config
   const tailwindCDNUrl = getTailwindCDNUrl(tailwindConfig);
 
-  // Use project's tailwind.config.js if available, otherwise fall back to generated config
-  const tailwindConfigScript = options.tailwindConfigJs
-    ? convertTailwindConfigForBrowser(options.tailwindConfigJs)
-    : generateTailwindConfig(tailwindConfig);
+  // Generate Tailwind v4 @theme CSS with default design tokens
+  const tailwindV4Theme = generateTailwindV4Theme(tailwindConfig);
 
-  // Project's tailwind.config.js may use ESM imports, so use type="module"
-  const configScriptType = options.tailwindConfigJs ? ' type="module"' : "";
-
-  // Always include Tailwind CDN for both dev and production
-  // This provides runtime CSS generation for any classes UnoCSS might miss
+  // Build Tailwind v4 CDN setup:
+  // 1. Tailwind v4 CDN script
+  // 2. @theme CSS with design tokens (colors, fonts, spacing)
   const tailwindCDN = `<script src="${tailwindCDNUrl}"${nonce ? ` nonce="${nonce}"` : ""}></script>
-  <script${configScriptType}${nonce ? ` nonce="${nonce}"` : ""}>${tailwindConfigScript}</script>${
-    tailwindConfig?.customCSS
-      ? `
   <style type="text/tailwindcss"${nonce ? ` nonce="${nonce}"` : ""}>
-${tailwindConfig.customCSS}
-  </style>`
-      : ""
-  }`;
+${tailwindV4Theme}
+  </style>`;
 
   // Generate modulepreload hints for page and layout modules (faster cold start)
   const modulePreloadHints = generateModulePreloadHints(options);
