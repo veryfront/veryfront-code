@@ -36,6 +36,14 @@ export async function compileMDXRuntime(
       body = rewriteBodyImports(body, { filePath, target, baseUrl, projectDir });
     }
 
+    // Debug: log body before MDX compilation to diagnose acorn errors
+    logger.debug("[MDX Compiler] Body preview before compilation:", {
+      filePath,
+      target,
+      bodyLength: body.length,
+      bodyFirst500: body.substring(0, 500),
+    });
+
     const allRehypePlugins: PluggableList = [
       ...rehypePlugins,
       ...(options?.studioEmbed && filePath
