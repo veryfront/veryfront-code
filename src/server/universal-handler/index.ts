@@ -341,6 +341,10 @@ export function createVeryfrontHandler(
         let proxyEnv = parseProxyEnvironment(
           req.headers.get("x-environment") || _url.searchParams.get("x-environment"),
         );
+        // Allow ?preview_mode=true to simulate preview environment locally (for E2E testing)
+        if (_url.searchParams.get("preview_mode") === "true") {
+          proxyEnv = "preview";
+        }
         const forwardedHost = req.headers.get("x-forwarded-host") || undefined;
 
         // Parse domain from host header
