@@ -207,7 +207,10 @@ describe("retry-handler", () => {
           fetchCallCount++;
           if (fetchCallCount < 3) {
             return Promise.resolve(
-              new Response("Internal Server Error", { status: 500, statusText: "Internal Server Error" }),
+              new Response("Internal Server Error", {
+                status: 500,
+                statusText: "Internal Server Error",
+              }),
             );
           }
           return Promise.resolve(
@@ -253,7 +256,10 @@ describe("retry-handler", () => {
           fetchCallCount++;
           if (fetchCallCount < 2) {
             return Promise.resolve(
-              new Response("Service Unavailable", { status: 503, statusText: "Service Unavailable" }),
+              new Response("Service Unavailable", {
+                status: 503,
+                statusText: "Service Unavailable",
+              }),
             );
           }
           return Promise.resolve(
@@ -275,7 +281,10 @@ describe("retry-handler", () => {
         globalThis.fetch = (() => {
           fetchCallCount++;
           return Promise.resolve(
-            new Response("Internal Server Error", { status: 500, statusText: "Internal Server Error" }),
+            new Response("Internal Server Error", {
+              status: 500,
+              statusText: "Internal Server Error",
+            }),
           );
         }) as typeof fetch;
 

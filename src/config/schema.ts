@@ -12,6 +12,14 @@ const bearerAuthSchema = z.object({
   token: z.string(),
 });
 
+const embeddingDimensionSchema = z.union([
+  z.literal(768),
+  z.literal(1024),
+  z.literal(1536),
+  z.literal(3072),
+  z.literal(4096),
+]);
+
 export const veryfrontConfigSchema = z
   .object({
     projectSlug: z.string().optional(),
@@ -168,6 +176,32 @@ export const veryfrontConfigSchema = z
           })
           .partial()
           .optional(),
+      })
+      .partial()
+      .optional(),
+    search: z
+      .object({
+        enabled: z.boolean().optional(),
+        embedding: z
+          .object({
+            provider: z.enum(["openai", "cohere", "voyageai", "custom"]).optional(),
+            model: z.string().optional(),
+            dimension: embeddingDimensionSchema.optional(),
+            apiKey: z.string().optional(),
+            batchSize: z.number().int().positive().optional(),
+          })
+          .partial()
+          .optional(),
+        chunking: z
+          .object({
+            maxTokens: z.number().int().positive().optional(),
+            overlapTokens: z.number().int().min(0).optional(),
+            include: z.array(z.string()).optional(),
+            exclude: z.array(z.string()).optional(),
+          })
+          .partial()
+          .optional(),
+        autoIndex: z.boolean().optional(),
       })
       .partial()
       .optional(),
