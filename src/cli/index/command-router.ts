@@ -474,7 +474,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
       case "sdlc":
         // SDLC resource management
         showLogo();
-        await sdlcCommand(cwd(), args._.slice(1).map(String));
+        await sdlcCommand(cwd());
         break;
 
       case "help":

@@ -735,7 +735,8 @@ export const COMMANDS: CommandRegistry = {
       "veryfront sdlc discover",
     ],
     notes: [
-      "Resources stored as markdown + YAML frontmatter in .veryfront/sdlc/",
+      "Resources stored as markdown + YAML frontmatter in issues/ (flat structure)",
+      "Each issue is a single .md file with frontmatter metadata",
       "Subcommands:",
       "  • create <type>     - Create new resource (task, issue, plan, milestone, rfc)",
       "  • list [type]       - List resources (optionally filter by type)",
@@ -746,6 +747,7 @@ export const COMMANDS: CommandRegistry = {
       "  • discover          - Discover all resources",
       "",
       "All resources are git-friendly and AI-native",
+      "Moving/editing files updates frontmatter automatically",
       "Use --json flag for programmatic access",
     ],
   },

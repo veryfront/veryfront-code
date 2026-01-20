@@ -17,40 +17,27 @@ import type {
 import { sdlcResourceSchema } from "./schema.ts"
 
 /**
- * Base directory for SDLC resources
+ * Base directory for SDLC resources - flat structure in issues/
  */
-export const SDLC_BASE_DIR = ".veryfront/sdlc"
+export const SDLC_BASE_DIR = "issues"
 
 /**
- * Subdirectories for each resource type
- */
-const RESOURCE_DIRS: Record<SdlcResourceType, string> = {
-  task: "tasks",
-  issue: "issues",
-  plan: "plans",
-  milestone: "milestones",
-  rfc: "rfcs",
-}
-
-/**
- * Get the directory path for a resource type
+ * Get the directory path for SDLC resources (flat structure)
  */
 export function getResourceDir(
-  type: SdlcResourceType,
   basePath = ".",
 ): string {
-  return path.join(basePath, SDLC_BASE_DIR, RESOURCE_DIRS[type])
+  return path.join(basePath, SDLC_BASE_DIR)
 }
 
 /**
  * Get the file path for a resource
  */
 export function getResourcePath(
-  type: SdlcResourceType,
   id: string,
   basePath = ".",
 ): string {
-  return path.join(getResourceDir(type, basePath), `${id}.md`)
+  return path.join(getResourceDir(basePath), `${id}.md`)
 }
 
 /**
@@ -91,12 +78,11 @@ export function serializeResourceFile(
  * Read a single SDLC resource
  */
 export async function readResource(
-  type: SdlcResourceType,
   id: string,
   basePath = ".",
 ): Promise<SdlcResourceFile | null> {
   try {
-    const filePath = getResourcePath(type, id, basePath)
+    const filePath = getResourcePath(id, basePath)
     const fileContent = await Deno.readTextFile(filePath)
     const { metadata, content } = parseResourceFile(fileContent)
 
@@ -117,13 +103,12 @@ export async function readResource(
 }
 
 /**
- * List all resources of a given type
+ * List all SDLC resources from the flat issues/ directory
  */
-export async function listResources(
-  type: SdlcResourceType,
+export async function listAllResources(
   basePath = ".",
 ): Promise<SdlcResourceFile[]> {
-  const dir = getResourceDir(type, basePath)
+  const dir = getResourceDir(basePath)
 
   try {
     const files: SdlcResourceFile[] = []
@@ -131,7 +116,7 @@ export async function listResources(
     for await (const entry of Deno.readDir(dir)) {
       if (entry.isFile && entry.name.endsWith(".md")) {
         const id = entry.name.replace(/\.md$/, "")
-        const resource = await readResource(type, id, basePath)
+        const resource = await readResource(id, basePath)
         if (resource) {
           files.push(resource)
         }
@@ -148,20 +133,14 @@ export async function listResources(
 }
 
 /**
- * List all resources across all types
+ * List resources of a specific type
  */
-export async function listAllResources(
+export async function listResources(
+  type: SdlcResourceType,
   basePath = ".",
 ): Promise<SdlcResourceFile[]> {
-  const types: SdlcResourceType[] = ["task", "issue", "plan", "milestone", "rfc"]
-  const allResources: SdlcResourceFile[] = []
-
-  for (const type of types) {
-    const resources = await listResources(type, basePath)
-    allResources.push(...resources)
-  }
-
-  return allResources
+  const allResources = await listAllResources(basePath)
+  return allResources.filter((r) => r.metadata.type === type)
 }
 
 /**
@@ -259,7 +238,7 @@ export async function createResource<T extends SdlcResource>(
 
   // Serialize to file
   const fileContent = serializeResourceFile(validatedMetadata, content)
-  const filePath = getResourcePath(type, id, basePath)
+  const filePath = getResourcePath(id, basePath)
 
   // Ensure directory exists
   const dir = path.dirname(filePath)
@@ -282,10 +261,10 @@ export async function updateResource(
   options: UpdateSdlcResourceOptions,
   basePath = ".",
 ): Promise<SdlcResourceFile | null> {
-  const { id, type, metadata, content } = options
+  const { id, metadata, content } = options
 
   // Read existing resource
-  const existing = await readResource(type, id, basePath)
+  const existing = await readResource(id, basePath)
   if (!existing) {
     return null
   }
@@ -318,12 +297,11 @@ export async function updateResource(
  * Delete an SDLC resource
  */
 export async function deleteResource(
-  type: SdlcResourceType,
   id: string,
   basePath = ".",
 ): Promise<boolean> {
   try {
-    const filePath = getResourcePath(type, id, basePath)
+    const filePath = getResourcePath(id, basePath)
     await Deno.remove(filePath)
     return true
   } catch (error) {

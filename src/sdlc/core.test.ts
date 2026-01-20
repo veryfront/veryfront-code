@@ -47,13 +47,13 @@ describe("SDLC Core Library", () => {
 
   describe("Path utilities", () => {
     it("should generate correct resource directory", () => {
-      const dir = getResourceDir("task", TEST_DIR)
-      assertEquals(dir.endsWith(`${SDLC_BASE_DIR}/tasks`), true)
+      const dir = getResourceDir(TEST_DIR)
+      assertEquals(dir.endsWith(SDLC_BASE_DIR), true)
     })
 
     it("should generate correct resource path", () => {
-      const path = getResourcePath("task", "TASK-001", TEST_DIR)
-      assertEquals(path.endsWith(`${SDLC_BASE_DIR}/tasks/TASK-001.md`), true)
+      const path = getResourcePath("TASK-001", TEST_DIR)
+      assertEquals(path.endsWith(`${SDLC_BASE_DIR}/TASK-001.md`), true)
     })
 
     it("should generate unique resource IDs", () => {
@@ -167,14 +167,14 @@ describe("SDLC Core Library", () => {
         TEST_DIR,
       )
 
-      const resource = await readResource("task", "TASK-001", TEST_DIR)
+      const resource = await readResource("TASK-001", TEST_DIR)
       assertExists(resource)
       assertEquals(resource.metadata.title, "Test task")
       assertEquals(resource.content, "Test content")
     })
 
     it("should return null for non-existent resource", async () => {
-      const resource = await readResource("task", "NONEXISTENT", TEST_DIR)
+      const resource = await readResource("NONEXISTENT", TEST_DIR)
       assertEquals(resource, null)
     })
 
@@ -195,7 +195,6 @@ describe("SDLC Core Library", () => {
 
       const updated = await updateResource(
         {
-          type: "task",
           id: "TASK-001",
           metadata: {
             status: "in_progress",
@@ -228,15 +227,15 @@ describe("SDLC Core Library", () => {
         TEST_DIR,
       )
 
-      const deleted = await deleteResource("task", "TASK-001", TEST_DIR)
+      const deleted = await deleteResource("TASK-001", TEST_DIR)
       assertEquals(deleted, true)
 
-      const resource = await readResource("task", "TASK-001", TEST_DIR)
+      const resource = await readResource("TASK-001", TEST_DIR)
       assertEquals(resource, null)
     })
 
     it("should return false when deleting non-existent resource", async () => {
-      const deleted = await deleteResource("task", "NONEXISTENT", TEST_DIR)
+      const deleted = await deleteResource("NONEXISTENT", TEST_DIR)
       assertEquals(deleted, false)
     })
   })

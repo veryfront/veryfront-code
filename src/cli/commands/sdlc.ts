@@ -20,7 +20,7 @@
  * ```
  */
 
-import { parseArgs } from "#std/cli/parse-args.ts"
+import { parseArgs } from "jsr:@std/cli@1.0.11/parse-args"
 import { cliLogger } from "#veryfront/utils"
 import {
   createResource,
@@ -42,8 +42,11 @@ import {
  */
 export async function sdlcCommand(
   projectDir: string,
-  args: string[],
 ): Promise<void> {
+  // Get args after 'sdlc' command
+  const sdlcIndex = Deno.args.indexOf("sdlc")
+  const args = sdlcIndex >= 0 ? Deno.args.slice(sdlcIndex + 1) : []
+
   const parsedArgs = parseArgs(args, {
     string: [
       "title",
@@ -222,24 +225,13 @@ async function listCommand(projectDir: string, args: any): Promise<void> {
  */
 async function showCommand(projectDir: string, args: any): Promise<void> {
   const id = args._[1] as string
-  const type = args._[2] as SdlcResourceType | undefined
 
   if (!id) {
     cliLogger.error("Resource ID is required")
     return
   }
 
-  // If type not specified, search all types
-  let resource
-  if (type) {
-    resource = await readResource(type, id, projectDir)
-  } else {
-    // Try all types
-    for (const t of ["task", "issue", "plan", "milestone", "rfc"] as SdlcResourceType[]) {
-      resource = await readResource(t, id, projectDir)
-      if (resource) break
-    }
-  }
+  const resource = await readResource(id, projectDir)
 
   if (!resource) {
     cliLogger.error(`Resource not found: ${id}`)
@@ -277,26 +269,15 @@ async function showCommand(projectDir: string, args: any): Promise<void> {
  */
 async function updateCommand(projectDir: string, args: any): Promise<void> {
   const id = args._[1] as string
-  const type = args._[2] as SdlcResourceType | undefined
 
   if (!id) {
     cliLogger.error("Resource ID is required")
     return
   }
 
-  // Find resource type if not specified
-  let resourceType = type
-  if (!resourceType) {
-    for (const t of ["task", "issue", "plan", "milestone", "rfc"] as SdlcResourceType[]) {
-      const r = await readResource(t, id, projectDir)
-      if (r) {
-        resourceType = t
-        break
-      }
-    }
-  }
-
-  if (!resourceType) {
+  // Check if resource exists
+  const existing = await readResource(id, projectDir)
+  if (!existing) {
     cliLogger.error(`Resource not found: ${id}`)
     return
   }
@@ -309,14 +290,13 @@ async function updateCommand(projectDir: string, args: any): Promise<void> {
   if (args.assignee) updates.assignee = args.assignee
   if (args.milestone) updates.milestone = args.milestone
 
-  if (Object.keys(updates).length === 0) {
+  if (Object.keys(updates).length === 0 && !args.content) {
     cliLogger.error("No updates specified")
     return
   }
 
   const updated = await updateResource(
     {
-      type: resourceType,
       id,
       metadata: updates,
       content: args.content,
@@ -329,7 +309,7 @@ async function updateCommand(projectDir: string, args: any): Promise<void> {
     return
   }
 
-  cliLogger.success(`Updated ${resourceType}: ${id}`)
+  cliLogger.success(`Updated ${existing.metadata.type}: ${id}`)
 
   if (args.json) {
     console.log(JSON.stringify(updated, null, 2))
@@ -341,31 +321,17 @@ async function updateCommand(projectDir: string, args: any): Promise<void> {
  */
 async function deleteCommand(projectDir: string, args: any): Promise<void> {
   const id = args._[1] as string
-  const type = args._[2] as SdlcResourceType | undefined
 
   if (!id) {
     cliLogger.error("Resource ID is required")
     return
   }
 
-  // Find resource type if not specified
-  let resourceType = type
-  if (!resourceType) {
-    for (const t of ["task", "issue", "plan", "milestone", "rfc"] as SdlcResourceType[]) {
-      const r = await readResource(t, id, projectDir)
-      if (r) {
-        resourceType = t
-        break
-      }
-    }
-  }
+  // Check if resource exists first to get its type for display
+  const existing = await readResource(id, projectDir)
+  const resourceType = existing?.metadata.type || "resource"
 
-  if (!resourceType) {
-    cliLogger.error(`Resource not found: ${id}`)
-    return
-  }
-
-  const deleted = await deleteResource(resourceType, id, projectDir)
+  const deleted = await deleteResource(id, projectDir)
 
   if (deleted) {
     cliLogger.success(`Deleted ${resourceType}: ${id}`)

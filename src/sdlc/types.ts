@@ -139,7 +139,6 @@ export interface CreateSdlcResourceOptions<T extends SdlcResource> {
  */
 export interface UpdateSdlcResourceOptions {
   id: string
-  type: SdlcResourceType
   metadata?: Partial<SdlcResourceMetadata>
   content?: string
 }
