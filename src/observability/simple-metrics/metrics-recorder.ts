@@ -230,3 +230,17 @@ export function recordCorsRejection(): void {
 export function recordSecurityHeaders(): void {
   state.securityHeadersApplied++;
 }
+
+export function recordApiRequest(status: number): void {
+  if (status >= 200 && status < 300) {
+    state.apiRequests2xx++;
+  } else if (status >= 400 && status < 500) {
+    state.apiRequests4xx++;
+  } else if (status >= 500) {
+    state.apiRequests5xx++;
+  }
+}
+
+export function recordApiRetry(): void {
+  state.apiRetries++;
+}
