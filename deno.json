@@ -54,7 +54,8 @@
     "./oauth": "./src/oauth/index.ts",
     "./oauth/providers": "./src/oauth/providers/index.ts",
     "./oauth/handlers": "./src/oauth/handlers/index.ts",
-    "./oauth/token-store": "./src/oauth/token-store/index.ts"
+    "./oauth/token-store": "./src/oauth/token-store/index.ts",
+    "./embeddings": "./src/embeddings/index.ts"
   },
   "imports": {
     "veryfront/head": "./src/react/components/Head.tsx",
@@ -100,6 +101,7 @@
     "#veryfront/utils": "./src/utils/index.ts",
     "#veryfront/workflow": "./src/workflow/index.ts",
     "#veryfront/workflow/react": "./src/workflow/react/index.ts",
+    "#veryfront/embeddings": "./src/embeddings/index.ts",
     "#veryfront/http/responses": "./src/platform/compat/http/responses.ts",
     "#veryfront/compat/console": "./src/platform/compat/console/index.ts",
     "#veryfront/compat/http": "./src/platform/compat/http/index.ts",

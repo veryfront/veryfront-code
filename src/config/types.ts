@@ -257,6 +257,37 @@ export interface VeryfrontConfig {
     /** Custom CSS content to add (for @layer, @apply directives, etc.) */
     customCSS?: string;
   };
+  /** Semantic search configuration */
+  search?: {
+    /** Enable semantic search indexing (default: false) */
+    enabled?: boolean;
+    /** Embedding provider configuration */
+    embedding?: {
+      /** Provider name (openai, cohere, voyageai, or custom) */
+      provider?: "openai" | "cohere" | "voyageai" | "custom";
+      /** Model name (e.g., text-embedding-3-small) */
+      model?: string;
+      /** Vector dimension (768, 1024, 1536, 3072, 4096) */
+      dimension?: 768 | 1024 | 1536 | 3072 | 4096;
+      /** API key (can also use env var) */
+      apiKey?: string;
+      /** Batch size for embedding requests (default: 100) */
+      batchSize?: number;
+    };
+    /** Chunking configuration */
+    chunking?: {
+      /** Max tokens per chunk (default: 500) */
+      maxTokens?: number;
+      /** Overlap tokens between chunks (default: 50) */
+      overlapTokens?: number;
+      /** File patterns to index */
+      include?: string[];
+      /** File patterns to exclude */
+      exclude?: string[];
+    };
+    /** Auto-index on file changes (default: false in dev, true in production) */
+    autoIndex?: boolean;
+  };
   /** OpenAPI documentation configuration */
   openapi?: {
     /** Enable OpenAPI endpoint (default: true) */
