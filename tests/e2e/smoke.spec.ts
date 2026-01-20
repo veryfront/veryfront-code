@@ -56,22 +56,24 @@ const DEFAULT_PROJECTS = [
   "blank",
   "codersociety",
   "veryfront",
+  // Static templates:
+  // "marketing-template",
+  // "restaurant-template",
   // "real-estate-template",
   // "lease-calculator",
   // "impartial-chandrasekhar-qsohb",
+  // "dashboard",
+  // "immo-price-finder",
+  // AI templates:
   // "ai-assistant-template",
   // "task-manager-template",
-  // "dashboard",
   // "ai-inbox-assistant",
   // "immo-agent-template",
-  // "immo-price-finder",
   // "doc-agent-template",
   // "outlook-agent",
   // "ai-agent",
   // "ai-agent-kitchen-sink",
   // "invest-pro-template",
-  // "marketing-template",
-  // "restaurant-template",
 ];
 const targetProject = process.env.E2E_PROJECT;
 
