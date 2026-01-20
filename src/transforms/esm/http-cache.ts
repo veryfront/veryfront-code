@@ -82,13 +82,25 @@ function normalizeEsmShUrl(url: URL): void {
   }
 
   const pathname = url.pathname.replace(/^\/+/, "");
-  const isReactCore = pathname.startsWith("react@") || pathname.startsWith("react/");
+  // Check if this is a React core package (react or react-dom)
+  const isReactCore = pathname.startsWith("react@") || pathname.startsWith("react/") ||
+    pathname.startsWith("react-dom@") || pathname.startsWith("react-dom/");
   if (!isReactCore) {
+    // Externalize both react and react-dom to ensure version consistency
+    // This prevents esm.sh from bundling its own versions of these packages
     const existing = url.searchParams.get("external");
-    if (!existing) {
-      url.searchParams.set("external", "react");
-    } else if (!existing.split(",").includes("react")) {
-      url.searchParams.set("external", `${existing},react`);
+    const externals = existing ? existing.split(",") : [];
+    let needsUpdate = false;
+    if (!externals.includes("react")) {
+      externals.push("react");
+      needsUpdate = true;
+    }
+    if (!externals.includes("react-dom")) {
+      externals.push("react-dom");
+      needsUpdate = true;
+    }
+    if (needsUpdate) {
+      url.searchParams.set("external", externals.join(","));
     }
   }
 }

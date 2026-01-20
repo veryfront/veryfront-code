@@ -78,11 +78,11 @@ function getEsmShImportMap(versions: DetectedVersions): Record<string, string> {
     "react/jsx-runtime": `https://esm.sh/react@${react}/jsx-runtime?target=es2022`,
     "react/jsx-dev-runtime": `https://esm.sh/react@${react}/jsx-dev-runtime?target=es2022`,
     "veryfront/agent/react":
-      `https://esm.sh/veryfront@${veryfront}/agent/react?external=react&target=es2022`,
+      `https://esm.sh/veryfront@${veryfront}/agent/react?external=react,react-dom&target=es2022`,
     "veryfront/components/ai":
-      `https://esm.sh/veryfront@${veryfront}/components/ai?external=react&target=es2022`,
+      `https://esm.sh/veryfront@${veryfront}/components/ai?external=react,react-dom&target=es2022`,
     "veryfront/primitives":
-      `https://esm.sh/veryfront@${veryfront}/primitives?external=react&target=es2022`,
+      `https://esm.sh/veryfront@${veryfront}/primitives?external=react,react-dom&target=es2022`,
     // Platform utilities - serve from local module server to match SSR behavior
     // This ensures hydration matches (same code on server and client)
     "veryfront/head": "/_vf_modules/react/components/Head.js",

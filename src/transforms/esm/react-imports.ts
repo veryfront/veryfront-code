@@ -61,11 +61,11 @@ export async function resolveReactImports(
  * Add deps/external params to esm.sh URLs for React version consistency.
  * esm.sh URLs that don't already have React version pinned get ?external added.
  *
- * IMPORTANT: We use `?external=react` (not `?external=react,react-dom`) to match
- * the configuration in deno.json for react-dom. esm.sh generates different URL
- * paths based on the externals list (e.g., X-ZXJlYWN0 vs X-ZXJlYWN0LHJlYWN0LWRvbQ),
- * and mismatched paths create separate React instances causing "Cannot read
- * properties of null (reading 'useState')" errors during SSR.
+ * IMPORTANT: We use `?external=react,react-dom` to ensure version consistency.
+ * Without externalizing react-dom, packages like @tanstack/react-query will
+ * bundle their own react-dom version (often 18.x), causing "Cannot read
+ * properties of undefined (reading 'ReactCurrentBatchConfig')" errors when
+ * used with React 19 (which renamed internal APIs).
  *
  * @param code - Source code to transform
  * @param _forSSR - Whether this is for SSR (unused but kept for API compatibility)
@@ -83,7 +83,7 @@ export function addDepsToEsmShUrls(
     ) {
       const hasQuery = specifier.includes("?");
       if (hasQuery) return null;
-      return `${specifier}?external=react&target=es2022`;
+      return `${specifier}?external=react,react-dom&target=es2022`;
     }
     return null;
   }));
