@@ -396,16 +396,16 @@ function getPriorityIcon(priority: SdlcPriority): string {
  */
 function printHelp(): void {
   console.log(`
-veryfront issues - Manage issues in issues/ folder
+veryfront issues - Manage issues (file-based, git-friendly)
 
 USAGE:
   veryfront issues <subcommand> [options]
 
 SUBCOMMANDS:
-  create            Create a new issue
-  list              List issues (kanban board view)
-  view <id>         View issue details
-  edit <id>         Edit issue (or delete with --delete flag)
+  create              Create a new issue
+  list                List issues (kanban board view)
+  view <id>           View issue details
+  edit <id> [options] Edit or delete issue
 
 CREATE OPTIONS:
   --title <string>      Issue title (required)
@@ -455,11 +455,44 @@ EXAMPLES:
   # Delete
   veryfront issues edit TASK-1234567-abc123 --delete
 
-NOTES:
-  - All issues stored in issues/ folder as markdown files
-  - Each file has YAML frontmatter with metadata
-  - Edit files directly or use CLI commands
-  - Changes to files update the issue automatically
-  - Git-friendly, AI-native format
+FILE-BASED WORKFLOW:
+  All issues are stored as markdown files in issues/ folder
+
+  Structure:
+    issues/
+    ├── TASK-1234567-abc123.md
+    ├── ISSUE-1234567-def456.md
+    └── PLAN-1234567-ghi789.md
+
+  Each file contains:
+    - YAML frontmatter (metadata: id, title, status, priority, etc.)
+    - Markdown content (description, details, notes)
+
+  You can:
+    - Use CLI commands (veryfront issues create/list/view/edit)
+    - Edit files directly in your editor
+    - Version control with git (all changes tracked)
+    - AI agents can read/write files directly
+
+FOR AI AGENTS:
+  - Read issues: Parse markdown files in issues/ folder
+  - Create issues: Write new .md file with frontmatter + content
+  - Update issues: Modify frontmatter fields (status, priority, assignee)
+  - Files follow standard markdown + YAML frontmatter format
+  - All metadata in frontmatter, all content in markdown body
+
+STATUSES:
+  todo, in_progress, blocked, in_review, done, cancelled
+
+PRIORITIES:
+  low, medium, high, critical
+
+TYPES:
+  task, issue, plan, milestone, rfc
+
+HELP:
+  veryfront issues --help          Show this help
+  veryfront issues create --help   Show create options
+  veryfront issues list --help     Show list options
 `)
 }
