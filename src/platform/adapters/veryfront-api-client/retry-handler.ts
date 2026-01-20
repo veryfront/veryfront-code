@@ -1,5 +1,6 @@
 import { logger } from "#veryfront/utils";
 import { injectContext, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { recordApiRequest, recordApiRetry } from "#veryfront/observability/simple-metrics/index.ts";
 import { VeryfrontAPIError } from "./types.ts";
 
 export interface RetryConfig {
@@ -39,7 +40,8 @@ export async function requestWithRetry(
         const response = await fetch(url, { headers });
         const duration = performance.now() - startTime;
 
-        // Log API timing for performance analysis
+        recordApiRequest(response.status);
+
         logger.debug("[API] Request completed", {
           path: urlPath,
           status: response.status,
@@ -85,6 +87,8 @@ export async function requestWithRetry(
             initialDelay * Math.pow(2, attempt),
             maxDelay,
           );
+
+          recordApiRetry();
 
           logger.warn("[VeryfrontAPIClient] Request failed, retrying...", {
             attempt: attempt + 1,

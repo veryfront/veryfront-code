@@ -68,6 +68,12 @@ export interface VeryfrontMetrics {
   corsRejections: number;
   /** Security: Responses with security headers applied */
   securityHeadersApplied: number;
+  /** API requests by status code category */
+  apiRequests2xx: number;
+  apiRequests4xx: number;
+  apiRequests5xx: number;
+  /** API request retries */
+  apiRetries: number;
 }
 
 /**

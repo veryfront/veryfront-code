@@ -58,6 +58,8 @@ export {
 } from "./metrics-state.ts";
 export {
   incRequest,
+  recordApiRequest,
+  recordApiRetry,
   recordCacheGet,
   recordCacheInvalidate,
   recordCacheSet,
@@ -72,6 +74,8 @@ export {
 // Main metrics object for backward compatibility
 import {
   incRequest,
+  recordApiRequest,
+  recordApiRetry,
   recordCacheGet,
   recordCacheInvalidate,
   recordCacheSet,
@@ -100,6 +104,8 @@ export const metrics = {
   recordRSC,
   recordCorsRejection,
   recordSecurityHeaders,
+  recordApiRequest,
+  recordApiRetry,
   snapshot: createSnapshot,
   reset: resetMetrics,
   getRequestCount,

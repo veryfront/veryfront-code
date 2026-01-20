@@ -33,6 +33,10 @@ export const state: MetricsState = {
   rscStreamHistogram: undefined,
   corsRejections: 0,
   securityHeadersApplied: 0,
+  apiRequests2xx: 0,
+  apiRequests4xx: 0,
+  apiRequests5xx: 0,
+  apiRetries: 0,
   _ssrCounts: Array.from({ length: SSR_BOUNDARIES_MS.length + 1 }, () => 0),
 };
 
@@ -74,6 +78,10 @@ export function createSnapshot(): VeryfrontMetrics {
     cacheInvalidations: state.cacheInvalidations,
     corsRejections: state.corsRejections,
     securityHeadersApplied: state.securityHeadersApplied,
+    apiRequests2xx: state.apiRequests2xx,
+    apiRequests4xx: state.apiRequests4xx,
+    apiRequests5xx: state.apiRequests5xx,
+    apiRetries: state.apiRetries,
     ssrHistogram: {
       boundaries: [...SSR_BOUNDARIES_MS],
       counts: [...state._ssrCounts],
@@ -112,6 +120,10 @@ export function resetMetrics(): void {
   state.cacheInvalidations = 0;
   state.corsRejections = 0;
   state.securityHeadersApplied = 0;
+  state.apiRequests2xx = 0;
+  state.apiRequests4xx = 0;
+  state.apiRequests5xx = 0;
+  state.apiRetries = 0;
   state._ssrCounts.fill(0);
   state.rscStreamHistogram = undefined;
 }
