@@ -1,167 +1,91 @@
 /**
- * File-based SDLC resource types
+ * File-based issue tracking - GitHub compatible
  *
- * All SDLC resources are stored as markdown files with YAML frontmatter
- * in `.veryfront/sdlc/` following convention-over-configuration.
+ * All issues are stored as markdown files with YAML frontmatter in `issues/`
+ * following GitHub's native structure for easy sync.
  */
 
 /**
- * Common statuses for SDLC resources
+ * GitHub native states
  */
-export type SdlcStatus =
-  | "todo"
-  | "in_progress"
-  | "blocked"
-  | "in_review"
-  | "done"
-  | "cancelled"
+export type IssueState = "open" | "closed"
 
 /**
- * Priority levels
+ * Issue types (stored as labels in GitHub)
  */
-export type SdlcPriority = "low" | "medium" | "high" | "critical"
+export type IssueType = "issue" | "plan" | "milestone"
 
 /**
- * Resource types
+ * Base metadata - GitHub compatible
  */
-export type SdlcResourceType = "task" | "issue" | "plan" | "milestone" | "rfc"
-
-/**
- * Base metadata common to all SDLC resources
- */
-export interface SdlcResourceMetadata {
-  id: string
+export interface IssueMetadata {
+  // GitHub native fields
+  number?: number // GitHub issue number (for sync)
   title: string
-  status: SdlcStatus
-  created: string // ISO 8601
-  updated: string // ISO 8601
-  labels?: string[]
+  state: IssueState
+  labels: string[] // GitHub labels: bug, enhancement, priority:high, type:plan
+  milestone?: string // Milestone title
+  assignees: string[] // GitHub usernames
+  created_at: string // ISO 8601 (GitHub format)
+  updated_at: string // ISO 8601 (GitHub format)
+
+  // Local only
+  id: string // Local ID (ISSUE-xxx, PLAN-xxx, MILESTONE-xxx)
 }
 
 /**
- * Task - Individual work item
+ * File representation of an issue
  */
-export interface SdlcTask extends SdlcResourceMetadata {
-  type: "task"
-  milestone?: string
-  assignee?: string
-  priority: SdlcPriority
-  estimate?: number // hours
-  parent?: string // parent task ID
-  blockedBy?: string[]
-  blocks?: string[]
-}
-
-/**
- * Issue - Bug report or feature request
- */
-export interface SdlcIssue extends SdlcResourceMetadata {
-  type: "issue"
-  milestone?: string
-  assignee?: string
-  priority: SdlcPriority
-  kind: "bug" | "feature" | "enhancement" | "documentation"
-  reproducible?: boolean
-  affectedVersion?: string
-  targetVersion?: string
-}
-
-/**
- * Plan - Implementation design
- */
-export interface SdlcPlan extends SdlcResourceMetadata {
-  type: "plan"
-  milestone?: string
-  author?: string
-  reviewers?: string[]
-  approved?: boolean
-  approvedBy?: string[]
-  approvedAt?: string // ISO 8601
-}
-
-/**
- * Milestone - Release goal
- */
-export interface SdlcMilestone extends SdlcResourceMetadata {
-  type: "milestone"
-  dueDate?: string // ISO 8601
-  version?: string
-  progress: number // 0-100
-  tasks?: string[] // task IDs
-  issues?: string[] // issue IDs
-  plans?: string[] // plan IDs
-}
-
-/**
- * RFC - Design proposal
- */
-export interface SdlcRfc extends SdlcResourceMetadata {
-  type: "rfc"
-  author?: string
-  reviewers?: string[]
-  approved?: boolean
-  approvedBy?: string[]
-  approvedAt?: string // ISO 8601
-  supersedes?: string // RFC ID
-  supersededBy?: string // RFC ID
-}
-
-/**
- * Union type for all SDLC resources
- */
-export type SdlcResource =
-  | SdlcTask
-  | SdlcIssue
-  | SdlcPlan
-  | SdlcMilestone
-  | SdlcRfc
-
-/**
- * File representation of an SDLC resource
- */
-export interface SdlcResourceFile<T extends SdlcResource = SdlcResource> {
-  metadata: T
+export interface IssueFile {
+  metadata: IssueMetadata
   content: string // markdown body
   path: string // file path
 }
 
 /**
- * Options for creating a new SDLC resource
+ * Options for creating a new issue
  */
-export interface CreateSdlcResourceOptions<T extends SdlcResource> {
-  type: SdlcResourceType
-  metadata: Omit<T, "created" | "updated" | "type">
+export interface CreateIssueOptions {
+  title: string
+  type?: IssueType
+  labels?: string[]
+  milestone?: string
+  assignees?: string[]
   content: string
 }
 
 /**
- * Options for updating an SDLC resource
+ * Options for updating an issue
  */
-export interface UpdateSdlcResourceOptions {
+export interface UpdateIssueOptions {
   id: string
-  metadata?: Partial<SdlcResourceMetadata>
+  number?: number // GitHub issue number (for sync)
+  title?: string
+  state?: IssueState
+  labels?: string[]
+  milestone?: string
+  assignees?: string[]
   content?: string
 }
 
 /**
- * Options for listing SDLC resources
+ * Options for listing issues
  */
-export interface ListSdlcResourcesOptions {
-  type?: SdlcResourceType
-  status?: SdlcStatus | SdlcStatus[]
+export interface ListIssuesOptions {
+  type?: IssueType
+  state?: IssueState
   milestone?: string
   assignee?: string
   labels?: string[]
-  sortBy?: "created" | "updated" | "priority" | "title"
+  sortBy?: "created_at" | "updated_at" | "title"
   sortOrder?: "asc" | "desc"
 }
 
 /**
- * Statistics for SDLC resources
+ * Statistics for issues
  */
-export interface SdlcStats {
+export interface IssueStats {
   total: number
-  byStatus: Record<SdlcStatus, number>
-  byType: Record<SdlcResourceType, number>
-  byPriority: Record<SdlcPriority, number>
+  byState: Record<IssueState, number>
+  byType: Record<IssueType, number>
 }

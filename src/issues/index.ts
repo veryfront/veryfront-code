@@ -1,37 +1,32 @@
 /**
- * File-based issues system
+ * File-based issues system - GitHub compatible
  *
- * Manages tasks, issues, plans, milestones, and RFCs as markdown files
+ * Manages issues, plans, and milestones as markdown files
  * with YAML frontmatter, stored in `issues/` folder.
+ * Supports bi-directional sync with GitHub Issues.
  *
  * @example
  * ```ts
- * import { createResource, listResources, updateResource } from "#veryfront/issues"
+ * import { createResource, listAllResources, sync } from "#veryfront/issues"
  *
- * // Create a new task
- * const task = await createResource({
- *   type: "task",
- *   metadata: {
- *     title: "Implement JWT authentication",
- *     status: "todo",
- *     priority: "high",
- *     assignee: "kentaro",
- *   },
- *   content: "## Description\n\nAdd JWT authentication to the API.",
+ * // Create a new issue
+ * const issue = await createResource({
+ *   title: "Fix login bug",
+ *   type: "issue",
+ *   labels: ["bug", "priority:high"],
+ *   assignees: ["kentaro"],
+ *   content: "## Description\n\nLogin fails on Safari.",
  * })
  *
- * // List all tasks
- * const tasks = await listResources("task")
+ * // List all issues
+ * const issues = await listAllResources()
  *
- * // Update task status
- * await updateResource({
- *   type: "task",
- *   id: task.metadata.id,
- *   metadata: { status: "in_progress" },
- * })
+ * // Sync with GitHub
+ * const stats = await sync({ owner: "org", repo: "repo", token: "..." }, ".")
  * ```
  */
 
 export * from "./types.ts"
 export * from "./schema.ts"
 export * from "./core.ts"
+export * from "./sync.ts"

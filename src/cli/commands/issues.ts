@@ -1,28 +1,23 @@
 /**
- * Issues command - Manage issues (tasks, bugs, features, plans, milestones, RFCs)
+ * Issues command - GitHub-compatible file-based issue tracking
  *
  * @example
  * ```bash
  * # Create issues
- * veryfront issues create --title "Implement JWT auth" --type task --priority high
- * veryfront issues create --title "Login bug" --type issue --kind bug
+ * veryfront issues create --title "Fix login bug" --labels bug,priority:high
  *
  * # List issues
  * veryfront issues list
- * veryfront issues list --status todo,in_progress
- * veryfront issues list --type task
+ * veryfront issues list --state open
  *
- * # Show issue
- * veryfront issues show TASK-001
+ * # View issue
+ * veryfront issues view ISSUE-xxx
  *
- * # Update issue
- * veryfront issues update TASK-001 --status done
+ * # Edit issue
+ * veryfront issues edit ISSUE-xxx --state closed
  *
- * # Delete issue
- * veryfront issues delete TASK-001
- *
- * # Statistics
- * veryfront issues stats
+ * # Sync with GitHub
+ * veryfront issues sync
  * ```
  */
 
@@ -31,24 +26,25 @@ import { cliLogger } from "#veryfront/utils"
 import {
   createResource,
   deleteResource,
-  discoverResources,
   filterResources,
   getStats,
   listAllResources,
-  listResources,
   readResource,
   updateResource,
-  type SdlcResourceType,
-  type SdlcStatus,
-  type SdlcPriority,
+  type IssueType,
+  type IssueState,
 } from "#veryfront/issues/index.ts"
+import {
+  pullFromGitHub,
+  pushToGitHub,
+  sync,
+  type SyncConfig,
+} from "#veryfront/issues/sync.ts"
 
 /**
  * Main issues command handler
  */
-export async function issuesCommand(
-  projectDir: string,
-): Promise<void> {
+export async function issuesCommand(projectDir: string): Promise<void> {
   // Get args after 'issues' command
   const issuesIndex = Deno.args.indexOf("issues")
   const args = issuesIndex >= 0 ? Deno.args.slice(issuesIndex + 1) : []
@@ -57,12 +53,14 @@ export async function issuesCommand(
     string: [
       "title",
       "type",
-      "status",
-      "priority",
+      "state",
+      "labels",
       "milestone",
       "assignee",
-      "kind",
       "content",
+      "owner",
+      "repo",
+      "token",
     ],
     boolean: ["json", "help", "delete"],
     alias: {
@@ -92,6 +90,9 @@ export async function issuesCommand(
     case "edit":
       await editCommand(projectDir, parsedArgs)
       break
+    case "sync":
+      await syncCommand(projectDir, parsedArgs)
+      break
     default:
       cliLogger.error(`Unknown subcommand: ${subcommand}`)
       printHelp()
@@ -103,10 +104,10 @@ export async function issuesCommand(
  * Create a new issue
  */
 async function createCommand(projectDir: string, args: any): Promise<void> {
-  const type = (args.type || "issue") as SdlcResourceType
+  const type = (args.type || "issue") as IssueType
 
-  if (!["task", "issue", "plan", "milestone", "rfc"].includes(type)) {
-    cliLogger.error("Invalid type. Must be: task, issue, plan, milestone, or rfc")
+  if (!["issue", "plan", "milestone"].includes(type)) {
+    cliLogger.error("Invalid type. Must be: issue, plan, or milestone")
     return
   }
 
@@ -116,35 +117,21 @@ async function createCommand(projectDir: string, args: any): Promise<void> {
     return
   }
 
-  const status = (args.status || "todo") as SdlcStatus
-  const priority = (args.priority || "medium") as SdlcPriority
+  // Parse labels
+  const labels: string[] = args.labels ? args.labels.split(",").map((l: string) => l.trim()) : []
 
-  // Build metadata based on type
-  let metadata: any = {
-    title,
-    status,
-  }
-
-  if (type === "task" || type === "issue") {
-    metadata.priority = priority
-    if (args.milestone) metadata.milestone = args.milestone
-    if (args.assignee) metadata.assignee = args.assignee
-  }
-
-  if (type === "issue") {
-    metadata.kind = args.kind || "feature"
-  }
-
-  if (type === "milestone") {
-    metadata.progress = 0
-  }
+  // Parse assignees
+  const assignees: string[] = args.assignee ? [args.assignee] : []
 
   const content = args.content || `# ${title}\n\n[Add description here]`
 
   const resource = await createResource(
     {
+      title,
       type,
-      metadata,
+      labels,
+      milestone: args.milestone,
+      assignees,
       content,
     },
     projectDir,
@@ -164,25 +151,24 @@ async function createCommand(projectDir: string, args: any): Promise<void> {
  * List issues
  */
 async function listCommand(projectDir: string, args: any): Promise<void> {
-  const typeFilter = args.type as SdlcResourceType | undefined
-
-  let resources
-  if (typeFilter) {
-    resources = await listResources(typeFilter, projectDir)
-  } else {
-    resources = await listAllResources(projectDir)
-  }
+  let resources = await listAllResources(projectDir)
 
   // Apply filters
   const filters: any = {}
-  if (args.status) {
-    filters.status = args.status.split(",")
+  if (args.type) {
+    filters.type = args.type
+  }
+  if (args.state) {
+    filters.state = args.state.split(",")
   }
   if (args.milestone) {
     filters.milestone = args.milestone
   }
   if (args.assignee) {
     filters.assignee = args.assignee
+  }
+  if (args.labels) {
+    filters.labels = args.labels.split(",").map((l: string) => l.trim())
   }
 
   if (Object.keys(filters).length > 0) {
@@ -199,45 +185,41 @@ async function listCommand(projectDir: string, args: any): Promise<void> {
     return
   }
 
-  // Group by status for board view
-  const byStatus: Record<string, typeof resources> = {
-    todo: [],
-    in_progress: [],
-    blocked: [],
-    in_review: [],
-    done: [],
-    cancelled: [],
+  // Group by state
+  const byState: Record<IssueState, typeof resources> = {
+    open: [],
+    closed: [],
   }
 
   for (const resource of resources) {
-    if (byStatus[resource.metadata.status]) {
-      byStatus[resource.metadata.status].push(resource)
-    }
+    byState[resource.metadata.state].push(resource)
   }
 
   console.log()
 
-  // Print by status lanes (clean, minimalistic kanban style)
-  for (const [status, items] of Object.entries(byStatus)) {
-    if (items.length === 0) continue
-
-    const statusIcon = getStatusIcon(status as SdlcStatus)
-    const statusLabel = status.replace(/_/g, " ")
-    console.log(`${statusIcon} ${statusLabel}`)
+  // Print open issues first
+  if (byState.open.length > 0) {
+    console.log(`🟢 open (${byState.open.length})`)
     console.log()
-
-    for (const resource of items) {
+    for (const resource of byState.open) {
       const { metadata } = resource
-      const priorityIcon = "priority" in metadata
-        ? getPriorityIcon(metadata.priority as SdlcPriority)
-        : ""
+      const labels = metadata.labels.join(", ")
+      const assignees = metadata.assignees.length > 0 ? ` · @${metadata.assignees.join(", @")}` : ""
+      console.log(`  ${metadata.title}${assignees}`)
+      if (labels) {
+        console.log(`    ${labels}`)
+      }
+    }
+    console.log()
+  }
 
-      // Clean single line: icon title (assignee if exists)
-      const assignee = "assignee" in metadata && metadata.assignee
-        ? ` · @${metadata.assignee}`
-        : ""
-
-      console.log(`  ${priorityIcon} ${metadata.title}${assignee}`)
+  // Print closed issues
+  if (byState.closed.length > 0) {
+    console.log(`⚫ closed (${byState.closed.length})`)
+    console.log()
+    for (const resource of byState.closed) {
+      const { metadata } = resource
+      console.log(`  ${metadata.title}`)
     }
     console.log()
   }
@@ -276,20 +258,23 @@ async function viewCommand(projectDir: string, args: any): Promise<void> {
   console.log(metadata.title)
   console.log()
 
-  // Minimal metadata line
-  const statusIcon = getStatusIcon(metadata.status)
-  const priorityIcon = "priority" in metadata ? getPriorityIcon(metadata.priority) : ""
-  const assignee = "assignee" in metadata && metadata.assignee ? `@${metadata.assignee}` : ""
-  const milestone = "milestone" in metadata && metadata.milestone ? metadata.milestone : ""
+  // Metadata
+  const stateIcon = metadata.state === "open" ? "🟢" : "⚫"
+  console.log(`${stateIcon} ${metadata.state}`)
 
-  const metaParts = [
-    `${statusIcon} ${metadata.status}`,
-    priorityIcon ? `${priorityIcon} ${metadata.priority}` : "",
-    assignee,
-    milestone,
-  ].filter(Boolean)
+  if (metadata.labels.length > 0) {
+    console.log(`Labels: ${metadata.labels.join(", ")}`)
+  }
+  if (metadata.assignees.length > 0) {
+    console.log(`Assignees: @${metadata.assignees.join(", @")}`)
+  }
+  if (metadata.milestone) {
+    console.log(`Milestone: ${metadata.milestone}`)
+  }
+  if (metadata.number) {
+    console.log(`GitHub: #${metadata.number}`)
+  }
 
-  console.log(metaParts.join(" · "))
   console.log()
   console.log("─".repeat(60))
   console.log()
@@ -301,7 +286,7 @@ async function viewCommand(projectDir: string, args: any): Promise<void> {
 }
 
 /**
- * Edit an issue (update status, metadata, or delete)
+ * Edit an issue
  */
 async function editCommand(projectDir: string, args: any): Promise<void> {
   const id = args._[1] as string
@@ -322,41 +307,35 @@ async function editCommand(projectDir: string, args: any): Promise<void> {
   if (args.delete) {
     const deleted = await deleteResource(id, projectDir)
     if (deleted) {
-      cliLogger.info(`✓ Deleted ${existing.metadata.type}: ${id}`)
+      cliLogger.info(`✓ Deleted: ${id}`)
     } else {
       cliLogger.error(`Failed to delete issue: ${id}`)
     }
     return
   }
 
-  // Build update metadata
-  const updates: any = {}
-  if (args.status) updates.status = args.status
+  // Build updates
+  const updates: any = { id }
+  if (args.state) updates.state = args.state as IssueState
   if (args.title) updates.title = args.title
-  if (args.priority) updates.priority = args.priority
-  if (args.assignee) updates.assignee = args.assignee
+  if (args.labels) updates.labels = args.labels.split(",").map((l: string) => l.trim())
+  if (args.assignee) updates.assignees = [args.assignee]
   if (args.milestone) updates.milestone = args.milestone
+  if (args.content) updates.content = args.content
 
-  if (Object.keys(updates).length === 0 && !args.content) {
+  if (Object.keys(updates).length === 1) {
     cliLogger.error("No updates specified. Use --delete to delete the issue.")
     return
   }
 
-  const updated = await updateResource(
-    {
-      id,
-      metadata: updates,
-      content: args.content,
-    },
-    projectDir,
-  )
+  const updated = await updateResource(updates, projectDir)
 
   if (!updated) {
     cliLogger.error(`Failed to update issue: ${id}`)
     return
   }
 
-  cliLogger.info(`✓ Updated ${existing.metadata.type}: ${id}`)
+  cliLogger.info(`✓ Updated: ${id}`)
 
   if (args.json) {
     console.log(JSON.stringify(updated, null, 2))
@@ -364,176 +343,171 @@ async function editCommand(projectDir: string, args: any): Promise<void> {
 }
 
 /**
- * Get status icon
+ * Sync with GitHub
  */
-function getStatusIcon(status: SdlcStatus): string {
-  const icons: Record<SdlcStatus, string> = {
-    todo: "⭕",
-    in_progress: "🔄",
-    blocked: "🚫",
-    in_review: "👀",
-    done: "✅",
-    cancelled: "❌",
+async function syncCommand(projectDir: string, args: any): Promise<void> {
+  const syncMode = args._[1] as string | undefined
+
+  // Get GitHub config
+  const owner = args.owner || Deno.env.get("GITHUB_OWNER")
+  const repo = args.repo || Deno.env.get("GITHUB_REPO")
+  const token = args.token || Deno.env.get("GITHUB_TOKEN")
+
+  if (!owner || !repo || !token) {
+    cliLogger.error("GitHub configuration required:")
+    cliLogger.error("  --owner <owner> or GITHUB_OWNER env var")
+    cliLogger.error("  --repo <repo> or GITHUB_REPO env var")
+    cliLogger.error("  --token <token> or GITHUB_TOKEN env var")
+    return
   }
-  return icons[status] || "❓"
+
+  const config: SyncConfig = { owner, repo, token }
+
+  try {
+    let stats
+
+    switch (syncMode) {
+      case "pull":
+        cliLogger.info(`Pulling issues from ${owner}/${repo}...`)
+        stats = await pullFromGitHub(config, projectDir)
+        break
+      case "push":
+        cliLogger.info(`Pushing issues to ${owner}/${repo}...`)
+        stats = await pushToGitHub(config, projectDir)
+        break
+      default:
+        cliLogger.info(`Syncing issues with ${owner}/${repo}...`)
+        stats = await sync(config, projectDir)
+    }
+
+    console.log()
+    cliLogger.info("Sync complete!")
+    console.log(`  Pulled: ${stats.pulled}`)
+    console.log(`  Pushed: ${stats.pushed}`)
+    console.log(`  Updated: ${stats.updated}`)
+    if (stats.errors > 0) {
+      console.log(`  Errors: ${stats.errors}`)
+    }
+    console.log()
+
+    if (args.json) {
+      console.log(JSON.stringify(stats, null, 2))
+    }
+  } catch (error) {
+    cliLogger.error("Sync failed:", error)
+    Deno.exit(1)
+  }
 }
 
 /**
- * Get priority icon
- */
-function getPriorityIcon(priority: SdlcPriority): string {
-  const icons: Record<SdlcPriority, string> = {
-    low: "🔵",
-    medium: "🟡",
-    high: "🟠",
-    critical: "🔴",
-  }
-  return icons[priority] || "⚪"
-}
-
-/**
- * Print help message
+ * Print help
  */
 function printHelp(): void {
   console.log(`
-veryfront issues - Manage issues (file-based, git-friendly)
+veryfront issues - GitHub-compatible file-based issue tracking
 
 USAGE:
   veryfront issues <subcommand> [options]
 
 SUBCOMMANDS:
   create              Create a new issue
-  list                List issues (kanban board view)
+  list                List issues
   view <id>           View issue details
   edit <id> [options] Edit or delete issue
+  sync [pull|push]    Sync with GitHub Issues
 
 CREATE OPTIONS:
-  --title <string>      Issue title (required)
-  --type <type>         Type: task, issue, plan, milestone, rfc (default: issue)
-  --status <status>     Status (default: todo)
-  --priority <level>    Priority: low, medium, high, critical
-  --milestone <id>      Milestone ID
-  --assignee <name>     Assignee name
-  --kind <type>         Issue kind: bug, feature, enhancement, documentation
-  --content <markdown>  Issue content
+  --title <string>     Issue title (required)
+  --type <type>        Type: issue, plan, milestone (default: issue)
+  --labels <list>      Comma-separated labels (e.g., bug,priority:high)
+  --milestone <name>   Milestone name
+  --assignee <user>    Assignee username
+  --content <markdown> Issue content
 
 LIST OPTIONS:
-  --type <type>         Filter by type
-  --status <statuses>   Filter by status (comma-separated)
-  --milestone <id>      Filter by milestone
-  --assignee <name>     Filter by assignee
+  --type <type>        Filter by type
+  --state <state>      Filter by state: open, closed
+  --labels <list>      Filter by labels
+  --milestone <name>   Filter by milestone
+  --assignee <user>    Filter by assignee
 
 EDIT OPTIONS:
-  --status <status>     New status
-  --title <string>      New title
-  --priority <level>    New priority
-  --assignee <name>     New assignee
-  --milestone <id>      New milestone
-  --content <markdown>  New content
-  --delete, -d          Delete the issue
+  --state <state>      New state: open, closed
+  --title <string>     New title
+  --labels <list>      New labels
+  --assignee <user>    New assignee
+  --milestone <name>   New milestone
+  --content <markdown> New content
+  --delete, -d         Delete the issue
+
+SYNC OPTIONS:
+  --owner <owner>      GitHub repository owner (or GITHUB_OWNER env var)
+  --repo <repo>        GitHub repository name (or GITHUB_REPO env var)
+  --token <token>      GitHub token (or GITHUB_TOKEN env var)
 
 GLOBAL OPTIONS:
-  --json                Output as JSON
-  --help, -h            Show this help
+  --json               Output as JSON
+  --help, -h           Show this help
 
 EXAMPLES:
-  # Create issues
-  veryfront issues create --title "Implement JWT auth" --type task --priority high
-  veryfront issues create --title "Login bug" --type issue --kind bug
+  # Create
+  veryfront issues create --title "Fix login bug" --labels bug,priority:high
+  veryfront issues create --title "Auth system spec" --type plan
 
-  # Spec-driven workflow
-  veryfront issues create --title "Auth System Spec" --type plan
-  veryfront issues create --type task --title "JWT signing" --milestone PLAN-1234567-abc123
-  veryfront issues list --type plan
-
-  # List (kanban board)
+  # List
   veryfront issues list
-  veryfront issues list --type task --status todo,in_progress
+  veryfront issues list --state open --labels bug
 
   # View
-  veryfront issues view TASK-1234567-abc123
+  veryfront issues view ISSUE-xxx
 
-  # Edit (update status, priority, etc)
-  veryfront issues edit TASK-1234567-abc123 --status done
-  veryfront issues edit ISSUE-1234567-def456 --assignee alice --priority high
+  # Edit
+  veryfront issues edit ISSUE-xxx --state closed
+  veryfront issues edit ISSUE-xxx --labels bug,fixed
 
   # Delete
-  veryfront issues edit TASK-1234567-abc123 --delete
+  veryfront issues edit ISSUE-xxx --delete
 
-FILE-BASED WORKFLOW:
-  All issues are stored as markdown files in issues/ folder
+  # Sync with GitHub
+  export GITHUB_OWNER=org
+  export GITHUB_REPO=repo
+  export GITHUB_TOKEN=ghp_xxx
+  veryfront issues sync        # Bi-directional
+  veryfront issues sync pull   # Pull only
+  veryfront issues sync push   # Push only
 
-  Structure:
-    issues/
-    ├── TASK-1234567-abc123.md
-    ├── ISSUE-1234567-def456.md
-    └── PLAN-1234567-ghi789.md
+FILE FORMAT:
+  issues/
+  ├── ISSUE-xxx.md
+  ├── PLAN-xxx.md
+  └── MILESTONE-xxx.md
 
-  Each file contains:
-    - YAML frontmatter (metadata: id, title, status, priority, etc.)
-    - Markdown content (description, details, notes)
+  Each file:
+  ---
+  id: ISSUE-xxx
+  title: Fix login bug
+  state: open
+  labels:
+    - bug
+    - priority:high
+  assignees:
+    - username
+  created_at: 2024-01-01T00:00:00Z
+  updated_at: 2024-01-01T00:00:00Z
+  ---
+  # Description
 
-  You can:
-    - Use CLI commands (veryfront issues create/list/view/edit)
-    - Edit files directly in your editor
-    - Version control with git (all changes tracked)
-    - AI agents can read/write files directly
-
-SPEC-DRIVEN DEVELOPMENT:
-  Everything is just a file. Specs, plans, and RFCs are issues with type=plan or type=rfc.
-
-  Workflow:
-    1. Write spec      → veryfront issues create --type plan --title "Auth System Spec"
-    2. Break into tasks → Create tasks linked to plan via --milestone PLAN-xxx
-    3. Track progress   → Tasks reference the plan, plan tracks completion
-    4. Ship & close     → Mark plan as done when all tasks complete
-
-  Example spec file (issues/PLAN-1234567-abc123.md):
-    ---
-    type: plan
-    title: Authentication System
-    status: in_progress
-    ---
-    # Authentication System Spec
-
-    ## Overview
-    JWT-based authentication with refresh tokens
-
-    ## Tasks
-    - [ ] TASK-xxx - Implement JWT signing
-    - [ ] TASK-yyy - Add refresh token rotation
-    - [ ] TASK-zzz - Create login endpoint
-
-  Then create tasks:
-    veryfront issues create --type task --title "Implement JWT signing" --milestone PLAN-1234567-abc123
-
-  The plan file is the single source of truth. Tasks link back to it.
-
-FOR AI AGENTS:
-  - Read issues: Parse markdown files in issues/ folder
-  - Create issues: Write new .md file with frontmatter + content
-  - Update issues: Modify frontmatter fields (status, priority, assignee)
-  - Files follow standard markdown + YAML frontmatter format
-  - All metadata in frontmatter, all content in markdown body
-  - Spec-driven: Plans/RFCs are just issues with type=plan or type=rfc
-  - Link tasks to specs via milestone field pointing to plan ID
-
-STATUSES:
-  todo, in_progress, blocked, in_review, done, cancelled
-
-PRIORITIES:
-  low, medium, high, critical
+  Issue content here...
 
 TYPES:
-  task      - Individual work item
-  issue     - Bug, feature request, or enhancement
-  plan      - Specification, design doc, or implementation plan
-  milestone - Release or project milestone
-  rfc       - Request for comments, architecture decision
+  issue     - Bug, feature, enhancement
+  plan      - Spec, design doc, implementation plan
+  milestone - Release milestone
 
-HELP:
-  veryfront issues --help          Show this help
-  veryfront issues create --help   Show create options
-  veryfront issues list --help     Show list options
+LABELS (conventions):
+  bug, enhancement, documentation
+  priority:low, priority:medium, priority:high, priority:critical
+  status:in_progress, status:blocked, status:in_review
+  type:issue, type:plan, type:milestone
 `)
 }

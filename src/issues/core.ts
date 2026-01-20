@@ -1,49 +1,49 @@
 /**
- * Core SDLC library for managing file-based resources
+ * Core issues library - GitHub compatible file-based issue tracking
  */
 
 import * as path from "#std/path.ts"
 import matter from "gray-matter"
 import type {
-  CreateSdlcResourceOptions,
-  ListSdlcResourcesOptions,
-  SdlcResource,
-  SdlcResourceFile,
-  SdlcResourceType,
-  SdlcStats,
-  SdlcStatus,
-  UpdateSdlcResourceOptions,
+  CreateIssueOptions,
+  ListIssuesOptions,
+  UpdateIssueOptions,
+  IssueMetadata,
+  IssueFile,
+  IssueType,
+  IssueState,
+  IssueStats,
 } from "./types.ts"
-import { sdlcResourceSchema } from "./schema.ts"
+import { issueMetadataSchema } from "./schema.ts"
+
+// Legacy type aliases for CLI compatibility during migration
+export type SdlcResourceType = IssueType | "task" | "rfc"
+export type SdlcStatus = "todo" | "in_progress" | "blocked" | "in_review" | "done" | "cancelled"
+export type SdlcPriority = "low" | "medium" | "high" | "critical"
 
 /**
- * Base directory for SDLC resources - flat structure in issues/
+ * Base directory for issues - flat structure in issues/
  */
 export const SDLC_BASE_DIR = "issues"
 
 /**
- * Get the directory path for SDLC resources (flat structure)
+ * Get the directory path for issues (flat structure)
  */
-export function getResourceDir(
-  basePath = ".",
-): string {
+export function getResourceDir(basePath = "."): string {
   return path.join(basePath, SDLC_BASE_DIR)
 }
 
 /**
- * Get the file path for a resource
+ * Get the file path for an issue
  */
-export function getResourcePath(
-  id: string,
-  basePath = ".",
-): string {
+export function getResourcePath(id: string, basePath = "."): string {
   return path.join(getResourceDir(basePath), `${id}.md`)
 }
 
 /**
- * Generate a new resource ID
+ * Generate a new issue ID
  */
-export function generateResourceId(type: SdlcResourceType): string {
+export function generateResourceId(type: IssueType): string {
   const prefix = type.toUpperCase()
   const timestamp = Date.now()
   const random = Math.random().toString(36).substring(2, 8)
@@ -65,29 +65,29 @@ export function parseResourceFile(content: string): {
 }
 
 /**
- * Serialize resource to markdown with frontmatter
+ * Serialize issue to markdown with frontmatter
  */
 export function serializeResourceFile(
-  metadata: SdlcResource,
+  metadata: IssueMetadata,
   content: string,
 ): string {
   return matter.stringify(content, metadata)
 }
 
 /**
- * Read a single SDLC resource
+ * Read a single issue
  */
 export async function readResource(
   id: string,
   basePath = ".",
-): Promise<SdlcResourceFile | null> {
+): Promise<IssueFile | null> {
   try {
     const filePath = getResourcePath(id, basePath)
     const fileContent = await Deno.readTextFile(filePath)
     const { metadata, content } = parseResourceFile(fileContent)
 
-    // Validate metadata
-    const validatedMetadata = sdlcResourceSchema.parse(metadata)
+    // Validate and coerce metadata
+    const validatedMetadata = issueMetadataSchema.parse(metadata)
 
     return {
       metadata: validatedMetadata,
@@ -103,15 +103,13 @@ export async function readResource(
 }
 
 /**
- * List all SDLC resources from the flat issues/ directory
+ * List all issues from the flat issues/ directory
  */
-export async function listAllResources(
-  basePath = ".",
-): Promise<SdlcResourceFile[]> {
+export async function listAllResources(basePath = "."): Promise<IssueFile[]> {
   const dir = getResourceDir(basePath)
 
   try {
-    const files: SdlcResourceFile[] = []
+    const files: IssueFile[] = []
 
     for await (const entry of Deno.readDir(dir)) {
       if (entry.isFile && entry.name.endsWith(".md")) {
@@ -133,58 +131,54 @@ export async function listAllResources(
 }
 
 /**
- * List resources of a specific type
+ * List issues of a specific type (by label)
  */
 export async function listResources(
-  type: SdlcResourceType,
+  type: IssueType,
   basePath = ".",
-): Promise<SdlcResourceFile[]> {
+): Promise<IssueFile[]> {
   const allResources = await listAllResources(basePath)
-  return allResources.filter((r) => r.metadata.type === type)
+  return allResources.filter((r) => r.metadata.labels.includes(`type:${type}`))
 }
 
 /**
- * Filter resources based on options
+ * Filter issues based on options
  */
 export function filterResources(
-  resources: SdlcResourceFile[],
-  options: ListSdlcResourcesOptions,
-): SdlcResourceFile[] {
+  resources: IssueFile[],
+  options: ListIssuesOptions,
+): IssueFile[] {
   let filtered = [...resources]
 
-  // Filter by type
+  // Filter by type (via label)
   if (options.type) {
-    filtered = filtered.filter((r) => r.metadata.type === options.type)
+    filtered = filtered.filter((r) =>
+      r.metadata.labels.includes(`type:${options.type}`)
+    )
   }
 
-  // Filter by status
-  if (options.status) {
-    const statuses = Array.isArray(options.status)
-      ? options.status
-      : [options.status]
-    filtered = filtered.filter((r) => statuses.includes(r.metadata.status))
+  // Filter by state
+  if (options.state) {
+    const states = Array.isArray(options.state) ? options.state : [options.state]
+    filtered = filtered.filter((r) => states.includes(r.metadata.state))
   }
 
   // Filter by milestone
   if (options.milestone) {
-    filtered = filtered.filter(
-      (r) => "milestone" in r.metadata && r.metadata.milestone === options.milestone,
-    )
+    filtered = filtered.filter((r) => r.metadata.milestone === options.milestone)
   }
 
   // Filter by assignee
   if (options.assignee) {
-    filtered = filtered.filter(
-      (r) => "assignee" in r.metadata && r.metadata.assignee === options.assignee,
+    filtered = filtered.filter((r) =>
+      r.metadata.assignees.includes(options.assignee!)
     )
   }
 
   // Filter by labels
   if (options.labels && options.labels.length > 0) {
     filtered = filtered.filter((r) =>
-      options.labels!.every((label) =>
-        r.metadata.labels?.includes(label)
-      )
+      options.labels!.every((label) => r.metadata.labels.includes(label))
     )
   }
 
@@ -192,16 +186,14 @@ export function filterResources(
   if (options.sortBy) {
     filtered.sort((a, b) => {
       const sortKey = options.sortBy!
-      const aVal = (a.metadata as any)[sortKey]
-      const bVal = (b.metadata as any)[sortKey]
+      const aVal = a.metadata[sortKey]
+      const bVal = b.metadata[sortKey]
 
       if (aVal === undefined || bVal === undefined) return 0
 
       let comparison = 0
       if (typeof aVal === "string" && typeof bVal === "string") {
         comparison = aVal.localeCompare(bVal)
-      } else if (typeof aVal === "number" && typeof bVal === "number") {
-        comparison = aVal - bVal
       }
 
       return options.sortOrder === "desc" ? -comparison : comparison
@@ -212,29 +204,38 @@ export function filterResources(
 }
 
 /**
- * Create a new SDLC resource
+ * Create a new issue
  */
-export async function createResource<T extends SdlcResource>(
-  options: CreateSdlcResourceOptions<T>,
+export async function createResource(
+  options: CreateIssueOptions,
   basePath = ".",
-): Promise<SdlcResourceFile<T>> {
-  const { type, metadata, content } = options
+): Promise<IssueFile> {
+  const { title, type = "issue", labels = [], milestone, assignees = [], content } = options
 
-  // Generate ID if not provided
-  const id = metadata.id || generateResourceId(type)
+  // Generate ID
+  const id = generateResourceId(type)
 
-  // Create full metadata with timestamps
+  // Build labels array (include type as label)
+  const allLabels = [...labels]
+  if (!allLabels.includes(`type:${type}`)) {
+    allLabels.push(`type:${type}`)
+  }
+
+  // Create full metadata
   const now = new Date().toISOString()
-  const fullMetadata = {
-    ...metadata,
+  const metadata: IssueMetadata = {
     id,
-    type,
-    created: now,
-    updated: now,
-  } as T
+    title,
+    state: "open",
+    labels: allLabels,
+    milestone,
+    assignees,
+    created_at: now,
+    updated_at: now,
+  }
 
   // Validate metadata
-  const validatedMetadata = sdlcResourceSchema.parse(fullMetadata) as T
+  const validatedMetadata = issueMetadataSchema.parse(metadata)
 
   // Serialize to file
   const fileContent = serializeResourceFile(validatedMetadata, content)
@@ -255,32 +256,37 @@ export async function createResource<T extends SdlcResource>(
 }
 
 /**
- * Update an existing SDLC resource
+ * Update an existing issue
  */
 export async function updateResource(
-  options: UpdateSdlcResourceOptions,
+  options: UpdateIssueOptions,
   basePath = ".",
-): Promise<SdlcResourceFile | null> {
-  const { id, metadata, content } = options
+): Promise<IssueFile | null> {
+  const { id, ...updates } = options
 
-  // Read existing resource
+  // Read existing issue
   const existing = await readResource(id, basePath)
   if (!existing) {
     return null
   }
 
   // Merge metadata
-  const updatedMetadata = {
+  const updatedMetadata: IssueMetadata = {
     ...existing.metadata,
-    ...metadata,
-    updated: new Date().toISOString(),
+    ...updates,
+    updated_at: new Date().toISOString(),
+  }
+
+  // Handle content update
+  if (updates.content !== undefined) {
+    delete (updatedMetadata as any).content
   }
 
   // Validate
-  const validatedMetadata = sdlcResourceSchema.parse(updatedMetadata)
+  const validatedMetadata = issueMetadataSchema.parse(updatedMetadata)
 
   // Serialize
-  const updatedContent = content ?? existing.content
+  const updatedContent = updates.content ?? existing.content
   const fileContent = serializeResourceFile(validatedMetadata, updatedContent)
 
   // Write
@@ -294,12 +300,9 @@ export async function updateResource(
 }
 
 /**
- * Delete an SDLC resource
+ * Delete an issue
  */
-export async function deleteResource(
-  id: string,
-  basePath = ".",
-): Promise<boolean> {
+export async function deleteResource(id: string, basePath = "."): Promise<boolean> {
   try {
     const filePath = getResourcePath(id, basePath)
     await Deno.remove(filePath)
@@ -313,56 +316,43 @@ export async function deleteResource(
 }
 
 /**
- * Get statistics for SDLC resources
+ * Get statistics for issues
  */
-export async function getStats(basePath = "."): Promise<SdlcStats> {
+export async function getStats(basePath = "."): Promise<IssueStats> {
   const allResources = await listAllResources(basePath)
 
-  const stats: SdlcStats = {
+  const stats: IssueStats = {
     total: allResources.length,
-    byStatus: {
-      todo: 0,
-      in_progress: 0,
-      blocked: 0,
-      in_review: 0,
-      done: 0,
-      cancelled: 0,
+    byState: {
+      open: 0,
+      closed: 0,
     },
     byType: {
-      task: 0,
       issue: 0,
       plan: 0,
       milestone: 0,
-      rfc: 0,
-    },
-    byPriority: {
-      low: 0,
-      medium: 0,
-      high: 0,
-      critical: 0,
     },
   }
 
   for (const resource of allResources) {
-    stats.byStatus[resource.metadata.status]++
-    stats.byType[resource.metadata.type]++
+    stats.byState[resource.metadata.state]++
 
-    if ("priority" in resource.metadata) {
-      stats.byPriority[resource.metadata.priority]++
-    }
+    // Count by type label
+    if (resource.metadata.labels.includes("type:issue")) stats.byType.issue++
+    else if (resource.metadata.labels.includes("type:plan")) stats.byType.plan++
+    else if (resource.metadata.labels.includes("type:milestone")) stats.byType.milestone++
+    else stats.byType.issue++ // default to issue
   }
 
   return stats
 }
 
 /**
- * Auto-discover all SDLC resources in a project
+ * Auto-discover all issues in a project
  */
-export async function discoverResources(
-  basePath = ".",
-): Promise<{
-  resources: SdlcResourceFile[]
-  stats: SdlcStats
+export async function discoverResources(basePath = "."): Promise<{
+  resources: IssueFile[]
+  stats: IssueStats
 }> {
   const resources = await listAllResources(basePath)
   const stats = await getStats(basePath)
