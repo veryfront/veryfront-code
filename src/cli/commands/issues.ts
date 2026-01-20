@@ -215,31 +215,35 @@ async function listCommand(projectDir: string, args: any): Promise<void> {
     }
   }
 
-  console.log(`\nFound ${resources.length} issue(s):\n`)
+  console.log()
 
-  // Print by status lanes (kanban style)
+  // Print by status lanes (clean, minimalistic kanban style)
   for (const [status, items] of Object.entries(byStatus)) {
     if (items.length === 0) continue
 
     const statusIcon = getStatusIcon(status as SdlcStatus)
-    console.log(`${statusIcon} ${status.toUpperCase().replace(/_/g, " ")} (${items.length})`)
-    console.log("─".repeat(60))
+    const statusLabel = status.replace(/_/g, " ")
+    console.log(`${statusIcon} ${statusLabel}`)
+    console.log()
 
     for (const resource of items) {
       const { metadata } = resource
-      const typeTag = `[${metadata.type}]`
-      const priorityBadge = "priority" in metadata
-        ? ` ${getPriorityIcon(metadata.priority as SdlcPriority)}`
+      const priorityIcon = "priority" in metadata
+        ? getPriorityIcon(metadata.priority as SdlcPriority)
         : ""
 
-      console.log(`  ${typeTag} ${metadata.id}`)
-      console.log(`  ${metadata.title}${priorityBadge}`)
-      if ("assignee" in metadata && metadata.assignee) {
-        console.log(`  @${metadata.assignee}`)
-      }
-      console.log()
+      // Clean single line: icon title (assignee if exists)
+      const assignee = "assignee" in metadata && metadata.assignee
+        ? ` · @${metadata.assignee}`
+        : ""
+
+      console.log(`  ${priorityIcon} ${metadata.title}${assignee}`)
     }
+    console.log()
   }
+
+  console.log(`${resources.length} issue${resources.length !== 1 ? "s" : ""}`)
+  console.log()
 }
 
 /**
@@ -266,25 +270,33 @@ async function viewCommand(projectDir: string, args: any): Promise<void> {
   }
 
   const { metadata, content } = resource
-  console.log(`\n${"=".repeat(60)}`)
-  console.log(`[${metadata.type.toUpperCase()}] ${metadata.title}`)
-  console.log(`${"=".repeat(60)}`)
-  console.log(`ID: ${metadata.id}`)
-  console.log(`Status: ${getStatusIcon(metadata.status)} ${metadata.status}`)
-  if ("priority" in metadata) {
-    console.log(`Priority: ${getPriorityIcon(metadata.priority)} ${metadata.priority}`)
-  }
-  if ("assignee" in metadata && metadata.assignee) {
-    console.log(`Assignee: @${metadata.assignee}`)
-  }
-  if ("milestone" in metadata && metadata.milestone) {
-    console.log(`Milestone: ${metadata.milestone}`)
-  }
-  console.log(`Created: ${metadata.created}`)
-  console.log(`Updated: ${metadata.updated}`)
-  console.log(`File: issues/${metadata.id}.md`)
-  console.log(`${"=".repeat(60)}\n`)
+
+  // Clean header
+  console.log()
+  console.log(metadata.title)
+  console.log()
+
+  // Minimal metadata line
+  const statusIcon = getStatusIcon(metadata.status)
+  const priorityIcon = "priority" in metadata ? getPriorityIcon(metadata.priority) : ""
+  const assignee = "assignee" in metadata && metadata.assignee ? `@${metadata.assignee}` : ""
+  const milestone = "milestone" in metadata && metadata.milestone ? metadata.milestone : ""
+
+  const metaParts = [
+    `${statusIcon} ${metadata.status}`,
+    priorityIcon ? `${priorityIcon} ${metadata.priority}` : "",
+    assignee,
+    milestone,
+  ].filter(Boolean)
+
+  console.log(metaParts.join(" · "))
+  console.log()
+  console.log("─".repeat(60))
+  console.log()
   console.log(content)
+  console.log()
+  console.log("─".repeat(60))
+  console.log(`issues/${metadata.id}.md`)
   console.log()
 }
 
