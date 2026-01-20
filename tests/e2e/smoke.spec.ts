@@ -128,10 +128,15 @@ for (const project of PROJECTS) {
     test("color_mode=dark works", async ({ page }) => {
       const errors = setupErrorCollection(page);
 
-      await page.goto(`${baseUrl}/?color_mode=dark`);
+      // Check SSR value before hydration
+      const response = await page.goto(`${baseUrl}/?color_mode=dark`);
+      const html = await response?.text();
+      expect(html).toContain('data-theme="dark"');
+
+      // Wait for hydration to complete
       await page.waitForLoadState("networkidle");
 
-      // SSR: data-theme attribute should be set to dark
+      // Client: data-theme should still be dark after hydration (no revert)
       await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
 
       // Page should still render correctly
@@ -148,10 +153,15 @@ for (const project of PROJECTS) {
     test("color_mode=light works", async ({ page }) => {
       const errors = setupErrorCollection(page);
 
-      await page.goto(`${baseUrl}/?color_mode=light`);
+      // Check SSR value before hydration
+      const response = await page.goto(`${baseUrl}/?color_mode=light`);
+      const html = await response?.text();
+      expect(html).toContain('data-theme="light"');
+
+      // Wait for hydration to complete
       await page.waitForLoadState("networkidle");
 
-      // SSR: data-theme attribute should be set to light
+      // Client: data-theme should still be light after hydration (no revert)
       await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
 
       // Page should still render correctly
