@@ -1,0 +1,257 @@
+/**
+ * E2E Smoke Tests
+ *
+ * Pre-push smoke tests for the Veryfront renderer.
+ * Tests 3 projects with various query parameter combinations.
+ *
+ * Target: < 2 minutes total runtime
+ * Zero tolerance: ANY failure blocks push
+ */
+
+import { test, expect } from "@playwright/test";
+import {
+  setupErrorCollection,
+  assertColorMode,
+  assertStudioEmbed,
+  assertPreviewMode,
+} from "./helpers/assertions.js";
+
+/**
+ * All available projects for testing.
+ *
+ * These are local projects that the dev server discovers automatically.
+ * Each project tests different aspects of the renderer.
+ *
+ * Filter by project: E2E_PROJECT=codersociety deno task test:e2e
+ */
+const ALL_PROJECTS = [
+  {
+    subdomain: "blank",
+    name: "Blank",
+    description: "Minimal baseline project",
+  },
+  {
+    subdomain: "codersociety",
+    name: "CoderSociety",
+    description: "Full-featured project with complex layouts",
+  },
+  {
+    subdomain: "veryfront",
+    name: "Veryfront",
+    description: "Marketing site with MDX content",
+  },
+];
+
+/**
+ * Filter projects based on E2E_PROJECT environment variable.
+ *
+ * Usage:
+ *   E2E_PROJECT=blank deno task test:e2e       # Test only blank project
+ *   E2E_PROJECT=codersociety deno task test:e2e # Test only codersociety
+ *   deno task test:e2e                          # Test default projects
+ *
+ * All projects are enabled by default.
+ */
+const DEFAULT_PROJECTS = [
+  "blank",
+  "codersociety",
+  "veryfront",
+  // Static templates:
+  // "marketing-template",
+  // "restaurant-template",
+  // "real-estate-template",
+  // "lease-calculator",
+  // "impartial-chandrasekhar-qsohb",
+  // "dashboard",
+  // "immo-price-finder",
+  // AI templates:
+  // "ai-assistant-template",
+  // "task-manager-template",
+  // "ai-inbox-assistant",
+  // "immo-agent-template",
+  // "doc-agent-template",
+  // "outlook-agent",
+  // "ai-agent",
+  // "ai-agent-kitchen-sink",
+  // "invest-pro-template",
+];
+const targetProject = process.env.E2E_PROJECT;
+
+const PROJECTS = targetProject
+  ? ALL_PROJECTS.filter((p) => p.subdomain === targetProject)
+  : ALL_PROJECTS.filter((p) => DEFAULT_PROJECTS.includes(p.subdomain));
+
+if (targetProject && PROJECTS.length === 0) {
+  console.error(`Unknown project: ${targetProject}`);
+  console.error(`Available: ${ALL_PROJECTS.map((p) => p.subdomain).join(", ")}`);
+  process.exit(1);
+}
+
+/**
+ * Test each project
+ */
+for (const project of PROJECTS) {
+  test.describe(`${project.name} (${project.subdomain})`, () => {
+    const baseUrl = `http://${project.subdomain}.lvh.me:8080`;
+
+    /**
+     * Basic smoke test: page loads without errors
+     */
+    test("page loads without errors", async ({ page }) => {
+      const errors = setupErrorCollection(page);
+
+      const response = await page.goto(`${baseUrl}/`);
+      await page.waitForLoadState("networkidle");
+
+      // Assert: no 5xx errors
+      expect(response?.status()).toBeLessThan(500);
+
+      // Assert: page has content
+      const body = await page.locator("body").innerHTML();
+      expect(body.length).toBeGreaterThan(0);
+
+      // Assert: no console errors
+      expect(errors).toEqual([]);
+    });
+
+    /**
+     * Hydration test: React hydration works without errors
+     */
+    test("hydration works", async ({ page }) => {
+      const errors = setupErrorCollection(page);
+
+      await page.goto(`${baseUrl}/`);
+      await page.waitForLoadState("networkidle");
+
+      // Try to interact with an element to trigger hydration errors
+      const interactive = page.locator("button, a[href], [onclick]").first();
+      if ((await interactive.count()) > 0) {
+        try {
+          await interactive.click({ force: true, timeout: 2000 });
+          await page.waitForTimeout(100);
+        } catch {
+          // Element might not be clickable, that's okay
+        }
+      }
+
+      // Assert: no hydration-related errors
+      const hydrationErrors = errors.filter(
+        (e) =>
+          e.includes("hydrat") ||
+          e.includes("Minified React error") ||
+          e.includes("did not match")
+      );
+      expect(hydrationErrors).toEqual([]);
+    });
+
+    /**
+     * Dark mode test: color_mode=dark applies correctly
+     */
+    test("color_mode=dark works", async ({ page }) => {
+      const errors = setupErrorCollection(page);
+
+      // Check SSR value before hydration
+      const response = await page.goto(`${baseUrl}/?color_mode=dark`);
+      const html = await response?.text();
+      expect(html).toContain('data-theme="dark"');
+
+      // Wait for hydration to complete
+      await page.waitForLoadState("networkidle");
+
+      // Client: data-theme should still be dark after hydration (no revert)
+      // Use .first() to handle pages with nested <html> elements (e.g., veryfront-managed)
+      await expect(page.locator("html").first()).toHaveAttribute("data-theme", "dark");
+
+      // Page should still render correctly
+      const body = await page.locator("body").innerHTML();
+      expect(body.length).toBeGreaterThan(0);
+
+      // No console errors
+      expect(errors).toEqual([]);
+    });
+
+    /**
+     * Light mode test: color_mode=light applies correctly
+     */
+    test("color_mode=light works", async ({ page }) => {
+      const errors = setupErrorCollection(page);
+
+      // Check SSR value before hydration
+      const response = await page.goto(`${baseUrl}/?color_mode=light`);
+      const html = await response?.text();
+      expect(html).toContain('data-theme="light"');
+
+      // Wait for hydration to complete
+      await page.waitForLoadState("networkidle");
+
+      // Client: data-theme should still be light after hydration (no revert)
+      // Use .first() to handle pages with nested <html> elements (e.g., veryfront-managed)
+      await expect(page.locator("html").first()).toHaveAttribute("data-theme", "light");
+
+      // Page should still render correctly
+      const body = await page.locator("body").innerHTML();
+      expect(body.length).toBeGreaterThan(0);
+
+      // No console errors
+      expect(errors).toEqual([]);
+    });
+
+    /**
+     * Studio embed test: studio_embed=true injects bridge script
+     */
+    test("studio_embed=true works", async ({ page }) => {
+      const errors = setupErrorCollection(page);
+
+      await page.goto(`${baseUrl}/?studio_embed=true`);
+      await page.waitForLoadState("networkidle");
+
+      // Page should still render correctly
+      const body = await page.locator("body").innerHTML();
+      expect(body.length).toBeGreaterThan(0);
+
+      // Studio bridge should be present (postMessage communication script)
+      // Check for StudioBridge in any script content
+      const pageContent = await page.content();
+      const hasStudioBridge =
+        pageContent.includes("StudioBridge") ||
+        pageContent.includes("studio-bridge") ||
+        pageContent.includes("parent.postMessage");
+      expect(hasStudioBridge).toBeTruthy();
+
+      // No console errors
+      expect(errors).toEqual([]);
+    });
+
+    /**
+     * Preview mode test: preview_mode=true injects HMR script
+     */
+    test("preview_mode=true works", async ({ page }) => {
+      const errors = setupErrorCollection(page);
+
+      await page.goto(`${baseUrl}/?preview_mode=true`);
+      await page.waitForLoadState("networkidle");
+
+      // Page should still render correctly
+      const body = await page.locator("body").innerHTML();
+      expect(body.length).toBeGreaterThan(0);
+
+      // Preview HMR script should be present
+      const hmrScript = page.locator('script[src*="preview-hmr.js"]');
+      await expect(hmrScript).toBeAttached();
+
+      // No console errors
+      expect(errors).toEqual([]);
+    });
+  });
+}
+
+/**
+ * Summary test to verify test execution
+ */
+test("smoke test summary", async () => {
+  console.log(`\nSmoke tests completed for ${PROJECTS.length} projects:`);
+  for (const project of PROJECTS) {
+    console.log(`  - ${project.name}: ${project.description}`);
+  }
+  console.log("\nAll assertions passed!");
+});

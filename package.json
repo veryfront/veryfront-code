@@ -123,5 +123,8 @@
     "#std/assert.ts": "./src/testing/assert.ts",
     "#std/testing/bdd": "./src/testing/bdd.ts",
     "#std/testing/bdd.ts": "./src/testing/bdd.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.57.0"
   }
 }
