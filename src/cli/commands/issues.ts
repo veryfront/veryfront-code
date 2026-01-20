@@ -437,9 +437,14 @@ GLOBAL OPTIONS:
   --help, -h            Show this help
 
 EXAMPLES:
-  # Create
+  # Create issues
   veryfront issues create --title "Implement JWT auth" --type task --priority high
   veryfront issues create --title "Login bug" --type issue --kind bug
+
+  # Spec-driven workflow
+  veryfront issues create --title "Auth System Spec" --type plan
+  veryfront issues create --type task --title "JWT signing" --milestone PLAN-1234567-abc123
+  veryfront issues list --type plan
 
   # List (kanban board)
   veryfront issues list
@@ -474,12 +479,44 @@ FILE-BASED WORKFLOW:
     - Version control with git (all changes tracked)
     - AI agents can read/write files directly
 
+SPEC-DRIVEN DEVELOPMENT:
+  Everything is just a file. Specs, plans, and RFCs are issues with type=plan or type=rfc.
+
+  Workflow:
+    1. Write spec      → veryfront issues create --type plan --title "Auth System Spec"
+    2. Break into tasks → Create tasks linked to plan via --milestone PLAN-xxx
+    3. Track progress   → Tasks reference the plan, plan tracks completion
+    4. Ship & close     → Mark plan as done when all tasks complete
+
+  Example spec file (issues/PLAN-1234567-abc123.md):
+    ---
+    type: plan
+    title: Authentication System
+    status: in_progress
+    ---
+    # Authentication System Spec
+
+    ## Overview
+    JWT-based authentication with refresh tokens
+
+    ## Tasks
+    - [ ] TASK-xxx - Implement JWT signing
+    - [ ] TASK-yyy - Add refresh token rotation
+    - [ ] TASK-zzz - Create login endpoint
+
+  Then create tasks:
+    veryfront issues create --type task --title "Implement JWT signing" --milestone PLAN-1234567-abc123
+
+  The plan file is the single source of truth. Tasks link back to it.
+
 FOR AI AGENTS:
   - Read issues: Parse markdown files in issues/ folder
   - Create issues: Write new .md file with frontmatter + content
   - Update issues: Modify frontmatter fields (status, priority, assignee)
   - Files follow standard markdown + YAML frontmatter format
   - All metadata in frontmatter, all content in markdown body
+  - Spec-driven: Plans/RFCs are just issues with type=plan or type=rfc
+  - Link tasks to specs via milestone field pointing to plan ID
 
 STATUSES:
   todo, in_progress, blocked, in_review, done, cancelled
@@ -488,7 +525,11 @@ PRIORITIES:
   low, medium, high, critical
 
 TYPES:
-  task, issue, plan, milestone, rfc
+  task      - Individual work item
+  issue     - Bug, feature request, or enhancement
+  plan      - Specification, design doc, or implementation plan
+  milestone - Release or project milestone
+  rfc       - Request for comments, architecture decision
 
 HELP:
   veryfront issues --help          Show this help
