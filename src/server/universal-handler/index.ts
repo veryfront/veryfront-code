@@ -12,6 +12,7 @@ import {
   startTimer,
   timeAsync,
 } from "#veryfront/utils";
+import { requestTracker } from "./request-tracker.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { metrics } from "#veryfront/observability/simple-metrics/index.ts";
 import {
@@ -297,6 +298,19 @@ export function createVeryfrontHandler(
     }
     const stopTotal = startTimer("total");
 
+    // Generate request ID for tracking (use existing or create new)
+    const trackingRequestId = req.headers.get("x-request-id") ?? crypto.randomUUID();
+    const _url = new URL(req.url);
+
+    // Get project info from headers for early tracking (before full context is built)
+    const earlyProjectSlug = req.headers.get("x-project-slug") || undefined;
+
+    // Skip tracking for monitoring endpoints to avoid noise
+    const shouldTrackRequest = !isMonitoringPath(_url.pathname);
+    if (shouldTrackRequest) {
+      requestTracker.start(trackingRequestId, earlyProjectSlug, _url.pathname, req.method);
+    }
+
     try {
       // Ensure API handler is ready before processing requests
       await readyPromise;
@@ -312,8 +326,6 @@ export function createVeryfrontHandler(
       await timeAsync("config:load", async () => {
         await configPromise;
       });
-
-      const _url = new URL(req.url);
 
       // Start tracing span for this request
       const parentContext = extractContext(req.headers);
@@ -668,6 +680,12 @@ export function createVeryfrontHandler(
 
       // End the span with status
       endServerSpan(span, response.status, error);
+
+      // Complete request tracking with final status
+      if (shouldTrackRequest) {
+        const isTimeout = response.status === HTTP_GATEWAY_TIMEOUT;
+        requestTracker.complete(trackingRequestId, response.status, isTimeout);
+      }
 
       return response;
     } finally {

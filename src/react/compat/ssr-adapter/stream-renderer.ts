@@ -6,6 +6,7 @@ import { renderToStringAdapter } from "./string-renderer.ts";
 import type { SSROptions, SSRResult } from "./types.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { isDebugEnvEnabled } from "#veryfront/config/env.ts";
+import { SSR_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
 
 interface VeryfrontGlobal {
   __VERYFRONT_DEBUG__?: boolean;
@@ -32,23 +33,43 @@ async function renderToReadableStreamImpl(
     }));
   }
 
+  // Create AbortController for timeout - this actually aborts the React render
+  // When aborted, React will flush loading fallbacks as HTML and render the rest on client
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    logger.error("[stream-renderer] SSR TIMEOUT - aborting React render", {
+      timeoutMs: SSR_TIMEOUT_MS,
+    });
+    controller.abort(new Error(`SSR timeout: React render exceeded ${SSR_TIMEOUT_MS}ms`));
+  }, SSR_TIMEOUT_MS);
+
   try {
-    if (debug) logger.info("[stream-renderer] Calling renderToReadableStream...");
+    if (debug) logger.info("[stream-renderer] Calling renderToReadableStream with abort signal...");
+
     const stream = await server.renderToReadableStream(
       element as Parameters<typeof server.renderToReadableStream>[0],
       {
+        signal: controller.signal, // Pass abort signal to React
         bootstrapScripts: options.bootstrapScripts,
         bootstrapModules: options.bootstrapModules,
         identifierPrefix: options.identifierPrefix,
         namespaceURI: options.namespaceURI,
         nonce: options.nonce,
         onError: (error: unknown) => {
+          // Don't log abort errors as they're expected on timeout
+          if (error instanceof Error && error.name === "AbortError") {
+            logger.warn("[stream-renderer] React render aborted (timeout)");
+            return;
+          }
           logger.error("React streaming error", error);
           options.onError?.(error as Error);
         },
         progressiveChunkSize: options.progressiveChunkSize,
       },
     );
+
+    // Clear timeout since render completed successfully
+    clearTimeout(timeoutId);
 
     if (debug) {
       logger.info("[stream-renderer] renderToReadableStream succeeded", {
@@ -59,6 +80,22 @@ async function renderToReadableStreamImpl(
 
     return { stream };
   } catch (error) {
+    // Clear timeout to prevent memory leak
+    clearTimeout(timeoutId);
+
+    // Check if this was an abort/timeout error
+    const isAbort = error instanceof Error &&
+      (error.name === "AbortError" || error.message.includes("SSR timeout") ||
+        error.message.includes("aborted"));
+    if (isAbort) {
+      logger.error("[stream-renderer] SSR TIMEOUT - React render was aborted", {
+        timeoutMs: SSR_TIMEOUT_MS,
+        error: (error as Error).message,
+      });
+      // Re-throw timeout errors - don't try fallback, fail fast
+      throw error;
+    }
+
     logger.error("[stream-renderer] renderToReadableStream failed", error);
     options.onError?.(error as Error);
 
@@ -92,6 +129,34 @@ function renderToPipeableStreamImpl(
   const renderFn = server.renderToPipeableStream;
 
   return new Promise<SSRResult>((resolve, reject) => {
+    let abortFn: (() => void) | undefined;
+    let settled = false;
+
+    // Set up timeout that will abort the React render
+    const timeoutId = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+
+      logger.error("[stream-renderer] SSR TIMEOUT (pipeable) - aborting React render", {
+        timeoutMs: SSR_TIMEOUT_MS,
+      });
+
+      // Call React's abort function to stop the render
+      if (abortFn) {
+        try {
+          abortFn();
+        } catch (e) {
+          logger.warn("[stream-renderer] Error calling abort:", e);
+        }
+      }
+
+      reject(
+        new Error(
+          `SSR timeout: React render exceeded ${SSR_TIMEOUT_MS}ms - likely a hanging data fetch`,
+        ),
+      );
+    }, SSR_TIMEOUT_MS);
+
     try {
       const { pipe, abort } = renderFn(element as Parameters<typeof renderFn>[0], {
         bootstrapScripts: options.bootstrapScripts,
@@ -108,23 +173,44 @@ function renderToPipeableStreamImpl(
           options.onAllReady?.();
         },
         onShellReady: () => {
+          if (settled) return;
+          settled = true;
+          if (timeoutId) clearTimeout(timeoutId);
+
           logger.debug("React pipeable stream: shell ready");
           options.onShellReady?.();
           resolve({ pipe, abort });
         },
         onShellError: (error: unknown) => {
+          if (settled) return;
+          settled = true;
+          if (timeoutId) clearTimeout(timeoutId);
+
           logger.error("React pipeable stream shell error", error);
           options.onShellError?.(error as Error);
           reject(error);
         },
         progressiveChunkSize: options.progressiveChunkSize,
       });
+
+      // Store abort function for timeout handler
+      abortFn = abort;
     } catch (error) {
+      if (timeoutId) clearTimeout(timeoutId);
       reject(error);
     }
   }).catch(async (error) => {
-    logger.error("renderToPipeableStream failed", error);
+    // Check if this was a timeout error
+    const isTimeout = error instanceof Error && error.message.includes("SSR timeout");
+    if (!isTimeout) {
+      logger.error("renderToPipeableStream failed", error);
+    }
     options.onError?.(error as Error);
+
+    // Don't try fallback for timeouts - just fail fast
+    if (isTimeout) {
+      throw error;
+    }
 
     try {
       const html = await renderToStringAdapter(element, options);
