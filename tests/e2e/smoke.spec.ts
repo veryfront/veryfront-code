@@ -69,6 +69,9 @@ const DEFAULT_PROJECTS = [
   // "outlook-agent",
   // "ai-agent",
   // "ai-agent-kitchen-sink",
+  // "invest-pro-template",
+  // "marketing-template",
+  // "restaurant-template",
 ];
 const targetProject = process.env.E2E_PROJECT;
 
