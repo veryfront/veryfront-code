@@ -311,8 +311,6 @@ export function createVeryfrontHandler(
       requestTracker.start(trackingRequestId, earlyProjectSlug, _url.pathname, req.method);
     }
 
-    let finalStatusCode = 500; // Default to error, will be updated on success
-
     try {
       // Ensure API handler is ready before processing requests
       await readyPromise;
@@ -682,6 +680,12 @@ export function createVeryfrontHandler(
 
       // End the span with status
       endServerSpan(span, response.status, error);
+
+      // Complete request tracking with final status
+      if (shouldTrackRequest) {
+        const isTimeout = response.status === HTTP_GATEWAY_TIMEOUT;
+        requestTracker.complete(trackingRequestId, response.status, isTimeout);
+      }
 
       return response;
     } finally {

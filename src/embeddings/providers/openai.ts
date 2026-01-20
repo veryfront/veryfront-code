@@ -3,11 +3,7 @@
  */
 import { z } from "zod";
 import { BaseEmbeddingProvider } from "../base.ts";
-import type {
-  EmbeddingDimension,
-  EmbeddingRequest,
-  EmbeddingResponse,
-} from "../types.ts";
+import type { EmbeddingDimension, EmbeddingRequest, EmbeddingResponse } from "../types.ts";
 
 const OpenAIEmbeddingResponseSchema = z.object({
   data: z.array(

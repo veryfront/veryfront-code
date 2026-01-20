@@ -18,28 +18,6 @@ function isDebugMode(): boolean {
   );
 }
 
-/**
- * Create a promise that rejects after a timeout
- */
-function createSSRTimeout(timeoutMs: number): { promise: Promise<never>; clear: () => void } {
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  const promise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      reject(
-        new Error(
-          `SSR timeout: React render exceeded ${timeoutMs}ms - likely a hanging data fetch or infinite loop`,
-        ),
-      );
-    }, timeoutMs);
-  });
-  return {
-    promise,
-    clear: () => {
-      if (timeoutId) clearTimeout(timeoutId);
-    },
-  };
-}
-
 async function renderToReadableStreamImpl(
   element: React.ReactNode,
   options: SSROptions,
@@ -151,12 +129,11 @@ function renderToPipeableStreamImpl(
   const renderFn = server.renderToPipeableStream;
 
   return new Promise<SSRResult>((resolve, reject) => {
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
     let abortFn: (() => void) | undefined;
     let settled = false;
 
     // Set up timeout that will abort the React render
-    timeoutId = setTimeout(() => {
+    const timeoutId = setTimeout(() => {
       if (settled) return;
       settled = true;
 

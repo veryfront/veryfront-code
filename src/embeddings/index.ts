@@ -24,7 +24,14 @@ import { OpenAIEmbeddingProvider } from "./providers/openai.ts";
 import { CohereEmbeddingProvider } from "./providers/cohere.ts";
 import { VoyageAIEmbeddingProvider } from "./providers/voyageai.ts";
 
-export type { EmbeddingProvider, EmbeddingProviderConfig, EmbeddingRequest, EmbeddingResponse, EmbeddingResult, EmbeddingDimension } from "./types.ts";
+export type {
+  EmbeddingDimension,
+  EmbeddingProvider,
+  EmbeddingProviderConfig,
+  EmbeddingRequest,
+  EmbeddingResponse,
+  EmbeddingResult,
+} from "./types.ts";
 export { BaseEmbeddingProvider } from "./base.ts";
 export { OpenAIEmbeddingProvider } from "./providers/openai.ts";
 export { CohereEmbeddingProvider } from "./providers/cohere.ts";
@@ -50,7 +57,8 @@ export function createEmbeddingProvider(
       throw toError(
         createError({
           type: "config",
-          message: "Custom embedding provider requires manual instantiation. Extend BaseEmbeddingProvider.",
+          message:
+            "Custom embedding provider requires manual instantiation. Extend BaseEmbeddingProvider.",
         }),
       );
     default:
