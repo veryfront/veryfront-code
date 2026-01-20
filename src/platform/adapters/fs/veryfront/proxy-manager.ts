@@ -225,10 +225,6 @@ export class ProxyFSAdapterManager {
         contentContext: existing.adapter.getContentContext(),
       });
 
-      if (existing.initializing) {
-        await existing.initializing;
-      }
-
       return existing.adapter;
     }
 
@@ -334,6 +330,13 @@ export class ProxyFSAdapterManager {
         await projectAdapter.initializing;
         logger.debug("[ProxyFSAdapterManager] Adapter initialized", { cacheKey });
         this.adapters.set(cacheKey, projectAdapter);
+      } catch (error) {
+        logger.error("[ProxyFSAdapterManager] Adapter initialization failed", {
+          cacheKey,
+          projectSlug,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
       } finally {
         projectAdapter.initializing = undefined;
         this.pendingAdapters.delete(cacheKey);
