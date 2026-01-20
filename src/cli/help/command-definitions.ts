@@ -690,9 +690,76 @@ export const COMMANDS: CommandRegistry = {
       "  • vf_trigger_hmr          - Force browser refresh",
     ],
   },
+  issues: {
+    name: "issues",
+    description: "Manage issues in issues/ folder (GitHub-like board)",
+    usage: "veryfront issues <subcommand> [options]",
+    options: [
+      {
+        flag: "--title <string>",
+        description: "Issue title (for create)",
+      },
+      {
+        flag: "--type, -t <type>",
+        description: "Type: task, issue, plan, milestone, rfc (default: issue)",
+      },
+      {
+        flag: "--status <status>",
+        description: "Status: todo, in_progress, blocked, in_review, done, cancelled",
+      },
+      {
+        flag: "--priority <level>",
+        description: "Priority: low, medium, high, critical",
+      },
+      {
+        flag: "--milestone <id>",
+        description: "Milestone ID",
+      },
+      {
+        flag: "--assignee <name>",
+        description: "Assignee name",
+      },
+      {
+        flag: "--kind <type>",
+        description: "Issue kind: bug, feature, enhancement, documentation",
+      },
+      {
+        flag: "--json",
+        description: "Output as JSON",
+      },
+    ],
+    examples: [
+      "veryfront issues create --title 'Implement JWT auth' --type task --priority high",
+      "veryfront issues create --title 'Login bug' --type issue --kind bug",
+      "veryfront issues list",
+      "veryfront issues list --type task --status todo",
+      "veryfront issues show TASK-1234567-abc123",
+      "veryfront issues update TASK-1234567-abc123 --status done",
+      "veryfront issues delete TASK-1234567-abc123",
+      "veryfront issues stats",
+    ],
+    notes: [
+      "File-based issue management in issues/ folder",
+      "Each issue is a markdown file with YAML frontmatter",
+      "Subcommands:",
+      "  • create            - Create new issue",
+      "  • list              - List issues (kanban board view)",
+      "  • show <id>         - Show issue details",
+      "  • update <id>       - Update issue metadata",
+      "  • delete <id>       - Delete issue",
+      "  • stats             - Show statistics",
+      "  • discover          - Discover all issues",
+      "",
+      "File-based workflow:",
+      "  • Edit issues/TASK-*.md directly in your editor",
+      "  • Changes to frontmatter update issue automatically",
+      "  • Moving files between status folders updates status",
+      "  • Git-friendly, version-controlled issue tracking",
+    ],
+  },
   sdlc: {
     name: "sdlc",
-    description: "Manage SDLC resources (tasks, issues, plans, milestones, RFCs)",
+    description: "Manage SDLC resources (legacy, use 'issues' instead)",
     usage: "veryfront sdlc <subcommand> [options]",
     options: [
       {
