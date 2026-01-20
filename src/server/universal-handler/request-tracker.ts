@@ -64,10 +64,8 @@ class RequestTracker {
       }
     }, STATUS_LOG_INTERVAL_MS);
 
-    // Don't block process exit
-    if (this.statusInterval.unref) {
-      this.statusInterval.unref();
-    }
+    // Don't block process exit (Deno doesn't support unref, but that's okay
+    // since Deno automatically doesn't block on intervals/timeouts)
   }
 
   /**
