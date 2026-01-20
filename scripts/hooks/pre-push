@@ -22,7 +22,8 @@ if [ "$SKIP_E2E" = "1" ]; then
   echo "Step 2/2: Skipping E2E tests (SKIP_E2E=1)"
 else
   echo "Step 2/2: Running E2E smoke tests..."
-  deno task test:e2e
+  # Use npx directly instead of deno task to ensure nvm's Node.js version is used
+  npx playwright test --config=tests/e2e/playwright.config.ts
   if [ $? -ne 0 ]; then
     echo ""
     echo "E2E tests failed. Push aborted."
