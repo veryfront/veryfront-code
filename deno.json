@@ -301,6 +301,7 @@
     "test:node": "node ./scripts/run-node-tests.mjs 'src/**/*.test.ts'",
     "test:bun": "node ./scripts/run-bun-tests.mjs src/",
     "test:all-runtimes": "deno task test:unit && deno task test:node && deno task test:bun",
+    "test:e2e": "npx playwright test --config=tests/e2e/playwright.config.ts",
     "check:circular": "deno run -A jsr:@cunarist/deno-circular-deps src/index.ts",
     "cli": "deno run --allow-all src/cli/main.ts"
   },

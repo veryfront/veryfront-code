@@ -1,0 +1,36 @@
+#!/bin/sh
+
+# Veryfront Pre-push Hook
+# Runs verification and E2E tests before pushing
+#
+# To install: ./scripts/hooks/install.sh
+# To skip E2E tests: SKIP_E2E=1 git push
+
+echo "Running pre-push checks..."
+
+# Step 1: Quick verification (fmt, lint, typecheck)
+echo "Step 1/2: Running quick verification..."
+deno task verify:quick
+if [ $? -ne 0 ]; then
+  echo "Pre-push checks failed at verify:quick. Push aborted."
+  exit 1
+fi
+echo "Quick verification passed!"
+
+# Step 2: E2E smoke tests (can be skipped with SKIP_E2E=1)
+if [ "$SKIP_E2E" = "1" ]; then
+  echo "Step 2/2: Skipping E2E tests (SKIP_E2E=1)"
+else
+  echo "Step 2/2: Running E2E smoke tests..."
+  deno task test:e2e
+  if [ $? -ne 0 ]; then
+    echo ""
+    echo "E2E tests failed. Push aborted."
+    echo "To skip E2E tests (not recommended): SKIP_E2E=1 git push"
+    exit 1
+  fi
+  echo "E2E tests passed!"
+fi
+
+echo ""
+echo "All pre-push checks passed!"
