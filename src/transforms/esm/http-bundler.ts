@@ -197,9 +197,23 @@ export function bundleHttpImports(
     if (!specifier.includes("target=")) {
       params.push("target=es2022");
     }
-    // Only add external=react to non-React packages
-    if (!isReactPackage && !specifier.includes("external=react")) {
-      params.push("external=react");
+    // Only add external to non-React packages
+    // Include both react AND react-dom to ensure version consistency
+    if (!isReactPackage) {
+      const hasExternalReact = specifier.includes("external=react");
+      const hasExternalReactDom = specifier.includes("external=react-dom") ||
+        specifier.includes("external=react,react-dom") ||
+        specifier.includes("external=react-dom,react");
+      if (!hasExternalReact && !hasExternalReactDom) {
+        params.push("external=react,react-dom");
+      } else if (hasExternalReact && !hasExternalReactDom) {
+        // Already has external=react, need to add react-dom
+        // This replaces the specifier to include both
+        const updated = specifier.replace("external=react", "external=react,react-dom");
+        if (updated !== specifier) {
+          return !specifier.includes("target=") ? updated + "&target=es2022" : updated;
+        }
+      }
     }
     if (params.length === 0) {
       return null;

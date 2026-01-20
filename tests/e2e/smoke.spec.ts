@@ -50,9 +50,9 @@ const ALL_PROJECTS = [
  *   E2E_PROJECT=codersociety deno task test:e2e # Test only codersociety
  *   deno task test:e2e                          # Test default projects
  *
- * Default projects exclude veryfront due to pre-existing MDX issues.
+ * All projects are enabled by default.
  */
-const DEFAULT_PROJECTS = ["blank", "codersociety"];
+const DEFAULT_PROJECTS = ["blank", "codersociety", "veryfront"];
 const targetProject = process.env.E2E_PROJECT;
 
 const PROJECTS = targetProject
@@ -137,7 +137,8 @@ for (const project of PROJECTS) {
       await page.waitForLoadState("networkidle");
 
       // Client: data-theme should still be dark after hydration (no revert)
-      await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+      // Use .first() to handle pages with nested <html> elements (e.g., veryfront-managed)
+      await expect(page.locator("html").first()).toHaveAttribute("data-theme", "dark");
 
       // Page should still render correctly
       const body = await page.locator("body").innerHTML();
@@ -162,7 +163,8 @@ for (const project of PROJECTS) {
       await page.waitForLoadState("networkidle");
 
       // Client: data-theme should still be light after hydration (no revert)
-      await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+      // Use .first() to handle pages with nested <html> elements (e.g., veryfront-managed)
+      await expect(page.locator("html").first()).toHaveAttribute("data-theme", "light");
 
       // Page should still render correctly
       const body = await page.locator("body").innerHTML();

@@ -43,3 +43,7 @@ deno.lock
 data/projects/*
 projects/*
 !data/projects/.gitkeep.env.docker
+
+# Playwright test artifacts
+test-results/
+playwright-report/
