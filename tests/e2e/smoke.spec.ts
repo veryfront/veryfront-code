@@ -52,7 +52,24 @@ const ALL_PROJECTS = [
  *
  * All projects are enabled by default.
  */
-const DEFAULT_PROJECTS = ["blank", "codersociety", "veryfront"];
+const DEFAULT_PROJECTS = [
+  "blank",
+  "codersociety",
+  "veryfront",
+  // "real-estate-template",
+  // "lease-calculator",
+  // "impartial-chandrasekhar-qsohb",
+  // "ai-assistant-template",
+  // "task-manager-template",
+  // "dashboard",
+  // "ai-inbox-assistant",
+  // "immo-agent-template",
+  // "immo-price-finder",
+  // "doc-agent-template",
+  // "outlook-agent",
+  // "ai-agent",
+  // "ai-agent-kitchen-sink",
+];
 const targetProject = process.env.E2E_PROJECT;
 
 const PROJECTS = targetProject
