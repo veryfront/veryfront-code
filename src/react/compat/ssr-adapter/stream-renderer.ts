@@ -25,7 +25,11 @@ function createSSRTimeout(timeoutMs: number): { promise: Promise<never>; clear: 
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const promise = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => {
-      reject(new Error(`SSR timeout: React render exceeded ${timeoutMs}ms - likely a hanging data fetch or infinite loop`));
+      reject(
+        new Error(
+          `SSR timeout: React render exceeded ${timeoutMs}ms - likely a hanging data fetch or infinite loop`,
+        ),
+      );
     }, timeoutMs);
   });
   return {
@@ -169,7 +173,11 @@ function renderToPipeableStreamImpl(
         }
       }
 
-      reject(new Error(`SSR timeout: React render exceeded ${SSR_TIMEOUT_MS}ms - likely a hanging data fetch`));
+      reject(
+        new Error(
+          `SSR timeout: React render exceeded ${SSR_TIMEOUT_MS}ms - likely a hanging data fetch`,
+        ),
+      );
     }, SSR_TIMEOUT_MS);
 
     try {
