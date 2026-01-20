@@ -64,10 +64,11 @@ export async function issuesCommand(
       "kind",
       "content",
     ],
-    boolean: ["json", "help"],
+    boolean: ["json", "help", "delete"],
     alias: {
       h: "help",
       t: "type",
+      d: "delete",
     },
   })
 
@@ -83,26 +84,13 @@ export async function issuesCommand(
       await createCommand(projectDir, parsedArgs)
       break
     case "list":
-    case "ls":
       await listCommand(projectDir, parsedArgs)
       break
-    case "show":
     case "view":
-      await showCommand(projectDir, parsedArgs)
+      await viewCommand(projectDir, parsedArgs)
       break
-    case "update":
     case "edit":
-      await updateCommand(projectDir, parsedArgs)
-      break
-    case "delete":
-    case "rm":
-      await deleteCommand(projectDir, parsedArgs)
-      break
-    case "stats":
-      await statsCommand(projectDir, parsedArgs)
-      break
-    case "discover":
-      await discoverCommand(projectDir, parsedArgs)
+      await editCommand(projectDir, parsedArgs)
       break
     default:
       cliLogger.error(`Unknown subcommand: ${subcommand}`)
@@ -255,9 +243,9 @@ async function listCommand(projectDir: string, args: any): Promise<void> {
 }
 
 /**
- * Show a single issue
+ * View a single issue
  */
-async function showCommand(projectDir: string, args: any): Promise<void> {
+async function viewCommand(projectDir: string, args: any): Promise<void> {
   const id = args._[1] as string
 
   if (!id) {
@@ -301,9 +289,9 @@ async function showCommand(projectDir: string, args: any): Promise<void> {
 }
 
 /**
- * Update an issue
+ * Edit an issue (update status, metadata, or delete)
  */
-async function updateCommand(projectDir: string, args: any): Promise<void> {
+async function editCommand(projectDir: string, args: any): Promise<void> {
   const id = args._[1] as string
 
   if (!id) {
@@ -318,6 +306,17 @@ async function updateCommand(projectDir: string, args: any): Promise<void> {
     return
   }
 
+  // Handle delete flag
+  if (args.delete) {
+    const deleted = await deleteResource(id, projectDir)
+    if (deleted) {
+      cliLogger.info(`✓ Deleted ${existing.metadata.type}: ${id}`)
+    } else {
+      cliLogger.error(`Failed to delete issue: ${id}`)
+    }
+    return
+  }
+
   // Build update metadata
   const updates: any = {}
   if (args.status) updates.status = args.status
@@ -327,7 +326,7 @@ async function updateCommand(projectDir: string, args: any): Promise<void> {
   if (args.milestone) updates.milestone = args.milestone
 
   if (Object.keys(updates).length === 0 && !args.content) {
-    cliLogger.error("No updates specified")
+    cliLogger.error("No updates specified. Use --delete to delete the issue.")
     return
   }
 
@@ -350,85 +349,6 @@ async function updateCommand(projectDir: string, args: any): Promise<void> {
   if (args.json) {
     console.log(JSON.stringify(updated, null, 2))
   }
-}
-
-/**
- * Delete an issue
- */
-async function deleteCommand(projectDir: string, args: any): Promise<void> {
-  const id = args._[1] as string
-
-  if (!id) {
-    cliLogger.error("Issue ID is required")
-    return
-  }
-
-  // Check if resource exists first to get its type for display
-  const existing = await readResource(id, projectDir)
-  const resourceType = existing?.metadata.type || "issue"
-
-  const deleted = await deleteResource(id, projectDir)
-
-  if (deleted) {
-    cliLogger.info(`✓ Deleted ${resourceType}: ${id}`)
-  } else {
-    cliLogger.error(`Failed to delete issue: ${id}`)
-  }
-}
-
-/**
- * Show statistics
- */
-async function statsCommand(projectDir: string, args: any): Promise<void> {
-  const stats = await getStats(projectDir)
-
-  if (args.json) {
-    console.log(JSON.stringify(stats, null, 2))
-    return
-  }
-
-  console.log("\nIssue Statistics\n")
-  console.log(`Total Issues: ${stats.total}\n`)
-
-  console.log("By Type:")
-  for (const [type, count] of Object.entries(stats.byType)) {
-    if (count > 0) {
-      console.log(`  ${type}: ${count}`)
-    }
-  }
-
-  console.log("\nBy Status:")
-  for (const [status, count] of Object.entries(stats.byStatus)) {
-    if (count > 0) {
-      const icon = getStatusIcon(status as SdlcStatus)
-      console.log(`  ${icon} ${status}: ${count}`)
-    }
-  }
-
-  console.log("\nBy Priority:")
-  for (const [priority, count] of Object.entries(stats.byPriority)) {
-    if (count > 0) {
-      const icon = getPriorityIcon(priority as SdlcPriority)
-      console.log(`  ${icon} ${priority}: ${count}`)
-    }
-  }
-  console.log()
-}
-
-/**
- * Discover all issues
- */
-async function discoverCommand(projectDir: string, args: any): Promise<void> {
-  const { resources, stats } = await discoverResources(projectDir)
-
-  if (args.json) {
-    console.log(JSON.stringify({ resources, stats }, null, 2))
-    return
-  }
-
-  cliLogger.info(`✓ Discovered ${resources.length} issues in issues/ folder`)
-  console.log()
-  statsCommand(projectDir, args)
 }
 
 /**
@@ -472,11 +392,8 @@ USAGE:
 SUBCOMMANDS:
   create            Create a new issue
   list              List issues (kanban board view)
-  show <id>         Show issue details
-  update <id>       Update issue metadata
-  delete <id>       Delete issue
-  stats             Show statistics
-  discover          Discover all issues
+  view <id>         View issue details
+  edit <id>         Edit issue (or delete with --delete flag)
 
 CREATE OPTIONS:
   --title <string>      Issue title (required)
@@ -494,40 +411,37 @@ LIST OPTIONS:
   --milestone <id>      Filter by milestone
   --assignee <name>     Filter by assignee
 
-UPDATE OPTIONS:
+EDIT OPTIONS:
   --status <status>     New status
   --title <string>      New title
   --priority <level>    New priority
   --assignee <name>     New assignee
   --milestone <id>      New milestone
   --content <markdown>  New content
+  --delete, -d          Delete the issue
 
 GLOBAL OPTIONS:
   --json                Output as JSON
   --help, -h            Show this help
 
 EXAMPLES:
-  # Create issues
+  # Create
   veryfront issues create --title "Implement JWT auth" --type task --priority high
   veryfront issues create --title "Login bug" --type issue --kind bug
 
-  # List issues (kanban board view)
+  # List (kanban board)
   veryfront issues list
-  veryfront issues list --type task
-  veryfront issues list --status todo,in_progress
+  veryfront issues list --type task --status todo,in_progress
 
-  # View issue
-  veryfront issues show TASK-1234567-abc123
+  # View
+  veryfront issues view TASK-1234567-abc123
 
-  # Update issue (moves between lanes)
-  veryfront issues update TASK-1234567-abc123 --status done
+  # Edit (update status, priority, etc)
+  veryfront issues edit TASK-1234567-abc123 --status done
+  veryfront issues edit ISSUE-1234567-def456 --assignee alice --priority high
 
-  # Delete issue
-  veryfront issues delete TASK-1234567-abc123
-
-  # File-based workflow
-  # Edit issues/TASK-1234567-abc123.md directly
-  # Frontmatter changes update the issue automatically
+  # Delete
+  veryfront issues edit TASK-1234567-abc123 --delete
 
 NOTES:
   - All issues stored in issues/ folder as markdown files
