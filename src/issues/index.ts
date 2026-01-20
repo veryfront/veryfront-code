@@ -1,12 +1,12 @@
 /**
- * File-based SDLC (Software Development Lifecycle) system
+ * File-based issues system
  *
  * Manages tasks, issues, plans, milestones, and RFCs as markdown files
- * with YAML frontmatter, stored in `.veryfront/sdlc/`.
+ * with YAML frontmatter, stored in `issues/` folder.
  *
  * @example
  * ```ts
- * import { createResource, listResources, updateResource } from "#veryfront/sdlc"
+ * import { createResource, listResources, updateResource } from "#veryfront/issues"
  *
  * // Create a new task
  * const task = await createResource({

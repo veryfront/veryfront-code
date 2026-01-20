@@ -41,7 +41,7 @@ import {
   type SdlcResourceType,
   type SdlcStatus,
   type SdlcPriority,
-} from "#veryfront/sdlc/index.ts"
+} from "#veryfront/issues/index.ts"
 
 /**
  * Main issues command handler
