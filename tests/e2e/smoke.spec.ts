@@ -17,36 +17,53 @@ import {
 } from "./helpers/assertions.js";
 
 /**
- * Projects to test
+ * All available projects for testing.
  *
  * These are local projects that the dev server discovers automatically.
  * Each project tests different aspects of the renderer.
  *
- * Note: Projects can be marked as `skip: true` if they have known issues
- * that are not related to the renderer core functionality.
+ * Filter by project: E2E_PROJECT=codersociety deno task test:e2e
  */
-const PROJECTS = [
+const ALL_PROJECTS = [
   {
     subdomain: "blank",
     name: "Blank",
     description: "Minimal baseline project",
-    skip: false,
   },
   {
     subdomain: "codersociety",
     name: "CoderSociety",
     description: "Full-featured project with complex layouts",
-    skip: false,
   },
-  // Note: veryfront project currently has MDX rendering issues
-  // (ReactCurrentBatchConfig error) - skipped until fixed
-  // {
-  //   subdomain: "veryfront",
-  //   name: "Veryfront",
-  //   description: "Marketing site with MDX content",
-  //   skip: true,
-  // },
+  {
+    subdomain: "veryfront",
+    name: "Veryfront",
+    description: "Marketing site with MDX content",
+  },
 ];
+
+/**
+ * Filter projects based on E2E_PROJECT environment variable.
+ *
+ * Usage:
+ *   E2E_PROJECT=blank deno task test:e2e       # Test only blank project
+ *   E2E_PROJECT=codersociety deno task test:e2e # Test only codersociety
+ *   deno task test:e2e                          # Test default projects
+ *
+ * Default projects exclude veryfront due to pre-existing MDX issues.
+ */
+const DEFAULT_PROJECTS = ["blank", "codersociety"];
+const targetProject = process.env.E2E_PROJECT;
+
+const PROJECTS = targetProject
+  ? ALL_PROJECTS.filter((p) => p.subdomain === targetProject)
+  : ALL_PROJECTS.filter((p) => DEFAULT_PROJECTS.includes(p.subdomain));
+
+if (targetProject && PROJECTS.length === 0) {
+  console.error(`Unknown project: ${targetProject}`);
+  console.error(`Available: ${ALL_PROJECTS.map((p) => p.subdomain).join(", ")}`);
+  process.exit(1);
+}
 
 /**
  * Test each project
