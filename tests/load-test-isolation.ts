@@ -284,13 +284,33 @@ async function main(): Promise<void> {
   // Test 1: Slow endpoint isolation
   results.push(await testSlowEndpointIsolation(baseUrl));
 
-  // Test 2: General load test
+  // Test 2: Moderate load (20 concurrent)
   results.push(
     await testIsolation({
       baseUrl,
-      concurrentRequests: 10,
-      requestTimeoutMs: 15000,
-      testDurationMs: 10000, // 10 seconds
+      concurrentRequests: 20,
+      requestTimeoutMs: 30000,
+      testDurationMs: 10000,
+    }),
+  );
+
+  // Test 3: Heavy load (50 concurrent)
+  results.push(
+    await testIsolation({
+      baseUrl,
+      concurrentRequests: 50,
+      requestTimeoutMs: 30000,
+      testDurationMs: 10000,
+    }),
+  );
+
+  // Test 4: Extreme load (100 concurrent) - find breaking point
+  results.push(
+    await testIsolation({
+      baseUrl,
+      concurrentRequests: 100,
+      requestTimeoutMs: 30000,
+      testDurationMs: 10000,
     }),
   );
 
