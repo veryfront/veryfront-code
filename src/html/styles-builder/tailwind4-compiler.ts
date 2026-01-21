@@ -186,6 +186,7 @@ function extractClassNamesFromSource(source: string): string[] {
  * Normalize arbitrary values:
  * 1. Convert commas to underscores: grid-cols-[0.25fr,0.5fr] -> grid-cols-[0.25fr_0.5fr]
  * 2. Wrap CSS variables with var(): aspect-[--ratio] -> aspect-[var(--ratio)]
+ * 3. Convert aspect ratio slashes to underscores: aspect-[800/450] -> aspect-[800/450] (kept as-is, handled by alias)
  */
 function normalizeClass(cls: string): string {
   if (!cls.includes("[")) return cls;
@@ -206,6 +207,31 @@ function normalizeClass(cls: string): string {
 
     return `[${normalized}]`;
   });
+}
+
+/**
+ * Check if a class is an aspect ratio with slash syntax (Tailwind 3 style)
+ * Examples: aspect-[800/450], aspect-[16/9], aspect-[4/3]
+ */
+function isAspectRatioWithSlash(cls: string): boolean {
+  return /^aspect-\[\d+\/\d+\]$/.test(cls);
+}
+
+/**
+ * Generate CSS for aspect ratio classes with slash syntax.
+ * Tailwind 4 doesn't natively support aspect-[800/450], so we generate the CSS directly.
+ */
+function generateAspectRatioCSS(cls: string): string | null {
+  const match = cls.match(/^aspect-\[(\d+)\/(\d+)\]$/);
+  if (!match) return null;
+
+  const width = match[1];
+  const height = match[2];
+
+  // Escape the class selector: aspect-[800/450] -> aspect-\[800\/450\]
+  const selector = cls.replace(/([[\]/])/g, "\\$1");
+
+  return `.${selector} { aspect-ratio: ${width} / ${height} !important; }`;
 }
 
 /**
@@ -312,6 +338,20 @@ const SAFELIST_CLASSES = [
 ];
 
 /**
+ * Generate CSS for aspect ratio classes that Tailwind 4 doesn't handle natively
+ */
+function generateAspectRatioAliases(classes: string[]): string {
+  const aspectCSS: string[] = [];
+  for (const cls of classes) {
+    if (isAspectRatioWithSlash(cls)) {
+      const css = generateAspectRatioCSS(cls);
+      if (css) aspectCSS.push(css);
+    }
+  }
+  return aspectCSS.length ? `\n/* Aspect ratio aliases */\n${aspectCSS.join("\n")}` : "";
+}
+
+/**
  * Generate Tailwind CSS from HTML content
  */
 export async function generateTailwindCSS(
@@ -333,8 +373,9 @@ export async function generateTailwindCSS(
 
     const css = compiler.build(normalized);
     const aliases = generateAliases(classes, css);
+    const aspectAliases = generateAspectRatioAliases(classes);
 
-    return css + aliases;
+    return css + aliases + aspectAliases;
   } catch (error) {
     logger.error("Tailwind 4 compilation error:", error);
     return "";
@@ -365,8 +406,9 @@ export async function generateCSSFromSources(
 
     const css = compiler.build(normalized);
     const aliases = generateAliases(classes, css);
+    const aspectAliases = generateAspectRatioAliases(classes);
 
-    return css + aliases;
+    return css + aliases + aspectAliases;
   } catch (error) {
     logger.error("Tailwind 4 source compilation error:", error);
     return "";
