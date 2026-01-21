@@ -44,8 +44,8 @@ export interface IsolationCheckResult {
 }
 
 const DEFAULT_CONFIG: ProjectIsolationConfig = {
-  maxConcurrentPerProject: 10,
-  circuitBreakerThreshold: 5,
+  maxConcurrentPerProject: 50,
+  circuitBreakerThreshold: 10,
   circuitResetTimeMs: 30_000,
   failureWindowMs: 60_000,
 };
@@ -240,8 +240,8 @@ export class ProjectIsolationManager {
 }
 
 // Singleton instance with configurable limits via env vars
-const maxConcurrent = parseInt(Deno.env.get("PROJECT_MAX_CONCURRENT") || "10", 10);
-const circuitThreshold = parseInt(Deno.env.get("PROJECT_CIRCUIT_THRESHOLD") || "5", 10);
+const maxConcurrent = parseInt(Deno.env.get("PROJECT_MAX_CONCURRENT") || "50", 10);
+const circuitThreshold = parseInt(Deno.env.get("PROJECT_CIRCUIT_THRESHOLD") || "10", 10);
 const circuitResetMs = parseInt(Deno.env.get("PROJECT_CIRCUIT_RESET_MS") || "30000", 10);
 
 export const projectIsolation = new ProjectIsolationManager({
