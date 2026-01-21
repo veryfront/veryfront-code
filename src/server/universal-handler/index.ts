@@ -31,7 +31,7 @@ import { getTimeoutFromEnv } from "../../middleware/builtin/timeout.ts";
 import type { HandlerContext } from "../handlers/types.ts";
 import { parseProjectDomain } from "../utils/domain-parser.ts";
 import { getEnvironmentType, lookupProjectByDomain } from "../utils/domain-lookup.ts";
-import { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environment.ts";
+import { parseProxyEnvironment } from "./proxy-environment.ts";
 import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
