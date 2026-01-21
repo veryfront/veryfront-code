@@ -142,9 +142,9 @@ export async function generateHTMLShellParts(
   const tailwindConfig = options.config?.tailwind;
   const tailwindCSS = contentForTailwind
     ? await generateTailwind4CSS(contentForTailwind, {
-        tailwindConfig,
-        projectClasses: options.projectClasses,
-      })
+      tailwindConfig,
+      projectClasses: options.projectClasses,
+    })
     : "";
 
   const {
