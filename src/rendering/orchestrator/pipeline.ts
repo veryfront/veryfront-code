@@ -39,6 +39,10 @@ import type { DataContext } from "#veryfront/data/types.ts";
 import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/index.ts";
 import { setupSSRGlobals } from "../ssr-globals.ts";
 import { LAYOUT_EXTENSIONS } from "../layouts/types.ts";
+import { withTimeout } from "../utils/stream-utils.ts";
+
+/** Timeout for CSS generation SSR (shorter than full SSR since it's optional) */
+const CSS_SSR_TIMEOUT_MS = 5000;
 
 /** Check if a path segment is a hidden dot-directory (not . or ..) */
 function isHiddenSegment(segment: string): boolean {
@@ -718,18 +722,21 @@ export class RenderPipeline {
 
     // 12. Generate CSS for SPA navigation via lightweight SSR render
     // This ensures client-side navigation has all required styles (from actual rendered HTML)
+    // Uses timeout to prevent blocking other requests if SSR hangs
     let css: string | undefined;
     try {
-      // Do a lightweight SSR render to get the actual HTML with all component classes
-      const renderResult = await this.renderPage(slug, {
-        ...options,
-        delivery: "string", // Full HTML string, not stream
-      });
+      // Do a lightweight SSR render with timeout protection
+      const renderResult = await withTimeout(
+        this.renderPage(slug, {
+          ...options,
+          delivery: "string", // Full HTML string, not stream
+        }),
+        CSS_SSR_TIMEOUT_MS,
+        `CSS SSR for ${slug}`,
+      );
 
-      // Extract CSS from rendered HTML - it's embedded in a <style> tag
-      // The JIT CSS is the first non-CDN style block after Tailwind theme
-      if (renderResult.html) {
-        // Extract classes from the rendered HTML and generate CSS
+      // Generate CSS from rendered HTML (if render completed in time)
+      if (renderResult?.html) {
         const { generateTailwind4CSS } = await import("#veryfront/html/styles-builder/index.ts");
         css = await generateTailwind4CSS(renderResult.html);
         logger.debug("[resolvePageData] Generated CSS from SSR HTML", {
