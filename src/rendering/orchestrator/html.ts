@@ -22,6 +22,7 @@ import { injectElementSelectors } from "#veryfront/studio/element-selector-injec
 import { computeSourceHash } from "#veryfront/studio/hash-utils.ts";
 import { extractRelativePath } from "#veryfront/utils/route-path-utils.ts";
 import { resolveAppComponentPath } from "../layouts/utils/app-resolver.ts";
+import { streamToString, StreamTimeoutError } from "../utils/stream-utils.ts";
 
 export interface HTMLGeneratorConfig {
   projectDir: string;
@@ -69,7 +70,13 @@ export class HTMLGenerator {
     return html;
   }
 
-  /** Generate HTML stream for streaming SSR by wrapping React stream with shell. */
+  /**
+   * Generate HTML stream for streaming SSR.
+   *
+   * Buffers React stream with timeout protection, then generates Tailwind CSS
+   * from the content. If timeout occurs, uses partial content for CSS generation.
+   * This ensures styles work without JS while preventing indefinite blocking.
+   */
   async generateHTMLStream(
     reactStream: ReadableStream,
     context: Omit<HTMLGenerationContext, "html">,
@@ -80,9 +87,21 @@ export class HTMLGenerator {
       mergedFrontmatter,
     );
 
-    // Buffer stream to string (needed for Tailwind CSS generation)
-    const response = new Response(reactStream);
-    const reactContent = (await response.text()).trim();
+    // Buffer stream with timeout protection
+    // If timeout, use partial content - better than blocking forever
+    let reactContent: string;
+    try {
+      reactContent = (await streamToString(reactStream)).trim();
+    } catch (error) {
+      if (error instanceof StreamTimeoutError) {
+        logger.warn("[HTMLGenerator] Stream timed out, using partial content", {
+          partialLength: error.partialContent.length,
+        });
+        reactContent = error.partialContent.trim();
+      } else {
+        throw error;
+      }
+    }
 
     // Use collected head data from HeadCollector (collected during SSR render)
     const head = context.collectedHead;
@@ -94,6 +113,7 @@ export class HTMLGenerator {
       ...(head?.description && { description: head.description }),
     };
 
+    // Generate Tailwind CSS from content (works even with partial content on timeout)
     const { start, end } = await generateHTMLShellParts(
       {
         title: effectiveTitle,
