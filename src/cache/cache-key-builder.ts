@@ -237,39 +237,5 @@ export function extractCacheKeyContextFromRequestContext(
   return extractCacheKeyContextFromMultiProjectContext(reqCtx);
 }
 
-// ============================================================================
-// CACHE KEY UTILITIES
-// ============================================================================
-
-/**
- * Check if a key matches a project.
- */
-export function isKeyForProject(key: string, projectId: string): boolean {
-  // Project-scoped format: prefix:projectId:mode:versionId:resource
-  const parts = key.split(":");
-  return parts.length >= 4 && parts[1] === projectId;
-}
-
-/**
- * Create a filter for clearing cache entries.
- */
-export function createCacheKeyFilter(options: {
-  projectId?: string;
-  mode?: "production" | "preview";
-  versionId?: string;
-  prefix?: string;
-}): (key: string) => boolean {
-  return (key: string) => {
-    const parts = key.split(":");
-    if (parts.length < 4) return false;
-
-    const [keyPrefix, keyProjectId, keyMode, keyVersionId] = parts;
-
-    if (options.prefix && keyPrefix !== options.prefix) return false;
-    if (options.projectId && keyProjectId !== options.projectId) return false;
-    if (options.mode && keyMode !== options.mode) return false;
-    if (options.versionId && keyVersionId !== options.versionId) return false;
-
-    return true;
-  };
-}
+// Note: isKeyForProject and createCacheKeyFilter are in registry.ts and keys.ts respectively
+// to avoid circular dependencies and keep implementations with their primary consumers.

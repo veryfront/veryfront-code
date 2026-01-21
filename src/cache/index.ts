@@ -10,17 +10,19 @@ export * from "./backend.ts";
 // Cache key builder exports
 export {
   type CacheKeyContext,
-  createCacheKeyFilter,
   extractCacheKeyContext,
   getContentHashKey,
   getCurrentCacheKeyContext,
   getProjectScopedKey,
   getProjectScopedKeyAlways,
-  isKeyForProject,
   type MultiProjectRequestContext,
   runWithCacheKeyContext,
   tryGetCacheKeyContext,
 } from "./cache-key-builder.ts";
+
+// Re-export utilities from their canonical locations
+export { isKeyForProject } from "./registry.ts";
+export { createCacheKeyFilter } from "./keys.ts";
 
 // Key builder exports (avoiding conflicts with cache-key-builder)
 export {
