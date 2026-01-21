@@ -10,6 +10,8 @@
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
+import { getSSRModuleCacheStats } from "#veryfront/modules/react-loader/ssr-module-loader/index.ts";
+import type { MultiProjectFSAdapter } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 
 export class DebugContextHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -50,7 +52,9 @@ export class DebugContextHandler extends BaseHandler {
       adapter: {
         type: ctx.adapter?.fs?.constructor?.name || "unknown",
         isMultiProjectMode: this.checkMultiProjectMode(ctx),
+        managerStats: this.getManagerStats(ctx),
       },
+      ssrModuleCache: getSSRModuleCacheStats(),
     };
 
     const response = this.createResponseBuilder(ctx)
@@ -66,6 +70,25 @@ export class DebugContextHandler extends BaseHandler {
       return typeof fs?.isMultiProjectMode === "function" && fs.isMultiProjectMode();
     } catch {
       return false;
+    }
+  }
+
+  private getManagerStats(
+    ctx: HandlerContext,
+  ): { adapters: number; stats: Record<string, unknown> } | null {
+    try {
+      const fs = ctx.adapter?.fs as {
+        getUnderlyingAdapter?: () => { getManagerStats?: () => unknown };
+      };
+      if (typeof fs?.getUnderlyingAdapter === "function") {
+        const underlying = fs.getUnderlyingAdapter() as MultiProjectFSAdapter;
+        if (typeof underlying?.getManagerStats === "function") {
+          return underlying.getManagerStats();
+        }
+      }
+      return null;
+    } catch {
+      return null;
     }
   }
 }

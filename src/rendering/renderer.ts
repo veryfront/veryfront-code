@@ -251,6 +251,15 @@ export class Renderer {
   }
 
   /**
+   * Clear all cached render results (across all contexts).
+   * Called by poke/invalidation handlers to ensure fresh renders.
+   */
+  async clearAllCaches(): Promise<void> {
+    await this.cache.clearAll();
+    logger.debug("[Renderer] All caches cleared");
+  }
+
+  /**
    * Destroy the renderer and clean up resources
    */
   async destroy(): Promise<void> {
@@ -426,6 +435,18 @@ export async function destroyRenderer(): Promise<void> {
   if (renderer) {
     await renderer.destroy();
     renderer = null;
+  }
+}
+
+/**
+ * Clear all cached render results from the singleton renderer.
+ * Safe to call even if renderer is not initialized (no-op).
+ */
+export function clearRendererCaches(): void {
+  if (renderer) {
+    renderer.clearAllCaches().catch((err) => {
+      logger.warn("[Renderer] Failed to clear caches", { error: String(err) });
+    });
   }
 }
 

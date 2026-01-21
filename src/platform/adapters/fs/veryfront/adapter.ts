@@ -499,6 +499,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
     });
     this.invalidationCallbacks.clearSSRModuleCache?.();
 
+    // Clear renderer result cache (context-aware HTML cache)
+    this.invalidationCallbacks.clearRendererCache?.();
+
     // Clear file list cache and refetch (only for branch mode)
     if (this.contentContext?.sourceType === "branch") {
       await this.cache.deleteByPrefixAsync("files:branch:");
@@ -582,6 +585,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.invalidationCallbacks.clearRouterDetectionCache?.();
     this.invalidationCallbacks.clearModulePathCache?.();
     this.invalidationCallbacks.clearSnippetCache?.();
+    this.invalidationCallbacks.clearRendererCache?.();
 
     const totalFileCount = fileBranchCount + fileReleaseCount + fileEnvCount;
     const totalStatCount = statBranchCount + statReleaseCount + statEnvCount;
@@ -710,6 +714,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   getCacheStats(): CacheStats {
     return {
       cache: this.cache.stats(),
+      poke: this.getPokeMetrics(),
     };
   }
 

@@ -116,6 +116,15 @@ export class RenderPipeline {
     };
   }
 
+  /**
+   * Clear the module cache to force re-transformation on next render.
+   * Called by poke/invalidation handlers to ensure fresh modules are loaded.
+   */
+  clearModuleCache(): void {
+    this.moduleLoaderConfig.moduleCache.clear();
+    this.moduleLoaderConfig.esmCache.clear();
+  }
+
   private loadModule(filePath: string): Promise<unknown> {
     return loadModule(filePath, this.moduleLoaderConfig);
   }
