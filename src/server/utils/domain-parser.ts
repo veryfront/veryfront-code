@@ -103,10 +103,12 @@ export function parseProjectDomain(host: string): ParsedDomain {
   }
 
   // Local development base: {slug}.{lvh.me|veryfront.dev}
+  // Mirrors production behavior: serves released content (isDraft: false)
+  // Use {slug}.preview.lvh.me for draft content
   const localBaseMatch = domain.match(new RegExp(`^([A-Za-z0-9-]+)\\.(${LOCAL_DEV_DOMAINS})$`));
   if (localBaseMatch?.[1]) {
     const { slug, branch } = parseSlugAndBranch(localBaseMatch[1]);
-    return createParsedDomain(slug, branch, "development", true, true);
+    return createParsedDomain(slug, branch, "production", true, false);
   }
 
   // Plain local dev domains without slug

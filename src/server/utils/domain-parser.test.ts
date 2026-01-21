@@ -21,12 +21,12 @@ describe("domain-parser", () => {
       assertEquals(result.environment, "preview");
     });
 
-    it("veryfront.me development", () => {
+    it("veryfront.me base (mirrors production)", () => {
       const result = parseProjectDomain("myproject.veryfront.me:8080");
       assertEquals(result.slug, "myproject");
-      assertEquals(result.environment, "development");
+      assertEquals(result.environment, "production");
       assertEquals(result.isVeryfrontDomain, true);
-      assertEquals(result.isDraft, true);
+      assertEquals(result.isDraft, false);
     });
 
     it("veryfront.me prod (custom domain simulation)", () => {
@@ -61,11 +61,11 @@ describe("domain-parser", () => {
       assertEquals(result.environment, "preview");
     });
 
-    it("lvh.me development", () => {
+    it("lvh.me base (mirrors production)", () => {
       const result = parseProjectDomain("myproject.lvh.me:3001");
       assertEquals(result.slug, "myproject");
-      assertEquals(result.environment, "development");
-      assertEquals(result.isDraft, true);
+      assertEquals(result.environment, "production");
+      assertEquals(result.isDraft, false);
     });
 
     it("lvh.me prod (custom domain simulation)", () => {
@@ -205,11 +205,12 @@ describe("domain-parser", () => {
       assertEquals(result.branch, "fix-bug-123");
     });
 
-    it("handles branch from development base domain", () => {
+    it("handles branch from base domain (mirrors production)", () => {
       const result = parseProjectDomain("myproject--experiment.lvh.me:3001");
       assertEquals(result.slug, "myproject");
       assertEquals(result.branch, "experiment");
-      assertEquals(result.environment, "development");
+      assertEquals(result.environment, "production");
+      assertEquals(result.isDraft, false);
     });
   });
 
