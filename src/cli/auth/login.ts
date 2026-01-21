@@ -124,7 +124,7 @@ async function loginWithOAuth(provider: "google" | "github" | "microsoft"): Prom
   }
 
   const callbackUrl = getCallbackUrl(server.port);
-  const authUrl = `${getApiUrl()}/auth/${provider}-login?redirect_uri=${
+  const authUrl = `${getApiUrl()}/auth/${provider}?redirect_uri=${
     encodeURIComponent(callbackUrl)
   }`;
 
