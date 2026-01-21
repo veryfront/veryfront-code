@@ -73,4 +73,4 @@ const DEFAULT_PROJECTS = ["blank", "codersociety", "veryfront"];
 2. [x] `veryfront` is included in DEFAULT_PROJECTS
 3. [x] No console errors during page load
 4. [x] Hydration works correctly
-5. [x] Query params (`color_mode`, `studio_embed`, `preview_mode`) work
+5. [x] Query params (`color_mode`, `studio_embed`) and `.preview.` subdomain work
