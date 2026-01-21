@@ -190,7 +190,7 @@ function extractClassNamesFromSource(source: string): string[] {
 function normalizeClass(cls: string): string {
   if (!cls.includes("[")) return cls;
 
-  return cls.replace(/\[([^\]]*)\]/g, (match, content) => {
+  return cls.replace(/\[([^\]]*)\]/g, (_match, content) => {
     let normalized = content;
 
     // Wrap bare CSS variables with var()
