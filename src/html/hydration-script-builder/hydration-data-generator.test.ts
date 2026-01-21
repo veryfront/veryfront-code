@@ -70,17 +70,6 @@ describe("hydration-data-generator", () => {
       assertEquals(parsed.layouts.length, 1);
     });
 
-    it("should include providers when provided", () => {
-      const options: HTMLGenerationOptions = {
-        ...baseOptions,
-        providerPaths: ["/project/providers/auth.tsx", "/project/providers/theme.tsx"],
-        projectDir: "/project",
-      };
-      const result = generateHydrationData("page", {}, {}, options);
-      const parsed = JSON.parse(result);
-      assertEquals(parsed.providers.length, 2);
-    });
-
     it("should include appPath when provided", () => {
       const options: HTMLGenerationOptions = {
         ...baseOptions,

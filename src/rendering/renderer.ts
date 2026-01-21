@@ -16,7 +16,6 @@
  * - **Per-Request Services** (created per-render, ~1ms):
  *   - PageResolver - needs projectDir, adapter, config
  *   - LayoutCollector - needs adapter, config
- *   - ProviderManager - needs projectDir, adapter, config
  *   - SSRRenderer - needs mode, adapter, projectDir
  *   - ComponentRegistry - needs projectId
  *   - etc.
@@ -55,7 +54,6 @@ import {
   createLayoutCompiler,
   createPageRenderer,
   createPageResolver,
-  createProviderManager,
   createSSRRenderer,
   createVirtualModuleSystem,
 } from "./factories/service-factories.ts";
@@ -159,19 +157,21 @@ export class Renderer {
       environment: ctx.environment,
     });
 
-    // Check cache first (context-aware)
-    const cacheResult = await this.cache.checkCache(slug, ctx);
+    // Check cache first (context-aware, includes colorScheme in key)
+    const cacheResult = await this.cache.checkCache(slug, ctx, options?.colorScheme);
     if (cacheResult.hit && cacheResult.cachedResult) {
       logger.debug("[Renderer] Cache hit", {
         slug,
         projectId: ctx.projectId,
+        colorScheme: options?.colorScheme,
         duration: `${(performance.now() - startTime).toFixed(2)}ms`,
       });
       return cacheResult.cachedResult;
     }
 
     // Create context-bound services (lightweight, ~1ms)
-    const services = this.createServicesForContext(ctx);
+    // Pass colorScheme so the pipeline cache also respects theme
+    const services = this.createServicesForContext(ctx, options?.colorScheme);
 
     // Run the render pipeline
     const result = await services.pipeline.renderPage(slug, {
@@ -181,8 +181,8 @@ export class Renderer {
       proxyEnvironment: ctx.environment,
     });
 
-    // Cache the result (context-aware)
-    await this.cache.persistResult(result, slug, ctx);
+    // Cache the result (context-aware, includes colorScheme in key)
+    await this.cache.persistResult(result, slug, ctx, options?.colorScheme);
 
     const duration = performance.now() - startTime;
     logger.debug("[Renderer] Render complete", {
@@ -273,8 +273,14 @@ export class Renderer {
    *
    * These services are lightweight to create (~1ms total) because
    * expensive initialization (esbuild, etc.) was done in shared services.
+   *
+   * @param ctx - Render context
+   * @param colorScheme - Optional color scheme for cache key variation
    */
-  private createServicesForContext(ctx: RenderContext): {
+  private createServicesForContext(
+    ctx: RenderContext,
+    colorScheme?: "light" | "dark",
+  ): {
     pipeline: RenderPipeline;
   } {
     const shared = getSharedServices();
@@ -304,7 +310,6 @@ export class Renderer {
     const pageResolver = createPageResolver(ctx);
     const layoutCollector = createLayoutCollector(ctx, compileMDX);
     const layoutCompiler = createLayoutCompiler(ctx, compileMDX);
-    const providerManager = createProviderManager(ctx, compileMDX);
     const ssrRenderer = createSSRRenderer(ctx);
     const pageRenderer = createPageRenderer(ctx, {
       componentRegistry,
@@ -322,7 +327,6 @@ export class Renderer {
       moduleServerUrl: ctx.moduleServerUrl,
       layoutCollector,
       layoutCompiler,
-      providerManager,
       layoutCache: createLayoutComponentCache(),
       componentRegistry: componentRegistry.getAllAsComponents(),
     });
@@ -346,9 +350,10 @@ export class Renderer {
 
     // Create a simple cache coordinator wrapper for the pipeline
     // (The pipeline uses the old interface, we adapt to context-aware cache)
+    // Include colorScheme in cache key to prevent serving wrong theme
     const pipelineCacheCoordinator = {
       checkCache: async (slug: string) => {
-        const result = await this.cache.checkCache(slug, ctx);
+        const result = await this.cache.checkCache(slug, ctx, colorScheme);
         return {
           cachedResult: result.cachedResult,
           depAwareSlug: slug,
@@ -357,7 +362,7 @@ export class Renderer {
         };
       },
       persistResult: async (result: RenderResult, slug: string) => {
-        await this.cache.persistResult(result, slug, ctx);
+        await this.cache.persistResult(result, slug, ctx, colorScheme);
       },
       clearAll: () => this.cache.clearAll(),
       clearSlug: (slug: string) => this.cache.clearSlug(slug, ctx),

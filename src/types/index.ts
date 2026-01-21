@@ -1,5 +1,4 @@
 import type * as React from "react";
-import type { EntityInfo } from "./entities.ts";
 
 export type {
   BundleResult,
@@ -180,15 +179,6 @@ export interface LayoutItem {
   path?: string;
 }
 
-export interface ProviderItem {
-  kind: "mdx" | "tsx";
-  bundle?: MdxBundle;
-  component?: React.ComponentType | unknown;
-  componentPath?: string;
-  path?: string;
-  entityInfo?: EntityInfo;
-}
-
 export interface PageBundle extends MdxBundle {
   headings?: Array<{ id: string; text: string; level: number }>;
   nodeMap?: Map<number, unknown>;
@@ -342,9 +332,4 @@ export interface CSSOptimizerStats {
 }
 
 // Entity utilities
-export {
-  getEntityBySlug,
-  getEntityInfo,
-  getLayoutEntity,
-  getProviderEntities,
-} from "./entities/getEntityInfo.ts";
+export { getEntityBySlug, getEntityInfo, getLayoutEntity } from "./entities/getEntityInfo.ts";

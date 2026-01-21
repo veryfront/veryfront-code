@@ -7,7 +7,6 @@ export interface HTMLGenerationOptions {
   config: VeryfrontConfig;
   importMap?: Record<string, string>;
   nestedLayouts?: Array<{ kind: string; path?: string; componentPath?: string }>;
-  providerPaths?: string[];
   appPath?: string;
   pagePath?: string;
   pageType?: "mdx" | "tsx" | "jsx" | "ts" | "js";
@@ -47,7 +46,6 @@ export interface HydrationData {
   props: Record<string, unknown>;
   params: Record<string, string | string[]>;
   layouts: Array<{ kind: string; path?: string }>;
-  providers: string[];
   appPath?: string;
   pagePath?: string;
 }

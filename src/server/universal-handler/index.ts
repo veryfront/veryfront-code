@@ -396,14 +396,6 @@ export function createVeryfrontHandler(
         // Parse domain from host header
         // Prefer x-forwarded-host (original domain from proxy) over Host header (internal service URL)
         const host = forwardedHost || req.headers.get("host") || _url.host;
-
-        // Allow ?preview_mode=true to simulate preview environment locally (for E2E testing)
-        // SECURITY: Only allow on local development hosts to prevent production exploitation
-        const isLocalHost = host.includes("lvh.me") || host.includes("localhost") ||
-          host.includes("127.0.0.1");
-        if (_url.searchParams.get("preview_mode") === "true" && isLocalHost) {
-          proxyEnv = "preview";
-        }
         const parsedDomain = parseProjectDomain(host);
 
         // Get project slug: proxy header > URL parsing > config
@@ -606,7 +598,7 @@ export function createVeryfrontHandler(
             logger.debug("[universal] Loaded project-specific config", {
               projectSlug,
               projectDir: effectiveProjectDir,
-              defaultLayout: effectiveConfig?.defaultLayout,
+              layout: effectiveConfig?.layout,
               router: effectiveConfig?.router,
             });
           } catch (err) {

@@ -293,6 +293,34 @@ export function generateErrorHTML(errorInfo: ErrorInfo, suggestion?: string): st
         }, '*');
       } catch (e) { /* postMessage may fail in cross-origin iframes */ }
     }
+
+    // HMR WebSocket for auto-refresh when error is fixed
+    (function() {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = protocol + '//' + window.location.host + '/_ws';
+      let ws = null;
+      let reconnectAttempts = 0;
+      const maxReconnectAttempts = 10;
+
+      function connect() {
+        if (reconnectAttempts >= maxReconnectAttempts) return;
+        ws = new WebSocket(wsUrl);
+        ws.onopen = () => { reconnectAttempts = 0; };
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'reload' || data.type === 'update') {
+              window.location.reload();
+            }
+          } catch (e) {}
+        };
+        ws.onclose = () => {
+          reconnectAttempts++;
+          setTimeout(connect, Math.min(1000 * reconnectAttempts, 5000));
+        };
+      }
+      connect();
+    })();
   </script>
 </body>
 </html>`;

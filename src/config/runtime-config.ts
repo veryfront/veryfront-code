@@ -57,7 +57,6 @@ export const DEFAULT_CONFIG: Partial<VeryfrontConfig> = {
     esmLayouts: true,
   },
   router: undefined,
-  defaultLayout: undefined,
   theme: {
     colors: {
       primary: "#3B82F6",

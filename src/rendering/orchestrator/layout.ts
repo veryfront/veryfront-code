@@ -1,11 +1,11 @@
 import * as React from "react";
 import type { EntityInfo } from "#veryfront/types";
-import type { LayoutItem, MdxBundle, MDXComponents, ProviderItem } from "#veryfront/types";
+import type { LayoutItem, MdxBundle, MDXComponents } from "#veryfront/types";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { LayoutApplicator } from "../layouts/index.ts";
 import { createDefaultMDXComponents } from "../utils/index.ts";
-import type { LayoutCollector, LayoutCompiler, ProviderManager } from "../layouts/index.ts";
+import type { LayoutCollector, LayoutCompiler } from "../layouts/index.ts";
 import type { LayoutComponentCache } from "../layouts/utils/component-loader.ts";
 import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/index.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
@@ -21,7 +21,6 @@ export interface LayoutOrchestratorConfig {
   moduleServerUrl?: string;
   layoutCollector: LayoutCollector;
   layoutCompiler: LayoutCompiler;
-  providerManager: ProviderManager;
   layoutCache: LayoutComponentCache;
   componentRegistry: MDXComponents;
 }
@@ -29,12 +28,6 @@ export interface LayoutOrchestratorConfig {
 export interface LayoutCollectionResult {
   layoutBundle: MdxBundle | undefined;
   nestedLayouts: LayoutItem[];
-}
-
-export interface ProviderCollectionResult {
-  providerBundles: MdxBundle[];
-  providerItems: ProviderItem[];
-  providerInfos: EntityInfo[];
 }
 
 export class LayoutOrchestrator {
@@ -55,16 +48,11 @@ export class LayoutOrchestrator {
     return result;
   }
 
-  collectProviders(route?: string): Promise<ProviderCollectionResult> {
-    return this.config.providerManager.collectProviders(route);
-  }
-
   async applyLayoutsAndWrappers(
     pageElement: React.ReactElement,
     pageInfo: EntityInfo,
     layoutBundle: MdxBundle | undefined,
     nestedLayouts: LayoutItem[],
-    providerItems: ProviderItem[],
     layoutDataMap?: Map<string, Record<string, unknown>>,
     requestUrl?: URL,
     frontmatter?: Record<string, unknown>,
@@ -98,7 +86,6 @@ export class LayoutOrchestrator {
       pageInfo,
       layoutBundle,
       nestedLayouts,
-      providerItems,
       layoutDataMap,
     );
     const resultType = result?.type;

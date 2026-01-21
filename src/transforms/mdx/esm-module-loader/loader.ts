@@ -284,8 +284,16 @@ async function transformJsxImports(
         const jsxCode = isFrameworkFile
           ? await getLocalFs().readTextFile(filePath)
           : await adapter!.fs.readFile(filePath);
+        // Determine the correct loader based on file extension
+        const loaderMap: Record<string, "js" | "jsx" | "ts" | "tsx"> = {
+          tsx: "tsx",
+          ts: "ts",
+          jsx: "jsx",
+          js: "js",
+        };
+        const loader = loaderMap[ext] ?? "tsx";
         const result = await transform(jsxCode as string, {
-          loader: ext === "tsx" ? "tsx" : "jsx",
+          loader,
           jsx: "transform",
           jsxFactory: ESBUILD_JSX_FACTORY,
           jsxFragment: ESBUILD_JSX_FRAGMENT,

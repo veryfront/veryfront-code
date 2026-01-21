@@ -24,9 +24,9 @@ export const LOG_PREFIX_MDX_LOADER = "[mdx-loader]";
 /** Log prefix for MDX renderer operations */
 export const LOG_PREFIX_MDX_RENDERER = "[mdx-renderer]";
 
-/** Pattern to match JSX file imports with file:// protocol */
+/** Pattern to match JS/TS file imports with file:// protocol */
 export const JSX_IMPORT_PATTERN =
-  /import\s+([^'"]+)\s+from\s+['"]file:\/\/([^'"]+\.(jsx|tsx))['"];?/g;
+  /import\s+([^'"]+)\s+from\s+['"]file:\/\/([^'"]+\.(js|jsx|ts|tsx))['"];?/g;
 
 /** Pattern to match React imports */
 export const REACT_IMPORT_PATTERN = /import\s+.*React.*\s+from\s+['"]react['"]/;
