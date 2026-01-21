@@ -135,7 +135,7 @@ export async function analyzeProjectChunks(
 
       pages.set(mdxPath, pageImports);
 
-      for (const dep of [...pageImports.remote, ...pageImports.shared]) {
+      for (const dep of getExternalDeps(pageImports)) {
         sharedDeps.set(dep, (sharedDeps.get(dep) || 0) + 1);
       }
     } catch (error) {
@@ -152,68 +152,72 @@ export async function analyzeProjectChunks(
   };
 }
 
+/** Get all external dependencies (remote URLs and shared packages) from imports */
+function getExternalDeps(imports: PageImports): string[] {
+  return [...imports.remote, ...imports.shared];
+}
+
+/** Find all pages that use any of the given dependencies */
+function findPagesUsingDeps(pages: Map<string, PageImports>, deps: string[]): string[] {
+  const result: string[] = [];
+  for (const [path, imports] of pages) {
+    const usesAny = getExternalDeps(imports).some((dep) => deps.includes(dep));
+    if (usesAny) result.push(path);
+  }
+  return result;
+}
+
+interface ChunkConfig {
+  name: string;
+  getDeps: (sharedDeps: Map<string, number>) => string[];
+  calculateBenefit: (deps: string[], pages: string[]) => number;
+}
+
+const CHUNK_CONFIGS: ChunkConfig[] = [
+  {
+    name: "common",
+    getDeps: (sharedDeps) =>
+      Array.from(sharedDeps.entries())
+        .filter(([_, count]) => count >= 2)
+        .map(([dep]) => dep),
+    calculateBenefit: (deps, pages) =>
+      deps.length * pages.length * SIZE_LIMITS.DEP_SIZE_ESTIMATE,
+  },
+  {
+    name: "react-vendor",
+    getDeps: (sharedDeps) =>
+      Array.from(sharedDeps.keys()).filter(
+        (dep) => dep.includes("react") || dep.includes("jsx-runtime"),
+      ),
+    calculateBenefit: () => SIZE_LIMITS.REACT_SIZE_ESTIMATE,
+  },
+  {
+    name: "ui-vendor",
+    getDeps: (sharedDeps) =>
+      Array.from(sharedDeps.keys()).filter(
+        (dep) =>
+          dep.includes("@mui/") || dep.includes("framer-motion") || dep.includes("@headlessui/"),
+      ),
+    calculateBenefit: (deps) => deps.length * SIZE_LIMITS.UI_LIB_SIZE_ESTIMATE,
+  },
+];
+
 function generateChunkSuggestions(
   pages: Map<string, PageImports>,
   sharedDeps: Map<string, number>,
-) {
+): ChunkSuggestion[] {
   const suggestions: ChunkSuggestion[] = [];
 
-  const commonDeps = Array.from(sharedDeps.entries())
-    .filter(([_, count]) => count >= 2)
-    .map(([dep, _]) => dep);
+  for (const config of CHUNK_CONFIGS) {
+    const deps = config.getDeps(sharedDeps);
+    if (deps.length === 0) continue;
 
-  if (commonDeps.length > 0) {
-    const pagesUsingCommon: string[] = [];
-    for (const [path, imports] of pages) {
-      const uses = [...imports.remote, ...imports.shared].some((dep) => commonDeps.includes(dep));
-      if (uses) pagesUsingCommon.push(path);
-    }
-
+    const pagesUsingDeps = findPagesUsingDeps(pages, deps);
     suggestions.push({
-      name: "common",
-      deps: commonDeps,
-      pages: pagesUsingCommon,
-      benefit: commonDeps.length *
-        pagesUsingCommon.length *
-        SIZE_LIMITS.DEP_SIZE_ESTIMATE,
-    });
-  }
-
-  const reactDeps = Array.from(sharedDeps.keys()).filter(
-    (dep) => dep.includes("react") || dep.includes("jsx-runtime"),
-  );
-
-  if (reactDeps.length > 0) {
-    const pagesUsingReact = Array.from(pages.keys()).filter((path) => {
-      const imports = pages.get(path);
-      if (!imports) return false;
-      return [...imports.remote, ...imports.shared].some((dep) => reactDeps.includes(dep));
-    });
-
-    suggestions.push({
-      name: "react-vendor",
-      deps: reactDeps,
-      pages: pagesUsingReact,
-      benefit: SIZE_LIMITS.REACT_SIZE_ESTIMATE,
-    });
-  }
-
-  const uiDeps = Array.from(sharedDeps.keys()).filter(
-    (dep) => dep.includes("@mui/") || dep.includes("framer-motion") || dep.includes("@headlessui/"),
-  );
-
-  if (uiDeps.length > 0) {
-    const pagesUsingUI = Array.from(pages.keys()).filter((path) => {
-      const imports = pages.get(path);
-      if (!imports) return false;
-      return [...imports.remote, ...imports.shared].some((dep) => uiDeps.includes(dep));
-    });
-
-    suggestions.push({
-      name: "ui-vendor",
-      deps: uiDeps,
-      pages: pagesUsingUI,
-      benefit: uiDeps.length * SIZE_LIMITS.UI_LIB_SIZE_ESTIMATE,
+      name: config.name,
+      deps,
+      pages: pagesUsingDeps,
+      benefit: config.calculateBenefit(deps, pagesUsingDeps),
     });
   }
 
@@ -237,8 +241,8 @@ export function generateChunkManifest(analysis: ChunkAnalysis): ChunkManifest {
   for (const [pagePath, imports] of analysis.pages) {
     const pageChunks: string[] = [];
 
+    const pageDeps = getExternalDeps(imports);
     for (const chunk of analysis.suggestedChunks) {
-      const pageDeps = [...imports.remote, ...imports.shared];
       const usesChunk = chunk.deps.some((dep) => pageDeps.includes(dep));
       if (usesChunk) {
         pageChunks.push(chunk.name);
