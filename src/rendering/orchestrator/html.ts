@@ -307,6 +307,10 @@ export class HTMLGenerator {
       ? computeSourceHash(context.pageInfo.entity.content)
       : undefined;
 
+    // Get cached project classes from the adapter (if available)
+    // This ensures CSS includes all classes from source files, not just SSR HTML
+    const projectClasses = this.getProjectClasses();
+
     return {
       mode: this.config.mode,
       config: this.config.config,
@@ -330,6 +334,20 @@ export class HTMLGenerator {
       colorSchemeFromParam: context.options?.colorSchemeFromParam,
       proxyEnvironment: context.options?.proxyEnvironment,
       headings: context.pageBundle.headings,
+      projectClasses,
     };
+  }
+
+  /**
+   * Get cached project classes from the adapter.
+   * Returns undefined if adapter doesn't support class caching.
+   */
+  private getProjectClasses(): Set<string> | undefined {
+    // Check if adapter has getCachedClasses method (VeryfrontFSAdapter)
+    const adapter = this.config.adapter as unknown as { getCachedClasses?: () => Set<string> | undefined };
+    if (typeof adapter.getCachedClasses === "function") {
+      return adapter.getCachedClasses();
+    }
+    return undefined;
   }
 }

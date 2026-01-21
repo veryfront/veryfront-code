@@ -138,10 +138,13 @@ export async function generateHTMLShellParts(
 ): Promise<{ start: string; end: string }> {
   // Generate JIT Tailwind CSS from content for both dev and prod
   // This ensures consistent styling across environments
-  // Pass tailwind config for theme customization
+  // Pass tailwind config and project-wide classes for complete coverage
   const tailwindConfig = options.config?.tailwind;
   const tailwindCSS = contentForTailwind
-    ? await generateTailwind4CSS(contentForTailwind, tailwindConfig)
+    ? await generateTailwind4CSS(contentForTailwind, {
+        tailwindConfig,
+        projectClasses: options.projectClasses,
+      })
     : "";
 
   const {
