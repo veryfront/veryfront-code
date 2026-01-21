@@ -335,6 +335,19 @@ export async function generateTailwindCSS(
     // Tailwind filters out invalid classes automatically
     let output = comp.build([...candidates]);
 
+    // Post-process: Fix grid-template-columns/rows values
+    // Tailwind's arbitrary values keep commas literal, but CSS grid needs spaces
+    // e.g., "0.25fr,0.5fr,0.25fr" -> "0.25fr 0.5fr 0.25fr"
+    output = output.replace(
+      /grid-template-(columns|rows):\s*([^;]+);/g,
+      (match, prop, value) => {
+        // Only replace commas that separate fr/px/% values (not in functions like minmax())
+        // Simple approach: replace commas between numeric values with units
+        const fixed = value.replace(/(\d+(?:\.\d+)?(?:fr|px|%|rem|em|vw|vh)),\s*/g, "$1 ");
+        return `grid-template-${prop}: ${fixed};`;
+      },
+    );
+
     // Minification: strip extra whitespace for now
     // Future: consider lightningcss for better minification
     if (options?.minify) {
