@@ -69,7 +69,7 @@ export class LayoutCollector {
           pagePath: pageInfo.entity.path,
           projectDir: this.projectDir,
           hasConfig: !!this.config,
-          defaultLayout: this.config?.defaultLayout,
+          layout: this.config?.layout,
         });
 
         // Skip layout resolution for .veryfront paths - these are framework-level pages
@@ -100,13 +100,13 @@ export class LayoutCollector {
         const hasExplicitFrontmatterLayout = typeof layoutValue === "string" &&
           layoutValue.length > 0;
 
-        // Collect the named layout (from frontmatter or config.defaultLayout)
+        // Collect the named layout (from frontmatter or config.layout)
         const { layoutBundle, layoutPath, layoutName } = await withSpan(
           SpanNames.LAYOUT_COLLECT_NAMED,
           () => this.collectNamedLayoutWithPath(pageInfo),
           {
             "layout.page_path": pageInfo.entity.path,
-            "layout.default_layout": this.config?.defaultLayout || "none",
+            "layout.config_layout": this.config?.layout || "none",
           },
         );
 
@@ -162,28 +162,37 @@ export class LayoutCollector {
         { "layout.page_path": pageInfo.entity.path },
       );
 
-      // If we have a layoutBundle from config.defaultLayout, add it to nestedLayouts
+      // If we have a layoutBundle from config.layout, add it to nestedLayouts
       // so the client can apply the same layout during hydration
+      // BUT: avoid duplicates if the same layout was already found via auto-discovery
       if (layoutBundle && layoutPath) {
-        // Use layoutPath (the resolved file path with extension) for kind detection
-        const kind = getLayoutKind(layoutPath);
+        const alreadyExists = nestedLayouts.some((l) => l.path === layoutPath);
+        if (!alreadyExists) {
+          // Use layoutPath (the resolved file path with extension) for kind detection
+          const kind = getLayoutKind(layoutPath);
 
-        // Prepend the defaultLayout to nestedLayouts (it wraps outermost)
-        nestedLayouts = [{
-          kind,
-          bundle: kind === "mdx" ? layoutBundle : undefined,
-          componentPath: kind === "tsx" ? layoutPath : undefined,
-          path: layoutPath,
-        }, ...nestedLayouts];
-
-        logger.debug(
-          "[LayoutCollector] Added defaultLayout to nestedLayouts for client hydration",
-          {
-            layoutPath,
+          // Prepend the config layout to nestedLayouts (it wraps outermost)
+          nestedLayouts = [{
             kind,
-            totalNestedLayouts: nestedLayouts.length,
-          },
-        );
+            bundle: kind === "mdx" ? layoutBundle : undefined,
+            componentPath: kind === "tsx" ? layoutPath : undefined,
+            path: layoutPath,
+          }, ...nestedLayouts];
+
+          logger.debug(
+            "[LayoutCollector] Added config.layout to nestedLayouts for client hydration",
+            {
+              layoutPath,
+              kind,
+              totalNestedLayouts: nestedLayouts.length,
+            },
+          );
+        } else {
+          logger.debug(
+            "[LayoutCollector] Skipping config.layout - already in nestedLayouts",
+            { layoutPath },
+          );
+        }
 
         // Return undefined layoutBundle since we're now using nestedLayouts
         // This ensures SSR and client hydration apply layouts the same way
@@ -215,13 +224,13 @@ export class LayoutCollector {
       pagePath: pageInfo.entity.path,
       layoutValue,
       frontmatterKeys: Object.keys(pageInfo.entity.frontmatter),
-      defaultLayout: this.config?.defaultLayout,
+      configLayout: this.config?.layout,
     });
 
     const layoutName = (typeof layoutValue === "boolean" && !layoutValue) || layoutValue === "false"
       ? null
       : (typeof layoutValue === "string" ? layoutValue : null) ||
-        this.config?.defaultLayout ||
+        this.config?.layout ||
         null;
 
     logger.debug("[LayoutCollector] Resolved layoutName:", { layoutName });
@@ -284,7 +293,6 @@ export class LayoutCollector {
     const nestedLayouts: LayoutItem[] = [];
 
     // Priority 1: Check config.layout from veryfront.config.ts
-    // Note: config.defaultLayout is handled separately by collectNamedLayoutWithPath()
     const configLayout = this.config?.layout;
     if (configLayout && isValidLayoutPath(configLayout)) {
       // Config layout can be absolute or relative to project

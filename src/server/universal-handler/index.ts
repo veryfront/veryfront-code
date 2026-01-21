@@ -568,7 +568,7 @@ export function createVeryfrontHandler(
             logger.debug("[universal] Loaded project-specific config", {
               projectSlug,
               projectDir: effectiveProjectDir,
-              defaultLayout: effectiveConfig?.defaultLayout,
+              layout: effectiveConfig?.layout,
               router: effectiveConfig?.router,
             });
           } catch (err) {

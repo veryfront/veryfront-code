@@ -31,9 +31,9 @@ export const veryfrontConfigSchema = z
       rsc: z.boolean().optional(),
     }).partial().optional(),
     router: z.enum(["app", "pages"]).optional(),
-    defaultLayout: z.string().optional(),
+    /** Path to the layout component (e.g., 'components/layout.tsx') */
     layout: z.string().optional(),
-    provider: z.string().optional(),
+    /** Path to the app wrapper component (e.g., 'components/app.tsx') */
     app: z.string().optional(),
     theme: z
       .object({ colors: z.record(z.string()).optional() })
