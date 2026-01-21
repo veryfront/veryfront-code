@@ -58,11 +58,8 @@ export function getDenoStdNodeBase(): string {
 // Tailwind CSS constants - unified version for all imports
 export const TAILWIND_VERSION = "4.1.8";
 
-// UnoCSS constants
-export const UNOCSS_VERSION = "0.59.0";
-
-export function getUnoCSSTailwindResetUrl(): string {
-  return `${ESM_CDN_BASE}/@unocss/reset@${UNOCSS_VERSION}/tailwind.css`;
+export function getTailwindCSSUrl(): string {
+  return `${ESM_CDN_BASE}/tailwindcss@${TAILWIND_VERSION}/index.css`;
 }
 
 // Veryfront package version - derived from deno.json (single source of truth)

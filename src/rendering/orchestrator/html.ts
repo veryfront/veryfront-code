@@ -22,7 +22,7 @@ import { injectElementSelectors } from "#veryfront/studio/element-selector-injec
 import { computeSourceHash } from "#veryfront/studio/hash-utils.ts";
 import { extractRelativePath } from "#veryfront/utils/route-path-utils.ts";
 import { resolveAppComponentPath } from "../layouts/utils/app-resolver.ts";
-import { streamToString, StreamTimeoutError } from "../utils/stream-utils.ts";
+import { StreamTimeoutError, streamToString } from "../utils/stream-utils.ts";
 
 export interface HTMLGeneratorConfig {
   projectDir: string;

@@ -4,7 +4,7 @@
 
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { streamToString, StreamTimeoutError } from "./stream-utils.ts";
+import { StreamTimeoutError, streamToString } from "./stream-utils.ts";
 
 describe("streamToString", () => {
   it("converts simple stream to string", async () => {
