@@ -6,7 +6,6 @@ import {
   getEntityBySlug,
   getEntityInfo,
   getLayoutEntity,
-  getProviderEntities,
 } from "../../../src/types/entities/getEntityInfo.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 
@@ -69,40 +68,6 @@ Layout content`,
       assertExists(info2);
       assertEquals(info2.entity.type, "layout");
       assertEquals(info2.entity.isLayout, true);
-    });
-  });
-
-  it("detects providers correctly", async () => {
-    await withTestContext("entity-provider-detection", async (context) => {
-      // Test filename-based detection
-      const providerFile1 = join(context.projectDir, "ThemeProvider.tsx");
-      await createTestFile(
-        providerFile1,
-        `export default function ThemeProvider() { /* empty */ }`,
-      );
-
-      const info1 = await getEntityInfo(providerFile1);
-      assertExists(info1);
-      assertEquals(info1.entity.type, "provider");
-      assertEquals(info1.entity.isProvider, true);
-
-      // Test frontmatter-based detection
-      const providerFile2 = join(context.projectDir, "auth.mdx");
-      await createTestFile(
-        providerFile2,
-        `---
-isProvider: true
-priority: 1
----
-
-Provider content`,
-      );
-
-      const info2 = await getEntityInfo(providerFile2);
-      assertExists(info2);
-      assertEquals(info2.entity.type, "provider");
-      assertEquals(info2.entity.isProvider, true);
-      assertEquals(info2.entity.frontmatter.priority, 1);
     });
   });
 
@@ -216,18 +181,6 @@ Content`,
       assertExists(info);
       assertEquals(info.entity.type, "layout");
       assertEquals(info.entity.isLayout, true);
-    });
-  });
-
-  it("detects lowercase provider filename", async () => {
-    await withTestContext("entity-provider-lowercase", async (context) => {
-      const providerFile = join(context.projectDir, "provider.tsx");
-      await createTestFile(providerFile, `export default function Provider() { /* empty */ }`);
-
-      const info = await getEntityInfo(providerFile);
-      assertExists(info);
-      assertEquals(info.entity.type, "provider");
-      assertEquals(info.entity.isProvider, true);
     });
   });
 
@@ -380,87 +333,3 @@ Generic layout`,
   });
 });
 
-describe("getProviderEntities", () => {
-  it("finds and sorts provider entities", async () => {
-    await withTestContext("entity-providers", async (context) => {
-      // Create provider files
-      const providersDir = join(context.projectDir, "providers");
-      await createTestFile(
-        join(providersDir, "auth.mdx"),
-        `---
-isProvider: true
-priority: 2
----
-Auth provider`,
-      );
-
-      await createTestFile(
-        join(providersDir, "theme.tsx"),
-        `---
-isProvider: true
-priority: 1
----
-export default function ThemeProvider() {
-    // No implementation
-  }`,
-      );
-
-      const componentsDir = join(context.projectDir, "components");
-      await createTestFile(
-        join(componentsDir, "GlobalProvider.tsx"),
-        `export default function GlobalProvider() {
-    // No implementation
-  }`,
-      );
-
-      // Get all providers
-      const providers = await getProviderEntities(context.projectDir);
-
-      // Should find providers and sort by priority
-      assertEquals(providers.length >= 2, true);
-
-      // Check if sorted by priority
-      const prioritizedProviders = providers.filter(
-        (p) => p.entity.frontmatter.priority !== undefined,
-      );
-      if (prioritizedProviders.length >= 2) {
-        const priority0 = prioritizedProviders[0]?.entity.frontmatter.priority ?? 0;
-        const priority1 = prioritizedProviders[1]?.entity.frontmatter.priority ?? 0;
-        assertEquals(priority0 <= priority1, true);
-      }
-    });
-  });
-
-  it("handles empty directories", async () => {
-    await withTestContext("entity-providers-empty", async (context) => {
-      // Don't create any provider directories
-      const providers = await getProviderEntities(context.projectDir);
-      assertEquals(providers.length, 0);
-    });
-  });
-
-  it("skips subdirectories", async () => {
-    await withTestContext("entity-providers-subdir", async (context) => {
-      const providersDir = join(context.projectDir, "providers");
-      const subDir = join(providersDir, "subdir");
-      await mkdir(subDir, { recursive: true });
-
-      // Create a provider in subdirectory (should be skipped)
-      await createTestFile(
-        join(subDir, "SubProvider.tsx"),
-        `export default function SubProvider() { /* empty */ }`,
-      );
-
-      // Create a provider in main directory
-      await createTestFile(
-        join(providersDir, "MainProvider.tsx"),
-        `export default function MainProvider() { /* empty */ }`,
-      );
-
-      const providers = await getProviderEntities(context.projectDir);
-      // Should only find the provider in the main directory
-      assertEquals(providers.length, 1);
-      assertEquals(providers[0]?.entity.content.includes("MainProvider"), true);
-    });
-  });
-});

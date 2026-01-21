@@ -79,7 +79,7 @@ export async function getEntityInfo(
     }
 
     const fileName = filePath.split("/").pop() || "";
-    const { type, kind, isLayout, isProvider, isComponent, isPage } = detectEntityType(
+    const { type, kind, isLayout, isComponent, isPage } = detectEntityType(
       fileName,
       frontmatter,
     );
@@ -120,7 +120,6 @@ export async function getEntityInfo(
       frontmatter,
       kind,
       isLayout,
-      isProvider,
       isComponent,
       isPage,
     };
@@ -401,93 +400,6 @@ export async function getLayoutEntity(
     }
   }
   return null;
-}
-
-export async function getProviderEntities(
-  projectDir: string,
-  adapter?: RuntimeAdapter,
-): Promise<EntityInfo[]> {
-  const providerDirs = [
-    pathHelper.join(projectDir, "providers"),
-    pathHelper.join(projectDir, "components"),
-  ];
-
-  // Check directory existence in parallel
-  const dirChecks = await parallelMap(providerDirs, async (dir) => {
-    let dirExists = false;
-    if (adapter) {
-      try {
-        const stat = await withFallback(
-          () => adapter.fs.stat(dir),
-          () => fs.stat(dir),
-          { operationName: "stat:getProviderEntities", logError: false },
-        );
-        dirExists = stat.isDirectory;
-      } catch {
-        dirExists = false;
-      }
-    } else {
-      dirExists = await fs.exists(dir);
-    }
-    return { dir, dirExists };
-  });
-
-  // Collect all file entries from existing directories
-  const allFilePaths: string[] = [];
-  for (const { dir, dirExists } of dirChecks) {
-    if (dirExists) {
-      const entries: { name: string; isFile: boolean; isDirectory: boolean }[] = [];
-      // Use withFallback to handle cross-runtime compatibility
-      // The adapter's readDir may not work in all runtimes, so fall back to compat fs
-      const dirIterator = adapter
-        ? await withFallback(
-          async () => {
-            const results: { name: string; isFile: boolean; isDirectory: boolean }[] = [];
-            for await (const entry of adapter.fs.readDir(dir)) {
-              results.push({
-                name: entry.name,
-                isFile: entry.isFile,
-                isDirectory: entry.isDirectory,
-              });
-            }
-            return results;
-          },
-          async () => {
-            const results: { name: string; isFile: boolean; isDirectory: boolean }[] = [];
-            for await (const entry of fs.readDir(dir)) {
-              results.push(entry);
-            }
-            return results;
-          },
-          { operationName: "readDir:getProviderEntities", logError: false },
-        )
-        : await (async () => {
-          const results: { name: string; isFile: boolean; isDirectory: boolean }[] = [];
-          for await (const entry of fs.readDir(dir)) {
-            results.push(entry);
-          }
-          return results;
-        })();
-      entries.push(...dirIterator);
-      for (const entry of entries) {
-        if (entry.isFile) {
-          allFilePaths.push(pathHelper.join(dir, entry.name));
-        }
-      }
-    }
-  }
-
-  // Process all files in parallel to check if they are providers
-  const entityInfos = await parallelMap(allFilePaths, async (filePath) => {
-    const info = await getEntityInfo(filePath, adapter);
-    return info?.entity.isProvider ? info : null;
-  });
-
-  // Filter out nulls and sort by priority
-  const providers = entityInfos.filter((info): info is EntityInfo => info !== null);
-  const getPriority = (e: EntityInfo): number =>
-    typeof e.entity.frontmatter.priority === "number" ? e.entity.frontmatter.priority : 0;
-  return providers.sort((a, b) => getPriority(a) - getPriority(b));
 }
 
 function getSlugFromPath(filePath: string): string {

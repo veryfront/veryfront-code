@@ -116,19 +116,6 @@ export async function generateCommand(projectDir: string, type: string, name: st
       }
       break;
     }
-    case "provider": {
-      const dir = join(projectDir, "providers");
-      await ensureDir(dir);
-      const file = join(dir, `${slug}.mdx`);
-      const content = `---\nisProvider: true\npriority: 1\n---\n\nexport default function ${
-        toComponentName(
-          slug,
-        )
-      }({ children }) {\n  return (<div className="${slug}-provider">{children}</div>);\n}\n`;
-      await fs.writeTextFile(file, content);
-      cliLogger.info(`Created ${file}`);
-      break;
-    }
     case "api": {
       const isApp = preferred === "app-router";
       if (isApp) {

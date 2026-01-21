@@ -67,18 +67,39 @@ export class HMRHandler extends BaseHandler {
   }
 
   /**
+   * Check if a file requires full page reload (server-rendered content)
+   */
+  private static requiresFullReload(path: string): boolean {
+    // MDX/MD files need full reload because content is server-rendered
+    // Config files need full reload because they affect layout/routing
+    const ext = path.split(".").pop()?.toLowerCase();
+    return ext === "mdx" || ext === "md" || path.includes("veryfront.config");
+  }
+
+  /**
    * Broadcast HMR update to all connected clients
-   * Sends individual update messages for each changed path when available
-   * Falls back to reload message if no paths provided
+   * Sends reload for server-rendered content (MDX), update for client-only files (CSS/JS)
    */
   private static broadcastUpdate(changedPaths?: string[]): void {
     const timestamp = Date.now();
     HMRHandler.metrics.broadcastsSent++;
     HMRHandler.metrics.lastBroadcastTime = timestamp;
 
-    // If we have specific changed paths, send update messages for smart HMR
-    // This allows the client to update only changed modules without full reload
-    if (changedPaths?.length) {
+    // Check if any changed file requires full reload
+    const needsFullReload = !changedPaths?.length ||
+      changedPaths.some((path) => HMRHandler.requiresFullReload(path));
+
+    if (needsFullReload) {
+      // MDX, config, or unknown changes - full reload
+      HMRHandler.broadcastMessage(JSON.stringify({ type: "reload", timestamp }));
+      HMRHandler.metrics.messagesForwarded++;
+      logger.debug("[HMRHandler] Broadcast reload", {
+        changedPaths: changedPaths?.length ?? 0,
+        totalClients: HMRHandler.clientsMap.size,
+        reason: changedPaths?.length ? "server-rendered content" : "no paths",
+      });
+    } else {
+      // CSS/JS only - smart HMR update
       for (const path of changedPaths) {
         HMRHandler.broadcastMessage(JSON.stringify({ type: "update", path, timestamp }));
         HMRHandler.metrics.messagesForwarded++;
@@ -86,15 +107,6 @@ export class HMRHandler extends BaseHandler {
       logger.debug("[HMRHandler] Broadcast update", {
         changedPaths: changedPaths.length,
         totalClients: HMRHandler.clientsMap.size,
-        totalBroadcasts: HMRHandler.metrics.broadcastsSent,
-      });
-    } else {
-      // No specific paths - fall back to full reload
-      HMRHandler.broadcastMessage(JSON.stringify({ type: "reload", timestamp }));
-      HMRHandler.metrics.messagesForwarded++;
-      logger.debug("[HMRHandler] Broadcast reload (no paths)", {
-        totalClients: HMRHandler.clientsMap.size,
-        totalBroadcasts: HMRHandler.metrics.broadcastsSent,
       });
     }
   }

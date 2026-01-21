@@ -675,7 +675,7 @@ layout: broken
         });
       });
 
-      it("should handle missing layout gracefully", async () => {
+      it("should error when explicitly specified layout is not found", async () => {
         await withTestContext("renderer-core-missing-layout", async (context) => {
           await remove(join(context.projectDir, "app"), { recursive: true });
 
@@ -694,9 +694,12 @@ layout: nonexistent
             mode: "development",
           });
 
-          // Should render without layout if not found
-          const result = await renderer.renderPage("test");
-          assertExists(result);
+          // Should error when layout is explicitly specified but not found
+          await assertRejects(
+            async () => await renderer.renderPage("test"),
+            Error,
+            'Layout "nonexistent" not found',
+          );
         });
       });
 

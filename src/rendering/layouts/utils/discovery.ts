@@ -1,12 +1,22 @@
-import {
-  memoizeAsync,
-  memoizeHash as simpleHash,
-  rendererLogger as logger,
-} from "#veryfront/utils";
+import { memoizeHash as simpleHash, rendererLogger as logger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { LayoutItem } from "#veryfront/types";
 import { dirname, extname, join } from "#veryfront/platform/compat/path-helper.ts";
 import { LAYOUT_EXTENSIONS } from "../types.ts";
+
+// Explicit cache for layout discovery - can be cleared for HMR
+const layoutDiscoveryCache = new Map<string, LayoutItem[]>();
+
+/**
+ * Clear the layout discovery cache.
+ * Call this when config or layout files change to ensure HMR works correctly.
+ */
+export function clearLayoutDiscoveryCache(): void {
+  logger.debug("[discovery] Clearing layout discovery cache", {
+    size: layoutDiscoveryCache.size,
+  });
+  layoutDiscoveryCache.clear();
+}
 
 async function discoverNestedLayoutsImpl(
   pageFilePath: string,
@@ -54,11 +64,26 @@ async function discoverNestedLayoutsImpl(
   return nestedLayouts;
 }
 
-export const discoverNestedLayouts = memoizeAsync(
-  discoverNestedLayoutsImpl,
-  (pageFilePath: string, rootDir: string, _projectDir: string, _adapter: RuntimeAdapter) =>
-    simpleHash(pageFilePath, rootDir),
-);
+/**
+ * Discover nested layouts for a page file.
+ * Results are cached for performance - call clearLayoutDiscoveryCache() to reset.
+ */
+export async function discoverNestedLayouts(
+  pageFilePath: string,
+  rootDir: string,
+  projectDir: string,
+  adapter: RuntimeAdapter,
+): Promise<LayoutItem[]> {
+  const key = simpleHash(pageFilePath, rootDir);
+
+  if (layoutDiscoveryCache.has(key)) {
+    return layoutDiscoveryCache.get(key)!;
+  }
+
+  const result = await discoverNestedLayoutsImpl(pageFilePath, rootDir, projectDir, adapter);
+  layoutDiscoveryCache.set(key, result);
+  return result;
+}
 
 async function resolveExistingFiles(
   candidates: string[],

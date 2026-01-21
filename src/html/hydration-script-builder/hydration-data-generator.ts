@@ -38,9 +38,6 @@ export function generateHydrationData(
     props: props || {},
     params: params || {},
     layouts,
-    providers: (options.providerPaths || []).map((p) =>
-      toProjectRelativePath(p, options.projectDir)
-    ),
     appPath: options.appPath
       ? toProjectRelativePath(options.appPath, options.projectDir)
       : undefined,

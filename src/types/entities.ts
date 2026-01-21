@@ -4,11 +4,9 @@ export interface Frontmatter {
   title?: string;
   description?: string;
   layout?: string;
-  provider?: string;
   tags?: string[];
   date?: string;
   published?: boolean;
-  priority?: number;
   [key: string]: string | number | boolean | string[] | undefined;
 }
 
@@ -43,12 +41,11 @@ export const EntitySchema: z.ZodType<Entity> = z.object({
     "Entity path must end with a valid file extension (.md, .mdx, .ts, .tsx, .js, .jsx)",
   ),
   slug: z.string().min(1, "Entity slug cannot be empty"),
-  type: z.enum(["page", "layout", "provider", "component"]),
+  type: z.enum(["page", "layout", "component"]),
   content: z.string(),
   frontmatter: FrontmatterSchema,
   kind: z.enum(["mdx", "tsx"]).optional(),
   isLayout: z.boolean().optional(),
-  isProvider: z.boolean().optional(),
   isComponent: z.boolean().optional(),
   isPage: z.boolean().optional(),
 });
@@ -92,12 +89,11 @@ export interface Entity {
   id: string;
   path: string;
   slug: string;
-  type: "page" | "layout" | "provider" | "component";
+  type: "page" | "layout" | "component";
   content: string;
   frontmatter: Frontmatter;
   kind?: "mdx" | "tsx";
   isLayout?: boolean;
-  isProvider?: boolean;
   isComponent?: boolean;
   isPage?: boolean;
 }
@@ -112,7 +108,6 @@ export interface EntityTypeInfo {
   type: Entity["type"];
   kind?: "mdx" | "tsx";
   isLayout: boolean;
-  isProvider: boolean;
   isComponent: boolean;
   isPage: boolean;
 }
@@ -125,11 +120,9 @@ function detectFileKind(ext: string | undefined): "mdx" | "tsx" | undefined {
 
 function detectEntityTypeFromFlags(
   isLayout: boolean,
-  isProvider: boolean,
   isComponent: boolean,
 ): Entity["type"] {
   if (isLayout) return "layout";
-  if (isProvider) return "provider";
   if (isComponent) return "component";
   return "page";
 }
@@ -147,21 +140,17 @@ export function detectEntityType(
   const isLayout = lowerBase === "layout" || baseName.endsWith("Layout") ||
     lowerBase.includes("layout") || frontmatter.isLayout === true;
 
-  const isProvider = lowerBase === "provider" || baseName.endsWith("Provider") ||
-    frontmatter.isProvider === true;
-
   const isDynamicRoute = fileName[0] === "[";
 
-  const isComponent = !isLayout && !isProvider && !isDynamicRoute &&
+  const isComponent = !isLayout && !isDynamicRoute &&
     fileName[0] === fileName[0]?.toUpperCase();
 
-  const isPage = !isLayout && !isProvider && !isComponent;
+  const isPage = !isLayout && !isComponent;
 
   return {
-    type: detectEntityTypeFromFlags(isLayout, isProvider, isComponent),
+    type: detectEntityTypeFromFlags(isLayout, isComponent),
     kind,
     isLayout,
-    isProvider,
     isComponent,
     isPage,
   };
