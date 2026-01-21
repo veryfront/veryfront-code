@@ -80,17 +80,6 @@ export const getRendererScript = () => `
           }
         }
 
-        // Load and wrap with providers (must match SSR order)
-        if (data.providers && data.providers.length > 0) {
-          for (let i = data.providers.length - 1; i >= 0; i--) {
-            const providerPath = data.providers[i];
-            const ProviderComponent = await loadComponent(providerPath);
-            if (ProviderComponent) {
-              tree = React.createElement(ProviderComponent, { children: tree });
-            }
-          }
-        }
-
         if (data.appPath) {
           const AppComponent = await loadComponent(data.appPath);
           if (AppComponent) {

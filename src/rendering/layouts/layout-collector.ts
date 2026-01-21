@@ -69,7 +69,7 @@ export class LayoutCollector {
           pagePath: pageInfo.entity.path,
           projectDir: this.projectDir,
           hasConfig: !!this.config,
-          defaultLayout: this.config?.defaultLayout,
+          layout: this.config?.layout,
         });
 
         // Skip layout resolution for .veryfront paths - these are framework-level pages
@@ -100,13 +100,13 @@ export class LayoutCollector {
         const hasExplicitFrontmatterLayout = typeof layoutValue === "string" &&
           layoutValue.length > 0;
 
-        // Collect the named layout (from frontmatter or config.defaultLayout)
+        // Collect the named layout (from frontmatter or config.layout)
         const { layoutBundle, layoutPath, layoutName } = await withSpan(
           SpanNames.LAYOUT_COLLECT_NAMED,
           () => this.collectNamedLayoutWithPath(pageInfo),
           {
             "layout.page_path": pageInfo.entity.path,
-            "layout.default_layout": this.config?.defaultLayout || "none",
+            "layout.config_layout": this.config?.layout || "none",
           },
         );
 
@@ -162,28 +162,37 @@ export class LayoutCollector {
         { "layout.page_path": pageInfo.entity.path },
       );
 
-      // If we have a layoutBundle from config.defaultLayout, add it to nestedLayouts
+      // If we have a layoutBundle from config.layout, add it to nestedLayouts
       // so the client can apply the same layout during hydration
+      // BUT: avoid duplicates if the same layout was already found via auto-discovery
       if (layoutBundle && layoutPath) {
-        // Use layoutPath (the resolved file path with extension) for kind detection
-        const kind = getLayoutKind(layoutPath);
+        const alreadyExists = nestedLayouts.some((l) => l.path === layoutPath);
+        if (!alreadyExists) {
+          // Use layoutPath (the resolved file path with extension) for kind detection
+          const kind = getLayoutKind(layoutPath);
 
-        // Prepend the defaultLayout to nestedLayouts (it wraps outermost)
-        nestedLayouts = [{
-          kind,
-          bundle: kind === "mdx" ? layoutBundle : undefined,
-          componentPath: kind === "tsx" ? layoutPath : undefined,
-          path: layoutPath,
-        }, ...nestedLayouts];
-
-        logger.debug(
-          "[LayoutCollector] Added defaultLayout to nestedLayouts for client hydration",
-          {
-            layoutPath,
+          // Prepend the config layout to nestedLayouts (it wraps outermost)
+          nestedLayouts = [{
             kind,
-            totalNestedLayouts: nestedLayouts.length,
-          },
-        );
+            bundle: kind === "mdx" ? layoutBundle : undefined,
+            componentPath: kind === "tsx" ? layoutPath : undefined,
+            path: layoutPath,
+          }, ...nestedLayouts];
+
+          logger.debug(
+            "[LayoutCollector] Added config.layout to nestedLayouts for client hydration",
+            {
+              layoutPath,
+              kind,
+              totalNestedLayouts: nestedLayouts.length,
+            },
+          );
+        } else {
+          logger.debug(
+            "[LayoutCollector] Skipping config.layout - already in nestedLayouts",
+            { layoutPath },
+          );
+        }
 
         // Return undefined layoutBundle since we're now using nestedLayouts
         // This ensures SSR and client hydration apply layouts the same way
@@ -209,20 +218,34 @@ export class LayoutCollector {
       layoutName: string | undefined;
     }
   > {
-    const layoutValue = pageInfo.entity.frontmatter.layout;
+    const layoutValue = pageInfo.entity.frontmatter.layout as string | boolean | undefined;
 
     logger.debug("[LayoutCollector] collectNamedLayoutWithPath called", {
       pagePath: pageInfo.entity.path,
       layoutValue,
       frontmatterKeys: Object.keys(pageInfo.entity.frontmatter),
-      defaultLayout: this.config?.defaultLayout,
+      configLayout: this.config?.layout,
     });
 
-    const layoutName = (typeof layoutValue === "boolean" && !layoutValue) || layoutValue === "false"
-      ? null
-      : (typeof layoutValue === "string" ? layoutValue : null) ||
-        this.config?.defaultLayout ||
-        null;
+    // Determine layout name from frontmatter or config
+    // Priority: frontmatter.layout > config.layout > null
+    // Both support `false` to explicitly disable layout
+    let layoutName: string | null = null;
+
+    // Check frontmatter first
+    if (layoutValue === false || layoutValue === "false") {
+      // Frontmatter explicitly disables layout
+      layoutName = null;
+    } else if (typeof layoutValue === "string" && layoutValue.length > 0) {
+      // Frontmatter specifies a layout
+      layoutName = layoutValue;
+    } else if (this.config?.layout === false) {
+      // Config explicitly disables layout
+      layoutName = null;
+    } else if (typeof this.config?.layout === "string" && this.config.layout.length > 0) {
+      // Config specifies a layout
+      layoutName = this.config.layout;
+    }
 
     logger.debug("[LayoutCollector] Resolved layoutName:", { layoutName });
 
@@ -238,14 +261,33 @@ export class LayoutCollector {
     logger.debug("[LayoutCollector] Layout entity found:", { found: !!layoutInfo, layoutName });
 
     if (!layoutInfo) {
-      return { layoutBundle: undefined, layoutPath: undefined, layoutName: undefined };
+      // Layout was explicitly specified but not found - this is an error
+      const source = typeof layoutValue === "string" ? "frontmatter" : "config";
+      throw new Error(
+        `Layout "${layoutName}" not found. Specified in ${source} for page "${pageInfo.entity.path}". ` +
+          `Check that the layout file exists.`,
+      );
     }
 
-    logger.debug("Compiling named layout", {
+    // Check layout kind - only MDX files need compilation
+    const kind = getLayoutKind(layoutInfo.entity.path);
+
+    logger.debug("Processing named layout", {
       layoutName,
+      layoutPath: layoutInfo.entity.path,
+      kind,
       contentLength: layoutInfo.entity.content.length,
     });
 
+    // For TSX layouts, skip MDX compilation - they'll be loaded as components
+    if (kind === "tsx") {
+      logger.debug("Named layout is TSX - skipping MDX compilation", {
+        layoutPath: layoutInfo.entity.path,
+      });
+      return { layoutBundle: undefined, layoutPath: layoutInfo.entity.path, layoutName };
+    }
+
+    // MDX layouts need compilation
     const layoutBundle = await this.compileMDX(
       layoutInfo.entity.content,
       { ...layoutInfo.entity.frontmatter, isLayout: true },
@@ -284,8 +326,14 @@ export class LayoutCollector {
     const nestedLayouts: LayoutItem[] = [];
 
     // Priority 1: Check config.layout from veryfront.config.ts
-    // Note: config.defaultLayout is handled separately by collectNamedLayoutWithPath()
     const configLayout = this.config?.layout;
+
+    // layout: false explicitly disables layout
+    if (configLayout === false) {
+      logger.debug("[LayoutCollector] Layout disabled via config.layout: false");
+      return nestedLayouts;
+    }
+
     if (configLayout && isValidLayoutPath(configLayout)) {
       // Config layout can be absolute or relative to project
       const layoutPath = configLayout.startsWith("/") || configLayout.startsWith(this.projectDir)
@@ -326,13 +374,19 @@ export class LayoutCollector {
           kind,
         });
         return nestedLayouts;
+      } else {
+        // config.layout is explicitly set but file doesn't exist - this is an error
+        throw new Error(
+          `Layout file not found: "${configLayout}" (resolved to "${layoutPath}"). ` +
+            `Check your veryfront.config.ts 'layout' setting.`,
+        );
       }
     }
 
     // Priority 2: Convention fallback - auto-discover layout.* in components folder
-    // This provides a fallback when layout is not explicitly configured
+    // This ONLY runs when config.layout is NOT set at all
     // Check all extensions in parallel, use first match by extension priority order
-    if (nestedLayouts.length === 0) {
+    if (nestedLayouts.length === 0 && !configLayout) {
       const existsFn = (wrappedAdapter as { exists: (path: string) => Promise<boolean> }).exists;
       const foundExt = await parallelFind([...LAYOUT_EXTENSIONS], async (ext) => {
         const layoutPath = join(this.projectDir, "components", `layout.${ext}`);

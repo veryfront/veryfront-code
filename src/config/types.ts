@@ -14,13 +14,10 @@ export interface VeryfrontConfig {
     rsc?: boolean;
   };
   router?: "app" | "pages" | undefined;
-  defaultLayout?: string | undefined;
-  /** Path to the root layout component (e.g., 'components/layout.tsx') */
-  layout?: string;
-  /** Path to the app provider component for global context (e.g., 'components/providers.tsx') */
-  provider?: string;
-  /** Path to the app wrapper component (e.g., 'components/app.tsx') */
-  app?: string;
+  /** Path to the layout component (e.g., 'components/layout.tsx'), or false to disable */
+  layout?: string | false;
+  /** Path to the app wrapper component (e.g., 'components/app.tsx'), or false to disable */
+  app?: string | false;
   theme?: {
     colors?: Record<string, string>;
   };

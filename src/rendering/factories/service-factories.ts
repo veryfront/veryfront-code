@@ -16,7 +16,6 @@ import type { CompileMDXFunction } from "../orchestrator/compiler-service.ts";
 import { PageResolver, type PageResolverOptions } from "../page-resolution/index.ts";
 import { LayoutCollector, type LayoutCollectorOptions } from "../layouts/layout-collector.ts";
 import { LayoutCompiler, type LayoutCompilerOptions } from "../layouts/layout-compiler.ts";
-import { ProviderManager, type ProviderManagerOptions } from "../layouts/provider-manager.ts";
 import { SSRRenderer } from "../ssr-renderer.ts";
 import { ComponentRegistry } from "../ssr/component-registry.ts";
 import { VirtualModuleSystem } from "../virtual-module-system.ts";
@@ -82,29 +81,6 @@ export function createLayoutCompiler(
     compileMDX,
   };
   return new LayoutCompiler(options);
-}
-
-/**
- * Create a ProviderManager bound to the render context
- *
- * ProviderManager discovers and manages React context providers.
- * Note: Has internal caching keyed by project ID for efficiency.
- *
- * @param ctx - Render context
- * @param compileMDX - MDX compilation function
- * @returns New ProviderManager instance
- */
-export function createProviderManager(
-  ctx: RenderContext,
-  compileMDX: CompileMDXFunction,
-): ProviderManager {
-  const options: ProviderManagerOptions = {
-    projectDir: ctx.projectDir,
-    adapter: ctx.adapter,
-    config: ctx.config,
-    compileMDX,
-  };
-  return new ProviderManager(options);
 }
 
 /**
@@ -194,7 +170,6 @@ export interface ContextBoundServices {
   pageResolver: PageResolver;
   layoutCollector: LayoutCollector;
   layoutCompiler: LayoutCompiler;
-  providerManager: ProviderManager;
   ssrRenderer: SSRRenderer;
   componentRegistry: ComponentRegistry;
   virtualModules: VirtualModuleSystem;
@@ -222,7 +197,6 @@ export function createContextBoundServices(
     pageResolver: createPageResolver(ctx),
     layoutCollector: createLayoutCollector(ctx, compileMDX),
     layoutCompiler: createLayoutCompiler(ctx, compileMDX),
-    providerManager: createProviderManager(ctx, compileMDX),
     ssrRenderer: createSSRRenderer(ctx),
     componentRegistry,
     virtualModules,

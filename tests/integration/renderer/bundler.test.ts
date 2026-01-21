@@ -98,9 +98,9 @@ custom: value
           recursive: true,
         });
 
-        // Create a provider MDX file with named exports
+        // Create an MDX file with named exports
         const providerContent = `---
-isProvider: true
+title: TestProvider
 ---
 
 import { createContext } from "react";
@@ -145,7 +145,7 @@ export default function TestProvider({ children }) {
 
         // Create the provider file
         const providerContent = `---
-isProvider: true
+title: TestProvider
 ---
 
 export const TestContext = "imported-value";

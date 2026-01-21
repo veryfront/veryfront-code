@@ -37,7 +37,6 @@ export interface HTMLGenerationContext {
   pageBundle: PageBundle;
   layoutBundle: MdxBundle | undefined;
   nestedLayouts: LayoutItem[];
-  providerInfos: EntityInfo[];
   collectedMetadata: Record<string, unknown>;
   slug: string;
   ssrHash: string;
@@ -320,7 +319,6 @@ export class HTMLGenerator {
         path: l.path,
         componentPath: l.componentPath,
       })),
-      providerPaths: context.providerInfos.map((p) => p.entity.path),
       appPath: appComponentPath,
       pagePath,
       nonce: context.options?.nonce,

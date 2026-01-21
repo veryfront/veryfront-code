@@ -505,7 +505,6 @@ description: This is bad YAML
         assertEquals(entity?.entity.type, "page");
         assertEquals(entity?.entity.isPage, true);
         assertEquals(entity?.entity.isLayout, false);
-        assertEquals(entity?.entity.isProvider, false);
       });
     });
 

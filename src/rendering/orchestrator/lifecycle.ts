@@ -14,7 +14,7 @@ import {
   RedisCacheStore,
 } from "../cache/stores/index.ts";
 import type { CacheStore } from "../cache/types.ts";
-import { LayoutCollector, LayoutCompiler, ProviderManager } from "../layouts/index.ts";
+import { LayoutCollector, LayoutCompiler } from "../layouts/index.ts";
 import { PageRenderer } from "../page-renderer.ts";
 import { PageResolver } from "../page-resolution/index.ts";
 import { ElementValidator } from "../element-validator/index.ts";
@@ -39,7 +39,6 @@ export interface RendererServices {
   mdxCacheAdapter: MDXCacheAdapter;
   layoutCollector: LayoutCollector;
   layoutCompiler: LayoutCompiler;
-  providerManager: ProviderManager;
   elementValidator: ElementValidator;
   ssrRenderer: SSRRenderer;
   pageRenderer: PageRenderer;
@@ -147,13 +146,6 @@ export class RendererLifecycle {
       compileMDX: compileMDXProxy,
     });
 
-    const providerManager = new ProviderManager({
-      projectDir: this.configManager.getProjectDir(),
-      adapter: this.adapter,
-      config,
-      compileMDX: compileMDXProxy,
-    });
-
     // Initialize rendering pipeline components
     const debugMode = this.configManager.isDebugMode();
 
@@ -192,7 +184,6 @@ export class RendererLifecycle {
       mdxCacheAdapter,
       layoutCollector,
       layoutCompiler,
-      providerManager,
       elementValidator,
       ssrRenderer,
       pageRenderer,
@@ -276,9 +267,6 @@ export class RendererLifecycle {
 
     // Clear component registry state
     this.services.componentRegistry.clear();
-
-    // Clear provider cache to pick up provider changes
-    this.services.providerManager.clearCache();
   }
 
   clearSlugCache(slug: string): void {

@@ -2,7 +2,6 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import { getContentHash } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { LayoutItem, MdxBundle } from "#veryfront/types";
-import type { EntityInfo } from "#veryfront/types";
 import { compileMDXLayouts } from "./utils/compiler.ts";
 
 export interface LayoutCompilerOptions {
@@ -34,7 +33,6 @@ export class LayoutCompiler {
   async computeDependencyHash(
     layoutBundle: MdxBundle | undefined,
     nestedLayouts: LayoutItem[],
-    providerInfos: EntityInfo[],
   ): Promise<string> {
     let depsHash = "";
 
@@ -58,14 +56,6 @@ export class LayoutCompiler {
           }
         } else if (item.bundle?.compiledCode) {
           depParts.push(await getContentHash(String(item.bundle.compiledCode)));
-        }
-      }
-
-      for (const p of providerInfos) {
-        try {
-          depParts.push(await getContentHash(String(p.entity.content || "")));
-        } catch (e) {
-          logger.debug("[LayoutCompiler] provider dep hash read failed", e as Error);
         }
       }
 

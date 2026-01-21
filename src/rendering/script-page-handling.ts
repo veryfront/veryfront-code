@@ -156,7 +156,6 @@ export async function handleScriptPage(
         mode: options.mode as "development" | "production",
         config: options.config,
         nestedLayouts: [],
-        providerPaths: [],
         appPath: appComponentPath,
         nonce: options.nonce,
       };

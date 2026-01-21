@@ -88,7 +88,6 @@ export class VeryfrontRenderer {
       moduleServerUrl: this.moduleServerUrl,
       layoutCollector: this.services.layoutCollector,
       layoutCompiler: this.services.layoutCompiler,
-      providerManager: this.services.providerManager,
       layoutCache: createLayoutComponentCache(),
       componentRegistry: this.services.componentRegistry.getAllAsComponents(),
     });

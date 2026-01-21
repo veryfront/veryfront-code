@@ -31,10 +31,10 @@ export const veryfrontConfigSchema = z
       rsc: z.boolean().optional(),
     }).partial().optional(),
     router: z.enum(["app", "pages"]).optional(),
-    defaultLayout: z.string().optional(),
-    layout: z.string().optional(),
-    provider: z.string().optional(),
-    app: z.string().optional(),
+    /** Path to the layout component (e.g., 'components/layout.tsx'), or false to disable */
+    layout: z.union([z.string(), z.literal(false)]).optional(),
+    /** Path to the app wrapper component (e.g., 'components/app.tsx'), or false to disable */
+    app: z.union([z.string(), z.literal(false)]).optional(),
     theme: z
       .object({ colors: z.record(z.string()).optional() })
       .partial()

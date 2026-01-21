@@ -5,7 +5,6 @@ import type { LayoutItem, MdxBundle } from "#veryfront/types";
 export async function computeDepsHash(
   layoutBundle: MdxBundle | undefined,
   nestedLayouts: LayoutItem[],
-  providerInfos: Array<{ entity: { content: string } }>,
   adapter: RuntimeAdapter,
 ): Promise<string> {
   let depsHash = "";
@@ -28,14 +27,6 @@ export async function computeDepsHash(
         }
       } else if (item.bundle?.compiledCode) {
         depParts.push(await getContentHash(String(item.bundle.compiledCode)));
-      }
-    }
-
-    for (const p of providerInfos) {
-      try {
-        depParts.push(await getContentHash(String(p.entity.content || "")));
-      } catch (e) {
-        logger.debug("[layout] provider dep hash read failed", e as Error);
       }
     }
 

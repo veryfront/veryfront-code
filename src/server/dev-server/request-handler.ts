@@ -8,10 +8,12 @@ import {
 } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import { clearConfigCache } from "#veryfront/config";
 import { ErrorOverlay } from "./error-overlay/index.ts";
 import type { HMRServer } from "./hmr-server.ts";
 import { createResponseBuilder } from "#veryfront/security/index.ts";
 import { resetApiHandler } from "../handlers/request/api/pages-api-handler.ts";
+import { clearLayoutDiscoveryCache } from "#veryfront/rendering/layouts/index.ts";
 
 export class RequestHandler {
   private universalHandler?: (req: Request) => Promise<Response>;
@@ -155,6 +157,10 @@ export class RequestHandler {
     resetApiHandler(this.projectDir).catch((error) => {
       logger.debug("[dev] resetApiHandler failed", error);
     });
+    // Clear config cache so HMR picks up config changes
+    clearConfigCache();
+    // Clear layout discovery cache so HMR picks up layout changes
+    clearLayoutDiscoveryCache();
   }
 
   private handleServerError(error: unknown): Response {

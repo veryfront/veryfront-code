@@ -86,24 +86,19 @@ This is a test post.
     });
   });
 
-  it("named layout with providers", async () => {
-    await withTestContext("layout-named-providers", async (context) => {
-      // Create named layout
+  it("named layout", async () => {
+    await withTestContext("layout-named", async (context) => {
+      // Create named layout with isLayout frontmatter
       await mkdir(join(context.projectDir, "layouts"), { recursive: true });
       await writeTextFile(
         join(context.projectDir, "layouts/main.mdx"),
-        `# Main Layout
+        `---
+isLayout: true
+---
+
+# Main Layout
 
 <slot />`,
-      );
-
-      // Create provider
-      await mkdir(join(context.projectDir, "providers"), { recursive: true });
-      await writeTextFile(
-        join(context.projectDir, "providers/theme.mdx"),
-        `export default function ThemeProvider({ children }) {
-  return <div className="theme-provider">{children}</div>;
-}`,
       );
 
       // Create page with layout
