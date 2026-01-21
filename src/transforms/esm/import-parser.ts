@@ -153,6 +153,25 @@ async function resolveLocalImportPath(
   const fromDir = fromFile.substring(0, fromFile.lastIndexOf("/"));
   const basePath = resolveRelative(fromDir, importSpecifier);
 
+  // For API-backed filesystems, prefer adapter.fs.resolveFile as it:
+  // 1. Handles multiple extensions (.tsx, .ts, .jsx, .js, .mdx, .md)
+  // 2. Handles index files (e.g., components/index.ts)
+  // 3. Uses API search as fallback (finds files not in initial file list)
+  // 4. Returns paths in the format the adapter expects (without leading /)
+  if (adapter?.fs.resolveFile) {
+    try {
+      // Normalize path: remove leading slash for API adapters
+      const normalizedPath = basePath.replace(/^\/+/, "");
+      const resolved = await adapter.fs.resolveFile(normalizedPath);
+      if (resolved) {
+        return resolved;
+      }
+    } catch {
+      // Fall through to traditional resolution
+    }
+  }
+
+  // Traditional resolution (for local filesystem or when adapter.resolveFile fails)
   if (/\.(tsx?|jsx?|mjs|cjs|mdx)$/.test(importSpecifier)) {
     if (await checkFileExists(basePath, adapter)) {
       return basePath;
@@ -160,6 +179,7 @@ async function resolveLocalImportPath(
     return null;
   }
 
+  // Try with extensions
   for (const ext of EXTENSIONS) {
     const fullPath = basePath + ext;
     if (await checkFileExists(fullPath, adapter)) {
@@ -167,6 +187,7 @@ async function resolveLocalImportPath(
     }
   }
 
+  // Try index files
   for (const ext of EXTENSIONS) {
     const indexPath = basePath + "/index" + ext;
     if (await checkFileExists(indexPath, adapter)) {
