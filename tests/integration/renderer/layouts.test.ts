@@ -525,7 +525,7 @@ describe(
             frontmatter: {},
           };
 
-          const hash = await computeDepsHash(layoutBundle, [], [], adapter);
+          const hash = await computeDepsHash(layoutBundle, [], adapter);
 
           assertExists(hash);
           assert(hash.length > 0);
@@ -550,27 +550,7 @@ describe(
             },
           ];
 
-          const hash = await computeDepsHash(undefined, nestedLayouts, [], adapter);
-
-          assertExists(hash);
-          assert(hash.length > 0);
-        });
-      });
-
-      it("computes hash for providers", async () => {
-        await withTestContext("layouts-hash-providers", async (_context) => {
-          const adapter = await getAdapter();
-
-          const providerInfos = [
-            {
-              entity: {
-                content:
-                  "export default function Provider({ children }) { return <div>{children}</div>; }",
-              },
-            },
-          ];
-
-          const hash = await computeDepsHash(undefined, [], providerInfos, adapter);
+          const hash = await computeDepsHash(undefined, nestedLayouts, adapter);
 
           assertExists(hash);
           assert(hash.length > 0);
@@ -600,18 +580,10 @@ describe(
             },
           ];
 
-          const providerInfos = [
-            {
-              entity: {
-                content:
-                  "export default function Provider({ children }) { return <div>{children}</div>; }",
-              },
-            },
-          ];
-
-          const hash = await computeDepsHash(layoutBundle, nestedLayouts, providerInfos, adapter);
+          const hash = await computeDepsHash(layoutBundle, nestedLayouts, adapter);
 
           assertExists(hash);
+          // Hash combines layoutBundle hash and nested layout hash with ":"
           assert(hash.includes(":"));
         });
       });
@@ -620,7 +592,7 @@ describe(
         await withTestContext("layouts-hash-empty", async (_context) => {
           const adapter = await getAdapter();
 
-          const hash = await computeDepsHash(undefined, [], [], adapter);
+          const hash = await computeDepsHash(undefined, [], adapter);
 
           assertEquals(hash, "");
         });
@@ -638,7 +610,7 @@ describe(
             },
           ];
 
-          const hash = await computeDepsHash(undefined, nestedLayouts, [], adapter);
+          const hash = await computeDepsHash(undefined, nestedLayouts, adapter);
 
           assertExists(hash);
         });
@@ -659,8 +631,8 @@ describe(
             frontmatter: {},
           };
 
-          const hash1 = await computeDepsHash(bundle1, [], [], adapter);
-          const hash2 = await computeDepsHash(bundle2, [], [], adapter);
+          const hash1 = await computeDepsHash(bundle1, [], adapter);
+          const hash2 = await computeDepsHash(bundle2, [], adapter);
 
           assert(hash1 !== hash2);
         });
@@ -697,7 +669,6 @@ describe(
           const result = await applyLayoutsESM(
             pageElement,
             layoutBundle,
-            [],
             [],
             context.projectDir,
             {},
@@ -757,7 +728,6 @@ describe(
             pageElement,
             undefined,
             nestedLayouts,
-            [],
             context.projectDir,
             {},
             cache,
@@ -780,7 +750,6 @@ describe(
             pageElement,
             undefined,
             [],
-            [],
             context.projectDir,
             {},
             cache,
@@ -788,56 +757,6 @@ describe(
           );
 
           assertEquals(result, pageElement);
-        });
-      });
-
-      it("applies providers after layouts", async () => {
-        await withTestContext("layouts-apply-providers-esm", async (context) => {
-          const adapter = await getAdapter();
-          const cache = new LRUCache<string, any>({ maxEntries: 10 });
-
-          await writeTextFile(
-            `${context.projectDir}/deno.json`,
-            JSON.stringify({
-              imports: {
-                "react": "https://esm.sh/react@19.1.1",
-              },
-            }),
-          );
-
-          const pageElement = React.createElement("div", {}, "Page");
-
-          const providerItems: any[] = [
-            {
-              kind: "mdx",
-              entityInfo: {
-                entity: { id: "p1", slug: "p1", type: "provider", content: "", frontmatter: {} },
-              },
-              bundle: {
-                compiledCode: `
-                import React from 'react';
-                export function MDXLayout({ children }) {
-                  return React.createElement('div', { className: 'provider' }, children);
-                }
-              `,
-                frontmatter: {},
-              },
-            },
-          ];
-
-          const result = await applyLayoutsESM(
-            pageElement,
-            undefined,
-            [],
-            providerItems,
-            context.projectDir,
-            {},
-            cache,
-            adapter,
-          );
-
-          assertExists(result);
-          assertEquals(typeof result, "object");
         });
       });
     });
@@ -864,7 +783,6 @@ describe(
           const result = await applyLayoutsFunctionBody(
             pageElement,
             layoutBundle,
-            [],
             [],
             {},
             cache,
@@ -903,7 +821,6 @@ describe(
             pageElement,
             undefined,
             nestedLayouts,
-            [],
             {},
             cache,
             context.projectDir,
@@ -915,63 +832,7 @@ describe(
         });
       });
 
-      it("applies providers in reverse order (function body)", async () => {
-        await withTestContext("layouts-providers-function-body", async (context) => {
-          const adapter = await getAdapter();
-          const cache = new LRUCache<string, any>({ maxEntries: 10 });
-
-          const pageElement = React.createElement("div", {}, "Page");
-
-          const providerItems: any[] = [
-            {
-              kind: "mdx",
-              entityInfo: {
-                entity: { id: "p1", slug: "p1", type: "provider", content: "", frontmatter: {} },
-              },
-              bundle: {
-                compiledCode: `
-                function Provider(props) {
-                  return React.createElement('div', { className: 'provider1' }, props.children);
-                }
-                return { default: Provider };
-              `,
-                frontmatter: {},
-              },
-            },
-            {
-              kind: "mdx",
-              entityInfo: {
-                entity: { id: "p2", slug: "p2", type: "provider", content: "", frontmatter: {} },
-              },
-              bundle: {
-                compiledCode: `
-                function Provider(props) {
-                  return React.createElement('div', { className: 'provider2' }, props.children);
-                }
-                return { default: Provider };
-              `,
-                frontmatter: {},
-              },
-            },
-          ];
-
-          const result = await applyLayoutsFunctionBody(
-            pageElement,
-            undefined,
-            [],
-            providerItems,
-            {},
-            cache,
-            context.projectDir,
-            adapter,
-          );
-
-          assertExists(result);
-          assertEquals(typeof result, "object");
-        });
-      });
-
-      it("handles empty layouts and providers", async () => {
+      it("handles empty layouts", async () => {
         await withTestContext("layouts-empty-function-body", async (context) => {
           const adapter = await getAdapter();
           const cache = new LRUCache<string, any>({ maxEntries: 10 });
@@ -981,7 +842,6 @@ describe(
           const result = await applyLayoutsFunctionBody(
             pageElement,
             undefined,
-            [],
             [],
             {},
             cache,
@@ -1033,7 +893,6 @@ describe(
             pageElement,
             layoutBundle,
             [],
-            [],
             {},
             cache,
             context.projectDir,
@@ -1070,7 +929,6 @@ describe(
           const result = await applyLayoutsFunctionBody(
             pageElement,
             layoutBundle,
-            [],
             [],
             {},
             cache,
@@ -1110,7 +968,6 @@ describe(
             pageElement,
             layoutBundle,
             [],
-            [],
             customComponents,
             cache,
             context.projectDir,
@@ -1122,40 +979,6 @@ describe(
         });
       });
 
-      it("handles provider without compiledCode", async () => {
-        await withTestContext("layouts-no-compiled-code", async (context) => {
-          const adapter = await getAdapter();
-          const cache = new LRUCache<string, any>({ maxEntries: 10 });
-
-          const pageElement = React.createElement("div", {}, "Page");
-
-          const providerItems: any[] = [
-            {
-              kind: "mdx",
-              entityInfo: {
-                entity: { id: "p1", slug: "p1", type: "provider", content: "", frontmatter: {} },
-              },
-              bundle: {
-                compiledCode: "", // Empty code
-                frontmatter: {},
-              },
-            },
-          ];
-
-          const result = await applyLayoutsFunctionBody(
-            pageElement,
-            undefined,
-            [],
-            providerItems,
-            {},
-            cache,
-            context.projectDir,
-            adapter,
-          );
-
-          assertEquals(result, pageElement);
-        });
-      });
     });
 
     describe("Integration Tests", () => {
@@ -1197,7 +1020,7 @@ describe(
             assertExists(layout!.bundle);
           }
 
-          const hash = await computeDepsHash(undefined, layouts, [], adapter);
+          const hash = await computeDepsHash(undefined, layouts, adapter);
           assertExists(hash);
 
           const pageElement = React.createElement("article", {}, "Post Content");
@@ -1207,7 +1030,6 @@ describe(
             pageElement,
             undefined,
             layouts,
-            [],
             {},
             cache,
             context.projectDir,
@@ -1263,7 +1085,6 @@ describe(
             pageElement,
             undefined,
             layouts,
-            [],
             {},
             cache,
             context.projectDir,
