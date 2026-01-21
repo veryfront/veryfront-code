@@ -19,6 +19,11 @@ import { ReadOperations } from "./read-operations.ts";
 import { DirectoryOperations } from "./directory-operations.ts";
 import { StatOperations } from "./stat-operations.ts";
 import { buildFileListCacheKey } from "./cache-keys.ts";
+import {
+  clearProjectClasses,
+  getProjectClasses,
+  updateProjectClasses,
+} from "#veryfront/html/styles-builder/class-cache.ts";
 
 const INVALIDATION_DEBOUNCE_MS = 100;
 const WS_RECONNECT_DELAY_MS = 5000;
@@ -164,9 +169,15 @@ export class VeryfrontFSAdapter implements FSAdapter {
     const files = await this.fetchFileList();
     this.cache.set(cacheKey, files);
 
+    // Extract and cache Tailwind classes from source files for CSS generation
+    // This ensures client-only classes (skeletons, loading states) are included
+    const projectKey = this.getProjectKey();
+    updateProjectClasses(projectKey, files);
+
     logger.debug("[VeryfrontFSAdapter] Fetched files during initialization", {
       count: files.length,
       cacheKey,
+      projectKey,
     });
 
     this.initialized = true;
@@ -498,9 +509,15 @@ export class VeryfrontFSAdapter implements FSAdapter {
         // Use setAsync to ensure Redis has fresh data before browser refresh
         // This prevents race conditions where other pods read stale Redis cache
         await this.cache.setAsync(cacheKey, files);
+
+        // Re-extract Tailwind classes from updated files
+        const projectKey = this.getProjectKey();
+        updateProjectClasses(projectKey, files);
+
         logger.debug("[VeryfrontFSAdapter] Fresh files cached (memory + Redis)", {
           cacheKey,
           fileCount: files.length,
+          projectKey,
         });
       } catch (error) {
         logger.warn("[VeryfrontFSAdapter] Failed to fetch files during selective invalidation", {
@@ -588,9 +605,15 @@ export class VeryfrontFSAdapter implements FSAdapter {
         // Use setAsync to ensure Redis has fresh data before browser refresh
         // This prevents race conditions where other pods read stale Redis cache
         await this.cache.setAsync(cacheKey, files);
+
+        // Re-extract Tailwind classes from updated files
+        const projectKey = this.getProjectKey();
+        updateProjectClasses(projectKey, files);
+
         logger.debug("[VeryfrontFSAdapter] FRESH FILES FETCHED", {
           cacheKey,
           fileCount: files.length,
+          projectKey,
         });
       } catch (error) {
         logger.warn("[VeryfrontFSAdapter] Failed to fetch files during invalidation", { error });
@@ -693,6 +716,28 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   getProjectData(): Project | undefined {
     return this.projectData;
+  }
+
+  /**
+   * Get the project key used for class caching.
+   * Format: {projectSlug}:{sourceType}:{qualifier}
+   */
+  getProjectKey(): string {
+    const slug = this.contentContext?.projectSlug || this.projectSlug || "__single__";
+    const sourceType = this.contentContext?.sourceType || "branch";
+    const qualifier = this.contentContext?.branch ||
+      this.contentContext?.environmentName ||
+      this.contentContext?.releaseId ||
+      "main";
+    return `${slug}:${sourceType}:${qualifier}`;
+  }
+
+  /**
+   * Get cached Tailwind classes for this project.
+   * Used by CSS generators to include all project classes.
+   */
+  getCachedClasses(): Set<string> | undefined {
+    return getProjectClasses(this.getProjectKey());
   }
 
   /**

@@ -364,20 +364,44 @@ function generateAspectRatioAliases(classes: string[]): string {
 }
 
 /**
+ * Options for CSS generation
+ */
+export interface GenerateCSSOptions {
+  /** Tailwind configuration */
+  tailwindConfig?: TailwindConfig;
+  /** Pre-extracted project classes from source files (for complete coverage) */
+  projectClasses?: Set<string> | string[];
+}
+
+/**
  * Generate Tailwind CSS from HTML content
+ *
+ * @param html - Rendered HTML to extract classes from
+ * @param options - Generation options including project-wide classes
  */
 export async function generateTailwindCSS(
   html: string,
-  tailwindConfig?: TailwindConfig,
+  options?: GenerateCSSOptions | TailwindConfig,
 ): Promise<string> {
   try {
-    const compiler = await getCompiler(tailwindConfig);
+    // Handle legacy signature (tailwindConfig as second param)
+    const opts: GenerateCSSOptions = options && typeof options === "object" && "tailwind" in options
+      ? { tailwindConfig: options as TailwindConfig }
+      : (options as GenerateCSSOptions) ?? {};
+
+    const compiler = await getCompiler(opts.tailwindConfig);
     const extractedClasses = extractClassNames(html);
 
-    // Merge extracted classes with safelist
+    // Merge: extracted from HTML + safelist + project-wide classes
     const classSet = new Set(extractedClasses);
     for (const cls of SAFELIST_CLASSES) {
       classSet.add(cls);
+    }
+    // Add project-wide classes (from source file scanning)
+    if (opts.projectClasses) {
+      for (const cls of opts.projectClasses) {
+        classSet.add(cls);
+      }
     }
     const classes = Array.from(classSet);
 
