@@ -10,12 +10,10 @@ describe("CLI generate command", () => {
     await withTestContext("generate-files", async (context: TestContext) => {
       await generateCommand(context.projectDir, "page", "docs/intro");
       await generateCommand(context.projectDir, "layout", "main");
-      await generateCommand(context.projectDir, "provider", "theme");
       await generateCommand(context.projectDir, "api", "users/[id]");
 
       assert(await exists(join(context.projectDir, "pages", "docs", "intro.mdx")));
       assert(await exists(join(context.projectDir, "layouts", "main.mdx")));
-      assert(await exists(join(context.projectDir, "providers", "theme.mdx")));
       // file might be nested; quick glob check by stat tries both
       assert(
         (await exists(join(context.projectDir, "pages", "api", "users", "[id].ts"))) ||

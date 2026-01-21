@@ -206,7 +206,7 @@ isLayout: true
       const collector = new LayoutCollector({
         projectDir,
         adapter,
-        config: { defaultLayout: "default" },
+        config: { layout: "default" },
         compileMDX: mockCompileMDX,
       });
 
