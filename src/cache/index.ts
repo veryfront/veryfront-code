@@ -28,7 +28,6 @@ export {
   buildComponentCacheKey,
   buildConfigCacheKey,
   buildContentHashCacheKey,
-  buildContentHashKey,
   buildDirCacheKeyPrefix,
   buildErrorPageCacheKey,
   buildFileCacheKeyPrefix,

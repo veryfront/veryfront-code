@@ -65,28 +65,3 @@ ${themeVars}
 ${customCSS}`;
 }
 
-/**
- * Convert project's tailwind.config.js to Tailwind v4 @theme format
- * This is a compatibility layer - projects should migrate to @theme CSS
- *
- * @deprecated Projects should use @theme CSS directly instead
- */
-export function convertTailwindConfigForBrowser(code: string): string {
-  if (!code) return "";
-
-  // For v4, we don't use JavaScript config anymore
-  // Return empty - project should define @theme in CSS
-  console.warn(
-    "[Tailwind v4] JavaScript config is deprecated. Use @theme CSS directive instead.",
-  );
-  return "";
-}
-
-/**
- * @deprecated Use generateTailwindV4Theme instead
- */
-export function generateTailwindConfig(_userConfig?: TailwindConfig): string {
-  // For backwards compatibility, return empty
-  // v4 uses @theme CSS, not JavaScript config
-  return "";
-}

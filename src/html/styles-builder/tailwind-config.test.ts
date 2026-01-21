@@ -1,8 +1,6 @@
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
-  convertTailwindConfigForBrowser,
-  generateTailwindConfig,
   generateTailwindV4Theme,
   getTailwindCDNUrl,
 } from "./tailwind-config.ts";
@@ -27,44 +25,6 @@ describe("tailwind-config", () => {
         getTailwindCDNUrl({ plugins: ["forms", "typography"] }),
         "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4",
       );
-    });
-  });
-
-  describe("convertTailwindConfigForBrowser", () => {
-    it("should return empty string for Tailwind v4 (JS config deprecated)", () => {
-      // Tailwind v4 uses CSS @theme directive instead of JS config
-      const input = `export default {
-  theme: {
-    extend: {}
-  }
-}`;
-      const result = convertTailwindConfigForBrowser(input);
-      assertEquals(result, "");
-    });
-
-    it("should handle empty string", () => {
-      assertEquals(convertTailwindConfigForBrowser(""), "");
-    });
-  });
-
-  describe("generateTailwindConfig", () => {
-    it("should return empty string for Tailwind v4 (JS config deprecated)", () => {
-      // Tailwind v4 uses @theme CSS instead of JavaScript config
-      const result = generateTailwindConfig();
-      assertEquals(result, "");
-    });
-
-    it("should return empty string with user config (deprecated)", () => {
-      const result = generateTailwindConfig({
-        theme: {
-          extend: {
-            colors: {
-              custom: "#ff0000",
-            },
-          },
-        },
-      });
-      assertEquals(result, "");
     });
   });
 
