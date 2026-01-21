@@ -141,7 +141,28 @@ export async function lookupProjectByDomain(
 }
 
 /**
- * Internal function to fetch domain lookup from API.
+ * Project API response environment type.
+ */
+interface ProjectEnvironment {
+  id: string;
+  name: string;
+  domains?: string[];
+  active_release_id?: string | null;
+}
+
+/**
+ * Project API response type.
+ */
+interface ProjectResponse {
+  id: string;
+  name: string;
+  slug: string;
+  environments?: ProjectEnvironment[];
+}
+
+/**
+ * Internal function to fetch project by domain from API.
+ * Uses GET /projects/{domain} which resolves domains automatically.
  */
 async function fetchDomainLookup(
   domain: string,
@@ -149,7 +170,7 @@ async function fetchDomainLookup(
 ): Promise<DomainLookupResult | null> {
   const domainWithoutPort = domain.replace(/:\d+$/, "");
   const encodedDomain = encodeURIComponent(domainWithoutPort);
-  const url = `${config.apiBaseUrl}/lookup/domain/${encodedDomain}`;
+  const url = `${config.apiBaseUrl}/projects/${encodedDomain}`;
 
   logger.debug("[DomainLookup] Fetching from API", { domain, url });
 
@@ -176,7 +197,20 @@ async function fetchDomainLookup(
       return null;
     }
 
-    const result = await response.json() as DomainLookupResult;
+    const project = await response.json() as ProjectResponse;
+
+    // Find the environment that has this domain
+    const matchingEnv = project.environments?.find(
+      (env) => env.domains?.some((d) => d.toLowerCase() === domainWithoutPort.toLowerCase()),
+    );
+
+    const result: DomainLookupResult = {
+      project_id: project.id,
+      project_slug: project.slug,
+      project_name: project.name,
+      environment: matchingEnv ? { id: matchingEnv.id, name: matchingEnv.name } : null,
+      release_id: matchingEnv?.active_release_id ?? null,
+    };
 
     logger.debug("[DomainLookup] Domain lookup result", {
       domain,

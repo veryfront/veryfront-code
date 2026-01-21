@@ -1,4 +1,5 @@
 import { logger } from "#veryfront/utils";
+import { z } from "zod";
 import { requestWithRetry, type RetryConfig } from "./retry-handler.ts";
 import { VeryfrontAPIError } from "./types.ts";
 import {
@@ -9,7 +10,6 @@ import {
   ListProjectsResponseSchema,
   ListReleaseFilesResponseSchema,
   type LookupDomainResponse,
-  LookupDomainResponseSchema,
   type PageInfo,
   type Project,
   type ProjectFile,
@@ -452,18 +452,40 @@ export class VeryfrontAPIOperations {
 
   /**
    * Look up project info by custom domain.
+   * Uses GET /projects/{domain} which resolves domains automatically.
    * Returns project details and environment info for routing.
    */
   async lookupProjectByDomain(domain: string): Promise<LookupDomainResponse | null> {
     return await withSpan(
       SpanNames.API_DOMAIN_LOOKUP,
       async () => {
-        const url = `/lookup/domain/${encodeURIComponent(domain)}`;
+        const domainWithoutPort = domain.replace(/:\d+$/, "");
+        const url = `/projects/${encodeURIComponent(domainWithoutPort)}`;
         logger.debug("[API] lookupProjectByDomain", { domain });
 
         try {
           const raw = await this.request(url);
-          const response = LookupDomainResponseSchema.parse(raw);
+          const project = ProjectSchema.extend({
+            environments: z.array(z.object({
+              id: z.string().uuid(),
+              name: z.string(),
+              domains: z.array(z.string()).optional(),
+              active_release_id: z.string().uuid().nullable().optional(),
+            })).optional(),
+          }).parse(raw);
+
+          // Find the environment that has this domain
+          const matchingEnv = project.environments?.find(
+            (env) => env.domains?.some((d) => d.toLowerCase() === domainWithoutPort.toLowerCase()),
+          );
+
+          const response: LookupDomainResponse = {
+            project_id: project.id,
+            project_slug: project.slug,
+            project_name: project.name,
+            environment: matchingEnv ? { id: matchingEnv.id, name: matchingEnv.name } : null,
+            release_id: matchingEnv?.active_release_id ?? null,
+          };
 
           logger.debug("[API] Domain lookup result", {
             domain,
