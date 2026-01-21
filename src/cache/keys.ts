@@ -403,11 +403,6 @@ export function buildContentHashCacheKey(
 }
 
 /**
- * @deprecated Use buildContentHashCacheKey instead
- */
-export const buildContentHashKey = buildContentHashCacheKey;
-
-/**
  * Build a component cache key.
  * Format: component:{projectId}:{filePath}:{contentHash}
  */

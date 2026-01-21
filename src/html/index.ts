@@ -14,7 +14,6 @@ export type { ProcessedMetadata } from "./metadata-builder.ts";
 export { processMetadata } from "./metadata-builder.ts";
 export { extractHTMLMetadata } from "./metadata-extraction.ts";
 export {
-  generateTailwindConfig,
   generateThemeVariables,
   getProductionStyles,
 } from "./styles-builder/index.ts";
