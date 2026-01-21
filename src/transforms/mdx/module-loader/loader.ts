@@ -8,9 +8,9 @@ export async function loadMDXModule(
   projectDir: string,
 ): Promise<MDXModule | null> {
   try {
-    const { getAdapter } = await import("#veryfront/platform/adapters/detect.ts");
+    const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
 
-    const adapter = await getAdapter();
+    const adapter = await runtime.get();
 
     const moduleCode = await adapter.fs.readFile(modulePath);
 

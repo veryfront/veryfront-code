@@ -1,6 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { parseProxyEnvironment } from "./index.ts";
+import { parseProxyEnvironment } from "./proxy-environment.ts";
 
 describe("parseProxyEnvironment", () => {
   it("returns 'preview' for valid preview value", () => {

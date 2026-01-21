@@ -3,7 +3,7 @@ import type * as React from "react";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import type { ElementValidator } from "../element-validator/index.ts";
 import type { SSRRenderer } from "../ssr-renderer.ts";
-import { getContentHash } from "../utils/index.ts";
+import { computeHash } from "../utils/index.ts";
 import type { HTMLGenerationContext, HTMLGenerator } from "./html.ts";
 import type { RenderOptions } from "./types.ts";
 import { flushHeadCollector, resetHeadCollector } from "#veryfront/react/head-collector.ts";
@@ -91,7 +91,7 @@ export class SSROrchestrator {
       // TRUE STREAMING: html is empty (not buffered), so skip content-based hash
       // Use a timestamp-based hash since we can't compute ETag from unbuffered stream
       // ETag will be skipped for streaming responses in the handler
-      const ssrHash = html ? await getContentHash(html) : `stream-${Date.now()}`;
+      const ssrHash = html ? await computeHash(html) : `stream-${Date.now()}`;
 
       logger.debug("[SSROrchestrator] True streaming mode - sending HTML shell immediately", {
         hasBufferedHtml: !!html,
@@ -118,7 +118,7 @@ export class SSROrchestrator {
     // Otherwise, use buffered HTML generation
     const ssrHash = await timeAsync(
       "ssr-content-hash",
-      () => getContentHash(html),
+      () => computeHash(html),
       "ssr-rendering",
     );
 

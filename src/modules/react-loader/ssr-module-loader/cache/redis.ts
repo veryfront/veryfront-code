@@ -1,5 +1,5 @@
 /**
- * Redis Cache for SSR Modules
+ * Distributed Cache for SSR Modules
  *
  * Redis caching for cross-pod module sharing.
  *
@@ -30,10 +30,10 @@ export function redisKey(key: string): string {
 }
 
 /**
- * Initialize Redis for SSR module cache.
- * Call this at startup if you want to enable Redis caching.
+ * Initialize distributed caching for SSR modules.
+ * Call this at startup if you want to enable cross-pod cache sharing.
  */
-export async function initializeSSRRedisCache(): Promise<boolean> {
+export async function initializeSSRDistributedCache(): Promise<boolean> {
   if (redisInitialized) {
     return redisEnabled;
   }
@@ -68,11 +68,17 @@ export async function initializeSSRRedisCache(): Promise<boolean> {
 }
 
 /**
- * Check if Redis caching is enabled for SSR modules.
+ * Check if distributed caching is enabled for SSR modules.
  */
-export function isSSRRedisCacheEnabled(): boolean {
+export function isSSRDistributedCacheEnabled(): boolean {
   return redisEnabled && redisClient !== null;
 }
+
+/** @deprecated Use initializeSSRDistributedCache instead */
+export const initializeSSRRedisCache = initializeSSRDistributedCache;
+
+/** @deprecated Use isSSRDistributedCacheEnabled instead */
+export const isSSRRedisCacheEnabled = isSSRDistributedCacheEnabled;
 
 /**
  * Get the current Redis enabled state.

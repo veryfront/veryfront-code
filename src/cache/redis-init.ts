@@ -9,9 +9,9 @@
  */
 
 import { logger } from "../utils/logger/logger.ts";
-import { initializeRedisCache } from "#veryfront/transforms/esm/transform-cache.ts";
-import { initializeSSRRedisCache } from "#veryfront/modules/react-loader/ssr-module-loader/index.ts";
-import { initializeFileCacheRedis } from "#veryfront/platform/adapters/fs/cache/file-cache.ts";
+import { initializeTransformCache } from "#veryfront/transforms/esm/transform-cache.ts";
+import { initializeSSRDistributedCache } from "#veryfront/modules/react-loader/ssr-module-loader/index.ts";
+import { initializeFileCacheBackend } from "#veryfront/platform/adapters/fs/cache/file-cache.ts";
 import { isRedisConfigured } from "../utils/redis-client.ts";
 
 export interface RedisCacheStatus {
@@ -46,9 +46,9 @@ export async function initializeRedisCaches(): Promise<RedisCacheStatus> {
 
   // Initialize all caches in parallel
   const [transformResult, ssrResult, fileResult] = await Promise.allSettled([
-    initializeRedisCache(),
-    initializeSSRRedisCache(),
-    initializeFileCacheRedis(),
+    initializeTransformCache(),
+    initializeSSRDistributedCache(),
+    initializeFileCacheBackend(),
   ]);
 
   status.transformCache = transformResult.status === "fulfilled" && transformResult.value;

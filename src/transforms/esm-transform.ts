@@ -4,6 +4,7 @@ export { needsTransform, transformToESM } from "./esm/index.ts";
 export {
   addDepsToEsmShUrls,
   computeContentHash,
+  computeShortContentHash,
   getLoaderFromPath,
   resolvePathAliases,
   resolveReactImports,

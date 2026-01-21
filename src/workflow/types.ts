@@ -286,6 +286,11 @@ export interface WorkflowDefinition<
   retry?: RetryConfig;
   /** Default timeout for the entire workflow */
   timeout?: string | number;
+  /**
+   * Allow the registry to execute the step builder for metadata extraction.
+   * Set to true only if step construction is pure and has no side effects.
+   */
+  introspect?: boolean;
   /** Workflow steps - can be static or dynamic based on input */
   steps:
     | WorkflowNode[]

@@ -374,8 +374,8 @@ export async function loadModuleESM(
   try {
     // Get or detect adapter
     const adapter = context.adapter ?? await (async () => {
-      const { getAdapter } = await import("#veryfront/platform/adapters/detect.ts");
-      return getAdapter();
+      const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
+      return runtime.get();
     })();
     context.adapter = adapter;
 

@@ -187,8 +187,8 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
       case "serve":
         showLogo();
         {
-          const { getAdapter } = await import("#veryfront/platform/adapters/detect.ts");
-          const adapter = await getAdapter();
+          const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
+          const adapter = await runtime.get();
           const { startUniversalServer } = await import("#veryfront/server/production-server.ts");
 
           const projectDir = cwd();

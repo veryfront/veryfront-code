@@ -1,9 +1,16 @@
 import type { Loader } from "esbuild";
 import { shortHash } from "#veryfront/utils/hash-utils.ts";
 
-export function computeContentHash(content: string): Promise<string> {
+/**
+ * Compute a short 8-character content hash for cache keys.
+ * Use this for transform cache keys where a compact hash is preferred.
+ */
+export function computeShortContentHash(content: string): Promise<string> {
   return shortHash(content);
 }
+
+/** @deprecated Use computeShortContentHash instead to avoid naming collision with full hash version */
+export const computeContentHash = computeShortContentHash;
 
 const EXTENSION_LOADERS: Record<string, Loader> = {
   ".tsx": "tsx",

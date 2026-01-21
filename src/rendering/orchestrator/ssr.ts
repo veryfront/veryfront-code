@@ -46,8 +46,8 @@ export class VeryfrontRenderer {
     logger.debug("Initializing VeryfrontRenderer");
 
     if (!this.adapter) {
-      const { getAdapter } = await import("#veryfront/platform/adapters/detect.ts");
-      this.adapter = await getAdapter();
+      const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
+      this.adapter = await runtime.get();
     }
 
     this.configManager = new ConfigurationManager({

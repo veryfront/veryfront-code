@@ -1,6 +1,6 @@
 import { serverLogger as logger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
+import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { createVeryfrontHandler } from "./universal-handler/index.ts";
 import { bootstrapProd } from "./bootstrap.ts";
 import { cwd, onGlobalError, onSignal } from "#veryfront/platform/compat/process.ts";
@@ -43,7 +43,7 @@ export async function startUniversalServer(
   },
 ): Promise<ServerHandle> {
   const { projectDir, port, bindAddress = "0.0.0.0", signal, debug, mode = "production" } = options;
-  const baseAdapter = options.adapter ?? (await getAdapter());
+  const baseAdapter = options.adapter ?? (await runtime.get());
 
   // Bootstrap framework to initialize FSAdapter if configured
   const bootstrap = await bootstrapProd(projectDir, baseAdapter);
@@ -135,7 +135,7 @@ if (import.meta.main) {
     // This reduces memory pressure by offloading cache to Redis
     await initializeRedisCaches();
 
-    const adapter = await getAdapter();
+    const adapter = await runtime.get();
 
     // Start memory monitoring if enabled
     const enableMemoryMonitoring = adapter.env.get("ENABLE_MEMORY_MONITORING") === "true";

@@ -13,10 +13,7 @@ export {
 export type { ProcessedMetadata } from "./metadata-builder.ts";
 export { processMetadata } from "./metadata-builder.ts";
 export { extractHTMLMetadata } from "./metadata-extraction.ts";
-export {
-  generateThemeVariables,
-  getProductionStyles,
-} from "./styles-builder/index.ts";
+export { generateThemeVariables, getProductionStyles } from "./styles-builder/index.ts";
 export {
   generateLinkTags,
   generateMetaTags,

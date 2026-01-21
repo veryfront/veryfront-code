@@ -70,9 +70,9 @@ export {
   describe,
   it,
   test,
-} from "@veryfront/testing/bdd";
+} from "#veryfront/testing/bdd.ts";
 
-export type { BddTestContext, TestOptions } from "@veryfront/testing/bdd";
+export type { BddTestContext, TestOptions } from "#veryfront/testing/bdd.ts";
 
 // ============================================================================
 // Test Isolation Helpers

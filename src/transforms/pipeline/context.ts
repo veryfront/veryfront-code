@@ -1,4 +1,4 @@
-import { computeContentHash } from "../esm/transform-utils.ts";
+import { computeShortContentHash } from "../esm/transform-utils.ts";
 import { REACT_VERSION } from "../esm/package-registry.ts";
 import type {
   TransformContext,
@@ -72,7 +72,7 @@ export async function createTransformContext(
   projectDir: string,
   options: TransformOptions,
 ): Promise<TransformContext> {
-  const contentHash = await computeContentHash(source);
+  const contentHash = await computeShortContentHash(source);
   // Use provided reactVersion or detect from project's package.json
   const reactVersion = options.reactVersion ?? await detectProjectReactVersion(projectDir);
   return buildContext(source, filePath, projectDir, contentHash, options, reactVersion);

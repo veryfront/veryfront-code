@@ -9,7 +9,7 @@
  */
 
 import { join } from "#veryfront/platform/compat/path/index.ts";
-import { getAdapter } from "#veryfront/platform/adapters/index.ts";
+import { runtime } from "#veryfront/platform/adapters/index.ts";
 import { getConfig } from "#veryfront/config";
 import { buildProduction } from "#veryfront/build/production-build/index.ts";
 import { displayBuildConfig, displayBuildStart } from "./config-display.ts";
@@ -29,7 +29,7 @@ export async function buildCommand(options: BuildOptions): Promise<void> {
     displayBuildConfig({ ...options, outputDir });
 
     // Initialize adapter and config
-    const adapter = await getAdapter();
+    const adapter = await runtime.get();
     await getConfig(options.projectDir, adapter);
 
     // Start build

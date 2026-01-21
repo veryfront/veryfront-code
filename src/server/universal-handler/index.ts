@@ -31,8 +31,9 @@ import { getTimeoutFromEnv } from "../../middleware/builtin/timeout.ts";
 import type { HandlerContext } from "../handlers/types.ts";
 import { parseProjectDomain } from "../utils/domain-parser.ts";
 import { getEnvironmentType, lookupProjectByDomain } from "../utils/domain-lookup.ts";
+import { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environment.ts";
 import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
-import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
+import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 
 /** Check if host is a private/internal IP address */
@@ -106,17 +107,8 @@ import { OpenAPIDocsHandler } from "../handlers/request/openapi-docs-handler.ts"
 import { DevDashboardHandler } from "../handlers/dev/dashboard/index.ts";
 import { ProjectsHandler } from "../handlers/dev/projects/index.ts";
 
-/** Valid proxy environment values */
-const VALID_PROXY_ENVIRONMENTS = ["preview", "production"] as const;
-type ProxyEnvironment = (typeof VALID_PROXY_ENVIRONMENTS)[number];
-
-/** Validate and parse proxy environment header */
-export function parseProxyEnvironment(value: string | null): ProxyEnvironment | undefined {
-  if (!value) return undefined;
-  return VALID_PROXY_ENVIRONMENTS.includes(value as ProxyEnvironment)
-    ? (value as ProxyEnvironment)
-    : undefined;
-}
+// Re-export from dedicated module for lightweight imports
+export { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environment.ts";
 
 export interface UniversalHandlerOptions {
   projectDir: string;
@@ -579,7 +571,7 @@ export function createVeryfrontHandler(
           // Get or create a cached adapter for this local project
           if (!localAdapterCache.has(effectiveProjectDir)) {
             // Create a base adapter for local filesystem operations
-            const baseAdapter = await getAdapter();
+            const baseAdapter = await runtime.get();
             localAdapterCache.set(effectiveProjectDir, baseAdapter);
             logger.debug("[universal] Created local adapter for project", {
               projectSlug,

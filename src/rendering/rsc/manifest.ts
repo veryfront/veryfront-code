@@ -1,4 +1,4 @@
-import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
+import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { HASH_SEED_DJB2 } from "#veryfront/utils";
 import { extractExportNames } from "./export-extractor.ts";
 
@@ -25,7 +25,7 @@ export async function buildRscModules(
 ): Promise<ManifestModule[]> {
   if (!graphIds) return [];
 
-  const adapter = await getAdapter();
+  const adapter = await runtime.get();
   const allEntries = [...graphIds.client, ...graphIds.server];
 
   return Promise.all(

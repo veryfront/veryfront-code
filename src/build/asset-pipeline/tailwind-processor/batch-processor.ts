@@ -1,6 +1,6 @@
 import { join } from "#veryfront/platform/compat/path/index.ts";
 import { logger } from "#veryfront/utils";
-import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
+import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { TailwindProcessorOptions, TailwindProcessResult } from "./types.ts";
 import { TailwindProcessor } from "./processor.ts";
@@ -21,7 +21,7 @@ export async function processTailwindCSSInDirectory(
   const results: TailwindProcessResult[] = [];
   const cssPath = join(projectDir, cssDir);
   const fs = createFileSystem();
-  const adapter = await getAdapter();
+  const adapter = await runtime.get();
 
   try {
     for await (const entry of fs.readDir(cssPath)) {

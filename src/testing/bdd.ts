@@ -53,6 +53,7 @@ if (isDeno) {
   // creating any test hooks at module level
   denoBdd = await import("@std/testing/bdd");
 }
+// Note: Node/Bun initialization happens at the end of this file via top-level await
 
 // ============================================================================
 // Node/Bun implementation interface
@@ -477,4 +478,13 @@ export const test = it;
 export async function initBdd(): Promise<void> {
   if (denoBdd) return; // Already initialized for Deno
   await getImpl();
+}
+
+// ============================================================================
+// Auto-initialize Node/Bun at module load time
+// This mirrors the Deno behavior where BDD is ready immediately after import
+// ============================================================================
+
+if (!isDeno) {
+  await initBdd();
 }

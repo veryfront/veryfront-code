@@ -205,9 +205,9 @@ export class APIRouteHandler {
   private async ensureAdapter(): Promise<RuntimeAdapter> {
     if (this.adapter) return this.adapter;
     if (!this.adapterPromise) {
-      const { getAdapter } = await import("#veryfront/platform/adapters/detect.ts");
+      const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
 
-      this.adapterPromise = getAdapter();
+      this.adapterPromise = runtime.get();
     }
     this.adapter = await this.adapterPromise;
     if (!this.adapter) {

@@ -1,5 +1,5 @@
 import { rendererLogger as logger } from "#veryfront/utils";
-import { getContentHash, TSX_LAYOUT_MAX_ENTRIES } from "#veryfront/utils";
+import { computeHash, TSX_LAYOUT_MAX_ENTRIES } from "#veryfront/utils";
 import * as BundledReact from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { LayoutItem, MdxBundle, MDXComponents, MDXModule } from "#veryfront/types";
@@ -67,7 +67,7 @@ export async function loadTSXComponent(
   projectId?: string,
 ): Promise<BundledReact.ComponentType> {
   const source = await adapter.fs.readFile(componentPath);
-  const hash = await getContentHash(source);
+  const hash = await computeHash(source);
   const effectiveProjectId = projectId ?? projectDir;
   const cacheKey = buildLayoutComponentCacheKey(effectiveProjectId, componentPath, hash);
   let component = cache.get(cacheKey);

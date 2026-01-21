@@ -1,5 +1,5 @@
 import { join } from "#std/path.ts";
-import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
+import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { APIRouteHandler, DynamicRouter } from "#veryfront/routing/api/index.ts";
 import { getConfig } from "#veryfront/config";
 import { cliLogger } from "#veryfront/utils";
@@ -9,7 +9,7 @@ let fs: FileSystem;
 
 export async function routesCommand(projectDir: string, options: { json?: boolean } = {}) {
   fs = createFileSystem();
-  const adapter = await getAdapter();
+  const adapter = await runtime.get();
   await getConfig(projectDir, adapter);
   const pagesDir = join(projectDir, "pages");
   const apiHandler = new APIRouteHandler(projectDir, adapter);

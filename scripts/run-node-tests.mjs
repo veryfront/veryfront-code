@@ -48,7 +48,7 @@ const hasFilters = includePatterns.length > 0 || excludePatterns.length > 0;
 
 function buildNodeArgs(files, perShardConcurrency) {
   return [
-    "--experimental-transform-types",
+    "--import", "./scripts/node-resolver.mjs",
     "--test",
     "--test-concurrency",
     String(perShardConcurrency),

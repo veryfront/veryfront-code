@@ -18,7 +18,7 @@ import type {
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { DEFAULT_DASHBOARD_PORT } from "#veryfront/utils";
-import { getContentHash } from "./utils/index.ts";
+import { computeHash } from "./utils/index.ts";
 import { type HTMLGenerationOptions, wrapInHTMLShell } from "#veryfront/html";
 import { extractHTMLMetadata, injectHTMLContent, isFullHTMLDocument } from "#veryfront/html";
 import { createFileSystem } from "../platform/compat/fs.ts";
@@ -183,7 +183,7 @@ export async function handleScriptPage(
       );
     }
 
-    const ssrHash = await getContentHash(fullHtml);
+    const ssrHash = await computeHash(fullHtml);
 
     const result: RenderResult = {
       html: fullHtml,

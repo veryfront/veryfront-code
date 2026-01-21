@@ -1,7 +1,7 @@
 import { serverLogger as logger } from "#veryfront/utils";
 import { buildLocalhostUrl, LOCALHOST } from "#veryfront/config";
 import type { RuntimeAdapter, Server } from "#veryfront/platform/adapters/base.ts";
-import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
+import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { DynamicRouter } from "#veryfront/routing/api/index.ts";
 import { ComponentRegistry } from "#veryfront/modules/component-registry/index.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
@@ -61,7 +61,7 @@ export class DevServer {
   }
 
   async start(): Promise<void> {
-    const baseAdapter = await getAdapter();
+    const baseAdapter = await runtime.get();
     logger.debug(`Using ${baseAdapter.name} runtime adapter`);
 
     const bootstrap = await bootstrapDev(this.options.projectDir, baseAdapter);

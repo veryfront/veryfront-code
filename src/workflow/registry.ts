@@ -11,6 +11,7 @@
 import type { WorkflowDefinition, WorkflowNode } from "./types.ts";
 import type { Workflow } from "./dsl/workflow.ts";
 import { zodToJsonSchema } from "#veryfront/tool/schema";
+import { agentLogger as logger } from "#veryfront/utils";
 
 /**
  * Serializable node information for the registry
@@ -38,6 +39,12 @@ export interface WorkflowMetadata {
   description?: string;
   version?: string;
   timeout?: string | number;
+  /** True when steps are defined dynamically via a function */
+  dynamicSteps?: boolean;
+  /** True when dynamic step introspection is disabled */
+  introspectionSkipped?: boolean;
+  /** Error message if introspection failed */
+  introspectionError?: string;
   nodeCount: number;
   nodeTypes: string[];
   /** Detailed node information */
@@ -59,34 +66,50 @@ export interface WorkflowMetadata {
 function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
   // Get nodes - handle both static array and function form
   let workflowNodes: WorkflowNode[] = [];
+  let dynamicSteps = false;
+  let introspectionSkipped = false;
+  let introspectionError: string | undefined;
   if (Array.isArray(definition.steps)) {
     workflowNodes = definition.steps;
   } else if (typeof definition.steps === "function") {
-    // Try calling with dummy input to extract static structure
-    // This works for workflows that only use input for data values, not control flow
-    try {
-      // Create proxies that return placeholder values for any property access
-      const createProxy = (): unknown =>
-        new Proxy({}, {
-          get: (_target, prop) => {
-            if (typeof prop === "string") {
-              return createProxy(); // Return nested proxy for chained access
-            }
-            return undefined;
-          },
-        });
+    dynamicSteps = true;
+    if (definition.introspect) {
+      // Try calling with dummy input to extract static structure
+      // This works for workflows that only use input for data values, not control flow
+      try {
+        // Create proxies that return placeholder values for any property access
+        const createProxy = (): unknown =>
+          new Proxy({}, {
+            get: (_target, prop) => {
+              if (typeof prop === "string") {
+                return createProxy(); // Return nested proxy for chained access
+              }
+              return undefined;
+            },
+          });
 
-      const dummyInput = createProxy();
-      const dummyContext = { input: createProxy() } as Record<string, unknown>;
+        const dummyInput = createProxy();
+        const dummyContext = { input: createProxy() } as Record<string, unknown>;
 
-      workflowNodes = definition.steps(
-        {
-          input: dummyInput,
-          context: dummyContext,
-        } as Parameters<typeof definition.steps>[0],
+        workflowNodes = definition.steps(
+          {
+            input: dummyInput,
+            context: dummyContext,
+          } as Parameters<typeof definition.steps>[0],
+        );
+      } catch (error) {
+        introspectionError = error instanceof Error ? error.message : String(error);
+        logger.warn(
+          `[WorkflowRegistry] Failed to introspect steps for "${definition.id}": ${introspectionError}`,
+        );
+        // If it fails (e.g., requires specific input structure), treat as dynamic
+        workflowNodes = [];
+      }
+    } else {
+      introspectionSkipped = true;
+      logger.debug(
+        `[WorkflowRegistry] Skipping dynamic steps introspection for "${definition.id}" (introspect=false)`,
       );
-    } catch {
-      // If it fails (e.g., requires specific input structure), treat as dynamic
       workflowNodes = [];
     }
   }
@@ -171,6 +194,9 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
     description: definition.description,
     version: definition.version,
     timeout: definition.timeout,
+    dynamicSteps,
+    introspectionSkipped,
+    introspectionError,
     nodeCount: workflowNodes.length,
     nodeTypes: Array.from(nodeTypes),
     nodes: nodeInfoList,

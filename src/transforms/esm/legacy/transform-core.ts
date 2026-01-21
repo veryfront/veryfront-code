@@ -1,6 +1,6 @@
 import * as esbuild from "esbuild"; // Use native esbuild, not WASM
 import { generateCacheKey, getCachedTransform, setCachedTransform } from "./transform-cache.ts";
-import { computeContentHash, getLoaderFromPath } from "./transform-utils.ts";
+import { computeShortContentHash, getLoaderFromPath } from "../transform-utils.ts";
 import { addDepsToEsmShUrls, resolveReactImports } from "./react-imports.ts";
 import {
   blockExternalUrlImports,
@@ -42,7 +42,7 @@ export async function transformToESM(
   } = options;
 
   const hashStart = performance.now();
-  const contentHash = await computeContentHash(source);
+  const contentHash = await computeShortContentHash(source);
   timings.hash = performance.now() - hashStart;
 
   const cacheKey = generateCacheKey(filePath, contentHash, ssr);

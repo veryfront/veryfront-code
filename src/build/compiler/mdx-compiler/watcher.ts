@@ -1,6 +1,6 @@
 import { bundlerLogger as logger } from "#veryfront/utils";
 import { join } from "#veryfront/platform/compat/path/index.ts";
-import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
+import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import type { CompileOptions } from "./types.ts";
 import { compileMDXFile } from "./compiler.ts";
 
@@ -14,7 +14,7 @@ export async function watchMDX(options: CompileOptions): Promise<void> {
     return;
   }
 
-  const adapter = await getAdapter();
+  const adapter = await runtime.get();
   const watcher = adapter.fs.watch(dirsToWatch, { recursive: true });
 
   for await (const event of watcher) {
@@ -25,7 +25,7 @@ export async function watchMDX(options: CompileOptions): Promise<void> {
 }
 
 async function getWatchableDirectories(projectDir: string): Promise<string[]> {
-  const adapter = await getAdapter();
+  const adapter = await runtime.get();
   const dirsToWatch: string[] = [];
   const potentialDirs = [
     join(projectDir, "pages"),
@@ -48,7 +48,7 @@ async function getWatchableDirectories(projectDir: string): Promise<string[]> {
 }
 
 async function handleFileChange(paths: string[], options: CompileOptions): Promise<void> {
-  const adapter = await getAdapter();
+  const adapter = await runtime.get();
   for (const path of paths) {
     if (path.endsWith(".mdx")) {
       try {

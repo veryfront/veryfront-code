@@ -1,5 +1,5 @@
 import { rendererLogger as logger } from "#veryfront/utils";
-import { getContentHash } from "#veryfront/utils";
+import { computeHash } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { LayoutItem, MdxBundle } from "#veryfront/types";
 import { compileMDXLayouts } from "./utils/compiler.ts";
@@ -41,7 +41,7 @@ export class LayoutCompiler {
 
       if (layoutBundle) {
         const code = String(layoutBundle.compiledCode || "");
-        depParts.push(await getContentHash(code));
+        depParts.push(await computeHash(code));
       }
 
       for (const item of nestedLayouts) {
@@ -50,12 +50,12 @@ export class LayoutCompiler {
         if (item.componentPath) {
           try {
             const src = await this.adapter.fs.readFile(item.componentPath);
-            depParts.push(await getContentHash(src));
+            depParts.push(await computeHash(src));
           } catch (e) {
             logger.debug("[LayoutCompiler] reading tsx layout for dep hash failed", e as Error);
           }
         } else if (item.bundle?.compiledCode) {
-          depParts.push(await getContentHash(String(item.bundle.compiledCode)));
+          depParts.push(await computeHash(String(item.bundle.compiledCode)));
         }
       }
 

@@ -36,7 +36,6 @@ async function fetchTailwindCSS(): Promise<string> {
   return tailwindCSS;
 }
 
-
 /**
  * Get or create the Tailwind compiler
  */
@@ -364,12 +363,23 @@ export async function generateTailwindCSS(
       classSet.add(cls);
     }
     // Add project-wide classes (from source file scanning)
+    const projectClassCount = opts.projectClasses
+      ? (opts.projectClasses instanceof Set ? opts.projectClasses.size : opts.projectClasses.length)
+      : 0;
     if (opts.projectClasses) {
       for (const cls of opts.projectClasses) {
         classSet.add(cls);
       }
     }
     const classes = Array.from(classSet);
+
+    logger.debug("[Tailwind4] CSS generation", {
+      extractedFromHTML: extractedClasses.length,
+      projectClasses: projectClassCount,
+      totalClasses: classes.length,
+      hasUppercase: classes.includes("uppercase"),
+      sampleClasses: classes.slice(0, 20),
+    });
 
     const normalized = classes.map(normalizeClass);
 

@@ -38,8 +38,8 @@ export async function checkProjectStructure(projectDir: string): Promise<Diagnos
  */
 export async function checkConfiguration(projectDir: string): Promise<DiagnosticResult> {
   try {
-    const { getAdapter } = await import("#veryfront/platform/adapters/detect.ts");
-    const adapter = await getAdapter();
+    const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
+    const adapter = await runtime.get();
     const config = await getConfig(projectDir, adapter);
     const reactConfig = (config as { react?: { version?: string } }).react;
     return {
