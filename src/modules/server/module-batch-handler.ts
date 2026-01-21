@@ -119,8 +119,8 @@ export async function handleModuleBatch(
       const moduleStart = performance.now();
       const cacheKey = buildModuleTransformCacheKey(projectKey, modulePath, isSSR);
 
-      // Check cache first
-      if (transformCache.has(cacheKey)) {
+      // Check cache first (skip in dev mode for fresh transforms)
+      if (!dev && transformCache.has(cacheKey)) {
         return {
           path: modulePath,
           code: transformCache.get(cacheKey)!,
@@ -141,8 +141,10 @@ export async function handleModuleBatch(
         const transformDurationMs = performance.now() - moduleStart;
 
         if (code) {
-          // Cache the transformed code
-          transformCache.set(cacheKey, code);
+          // Cache the transformed code (skip in dev mode)
+          if (!dev) {
+            transformCache.set(cacheKey, code);
+          }
           return { path: modulePath, code, cached: false, transformDurationMs };
         }
         return { path: modulePath, code: null, error: "Not found", transformDurationMs };

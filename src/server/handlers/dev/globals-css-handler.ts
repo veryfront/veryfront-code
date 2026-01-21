@@ -35,9 +35,7 @@ export class GlobalsCSSHandler extends BaseHandler {
         const rawCss = await ctx.adapter.fs.readFile(filePath);
 
         // Compile using Tailwind's API - properly handles @theme, @utility, @variant, etc.
-        // Pass projectId for cache isolation
-        const projectId = ctx.projectId || ctx.projectSlug || "default";
-        const css = await compileGlobalsCSS(rawCss, projectId);
+        const css = await compileGlobalsCSS(rawCss);
 
         const response = this.createResponseBuilder(ctx)
           .withCache("no-cache") // No caching for HMR to work

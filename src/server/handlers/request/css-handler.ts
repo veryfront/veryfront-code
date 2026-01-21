@@ -17,11 +17,7 @@
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { getCSSByHash } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
-import {
-  HTTP_NOT_FOUND,
-  HTTP_OK,
-  PRIORITY_HIGH,
-} from "#veryfront/utils/constants/index.ts";
+import { HTTP_NOT_FOUND, HTTP_OK, PRIORITY_HIGH } from "#veryfront/utils/constants/index.ts";
 
 /** Pattern to match hashed CSS URLs: /_vf/css/[8-char-hash].css */
 const CSS_URL_PATTERN = /^\/_vf\/css\/([a-z0-9-]{1,16})\.css$/;
@@ -36,6 +32,7 @@ export class CSSHandler extends BaseHandler {
     ],
   };
 
+  // deno-lint-ignore require-await
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const method = req.method.toUpperCase();
     if (method !== "GET" && method !== "HEAD") {
