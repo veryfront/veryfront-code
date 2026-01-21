@@ -17,5 +17,5 @@ export {
   generateTailwindCSS as generateTailwind4CSS,
 } from "./tailwind4-compiler.ts";
 
-// Build-time directive stripping for browser CDN compatibility
-export { stripTailwindBuildDirectives } from "./strip-directives.ts";
+// Globals CSS compiler using Tailwind's programmatic API
+export { compileGlobalsCSS } from "./globals-compiler.ts";
