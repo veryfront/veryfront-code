@@ -183,12 +183,29 @@ function extractClassNamesFromSource(source: string): string[] {
 }
 
 /**
- * Normalize arbitrary values: convert commas to underscores
- * e.g., grid-cols-[0.25fr,0.5fr] -> grid-cols-[0.25fr_0.5fr]
+ * Normalize arbitrary values:
+ * 1. Convert commas to underscores: grid-cols-[0.25fr,0.5fr] -> grid-cols-[0.25fr_0.5fr]
+ * 2. Wrap CSS variables with var(): aspect-[--ratio] -> aspect-[var(--ratio)]
  */
 function normalizeClass(cls: string): string {
-  if (!cls.includes("[") || !cls.includes(",")) return cls;
-  return cls.replace(/\[([^\]]*)\]/g, (_, c) => `[${c.replace(/,/g, "_")}]`);
+  if (!cls.includes("[")) return cls;
+
+  return cls.replace(/\[([^\]]*)\]/g, (match, content) => {
+    let normalized = content;
+
+    // Wrap bare CSS variables with var()
+    // Matches --name or --name/opacity but not already wrapped var(--name)
+    if (/^--[\w-]+(?:\/[\d.]+)?$/.test(normalized) && !normalized.includes("var(")) {
+      normalized = `var(${normalized})`;
+    }
+
+    // Convert commas to underscores
+    if (normalized.includes(",")) {
+      normalized = normalized.replace(/,/g, "_");
+    }
+
+    return `[${normalized}]`;
+  });
 }
 
 /**
