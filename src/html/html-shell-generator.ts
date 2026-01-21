@@ -277,16 +277,20 @@ export async function generateHTMLShellParts(
   ${modulePreloadHints}
 
   <!-- Tailwind CSS: Server-side JIT compiled -->
-  ${(() => {
-    if (!tailwindCSS) return "";
-    if (isProduction) {
-      // Production: link to hashed CSS file for immutable caching
-      return `<link rel="stylesheet" href="/_vf/css/${cssHash}.css">`;
-    } else {
-      // Preview/Dev: inline style with ID for HMR updates
-      return `<style id="vf-tailwind-css"${nonce ? ` nonce="${nonce}"` : ""}>\n${tailwindCSS}\n  </style>`;
-    }
-  })()}
+  ${
+    (() => {
+      if (!tailwindCSS) return "";
+      if (isProduction) {
+        // Production: link to hashed CSS file for immutable caching
+        return `<link rel="stylesheet" href="/_vf/css/${cssHash}.css">`;
+      } else {
+        // Preview/Dev: inline style with ID for HMR updates
+        return `<style id="vf-tailwind-css"${
+          nonce ? ` nonce="${nonce}"` : ""
+        }>\n${tailwindCSS}\n  </style>`;
+      }
+    })()
+  }
   ${tailwindError ? `<!-- Tailwind CSS Error: ${tailwindError.replace(/-->/g, "- ->")} -->` : ""}
 
   <!-- CSS Variables for Theming (veryfront-renderer compatible) -->
