@@ -214,14 +214,17 @@ async function handleUpdate(update) {
     return;
   }
   if (update.path.endsWith('.css')) {
-    updateCSS(update.path);
+    await updateCSS(update.path);
     return;
   }
   await updateJS(update.path);
 }
 
-function updateCSS(path) {
+async function updateCSS(path) {
   console.log('[HMR] Updating CSS:', path);
+  let updated = false;
+
+  // Try to update linked stylesheets
   document.querySelectorAll('link[rel="stylesheet"]').forEach((link) => {
     try {
       const url = new URL(link.href);
@@ -229,12 +232,31 @@ function updateCSS(path) {
         const newUrl = new URL(link.href);
         newUrl.searchParams.set('t', Date.now().toString());
         link.href = newUrl.toString();
-        console.log('[HMR] CSS updated:', path);
+        console.log('[HMR] CSS link updated:', path);
+        updated = true;
       }
     } catch (error) {
       console.error('[HMR] Failed to update CSS link:', error);
     }
   });
+
+  // Try to update inline Tailwind CSS style tag
+  const tailwindStyle = document.getElementById('vf-tailwind-css');
+  if (tailwindStyle && (path.includes('globals.css') || path.endsWith('.css'))) {
+    try {
+      // Fetch fresh compiled CSS from globals endpoint
+      const response = await fetch('/_vf_styles/globals.css?t=' + Date.now());
+      if (response.ok) {
+        const newCSS = await response.text();
+        tailwindStyle.textContent = newCSS;
+        console.log('[HMR] Inline Tailwind CSS updated');
+        updated = true;
+      }
+    } catch (error) {
+      console.error('[HMR] Failed to fetch fresh CSS:', error);
+    }
+  }
+
   notifyStudio();
 }
 ${getUpdateJSFunction("[HMR]")}
@@ -566,9 +588,11 @@ document.head.appendChild(errorScript);
     await updateJS(update.path);
   }
 
-  function updateCSS(path) {
+  async function updateCSS(path) {
     console.log('[Preview HMR] Updating CSS:', path);
     let updated = false;
+
+    // Try to update linked stylesheets
     for (const link of document.querySelectorAll('link[rel="stylesheet"]')) {
       try {
         const url = new URL(link.href);
@@ -576,16 +600,34 @@ document.head.appendChild(errorScript);
           const newUrl = new URL(link.href);
           newUrl.searchParams.set('t', Date.now().toString());
           link.href = newUrl.toString();
-          console.log('[Preview HMR] CSS updated:', path);
+          console.log('[Preview HMR] CSS link updated:', path);
           updated = true;
         }
       } catch (error) {
         console.error('[Preview HMR] Failed to update CSS link:', error);
       }
     }
-    // Fallback: if CSS is inlined (no matching link found), do full reload
+
+    // Try to update inline Tailwind CSS style tag
+    const tailwindStyle = document.getElementById('vf-tailwind-css');
+    if (tailwindStyle && (path.includes('globals.css') || path.endsWith('.css'))) {
+      try {
+        // Fetch fresh compiled CSS from globals endpoint
+        const response = await fetch('/_vf_styles/globals.css?t=' + Date.now());
+        if (response.ok) {
+          const newCSS = await response.text();
+          tailwindStyle.textContent = newCSS;
+          console.log('[Preview HMR] Inline Tailwind CSS updated');
+          updated = true;
+        }
+      } catch (error) {
+        console.error('[Preview HMR] Failed to fetch fresh CSS:', error);
+      }
+    }
+
+    // Fallback: if nothing was updated, do full reload
     if (!updated) {
-      console.log('[Preview HMR] No matching stylesheet link for ' + path + ', reloading page');
+      console.log('[Preview HMR] No matching stylesheet for ' + path + ', reloading page');
       notifyStudioAndReload();
     }
   }

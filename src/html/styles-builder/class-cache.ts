@@ -8,7 +8,7 @@
  * Cache invalidation is triggered by file changes via WebSocket pokes.
  */
 
-import { extractClassNamesFromSource } from "./tailwind4-compiler.ts";
+import { extractCandidates } from "./tailwind-compiler.ts";
 import { logger } from "#veryfront/utils";
 
 /** In-memory cache of extracted classes per project */
@@ -36,17 +36,11 @@ export function extractClassesFromFiles(
   for (const file of files) {
     if (!file.content || !isSourceFile(file.path)) continue;
 
-    try {
-      const extracted = extractClassNamesFromSource(file.content);
-      for (const cls of extracted) {
-        classes.add(cls);
-      }
-    } catch (error) {
-      // Log but don't fail - some files might have syntax issues
-      logger.debug("[ClassCache] Failed to extract classes from file", {
-        path: file.path,
-        error: error instanceof Error ? error.message : String(error),
-      });
+    // Use simple plain-text extraction like Tailwind does
+    // Tailwind's build() will filter out invalid classes
+    const extracted = extractCandidates(file.content);
+    for (const cls of extracted) {
+      classes.add(cls);
     }
   }
 
