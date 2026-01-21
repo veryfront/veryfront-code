@@ -18,4 +18,10 @@ export {
 } from "./tailwind4-compiler.ts";
 
 // Globals CSS compiler using Tailwind's programmatic API
-export { compileGlobalsCSS } from "./globals-compiler.ts";
+export {
+  clearAllGlobalsCSSCache,
+  clearGlobalsCSSCache,
+  compileGlobalsCSS,
+  getGlobalsCSSCacheStats,
+  getGlobalsCSSMetrics,
+} from "./globals-compiler.ts";
