@@ -8,6 +8,10 @@ import type { HandlerContext, HandlerResult } from "../../types.ts";
 import { computeEtag, hasMatchingEtag } from "../../utils/etag.ts";
 import { ResponseBuilder } from "#veryfront/security/index.ts";
 import { getRendererForProject } from "../../../shared/renderer-factory.ts";
+import { TimeoutError, withTimeoutThrow } from "#veryfront/rendering/utils/stream-utils.ts";
+
+/** Timeout for entire page-data resolution (25s, leaves buffer before 30s request timeout) */
+const PAGE_DATA_TIMEOUT_MS = 25000;
 
 /**
  * Handles SPA page data endpoint requests.
@@ -32,10 +36,15 @@ export async function handlePageDataEndpoint(
     const renderer = await getRendererForProject(ctx);
 
     // Use resolvePageData instead of renderPage to get structured data
-    const pageData = await renderer.resolvePageData(slug, {
-      request: req,
-      url,
-    });
+    // Wrap with timeout to prevent hanging on slow module loads or data fetches
+    const pageData = await withTimeoutThrow(
+      renderer.resolvePageData(slug, {
+        request: req,
+        url,
+      }),
+      PAGE_DATA_TIMEOUT_MS,
+      `resolvePageData for ${slug}`,
+    );
 
     const body = JSON.stringify(pageData);
 
@@ -60,6 +69,21 @@ export async function handlePageDataEndpoint(
         .json(JSON.parse(body), 200),
     );
   } catch (e) {
+    // Handle timeout errors with 504 Gateway Timeout
+    if (e instanceof TimeoutError) {
+      return respond(
+        ResponseBuilder.json(
+          { error: `Page data request timed out: ${e.message}`, status: 504 },
+          req,
+          {
+            securityConfig: ctx.securityConfig,
+            corsConfig: ctx.securityConfig?.cors,
+            status: 504,
+          },
+        ),
+      );
+    }
+
     // Determine appropriate status code based on error type
     const errorMessage = getErrorMessage(e);
     const isNotFound = errorMessage.toLowerCase().includes("not found") ||

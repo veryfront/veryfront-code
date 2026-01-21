@@ -215,10 +215,14 @@ function handleWebSocketUpgrade(req: Request): Response {
   return response;
 }
 
-/**
- * Forward request to renderer with proxy context as headers.
- */
-async function forwardToRenderer(req: Request): Promise<Response> {
+function jsonErrorResponse(status: number, body: Record<string, unknown>): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function forwardToRenderer(req: Request): Promise<Response> {
   const startTime = performance.now();
   const url = new URL(req.url);
 
@@ -227,15 +231,20 @@ async function forwardToRenderer(req: Request): Promise<Response> {
 
   const execute = async (): Promise<Response> => {
     try {
-      // Process request through proxy handler
       const ctx = await proxyHandler.processRequest(req);
+
+      if (ctx.error) {
+        const ms = Math.round(performance.now() - startTime);
+        proxyLogger.error(`${ctx.error.status} ${req.method} ${url.pathname}`, { ms, domain: ctx.host });
+        endSpan(spanInfo?.span, ctx.error.status);
+        return jsonErrorResponse(ctx.error.status, { error: ctx.error.message, status: ctx.error.status });
+      }
 
       const reqLogger = proxyLogger.child({
         ...(ctx.projectSlug && { project: ctx.projectSlug }),
         env: ctx.environment,
       });
 
-      // Build headers for renderer
       const newHeaders = new Headers(req.headers);
       if (ctx.token) newHeaders.set("x-token", ctx.token);
       newHeaders.set("x-project-slug", ctx.projectSlug || "");
@@ -246,7 +255,6 @@ async function forwardToRenderer(req: Request): Promise<Response> {
 
       injectContext(newHeaders);
 
-      // Forward to renderer
       const rendererUrl = new URL(url.pathname + url.search, RENDERER_URL);
       const response = await fetch(rendererUrl.toString(), {
         method: req.method,
@@ -256,9 +264,7 @@ async function forwardToRenderer(req: Request): Promise<Response> {
       });
 
       const ms = Math.round(performance.now() - startTime);
-      reqLogger.info(`${response.status} ${req.method} ${url.pathname}`, {
-        ms,
-      });
+      reqLogger.info(`${response.status} ${req.method} ${url.pathname}`, { ms });
 
       endSpan(spanInfo?.span, response.status);
 
@@ -269,21 +275,12 @@ async function forwardToRenderer(req: Request): Promise<Response> {
       });
     } catch (error) {
       const ms = Math.round(performance.now() - startTime);
-      proxyLogger.error(
-        `502 ${req.method} ${url.pathname}`,
-        { ms },
-        error as Error,
-      );
-
+      proxyLogger.error(`502 ${req.method} ${url.pathname}`, { ms }, error as Error);
       endSpan(spanInfo?.span, 502, error as Error);
-
-      return new Response(
-        JSON.stringify({
-          error: "Proxy Error",
-          message: error instanceof Error ? error.message : "Unknown error",
-        }),
-        { status: 502, headers: { "Content-Type": "application/json" } },
-      );
+      return jsonErrorResponse(502, {
+        error: "Proxy Error",
+        message: error instanceof Error ? error.message : "Unknown error",
+      });
     }
   };
 
@@ -309,10 +306,7 @@ async function handleApiProxy(req: Request): Promise<Response> {
 
   const token = await proxyHandler.getTokenForApi(req);
   if (!token) {
-    return new Response(JSON.stringify({ error: "No authentication token" }), {
-      status: 401,
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonErrorResponse(401, { error: "No authentication token" });
   }
 
   // Strip /_vf/api prefix and forward to API
@@ -343,12 +337,9 @@ async function handleApiProxy(req: Request): Promise<Response> {
     });
   } catch (error) {
     proxyLogger.error("API proxy error", error as Error);
-    return new Response(
-      JSON.stringify({
-        error: error instanceof Error ? error.message : "API request failed",
-      }),
-      { status: 502, headers: { "Content-Type": "application/json" } },
-    );
+    return jsonErrorResponse(502, {
+      error: error instanceof Error ? error.message : "API request failed",
+    });
   }
 }
 

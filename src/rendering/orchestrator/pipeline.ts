@@ -39,10 +39,13 @@ import type { DataContext } from "#veryfront/data/types.ts";
 import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/index.ts";
 import { setupSSRGlobals } from "../ssr-globals.ts";
 import { LAYOUT_EXTENSIONS } from "../layouts/types.ts";
-import { withTimeout } from "../utils/stream-utils.ts";
+import { withTimeout, withTimeoutThrow } from "../utils/stream-utils.ts";
 
 /** Timeout for CSS generation SSR (shorter than full SSR since it's optional) */
 const CSS_SSR_TIMEOUT_MS = 5000;
+
+/** Timeout for module loading in resolvePageData (prevents hanging on slow transforms) */
+const MODULE_LOAD_TIMEOUT_MS = 10000;
 
 /** Check if a path segment is a hidden dot-directory (not . or ..) */
 function isHiddenSegment(segment: string): boolean {
@@ -623,13 +626,18 @@ export class RenderPipeline {
       );
 
       if (modulesToLoad.length > 0) {
-        const loadedModules = await Promise.all(
-          modulesToLoad.map((m) =>
-            this.loadModule(m.path)
-              // deno-lint-ignore no-explicit-any
-              .then((mod) => ({ ...m, mod: mod as any }))
-              .catch(() => ({ ...m, mod: null }))
+        // Load modules with timeout to prevent hanging on slow transforms
+        const loadedModules = await withTimeoutThrow(
+          Promise.all(
+            modulesToLoad.map((m) =>
+              this.loadModule(m.path)
+                // deno-lint-ignore no-explicit-any
+                .then((mod) => ({ ...m, mod: mod as any }))
+                .catch(() => ({ ...m, mod: null }))
+            ),
           ),
+          MODULE_LOAD_TIMEOUT_MS,
+          `Module loading for ${slug}`,
         );
 
         // Phase 2: Fetch data for modules with data fetching functions

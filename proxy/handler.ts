@@ -18,6 +18,68 @@ import type { TokenCache } from "./cache/types.ts";
 import { createFileSystem } from "../src/platform/compat/fs.ts";
 import { cwd } from "../src/platform/compat/process.ts";
 import { join } from "../src/platform/compat/path/index.ts";
+import { injectContext } from "./tracing.ts";
+
+/**
+ * Domain lookup result from API.
+ */
+interface DomainLookupResult {
+  project_id: string;
+  project_slug: string;
+  project_name: string;
+  environment: { id: string; name: string } | null;
+  release_id: string | null;
+}
+
+/**
+ * Look up project info by custom domain.
+ * Used to resolve project slug when request comes via custom domain.
+ */
+async function lookupProjectByDomain(
+  domain: string,
+  apiBaseUrl: string,
+  token: string,
+  logger?: ProxyLogger,
+): Promise<DomainLookupResult | null> {
+  const domainWithoutPort = domain.replace(/:\d+$/, "");
+  const url = `${apiBaseUrl}/lookup/domain/${encodeURIComponent(domainWithoutPort)}`;
+
+  logger?.debug("Looking up project by domain", { domain, url });
+
+  const headers = new Headers({
+    Authorization: `Bearer ${token}`,
+    Accept: "application/json",
+  });
+  injectContext(headers);
+
+  try {
+    const response = await fetch(url, { headers });
+
+    if (!response.ok) {
+      // Consume response body to prevent resource leak
+      await response.body?.cancel();
+      if (response.status !== 404) {
+        logger?.error("Domain lookup API error", undefined, {
+          domain,
+          status: response.status,
+          statusText: response.statusText,
+        });
+      }
+      return null;
+    }
+
+    const result = await response.json() as DomainLookupResult;
+    logger?.debug("Domain lookup successful", {
+      domain,
+      projectSlug: result.project_slug,
+      environment: result.environment?.name,
+    });
+    return result;
+  } catch (error) {
+    logger?.error("Domain lookup failed", error as Error, { domain });
+    return null;
+  }
+}
 
 export interface ProxyConfig {
   apiBaseUrl: string;
@@ -37,6 +99,8 @@ export interface ProxyContext {
   host: string;
   parsedDomain: ParsedDomain;
   isLocalProject: boolean;
+  /** Error if request cannot be processed (e.g., custom domain not found) */
+  error?: { status: number; message: string };
 }
 
 export interface ProxyLogger {
@@ -132,17 +196,13 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     return missing;
   }
 
-  /**
-   * Process a request and return the proxy context.
-   * This is the main entry point for proxy logic.
-   */
   async function processRequest(req: Request): Promise<ProxyContext> {
     const host = req.headers.get("host") || "";
     const parsedDomain = parseProjectDomain(host);
     const scope = getScope(parsedDomain.environment);
-    const projectSlug = parsedDomain.slug || undefined;
+    let projectSlug = parsedDomain.slug || undefined;
+    const isCustomDomain = !projectSlug && !parsedDomain.isVeryfrontDomain;
 
-    // Check if this is a local project (with dynamic discovery)
     const localPath = projectSlug ? await findLocalProject(projectSlug) : undefined;
     const isLocalProject = !!localPath;
 
@@ -151,13 +211,25 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       projectSlug,
       environment: scope,
       isLocalProject,
+      isCustomDomain,
+    });
+
+    const makeErrorContext = (status: number, message: string, token?: string): ProxyContext => ({
+      token,
+      projectSlug: undefined,
+      environment: scope,
+      localPath: undefined,
+      host,
+      parsedDomain,
+      isLocalProject: false,
+      error: { status, message },
     });
 
     let token: string | undefined;
 
-    // For local projects, skip token fetching entirely
-    if (!isLocalProject) {
-      // For preview requests, try to use user's auth token from cookie first
+    if (isLocalProject) {
+      logger?.debug("Local project, skipping token fetch", { localPath });
+    } else {
       if (scope === "preview") {
         const cookieHeader = req.headers.get("cookie") || "";
         token = extractUserToken(cookieHeader);
@@ -166,8 +238,6 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         }
       }
 
-      // Fall back to OAuth client credentials if no user token
-      // Use projectSlug if available, otherwise use custom domain for lookup
       if (!token && config.clientId && config.clientSecret) {
         const customDomain = !projectSlug ? host : undefined;
         if (projectSlug || customDomain) {
@@ -179,13 +249,31 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         }
       }
 
-      // Fall back to static API token if OAuth token not available
       if (!token && config.apiToken) {
         token = config.apiToken;
         logger?.debug("Using static API token fallback");
       }
-    } else {
-      logger?.debug("Local project, skipping token fetch", { localPath });
+
+      if (isCustomDomain && !projectSlug) {
+        if (!token) {
+          logger?.error("Cannot process custom domain without token", undefined, { domain: host });
+          return makeErrorContext(502, `Failed to authenticate for domain: ${host}`, token);
+        }
+
+        const lookupResult = await lookupProjectByDomain(host, config.apiBaseUrl, token, logger);
+        if (lookupResult) {
+          projectSlug = lookupResult.project_slug;
+          logger?.info("Resolved custom domain to project", {
+            domain: host,
+            projectSlug,
+            projectId: lookupResult.project_id,
+            environment: lookupResult.environment?.name,
+          });
+        } else {
+          logger?.error("Custom domain not found", undefined, { domain: host });
+          return makeErrorContext(404, `No project configured for domain: ${host}`, token);
+        }
+      }
     }
 
     return {
@@ -239,7 +327,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
    * Get token manager stats for monitoring.
    */
   async function getStats() {
-    return tokenManager.getStats();
+    return await tokenManager.getStats();
   }
 
   /**
