@@ -15,17 +15,8 @@ import { compile } from "tailwindcss";
 import { serverLogger as logger } from "#veryfront/utils";
 import { getTailwindCSSUrl } from "#veryfront/utils/constants/cdn.ts";
 import { registerMapCache, CacheKeyPrefix } from "#veryfront/cache/index.ts";
-import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
+import { getContentHashKey, tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 
-// ============================================================================
-// CACHE KEY PREFIX
-// ============================================================================
-
-/**
- * Use the centralized cache key prefix for globals CSS.
- * Format: globals:{projectId}:{contentHash}
- */
-const GLOBALS_CSS_PREFIX = CacheKeyPrefix.GLOBALS_CSS;
 
 // ============================================================================
 // CACHES (Project-isolated)
@@ -99,12 +90,6 @@ function hashString(str: string): string {
   return (hash >>> 0).toString(36);
 }
 
-/**
- * Build a project-scoped cache key for globals CSS.
- */
-function buildGlobalsCSSCacheKey(projectId: string, contentHash: string): string {
-  return `${GLOBALS_CSS_PREFIX}:${projectId}:${contentHash}`;
-}
 
 // ============================================================================
 // TAILWIND BASE CSS (Pre-warm on import)
@@ -237,7 +222,8 @@ export async function compileGlobalsCSS(
   // Get project ID from context if not provided
   const effectiveProjectId = projectId || tryGetCacheKeyContext()?.projectId || "default";
   const contentHash = hashString(css);
-  const cacheKey = buildGlobalsCSSCacheKey(effectiveProjectId, contentHash);
+  // Use unified cache key builder: globals:{projectId}:{contentHash}
+  const cacheKey = getContentHashKey(CacheKeyPrefix.GLOBALS_CSS, effectiveProjectId, contentHash);
 
   // Check cache first
   const cached = compiledCache.get(cacheKey);
@@ -318,7 +304,7 @@ export async function compileGlobalsCSS(
  */
 export function clearGlobalsCSSCache(projectId: string): number {
   let cleared = 0;
-  const prefix = `${GLOBALS_CSS_PREFIX}:${projectId}:`;
+  const prefix = `${CacheKeyPrefix.GLOBALS_CSS}:${projectId}:`;
 
   for (const key of [...compiledCache.keys()]) {
     if (key.startsWith(prefix)) {
