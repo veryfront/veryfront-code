@@ -15,6 +15,22 @@ let tailwindBaseCSS: string | null = null;
 // Cache for loaded plugin modules
 const pluginCache = new Map<string, unknown>();
 
+// Cache for compiled CSS output (keyed by input hash)
+const compiledCache = new Map<string, string>();
+
+/**
+ * Simple hash for cache key
+ */
+function hashString(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return hash.toString(36);
+}
+
 /**
  * Fetch Tailwind base CSS (cached)
  */
@@ -81,6 +97,13 @@ async function loadPlugin(id: string): Promise<unknown> {
  * @returns Compiled CSS ready for browser
  */
 export async function compileGlobalsCSS(css: string): Promise<string> {
+  // Check cache first
+  const cacheKey = hashString(css);
+  const cached = compiledCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
   try {
     const tailwindBase = await getTailwindBaseCSS();
 
@@ -106,6 +129,14 @@ export async function compileGlobalsCSS(css: string): Promise<string> {
     // Build with empty class list - we just want the base CSS with theme variables
     // The actual utility classes are handled by the CDN at runtime
     const compiled = compiler.build([]);
+
+    // Cache the result
+    compiledCache.set(cacheKey, compiled);
+    logger.info("[globals-compiler] Compiled and cached globals.css", {
+      cacheKey,
+      inputLength: css.length,
+      outputLength: compiled.length,
+    });
 
     return compiled;
   } catch (error) {
