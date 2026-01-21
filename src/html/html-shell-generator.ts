@@ -279,9 +279,20 @@ ${tailwindV4Theme}
   ${tailwindCSS ? `<style${nonce ? ` nonce="${nonce}"` : ""}>\n${tailwindCSS}\n  </style>` : ""}
 
   <!-- CSS Variables for Theming (veryfront-renderer compatible) -->
-  <style${nonce ? ` nonce="${nonce}"` : ""}>
-${options.globalCSS || generateThemeVariables()}
-  </style>
+  ${
+    (() => {
+      let css = options.globalCSS || generateThemeVariables();
+      // Strip Tailwind v4 directives from globalCSS - these are build-time only
+      // The JIT CSS already includes all compiled Tailwind styles
+      // Browser CDN doesn't support @plugin or @import "tailwindcss"
+      css = css
+        .replace(/@import\s+["']tailwindcss["'];?\s*/g, "")
+        .replace(/@plugin\s+["'][^"']+["'](\s*\{[^}]*\})?;?\s*/g, "");
+      return `<style${nonce ? ` nonce="${nonce}"` : ""}>
+${css}
+  </style>`;
+    })()
+  }
 
   <!-- Syntax highlighting for code blocks -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/${syntaxHighlightTheme}.min.css">

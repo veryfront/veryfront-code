@@ -118,6 +118,71 @@ function extractClassNames(html: string): string[] {
 }
 
 /**
+ * Extract class names from source code (TSX/JSX/MDX).
+ * Handles static strings, template literals, and function calls like cn/clsx.
+ */
+function extractClassNamesFromSource(source: string): string[] {
+  const classes = new Set<string>();
+
+  // Pattern 1: className="..." or class="..."
+  const staticPattern = /class(?:Name)?="([^"]*)"/g;
+  let match;
+  while ((match = staticPattern.exec(source)) !== null) {
+    for (const cls of (match[1] || "").split(/\s+/)) {
+      if (cls) classes.add(cls);
+    }
+  }
+
+  // Pattern 2: className='...'
+  const singleQuotePattern = /class(?:Name)?='([^']*)'/g;
+  while ((match = singleQuotePattern.exec(source)) !== null) {
+    for (const cls of (match[1] || "").split(/\s+/)) {
+      if (cls) classes.add(cls);
+    }
+  }
+
+  // Pattern 3: className={`...`} template literals (extract string parts)
+  const templatePattern = /class(?:Name)?=\{`([^`]*)`\}/g;
+  while ((match = templatePattern.exec(source)) !== null) {
+    // Remove ${...} interpolations and extract remaining classes
+    const cleaned = (match[1] || "").replace(/\$\{[^}]*\}/g, " ");
+    for (const cls of cleaned.split(/\s+/)) {
+      if (cls) classes.add(cls);
+    }
+  }
+
+  // Pattern 4: cn(...), clsx(...), classNames(...) - extract string literals
+  const cnPattern = /(?:cn|clsx|classNames)\s*\(\s*([^)]+)\)/g;
+  while ((match = cnPattern.exec(source)) !== null) {
+    const args = match[1] || "";
+    // Extract double-quoted strings
+    const dqStrings = args.match(/"([^"]*)"/g) || [];
+    for (const str of dqStrings) {
+      for (const cls of str.slice(1, -1).split(/\s+/)) {
+        if (cls) classes.add(cls);
+      }
+    }
+    // Extract single-quoted strings
+    const sqStrings = args.match(/'([^']*)'/g) || [];
+    for (const str of sqStrings) {
+      for (const cls of str.slice(1, -1).split(/\s+/)) {
+        if (cls) classes.add(cls);
+      }
+    }
+    // Extract template literals
+    const tlStrings = args.match(/`([^`]*)`/g) || [];
+    for (const str of tlStrings) {
+      const cleaned = str.slice(1, -1).replace(/\$\{[^}]*\}/g, " ");
+      for (const cls of cleaned.split(/\s+/)) {
+        if (cls) classes.add(cls);
+      }
+    }
+  }
+
+  return Array.from(classes);
+}
+
+/**
  * Normalize arbitrary values: convert commas to underscores
  * e.g., grid-cols-[0.25fr,0.5fr] -> grid-cols-[0.25fr_0.5fr]
  */
@@ -173,4 +238,36 @@ export async function generateTailwindCSS(
   }
 }
 
-export { extractClassNames };
+/**
+ * Generate Tailwind CSS from source file contents.
+ * Extracts class names from TSX/JSX/MDX source code and compiles CSS.
+ * Used for SPA navigation where we don't have rendered HTML.
+ */
+export async function generateCSSFromSources(
+  sources: string[],
+  tailwindConfig?: TailwindConfig,
+): Promise<string> {
+  try {
+    const compiler = await getCompiler(tailwindConfig);
+    const allClasses = new Set<string>();
+
+    for (const source of sources) {
+      for (const cls of extractClassNamesFromSource(source)) {
+        allClasses.add(cls);
+      }
+    }
+
+    const classes = Array.from(allClasses);
+    const normalized = classes.map(normalizeClass);
+
+    const css = compiler.build(normalized);
+    const aliases = generateAliases(classes, css);
+
+    return css + aliases;
+  } catch (error) {
+    logger.error("Tailwind 4 source compilation error:", error);
+    return "";
+  }
+}
+
+export { extractClassNames, extractClassNamesFromSource };

@@ -461,6 +461,22 @@ export const getRouterScript = () => `
         }
       }
 
+      // Inject CSS for the new page (ensures styles work without Tailwind CDN)
+      if (pageData.css) {
+        const existingStyle = document.getElementById('veryfront-spa-css');
+        if (existingStyle) {
+          // Update existing style element content
+          existingStyle.textContent = pageData.css;
+        } else {
+          // Create new style element
+          const styleEl = document.createElement('style');
+          styleEl.id = 'veryfront-spa-css';
+          styleEl.textContent = pageData.css;
+          document.head.appendChild(styleEl);
+        }
+        log('Injected CSS for SPA navigation', { cssLength: pageData.css.length });
+      }
+
       // Build the component tree with layouts
       let tree = React.createElement(PageComponent, {
         ...pageData.props,
@@ -526,6 +542,7 @@ export const getRouterScript = () => `
         container.__reactRoot.render(tree);
         perfEnd('render:reactRender');
         log('Page re-rendered via SPA');
+
       } else if (hydrationFailed) {
         // Hydration failed, fall back to full page navigation
         throw new Error('React root not found - hydration failed, falling back to full page navigation');

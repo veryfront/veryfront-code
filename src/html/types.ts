@@ -16,8 +16,6 @@ export interface HTMLGenerationOptions {
   projectDir?: string;
   /** Project's globals.css content (overrides default theme variables) */
   globalCSS?: string;
-  /** Project's tailwind.config.js content (raw JS, will be converted to browser format) */
-  tailwindConfigJs?: string;
   /** Frontmatter for SPA client navigation */
   frontmatter?: Record<string, unknown>;
   /** Props for each layout keyed by layout path */

@@ -72,4 +72,6 @@ export interface PageDataResponse {
   appPath?: string;
   /** Headings extracted from MDX for sidebar/TOC navigation */
   headings?: Array<{ id: string; text: string; level: number }>;
+  /** JIT-compiled Tailwind CSS for this page (for SPA navigation in prod mode) */
+  css?: string;
 }
