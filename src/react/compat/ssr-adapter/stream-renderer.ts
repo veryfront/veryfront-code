@@ -24,6 +24,7 @@ async function renderToReadableStreamImpl(
   server: Awaited<ReturnType<typeof getReactDOMServer>>,
 ): Promise<SSRResult> {
   const debug = isDebugMode();
+  const start = performance.now();
 
   if (!server.renderToReadableStream) {
     throw toError(createError({
@@ -37,14 +38,12 @@ async function renderToReadableStreamImpl(
   // When aborted, React will flush loading fallbacks as HTML and render the rest on client
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
-    logger.error("[stream-renderer] SSR TIMEOUT - aborting React render", {
-      timeoutMs: SSR_TIMEOUT_MS,
-    });
+    logger.error("SSR_TIMEOUT aborting React render", { timeoutMs: SSR_TIMEOUT_MS });
     controller.abort(new Error(`SSR timeout: React render exceeded ${SSR_TIMEOUT_MS}ms`));
   }, SSR_TIMEOUT_MS);
 
   try {
-    if (debug) logger.info("[stream-renderer] Calling renderToReadableStream with abort signal...");
+    if (debug) logger.info("SSR renderToReadableStream started");
 
     const stream = await server.renderToReadableStream(
       element as Parameters<typeof server.renderToReadableStream>[0],
@@ -58,10 +57,10 @@ async function renderToReadableStreamImpl(
         onError: (error: unknown) => {
           // Don't log abort errors as they're expected on timeout
           if (error instanceof Error && error.name === "AbortError") {
-            logger.warn("[stream-renderer] React render aborted (timeout)");
+            logger.warn("SSR_ABORT React render aborted due to timeout");
             return;
           }
-          logger.error("React streaming error", error);
+          logger.error("SSR_ERROR React streaming error", error);
           options.onError?.(error as Error);
         },
         progressiveChunkSize: options.progressiveChunkSize,
@@ -72,42 +71,38 @@ async function renderToReadableStreamImpl(
     clearTimeout(timeoutId);
 
     if (debug) {
-      logger.info("[stream-renderer] renderToReadableStream succeeded", {
-        hasStream: !!stream,
-        streamType: stream ? typeof stream : "null",
-      });
+      const durationMs = Math.round(performance.now() - start);
+      logger.info("SSR renderToReadableStream completed", { durationMs });
     }
 
     return { stream };
   } catch (error) {
     // Clear timeout to prevent memory leak
     clearTimeout(timeoutId);
+    const durationMs = Math.round(performance.now() - start);
 
     // Check if this was an abort/timeout error
     const isAbort = error instanceof Error &&
       (error.name === "AbortError" || error.message.includes("SSR timeout") ||
         error.message.includes("aborted"));
     if (isAbort) {
-      logger.error("[stream-renderer] SSR TIMEOUT - React render was aborted", {
-        timeoutMs: SSR_TIMEOUT_MS,
-        error: (error as Error).message,
-      });
+      logger.error("SSR_TIMEOUT React render was aborted", { durationMs, timeoutMs: SSR_TIMEOUT_MS });
       // Re-throw timeout errors - don't try fallback, fail fast
       throw error;
     }
 
-    logger.error("[stream-renderer] renderToReadableStream failed", error);
+    logger.error("SSR_ERROR renderToReadableStream failed", { durationMs }, error);
     options.onError?.(error as Error);
 
     try {
-      if (debug) logger.info("[stream-renderer] Trying string rendering fallback...");
+      if (debug) logger.info("SSR trying string rendering fallback");
       const html = await renderToStringAdapter(element, options);
       if (debug) {
-        logger.info("[stream-renderer] String fallback succeeded", { htmlLength: html.length });
+        logger.info("SSR string fallback succeeded", { htmlLength: html.length });
       }
       return { html };
     } catch (fallbackError) {
-      logger.error("[stream-renderer] String rendering fallback also failed", fallbackError);
+      logger.error("SSR_ERROR string rendering fallback also failed", fallbackError);
       throw fallbackError;
     }
   }
@@ -118,6 +113,8 @@ function renderToPipeableStreamImpl(
   options: SSROptions,
   server: Awaited<ReturnType<typeof getReactDOMServer>>,
 ): Promise<SSRResult> {
+  const start = performance.now();
+
   if (!server.renderToPipeableStream) {
     throw toError(createError({
       type: "not_supported",
@@ -137,16 +134,14 @@ function renderToPipeableStreamImpl(
       if (settled) return;
       settled = true;
 
-      logger.error("[stream-renderer] SSR TIMEOUT (pipeable) - aborting React render", {
-        timeoutMs: SSR_TIMEOUT_MS,
-      });
+      logger.error("SSR_TIMEOUT aborting pipeable React render", { timeoutMs: SSR_TIMEOUT_MS });
 
       // Call React's abort function to stop the render
       if (abortFn) {
         try {
           abortFn();
         } catch (e) {
-          logger.warn("[stream-renderer] Error calling abort:", e);
+          logger.warn("SSR_ABORT error calling abort", e);
         }
       }
 
@@ -165,11 +160,11 @@ function renderToPipeableStreamImpl(
         namespaceURI: options.namespaceURI,
         nonce: options.nonce,
         onError: (error: unknown) => {
-          logger.error("React pipeable stream error", error);
+          logger.error("SSR_ERROR pipeable stream error", error);
           options.onError?.(error as Error);
         },
         onAllReady: () => {
-          logger.debug("React pipeable stream: all ready");
+          logger.debug("SSR pipeable stream all ready");
           options.onAllReady?.();
         },
         onShellReady: () => {
@@ -177,7 +172,7 @@ function renderToPipeableStreamImpl(
           settled = true;
           if (timeoutId) clearTimeout(timeoutId);
 
-          logger.debug("React pipeable stream: shell ready");
+          logger.debug("SSR pipeable stream shell ready");
           options.onShellReady?.();
           resolve({ pipe, abort });
         },
@@ -186,7 +181,7 @@ function renderToPipeableStreamImpl(
           settled = true;
           if (timeoutId) clearTimeout(timeoutId);
 
-          logger.error("React pipeable stream shell error", error);
+          logger.error("SSR_ERROR pipeable stream shell error", error);
           options.onShellError?.(error as Error);
           reject(error);
         },
@@ -200,10 +195,11 @@ function renderToPipeableStreamImpl(
       reject(error);
     }
   }).catch(async (error) => {
+    const durationMs = Math.round(performance.now() - start);
     // Check if this was a timeout error
     const isTimeout = error instanceof Error && error.message.includes("SSR timeout");
     if (!isTimeout) {
-      logger.error("renderToPipeableStream failed", error);
+      logger.error("SSR_ERROR renderToPipeableStream failed", { durationMs }, error);
     }
     options.onError?.(error as Error);
 
@@ -216,7 +212,7 @@ function renderToPipeableStreamImpl(
       const html = await renderToStringAdapter(element, options);
       return { html };
     } catch (fallbackError) {
-      logger.error("String rendering fallback also failed", fallbackError);
+      logger.error("SSR_ERROR string rendering fallback also failed", fallbackError);
       throw fallbackError;
     }
   });
@@ -230,22 +226,22 @@ export async function renderToStreamAdapter(
   const server = await getReactDOMServer();
 
   if (hasFeature("renderToReadableStream") && server.renderToReadableStream) {
-    if (debug) logger.info("[stream-renderer] Using renderToReadableStream");
+    if (debug) logger.info("SSR using renderToReadableStream");
     return renderToReadableStreamImpl(element, options, server);
   }
 
   if (hasFeature("renderToPipeableStream") && server.renderToPipeableStream) {
-    if (debug) logger.info("[stream-renderer] Using renderToPipeableStream");
+    if (debug) logger.info("SSR using renderToPipeableStream");
     return renderToPipeableStreamImpl(element, options, server);
   }
 
   const { version } = getReactVersionInfo();
-  if (debug) logger.info("[stream-renderer] Using string rendering for React", version);
+  if (debug) logger.info("SSR using string rendering", { reactVersion: version });
   try {
     const html = await renderToStringAdapter(element, options);
     return { html };
   } catch (error) {
-    logger.error("[stream-renderer] String rendering failed", error);
+    logger.error("SSR_ERROR string rendering failed", error);
     throw error;
   }
 }

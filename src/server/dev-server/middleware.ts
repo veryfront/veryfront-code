@@ -21,13 +21,19 @@ export function createRequestLoggerMiddleware() {
     const start = performance.now();
     const url = new URL(c.req.url);
     const method = c.req.method;
+    const pathname = url.pathname;
     const incomingId = c.req.headers.get("x-request-id") || "";
     const requestId = generateRequestId(incomingId);
+    const projectSlug = c.req.headers.get("x-project-slug") || undefined;
+
+    // Create request-scoped logger with bound context
+    const reqLogger = logger.child({ requestId, projectSlug, pathname });
     c.var.requestId = requestId;
+    c.var.logger = reqLogger;
 
     try {
-      await enrichSpanWithRequestInfo(method, url.pathname, requestId);
-      logger.debug(`[${requestId}] --> ${method} ${url.pathname}`);
+      await enrichSpanWithRequestInfo(method, pathname, requestId);
+      reqLogger.debug(`${method} ${pathname} started`);
     } catch {
       /* dev only */
     }
@@ -36,27 +42,22 @@ export function createRequestLoggerMiddleware() {
     try {
       response = (await next()) as Response | undefined;
     } catch (error) {
-      try {
-        logger.error(
-          `[${requestId}] ERROR ${method} ${url.pathname}`,
-          error instanceof Error ? error : new Error(String(error)),
-        );
-      } catch (loggingError) {
-        logger.debug("[dev-server] logging failed", loggingError);
-      }
+      const durationMs = Math.round(performance.now() - start);
+      reqLogger.error(`${method} ${pathname} failed`, { durationMs }, error);
       throw error;
     }
 
-    const duration = (performance.now() - start).toFixed(0);
+    const durationMs = Math.round(performance.now() - start);
     // Don't modify headers for WebSocket upgrade responses (status 101) - they're immutable
     if (response && response.status !== 101) {
       response.headers.set("x-request-id", requestId);
     }
 
     try {
-      logger.debug(
-        `[${requestId}] <-- ${method} ${url.pathname} ${response?.status ?? 0} ${duration}ms`,
-      );
+      reqLogger.debug(`${method} ${pathname} completed`, {
+        status: response?.status ?? 0,
+        durationMs,
+      });
     } catch {
       /* dev only */
     }

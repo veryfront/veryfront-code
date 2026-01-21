@@ -24,7 +24,10 @@ export async function withTimeout<T>(
 
   const timeoutPromise = new Promise<undefined>((resolve) => {
     timeoutId = setTimeout(() => {
-      logger.warn(`[withTimeout] ${label} timed out after ${timeoutMs}ms`);
+      logger.warn("TIMEOUT_SOFT operation timed out (returning undefined)", {
+        label,
+        timeoutMs,
+      });
       resolve(undefined);
     }, timeoutMs);
   });
@@ -52,7 +55,7 @@ export async function withTimeoutThrow<T>(
 
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => {
-      logger.error(`[withTimeoutThrow] ${label} timed out after ${timeoutMs}ms`);
+      logger.error("TIMEOUT_HARD operation timed out (throwing)", { label, timeoutMs });
       reject(new TimeoutError(label, timeoutMs));
     }, timeoutMs);
   });
@@ -110,7 +113,7 @@ export async function streamToString(
       // Check before AND after read - cancel() may cause read() to return done=true
       if (timedOut) {
         const partial = chunks.join("");
-        logger.error("[streamToString] Stream read timed out", {
+        logger.error("STREAM_TIMEOUT stream read timed out", {
           timeoutMs,
           partialLength: partial.length,
         });
@@ -122,7 +125,7 @@ export async function streamToString(
       // Check again after read - timeout may have fired during await
       if (timedOut) {
         const partial = chunks.join("");
-        logger.error("[streamToString] Stream read timed out", {
+        logger.error("STREAM_TIMEOUT stream read timed out", {
           timeoutMs,
           partialLength: partial.length,
         });
