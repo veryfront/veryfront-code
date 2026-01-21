@@ -9,6 +9,7 @@ import { compile } from "tailwindcss";
 import { serverLogger as logger } from "#veryfront/utils";
 import { getTailwindCSSUrl } from "#veryfront/utils/constants/cdn.ts";
 import type { VeryfrontConfig } from "#veryfront/config/types.ts";
+import { generateTailwindV4Theme } from "./tailwind-config.ts";
 
 type TailwindConfig = VeryfrontConfig["tailwind"];
 
@@ -35,42 +36,6 @@ async function fetchTailwindCSS(): Promise<string> {
   return tailwindCSS;
 }
 
-/**
- * Build custom theme CSS for veryfront color system
- */
-function buildCustomTheme(tailwindConfig?: TailwindConfig): string {
-  const themeVars = `
-  --color-background: hsl(var(--background));
-  --color-foreground: hsl(var(--foreground));
-  --color-muted: hsl(var(--muted));
-  --color-muted-foreground: hsl(var(--muted-foreground));
-  --color-primary: hsl(var(--primary));
-  --color-primary-foreground: hsl(var(--primary-foreground));
-  --color-secondary: hsl(var(--secondary));
-  --color-secondary-foreground: hsl(var(--secondary-foreground));
-  --color-highlight: hsl(var(--highlight));
-  --color-highlight-foreground: hsl(var(--highlight-foreground));
-  --color-card: hsl(var(--card));
-  --color-card-foreground: hsl(var(--card-foreground));
-  --color-panel: hsl(var(--panel));
-  --color-panel-foreground: hsl(var(--panel-foreground));
-  --color-popover: hsl(var(--popover));
-  --color-popover-foreground: hsl(var(--popover-foreground));
-  --color-destructive: hsl(var(--destructive));
-  --color-destructive-foreground: hsl(var(--destructive-foreground));
-  --color-border: hsl(var(--border));
-  --color-divider: hsl(var(--divider));
-  --color-input: hsl(var(--input));
-  --color-ring: hsl(var(--ring));
-  --color-success: hsl(var(--success));
-`;
-
-  return `
-@theme {
-${themeVars}
-}
-${tailwindConfig?.customCSS || ""}`;
-}
 
 /**
  * Get or create the Tailwind compiler
@@ -84,7 +49,8 @@ async function getCompiler(
     lastConfigHash = configHash;
 
     const baseCss = await fetchTailwindCSS();
-    const customTheme = buildCustomTheme(tailwindConfig);
+    // Use shared theme generator for consistency with CDN theme
+    const customTheme = generateTailwindV4Theme(tailwindConfig);
 
     compilerPromise = compile(baseCss + customTheme, {
       base: "/",
