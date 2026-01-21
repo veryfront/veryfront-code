@@ -124,26 +124,6 @@ export function getTemplateConfig(name: TemplateName): TemplateConfig | null {
   return templateConfigs[name] || null;
 }
 
-/**
- * Synchronous version of getTemplate for backward compatibility.
- * Only returns inline templates. Use async getTemplate() for directory-based templates.
- *
- * @deprecated Use the async getTemplate() function instead
- */
-export function getTemplateSync(name: TemplateName): TemplateFile[] | null {
-  const legacyTemplate = legacyTemplates[name];
-  if (legacyTemplate) {
-    return legacyTemplate;
-  }
-
-  // Handle aliases
-  if (name === "pages-router" || name === "app-router") {
-    return getTemplateSync("minimal");
-  }
-
-  return null;
-}
-
 // Legacy exports for backward compatibility
 // All templates should be loaded via async getTemplate()
 export const templates: Record<string, TemplateFile[]> = {};

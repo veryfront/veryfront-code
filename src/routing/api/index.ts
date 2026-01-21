@@ -7,12 +7,12 @@ export type { Route, RouteMatch } from "./api-route-matcher.ts";
 export {
   badRequest,
   forbidden,
-  json,
+  internalServerError as serverError,
+  jsonResponse as json,
   notFound,
-  redirect,
-  serverError,
+  redirectResponse as redirect,
   unauthorized,
-} from "./responses.ts";
+} from "#veryfront/http/responses";
 
 export { applyCORSHeaders, handleCORSPreflight } from "#veryfront/security";
 

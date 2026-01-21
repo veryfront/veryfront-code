@@ -114,20 +114,6 @@ export async function parseLocalImports(
   return { imports: localImports, crossProjectImports, missing: missingImports };
 }
 
-/**
- * Legacy function for backwards compatibility - returns only resolved imports.
- * @deprecated Use parseLocalImports which returns both resolved and missing imports.
- */
-export async function parseLocalImportsLegacy(
-  code: string,
-  filePath: string,
-  projectDir: string,
-  adapter?: RuntimeAdapter,
-): Promise<LocalImport[]> {
-  const result = await parseLocalImports(code, filePath, projectDir, adapter);
-  return result.imports;
-}
-
 async function checkFileExists(
   path: string,
   adapter?: RuntimeAdapter,

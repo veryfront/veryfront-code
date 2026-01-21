@@ -12,7 +12,6 @@ export {
   type CacheKeyContext,
   createCacheKeyFilter,
   extractCacheKeyContext,
-  extractCacheKeyContextFromRequestContext,
   getContentHashKey,
   getCurrentCacheKeyContext,
   getProjectScopedKey,
