@@ -202,9 +202,7 @@ async function demoLogin(preselectedMethod?: AuthMethod): Promise<boolean> {
   }
 
   const callbackUrl = getCallbackUrl(server.port);
-  const authUrl = `${getApiUrl()}/auth/${provider}?redirect_uri=${
-    encodeURIComponent(callbackUrl)
-  }`;
+  const authUrl = `${getApiUrl()}/auth/${provider}?redirect_uri=${encodeURIComponent(callbackUrl)}`;
 
   console.log("  " + brand("Opening browser to log in..."));
   console.log();
