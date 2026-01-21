@@ -66,19 +66,45 @@ async function getCompiler(
 }
 
 /**
+ * Add space-separated class names from a string to a Set.
+ * Filters out empty strings from splitting.
+ */
+function addClassesToSet(classes: Set<string>, classString: string): void {
+  for (const cls of classString.split(/\s+/)) {
+    if (cls) classes.add(cls);
+  }
+}
+
+/**
+ * Extract all regex matches and add their classes to a Set.
+ * Optionally processes each match through a transform function.
+ */
+function extractWithPattern(
+  classes: Set<string>,
+  source: string,
+  pattern: RegExp,
+  transform?: (match: string) => string,
+): void {
+  let match;
+  while ((match = pattern.exec(source)) !== null) {
+    const content = transform ? transform(match[1] || "") : (match[1] || "");
+    addClassesToSet(classes, content);
+  }
+}
+
+/**
+ * Remove template literal interpolations: ${...} -> space
+ */
+function removeInterpolations(str: string): string {
+  return str.replace(/\$\{[^}]*\}/g, " ");
+}
+
+/**
  * Extract class names from HTML
  */
 function extractClassNames(html: string): string[] {
   const classes = new Set<string>();
-  const pattern = /class(?:Name)?="([^"]*)"/g;
-
-  let match;
-  while ((match = pattern.exec(html)) !== null) {
-    for (const cls of (match[1] || "").split(/\s+/)) {
-      if (cls) classes.add(cls);
-    }
-  }
-
+  extractWithPattern(classes, html, /class(?:Name)?="([^"]*)"/g);
   return Array.from(classes);
 }
 
@@ -90,56 +116,32 @@ function extractClassNamesFromSource(source: string): string[] {
   const classes = new Set<string>();
 
   // Pattern 1: className="..." or class="..."
-  const staticPattern = /class(?:Name)?="([^"]*)"/g;
-  let match;
-  while ((match = staticPattern.exec(source)) !== null) {
-    for (const cls of (match[1] || "").split(/\s+/)) {
-      if (cls) classes.add(cls);
-    }
-  }
+  extractWithPattern(classes, source, /class(?:Name)?="([^"]*)"/g);
 
   // Pattern 2: className='...'
-  const singleQuotePattern = /class(?:Name)?='([^']*)'/g;
-  while ((match = singleQuotePattern.exec(source)) !== null) {
-    for (const cls of (match[1] || "").split(/\s+/)) {
-      if (cls) classes.add(cls);
-    }
-  }
+  extractWithPattern(classes, source, /class(?:Name)?='([^']*)'/g);
 
   // Pattern 3: className={`...`} template literals (extract string parts)
-  const templatePattern = /class(?:Name)?=\{`([^`]*)`\}/g;
-  while ((match = templatePattern.exec(source)) !== null) {
-    // Remove ${...} interpolations and extract remaining classes
-    const cleaned = (match[1] || "").replace(/\$\{[^}]*\}/g, " ");
-    for (const cls of cleaned.split(/\s+/)) {
-      if (cls) classes.add(cls);
-    }
-  }
+  extractWithPattern(classes, source, /class(?:Name)?=\{`([^`]*)`\}/g, removeInterpolations);
 
   // Pattern 4: cn(...), clsx(...), classNames(...) - extract string literals
   const cnPattern = /(?:cn|clsx|classNames)\s*\(\s*([^)]+)\)/g;
+  let match;
   while ((match = cnPattern.exec(source)) !== null) {
     const args = match[1] || "";
-    // Extract double-quoted strings
-    const dqStrings = args.match(/"([^"]*)"/g) || [];
-    for (const str of dqStrings) {
-      for (const cls of str.slice(1, -1).split(/\s+/)) {
-        if (cls) classes.add(cls);
-      }
-    }
-    // Extract single-quoted strings
-    const sqStrings = args.match(/'([^']*)'/g) || [];
-    for (const str of sqStrings) {
-      for (const cls of str.slice(1, -1).split(/\s+/)) {
-        if (cls) classes.add(cls);
-      }
-    }
-    // Extract template literals
-    const tlStrings = args.match(/`([^`]*)`/g) || [];
-    for (const str of tlStrings) {
-      const cleaned = str.slice(1, -1).replace(/\$\{[^}]*\}/g, " ");
-      for (const cls of cleaned.split(/\s+/)) {
-        if (cls) classes.add(cls);
+
+    // Extract strings from double quotes, single quotes, and template literals
+    const stringPatterns = [
+      { pattern: /"([^"]*)"/g, transform: undefined },
+      { pattern: /'([^']*)'/g, transform: undefined },
+      { pattern: /`([^`]*)`/g, transform: removeInterpolations },
+    ];
+
+    for (const { pattern, transform } of stringPatterns) {
+      let strMatch;
+      while ((strMatch = pattern.exec(args)) !== null) {
+        const content = transform ? transform(strMatch[1] || "") : (strMatch[1] || "");
+        addClassesToSet(classes, content);
       }
     }
   }
@@ -363,9 +365,6 @@ export async function generateTailwindCSS(
       classSet.add(cls);
     }
     // Add project-wide classes (from source file scanning)
-    const projectClassCount = opts.projectClasses
-      ? (opts.projectClasses instanceof Set ? opts.projectClasses.size : opts.projectClasses.length)
-      : 0;
     if (opts.projectClasses) {
       for (const cls of opts.projectClasses) {
         classSet.add(cls);
@@ -373,27 +372,9 @@ export async function generateTailwindCSS(
     }
     const classes = Array.from(classSet);
 
-    logger.debug("[Tailwind4] CSS generation", {
-      extractedFromHTML: extractedClasses.length,
-      projectClasses: projectClassCount,
-      totalClasses: classes.length,
-      hasUppercase: classes.includes("uppercase"),
-      sampleClasses: classes.slice(0, 20),
-    });
-
     const normalized = classes.map(normalizeClass);
 
     const css = compiler.build(normalized);
-
-    // Debug: Check if specific utilities are generated
-    const hasUppercaseCSS = css.includes("text-transform");
-    const hasFontSemibold = css.includes("font-weight") || css.includes("--tw-font-weight");
-    logger.debug("[Tailwind4] Generated CSS stats", {
-      cssLength: css.length,
-      hasUppercaseCSS,
-      hasFontSemibold,
-      cssPreview: css.slice(0, 500),
-    });
     const aliases = generateAliases(classes, css);
     const aspectAliases = generateAspectRatioAliases(classes);
 
