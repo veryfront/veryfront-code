@@ -384,6 +384,16 @@ export async function generateTailwindCSS(
     const normalized = classes.map(normalizeClass);
 
     const css = compiler.build(normalized);
+
+    // Debug: Check if specific utilities are generated
+    const hasUppercaseCSS = css.includes("text-transform");
+    const hasFontSemibold = css.includes("font-weight") || css.includes("--tw-font-weight");
+    logger.debug("[Tailwind4] Generated CSS stats", {
+      cssLength: css.length,
+      hasUppercaseCSS,
+      hasFontSemibold,
+      cssPreview: css.slice(0, 500),
+    });
     const aliases = generateAliases(classes, css);
     const aspectAliases = generateAspectRatioAliases(classes);
 
