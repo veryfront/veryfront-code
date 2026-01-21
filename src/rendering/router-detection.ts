@@ -134,15 +134,33 @@ type NormalizedDirEntry = {
   isSymlink: boolean;
 };
 
+/**
+ * Execute an async operation with adapter, falling back to native fs on failure.
+ */
+async function withAdapterFallback<T>(
+  adapterFn: () => Promise<T>,
+  fallbackFn: () => Promise<T>,
+  defaultValue: T,
+): Promise<T> {
+  try {
+    return await adapterFn();
+  } catch {
+    try {
+      return await fallbackFn();
+    } catch {
+      return defaultValue;
+    }
+  }
+}
+
 async function statWithFallback(
   path: string,
   adapter: RuntimeAdapter,
 ): Promise<NormalizedStat | null> {
-  try {
-    return await adapter.fs.stat(path) as NormalizedStat;
-  } catch {
-    const fs = createFileSystem();
-    try {
+  const fs = createFileSystem();
+  return await withAdapterFallback(
+    async () => await adapter.fs.stat(path) as NormalizedStat,
+    async () => {
       const stat = await fs.stat(path);
       return {
         size: stat.size,
@@ -151,46 +169,34 @@ async function statWithFallback(
         isSymlink: stat.isSymlink,
         mtime: stat.mtime,
       };
-    } catch {
-      return null;
-    }
-  }
+    },
+    null,
+  );
 }
 
-function normalizeEntry(entry: {
-  name: string;
-  isFile: boolean;
-  isDirectory: boolean;
-  isSymlink?: boolean;
-}): NormalizedDirEntry {
-  return {
-    name: entry.name,
-    isFile: entry.isFile,
-    isDirectory: entry.isDirectory,
-    isSymlink: entry.isSymlink ?? false,
-  };
+async function collectDirEntries(
+  iterable: AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean; isSymlink?: boolean }>,
+): Promise<NormalizedDirEntry[]> {
+  const entries: NormalizedDirEntry[] = [];
+  for await (const entry of iterable) {
+    entries.push({
+      name: entry.name,
+      isFile: entry.isFile,
+      isDirectory: entry.isDirectory,
+      isSymlink: entry.isSymlink ?? false,
+    });
+  }
+  return entries;
 }
 
 async function readDirWithFallback(
   dir: string,
   adapter: RuntimeAdapter,
 ): Promise<NormalizedDirEntry[]> {
-  try {
-    const entries: NormalizedDirEntry[] = [];
-    for await (const entry of adapter.fs.readDir(dir)) {
-      entries.push(normalizeEntry(entry));
-    }
-    return entries;
-  } catch {
-    const fs = createFileSystem();
-    try {
-      const entries: NormalizedDirEntry[] = [];
-      for await (const entry of fs.readDir(dir)) {
-        entries.push(normalizeEntry(entry));
-      }
-      return entries;
-    } catch {
-      return [];
-    }
-  }
+  const fs = createFileSystem();
+  return await withAdapterFallback(
+    () => collectDirEntries(adapter.fs.readDir(dir)),
+    () => collectDirEntries(fs.readDir(dir)),
+    [],
+  );
 }
