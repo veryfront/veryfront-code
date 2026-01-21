@@ -236,6 +236,7 @@ async function main(): Promise<void> {
     clientSecret: Deno.env.get("OAUTH_CLIENT_SECRET") || "",
     previewClientId: Deno.env.get("OAUTH_PREVIEW_CLIENT_ID") || "",
     previewClientSecret: Deno.env.get("OAUTH_PREVIEW_CLIENT_SECRET") || "",
+    apiToken: Deno.env.get("VERYFRONT_API_TOKEN") || "",
     localProjects: Object.fromEntries(allProjects),
   };
 

@@ -25,6 +25,7 @@ export interface ProxyConfig {
   clientSecret: string;
   previewClientId: string;
   previewClientSecret: string;
+  apiToken?: string; // Fallback token when OAuth credentials not available
   localProjects?: Record<string, string>;
 }
 
@@ -177,6 +178,12 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           }
         }
       }
+
+      // Fall back to static API token if OAuth token not available
+      if (!token && config.apiToken) {
+        token = config.apiToken;
+        logger?.debug("Using static API token fallback");
+      }
     } else {
       logger?.debug("Local project, skipping token fetch", { localPath });
     }
@@ -218,6 +225,11 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           logger?.error("Token fetch failed for API", error as Error, { projectSlug, customDomain });
         }
       }
+    }
+
+    // Fall back to static API token
+    if (config.apiToken) {
+      return config.apiToken;
     }
 
     return undefined;
