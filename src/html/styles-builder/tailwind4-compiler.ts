@@ -88,11 +88,11 @@ async function getCompiler(
 
     compilerPromise = compile(baseCss + customTheme, {
       base: "/",
-      async loadStylesheet(_id: string, _base: string) {
-        return { content: "", base: "/", path: "/" };
+      loadStylesheet(_id: string, _base: string) {
+        return Promise.resolve({ content: "", base: "/", path: "/" });
       },
-      async loadModule(_id: string, _base: string) {
-        return { module: {}, base: "/", path: "/" };
+      loadModule(_id: string, _base: string) {
+        return Promise.resolve({ module: {}, base: "/", path: "/" });
       },
     });
   }
