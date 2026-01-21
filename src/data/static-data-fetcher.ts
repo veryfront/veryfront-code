@@ -106,7 +106,11 @@ export class StaticDataFetcher {
           cacheKey,
         });
       } else {
-        this.logError("DATA_FETCH_ERROR getStaticData failed", error, { pathname, durationMs, cacheKey });
+        this.logError("DATA_FETCH_ERROR getStaticData failed", error, {
+          pathname,
+          durationMs,
+          cacheKey,
+        });
       }
       throw error;
     }
