@@ -8,13 +8,13 @@ import {
 import { getStudioScripts } from "./dev-scripts.ts";
 import { processMetadata } from "./metadata-builder.ts";
 import {
+  generateTailwind4CSS,
   generateTailwindV4Theme,
   generateThemeVariables,
   getDevStyles,
   getProductionStyles,
   getTailwindCDNUrl,
 } from "./styles-builder/index.ts";
-import { generateTailwindCSS } from "./styles-builder/unocss-generator.ts";
 import type { HTMLGenerationOptions } from "./types.ts";
 import {
   buildContentAttributes,
@@ -136,12 +136,12 @@ export async function generateHTMLShellParts(
   props?: ComponentProps,
   contentForTailwind?: string,
 ): Promise<{ start: string; end: string }> {
-  // For streaming, we can't generate Tailwind CSS from the content
-  // since the content isn't available yet. Use empty string or provided content.
-  // Pass tailwind config for theme customization in production mode
+  // Generate JIT Tailwind CSS from content for both dev and prod
+  // This ensures consistent styling across environments
+  // Pass tailwind config for theme customization
   const tailwindConfig = options.config?.tailwind;
   const tailwindCSS = contentForTailwind
-    ? await generateTailwindCSS(contentForTailwind, tailwindConfig)
+    ? await generateTailwind4CSS(contentForTailwind, tailwindConfig)
     : "";
 
   const {
@@ -273,13 +273,10 @@ ${tailwindV4Theme}
   <!-- Modulepreload hints for faster cold start -->
   ${modulePreloadHints}
 
-  <!-- Tailwind CSS: CDN in dev (runtime compilation), UnoCSS in prod (pre-generated) -->
-  ${tailwindCDN}
-  ${
-    options.mode !== "development" && tailwindCSS
-      ? `<style${nonce ? ` nonce="${nonce}"` : ""}>\n${tailwindCSS}\n  </style>`
-      : ""
-  }
+  <!-- Tailwind CSS: JIT-compiled for both dev and prod (consistent styling) -->
+  <!-- CDN kept in dev for live class editing during HMR -->
+  ${options.mode === "development" ? tailwindCDN : ""}
+  ${tailwindCSS ? `<style${nonce ? ` nonce="${nonce}"` : ""}>\n${tailwindCSS}\n  </style>` : ""}
 
   <!-- CSS Variables for Theming (veryfront-renderer compatible) -->
   <style${nonce ? ` nonce="${nonce}"` : ""}>

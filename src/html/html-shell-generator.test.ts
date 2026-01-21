@@ -147,7 +147,7 @@ describe("html-generation/html-shell-generator", () => {
       assertStringIncludes(result, '[data-theme="dark"]');
     });
 
-    it("should include Tailwind v4 CDN in development mode", async () => {
+    it("should include Tailwind v4 CDN in development mode for HMR", async () => {
       const meta: RenderMetadata = {
         title: "Test Page",
         slug: "test",
@@ -161,15 +161,15 @@ describe("html-generation/html-shell-generator", () => {
 
       const result = await wrapInHTMLShell("<div>Content</div>", meta, options);
 
-      // Tailwind v4 uses the @tailwindcss/browser package
+      // Tailwind v4 CDN is included in dev for HMR live class editing
       assertStringIncludes(result, "cdn.jsdelivr.net/npm/@tailwindcss/browser@4");
       assertStringIncludes(
         result,
-        "<!-- Tailwind CSS: CDN in dev (runtime compilation), UnoCSS in prod (pre-generated) -->",
+        "<!-- Tailwind CSS: JIT-compiled for both dev and prod (consistent styling) -->",
       );
     });
 
-    it("should use Tailwind v4 CDN in production mode", async () => {
+    it("should NOT include Tailwind CDN in production mode (JIT only)", async () => {
       const meta: RenderMetadata = {
         title: "Test Page",
         slug: "test",
@@ -183,8 +183,10 @@ describe("html-generation/html-shell-generator", () => {
 
       const result = await wrapInHTMLShell("<div>Content</div>", meta, options);
 
-      // Tailwind v4 uses the @tailwindcss/browser package
-      assertStringIncludes(result, "cdn.jsdelivr.net/npm/@tailwindcss/browser@4");
+      // Production mode uses JIT CSS only, no CDN
+      assert(!result.includes("cdn.jsdelivr.net/npm/@tailwindcss/browser@4"));
+      // Should have JIT CSS styles
+      assertStringIncludes(result, "tailwindcss v4");
     });
 
     it("should include syntax highlighting styles", async () => {
