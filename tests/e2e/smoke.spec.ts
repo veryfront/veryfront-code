@@ -21,14 +21,14 @@ const ENABLED_PROJECTS = [
   "blank",
   "codersociety",
   "veryfront",
-  // "tomcode", // RENDERER BUG: SVG components missing `export default` (see docs/E2E_PROJECT_ISSUES.md)
-
   "restaurant-template",
   "lease-calculator",
   "impartial-chandrasekhar-qsohb",
   "immo-price-finder",
   "real-estate-template",
   "dashboard"
+
+  // "tomcode", // RENDERER BUG: SVG components missing `export default` (see docs/E2E_PROJECT_ISSUES.md)
 
   // AI templates:
   // "ai-assistant-template",

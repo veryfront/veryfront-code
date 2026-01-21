@@ -269,11 +269,25 @@ export class LayoutCollector {
       );
     }
 
-    logger.debug("Compiling named layout", {
+    // Check layout kind - only MDX files need compilation
+    const kind = getLayoutKind(layoutInfo.entity.path);
+
+    logger.debug("Processing named layout", {
       layoutName,
+      layoutPath: layoutInfo.entity.path,
+      kind,
       contentLength: layoutInfo.entity.content.length,
     });
 
+    // For TSX layouts, skip MDX compilation - they'll be loaded as components
+    if (kind === "tsx") {
+      logger.debug("Named layout is TSX - skipping MDX compilation", {
+        layoutPath: layoutInfo.entity.path,
+      });
+      return { layoutBundle: undefined, layoutPath: layoutInfo.entity.path, layoutName };
+    }
+
+    // MDX layouts need compilation
     const layoutBundle = await this.compileMDX(
       layoutInfo.entity.content,
       { ...layoutInfo.entity.frontmatter, isLayout: true },

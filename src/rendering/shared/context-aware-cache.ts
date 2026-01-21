@@ -78,10 +78,17 @@ export class ContextAwareCacheCoordinator {
    *
    * @param slug - Page slug to look up
    * @param ctx - Render context for tenant isolation
+   * @param colorScheme - Optional color scheme for cache key variation
    * @returns Cache lookup result
    */
-  async checkCache(slug: string, ctx: RenderContext): Promise<ContextAwareCacheLookupResult> {
-    const cacheKey = createCacheKey(ctx, `page:${slug}`);
+  async checkCache(
+    slug: string,
+    ctx: RenderContext,
+    colorScheme?: "light" | "dark",
+  ): Promise<ContextAwareCacheLookupResult> {
+    // Include colorScheme in cache key to prevent serving wrong theme
+    const themeKey = colorScheme ? `:theme=${colorScheme}` : "";
+    const cacheKey = createCacheKey(ctx, `page:${slug}${themeKey}`);
 
     const cached = await this.store.get(cacheKey);
 
@@ -108,6 +115,12 @@ export class ContextAwareCacheCoordinator {
       });
     }
 
+    logger.debug("[ContextAwareCache] Cache miss", {
+      slug,
+      cacheKey,
+      projectId: ctx.projectId,
+      environment: ctx.environment,
+    });
     return {
       cacheKey,
       hit: false,
@@ -120,14 +133,22 @@ export class ContextAwareCacheCoordinator {
    * @param result - Render result to cache
    * @param slug - Page slug
    * @param ctx - Render context for tenant isolation
+   * @param colorScheme - Optional color scheme for cache key variation
    */
-  async persistResult(result: RenderResult, slug: string, ctx: RenderContext): Promise<void> {
+  async persistResult(
+    result: RenderResult,
+    slug: string,
+    ctx: RenderContext,
+    colorScheme?: "light" | "dark",
+  ): Promise<void> {
     // Don't cache streaming results
     if (!result || result.stream) {
       return;
     }
 
-    const cacheKey = createCacheKey(ctx, `page:${slug}`);
+    // Include colorScheme in cache key to prevent serving wrong theme
+    const themeKey = colorScheme ? `:theme=${colorScheme}` : "";
+    const cacheKey = createCacheKey(ctx, `page:${slug}${themeKey}`);
 
     const payload: CachePayload = {
       result: this.cloneResult(result),
