@@ -6,6 +6,9 @@ export const SSR_TIMEOUT_MS = 10000;
 
 export const SANDBOX_TIMEOUT_MS = 5000;
 
+/** Timeout for user data fetching functions (getServerData, getStaticData) */
+export const DATA_FETCH_TIMEOUT_MS = 10000;
+
 export const DEFAULT_CACHE_MAX_SIZE = 100;
 
 export const defaultConfig = {

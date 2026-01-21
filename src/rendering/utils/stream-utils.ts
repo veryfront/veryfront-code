@@ -2,6 +2,16 @@ import { SSR_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 
 /**
+ * Error thrown when an operation times out.
+ */
+export class TimeoutError extends Error {
+  constructor(label: string, timeoutMs: number) {
+    super(`${label} timed out after ${timeoutMs}ms`);
+    this.name = "TimeoutError";
+  }
+}
+
+/**
  * Wrap a promise with timeout protection.
  * Returns undefined if timeout occurs (non-throwing for optional operations).
  */
@@ -16,6 +26,34 @@ export async function withTimeout<T>(
     timeoutId = setTimeout(() => {
       logger.warn(`[withTimeout] ${label} timed out after ${timeoutMs}ms`);
       resolve(undefined);
+    }, timeoutMs);
+  });
+
+  try {
+    const result = await Promise.race([promise, timeoutPromise]);
+    clearTimeout(timeoutId!);
+    return result;
+  } catch (error) {
+    clearTimeout(timeoutId!);
+    throw error;
+  }
+}
+
+/**
+ * Wrap a promise with timeout protection (throwing version).
+ * Throws TimeoutError if timeout occurs.
+ */
+export async function withTimeoutThrow<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string,
+): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout>;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      logger.error(`[withTimeoutThrow] ${label} timed out after ${timeoutMs}ms`);
+      reject(new TimeoutError(label, timeoutMs));
     }, timeoutMs);
   });
 
