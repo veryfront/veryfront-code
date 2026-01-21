@@ -167,6 +167,12 @@ export interface CacheStats {
     misses: number;
     hitRate: number;
   };
+  poke?: {
+    received: number;
+    invalidationsTriggered: number;
+    lastPokeTime: number;
+    connectionId: string | null;
+  };
 }
 
 /**
@@ -189,6 +195,8 @@ export interface InvalidationCallbacks {
   clearProjectClasses?: (projectKey: string) => void;
   /** Trigger browser reload notification */
   triggerReload?: (changedPaths?: string[]) => void;
+  /** Clear renderer result cache (context-aware HTML cache) */
+  clearRendererCache?: () => void;
 }
 
 /**

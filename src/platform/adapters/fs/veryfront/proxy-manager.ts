@@ -9,6 +9,7 @@ import {
   invalidateModulePaths,
 } from "../../../../transforms/mdx/esm-module-loader/cache/index.ts";
 import { clearSnippetCache } from "../../../../rendering/snippet-renderer.ts";
+import { clearRendererCaches } from "../../../../rendering/renderer.ts";
 import { buildProxyManagerCacheKey } from "#veryfront/cache";
 import { z } from "zod";
 
@@ -284,7 +285,7 @@ export class ProxyFSAdapterManager {
       },
       // Inject invalidationCallbacks to wire up cache clearing and HMR notifications
       // When FSAdapter receives poke from API:
-      // 1. Clear all server-side caches (SSR modules, router detection, etc.)
+      // 1. Clear all server-side caches (SSR modules, router detection, renderer cache, etc.)
       // 2. Trigger browser reload via ReloadNotifier → HMRHandler → WebSocket
       invalidationCallbacks: {
         clearSSRModuleCache,
@@ -292,6 +293,7 @@ export class ProxyFSAdapterManager {
         clearModulePathCache,
         invalidateModulePaths,
         clearSnippetCache,
+        clearRendererCache: clearRendererCaches,
         triggerReload: (changedPaths) => ReloadNotifier.triggerReload(changedPaths),
       },
     };
