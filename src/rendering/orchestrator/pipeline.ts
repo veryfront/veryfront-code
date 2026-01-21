@@ -716,6 +716,35 @@ export class RenderPipeline {
       }
     }
 
+    // 12. Generate CSS for SPA navigation via lightweight SSR render
+    // This ensures client-side navigation has all required styles (from actual rendered HTML)
+    let css: string | undefined;
+    try {
+      // Do a lightweight SSR render to get the actual HTML with all component classes
+      const renderResult = await this.renderPage(slug, {
+        ...options,
+        delivery: "string", // Full HTML string, not stream
+      });
+
+      // Extract CSS from rendered HTML - it's embedded in a <style> tag
+      // The JIT CSS is the first non-CDN style block after Tailwind theme
+      if (renderResult.html) {
+        // Extract classes from the rendered HTML and generate CSS
+        const { generateTailwind4CSS } = await import("#veryfront/html/styles-builder/index.ts");
+        css = await generateTailwind4CSS(renderResult.html);
+        logger.debug("[resolvePageData] Generated CSS from SSR HTML", {
+          slug,
+          htmlLength: renderResult.html.length,
+          cssLength: css?.length || 0,
+        });
+      }
+    } catch (error) {
+      logger.warn("[resolvePageData] Failed to generate CSS via SSR", {
+        slug,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
     logger.debug("[resolvePageData] Resolved page data", {
       slug,
       pagePath,
@@ -724,6 +753,7 @@ export class RenderPipeline {
       providerCount: providers.length,
       appPath,
       headingsCount: headings.length,
+      hasCss: !!css,
     });
 
     return {
@@ -739,6 +769,7 @@ export class RenderPipeline {
       buildVersion: createBuildVersion(projectUpdatedAt),
       appPath,
       headings,
+      css,
     };
   }
 }

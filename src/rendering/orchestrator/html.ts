@@ -289,11 +289,11 @@ export class HTMLGenerator {
     context: HTMLGenerationContext,
     mergedFrontmatter: MDXFrontmatter,
   ): Promise<HTMLGenerationOptions> {
-    // Load app path, global CSS, and tailwind config in parallel
-    const [appComponentPath, globalCSS, tailwindConfigJs] = await Promise.all([
+    // Load app path and global CSS in parallel
+    // Note: tailwind.config.js is not loaded - Tailwind v4 uses CSS @theme directive instead
+    const [appComponentPath, globalCSS] = await Promise.all([
       this.resolveAppPath().then((p) => p ?? undefined),
       this.loadProjectFile("globals.css"),
-      this.loadProjectFile("tailwind.config.js"),
     ]);
     logger.debug("[HTMLGenerator] App component resolution", {
       appComponentPath,
@@ -321,7 +321,6 @@ export class HTMLGenerator {
       pagePath,
       nonce: context.options?.nonce,
       globalCSS,
-      tailwindConfigJs,
       frontmatter: mergedFrontmatter,
       studioEmbed: context.options?.studioEmbed,
       projectId: context.options?.projectId,
