@@ -113,6 +113,9 @@ export const CacheKeyPrefix = {
 
   // Project prefixes
   PROJECT: "project",
+
+  // Styles prefixes
+  GLOBALS_CSS: "globals",
 } as const;
 
 /**
