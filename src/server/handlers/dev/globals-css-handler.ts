@@ -9,7 +9,7 @@ import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { HTTP_NOT_FOUND, HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
 import { joinPath } from "#veryfront/utils/path-utils.ts";
-import { compileGlobalsCSS } from "#veryfront/html/styles-builder/globals-compiler.ts";
+import { compileGlobalsCSS } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
 
 export class GlobalsCSSHandler extends BaseHandler {
   metadata: HandlerMetadata = {

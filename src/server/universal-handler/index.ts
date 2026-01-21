@@ -96,6 +96,7 @@ import { StudioEndpointsHandler } from "../handlers/studio/endpoints.ts";
 import { StaticHandler } from "../handlers/request/static.ts";
 import { SnippetHandler } from "../handlers/request/snippet-handler.ts";
 import { LibModulesHandler } from "../handlers/request/lib-modules-handler.ts";
+import { CSSHandler } from "../handlers/request/css-handler.ts";
 import { RSCHandler } from "../handlers/request/rsc/index.ts";
 import { ModuleHandler } from "../handlers/request/module/index.ts";
 import { ApiHandlerWrapper } from "../handlers/request/api/index.ts";
@@ -195,6 +196,7 @@ export function createVeryfrontHandler(
     new DevDashboardHandler(), // Priority: 300 (HIGH, dev only - unified dev dashboard at /_dev)
     new ProjectsHandler(), // Priority: HIGH (multi-project mode landing page with React UI)
     new StudioEndpointsHandler(), // Priority: 300 (HIGH, Studio iframe scripts)
+    new CSSHandler(), // Priority: 300 (HIGH, serves /_vf/css/[hash].css)
     new DevFileHandler(), // Priority: 400 (dev only)
     new SnippetHandler(), // Priority: 450 (before static, handles @/ component previews)
     new StaticHandler(), // Priority: 500 (MEDIUM_STATIC)

@@ -8,12 +8,12 @@ import {
 import { getStudioScripts } from "./dev-scripts.ts";
 import { processMetadata } from "./metadata-builder.ts";
 import {
-  generateTailwind4CSS,
-  generateTailwindV4Theme,
+  cacheCSS,
+  extractCandidates,
+  generateTailwindCSS,
   generateThemeVariables,
   getDevStyles,
   getProductionStyles,
-  getTailwindCDNUrl,
 } from "./styles-builder/index.ts";
 import type { HTMLGenerationOptions } from "./types.ts";
 import {
@@ -136,16 +136,27 @@ export async function generateHTMLShellParts(
   props?: ComponentProps,
   contentForTailwind?: string,
 ): Promise<{ start: string; end: string }> {
-  // Generate JIT Tailwind CSS from content for both dev and prod
-  // This ensures consistent styling across environments
-  // Pass tailwind config and project-wide classes for complete coverage
-  const tailwindConfig = options.config?.tailwind;
-  const tailwindCSS = contentForTailwind
-    ? await generateTailwind4CSS(contentForTailwind, {
-      tailwindConfig,
-      projectClasses: options.projectClasses,
-    })
-    : "";
+  // Generate JIT Tailwind CSS using native Tailwind v4 compile() API
+  // Uses project's stylesheet (globals.css) for @theme, @plugin support
+  // Extracts candidates from rendered HTML content + project-wide classes
+  const stylesheetContent = options.globalCSS;
+  const isProduction = options.mode === "production" && options.proxyEnvironment !== "preview";
+
+  // Merge candidates from: 1) rendered HTML content, 2) pre-extracted project classes
+  const candidates = new Set<string>(options.projectClasses || []);
+  if (contentForTailwind) {
+    for (const cls of extractCandidates(contentForTailwind)) {
+      candidates.add(cls);
+    }
+  }
+
+  const tailwindResult = await generateTailwindCSS(
+    stylesheetContent,
+    candidates,
+    { minify: isProduction },
+  );
+  const tailwindCSS = tailwindResult.css;
+  const tailwindError = tailwindResult.error;
 
   const {
     effectiveTitle,
@@ -199,20 +210,9 @@ export async function generateHTMLShellParts(
 
   const syntaxHighlightTheme = options.mode === "development" ? "github-dark" : "github";
 
-  // Tailwind v4 CDN for runtime CSS compilation
-  // Uses CSS-first configuration with @theme directive instead of JavaScript config
-  const tailwindCDNUrl = getTailwindCDNUrl(tailwindConfig);
-
-  // Generate Tailwind v4 @theme CSS with default design tokens
-  const tailwindV4Theme = generateTailwindV4Theme(tailwindConfig);
-
-  // Build Tailwind v4 CDN setup:
-  // 1. Tailwind v4 CDN script
-  // 2. @theme CSS with design tokens (colors, fonts, spacing)
-  const tailwindCDN = `<script src="${tailwindCDNUrl}"${nonce ? ` nonce="${nonce}"` : ""}></script>
-  <style type="text/tailwindcss"${nonce ? ` nonce="${nonce}"` : ""}>
-${tailwindV4Theme}
-  </style>`;
+  // Generate Tailwind CSS output - inline for preview, hashed link for production
+  // cacheCSS stores the CSS and returns the hash for later retrieval
+  const cssHash = tailwindCSS && isProduction ? cacheCSS(tailwindCSS) : "";
 
   // Generate modulepreload hints for page and layout modules (faster cold start)
   const modulePreloadHints = generateModulePreloadHints(options);
@@ -276,10 +276,18 @@ ${tailwindV4Theme}
   <!-- Modulepreload hints for faster cold start -->
   ${modulePreloadHints}
 
-  <!-- Tailwind CSS: JIT-compiled for both dev and prod (consistent styling) -->
-  <!-- CDN kept in dev/preview for live class editing during HMR -->
-  ${options.mode === "development" || options.proxyEnvironment === "preview" ? tailwindCDN : ""}
-  ${tailwindCSS ? `<style${nonce ? ` nonce="${nonce}"` : ""}>\n${tailwindCSS}\n  </style>` : ""}
+  <!-- Tailwind CSS: Server-side JIT compiled -->
+  ${(() => {
+    if (!tailwindCSS) return "";
+    if (isProduction) {
+      // Production: link to hashed CSS file for immutable caching
+      return `<link rel="stylesheet" href="/_vf/css/${cssHash}.css">`;
+    } else {
+      // Preview/Dev: inline style with ID for HMR updates
+      return `<style id="vf-tailwind-css"${nonce ? ` nonce="${nonce}"` : ""}>\n${tailwindCSS}\n  </style>`;
+    }
+  })()}
+  ${tailwindError ? `<!-- Tailwind CSS Error: ${tailwindError.replace(/-->/g, "- ->")} -->` : ""}
 
   <!-- CSS Variables for Theming (veryfront-renderer compatible) -->
   ${
