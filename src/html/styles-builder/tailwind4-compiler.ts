@@ -209,29 +209,107 @@ function normalizeClass(cls: string): string {
 }
 
 /**
- * Generate CSS aliases for comma-syntax classes
+ * Check if a class needs normalization (has comma or bare CSS variable)
+ */
+function needsNormalization(cls: string): boolean {
+  if (!cls.includes("[")) return false;
+  // Check for comma syntax: grid-cols-[0.25fr,0.5fr]
+  if (cls.includes(",")) return true;
+  // Check for bare CSS variable: aspect-[--ratio]
+  const match = cls.match(/\[([^\]]*)\]/);
+  const content = match?.[1];
+  if (content) {
+    // Bare CSS variable: --name or --name/opacity, not already wrapped in var()
+    if (/^--[\w-]+(?:\/[\d.]+)?$/.test(content) && !content.includes("var(")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Escape string for use in a regex to match it literally
+ */
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Generate CSS aliases for classes that need normalization
+ * (comma-syntax and bare CSS variable classes)
+ *
+ * For each class that needs normalization, we:
+ * 1. Build the CSS selector for the NORMALIZED class as Tailwind generates it
+ * 2. Search for that selector in the generated CSS
+ * 3. Extract the CSS properties
+ * 4. Create an alias with the ORIGINAL class name pointing to those properties
  */
 function generateAliases(classes: string[], css: string): string {
   const aliases: string[] = [];
 
   for (const cls of classes) {
-    if (!cls.includes("[") || !cls.includes(",")) continue;
+    if (!needsNormalization(cls)) continue;
 
     const normalized = normalizeClass(cls);
-    const escaped = normalized.replace(/([[\].:#(),>+~=|^$*])/g, "\\$1");
-    const pattern = new RegExp(
-      `\\.${escaped.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\{([^}]*)\\}`,
-    );
-    const match = css.match(pattern);
 
-    if (match?.[1]) {
-      const origEscaped = cls.replace(/([[\].:#(),>+~=|^$*])/g, "\\$1");
-      aliases.push(`.${origEscaped} {${match[1]}}`);
+    // Build the CSS selector as Tailwind generates it
+    // Tailwind escapes: [ ] ( ) : and . (decimal points)
+    // Example: grid-cols-[0.68fr_0.32fr] -> grid-cols-\[0\.68fr_0\.32fr\]
+    const cssSelector = normalized.replace(/([[\]().:])/g, "\\$1");
+
+    // Escape the entire CSS selector for use in a regex
+    const regexSelector = escapeRegex(cssSelector);
+
+    const isResponsive = cls.includes(":");
+
+    let cssProperties: string | null = null;
+
+    if (isResponsive) {
+      // For responsive classes like md:grid-cols-[...], the CSS structure is:
+      // .md\:grid-cols-\[...\] { @media (...) { property: value; } }
+      const pattern = new RegExp(
+        `\\.${regexSelector}\\s*\\{\\s*@media[^{]*\\{([^}]*)\\}`,
+      );
+      const match = css.match(pattern);
+      cssProperties = match?.[1]?.trim() || null;
+    } else {
+      // For non-responsive classes, the structure is:
+      // .class-\[...\] { property: value; }
+      const pattern = new RegExp(`\\.${regexSelector}\\s*\\{([^}]*)\\}`);
+      const match = css.match(pattern);
+      cssProperties = match?.[1]?.trim() || null;
+    }
+
+    if (cssProperties) {
+      // Build the original class selector (CSS-escaped)
+      // Must escape: [ ] ( ) . : and , (commas are CSS selector separators)
+      const origSelector = cls.replace(/([[\]().:,])/g, "\\$1");
+      // Add !important to override CDN-generated CSS in development
+      const importantProps = cssProperties.replace(/;/g, " !important;");
+      if (isResponsive) {
+        // Extract the media query from the normalized class rule
+        const mediaPattern = new RegExp(
+          `\\.${regexSelector}\\s*\\{\\s*(@media[^{]*)\\{`,
+        );
+        const mediaMatch = css.match(mediaPattern);
+        const mediaQuery = mediaMatch?.[1]?.trim() || "@media (width >= 48rem)";
+        aliases.push(`.${origSelector} { ${mediaQuery} { ${importantProps} } }`);
+      } else {
+        aliases.push(`.${origSelector} { ${importantProps} }`);
+      }
     }
   }
 
-  return aliases.length ? `\n/* Comma-syntax aliases */\n${aliases.join("\n")}` : "";
+  return aliases.length ? `\n/* Normalized class aliases */\n${aliases.join("\n")}` : "";
 }
+
+/**
+ * Classes that commonly need normalization but may be rendered client-side.
+ * These are always included to ensure correct CSS is generated.
+ */
+const SAFELIST_CLASSES = [
+  "aspect-[--ratio]",
+];
 
 /**
  * Generate Tailwind CSS from HTML content
@@ -242,7 +320,15 @@ export async function generateTailwindCSS(
 ): Promise<string> {
   try {
     const compiler = await getCompiler(tailwindConfig);
-    const classes = extractClassNames(html);
+    const extractedClasses = extractClassNames(html);
+
+    // Merge extracted classes with safelist
+    const classSet = new Set(extractedClasses);
+    for (const cls of SAFELIST_CLASSES) {
+      classSet.add(cls);
+    }
+    const classes = Array.from(classSet);
+
     const normalized = classes.map(normalizeClass);
 
     const css = compiler.build(normalized);

@@ -86,7 +86,10 @@ async function renderToReadableStreamImpl(
       (error.name === "AbortError" || error.message.includes("SSR timeout") ||
         error.message.includes("aborted"));
     if (isAbort) {
-      logger.error("SSR_TIMEOUT React render was aborted", { durationMs, timeoutMs: SSR_TIMEOUT_MS });
+      logger.error("SSR_TIMEOUT React render was aborted", {
+        durationMs,
+        timeoutMs: SSR_TIMEOUT_MS,
+      });
       // Re-throw timeout errors - don't try fallback, fail fast
       throw error;
     }
