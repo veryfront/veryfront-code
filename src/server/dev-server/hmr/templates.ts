@@ -85,6 +85,7 @@ export function generateHMRClientTemplate(
   }
 
   function updateCSS(path) {
+    let updated = false;
     document.querySelectorAll('link[rel="stylesheet"]').forEach((link) => {
       try {
         const url = new URL(link.href);
@@ -92,9 +93,15 @@ export function generateHMRClientTemplate(
           const newUrl = new URL(link.href);
           newUrl.searchParams.set('t', Date.now().toString());
           link.href = newUrl.toString();
+          updated = true;
         }
       } catch (error) { console.error('[HMR] Failed to update CSS link:', error); }
     });
+    // Fallback: if CSS is inlined (no matching link found), do full reload
+    if (!updated) {
+      console.log('[HMR] No matching stylesheet link for ' + path + ', reloading page');
+      window.location.reload();
+    }
   }
 
   function updateJS(path) {

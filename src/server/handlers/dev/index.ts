@@ -6,3 +6,4 @@
 export { DevEndpointsHandler } from "./endpoints.ts";
 export { DevFileHandler } from "./files/index.ts";
 export { DebugContextHandler } from "./debug-context.ts";
+export { GlobalsCSSHandler } from "./globals-css-handler.ts";
