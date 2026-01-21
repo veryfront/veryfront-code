@@ -3,7 +3,7 @@ import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import * as esbuild from "esbuild";
 import { join } from "#veryfront/platform/compat/path/index.ts";
 import { compileMDXToJS } from "../compiler/index.ts";
-import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
+import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import type { EmbeddedBundleManifest } from "../renderer/types/bundler-types.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 
@@ -26,7 +26,7 @@ export async function buildEmbeddedPreset(
   const { projectDir, outDir } = options;
   const embeddedDir = join(outDir, "embedded");
   const fs = createFileSystem();
-  const adapter = await getAdapter();
+  const adapter = await runtime.get();
   await fs.mkdir(embeddedDir, { recursive: true });
   await fs.mkdir(join(embeddedDir, "rsc"), { recursive: true });
 
@@ -62,9 +62,21 @@ export async function buildEmbeddedPreset(
   const appOut = join(embeddedDir, "app.js");
   let bundledAppCode = "";
   try {
+    // Compile MDX/MD files first, then bundle
+    let sourceCode = await fs.readTextFile(entryPath);
+    const isMdx = entryPath.endsWith(".mdx") || entryPath.endsWith(".md");
+    if (isMdx) {
+      const compiled = await compileMDXToJS(entryPath, sourceCode, {
+        projectDir,
+        mode: "production",
+        adapter,
+      });
+      sourceCode = compiled.code;
+    }
+
     const appBuild = await esbuild.build({
       stdin: {
-        contents: await fs.readTextFile(entryPath),
+        contents: sourceCode,
         sourcefile: entryPath,
         resolveDir: projectDir,
         loader: "tsx",
@@ -75,6 +87,7 @@ export async function buildEmbeddedPreset(
       target: ["es2020"],
       write: false,
       logLevel: "silent",
+      external: ["react", "react-dom", "react/jsx-runtime", "react/jsx-dev-runtime"],
     });
     if (!appBuild.outputFiles?.[0]?.text) {
       throw toError(createError({
@@ -85,7 +98,12 @@ export async function buildEmbeddedPreset(
     bundledAppCode = appBuild.outputFiles[0].text;
   } catch (error) {
     logger.error("Failed to bundle embedded app:", error);
-    bundledAppCode = "export default async function App(){ return ''; }";
+    throw toError(createError({
+      type: "build",
+      message: `Failed to bundle embedded app: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    }));
   }
   if (!bundledAppCode) {
     throw toError(createError({

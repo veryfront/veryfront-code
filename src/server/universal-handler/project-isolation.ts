@@ -9,6 +9,7 @@
  */
 
 import { serverLogger as logger } from "#veryfront/utils";
+import { getEnv } from "#veryfront/compat/process.ts";
 
 /** Configuration for project isolation */
 export interface ProjectIsolationConfig {
@@ -240,9 +241,9 @@ export class ProjectIsolationManager {
 }
 
 // Singleton instance with configurable limits via env vars
-const maxConcurrent = parseInt(Deno.env.get("PROJECT_MAX_CONCURRENT") || "100", 10);
-const circuitThreshold = parseInt(Deno.env.get("PROJECT_CIRCUIT_THRESHOLD") || "20", 10);
-const circuitResetMs = parseInt(Deno.env.get("PROJECT_CIRCUIT_RESET_MS") || "60000", 10);
+const maxConcurrent = parseInt(getEnv("PROJECT_MAX_CONCURRENT") || "100", 10);
+const circuitThreshold = parseInt(getEnv("PROJECT_CIRCUIT_THRESHOLD") || "20", 10);
+const circuitResetMs = parseInt(getEnv("PROJECT_CIRCUIT_RESET_MS") || "60000", 10);
 
 export const projectIsolation = new ProjectIsolationManager({
   maxConcurrentPerProject: maxConcurrent,

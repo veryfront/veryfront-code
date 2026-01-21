@@ -175,6 +175,69 @@ export async function resolve(specifier, context, nextResolve) {
   return nextResolve(specifier, context);
 }
 
-// No custom load hook needed anymore:
-// - React/HTTP modules are handled by shared facades
-// - .tsx files are handled by --experimental-transform-types
+// Lazy-load esbuild for TSX transformation
+let esbuild = null;
+async function getEsbuild() {
+  if (!esbuild) {
+    esbuild = await import('esbuild');
+  }
+  return esbuild;
+}
+
+/**
+ * Custom load hook for TypeScript/TSX/JSX files.
+ * Node's --experimental-strip-types doesn't support enums and other advanced TS features.
+ * We use esbuild for full TypeScript transformation.
+ */
+export async function load(url, context, nextLoad) {
+  // Only handle file:// URLs
+  if (!url.startsWith('file://')) {
+    return nextLoad(url, context);
+  }
+
+  const filePath = fileURLToPath(url);
+
+  // Handle JSON files (Node requires import attributes for JSON)
+  if (filePath.endsWith('.json')) {
+    const source = readFileSync(filePath, 'utf-8');
+    return {
+      shortCircuit: true,
+      format: 'json',
+      source,
+    };
+  }
+
+  // Determine the loader based on file extension
+  let loader = null;
+  if (filePath.endsWith('.tsx')) {
+    loader = 'tsx';
+  } else if (filePath.endsWith('.ts') && !filePath.endsWith('.d.ts')) {
+    loader = 'ts';
+  } else if (filePath.endsWith('.jsx')) {
+    loader = 'jsx';
+  }
+
+  // Transform TypeScript/TSX/JSX files with esbuild
+  if (loader) {
+    const source = readFileSync(filePath, 'utf-8');
+    const esb = await getEsbuild();
+
+    const result = await esb.transform(source, {
+      loader,
+      format: 'esm',
+      sourcefile: filePath,
+      jsx: 'automatic',
+      jsxImportSource: 'react',
+      target: 'node20',
+    });
+
+    return {
+      shortCircuit: true,
+      format: 'module',
+      source: result.code,
+    };
+  }
+
+  // Let Node handle everything else
+  return nextLoad(url, context);
+}

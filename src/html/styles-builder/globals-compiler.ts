@@ -14,9 +14,10 @@
 import { compile } from "tailwindcss";
 import { serverLogger as logger } from "#veryfront/utils";
 import { getTailwindCSSUrl } from "#veryfront/utils/constants/cdn.ts";
-import { registerMapCache, CacheKeyPrefix } from "#veryfront/cache/index.ts";
+import { CacheKeyPrefix, registerMapCache } from "#veryfront/cache/index.ts";
 import { getContentHashKey, tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
-
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { getEnv } from "#veryfront/compat/process.ts";
 
 // ============================================================================
 // CACHES (Project-isolated)
@@ -90,7 +91,6 @@ function hashString(str: string): string {
   return (hash >>> 0).toString(36);
 }
 
-
 // ============================================================================
 // TAILWIND BASE CSS (Pre-warm on import)
 // ============================================================================
@@ -99,8 +99,8 @@ function hashString(str: string): string {
  * Fetch Tailwind base CSS with automatic pre-warming.
  * Uses a singleton promise to prevent duplicate fetches.
  */
-async function getTailwindBaseCSS(): Promise<string> {
-  if (tailwindBaseCSS) return tailwindBaseCSS;
+function getTailwindBaseCSS(): Promise<string> {
+  if (tailwindBaseCSS) return Promise.resolve(tailwindBaseCSS);
 
   // Use singleton promise to prevent duplicate fetches
   if (!tailwindBaseCSSPromise) {
@@ -138,12 +138,15 @@ async function fetchTailwindBaseCSS(): Promise<string> {
   }
 }
 
-// Pre-warm on module import (non-blocking)
-getTailwindBaseCSS().catch((error) => {
-  logger.warn("[globals-compiler] Pre-warm failed, will retry on demand", {
-    error: error instanceof Error ? error.message : String(error),
+// Pre-warm on module import (non-blocking) - skip in test environments to avoid leak detection
+const isTestEnvironment = getEnv("VF_DISABLE_LRU_INTERVAL") === "1";
+if (!isTestEnvironment) {
+  getTailwindBaseCSS().catch((error) => {
+    logger.warn("[globals-compiler] Pre-warm failed, will retry on demand", {
+      error: error instanceof Error ? error.message : String(error),
+    });
   });
-});
+}
 
 // ============================================================================
 // PLUGIN LOADING
@@ -187,10 +190,12 @@ async function loadPlugin(id: string): Promise<unknown> {
       id,
       error: error instanceof Error ? error.message : String(error),
     });
-    // Return empty function as fallback
-    const fallback = () => {};
-    pluginCache.set(id, fallback);
-    return fallback;
+    throw toError(createError({
+      type: "build",
+      message: `Failed to load Tailwind plugin "${id}": ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    }));
   }
 }
 

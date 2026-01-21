@@ -1,5 +1,5 @@
 import { join } from "#veryfront/platform/compat/path/index.ts";
-import { getAdapter } from "#veryfront/platform/adapters/index.ts";
+import { runtime } from "#veryfront/platform/adapters/index.ts";
 import { getConfig } from "#veryfront/config";
 import { createRenderer, type VeryfrontRenderer } from "#veryfront/rendering/index.ts";
 import type { BuildOptions, BuildStats } from "#veryfront/server/build-types.ts";
@@ -15,7 +15,7 @@ export interface BuildContext {
 }
 
 export async function initializeBuildContext(options: BuildOptions): Promise<BuildContext> {
-  const adapter = await getAdapter();
+  const adapter = await runtime.get();
   const config = await getConfig(options.projectDir, adapter);
   const renderer = await createRenderer({
     projectDir: options.projectDir,

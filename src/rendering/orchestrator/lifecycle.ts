@@ -70,8 +70,8 @@ export class RendererLifecycle {
     // Get or detect adapter
     this.adapter = this.configManager.getAdapter();
     if (!this.adapter) {
-      const { getAdapter } = await import("#veryfront/platform/adapters/detect.ts");
-      this.adapter = await getAdapter();
+      const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
+      this.adapter = await runtime.get();
     }
 
     const config = this.configManager.getConfig();

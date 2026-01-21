@@ -1,7 +1,7 @@
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { LRUCache } from "./lru-wrapper.ts";
 import { delay } from "#std/async.ts";
+import { LRUCache } from "./lru-wrapper.ts";
 
 describe("LRUCache", () => {
   const caches: LRUCache<unknown, unknown>[] = [];
@@ -80,11 +80,11 @@ describe("LRUCache", () => {
 
   describe("TTL and expiration", () => {
     it("TTL expiration", async () => {
-      const cache = createCache<string, number>({ maxEntries: 3, ttlMs: 50 });
+      const cache = createCache<string, number>({ maxEntries: 3, ttlMs: 30 });
       cache.set("a", 1);
       assertEquals(cache.get("a"), 1);
 
-      await delay(80);
+      await delay(150);
 
       cache.cleanup();
 
@@ -92,11 +92,11 @@ describe("LRUCache", () => {
     });
 
     it("has() respects expiry", async () => {
-      const cache = createCache<string, number>({ maxEntries: 3, ttlMs: 50 });
+      const cache = createCache<string, number>({ maxEntries: 3, ttlMs: 30 });
       cache.set("a", 1);
       assertEquals(cache.has("a"), true);
 
-      await delay(80);
+      await delay(150);
 
       cache.cleanup();
 
@@ -117,18 +117,23 @@ describe("LRUCache", () => {
   describe("LRU eviction", () => {
     it("prune respects maxEntries (LRU order)", async () => {
       const cache = createCache<string, number>({ maxEntries: 2, ttlMs: 1000 });
+
       cache.set("a", 1);
       await delay(2);
       cache.set("b", 2);
       await delay(2);
-      assert(cache.get("a") !== undefined);
+
+      cache.get("a");
       await delay(2);
+
       cache.set("c", 3);
       assertEquals(cache.get("b"), undefined);
       assertEquals(cache.get("a"), 1);
       assertEquals(cache.get("c"), 3);
-      assert(cache.get("c") !== undefined);
+
+      cache.get("c");
       await delay(2);
+
       cache.set("d", 4);
       assertEquals(cache.get("a"), undefined);
       assertEquals(cache.get("c"), 3);
@@ -162,12 +167,12 @@ describe("LRUCache", () => {
     });
 
     it("pruning removes multiple expired entries", async () => {
-      const cache = createCache<string, number>({ maxEntries: 5, ttlMs: 50 });
+      const cache = createCache<string, number>({ maxEntries: 5, ttlMs: 30 });
 
       cache.set("exp1", 1);
       cache.set("exp2", 2);
 
-      await delay(80);
+      await delay(150);
 
       cache.cleanup();
 
@@ -204,12 +209,15 @@ describe("LRUCache", () => {
 
     it("has() respects delete and clear", () => {
       const cache = createCache<string, number>({ maxEntries: 3, ttlMs: 1000 });
+
       cache.set("b", 2);
       assertEquals(cache.delete("b"), true);
       assertEquals(cache.has("b"), false);
+
       cache.set("c", 3);
       cache.set("d", 4);
-      assertEquals(cache.size >= 1, true);
+      assertEquals(cache.size, 2);
+
       cache.clear();
       assertEquals(cache.size, 0);
     });

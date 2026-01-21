@@ -23,6 +23,9 @@ import { MemoryCache } from "./memory-cache.ts";
 import { RedisCache } from "./redis-cache.ts";
 import { ResilientCache } from "./resilient-cache.ts";
 import { getEnv } from "../../src/platform/compat/process.ts";
+import { proxyLogger } from "../logger.ts";
+
+const logger = proxyLogger.child({ module: "cache" });
 
 /**
  * Create a token cache based on configuration.
@@ -66,7 +69,7 @@ export function createCacheFromEnv(): TokenCache {
   if (cacheType === "redis") {
     const url = getEnv("REDIS_URL");
     if (!url) {
-      console.warn("[Cache] CACHE_TYPE=redis but REDIS_URL not set, falling back to memory");
+      logger.warn("[Cache] CACHE_TYPE=redis but REDIS_URL not set, falling back to memory");
       return new MemoryCache();
     }
 
@@ -77,7 +80,7 @@ export function createCacheFromEnv(): TokenCache {
 
     // Wrap Redis with resilient fallback to memory cache
     // This ensures the proxy continues to function when Redis is unavailable
-    console.log("[Cache] Using Redis with memory fallback (ResilientCache)");
+    logger.info("[Cache] Using Redis with memory fallback (ResilientCache)");
     return new ResilientCache(redisCache, new MemoryCache());
   }
 

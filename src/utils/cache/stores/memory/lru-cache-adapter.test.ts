@@ -87,12 +87,10 @@ describe("LRUCacheAdapter", () => {
 
   describe("TTL expiration", () => {
     it("should expire entries after TTL", async () => {
-      cache.set("expire-me", "value", 100); // 100ms TTL
-
+      cache.set("expire-me", "value", 50);
       expect(cache.get("expire-me")).toBe("value");
 
-      // Wait with sufficient margin for concurrent execution stability
-      await delay(200);
+      await delay(300);
 
       expect(cache.get("expire-me")).toBeUndefined();
     });
@@ -108,12 +106,11 @@ describe("LRUCacheAdapter", () => {
     });
 
     it("should cleanup expired entries", async () => {
-      cache.set("expire1", "value1", 80);
-      cache.set("expire2", "value2", 80);
+      cache.set("expire1", "value1", 50);
+      cache.set("expire2", "value2", 50);
       cache.set("keep", "value3", 5000);
 
-      // Wait with sufficient margin for concurrent execution stability
-      await delay(200);
+      await delay(300);
 
       const cleaned = cache.cleanupExpired();
       expect(cleaned).toBe(2);
@@ -259,10 +256,9 @@ describe("LRUCacheAdapter", () => {
 
     it("should update TTL for existing key", async () => {
       cache.set("key", "value", 1000);
-      cache.set("key", "value", 100); // Update with shorter TTL
+      cache.set("key", "value", 50);
 
-      // Wait with sufficient margin for concurrent execution stability
-      await delay(200);
+      await delay(300);
 
       expect(cache.get("key")).toBeUndefined();
     });

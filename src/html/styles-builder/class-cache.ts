@@ -62,17 +62,23 @@ export function updateProjectClasses(
   files: Array<{ path: string; content?: string }>,
 ): void {
   const startTime = performance.now();
+  const sourceFiles = files.filter((f) => isSourceFile(f.path));
+  const filesWithContent = sourceFiles.filter((f) => f.content);
   const classes = extractClassesFromFiles(files);
 
   projectClassCache.set(projectKey, classes);
 
   const duration = Math.round(performance.now() - startTime);
-  logger.debug("[ClassCache] Updated project classes", {
+  const classArray = Array.from(classes);
+  logger.info("[ClassCache] Updated project classes", {
     projectKey,
     classCount: classes.size,
     fileCount: files.length,
-    sourceFiles: files.filter((f) => isSourceFile(f.path)).length,
+    sourceFiles: sourceFiles.length,
+    filesWithContent: filesWithContent.length,
     durationMs: duration,
+    hasUppercase: classes.has("uppercase"),
+    sampleClasses: classArray.slice(0, 30),
   });
 }
 

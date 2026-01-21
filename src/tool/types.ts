@@ -20,6 +20,12 @@ export interface ToolConfig<TInput = any, TOutput = any> {
   inputSchema: z.ZodSchema<TInput>;
 
   /**
+   * Allow unknown/non-Zod schemas to fall back to a permissive JSON schema.
+   * Use only for truly dynamic tools; prefer z.unknown() or z.any() instead.
+   */
+  allowUnknownSchema?: boolean;
+
+  /**
    * Tool execution function
    */
   execute: (

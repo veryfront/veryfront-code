@@ -7,9 +7,12 @@
  */
 
 import type { CacheStats, TokenCache, TokenCacheEntry } from "./types.ts";
+import { proxyLogger } from "../logger.ts";
 
 const CIRCUIT_OPEN_DURATION_MS = 30_000; // 30 seconds
 const FAILURE_THRESHOLD = 3; // failures before circuit opens
+
+const logger = proxyLogger.child({ module: "cache" });
 
 export class ResilientCache implements TokenCache {
   private primary: TokenCache;
@@ -33,7 +36,7 @@ export class ResilientCache implements TokenCache {
     if (this.circuitOpenedAt) {
       const elapsed = Date.now() - this.circuitOpenedAt;
       if (elapsed >= CIRCUIT_OPEN_DURATION_MS) {
-        console.log("[ResilientCache] Circuit half-open, trying primary again");
+        logger.info("[ResilientCache] Circuit half-open, trying primary again");
         return true;
       }
     }
@@ -46,7 +49,7 @@ export class ResilientCache implements TokenCache {
    */
   private recordSuccess(): void {
     if (this.usingFallback) {
-      console.log("[ResilientCache] Primary recovered, switching back from fallback");
+      logger.info("[ResilientCache] Primary recovered, switching back from fallback");
       this.usingFallback = false;
       this.failureCount = 0;
       this.circuitOpenedAt = null;
@@ -58,13 +61,13 @@ export class ResilientCache implements TokenCache {
    */
   private recordFailure(error: unknown): void {
     this.failureCount++;
-    console.warn(
+    logger.warn(
       `[ResilientCache] Primary cache error (${this.failureCount}/${FAILURE_THRESHOLD}):`,
-      error instanceof Error ? error.message : error
+      { error: error instanceof Error ? error.message : error }
     );
 
     if (this.failureCount >= FAILURE_THRESHOLD && !this.usingFallback) {
-      console.warn("[ResilientCache] Opening circuit, switching to fallback cache");
+      logger.warn("[ResilientCache] Opening circuit, switching to fallback cache");
       this.usingFallback = true;
       this.circuitOpenedAt = Date.now();
     }

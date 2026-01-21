@@ -4,7 +4,7 @@ import type { CompileOptions, CompileResult } from "./types.ts";
 import { pathExists } from "./validator.ts";
 import { compileMDXFile } from "./compiler.ts";
 import { discoverFiles } from "#veryfront/utils/file-discovery.ts";
-import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
+import { runtime } from "#veryfront/platform/adapters/detect.ts";
 
 export async function compileAllMDX(options: CompileOptions): Promise<Map<string, CompileResult>> {
   const results = new Map<string, CompileResult>();
@@ -28,7 +28,7 @@ export async function compileMDXDirectory(
   options: CompileOptions,
   results: Map<string, CompileResult>,
 ): Promise<void> {
-  const adapter = await getAdapter();
+  const adapter = await runtime.get();
   for await (
     const file of discoverFiles({
       baseDir: dir,

@@ -34,9 +34,9 @@ export async function generateCommand(projectDir: string, type: string, name: st
   fs = createFileSystem();
   let preferred: "pages-router" | "app-router" = "pages-router";
   try {
-    const { getAdapter } = await import("#veryfront/platform/adapters/detect.ts");
+    const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
 
-    const adapter = await getAdapter();
+    const adapter = await runtime.get();
     const cfg = await getConfig(projectDir, adapter);
     const pref = cfg?.generate?.preferredRouter || cfg?.router;
     if (pref === "app-router" || pref === "pages-router") preferred = pref;

@@ -1,7 +1,7 @@
 import { join, relative } from "#veryfront/platform/compat/path/index.ts";
 import { serverLogger } from "#veryfront/utils";
 import { toBase64Url } from "#veryfront/utils/path-utils.ts";
-import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
+import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import type { ComponentAnalysis, ComponentType } from "./types.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
@@ -73,7 +73,7 @@ export async function buildClientManifest(
   let fsAdapter = fs;
   if (!fsAdapter) {
     try {
-      const adapter = await getAdapter();
+      const adapter = await runtime.get();
       fsAdapter = adapter.fs;
     } catch (error) {
       serverLogger.warn(`Failed to get file system adapter:`, error);

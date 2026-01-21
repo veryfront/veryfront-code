@@ -66,6 +66,8 @@ function convertSchemaToJson(
   const fallbackSchema: JsonSchema = permissive
     ? { type: "object", properties: {}, additionalProperties: true }
     : { type: "object", properties: {} };
+  const formatErrorMessage = (error: unknown): string =>
+    error instanceof Error ? error.message : String(error);
 
   // Strategy 1: Full Zod conversion if typeName is present
   if (hasValidZodTypeName(schema)) {
@@ -83,7 +85,10 @@ function convertSchemaToJson(
         agentLogger.info(`[${logPrefix}] Using permissive schema for "${toolId}"`);
         return fallbackSchema;
       }
-      agentLogger.warn(`[${logPrefix}] Failed to pre-convert schema for "${toolId}":`, error);
+      throw toError(createError({
+        type: "agent",
+        message: `Tool "${toolId}" input schema conversion failed: ${formatErrorMessage(error)}`,
+      }));
     }
   }
 
@@ -99,19 +104,29 @@ function convertSchemaToJson(
         } properties`,
       );
       return result;
-    } catch {
-      agentLogger.warn(`[${logPrefix}] Schema for "${toolId}" could not be introspected.`);
-      return fallbackSchema;
+    } catch (error) {
+      if (permissive) {
+        agentLogger.info(`[${logPrefix}] Using permissive schema for "${toolId}"`);
+        return fallbackSchema;
+      }
+      throw toError(createError({
+        type: "agent",
+        message: `Tool "${toolId}" schema introspection failed: ${formatErrorMessage(error)}`,
+      }));
     }
   }
 
   // Strategy 3: Fallback to empty/permissive schema
-  const logFn = permissive ? agentLogger.info : agentLogger.warn;
-  const message = permissive
-    ? `[${logPrefix}] Using fully dynamic schema for "${toolId}"`
-    : `[${logPrefix}] Schema for "${toolId}" is not a valid Zod schema (different zod instance?). Input validation may be limited.`;
-  logFn(message);
-  return fallbackSchema;
+  if (permissive) {
+    agentLogger.info(`[${logPrefix}] Using fully dynamic schema for "${toolId}"`);
+    return fallbackSchema;
+  }
+
+  throw toError(createError({
+    type: "agent",
+    message:
+      `Tool "${toolId}" input schema is not a valid Zod schema. Use the same Zod instance or set allowUnknownSchema to true.`,
+  }));
 }
 
 /**
@@ -148,7 +163,12 @@ export function tool<TInput = unknown, TOutput = unknown>(
   const id = config.id || generateToolId();
 
   // Pre-convert Zod schema to JSON Schema using unified conversion logic
-  const inputSchemaJson = convertSchemaToJson(config.inputSchema, id, "TOOL", false);
+  const inputSchemaJson = convertSchemaToJson(
+    config.inputSchema,
+    id,
+    "TOOL",
+    config.allowUnknownSchema ?? false,
+  );
 
   return {
     id,

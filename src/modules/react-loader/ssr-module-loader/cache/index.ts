@@ -18,12 +18,14 @@ export {
   transformSemaphore,
 } from "./memory.ts";
 
-// Redis caching
+// Distributed caching (Redis backend)
 export {
   getFromRedis,
   getRedisClientInstance,
   getRedisEnabled,
+  initializeSSRDistributedCache,
   initializeSSRRedisCache,
+  isSSRDistributedCacheEnabled,
   isSSRRedisCacheEnabled,
   redisKey,
   setInRedis,

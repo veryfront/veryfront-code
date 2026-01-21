@@ -101,7 +101,12 @@ export default function ${name}() {
 `;
 }
 
-describe("SSRModuleLoader Stress Tests", { sanitizeResources: false, sanitizeOps: false }, () => {
+// Skip entire stress test suite on non-Deno runtimes due to module resolution differences
+describe("SSRModuleLoader Stress Tests", {
+  sanitizeResources: false,
+  sanitizeOps: false,
+  ignore: !isDeno,
+}, () => {
   denoOnlyIt("concurrent requests for same file should not race", async () => {
     clearSSRModuleCache();
 

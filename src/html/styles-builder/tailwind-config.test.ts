@@ -1,9 +1,6 @@
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import {
-  generateTailwindV4Theme,
-  getTailwindCDNUrl,
-} from "./tailwind-config.ts";
+import { generateTailwindV4Theme, getTailwindCDNUrl } from "./tailwind-config.ts";
 
 describe("tailwind-config", () => {
   describe("getTailwindCDNUrl", () => {

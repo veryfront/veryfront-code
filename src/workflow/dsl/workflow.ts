@@ -33,6 +33,11 @@ export interface WorkflowOptions<TInput = unknown, TOutput = unknown> {
   /** Default timeout for the entire workflow */
   timeout?: string | number;
   /**
+   * Allow the registry to execute the step builder for metadata extraction.
+   * Set to true only if step construction is pure and has no side effects.
+   */
+  introspect?: boolean;
+  /**
    * Workflow steps - can be:
    * - An array of WorkflowNode
    * - A function that returns an array based on input
@@ -139,6 +144,7 @@ export function workflow<TInput = unknown, TOutput = unknown>(
     outputSchema: options.outputSchema,
     retry: options.retry,
     timeout: options.timeout,
+    introspect: options.introspect,
     steps: options.steps,
     onError: options.onError,
     onComplete: options.onComplete,

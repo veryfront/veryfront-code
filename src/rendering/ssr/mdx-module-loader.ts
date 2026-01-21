@@ -1,6 +1,6 @@
 import { getCacheNamespace } from "#veryfront/utils/cache/keys/namespace.ts";
 import { CompilationError, wrapError } from "#veryfront/errors/index.ts";
-import { getAdapter } from "#veryfront/platform/adapters/index.ts";
+import { runtime } from "#veryfront/platform/adapters/index.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import type { MDXModule } from "./types.ts";
@@ -149,7 +149,7 @@ const _Fragment = Fragment;
 }
 
 async function ensureTempDir(): Promise<string> {
-  const adapter = await getAdapter();
+  const adapter = await runtime.get();
   const { cwd } = await import("../../platform/compat/process.ts"); // Import cwd helper
   const tempDir = `${cwd()}/.veryfront/temp/mdx-modules`;
 
@@ -171,7 +171,7 @@ async function ensureTempDir(): Promise<string> {
 
 async function cleanupTempModule(modulePath: string): Promise<void> {
   try {
-    const adapter = await getAdapter();
+    const adapter = await runtime.get();
     await adapter.fs.remove(modulePath);
   } catch {
     // Best-effort cleanup

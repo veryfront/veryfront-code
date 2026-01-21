@@ -40,8 +40,8 @@ export async function loadImportMap(
 ): Promise<ImportMapConfig> {
   let runtimeAdapter = adapter;
   if (!runtimeAdapter) {
-    const { getAdapter } = await import("#veryfront/platform/adapters/detect.ts");
-    runtimeAdapter = await getAdapter();
+    const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
+    runtimeAdapter = await runtime.get();
   }
 
   try {

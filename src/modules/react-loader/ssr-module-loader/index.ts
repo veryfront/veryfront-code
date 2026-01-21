@@ -35,7 +35,9 @@ export {
   clearSSRModuleCache,
   clearSSRModuleCacheForProject,
   globalModuleCache,
+  initializeSSRDistributedCache,
   initializeSSRRedisCache,
+  isSSRDistributedCacheEnabled,
   isSSRRedisCacheEnabled,
 } from "./cache/index.ts";
 
