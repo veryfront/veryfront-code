@@ -2,7 +2,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/index.ts";
 import type { DataContext, DataResult, PageWithData } from "./types.ts";
 import { serverLogger } from "#veryfront/utils";
 import { DATA_FETCH_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
-import { withTimeoutThrow, TimeoutError } from "#veryfront/rendering/utils/stream-utils.ts";
+import { TimeoutError, withTimeoutThrow } from "#veryfront/rendering/utils/stream-utils.ts";
 
 export class ServerDataFetcher {
   constructor(private adapter?: RuntimeAdapter) {}
@@ -35,9 +35,12 @@ export class ServerDataFetcher {
       };
     } catch (error) {
       if (error instanceof TimeoutError) {
-        serverLogger.error(`[ServerDataFetcher] getServerData timed out after ${DATA_FETCH_TIMEOUT_MS}ms`, {
-          pathname,
-        });
+        serverLogger.error(
+          `[ServerDataFetcher] getServerData timed out after ${DATA_FETCH_TIMEOUT_MS}ms`,
+          {
+            pathname,
+          },
+        );
       }
       this.logError("Error in getServerData:", error);
       throw error;

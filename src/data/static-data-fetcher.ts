@@ -3,7 +3,7 @@ import type { CacheManager } from "./data-fetching-cache.ts";
 import type { DataContext, DataResult, PageWithData } from "./types.ts";
 import { serverLogger } from "#veryfront/utils";
 import { DATA_FETCH_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
-import { withTimeoutThrow, TimeoutError } from "#veryfront/rendering/utils/stream-utils.ts";
+import { TimeoutError, withTimeoutThrow } from "#veryfront/rendering/utils/stream-utils.ts";
 
 /** Shorter timeout for background revalidation (non-blocking, fire-and-forget) */
 const REVALIDATION_TIMEOUT_MS = 15000;
@@ -120,7 +120,10 @@ export class StaticDataFetcher {
       });
     } catch (error) {
       if (error instanceof TimeoutError) {
-        serverLogger.error(`[StaticDataFetcher] Background revalidation timed out`, { pathname, cacheKey });
+        serverLogger.error(`[StaticDataFetcher] Background revalidation timed out`, {
+          pathname,
+          cacheKey,
+        });
       }
       this.logError("Error revalidating data:", error);
     } finally {
