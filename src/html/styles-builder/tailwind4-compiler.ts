@@ -330,11 +330,23 @@ function generateAliases(classes: string[], css: string): string {
 }
 
 /**
- * Classes that commonly need normalization but may be rendered client-side.
+ * Classes that commonly need normalization or may be rendered client-side.
  * These are always included to ensure correct CSS is generated.
+ *
+ * Common patterns that need safelisting:
+ * - aspect-[--ratio]: CSS variable aspect ratios
+ * - aspect-[800/450]: Common image dimensions (16:9-ish)
+ * - aspect-[16/9], aspect-[4/3]: Standard video/photo ratios
+ * - Skeleton components often use these during client-side loading states
  */
 const SAFELIST_CLASSES = [
   "aspect-[--ratio]",
+  "aspect-[800/450]",
+  "aspect-[16/9]",
+  "aspect-[4/3]",
+  "aspect-[3/2]",
+  "aspect-[2/3]",
+  "aspect-[1/1]",
 ];
 
 /**
