@@ -13,6 +13,7 @@ import {
   timeAsync,
 } from "#veryfront/utils";
 import { requestTracker } from "./request-tracker.ts";
+import { projectIsolation } from "./project-isolation.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { metrics } from "#veryfront/observability/simple-metrics/index.ts";
 import {
@@ -310,6 +311,41 @@ export function createVeryfrontHandler(
     if (shouldTrackRequest) {
       requestTracker.start(trackingRequestId, earlyProjectSlug, _url.pathname, req.method);
     }
+
+    // Per-project isolation check - prevent one project from monopolizing resources
+    const isolationCheck = projectIsolation.checkRequest(earlyProjectSlug);
+    if (!isolationCheck.allowed) {
+      // Complete tracking with rejection
+      if (shouldTrackRequest) {
+        requestTracker.complete(trackingRequestId, 503, false);
+      }
+
+      const message = isolationCheck.reason === "circuit_open"
+        ? `Service temporarily unavailable for project. Retry after ${
+          Math.ceil((isolationCheck.waitTimeMs || 0) / 1000)
+        } seconds.`
+        : "Too many concurrent requests for this project. Please retry.";
+
+      return new Response(
+        JSON.stringify({
+          error: message,
+          reason: isolationCheck.reason,
+          retryAfterMs: isolationCheck.waitTimeMs,
+        }),
+        {
+          status: 503,
+          headers: {
+            "Content-Type": "application/json",
+            ...(isolationCheck.waitTimeMs
+              ? { "Retry-After": String(Math.ceil(isolationCheck.waitTimeMs / 1000)) }
+              : {}),
+          },
+        },
+      );
+    }
+
+    // Start tracking for isolation
+    projectIsolation.startRequest(earlyProjectSlug);
 
     try {
       // Ensure API handler is ready before processing requests
@@ -690,10 +726,13 @@ export function createVeryfrontHandler(
       endServerSpan(span, response.status, error);
 
       // Complete request tracking with final status
+      const isTimeout = response.status === HTTP_GATEWAY_TIMEOUT;
       if (shouldTrackRequest) {
-        const isTimeout = response.status === HTTP_GATEWAY_TIMEOUT;
         requestTracker.complete(trackingRequestId, response.status, isTimeout);
       }
+
+      // Complete isolation tracking
+      projectIsolation.completeRequest(earlyProjectSlug, isTimeout);
 
       return response;
     } finally {

@@ -344,7 +344,9 @@ export class HTMLGenerator {
    */
   private getProjectClasses(): Set<string> | undefined {
     // Check if adapter has getCachedClasses method (VeryfrontFSAdapter)
-    const adapter = this.config.adapter as unknown as { getCachedClasses?: () => Set<string> | undefined };
+    const adapter = this.config.adapter as unknown as {
+      getCachedClasses?: () => Set<string> | undefined;
+    };
     if (typeof adapter.getCachedClasses === "function") {
       return adapter.getCachedClasses();
     }

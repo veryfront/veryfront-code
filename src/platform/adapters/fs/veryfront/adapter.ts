@@ -20,7 +20,6 @@ import { DirectoryOperations } from "./directory-operations.ts";
 import { StatOperations } from "./stat-operations.ts";
 import { buildFileListCacheKey } from "./cache-keys.ts";
 import {
-  clearProjectClasses,
   getProjectClasses,
   updateProjectClasses,
 } from "#veryfront/html/styles-builder/class-cache.ts";
