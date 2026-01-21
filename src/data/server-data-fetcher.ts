@@ -13,6 +13,7 @@ export class ServerDataFetcher {
     }
 
     const pathname = context.url?.pathname || "unknown";
+    const start = performance.now();
 
     try {
       const result = await withTimeoutThrow(
@@ -34,23 +35,24 @@ export class ServerDataFetcher {
         revalidate: result.revalidate,
       };
     } catch (error) {
+      const durationMs = Math.round(performance.now() - start);
       if (error instanceof TimeoutError) {
-        serverLogger.error(
-          `[ServerDataFetcher] getServerData timed out after ${DATA_FETCH_TIMEOUT_MS}ms`,
-          {
-            pathname,
-          },
-        );
+        serverLogger.error("DATA_FETCH_TIMEOUT getServerData timed out", {
+          pathname,
+          durationMs,
+          timeoutMs: DATA_FETCH_TIMEOUT_MS,
+        });
+      } else {
+        this.logError("DATA_FETCH_ERROR getServerData failed", error, { pathname, durationMs });
       }
-      this.logError("Error in getServerData:", error);
       throw error;
     }
   }
 
-  private logError(message: string, error: unknown): void {
+  private logError(message: string, error: unknown, context?: Record<string, unknown>): void {
     const debugEnabled = this.adapter?.env.get("VERYFRONT_DEBUG");
     if (debugEnabled) {
-      serverLogger.error(message, error);
+      serverLogger.error(message, context ?? {}, error);
     }
   }
 }
