@@ -67,94 +67,133 @@ export async function detectVersions(projectDir: string): Promise<DetectedVersio
 
 type CdnProvider = "esm.sh" | "unpkg" | "jsdelivr";
 
-function getEsmShImportMap(versions: DetectedVersions): Record<string, string> {
+// Platform utilities served from local module server to match SSR behavior.
+// This ensures hydration matches (same code on server and client).
+// CRITICAL: veryfront/context must use local module to share React context with SSR.
+// Using esm.sh creates a separate context instance causing usePageContext to return undefined.
+const PLATFORM_UTILITY_PATHS = {
+  head: "/_vf_modules/react/components/Head.js",
+  router: "/_vf_modules/react/router/index.js",
+  context: "/_vf_modules/react/context/index.js",
+  fonts: "/_vf_modules/react/fonts/index.js",
+} as const;
+
+// Full platform utilities including react-prefixed aliases
+const PLATFORM_UTILITIES: Record<string, string> = {
+  "veryfront/head": PLATFORM_UTILITY_PATHS.head,
+  "veryfront/router": PLATFORM_UTILITY_PATHS.router,
+  "veryfront/context": PLATFORM_UTILITY_PATHS.context,
+  "veryfront/fonts": PLATFORM_UTILITY_PATHS.fonts,
+  // React-prefixed aliases (veryfront/react/*) - same modules, alternative import paths
+  "veryfront/react/head": PLATFORM_UTILITY_PATHS.head,
+  "veryfront/react/router": PLATFORM_UTILITY_PATHS.router,
+  "veryfront/react/context": PLATFORM_UTILITY_PATHS.context,
+  "veryfront/react/fonts": PLATFORM_UTILITY_PATHS.fonts,
+};
+
+// URL templates for each CDN provider
+// Use ?target=es2022 on esm.sh to ensure identical builds between SSR (Deno) and browser.
+// Without this, esm.sh auto-detects target and may serve different builds.
+interface CdnUrlTemplates {
+  react: (version: string) => string;
+  reactDom: (version: string) => string;
+  reactDomClient: (version: string) => string;
+  jsxRuntime: (version: string) => string;
+  jsxDevRuntime: (version: string) => string;
+  veryfrontAgentReact: (version: string) => string;
+  veryfrontComponentsAi: (version: string) => string;
+  veryfrontPrimitives: (version: string) => string;
+}
+
+const CDN_URL_TEMPLATES: Record<CdnProvider, CdnUrlTemplates> = {
+  "esm.sh": {
+    react: (v) => `https://esm.sh/react@${v}?target=es2022`,
+    reactDom: (v) => `https://esm.sh/react-dom@${v}?target=es2022`,
+    reactDomClient: (v) => `https://esm.sh/react-dom@${v}/client?target=es2022`,
+    jsxRuntime: (v) => `https://esm.sh/react@${v}/jsx-runtime?target=es2022`,
+    jsxDevRuntime: (v) => `https://esm.sh/react@${v}/jsx-dev-runtime?target=es2022`,
+    veryfrontAgentReact: (v) =>
+      `https://esm.sh/veryfront@${v}/agent/react?external=react,react-dom&target=es2022`,
+    veryfrontComponentsAi: (v) =>
+      `https://esm.sh/veryfront@${v}/components/ai?external=react,react-dom&target=es2022`,
+    veryfrontPrimitives: (v) =>
+      `https://esm.sh/veryfront@${v}/primitives?external=react,react-dom&target=es2022`,
+  },
+  unpkg: {
+    react: (v) => `https://unpkg.com/react@${v}/umd/react.production.min.js`,
+    reactDom: (v) => `https://unpkg.com/react-dom@${v}/umd/react-dom.production.min.js`,
+    reactDomClient: (v) => `https://unpkg.com/react-dom@${v}/umd/react-dom.production.min.js`,
+    jsxRuntime: (v) => `https://unpkg.com/react@${v}/jsx-runtime`,
+    jsxDevRuntime: (v) => `https://unpkg.com/react@${v}/jsx-dev-runtime`,
+    veryfrontAgentReact: (v) => `https://unpkg.com/veryfront@${v}/dist/agent/react.js`,
+    veryfrontComponentsAi: (v) => `https://unpkg.com/veryfront@${v}/dist/components/ai.js`,
+    veryfrontPrimitives: (v) => `https://unpkg.com/veryfront@${v}/dist/primitives.js`,
+  },
+  jsdelivr: {
+    react: (v) => `https://cdn.jsdelivr.net/npm/react@${v}/umd/react.production.min.js`,
+    reactDom: (v) => `https://cdn.jsdelivr.net/npm/react-dom@${v}/umd/react-dom.production.min.js`,
+    reactDomClient: (v) =>
+      `https://cdn.jsdelivr.net/npm/react-dom@${v}/umd/react-dom.production.min.js`,
+    jsxRuntime: (v) => `https://cdn.jsdelivr.net/npm/react@${v}/jsx-runtime`,
+    jsxDevRuntime: (v) => `https://cdn.jsdelivr.net/npm/react@${v}/jsx-dev-runtime`,
+    veryfrontAgentReact: (v) => `https://cdn.jsdelivr.net/npm/veryfront@${v}/dist/agent/react.js`,
+    veryfrontComponentsAi: (v) =>
+      `https://cdn.jsdelivr.net/npm/veryfront@${v}/dist/components/ai.js`,
+    veryfrontPrimitives: (v) => `https://cdn.jsdelivr.net/npm/veryfront@${v}/dist/primitives.js`,
+  },
+};
+
+function buildCdnImportMapFromTemplates(
+  versions: DetectedVersions,
+  templates: CdnUrlTemplates,
+  includePlatformUtilities: boolean,
+): Record<string, string> {
   const { react, veryfront } = versions;
-  // Use ?target=es2022 to ensure identical builds between SSR (Deno) and browser
-  // Without this, esm.sh auto-detects target and may serve different builds
   return {
-    "react": `https://esm.sh/react@${react}?target=es2022`,
-    "react-dom": `https://esm.sh/react-dom@${react}?target=es2022`,
-    "react-dom/client": `https://esm.sh/react-dom@${react}/client?target=es2022`,
-    "react/jsx-runtime": `https://esm.sh/react@${react}/jsx-runtime?target=es2022`,
-    "react/jsx-dev-runtime": `https://esm.sh/react@${react}/jsx-dev-runtime?target=es2022`,
-    "veryfront/agent/react":
-      `https://esm.sh/veryfront@${veryfront}/agent/react?external=react,react-dom&target=es2022`,
-    "veryfront/components/ai":
-      `https://esm.sh/veryfront@${veryfront}/components/ai?external=react,react-dom&target=es2022`,
-    "veryfront/primitives":
-      `https://esm.sh/veryfront@${veryfront}/primitives?external=react,react-dom&target=es2022`,
-    // Platform utilities - serve from local module server to match SSR behavior
-    // This ensures hydration matches (same code on server and client)
-    "veryfront/head": "/_vf_modules/react/components/Head.js",
-    "veryfront/router": "/_vf_modules/react/router/index.js",
-    // CRITICAL: veryfront/context must use local module to share React context with SSR
-    // Using esm.sh creates a separate context instance causing usePageContext to return undefined
-    "veryfront/context": "/_vf_modules/react/context/index.js",
-    "veryfront/fonts": "/_vf_modules/react/fonts/index.js",
-    // React-prefixed aliases (veryfront/react/*) - same modules, alternative import paths
-    "veryfront/react/head": "/_vf_modules/react/components/Head.js",
-    "veryfront/react/router": "/_vf_modules/react/router/index.js",
-    "veryfront/react/context": "/_vf_modules/react/context/index.js",
-    "veryfront/react/fonts": "/_vf_modules/react/fonts/index.js",
+    "react": templates.react(react),
+    "react-dom": templates.reactDom(react),
+    "react-dom/client": templates.reactDomClient(react),
+    "react/jsx-runtime": templates.jsxRuntime(react),
+    "react/jsx-dev-runtime": templates.jsxDevRuntime(react),
+    "veryfront/agent/react": templates.veryfrontAgentReact(veryfront),
+    "veryfront/components/ai": templates.veryfrontComponentsAi(veryfront),
+    "veryfront/primitives": templates.veryfrontPrimitives(veryfront),
+    ...(includePlatformUtilities ? PLATFORM_UTILITIES : {}),
     ...getTailwindImportMap(),
   };
+}
+
+function getEsmShImportMap(versions: DetectedVersions): Record<string, string> {
+  return buildCdnImportMapFromTemplates(versions, CDN_URL_TEMPLATES["esm.sh"], true);
 }
 
 function getUnpkgImportMap(versions: DetectedVersions): Record<string, string> {
-  const { react, veryfront } = versions;
-  return {
-    "react": `https://unpkg.com/react@${react}/umd/react.production.min.js`,
-    "react-dom": `https://unpkg.com/react-dom@${react}/umd/react-dom.production.min.js`,
-    "react-dom/client": `https://unpkg.com/react-dom@${react}/umd/react-dom.production.min.js`,
-    "react/jsx-runtime": `https://unpkg.com/react@${react}/jsx-runtime`,
-    "react/jsx-dev-runtime": `https://unpkg.com/react@${react}/jsx-dev-runtime`,
-    "veryfront/agent/react": `https://unpkg.com/veryfront@${veryfront}/dist/agent/react.js`,
-    "veryfront/components/ai": `https://unpkg.com/veryfront@${veryfront}/dist/components/ai.js`,
-    "veryfront/primitives": `https://unpkg.com/veryfront@${veryfront}/dist/primitives.js`,
-    // Tailwind CSS - unified version (use esm.sh for ESM compatibility)
-    ...getTailwindImportMap(),
-  };
+  return buildCdnImportMapFromTemplates(versions, CDN_URL_TEMPLATES.unpkg, false);
 }
 
 function getJsdelivrImportMap(versions: DetectedVersions): Record<string, string> {
-  const { react, veryfront } = versions;
-  return {
-    "react": `https://cdn.jsdelivr.net/npm/react@${react}/umd/react.production.min.js`,
-    "react-dom": `https://cdn.jsdelivr.net/npm/react-dom@${react}/umd/react-dom.production.min.js`,
-    "react-dom/client":
-      `https://cdn.jsdelivr.net/npm/react-dom@${react}/umd/react-dom.production.min.js`,
-    "react/jsx-runtime": `https://cdn.jsdelivr.net/npm/react@${react}/jsx-runtime`,
-    "react/jsx-dev-runtime": `https://cdn.jsdelivr.net/npm/react@${react}/jsx-dev-runtime`,
-    "veryfront/agent/react":
-      `https://cdn.jsdelivr.net/npm/veryfront@${veryfront}/dist/agent/react.js`,
-    "veryfront/components/ai":
-      `https://cdn.jsdelivr.net/npm/veryfront@${veryfront}/dist/components/ai.js`,
-    "veryfront/primitives":
-      `https://cdn.jsdelivr.net/npm/veryfront@${veryfront}/dist/primitives.js`,
-    // Tailwind CSS - unified version (use esm.sh for ESM compatibility)
-    ...getTailwindImportMap(),
-  };
+  return buildCdnImportMapFromTemplates(versions, CDN_URL_TEMPLATES.jsdelivr, false);
 }
 
 function getSelfHostedImportMap(versions: DetectedVersions): Record<string, string> {
   const { react } = versions;
+  const esmShTemplates = CDN_URL_TEMPLATES["esm.sh"];
   return {
     // React still from CDN (or can be bundled separately)
-    // Use ?target=es2022 to match SSR build
-    "react": `https://esm.sh/react@${react}?target=es2022`,
-    "react-dom": `https://esm.sh/react-dom@${react}?target=es2022`,
-    "react-dom/client": `https://esm.sh/react-dom@${react}/client?target=es2022`,
-    "react/jsx-runtime": `https://esm.sh/react@${react}/jsx-runtime?target=es2022`,
-    "react/jsx-dev-runtime": `https://esm.sh/react@${react}/jsx-dev-runtime?target=es2022`,
+    "react": esmShTemplates.react(react),
+    "react-dom": esmShTemplates.reactDom(react),
+    "react-dom/client": esmShTemplates.reactDomClient(react),
+    "react/jsx-runtime": esmShTemplates.jsxRuntime(react),
+    "react/jsx-dev-runtime": esmShTemplates.jsxDevRuntime(react),
     // Veryfront modules served from local endpoint
     "veryfront/agent/react": "/_veryfront/lib/agent/react.js",
     "veryfront/components/ai": "/_veryfront/lib/components/ai.js",
     "veryfront/primitives": "/_veryfront/lib/primitives.js",
-    // Platform utilities
-    "veryfront/head": "/_vf_modules/react/components/Head.js",
-    "veryfront/router": "/_vf_modules/react/router/index.js",
-    "veryfront/context": "/_vf_modules/react/context/index.js",
-    "veryfront/fonts": "/_vf_modules/react/fonts/index.js",
+    // Platform utilities (subset without react-prefixed aliases)
+    "veryfront/head": PLATFORM_UTILITY_PATHS.head,
+    "veryfront/router": PLATFORM_UTILITY_PATHS.router,
+    "veryfront/context": PLATFORM_UTILITY_PATHS.context,
+    "veryfront/fonts": PLATFORM_UTILITY_PATHS.fonts,
     ...getTailwindImportMap(),
   };
 }
