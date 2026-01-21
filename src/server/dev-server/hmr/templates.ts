@@ -99,7 +99,7 @@ export function generateHMRClientTemplate(
     });
     // Fallback: if CSS is inlined (no matching link found), do full reload
     if (!updated) {
-      console.log('[HMR] No matching stylesheet link for ' + path + ', reloading page');
+      console.warn('[HMR] No matching stylesheet link for ' + path + ', reloading page');
       window.location.reload();
     }
   }
