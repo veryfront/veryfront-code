@@ -2,6 +2,11 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/index.ts";
 import type { CacheManager } from "./data-fetching-cache.ts";
 import type { DataContext, DataResult, PageWithData } from "./types.ts";
 import { serverLogger } from "#veryfront/utils";
+import { DATA_FETCH_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
+import { withTimeoutThrow, TimeoutError } from "#veryfront/rendering/utils/stream-utils.ts";
+
+/** Shorter timeout for background revalidation (non-blocking, fire-and-forget) */
+const REVALIDATION_TIMEOUT_MS = 15000;
 
 export class StaticDataFetcher {
   private pendingRevalidations = new Map<string, Promise<void>>();
@@ -45,12 +50,18 @@ export class StaticDataFetcher {
     pageModule: PageWithData,
     context: DataContext,
   ): Promise<DataResult> {
+    const pathname = context.url?.pathname || "unknown";
+
     try {
-      return await pageModule.getStaticData!({
-        params: context.params,
-        url: context.url,
-      });
+      return await withTimeoutThrow(
+        Promise.resolve(pageModule.getStaticData!({ params: context.params, url: context.url })),
+        DATA_FETCH_TIMEOUT_MS,
+        `getStaticData for ${pathname}`,
+      );
     } catch (error) {
+      if (error instanceof TimeoutError) {
+        serverLogger.error(`[StaticDataFetcher] getStaticData timed out`, { pathname });
+      }
       this.logError("Error in getStaticData:", error);
       throw error;
     }
@@ -61,11 +72,14 @@ export class StaticDataFetcher {
     context: DataContext,
     cacheKey: string,
   ): Promise<DataResult> {
+    const pathname = context.url?.pathname || "unknown";
+
     try {
-      const result = await pageModule.getStaticData!({
-        params: context.params,
-        url: context.url,
-      });
+      const result = await withTimeoutThrow(
+        Promise.resolve(pageModule.getStaticData!({ params: context.params, url: context.url })),
+        DATA_FETCH_TIMEOUT_MS,
+        `getStaticData for ${pathname}`,
+      );
 
       this.cacheManager.set(cacheKey, {
         data: result,
@@ -75,6 +89,9 @@ export class StaticDataFetcher {
 
       return result;
     } catch (error) {
+      if (error instanceof TimeoutError) {
+        serverLogger.error(`[StaticDataFetcher] getStaticData timed out`, { pathname, cacheKey });
+      }
       this.logError("Error in getStaticData:", error);
       throw error;
     }
@@ -85,15 +102,16 @@ export class StaticDataFetcher {
     context: DataContext,
     cacheKey: string,
   ): Promise<void> {
-    try {
-      if (!pageModule.getStaticData) {
-        return;
-      }
+    if (!pageModule.getStaticData) return;
 
-      const result = await pageModule.getStaticData({
-        params: context.params,
-        url: context.url,
-      });
+    const pathname = context.url?.pathname || "unknown";
+
+    try {
+      const result = await withTimeoutThrow(
+        Promise.resolve(pageModule.getStaticData({ params: context.params, url: context.url })),
+        REVALIDATION_TIMEOUT_MS,
+        `getStaticData revalidation for ${pathname}`,
+      );
 
       this.cacheManager.set(cacheKey, {
         data: result,
@@ -101,6 +119,9 @@ export class StaticDataFetcher {
         revalidate: result.revalidate,
       });
     } catch (error) {
+      if (error instanceof TimeoutError) {
+        serverLogger.error(`[StaticDataFetcher] Background revalidation timed out`, { pathname, cacheKey });
+      }
       this.logError("Error revalidating data:", error);
     } finally {
       this.pendingRevalidations.delete(cacheKey);
