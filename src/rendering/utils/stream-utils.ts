@@ -1,15 +1,82 @@
-export async function streamToString(stream: ReadableStream): Promise<string> {
+import { SSR_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+
+/**
+ * Error thrown when stream reading times out.
+ */
+export class StreamTimeoutError extends Error {
+  constructor(timeoutMs: number, partialContent: string) {
+    super(`Stream read timed out after ${timeoutMs}ms`);
+    this.name = "StreamTimeoutError";
+    this.partialContent = partialContent;
+  }
+  readonly partialContent: string;
+}
+
+/**
+ * Convert a ReadableStream to string with timeout protection.
+ *
+ * If the stream doesn't complete within the timeout, throws StreamTimeoutError
+ * with partial content that was read so far.
+ *
+ * @param stream - The stream to read
+ * @param timeoutMs - Timeout in milliseconds (default: SSR_TIMEOUT_MS)
+ */
+export async function streamToString(
+  stream: ReadableStream,
+  timeoutMs: number = SSR_TIMEOUT_MS,
+): Promise<string> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   const chunks: string[] = [];
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value) {
-      chunks.push(decoder.decode(value, { stream: true }));
+  // Set up timeout
+  let timedOut = false;
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    reader.cancel("Stream read timeout").catch(() => {
+      // Ignore cancel errors
+    });
+  }, timeoutMs);
+
+  try {
+    while (true) {
+      // Check before AND after read - cancel() may cause read() to return done=true
+      if (timedOut) {
+        const partial = chunks.join("");
+        logger.error("[streamToString] Stream read timed out", {
+          timeoutMs,
+          partialLength: partial.length,
+        });
+        throw new StreamTimeoutError(timeoutMs, partial);
+      }
+
+      const { done, value } = await reader.read();
+
+      // Check again after read - timeout may have fired during await
+      if (timedOut) {
+        const partial = chunks.join("");
+        logger.error("[streamToString] Stream read timed out", {
+          timeoutMs,
+          partialLength: partial.length,
+        });
+        throw new StreamTimeoutError(timeoutMs, partial);
+      }
+
+      if (done) break;
+      if (value) {
+        chunks.push(decoder.decode(value, { stream: true }));
+      }
+    }
+
+    return chunks.join("");
+  } finally {
+    clearTimeout(timeoutId);
+    // Ensure reader is released
+    try {
+      reader.releaseLock();
+    } catch {
+      // Ignore if already released
     }
   }
-
-  return chunks.join("");
 }
