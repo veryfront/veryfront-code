@@ -8,62 +8,30 @@
  * Zero tolerance: ANY failure blocks push
  */
 
-import { test, expect } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import {
-  setupErrorCollection,
-  assertColorMode,
-  assertStudioEmbed,
-  assertPreviewMode,
+  setupErrorCollection
 } from "./helpers/assertions.js";
 
 /**
- * All available projects for testing.
+ * Projects to test.
  *
- * These are local projects that the dev server discovers automatically.
- * Each project tests different aspects of the renderer.
- *
- * Filter by project: E2E_PROJECT=codersociety deno task test:e2e
+ * Comment/uncomment to enable/disable projects.
+ * Filter by project: E2E_PROJECT=codersociety npx playwright test
  */
-const ALL_PROJECTS = [
-  {
-    subdomain: "blank",
-    name: "Blank",
-    description: "Minimal baseline project",
-  },
-  {
-    subdomain: "codersociety",
-    name: "CoderSociety",
-    description: "Full-featured project with complex layouts",
-  },
-  {
-    subdomain: "veryfront",
-    name: "Veryfront",
-    description: "Marketing site with MDX content",
-  },
-];
-
-/**
- * Filter projects based on E2E_PROJECT environment variable.
- *
- * Usage:
- *   E2E_PROJECT=blank deno task test:e2e       # Test only blank project
- *   E2E_PROJECT=codersociety deno task test:e2e # Test only codersociety
- *   deno task test:e2e                          # Test default projects
- *
- * All projects are enabled by default.
- */
-const DEFAULT_PROJECTS = [
+const ENABLED_PROJECTS = [
   "blank",
   "codersociety",
   "veryfront",
-  // Static templates:
-  // "marketing-template",
-  // "restaurant-template",
-  // "real-estate-template",
-  // "lease-calculator",
-  // "impartial-chandrasekhar-qsohb",
-  // "dashboard",
-  // "immo-price-finder",
+  "restaurant-template",
+  "lease-calculator",
+  "impartial-chandrasekhar-qsohb",
+  "immo-price-finder",
+  // "marketing-template", // missing remote deps (veryfront-ui 404s)
+  // "tomcode", // RENDERER BUG: SVG components missing `export default` (see docs/E2E_PROJECT_ISSUES.md)
+  // "real-estate-template", // DATA ISSUE: TypeScript `interface` in MDX (see docs/E2E_PROJECT_ISSUES.md)
+  // "dashboard", // DATA ISSUE: Invalid JSX expression in MDX (see docs/E2E_PROJECT_ISSUES.md)
+  //
   // AI templates:
   // "ai-assistant-template",
   // "task-manager-template",
@@ -75,24 +43,16 @@ const DEFAULT_PROJECTS = [
   // "ai-agent-kitchen-sink",
   // "invest-pro-template",
 ];
+
 const targetProject = process.env.E2E_PROJECT;
-
-const PROJECTS = targetProject
-  ? ALL_PROJECTS.filter((p) => p.subdomain === targetProject)
-  : ALL_PROJECTS.filter((p) => DEFAULT_PROJECTS.includes(p.subdomain));
-
-if (targetProject && PROJECTS.length === 0) {
-  console.error(`Unknown project: ${targetProject}`);
-  console.error(`Available: ${ALL_PROJECTS.map((p) => p.subdomain).join(", ")}`);
-  process.exit(1);
-}
+const PROJECTS = targetProject ? [targetProject] : ENABLED_PROJECTS;
 
 /**
  * Test each project
  */
-for (const project of PROJECTS) {
-  test.describe(`${project.name} (${project.subdomain})`, () => {
-    const baseUrl = `http://${project.subdomain}.lvh.me:8080`;
+for (const subdomain of PROJECTS) {
+  test.describe(subdomain, () => {
+    const baseUrl = `http://${subdomain}.lvh.me:8080`;
 
     /**
      * Basic smoke test: page loads without errors
@@ -250,8 +210,8 @@ for (const project of PROJECTS) {
  */
 test("smoke test summary", async () => {
   console.log(`\nSmoke tests completed for ${PROJECTS.length} projects:`);
-  for (const project of PROJECTS) {
-    console.log(`  - ${project.name}: ${project.description}`);
+  for (const subdomain of PROJECTS) {
+    console.log(`  - ${subdomain}`);
   }
   console.log("\nAll assertions passed!");
 });
