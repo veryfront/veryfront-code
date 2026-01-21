@@ -14,11 +14,8 @@ export interface VeryfrontConfig {
     rsc?: boolean;
   };
   router?: "app" | "pages" | undefined;
-  defaultLayout?: string | undefined;
-  /** Path to the root layout component (e.g., 'components/layout.tsx') */
+  /** Path to the layout component (e.g., 'components/layout.tsx') */
   layout?: string;
-  /** Path to the app provider component for global context (e.g., 'components/providers.tsx') */
-  provider?: string;
   /** Path to the app wrapper component (e.g., 'components/app.tsx') */
   app?: string;
   theme?: {
