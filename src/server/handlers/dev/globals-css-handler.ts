@@ -31,11 +31,22 @@ export class GlobalsCSSHandler extends BaseHandler {
       const filePath = joinPath(ctx.projectDir, "globals.css");
       let css = await ctx.adapter.fs.readFile(filePath);
 
-      // Strip Tailwind v4 directives - these are build-time only
-      // Browser CDN doesn't support @plugin or @import "tailwindcss"
+      // Strip Tailwind build-time directives - browser CDN doesn't need them
       css = css
+        // Tailwind v4: @import "tailwindcss"
         .replace(/@import\s+["']tailwindcss["'];?\s*/g, "")
-        .replace(/@plugin\s+["'][^"']+["'](\s*\{[^}]*\})?;?\s*/g, "");
+        // Tailwind v4: @plugin with optional config block
+        .replace(/@plugin\s+["'][^"']+["'](\s*\{[^}]*\})?;?\s*/g, "")
+        // Tailwind v4: @source for content paths
+        .replace(/@source\s+["'][^"']+["'];?\s*/g, "")
+        // Tailwind v4: @theme for theme config
+        .replace(/@theme\s*\{[^}]*\};?\s*/g, "")
+        // Tailwind v4: @variant for custom variants
+        .replace(/@variant\s+[^{]+\{[^}]*\};?\s*/g, "")
+        // Tailwind v3: @tailwind base/components/utilities
+        .replace(/@tailwind\s+(base|components|utilities);?\s*/g, "")
+        // Tailwind v3: @config for config path
+        .replace(/@config\s+["'][^"']+["'];?\s*/g, "");
 
       const response = this.createResponseBuilder(ctx)
         .withCache("no-cache") // No caching for HMR to work
