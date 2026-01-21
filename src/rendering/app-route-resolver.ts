@@ -180,7 +180,6 @@ async function tryLoadPageFile(
       type: "page",
       isPage: true,
       isLayout: false,
-      isProvider: false,
       isComponent: false,
       content,
       frontmatter: coercedFm as Frontmatter,

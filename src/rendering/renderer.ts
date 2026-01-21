@@ -16,7 +16,6 @@
  * - **Per-Request Services** (created per-render, ~1ms):
  *   - PageResolver - needs projectDir, adapter, config
  *   - LayoutCollector - needs adapter, config
- *   - ProviderManager - needs projectDir, adapter, config
  *   - SSRRenderer - needs mode, adapter, projectDir
  *   - ComponentRegistry - needs projectId
  *   - etc.
@@ -55,7 +54,6 @@ import {
   createLayoutCompiler,
   createPageRenderer,
   createPageResolver,
-  createProviderManager,
   createSSRRenderer,
   createVirtualModuleSystem,
 } from "./factories/service-factories.ts";
@@ -295,7 +293,6 @@ export class Renderer {
     const pageResolver = createPageResolver(ctx);
     const layoutCollector = createLayoutCollector(ctx, compileMDX);
     const layoutCompiler = createLayoutCompiler(ctx, compileMDX);
-    const providerManager = createProviderManager(ctx, compileMDX);
     const ssrRenderer = createSSRRenderer(ctx);
     const pageRenderer = createPageRenderer(ctx, {
       componentRegistry,
@@ -313,7 +310,6 @@ export class Renderer {
       moduleServerUrl: ctx.moduleServerUrl,
       layoutCollector,
       layoutCompiler,
-      providerManager,
       layoutCache: createLayoutComponentCache(),
       componentRegistry: componentRegistry.getAllAsComponents(),
     });

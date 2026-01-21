@@ -2,7 +2,7 @@ import { dirname, join } from "#veryfront/platform/compat/path-helper.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import * as BundledReact from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import type { LayoutItem, MdxBundle, MDXComponents, ProviderItem } from "#veryfront/types";
+import type { LayoutItem, MdxBundle, MDXComponents } from "#veryfront/types";
 import type { EntityInfo } from "#veryfront/types";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { LayoutComponentCache } from "./utils/component-loader.ts";
@@ -74,25 +74,17 @@ export class LayoutApplicator {
     pageInfo: EntityInfo,
     layoutBundle: MdxBundle | undefined,
     nestedLayouts: LayoutItem[],
-    providerItems: ProviderItem[],
     layoutDataMap?: Map<string, Record<string, unknown>>,
   ): Promise<BundledReact.ReactElement> {
-    let wrappedElement = await this.applyLayoutsAndProviders(
+    let wrappedElement = await this.applyLayoutsOnly(
       pageElement,
       layoutBundle,
       nestedLayouts,
-      providerItems,
       layoutDataMap,
     );
 
     const useAppRouter = await detectAppRouter(this.projectDir, this.config, this.adapter);
     const pageFilePath = pageInfo.entity.path;
-
-    // Check if App was already applied as a provider to avoid double-wrapping
-    // which causes duplicate <Head> content and hydration errors
-    const isAppPath = (path: string | undefined): boolean =>
-      !!path && (/\/components\/app\.[jt]sx?$/.test(path) || /\/app\.[jt]sx?$/.test(path));
-    const hasAppProvider = providerItems.some((p) => isAppPath(p.componentPath));
 
     // Skip App component wrapping for dot-prefixed paths (e.g., .veryfront) - these are
     // framework-level pages that should not use user-defined App component
@@ -100,10 +92,8 @@ export class LayoutApplicator {
       s.startsWith(".") && s !== "." && s !== ".."
     );
 
-    if (!useAppRouter && !hasAppProvider && !isDotPath) {
+    if (!useAppRouter && !isDotPath) {
       wrappedElement = await this.wrapWithAppComponent(wrappedElement);
-    } else if (hasAppProvider) {
-      logger.debug("Skipping wrapWithAppComponent - App already applied as provider");
     } else if (isDotPath) {
       logger.debug("Skipping wrapWithAppComponent - dot-prefixed path");
     }
@@ -164,11 +154,10 @@ export class LayoutApplicator {
     return wrappedElement;
   }
 
-  private async applyLayoutsAndProviders(
+  private async applyLayoutsOnly(
     pageElement: BundledReact.ReactElement,
     layoutBundle: MdxBundle | undefined,
     nestedLayouts: LayoutItem[],
-    providerItems: ProviderItem[],
     layoutDataMap?: Map<string, Record<string, unknown>>,
   ): Promise<BundledReact.ReactElement> {
     logger.debug("Applying layouts", {
@@ -182,7 +171,6 @@ export class LayoutApplicator {
         pageElement,
         layoutBundle,
         nestedLayouts,
-        providerItems,
         this.projectDir,
         this.mergedComponents,
         this.layoutCache,
@@ -197,7 +185,6 @@ export class LayoutApplicator {
       pageElement,
       layoutBundle,
       nestedLayouts,
-      providerItems,
       this.mergedComponents,
       this.layoutCache,
       this.projectDir,
