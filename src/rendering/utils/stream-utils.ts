@@ -2,6 +2,34 @@ import { SSR_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 
 /**
+ * Wrap a promise with timeout protection.
+ * Returns undefined if timeout occurs (non-throwing for optional operations).
+ */
+export async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string,
+): Promise<T | undefined> {
+  let timeoutId: ReturnType<typeof setTimeout>;
+
+  const timeoutPromise = new Promise<undefined>((resolve) => {
+    timeoutId = setTimeout(() => {
+      logger.warn(`[withTimeout] ${label} timed out after ${timeoutMs}ms`);
+      resolve(undefined);
+    }, timeoutMs);
+  });
+
+  try {
+    const result = await Promise.race([promise, timeoutPromise]);
+    clearTimeout(timeoutId!);
+    return result;
+  } catch (error) {
+    clearTimeout(timeoutId!);
+    throw error;
+  }
+}
+
+/**
  * Error thrown when stream reading times out.
  */
 export class StreamTimeoutError extends Error {
