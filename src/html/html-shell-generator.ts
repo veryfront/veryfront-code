@@ -277,20 +277,20 @@ ${tailwindV4Theme}
   ${modulePreloadHints}
 
   <!-- Tailwind CSS: JIT-compiled for both dev and prod (consistent styling) -->
-  <!-- CDN kept in dev for live class editing during HMR -->
-  ${options.mode === "development" ? tailwindCDN : ""}
+  <!-- CDN kept in dev/preview for live class editing during HMR -->
+  ${options.mode === "development" || options.proxyEnvironment === "preview" ? tailwindCDN : ""}
   ${tailwindCSS ? `<style${nonce ? ` nonce="${nonce}"` : ""}>\n${tailwindCSS}\n  </style>` : ""}
 
   <!-- CSS Variables for Theming (veryfront-renderer compatible) -->
   ${
     (() => {
-      let css = options.globalCSS || generateThemeVariables();
-      // Strip Tailwind v4 directives from globalCSS - these are build-time only
-      // The JIT CSS already includes all compiled Tailwind styles
-      // Browser CDN doesn't support @plugin or @import "tailwindcss"
-      css = css
-        .replace(/@import\s+["']tailwindcss["'];?\s*/g, "")
-        .replace(/@plugin\s+["'][^"']+["'](\s*\{[^}]*\})?;?\s*/g, "");
+      // If project has globals.css, serve via link tag for proper HMR support
+      // Link tags can be hot-reloaded by updating href with cache-bust param
+      if (options.globalCSS) {
+        return `<link rel="stylesheet" href="/_vf_styles/globals.css">`;
+      }
+      // Fallback: inline default theme variables if no globals.css exists
+      const css = generateThemeVariables();
       return `<style${nonce ? ` nonce="${nonce}"` : ""}>
 ${css}
   </style>`;

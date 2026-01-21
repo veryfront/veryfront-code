@@ -568,6 +568,7 @@ document.head.appendChild(errorScript);
 
   function updateCSS(path) {
     console.log('[Preview HMR] Updating CSS:', path);
+    let updated = false;
     for (const link of document.querySelectorAll('link[rel="stylesheet"]')) {
       try {
         const url = new URL(link.href);
@@ -576,10 +577,16 @@ document.head.appendChild(errorScript);
           newUrl.searchParams.set('t', Date.now().toString());
           link.href = newUrl.toString();
           console.log('[Preview HMR] CSS updated:', path);
+          updated = true;
         }
       } catch (error) {
         console.error('[Preview HMR] Failed to update CSS link:', error);
       }
+    }
+    // Fallback: if CSS is inlined (no matching link found), do full reload
+    if (!updated) {
+      console.log('[Preview HMR] No matching stylesheet link for ' + path + ', reloading page');
+      notifyStudioAndReload();
     }
   }
 ${getUpdateJSFunction("[Preview HMR]")}
