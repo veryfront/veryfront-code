@@ -1,7 +1,7 @@
 /**
  * Globals CSS Handler
  *
- * Serves globals.css as a file for proper HMR support.
+ * Serves globals.css compiled via Tailwind's API for proper directive support.
  * CSS served via <link> tags can be hot-reloaded by updating the href.
  */
 
@@ -9,6 +9,7 @@ import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { HTTP_NOT_FOUND, HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
 import { joinPath } from "#veryfront/utils/path-utils.ts";
+import { compileGlobalsCSS } from "#veryfront/html/styles-builder/globals-compiler.ts";
 
 export class GlobalsCSSHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -26,42 +27,35 @@ export class GlobalsCSSHandler extends BaseHandler {
       return this.continue();
     }
 
-    try {
-      // Load globals.css from project root
-      const filePath = joinPath(ctx.projectDir, "globals.css");
-      let css = await ctx.adapter.fs.readFile(filePath);
+    // Wrap in proxy context for multi-project mode file resolution
+    return await this.withProxyContext(ctx, async () => {
+      try {
+        // Load globals.css from project root
+        const filePath = joinPath(ctx.projectDir, "globals.css");
+        const rawCss = await ctx.adapter.fs.readFile(filePath);
 
-      // Strip Tailwind build-time directives - browser CDN doesn't need them
-      css = css
-        // Tailwind v4: @import "tailwindcss"
-        .replace(/@import\s+["']tailwindcss["'];?\s*/g, "")
-        // Tailwind v4: @plugin with optional config block
-        .replace(/@plugin\s+["'][^"']+["'](\s*\{[^}]*\})?;?\s*/g, "")
-        // Tailwind v4: @source for content paths
-        .replace(/@source\s+["'][^"']+["'];?\s*/g, "")
-        // Tailwind v4: @theme for theme config
-        .replace(/@theme\s*\{[^}]*\};?\s*/g, "")
-        // Tailwind v4: @variant for custom variants
-        .replace(/@variant\s+[^{]+\{[^}]*\};?\s*/g, "")
-        // Tailwind v3: @tailwind base/components/utilities
-        .replace(/@tailwind\s+(base|components|utilities);?\s*/g, "")
-        // Tailwind v3: @config for config path
-        .replace(/@config\s+["'][^"']+["'];?\s*/g, "");
+        // Compile using Tailwind's API - properly handles @theme, @utility, @variant, etc.
+        const css = await compileGlobalsCSS(rawCss);
 
-      const response = this.createResponseBuilder(ctx)
-        .withCache("no-cache") // No caching for HMR to work
-        .withContentType("text/css; charset=utf-8", css, HTTP_OK);
+        const response = this.createResponseBuilder(ctx)
+          .withCache("no-cache") // No caching for HMR to work
+          .withContentType("text/css; charset=utf-8", css, HTTP_OK);
 
-      return this.respond(response);
-    } catch (error) {
-      this.logDebug("globals.css not found", { error: this.getErrorMessage(error) }, ctx);
+        return this.respond(response);
+      } catch (error) {
+        this.logDebug("globals.css not found", { error: this.getErrorMessage(error) }, ctx);
 
-      // Return empty CSS if file doesn't exist
-      const response = this.createResponseBuilder(ctx)
-        .withCache("no-cache")
-        .withContentType("text/css; charset=utf-8", "/* globals.css not found */", HTTP_NOT_FOUND);
+        // Return empty CSS if file doesn't exist
+        const response = this.createResponseBuilder(ctx)
+          .withCache("no-cache")
+          .withContentType(
+            "text/css; charset=utf-8",
+            "/* globals.css not found */",
+            HTTP_NOT_FOUND,
+          );
 
-      return this.respond(response);
-    }
+        return this.respond(response);
+      }
+    });
   }
 }
