@@ -12,13 +12,13 @@ import { serverLogger as logger } from "#veryfront/utils";
 
 /** Configuration for project isolation */
 export interface ProjectIsolationConfig {
-  /** Maximum concurrent requests per project (default: 10) */
+  /** Maximum concurrent requests per project (default: 100) */
   maxConcurrentPerProject: number;
-  /** Maximum consecutive failures before circuit opens (default: 5) */
+  /** Maximum consecutive failures before circuit opens (default: 20) */
   circuitBreakerThreshold: number;
-  /** Time in ms before circuit resets (default: 30000) */
+  /** Time in ms before circuit resets (default: 60000) */
   circuitResetTimeMs: number;
-  /** Time window in ms for tracking failures (default: 60000) */
+  /** Time window in ms for tracking failures (default: 120000) */
   failureWindowMs: number;
 }
 
@@ -44,10 +44,10 @@ export interface IsolationCheckResult {
 }
 
 const DEFAULT_CONFIG: ProjectIsolationConfig = {
-  maxConcurrentPerProject: 50,
-  circuitBreakerThreshold: 10,
-  circuitResetTimeMs: 30_000,
-  failureWindowMs: 60_000,
+  maxConcurrentPerProject: 100,
+  circuitBreakerThreshold: 20,
+  circuitResetTimeMs: 60_000,
+  failureWindowMs: 120_000,
 };
 
 /**
@@ -240,9 +240,9 @@ export class ProjectIsolationManager {
 }
 
 // Singleton instance with configurable limits via env vars
-const maxConcurrent = parseInt(Deno.env.get("PROJECT_MAX_CONCURRENT") || "50", 10);
-const circuitThreshold = parseInt(Deno.env.get("PROJECT_CIRCUIT_THRESHOLD") || "10", 10);
-const circuitResetMs = parseInt(Deno.env.get("PROJECT_CIRCUIT_RESET_MS") || "30000", 10);
+const maxConcurrent = parseInt(Deno.env.get("PROJECT_MAX_CONCURRENT") || "100", 10);
+const circuitThreshold = parseInt(Deno.env.get("PROJECT_CIRCUIT_THRESHOLD") || "20", 10);
+const circuitResetMs = parseInt(Deno.env.get("PROJECT_CIRCUIT_RESET_MS") || "60000", 10);
 
 export const projectIsolation = new ProjectIsolationManager({
   maxConcurrentPerProject: maxConcurrent,

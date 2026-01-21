@@ -3,11 +3,11 @@ import { getRequest } from "./types.ts";
 import { serverLogger } from "#veryfront/utils";
 import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 
-const DEFAULT_TIMEOUT_MS = 30000;
+const DEFAULT_TIMEOUT_MS = 60000;
 const HTTP_GATEWAY_TIMEOUT = 504;
 
 export interface TimeoutOptions {
-  /** Timeout in milliseconds (default: 30000) */
+  /** Timeout in milliseconds (default: 60000) */
   timeoutMs?: number;
 
   /** Custom message for timeout response */
