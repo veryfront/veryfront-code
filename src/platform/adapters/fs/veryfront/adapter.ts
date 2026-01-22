@@ -132,26 +132,59 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   async initialize(): Promise<void> {
-    if (this.initialized) return;
+    const initStartTime = performance.now();
+    const projectSlug = this.client.getProjectSlug();
 
-    logger.debug("[VeryfrontFSAdapter] Initializing...", { contentSource: this.contentSource });
-
-    await this.client.initialize();
-
-    const projectId = this.client.getProjectId();
-    this.projectData = await this.client.getProject(projectId);
-
-    logger.debug("[VeryfrontFSAdapter] Project data fetched", {
-      provider: this.projectData.provider,
-      layout: this.projectData.layout,
+    logger.info("[VeryfrontFSAdapter] initialize START", {
+      projectSlug,
+      contentSource: this.contentSource,
+      alreadyInitialized: this.initialized,
     });
 
-    // Resolve content source to content context (skip if already set by setContentContext)
-    if (!this.contentContext) {
-      this.contentContext = await this.resolveContentSource();
+    if (this.initialized) {
+      logger.info("[VeryfrontFSAdapter] Already initialized, skipping", { projectSlug });
+      return;
     }
 
-    logger.debug("[VeryfrontFSAdapter] Content context resolved", {
+    // Step 1: Initialize API client
+    logger.info("[VeryfrontFSAdapter] Step 1: client.initialize START", { projectSlug });
+    const step1Start = performance.now();
+    await this.client.initialize();
+    logger.info("[VeryfrontFSAdapter] Step 1: client.initialize DONE", {
+      projectSlug,
+      duration: `${(performance.now() - step1Start).toFixed(2)}ms`,
+    });
+
+    // Step 2: Get project data
+    const projectId = this.client.getProjectId();
+    logger.info("[VeryfrontFSAdapter] Step 2: getProject START", { projectSlug, projectId });
+    const step2Start = performance.now();
+    this.projectData = await this.client.getProject(projectId);
+    logger.info("[VeryfrontFSAdapter] Step 2: getProject DONE", {
+      projectSlug,
+      provider: this.projectData.provider,
+      layout: this.projectData.layout,
+      duration: `${(performance.now() - step2Start).toFixed(2)}ms`,
+    });
+
+    // Step 3: Resolve content source to content context (skip if already set by setContentContext)
+    if (!this.contentContext) {
+      logger.info("[VeryfrontFSAdapter] Step 3: resolveContentSource START", { projectSlug });
+      const step3Start = performance.now();
+      this.contentContext = await this.resolveContentSource();
+      logger.info("[VeryfrontFSAdapter] Step 3: resolveContentSource DONE", {
+        projectSlug,
+        sourceType: this.contentContext.sourceType,
+        duration: `${(performance.now() - step3Start).toFixed(2)}ms`,
+      });
+    } else {
+      logger.info("[VeryfrontFSAdapter] Step 3: Content context already set", {
+        projectSlug,
+        sourceType: this.contentContext.sourceType,
+      });
+    }
+
+    logger.info("[VeryfrontFSAdapter] Content context resolved", {
       sourceType: this.contentContext.sourceType,
       projectSlug: this.contentContext.projectSlug,
       branch: this.contentContext.branch,
@@ -159,9 +192,16 @@ export class VeryfrontFSAdapter implements FSAdapter {
       releaseId: this.contentContext.releaseId,
     });
 
-    // Fetch file list based on content source type
+    // Step 4: Fetch file list based on content source type
     const cacheKey = buildFileListCacheKey(this.contentContext);
+    logger.info("[VeryfrontFSAdapter] Step 4: fetchFileList START", { projectSlug, cacheKey });
+    const step4Start = performance.now();
     const files = await this.fetchFileList();
+    logger.info("[VeryfrontFSAdapter] Step 4: fetchFileList DONE", {
+      projectSlug,
+      fileCount: files.length,
+      duration: `${(performance.now() - step4Start).toFixed(2)}ms`,
+    });
     this.cache.set(cacheKey, files);
 
     logger.debug("[VeryfrontFSAdapter] Fetched files during initialization", {
@@ -170,6 +210,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
     });
 
     this.initialized = true;
+
+    logger.info("[VeryfrontFSAdapter] initialize COMPLETE", {
+      projectSlug,
+      fileCount: files.length,
+      totalDuration: `${(performance.now() - initStartTime).toFixed(2)}ms`,
+    });
 
     // Connect to WebSocket for real-time cache invalidation (branch mode only)
     // Environment/release/domain modes serve immutable published content

@@ -94,6 +94,10 @@ export interface ProxyConfig {
 export interface ProxyContext {
   token?: string;
   projectSlug?: string;
+  projectId?: string;
+  releaseId?: string;
+  branchId?: string;
+  branchName?: string;
   environment: "preview" | "production";
   localPath?: string;
   host: string;
@@ -201,6 +205,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     const parsedDomain = parseProjectDomain(host);
     const scope = getScope(parsedDomain.environment);
     let projectSlug = parsedDomain.slug || undefined;
+    let projectId: string | undefined;
     const isCustomDomain = !projectSlug && !parsedDomain.isVeryfrontDomain;
 
     const localPath = projectSlug ? await findLocalProject(projectSlug) : undefined;
@@ -217,6 +222,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     const makeErrorContext = (status: number, message: string, token?: string): ProxyContext => ({
       token,
       projectSlug: undefined,
+      projectId: undefined,
       environment: scope,
       localPath: undefined,
       host,
@@ -263,10 +269,11 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         const lookupResult = await lookupProjectByDomain(host, config.apiBaseUrl, token, logger);
         if (lookupResult) {
           projectSlug = lookupResult.slug;
+          projectId = lookupResult.id;
           logger?.info("Resolved custom domain to project", {
             domain: host,
             projectSlug,
-            projectId: lookupResult.id,
+            projectId,
           });
         } else {
           logger?.error("Custom domain not found", undefined, { domain: host });
@@ -278,6 +285,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     return {
       token,
       projectSlug,
+      projectId,
       environment: scope,
       localPath,
       host,
@@ -360,6 +368,12 @@ export function injectContextHeaders(req: Request, ctx: ProxyContext): Request {
   headers.set("x-environment", ctx.environment);
   headers.set("x-forwarded-host", ctx.host);
   if (ctx.localPath) headers.set("x-project-path", ctx.localPath);
+
+  // Forward project/branch context for logging
+  if (ctx.projectId) headers.set("x-project-id", ctx.projectId);
+  if (ctx.releaseId) headers.set("x-release-id", ctx.releaseId);
+  if (ctx.branchId) headers.set("x-branch-id", ctx.branchId);
+  if (ctx.branchName) headers.set("x-branch-name", ctx.branchName);
 
   return new Request(req.url, {
     method: req.method,
