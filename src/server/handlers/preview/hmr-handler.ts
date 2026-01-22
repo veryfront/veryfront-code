@@ -13,6 +13,7 @@ import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } 
 import { ReloadNotifier } from "../../reload-notifier.ts";
 import { RateLimiter, setupWebSocketHandlers } from "#veryfront/modules/server/index.ts";
 import { HMR_MAX_MESSAGE_SIZE_BYTES, HMR_MAX_MESSAGES_PER_MINUTE } from "#veryfront/utils";
+import { invalidateProjectCaches } from "../../context/cache-invalidation.ts";
 
 // Priority between auth (0) and cors (50)
 const PRIORITY_HMR = 25 as HandlerPriority;
@@ -60,6 +61,10 @@ export class HMRHandler extends BaseHandler {
     // When changedPaths are provided, send update messages for smart HMR
     // Otherwise, send reload message for full page refresh
     HMRHandler.reloadUnsubscribe = ReloadNotifier.subscribe((changedPaths) => {
+      // Invalidate server-side caches first (Phase 8: Preview HMR cache invalidation)
+      // This ensures next request gets fresh content
+      invalidateProjectCaches("preview", changedPaths);
+      // Then notify browser clients to refresh
       HMRHandler.broadcastUpdate(changedPaths);
     });
 
