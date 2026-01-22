@@ -1,5 +1,6 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import type { RequestContext } from "../server/context/request-context.ts";
 
 export interface ParsedDomain {
   /** Project slug extracted from host (e.g., "my-project" from "my-project.preview.veryfront.dev") */
@@ -63,6 +64,8 @@ export interface HandlerContext {
   proxyEnvironment?: "preview" | "production";
   /** Actual environment name from API (e.g., "Development", "Production") */
   environmentName?: string;
+  /** Unified request context (token, slug, branch, mode) */
+  requestContext?: RequestContext;
   /** Route registry for handler chain inspection (dev dashboard) */
   routeRegistry?: {
     getHandlers(): ReadonlyArray<{ metadata: HandlerMetadata }>;
