@@ -7,13 +7,16 @@
  */
 
 import { parallelMap, rendererLogger as logger } from "#veryfront/utils";
+import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { CacheBackend } from "#veryfront/cache/backend.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import { generateHash } from "./cache.ts";
 import { findLocalLibFile, findSourceFile } from "../file-resolver/index.ts";
 // Hoisted imports - avoid dynamic import overhead on every module load
 import { transformToESM } from "#veryfront/transforms/esm-transform.ts";
 import { getProjectTmpDir } from "#veryfront/modules/react-loader/index.ts";
+import { TRANSFORM_CACHE_VERSION } from "#veryfront/transforms/esm/package-registry.ts";
 
 // Re-export utilities
 export { createEsmCache, createModuleCache, generateHash } from "./cache.ts";
@@ -21,6 +24,67 @@ export { fetchEsmModule, rewriteEsmPaths } from "./esm-rewriter.ts";
 
 /** Cache for created directories to avoid repeated mkdir calls */
 const createdDirs = new Set<string>();
+
+/**
+ * Distributed transform cache for cross-pod sharing.
+ * Caches transformed module code in Redis/API so other pods don't need to re-transform.
+ */
+let distributedTransformCache: CacheBackend | null | undefined;
+const distributedCacheInit = new Singleflight<CacheBackend | null>();
+
+/** TTL for cached transforms (24 hours) */
+const TRANSFORM_CACHE_TTL_SECONDS = 86400;
+
+function getDistributedTransformCache(): Promise<CacheBackend | null> {
+  if (distributedTransformCache !== undefined) {
+    return Promise.resolve(distributedTransformCache);
+  }
+
+  return distributedCacheInit.do("init", async () => {
+    try {
+      const { CacheBackends } = await import("#veryfront/cache/backend.ts");
+      const backend = await CacheBackends.transform();
+      // Only use distributed cache if API or Redis (not memory - that's per-process)
+      if (backend.type === "memory") {
+        distributedTransformCache = null;
+        logger.debug("[ModuleLoader] No distributed transform cache (memory only)");
+        return null;
+      }
+      distributedTransformCache = backend;
+      logger.debug("[ModuleLoader] Distributed transform cache initialized", {
+        type: backend.type,
+      });
+      return backend;
+    } catch (error) {
+      logger.debug("[ModuleLoader] Failed to init distributed transform cache", { error });
+      distributedTransformCache = null;
+      return null;
+    }
+  });
+}
+
+/**
+ * Build cache key for transformed module.
+ * Includes content hash so cache invalidates when source changes.
+ */
+function getTransformCacheKey(
+  projectId: string,
+  filePath: string,
+  contentHash: string,
+): string {
+  return `v${TRANSFORM_CACHE_VERSION}:${projectId}:${filePath}:${contentHash}`;
+}
+
+/** Simple string hash for cache keys */
+function hashString(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return Math.abs(hash).toString(36);
+}
 
 export interface ModuleLoaderConfig {
   projectDir: string;
@@ -145,18 +209,51 @@ export async function transformModuleWithDeps(
     });
   }
 
-  // Now transform the code (with @/ imports already replaced with file:// paths)
-  const transformedCode = await transformToESM(
-    fileContent,
-    filePath,
-    projectDir,
-    adapter,
-    {
-      projectId: projectId ?? projectDir,
-      dev: mode === "development",
-      ssr: true,
-    },
-  );
+  // Check distributed transform cache first (cross-pod sharing)
+  const contentHash = hashString(fileContent);
+  const effectiveProjectId = projectId ?? projectDir;
+  const transformCacheKey = getTransformCacheKey(effectiveProjectId, filePath, contentHash);
+  let transformedCode: string | null = null;
+
+  const distributedCache = await getDistributedTransformCache();
+  if (distributedCache) {
+    try {
+      const cached = await distributedCache.get(transformCacheKey);
+      if (cached) {
+        transformedCode = cached;
+        logger.debug("[ModuleLoader] Distributed transform cache HIT", {
+          filePath,
+          cacheKey: transformCacheKey,
+        });
+      }
+    } catch (error) {
+      logger.debug("[ModuleLoader] Distributed cache get failed", { filePath, error });
+    }
+  }
+
+  // If not in distributed cache, transform the code
+  if (!transformedCode) {
+    transformedCode = await transformToESM(
+      fileContent,
+      filePath,
+      projectDir,
+      adapter,
+      {
+        projectId: effectiveProjectId,
+        dev: mode === "development",
+        ssr: true,
+      },
+    );
+
+    // Store in distributed cache (fire-and-forget for performance)
+    if (distributedCache) {
+      distributedCache.set(transformCacheKey, transformedCode, TRANSFORM_CACHE_TTL_SECONDS).catch(
+        (error) => {
+          logger.debug("[ModuleLoader] Distributed cache set failed", { filePath, error });
+        },
+      );
+    }
+  }
 
   // Note: esm.sh URLs (like https://esm.sh/react@18.3.1/...) are kept as-is.
   // Deno natively supports HTTP imports and will fetch/cache them automatically.
