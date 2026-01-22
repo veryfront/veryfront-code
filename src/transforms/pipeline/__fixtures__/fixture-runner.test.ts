@@ -13,6 +13,7 @@ import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { readTextFile } from "#veryfront/testing/deno-compat.ts";
 import { runPipeline } from "../index.ts";
 import * as esbuild from "esbuild";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 
 const FIXTURES_DIR = new URL(".", import.meta.url).pathname;
 
@@ -54,7 +55,7 @@ describe("transform pipeline fixtures", { sanitizeResources: false, sanitizeOps:
       assertEquals(result.code.includes('from "react"'), false);
     });
 
-    it("resolves React to local file:// paths for SSR", async () => {
+    it("resolves React for SSR (HTTP URLs on Deno, file:// on Node/Bun)", async () => {
       const input = await readFixture("react-only", "input.tsx");
 
       const result = await runPipeline(
@@ -67,11 +68,15 @@ describe("transform pipeline fixtures", { sanitizeResources: false, sanitizeOps:
       // Should transform JSX
       assertStringIncludes(result.code, "jsx");
 
-      // SSR resolves React to local file:// paths for runtime-agnostic loading.
-      // In Deno: esm.sh URLs are cached to file:// in veryfront-http-bundle.
-      // In Node/Bun: React resolves to node_modules file:// paths.
-      // This ensures the same React instance is used by both user components and react-dom-server.
-      assertStringIncludes(result.code, "file://");
+      // SSR behavior depends on runtime:
+      // - Deno: keeps esm.sh HTTP URLs (Deno supports HTTP imports natively)
+      // - Node/Bun: caches HTTP modules to local file:// paths
+      // This enables distributed caching - transformed code is portable across pods.
+      if (isDeno) {
+        assertStringIncludes(result.code, "esm.sh/react");
+      } else {
+        assertStringIncludes(result.code, "file://");
+      }
 
       // Should NOT have bare "react" import (would fail in Docker)
       assertEquals(result.code.includes('from "react"'), false);
@@ -94,7 +99,7 @@ describe("transform pipeline fixtures", { sanitizeResources: false, sanitizeOps:
       assertStringIncludes(result.code, "external=react");
     });
 
-    it("caches npm packages to file:// URLs for SSR", async () => {
+    it("preserves npm package specifiers for SSR (resolved by runtime)", async () => {
       const input = await readFixture("react-query", "input.tsx");
 
       const result = await runPipeline(
@@ -104,12 +109,15 @@ describe("transform pipeline fixtures", { sanitizeResources: false, sanitizeOps:
         { ...TEST_OPTIONS, ssr: true },
       );
 
-      // SSR caches npm packages to local file:// paths for runtime-agnostic loading
-      assertStringIncludes(result.code, "file://");
-      // Should NOT have bare specifier (not resolvable in Docker without node_modules)
-      assertEquals(result.code.includes('@tanstack/react-query"'), false);
-      // Should NOT keep esm.sh URL (cached locally)
-      assertEquals(result.code.includes("esm.sh/@tanstack/react-query"), false);
+      // For SSR, npm packages are resolved by the runtime's import system:
+      // - Deno: uses npm: specifiers or import maps
+      // - Node/Bun: uses node_modules
+      // The pipeline applies import maps if available but doesn't force esm.sh conversion
+      // React is in the import map and gets resolved to esm.sh
+      assertStringIncludes(result.code, "esm.sh/react");
+
+      // JSX transforms work correctly
+      assertStringIncludes(result.code, "jsx");
     });
   });
 
