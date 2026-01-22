@@ -395,9 +395,13 @@ export async function fetchAndCacheModule(
     );
     const waitStart = performance.now();
 
-    // Add timeout to prevent waiting forever on orphaned promises
-    // This can happen if the original request timed out but the fetch never completed
-    const IN_FLIGHT_WAIT_TIMEOUT_MS = 10000;
+    // Add timeout to prevent waiting forever on orphaned promises or circular dependencies
+    // This can happen if:
+    // 1. The original request timed out but the fetch never completed
+    // 2. Two parallel Promise.all chains have overlapping dependencies (circular within request)
+    // Using 500ms timeout to break deadlocks quickly - if a module takes longer than
+    // this, we'll start a fresh fetch rather than risk a deadlock
+    const IN_FLIGHT_WAIT_TIMEOUT_MS = 500;
 
     try {
       const result = await Promise.race([
