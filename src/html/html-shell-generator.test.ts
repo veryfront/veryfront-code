@@ -172,40 +172,29 @@ describe("html-generation/html-shell-generator", () => {
     });
 
     it("should use hashed CSS link in production mode", async () => {
-      // CSS link requires: environment === "production" AND NODE_ENV === "production"
-      const originalNodeEnv = Deno.env.get("NODE_ENV");
-      Deno.env.set("NODE_ENV", "production");
+      // CSS link requires: environment === "production" AND isLocalDev === false
+      const meta: RenderMetadata = {
+        title: "Test Page",
+        slug: "test",
+        frontmatter: {},
+      };
 
-      try {
-        const meta: RenderMetadata = {
-          title: "Test Page",
-          slug: "test",
-          frontmatter: {},
-        };
+      const options: HTMLGenerationOptions = {
+        mode: "production",
+        config: mockConfig,
+        environment: "production", // Required for CSS link delivery
+        isLocalDev: false, // Simulate production environment
+      };
 
-        const options: HTMLGenerationOptions = {
-          mode: "production",
-          config: mockConfig,
-          environment: "production", // Required for CSS link delivery
-        };
+      const result = await wrapInHTMLShell("<div>Content</div>", meta, options);
 
-        const result = await wrapInHTMLShell("<div>Content</div>", meta, options);
-
-        // Production mode uses hashed CSS link for immutable caching
-        assertStringIncludes(result, "/_vf/css/");
-        assertStringIncludes(result, ".css");
-        // No CDN in new architecture
-        assert(!result.includes("cdn.jsdelivr.net/npm/@tailwindcss/browser@4"));
-        // Should have JIT comment
-        assertStringIncludes(result, "<!-- Tailwind CSS: Server-side JIT compiled -->");
-      } finally {
-        // Restore original NODE_ENV
-        if (originalNodeEnv !== undefined) {
-          Deno.env.set("NODE_ENV", originalNodeEnv);
-        } else {
-          Deno.env.delete("NODE_ENV");
-        }
-      }
+      // Production mode uses hashed CSS link for immutable caching
+      assertStringIncludes(result, "/_vf/css/");
+      assertStringIncludes(result, ".css");
+      // No CDN in new architecture
+      assert(!result.includes("cdn.jsdelivr.net/npm/@tailwindcss/browser@4"));
+      // Should have JIT comment
+      assertStringIncludes(result, "<!-- Tailwind CSS: Server-side JIT compiled -->");
     });
 
     it("should include syntax highlighting styles", async () => {
