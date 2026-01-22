@@ -15,7 +15,7 @@ import { join } from "@veryfront/compat/path";
 import { afterAll, describe, it } from "@veryfront/testing/bdd";
 import { mkdir, writeTextFile } from "@veryfront/testing/deno-compat";
 
-import "../../_helpers/log-guard.ts";
+import { restoreLogs } from "../../_helpers/log-guard.ts";
 import { buildProduction } from "../../../src/build/production-build/index.ts";
 import { TestDataFactory } from "../../fixtures/test-data-factory.ts";
 import { withTestContext } from "../../_helpers/context.ts";
@@ -31,9 +31,10 @@ describe(
     sanitizeOps: false,
   },
   () => {
-    // Clean up renderer intervals to prevent resource leaks
+    // Clean up renderer intervals and restore console methods to prevent resource leaks
     afterAll(async () => {
       await cleanupBundler();
+      restoreLogs();
     });
 
     describe("Production Server - Static Assets", { sanitizeResources: false, sanitizeOps: false }, () => {

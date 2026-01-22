@@ -438,12 +438,14 @@ export type MockFetchResponse =
   | Error
   | ((url: string, init?: RequestInit) => Response | Promise<Response>);
 
+// Capture original fetch at module level for reliable restoration across parallel tests
+const originalFetch = globalThis.fetch;
+
 export class FetchMock {
   private responses = new Map<string, MockFetchResponse>();
-  private originalFetch: typeof fetch;
 
   constructor() {
-    this.originalFetch = globalThis.fetch;
+    // Use module-level originalFetch instead of instance-level capture
   }
 
   set(url: string, response: MockFetchResponse): void {
@@ -495,7 +497,7 @@ export class FetchMock {
 
   uninstall(): void {
     const global = globalThis as GlobalWithBrowserAPIs;
-    global.fetch = this.originalFetch;
+    global.fetch = originalFetch;
   }
 }
 
