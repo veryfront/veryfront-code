@@ -66,7 +66,6 @@ import { createLayoutComponentCache } from "./layouts/utils/component-loader.ts"
 import type { PageDataResponse, RenderOptions, RenderResult } from "./orchestrator/types.ts";
 import type { HandlerContext } from "../server/handlers/types.ts";
 import { TimeoutError, withTimeoutThrow } from "./utils/stream-utils.ts";
-import { Singleflight } from "#veryfront/utils/singleflight.ts";
 
 /**
  * Get environment variable (cross-platform: Deno, Node, Bun).
@@ -100,11 +99,20 @@ export interface RendererOptions {
  * Initialize once at startup, then use for any project by passing
  * a RenderContext to each render call.
  */
+/**
+ * Note: Singleflight was previously used for render deduplication but caused
+ * "body already consumed" errors when multiple concurrent requests shared the
+ * same RenderResult. The RenderResult.stream is a ReadableStream that can only
+ * be consumed once. Without Singleflight, concurrent requests for the same page
+ * may duplicate work, but this is acceptable since:
+ * 1. The cache (checkCache) handles repeated requests after first render completes
+ * 2. Duplicate renders are rare in practice and don't cause errors
+ * 3. This matches the pattern in http-cache.ts which also removed Singleflight
+ */
 export class Renderer {
   private cache: ContextAwareCacheCoordinator;
   private initialized: boolean = false;
   private initializationPromise: Promise<void> | null = null;
-  private renderFlight = new Singleflight<RenderResult>();
 
   constructor(options: RendererOptions = {}) {
     this.cache = new ContextAwareCacheCoordinator(options.cache);
@@ -188,61 +196,54 @@ export class Renderer {
       return cacheResult.cachedResult;
     }
 
-    const flightKey = `${ctx.projectId}:${ctx.environment}:${ctx.releaseId ?? "draft"}:${slug}:${
-      options?.colorScheme ?? "default"
-    }`;
+    // Create context-bound services (lightweight, ~1ms)
+    // Pass colorScheme so the pipeline cache also respects theme
+    const services = this.createServicesForContext(ctx, options?.colorScheme);
 
-    return this.renderFlight.do(flightKey, async () => {
-      // Create context-bound services (lightweight, ~1ms)
-      // Pass colorScheme so the pipeline cache also respects theme
-      const services = this.createServicesForContext(ctx, options?.colorScheme);
+    // Compute contentSourceId for cache isolation between preview/production
+    const contentSourceId = ctx.environment === "production" && ctx.releaseId
+      ? `release-${ctx.releaseId}`
+      : `${ctx.environment}-draft`;
 
-      // Compute contentSourceId for cache isolation between preview/production
-      const contentSourceId = ctx.environment === "production" && ctx.releaseId
-        ? `release-${ctx.releaseId}`
-        : `${ctx.environment}-draft`;
-
-      // Run the render pipeline with master timeout to prevent stuck renders
-      // from blocking other requests. Timeout is 20s (less than 60s request timeout).
-      let result: RenderResult;
-      try {
-        result = await withTimeoutThrow(
-          services.pipeline.renderPage(slug, {
-            ...options,
-            projectId: ctx.projectId,
-            projectSlug: ctx.projectSlug,
-            environment: ctx.environment,
-            contentSourceId,
-          }),
-          RENDER_PIPELINE_TIMEOUT_MS,
-          `Render pipeline for ${ctx.projectId}:${slug}`,
-        );
-      } catch (error) {
-        // Log timeout specifically to help identify problematic projects
-        if (error instanceof TimeoutError) {
-          logger.error("[Renderer] Render pipeline timeout - aborting", {
-            slug,
-            projectId: ctx.projectId,
-            timeoutMs: RENDER_PIPELINE_TIMEOUT_MS,
-          });
-        }
-        throw error;
+// Run the render pipeline with master timeout to prevent stuck renders
+    // from blocking other requests. Timeout configurable via RENDER_TIMEOUT_MS.
+    let result: RenderResult;
+    try {
+      result = await withTimeoutThrow(
+        services.pipeline.renderPage(slug, {
+          ...options,
+          projectId: ctx.projectId,
+          projectSlug: ctx.projectSlug,
+          environment: ctx.environment,
+          contentSourceId,
+        }),
+        RENDER_PIPELINE_TIMEOUT_MS,
+        `Render pipeline for ${ctx.projectId}:${slug}`,
+      );
+    } catch (error) {
+      // Log timeout specifically to help identify problematic projects
+      if (error instanceof TimeoutError) {
+        logger.error("[Renderer] Render pipeline timeout - aborting", {
+          slug,
+          projectId: ctx.projectId,
+          timeoutMs: RENDER_PIPELINE_TIMEOUT_MS,
+        });
       }
+      throw error;
+    }
 
-      // Cache the result (context-aware, includes colorScheme in key)
-      await this.cache.persistResult(result, slug, ctx, options?.colorScheme);
+    // Cache the result (context-aware, includes colorScheme in key)
+    await this.cache.persistResult(result, slug, ctx, options?.colorScheme);
 
-      const duration = performance.now() - startTime;
-      logger.debug("[Renderer] Render complete", {
-        slug,
-        projectId: ctx.projectId,
-        duration: `${duration.toFixed(2)}ms`,
-        htmlLength: result.html?.length ?? 0,
-        coalesced: this.renderFlight.size > 0,
-      });
-
-      return result;
+    const duration = performance.now() - startTime;
+    logger.debug("[Renderer] Render complete", {
+      slug,
+      projectId: ctx.projectId,
+      duration: `${duration.toFixed(2)}ms`,
+      htmlLength: result.html?.length ?? 0,
     });
+
+    return result;
   }
 
   /**

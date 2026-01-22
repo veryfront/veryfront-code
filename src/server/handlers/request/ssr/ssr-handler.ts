@@ -36,6 +36,7 @@ import {
 import { generateNonce } from "#veryfront/security/http/response/security-handler.ts";
 import { getColorSchemeFromRequest } from "#veryfront/security/http/client-hints.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
 import {
   endRenderSession,
   startRenderSession,
@@ -136,6 +137,9 @@ export class SSRHandler extends BaseHandler {
         const prodMode = isProductionMode(ctx, url);
         const branch = ctx.parsedDomain?.branch ?? null;
 
+        // Get effective token: proxy token (from x-token header) or env token (direct mode)
+        const effectiveToken = ctx.proxyToken || getEnv("VERYFRONT_API_TOKEN") || "";
+
         _logger.debug("[SSR] Using multi-project context - entering runWithContext", {
           projectSlug: ctx.projectSlug,
           productionMode: prodMode,
@@ -143,12 +147,14 @@ export class SSRHandler extends BaseHandler {
           branch: !prodMode ? branch : undefined,
           environmentName: ctx.environmentName,
           slug,
+          hasProxyToken: !!ctx.proxyToken,
+          hasEnvToken: !!getEnv("VERYFRONT_API_TOKEN"),
         });
 
         const runWithContextStartTime = performance.now();
         return fsAdapter.runWithContext(
           ctx.projectSlug,
-          ctx.proxyToken || "",
+          effectiveToken,
           () => {
             _logger.debug("[SSR] runWithContext callback started", {
               projectSlug: ctx.projectSlug,

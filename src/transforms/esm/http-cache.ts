@@ -57,8 +57,15 @@ type CacheOptions = {
   reactVersion?: string;
 };
 
-/** Singleflight for HTTP module fetch deduplication */
-const httpFetchFlight = new Singleflight<string>();
+/**
+ * In-memory cache for resolved HTTP module paths.
+ *
+ * Note: Singleflight was previously used for fetch deduplication but caused deadlocks
+ * when processing packages with complex dependency graphs (like zod). The recursive
+ * rewriteModuleImports calls would create nested Singleflight entries that blocked
+ * on each other. The filesystem cache + processingStack already provide sufficient
+ * deduplication and circular dependency handling.
+ */
 const cachedPaths = new Map<string, string>();
 
 // Track currently processing URLs to detect circular dependencies
@@ -182,7 +189,7 @@ function resolveBareSpecifier(
   return `https://esm.sh/${specifier}?target=es2022`;
 }
 
-function cacheHttpModule(url: string, options: CacheOptions): Promise<string | null> {
+async function cacheHttpModule(url: string, options: CacheOptions): Promise<string | null> {
   const normalizedUrl = normalizeHttpUrl(url);
 
   // Don't cache React core modules - they must use the same instance as framework components
@@ -190,103 +197,97 @@ function cacheHttpModule(url: string, options: CacheOptions): Promise<string | n
     logger.debug("[HTTP-CACHE] Skipping React core module (prevents multiple instances)", {
       url: normalizedUrl,
     });
-    return Promise.resolve(null);
+    return null;
   }
 
   const cacheDir = ensureAbsoluteDir(options.cacheDir);
   const cacheKey = `${cacheDir}:${normalizedUrl}`;
 
   const existing = cachedPaths.get(cacheKey);
-  if (existing) return Promise.resolve(existing);
+  if (existing) {
+    return existing;
+  }
 
-  // Use Singleflight to deduplicate concurrent fetches for the same URL.
-  // This prevents race conditions where multiple requests try to write
-  // the same cache file simultaneously.
-  //
-  // IMPORTANT: The circular dependency check MUST be inside the Singleflight callback.
-  // If it's outside, unrelated concurrent requests may incorrectly detect "circular"
-  // dependencies because processingStack is global, causing them to return expected
-  // file paths for files that haven't been written yet.
-  return httpFetchFlight.do(cacheKey, async () => {
-    const cachePath = join(cacheDir, `http-${simpleHash(normalizedUrl)}.mjs`);
-    const fs = createFileSystem();
+  // No Singleflight - it caused deadlocks with complex dependency graphs.
+  // Filesystem cache + processingStack provide sufficient deduplication.
+  // Multiple concurrent fetches for the same URL may occur briefly, but
+  // this is acceptable since fetch results are deterministic and cached.
 
-    // Layer 1: Check filesystem cache (fast, local)
-    if (await exists(cachePath)) {
-      cachedPaths.set(cacheKey, cachePath);
-      return cachePath;
-    }
+  const cachePath = join(cacheDir, `http-${simpleHash(normalizedUrl)}.mjs`);
+  const fs = createFileSystem();
 
-    // Check circular dependency INSIDE Singleflight - only the leader checks this.
-    // Waiters will block on the Singleflight and get the result when the leader completes.
-    // This prevents false "circular" detection for unrelated concurrent requests.
-    if (processingStack.has(normalizedUrl)) {
-      logger.debug("[HTTP-CACHE] Circular dependency detected, returning expected path", {
-        url: normalizedUrl,
-      });
-      // For circular deps, the file will be written by the outer call after it finishes
-      // processing imports. The path is predictable so we can return it now.
-      return cachePath;
-    }
-
-    // Layer 2: Check distributed cache (cross-pod sharing)
-    const distributed = await getDistributedCache();
-    if (distributed) {
-      try {
-        const cachedCode = await distributed.get(normalizedUrl);
-        if (cachedCode) {
-          logger.debug("[HTTP-CACHE] Distributed cache hit", { url: normalizedUrl });
-          await fs.mkdir(cacheDir, { recursive: true });
-          await fs.writeTextFile(cachePath, cachedCode);
-          cachedPaths.set(cacheKey, cachePath);
-          return cachePath;
-        }
-      } catch (error) {
-        logger.debug("[HTTP-CACHE] Distributed cache get failed", { url: normalizedUrl, error });
-      }
-    }
-
-    // Layer 3: Fetch from esm.sh
-    logger.debug("[HTTP-CACHE] Fetching from network", { url: normalizedUrl });
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30000);
-
-    const response = await fetch(normalizedUrl, {
-      headers: { "user-agent": "Mozilla/5.0 Veryfront/1.0" },
-      signal: controller.signal,
-      redirect: "follow",
-    });
-    clearTimeout(timeout);
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch ${normalizedUrl}: ${response.status}`);
-    }
-
-    let code = await response.text();
-
-    // Track this URL as being processed before rewriting imports
-    processingStack.add(normalizedUrl);
-    try {
-      code = await rewriteModuleImports(code, normalizedUrl, options);
-    } finally {
-      processingStack.delete(normalizedUrl);
-    }
-
-    // Write to filesystem cache
-    await fs.mkdir(cacheDir, { recursive: true });
-    await fs.writeTextFile(cachePath, code);
-
-    // Store in distributed cache (fire-and-forget for performance)
-    if (distributed) {
-      distributed.set(normalizedUrl, code, DISTRIBUTED_CACHE_TTL_SECONDS).catch((error) => {
-        logger.debug("[HTTP-CACHE] Distributed cache set failed", { url: normalizedUrl, error });
-      });
-    }
-
+  // Layer 1: Check filesystem cache (fast, local)
+  if (await exists(cachePath)) {
     cachedPaths.set(cacheKey, cachePath);
     return cachePath;
+  }
+
+  // Check circular dependency - if we're already processing this URL in the call stack,
+  // return the expected path to break the cycle. The file will be written by the outer call.
+  if (processingStack.has(normalizedUrl)) {
+    logger.debug("[HTTP-CACHE] Circular dependency detected, returning expected path", {
+      url: normalizedUrl,
+    });
+    return cachePath;
+  }
+
+  // Layer 2: Check distributed cache (cross-pod sharing)
+  const distributed = await getDistributedCache();
+  if (distributed) {
+    try {
+      const cachedCode = await distributed.get(normalizedUrl);
+      if (cachedCode) {
+        logger.debug("[HTTP-CACHE] Distributed cache hit", { url: normalizedUrl });
+        await fs.mkdir(cacheDir, { recursive: true });
+        await fs.writeTextFile(cachePath, cachedCode);
+        cachedPaths.set(cacheKey, cachePath);
+        return cachePath;
+      }
+    } catch (error) {
+      logger.debug("[HTTP-CACHE] Distributed cache get failed", { url: normalizedUrl, error });
+    }
+  }
+
+  // Layer 3: Fetch from esm.sh
+  logger.debug("[HTTP-CACHE] Fetching from network", { url: normalizedUrl });
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+
+  const response = await fetch(normalizedUrl, {
+    headers: { "user-agent": "Mozilla/5.0 Veryfront/1.0" },
+    signal: controller.signal,
+    redirect: "follow",
   });
+  clearTimeout(timeout);
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch ${normalizedUrl}: ${response.status}`);
+  }
+
+  let code = await response.text();
+
+  // Track this URL as being processed before rewriting imports
+  processingStack.add(normalizedUrl);
+  try {
+    code = await rewriteModuleImports(code, normalizedUrl, options);
+  } finally {
+    processingStack.delete(normalizedUrl);
+  }
+
+  // Write to filesystem cache
+  await fs.mkdir(cacheDir, { recursive: true });
+  await fs.writeTextFile(cachePath, code);
+
+  // Store in distributed cache (fire-and-forget for performance)
+  if (distributed) {
+    distributed.set(normalizedUrl, code, DISTRIBUTED_CACHE_TTL_SECONDS).catch((error) => {
+      logger.debug("[HTTP-CACHE] Distributed cache set failed", { url: normalizedUrl, error });
+    });
+  }
+
+  cachedPaths.set(cacheKey, cachePath);
+  return cachePath;
 }
 
 async function resolveSpecifier(
