@@ -167,26 +167,32 @@ function cacheHttpModule(url: string, options: CacheOptions): Promise<string | n
   const existing = cachedPaths.get(cacheKey);
   if (existing) return Promise.resolve(existing);
 
-  // Check if we're already processing this URL (circular dependency)
-  // In this case, we need to return the expected cache path without waiting
-  // The file will exist by the time it's actually imported at runtime
-  if (processingStack.has(normalizedUrl)) {
-    const cachePath = join(cacheDir, `http-${simpleHash(normalizedUrl)}.mjs`);
-    logger.debug("[HTTP-CACHE] Circular dependency detected, returning expected path", {
-      url: normalizedUrl,
-    });
-    return Promise.resolve(cachePath);
-  }
-
   // Use Singleflight to deduplicate concurrent fetches for the same URL.
   // This prevents race conditions where multiple requests try to write
   // the same cache file simultaneously.
+  //
+  // IMPORTANT: The circular dependency check MUST be inside the Singleflight callback.
+  // If it's outside, unrelated concurrent requests may incorrectly detect "circular"
+  // dependencies because processingStack is global, causing them to return expected
+  // file paths for files that haven't been written yet.
   return httpFetchFlight.do(cacheKey, async () => {
     const cachePath = join(cacheDir, `http-${simpleHash(normalizedUrl)}.mjs`);
 
     // Double-check cache after acquiring flight (another request may have completed)
     if (await exists(cachePath)) {
       cachedPaths.set(cacheKey, cachePath);
+      return cachePath;
+    }
+
+    // Check circular dependency INSIDE Singleflight - only the leader checks this.
+    // Waiters will block on the Singleflight and get the result when the leader completes.
+    // This prevents false "circular" detection for unrelated concurrent requests.
+    if (processingStack.has(normalizedUrl)) {
+      logger.debug("[HTTP-CACHE] Circular dependency detected, returning expected path", {
+        url: normalizedUrl,
+      });
+      // For circular deps, the file will be written by the outer call after it finishes
+      // processing imports. The path is predictable so we can return it now.
       return cachePath;
     }
 
