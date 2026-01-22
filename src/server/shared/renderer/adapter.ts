@@ -74,7 +74,7 @@ async function getOrInitRenderer(): Promise<Renderer> {
     return rendererInitPromise;
   }
 
-  logger.info("[RendererAdapter] Initializing renderer");
+  logger.debug("[RendererAdapter] Initializing renderer");
   rendererInitPromise = initializeRenderer();
 
   try {
@@ -93,22 +93,36 @@ async function getOrInitRenderer(): Promise<Renderer> {
  * correct per-project config caching.
  */
 async function createContextFromHandler(ctx: HandlerContext): Promise<RenderContext> {
+  const projectSlug = ctx.projectSlug || "unknown";
   let config = ctx.config;
 
   if (!config) {
     // Load config from API adapter (for proxy mode projects)
     // Use projectId/projectSlug as cache key since projectDir is shared across all API-backed projects
     const cacheKey = ctx.projectId || ctx.projectSlug;
-    logger.debug("[RendererAdapter] Loading config from adapter", {
+    logger.debug("[RendererAdapter] Loading config from adapter START", {
       projectDir: ctx.projectDir,
-      projectSlug: ctx.projectSlug,
+      projectSlug,
       projectId: ctx.projectId,
       cacheKey,
     });
+    const configStartTime = performance.now();
     config = await getConfig(ctx.projectDir, ctx.adapter, { cacheKey });
+    logger.debug("[RendererAdapter] Loading config from adapter DONE", {
+      projectSlug,
+      duration: `${(performance.now() - configStartTime).toFixed(2)}ms`,
+    });
   }
 
-  return createRenderContext({ ...ctx, config });
+  logger.debug("[RendererAdapter] createRenderContext START", { projectSlug });
+  const contextStartTime = performance.now();
+  const renderContext = createRenderContext({ ...ctx, config });
+  logger.debug("[RendererAdapter] createRenderContext DONE", {
+    projectSlug,
+    duration: `${(performance.now() - contextStartTime).toFixed(2)}ms`,
+  });
+
+  return renderContext;
 }
 
 /**
@@ -208,15 +222,34 @@ class RendererAdapterImpl implements RendererAdapter {
  */
 export async function getRendererForProject(ctx: HandlerContext): Promise<RendererAdapter> {
   const startTime = performance.now();
+  const projectSlug = ctx.projectSlug || "unknown";
+
+  logger.debug("[RendererAdapter] getRendererForProject START", {
+    projectSlug,
+    projectId: ctx.projectId,
+    hasConfig: !!ctx.config,
+  });
 
   // Get or initialize the renderer (shared, ~100ms first time, instant after)
+  const rendererStartTime = performance.now();
+  logger.debug("[RendererAdapter] getOrInitRenderer START", { projectSlug });
   const renderer = await getOrInitRenderer();
+  logger.debug("[RendererAdapter] getOrInitRenderer DONE", {
+    projectSlug,
+    duration: `${(performance.now() - rendererStartTime).toFixed(2)}ms`,
+  });
 
   // Create context for this project (~1ms)
+  const contextStartTime = performance.now();
+  logger.debug("[RendererAdapter] createContextFromHandler START", { projectSlug });
   const renderCtx = await createContextFromHandler(ctx);
+  logger.debug("[RendererAdapter] createContextFromHandler DONE", {
+    projectSlug,
+    duration: `${(performance.now() - contextStartTime).toFixed(2)}ms`,
+  });
 
   const duration = performance.now() - startTime;
-  logger.debug("[RendererAdapter] Created renderer adapter", {
+  logger.debug("[RendererAdapter] getRendererForProject DONE", {
     projectId: renderCtx.projectId,
     projectSlug: renderCtx.projectSlug,
     duration: `${duration.toFixed(2)}ms`,

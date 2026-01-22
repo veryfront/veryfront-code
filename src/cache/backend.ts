@@ -16,7 +16,15 @@ import { getRedisClient, isRedisConfigured, type RedisClient } from "../utils/re
 import { runtime } from "../platform/adapters/registry.ts";
 import { tryGetCacheKeyContext } from "./cache-key-builder.ts";
 import { getRuntimeEnv, isRuntimeEnvInitialized, type RuntimeEnv } from "../config/runtime-env.ts";
-import { getCurrentRequestContext } from "../platform/adapters/fs/veryfront/multi-project-adapter.ts";
+// Lazy-loaded to avoid circular dependency (multi-project-adapter has React dependencies)
+let _getCurrentRequestContext: (() => { token?: string } | null) | undefined;
+async function getCurrentRequestContext(): Promise<{ token?: string } | null> {
+  if (!_getCurrentRequestContext) {
+    const mod = await import("../platform/adapters/fs/veryfront/multi-project-adapter.ts");
+    _getCurrentRequestContext = mod.getCurrentRequestContext;
+  }
+  return _getCurrentRequestContext();
+}
 import { CircuitBreakerOpen, getCircuitBreaker } from "../utils/circuit-breaker.ts";
 import { MEMORY_CACHE_MAX_ENTRIES } from "../utils/constants/cache.ts";
 
@@ -246,11 +254,13 @@ export class ApiCacheBackend implements CacheBackend {
     return this.keyPrefix ? `${this.keyPrefix}:${key}` : key;
   }
 
-  private getAuthToken(): string | null {
+  private async getAuthToken(): Promise<string | null> {
     // Static token from env (non-proxy mode) or request context token (proxy mode)
-    return getEnvValue("VERYFRONT_API_TOKEN", this.env) ??
-      getCurrentRequestContext()?.token ??
-      null;
+    const envToken = getEnvValue("VERYFRONT_API_TOKEN", this.env);
+    if (envToken) return envToken;
+
+    const ctx = await getCurrentRequestContext();
+    return ctx?.token ?? null;
   }
 
   private getProjectSlug(): string | null {
@@ -262,7 +272,7 @@ export class ApiCacheBackend implements CacheBackend {
     path: string,
     body?: Record<string, unknown>,
   ): Promise<T | null> {
-    const token = this.getAuthToken();
+    const token = await this.getAuthToken();
     const projectSlug = this.getProjectSlug();
 
     if (!token || !projectSlug) {
@@ -410,4 +420,7 @@ export const CacheBackends = {
 
   /** User KV store - always uses API backend. */
   userKv: () => createCacheBackend({ keyPrefix: "kv", preferredBackend: "api" }),
+
+  /** HTTP module cache for ESM.sh modules (cross-pod sharing). */
+  httpModule: () => createCacheBackend({ keyPrefix: "http-module" }),
 };

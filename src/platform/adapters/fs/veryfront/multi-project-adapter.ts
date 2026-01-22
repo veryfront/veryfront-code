@@ -62,12 +62,13 @@ export class MultiProjectFSAdapter implements FSAdapter {
       environmentName?: string | null;
     },
   ): Promise<T> {
+    const runWithContextStartTime = performance.now();
     const productionMode = options?.productionMode ?? false;
     const releaseId = options?.releaseId ?? null;
     const branch = options?.branch ?? null;
     const environmentName = options?.environmentName ?? null;
 
-    logger.debug("[MultiProjectFSAdapter] runWithContext called", {
+    logger.debug("[MultiProjectFSAdapter] runWithContext START", {
       projectSlug,
       hasToken: !!token,
       productionMode,
@@ -90,7 +91,19 @@ export class MultiProjectFSAdapter implements FSAdapter {
       environmentName,
     };
 
-    return asyncLocalStorage.run(context, fn);
+    logger.debug("[MultiProjectFSAdapter] asyncLocalStorage.run START", { projectSlug });
+    return asyncLocalStorage.run(context, async () => {
+      logger.debug("[MultiProjectFSAdapter] Inside asyncLocalStorage.run callback", {
+        projectSlug,
+        duration: `${(performance.now() - runWithContextStartTime).toFixed(2)}ms`,
+      });
+      const result = await fn();
+      logger.debug("[MultiProjectFSAdapter] runWithContext callback complete", {
+        projectSlug,
+        totalDuration: `${(performance.now() - runWithContextStartTime).toFixed(2)}ms`,
+      });
+      return result;
+    });
   }
 
   setRequestContext(projectSlug: string, token: string): void {
@@ -107,7 +120,8 @@ export class MultiProjectFSAdapter implements FSAdapter {
     // because ssr-handler returns early after runWithContext().
   }
 
-  private getAdapter(): Promise<VeryfrontFSAdapter> {
+  private async getAdapter(): Promise<VeryfrontFSAdapter> {
+    const getAdapterStartTime = performance.now();
     const context = asyncLocalStorage.getStore();
 
     if (!context) {
@@ -131,7 +145,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
     const releaseId = context.releaseId ?? null;
     const environmentName = context.environmentName ?? null;
 
-    logger.debug("[MultiProjectFSAdapter] getAdapter with context", {
+    logger.debug("[MultiProjectFSAdapter] getAdapter START", {
       projectSlug: context.projectSlug,
       productionMode,
       releaseId,
@@ -139,7 +153,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
       environmentName,
     });
 
-    return this.manager.getAdapter(
+    const adapter = await this.manager.getAdapter(
       context.projectSlug,
       context.token,
       context.projectId,
@@ -148,6 +162,13 @@ export class MultiProjectFSAdapter implements FSAdapter {
       environmentName,
       context.branch,
     );
+
+    logger.debug("[MultiProjectFSAdapter] getAdapter DONE", {
+      projectSlug: context.projectSlug,
+      duration: `${(performance.now() - getAdapterStartTime).toFixed(2)}ms`,
+    });
+
+    return adapter;
   }
 
   setDefaultAdapter(adapter: VeryfrontFSAdapter): void {

@@ -175,9 +175,23 @@ async function processVfModuleImports(
   context: ESMLoaderContext,
   projectDir: string,
 ): Promise<string> {
+  const projectSlug = context.projectSlug || "unknown";
   const { adapter } = context;
   if (!adapter) {
     logger.warn(`${LOG_PREFIX_MDX_LOADER} No adapter available for module fetching`);
+    return code;
+  }
+
+  logger.debug(`${LOG_PREFIX_MDX_LOADER} processVfModuleImports: found imports`, {
+    projectSlug,
+    count: imports.length,
+    paths: imports.map((i) => i.path).slice(0, 10), // First 10 paths
+  });
+
+  if (imports.length === 0) {
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} processVfModuleImports: no imports to process`, {
+      projectSlug,
+    });
     return code;
   }
 
@@ -192,14 +206,23 @@ async function processVfModuleImports(
 
   // Fetch all modules in parallel
   const results = await Promise.all(
-    imports.map(async ({ original, path }) => {
+    imports.map(async ({ original, path }, index) => {
+      const moduleStart = performance.now();
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} Fetching module START`, { projectSlug, index, path });
       const filePath = await fetchAndCacheModule(path, fetcherContext);
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} Fetching module DONE`, {
+        projectSlug,
+        index,
+        path,
+        durationMs: (performance.now() - moduleStart).toFixed(1),
+      });
       return { original, filePath, path };
     }),
   );
 
   const fetchEnd = performance.now();
   logger.debug(`${LOG_PREFIX_MDX_LOADER} Module fetch phase completed`, {
+    projectSlug,
     moduleCount: imports.length,
     durationMs: (fetchEnd - fetchStart).toFixed(1),
   });
@@ -379,33 +402,46 @@ export async function loadModuleESM(
   context: ESMLoaderContext,
 ): Promise<MDXModule> {
   const loadStart = performance.now();
+  const projectSlug = context.projectSlug || "unknown";
+
+  logger.debug(`${LOG_PREFIX_MDX_LOADER} loadModuleESM START`, { projectSlug });
 
   try {
     // Get or detect adapter
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: Detect adapter START`, { projectSlug });
     const adapter = context.adapter ?? await (async () => {
       const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
       return runtime.get();
     })();
     context.adapter = adapter;
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: Detect adapter DONE`, { projectSlug });
 
     // Initialize cache directory
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: initializeCacheDir START`, { projectSlug });
     const esmCacheDir = await initializeCacheDir(context);
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: initializeCacheDir DONE`, { projectSlug });
 
     // Step 1: Rewrite @/ aliases to /_vf_modules/ paths
     let rewritten = rewriteProjectAliasImports(compiledProgramCode);
 
     const projectDir = resolveProjectDir(context);
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: loadImportMap START`, { projectSlug });
     const importMap = await loadImportMap(projectDir, adapter);
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: loadImportMap DONE`, { projectSlug });
 
     // Step 2: Transform imports using project import map
     rewritten = transformImports(rewritten, importMap);
 
     // Step 3: Find and process /_vf_modules/ imports
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: processVfModuleImports START`, { projectSlug });
     const vfModuleImports = findVfModuleImports(rewritten);
     rewritten = await processVfModuleImports(rewritten, vfModuleImports, context, projectDir);
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: processVfModuleImports DONE`, { projectSlug });
 
     // Step 4: Transform JSX imports
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformJsxImports START`, { projectSlug });
     rewritten = await transformJsxImports(rewritten, adapter, esmCacheDir);
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformJsxImports DONE`, { projectSlug });
 
     // Add MDXLayout export if present
     if (/\bconst\s+MDXLayout\b/.test(rewritten) && !/export\s+\{[^}]*MDXLayout/.test(rewritten)) {
@@ -413,11 +449,17 @@ export async function loadModuleESM(
     }
 
     // Step 5: Cache HTTP imports to local file:// paths
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: cacheHttpImports START`, { projectSlug });
     rewritten = await cacheHttpImports(rewritten, importMap);
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: cacheHttpImports DONE`, { projectSlug });
 
     // Step 5.5: Transform React imports to local file:// paths for Bun/Node
     // This ensures the same React instance as react-dom-server
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformReactToLocalPaths START`, {
+      projectSlug,
+    });
     rewritten = await transformReactToLocalPaths(rewritten);
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformReactToLocalPaths DONE`, { projectSlug });
 
     // Step 6: Check cache and load module
     const codeHash = hashString(rewritten);
@@ -426,7 +468,11 @@ export async function loadModuleESM(
     const compositeKey = `${namespaceKey}:${codeHash}`;
 
     const cached = context.moduleCache.get(compositeKey);
-    if (cached) return cached as MDXModule;
+    if (cached) {
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} Module cache hit`, { projectSlug, compositeKey });
+      return cached as MDXModule;
+    }
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Module cache miss`, { projectSlug, compositeKey });
 
     // Check for unresolved imports
     const unresolvedPattern = new RegExp(UNRESOLVED_VF_MODULES_PATTERN.source, "g");
@@ -459,22 +505,30 @@ export async function loadModuleESM(
     // This prevents race conditions where multiple requests try to write
     // the same module file simultaneously, which can cause "Module not found"
     // errors when one request imports before another finishes writing.
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: mdxWriteFlight START`, { projectSlug, filePath });
     await mdxWriteFlight.do(filePath, async () => {
       try {
         const stat = await localFs.stat(filePath);
         if (stat?.isFile) {
           // File already exists, no need to write
+          logger.debug(`${LOG_PREFIX_MDX_LOADER} File exists, skipping write`, {
+            projectSlug,
+            filePath,
+          });
           return;
         }
       } catch {
         // File doesn't exist, proceed with write
       }
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} Writing module file`, { projectSlug, filePath });
       await localFs.writeTextFile(filePath, rewritten);
     });
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: mdxWriteFlight DONE`, { projectSlug, filePath });
 
-    logger.debug(`${LOG_PREFIX_MDX_RENDERER} Loading MDX module`, {
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: dynamic import START`, {
+      projectSlug,
       filePath,
-      codePreview: rewritten.substring(0, 300),
+      codePreview: rewritten.substring(0, 200),
     });
 
     // Set up browser globals before importing
@@ -483,6 +537,10 @@ export async function loadModuleESM(
     const mod = await import(`file://${filePath}?v=${codeHash}`) as Record<string, unknown> & {
       __vfLayout?: React.ComponentType;
     };
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: dynamic import DONE`, {
+      projectSlug,
+      exports: Object.keys(mod),
+    });
 
     const result: MDXModule = {
       ...mod,
