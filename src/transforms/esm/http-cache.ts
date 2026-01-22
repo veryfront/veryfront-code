@@ -150,7 +150,7 @@ function resolveBareSpecifier(
   return `https://esm.sh/${specifier}?target=es2022`;
 }
 
-async function cacheHttpModule(url: string, options: CacheOptions): Promise<string | null> {
+function cacheHttpModule(url: string, options: CacheOptions): Promise<string | null> {
   const normalizedUrl = normalizeHttpUrl(url);
 
   // Don't cache React core modules - they must use the same instance as framework components
