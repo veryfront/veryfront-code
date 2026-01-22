@@ -38,26 +38,73 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       assertEquals(firstPattern.exact, true);
     });
 
-    it("is enabled only in preview mode", () => {
+    it("is enabled in preview mode (regardless of env)", () => {
       const handler = new HMRHandler();
+      const originalNodeEnv = Deno.env.get("NODE_ENV");
 
-      // Should be enabled in preview mode
-      const previewCtx = { proxyEnvironment: "preview" } as Parameters<
-        NonNullable<typeof handler.metadata.enabled>
-      >[0];
-      assertEquals(handler.metadata.enabled?.(previewCtx), true);
+      try {
+        // Even in production env, preview mode should enable HMR
+        Deno.env.set("NODE_ENV", "production");
 
-      // Should be disabled in production mode
-      const productionCtx = { proxyEnvironment: "production" } as Parameters<
-        NonNullable<typeof handler.metadata.enabled>
-      >[0];
-      assertEquals(handler.metadata.enabled?.(productionCtx), false);
+        const previewCtx = { requestContext: { mode: "preview" } } as Parameters<
+          NonNullable<typeof handler.metadata.enabled>
+        >[0];
+        assertEquals(handler.metadata.enabled?.(previewCtx), true);
+      } finally {
+        if (originalNodeEnv) {
+          Deno.env.set("NODE_ENV", originalNodeEnv);
+        } else {
+          Deno.env.delete("NODE_ENV");
+        }
+      }
+    });
 
-      // Should be disabled when no proxyEnvironment
-      const noEnvCtx = {} as Parameters<
-        NonNullable<typeof handler.metadata.enabled>
-      >[0];
-      assertEquals(handler.metadata.enabled?.(noEnvCtx), false);
+    it("is enabled in local dev (regardless of mode)", () => {
+      const handler = new HMRHandler();
+      const originalNodeEnv = Deno.env.get("NODE_ENV");
+
+      try {
+        // In development env, HMR should be enabled even without preview mode
+        Deno.env.set("NODE_ENV", "development");
+
+        const productionModeCtx = { requestContext: { mode: "production" } } as Parameters<
+          NonNullable<typeof handler.metadata.enabled>
+        >[0];
+        assertEquals(handler.metadata.enabled?.(productionModeCtx), true);
+      } finally {
+        if (originalNodeEnv) {
+          Deno.env.set("NODE_ENV", originalNodeEnv);
+        } else {
+          Deno.env.delete("NODE_ENV");
+        }
+      }
+    });
+
+    it("is disabled in production env with production mode", () => {
+      const handler = new HMRHandler();
+      const originalNodeEnv = Deno.env.get("NODE_ENV");
+
+      try {
+        // In production env with production mode, HMR should be disabled
+        Deno.env.set("NODE_ENV", "production");
+
+        const productionCtx = { requestContext: { mode: "production" } } as Parameters<
+          NonNullable<typeof handler.metadata.enabled>
+        >[0];
+        assertEquals(handler.metadata.enabled?.(productionCtx), false);
+
+        // Also disabled when no requestContext
+        const noCtx = {} as Parameters<
+          NonNullable<typeof handler.metadata.enabled>
+        >[0];
+        assertEquals(handler.metadata.enabled?.(noCtx), false);
+      } finally {
+        if (originalNodeEnv) {
+          Deno.env.set("NODE_ENV", originalNodeEnv);
+        } else {
+          Deno.env.delete("NODE_ENV");
+        }
+      }
     });
   });
 
@@ -78,7 +125,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
 
       const req = new Request("http://localhost:3000/_ws");
       const ctx = {
-        proxyEnvironment: "preview",
+        requestContext: { mode: "preview" },
         mode: "development",
         projectDir: "/tmp/test",
         securityConfig: null,
@@ -108,7 +155,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
         headers: { upgrade: "websocket" },
       });
       const ctx = {
-        proxyEnvironment: "preview",
+        requestContext: { mode: "preview" },
         mode: "development",
         projectDir: "/tmp/test",
         securityConfig: null,

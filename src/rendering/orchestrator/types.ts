@@ -5,6 +5,9 @@ import type { BuildVersion } from "#veryfront/utils/version.ts";
 
 export interface RendererOptions {
   projectDir: string;
+  /**
+   * @deprecated Use `isLocalDev()` for environment checks.
+   */
   mode: "development" | "production";
   port?: number;
   adapter?: RuntimeAdapter;
@@ -47,6 +50,9 @@ export interface RenderOptions {
   colorScheme?: "light" | "dark";
   /** Whether colorScheme was set via color_mode URL param (needs localStorage persistence) */
   colorSchemeFromParam?: boolean;
+  /**
+   * @deprecated Use `requestContext?.mode` instead.
+   */
   proxyEnvironment?: "preview" | "production";
   /** Project slug for HTTP fallback in multi-project mode */
   projectSlug?: string;
