@@ -232,14 +232,16 @@ describe("html-generation/html-shell-generator", () => {
         frontmatter: {},
       };
 
+      // Development syntax theme requires isLocalDev() === true
+      const originalNodeEnv = Deno.env.get("NODE_ENV");
+      Deno.env.set("NODE_ENV", "development");
       const devResult = await wrapInHTMLShell(
         "<div>Content</div>",
         meta,
         { mode: "development", config: mockConfig },
       );
 
-      // Production syntax theme requires NODE_ENV=production
-      const originalNodeEnv = Deno.env.get("NODE_ENV");
+      // Production syntax theme requires NODE_ENV=production (isLocalDev() === false)
       Deno.env.set("NODE_ENV", "production");
       try {
         const prodResult = await wrapInHTMLShell(
@@ -287,22 +289,34 @@ describe("html-generation/html-shell-generator", () => {
     });
 
     it("should include development scripts in dev mode", async () => {
-      const meta: RenderMetadata = {
-        title: "Test Page",
-        slug: "test",
-        frontmatter: {},
-      };
+      // Development scripts require NODE_ENV !== "production" (isLocalDev() === true)
+      const originalNodeEnv = Deno.env.get("NODE_ENV");
+      Deno.env.set("NODE_ENV", "development");
 
-      const options: HTMLGenerationOptions = {
-        mode: "development",
-        config: mockConfig,
-      };
+      try {
+        const meta: RenderMetadata = {
+          title: "Test Page",
+          slug: "test",
+          frontmatter: {},
+        };
 
-      const result = await wrapInHTMLShell("<div>Content</div>", meta, options);
+        const options: HTMLGenerationOptions = {
+          mode: "development",
+          config: mockConfig,
+        };
 
-      // Dev mode includes client-side error logger and error overlay styling
-      assertStringIncludes(result, "Client-side error logger");
-      assertStringIncludes(result, "veryfront-error-overlay");
+        const result = await wrapInHTMLShell("<div>Content</div>", meta, options);
+
+        // Dev mode includes client-side error logger and error overlay styling
+        assertStringIncludes(result, "Client-side error logger");
+        assertStringIncludes(result, "veryfront-error-overlay");
+      } finally {
+        if (originalNodeEnv !== undefined) {
+          Deno.env.set("NODE_ENV", originalNodeEnv);
+        } else {
+          Deno.env.delete("NODE_ENV");
+        }
+      }
     });
 
     it("should include production scripts in prod mode", async () => {

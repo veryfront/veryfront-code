@@ -5,6 +5,7 @@ import {
   getCacheStrategy,
   isLocalDev,
   shouldEnableCache,
+  shouldUseNoCacheHeaders,
 } from "../../../src/server/context/request-context.ts";
 
 describe("request-context", () => {
@@ -223,6 +224,56 @@ describe("request-context", () => {
 
       const ctx = { token: "", slug: "", branch: null, mode: "production" as const };
       assertStrictEquals(shouldEnableCache(ctx), true);
+    });
+  });
+
+  describe("shouldUseNoCacheHeaders", () => {
+    let originalNodeEnv: string | undefined;
+
+    beforeEach(() => {
+      originalNodeEnv = Deno.env.get("NODE_ENV");
+    });
+
+    afterEach(() => {
+      if (originalNodeEnv !== undefined) {
+        Deno.env.set("NODE_ENV", originalNodeEnv);
+      } else {
+        Deno.env.delete("NODE_ENV");
+      }
+    });
+
+    it("returns true in development regardless of mode", () => {
+      Deno.env.set("NODE_ENV", "development");
+
+      const previewCtx = { token: "", slug: "", branch: null, mode: "preview" as const };
+      const prodCtx = { token: "", slug: "", branch: null, mode: "production" as const };
+
+      assertStrictEquals(shouldUseNoCacheHeaders(previewCtx), true);
+      assertStrictEquals(shouldUseNoCacheHeaders(prodCtx), true);
+    });
+
+    it("returns true without context in development", () => {
+      Deno.env.set("NODE_ENV", "development");
+      assertStrictEquals(shouldUseNoCacheHeaders(), true);
+    });
+
+    it("returns true for preview mode in production env", () => {
+      Deno.env.set("NODE_ENV", "production");
+
+      const ctx = { token: "", slug: "", branch: null, mode: "preview" as const };
+      assertStrictEquals(shouldUseNoCacheHeaders(ctx), true);
+    });
+
+    it("returns false for production mode in production env", () => {
+      Deno.env.set("NODE_ENV", "production");
+
+      const ctx = { token: "", slug: "", branch: null, mode: "production" as const };
+      assertStrictEquals(shouldUseNoCacheHeaders(ctx), false);
+    });
+
+    it("returns false without context in production env", () => {
+      Deno.env.set("NODE_ENV", "production");
+      assertStrictEquals(shouldUseNoCacheHeaders(), false);
     });
   });
 });
