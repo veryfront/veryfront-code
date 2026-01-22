@@ -663,6 +663,8 @@ describe(
             const adapter = await createMockAdapter({});
             const handler = createVeryfrontHandler(tempDir, adapter, {
               projectDir: tempDir,
+              // Enable dev mode for /_veryfront/fs/ endpoint
+              envConfig: { isLocalDev: true },
             });
 
             // Helper to encode path
