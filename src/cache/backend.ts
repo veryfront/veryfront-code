@@ -404,9 +404,6 @@ export const CacheBackends = {
   /** Render cache for rendered pages. */
   render: () => createCacheBackend({ keyPrefix: "render" }),
 
-  /** HTTP module cache for esm.sh/CDN modules. */
-  httpModule: () => createCacheBackend({ keyPrefix: "http-module" }),
-
   /** User KV store - always uses API backend. */
   userKv: () => createCacheBackend({ keyPrefix: "kv", preferredBackend: "api" }),
 };
