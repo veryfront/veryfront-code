@@ -375,12 +375,32 @@ export async function fetchAndCacheModule(
 ): Promise<string | null> {
   const normalizedPath = normalizePath(modulePath, parentModulePath);
   const cacheKey = getPathCacheKey(context.projectId, normalizedPath);
+  const projectSlug = context.projectSlug || "unknown";
+
+  logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] START`, {
+    projectSlug,
+    modulePath,
+    normalizedPath,
+    parentModulePath,
+    inFlightCount: inFlight.size,
+    inFlightKeys: Array.from(inFlight.keys()).slice(0, 5),
+  });
 
   // Check if this module is already being fetched (prevent race conditions)
   const existingFetch = inFlight.get(cacheKey);
   if (existingFetch) {
-    logger.debug(`${LOG_PREFIX_MDX_LOADER} Waiting for in-flight fetch: ${normalizedPath}`);
-    return existingFetch;
+    logger.debug(
+      `${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] WAITING for in-flight fetch (potential deadlock if circular)`,
+      { projectSlug, normalizedPath, cacheKey },
+    );
+    const waitStart = performance.now();
+    const result = await existingFetch;
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] in-flight wait DONE`, {
+      projectSlug,
+      normalizedPath,
+      waitMs: (performance.now() - waitStart).toFixed(1),
+    });
+    return result;
   }
 
   // Create a deferred promise to track this fetch
@@ -391,6 +411,11 @@ export async function fetchAndCacheModule(
 
   // Register BEFORE starting fetch to prevent race conditions
   inFlight.set(cacheKey, fetchPromise);
+  logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] registered in-flight`, {
+    projectSlug,
+    normalizedPath,
+    inFlightCount: inFlight.size,
+  });
 
   // Recursive fetch function for nested imports
   const fetchAndCacheModuleFn = (path: string, parent?: string): Promise<string | null> => {
@@ -450,6 +475,13 @@ export async function fetchAndCacheModule(
 
       // Transform the source code directly (SSR mode)
       let moduleCode: string;
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] transformToESM START`, {
+        projectSlug,
+        normalizedPath,
+        actualFilePath,
+        sourceLength: sourceCode.length,
+      });
+      const transformStart = performance.now();
       try {
         moduleCode = await transformToESM(
           sourceCode,
@@ -468,6 +500,12 @@ export async function fetchAndCacheModule(
         });
         throw transformError;
       }
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] transformToESM DONE`, {
+        projectSlug,
+        normalizedPath,
+        transformMs: (performance.now() - transformStart).toFixed(1),
+        outputLength: moduleCode.length,
+      });
 
       // Rewrite veryfront/* imports to /_vf_modules/ paths so they can be resolved
       // This is needed because cached .mjs files don't have access to deno.json import maps
@@ -475,26 +513,73 @@ export async function fetchAndCacheModule(
 
       // Find and recursively process nested imports
       const { vfModules, relative } = findNestedImports(moduleCode);
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] found nested imports`, {
+        projectSlug,
+        normalizedPath,
+        vfModulesCount: vfModules.length,
+        relativeCount: relative.length,
+        vfModulePaths: vfModules.map((m) => m.path).slice(0, 5),
+        relativePaths: relative.map((m) => m.path).slice(0, 5),
+      });
 
       // Process nested /_vf_modules/ imports recursively in parallel
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing vfModules START`, {
+        projectSlug,
+        normalizedPath,
+        count: vfModules.length,
+      });
+      const vfStart = performance.now();
       const nestedResults = await Promise.all(
         vfModules.map(async ({ original, path }) => {
           const nestedFilePath = await fetchAndCacheModuleFn(path, normalizedPath);
           return { original, nestedFilePath, nestedPath: path };
         }),
       );
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing vfModules DONE`, {
+        projectSlug,
+        normalizedPath,
+        vfMs: (performance.now() - vfStart).toFixed(1),
+      });
       moduleCode = await processNestedImports(moduleCode, nestedResults, esmCacheDir);
 
       // Process relative imports in parallel
+      logger.debug(
+        `${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing relative imports START`,
+        {
+          projectSlug,
+          normalizedPath,
+          count: relative.length,
+        },
+      );
+      const relStart = performance.now();
       const relativeResults = await Promise.all(
         relative.map(async ({ original, path }) => {
           const nestedFilePath = await fetchAndCacheModuleFn(path, normalizedPath);
           return { original, nestedFilePath, relativePath: path };
         }),
       );
+      logger.debug(
+        `${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing relative imports DONE`,
+        {
+          projectSlug,
+          normalizedPath,
+          relMs: (performance.now() - relStart).toFixed(1),
+        },
+      );
       moduleCode = await processNestedImports(moduleCode, relativeResults, esmCacheDir);
 
-      return await cacheModule(normalizedPath, moduleCode, esmCacheDir, pathCache);
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] cacheModule START`, {
+        projectSlug,
+        normalizedPath,
+      });
+      const cacheStart = performance.now();
+      const cachedPath = await cacheModule(normalizedPath, moduleCode, esmCacheDir, pathCache);
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] cacheModule DONE`, {
+        projectSlug,
+        normalizedPath,
+        cacheMs: (performance.now() - cacheStart).toFixed(1),
+      });
+      return cachedPath;
     } catch (error) {
       logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to process ${normalizedPath}`, error);
       return null;
@@ -502,6 +587,11 @@ export async function fetchAndCacheModule(
   })();
 
   // Resolve the deferred promise and clean up
+  logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] DONE, resolving deferred`, {
+    projectSlug,
+    normalizedPath,
+    hasResult: result !== null,
+  });
   resolveDeferred!(result);
   inFlight.delete(cacheKey);
   return result;
