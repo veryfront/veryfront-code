@@ -17,6 +17,7 @@ import {
   getProductionStyles,
 } from "./styles-builder/index.ts";
 import type { HTMLGenerationOptions } from "./types.ts";
+import { isLocalDev } from "../server/context/request-context.ts";
 import {
   buildContentAttributes,
   buildImportMapJson,
@@ -141,7 +142,12 @@ export async function generateHTMLShellParts(
   // Uses project's stylesheet (globals.css) for @theme, @plugin support
   // Extracts candidates from: 1) project source files, 2) rendered HTML content
   const stylesheetContent = options.globalCSS;
-  const isProduction = options.mode === "production" && options.proxyEnvironment !== "preview";
+
+  // CSS delivery mode: determines <link> vs inline <style>
+  // - Production mode + deployed env → <link> for immutable caching
+  // - Preview mode → inline for Preview HMR updates
+  // - Local dev → inline for Local Dev HMR updates
+  const useProductionCSS = !isLocalDev() && options.proxyEnvironment === "production";
 
   // Start with classes from all project source files (extracted fresh each request)
   const candidates = new Set<string>(options.projectClasses || []);
@@ -156,7 +162,7 @@ export async function generateHTMLShellParts(
   const tailwindResult = await generateTailwindCSS(
     stylesheetContent,
     candidates,
-    { minify: isProduction },
+    { minify: useProductionCSS },
   );
   const tailwindCSS = tailwindResult.css;
   const tailwindError = tailwindResult.error;
@@ -213,9 +219,9 @@ export async function generateHTMLShellParts(
 
   const syntaxHighlightTheme = options.mode === "development" ? "github-dark" : "github";
 
-  // Generate Tailwind CSS output - inline for preview, hashed link for production
+  // Generate Tailwind CSS output - inline for preview/dev, hashed link for production
   // cacheCSS stores the CSS and returns the hash for later retrieval
-  const cssHash = tailwindCSS && isProduction ? cacheCSS(tailwindCSS) : "";
+  const cssHash = tailwindCSS && useProductionCSS ? cacheCSS(tailwindCSS) : "";
 
   // Generate modulepreload hints for page and layout modules (faster cold start)
   const modulePreloadHints = generateModulePreloadHints(options);
@@ -283,11 +289,11 @@ export async function generateHTMLShellParts(
   ${
     (() => {
       if (!tailwindCSS) return "";
-      if (isProduction) {
-        // Production: link to hashed CSS file for immutable caching
+      if (useProductionCSS) {
+        // Production mode (deployed): link to hashed CSS file for immutable caching
         return `<link rel="stylesheet" href="/_vf/css/${cssHash}.css">`;
       } else {
-        // Preview/Dev: inline style with ID for HMR updates
+        // Preview mode or local dev: inline style with ID for HMR updates
         return `<style id="vf-tailwind-css"${
           nonce ? ` nonce="${nonce}"` : ""
         }>\n${tailwindCSS}\n  </style>`;
@@ -352,10 +358,10 @@ ${css}
   </script>`;
 
   // Tailwind error overlay - inline version matching JS error overlay style
-  // Only show in preview/dev mode, not production
+  // Only show in preview mode or local dev, not deployed production
   const tailwindErrorScript = (() => {
     if (!tailwindError) return "";
-    if (options.mode === "production" && options.proxyEnvironment !== "preview") return "";
+    if (useProductionCSS) return "";
     const errorInfo = formatCSSError(tailwindError);
     const title = JSON.stringify(errorInfo.title);
     const message = JSON.stringify(errorInfo.message);

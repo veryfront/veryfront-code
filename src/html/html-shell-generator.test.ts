@@ -172,26 +172,40 @@ describe("html-generation/html-shell-generator", () => {
     });
 
     it("should use hashed CSS link in production mode", async () => {
-      const meta: RenderMetadata = {
-        title: "Test Page",
-        slug: "test",
-        frontmatter: {},
-      };
+      // CSS link requires: proxyEnvironment === "production" AND NODE_ENV === "production"
+      const originalNodeEnv = Deno.env.get("NODE_ENV");
+      Deno.env.set("NODE_ENV", "production");
 
-      const options: HTMLGenerationOptions = {
-        mode: "production",
-        config: mockConfig,
-      };
+      try {
+        const meta: RenderMetadata = {
+          title: "Test Page",
+          slug: "test",
+          frontmatter: {},
+        };
 
-      const result = await wrapInHTMLShell("<div>Content</div>", meta, options);
+        const options: HTMLGenerationOptions = {
+          mode: "production",
+          config: mockConfig,
+          proxyEnvironment: "production", // Required for CSS link delivery
+        };
 
-      // Production mode uses hashed CSS link for immutable caching
-      assertStringIncludes(result, "/_vf/css/");
-      assertStringIncludes(result, ".css");
-      // No CDN in new architecture
-      assert(!result.includes("cdn.jsdelivr.net/npm/@tailwindcss/browser@4"));
-      // Should have JIT comment
-      assertStringIncludes(result, "<!-- Tailwind CSS: Server-side JIT compiled -->");
+        const result = await wrapInHTMLShell("<div>Content</div>", meta, options);
+
+        // Production mode uses hashed CSS link for immutable caching
+        assertStringIncludes(result, "/_vf/css/");
+        assertStringIncludes(result, ".css");
+        // No CDN in new architecture
+        assert(!result.includes("cdn.jsdelivr.net/npm/@tailwindcss/browser@4"));
+        // Should have JIT comment
+        assertStringIncludes(result, "<!-- Tailwind CSS: Server-side JIT compiled -->");
+      } finally {
+        // Restore original NODE_ENV
+        if (originalNodeEnv !== undefined) {
+          Deno.env.set("NODE_ENV", originalNodeEnv);
+        } else {
+          Deno.env.delete("NODE_ENV");
+        }
+      }
     });
 
     it("should include syntax highlighting styles", async () => {
