@@ -132,23 +132,56 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   async initialize(): Promise<void> {
-    if (this.initialized) return;
+    const initStartTime = performance.now();
+    const projectSlug = this.client.getProjectSlug();
 
-    logger.debug("[VeryfrontFSAdapter] Initializing...", { contentSource: this.contentSource });
-
-    await this.client.initialize();
-
-    const projectId = this.client.getProjectId();
-    this.projectData = await this.client.getProject(projectId);
-
-    logger.debug("[VeryfrontFSAdapter] Project data fetched", {
-      provider: this.projectData.provider,
-      layout: this.projectData.layout,
+    logger.debug("[VeryfrontFSAdapter] initialize START", {
+      projectSlug,
+      contentSource: this.contentSource,
+      alreadyInitialized: this.initialized,
     });
 
-    // Resolve content source to content context (skip if already set by setContentContext)
+    if (this.initialized) {
+      logger.debug("[VeryfrontFSAdapter] Already initialized, skipping", { projectSlug });
+      return;
+    }
+
+    // Step 1: Initialize API client
+    logger.debug("[VeryfrontFSAdapter] Step 1: client.initialize START", { projectSlug });
+    const step1Start = performance.now();
+    await this.client.initialize();
+    logger.debug("[VeryfrontFSAdapter] Step 1: client.initialize DONE", {
+      projectSlug,
+      duration: `${(performance.now() - step1Start).toFixed(2)}ms`,
+    });
+
+    // Step 2: Get project data
+    const projectId = this.client.getProjectId();
+    logger.debug("[VeryfrontFSAdapter] Step 2: getProject START", { projectSlug, projectId });
+    const step2Start = performance.now();
+    this.projectData = await this.client.getProject(projectId);
+    logger.debug("[VeryfrontFSAdapter] Step 2: getProject DONE", {
+      projectSlug,
+      provider: this.projectData.provider,
+      layout: this.projectData.layout,
+      duration: `${(performance.now() - step2Start).toFixed(2)}ms`,
+    });
+
+    // Step 3: Resolve content source to content context (skip if already set by setContentContext)
     if (!this.contentContext) {
+      logger.debug("[VeryfrontFSAdapter] Step 3: resolveContentSource START", { projectSlug });
+      const step3Start = performance.now();
       this.contentContext = await this.resolveContentSource();
+      logger.debug("[VeryfrontFSAdapter] Step 3: resolveContentSource DONE", {
+        projectSlug,
+        sourceType: this.contentContext.sourceType,
+        duration: `${(performance.now() - step3Start).toFixed(2)}ms`,
+      });
+    } else {
+      logger.debug("[VeryfrontFSAdapter] Step 3: Content context already set", {
+        projectSlug,
+        sourceType: this.contentContext.sourceType,
+      });
     }
 
     logger.debug("[VeryfrontFSAdapter] Content context resolved", {
@@ -162,6 +195,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
     // Fetch file list based on content source type
     // Use setAsync to ensure cache is populated before continuing (important for Redis backend)
     const cacheKey = buildFileListCacheKey(this.contentContext);
+    logger.debug("[VeryfrontFSAdapter] Step 4: fetchFileList START", { projectSlug, cacheKey });
+    const _step4Start = performance.now();
     const files = await this.fetchFileList();
 
     // Count files with content for Tailwind class extraction debugging
@@ -183,6 +218,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
     });
 
     this.initialized = true;
+
+    logger.debug("[VeryfrontFSAdapter] initialize COMPLETE", {
+      projectSlug,
+      fileCount: files.length,
+      totalDuration: `${(performance.now() - initStartTime).toFixed(2)}ms`,
+    });
 
     // Connect to WebSocket for real-time cache invalidation (branch mode only)
     // Environment/release/domain modes serve immutable published content

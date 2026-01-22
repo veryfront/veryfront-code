@@ -105,9 +105,24 @@ export async function loadMDXLayout(
   projectSlug?: string,
   contentSourceId?: string,
 ): Promise<BundledReact.ComponentType<{ components?: MDXComponents }> | undefined> {
+  const loadStart = performance.now();
+  logger.debug("[loadMDXLayout] START", { projectSlug });
+
+  logger.debug("[loadMDXLayout] loadImportMap START", { projectSlug });
+  const mapStart = performance.now();
   const map = await loadImportMap(projectDir, adapter);
+  logger.debug("[loadMDXLayout] loadImportMap DONE", {
+    projectSlug,
+    duration: `${(performance.now() - mapStart).toFixed(2)}ms`,
+  });
+
   const code = transformImportsWithMap(bundle.compiledCode, map);
-  logger.debug("[loadMDXLayout] Loading module", { codeLength: code.length });
+  logger.debug("[loadMDXLayout] Loading module via loadModuleESM START", {
+    projectSlug,
+    codeLength: code.length,
+  });
+
+  const modStart = performance.now();
   const mod = (await mdxRenderer.loadModuleESM(
     code,
     adapter,
@@ -116,7 +131,16 @@ export async function loadMDXLayout(
     projectSlug,
     contentSourceId,
   )) as MDXModule;
-  logger.debug("[loadMDXLayout] Module loaded", { exports: Object.keys(mod) });
+  logger.debug("[loadMDXLayout] loadModuleESM DONE", {
+    projectSlug,
+    duration: `${(performance.now() - modStart).toFixed(2)}ms`,
+    exports: Object.keys(mod),
+  });
+
+  logger.debug("[loadMDXLayout] DONE", {
+    projectSlug,
+    totalDuration: `${(performance.now() - loadStart).toFixed(2)}ms`,
+  });
   return mod.MDXLayout || mod.MainLayout || mod.default;
 }
 
@@ -129,8 +153,12 @@ export async function applyTSXLayout(
   props?: Record<string, unknown>,
   projectId?: string,
 ): Promise<BundledReact.ReactElement> {
+  const start = performance.now();
+  logger.debug("[applyTSXLayout] START", { componentPath: item.componentPath, projectId });
   const React = await getProjectReact();
   try {
+    logger.debug("[applyTSXLayout] loadTSXComponent START", { componentPath: item.componentPath });
+    const loadStart = performance.now();
     const LayoutComponent = await loadTSXComponent(
       item.componentPath!,
       projectDir,
@@ -138,7 +166,20 @@ export async function applyTSXLayout(
       adapter,
       projectId,
     );
-    return React.createElement(LayoutComponent, props || {}, element) as BundledReact.ReactElement;
+    logger.debug("[applyTSXLayout] loadTSXComponent DONE", {
+      componentPath: item.componentPath,
+      duration: `${(performance.now() - loadStart).toFixed(2)}ms`,
+    });
+    const result = React.createElement(
+      LayoutComponent,
+      props || {},
+      element,
+    ) as BundledReact.ReactElement;
+    logger.debug("[applyTSXLayout] DONE", {
+      componentPath: item.componentPath,
+      totalDuration: `${(performance.now() - start).toFixed(2)}ms`,
+    });
+    return result;
   } catch (e) {
     logger.error("Failed to compile/import TSX layout", e);
 
