@@ -15,7 +15,6 @@
  */
 
 import { rendererLogger as logger } from "#veryfront/utils";
-import { timeAsync } from "#veryfront/utils";
 import { createBuildVersion } from "#veryfront/utils/version.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
@@ -39,6 +38,7 @@ import type { DataContext } from "#veryfront/data/types.ts";
 import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/index.ts";
 import { setupSSRGlobals } from "../ssr-globals.ts";
 import { LAYOUT_EXTENSIONS } from "../layouts/types.ts";
+import type { LayoutItem } from "#veryfront/types";
 import { withTimeout, withTimeoutThrow } from "../utils/stream-utils.ts";
 
 /** Timeout for CSS generation SSR (shorter than full SSR since it's optional) */
@@ -191,18 +191,21 @@ export class RenderPipeline {
   async renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
     const pipelineStartTime = performance.now();
     const projectSlug = options?.projectSlug || options?.projectId || "unknown";
+    const projectId = options?.projectId ?? this.config.projectDir;
 
-    logger.debug("[RenderPipeline] renderPage START", {
-      slug,
-      projectSlug,
-      projectId: options?.projectId,
-    });
+    // ─────────────────────────────────────────────────────────────────────────
+    // FAST PATH: Check cache FIRST before any expensive operations
+    // ─────────────────────────────────────────────────────────────────────────
+    const cacheResult = await this.config.cacheCoordinator.checkCache(slug);
+    if (cacheResult?.cachedResult) {
+      logger.debug("[RenderPipeline] Cache HIT - returning immediately", { slug, projectSlug });
+      return cacheResult.cachedResult;
+    }
 
     // Set up browser globals before any module loading to prevent crashes
     // when third-party libraries check for browser features during SSR
     setupSSRGlobals();
 
-    const projectId = options?.projectId ?? this.config.projectDir;
     this.moduleLoaderConfig.projectId = projectId;
 
     // In development mode, clear SSR module cache to pick up file changes
@@ -217,62 +220,22 @@ export class RenderPipeline {
         // ─────────────────────────────────────────────────────────────────────────
         // Stage 1: Page Resolution
         // ─────────────────────────────────────────────────────────────────────────
-        logger.debug("[RenderPipeline] Stage 1: Page Resolution START", { slug, projectSlug });
-        const stage1Start = performance.now();
         const pageInfo = await withSpan(
           "render.resolve_page",
-          () =>
-            timeAsync(
-              "resolve-page",
-              () => this.config.pageResolver.resolvePage(slug),
-              "render-page",
-            ),
+          () => this.config.pageResolver.resolvePage(slug),
           { "render.slug": slug },
         );
-        logger.debug("[RenderPipeline] Stage 1: Page Resolution DONE", {
-          slug,
-          projectSlug,
-          duration: `${(performance.now() - stage1Start).toFixed(2)}ms`,
-          pagePath: pageInfo.entity.path,
-        });
 
         // ─────────────────────────────────────────────────────────────────────────
         // Stage 2: Layout Collection
         // Skip for dot-prefixed paths (e.g., .veryfront) - they don't use project layouts
         // ─────────────────────────────────────────────────────────────────────────
-        logger.debug("[RenderPipeline] Stage 2: Layout Collection START", { slug, projectSlug });
-        const stage2Start = performance.now();
         const skipLayouts = isDotPath(slug, pageInfo.entity.path);
-
         const layoutResult = skipLayouts ? EMPTY_LAYOUT_RESULT : await withSpan(
           "render.collect_layouts",
-          () =>
-            timeAsync(
-              "collect-layouts",
-              () => this.config.layoutOrchestrator.collectLayouts(pageInfo),
-              "render-page",
-            ),
+          () => this.config.layoutOrchestrator.collectLayouts(pageInfo),
           { "render.slug": slug },
         );
-        logger.debug("[RenderPipeline] Stage 2: Layout Collection DONE", {
-          slug,
-          projectSlug,
-          duration: `${(performance.now() - stage2Start).toFixed(2)}ms`,
-          skipLayouts,
-          nestedLayoutsCount: layoutResult.nestedLayouts.length,
-        });
-
-        if (skipLayouts) {
-          logger.debug("[renderPage] Skipping layouts for dot-prefixed path", { slug });
-        }
-
-        logger.debug("[renderPage] Layout collection result", {
-          slug,
-          skipLayouts,
-          hasLayoutBundle: !!layoutResult.layoutBundle,
-          nestedLayoutsCount: layoutResult.nestedLayouts.length,
-          nestedLayoutPaths: layoutResult.nestedLayouts.map((l) => l.path || l.componentPath),
-        });
 
         let dataFetchingProps: Record<string, unknown> | undefined;
         const layoutDataMap = new Map<string, Record<string, unknown>>();
@@ -283,21 +246,8 @@ export class RenderPipeline {
         const isInAppDir = pageInfo.entity.path.includes("/app/");
 
         // ─────────────────────────────────────────────────────────────────────────
-        // Stage 3: Start Speculative Cache Check (runs in parallel with data fetching)
+        // Stage 3: Route Params + Data Fetching (parallel module loads, then parallel data fetches)
         // ─────────────────────────────────────────────────────────────────────────
-        logger.debug("[RenderPipeline] Stage 3: Cache Check START", { slug, projectSlug });
-        const cacheCheckPromise = withSpan(
-          SpanNames.CACHE_CHECK_SPECULATIVE,
-          () => this.config.cacheCoordinator.checkCache(slug),
-          { "cache.slug": slug },
-        );
-
-        // ─────────────────────────────────────────────────────────────────────────
-        // Stage 4: Route Params Extraction
-        // Stage 5: Two-Phase Data Fetching (parallel module loads, then parallel data fetches)
-        // ─────────────────────────────────────────────────────────────────────────
-        logger.debug("[RenderPipeline] Stage 4-5: Data Fetching START", { slug, projectSlug });
-        const stage45Start = performance.now();
         if (options?.request && options?.url) {
           await withSpan(
             "render.data_fetching",
@@ -334,41 +284,18 @@ export class RenderPipeline {
                   layoutResult.nestedLayouts,
                 );
 
-                if (modulesToLoad.length === 0) {
-                  logger.debug("[renderPage] No modules to load for data fetching", { slug });
-                  return;
-                }
+                if (modulesToLoad.length === 0) return;
 
-                logger.debug("[RenderPipeline] Stage 5 Phase 1: Loading modules START", {
-                  slug,
-                  projectSlug,
-                  count: modulesToLoad.length,
-                });
-                const phase1Start = performance.now();
-
+                // Phase 1: Load all modules in parallel
                 const loadedModules = await withSpan(
                   SpanNames.RENDER_LOAD_MODULES,
                   () => this.loadModulesInParallel(modulesToLoad),
                   { "render.module_count": modulesToLoad.length },
                 );
-                logger.debug("[RenderPipeline] Stage 5 Phase 1: Loading modules DONE", {
-                  slug,
-                  projectSlug,
-                  duration: `${(performance.now() - phase1Start).toFixed(2)}ms`,
-                  loadedCount: loadedModules.length,
-                });
 
                 // Phase 2: Fetch data for modules with data fetching functions
                 const dataJobs = loadedModules.filter((m) => this.hasDataFetchingFunction(m.mod));
-
-                if (dataJobs.length === 0) {
-                  logger.debug("[renderPage] No data fetching functions found", { slug });
-                  return;
-                }
-
-                logger.debug("[renderPage] Phase 2: Fetching data in parallel", {
-                  count: dataJobs.length,
-                });
+                if (dataJobs.length === 0) return;
 
                 const dataResults = await withSpan(
                   SpanNames.RENDER_FETCH_DATA,
@@ -434,64 +361,25 @@ export class RenderPipeline {
           );
         }
 
-        logger.debug("[RenderPipeline] Stage 4-5: Data Fetching DONE", {
-          slug,
-          projectSlug,
-          duration: `${(performance.now() - stage45Start).toFixed(2)}ms`,
-          hasDataFetchingProps: !!dataFetchingProps,
-        });
-
-        // ─────────────────────────────────────────────────────────────────────────
-        // Stage 6: Await Speculative Cache Check (started in parallel with data fetching)
-        // ─────────────────────────────────────────────────────────────────────────
-        logger.debug("[RenderPipeline] Stage 6: Cache Check Await START", { slug, projectSlug });
-        const stage6Start = performance.now();
-        const cacheResult = await cacheCheckPromise;
-        logger.debug("[RenderPipeline] Stage 6: Cache Check Await DONE", {
-          slug,
-          projectSlug,
-          duration: `${(performance.now() - stage6Start).toFixed(2)}ms`,
-          cacheHit: !!cacheResult?.cachedResult,
-        });
-
-        if (cacheResult?.cachedResult) {
-          logger.debug("[renderPage] Cache hit, returning cached result", { slug });
-          return cacheResult.cachedResult;
-        }
-
+        // Merge data fetching props with options
         const mergedOptions = dataFetchingProps
           ? { ...options, props: { ...options?.props, ...dataFetchingProps } }
           : options;
 
         // ─────────────────────────────────────────────────────────────────────────
-        // Stage 7: Page Bundle Preparation
+        // Stage 4: Page Bundle Preparation
         // ─────────────────────────────────────────────────────────────────────────
-        logger.debug("[RenderPipeline] Stage 7: Bundle Preparation START", { slug, projectSlug });
-        const stage7Start = performance.now();
         const pageBundleResult = await withSpan(
           "render.prepare_bundles",
           () =>
-            timeAsync(
-              "prepare-page-bundles",
-              () =>
-                this.config.pageRenderer.preparePageBundles(
-                  pageInfo,
-                  slug,
-                  cacheResult?.cachedModule,
-                  mergedOptions,
-                ),
-              "render-page",
+            this.config.pageRenderer.preparePageBundles(
+              pageInfo,
+              slug,
+              cacheResult?.cachedModule,
+              mergedOptions,
             ),
           { "render.slug": slug },
         );
-
-        logger.debug("[RenderPipeline] Stage 7: Bundle Preparation DONE", {
-          slug,
-          projectSlug,
-          duration: `${(performance.now() - stage7Start).toFixed(2)}ms`,
-          hasPageElement: !!pageBundleResult.pageElement,
-          hasPageBundle: !!pageBundleResult.pageBundle,
-        });
 
         if (pageBundleResult.scriptResult) {
           return pageBundleResult.scriptResult;
@@ -516,77 +404,49 @@ export class RenderPipeline {
         const headings = (pageBundle as PageBundle).headings || [];
 
         // ─────────────────────────────────────────────────────────────────────────
-        // Stage 8: Layout Application
+        // Stage 5: Layout Application
         // ─────────────────────────────────────────────────────────────────────────
-        logger.debug("[RenderPipeline] Stage 8: Layout Application START", { slug, projectSlug });
-        const stage8Start = performance.now();
         const wrappedElement = await withSpan(
           "render.apply_layouts",
           () =>
-            timeAsync(
-              "apply-layouts",
-              () =>
-                this.config.layoutOrchestrator.applyLayoutsAndWrappers(
-                  pageElement,
-                  pageInfo,
-                  layoutResult.layoutBundle,
-                  layoutResult.nestedLayouts,
-                  layoutDataMap,
-                  options?.url,
-                  mergedFrontmatter,
-                  headings,
-                  options?.projectSlug,
-                ),
-              "render-page",
+            this.config.layoutOrchestrator.applyLayoutsAndWrappers(
+              pageElement,
+              pageInfo,
+              layoutResult.layoutBundle,
+              layoutResult.nestedLayouts,
+              layoutDataMap,
+              options?.url,
+              mergedFrontmatter,
+              headings,
+              options?.projectSlug,
             ),
           { "render.slug": slug, "render.layout_count": layoutResult.nestedLayouts.length },
         );
-        logger.debug("[RenderPipeline] Stage 8: Layout Application DONE", {
-          slug,
-          projectSlug,
-          duration: `${(performance.now() - stage8Start).toFixed(2)}ms`,
-        });
 
         // ─────────────────────────────────────────────────────────────────────────
-        // Stage 9: SSR Rendering
+        // Stage 6: SSR Rendering
         // ─────────────────────────────────────────────────────────────────────────
-        logger.debug("[RenderPipeline] Stage 9: SSR Rendering START", { slug, projectSlug });
-        const stage9Start = performance.now();
         const ssrResult = await withSpan(
           "render.ssr",
           () =>
-            timeAsync(
-              "ssr-rendering",
-              () =>
-                this.config.ssrOrchestrator.performSSRRendering(
-                  wrappedElement,
-                  {
-                    pageInfo,
-                    pageBundle,
-                    layoutBundle: layoutResult.layoutBundle,
-                    nestedLayouts: layoutResult.nestedLayouts,
-                    collectedMetadata: pageBundleResult.collectedMetadata,
-                    slug,
-                  },
-                  mergedOptions,
-                ),
-              "render-page",
+            this.config.ssrOrchestrator.performSSRRendering(
+              wrappedElement,
+              {
+                pageInfo,
+                pageBundle,
+                layoutBundle: layoutResult.layoutBundle,
+                nestedLayouts: layoutResult.nestedLayouts,
+                collectedMetadata: pageBundleResult.collectedMetadata,
+                slug,
+              },
+              mergedOptions,
             ),
           { "render.slug": slug, "render.delivery": mergedOptions?.delivery || "full" },
         );
-        logger.debug("[RenderPipeline] Stage 9: SSR Rendering DONE", {
-          slug,
-          projectSlug,
-          duration: `${(performance.now() - stage9Start).toFixed(2)}ms`,
-          hasHtml: !!ssrResult.fullHtml,
-          hasStream: !!ssrResult.finalStream,
-        });
 
         // ─────────────────────────────────────────────────────────────────────────
-        // Stage 10: Result Assembly
+        // Stage 7: Result Assembly + Cache Persist
         // ─────────────────────────────────────────────────────────────────────────
-        logger.debug("[RenderPipeline] Stage 10: Result Assembly START", { slug, projectSlug });
-        const stage10Start = performance.now();
         const pageModule = pageBundleResult.clientModuleCode && pageBundleResult.pageModuleType
           ? {
             slug,
@@ -605,24 +465,12 @@ export class RenderPipeline {
           ...(pageModule ? { pageModule } : {}),
         };
 
-        if (cacheResult) {
-          await this.config.cacheCoordinator.persistResult(result, slug);
-        }
+        // Persist to cache (fire-and-forget for performance)
+        this.config.cacheCoordinator.persistResult(result, slug).catch(() => {});
 
-        logger.debug("[RenderPipeline] Stage 10: Result Assembly DONE", {
+        logger.debug("[RenderPipeline] Complete", {
           slug,
-          projectSlug,
-          duration: `${(performance.now() - stage10Start).toFixed(2)}ms`,
-        });
-
-        const totalDuration = performance.now() - pipelineStartTime;
-        logger.debug("[RenderPipeline] renderPage COMPLETE", {
-          slug,
-          projectSlug,
-          totalDuration: `${totalDuration.toFixed(2)}ms`,
-          hasHtml: !!result.html,
-          hasStream: !!result.stream,
-          htmlLength: result.html?.length || 0,
+          durationMs: Math.round(performance.now() - pipelineStartTime),
         });
 
         return result;
@@ -649,21 +497,14 @@ export class RenderPipeline {
     }
 
     // 1. Resolve page info
-    const pageInfo = await timeAsync(
-      "resolve-page-data",
-      () => this.config.pageResolver.resolvePage(slug),
-      "resolve-page-data",
-    );
+    const pageInfo = await this.config.pageResolver.resolvePage(slug);
 
     // 2. Collect layouts
     // Skip for dot-prefixed paths (e.g., .veryfront) - they don't use project layouts
     const skipLayouts = isDotPath(slug, pageInfo.entity.path);
-
-    const layoutResult = skipLayouts ? EMPTY_LAYOUT_RESULT : await timeAsync(
-      "collect-layouts-data",
-      () => this.config.layoutOrchestrator.collectLayouts(pageInfo),
-      "resolve-page-data",
-    );
+    const layoutResult = skipLayouts
+      ? EMPTY_LAYOUT_RESULT
+      : await this.config.layoutOrchestrator.collectLayouts(pageInfo);
 
     // 3. Extract page path and type
     const pagePath = extractRelativePathShared(pageInfo.entity.path, this.config.projectDir);
@@ -773,8 +614,8 @@ export class RenderPipeline {
 
     // 8. Build layout info array
     const layouts = layoutResult.nestedLayouts
-      .filter((l) => l.componentPath || l.path)
-      .map((l) => ({
+      .filter((l: LayoutItem) => l.componentPath || l.path)
+      .map((l: LayoutItem) => ({
         kind: l.kind,
         path: extractRelativePathShared(l.componentPath || l.path || "", this.config.projectDir),
       }));
