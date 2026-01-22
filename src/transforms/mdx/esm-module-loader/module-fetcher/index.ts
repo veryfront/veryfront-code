@@ -4,12 +4,19 @@
  * Fetches and caches ESM modules for MDX rendering.
  * Handles direct file reads, HTTP fallback, and recursive dependency resolution.
  *
+ * Features:
+ * - Distributed transform cache for cross-pod sharing (Redis/API)
+ * - Local filesystem cache for fast repeated access
+ * - Parallel nested import resolution
+ *
  * @module build/transforms/mdx/esm-module-loader/module-fetcher
  */
 
 import { join, posix } from "#std/path.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
+import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { CacheBackend } from "#veryfront/cache/backend.ts";
 import { transformToESM } from "../../../esm-transform.ts";
 import { TRANSFORM_CACHE_VERSION } from "../../../esm/package-registry.ts";
 import {
@@ -24,6 +31,58 @@ import { hashString } from "../utils/hash.ts";
 import { createStubModule } from "../utils/stub-module.ts";
 import { resolveModuleFile } from "../resolution/file-finder.ts";
 import { recordSSRModules } from "../../../../modules/manifest/route-module-manifest.ts";
+
+/**
+ * Distributed transform cache for cross-pod sharing.
+ * Caches transformed module code in Redis/API so other pods don't need to re-transform.
+ */
+let distributedTransformCache: CacheBackend | null | undefined;
+const distributedCacheInit = new Singleflight<CacheBackend | null>();
+
+/** TTL for cached transforms (24 hours) */
+const TRANSFORM_CACHE_TTL_SECONDS = 86400;
+
+function getDistributedTransformCache(): Promise<CacheBackend | null> {
+  if (distributedTransformCache !== undefined) {
+    return Promise.resolve(distributedTransformCache);
+  }
+
+  return distributedCacheInit.do("init", async () => {
+    try {
+      const { CacheBackends } = await import("#veryfront/cache/backend.ts");
+      const backend = await CacheBackends.transform();
+      // Only use distributed cache if API or Redis (not memory - that's per-process)
+      if (backend.type === "memory") {
+        distributedTransformCache = null;
+        logger.debug(`${LOG_PREFIX_MDX_LOADER} No distributed transform cache (memory only)`);
+        return null;
+      }
+      distributedTransformCache = backend;
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} Distributed transform cache initialized`, {
+        type: backend.type,
+      });
+      return backend;
+    } catch (error) {
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to init distributed transform cache`, {
+        error,
+      });
+      distributedTransformCache = null;
+      return null;
+    }
+  });
+}
+
+/**
+ * Build cache key for transformed module.
+ * Includes content hash so cache invalidates when source changes.
+ */
+function getTransformCacheKey(
+  projectId: string,
+  normalizedPath: string,
+  contentHash: string,
+): string {
+  return `v${TRANSFORM_CACHE_VERSION}:${projectId}:${normalizedPath}:${contentHash}`;
+}
 
 /**
  * Map veryfront/* bare specifiers to /_vf_modules/ paths for MDX module loading.
@@ -392,7 +451,10 @@ export async function fetchAndCacheModule(
   const result = await (async (): Promise<string | null> => {
     const { esmCacheDir, adapter, projectDir, projectId, projectSlug } = context;
 
-    // Check persistent module path cache first
+    // Check persistent module path cache first (per-pod filesystem cache).
+    // NOTE: This cache uses path + version key (no content hash), but this is safe
+    // because poke invalidation calls clearModulePathCache() which clears this cache.
+    // The distributed transform cache (below) uses content hash for cross-pod sharing.
     const pathCache = await getModulePathCache(esmCacheDir);
     const versionedKey = getVersionedPathCacheKey(normalizedPath);
     const cachedPath = pathCache.get(versionedKey);
@@ -440,43 +502,82 @@ export async function fetchAndCacheModule(
 
       const { sourceCode, actualFilePath } = resolved;
 
-      // Transform the source code directly (SSR mode)
-      let moduleCode: string;
-      logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] transformToESM START`, {
-        projectSlug,
-        normalizedPath,
-        actualFilePath,
-        sourceLength: sourceCode.length,
-      });
-      const transformStart = performance.now();
-      try {
-        moduleCode = await transformToESM(
-          sourceCode,
-          actualFilePath,
-          projectDir,
-          adapter as RuntimeAdapter,
-          { projectId, dev: true, ssr: true },
-        );
-      } catch (transformError) {
-        logger.error(`${LOG_PREFIX_MDX_LOADER} Transform failed for module`, {
+      // Compute content hash for distributed cache key
+      const contentHash = hashString(sourceCode);
+      const transformCacheKey = getTransformCacheKey(projectId, normalizedPath, contentHash);
+
+      // Check distributed transform cache first (cross-pod sharing)
+      let moduleCode: string | null = null;
+      const distributedCache = await getDistributedTransformCache();
+      if (distributedCache) {
+        try {
+          const cached = await distributedCache.get(transformCacheKey);
+          if (cached) {
+            moduleCode = cached;
+            logger.debug(`${LOG_PREFIX_MDX_LOADER} Distributed transform cache HIT`, {
+              projectSlug,
+              normalizedPath,
+              cacheKey: transformCacheKey,
+            });
+          }
+        } catch (error) {
+          logger.debug(`${LOG_PREFIX_MDX_LOADER} Distributed cache get failed`, {
+            normalizedPath,
+            error,
+          });
+        }
+      }
+
+      // If not in distributed cache, transform the source code
+      if (!moduleCode) {
+        logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] transformToESM START`, {
+          projectSlug,
           normalizedPath,
           actualFilePath,
           sourceLength: sourceCode.length,
-          sourcePreview: sourceCode.slice(0, 200),
-          error: transformError instanceof Error ? transformError.message : String(transformError),
         });
-        throw transformError;
-      }
-      logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] transformToESM DONE`, {
-        projectSlug,
-        normalizedPath,
-        transformMs: (performance.now() - transformStart).toFixed(1),
-        outputLength: moduleCode.length,
-      });
+        const transformStart = performance.now();
+        try {
+          moduleCode = await transformToESM(
+            sourceCode,
+            actualFilePath,
+            projectDir,
+            adapter as RuntimeAdapter,
+            { projectId, dev: true, ssr: true },
+          );
+        } catch (transformError) {
+          logger.error(`${LOG_PREFIX_MDX_LOADER} Transform failed for module`, {
+            normalizedPath,
+            actualFilePath,
+            sourceLength: sourceCode.length,
+            sourcePreview: sourceCode.slice(0, 200),
+            error: transformError instanceof Error ? transformError.message : String(transformError),
+          });
+          throw transformError;
+        }
+        logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] transformToESM DONE`, {
+          projectSlug,
+          normalizedPath,
+          transformMs: (performance.now() - transformStart).toFixed(1),
+          outputLength: moduleCode.length,
+        });
 
-      // Rewrite veryfront/* imports to /_vf_modules/ paths so they can be resolved
-      // This is needed because cached .mjs files don't have access to deno.json import maps
-      moduleCode = rewriteVeryfrontImports(moduleCode);
+        // Rewrite veryfront/* imports to /_vf_modules/ paths so they can be resolved
+        // This is needed because cached .mjs files don't have access to deno.json import maps
+        moduleCode = rewriteVeryfrontImports(moduleCode);
+
+        // Store in distributed cache (fire-and-forget for performance)
+        if (distributedCache) {
+          distributedCache.set(transformCacheKey, moduleCode, TRANSFORM_CACHE_TTL_SECONDS).catch(
+            (error) => {
+              logger.debug(`${LOG_PREFIX_MDX_LOADER} Distributed cache set failed`, {
+                normalizedPath,
+                error,
+              });
+            },
+          );
+        }
+      }
 
       // Find and recursively process nested imports
       const { vfModules, relative } = findNestedImports(moduleCode);
