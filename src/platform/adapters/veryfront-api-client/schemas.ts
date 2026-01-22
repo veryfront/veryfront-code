@@ -190,8 +190,8 @@ export const ListProjectsResponseSchema = z.object({
 });
 
 // =============================================================================
-// Domain Lookup
-// GET /lookup/domain/{domain}
+// Domain Lookup Response
+// Transformed from GET /projects/{domain} response
 // =============================================================================
 
 export const LookupDomainResponseSchema = z.object({
@@ -272,7 +272,7 @@ export const API_ENDPOINTS = {
   },
   lookupDomain: {
     method: "GET" as const,
-    path: "/lookup/domain/{domain}",
-    description: "Look up project by custom domain",
+    path: "/projects/{domain}",
+    description: "Look up project by custom domain (resolved via project_reference)",
   },
 } as const;
