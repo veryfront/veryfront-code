@@ -158,14 +158,14 @@ function cacheHttpModule(url: string, options: CacheOptions): Promise<string | n
     logger.debug("[HTTP-CACHE] Skipping React core module (prevents multiple instances)", {
       url: normalizedUrl,
     });
-    return null;
+    return Promise.resolve(null);
   }
 
   const cacheDir = ensureAbsoluteDir(options.cacheDir);
   const cacheKey = `${cacheDir}:${normalizedUrl}`;
 
   const existing = cachedPaths.get(cacheKey);
-  if (existing) return existing;
+  if (existing) return Promise.resolve(existing);
 
   // Check if we're already processing this URL (circular dependency)
   // In this case, we need to return the expected cache path without waiting
@@ -175,7 +175,7 @@ function cacheHttpModule(url: string, options: CacheOptions): Promise<string | n
     logger.debug("[HTTP-CACHE] Circular dependency detected, returning expected path", {
       url: normalizedUrl,
     });
-    return cachePath;
+    return Promise.resolve(cachePath);
   }
 
   // Use Singleflight to deduplicate concurrent fetches for the same URL.

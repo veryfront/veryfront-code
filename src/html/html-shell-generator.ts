@@ -10,6 +10,7 @@ import { processMetadata } from "./metadata-builder.ts";
 import {
   cacheCSS,
   extractCandidates,
+  formatCSSError,
   generateTailwindCSS,
   generateThemeVariables,
   getDevStyles,
@@ -138,12 +139,14 @@ export async function generateHTMLShellParts(
 ): Promise<{ start: string; end: string }> {
   // Generate JIT Tailwind CSS using native Tailwind v4 compile() API
   // Uses project's stylesheet (globals.css) for @theme, @plugin support
-  // Extracts candidates from rendered HTML content + project-wide classes
+  // Extracts candidates from: 1) project source files, 2) rendered HTML content
   const stylesheetContent = options.globalCSS;
   const isProduction = options.mode === "production" && options.proxyEnvironment !== "preview";
 
-  // Merge candidates from: 1) rendered HTML content, 2) pre-extracted project classes
+  // Start with classes from all project source files (extracted fresh each request)
   const candidates = new Set<string>(options.projectClasses || []);
+
+  // Add classes from rendered HTML content
   if (contentForTailwind) {
     for (const cls of extractCandidates(contentForTailwind)) {
       candidates.add(cls);
@@ -293,19 +296,20 @@ export async function generateHTMLShellParts(
   }
   ${tailwindError ? `<!-- Tailwind CSS Error: ${tailwindError.replace(/-->/g, "- ->")} -->` : ""}
 
-  <!-- CSS Variables for Theming (veryfront-renderer compatible) -->
+  <!-- CSS Variables for Theming -->
   ${
     (() => {
-      // If project has globals.css, serve via link tag for proper HMR support
-      // Link tags can be hot-reloaded by updating href with cache-bust param
-      if (options.globalCSS) {
-        return `<link rel="stylesheet" href="/_vf_styles/globals.css">`;
-      }
-      // Fallback: inline default theme variables if no globals.css exists
-      const css = generateThemeVariables();
-      return `<style${nonce ? ` nonce="${nonce}"` : ""}>
+      // globals.css is processed by Tailwind compiler - its content is in vf-tailwind-css
+      // In production, we could serve non-Tailwind parts separately, but for now
+      // the Tailwind output includes everything from globals.css
+      // Only need fallback theme variables if no globals.css exists
+      if (!options.globalCSS) {
+        const css = generateThemeVariables();
+        return `<style${nonce ? ` nonce="${nonce}"` : ""}>
 ${css}
   </style>`;
+      }
+      return "";
     })()
   }
 
@@ -347,6 +351,25 @@ ${css}
     mermaid.initialize({ startOnLoad: true, theme: 'default' });
   </script>`;
 
+  // Tailwind error overlay - inline version matching JS error overlay style
+  // Only show in preview/dev mode, not production
+  const tailwindErrorScript = (() => {
+    if (!tailwindError) return "";
+    if (options.mode === "production" && options.proxyEnvironment !== "preview") return "";
+    const errorInfo = formatCSSError(tailwindError);
+    const title = JSON.stringify(errorInfo.title);
+    const message = JSON.stringify(errorInfo.message);
+    const suggestion = JSON.stringify(errorInfo.suggestion);
+    return `<script${nonce ? ` nonce="${nonce}"` : ""}>
+    (function() {
+      var overlay = document.createElement('div');
+      overlay.id = 'veryfront-error-overlay';
+      overlay.innerHTML = '<div style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);color:white;font-family:Menlo,Monaco,Courier New,monospace;font-size:14px;padding:20px;overflow:auto;z-index:999999;"><div style="max-width:800px;margin:0 auto;"><h1 style="color:#ff6b6b;font-size:24px;margin-bottom:10px;">CSS Error</h1><div style="background:#1a1a1a;border:1px solid #333;border-radius:4px;padding:20px;margin:20px 0;"><div style="color:#ff6b6b;font-weight:bold;margin-bottom:10px;">' + ${title} + '</div><div style="color:#ccc;margin-bottom:20px;">' + ${message} + '</div><div style="background:#2a2a2a;border-left:3px solid #4fc3f7;padding:10px;margin-top:20px;"><div style="color:#4fc3f7;font-weight:bold;margin-bottom:5px;">Suggestion:</div><div style="color:#ccc;">' + ${suggestion} + '</div></div></div><button onclick="this.parentElement.parentElement.remove()" style="background:#333;border:1px solid #555;color:#ccc;padding:8px 16px;border-radius:4px;cursor:pointer;font-family:inherit;">Dismiss</button></div></div>';
+      document.body.appendChild(overlay);
+    })();
+  </script>`;
+  })();
+
   const end = `</div>
   </div>
   <div id="veryfront-portals"></div>
@@ -361,6 +384,7 @@ ${css}
   ${studioScripts}
   ${previewHMRScript}
   ${mermaidScript}
+  ${tailwindErrorScript}
 </body>
 </html>`;
 

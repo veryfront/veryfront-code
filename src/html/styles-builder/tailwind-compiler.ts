@@ -156,7 +156,9 @@ export function extractCandidates(content: string): string[] {
   // - Starts with a letter OR digit (for 2xl:, 3xl: responsive prefixes)
   // - Contains letters, numbers, dashes, colons, slashes, brackets, dots, etc.
   // - Includes special chars for arbitrary values: [], (), %, #, !, '
-  const pattern = /[a-zA-Z0-9][a-zA-Z0-9_\-:\/\[\]\.%#,()!']+/g;
+  // Tailwind's build() is fast and handles invalid candidates gracefully
+  // Match Tailwind's Oxide scanner permissiveness - false positives are cheap, false negatives break styling
+  const pattern = /[a-zA-Z0-9][a-zA-Z0-9_\-:\/\.\[\]%#,()!'=<>$@{}|*+?;^]+/g;
   const matches = content.match(pattern) || [];
   return [...new Set(matches)];
 }
@@ -320,28 +322,26 @@ export function invalidateCompiler(): void {
  * @param options - Generation options (minify, etc.)
  * @returns Result with CSS and optional error
  */
+
 export async function generateTailwindCSS(
   stylesheet: string | undefined,
   candidates: string[] | Set<string>,
   options?: GenerateOptions,
 ): Promise<TailwindResult> {
   const css = stylesheet || DEFAULT_STYLESHEET;
+  const candidateArray = Array.isArray(candidates) ? candidates : [...candidates];
 
   try {
     const comp = await getCompiler(css);
+    let output = comp.build(candidateArray);
 
-    // Build CSS for all candidates
-    // Tailwind filters out invalid classes automatically
-    let output = comp.build([...candidates]);
-
-    // Minification: strip extra whitespace for now
-    // Future: consider lightningcss for better minification
+    // Minification: strip extra whitespace for production
     if (options?.minify) {
       output = output.replace(/\n\s*\n/g, "\n");
     }
 
     logger.debug("[tailwind] Generated CSS", {
-      candidateCount: candidates instanceof Set ? candidates.size : candidates.length,
+      candidateCount: candidateArray.length,
       outputLength: output.length,
     });
 
@@ -349,12 +349,7 @@ export async function generateTailwindCSS(
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error("[tailwind] Compilation failed", { error: errorMessage });
-
-    // Return empty CSS with error message for overlay
-    return {
-      css: "",
-      error: errorMessage,
-    };
+    return { css: "", error: errorMessage };
   }
 }
 

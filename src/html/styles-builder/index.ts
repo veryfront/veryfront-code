@@ -21,13 +21,3 @@ export {
   invalidateCompiler,
   type TailwindResult,
 } from "./tailwind-compiler.ts";
-
-// Class cache for project-wide class extraction
-export {
-  clearAllClasses,
-  clearProjectClasses,
-  extractClassesFromFiles,
-  getClassCacheStats,
-  getProjectClasses,
-  updateProjectClasses,
-} from "./class-cache.ts";

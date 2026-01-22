@@ -35,7 +35,7 @@ export interface HTMLGenerationOptions {
   proxyEnvironment?: "preview" | "production";
   /** Headings extracted from MDX for sidebar/TOC navigation */
   headings?: Array<{ id: string; text: string; level: number }>;
-  /** Pre-extracted Tailwind classes from project source files */
+  /** Tailwind classes extracted from all project source files */
   projectClasses?: Set<string>;
 }
 
