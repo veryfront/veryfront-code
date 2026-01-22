@@ -20,17 +20,17 @@ Deno.test({
   sanitizeOps: false,
   sanitizeResources: false,
   fn: async () => {
-  // This import would fail with "Cannot access 'React' before initialization"
-  // if the circular dependency was not fixed
-  const mod = await import("./backend.ts");
+    // This import would fail with "Cannot access 'React' before initialization"
+    // if the circular dependency was not fixed
+    const mod = await import("./backend.ts");
 
-  // Verify key exports exist
-  assertExists(mod.MemoryCacheBackend);
-  assertExists(mod.RedisCacheBackend);
-  assertExists(mod.ApiCacheBackend);
-  assertExists(mod.createCacheBackend);
-  assertExists(mod.CacheBackends);
-  assertExists(mod.isApiCacheAvailable);
+    // Verify key exports exist
+    assertExists(mod.MemoryCacheBackend);
+    assertExists(mod.RedisCacheBackend);
+    assertExists(mod.ApiCacheBackend);
+    assertExists(mod.createCacheBackend);
+    assertExists(mod.CacheBackends);
+    assertExists(mod.isApiCacheAvailable);
   },
 });
 
