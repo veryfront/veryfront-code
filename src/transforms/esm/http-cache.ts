@@ -23,7 +23,9 @@ import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import { getReactImportMap, REACT_VERSION } from "./package-registry.ts";
 import { parseImports, replaceSpecifiers } from "./lexer.ts";
-import { CacheBackends, type CacheBackend } from "#veryfront/cache/backend.ts";
+// Dynamic import to avoid circular dependency at module load time
+// backend.ts imports multi-project-adapter which has React dependencies
+import type { CacheBackend } from "#veryfront/cache/backend.ts";
 
 type CacheOptions = {
   cacheDir: string;
@@ -50,11 +52,14 @@ function getDistributedCache(): Promise<CacheBackend> {
   if (distributedCache) return Promise.resolve(distributedCache);
   if (distributedCacheInitPromise) return distributedCacheInitPromise;
 
-  distributedCacheInitPromise = CacheBackends.httpModule().then((backend) => {
-    distributedCache = backend;
-    logger.debug("[HTTP-CACHE] Distributed cache initialized", { type: backend.type });
-    return backend;
-  });
+  // Dynamic import to avoid circular dependency at module load time
+  distributedCacheInitPromise = import("#veryfront/cache/backend.ts")
+    .then(({ CacheBackends }) => CacheBackends.httpModule())
+    .then((backend) => {
+      distributedCache = backend;
+      logger.debug("[HTTP-CACHE] Distributed cache initialized", { type: backend.type });
+      return backend;
+    });
 
   return distributedCacheInitPromise;
 }
