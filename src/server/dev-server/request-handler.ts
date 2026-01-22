@@ -144,6 +144,8 @@ export class RequestHandler {
         // Use relative path since modules are served on the same server
         moduleServerUrl: "/_vf_modules",
         config: this.config,
+        // Dev server always runs in local development mode
+        envConfig: { isLocalDev: true },
       });
     }
 

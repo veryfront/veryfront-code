@@ -122,6 +122,8 @@ export interface UniversalHandlerOptions {
   config?: VeryfrontConfig;
   /** Map of local project slugs to their filesystem paths (for unified dev server) */
   localProjects?: Record<string, string>;
+  /** Override environment config for isLocalDev (dev server passes { isLocalDev: true }) */
+  envConfig?: import("../context/request-context.ts").EnvConfig;
 }
 
 /**
@@ -379,7 +381,7 @@ export function createVeryfrontHandler(
         // 1. Headers (x-token, x-project-slug) - from proxy
         // 2. Domain parsing - extracts slug/branch from hostname
         // 3. Environment variables - fallback for direct mode
-        const reqCtx = createRequestContext(req);
+        const reqCtx = createRequestContext(req, opts.envConfig);
 
         // WebSocket requests: also check query params since custom headers aren't supported
         const wsSlugOverride = _url.searchParams.get("x-project-slug") || undefined;
