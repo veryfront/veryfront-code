@@ -1,11 +1,16 @@
 /**
- * Redis Cache Initialization
+ * Distributed Cache Initialization
  *
- * Initializes all Redis-enabled caches for cross-pod cache sharing.
+ * Initializes all distributed caches for cross-pod cache sharing.
  * This reduces memory pressure on individual pods by offloading
- * cached data to a shared Redis instance.
+ * cached data to a shared backend (API or Redis).
  *
- * Call this at server startup when REDIS_URL is configured.
+ * Backend selection priority:
+ * - API (production): Uses veryfront-api for centralized cache
+ * - Redis (local dev/open source): Direct Redis access
+ * - Memory (fallback): In-memory cache
+ *
+ * Call this at server startup.
  */
 
 import { logger } from "../utils/logger/logger.ts";
@@ -13,36 +18,50 @@ import { initializeTransformCache } from "#veryfront/transforms/esm/transform-ca
 import { initializeSSRDistributedCache } from "#veryfront/modules/react-loader/ssr-module-loader/index.ts";
 import { initializeFileCacheBackend } from "#veryfront/platform/adapters/fs/cache/file-cache.ts";
 import { isRedisConfigured } from "../utils/redis-client.ts";
+import { runtime } from "../platform/adapters/registry.ts";
 
-export interface RedisCacheStatus {
-  configured: boolean;
+export interface DistributedCacheStatus {
+  backend: "api" | "redis" | "memory";
   transformCache: boolean;
   ssrModuleCache: boolean;
   fileCache: boolean;
 }
 
+/** @deprecated Use DistributedCacheStatus instead */
+export type RedisCacheStatus = DistributedCacheStatus & { configured: boolean };
+
+/** Check if API cache backend is available (proxy mode with API URL). */
+function isApiCacheAvailable(): boolean {
+  if (!runtime.isInitialized()) return false;
+  const env = runtime.getSync().env;
+  return env.get("PROXY_MODE") === "1" && !!env.get("VERYFRONT_API_BASE_URL");
+}
+
 /**
- * Initialize all Redis caches.
+ * Initialize all distributed caches.
  *
  * This function is idempotent and safe to call multiple times.
- * Each cache will only initialize Redis once.
+ * Each cache will only initialize once.
  *
  * @returns Status object indicating which caches were enabled
  */
-export async function initializeRedisCaches(): Promise<RedisCacheStatus> {
-  const status: RedisCacheStatus = {
-    configured: isRedisConfigured(),
+export async function initializeRedisCaches(): Promise<DistributedCacheStatus> {
+  const hasApiCache = isApiCacheAvailable();
+  const hasRedis = isRedisConfigured();
+
+  const status: DistributedCacheStatus = {
+    backend: hasApiCache ? "api" : hasRedis ? "redis" : "memory",
     transformCache: false,
     ssrModuleCache: false,
     fileCache: false,
   };
 
-  if (!status.configured) {
-    logger.debug("[Redis] Not configured (REDIS_URL not set), using memory-only caches");
+  if (!hasApiCache && !hasRedis) {
+    logger.debug("[DistributedCache] No distributed backend available, using memory-only caches");
     return status;
   }
 
-  logger.info("[Redis] Initializing Redis caches...");
+  logger.info("[DistributedCache] Initializing caches...", { backend: status.backend });
 
   // Initialize all caches in parallel
   const [transformResult, ssrResult, fileResult] = await Promise.allSettled([
@@ -59,14 +78,17 @@ export async function initializeRedisCaches(): Promise<RedisCacheStatus> {
     .filter(Boolean).length;
 
   if (enabledCount > 0) {
-    logger.info("[Redis] Cache initialization complete", {
+    logger.info("[DistributedCache] Initialization complete", {
+      backend: status.backend,
       enabled: enabledCount,
       transform: status.transformCache,
       ssrModule: status.ssrModuleCache,
       file: status.fileCache,
     });
   } else {
-    logger.warn("[Redis] No caches enabled despite REDIS_URL being set");
+    logger.warn("[DistributedCache] No caches enabled despite backend being available", {
+      backend: status.backend,
+    });
   }
 
   return status;
