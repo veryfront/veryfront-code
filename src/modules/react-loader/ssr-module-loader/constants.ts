@@ -32,9 +32,25 @@ export const CIRCUIT_BREAKER_RESET_MS = 60 * 1000;
 /**
  * Maximum concurrent ESM transforms.
  * Configurable via SSR_MAX_CONCURRENT_TRANSFORMS env var.
- * Default: 3 (conservative, ~500MB per transform, fits in 2GB heap)
+ *
+ * This is a SAFETY NET, not a throttle. Set high to allow burst capacity.
+ * The real protection comes from:
+ * - Caching (99%+ hit rate eliminates transforms)
+ * - Horizontal scaling (more pods)
+ * - Memory limits (OOM kill restarts unhealthy pods)
+ *
+ * Default: 50 (high enough for bursts, low enough to prevent OOM)
+ * Set to 0 to disable the semaphore entirely.
  */
 export const MAX_CONCURRENT_TRANSFORMS = parseInt(
-  String(getSsrMaxConcurrentTransformsEnv(3)),
+  String(getSsrMaxConcurrentTransformsEnv(50)),
   10,
 );
+
+/**
+ * Timeout for acquiring a transform semaphore permit (ms).
+ * If a permit isn't available within this time, the request fails fast
+ * with 503 instead of blocking indefinitely.
+ * Default: 2000ms (2 seconds) - fail fast, let client retry
+ */
+export const TRANSFORM_ACQUIRE_TIMEOUT_MS = 2000;

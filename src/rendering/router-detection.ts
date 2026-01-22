@@ -175,7 +175,9 @@ async function statWithFallback(
 }
 
 async function collectDirEntries(
-  iterable: AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean; isSymlink?: boolean }>,
+  iterable: AsyncIterable<
+    { name: string; isFile: boolean; isDirectory: boolean; isSymlink?: boolean }
+  >,
 ): Promise<NormalizedDirEntry[]> {
   const entries: NormalizedDirEntry[] = [];
   for await (const entry of iterable) {

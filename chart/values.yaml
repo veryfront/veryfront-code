@@ -169,9 +169,14 @@ renderer:
     # V8 heap size: 3.5GB with container limit 4Gi
     # Large projects (e.g., codersociety) can require 3GB+ memory
     DENO_V8_FLAGS: "--max-old-space-size=3584"
-    # Limit concurrent ESM transforms to prevent memory spikes
-    # Reduced to 1 to minimize peak memory during SSR
-    SSR_MAX_CONCURRENT_TRANSFORMS: "1"
+    # Concurrent ESM transform limit - safety net, not throttle
+    # High value allows burst traffic; caching prevents most transforms
+    # Set to 0 to disable entirely (rely on caching + horizontal scaling)
+    SSR_MAX_CONCURRENT_TRANSFORMS: "50"
+    # Redis for distributed SSR module cache (cross-pod sharing)
+    # REDIS_URL provided via veryfront-renderer-secret
+    # Enables JIT rendering: first request transforms, all pods benefit from cache
+    SSR_REDIS_CACHE_ENABLED: "true"
     # Enable memory monitoring (logs heap usage periodically)
     ENABLE_MEMORY_MONITORING: "true"
     MEMORY_MONITORING_INTERVAL_MS: "30000"
@@ -187,7 +192,9 @@ renderer:
     OTEL_METRICS_EXPORTER: "otlp"
     # Uses same endpoint as traces (Grafana OTLP gateway accepts both)
 
-  # Secret must contain: OTEL_EXPORTER_OTLP_HEADERS
+  # Secret must contain:
+  # - OTEL_EXPORTER_OTLP_HEADERS
+  # - REDIS_URL (for distributed SSR module cache)
   envFrom:
     - secretRef:
         name: veryfront-renderer-secret

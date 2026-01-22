@@ -180,8 +180,7 @@ const CHUNK_CONFIGS: ChunkConfig[] = [
       Array.from(sharedDeps.entries())
         .filter(([_, count]) => count >= 2)
         .map(([dep]) => dep),
-    calculateBenefit: (deps, pages) =>
-      deps.length * pages.length * SIZE_LIMITS.DEP_SIZE_ESTIMATE,
+    calculateBenefit: (deps, pages) => deps.length * pages.length * SIZE_LIMITS.DEP_SIZE_ESTIMATE,
   },
   {
     name: "react-vendor",

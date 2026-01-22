@@ -24,7 +24,12 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
 import { injectContext } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { extractComponent } from "../extract-component.ts";
-import { CIRCUIT_BREAKER_RESET_MS, CIRCUIT_BREAKER_THRESHOLD } from "./constants.ts";
+import {
+  CIRCUIT_BREAKER_RESET_MS,
+  CIRCUIT_BREAKER_THRESHOLD,
+  MAX_CONCURRENT_TRANSFORMS,
+  TRANSFORM_ACQUIRE_TIMEOUT_MS,
+} from "./constants.ts";
 import {
   failedComponents,
   getFromRedis,
@@ -208,7 +213,16 @@ export class SSRModuleLoader {
       const tempDir = tempPath.substring(0, tempPath.lastIndexOf("/"));
       await this.fs.mkdir(tempDir, { recursive: true });
 
-      await transformSemaphore.acquire();
+      // Semaphore is a safety net, not a throttle. Skip if disabled (0).
+      const useSemaphore = MAX_CONCURRENT_TRANSFORMS > 0;
+      if (useSemaphore) {
+        const acquired = await transformSemaphore.tryAcquire(TRANSFORM_ACQUIRE_TIMEOUT_MS);
+        if (!acquired) {
+          throw new Error(
+            `Transform capacity exceeded (${transformSemaphore.waiting} waiting). Service is overloaded.`,
+          );
+        }
+      }
       try {
         const transformOpts: TransformOptions = {
           projectId: this.options.projectId,
@@ -241,7 +255,9 @@ export class SSRModuleLoader {
 
         return tempPath;
       } finally {
-        transformSemaphore.release();
+        if (useSemaphore) {
+          transformSemaphore.release();
+        }
       }
     } catch (error) {
       clearTimeout(timeout);
@@ -366,7 +382,19 @@ export class SSRModuleLoader {
         }),
       ]);
 
-      await transformSemaphore.acquire();
+      // Semaphore is a safety net, not a throttle. Skip if disabled (0).
+      const useSemaphore = MAX_CONCURRENT_TRANSFORMS > 0;
+      if (useSemaphore) {
+        const acquired = await transformSemaphore.tryAcquire(TRANSFORM_ACQUIRE_TIMEOUT_MS);
+        if (!acquired) {
+          throw toError(createError({
+            type: "build",
+            message:
+              `Transform capacity exceeded (${transformSemaphore.waiting} waiting). Service is overloaded.`,
+            context: { file: filePath, phase: "transform" },
+          }));
+        }
+      }
 
       try {
         const transformOpts: TransformOptions = {
@@ -419,7 +447,9 @@ export class SSRModuleLoader {
         globalModuleCache.set(contentCacheKey, entry);
         globalModuleCache.set(filePathCacheKey, entry);
       } finally {
-        transformSemaphore.release();
+        if (useSemaphore) {
+          transformSemaphore.release();
+        }
       }
 
       resolveTransform!();
