@@ -15,7 +15,7 @@ describe("Proxy Handler", () => {
         (req: Request) => {
           const url = new URL(req.url);
 
-          if (url.pathname === "/oauth/token") {
+          if (url.pathname === "/auth/token") {
             return Response.json({
               access_token: "test-token",
               token_type: "Bearer",
@@ -23,13 +23,12 @@ describe("Proxy Handler", () => {
             });
           }
 
-          if (url.pathname.startsWith("/lookup/domain/")) {
+          if (url.pathname.startsWith("/projects/")) {
             return Response.json({
-              project_id: "proj-123",
-              project_slug: "my-project",
-              project_name: "My Project",
-              environment: { id: "env-1", name: "production" },
-              release_id: "rel-1",
+              id: "proj-123",
+              slug: "my-project",
+              name: "My Project",
+              environments: [{ id: "env-1", name: "production" }],
             });
           }
 
@@ -73,7 +72,7 @@ describe("Proxy Handler", () => {
         (req: Request) => {
           const url = new URL(req.url);
 
-          if (url.pathname === "/oauth/token") {
+          if (url.pathname === "/auth/token") {
             return Response.json({
               access_token: "test-token",
               token_type: "Bearer",
@@ -81,7 +80,7 @@ describe("Proxy Handler", () => {
             });
           }
 
-          if (url.pathname.startsWith("/lookup/domain/")) {
+          if (url.pathname.startsWith("/projects/")) {
             return new Response("Not found", { status: 404 });
           }
 
