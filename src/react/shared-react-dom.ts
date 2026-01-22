@@ -37,8 +37,17 @@ async function loadReactDOM(): Promise<ReactDOMType> {
     }
   }
 
-  // Deno or no node_modules: cache from esm.sh
   const urls = getReactUrls();
+
+  // Deno: use HTTP imports directly (Deno supports them natively)
+  if (isDeno) {
+    const httpReactDOM = await import(urls["react-dom"]);
+    const mod = httpReactDOM.default ?? httpReactDOM;
+    reactDOMCache = mod as ReactDOMType;
+    return reactDOMCache;
+  }
+
+  // Node/Bun without node_modules: cache from esm.sh to local file://
   const cacheDir = getHttpBundleCacheDir();
   const cachedPath = await cacheModuleToLocal(urls["react-dom"], cacheDir);
   const cachedReactDOM = await import(cachedPath);

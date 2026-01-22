@@ -36,8 +36,16 @@ async function loadJsxDevRuntime(): Promise<JsxDevRuntimeType> {
     }
   }
 
-  // Deno or no node_modules: cache from esm.sh
   const urls = getReactUrls();
+
+  // Deno: use HTTP imports directly (Deno supports them natively)
+  if (isDeno) {
+    const httpJsxDevRuntime = await import(urls["react/jsx-dev-runtime"]);
+    jsxDevRuntimeCache = httpJsxDevRuntime as JsxDevRuntimeType;
+    return jsxDevRuntimeCache;
+  }
+
+  // Node/Bun without node_modules: cache from esm.sh to local file://
   const cacheDir = getHttpBundleCacheDir();
   const cachedPath = await cacheModuleToLocal(urls["react/jsx-dev-runtime"], cacheDir);
   const cachedJsxDevRuntime = await import(cachedPath);

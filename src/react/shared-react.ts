@@ -42,8 +42,19 @@ async function loadReact(): Promise<ReactType> {
     }
   }
 
-  // Deno or no node_modules: cache from esm.sh
   const urls = getReactUrls();
+
+  // Deno: use HTTP imports directly (Deno supports them natively)
+  // This ensures the same React instance is used by both shared modules and
+  // user code, preventing "Invalid hook call" errors from multiple React instances.
+  if (isDeno) {
+    const httpReact = await import(urls.react);
+    const mod = httpReact.default ?? httpReact;
+    reactCache = mod as ReactType;
+    return reactCache;
+  }
+
+  // Node/Bun without node_modules: cache from esm.sh to local file://
   const cacheDir = getHttpBundleCacheDir();
   const cachedPath = await cacheModuleToLocal(urls.react, cacheDir);
   const cachedReact = await import(cachedPath);

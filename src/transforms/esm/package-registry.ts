@@ -14,8 +14,9 @@ export const TAILWIND_VERSION = "4.1.8";
  * See: https://github.com/veryfront/veryfront-renderer/issues/79
  *
  * v2: Skip ssr-http-cache on Deno for cross-pod compatibility
+ * v3: Use HTTP imports in shared React modules on Deno
  */
-export const TRANSFORM_CACHE_VERSION = 2;
+export const TRANSFORM_CACHE_VERSION = 3;
 
 /**
  * Generate esm.sh URL for browser.
