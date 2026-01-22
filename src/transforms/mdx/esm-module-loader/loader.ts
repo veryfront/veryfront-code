@@ -175,9 +175,23 @@ async function processVfModuleImports(
   context: ESMLoaderContext,
   projectDir: string,
 ): Promise<string> {
+  const projectSlug = context.projectSlug || "unknown";
   const { adapter } = context;
   if (!adapter) {
     logger.warn(`${LOG_PREFIX_MDX_LOADER} No adapter available for module fetching`);
+    return code;
+  }
+
+  logger.debug(`${LOG_PREFIX_MDX_LOADER} processVfModuleImports: found imports`, {
+    projectSlug,
+    count: imports.length,
+    paths: imports.map((i) => i.path).slice(0, 10), // First 10 paths
+  });
+
+  if (imports.length === 0) {
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} processVfModuleImports: no imports to process`, {
+      projectSlug,
+    });
     return code;
   }
 
@@ -192,14 +206,23 @@ async function processVfModuleImports(
 
   // Fetch all modules in parallel
   const results = await Promise.all(
-    imports.map(async ({ original, path }) => {
+    imports.map(async ({ original, path }, index) => {
+      const moduleStart = performance.now();
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} Fetching module START`, { projectSlug, index, path });
       const filePath = await fetchAndCacheModule(path, fetcherContext);
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} Fetching module DONE`, {
+        projectSlug,
+        index,
+        path,
+        durationMs: (performance.now() - moduleStart).toFixed(1),
+      });
       return { original, filePath, path };
     }),
   );
 
   const fetchEnd = performance.now();
   logger.debug(`${LOG_PREFIX_MDX_LOADER} Module fetch phase completed`, {
+    projectSlug,
     moduleCount: imports.length,
     durationMs: (fetchEnd - fetchStart).toFixed(1),
   });
