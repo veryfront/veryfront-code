@@ -25,6 +25,7 @@ import {
   PRIORITY_MEDIUM_STATIC,
 } from "#veryfront/utils/constants/index.ts";
 import { normalizeChunkPath } from "#veryfront/utils/chunk-utils.ts";
+import { shouldUseNoCacheHeaders } from "../../context/request-context.ts";
 
 export class StaticHandler extends BaseHandler {
   private static manifestCache = new Map<
@@ -146,19 +147,24 @@ export class StaticHandler extends BaseHandler {
         }
 
         // Determine cache strategy
+        // Development and preview modes always use no-cache HTTP headers
+        // Production mode uses appropriate caching based on content type
         const ext = getExtension(candidate.abs);
         const isHashed = hasHashedFilename(candidate.abs);
         const isVeryfrontAsset = reqPath.includes("/_veryfront/");
 
         let cacheStrategy: CacheStrategy;
-        // Immutable cache for hashed files regardless of source directory
-        // or for dist/manifest assets including _veryfront resources
-        if (
+        if (shouldUseNoCacheHeaders(ctx.requestContext)) {
+          // Development/Preview: browser must fetch fresh, server handles caching
+          cacheStrategy = "no-cache";
+        } else if (
           isHashed ||
           ((candidate.source === "dist" || candidate.source === "manifest") && isVeryfrontAsset)
         ) {
+          // Production: immutable cache for hashed files or dist/_veryfront assets
           cacheStrategy = "immutable";
         } else {
+          // Production: medium cache for other static files
           cacheStrategy = "medium";
         }
 

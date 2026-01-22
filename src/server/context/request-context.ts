@@ -109,3 +109,22 @@ export function getCacheStrategy(ctx: RequestContext): "none" | "invalidate" | "
 export function shouldEnableCache(ctx: RequestContext): boolean {
   return getCacheStrategy(ctx) === "immutable";
 }
+
+/**
+ * Check if HTTP response should use no-cache headers.
+ *
+ * Returns true for:
+ * - Local development (always fresh, no caching)
+ * - Preview mode (browser must fetch fresh, server handles caching)
+ *
+ * In production mode, callers should use appropriate cache headers
+ * (short, medium, immutable) based on content type.
+ *
+ * @param ctx - Request context (optional, uses isLocalDev() if not provided)
+ * @returns true if HTTP headers should be no-cache
+ */
+export function shouldUseNoCacheHeaders(ctx?: RequestContext): boolean {
+  if (isLocalDev()) return true;
+  if (ctx?.mode === "preview") return true;
+  return false;
+}

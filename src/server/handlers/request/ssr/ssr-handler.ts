@@ -41,6 +41,7 @@ import {
   startRenderSession,
 } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
 import { VeryfrontAPIError } from "#veryfront/platform/adapters/veryfront-api-client/types.ts";
+import { isLocalDev, shouldUseNoCacheHeaders } from "../../../context/request-context.ts";
 
 /**
  * Determine if request should serve production (released) content.
@@ -336,7 +337,10 @@ export class SSRHandler extends BaseHandler {
       // Disable caching in development to prevent nonce mismatches
       // (cached HTML has old nonces, but each request generates a fresh nonce for CSP)
       // Preview URLs use short cache - poke mechanism triggers hard refresh on content changes
-      const cacheStrategy = ctx.mode === "development" ? "no-cache" : "short";
+      // HTTP cache headers: no-cache for development and preview, short for production
+      // Preview uses no-cache HTTP headers because browser must fetch fresh content
+      // Server-side memory caches handle performance in preview mode (Phase 7)
+      const cacheStrategy = shouldUseNoCacheHeaders(ctx.requestContext) ? "no-cache" : "short";
       const isHeadRequest = req.method.toUpperCase() === "HEAD";
       const builder = this.createResponseBuilder(ctx, nonce);
 
@@ -371,7 +375,7 @@ export class SSRHandler extends BaseHandler {
       // Check if-none-match for 304 response
       // IMPORTANT: Skip 304 in dev mode to prevent CSP nonce mismatch
       // (304 returns new nonce in CSP but browser uses cached HTML with old nonce)
-      const isDev = ctx.mode === "development";
+      const isDev = isLocalDev();
       if (!isDev && hasMatchingEtag(req, etag)) {
         return this.respond(
           builder
