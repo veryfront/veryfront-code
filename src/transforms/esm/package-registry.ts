@@ -12,8 +12,10 @@ export const TAILWIND_VERSION = "4.1.8";
  * Transform cache version - bump when transform logic changes.
  * This invalidates all cached modules (local + Redis) to prevent stale transform issues.
  * See: https://github.com/veryfront/veryfront-renderer/issues/79
+ *
+ * v2: Skip ssr-http-cache on Deno for cross-pod compatibility
  */
-export const TRANSFORM_CACHE_VERSION = 1;
+export const TRANSFORM_CACHE_VERSION = 2;
 
 /**
  * Generate esm.sh URL for browser.
