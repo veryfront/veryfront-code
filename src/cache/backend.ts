@@ -16,6 +16,7 @@ import { getRedisClient, isRedisConfigured, type RedisClient } from "../utils/re
 import { runtime } from "../platform/adapters/registry.ts";
 import { tryGetCacheKeyContext } from "./cache-key-builder.ts";
 import { getRuntimeEnv, isRuntimeEnvInitialized, type RuntimeEnv } from "../config/runtime-env.ts";
+import { isLocalDev } from "../server/context/request-context.ts";
 import { getCurrentRequestContext } from "../platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { CircuitBreakerOpen, getCircuitBreaker } from "../utils/circuit-breaker.ts";
 import { MEMORY_CACHE_MAX_ENTRIES } from "../utils/constants/cache.ts";
@@ -30,7 +31,6 @@ function getEnvValue(key: string, env?: RuntimeEnv): string | undefined {
   const runtimeEnv = env ?? (isRuntimeEnvInitialized() ? getRuntimeEnv() : null);
 
   if (runtimeEnv) {
-    if (key === "PROXY_MODE") return runtimeEnv.proxyMode ? "1" : undefined;
     const prop = ENV_KEY_MAP[key];
     return prop ? (runtimeEnv[prop] as string | undefined) : undefined;
   }
@@ -357,9 +357,9 @@ export interface CacheBackendConfig {
   env?: RuntimeEnv;
 }
 
-/** Check if API cache backend is available (proxy mode with API URL). */
+/** Check if API cache backend is available (production environment with API URL). */
 export function isApiCacheAvailable(env?: RuntimeEnv): boolean {
-  return getEnvValue("PROXY_MODE", env) === "1" && !!getEnvValue("VERYFRONT_API_BASE_URL", env);
+  return !isLocalDev() && !!getEnvValue("VERYFRONT_API_BASE_URL", env);
 }
 
 /**

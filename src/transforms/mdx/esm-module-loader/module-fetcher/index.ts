@@ -10,6 +10,7 @@
 import { join, posix } from "#std/path.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { isLocalDev } from "../../../../server/context/request-context.ts";
 import { transformToESM } from "../../../esm-transform.ts";
 import { TRANSFORM_CACHE_VERSION } from "../../../esm/package-registry.ts";
 import {
@@ -308,11 +309,10 @@ async function fetchModuleViaHTTP(
   fetchAndCacheModuleFn: (path: string, parent?: string) => Promise<string | null>,
   projectSlug?: string,
 ): Promise<string | null> {
-  // In proxy mode, HTTP fallback to localhost won't work (self-referential request)
-  const isProxyMode = adapter.env.get("PROXY_MODE") === "1";
-  if (isProxyMode) {
+  // In production environment, HTTP fallback to localhost won't work
+  if (!isLocalDev()) {
     logger.warn(
-      `${LOG_PREFIX_MDX_LOADER} Direct read failed in proxy mode (module must be pre-loaded): ${normalizedPath}`,
+      `${LOG_PREFIX_MDX_LOADER} Direct read failed in production (module must be pre-loaded): ${normalizedPath}`,
     );
     return null;
   }

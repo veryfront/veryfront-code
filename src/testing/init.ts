@@ -28,7 +28,6 @@
     "ANTHROPIC_",
     "GOOGLE_",
   ],
-  keys: ["PROXY_MODE"],
 };
 
 /**

@@ -65,9 +65,6 @@ export interface RuntimeEnv {
   /** VERYFRONT_PROJECT_SLUG - Current project slug */
   projectSlug: string | undefined;
 
-  /** PROXY_MODE=1 indicates proxy mode */
-  proxyMode: boolean;
-
   // =========================================================================
   // System Paths
   // =========================================================================
@@ -253,7 +250,6 @@ const DEFAULTS: Partial<RuntimeEnv> = {
   denoTesting: false,
   perfEnabled: false,
   apiBaseUrl: "http://api.lvh.me:4000",
-  proxyMode: false,
   experimentalRsc: false,
   disableLruInterval: false,
   port: 3001,
@@ -304,7 +300,6 @@ function readEnvSnapshot(): RuntimeEnv {
     apiUrl: getEnv("VERYFRONT_API_URL") || undefined,
     apiToken: getEnv("VERYFRONT_API_TOKEN") || undefined,
     projectSlug: getEnv("VERYFRONT_PROJECT_SLUG") || undefined,
-    proxyMode: getEnv("PROXY_MODE") === "1",
 
     // System Paths
     homeDir: getEnv("HOME") || getEnv("USERPROFILE") || undefined,
