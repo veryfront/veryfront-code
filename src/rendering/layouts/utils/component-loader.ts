@@ -103,6 +103,7 @@ export async function loadMDXLayout(
   adapter: RuntimeAdapter,
   projectId?: string,
   projectSlug?: string,
+  contentSourceId?: string,
 ): Promise<BundledReact.ComponentType<{ components?: MDXComponents }> | undefined> {
   const map = await loadImportMap(projectDir, adapter);
   const code = transformImportsWithMap(bundle.compiledCode, map);
@@ -113,6 +114,7 @@ export async function loadMDXLayout(
     projectId,
     projectDir,
     projectSlug,
+    contentSourceId,
   )) as MDXModule;
   logger.debug("[loadMDXLayout] Module loaded", { exports: Object.keys(mod) });
   return mod.MDXLayout || mod.MainLayout || mod.default;
@@ -152,9 +154,17 @@ export async function applyMDXLayout(
   adapter: RuntimeAdapter,
   projectId?: string,
   projectSlug?: string,
+  contentSourceId?: string,
 ): Promise<BundledReact.ReactElement> {
   const React = await getProjectReact();
-  const LayoutFn = await loadMDXLayout(bundle, projectDir, adapter, projectId, projectSlug);
+  const LayoutFn = await loadMDXLayout(
+    bundle,
+    projectDir,
+    adapter,
+    projectId,
+    projectSlug,
+    contentSourceId,
+  );
 
   if (!LayoutFn) {
     logger.debug("[applyMDXLayout] No layout function found");

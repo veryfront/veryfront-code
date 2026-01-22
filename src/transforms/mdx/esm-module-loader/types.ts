@@ -26,6 +26,8 @@ export interface ESMLoaderContext {
   projectDir?: string;
   /** Project slug for HTTP fallback URLs (multi-project mode) */
   projectSlug?: string;
+  /** Content source identifier for cache isolation (branch name or release ID) */
+  contentSourceId?: string;
 }
 
 /**

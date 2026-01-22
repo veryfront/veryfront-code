@@ -26,6 +26,8 @@ export interface LayoutApplicationOptions {
   projectId?: string;
   /** Project slug for HTTP fallback in multi-project mode */
   projectSlug?: string;
+  /** Content source identifier for cache isolation (branch name or release ID) */
+  contentSourceId?: string;
   adapter: RuntimeAdapter;
   config: VeryfrontConfig;
   layoutCache: LayoutComponentCache;
@@ -53,11 +55,13 @@ export class LayoutApplicator {
   private headings?: Array<{ id: string; text: string; level: number }>;
   private projectId?: string;
   private projectSlug?: string;
+  private contentSourceId?: string;
 
   constructor(options: LayoutApplicationOptions) {
     this.projectDir = options.projectDir;
     this.projectId = options.projectId;
     this.projectSlug = options.projectSlug;
+    this.contentSourceId = options.contentSourceId;
     this.adapter = options.adapter;
     this.config = options.config;
     this.layoutCache = options.layoutCache;
@@ -178,6 +182,7 @@ export class LayoutApplicator {
         layoutDataMap,
         this.projectId,
         this.projectSlug,
+        this.contentSourceId,
       );
     }
 

@@ -30,6 +30,8 @@ export interface PageRenderOptions {
   studioEmbed?: boolean;
   /** Project slug for HTTP fallback in multi-project mode */
   projectSlug?: string;
+  /** Content source identifier for cache isolation (branch name or release ID) */
+  contentSourceId?: string;
 }
 
 export interface PageBundleResult {
@@ -220,6 +222,7 @@ export class PageRenderer {
             projectId: options?.projectId,
             studioEmbed: options?.studioEmbed,
             projectSlug: options?.projectSlug,
+            contentSourceId: options?.contentSourceId,
           },
         );
 
