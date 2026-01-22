@@ -27,9 +27,6 @@ export interface DistributedCacheStatus {
   fileCache: boolean;
 }
 
-/** @deprecated Use DistributedCacheStatus instead */
-export type RedisCacheStatus = DistributedCacheStatus & { configured: boolean };
-
 /** Check if API cache backend is available (proxy mode with API URL). */
 function isApiCacheAvailable(): boolean {
   if (!runtime.isInitialized()) return false;
@@ -45,7 +42,7 @@ function isApiCacheAvailable(): boolean {
  *
  * @returns Status object indicating which caches were enabled
  */
-export async function initializeRedisCaches(): Promise<DistributedCacheStatus> {
+export async function initializeDistributedCaches(): Promise<DistributedCacheStatus> {
   const hasApiCache = isApiCacheAvailable();
   const hasRedis = isRedisConfigured();
 
