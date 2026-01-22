@@ -11,6 +11,7 @@ import { logger } from "#veryfront/utils";
 import { runtime } from "../platform/adapters/registry.ts";
 import { tryGetCacheKeyContext } from "./cache-key-builder.ts";
 import { getRuntimeEnv, isRuntimeEnvInitialized, type RuntimeEnv } from "../config/runtime-env.ts";
+import { getCurrentRequestContext } from "../platform/adapters/fs/veryfront/multi-project-adapter.ts";
 
 /** Runtime-agnostic environment variable getter with RuntimeEnv support. */
 function getEnvValue(key: string, env?: RuntimeEnv): string | undefined {
@@ -245,7 +246,15 @@ export class ApiCacheBackend implements CacheBackend {
   }
 
   private getAuthToken(): string | null {
-    return getEnvValue("VERYFRONT_API_TOKEN", this.env) || null;
+    // First try static token from env (for non-proxy mode)
+    const envToken = getEnvValue("VERYFRONT_API_TOKEN", this.env);
+    if (envToken) return envToken;
+
+    // In proxy mode, get token from request context (set by MultiProjectFSAdapter)
+    const reqCtx = getCurrentRequestContext();
+    if (reqCtx?.token) return reqCtx.token;
+
+    return null;
   }
 
   private getProjectSlug(): string | null {

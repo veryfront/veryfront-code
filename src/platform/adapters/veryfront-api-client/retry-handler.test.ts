@@ -3,7 +3,15 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { requestWithRetry } from "./retry-handler.ts";
 import { VeryfrontAPIError } from "./types.ts";
 
+// Capture original fetch once at module level for reliable restoration
+const originalFetch = globalThis.fetch;
+
 describe("retry-handler", () => {
+  // Restore fetch after each test to prevent interference
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
   describe("requestWithRetry", () => {
     it("should export requestWithRetry function", () => {
       assertExists(requestWithRetry);
@@ -11,11 +19,9 @@ describe("retry-handler", () => {
     });
 
     describe("trace context propagation", () => {
-      let originalFetch: typeof globalThis.fetch;
       let capturedHeaders: Headers | null = null;
 
       beforeEach(() => {
-        originalFetch = globalThis.fetch;
         capturedHeaders = null;
         globalThis.fetch = ((_url, init) => {
           capturedHeaders = init?.headers as Headers;
@@ -23,10 +29,6 @@ describe("retry-handler", () => {
             new Response(JSON.stringify({ ok: true }), { status: 200 }),
           );
         }) as typeof fetch;
-      });
-
-      afterEach(() => {
-        globalThis.fetch = originalFetch;
       });
 
       it("should pass headers to fetch for trace context injection", async () => {
@@ -43,16 +45,10 @@ describe("retry-handler", () => {
     });
 
     describe("4xx error handling - no retry", () => {
-      let originalFetch: typeof globalThis.fetch;
       let fetchCallCount: number;
 
       beforeEach(() => {
-        originalFetch = globalThis.fetch;
         fetchCallCount = 0;
-      });
-
-      afterEach(() => {
-        globalThis.fetch = originalFetch;
       });
 
       it("should NOT retry 401 errors - fail fast for auth failures", async () => {
@@ -153,16 +149,10 @@ describe("retry-handler", () => {
     });
 
     describe("429 rate limiting - should retry", () => {
-      let originalFetch: typeof globalThis.fetch;
       let fetchCallCount: number;
 
       beforeEach(() => {
-        originalFetch = globalThis.fetch;
         fetchCallCount = 0;
-      });
-
-      afterEach(() => {
-        globalThis.fetch = originalFetch;
       });
 
       it("should retry 429 errors with backoff", async () => {
@@ -190,16 +180,10 @@ describe("retry-handler", () => {
     });
 
     describe("5xx server errors - should retry", () => {
-      let originalFetch: typeof globalThis.fetch;
       let fetchCallCount: number;
 
       beforeEach(() => {
-        originalFetch = globalThis.fetch;
         fetchCallCount = 0;
-      });
-
-      afterEach(() => {
-        globalThis.fetch = originalFetch;
       });
 
       it("should retry 500 errors with backoff", async () => {
@@ -305,16 +289,10 @@ describe("retry-handler", () => {
     });
 
     describe("network errors - should retry", () => {
-      let originalFetch: typeof globalThis.fetch;
       let fetchCallCount: number;
 
       beforeEach(() => {
-        originalFetch = globalThis.fetch;
         fetchCallCount = 0;
-      });
-
-      afterEach(() => {
-        globalThis.fetch = originalFetch;
       });
 
       it("should retry network failures", async () => {
@@ -340,16 +318,6 @@ describe("retry-handler", () => {
     });
 
     describe("successful requests", () => {
-      let originalFetch: typeof globalThis.fetch;
-
-      beforeEach(() => {
-        originalFetch = globalThis.fetch;
-      });
-
-      afterEach(() => {
-        globalThis.fetch = originalFetch;
-      });
-
       it("should return JSON response on success", async () => {
         globalThis.fetch = (() => {
           return Promise.resolve(
