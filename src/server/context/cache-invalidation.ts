@@ -4,6 +4,10 @@
  * Provides a unified interface for invalidating all project caches.
  * Used by Preview HMR to ensure fresh content after file changes.
  *
+ * NOTE: This module uses GLOBAL cache clearing functions. For multi-tenant
+ * deployments, prefer per-project clearing via the FSAdapter's invalidation
+ * callbacks which have access to projectId and projectDir.
+ *
  * @module server/context/cache-invalidation
  */
 
@@ -32,7 +36,11 @@ import { clearSnippetCache } from "../../rendering/snippet-renderer.ts";
  * - Router detection cache (app vs pages router)
  * - Snippet cache (MDX snippets)
  *
- * @param projectSlug - Project slug (used for logging)
+ * NOTE: This function uses GLOBAL cache clearing. In multi-tenant deployments,
+ * this clears caches for ALL projects. For per-project clearing, use the
+ * FSAdapter's invalidation callbacks which have projectId context.
+ *
+ * @param projectSlug - Project slug (used for logging only)
  * @param changedPaths - Array of changed file paths (for selective invalidation)
  */
 export function invalidateProjectCaches(

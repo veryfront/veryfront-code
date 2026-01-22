@@ -16,8 +16,8 @@ export class DevDashboardHandler extends BaseHandler {
     name: "DevDashboardHandler",
     priority: PRIORITY_HIGH_DEV as HandlerPriority,
     patterns: [{ pattern: "/_dev", exact: false }],
-    // Enable in local dev (isLocalDev checks NODE_ENV) or when server mode is development
-    enabled: (ctx) => isLocalDev() || ctx.mode === "development",
+    // Enable in local dev (isLocalDev checks NODE_ENV)
+    enabled: () => isLocalDev(),
   };
 
   protected override shouldHandle(req: Request, _ctx: HandlerContext): boolean {

@@ -7,6 +7,7 @@ import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
 import { ResponseBuilder } from "@veryfront/security/index.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 import { getConfig } from "@veryfront/config";
+import { isLocalDev } from "../../../src/server/context/request-context.ts";
 
 async function setupProject(): Promise<string> {
   const dir = await makeTempDir({ prefix: "vf_module_cache_" });
@@ -18,7 +19,7 @@ async function setupProject(): Promise<string> {
 function createBuilder(ctx: HandlerContext): ResponseBuilder {
   return new ResponseBuilder({
     securityConfig: ctx.securityConfig ?? undefined,
-    isDev: ctx.mode === "development",
+    isDev: isLocalDev(),
     cspUserHeader: ctx.cspUserHeader ?? undefined,
     adapter: ctx.adapter,
   });
@@ -42,7 +43,6 @@ describe("Module Handler Cache Tests", { sanitizeOps: false, sanitizeResources: 
         const handlerContext: HandlerContext = {
           projectDir,
           adapter: await getAdapter(),
-          mode: "development",
           moduleServerUrl: undefined,
           securityConfig: null,
           cspUserHeader: null,
@@ -103,7 +103,6 @@ describe("Module Handler Cache Tests", { sanitizeOps: false, sanitizeResources: 
         const handlerContext: HandlerContext = {
           projectDir,
           adapter: await getAdapter(),
-          mode: "development",
           moduleServerUrl: undefined,
           securityConfig: null,
           cspUserHeader: null,

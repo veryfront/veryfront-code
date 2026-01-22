@@ -45,12 +45,11 @@ describe("RenderContext", () => {
         projectDir: "/projects/test-project",
         projectId: "proj_123",
         projectSlug: "test-project",
-        mode: "production",
         adapter: mockAdapter as any,
         config: mockConfig as any,
         securityConfig: null,
         cspUserHeader: null,
-        proxyEnvironment: "production",
+        requestContext: { mode: "production", slug: "test-project", branch: null, token: "token_xyz" },
         releaseId: "rel_456",
         proxyToken: "token_xyz",
       };
@@ -60,7 +59,8 @@ describe("RenderContext", () => {
       assertEquals(ctx.projectId, "proj_123");
       assertEquals(ctx.projectSlug, "test-project");
       assertEquals(ctx.projectDir, "/projects/test-project");
-      assertEquals(ctx.mode, "production");
+      // mode is now derived from isLocalDev(), which is true in test environment
+      assertEquals(ctx.mode, "development");
       assertEquals(ctx.environment, "production");
       assertEquals(ctx.releaseId, "rel_456");
       assertEquals(ctx.proxyToken, "token_xyz");
@@ -72,12 +72,11 @@ describe("RenderContext", () => {
         projectDir: "/projects/test-project",
         projectId: "proj_123",
         projectSlug: "test-project",
-        mode: "development",
         adapter: mockAdapter as any,
         config: mockConfig as any,
         securityConfig: null,
         cspUserHeader: null,
-        proxyEnvironment: "preview",
+        requestContext: { mode: "preview", slug: "test-project", branch: null, token: "" },
       };
 
       const ctx = createRenderContext(handlerCtx);
@@ -89,7 +88,6 @@ describe("RenderContext", () => {
     it("uses __single__ for single-project mode", () => {
       const handlerCtx: HandlerContext = {
         projectDir: "/projects/test-project",
-        mode: "development",
         adapter: mockAdapter as any,
         config: mockConfig as any,
         securityConfig: null,
@@ -107,7 +105,6 @@ describe("RenderContext", () => {
       const handlerCtx: HandlerContext = {
         projectDir: "/projects/test-project",
         projectId: "proj_123",
-        mode: "development",
         adapter: mockAdapter as any,
         securityConfig: null,
         cspUserHeader: null,

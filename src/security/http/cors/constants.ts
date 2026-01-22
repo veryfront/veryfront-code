@@ -6,7 +6,7 @@
  */
 
 import { DEV_LOCALHOST_ORIGINS } from "#veryfront/config";
-import { getEnvironment } from "#veryfront/build/config/environment.ts";
+import { isLocalDev } from "#veryfront/server/context/request-context.ts";
 
 /**
  * Default allowed HTTP methods for CORS
@@ -39,8 +39,7 @@ export const HTTP_NO_CONTENT = 204;
 export const HTTP_FORBIDDEN = 403;
 
 /**
- * Check if running in production mode
- * Checks multiple environment variables for robustness
+ * Check if running in production mode (not local development)
  *
  * @returns true if in production, false if in development
  *
@@ -48,7 +47,7 @@ export const HTTP_FORBIDDEN = 403;
  */
 export function isProductionMode(): boolean {
   try {
-    return getEnvironment() === "production";
+    return !isLocalDev();
   } catch {
     // Default to production for safety (fail-secure)
     return true;

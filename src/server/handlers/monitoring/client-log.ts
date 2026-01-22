@@ -13,8 +13,8 @@ export class ClientLogHandler extends BaseHandler {
     patterns: [
       { pattern: "/_veryfront/log", exact: true, method: "POST" },
     ],
-    // Enable in local dev (isLocalDev checks NODE_ENV) or when server mode is development
-    enabled: (ctx) => isLocalDev() || ctx.mode === "development",
+    // Enable in local dev (isLocalDev checks NODE_ENV)
+    enabled: () => isLocalDev(),
   };
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {

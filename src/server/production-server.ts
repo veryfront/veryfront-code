@@ -39,10 +39,9 @@ export async function startUniversalServer(
   options: ServerOptions & {
     debug?: boolean;
     adapter?: RuntimeAdapter;
-    mode?: "development" | "production";
   },
 ): Promise<ServerHandle> {
-  const { projectDir, port, bindAddress = "0.0.0.0", signal, debug, mode = "production" } = options;
+  const { projectDir, port, bindAddress = "0.0.0.0", signal, debug } = options;
   const baseAdapter = options.adapter ?? (await runtime.get());
 
   // Bootstrap framework to initialize FSAdapter if configured
@@ -68,7 +67,6 @@ export async function startUniversalServer(
   const handler = createVeryfrontHandler(projectDir, adapter, {
     projectDir,
     debug,
-    mode,
     config: bootstrap.config,
   });
 

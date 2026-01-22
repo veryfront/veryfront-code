@@ -44,11 +44,6 @@ export interface SecurityConfig {
 export interface HandlerContext {
   projectDir: string;
   adapter: RuntimeAdapter;
-  /**
-   * @deprecated Use `isLocalDev()` for environment checks.
-   * This field will be removed in a future version.
-   */
-  mode: "development" | "production";
   moduleServerUrl?: string;
   securityConfig: SecurityConfig | null;
   cspUserHeader: string | null;
@@ -64,11 +59,6 @@ export interface HandlerContext {
   releaseId?: string;
   /** OAuth token from proxy (via x-token header) */
   proxyToken?: string;
-  /**
-   * @deprecated Use `ctx.requestContext?.mode` instead.
-   * This field will be removed in a future version.
-   */
-  proxyEnvironment?: "preview" | "production";
   /** Actual environment name from API (e.g., "Development", "Production") */
   environmentName?: string;
   /** Unified request context (token, slug, branch, mode) */

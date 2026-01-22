@@ -232,8 +232,20 @@ export class MultiProjectFSAdapter implements FSAdapter {
   async getAllSourceFiles(): Promise<Array<{ path: string; content?: string }>> {
     try {
       const adapter = await this.getAdapter();
-      return adapter.getAllSourceFiles?.() || [];
-    } catch {
+      // getAllSourceFiles is now async - await the result
+      const files = (await adapter.getAllSourceFiles?.()) || [];
+      if (files.length === 0) {
+        logger.debug("[MultiProjectFSAdapter] getAllSourceFiles returned empty", {
+          hasAdapter: !!adapter,
+          hasMethod: typeof adapter.getAllSourceFiles === "function",
+        });
+      }
+      return files;
+    } catch (error) {
+      // Log the error instead of silently swallowing it
+      logger.warn("[MultiProjectFSAdapter] getAllSourceFiles failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
       return [];
     }
   }

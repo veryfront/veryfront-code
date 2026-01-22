@@ -147,7 +147,7 @@ export async function generateHTMLShellParts(
   // - Production mode + deployed env → <link> for immutable caching
   // - Preview mode → inline for Preview HMR updates
   // - Local dev → inline for Local Dev HMR updates
-  const useProductionCSS = !isLocalDev() && options.proxyEnvironment === "production";
+  const useProductionCSS = !isLocalDev() && options.environment === "production";
 
   // Start with classes from all project source files (extracted fresh each request)
   const candidates = new Set<string>(options.projectClasses || []);
@@ -211,7 +211,7 @@ export async function generateHTMLShellParts(
   // - Local Dev HMR (hmr.js): enabled when isLocalDev() - hot reload during development
   // - Preview HMR (preview-hmr.js): enabled when mode === "preview" - Studio live updates
   // Skip Local Dev HMR when Preview HMR is active (avoid duplicate handling)
-  const skipDevHMR = options.proxyEnvironment === "preview";
+  const skipDevHMR = options.environment === "preview";
   const useDevScripts = isLocalDev();
   const modeScripts = useDevScripts
     ? getDevScripts(meta.slug || "", options.config, params, props, nonce, { skipDevHMR })
@@ -347,7 +347,7 @@ ${css}
 
   // Preview HMR script for live updates in cloud preview mode
   // Connects to /_ws WebSocket and reloads on file changes
-  const previewHMRScript = options.proxyEnvironment === "preview"
+  const previewHMRScript = options.environment === "preview"
     ? `<script src="/_veryfront/preview-hmr.js"${nonce ? ` nonce="${nonce}"` : ""}></script>`
     : "";
 

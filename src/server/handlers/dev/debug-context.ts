@@ -43,12 +43,18 @@ export class DebugContextHandler extends BaseHandler {
         },
       },
       context: {
-        mode: ctx.mode,
         projectSlug: ctx.projectSlug,
         projectId: ctx.projectId,
         projectDir: ctx.projectDir,
         proxyToken: ctx.proxyToken ? `[${ctx.proxyToken.length} chars]` : null,
-        proxyEnvironment: ctx.proxyEnvironment,
+        requestContext: ctx.requestContext
+          ? {
+            mode: ctx.requestContext.mode,
+            slug: ctx.requestContext.slug,
+            branch: ctx.requestContext.branch,
+            hasToken: !!ctx.requestContext.token,
+          }
+          : null,
         releaseId: ctx.releaseId,
         parsedDomain: ctx.parsedDomain,
       },

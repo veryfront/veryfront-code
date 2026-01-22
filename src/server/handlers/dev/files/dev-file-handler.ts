@@ -51,8 +51,8 @@ export class DevFileHandler extends BaseHandler {
     name: "DevFileHandler",
     priority: PRIORITY_MEDIUM_DEV_FILES as HandlerPriority, // Higher than static, lower than health
     patterns: [{ pattern: "/_veryfront/fs/", prefix: true, method: "GET" }],
-    // Enable in local dev (isLocalDev checks NODE_ENV) or when server mode is development
-    enabled: (ctx) => isLocalDev() || ctx.mode === "development",
+    // Enable in local dev (isLocalDev checks NODE_ENV)
+    enabled: () => isLocalDev(),
   };
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
