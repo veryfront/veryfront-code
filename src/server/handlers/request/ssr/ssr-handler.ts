@@ -138,7 +138,7 @@ export class SSRHandler extends BaseHandler {
         const prodMode = isProductionMode(ctx, url);
         const branch = ctx.parsedDomain?.branch ?? null;
 
-        _logger.info("[SSR] Using multi-project context - entering runWithContext", {
+        _logger.debug("[SSR] Using multi-project context - entering runWithContext", {
           projectSlug: ctx.projectSlug,
           productionMode: prodMode,
           releaseId: prodMode ? ctx.releaseId : undefined,
@@ -152,7 +152,7 @@ export class SSRHandler extends BaseHandler {
           ctx.projectSlug,
           ctx.proxyToken || "",
           () => {
-            _logger.info("[SSR] runWithContext callback started", {
+            _logger.debug("[SSR] runWithContext callback started", {
               projectSlug: ctx.projectSlug,
               slug,
               duration: `${(performance.now() - runWithContextStartTime).toFixed(2)}ms`,
@@ -201,7 +201,7 @@ export class SSRHandler extends BaseHandler {
     url: URL,
   ): Promise<HandlerResult> {
     const handleWithContextStartTime = performance.now();
-    _logger.info("[SSR] handleWithContext START", {
+    _logger.debug("[SSR] handleWithContext START", {
       projectSlug: ctx.projectSlug,
       projectId: ctx.projectId,
       slug,
@@ -235,7 +235,7 @@ export class SSRHandler extends BaseHandler {
     try {
       // Use centralized renderer factory with per-project LRU caching
       // This prevents memory growth in multi-project mode
-      _logger.info("[SSR] getRendererForProject START", {
+      _logger.debug("[SSR] getRendererForProject START", {
         projectSlug: ctx.projectSlug,
         projectId: ctx.projectId,
         slug,
@@ -243,7 +243,7 @@ export class SSRHandler extends BaseHandler {
       });
       const getRendererStartTime = performance.now();
       const renderer = await timeAsync("renderer-init", () => getRendererForProject(ctx));
-      _logger.info("[SSR] getRendererForProject DONE", {
+      _logger.debug("[SSR] getRendererForProject DONE", {
         projectSlug: ctx.projectSlug,
         slug,
         duration: `${(performance.now() - getRendererStartTime).toFixed(2)}ms`,
@@ -317,7 +317,7 @@ export class SSRHandler extends BaseHandler {
       const renderSessionId = `${ctx.projectSlug || "default"}-${slug || "index"}-${Date.now()}`;
       startRenderSession(renderSessionId, ctx.projectSlug, slug);
 
-      _logger.info("[SSR] renderer.renderPage START", {
+      _logger.debug("[SSR] renderer.renderPage START", {
         projectSlug: ctx.projectSlug,
         projectId,
         slug,
@@ -339,7 +339,7 @@ export class SSRHandler extends BaseHandler {
           proxyEnvironment: ctx.proxyEnvironment,
           projectSlug: ctx.projectSlug,
         }));
-      _logger.info("[SSR] renderer.renderPage DONE", {
+      _logger.debug("[SSR] renderer.renderPage DONE", {
         projectSlug: ctx.projectSlug,
         slug,
         duration: `${(performance.now() - renderPageStartTime).toFixed(2)}ms`,

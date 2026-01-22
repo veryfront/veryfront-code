@@ -75,7 +75,7 @@ export class ProxyFSAdapterManager {
     branch?: string | null,
   ): Promise<VeryfrontFSAdapter> {
     const getAdapterStartTime = performance.now();
-    logger.info("[ProxyFSAdapterManager] getAdapter START", {
+    logger.debug("[ProxyFSAdapterManager] getAdapter START", {
       projectSlug,
       productionMode,
       releaseId,
@@ -230,7 +230,7 @@ export class ProxyFSAdapterManager {
         throw error;
       }
 
-      logger.info("[ProxyFSAdapterManager] Reusing cached adapter", {
+      logger.debug("[ProxyFSAdapterManager] Reusing cached adapter", {
         cacheKey,
         duration: `${(performance.now() - getAdapterStartTime).toFixed(2)}ms`,
       });
@@ -241,13 +241,13 @@ export class ProxyFSAdapterManager {
     // Check for pending adapter creation to prevent concurrent creation
     const pending = this.pendingAdapters.get(cacheKey);
     if (pending) {
-      logger.info("[ProxyFSAdapterManager] Waiting for pending adapter creation", {
+      logger.debug("[ProxyFSAdapterManager] Waiting for pending adapter creation", {
         cacheKey,
         projectSlug,
       });
       const waitStartTime = performance.now();
       const adapter = await pending;
-      logger.info("[ProxyFSAdapterManager] Pending adapter ready", {
+      logger.debug("[ProxyFSAdapterManager] Pending adapter ready", {
         cacheKey,
         waitDuration: `${(performance.now() - waitStartTime).toFixed(2)}ms`,
         totalDuration: `${(performance.now() - getAdapterStartTime).toFixed(2)}ms`,
@@ -260,7 +260,7 @@ export class ProxyFSAdapterManager {
       this.evictLeastRecentlyUsed();
     }
 
-    logger.info("[ProxyFSAdapterManager] Creating new adapter", {
+    logger.debug("[ProxyFSAdapterManager] Creating new adapter", {
       cacheKey,
       projectSlug,
       elapsedBeforeCreate: `${(performance.now() - getAdapterStartTime).toFixed(2)}ms`,
@@ -353,14 +353,14 @@ export class ProxyFSAdapterManager {
     // Store in pending map to prevent concurrent creation
     const initPromise = (async () => {
       const initStartTime = performance.now();
-      logger.info("[ProxyFSAdapterManager] Adapter initialization START", {
+      logger.debug("[ProxyFSAdapterManager] Adapter initialization START", {
         cacheKey,
         projectSlug,
       });
       projectAdapter.initializing = adapter.initialize();
       try {
         await projectAdapter.initializing;
-        logger.info("[ProxyFSAdapterManager] Adapter initialization DONE", {
+        logger.debug("[ProxyFSAdapterManager] Adapter initialization DONE", {
           cacheKey,
           projectSlug,
           duration: `${(performance.now() - initStartTime).toFixed(2)}ms`,

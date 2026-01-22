@@ -68,7 +68,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
     const branch = options?.branch ?? null;
     const environmentName = options?.environmentName ?? null;
 
-    logger.info("[MultiProjectFSAdapter] runWithContext START", {
+    logger.debug("[MultiProjectFSAdapter] runWithContext START", {
       projectSlug,
       hasToken: !!token,
       productionMode,
@@ -91,14 +91,14 @@ export class MultiProjectFSAdapter implements FSAdapter {
       environmentName,
     };
 
-    logger.info("[MultiProjectFSAdapter] asyncLocalStorage.run START", { projectSlug });
+    logger.debug("[MultiProjectFSAdapter] asyncLocalStorage.run START", { projectSlug });
     return asyncLocalStorage.run(context, async () => {
-      logger.info("[MultiProjectFSAdapter] Inside asyncLocalStorage.run callback", {
+      logger.debug("[MultiProjectFSAdapter] Inside asyncLocalStorage.run callback", {
         projectSlug,
         duration: `${(performance.now() - runWithContextStartTime).toFixed(2)}ms`,
       });
       const result = await fn();
-      logger.info("[MultiProjectFSAdapter] runWithContext callback complete", {
+      logger.debug("[MultiProjectFSAdapter] runWithContext callback complete", {
         projectSlug,
         totalDuration: `${(performance.now() - runWithContextStartTime).toFixed(2)}ms`,
       });
@@ -145,7 +145,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
     const releaseId = context.releaseId ?? null;
     const environmentName = context.environmentName ?? null;
 
-    logger.info("[MultiProjectFSAdapter] getAdapter START", {
+    logger.debug("[MultiProjectFSAdapter] getAdapter START", {
       projectSlug: context.projectSlug,
       productionMode,
       releaseId,
@@ -163,7 +163,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
       context.branch,
     );
 
-    logger.info("[MultiProjectFSAdapter] getAdapter DONE", {
+    logger.debug("[MultiProjectFSAdapter] getAdapter DONE", {
       projectSlug: context.projectSlug,
       duration: `${(performance.now() - getAdapterStartTime).toFixed(2)}ms`,
     });

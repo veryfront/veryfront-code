@@ -347,7 +347,7 @@ export async function getConfig(
   const getConfigStartTime = performance.now();
   const cacheKeyForLog = options?.cacheKey || "unknown";
 
-  serverLogger.info("[CONFIG] getConfig START", {
+  serverLogger.debug("[CONFIG] getConfig START", {
     projectDir,
     cacheKey: cacheKeyForLog,
   });
@@ -364,7 +364,7 @@ export async function getConfig(
         isVirtualFS && !!options?.cacheKey,
       );
 
-      serverLogger.info("[CONFIG] Cache key built", {
+      serverLogger.debug("[CONFIG] Cache key built", {
         effectiveCacheKey,
         isVirtualFS,
         cacheKey: cacheKeyForLog,
@@ -372,7 +372,7 @@ export async function getConfig(
 
       const cached = configCacheByProject.get(effectiveCacheKey);
       if (cached && cached.revision === cacheRevision) {
-        serverLogger.info("[CONFIG] Cache HIT - using cached config", {
+        serverLogger.debug("[CONFIG] Cache HIT - using cached config", {
           cacheKey: effectiveCacheKey,
           isVirtualFS,
           duration: `${(performance.now() - getConfigStartTime).toFixed(2)}ms`,
@@ -380,7 +380,7 @@ export async function getConfig(
         return cached.config;
       }
 
-      serverLogger.info("[CONFIG] Cache MISS - loading config", {
+      serverLogger.debug("[CONFIG] Cache MISS - loading config", {
         cacheKey: effectiveCacheKey,
         isVirtualFS,
       });
@@ -390,7 +390,7 @@ export async function getConfig(
       for (const configFile of configFiles) {
         const configPath = join(projectDir, configFile);
 
-        serverLogger.info("[CONFIG] Checking config file existence", {
+        serverLogger.debug("[CONFIG] Checking config file existence", {
           configFile,
           configPath,
           cacheKey: cacheKeyForLog,
@@ -398,7 +398,7 @@ export async function getConfig(
 
         const existsStart = performance.now();
         const exists = await adapter.fs.exists(configPath);
-        serverLogger.info("[CONFIG] Config file existence check done", {
+        serverLogger.debug("[CONFIG] Config file existence check done", {
           configFile,
           exists,
           duration: `${(performance.now() - existsStart).toFixed(2)}ms`,
@@ -408,14 +408,14 @@ export async function getConfig(
         if (!exists) continue;
 
         try {
-          serverLogger.info("[CONFIG] Loading config file START", {
+          serverLogger.debug("[CONFIG] Loading config file START", {
             configFile,
             configPath,
             cacheKey: cacheKeyForLog,
           });
           const loadStart = performance.now();
           const merged = await loadAndMergeConfig(configPath, effectiveCacheKey, adapter);
-          serverLogger.info("[CONFIG] Loading config file DONE", {
+          serverLogger.debug("[CONFIG] Loading config file DONE", {
             configFile,
             duration: `${(performance.now() - loadStart).toFixed(2)}ms`,
             totalDuration: `${(performance.now() - getConfigStartTime).toFixed(2)}ms`,
@@ -432,7 +432,7 @@ export async function getConfig(
         }
       }
 
-      serverLogger.info("[CONFIG] No config file found, using defaults", {
+      serverLogger.debug("[CONFIG] No config file found, using defaults", {
         effectiveCacheKey,
         duration: `${(performance.now() - getConfigStartTime).toFixed(2)}ms`,
       });
