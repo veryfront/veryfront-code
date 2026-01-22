@@ -54,7 +54,7 @@ export async function getProjectReact(): Promise<typeof React> {
 
   // Use Singleflight to ensure only one concurrent initialization
   // This prevents race conditions when many requests arrive before React is loaded
-  return reactLoadFlight.do("react", async () => {
+  return await reactLoadFlight.do("react", async () => {
     // Double-check after acquiring flight
     if (projectReactCache) {
       return projectReactCache;
@@ -81,7 +81,7 @@ export async function getReactDOMServer(): Promise<ReactDOMServer> {
 
   // Use Singleflight to ensure only one concurrent initialization
   // This prevents race conditions when many requests arrive before ReactDOM server is loaded
-  return reactDOMServerLoadFlight.do("react-dom-server", async () => {
+  return await reactDOMServerLoadFlight.do("react-dom-server", async () => {
     // Double-check after acquiring flight
     if (reactDOMServerCache) {
       return reactDOMServerCache;
@@ -95,8 +95,12 @@ export async function getReactDOMServer(): Promise<ReactDOMServer> {
     const renderToString = serverModule.renderToString;
     const renderToStaticMarkup = serverModule.renderToStaticMarkup;
 
-    let renderToPipeableStream: typeof import("react-dom/server").renderToPipeableStream | undefined;
-    let renderToReadableStream: typeof import("react-dom/server").renderToReadableStream | undefined;
+    let renderToPipeableStream:
+      | typeof import("react-dom/server").renderToPipeableStream
+      | undefined;
+    let renderToReadableStream:
+      | typeof import("react-dom/server").renderToReadableStream
+      | undefined;
 
     if (versionInfo.isReact18 || versionInfo.isReact19) {
       renderToPipeableStream = serverModule
