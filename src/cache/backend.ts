@@ -8,20 +8,27 @@
  */
 
 import { logger } from "#veryfront/utils";
+import { getRedisClient, isRedisConfigured, type RedisClient } from "../utils/redis-client.ts";
 import { runtime } from "../platform/adapters/registry.ts";
 import { tryGetCacheKeyContext } from "./cache-key-builder.ts";
 import { getRuntimeEnv, isRuntimeEnvInitialized, type RuntimeEnv } from "../config/runtime-env.ts";
 import { getCurrentRequestContext } from "../platform/adapters/fs/veryfront/multi-project-adapter.ts";
 
+const ENV_KEY_MAP: Record<string, keyof RuntimeEnv | undefined> = {
+  VERYFRONT_API_BASE_URL: "apiBaseUrl",
+  VERYFRONT_API_TOKEN: "apiToken",
+};
+
 /** Runtime-agnostic environment variable getter with RuntimeEnv support. */
 function getEnvValue(key: string, env?: RuntimeEnv): string | undefined {
-  // If RuntimeEnv is provided or initialized, use it for better test isolation
-  if (env) {
-    return getEnvFromRuntimeEnv(key, env);
+  const runtimeEnv = env ?? (isRuntimeEnvInitialized() ? getRuntimeEnv() : null);
+
+  if (runtimeEnv) {
+    if (key === "PROXY_MODE") return runtimeEnv.proxyMode ? "1" : undefined;
+    const prop = ENV_KEY_MAP[key];
+    return prop ? (runtimeEnv[prop] as string | undefined) : undefined;
   }
-  if (isRuntimeEnvInitialized()) {
-    return getEnvFromRuntimeEnv(key, getRuntimeEnv());
-  }
+
   // Fallback for bootstrap scenarios before RuntimeEnv is initialized
   if (runtime.isInitialized()) {
     return runtime.getSync().env.get(key);
@@ -29,20 +36,6 @@ function getEnvValue(key: string, env?: RuntimeEnv): string | undefined {
   // deno-lint-ignore no-explicit-any
   const g = globalThis as any;
   return g.Deno?.env?.get(key) ?? g.process?.env?.[key];
-}
-
-/** Map env var names to RuntimeEnv properties. */
-function getEnvFromRuntimeEnv(key: string, env: RuntimeEnv): string | undefined {
-  switch (key) {
-    case "VERYFRONT_API_BASE_URL":
-      return env.apiBaseUrl;
-    case "VERYFRONT_API_TOKEN":
-      return env.apiToken;
-    case "PROXY_MODE":
-      return env.proxyMode ? "1" : undefined;
-    default:
-      return undefined;
-  }
 }
 
 /** Cache backend interface. */
@@ -212,9 +205,6 @@ export class RedisCacheBackend implements CacheBackend {
   }
 }
 
-// Import Redis types and functions
-import { getRedisClient, isRedisConfigured, type RedisClient } from "../utils/redis-client.ts";
-
 /**
  * API cache backend for production.
  * Uses veryfront-api for centralized, project-scoped cache management.
@@ -246,19 +236,14 @@ export class ApiCacheBackend implements CacheBackend {
   }
 
   private getAuthToken(): string | null {
-    // First try static token from env (for non-proxy mode)
-    const envToken = getEnvValue("VERYFRONT_API_TOKEN", this.env);
-    if (envToken) return envToken;
-
-    // In proxy mode, get token from request context (set by MultiProjectFSAdapter)
-    const reqCtx = getCurrentRequestContext();
-    if (reqCtx?.token) return reqCtx.token;
-
-    return null;
+    // Static token from env (non-proxy mode) or request context token (proxy mode)
+    return getEnvValue("VERYFRONT_API_TOKEN", this.env) ??
+      getCurrentRequestContext()?.token ??
+      null;
   }
 
   private getProjectSlug(): string | null {
-    return tryGetCacheKeyContext()?.projectId || null;
+    return tryGetCacheKeyContext()?.projectId ?? null;
   }
 
   private async request<T>(
@@ -275,11 +260,10 @@ export class ApiCacheBackend implements CacheBackend {
     }
 
     const url = `${this.apiBaseUrl}/projects/${projectSlug}/cache${path}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
 
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
-
       const response = await fetch(url, {
         method,
         headers: {
@@ -290,24 +274,18 @@ export class ApiCacheBackend implements CacheBackend {
         signal: controller.signal,
       });
 
-      clearTimeout(timeoutId);
-
       if (!response.ok) {
-        logger.debug("[ApiCacheBackend] Request failed", {
-          status: response.status,
-          path,
-        });
+        logger.debug("[ApiCacheBackend] Request failed", { status: response.status, path });
         return null;
       }
 
       return (await response.json()) as T;
     } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") {
-        logger.debug("[ApiCacheBackend] Request timeout", { path });
-      } else {
-        logger.debug("[ApiCacheBackend] Request error", { path, error });
-      }
+      const isTimeout = error instanceof Error && error.name === "AbortError";
+      logger.debug(`[ApiCacheBackend] Request ${isTimeout ? "timeout" : "error"}`, { path, error });
       return null;
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 
@@ -356,7 +334,7 @@ export interface CacheBackendConfig {
 }
 
 /** Check if API cache backend is available (proxy mode with API URL). */
-function isApiCacheAvailable(env?: RuntimeEnv): boolean {
+export function isApiCacheAvailable(env?: RuntimeEnv): boolean {
   return getEnvValue("PROXY_MODE", env) === "1" && !!getEnvValue("VERYFRONT_API_BASE_URL", env);
 }
 
