@@ -4,7 +4,7 @@ export type { HTMLMetadata, MDXFrontmatter } from "#veryfront/transforms/mdx/typ
 
 export interface HTMLGenerationOptions {
   /**
-   * @deprecated Use `isLocalDev()` for environment checks.
+   * @deprecated Use `options.isLocalDev` for environment checks.
    */
   mode: "development" | "production";
   config: VeryfrontConfig;
@@ -40,7 +40,7 @@ export interface HTMLGenerationOptions {
   headings?: Array<{ id: string; text: string; level: number }>;
   /** Tailwind classes extracted from all project source files */
   projectClasses?: Set<string>;
-  /** Whether running in local development mode (overrides isLocalDev() for testing) */
+  /** Whether running in local development mode */
   isLocalDev?: boolean;
 }
 

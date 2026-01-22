@@ -17,7 +17,6 @@ import {
   getProductionStyles,
 } from "./styles-builder/index.ts";
 import type { HTMLGenerationOptions } from "./types.ts";
-import { isLocalDev } from "../server/context/request-context.ts";
 import {
   buildContentAttributes,
   buildImportMapJson,
@@ -147,7 +146,7 @@ export async function generateHTMLShellParts(
   // - Production mode + deployed env → <link> for immutable caching
   // - Preview mode → inline for Preview HMR updates
   // - Local dev → inline for Local Dev HMR updates
-  const localDev = options.isLocalDev ?? isLocalDev();
+  const localDev = options.isLocalDev ?? false;
   const useProductionCSS = !localDev && options.environment === "production";
 
   // Start with classes from all project source files (extracted fresh each request)

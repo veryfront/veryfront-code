@@ -16,7 +16,6 @@ import {
   buildRenderCachePrefix,
   parseRenderCacheKey,
 } from "../../cache/keys.ts";
-import { isLocalDev } from "../../server/context/request-context.ts";
 
 /**
  * Environment type for rendering context
@@ -47,7 +46,7 @@ export interface RenderContext {
   /** Veryfront configuration for this project */
   config: VeryfrontConfig;
 
-  /** Rendering mode (derived from isLocalDev()) */
+  /** Rendering mode (derived from ctx.requestContext?.isLocalDev) */
   mode: "development" | "production";
 
   /** Runtime adapter for filesystem/API access */
@@ -137,7 +136,7 @@ export function createRenderContext(
     projectSlug,
     projectDir: ctx.projectDir,
     config: ctx.config,
-    mode: isLocalDev() ? "development" : "production",
+    mode: ctx.requestContext?.isLocalDev ? "development" : "production",
     adapter: ctx.adapter,
     cachePrefix,
     environment,

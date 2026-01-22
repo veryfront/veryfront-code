@@ -49,7 +49,7 @@ describe("RenderContext", () => {
         config: mockConfig as any,
         securityConfig: null,
         cspUserHeader: null,
-        requestContext: { mode: "production", slug: "test-project", branch: null, token: "token_xyz" },
+        requestContext: { mode: "production", slug: "test-project", branch: null, token: "token_xyz", isLocalDev: true },
         releaseId: "rel_456",
         proxyToken: "token_xyz",
       };
@@ -59,7 +59,7 @@ describe("RenderContext", () => {
       assertEquals(ctx.projectId, "proj_123");
       assertEquals(ctx.projectSlug, "test-project");
       assertEquals(ctx.projectDir, "/projects/test-project");
-      // mode is now derived from isLocalDev(), which is true in test environment
+      // mode is "development" in test environment (NODE_ENV !== "production")
       assertEquals(ctx.mode, "development");
       assertEquals(ctx.environment, "production");
       assertEquals(ctx.releaseId, "rel_456");
@@ -76,7 +76,7 @@ describe("RenderContext", () => {
         config: mockConfig as any,
         securityConfig: null,
         cspUserHeader: null,
-        requestContext: { mode: "preview", slug: "test-project", branch: null, token: "" },
+        requestContext: { mode: "preview", slug: "test-project", branch: null, token: "", isLocalDev: true },
       };
 
       const ctx = createRenderContext(handlerCtx);

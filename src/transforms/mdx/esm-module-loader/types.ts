@@ -92,6 +92,8 @@ export interface ModuleFetcherContext {
   projectId: string;
   /** Project slug for HTTP fallback URLs (multi-project mode) */
   projectSlug?: string;
+  /** Whether running in local development mode (affects HTTP fallback behavior) */
+  isLocalDev?: boolean;
 }
 
 /**

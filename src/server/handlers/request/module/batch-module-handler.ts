@@ -11,7 +11,6 @@ import type { HandlerContext, HandlerResult } from "../../types.ts";
 import type { ResponseBuilder } from "#veryfront/security/index.ts";
 import { handleModuleBatch } from "#veryfront/modules/server/module-batch-handler.ts";
 import { serverLogger as logger } from "#veryfront/utils";
-import { isLocalDev } from "../../../context/request-context.ts";
 
 /**
  * Handle batch module requests at /_vf_modules/_batch.
@@ -42,7 +41,7 @@ export async function handleBatchModuleEndpoint(
     projectSlug: ctx.projectSlug,
     projectId: ctx.projectId,
     branch: ctx.parsedDomain?.branch ?? null,
-    dev: isLocalDev(),
+    dev: ctx.requestContext?.isLocalDev ?? false,
     // Pass security config for opt-in import restrictions
     allowedImportDirs: ctx.config?.security?.allowedImportDirs,
   });

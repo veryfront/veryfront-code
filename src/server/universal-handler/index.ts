@@ -80,7 +80,7 @@ import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import { SecurityConfigLoader } from "#veryfront/security/http/config.ts";
 import { getConfig } from "#veryfront/config/loader.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
-import { createRequestContext, isLocalDev } from "../context/request-context.ts";
+import { createRequestContext } from "../context/request-context.ts";
 
 // Import handlers (from new location)
 import { AuthHandler } from "#veryfront/security/http/auth.ts";
@@ -420,7 +420,7 @@ export function createVeryfrontHandler(
           parsedDomainSlug: parsedDomain.slug,
           finalProjectSlug: projectSlug,
           isVeryfrontDomain: parsedDomain.isVeryfrontDomain,
-          isLocalDev: isLocalDev(),
+          isLocalDev: reqCtx.isLocalDev,
         });
 
         // For custom domains without a slug, look up the project via API

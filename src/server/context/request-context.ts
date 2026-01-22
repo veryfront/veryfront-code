@@ -93,26 +93,6 @@ export function createRequestContext(
 }
 
 /**
- * Check if running in local development environment.
- *
- * PREFER using `ctx.isLocalDev` when you have a RequestContext available.
- * This function reads global env and should only be used for:
- * - Handler registration (before any request context exists)
- * - Module-level constants
- *
- * When true:
- * - ALL caching is disabled (both HTTP headers and memory caches)
- * - Local Dev HMR is enabled
- * - Debug endpoints are available
- * - Verbose error messages
- *
- * @returns true if NODE_ENV/DENO_ENV is not "production"
- */
-export function isLocalDev(): boolean {
-  return DEFAULT_ENV_CONFIG.isLocalDev;
-}
-
-/**
  * Determine the caching strategy based on environment and mode.
  *
  * - `none`: No caching at all (development - always fresh)
@@ -148,19 +128,17 @@ export function shouldEnableCache(ctx: RequestContext): boolean {
  * Returns true for:
  * - Local development (always fresh, no caching)
  * - Preview mode (browser must fetch fresh, server handles caching)
+ * - When no context is provided (safest default)
  *
  * In production mode, callers should use appropriate cache headers
  * (short, medium, immutable) based on content type.
  *
- * @param ctx - Request context (optional - falls back to isLocalDev() if not provided)
+ * @param ctx - Request context (optional - defaults to no-cache when undefined)
  * @returns true if HTTP headers should be no-cache
  */
 export function shouldUseNoCacheHeaders(ctx?: RequestContext): boolean {
-  if (ctx) {
-    if (ctx.isLocalDev) return true;
-    if (ctx.mode === "preview") return true;
-    return false;
-  }
-  // Fallback when no context: use global isLocalDev()
-  return isLocalDev();
+  if (!ctx) return true; // Safe default when context unavailable
+  if (ctx.isLocalDev) return true;
+  if (ctx.mode === "preview") return true;
+  return false;
 }

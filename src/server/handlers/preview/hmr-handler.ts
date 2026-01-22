@@ -5,7 +5,7 @@
  * Listens to ReloadNotifier events (triggered by API poke) and broadcasts to browsers.
  *
  * Enabled when:
- * - isLocalDev() is true (local development)
+ * - ctx.requestContext?.isLocalDev is true (local development)
  * - ctx.requestContext?.mode === "preview" (cloud preview via .preview. hostname)
  */
 
@@ -16,7 +16,6 @@ import { ReloadNotifier } from "../../reload-notifier.ts";
 import { RateLimiter, setupWebSocketHandlers } from "#veryfront/modules/server/index.ts";
 import { HMR_MAX_MESSAGE_SIZE_BYTES, HMR_MAX_MESSAGES_PER_MINUTE } from "#veryfront/utils";
 import { invalidateProjectCaches } from "../../context/cache-invalidation.ts";
-import { isLocalDev } from "../../context/request-context.ts";
 
 // Priority between auth (0) and cors (50)
 const PRIORITY_HMR = 25 as HandlerPriority;
@@ -48,9 +47,9 @@ export class HMRHandler extends BaseHandler {
     priority: PRIORITY_HMR,
     patterns: [{ pattern: "/_ws", exact: true }],
     // Enable in preview mode (for live Studio updates) and local dev (for HMR)
-    // - isLocalDev(): env !== "production" (enables local dev HMR)
+    // - ctx.requestContext?.isLocalDev: env !== "production" (enables local dev HMR)
     // - ctx.requestContext?.mode === "preview": hostname has .preview. (enables preview HMR)
-    enabled: (ctx) => isLocalDev() || ctx.requestContext?.mode === "preview",
+    enabled: (ctx) => ctx.requestContext?.isLocalDev || ctx.requestContext?.mode === "preview",
   };
 
   /**

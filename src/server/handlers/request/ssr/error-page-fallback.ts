@@ -13,7 +13,6 @@ import type { ResponseBuilder } from "#veryfront/security/index.ts";
 import { join as joinPath } from "#veryfront/platform/compat/path/index.ts";
 import { serverLogger as logger } from "#veryfront/utils";
 import { buildErrorPageCacheKey } from "#veryfront/cache";
-import { isLocalDev } from "../../../context/request-context.ts";
 
 type ErrorPageType = "404" | "500" | "_error";
 
@@ -193,7 +192,7 @@ async function loadErrorComponent(
     filePath,
     ctx.projectDir,
     ctx.adapter,
-    { projectId: ctx.projectId ?? ctx.projectDir, dev: isLocalDev() },
+    { projectId: ctx.projectId ?? ctx.projectDir, dev: ctx.requestContext?.isLocalDev ?? false },
   );
   if (typeof Component === "function") {
     return Component as React.ComponentType<unknown>;

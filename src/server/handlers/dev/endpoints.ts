@@ -6,7 +6,6 @@
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
-import { isLocalDev } from "../../context/request-context.ts";
 
 /**
  * Shared HMR JS update logic used by both local dev and preview HMR scripts.
@@ -81,9 +80,9 @@ export class DevEndpointsHandler extends BaseHandler {
       { pattern: "/_veryfront/preview-hmr.js", exact: true },
     ],
     // Enable in local dev (for dev HMR/error overlay) OR preview mode (for live updates)
-    // - isLocalDev(): env !== "production" (enables local dev scripts)
+    // - ctx.requestContext?.isLocalDev: env !== "production" (enables local dev scripts)
     // - ctx.requestContext?.mode === "preview": hostname has .preview. (enables preview HMR)
-    enabled: (ctx) => isLocalDev() || ctx.requestContext?.mode === "preview",
+    enabled: (ctx) => ctx.requestContext?.isLocalDev || ctx.requestContext?.mode === "preview",
   };
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {

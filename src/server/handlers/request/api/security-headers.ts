@@ -14,7 +14,6 @@ import {
   generateNonce,
   getSecurityHeader as coreGetSecurityHeader,
 } from "#veryfront/security/http/response/security-handler.ts";
-import { isLocalDev } from "../../../context/request-context.ts";
 
 /**
  * Builds a Content Security Policy string from handler context
@@ -23,7 +22,7 @@ import { isLocalDev } from "../../../context/request-context.ts";
  * @returns CSP string
  */
 export function buildCSP(ctx: HandlerContext): string {
-  const isDev = isLocalDev();
+  const isDev = ctx.requestContext?.isLocalDev ?? false;
   const nonce = generateNonce();
   return coreBuildCSP(isDev, nonce, ctx.cspUserHeader ?? null, ctx.securityConfig, ctx.adapter);
 }
@@ -54,7 +53,7 @@ export function applySecurityHeaders(
   headers: Headers,
   ctx: HandlerContext,
 ): void {
-  const isDev = isLocalDev();
+  const isDev = ctx.requestContext?.isLocalDev ?? false;
   const nonce = generateNonce();
   coreApplySecurityHeaders(
     headers,

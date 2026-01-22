@@ -47,5 +47,4 @@ export {
   DEFAULT_METHODS,
   HTTP_FORBIDDEN,
   HTTP_NO_CONTENT,
-  isProductionMode,
 } from "./constants.ts";
