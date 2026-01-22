@@ -113,10 +113,18 @@ export class StatOperations {
   }
 
   private async ensureIndexBuilt(): Promise<void> {
-    if (this.fileIndex && this.directoryIndex) return;
+    if (this.fileIndex && this.directoryIndex) {
+      logger.debug("[StatOperations] ensureIndexBuilt - index already built");
+      return;
+    }
 
     if (this.buildingIndex) {
+      logger.debug("[StatOperations] ensureIndexBuilt - waiting for concurrent build");
+      const waitStart = performance.now();
       await this.buildingIndex;
+      logger.debug("[StatOperations] ensureIndexBuilt - concurrent build done", {
+        waitMs: Math.round(performance.now() - waitStart),
+      });
       return;
     }
 
@@ -126,7 +134,18 @@ export class StatOperations {
   }
 
   private async buildIndex(): Promise<void> {
+    const buildStart = performance.now();
+    logger.debug("[StatOperations] buildIndex START");
+
+    const fetchStart = performance.now();
     const allFiles = await this.getAllFilesRaw();
+    const fetchMs = Math.round(performance.now() - fetchStart);
+    logger.debug("[StatOperations] buildIndex - getAllFilesRaw done", {
+      fetchMs,
+      fileCount: allFiles.length,
+    });
+
+    const indexStart = performance.now();
     const fileIdx = new Map<string, ProjectFile>();
     const dirIdx = new Set<string>();
     const pathMap = new Map<string, string>();
@@ -163,10 +182,15 @@ export class StatOperations {
     this.directoryIndex = dirIdx;
     this.pathMapping = pathMap;
 
-    logger.debug("[StatOperations] Index built", {
+    const indexMs = Math.round(performance.now() - indexStart);
+    const totalMs = Math.round(performance.now() - buildStart);
+    logger.info("[StatOperations] Index built", {
       files: fileIdx.size,
       directories: dirIdx.size,
       pathMappings: pathMap.size,
+      fetchMs,
+      indexMs,
+      totalMs,
     });
   }
 
@@ -190,10 +214,22 @@ export class StatOperations {
     const cacheKey = buildFileListCacheKey(ctx);
 
     // Check cache first (memory + Redis)
+    const cacheStart = performance.now();
     const cached = await this.cache.getAsync<ProjectFile[]>(cacheKey);
+    const cacheMs = Math.round(performance.now() - cacheStart);
     if (cached) {
+      logger.debug("[StatOperations] getAllFilesRaw - cache HIT", {
+        cacheKey,
+        cacheMs,
+        fileCount: cached.length,
+      });
       return cached;
     }
+
+    logger.warn("[StatOperations] getAllFilesRaw - cache MISS, fetching from API", {
+      cacheKey,
+      cacheMs,
+    });
 
     // Fetch based on source type
     const isPublished = ctx?.sourceType !== "branch";
@@ -224,6 +260,7 @@ export class StatOperations {
   }
 
   async resolveFile(basePath: string): Promise<string | null> {
+    const resolveStart = performance.now();
     const normalizedPath = this.normalizer.normalize(basePath);
     const ctx = this.contextProvider?.getContentContext();
     const cacheKey = `${buildStatCacheKeyPrefix(ctx)}:resolve:${normalizedPath}`;
@@ -235,32 +272,50 @@ export class StatOperations {
     });
 
     // Check cache first (memory + Redis)
+    const cacheCheckStart = performance.now();
     const cached = await this.cache.getAsync<string>(cacheKey);
+    const cacheCheckMs = Math.round(performance.now() - cacheCheckStart);
     if (cached === NOT_FOUND_SENTINEL) {
-      logger.debug("[StatOperations] resolveFile cache hit (not found)", { normalizedPath });
+      logger.debug("[StatOperations] resolveFile cache hit (not found)", {
+        normalizedPath,
+        cacheCheckMs,
+      });
       return null;
     }
     if (cached !== undefined) {
-      logger.debug("[StatOperations] resolveFile cache hit", { normalizedPath, cached });
+      logger.debug("[StatOperations] resolveFile cache hit", {
+        normalizedPath,
+        cached,
+        cacheCheckMs,
+      });
       return cached;
     }
 
+    const indexStart = performance.now();
     await this.ensureIndexBuilt();
+    const indexMs = Math.round(performance.now() - indexStart);
 
     const fileIdx = this.fileIndex;
     if (!fileIdx) {
-      logger.debug("[StatOperations] resolveFile - no file index");
+      logger.debug("[StatOperations] resolveFile - no file index", { indexMs });
       return null;
     }
 
     logger.debug("[StatOperations] resolveFile index lookup", {
       normalizedPath,
       fileCount: fileIdx.size,
+      indexMs,
     });
 
     // 1. Try exact match first
     if (fileIdx.has(normalizedPath)) {
-      logger.debug("[StatOperations] resolveFile exact match found", { normalizedPath });
+      const totalMs = Math.round(performance.now() - resolveStart);
+      logger.debug("[StatOperations] resolveFile exact match found", {
+        normalizedPath,
+        cacheCheckMs,
+        indexMs,
+        totalMs,
+      });
       this.cache.set(cacheKey, normalizedPath);
       return normalizedPath;
     }

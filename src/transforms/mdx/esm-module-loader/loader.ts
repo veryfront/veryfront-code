@@ -16,6 +16,7 @@ import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { loadImportMap, transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/index.ts";
 import { cacheHttpImportsToLocal } from "../../esm/http-cache.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { replaceSpecifiers } from "../../esm/lexer.ts";
 import { setupSSRGlobals } from "../../../rendering/ssr-globals.ts";
 import type { MDXFrontmatter, MDXModule } from "../types.ts";
@@ -375,12 +376,18 @@ async function transformJsxImports(
 }
 
 /**
- * Cache HTTP imports to local file:// paths for runtime-agnostic SSR.
+ * Cache HTTP imports to local file:// paths for Node/Bun SSR.
+ * Deno supports HTTP imports natively, so we skip this step to avoid
+ * creating pod-specific file:// paths that break distributed caching.
  */
 async function cacheHttpImports(
   code: string,
   importMap: ImportMapConfig,
 ): Promise<string> {
+  // Skip on Deno - it supports HTTP imports natively
+  if (isDeno) {
+    return code;
+  }
   const cacheDir = getHttpBundleCacheDir();
   return await cacheHttpImportsToLocal(code, { cacheDir, importMap });
 }

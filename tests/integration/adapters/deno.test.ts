@@ -6,8 +6,8 @@ import { withTestContext } from "../../_helpers/context.ts";
 
 // Skip all tests if not running in Deno
 if (!isDeno) {
-  describe("DenoAdapter", { skip: true }, () => {
-    it("skipped - not running in Deno", () => {});
+  describe("DenoAdapter", () => {
+    it("skipped - not running in Deno", { ignore: true }, () => {});
   });
 } else {
 

@@ -71,7 +71,8 @@ export async function startUniversalServer(
     debug,
     config: bootstrap.config,
     // When mode is "development", enable dev-only features (e.g., /_veryfront/fs/)
-    envConfig: mode === "development" ? { isLocalDev: true } : undefined,
+    // Otherwise explicitly disable dev mode (don't rely on NODE_ENV which may not be set in tests)
+    envConfig: mode === "development" ? { isLocalDev: true } : { isLocalDev: false },
   });
 
   let onListenResolve: (() => void) | null = null;

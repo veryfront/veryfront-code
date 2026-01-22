@@ -113,19 +113,6 @@ describe("LayoutCompiler", () => {
         },
       ];
 
-      const providerInfos: EntityInfo[] = [
-        {
-          entity: {
-            id: join(projectDir, "providers/test.mdx"),
-            path: "providers/test.mdx",
-            slug: "test",
-            type: "provider",
-            content: "# Provider",
-            frontmatter: {},
-          },
-        },
-      ];
-
       const adapter = await getAdapter();
       const compiler = new LayoutCompiler({
         adapter,
@@ -136,7 +123,6 @@ describe("LayoutCompiler", () => {
       const hash = await compiler.computeDependencyHash(
         layoutBundle,
         nestedLayouts,
-        providerInfos,
       );
 
       assertExists(hash);
@@ -168,8 +154,8 @@ describe("LayoutCompiler", () => {
         compileMDX: async () => layoutBundle1,
       });
 
-      const hash1 = await compiler.computeDependencyHash(layoutBundle1, [], []);
-      const hash2 = await compiler.computeDependencyHash(layoutBundle2, [], []);
+      const hash1 = await compiler.computeDependencyHash(layoutBundle1, []);
+      const hash2 = await compiler.computeDependencyHash(layoutBundle2, []);
 
       assertEquals(hash1 !== hash2, true);
     } finally {
