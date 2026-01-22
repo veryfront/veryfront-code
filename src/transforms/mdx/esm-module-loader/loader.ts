@@ -12,6 +12,7 @@ import React from "react";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { getCacheNamespace } from "#veryfront/utils/cache/keys/namespace.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { loadImportMap, transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/index.ts";
 import { cacheHttpImportsToLocal } from "../../esm/http-cache.ts";
@@ -34,6 +35,9 @@ import { getLocalFs } from "./cache/index.ts";
 import { hashString } from "./utils/hash.ts";
 import { createStubModule } from "./utils/stub-module.ts";
 import { createModuleFetcherContext, fetchAndCacheModule } from "./module-fetcher/index.ts";
+
+/** Singleflight for MDX module file writes to prevent race conditions */
+const mdxWriteFlight = new Singleflight<void>();
 
 function resolveProjectDir(context: ESMLoaderContext): string {
   if (context.projectDir) return context.projectDir;
@@ -450,14 +454,23 @@ export async function loadModuleESM(
     }
 
     const filePath = join(nsDir, `${codeHash}.mjs`);
-    try {
-      const stat = await localFs.stat(filePath);
-      if (!stat?.isFile) {
-        await localFs.writeTextFile(filePath, rewritten);
+
+    // Use Singleflight to deduplicate concurrent writes for the same file.
+    // This prevents race conditions where multiple requests try to write
+    // the same module file simultaneously, which can cause "Module not found"
+    // errors when one request imports before another finishes writing.
+    await mdxWriteFlight.do(filePath, async () => {
+      try {
+        const stat = await localFs.stat(filePath);
+        if (stat?.isFile) {
+          // File already exists, no need to write
+          return;
+        }
+      } catch {
+        // File doesn't exist, proceed with write
       }
-    } catch {
       await localFs.writeTextFile(filePath, rewritten);
-    }
+    });
 
     logger.debug(`${LOG_PREFIX_MDX_RENDERER} Loading MDX module`, {
       filePath,
