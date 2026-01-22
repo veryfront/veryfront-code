@@ -21,6 +21,7 @@ import {
   HTTP_NOT_FOUND,
   PRIORITY_MEDIUM_DEV_FILES,
 } from "#veryfront/utils/constants/index.ts";
+import { isLocalDev } from "../../../context/request-context.ts";
 
 /**
  * Development File Handler Class
@@ -50,7 +51,8 @@ export class DevFileHandler extends BaseHandler {
     name: "DevFileHandler",
     priority: PRIORITY_MEDIUM_DEV_FILES as HandlerPriority, // Higher than static, lower than health
     patterns: [{ pattern: "/_veryfront/fs/", prefix: true, method: "GET" }],
-    enabled: (ctx) => ctx.mode === "development", // Only in dev mode
+    // Enable in local dev (isLocalDev checks NODE_ENV) or when server mode is development
+    enabled: (ctx) => isLocalDev() || ctx.mode === "development",
   };
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {

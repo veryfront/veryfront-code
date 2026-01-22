@@ -4,6 +4,7 @@ import { ResponseBuilder } from "#veryfront/security/index.ts";
 import { serverLogger } from "#veryfront/utils";
 import { HTTP_OK, PRIORITY_HIGH_CLIENT_LOG } from "#veryfront/utils/constants/index.ts";
 import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
+import { isLocalDev } from "../../context/request-context.ts";
 
 export class ClientLogHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -12,7 +13,8 @@ export class ClientLogHandler extends BaseHandler {
     patterns: [
       { pattern: "/_veryfront/log", exact: true, method: "POST" },
     ],
-    enabled: (ctx) => ctx.mode === "development", // Only in dev mode
+    // Enable in local dev (isLocalDev checks NODE_ENV) or when server mode is development
+    enabled: (ctx) => isLocalDev() || ctx.mode === "development",
   };
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
