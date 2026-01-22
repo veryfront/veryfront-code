@@ -5,7 +5,6 @@ import {
   createRequestContext,
   type EnvConfig,
   getCacheStrategy,
-  isLocalDev,
   type RequestContext,
   shouldEnableCache,
   shouldUseNoCacheHeaders,
@@ -139,12 +138,6 @@ describe("request-context", () => {
     });
   });
 
-  describe("isLocalDev", () => {
-    it("returns a boolean", () => {
-      assertEquals(typeof isLocalDev(), "boolean");
-    });
-  });
-
   describe("getCacheStrategy", () => {
     it("returns 'none' when isLocalDev is true regardless of mode", () => {
       const previewCtx = makeCtx({ mode: "preview", isLocalDev: true });
@@ -199,11 +192,6 @@ describe("request-context", () => {
     it("returns false for production mode when not local dev", () => {
       const ctx = makeCtx({ mode: "production", isLocalDev: false });
       assertStrictEquals(shouldUseNoCacheHeaders(ctx), false);
-    });
-
-    it("falls back to isLocalDev() when no context provided", () => {
-      // When no context, it should return based on current environment
-      assertEquals(typeof shouldUseNoCacheHeaders(), "boolean");
     });
   });
 });

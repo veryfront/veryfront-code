@@ -9,7 +9,6 @@
 
 import type { HandlerContext, HandlerResult } from "../../types.ts";
 import { ResponseBuilder } from "#veryfront/security/index.ts";
-import { isLocalDev } from "../../../context/request-context.ts";
 
 /**
  * Handles module server requests for ES module serving.
@@ -49,7 +48,7 @@ export async function handleModuleServer(
       projectId: ctx.projectId ?? ctx.projectDir,
       projectDir: ctx.projectDir,
       adapter: ctx.adapter,
-      dev: isLocalDev(),
+      dev: ctx.requestContext?.isLocalDev ?? false,
       projectUUID: ctx.projectId,
       // Pass project context from handler (set via proxy headers or domain lookup)
       projectSlug: ctx.projectSlug,

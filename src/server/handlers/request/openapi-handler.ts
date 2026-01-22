@@ -16,7 +16,6 @@ import { generateOpenAPISpec, specToYaml } from "#veryfront/routing/api/openapi/
 import type { OpenAPISpec } from "#veryfront/routing/api/openapi/types.ts";
 import { join } from "#veryfront/platform/compat/path/index.ts";
 import { logger } from "#veryfront/utils";
-import { isLocalDev } from "../../context/request-context.ts";
 
 /** Default paths for OpenAPI spec endpoints */
 const DEFAULT_JSON_PATH = "/_openapi.json";
@@ -64,7 +63,7 @@ export class OpenAPIHandler extends BaseHandler {
 
       const content = isYaml ? specToYaml(spec) : JSON.stringify(spec, null, 2);
 
-      const isDev = isLocalDev();
+      const isDev = ctx.requestContext?.isLocalDev ?? false;
       const response = this.createResponseBuilder(ctx)
         .withCache(!isDev ? { maxAge: 3600, public: true } : "no-cache")
         .withCORS(req, { origin: "*" })
@@ -83,7 +82,7 @@ export class OpenAPIHandler extends BaseHandler {
         .json(
           {
             error: "Failed to generate OpenAPI specification",
-            message: isLocalDev() ? String(error) : undefined,
+            message: ctx.requestContext?.isLocalDev ? String(error) : undefined,
           },
           HTTP_SERVER_ERROR,
         );
@@ -97,7 +96,7 @@ export class OpenAPIHandler extends BaseHandler {
    * Caching is only enabled in production mode (non-local-dev).
    */
   private async getOrGenerateSpec(ctx: HandlerContext, url: URL): Promise<OpenAPISpec> {
-    const isDev = isLocalDev();
+    const isDev = ctx.requestContext?.isLocalDev ?? false;
     // Create cache key based on project
     const currentKey = `${ctx.projectDir}:${ctx.projectSlug || "default"}`;
 

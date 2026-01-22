@@ -12,15 +12,13 @@ import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } 
 import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
 import { getSSRModuleCacheStats } from "#veryfront/modules/react-loader/ssr-module-loader/index.ts";
 import type { MultiProjectFSAdapter } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
-import { isLocalDev } from "../../context/request-context.ts";
-
 export class DebugContextHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "DebugContextHandler",
     priority: PRIORITY_HIGH_DEV as HandlerPriority,
     patterns: [{ pattern: "/_vf_debug/context", exact: true }],
     // Only enable in local development - debug endpoints should not be exposed in production
-    enabled: () => isLocalDev(),
+    enabled: (ctx) => ctx.requestContext?.isLocalDev ?? false,
   };
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {

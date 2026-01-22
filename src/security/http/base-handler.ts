@@ -12,7 +12,6 @@ import type {
 } from "#veryfront/types";
 import { ResponseBuilder } from "./response/index.ts";
 import { serverLogger } from "#veryfront/utils";
-import { isLocalDev } from "#veryfront/server/context/request-context.ts";
 
 /**
  * Pre-bound handler helper methods.
@@ -122,7 +121,7 @@ export abstract class BaseHandler implements Handler {
   ): ResponseBuilder {
     return new ResponseBuilder({
       securityConfig: ctx.securityConfig ?? undefined,
-      isDev: isLocalDev(),
+      isDev: ctx.requestContext?.isLocalDev ?? false,
       cspUserHeader: ctx.cspUserHeader,
       adapter: ctx.adapter,
       nonce,

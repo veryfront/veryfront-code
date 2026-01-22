@@ -10,7 +10,6 @@
 import { join, posix } from "#std/path.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { isLocalDev } from "../../../../server/context/request-context.ts";
 import { transformToESM } from "../../../esm-transform.ts";
 import { TRANSFORM_CACHE_VERSION } from "../../../esm/package-registry.ts";
 import {
@@ -308,9 +307,10 @@ async function fetchModuleViaHTTP(
   adapter: RuntimeAdapter,
   fetchAndCacheModuleFn: (path: string, parent?: string) => Promise<string | null>,
   projectSlug?: string,
+  isLocalDev?: boolean,
 ): Promise<string | null> {
   // In production environment, HTTP fallback to localhost won't work
-  if (!isLocalDev()) {
+  if (!isLocalDev) {
     logger.warn(
       `${LOG_PREFIX_MDX_LOADER} Direct read failed in production (module must be pre-loaded): ${normalizedPath}`,
     );
@@ -439,6 +439,7 @@ export async function fetchAndCacheModule(
           adapter,
           fetchAndCacheModuleFn,
           projectSlug,
+          context.isLocalDev,
         );
         if (moduleCode) {
           return await cacheModule(normalizedPath, moduleCode, esmCacheDir, pathCache);
@@ -515,6 +516,7 @@ export function createModuleFetcherContext(
   adapter: RuntimeAdapter,
   projectDir: string,
   projectId: string,
+  options?: { isLocalDev?: boolean; projectSlug?: string },
 ): ModuleFetcherContext {
-  return { esmCacheDir, adapter, projectDir, projectId };
+  return { esmCacheDir, adapter, projectDir, projectId, ...options };
 }

@@ -4,7 +4,6 @@ import { RSCProductionOptimizer } from "#veryfront/rendering/rsc/production-opti
 import type { RSCRenderer } from "#veryfront/rendering/rsc/server-renderer/index.ts";
 import type { RSCPayload } from "#veryfront/rendering/rsc/types.ts";
 import { extractParams, resolveComponentPath } from "./component-resolver.ts";
-import { isProductionMode } from "./environment.ts";
 import type { RenderProps } from "./types.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
@@ -12,6 +11,7 @@ export class RenderHandler {
   constructor(
     private projectDir: string,
     private getRenderer: () => RSCRenderer | null,
+    private isLocalDev: boolean = false,
   ) {}
 
   async handle(
@@ -81,7 +81,7 @@ export class RenderHandler {
       }));
     }
 
-    if (isProductionMode()) {
+    if (!this.isLocalDev) {
       payload = RSCProductionOptimizer.optimizePayload(payload);
     }
 
@@ -105,7 +105,7 @@ export class RenderHandler {
   }
 
   private buildHeaders(etag: string): Record<string, string> {
-    const isProd = isProductionMode();
+    const isProd = !this.isLocalDev;
     const headers: Record<string, string> = {
       "content-type": "application/json",
       etag,
@@ -128,7 +128,7 @@ export class RenderHandler {
     const errorData = {
       error: "Render error",
       message: (error as Error).message,
-      stack: isProductionMode() ? undefined : (error as Error).stack,
+      stack: this.isLocalDev ? (error as Error).stack : undefined,
     };
 
     return new Response(JSON.stringify(errorData), {

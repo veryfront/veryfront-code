@@ -11,7 +11,6 @@ import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
 import { escapeHtml } from "#veryfront/html/html-escape.ts";
-import { isLocalDev } from "../../context/request-context.ts";
 
 /** Default paths */
 const DEFAULT_DOCS_PATH = "/_docs";
@@ -42,8 +41,9 @@ export class OpenAPIDocsHandler extends BaseHandler {
 
     const html = this.generateDocsPage(ctx);
 
+    const isDev = ctx.requestContext?.isLocalDev ?? false;
     const response = this.createResponseBuilder(ctx)
-      .withCache(!isLocalDev() ? { maxAge: 3600, public: true } : "no-cache")
+      .withCache(!isDev ? { maxAge: 3600, public: true } : "no-cache")
       .withContentType("text/html; charset=utf-8", html, HTTP_OK);
 
     return Promise.resolve(this.respond(response));

@@ -41,7 +41,7 @@ import {
   startRenderSession,
 } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
 import { VeryfrontAPIError } from "#veryfront/platform/adapters/veryfront-api-client/types.ts";
-import { isLocalDev, shouldUseNoCacheHeaders } from "../../../context/request-context.ts";
+import { shouldUseNoCacheHeaders } from "../../../context/request-context.ts";
 
 /**
  * Determine if request should serve production (released) content.
@@ -220,7 +220,7 @@ export class SSRHandler extends BaseHandler {
       const renderer = await timeAsync("renderer-init", () => getRendererForProject(ctx));
       this.logDebug(
         "renderer obtained",
-        { isDev: isLocalDev(), projectSlug: ctx.projectSlug },
+        { isDev: ctx.requestContext?.isLocalDev ?? false, projectSlug: ctx.projectSlug },
         ctx,
       );
 
@@ -372,7 +372,7 @@ export class SSRHandler extends BaseHandler {
       // Check if-none-match for 304 response
       // IMPORTANT: Skip 304 in dev mode to prevent CSP nonce mismatch
       // (304 returns new nonce in CSP but browser uses cached HTML with old nonce)
-      const isDev = isLocalDev();
+      const isDev = ctx.requestContext?.isLocalDev ?? false;
       if (!isDev && hasMatchingEtag(req, etag)) {
         return this.respond(
           builder
@@ -513,7 +513,7 @@ export class SSRHandler extends BaseHandler {
 
       // In development or preview mode, show error overlay with full stack trace
       // Preview is a dev environment (branch previews) so developers need detailed errors
-      if (!isHead && (isLocalDev() || ctx.requestContext?.mode === "preview")) {
+      if (!isHead && (ctx.requestContext?.isLocalDev || ctx.requestContext?.mode === "preview")) {
         const { ErrorOverlay } = await import(
           "../../../dev-server/error-overlay/index.ts"
         );

@@ -18,7 +18,6 @@ import {
   HTTP_OK,
   PRIORITY_MEDIUM_LIB_MODULES,
 } from "#veryfront/utils/constants/index.ts";
-import { isLocalDev } from "../../context/request-context.ts";
 
 /** Allowed module paths that can be served */
 const ALLOWED_MODULES = new Set([
@@ -129,7 +128,7 @@ export class LibModulesHandler extends BaseHandler {
       // In production, use immutable caching (modules are versioned)
       const builder = this.createResponseBuilder(ctx);
       const body = method === "HEAD" ? null : content;
-      const isDev = isLocalDev();
+      const isDev = ctx.requestContext?.isLocalDev ?? false;
 
       const response = builder
         .withCORS(req, ctx.securityConfig?.cors)

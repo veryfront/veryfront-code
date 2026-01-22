@@ -16,7 +16,6 @@ import { getRedisClient, isRedisConfigured, type RedisClient } from "../utils/re
 import { runtime } from "../platform/adapters/registry.ts";
 import { tryGetCacheKeyContext } from "./cache-key-builder.ts";
 import { getRuntimeEnv, isRuntimeEnvInitialized, type RuntimeEnv } from "../config/runtime-env.ts";
-import { isLocalDev } from "../server/context/request-context.ts";
 import { getCurrentRequestContext } from "../platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { CircuitBreakerOpen, getCircuitBreaker } from "../utils/circuit-breaker.ts";
 import { MEMORY_CACHE_MAX_ENTRIES } from "../utils/constants/cache.ts";
@@ -359,7 +358,12 @@ export interface CacheBackendConfig {
 
 /** Check if API cache backend is available (production environment with API URL). */
 export function isApiCacheAvailable(env?: RuntimeEnv): boolean {
-  return !isLocalDev() && !!getEnvValue("VERYFRONT_API_BASE_URL", env);
+  // Check NODE_ENV directly at process level - this is called at initialization time
+  // deno-lint-ignore no-explicit-any
+  const g = globalThis as any;
+  const nodeEnv = g.Deno?.env?.get("NODE_ENV") ?? g.process?.env?.NODE_ENV ?? "development";
+  const isLocalDev = nodeEnv !== "production";
+  return !isLocalDev && !!getEnvValue("VERYFRONT_API_BASE_URL", env);
 }
 
 /**

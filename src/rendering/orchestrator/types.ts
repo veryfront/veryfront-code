@@ -6,7 +6,7 @@ import type { BuildVersion } from "#veryfront/utils/version.ts";
 export interface RendererOptions {
   projectDir: string;
   /**
-   * @deprecated Use `isLocalDev()` for environment checks.
+   * @deprecated Use `ctx.requestContext?.isLocalDev` for environment checks.
    */
   mode: "development" | "production";
   port?: number;

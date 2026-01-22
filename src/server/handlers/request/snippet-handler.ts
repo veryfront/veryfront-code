@@ -13,7 +13,6 @@ import { serverLogger as logger } from "#veryfront/utils";
 import { renderSnippet } from "#veryfront/rendering/snippet-renderer.ts";
 import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import { VeryfrontAPIError } from "#veryfront/platform/adapters/veryfront-api-client/types.ts";
-import { isLocalDev } from "../../context/request-context.ts";
 
 /**
  * SnippetHandler handles @/ and @components/ prefixed paths.
@@ -86,7 +85,7 @@ export class SnippetHandler extends BaseHandler {
         const pageId = url.searchParams.get("page_id") || undefined;
 
         // Render the MDX snippet to HTML
-        const isDev = isLocalDev();
+        const isDev = ctx.requestContext?.isLocalDev ?? false;
         const result = await renderSnippet(content, {
           mode: isDev ? "development" : "production",
           projectDir: ctx.projectDir,
