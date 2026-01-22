@@ -194,14 +194,14 @@ export function getOtelTracingConfig(env: RuntimeEnv = getRuntimeEnv()): {
   tracesHeaders?: string;
 } {
   return {
-    enabledFlag: env.otelEnabled ? "1" : undefined,
+    enabledFlag: env.otelEnabled ? "true" : undefined,
     veryfrontFlag: env.otelEnabled ? "1" : undefined,
     serviceName: env.otelServiceName,
     endpoint: env.otelEndpoint,
     tracesEndpoint: env.otelTracesEndpoint,
     exporter: env.otelTracesExporter,
-    headers: undefined, // Not currently in RuntimeEnv
-    tracesHeaders: undefined, // Not currently in RuntimeEnv
+    headers: env.otelHeaders,
+    tracesHeaders: undefined,
   };
 }
 

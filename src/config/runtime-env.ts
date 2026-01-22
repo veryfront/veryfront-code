@@ -174,6 +174,9 @@ export interface RuntimeEnv {
   /** OTEL_METRICS_EXPORTER - Metrics exporter type */
   otelMetricsExporter: string | undefined;
 
+  /** OTEL_EXPORTER_OTLP_HEADERS - OTLP auth headers */
+  otelHeaders: string | undefined;
+
   /** OTEL_METRICS_ENABLED - Enable metrics specifically */
   otelMetricsEnabled: boolean;
 
@@ -259,6 +262,7 @@ const DEFAULTS: Partial<RuntimeEnv> = {
   port: 3001,
   ssrMaxConcurrentTransforms: 3,
   otelEnabled: false,
+  otelHeaders: undefined,
   otelMetricsEnabled: false,
   noColor: false,
   forceColor: false,
@@ -353,6 +357,7 @@ function readEnvSnapshot(): RuntimeEnv {
     otelMetricsEndpoint: getEnv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") || undefined,
     otelTracesExporter: getEnv("OTEL_TRACES_EXPORTER") || undefined,
     otelMetricsExporter: getEnv("OTEL_METRICS_EXPORTER") || undefined,
+    otelHeaders: getEnv("OTEL_EXPORTER_OTLP_HEADERS") || undefined,
     otelMetricsEnabled: isTruthyEnvValue(getEnv("OTEL_METRICS_ENABLED")),
 
     // AI Providers
