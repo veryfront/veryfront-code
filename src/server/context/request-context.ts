@@ -31,9 +31,14 @@ export interface RequestContext {
  * Create request context from an incoming request.
  *
  * Resolution order (headers take precedence for proxy scenarios):
- * 1. Headers (x-token, x-project-slug) - set by proxy
+ * 1. Headers (x-token, x-project-slug, x-environment) - set by proxy
  * 2. Domain parsing - extracts slug, branch, mode from hostname
  * 3. Environment variables - fallback for direct mode
+ *
+ * Mode resolution:
+ * 1. If hostname has `.preview.`, it's preview mode (veryfront/local domains)
+ * 2. Otherwise, check x-environment header (custom domains via proxy)
+ * 3. Default to production
  *
  * @param req - Incoming request
  * @returns Fully resolved request context
@@ -43,11 +48,19 @@ export function createRequestContext(req: Request): RequestContext {
   const hostname = url.hostname;
   const parsed = parseProjectDomain(hostname);
 
+  // Determine mode from hostname or x-environment header
+  let mode: "preview" | "production" = "production";
+  if (hostname.includes(".preview.")) {
+    mode = "preview";
+  } else if (req.headers.get("x-environment") === "preview") {
+    mode = "preview";
+  }
+
   return {
     token: req.headers.get("x-token") ?? getEnv("VERYFRONT_API_TOKEN") ?? "",
     slug: req.headers.get("x-project-slug") ?? parsed.slug ?? "",
     branch: parsed.branch,
-    mode: hostname.includes(".preview.") ? "preview" : "production",
+    mode,
   };
 }
 

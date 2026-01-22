@@ -44,7 +44,8 @@ import { VeryfrontAPIError } from "#veryfront/platform/adapters/veryfront-api-cl
 
 /**
  * Determine if request should serve production (released) content.
- * Priority: config > veryfront domain isDraft flag > proxy environment header
+ * Uses RequestContext.mode which unifies hostname and x-environment header.
+ * Config override (PRODUCTION_MODE) takes precedence.
  */
 export function isProductionMode(ctx: HandlerContext, _url?: URL): boolean {
   // Config override (PRODUCTION_MODE env var)
@@ -52,12 +53,15 @@ export function isProductionMode(ctx: HandlerContext, _url?: URL): boolean {
     return true;
   }
 
-  // Veryfront domain: production if not draft
+  // Use RequestContext.mode if available (unified from hostname/header)
+  if (ctx.requestContext) {
+    return ctx.requestContext.mode === "production";
+  }
+
+  // Fallback for contexts without RequestContext
   if (ctx.parsedDomain?.isVeryfrontDomain) {
     return ctx.parsedDomain.isDraft === false;
   }
-
-  // Custom domain: use proxy environment header
   return ctx.proxyEnvironment === "production";
 }
 
