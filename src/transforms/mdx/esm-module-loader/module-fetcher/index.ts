@@ -377,11 +377,11 @@ export async function fetchAndCacheModule(
   const cacheKey = getPathCacheKey(context.projectId, normalizedPath);
   const projectSlug = context.projectSlug || "unknown";
 
-  // DISABLED: In-flight deduplication caused cascading deadlocks across concurrent requests.
-  // The global inFlight map would block ALL requests when one request's fetch hung.
-  // Each module wait added 5s, cascading to 15-20s total timeouts.
-  // The file cache handles deduplication anyway - parallel fetches just write to same path.
-  const useInFlightTracking = false;
+  // Only use in-flight deduplication for top-level imports (no parent).
+  // Nested imports (with parentModulePath) skip deduplication to avoid deadlocks
+  // when parallel Promise.all chains have overlapping dependencies.
+  // The file cache handles eventual deduplication anyway.
+  const useInFlightTracking = !parentModulePath;
 
   logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] START`, {
     projectSlug,
