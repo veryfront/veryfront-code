@@ -65,6 +65,10 @@ import { RenderPipeline } from "./orchestrator/pipeline.ts";
 import { createLayoutComponentCache } from "./layouts/utils/component-loader.ts";
 import type { PageDataResponse, RenderOptions, RenderResult } from "./orchestrator/types.ts";
 import type { HandlerContext } from "../server/handlers/types.ts";
+import { TimeoutError, withTimeoutThrow } from "./utils/stream-utils.ts";
+
+/** Master timeout for entire render pipeline (must be less than REQUEST_TIMEOUT_MS) */
+const RENDER_PIPELINE_TIMEOUT_MS = 20000;
 
 /**
  * Options for initializing the Renderer
@@ -178,14 +182,32 @@ export class Renderer {
       ? `release-${ctx.releaseId}`
       : `${ctx.environment}-draft`;
 
-    // Run the render pipeline
-    const result = await services.pipeline.renderPage(slug, {
-      ...options,
-      projectId: ctx.projectId,
-      projectSlug: ctx.projectSlug,
-      proxyEnvironment: ctx.environment,
-      contentSourceId,
-    });
+    // Run the render pipeline with master timeout to prevent stuck renders
+    // from blocking other requests. Timeout is 20s (less than 60s request timeout).
+    let result: RenderResult;
+    try {
+      result = await withTimeoutThrow(
+        services.pipeline.renderPage(slug, {
+          ...options,
+          projectId: ctx.projectId,
+          projectSlug: ctx.projectSlug,
+          proxyEnvironment: ctx.environment,
+          contentSourceId,
+        }),
+        RENDER_PIPELINE_TIMEOUT_MS,
+        `Render pipeline for ${ctx.projectId}:${slug}`,
+      );
+    } catch (error) {
+      // Log timeout specifically to help identify problematic projects
+      if (error instanceof TimeoutError) {
+        logger.error("[Renderer] Render pipeline timeout - aborting", {
+          slug,
+          projectId: ctx.projectId,
+          timeoutMs: RENDER_PIPELINE_TIMEOUT_MS,
+        });
+      }
+      throw error;
+    }
 
     // Cache the result (context-aware, includes colorScheme in key)
     await this.cache.persistResult(result, slug, ctx, options?.colorScheme);
