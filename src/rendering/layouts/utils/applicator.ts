@@ -24,12 +24,27 @@ export async function applyLayoutsESM(
 ): Promise<BundledReact.ReactElement> {
   let element = pageElement;
 
+  logger.debug("[applyLayoutsESM] START", {
+    projectSlug,
+    nestedLayoutsCount: nestedLayouts.length,
+    hasLayoutBundle: !!layoutBundle,
+  });
+
   if (nestedLayouts.length > 0) {
     for (let i = nestedLayouts.length - 1; i >= 0; i--) {
       const item = nestedLayouts[i];
       if (!item) continue;
+      logger.debug("[applyLayoutsESM] Processing layout", {
+        projectSlug,
+        index: i,
+        kind: item.kind,
+        componentPath: item.componentPath,
+        hasBundleCode: !!(item.bundle?.compiledCode),
+      });
+      const layoutStart = performance.now();
       try {
         if (item.kind === "mdx" && item.bundle?.compiledCode) {
+          logger.debug("[applyLayoutsESM] Calling applyMDXLayout START", { projectSlug, index: i });
           element = await applyMDXLayout(
             element,
             item.bundle,
@@ -40,7 +55,13 @@ export async function applyLayoutsESM(
             projectSlug,
             contentSourceId,
           );
+          logger.debug("[applyLayoutsESM] applyMDXLayout DONE", {
+            projectSlug,
+            index: i,
+            duration: `${(performance.now() - layoutStart).toFixed(2)}ms`,
+          });
         } else if (item.kind === "tsx") {
+          logger.debug("[applyLayoutsESM] Calling applyTSXLayout START", { projectSlug, index: i });
           const props = item.componentPath ? layoutDataMap?.get(item.componentPath) : undefined;
           element = await applyTSXLayout(
             element,
@@ -51,6 +72,11 @@ export async function applyLayoutsESM(
             props,
             projectId,
           );
+          logger.debug("[applyLayoutsESM] applyTSXLayout DONE", {
+            projectSlug,
+            index: i,
+            duration: `${(performance.now() - layoutStart).toFixed(2)}ms`,
+          });
         }
       } catch (e) {
         logger.error("Failed to apply nested layout:", e);
@@ -58,6 +84,7 @@ export async function applyLayoutsESM(
       }
     }
   }
+  logger.debug("[applyLayoutsESM] All nested layouts applied", { projectSlug });
 
   if (layoutBundle) {
     logger.debug("[applyLayoutsESM] Applying named layoutBundle (frontmatter layout)");
