@@ -85,6 +85,23 @@ describe("request-context", () => {
       assertEquals(ctx.slug, "proxy-slug");
       assertEquals(ctx.mode, "preview"); // Still from domain
     });
+
+    it("uses x-environment header for custom domains", () => {
+      // Custom domain (no .preview.) but proxy sets x-environment: preview
+      const req = new Request("https://custom-domain.com/page", {
+        headers: { "x-environment": "preview" },
+      });
+      const ctx = createRequestContext(req);
+
+      assertEquals(ctx.mode, "preview");
+    });
+
+    it("defaults to production for custom domains without header", () => {
+      const req = new Request("https://custom-domain.com/page");
+      const ctx = createRequestContext(req);
+
+      assertEquals(ctx.mode, "production");
+    });
   });
 
   describe("isLocalDev", () => {
