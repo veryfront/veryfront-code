@@ -14,7 +14,7 @@ import {
   startMemoryMonitoring,
   stopMemoryMonitoring,
 } from "#veryfront/utils/memory/index.ts";
-import { initializeRedisCaches } from "#veryfront/cache/redis-init.ts";
+import { initializeDistributedCaches } from "#veryfront/cache/distributed-cache-init.ts";
 import { setServerInitialized } from "./handlers/monitoring/health.ts";
 import {
   enableSSRClientOnlyFetching,
@@ -131,9 +131,9 @@ if (import.meta.main) {
     // Initialize OpenTelemetry tracing before starting server
     await initializeOTLPWithApis();
 
-    // Initialize Redis caches for cross-pod cache sharing (optional)
-    // This reduces memory pressure by offloading cache to Redis
-    await initializeRedisCaches();
+    // Initialize distributed caches for cross-pod cache sharing
+    // Backend: API (production) > Redis (local dev) > Memory (fallback)
+    await initializeDistributedCaches();
 
     const adapter = await runtime.get();
 
