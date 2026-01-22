@@ -209,13 +209,11 @@ export function getProjectScopedKeyAlways(
 export function extractCacheKeyContext(handlerCtx: HandlerContext): CacheKeyContext {
   const projectId = handlerCtx.projectId || handlerCtx.projectSlug || "default";
 
-  const isProduction = handlerCtx.proxyEnvironment === "production" ||
-    (handlerCtx.parsedDomain?.isDraft === false && handlerCtx.parsedDomain?.isVeryfrontDomain);
-
-  const mode = isProduction ? "production" : "preview";
+  // Use requestContext.mode (unified from hostname/headers)
+  const mode = handlerCtx.requestContext?.mode || "preview";
 
   // Version: releaseId (production) or branch (preview)
-  const versionId = isProduction
+  const versionId = mode === "production"
     ? (handlerCtx.releaseId || "latest")
     : (handlerCtx.parsedDomain?.branch || "main");
 

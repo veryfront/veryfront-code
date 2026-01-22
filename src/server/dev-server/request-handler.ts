@@ -140,7 +140,6 @@ export class RequestHandler {
       this.universalHandler = createVeryfrontHandler(this.projectDir, this.adapter, {
         projectDir: this.projectDir,
         debug: this.isDebug(),
-        mode: "development",
         // Module server is integrated into main server at /_vf_modules/
         // Use relative path since modules are served on the same server
         moduleServerUrl: "/_vf_modules",

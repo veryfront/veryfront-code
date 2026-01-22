@@ -34,11 +34,8 @@ export interface HTMLGenerationOptions {
   colorScheme?: "light" | "dark";
   /** Whether colorScheme was set via color_mode URL param (needs localStorage persistence) */
   colorSchemeFromParam?: boolean;
-  /**
-   * @deprecated Use `requestContext?.mode` instead.
-   * Proxy environment for cloud deployments (preview or production)
-   */
-  proxyEnvironment?: "preview" | "production";
+  /** Deployment environment (preview or production) */
+  environment?: "preview" | "production";
   /** Headings extracted from MDX for sidebar/TOC navigation */
   headings?: Array<{ id: string; text: string; level: number }>;
   /** Tailwind classes extracted from all project source files */

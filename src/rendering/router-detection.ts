@@ -19,13 +19,23 @@ export { getAppRouteEntity } from "./app-route-resolver.ts";
 export { extractAppRouteParams, extractPagesRouteParams } from "./route-params-extractor.ts";
 
 // Cache for router detection results - avoids repeated filesystem calls
+// Key is projectDir, value is whether app router should be used
 const routerDetectionCache = new Map<string, boolean>();
 
 /**
  * Clear the router detection cache. Call when filesystem changes.
+ * @deprecated Use clearRouterDetectionCacheForProject for multi-tenant deployments
  */
 export function clearRouterDetectionCache(): void {
   routerDetectionCache.clear();
+}
+
+/**
+ * Clear the router detection cache for a specific project.
+ * Use this in multi-tenant deployments to avoid clearing other projects' caches.
+ */
+export function clearRouterDetectionCacheForProject(projectDir: string): void {
+  routerDetectionCache.delete(projectDir);
 }
 
 /**

@@ -172,7 +172,7 @@ describe("html-generation/html-shell-generator", () => {
     });
 
     it("should use hashed CSS link in production mode", async () => {
-      // CSS link requires: proxyEnvironment === "production" AND NODE_ENV === "production"
+      // CSS link requires: environment === "production" AND NODE_ENV === "production"
       const originalNodeEnv = Deno.env.get("NODE_ENV");
       Deno.env.set("NODE_ENV", "production");
 
@@ -186,7 +186,7 @@ describe("html-generation/html-shell-generator", () => {
         const options: HTMLGenerationOptions = {
           mode: "production",
           config: mockConfig,
-          proxyEnvironment: "production", // Required for CSS link delivery
+          environment: "production", // Required for CSS link delivery
         };
 
         const result = await wrapInHTMLShell("<div>Content</div>", meta, options);

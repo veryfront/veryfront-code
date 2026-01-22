@@ -160,13 +160,26 @@ export class VeryfrontFSAdapter implements FSAdapter {
     });
 
     // Fetch file list based on content source type
+    // Use setAsync to ensure cache is populated before continuing (important for Redis backend)
     const cacheKey = buildFileListCacheKey(this.contentContext);
     const files = await this.fetchFileList();
-    this.cache.set(cacheKey, files);
+
+    // Count files with content for Tailwind class extraction debugging
+    const filesWithContent = files.filter((f) => f.content);
+    const sourceFiles = files.filter((f) =>
+      f.path.endsWith(".tsx") || f.path.endsWith(".jsx") ||
+      f.path.endsWith(".mdx") || f.path.endsWith(".ts") || f.path.endsWith(".js")
+    );
+    const sourceFilesWithContent = sourceFiles.filter((f) => f.content);
+
+    await this.cache.setAsync(cacheKey, files);
 
     logger.debug("[VeryfrontFSAdapter] Fetched files during initialization", {
-      count: files.length,
       cacheKey,
+      totalFiles: files.length,
+      filesWithContent: filesWithContent.length,
+      sourceFiles: sourceFiles.length,
+      sourceFilesWithContent: sourceFilesWithContent.length,
     });
 
     this.initialized = true;
@@ -483,14 +496,26 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     // Clear SSR module cache to ensure fresh modules are loaded
     // This is critical for HMR - without this, browser refreshes but gets stale JS
+    // Prefer per-project clearing for multi-tenant deployments
+    const projectId = this.client.getProjectId();
     logger.debug("[VeryfrontFSAdapter] Clearing SSR module cache for HMR", {
       changedPaths,
-      hasCallback: !!this.invalidationCallbacks.clearSSRModuleCache,
+      projectId,
+      usePerProject: !!this.invalidationCallbacks.clearSSRModuleCacheForProject,
     });
-    this.invalidationCallbacks.clearSSRModuleCache?.();
+    if (this.invalidationCallbacks.clearSSRModuleCacheForProject && projectId) {
+      this.invalidationCallbacks.clearSSRModuleCacheForProject(projectId);
+    } else {
+      this.invalidationCallbacks.clearSSRModuleCache?.();
+    }
 
     // Clear renderer result cache (context-aware HTML cache)
-    this.invalidationCallbacks.clearRendererCache?.();
+    // Prefer per-project clearing for multi-tenant deployments
+    if (this.invalidationCallbacks.clearRendererCacheForProject && projectId) {
+      this.invalidationCallbacks.clearRendererCacheForProject(projectId);
+    } else {
+      this.invalidationCallbacks.clearRendererCache?.();
+    }
 
     // Clear file list cache and refetch (only for branch mode)
     if (this.contentContext?.sourceType === "branch") {
@@ -566,11 +591,41 @@ export class VeryfrontFSAdapter implements FSAdapter {
     ]);
     this.statOps.clearIndex();
     this.dirOps.clearTree();
-    this.invalidationCallbacks.clearSSRModuleCache?.();
-    this.invalidationCallbacks.clearRouterDetectionCache?.();
+
+    // Clear server-side caches - prefer per-project clearing for multi-tenant deployments
+    const projectId = this.client.getProjectId();
+    const projectDir = this.normalizer.getProjectDir();
+
+    // SSR module cache
+    if (this.invalidationCallbacks.clearSSRModuleCacheForProject && projectId) {
+      this.invalidationCallbacks.clearSSRModuleCacheForProject(projectId);
+    } else {
+      this.invalidationCallbacks.clearSSRModuleCache?.();
+    }
+
+    // Router detection cache
+    if (this.invalidationCallbacks.clearRouterDetectionCacheForProject && projectDir) {
+      this.invalidationCallbacks.clearRouterDetectionCacheForProject(projectDir);
+    } else {
+      this.invalidationCallbacks.clearRouterDetectionCache?.();
+    }
+
+    // Module path cache (no per-project variant yet)
     this.invalidationCallbacks.clearModulePathCache?.();
-    this.invalidationCallbacks.clearSnippetCache?.();
-    this.invalidationCallbacks.clearRendererCache?.();
+
+    // Snippet cache
+    if (this.invalidationCallbacks.clearSnippetCacheForProject && this.projectSlug) {
+      this.invalidationCallbacks.clearSnippetCacheForProject(this.projectSlug);
+    } else {
+      this.invalidationCallbacks.clearSnippetCache?.();
+    }
+
+    // Renderer result cache
+    if (this.invalidationCallbacks.clearRendererCacheForProject && projectId) {
+      this.invalidationCallbacks.clearRendererCacheForProject(projectId);
+    } else {
+      this.invalidationCallbacks.clearRendererCache?.();
+    }
 
     const totalFileCount = fileBranchCount + fileReleaseCount + fileEnvCount;
     const totalStatCount = statBranchCount + statReleaseCount + statEnvCount;
@@ -704,17 +759,53 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   /**
    * Get all source files with content for class extraction.
-   * Returns the cached file list (files are cached, class extraction is not).
+   * Returns the cached file list from initialization.
+   *
+   * IMPORTANT: This method logs warnings if files are missing or have no content,
+   * to prevent silent failures in Tailwind class extraction.
+   *
+   * NOTE: Uses getAsync() to support both memory and Redis cache backends.
+   * The sync get() method returns undefined in Redis mode, causing missing styles.
    */
-  getAllSourceFiles(): Array<{ path: string; content?: string }> {
-    if (!this.contentContext) return [];
+  async getAllSourceFiles(): Promise<Array<{ path: string; content?: string }>> {
+    if (!this.contentContext) {
+      logger.warn("[VeryfrontFSAdapter] getAllSourceFiles called without contentContext", {
+        initialized: this.initialized,
+        projectSlug: this.projectSlug,
+      });
+      return [];
+    }
 
     const cacheKey = buildFileListCacheKey(this.contentContext);
-    const files = this.cache.get(cacheKey) as
-      | Array<{ path: string; content?: string }>
-      | undefined;
+    const files = await this.cache.getAsync<Array<{ path: string; content?: string }>>(cacheKey);
 
-    return files || [];
+    if (!files || files.length === 0) {
+      logger.warn("[VeryfrontFSAdapter] getAllSourceFiles cache miss or empty", {
+        cacheKey,
+        initialized: this.initialized,
+        hasFiles: !!files,
+        fileCount: files?.length ?? 0,
+      });
+      return [];
+    }
+
+    // Validate that files have content - detailed logging for debugging Tailwind issues
+    const filesWithContent = files.filter((f) => f.content);
+    const sourceFiles = files.filter((f) =>
+      f.path.endsWith(".tsx") || f.path.endsWith(".jsx") ||
+      f.path.endsWith(".mdx") || f.path.endsWith(".ts") || f.path.endsWith(".js")
+    );
+    const sourceFilesWithContent = sourceFiles.filter((f) => f.content);
+
+    logger.debug("[VeryfrontFSAdapter] getAllSourceFiles returning", {
+      cacheKey,
+      totalFiles: files.length,
+      filesWithContent: filesWithContent.length,
+      sourceFiles: sourceFiles.length,
+      sourceFilesWithContent: sourceFilesWithContent.length,
+    });
+
+    return files;
   }
 
   /**

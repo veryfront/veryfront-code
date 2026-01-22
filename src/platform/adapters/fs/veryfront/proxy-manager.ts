@@ -2,14 +2,26 @@ import { logger } from "#veryfront/utils";
 import { VeryfrontFSAdapter } from "./index.ts";
 import type { CacheStats, FSAdapterConfig, ResolvedContentContext } from "./types.ts";
 import { ReloadNotifier } from "../../../../server/reload-notifier.ts";
-import { clearSSRModuleCache } from "../../../../modules/react-loader/ssr-module-loader/cache/index.ts";
-import { clearRouterDetectionCache } from "../../../../rendering/router-detection.ts";
+import {
+  clearSSRModuleCache,
+  clearSSRModuleCacheForProject,
+} from "../../../../modules/react-loader/ssr-module-loader/cache/index.ts";
+import {
+  clearRouterDetectionCache,
+  clearRouterDetectionCacheForProject,
+} from "../../../../rendering/router-detection.ts";
 import {
   clearModulePathCache,
   invalidateModulePaths,
 } from "../../../../transforms/mdx/esm-module-loader/cache/index.ts";
-import { clearSnippetCache } from "../../../../rendering/snippet-renderer.ts";
-import { clearRendererCaches } from "../../../../rendering/renderer.ts";
+import {
+  clearSnippetCache,
+  clearSnippetCacheForProject,
+} from "../../../../rendering/snippet-renderer.ts";
+import {
+  clearRendererCacheForProject,
+  clearRendererCaches,
+} from "../../../../rendering/renderer.ts";
 import { buildProxyManagerCacheKey } from "#veryfront/cache";
 import { z } from "zod";
 
@@ -288,13 +300,19 @@ export class ProxyFSAdapterManager {
       // 1. Clear all server-side caches (SSR modules, router detection, renderer cache, etc.)
       // 2. Trigger browser reload via ReloadNotifier → HMRHandler → WebSocket
       invalidationCallbacks: {
+        // Global clear functions (deprecated - kept for compatibility)
         clearSSRModuleCache,
         clearRouterDetectionCache,
         clearModulePathCache,
         invalidateModulePaths,
         clearSnippetCache,
         clearRendererCache: clearRendererCaches,
-        triggerReload: (changedPaths) => ReloadNotifier.triggerReload(changedPaths),
+        // Per-project clear functions (preferred for multi-tenant)
+        clearSSRModuleCacheForProject,
+        clearRouterDetectionCacheForProject,
+        clearSnippetCacheForProject,
+        clearRendererCacheForProject,
+        triggerReload: (changedPaths, _project) => ReloadNotifier.triggerReload(changedPaths),
       },
     };
 

@@ -16,6 +16,7 @@ import { TransformStage } from "#veryfront/transforms/pipeline/types.ts";
 import { isRSCEnabled } from "#veryfront/utils/feature-flags.ts";
 import { getRuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import type { HandlerContext } from "../../types.ts";
+import { isLocalDev } from "../../../context/request-context.ts";
 
 const JSON_HEADERS = { "Content-Type": "application/json", "Cache-Control": "no-cache" };
 
@@ -573,7 +574,7 @@ function handleGetConfig(ctx: HandlerContext): Response {
     featureFlags,
     environment: safeEnvVars,
     projectDir: ctx.projectDir || "(unknown)",
-    mode: ctx.mode,
+    isLocalDev: isLocalDev(),
     timestamp: new Date().toISOString(),
   });
 }

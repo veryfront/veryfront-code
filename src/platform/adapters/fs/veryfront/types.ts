@@ -176,25 +176,43 @@ export interface CacheStats {
 }
 
 /**
+ * Project context for cache invalidation.
+ * Used to clear only caches for a specific project in multi-tenant deployments.
+ */
+export interface InvalidationProjectContext {
+  projectId?: string;
+  projectSlug?: string;
+  projectDir?: string;
+}
+
+/**
  * Callbacks for cache invalidation operations.
  * These are injected to decouple the adapter from rendering/server internals.
  * All callbacks are optional - no-ops are used when not provided.
  */
 export interface InvalidationCallbacks {
-  /** Clear SSR module cache (full invalidation) */
+  /** Clear SSR module cache (full invalidation - DEPRECATED: use clearSSRModuleCacheForProject) */
   clearSSRModuleCache?: () => void;
-  /** Clear router detection cache */
+  /** Clear SSR module cache for a specific project */
+  clearSSRModuleCacheForProject?: (projectId: string) => void;
+  /** Clear router detection cache (full - DEPRECATED: use clearRouterDetectionCacheForProject) */
   clearRouterDetectionCache?: () => void;
+  /** Clear router detection cache for a specific project */
+  clearRouterDetectionCacheForProject?: (projectDir: string) => void;
   /** Clear module path resolution cache */
   clearModulePathCache?: () => void;
   /** Invalidate specific module paths (selective invalidation) */
   invalidateModulePaths?: (changedPaths: string[]) => void;
-  /** Clear snippet rendering cache */
+  /** Clear snippet rendering cache (full - DEPRECATED: use clearSnippetCacheForProject) */
   clearSnippetCache?: () => void;
-  /** Trigger browser reload notification */
-  triggerReload?: (changedPaths?: string[]) => void;
+  /** Clear snippet rendering cache for a specific project */
+  clearSnippetCacheForProject?: (projectSlug: string) => void;
+  /** Trigger browser reload notification with project context */
+  triggerReload?: (changedPaths?: string[], project?: InvalidationProjectContext) => void;
   /** Clear renderer result cache (context-aware HTML cache) */
   clearRendererCache?: () => void;
+  /** Clear renderer cache for a specific project */
+  clearRendererCacheForProject?: (projectId: string) => void;
 }
 
 /**

@@ -198,7 +198,7 @@ export class Renderer {
             ...options,
             projectId: ctx.projectId,
             projectSlug: ctx.projectSlug,
-            proxyEnvironment: ctx.environment,
+            environment: ctx.environment,
             contentSourceId,
           }),
           RENDER_PIPELINE_TIMEOUT_MS,
@@ -259,7 +259,7 @@ export class Renderer {
       ...options,
       projectId: ctx.projectId,
       projectSlug: ctx.projectSlug,
-      proxyEnvironment: ctx.environment,
+      environment: ctx.environment,
       contentSourceId,
     });
   }
@@ -296,10 +296,20 @@ export class Renderer {
   /**
    * Clear all cached render results (across all contexts).
    * Called by poke/invalidation handlers to ensure fresh renders.
+   * @deprecated Use clearCacheForProject for multi-tenant deployments
    */
   async clearAllCaches(): Promise<void> {
     await this.cache.clearAll();
     logger.debug("[Renderer] All caches cleared");
+  }
+
+  /**
+   * Clear cached render results for a specific project.
+   * Use this in multi-tenant deployments to avoid clearing other projects' caches.
+   */
+  async clearCacheForProject(projectId: string): Promise<void> {
+    await this.cache.clearForProject(projectId);
+    logger.debug("[Renderer] Project caches cleared", { projectId });
   }
 
   /**
@@ -494,11 +504,27 @@ export async function destroyRenderer(): Promise<void> {
 /**
  * Clear all cached render results from the singleton renderer.
  * Safe to call even if renderer is not initialized (no-op).
+ * @deprecated Use clearRendererCacheForProject for multi-tenant deployments
  */
 export function clearRendererCaches(): void {
   if (renderer) {
     renderer.clearAllCaches().catch((err) => {
       logger.warn("[Renderer] Failed to clear caches", { error: String(err) });
+    });
+  }
+}
+
+/**
+ * Clear cached render results for a specific project.
+ * Safe to call even if renderer is not initialized (no-op).
+ */
+export function clearRendererCacheForProject(projectId: string): void {
+  if (renderer) {
+    renderer.clearCacheForProject(projectId).catch((err) => {
+      logger.warn("[Renderer] Failed to clear project caches", {
+        projectId,
+        error: String(err),
+      });
     });
   }
 }

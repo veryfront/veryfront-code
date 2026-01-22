@@ -116,8 +116,6 @@ export interface UniversalHandlerOptions {
   projectDir: string;
   /** When true, expose additional debug logging. */
   debug?: boolean;
-  /** Renderer mode: 'development' or 'production'. Defaults to 'production'. */
-  mode?: "development" | "production";
   /** Module server URL for ESM imports (e.g., 'http://localhost:8765') */
   moduleServerUrl?: string;
   /** Pre-loaded config (avoids re-loading via FSAdapter) */
@@ -633,7 +631,6 @@ export function createVeryfrontHandler(
         const ctx: HandlerContext = {
           projectDir: effectiveProjectDir,
           adapter: effectiveAdapter,
-          mode: opts.mode ?? "production",
           moduleServerUrl: opts.moduleServerUrl,
           securityConfig: securityLoader.getSecurityConfig(),
           cspUserHeader: securityLoader.getCspUserHeader(),
@@ -644,9 +641,8 @@ export function createVeryfrontHandler(
           projectId,
           releaseId,
           proxyToken: isLocalProject ? undefined : proxyToken, // Don't pass token for local projects
-          proxyEnvironment: isLocalProject ? "preview" : proxyEnv, // Local projects are always preview
           environmentName,
-          requestContext: reqCtx,
+          requestContext: reqCtx, // Contains mode (preview/production) - use ctx.requestContext?.mode
           routeRegistry: registry,
         };
 

@@ -54,16 +54,9 @@ export function isProductionMode(ctx: HandlerContext, _url?: URL): boolean {
     return true;
   }
 
-  // Use RequestContext.mode if available (unified from hostname/header)
-  if (ctx.requestContext) {
-    return ctx.requestContext.mode === "production";
-  }
-
-  // Fallback for contexts without RequestContext
-  if (ctx.parsedDomain?.isVeryfrontDomain) {
-    return ctx.parsedDomain.isDraft === false;
-  }
-  return ctx.proxyEnvironment === "production";
+  // Use RequestContext.mode (unified from hostname/header)
+  // Default to preview (safer for development) if no context
+  return ctx.requestContext?.mode === "production";
 }
 
 /**
@@ -225,7 +218,11 @@ export class SSRHandler extends BaseHandler {
       // Use centralized renderer factory with per-project LRU caching
       // This prevents memory growth in multi-project mode
       const renderer = await timeAsync("renderer-init", () => getRendererForProject(ctx));
-      this.logDebug("renderer obtained", { mode: ctx.mode, projectSlug: ctx.projectSlug }, ctx);
+      this.logDebug(
+        "renderer obtained",
+        { isDev: isLocalDev(), projectSlug: ctx.projectSlug },
+        ctx,
+      );
 
       // Extract route parameters for both App Router and Pages Router
       // Run both extractions in parallel for better performance
@@ -306,7 +303,7 @@ export class SSRHandler extends BaseHandler {
           pageId,
           colorScheme,
           colorSchemeFromParam,
-          proxyEnvironment: ctx.proxyEnvironment,
+          environment: ctx.requestContext?.mode,
           projectSlug: ctx.projectSlug,
         }));
 
@@ -516,7 +513,7 @@ export class SSRHandler extends BaseHandler {
 
       // In development or preview mode, show error overlay with full stack trace
       // Preview is a dev environment (branch previews) so developers need detailed errors
-      if (!isHead && (ctx.mode === "development" || ctx.proxyEnvironment === "preview")) {
+      if (!isHead && (isLocalDev() || ctx.requestContext?.mode === "preview")) {
         const { ErrorOverlay } = await import(
           "../../../dev-server/error-overlay/index.ts"
         );

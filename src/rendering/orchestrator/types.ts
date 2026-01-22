@@ -50,10 +50,8 @@ export interface RenderOptions {
   colorScheme?: "light" | "dark";
   /** Whether colorScheme was set via color_mode URL param (needs localStorage persistence) */
   colorSchemeFromParam?: boolean;
-  /**
-   * @deprecated Use `requestContext?.mode` instead.
-   */
-  proxyEnvironment?: "preview" | "production";
+  /** Deployment environment (preview or production) */
+  environment?: "preview" | "production";
   /** Project slug for HTTP fallback in multi-project mode */
   projectSlug?: string;
   /** Content source identifier for cache isolation (branch name or release ID) */

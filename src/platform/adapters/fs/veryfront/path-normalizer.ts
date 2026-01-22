@@ -3,6 +3,10 @@ import { logger } from "#veryfront/utils";
 export class PathNormalizer {
   constructor(private readonly projectDir?: string) {}
 
+  getProjectDir(): string | undefined {
+    return this.projectDir;
+  }
+
   normalize(path: string): string {
     let normalized = path;
 
