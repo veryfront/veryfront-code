@@ -34,6 +34,8 @@ export async function handleMDXPage(
     projectSlug?: string;
     /** Enable node position injection for Studio Navigator */
     studioEmbed?: boolean;
+    /** Content source identifier for cache isolation (branch name or release ID) */
+    contentSourceId?: string;
   },
 ): Promise<MDXPageResult> {
   const fmArg = pageInfo.entity.frontmatter && Object.keys(pageInfo.entity.frontmatter).length > 0
@@ -87,6 +89,7 @@ export async function handleMDXPage(
       options?.projectId,
       projectDir,
       options?.projectSlug,
+      options?.contentSourceId,
     )) as MDXModule;
     const MDXComp = mod.MDXContent || mod.default;
     if (!MDXComp) {

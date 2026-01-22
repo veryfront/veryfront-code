@@ -50,6 +50,8 @@ export interface RenderOptions {
   proxyEnvironment?: "preview" | "production";
   /** Project slug for HTTP fallback in multi-project mode */
   projectSlug?: string;
+  /** Content source identifier for cache isolation (branch name or release ID) */
+  contentSourceId?: string;
 }
 
 export interface RenderContext {
