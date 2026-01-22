@@ -63,14 +63,12 @@ function getVersionedPathCacheKey(normalizedPath: string): string {
 }
 
 /**
- * Render session state including module tracking and per-session in-flight deduplication.
+ * Render session state for module tracking.
  */
 interface RenderSession {
   modules: Set<string>;
   projectSlug?: string;
   route?: string;
-  /** Per-session in-flight tracking to prevent duplicate parallel fetches within a request */
-  inFlight: Map<string, Promise<string | null>>;
 }
 
 /**
@@ -92,7 +90,6 @@ export function startRenderSession(
     modules: new Set(),
     projectSlug,
     route,
-    inFlight: new Map(),
   });
   logger.debug(`${LOG_PREFIX_MDX_LOADER} Started render session`, {
     sessionId,
@@ -378,92 +375,18 @@ export async function fetchAndCacheModule(
   const cacheKey = getPathCacheKey(context.projectId, normalizedPath);
   const projectSlug = context.projectSlug || "unknown";
 
-  // Get session-scoped inFlight map for deduplication.
-  // This prevents cross-request deadlocks where Request B waits on Request A's hung fetch.
-  // If no session exists (tests/dev), skip deduplication entirely.
-  const session = getCurrentSession();
-  const inFlight = session?.inFlight;
-
-  // Only use in-flight deduplication for top-level imports (no parent) and when we have a session.
-  // Nested imports (with parentModulePath) skip deduplication to avoid deadlocks
-  // when parallel Promise.all chains have overlapping dependencies.
-  // The file cache handles eventual deduplication anyway.
-  const useInFlightTracking = !parentModulePath && inFlight !== undefined;
+  // NOTE: In-flight deduplication is DISABLED.
+  // It caused deadlocks even within a single request because page + layout
+  // modules are fetched in parallel and share state. Layout's Footer.js would
+  // wait on page's Footer.js which was still processing nested imports.
+  // The file cache handles deduplication anyway - parallel fetches write to same path.
 
   logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] START`, {
     projectSlug,
     modulePath,
     normalizedPath,
     parentModulePath,
-    useInFlightTracking,
-    hasSession: session !== null,
-    inFlightCount: inFlight?.size ?? 0,
-    inFlightKeys: useInFlightTracking && inFlight ? Array.from(inFlight.keys()).slice(0, 5) : [],
   });
-
-  // Only check in-flight for top-level imports with an active session
-  if (useInFlightTracking && inFlight) {
-    const existingFetch = inFlight.get(cacheKey);
-    if (existingFetch) {
-      logger.debug(
-        `${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] WAITING for in-flight fetch`,
-        { projectSlug, normalizedPath, cacheKey },
-      );
-      const waitStart = performance.now();
-
-      // Add timeout to prevent waiting forever on orphaned promises
-      // This can happen if the original request timed out but the fetch never completed
-      const IN_FLIGHT_WAIT_TIMEOUT_MS = 5000;
-
-      try {
-        const result = await Promise.race([
-          existingFetch,
-          new Promise<null>((_, reject) =>
-            setTimeout(
-              () => reject(new Error("In-flight wait timeout")),
-              IN_FLIGHT_WAIT_TIMEOUT_MS,
-            )
-          ),
-        ]);
-        logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] in-flight wait DONE`, {
-          projectSlug,
-          normalizedPath,
-          waitMs: (performance.now() - waitStart).toFixed(1),
-        });
-        return result;
-      } catch (error) {
-        // Timeout waiting for in-flight fetch - likely orphaned from a previous request
-        // Remove the stale entry and continue with a fresh fetch
-        logger.warn(
-          `${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] in-flight wait TIMEOUT - removing stale entry and retrying`,
-          {
-            projectSlug,
-            normalizedPath,
-            waitMs: (performance.now() - waitStart).toFixed(1),
-            error: error instanceof Error ? error.message : String(error),
-          },
-        );
-        inFlight.delete(cacheKey);
-        // Fall through to start a fresh fetch
-      }
-    }
-  }
-
-  // Create a deferred promise to track this fetch (only for top-level with session)
-  let resolveDeferred: ((value: string | null) => void) | undefined;
-  if (useInFlightTracking && inFlight) {
-    const fetchPromise = new Promise<string | null>((resolve) => {
-      resolveDeferred = resolve;
-    });
-
-    // Register BEFORE starting fetch to prevent race conditions
-    inFlight.set(cacheKey, fetchPromise);
-    logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] registered in-flight`, {
-      projectSlug,
-      normalizedPath,
-      inFlightCount: inFlight.size,
-    });
-  }
 
   // Recursive fetch function for nested imports
   const fetchAndCacheModuleFn = (path: string, parent?: string): Promise<string | null> => {
@@ -634,17 +557,11 @@ export async function fetchAndCacheModule(
     }
   })();
 
-  // Resolve the deferred promise and clean up (only for top-level)
   logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] DONE`, {
     projectSlug,
     normalizedPath,
     hasResult: result !== null,
-    useInFlightTracking,
   });
-  if (useInFlightTracking && resolveDeferred && inFlight) {
-    resolveDeferred(result);
-    inFlight.delete(cacheKey);
-  }
   return result;
 }
 
