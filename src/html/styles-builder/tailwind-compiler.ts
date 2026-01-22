@@ -45,9 +45,6 @@ const pluginCache = new Map<string, unknown>();
 /** Track plugin load errors for error overlay */
 const pluginErrors = new Map<string, string>();
 
-/** Last successfully generated CSS (for error recovery) */
-let lastGoodCSS = "";
-
 /**
  * CSS cache by hash - stores generated CSS for production hashed URLs
  * Key: CSS hash (8 chars), Value: CSS content
@@ -156,10 +153,10 @@ export function clearCSSCache(): void {
  */
 export function extractCandidates(content: string): string[] {
   // Match anything that could be a Tailwind class:
-  // - Starts with a letter
+  // - Starts with a letter OR digit (for 2xl:, 3xl: responsive prefixes)
   // - Contains letters, numbers, dashes, colons, slashes, brackets, dots, etc.
   // - Includes special chars for arbitrary values: [], (), %, #, !, '
-  const pattern = /[a-zA-Z][a-zA-Z0-9_\-:\/\[\]\.%#,()!']+/g;
+  const pattern = /[a-zA-Z0-9][a-zA-Z0-9_\-:\/\[\]\.%#,()!']+/g;
   const matches = content.match(pattern) || [];
   return [...new Set(matches)];
 }
@@ -343,9 +340,6 @@ export async function generateTailwindCSS(
       output = output.replace(/\n\s*\n/g, "\n");
     }
 
-    // Success - cache it
-    lastGoodCSS = output;
-
     logger.debug("[tailwind] Generated CSS", {
       candidateCount: candidates instanceof Set ? candidates.size : candidates.length,
       outputLength: output.length,
@@ -356,9 +350,9 @@ export async function generateTailwindCSS(
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error("[tailwind] Compilation failed", { error: errorMessage });
 
-    // Return last good CSS + error message for overlay
+    // Return empty CSS with error message for overlay
     return {
-      css: lastGoodCSS,
+      css: "",
       error: errorMessage,
     };
   }
