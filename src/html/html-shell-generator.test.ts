@@ -238,15 +238,26 @@ describe("html-generation/html-shell-generator", () => {
         { mode: "development", config: mockConfig },
       );
 
-      const prodResult = await wrapInHTMLShell(
-        "<div>Content</div>",
-        meta,
-        { mode: "production", config: mockConfig },
-      );
+      // Production syntax theme requires NODE_ENV=production
+      const originalNodeEnv = Deno.env.get("NODE_ENV");
+      Deno.env.set("NODE_ENV", "production");
+      try {
+        const prodResult = await wrapInHTMLShell(
+          "<div>Content</div>",
+          meta,
+          { mode: "production", config: mockConfig },
+        );
 
-      assertStringIncludes(devResult, "github-dark");
-      assertStringIncludes(prodResult, "github.min.css");
-      assert(!prodResult.includes("github-dark"));
+        assertStringIncludes(devResult, "github-dark");
+        assertStringIncludes(prodResult, "github.min.css");
+        assert(!prodResult.includes("github-dark"));
+      } finally {
+        if (originalNodeEnv !== undefined) {
+          Deno.env.set("NODE_ENV", originalNodeEnv);
+        } else {
+          Deno.env.delete("NODE_ENV");
+        }
+      }
     });
 
     it("should include hydration data script", async () => {
@@ -295,21 +306,33 @@ describe("html-generation/html-shell-generator", () => {
     });
 
     it("should include production scripts in prod mode", async () => {
-      const meta: RenderMetadata = {
-        title: "Test Page",
-        slug: "test",
-        frontmatter: {},
-      };
+      // Production scripts require NODE_ENV=production (isLocalDev() === false)
+      const originalNodeEnv = Deno.env.get("NODE_ENV");
+      Deno.env.set("NODE_ENV", "production");
 
-      const options: HTMLGenerationOptions = {
-        mode: "production",
-        config: mockConfig,
-      };
+      try {
+        const meta: RenderMetadata = {
+          title: "Test Page",
+          slug: "test",
+          frontmatter: {},
+        };
 
-      const result = await wrapInHTMLShell("<div>Content</div>", meta, options);
+        const options: HTMLGenerationOptions = {
+          mode: "production",
+          config: mockConfig,
+        };
 
-      assertStringIncludes(result, "hydrateRoot");
-      assert(!result.includes("Client-side error logger"));
+        const result = await wrapInHTMLShell("<div>Content</div>", meta, options);
+
+        assertStringIncludes(result, "hydrateRoot");
+        assert(!result.includes("Client-side error logger"));
+      } finally {
+        if (originalNodeEnv !== undefined) {
+          Deno.env.set("NODE_ENV", originalNodeEnv);
+        } else {
+          Deno.env.delete("NODE_ENV");
+        }
+      }
     });
 
     it("should handle layout disabled", async () => {

@@ -207,17 +207,19 @@ export async function generateHTMLShellParts(
 
   const nonce = options.nonce || "";
 
-  // Skip dev HMR script (hmr.js) when preview-hmr.js will be used instead
+  // HMR modes (two orthogonal concerns):
+  // - Local Dev HMR (hmr.js): enabled when isLocalDev() - hot reload during development
+  // - Preview HMR (preview-hmr.js): enabled when mode === "preview" - Studio live updates
+  // Skip Local Dev HMR when Preview HMR is active (avoid duplicate handling)
   const skipDevHMR = options.proxyEnvironment === "preview";
-  const modeScripts = options.mode === "development"
+  const useDevScripts = isLocalDev();
+  const modeScripts = useDevScripts
     ? getDevScripts(meta.slug || "", options.config, params, props, nonce, { skipDevHMR })
     : getProdScripts(meta.slug || "", params, props, nonce);
 
-  const modeStyles = options.mode === "development"
-    ? getDevStyles(nonce)
-    : getProductionStyles(nonce);
+  const modeStyles = useDevScripts ? getDevStyles(nonce) : getProductionStyles(nonce);
 
-  const syntaxHighlightTheme = options.mode === "development" ? "github-dark" : "github";
+  const syntaxHighlightTheme = useDevScripts ? "github-dark" : "github";
 
   // Generate Tailwind CSS output - inline for preview/dev, hashed link for production
   // cacheCSS stores the CSS and returns the hash for later retrieval
@@ -226,11 +228,11 @@ export async function generateHTMLShellParts(
   // Generate modulepreload hints for page and layout modules (faster cold start)
   const modulePreloadHints = generateModulePreloadHints(options);
 
-  // Deduplicate React hydration errors in production (error #418, #423, #425)
+  // Deduplicate React hydration errors in non-development environments (error #418, #423, #425)
   // These are common with SSR + client-side libraries (themes, animations) and React 18
   // recovers gracefully. We log once with helpful context instead of spamming console.
   // Must run BEFORE React loads to intercept the console.error calls.
-  const hydrationErrorSuppression = options.mode !== "development"
+  const hydrationErrorSuppression = !useDevScripts
     ? `<script${nonce ? ` nonce="${nonce}"` : ""}>
 (function(){
   var origError = console.error;
