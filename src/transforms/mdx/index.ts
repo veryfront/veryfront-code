@@ -45,6 +45,7 @@ export class MDXRenderer {
     projectId?: string,
     projectDir?: string,
     projectSlug?: string,
+    contentSourceId?: string,
   ): Promise<MDXModule> {
     // Don't pass esmCacheDir - let loadModuleESM get it fresh from getMdxEsmCacheDir()
     // which respects AsyncLocalStorage for proper test isolation
@@ -55,6 +56,7 @@ export class MDXRenderer {
       projectId,
       projectDir,
       projectSlug,
+      contentSourceId, // For cache isolation between preview/production
     };
     const result = await loadModuleESM(compiledProgramCode, context);
     // Don't cache context.esmCacheDir - it may be for a different AsyncLocalStorage context

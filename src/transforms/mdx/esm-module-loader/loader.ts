@@ -47,6 +47,7 @@ function resolveProjectDir(context: ESMLoaderContext): string {
 
 /**
  * Initialize the ESM cache directory.
+ * Includes contentSourceId in the path to isolate preview vs production caches.
  */
 async function initializeCacheDir(context: ESMLoaderContext): Promise<string> {
   if (context.esmCacheDir) {
@@ -56,7 +57,11 @@ async function initializeCacheDir(context: ESMLoaderContext): Promise<string> {
   const localFs = getLocalFs();
   const baseCacheDir = getMdxEsmCacheDir();
   const projectKey = context.projectId ? encodeURIComponent(context.projectId) : "default";
-  const persistentCacheDir = join(baseCacheDir, projectKey);
+  // Include contentSourceId to separate caches by environment (branch/release)
+  const sourceKey = context.contentSourceId
+    ? encodeURIComponent(context.contentSourceId)
+    : "default";
+  const persistentCacheDir = join(baseCacheDir, projectKey, sourceKey);
 
   try {
     await localFs.mkdir(persistentCacheDir, { recursive: true });
