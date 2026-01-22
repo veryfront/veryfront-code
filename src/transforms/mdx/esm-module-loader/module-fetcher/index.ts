@@ -377,78 +377,85 @@ export async function fetchAndCacheModule(
   const cacheKey = getPathCacheKey(context.projectId, normalizedPath);
   const projectSlug = context.projectSlug || "unknown";
 
+  // Only use in-flight deduplication for top-level imports (no parent).
+  // Nested imports (with parentModulePath) skip deduplication to avoid deadlocks
+  // when parallel Promise.all chains have overlapping dependencies.
+  // The file cache handles eventual deduplication anyway.
+  const useInFlightTracking = !parentModulePath;
+
   logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] START`, {
     projectSlug,
     modulePath,
     normalizedPath,
     parentModulePath,
+    useInFlightTracking,
     inFlightCount: inFlight.size,
-    inFlightKeys: Array.from(inFlight.keys()).slice(0, 5),
+    inFlightKeys: useInFlightTracking ? Array.from(inFlight.keys()).slice(0, 5) : [],
   });
 
-  // Check if this module is already being fetched (prevent race conditions)
-  const existingFetch = inFlight.get(cacheKey);
-  if (existingFetch) {
-    logger.debug(
-      `${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] WAITING for in-flight fetch`,
-      { projectSlug, normalizedPath, cacheKey },
-    );
-    const waitStart = performance.now();
+  // Only check in-flight for top-level imports
+  if (useInFlightTracking) {
+    const existingFetch = inFlight.get(cacheKey);
+    if (existingFetch) {
+      logger.debug(
+        `${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] WAITING for in-flight fetch`,
+        { projectSlug, normalizedPath, cacheKey },
+      );
+      const waitStart = performance.now();
 
-    // Add timeout to prevent waiting forever on orphaned promises or circular dependencies
-    // This can happen if:
-    // 1. The original request timed out but the fetch never completed
-    // 2. Two parallel Promise.all chains have overlapping dependencies (circular within request)
-    // Using 500ms timeout to break deadlocks quickly - if a module takes longer than
-    // this, we'll start a fresh fetch rather than risk a deadlock
-    const IN_FLIGHT_WAIT_TIMEOUT_MS = 500;
+      // Add timeout to prevent waiting forever on orphaned promises
+      // This can happen if the original request timed out but the fetch never completed
+      const IN_FLIGHT_WAIT_TIMEOUT_MS = 5000;
 
-    try {
-      const result = await Promise.race([
-        existingFetch,
-        new Promise<null>((_, reject) =>
-          setTimeout(
-            () => reject(new Error("In-flight wait timeout")),
-            IN_FLIGHT_WAIT_TIMEOUT_MS,
-          )
-        ),
-      ]);
-      logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] in-flight wait DONE`, {
-        projectSlug,
-        normalizedPath,
-        waitMs: (performance.now() - waitStart).toFixed(1),
-      });
-      return result;
-    } catch (error) {
-      // Timeout waiting for in-flight fetch - likely orphaned from a previous request
-      // Remove the stale entry and continue with a fresh fetch
-      logger.warn(
-        `${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] in-flight wait TIMEOUT - removing stale entry and retrying`,
-        {
+      try {
+        const result = await Promise.race([
+          existingFetch,
+          new Promise<null>((_, reject) =>
+            setTimeout(
+              () => reject(new Error("In-flight wait timeout")),
+              IN_FLIGHT_WAIT_TIMEOUT_MS,
+            )
+          ),
+        ]);
+        logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] in-flight wait DONE`, {
           projectSlug,
           normalizedPath,
           waitMs: (performance.now() - waitStart).toFixed(1),
-          error: error instanceof Error ? error.message : String(error),
-        },
-      );
-      inFlight.delete(cacheKey);
-      // Fall through to start a fresh fetch
+        });
+        return result;
+      } catch (error) {
+        // Timeout waiting for in-flight fetch - likely orphaned from a previous request
+        // Remove the stale entry and continue with a fresh fetch
+        logger.warn(
+          `${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] in-flight wait TIMEOUT - removing stale entry and retrying`,
+          {
+            projectSlug,
+            normalizedPath,
+            waitMs: (performance.now() - waitStart).toFixed(1),
+            error: error instanceof Error ? error.message : String(error),
+          },
+        );
+        inFlight.delete(cacheKey);
+        // Fall through to start a fresh fetch
+      }
     }
   }
 
-  // Create a deferred promise to track this fetch
-  let resolveDeferred: (value: string | null) => void;
-  const fetchPromise = new Promise<string | null>((resolve) => {
-    resolveDeferred = resolve;
-  });
+  // Create a deferred promise to track this fetch (only for top-level)
+  let resolveDeferred: ((value: string | null) => void) | undefined;
+  if (useInFlightTracking) {
+    const fetchPromise = new Promise<string | null>((resolve) => {
+      resolveDeferred = resolve;
+    });
 
-  // Register BEFORE starting fetch to prevent race conditions
-  inFlight.set(cacheKey, fetchPromise);
-  logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] registered in-flight`, {
-    projectSlug,
-    normalizedPath,
-    inFlightCount: inFlight.size,
-  });
+    // Register BEFORE starting fetch to prevent race conditions
+    inFlight.set(cacheKey, fetchPromise);
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] registered in-flight`, {
+      projectSlug,
+      normalizedPath,
+      inFlightCount: inFlight.size,
+    });
+  }
 
   // Recursive fetch function for nested imports
   const fetchAndCacheModuleFn = (path: string, parent?: string): Promise<string | null> => {
@@ -619,14 +626,17 @@ export async function fetchAndCacheModule(
     }
   })();
 
-  // Resolve the deferred promise and clean up
-  logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] DONE, resolving deferred`, {
+  // Resolve the deferred promise and clean up (only for top-level)
+  logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] DONE`, {
     projectSlug,
     normalizedPath,
     hasResult: result !== null,
+    useInFlightTracking,
   });
-  resolveDeferred!(result);
-  inFlight.delete(cacheKey);
+  if (useInFlightTracking && resolveDeferred) {
+    resolveDeferred(result);
+    inFlight.delete(cacheKey);
+  }
   return result;
 }
 
