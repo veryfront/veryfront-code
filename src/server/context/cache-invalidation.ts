@@ -75,15 +75,3 @@ export function invalidateProjectCaches(
     changedPaths: changedPaths?.length ?? "all",
   });
 }
-
-/**
- * Clear all project caches (full invalidation).
- *
- * Use this when you need to ensure everything is fresh,
- * such as after a deployment or major content update.
- *
- * @param projectSlug - Project slug (used for logging)
- */
-export function clearAllProjectCaches(projectSlug: string): void {
-  invalidateProjectCaches(projectSlug);
-}

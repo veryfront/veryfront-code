@@ -147,7 +147,8 @@ export async function generateHTMLShellParts(
   // - Production mode + deployed env → <link> for immutable caching
   // - Preview mode → inline for Preview HMR updates
   // - Local dev → inline for Local Dev HMR updates
-  const useProductionCSS = !isLocalDev() && options.environment === "production";
+  const localDev = options.isLocalDev ?? isLocalDev();
+  const useProductionCSS = !localDev && options.environment === "production";
 
   // Start with classes from all project source files (extracted fresh each request)
   const candidates = new Set<string>(options.projectClasses || []);
@@ -208,11 +209,11 @@ export async function generateHTMLShellParts(
   const nonce = options.nonce || "";
 
   // HMR modes (two orthogonal concerns):
-  // - Local Dev HMR (hmr.js): enabled when isLocalDev() - hot reload during development
+  // - Local Dev HMR (hmr.js): enabled when localDev - hot reload during development
   // - Preview HMR (preview-hmr.js): enabled when mode === "preview" - Studio live updates
   // Skip Local Dev HMR when Preview HMR is active (avoid duplicate handling)
   const skipDevHMR = options.environment === "preview";
-  const useDevScripts = isLocalDev();
+  const useDevScripts = localDev;
   const modeScripts = useDevScripts
     ? getDevScripts(meta.slug || "", options.config, params, props, nonce, { skipDevHMR })
     : getProdScripts(meta.slug || "", params, props, nonce);
