@@ -12,6 +12,7 @@ import { isAbsolute, join } from "#veryfront/platform/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { simpleHash } from "#veryfront/utils/hash-utils.ts";
+import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import { getReactImportMap, REACT_VERSION } from "./package-registry.ts";
@@ -24,7 +25,8 @@ type CacheOptions = {
   reactVersion?: string;
 };
 
-const inFlight = new Map<string, Promise<string>>();
+/** Singleflight for HTTP module fetch deduplication */
+const httpFetchFlight = new Singleflight<string>();
 const cachedPaths = new Map<string, string>();
 
 // Track currently processing URLs to detect circular dependencies
@@ -176,11 +178,13 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
     return cachePath;
   }
 
-  const inflight = inFlight.get(cacheKey);
-  if (inflight) return inflight;
-
-  const fetchPromise = (async () => {
+  // Use Singleflight to deduplicate concurrent fetches for the same URL.
+  // This prevents race conditions where multiple requests try to write
+  // the same cache file simultaneously.
+  return httpFetchFlight.do(cacheKey, async () => {
     const cachePath = join(cacheDir, `http-${simpleHash(normalizedUrl)}.mjs`);
+
+    // Double-check cache after acquiring flight (another request may have completed)
     if (await exists(cachePath)) {
       cachedPaths.set(cacheKey, cachePath);
       return cachePath;
@@ -218,14 +222,7 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
 
     cachedPaths.set(cacheKey, cachePath);
     return cachePath;
-  })();
-
-  inFlight.set(cacheKey, fetchPromise);
-  try {
-    return await fetchPromise;
-  } finally {
-    inFlight.delete(cacheKey);
-  }
+  });
 }
 
 async function resolveSpecifier(
