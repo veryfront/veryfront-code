@@ -58,20 +58,67 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       assertEquals(handler.metadata.enabled?.(productionModeCtx), true);
     });
 
-    it("is disabled in production with production mode", () => {
+    it("enabled function always returns true (check happens in handle)", () => {
       const handler = new HMRHandler();
 
-      // Not local dev + production mode = HMR should be disabled
+      // The enabled function now always returns true because:
+      // 1. WebSocket API doesn't support custom headers
+      // 2. Proxy forwards environment via query params
+      // 3. Environment check happens in handle() method
       const productionCtx = { requestContext: { mode: "production", isLocalDev: false } } as Parameters<
         NonNullable<typeof handler.metadata.enabled>
       >[0];
-      assertEquals(handler.metadata.enabled?.(productionCtx), false);
+      assertEquals(handler.metadata.enabled?.(productionCtx), true);
 
-      // Also disabled when no requestContext
       const noCtx = {} as Parameters<
         NonNullable<typeof handler.metadata.enabled>
       >[0];
-      assertEquals(handler.metadata.enabled?.(noCtx), false);
+      assertEquals(handler.metadata.enabled?.(noCtx), true);
+    });
+
+    it("handle returns continue for non-preview/non-localdev requests", async () => {
+      const handler = new HMRHandler();
+
+      const req = new Request("http://localhost:3000/_ws");
+      const ctx = {
+        requestContext: { mode: "production", isLocalDev: false },
+        projectDir: "/tmp/test",
+        securityConfig: null,
+        cspUserHeader: null,
+        adapter: {
+          fs: {},
+          server: null,
+        },
+      } as unknown as Parameters<typeof handler.handle>[1];
+
+      const result = await handler.handle(req, ctx);
+
+      // Should return continue (not handle this request)
+      assertEquals(result.continue, true);
+      assertEquals(result.response, undefined);
+    });
+
+    it("handle accepts preview via query param (for proxy WebSocket)", async () => {
+      const handler = new HMRHandler();
+
+      // Proxy forwards environment via query param since WebSocket API doesn't support headers
+      const req = new Request("http://localhost:3000/_ws?x-environment=preview");
+      const ctx = {
+        requestContext: { mode: "production", isLocalDev: false }, // Not preview in context
+        projectDir: "/tmp/test",
+        securityConfig: null,
+        cspUserHeader: null,
+        adapter: {
+          fs: {},
+          server: null, // No server adapter - will return info response
+        },
+      } as unknown as Parameters<typeof handler.handle>[1];
+
+      const result = await handler.handle(req, ctx);
+
+      // Should respond (not continue) because query param has x-environment=preview
+      assertExists(result.response);
+      assertEquals(result.response.status, 200); // Info response (not WebSocket, no upgrade header)
     });
   });
 

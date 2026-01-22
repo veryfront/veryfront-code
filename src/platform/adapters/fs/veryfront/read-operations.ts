@@ -18,6 +18,10 @@ export interface ContentContextProvider {
 const EXTENSION_PRIORITY = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"] as const;
 
 export class ReadOperations {
+  // In-flight request deduplication map
+  // Prevents duplicate concurrent fetches for the same file
+  private readonly inFlightRequests = new Map<string, Promise<string>>();
+
   constructor(
     private readonly client: VeryfrontAPIClient,
     private readonly cache: FileCache,
@@ -113,6 +117,19 @@ export class ReadOperations {
       }
     }
 
+    // Request deduplication: check if there's already an in-flight request for this file
+    // This prevents duplicate concurrent fetches when multiple parts of the code
+    // request the same file simultaneously (e.g., pages/index.mdx fetched 3x)
+    const inFlightKey = cacheKey;
+    const existingRequest = this.inFlightRequests.get(inFlightKey);
+    if (existingRequest) {
+      logger.debug("[ReadOperations] Deduplicating request - joining existing fetch", {
+        path: normalizedPath,
+        cacheKey: inFlightKey,
+      });
+      return existingRequest;
+    }
+
     // Fetch based on source type
     const isPublished = ctx?.sourceType !== "branch";
 
@@ -123,16 +140,29 @@ export class ReadOperations {
       sourceType: ctx?.sourceType ?? "null/undefined",
     });
 
-    if (isPublished) {
-      return this.fetchPublishedContent(
-        normalizedPath,
-        apiPath,
-        cacheKey,
-        ctx?.releaseId ?? null,
-        isProduction,
-      );
-    }
-    return this.fetchDraftContent(normalizedPath, apiPath, cacheKey, isProduction);
+    // Create the fetch promise and store it for deduplication
+    const fetchPromise = (async () => {
+      try {
+        if (isPublished) {
+          return await this.fetchPublishedContent(
+            normalizedPath,
+            apiPath,
+            cacheKey,
+            ctx?.releaseId ?? null,
+            isProduction,
+          );
+        }
+        return await this.fetchDraftContent(normalizedPath, apiPath, cacheKey, isProduction);
+      } finally {
+        // Clean up the in-flight request when done (success or failure)
+        this.inFlightRequests.delete(inFlightKey);
+      }
+    })();
+
+    // Store the promise for other concurrent requests to join
+    this.inFlightRequests.set(inFlightKey, fetchPromise);
+
+    return fetchPromise;
   }
 
   private async fetchPublishedContent(

@@ -46,10 +46,11 @@ export class HMRHandler extends BaseHandler {
     name: "HMRHandler",
     priority: PRIORITY_HMR,
     patterns: [{ pattern: "/_ws", exact: true }],
-    // Enable in preview mode (for live Studio updates) and local dev (for HMR)
-    // - ctx.requestContext?.isLocalDev: env !== "production" (enables local dev HMR)
-    // - ctx.requestContext?.mode === "preview": hostname has .preview. (enables preview HMR)
-    enabled: (ctx) => ctx.requestContext?.isLocalDev || ctx.requestContext?.mode === "preview",
+    // Always enabled for /_ws path - we check environment in handle() because:
+    // 1. Standard WebSocket API doesn't support custom headers
+    // 2. Proxy forwards environment via query params (x-environment=preview)
+    // 3. The enabled() function only receives ctx, not the request
+    enabled: () => true,
   };
 
   /**
@@ -135,6 +136,23 @@ export class HMRHandler extends BaseHandler {
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     if (!this.shouldHandle(req, ctx)) {
+      return Promise.resolve(this.continue());
+    }
+
+    // Check if HMR should be enabled for this request
+    // Environment can come from: context mode, local dev flag, or query params (proxy WebSocket)
+    const url = new URL(req.url);
+    const queryEnv = url.searchParams.get("x-environment");
+    const isPreviewMode = ctx.requestContext?.mode === "preview" || queryEnv === "preview";
+    const isLocalDev = ctx.requestContext?.isLocalDev === true;
+
+    if (!isPreviewMode && !isLocalDev) {
+      // Not a preview/dev request - skip HMR handler
+      logger.debug("[HMRHandler] Skipping - not preview or local dev", {
+        mode: ctx.requestContext?.mode,
+        queryEnv,
+        isLocalDev,
+      });
       return Promise.resolve(this.continue());
     }
 

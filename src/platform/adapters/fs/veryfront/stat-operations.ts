@@ -86,22 +86,12 @@ export class StatOperations {
       return info;
     }
 
-    // 3. File not in local index - check distributed cache for negative result
-    // This avoids re-checking the API for files we already know don't exist
-    const cached = await this.cache.getAsync<FileInfo | string>(cacheKey);
-    if (cached === NOT_FOUND_SENTINEL) {
-      throw toError(createError({
-        type: "file",
-        message: `File not found: ${normalizedPath}`,
-      }));
-    }
-
-    // 4. Cache negative result to avoid repeated lookups (uses default TTL)
-    this.cache.set(cacheKey, NOT_FOUND_SENTINEL);
-
-    // Log at debug level to reduce noise - only log details for unexpected misses
-    logger.debug("[StatOperations] stat file not found", {
-      path,
+    // 3. File not in local index - it doesn't exist
+    // The local file index is built from getAllFilesRaw() which fetches ALL files.
+    // If a file isn't in the local index, it definitively doesn't exist.
+    // No need to check distributed cache - the local index is authoritative.
+    // This avoids ~100-200ms HTTP calls to distributed cache for each missing file.
+    logger.debug("[StatOperations] stat file not found (not in index)", {
       normalizedPath,
       indexSize: fileIdx.size,
     });
