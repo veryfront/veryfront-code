@@ -68,8 +68,21 @@ import type { HandlerContext } from "../server/handlers/types.ts";
 import { TimeoutError, withTimeoutThrow } from "./utils/stream-utils.ts";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
 
-/** Master timeout for entire render pipeline (must be less than REQUEST_TIMEOUT_MS) */
-const RENDER_PIPELINE_TIMEOUT_MS = 20000;
+/**
+ * Get environment variable (cross-platform: Deno, Node, Bun).
+ */
+function getEnv(name: string): string | undefined {
+  // deno-lint-ignore no-explicit-any
+  const g = globalThis as any;
+  return g.Deno?.env?.get(name) ?? g.process?.env?.[name];
+}
+
+/**
+ * Master timeout for entire render pipeline (must be less than REQUEST_TIMEOUT_MS).
+ * Configurable via RENDER_TIMEOUT_MS env var for cold-start scenarios.
+ * Default increased to 60s to handle cold-start module transforms.
+ */
+const RENDER_PIPELINE_TIMEOUT_MS = parseInt(getEnv("RENDER_TIMEOUT_MS") || "60000", 10);
 
 /**
  * Options for initializing the Renderer
