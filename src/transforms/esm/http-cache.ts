@@ -4,6 +4,12 @@
  * Fetches HTTP(S) modules (esm.sh, deno.land, etc.), rewrites their imports to
  * local file:// paths, and caches them on disk for runtime-agnostic loading.
  *
+ * Uses distributed caching (API/Redis) to share modules across pods:
+ * 1. Check in-memory cache (fastest, per-process)
+ * 2. Check local filesystem (fast, per-pod)
+ * 3. Check distributed cache (medium, shared across pods)
+ * 4. Fetch from esm.sh (slow, external)
+ *
  * @module transforms/esm/http-cache
  */
 
@@ -17,6 +23,7 @@ import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import { getReactImportMap, REACT_VERSION } from "./package-registry.ts";
 import { parseImports, replaceSpecifiers } from "./lexer.ts";
+import { CacheBackends, type CacheBackend } from "#veryfront/cache/backend.ts";
 
 type CacheOptions = {
   cacheDir: string;
@@ -31,6 +38,26 @@ const cachedPaths = new Map<string, string>();
 
 // Track currently processing URLs to detect circular dependencies
 const processingStack = new Set<string>();
+
+/** Distributed cache backend (lazy initialized) */
+let distributedCache: CacheBackend | null = null;
+let distributedCacheInitPromise: Promise<CacheBackend> | null = null;
+
+/** TTL for HTTP modules in distributed cache (7 days) */
+const HTTP_MODULE_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60;
+
+function getDistributedCache(): Promise<CacheBackend> {
+  if (distributedCache) return Promise.resolve(distributedCache);
+  if (distributedCacheInitPromise) return distributedCacheInitPromise;
+
+  distributedCacheInitPromise = CacheBackends.httpModule().then((backend) => {
+    distributedCache = backend;
+    logger.debug("[HTTP-CACHE] Distributed cache initialized", { type: backend.type });
+    return backend;
+  });
+
+  return distributedCacheInitPromise;
+}
 
 function ensureAbsoluteDir(path: string): string {
   return isAbsolute(path) ? path : join(cwd(), path);
@@ -176,9 +203,10 @@ function cacheHttpModule(url: string, options: CacheOptions): Promise<string | n
   // dependencies because processingStack is global, causing them to return expected
   // file paths for files that haven't been written yet.
   return httpFetchFlight.do(cacheKey, async () => {
-    const cachePath = join(cacheDir, `http-${simpleHash(normalizedUrl)}.mjs`);
+    const urlHash = simpleHash(normalizedUrl);
+    const cachePath = join(cacheDir, `http-${urlHash}.mjs`);
 
-    // Double-check cache after acquiring flight (another request may have completed)
+    // 1. Double-check local filesystem after acquiring flight
     if (await exists(cachePath)) {
       cachedPaths.set(cacheKey, cachePath);
       return cachePath;
@@ -196,7 +224,32 @@ function cacheHttpModule(url: string, options: CacheOptions): Promise<string | n
       return cachePath;
     }
 
-    logger.debug("[HTTP-CACHE] Fetching", { url: normalizedUrl });
+    // 2. Check distributed cache (API/Redis) - shared across pods
+    const distributedCacheKey = `http:${urlHash}`;
+    let code: string | null = null;
+
+    try {
+      const backend = await getDistributedCache();
+      code = await backend.get(distributedCacheKey);
+      if (code) {
+        logger.debug("[HTTP-CACHE] Distributed cache hit", { url: normalizedUrl });
+        // Write to local filesystem for fast subsequent access
+        const fs = createFileSystem();
+        await fs.mkdir(cacheDir, { recursive: true });
+        await fs.writeTextFile(cachePath, code);
+        cachedPaths.set(cacheKey, cachePath);
+        return cachePath;
+      }
+    } catch (err) {
+      // Distributed cache error - fall through to fetch from esm.sh
+      logger.debug("[HTTP-CACHE] Distributed cache error, falling back to fetch", {
+        url: normalizedUrl,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    // 3. Fetch from esm.sh
+    logger.debug("[HTTP-CACHE] Fetching from esm.sh", { url: normalizedUrl });
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
@@ -212,7 +265,7 @@ function cacheHttpModule(url: string, options: CacheOptions): Promise<string | n
       throw new Error(`Failed to fetch ${normalizedUrl}: ${response.status}`);
     }
 
-    let code = await response.text();
+    code = await response.text();
 
     // Track this URL as being processed before rewriting imports
     processingStack.add(normalizedUrl);
@@ -222,9 +275,20 @@ function cacheHttpModule(url: string, options: CacheOptions): Promise<string | n
       processingStack.delete(normalizedUrl);
     }
 
+    // Write to local filesystem
     const fs = createFileSystem();
     await fs.mkdir(cacheDir, { recursive: true });
     await fs.writeTextFile(cachePath, code);
+
+    // Store in distributed cache for other pods (fire-and-forget)
+    getDistributedCache()
+      .then((backend) => backend.set(distributedCacheKey, code!, HTTP_MODULE_CACHE_TTL_SECONDS))
+      .catch((err) => {
+        logger.debug("[HTTP-CACHE] Failed to store in distributed cache", {
+          url: normalizedUrl,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
 
     cachedPaths.set(cacheKey, cachePath);
     return cachePath;
