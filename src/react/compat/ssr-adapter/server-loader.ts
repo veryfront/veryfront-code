@@ -10,6 +10,7 @@
 
 import * as React from "react";
 import { getReactVersionInfo } from "../version-detector/index.ts";
+import { Singleflight } from "#veryfront/utils/singleflight.ts";
 
 export interface ReactDOMServer {
   renderToString: typeof import("react-dom/server").renderToString;
@@ -24,6 +25,10 @@ export interface ReactDOMServer {
 // Caches to ensure single instance
 let projectReactCache: typeof React | null = null;
 let reactDOMServerCache: ReactDOMServer | null = null;
+
+// Singleflight to prevent concurrent initialization races
+const reactLoadFlight = new Singleflight<typeof React>();
+const reactDOMServerLoadFlight = new Singleflight<ReactDOMServer>();
 
 /**
  * Reset all cached React and ReactDOM instances.
@@ -47,12 +52,21 @@ export async function getProjectReact(): Promise<typeof React> {
     return projectReactCache;
   }
 
-  // Import via shared facade (resolved by import map in Deno, or via module resolution in Node/Bun)
-  // The facade handles the complexity of cross-runtime loading
-  const reactModule = await import("react");
-  const mod = reactModule.default ?? reactModule;
-  projectReactCache = mod as typeof React;
-  return projectReactCache;
+  // Use Singleflight to ensure only one concurrent initialization
+  // This prevents race conditions when many requests arrive before React is loaded
+  return reactLoadFlight.do("react", async () => {
+    // Double-check after acquiring flight
+    if (projectReactCache) {
+      return projectReactCache;
+    }
+
+    // Import via shared facade (resolved by import map in Deno, or via module resolution in Node/Bun)
+    // The facade handles the complexity of cross-runtime loading
+    const reactModule = await import("react");
+    const mod = reactModule.default ?? reactModule;
+    projectReactCache = mod as typeof React;
+    return projectReactCache;
+  });
 }
 
 /**
@@ -65,30 +79,39 @@ export async function getReactDOMServer(): Promise<ReactDOMServer> {
     return reactDOMServerCache;
   }
 
-  const versionInfo = getReactVersionInfo();
+  // Use Singleflight to ensure only one concurrent initialization
+  // This prevents race conditions when many requests arrive before ReactDOM server is loaded
+  return reactDOMServerLoadFlight.do("react-dom-server", async () => {
+    // Double-check after acquiring flight
+    if (reactDOMServerCache) {
+      return reactDOMServerCache;
+    }
 
-  // Import via shared facade
-  const serverModule = await import("react-dom/server");
+    const versionInfo = getReactVersionInfo();
 
-  const renderToString = serverModule.renderToString;
-  const renderToStaticMarkup = serverModule.renderToStaticMarkup;
+    // Import via shared facade
+    const serverModule = await import("react-dom/server");
 
-  let renderToPipeableStream: typeof import("react-dom/server").renderToPipeableStream | undefined;
-  let renderToReadableStream: typeof import("react-dom/server").renderToReadableStream | undefined;
+    const renderToString = serverModule.renderToString;
+    const renderToStaticMarkup = serverModule.renderToStaticMarkup;
 
-  if (versionInfo.isReact18 || versionInfo.isReact19) {
-    renderToPipeableStream = serverModule
-      .renderToPipeableStream as typeof import("react-dom/server").renderToPipeableStream;
-    renderToReadableStream = serverModule
-      .renderToReadableStream as typeof import("react-dom/server").renderToReadableStream;
-  }
+    let renderToPipeableStream: typeof import("react-dom/server").renderToPipeableStream | undefined;
+    let renderToReadableStream: typeof import("react-dom/server").renderToReadableStream | undefined;
 
-  reactDOMServerCache = {
-    renderToString,
-    renderToStaticMarkup,
-    renderToPipeableStream,
-    renderToReadableStream,
-  };
+    if (versionInfo.isReact18 || versionInfo.isReact19) {
+      renderToPipeableStream = serverModule
+        .renderToPipeableStream as typeof import("react-dom/server").renderToPipeableStream;
+      renderToReadableStream = serverModule
+        .renderToReadableStream as typeof import("react-dom/server").renderToReadableStream;
+    }
 
-  return reactDOMServerCache;
+    reactDOMServerCache = {
+      renderToString,
+      renderToStaticMarkup,
+      renderToPipeableStream,
+      renderToReadableStream,
+    };
+
+    return reactDOMServerCache;
+  });
 }
