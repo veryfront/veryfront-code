@@ -170,7 +170,11 @@ export async function applyTSXLayout(
       componentPath: item.componentPath,
       duration: `${(performance.now() - loadStart).toFixed(2)}ms`,
     });
-    const result = React.createElement(LayoutComponent, props || {}, element) as BundledReact.ReactElement;
+    const result = React.createElement(
+      LayoutComponent,
+      props || {},
+      element,
+    ) as BundledReact.ReactElement;
     logger.debug("[applyTSXLayout] DONE", {
       componentPath: item.componentPath,
       totalDuration: `${(performance.now() - start).toFixed(2)}ms`,
