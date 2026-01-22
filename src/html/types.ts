@@ -3,6 +3,9 @@ import type { VeryfrontConfig } from "#veryfront/config";
 export type { HTMLMetadata, MDXFrontmatter } from "#veryfront/transforms/mdx/types.ts";
 
 export interface HTMLGenerationOptions {
+  /**
+   * @deprecated Use `isLocalDev()` for environment checks.
+   */
   mode: "development" | "production";
   config: VeryfrontConfig;
   importMap?: Record<string, string>;
@@ -31,7 +34,10 @@ export interface HTMLGenerationOptions {
   colorScheme?: "light" | "dark";
   /** Whether colorScheme was set via color_mode URL param (needs localStorage persistence) */
   colorSchemeFromParam?: boolean;
-  /** Proxy environment for cloud deployments (preview or production) */
+  /**
+   * @deprecated Use `requestContext?.mode` instead.
+   * Proxy environment for cloud deployments (preview or production)
+   */
   proxyEnvironment?: "preview" | "production";
   /** Headings extracted from MDX for sidebar/TOC navigation */
   headings?: Array<{ id: string; text: string; level: number }>;

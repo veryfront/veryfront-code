@@ -4,7 +4,9 @@
  * Provides Hot Module Replacement WebSocket support for cloud preview environments.
  * Listens to ReloadNotifier events (triggered by API poke) and broadcasts to browsers.
  *
- * Only enabled when proxyEnvironment === "preview" (not production).
+ * Enabled when:
+ * - isLocalDev() is true (local development)
+ * - ctx.requestContext?.mode === "preview" (cloud preview via .preview. hostname)
  */
 
 import { serverLogger as logger } from "#veryfront/utils";
@@ -14,6 +16,7 @@ import { ReloadNotifier } from "../../reload-notifier.ts";
 import { RateLimiter, setupWebSocketHandlers } from "#veryfront/modules/server/index.ts";
 import { HMR_MAX_MESSAGE_SIZE_BYTES, HMR_MAX_MESSAGES_PER_MINUTE } from "#veryfront/utils";
 import { invalidateProjectCaches } from "../../context/cache-invalidation.ts";
+import { isLocalDev } from "../../context/request-context.ts";
 
 // Priority between auth (0) and cors (50)
 const PRIORITY_HMR = 25 as HandlerPriority;
@@ -44,10 +47,10 @@ export class HMRHandler extends BaseHandler {
     name: "HMRHandler",
     priority: PRIORITY_HMR,
     patterns: [{ pattern: "/_ws", exact: true }],
-    // Enable in preview mode and development mode (not production)
-    // proxyEnvironment is "preview" for {slug}.preview.* domains
-    // mode is "development" for local dev server
-    enabled: (ctx) => ctx.proxyEnvironment === "preview" || ctx.mode === "development",
+    // Enable in preview mode (for live Studio updates) and local dev (for HMR)
+    // - isLocalDev(): env !== "production" (enables local dev HMR)
+    // - ctx.requestContext?.mode === "preview": hostname has .preview. (enables preview HMR)
+    enabled: (ctx) => isLocalDev() || ctx.requestContext?.mode === "preview",
   };
 
   /**
