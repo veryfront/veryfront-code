@@ -11,10 +11,16 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import { generateHash } from "./cache.ts";
 import { findLocalLibFile, findSourceFile } from "../file-resolver/index.ts";
+// Hoisted imports - avoid dynamic import overhead on every module load
+import { transformToESM } from "#veryfront/transforms/esm-transform.ts";
+import { getProjectTmpDir } from "#veryfront/modules/react-loader/index.ts";
 
 // Re-export utilities
 export { createEsmCache, createModuleCache, generateHash } from "./cache.ts";
 export { fetchEsmModule, rewriteEsmPaths } from "./esm-rewriter.ts";
+
+/** Cache for created directories to avoid repeated mkdir calls */
+const createdDirs = new Set<string>();
 
 export interface ModuleLoaderConfig {
   projectDir: string;
@@ -62,7 +68,6 @@ export async function transformModuleWithDeps(
   if (typeof fileContent !== "string") {
     fileContent = new TextDecoder().decode(fileContent as Uint8Array);
   }
-  const { transformToESM } = await import("#veryfront/transforms/esm-transform.ts");
 
   // Find all @/ imports BEFORE transforming (transformToESM converts them to relative paths)
   // We need to resolve these first and replace them with file:// paths
@@ -162,11 +167,15 @@ export async function transformModuleWithDeps(
   const hash = await generateHash(filePath);
   const tempFilePath = `${tmpDir}/mod-${hash}.js`;
 
-  // Ensure directory exists before writing
-  try {
-    await localAdapter.fs.mkdir(tmpDir, { recursive: true });
-  } catch {
-    // Directory might already exist, ignore errors
+  // Ensure directory exists before writing (cached to avoid repeated syscalls)
+  if (!createdDirs.has(tmpDir)) {
+    try {
+      await localAdapter.fs.mkdir(tmpDir, { recursive: true });
+      createdDirs.add(tmpDir);
+    } catch {
+      // Directory might already exist, ignore errors
+      createdDirs.add(tmpDir);
+    }
   }
 
   try {
@@ -195,7 +204,6 @@ export async function loadModule(
   filePath: string,
   config: ModuleLoaderConfig,
 ): Promise<any> {
-  const { getProjectTmpDir } = await import("#veryfront/modules/react-loader/index.ts");
   const tmpDir = await getProjectTmpDir(config.projectId ?? config.projectDir);
   const localAdapter = await getLocalAdapter();
 
