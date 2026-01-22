@@ -54,11 +54,6 @@ function rewriteVeryfrontImports(code: string): string {
   );
 }
 
-/**
- * In-flight tracking to prevent duplicate parallel fetches.
- */
-const inFlight = new Map<string, Promise<string | null>>();
-
 function getPathCacheKey(projectId: string, normalizedPath: string): string {
   return `${encodeURIComponent(projectId)}:${normalizedPath}`;
 }
@@ -68,14 +63,21 @@ function getVersionedPathCacheKey(normalizedPath: string): string {
 }
 
 /**
- * Track modules loaded during current render for manifest recording.
- * Key: renderSessionId, Value: Set of normalized module paths
+ * Render session state including module tracking and per-session in-flight deduplication.
  */
-const renderSessions = new Map<string, {
+interface RenderSession {
   modules: Set<string>;
   projectSlug?: string;
   route?: string;
-}>();
+  /** Per-session in-flight tracking to prevent duplicate parallel fetches within a request */
+  inFlight: Map<string, Promise<string | null>>;
+}
+
+/**
+ * Track modules loaded during current render for manifest recording.
+ * Key: renderSessionId, Value: RenderSession
+ */
+const renderSessions = new Map<string, RenderSession>();
 
 /**
  * Start a render session to track module loading.
@@ -90,6 +92,7 @@ export function startRenderSession(
     modules: new Set(),
     projectSlug,
     route,
+    inFlight: new Map(),
   });
   logger.debug(`${LOG_PREFIX_MDX_LOADER} Started render session`, {
     sessionId,
@@ -139,11 +142,9 @@ export function endRenderSession(sessionId: string): void {
 
 /**
  * Get the current active render session (if any).
- * Used to record modules during fetch.
+ * Used to record modules during fetch and for per-session in-flight deduplication.
  */
-function getCurrentSession():
-  | { modules: Set<string>; projectSlug?: string; route?: string }
-  | null {
+function getCurrentSession(): RenderSession | null {
   // Return the first session (there should only be one per request)
   const firstSession = renderSessions.values().next();
   return firstSession.done ? null : firstSession.value;
@@ -377,11 +378,17 @@ export async function fetchAndCacheModule(
   const cacheKey = getPathCacheKey(context.projectId, normalizedPath);
   const projectSlug = context.projectSlug || "unknown";
 
-  // Only use in-flight deduplication for top-level imports (no parent).
+  // Get session-scoped inFlight map for deduplication.
+  // This prevents cross-request deadlocks where Request B waits on Request A's hung fetch.
+  // If no session exists (tests/dev), skip deduplication entirely.
+  const session = getCurrentSession();
+  const inFlight = session?.inFlight;
+
+  // Only use in-flight deduplication for top-level imports (no parent) and when we have a session.
   // Nested imports (with parentModulePath) skip deduplication to avoid deadlocks
   // when parallel Promise.all chains have overlapping dependencies.
   // The file cache handles eventual deduplication anyway.
-  const useInFlightTracking = !parentModulePath;
+  const useInFlightTracking = !parentModulePath && inFlight !== undefined;
 
   logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] START`, {
     projectSlug,
@@ -389,12 +396,13 @@ export async function fetchAndCacheModule(
     normalizedPath,
     parentModulePath,
     useInFlightTracking,
-    inFlightCount: inFlight.size,
-    inFlightKeys: useInFlightTracking ? Array.from(inFlight.keys()).slice(0, 5) : [],
+    hasSession: session !== null,
+    inFlightCount: inFlight?.size ?? 0,
+    inFlightKeys: useInFlightTracking && inFlight ? Array.from(inFlight.keys()).slice(0, 5) : [],
   });
 
-  // Only check in-flight for top-level imports
-  if (useInFlightTracking) {
+  // Only check in-flight for top-level imports with an active session
+  if (useInFlightTracking && inFlight) {
     const existingFetch = inFlight.get(cacheKey);
     if (existingFetch) {
       logger.debug(
@@ -441,9 +449,9 @@ export async function fetchAndCacheModule(
     }
   }
 
-  // Create a deferred promise to track this fetch (only for top-level)
+  // Create a deferred promise to track this fetch (only for top-level with session)
   let resolveDeferred: ((value: string | null) => void) | undefined;
-  if (useInFlightTracking) {
+  if (useInFlightTracking && inFlight) {
     const fetchPromise = new Promise<string | null>((resolve) => {
       resolveDeferred = resolve;
     });
@@ -633,7 +641,7 @@ export async function fetchAndCacheModule(
     hasResult: result !== null,
     useInFlightTracking,
   });
-  if (useInFlightTracking && resolveDeferred) {
+  if (useInFlightTracking && resolveDeferred && inFlight) {
     resolveDeferred(result);
     inFlight.delete(cacheKey);
   }
