@@ -191,8 +191,6 @@ export interface InvalidationCallbacks {
   invalidateModulePaths?: (changedPaths: string[]) => void;
   /** Clear snippet rendering cache */
   clearSnippetCache?: () => void;
-  /** Clear Tailwind class cache for CSS regeneration */
-  clearProjectClasses?: (projectKey: string) => void;
   /** Trigger browser reload notification */
   triggerReload?: (changedPaths?: string[]) => void;
   /** Clear renderer result cache (context-aware HTML cache) */
