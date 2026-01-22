@@ -54,10 +54,6 @@ function rewriteVeryfrontImports(code: string): string {
   );
 }
 
-function getPathCacheKey(projectId: string, normalizedPath: string): string {
-  return `${encodeURIComponent(projectId)}:${normalizedPath}`;
-}
-
 function getVersionedPathCacheKey(normalizedPath: string): string {
   return `v${TRANSFORM_CACHE_VERSION}:${normalizedPath}`;
 }
@@ -372,7 +368,6 @@ export async function fetchAndCacheModule(
   parentModulePath?: string,
 ): Promise<string | null> {
   const normalizedPath = normalizePath(modulePath, parentModulePath);
-  const cacheKey = getPathCacheKey(context.projectId, normalizedPath);
   const projectSlug = context.projectSlug || "unknown";
 
   // NOTE: In-flight deduplication is DISABLED.
