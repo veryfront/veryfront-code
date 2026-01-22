@@ -38,73 +38,40 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       assertEquals(firstPattern.exact, true);
     });
 
-    it("is enabled in preview mode (regardless of env)", () => {
+    it("is enabled in preview mode (regardless of isLocalDev)", () => {
       const handler = new HMRHandler();
-      const originalNodeEnv = Deno.env.get("NODE_ENV");
 
-      try {
-        // Even in production env, preview mode should enable HMR
-        Deno.env.set("NODE_ENV", "production");
-
-        const previewCtx = { requestContext: { mode: "preview" } } as Parameters<
-          NonNullable<typeof handler.metadata.enabled>
-        >[0];
-        assertEquals(handler.metadata.enabled?.(previewCtx), true);
-      } finally {
-        if (originalNodeEnv) {
-          Deno.env.set("NODE_ENV", originalNodeEnv);
-        } else {
-          Deno.env.delete("NODE_ENV");
-        }
-      }
+      // Even when not local dev, preview mode should enable HMR
+      const previewCtx = { requestContext: { mode: "preview", isLocalDev: false } } as Parameters<
+        NonNullable<typeof handler.metadata.enabled>
+      >[0];
+      assertEquals(handler.metadata.enabled?.(previewCtx), true);
     });
 
     it("is enabled in local dev (regardless of mode)", () => {
       const handler = new HMRHandler();
-      const originalNodeEnv = Deno.env.get("NODE_ENV");
 
-      try {
-        // In development env, HMR should be enabled even without preview mode
-        Deno.env.set("NODE_ENV", "development");
-
-        const productionModeCtx = { requestContext: { mode: "production" } } as Parameters<
-          NonNullable<typeof handler.metadata.enabled>
-        >[0];
-        assertEquals(handler.metadata.enabled?.(productionModeCtx), true);
-      } finally {
-        if (originalNodeEnv) {
-          Deno.env.set("NODE_ENV", originalNodeEnv);
-        } else {
-          Deno.env.delete("NODE_ENV");
-        }
-      }
+      // In local dev, HMR should be enabled even without preview mode
+      const productionModeCtx = { requestContext: { mode: "production", isLocalDev: true } } as Parameters<
+        NonNullable<typeof handler.metadata.enabled>
+      >[0];
+      assertEquals(handler.metadata.enabled?.(productionModeCtx), true);
     });
 
-    it("is disabled in production env with production mode", () => {
+    it("is disabled in production with production mode", () => {
       const handler = new HMRHandler();
-      const originalNodeEnv = Deno.env.get("NODE_ENV");
 
-      try {
-        // In production env with production mode, HMR should be disabled
-        Deno.env.set("NODE_ENV", "production");
+      // Not local dev + production mode = HMR should be disabled
+      const productionCtx = { requestContext: { mode: "production", isLocalDev: false } } as Parameters<
+        NonNullable<typeof handler.metadata.enabled>
+      >[0];
+      assertEquals(handler.metadata.enabled?.(productionCtx), false);
 
-        const productionCtx = { requestContext: { mode: "production" } } as Parameters<
-          NonNullable<typeof handler.metadata.enabled>
-        >[0];
-        assertEquals(handler.metadata.enabled?.(productionCtx), false);
-
-        // Also disabled when no requestContext
-        const noCtx = {} as Parameters<
-          NonNullable<typeof handler.metadata.enabled>
-        >[0];
-        assertEquals(handler.metadata.enabled?.(noCtx), false);
-      } finally {
-        if (originalNodeEnv) {
-          Deno.env.set("NODE_ENV", originalNodeEnv);
-        } else {
-          Deno.env.delete("NODE_ENV");
-        }
-      }
+      // Also disabled when no requestContext
+      const noCtx = {} as Parameters<
+        NonNullable<typeof handler.metadata.enabled>
+      >[0];
+      assertEquals(handler.metadata.enabled?.(noCtx), false);
     });
   });
 
