@@ -24,7 +24,7 @@ export interface OAuthTokenConfig {
 export async function fetchOAuthToken(
   config: OAuthTokenConfig,
 ): Promise<TokenResponse> {
-  const url = `${config.apiBaseUrl}/oauth/token`;
+  const url = `${config.apiBaseUrl}/auth/token`;
   const controller = new AbortController();
   const timeoutId = setTimeout(
     () => controller.abort(),

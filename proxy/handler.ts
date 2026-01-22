@@ -22,18 +22,18 @@ import { injectContext } from "./tracing.ts";
 
 /**
  * Domain lookup result from API.
+ * Uses GET /projects/{domain} which returns full project data.
  */
 interface DomainLookupResult {
-  project_id: string;
-  project_slug: string;
-  project_name: string;
-  environment: { id: string; name: string } | null;
-  release_id: string | null;
+  id: string;
+  slug: string;
+  name: string;
+  environments?: Array<{ id: string; name: string }>;
 }
 
 /**
  * Look up project info by custom domain.
- * Used to resolve project slug when request comes via custom domain.
+ * Uses GET /projects/{domain} to resolve project slug when request comes via custom domain.
  */
 async function lookupProjectByDomain(
   domain: string,
@@ -42,7 +42,7 @@ async function lookupProjectByDomain(
   logger?: ProxyLogger,
 ): Promise<DomainLookupResult | null> {
   const domainWithoutPort = domain.replace(/:\d+$/, "");
-  const url = `${apiBaseUrl}/lookup/domain/${encodeURIComponent(domainWithoutPort)}`;
+  const url = `${apiBaseUrl}/projects/${encodeURIComponent(domainWithoutPort)}`;
 
   logger?.debug("Looking up project by domain", { domain, url });
 
@@ -71,8 +71,8 @@ async function lookupProjectByDomain(
     const result = await response.json() as DomainLookupResult;
     logger?.debug("Domain lookup successful", {
       domain,
-      projectSlug: result.project_slug,
-      environment: result.environment?.name,
+      projectSlug: result.slug,
+      environments: result.environments?.map((e) => e.name),
     });
     return result;
   } catch (error) {
@@ -262,12 +262,11 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
         const lookupResult = await lookupProjectByDomain(host, config.apiBaseUrl, token, logger);
         if (lookupResult) {
-          projectSlug = lookupResult.project_slug;
+          projectSlug = lookupResult.slug;
           logger?.info("Resolved custom domain to project", {
             domain: host,
             projectSlug,
-            projectId: lookupResult.project_id,
-            environment: lookupResult.environment?.name,
+            projectId: lookupResult.id,
           });
         } else {
           logger?.error("Custom domain not found", undefined, { domain: host });
