@@ -38,26 +38,40 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       assertEquals(firstPattern.exact, true);
     });
 
-    it("is enabled only in preview mode", () => {
+    it("is enabled in preview mode (regardless of isLocalDev)", () => {
       const handler = new HMRHandler();
 
-      // Should be enabled in preview mode
-      const previewCtx = { proxyEnvironment: "preview" } as Parameters<
+      // Even when not local dev, preview mode should enable HMR
+      const previewCtx = { requestContext: { mode: "preview", isLocalDev: false } } as Parameters<
         NonNullable<typeof handler.metadata.enabled>
       >[0];
       assertEquals(handler.metadata.enabled?.(previewCtx), true);
+    });
 
-      // Should be disabled in production mode
-      const productionCtx = { proxyEnvironment: "production" } as Parameters<
+    it("is enabled in local dev (regardless of mode)", () => {
+      const handler = new HMRHandler();
+
+      // In local dev, HMR should be enabled even without preview mode
+      const productionModeCtx = { requestContext: { mode: "production", isLocalDev: true } } as Parameters<
+        NonNullable<typeof handler.metadata.enabled>
+      >[0];
+      assertEquals(handler.metadata.enabled?.(productionModeCtx), true);
+    });
+
+    it("is disabled in production with production mode", () => {
+      const handler = new HMRHandler();
+
+      // Not local dev + production mode = HMR should be disabled
+      const productionCtx = { requestContext: { mode: "production", isLocalDev: false } } as Parameters<
         NonNullable<typeof handler.metadata.enabled>
       >[0];
       assertEquals(handler.metadata.enabled?.(productionCtx), false);
 
-      // Should be disabled when no proxyEnvironment
-      const noEnvCtx = {} as Parameters<
+      // Also disabled when no requestContext
+      const noCtx = {} as Parameters<
         NonNullable<typeof handler.metadata.enabled>
       >[0];
-      assertEquals(handler.metadata.enabled?.(noEnvCtx), false);
+      assertEquals(handler.metadata.enabled?.(noCtx), false);
     });
   });
 
@@ -78,7 +92,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
 
       const req = new Request("http://localhost:3000/_ws");
       const ctx = {
-        proxyEnvironment: "preview",
+        requestContext: { mode: "preview" },
         mode: "development",
         projectDir: "/tmp/test",
         securityConfig: null,
@@ -108,7 +122,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
         headers: { upgrade: "websocket" },
       });
       const ctx = {
-        proxyEnvironment: "preview",
+        requestContext: { mode: "preview" },
         mode: "development",
         projectDir: "/tmp/test",
         securityConfig: null,

@@ -63,8 +63,9 @@ export class OpenAPIHandler extends BaseHandler {
 
       const content = isYaml ? specToYaml(spec) : JSON.stringify(spec, null, 2);
 
+      const isDev = ctx.requestContext?.isLocalDev ?? false;
       const response = this.createResponseBuilder(ctx)
-        .withCache(ctx.mode === "production" ? { maxAge: 3600, public: true } : "no-cache")
+        .withCache(!isDev ? { maxAge: 3600, public: true } : "no-cache")
         .withCORS(req, { origin: "*" })
         .withContentType(
           isYaml ? "text/yaml; charset=utf-8" : "application/json; charset=utf-8",
@@ -81,7 +82,7 @@ export class OpenAPIHandler extends BaseHandler {
         .json(
           {
             error: "Failed to generate OpenAPI specification",
-            message: ctx.mode === "development" ? String(error) : undefined,
+            message: ctx.requestContext?.isLocalDev ? String(error) : undefined,
           },
           HTTP_SERVER_ERROR,
         );
@@ -92,14 +93,15 @@ export class OpenAPIHandler extends BaseHandler {
 
   /**
    * Get cached spec or generate a new one.
-   * Caching is only enabled in production mode.
+   * Caching is only enabled in production mode (non-local-dev).
    */
   private async getOrGenerateSpec(ctx: HandlerContext, url: URL): Promise<OpenAPISpec> {
-    // Create cache key based on project and mode
-    const currentKey = `${ctx.projectDir}:${ctx.mode}:${ctx.projectSlug || "default"}`;
+    const isDev = ctx.requestContext?.isLocalDev ?? false;
+    // Create cache key based on project
+    const currentKey = `${ctx.projectDir}:${ctx.projectSlug || "default"}`;
 
-    // Return cached spec in production
-    if (this.cachedSpec && this.cacheKey === currentKey && ctx.mode === "production") {
+    // Return cached spec in production (non-local-dev)
+    if (this.cachedSpec && this.cacheKey === currentKey && !isDev) {
       return this.cachedSpec;
     }
 
@@ -149,15 +151,15 @@ export class OpenAPIHandler extends BaseHandler {
       servers: [{ url: serverUrl, description: "Current server" }],
     });
 
-    // Cache in production mode
-    if (ctx.mode === "production") {
+    // Cache in production mode (non-local-dev)
+    if (!isDev) {
       this.cachedSpec = spec;
       this.cacheKey = currentKey;
     }
 
     logger.debug("[OpenAPI] Generated spec", {
       pathCount: Object.keys(spec.paths).length,
-      mode: ctx.mode,
+      isDev,
     });
 
     return spec;

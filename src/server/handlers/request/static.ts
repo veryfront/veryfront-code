@@ -146,19 +146,28 @@ export class StaticHandler extends BaseHandler {
         }
 
         // Determine cache strategy
+        // Static files use ETag-based caching (browser validates freshness via If-None-Match)
+        // Only preview mode uses no-cache (remote preview needs instant updates)
+        // Local dev uses normal caching since ETag handles freshness efficiently
         const ext = getExtension(candidate.abs);
         const isHashed = hasHashedFilename(candidate.abs);
         const isVeryfrontAsset = reqPath.includes("/_veryfront/");
 
         let cacheStrategy: CacheStrategy;
-        // Immutable cache for hashed files regardless of source directory
-        // or for dist/manifest assets including _veryfront resources
-        if (
+        // Only preview mode (not local dev) uses no-cache for static files
+        const isPreviewMode = ctx.requestContext?.mode === "preview" &&
+          !ctx.requestContext?.isLocalDev;
+        if (isPreviewMode) {
+          // Preview: browser must fetch fresh, server handles caching
+          cacheStrategy = "no-cache";
+        } else if (
           isHashed ||
           ((candidate.source === "dist" || candidate.source === "manifest") && isVeryfrontAsset)
         ) {
+          // Production: immutable cache for hashed files or dist/_veryfront assets
           cacheStrategy = "immutable";
         } else {
+          // Production: medium cache for other static files
           cacheStrategy = "medium";
         }
 

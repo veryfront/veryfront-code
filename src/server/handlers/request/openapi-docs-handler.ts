@@ -41,8 +41,9 @@ export class OpenAPIDocsHandler extends BaseHandler {
 
     const html = this.generateDocsPage(ctx);
 
+    const isDev = ctx.requestContext?.isLocalDev ?? false;
     const response = this.createResponseBuilder(ctx)
-      .withCache(ctx.mode === "production" ? { maxAge: 3600, public: true } : "no-cache")
+      .withCache(!isDev ? { maxAge: 3600, public: true } : "no-cache")
       .withContentType("text/html; charset=utf-8", html, HTTP_OK);
 
     return Promise.resolve(this.respond(response));

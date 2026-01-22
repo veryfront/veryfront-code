@@ -80,6 +80,7 @@ import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import { SecurityConfigLoader } from "#veryfront/security/http/config.ts";
 import { getConfig } from "#veryfront/config/loader.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import { createRequestContext } from "../context/request-context.ts";
 
 // Import handlers (from new location)
 import { AuthHandler } from "#veryfront/security/http/auth.ts";
@@ -115,14 +116,14 @@ export interface UniversalHandlerOptions {
   projectDir: string;
   /** When true, expose additional debug logging. */
   debug?: boolean;
-  /** Renderer mode: 'development' or 'production'. Defaults to 'production'. */
-  mode?: "development" | "production";
   /** Module server URL for ESM imports (e.g., 'http://localhost:8765') */
   moduleServerUrl?: string;
   /** Pre-loaded config (avoids re-loading via FSAdapter) */
   config?: VeryfrontConfig;
   /** Map of local project slugs to their filesystem paths (for unified dev server) */
   localProjects?: Record<string, string>;
+  /** Override environment config for isLocalDev (dev server passes { isLocalDev: true }) */
+  envConfig?: import("../context/request-context.ts").EnvConfig;
 }
 
 /**
@@ -375,26 +376,36 @@ export function createVeryfrontHandler(
 
       // Execute request handling within span context
       const executeHandler = async (): Promise<Response> => {
-        // Check for proxy-provided headers (from Deno proxy)
-        // For WebSocket requests, also check query params since custom headers aren't supported
-        const proxyToken = req.headers.get("x-token") || undefined;
-        const proxySlug = req.headers.get("x-project-slug") ||
-          _url.searchParams.get("x-project-slug") || undefined;
+        // Create unified request context from headers, domain, and env vars
+        // This resolves token, slug, branch, and mode in priority order:
+        // 1. Headers (x-token, x-project-slug) - from proxy
+        // 2. Domain parsing - extracts slug/branch from hostname
+        // 3. Environment variables - fallback for direct mode
+        const reqCtx = createRequestContext(req, opts.envConfig);
+
+        // WebSocket requests: also check query params since custom headers aren't supported
+        const wsSlugOverride = _url.searchParams.get("x-project-slug") || undefined;
+
         // x-project-path: explicit local filesystem path for this project (from proxy)
         const proxyProjectPath = req.headers.get("x-project-path") || undefined;
+
+        // Legacy x-environment header support (will be removed in Phase 10)
         let proxyEnv = parseProxyEnvironment(
           req.headers.get("x-environment") || _url.searchParams.get("x-environment"),
         );
         const forwardedHost = req.headers.get("x-forwarded-host") || undefined;
 
-        // Parse domain from host header
+        // Parse domain from host header for additional domain info
         // Prefer x-forwarded-host (original domain from proxy) over Host header (internal service URL)
         const host = forwardedHost || req.headers.get("host") || _url.host;
         const parsedDomain = parseProjectDomain(host);
 
-        // Get project slug: proxy header > URL parsing > config
+        // Get project slug from RequestContext, with WebSocket and config fallbacks
         const configuredSlug = config?.fs?.veryfront?.projectSlug;
-        let projectSlug = proxySlug || parsedDomain.slug || configuredSlug;
+        let projectSlug = reqCtx.slug || wsSlugOverride || configuredSlug;
+
+        // Get token from RequestContext (already resolved headers > env vars)
+        const proxyToken = reqCtx.token || undefined;
         let projectId: string | undefined;
         let releaseId: string | undefined;
         let environmentName: string | undefined;
@@ -405,10 +416,13 @@ export function createVeryfrontHandler(
           hasFsConfig: !!config?.fs,
           hasVeryfrontConfig: !!config?.fs?.veryfront,
           configuredSlug,
-          proxySlug,
+          reqCtxSlug: reqCtx.slug,
+          reqCtxMode: reqCtx.mode,
+          reqCtxBranch: reqCtx.branch,
           parsedDomainSlug: parsedDomain.slug,
           finalProjectSlug: projectSlug,
           isVeryfrontDomain: parsedDomain.isVeryfrontDomain,
+          isLocalDev: reqCtx.isLocalDev,
         });
 
         // For custom domains without a slug, look up the project via API
@@ -531,11 +545,14 @@ export function createVeryfrontHandler(
           });
         }
 
-        // Log proxy mode for debugging
-        if (proxyToken) {
-          logDebug("[universal] Using proxy-provided token", {
+        // Log request context for debugging
+        if (reqCtx.token) {
+          logDebug("[universal] Request context resolved", {
             projectSlug,
+            mode: reqCtx.mode,
+            branch: reqCtx.branch,
             environment: proxyEnv,
+            hasToken: !!reqCtx.token,
           });
         }
 
@@ -616,7 +633,6 @@ export function createVeryfrontHandler(
         const ctx: HandlerContext = {
           projectDir: effectiveProjectDir,
           adapter: effectiveAdapter,
-          mode: opts.mode ?? "production",
           moduleServerUrl: opts.moduleServerUrl,
           securityConfig: securityLoader.getSecurityConfig(),
           cspUserHeader: securityLoader.getCspUserHeader(),
@@ -627,8 +643,8 @@ export function createVeryfrontHandler(
           projectId,
           releaseId,
           proxyToken: isLocalProject ? undefined : proxyToken, // Don't pass token for local projects
-          proxyEnvironment: isLocalProject ? "preview" : proxyEnv, // Local projects are always preview
           environmentName,
+          requestContext: reqCtx, // Contains mode (preview/production) - use ctx.requestContext?.mode
           routeRegistry: registry,
         };
 

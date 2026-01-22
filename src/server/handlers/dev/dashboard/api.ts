@@ -573,7 +573,7 @@ function handleGetConfig(ctx: HandlerContext): Response {
     featureFlags,
     environment: safeEnvVars,
     projectDir: ctx.projectDir || "(unknown)",
-    mode: ctx.mode,
+    isLocalDev: ctx.requestContext?.isLocalDev ?? false,
     timestamp: new Date().toISOString(),
   });
 }

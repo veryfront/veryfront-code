@@ -1,14 +1,23 @@
 import type { FSAdapter, FSAdapterConfig } from "./veryfront/types.ts";
 import { createError, toError } from "../../../errors/veryfront-error.ts";
 import { ReloadNotifier } from "../../../server/reload-notifier.ts";
-import { clearSSRModuleCache } from "../../../modules/react-loader/ssr-module-loader/cache/index.ts";
-import { clearRouterDetectionCache } from "../../../rendering/router-detection.ts";
+import {
+  clearSSRModuleCache,
+  clearSSRModuleCacheForProject,
+} from "../../../modules/react-loader/ssr-module-loader/cache/index.ts";
+import {
+  clearRouterDetectionCache,
+  clearRouterDetectionCacheForProject,
+} from "../../../rendering/router-detection.ts";
 import {
   clearModulePathCache,
   invalidateModulePaths,
 } from "../../../transforms/mdx/esm-module-loader/cache/index.ts";
-import { clearSnippetCache } from "../../../rendering/snippet-renderer.ts";
-import { clearRendererCaches } from "../../../rendering/renderer.ts";
+import {
+  clearSnippetCache,
+  clearSnippetCacheForProject,
+} from "../../../rendering/snippet-renderer.ts";
+import { clearRendererCacheForProject, clearRendererCaches } from "../../../rendering/renderer.ts";
 
 export async function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapter> {
   const type = config.type || "local";
@@ -36,13 +45,19 @@ export async function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapte
       ...config,
       invalidationCallbacks: {
         ...config.invalidationCallbacks,
+        // Global clear functions (deprecated - kept for compatibility)
         clearSSRModuleCache,
         clearRouterDetectionCache,
         clearModulePathCache,
         invalidateModulePaths,
         clearSnippetCache,
         clearRendererCache: clearRendererCaches,
-        triggerReload: (changedPaths) => ReloadNotifier.triggerReload(changedPaths),
+        // Per-project clear functions (preferred for multi-tenant)
+        clearSSRModuleCacheForProject,
+        clearRouterDetectionCacheForProject,
+        clearSnippetCacheForProject,
+        clearRendererCacheForProject,
+        triggerReload: (changedPaths, _project) => ReloadNotifier.triggerReload(changedPaths),
       },
     };
 

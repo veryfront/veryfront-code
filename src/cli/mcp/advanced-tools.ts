@@ -828,10 +828,9 @@ type GetDebugContextInput = z.infer<typeof getDebugContextInput>;
 interface DebugContextResult {
   success: boolean;
   context?: {
-    mode: string;
     projectSlug: string;
     projectDir: string;
-    proxyEnvironment?: string;
+    requestContextMode?: string;
     isMultiProjectMode: boolean;
   };
   error?: string;
@@ -859,10 +858,9 @@ export const vfGetDebugContext: MCPTool<GetDebugContextInput, DebugContextResult
       return {
         success: true,
         context: {
-          mode: data.context?.mode || "unknown",
           projectSlug: data.context?.projectSlug || "",
           projectDir: data.context?.projectDir || "",
-          proxyEnvironment: data.context?.proxyEnvironment,
+          requestContextMode: data.context?.requestContext?.mode || "unknown",
           isMultiProjectMode: data.adapter?.isMultiProjectMode || false,
         },
       };

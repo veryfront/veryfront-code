@@ -328,7 +328,7 @@ export class HTMLGenerator {
       sourceHash,
       colorScheme: context.options?.colorScheme,
       colorSchemeFromParam: context.options?.colorSchemeFromParam,
-      proxyEnvironment: context.options?.proxyEnvironment,
+      environment: context.options?.environment,
       headings: context.pageBundle.headings,
       projectClasses,
     };
@@ -373,6 +373,13 @@ export class HTMLGenerator {
         classes.add(cls);
       }
     }
+
+    logger.debug("[HTMLGenerator] extractProjectClasses", {
+      filesProcessed: files.filter((f) =>
+        f.content && SOURCE_EXTENSIONS.some((ext) => f.path.endsWith(ext))
+      ).length,
+      totalClasses: classes.size,
+    });
 
     return classes;
   }

@@ -22,7 +22,7 @@ import {
  * @returns CSP string
  */
 export function buildCSP(ctx: HandlerContext): string {
-  const isDev = ctx.mode === "development";
+  const isDev = ctx.requestContext?.isLocalDev ?? false;
   const nonce = generateNonce();
   return coreBuildCSP(isDev, nonce, ctx.cspUserHeader ?? null, ctx.securityConfig, ctx.adapter);
 }
@@ -53,7 +53,7 @@ export function applySecurityHeaders(
   headers: Headers,
   ctx: HandlerContext,
 ): void {
-  const isDev = ctx.mode === "development";
+  const isDev = ctx.requestContext?.isLocalDev ?? false;
   const nonce = generateNonce();
   coreApplySecurityHeaders(
     headers,

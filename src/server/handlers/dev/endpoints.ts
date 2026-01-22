@@ -79,8 +79,10 @@ export class DevEndpointsHandler extends BaseHandler {
       { pattern: "/_veryfront/hydrate.js", exact: true },
       { pattern: "/_veryfront/preview-hmr.js", exact: true },
     ],
-    // Enable in dev mode OR preview mode (for live updates)
-    enabled: (ctx) => ctx.mode === "development" || ctx.proxyEnvironment === "preview",
+    // Enable in local dev (for dev HMR/error overlay) OR preview mode (for live updates)
+    // - ctx.requestContext?.isLocalDev: env !== "production" (enables local dev scripts)
+    // - ctx.requestContext?.mode === "preview": hostname has .preview. (enables preview HMR)
+    enabled: (ctx) => ctx.requestContext?.isLocalDev || ctx.requestContext?.mode === "preview",
   };
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {

@@ -38,7 +38,6 @@ function getEnvValue(key: string, env?: RuntimeEnv): string | undefined {
   const runtimeEnv = env ?? (isRuntimeEnvInitialized() ? getRuntimeEnv() : null);
 
   if (runtimeEnv) {
-    if (key === "PROXY_MODE") return runtimeEnv.proxyMode ? "1" : undefined;
     const prop = ENV_KEY_MAP[key];
     return prop ? (runtimeEnv[prop] as string | undefined) : undefined;
   }
@@ -367,9 +366,14 @@ export interface CacheBackendConfig {
   env?: RuntimeEnv;
 }
 
-/** Check if API cache backend is available (proxy mode with API URL). */
+/** Check if API cache backend is available (production environment with API URL). */
 export function isApiCacheAvailable(env?: RuntimeEnv): boolean {
-  return getEnvValue("PROXY_MODE", env) === "1" && !!getEnvValue("VERYFRONT_API_BASE_URL", env);
+  // Check NODE_ENV directly at process level - this is called at initialization time
+  // deno-lint-ignore no-explicit-any
+  const g = globalThis as any;
+  const nodeEnv = g.Deno?.env?.get("NODE_ENV") ?? g.process?.env?.NODE_ENV ?? "development";
+  const isLocalDev = nodeEnv !== "production";
+  return !isLocalDev && !!getEnvValue("VERYFRONT_API_BASE_URL", env);
 }
 
 /**

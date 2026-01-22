@@ -28,6 +28,8 @@ interface ServerOptions {
   /** 0.0.0.0 = all interfaces, 127.0.0.1 = localhost only */
   bindAddress?: string;
   signal?: AbortSignal;
+  /** Server mode - "development" enables dev-only features like /_veryfront/fs/ */
+  mode?: "development" | "production";
 }
 
 export interface ServerHandle {
@@ -39,10 +41,9 @@ export async function startUniversalServer(
   options: ServerOptions & {
     debug?: boolean;
     adapter?: RuntimeAdapter;
-    mode?: "development" | "production";
   },
 ): Promise<ServerHandle> {
-  const { projectDir, port, bindAddress = "0.0.0.0", signal, debug, mode = "production" } = options;
+  const { projectDir, port, bindAddress = "0.0.0.0", signal, debug, mode } = options;
   const baseAdapter = options.adapter ?? (await runtime.get());
 
   // Bootstrap framework to initialize FSAdapter if configured
@@ -68,8 +69,9 @@ export async function startUniversalServer(
   const handler = createVeryfrontHandler(projectDir, adapter, {
     projectDir,
     debug,
-    mode,
     config: bootstrap.config,
+    // When mode is "development", enable dev-only features (e.g., /_veryfront/fs/)
+    envConfig: mode === "development" ? { isLocalDev: true } : undefined,
   });
 
   let onListenResolve: (() => void) | null = null;

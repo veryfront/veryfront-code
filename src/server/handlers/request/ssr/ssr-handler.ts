@@ -41,10 +41,12 @@ import {
   startRenderSession,
 } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
 import { VeryfrontAPIError } from "#veryfront/platform/adapters/veryfront-api-client/types.ts";
+import { shouldUseNoCacheHeaders } from "../../../context/request-context.ts";
 
 /**
  * Determine if request should serve production (released) content.
- * Priority: config > veryfront domain isDraft flag > proxy environment header
+ * Uses RequestContext.mode which unifies hostname and x-environment header.
+ * Config override (PRODUCTION_MODE) takes precedence.
  */
 export function isProductionMode(ctx: HandlerContext, _url?: URL): boolean {
   // Config override (PRODUCTION_MODE env var)
@@ -52,13 +54,9 @@ export function isProductionMode(ctx: HandlerContext, _url?: URL): boolean {
     return true;
   }
 
-  // Veryfront domain: production if not draft
-  if (ctx.parsedDomain?.isVeryfrontDomain) {
-    return ctx.parsedDomain.isDraft === false;
-  }
-
-  // Custom domain: use proxy environment header
-  return ctx.proxyEnvironment === "production";
+  // Use RequestContext.mode (unified from hostname/header)
+  // Default to preview (safer for development) if no context
+  return ctx.requestContext?.mode === "production";
 }
 
 /**
@@ -241,14 +239,13 @@ export class SSRHandler extends BaseHandler {
         slug,
         elapsedInHandler: `${(performance.now() - handleWithContextStartTime).toFixed(2)}ms`,
       });
-      const getRendererStartTime = performance.now();
+      const _getRendererStartTime = performance.now();
       const renderer = await timeAsync("renderer-init", () => getRendererForProject(ctx));
-      _logger.debug("[SSR] getRendererForProject DONE", {
-        projectSlug: ctx.projectSlug,
-        slug,
-        duration: `${(performance.now() - getRendererStartTime).toFixed(2)}ms`,
-      });
-      this.logDebug("renderer obtained", { mode: ctx.mode, projectSlug: ctx.projectSlug }, ctx);
+      this.logDebug(
+        "renderer obtained",
+        { isDev: ctx.requestContext?.isLocalDev ?? false, projectSlug: ctx.projectSlug },
+        ctx,
+      );
 
       // Extract route parameters for both App Router and Pages Router
       // Run both extractions in parallel for better performance
@@ -336,7 +333,7 @@ export class SSRHandler extends BaseHandler {
           pageId,
           colorScheme,
           colorSchemeFromParam,
-          proxyEnvironment: ctx.proxyEnvironment,
+          environment: ctx.requestContext?.mode,
           projectSlug: ctx.projectSlug,
         }));
       _logger.debug("[SSR] renderer.renderPage DONE", {
@@ -374,7 +371,10 @@ export class SSRHandler extends BaseHandler {
       // Disable caching in development to prevent nonce mismatches
       // (cached HTML has old nonces, but each request generates a fresh nonce for CSP)
       // Preview URLs use short cache - poke mechanism triggers hard refresh on content changes
-      const cacheStrategy = ctx.mode === "development" ? "no-cache" : "short";
+      // HTTP cache headers: no-cache for development and preview, short for production
+      // Preview uses no-cache HTTP headers because browser must fetch fresh content
+      // Server-side memory caches handle performance in preview mode (Phase 7)
+      const cacheStrategy = shouldUseNoCacheHeaders(ctx.requestContext) ? "no-cache" : "short";
       const isHeadRequest = req.method.toUpperCase() === "HEAD";
       const builder = this.createResponseBuilder(ctx, nonce);
 
@@ -409,7 +409,7 @@ export class SSRHandler extends BaseHandler {
       // Check if-none-match for 304 response
       // IMPORTANT: Skip 304 in dev mode to prevent CSP nonce mismatch
       // (304 returns new nonce in CSP but browser uses cached HTML with old nonce)
-      const isDev = ctx.mode === "development";
+      const isDev = ctx.requestContext?.isLocalDev ?? false;
       if (!isDev && hasMatchingEtag(req, etag)) {
         return this.respond(
           builder
@@ -550,7 +550,7 @@ export class SSRHandler extends BaseHandler {
 
       // In development or preview mode, show error overlay with full stack trace
       // Preview is a dev environment (branch previews) so developers need detailed errors
-      if (!isHead && (ctx.mode === "development" || ctx.proxyEnvironment === "preview")) {
+      if (!isHead && (ctx.requestContext?.isLocalDev || ctx.requestContext?.mode === "preview")) {
         const { ErrorOverlay } = await import(
           "../../../dev-server/error-overlay/index.ts"
         );

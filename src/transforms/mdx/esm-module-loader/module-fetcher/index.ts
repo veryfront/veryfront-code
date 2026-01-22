@@ -301,12 +301,12 @@ async function fetchModuleViaHTTP(
   adapter: RuntimeAdapter,
   fetchAndCacheModuleFn: (path: string, parent?: string) => Promise<string | null>,
   projectSlug?: string,
+  isLocalDev?: boolean,
 ): Promise<string | null> {
-  // In proxy mode, HTTP fallback to localhost won't work (self-referential request)
-  const isProxyMode = adapter.env.get("PROXY_MODE") === "1";
-  if (isProxyMode) {
+  // In production environment, HTTP fallback to localhost won't work
+  if (!isLocalDev) {
     logger.warn(
-      `${LOG_PREFIX_MDX_LOADER} Direct read failed in proxy mode (module must be pre-loaded): ${normalizedPath}`,
+      `${LOG_PREFIX_MDX_LOADER} Direct read failed in production (module must be pre-loaded): ${normalizedPath}`,
     );
     return null;
   }
@@ -430,6 +430,7 @@ export async function fetchAndCacheModule(
           adapter,
           fetchAndCacheModuleFn,
           projectSlug,
+          context.isLocalDev,
         );
         if (moduleCode) {
           return await cacheModule(normalizedPath, moduleCode, esmCacheDir, pathCache);
@@ -568,6 +569,7 @@ export function createModuleFetcherContext(
   adapter: RuntimeAdapter,
   projectDir: string,
   projectId: string,
+  options?: { isLocalDev?: boolean; projectSlug?: string },
 ): ModuleFetcherContext {
-  return { esmCacheDir, adapter, projectDir, projectId };
+  return { esmCacheDir, adapter, projectDir, projectId, ...options };
 }

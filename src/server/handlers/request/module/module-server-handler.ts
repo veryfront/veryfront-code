@@ -48,7 +48,7 @@ export async function handleModuleServer(
       projectId: ctx.projectId ?? ctx.projectDir,
       projectDir: ctx.projectDir,
       adapter: ctx.adapter,
-      dev: ctx.mode === "development",
+      dev: ctx.requestContext?.isLocalDev ?? false,
       projectUUID: ctx.projectId,
       // Pass project context from handler (set via proxy headers or domain lookup)
       projectSlug: ctx.projectSlug,

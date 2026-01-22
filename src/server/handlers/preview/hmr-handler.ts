@@ -4,7 +4,9 @@
  * Provides Hot Module Replacement WebSocket support for cloud preview environments.
  * Listens to ReloadNotifier events (triggered by API poke) and broadcasts to browsers.
  *
- * Only enabled when proxyEnvironment === "preview" (not production).
+ * Enabled when:
+ * - ctx.requestContext?.isLocalDev is true (local development)
+ * - ctx.requestContext?.mode === "preview" (cloud preview via .preview. hostname)
  */
 
 import { serverLogger as logger } from "#veryfront/utils";
@@ -13,6 +15,7 @@ import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } 
 import { ReloadNotifier } from "../../reload-notifier.ts";
 import { RateLimiter, setupWebSocketHandlers } from "#veryfront/modules/server/index.ts";
 import { HMR_MAX_MESSAGE_SIZE_BYTES, HMR_MAX_MESSAGES_PER_MINUTE } from "#veryfront/utils";
+import { invalidateProjectCaches } from "../../context/cache-invalidation.ts";
 
 // Priority between auth (0) and cors (50)
 const PRIORITY_HMR = 25 as HandlerPriority;
@@ -43,10 +46,10 @@ export class HMRHandler extends BaseHandler {
     name: "HMRHandler",
     priority: PRIORITY_HMR,
     patterns: [{ pattern: "/_ws", exact: true }],
-    // Enable in preview mode and development mode (not production)
-    // proxyEnvironment is "preview" for {slug}.preview.* domains
-    // mode is "development" for local dev server
-    enabled: (ctx) => ctx.proxyEnvironment === "preview" || ctx.mode === "development",
+    // Enable in preview mode (for live Studio updates) and local dev (for HMR)
+    // - ctx.requestContext?.isLocalDev: env !== "production" (enables local dev HMR)
+    // - ctx.requestContext?.mode === "preview": hostname has .preview. (enables preview HMR)
+    enabled: (ctx) => ctx.requestContext?.isLocalDev || ctx.requestContext?.mode === "preview",
   };
 
   /**
@@ -60,6 +63,10 @@ export class HMRHandler extends BaseHandler {
     // When changedPaths are provided, send update messages for smart HMR
     // Otherwise, send reload message for full page refresh
     HMRHandler.reloadUnsubscribe = ReloadNotifier.subscribe((changedPaths) => {
+      // Invalidate server-side caches first (Phase 8: Preview HMR cache invalidation)
+      // This ensures next request gets fresh content
+      invalidateProjectCaches("preview", changedPaths);
+      // Then notify browser clients to refresh
       HMRHandler.broadcastUpdate(changedPaths);
     });
 

@@ -663,7 +663,8 @@ describe(
             const adapter = await createMockAdapter({});
             const handler = createVeryfrontHandler(tempDir, adapter, {
               projectDir: tempDir,
-              mode: "development",
+              // Enable dev mode for /_veryfront/fs/ endpoint
+              envConfig: { isLocalDev: true },
             });
 
             // Helper to encode path
@@ -750,7 +751,6 @@ describe(
             const adapter = await createMockAdapter({});
             const handler = createVeryfrontHandler(tempDir, adapter, {
               projectDir: tempDir,
-              mode: "production",
             });
 
             // Request with x-forwarded-host (from proxy) but different Host header (internal service)
@@ -775,7 +775,6 @@ describe(
             const adapter = await createMockAdapter({});
             const handler = createVeryfrontHandler(tempDir, adapter, {
               projectDir: tempDir,
-              mode: "production",
             });
 
             // Request without x-forwarded-host
@@ -802,7 +801,6 @@ describe(
             const adapter = await createMockAdapter({});
             const handler = createVeryfrontHandler(tempDir, adapter, {
               projectDir: tempDir,
-              mode: "production",
             });
 
             // Simulate proxy request: internal host but Veryfront domain in x-forwarded-host

@@ -3,6 +3,9 @@ import type { VeryfrontConfig } from "#veryfront/config";
 export type { HTMLMetadata, MDXFrontmatter } from "#veryfront/transforms/mdx/types.ts";
 
 export interface HTMLGenerationOptions {
+  /**
+   * @deprecated Use `options.isLocalDev` for environment checks.
+   */
   mode: "development" | "production";
   config: VeryfrontConfig;
   importMap?: Record<string, string>;
@@ -31,12 +34,14 @@ export interface HTMLGenerationOptions {
   colorScheme?: "light" | "dark";
   /** Whether colorScheme was set via color_mode URL param (needs localStorage persistence) */
   colorSchemeFromParam?: boolean;
-  /** Proxy environment for cloud deployments (preview or production) */
-  proxyEnvironment?: "preview" | "production";
+  /** Deployment environment (preview or production) */
+  environment?: "preview" | "production";
   /** Headings extracted from MDX for sidebar/TOC navigation */
   headings?: Array<{ id: string; text: string; level: number }>;
   /** Tailwind classes extracted from all project source files */
   projectClasses?: Set<string>;
+  /** Whether running in local development mode */
+  isLocalDev?: boolean;
 }
 
 export type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";

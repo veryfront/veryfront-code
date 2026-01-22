@@ -9,13 +9,13 @@ import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts"
 import { DASHBOARD_SHELL_HTML } from "./html-shell.ts";
 import { handleDashboardAPI } from "./api.ts";
 import { handleDashboardUI } from "./ui-handler.ts";
-
 export class DevDashboardHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "DevDashboardHandler",
     priority: PRIORITY_HIGH_DEV as HandlerPriority,
     patterns: [{ pattern: "/_dev", exact: false }],
-    enabled: (ctx) => ctx.mode === "development",
+    // Enable in local dev only
+    enabled: (ctx) => ctx.requestContext?.isLocalDev ?? false,
   };
 
   protected override shouldHandle(req: Request, _ctx: HandlerContext): boolean {

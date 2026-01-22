@@ -85,8 +85,9 @@ export class SnippetHandler extends BaseHandler {
         const pageId = url.searchParams.get("page_id") || undefined;
 
         // Render the MDX snippet to HTML
+        const isDev = ctx.requestContext?.isLocalDev ?? false;
         const result = await renderSnippet(content, {
-          mode: ctx.mode || "development",
+          mode: isDev ? "development" : "production",
           projectDir: ctx.projectDir,
           filePath,
           moduleServerUrl,
@@ -101,8 +102,7 @@ export class SnippetHandler extends BaseHandler {
 
         // Return rendered HTML
         const builder = this.createResponseBuilder(ctx);
-        // In development mode, relax COOP/CORP headers to allow Studio iframe embedding
-        const isDev = ctx.mode === "development";
+        // In local dev mode, relax COOP/CORP headers to allow Studio iframe embedding
         return this.respond(
           builder
             .withCORS(req, ctx.securityConfig?.cors)

@@ -69,8 +69,24 @@ export function getCompiledSnippet(hash: string): string | undefined {
 
 /**
  * Clear all cached snippets - used during cache invalidation
+ * @deprecated Use clearSnippetCacheForProject for multi-tenant deployments
  */
 export function clearSnippetCache(): void {
+  snippetCache.clear();
+}
+
+/**
+ * Clear cached snippets for a specific project.
+ * Snippets are keyed by content hash + projectSlug, so we clear entries
+ * where the key was generated with the given project slug.
+ *
+ * Note: Since we hash content + projectSlug together, we can't directly identify
+ * which entries belong to which project. For now, this clears all snippets.
+ * A future optimization could store projectSlug separately in the cache entry.
+ */
+export function clearSnippetCacheForProject(_projectSlug: string): void {
+  // TODO(#127): Implement per-project snippet clearing once cache entries store projectSlug
+  // For now, clear all to ensure correctness over efficiency
   snippetCache.clear();
 }
 

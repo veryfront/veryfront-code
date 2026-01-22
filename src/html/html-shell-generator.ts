@@ -141,7 +141,13 @@ export async function generateHTMLShellParts(
   // Uses project's stylesheet (globals.css) for @theme, @plugin support
   // Extracts candidates from: 1) project source files, 2) rendered HTML content
   const stylesheetContent = options.globalCSS;
-  const isProduction = options.mode === "production" && options.proxyEnvironment !== "preview";
+
+  // CSS delivery mode: determines <link> vs inline <style>
+  // - Production mode + deployed env → <link> for immutable caching
+  // - Preview mode → inline for Preview HMR updates
+  // - Local dev → inline for Local Dev HMR updates
+  const localDev = options.isLocalDev ?? false;
+  const useProductionCSS = !localDev && options.environment === "production";
 
   // Start with classes from all project source files (extracted fresh each request)
   const candidates = new Set<string>(options.projectClasses || []);
@@ -156,7 +162,7 @@ export async function generateHTMLShellParts(
   const tailwindResult = await generateTailwindCSS(
     stylesheetContent,
     candidates,
-    { minify: isProduction },
+    { minify: useProductionCSS },
   );
   const tailwindCSS = tailwindResult.css;
   const tailwindError = tailwindResult.error;
@@ -201,30 +207,32 @@ export async function generateHTMLShellParts(
 
   const nonce = options.nonce || "";
 
-  // Skip dev HMR script (hmr.js) when preview-hmr.js will be used instead
-  const skipDevHMR = options.proxyEnvironment === "preview";
-  const modeScripts = options.mode === "development"
+  // HMR modes (two orthogonal concerns):
+  // - Local Dev HMR (hmr.js): enabled when localDev - hot reload during development
+  // - Preview HMR (preview-hmr.js): enabled when mode === "preview" - Studio live updates
+  // Skip Local Dev HMR when Preview HMR is active (avoid duplicate handling)
+  const skipDevHMR = options.environment === "preview";
+  const useDevScripts = localDev;
+  const modeScripts = useDevScripts
     ? getDevScripts(meta.slug || "", options.config, params, props, nonce, { skipDevHMR })
     : getProdScripts(meta.slug || "", params, props, nonce);
 
-  const modeStyles = options.mode === "development"
-    ? getDevStyles(nonce)
-    : getProductionStyles(nonce);
+  const modeStyles = useDevScripts ? getDevStyles(nonce) : getProductionStyles(nonce);
 
-  const syntaxHighlightTheme = options.mode === "development" ? "github-dark" : "github";
+  const syntaxHighlightTheme = useDevScripts ? "github-dark" : "github";
 
-  // Generate Tailwind CSS output - inline for preview, hashed link for production
+  // Generate Tailwind CSS output - inline for preview/dev, hashed link for production
   // cacheCSS stores the CSS and returns the hash for later retrieval
-  const cssHash = tailwindCSS && isProduction ? cacheCSS(tailwindCSS) : "";
+  const cssHash = tailwindCSS && useProductionCSS ? cacheCSS(tailwindCSS) : "";
 
   // Generate modulepreload hints for page and layout modules (faster cold start)
   const modulePreloadHints = generateModulePreloadHints(options);
 
-  // Deduplicate React hydration errors in production (error #418, #423, #425)
+  // Deduplicate React hydration errors in non-development environments (error #418, #423, #425)
   // These are common with SSR + client-side libraries (themes, animations) and React 18
   // recovers gracefully. We log once with helpful context instead of spamming console.
   // Must run BEFORE React loads to intercept the console.error calls.
-  const hydrationErrorSuppression = options.mode !== "development"
+  const hydrationErrorSuppression = !useDevScripts
     ? `<script${nonce ? ` nonce="${nonce}"` : ""}>
 (function(){
   var origError = console.error;
@@ -283,11 +291,11 @@ export async function generateHTMLShellParts(
   ${
     (() => {
       if (!tailwindCSS) return "";
-      if (isProduction) {
-        // Production: link to hashed CSS file for immutable caching
+      if (useProductionCSS) {
+        // Production mode (deployed): link to hashed CSS file for immutable caching
         return `<link rel="stylesheet" href="/_vf/css/${cssHash}.css">`;
       } else {
-        // Preview/Dev: inline style with ID for HMR updates
+        // Preview mode or local dev: inline style with ID for HMR updates
         return `<style id="vf-tailwind-css"${
           nonce ? ` nonce="${nonce}"` : ""
         }>\n${tailwindCSS}\n  </style>`;
@@ -339,7 +347,7 @@ ${css}
 
   // Preview HMR script for live updates in cloud preview mode
   // Connects to /_ws WebSocket and reloads on file changes
-  const previewHMRScript = options.proxyEnvironment === "preview"
+  const previewHMRScript = options.environment === "preview"
     ? `<script src="/_veryfront/preview-hmr.js"${nonce ? ` nonce="${nonce}"` : ""}></script>`
     : "";
 
@@ -352,10 +360,10 @@ ${css}
   </script>`;
 
   // Tailwind error overlay - inline version matching JS error overlay style
-  // Only show in preview/dev mode, not production
+  // Only show in preview mode or local dev, not deployed production
   const tailwindErrorScript = (() => {
     if (!tailwindError) return "";
-    if (options.mode === "production" && options.proxyEnvironment !== "preview") return "";
+    if (useProductionCSS) return "";
     const errorInfo = formatCSSError(tailwindError);
     const title = JSON.stringify(errorInfo.title);
     const message = JSON.stringify(errorInfo.message);

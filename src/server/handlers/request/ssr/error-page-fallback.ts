@@ -192,7 +192,7 @@ async function loadErrorComponent(
     filePath,
     ctx.projectDir,
     ctx.adapter,
-    { projectId: ctx.projectId ?? ctx.projectDir, dev: ctx.mode === "development" },
+    { projectId: ctx.projectId ?? ctx.projectDir, dev: ctx.requestContext?.isLocalDev ?? false },
   );
   if (typeof Component === "function") {
     return Component as React.ComponentType<unknown>;

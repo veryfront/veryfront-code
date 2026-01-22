@@ -18,7 +18,7 @@ async function setupProject(): Promise<string> {
 function createBuilder(ctx: HandlerContext): ResponseBuilder {
   return new ResponseBuilder({
     securityConfig: ctx.securityConfig ?? undefined,
-    isDev: ctx.mode === "development",
+    isDev: ctx.requestContext?.isLocalDev ?? true, // Default to true in test environment
     cspUserHeader: ctx.cspUserHeader ?? undefined,
     adapter: ctx.adapter,
   });
@@ -42,7 +42,6 @@ describe("Module Handler Cache Tests", { sanitizeOps: false, sanitizeResources: 
         const handlerContext: HandlerContext = {
           projectDir,
           adapter: await getAdapter(),
-          mode: "development",
           moduleServerUrl: undefined,
           securityConfig: null,
           cspUserHeader: null,
@@ -103,7 +102,6 @@ describe("Module Handler Cache Tests", { sanitizeOps: false, sanitizeResources: 
         const handlerContext: HandlerContext = {
           projectDir,
           adapter: await getAdapter(),
-          mode: "development",
           moduleServerUrl: undefined,
           securityConfig: null,
           cspUserHeader: null,

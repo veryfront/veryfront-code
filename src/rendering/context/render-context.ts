@@ -46,7 +46,7 @@ export interface RenderContext {
   /** Veryfront configuration for this project */
   config: VeryfrontConfig;
 
-  /** Rendering mode */
+  /** Rendering mode (derived from ctx.requestContext?.isLocalDev) */
   mode: "development" | "production";
 
   /** Runtime adapter for filesystem/API access */
@@ -118,8 +118,8 @@ export function createRenderContext(
     throw new Error("RenderContext requires adapter");
   }
 
-  // Determine environment
-  const environment: RenderEnvironment = ctx.proxyEnvironment ?? "preview";
+  // Determine environment from requestContext.mode
+  const environment: RenderEnvironment = ctx.requestContext?.mode ?? "preview";
 
   // Compute project identifier (prefer ID, fall back to slug, default to __single__)
   // Single-project mode (local dev without subdomain) uses "__single__"
@@ -136,7 +136,7 @@ export function createRenderContext(
     projectSlug,
     projectDir: ctx.projectDir,
     config: ctx.config,
-    mode: ctx.mode,
+    mode: ctx.requestContext?.isLocalDev ? "development" : "production",
     adapter: ctx.adapter,
     cachePrefix,
     environment,

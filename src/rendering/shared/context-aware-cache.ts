@@ -174,17 +174,42 @@ export class ContextAwareCacheCoordinator {
    *
    * @param ctx - Render context to clear cache for
    */
-  clearForContext(ctx: RenderContext): void {
-    // Note: This requires store implementation to support prefix-based deletion
-    // For now, we'll clear all (stores should implement prefix filtering)
-    logger.debug("[ContextAwareCache] Clearing cache for context", {
-      projectId: ctx.projectId,
-      environment: ctx.environment,
-      cachePrefix: ctx.cachePrefix,
-    });
+  async clearForContext(ctx: RenderContext): Promise<void> {
+    if (this.store.deleteByPrefix) {
+      const deleted = await this.store.deleteByPrefix(ctx.cachePrefix);
+      logger.debug("[ContextAwareCache] Cleared cache for context", {
+        projectId: ctx.projectId,
+        environment: ctx.environment,
+        cachePrefix: ctx.cachePrefix,
+        entriesDeleted: deleted,
+      });
+    } else {
+      logger.debug("[ContextAwareCache] Store does not support prefix deletion", {
+        projectId: ctx.projectId,
+        cachePrefix: ctx.cachePrefix,
+      });
+    }
+  }
 
-    // Prefix-based clearing not yet implemented - this is a no-op
-    // to avoid clearing other tenants' caches
+  /**
+   * Clear all cached pages for a specific project (across all environments).
+   * Use this when you only have a projectId and want to clear all caches.
+   *
+   * @param projectId - Project ID to clear caches for
+   */
+  async clearForProject(projectId: string): Promise<void> {
+    if (this.store.deleteByPrefix) {
+      // Cache keys are prefixed with projectId, so clear all with that prefix
+      const deleted = await this.store.deleteByPrefix(`${projectId}:`);
+      logger.debug("[ContextAwareCache] Cleared cache for project", {
+        projectId,
+        entriesDeleted: deleted,
+      });
+    } else {
+      logger.debug("[ContextAwareCache] Store does not support prefix deletion", {
+        projectId,
+      });
+    }
   }
 
   /**

@@ -39,6 +39,26 @@ export class MemoryCacheStore implements CacheStore {
     return Promise.resolve();
   }
 
+  /**
+   * Delete all entries with keys starting with the given prefix.
+   * Used for per-project cache invalidation in multi-tenant deployments.
+   */
+  deleteByPrefix(prefix: string): Promise<number> {
+    let deleted = 0;
+    // Collect keys to delete (can't delete while iterating)
+    const keysToDelete: string[] = [];
+    for (const key of this.cache.keys()) {
+      if (key.startsWith(prefix)) {
+        keysToDelete.push(key);
+      }
+    }
+    for (const key of keysToDelete) {
+      this.cache.delete(key);
+      deleted++;
+    }
+    return Promise.resolve(deleted);
+  }
+
   clear(): Promise<void> {
     this.cache.clear();
     return Promise.resolve();

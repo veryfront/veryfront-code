@@ -103,13 +103,8 @@ export class ApiHandlerWrapper extends BaseHandler {
       ctx.projectSlug && typeof fsWrapper.isMultiProjectMode === "function" &&
       fsWrapper.isMultiProjectMode()
     ) {
-      // Determine production mode based on domain type
-      let isProduction = false;
-      if (ctx.parsedDomain?.isVeryfrontDomain) {
-        isProduction = ctx.parsedDomain.isDraft === false;
-      } else {
-        isProduction = ctx.proxyEnvironment === "production";
-      }
+      // Determine production mode from request context
+      const isProduction = ctx.requestContext?.mode === "production";
 
       this.logDebug("[API-Wrapper] Using multi-project context", {
         projectSlug: ctx.projectSlug,

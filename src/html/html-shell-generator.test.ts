@@ -172,6 +172,7 @@ describe("html-generation/html-shell-generator", () => {
     });
 
     it("should use hashed CSS link in production mode", async () => {
+      // CSS link requires: environment === "production" AND isLocalDev === false
       const meta: RenderMetadata = {
         title: "Test Page",
         slug: "test",
@@ -181,6 +182,8 @@ describe("html-generation/html-shell-generator", () => {
       const options: HTMLGenerationOptions = {
         mode: "production",
         config: mockConfig,
+        environment: "production", // Required for CSS link delivery
+        isLocalDev: false, // Simulate production environment
       };
 
       const result = await wrapInHTMLShell("<div>Content</div>", meta, options);
@@ -218,16 +221,18 @@ describe("html-generation/html-shell-generator", () => {
         frontmatter: {},
       };
 
+      // Development syntax theme (isLocalDev: true)
       const devResult = await wrapInHTMLShell(
         "<div>Content</div>",
         meta,
-        { mode: "development", config: mockConfig },
+        { mode: "development", config: mockConfig, isLocalDev: true },
       );
 
+      // Production syntax theme (isLocalDev: false)
       const prodResult = await wrapInHTMLShell(
         "<div>Content</div>",
         meta,
-        { mode: "production", config: mockConfig },
+        { mode: "production", config: mockConfig, isLocalDev: false },
       );
 
       assertStringIncludes(devResult, "github-dark");
@@ -271,6 +276,7 @@ describe("html-generation/html-shell-generator", () => {
       const options: HTMLGenerationOptions = {
         mode: "development",
         config: mockConfig,
+        isLocalDev: true,
       };
 
       const result = await wrapInHTMLShell("<div>Content</div>", meta, options);
@@ -290,6 +296,7 @@ describe("html-generation/html-shell-generator", () => {
       const options: HTMLGenerationOptions = {
         mode: "production",
         config: mockConfig,
+        isLocalDev: false,
       };
 
       const result = await wrapInHTMLShell("<div>Content</div>", meta, options);

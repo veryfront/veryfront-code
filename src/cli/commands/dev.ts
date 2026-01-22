@@ -62,9 +62,9 @@ export async function devCommand(options: DevOptions): Promise<DevCommandResult>
   const DEFAULT_DEV_PORT = 3000;
   const finalPort = port !== DEFAULT_DEV_PORT ? port : (config?.dev?.port || port);
   const enableHMR = config?.dev?.hmr !== false && hmr;
-  // Check both config and env var for proxy mode (dev-server.ts sets PROXY_MODE env var)
+  // Check config for proxy mode (multi-project shared adapter)
   const env = getRuntimeEnv();
-  const isProxyMode = config?.fs?.veryfront?.proxyMode === true || env.proxyMode;
+  const isProxyMode = config?.fs?.veryfront?.proxyMode === true;
   const projectSlug = config?.fs?.veryfront?.projectSlug || env.projectSlug;
 
   // Validate AI configuration

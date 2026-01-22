@@ -231,7 +231,6 @@ describe("RuntimeEnv", () => {
         "apiUrl",
         "apiToken",
         "projectSlug",
-        "proxyMode",
         // System Paths
         "homeDir",
         "xdgConfigHome",

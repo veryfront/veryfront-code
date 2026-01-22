@@ -121,7 +121,7 @@ export abstract class BaseHandler implements Handler {
   ): ResponseBuilder {
     return new ResponseBuilder({
       securityConfig: ctx.securityConfig ?? undefined,
-      isDev: ctx.mode === "development",
+      isDev: ctx.requestContext?.isLocalDev ?? false,
       cspUserHeader: ctx.cspUserHeader,
       adapter: ctx.adapter,
       nonce,
@@ -217,13 +217,8 @@ export abstract class BaseHandler implements Handler {
     // Multi-project mode: use runWithContext
     // Use isMultiProjectMode() to check support - the method exists on wrapper but throws if unsupported
     if (typeof fsWrapper.isMultiProjectMode === "function" && fsWrapper.isMultiProjectMode()) {
-      // Determine production mode based on domain type
-      let isProduction = false;
-      if (ctx.parsedDomain?.isVeryfrontDomain) {
-        isProduction = ctx.parsedDomain.isDraft === false;
-      } else {
-        isProduction = ctx.proxyEnvironment === "production";
-      }
+      // Determine production mode from request context
+      const isProduction = ctx.requestContext?.mode === "production";
 
       // Extract branch from parsed domain (for preview URLs like slug--branch.preview.veryfront.com)
       const branch = ctx.parsedDomain?.branch ?? null;

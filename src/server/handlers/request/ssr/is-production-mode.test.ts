@@ -7,7 +7,6 @@ function createContext(overrides: Partial<HandlerContext> = {}): HandlerContext 
   return {
     projectDir: "/test",
     adapter: {} as HandlerContext["adapter"],
-    mode: "production",
     securityConfig: null,
     cspUserHeader: null,
     ...overrides,
@@ -22,94 +21,36 @@ describe("isProductionMode", () => {
     assertEquals(isProductionMode(ctx), true);
   });
 
-  it("config.productionMode takes priority over domain", () => {
+  it("config.productionMode takes priority over requestContext.mode", () => {
     const ctx = createContext({
       config: prodConfig,
-      parsedDomain: {
-        isVeryfrontDomain: true,
-        isDraft: true,
-        slug: "test",
-        branch: null,
-        environment: "preview",
-        allowIframeEmbed: true,
-      },
+      requestContext: { mode: "preview", slug: "test", branch: null, token: "" },
     });
     assertEquals(isProductionMode(ctx), true);
   });
 
-  it("returns true for veryfront domain when isDraft is false", () => {
+  it("returns true when requestContext.mode is production", () => {
     const ctx = createContext({
-      parsedDomain: {
-        isVeryfrontDomain: true,
-        isDraft: false,
-        slug: "test",
-        branch: null,
-        environment: "production",
-        allowIframeEmbed: true,
-      },
+      requestContext: { mode: "production", slug: "test", branch: null, token: "" },
     });
     assertEquals(isProductionMode(ctx), true);
   });
 
-  it("returns false for veryfront domain when isDraft is true", () => {
+  it("returns false when requestContext.mode is preview", () => {
     const ctx = createContext({
-      parsedDomain: {
-        isVeryfrontDomain: true,
-        isDraft: true,
-        slug: "test",
-        branch: null,
-        environment: "preview",
-        allowIframeEmbed: true,
-      },
+      requestContext: { mode: "preview", slug: "test", branch: null, token: "" },
     });
     assertEquals(isProductionMode(ctx), false);
   });
 
-  it("returns true for custom domain with production proxy environment", () => {
-    const ctx = createContext({
-      parsedDomain: {
-        isVeryfrontDomain: false,
-        isDraft: false,
-        slug: null,
-        branch: null,
-        environment: null,
-        allowIframeEmbed: false,
-      },
-      proxyEnvironment: "production",
-    });
-    assertEquals(isProductionMode(ctx), true);
-  });
-
-  it("returns false for custom domain with preview proxy environment", () => {
-    const ctx = createContext({
-      parsedDomain: {
-        isVeryfrontDomain: false,
-        isDraft: false,
-        slug: null,
-        branch: null,
-        environment: null,
-        allowIframeEmbed: false,
-      },
-      proxyEnvironment: "preview",
-    });
-    assertEquals(isProductionMode(ctx), false);
-  });
-
-  it("returns false when no indicators present", () => {
+  it("returns false when no requestContext present", () => {
     const ctx = createContext({});
     assertEquals(isProductionMode(ctx), false);
   });
 
   it("works without URL parameter (backward compatible)", () => {
     const ctx = createContext({
-      parsedDomain: {
-        isVeryfrontDomain: true,
-        isDraft: false,
-        slug: "test",
-        branch: null,
-        environment: "production",
-        allowIframeEmbed: true,
-      },
+      requestContext: { mode: "production", slug: "test", branch: null, token: "" },
     });
     assertEquals(isProductionMode(ctx), true);
   });
