@@ -218,12 +218,18 @@ export class Renderer {
       throw new Error("Renderer not initialized. Call initialize() first.");
     }
 
+    // Compute contentSourceId for cache isolation between preview/production
+    const contentSourceId = ctx.environment === "production" && ctx.releaseId
+      ? `release-${ctx.releaseId}`
+      : `${ctx.environment}-draft`;
+
     const services = this.createServicesForContext(ctx);
     return services.pipeline.resolvePageData(slug, {
       ...options,
       projectId: ctx.projectId,
       projectSlug: ctx.projectSlug,
       proxyEnvironment: ctx.environment,
+      contentSourceId,
     });
   }
 
