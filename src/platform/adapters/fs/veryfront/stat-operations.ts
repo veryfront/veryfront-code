@@ -43,20 +43,9 @@ export class StatOperations {
 
     logger.debug("[StatOperations] stat called", { path, normalizedPath, cacheKey });
 
-    // Check cache first (memory + Redis)
-    const cached = await this.cache.getAsync<FileInfo | string>(cacheKey);
-    if (cached) {
-      // Check for negative cache (file not found)
-      if (cached === NOT_FOUND_SENTINEL) {
-        throw toError(createError({
-          type: "file",
-          message: `File not found: ${normalizedPath}`,
-        }));
-      }
-      logger.debug("[StatOperations] stat cache hit", { normalizedPath });
-      return cached as FileInfo;
-    }
-
+    // OPTIMIZATION: Check local file index FIRST before distributed cache.
+    // The local file index is an in-memory Map (nanosecond lookup) while
+    // distributed cache requires HTTP calls (200-300ms).
     await this.ensureIndexBuilt();
 
     const fileIdx = this.fileIndex;
@@ -70,6 +59,7 @@ export class StatOperations {
       }));
     }
 
+    // 1. Check local file index first (fast in-memory lookup)
     const file = fileIdx.get(normalizedPath);
     if (file) {
       logger.debug("[StatOperations] stat found file", { normalizedPath });
@@ -80,10 +70,10 @@ export class StatOperations {
         isFile: true,
         isSymlink: false,
       };
-      this.cache.set(cacheKey, info);
       return info;
     }
 
+    // 2. Check directory index (fast in-memory lookup)
     if (dirIdx.has(normalizedPath)) {
       logger.debug("[StatOperations] stat found directory", { normalizedPath });
       const info: FileInfo = {
@@ -93,11 +83,20 @@ export class StatOperations {
         isFile: false,
         isSymlink: false,
       };
-      this.cache.set(cacheKey, info);
       return info;
     }
 
-    // Cache negative result to avoid repeated lookups (uses default TTL)
+    // 3. File not in local index - check distributed cache for negative result
+    // This avoids re-checking the API for files we already know don't exist
+    const cached = await this.cache.getAsync<FileInfo | string>(cacheKey);
+    if (cached === NOT_FOUND_SENTINEL) {
+      throw toError(createError({
+        type: "file",
+        message: `File not found: ${normalizedPath}`,
+      }));
+    }
+
+    // 4. Cache negative result to avoid repeated lookups (uses default TTL)
     this.cache.set(cacheKey, NOT_FOUND_SENTINEL);
 
     // Log at debug level to reduce noise - only log details for unexpected misses
@@ -271,25 +270,10 @@ export class StatOperations {
       cacheKey,
     });
 
-    // Check cache first (memory + Redis)
-    const cacheCheckStart = performance.now();
-    const cached = await this.cache.getAsync<string>(cacheKey);
-    const cacheCheckMs = Math.round(performance.now() - cacheCheckStart);
-    if (cached === NOT_FOUND_SENTINEL) {
-      logger.debug("[StatOperations] resolveFile cache hit (not found)", {
-        normalizedPath,
-        cacheCheckMs,
-      });
-      return null;
-    }
-    if (cached !== undefined) {
-      logger.debug("[StatOperations] resolveFile cache hit", {
-        normalizedPath,
-        cached,
-        cacheCheckMs,
-      });
-      return cached;
-    }
+    // OPTIMIZATION: Check local file index FIRST before distributed cache.
+    // The local file index is an in-memory Map (nanosecond lookup) while
+    // distributed cache requires HTTP calls (200-300ms). Only use distributed
+    // cache for negative results to avoid expensive API searches.
 
     const indexStart = performance.now();
     await this.ensureIndexBuilt();
@@ -301,22 +285,14 @@ export class StatOperations {
       return null;
     }
 
-    logger.debug("[StatOperations] resolveFile index lookup", {
-      normalizedPath,
-      fileCount: fileIdx.size,
-      indexMs,
-    });
-
-    // 1. Try exact match first
+    // 1. Try exact match first (fast in-memory lookup)
     if (fileIdx.has(normalizedPath)) {
       const totalMs = Math.round(performance.now() - resolveStart);
       logger.debug("[StatOperations] resolveFile exact match found", {
         normalizedPath,
-        cacheCheckMs,
         indexMs,
         totalMs,
       });
-      this.cache.set(cacheKey, normalizedPath);
       return normalizedPath;
     }
 
@@ -326,17 +302,16 @@ export class StatOperations {
       ? normalizedPath.replace(/\.(mdx|md|tsx|jsx|ts|js)$/, "")
       : normalizedPath;
 
-    logger.debug("[StatOperations] resolveFile trying extensions", {
-      pathWithoutExt,
-      hasExtension,
-    });
-
-    // 3. Try each extension in priority order from cached index
+    // 3. Try each extension in priority order from local index (fast)
     for (const ext of EXTENSION_PRIORITY) {
       const pathWithExt = pathWithoutExt + ext;
       if (fileIdx.has(pathWithExt)) {
-        logger.debug("[StatOperations] resolveFile found with extension", { pathWithExt });
-        this.cache.set(cacheKey, pathWithExt);
+        const totalMs = Math.round(performance.now() - resolveStart);
+        logger.debug("[StatOperations] resolveFile found with extension", {
+          pathWithExt,
+          indexMs,
+          totalMs,
+        });
         return pathWithExt;
       }
     }
@@ -347,8 +322,12 @@ export class StatOperations {
       for (const ext of EXTENSION_PRIORITY) {
         const pathWithExt = pagesPath + ext;
         if (fileIdx.has(pathWithExt)) {
-          logger.debug("[StatOperations] resolveFile found with pages prefix", { pathWithExt });
-          this.cache.set(cacheKey, pathWithExt);
+          const totalMs = Math.round(performance.now() - resolveStart);
+          logger.debug("[StatOperations] resolveFile found with pages prefix", {
+            pathWithExt,
+            indexMs,
+            totalMs,
+          });
           return pathWithExt;
         }
       }
@@ -358,8 +337,12 @@ export class StatOperations {
     for (const ext of EXTENSION_PRIORITY) {
       const indexPath = `${pathWithoutExt}/index${ext}`;
       if (fileIdx.has(indexPath)) {
-        logger.debug("[StatOperations] resolveFile found index file", { indexPath });
-        this.cache.set(cacheKey, indexPath);
+        const totalMs = Math.round(performance.now() - resolveStart);
+        logger.debug("[StatOperations] resolveFile found index file", {
+          indexPath,
+          indexMs,
+          totalMs,
+        });
         return indexPath;
       }
     }
@@ -368,18 +351,41 @@ export class StatOperations {
     // from FRAMEWORK_ROOT (/app/). No need to search the user's project API.
     if (FRAMEWORK_PREFIXES.some((prefix) => normalizedPath.startsWith(prefix))) {
       logger.debug("[StatOperations] Skipping API search for framework path", { normalizedPath });
-      this.cache.set(cacheKey, NOT_FOUND_SENTINEL);
       return null;
     }
 
     // 7. Check circuit breaker before API search
     if (Date.now() < this.apiSearchDisabledUntil) {
       logger.warn("[StatOperations] API search circuit breaker open, skipping", { normalizedPath });
-      this.cache.set(cacheKey, NOT_FOUND_SENTINEL);
       return null;
     }
 
-    // 8. If not in cache, search via API pattern
+    // 8. Check distributed cache for negative results ONLY before expensive API search
+    // This avoids repeated API searches for files that don't exist
+    const cacheCheckStart = performance.now();
+    const cached = await this.cache.getAsync<string>(cacheKey);
+    const cacheCheckMs = Math.round(performance.now() - cacheCheckStart);
+
+    if (cached === NOT_FOUND_SENTINEL) {
+      logger.debug("[StatOperations] resolveFile cached negative result", {
+        normalizedPath,
+        cacheCheckMs,
+      });
+      return null;
+    }
+
+    // If we got a positive cached result, return it (shouldn't happen often since
+    // local index should have found it, but handles edge cases)
+    if (cached !== undefined) {
+      logger.debug("[StatOperations] resolveFile cache hit (unexpected)", {
+        normalizedPath,
+        cached,
+        cacheCheckMs,
+      });
+      return cached;
+    }
+
+    // 9. If not in local index or cache, search via API pattern
     // This fallback is needed because listPublishedFiles() may not include all project files
     // (e.g., lib/, utils/, hooks/ directories). The search result is cached, so this only
     // incurs overhead on the first request for each missing file.
@@ -387,6 +393,7 @@ export class StatOperations {
     logger.debug("[StatOperations] Searching for file via API", {
       pattern: searchPattern,
       normalizedPath,
+      cacheCheckMs,
     });
 
     try {
