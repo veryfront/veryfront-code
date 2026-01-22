@@ -205,7 +205,7 @@ export class Renderer {
       ? `release-${ctx.releaseId}`
       : `${ctx.environment}-draft`;
 
-// Run the render pipeline with master timeout to prevent stuck renders
+    // Run the render pipeline with master timeout to prevent stuck renders
     // from blocking other requests. Timeout configurable via RENDER_TIMEOUT_MS.
     let result: RenderResult;
     try {
