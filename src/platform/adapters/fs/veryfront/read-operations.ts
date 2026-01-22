@@ -79,6 +79,9 @@ export class ReadOperations {
     const cacheKeyPrefix = buildFileCacheKeyPrefix(ctx);
     const cacheKey = `${cacheKeyPrefix}:${normalizedPath}`;
 
+    // Skip file content caching in dev/preview mode (non-production) for fresh content
+    const isProduction = this.contextProvider?.isProductionMode() ?? false;
+
     logger.debug("[ReadOperations] fetchContent context", {
       path: normalizedPath,
       hasContextProvider: !!this.contextProvider,
@@ -88,20 +91,26 @@ export class ReadOperations {
       branch: ctx?.branch,
       releaseId: ctx?.releaseId,
       cacheKeyPrefix,
+      isProduction,
     });
 
-    // Check cache first (memory + Redis)
-    const cached = await this.cache.getAsync<string>(cacheKey);
-    if (cached) {
-      logger.debug("[ReadOperations] Cache hit", { path: normalizedPath, cacheKey });
-      return cached;
+    // Check cache first (memory + Redis) - only in production
+    if (isProduction) {
+      const cached = await this.cache.getAsync<string>(cacheKey);
+      if (cached) {
+        logger.debug("[ReadOperations] Cache hit", { path: normalizedPath, cacheKey });
+        return cached;
+      }
     }
 
     // Check if content is available in the file list cache (memory + Redis)
-    const fileListContent = await this.getContentFromFileList(normalizedPath);
-    if (fileListContent) {
-      this.cache.set(cacheKey, fileListContent);
-      return fileListContent;
+    // Skip in non-production mode to ensure fresh content
+    if (isProduction) {
+      const fileListContent = await this.getContentFromFileList(normalizedPath);
+      if (fileListContent) {
+        this.cache.set(cacheKey, fileListContent);
+        return fileListContent;
+      }
     }
 
     // Fetch based on source type
@@ -115,9 +124,15 @@ export class ReadOperations {
     });
 
     if (isPublished) {
-      return this.fetchPublishedContent(normalizedPath, apiPath, cacheKey, ctx?.releaseId ?? null);
+      return this.fetchPublishedContent(
+        normalizedPath,
+        apiPath,
+        cacheKey,
+        ctx?.releaseId ?? null,
+        isProduction,
+      );
     }
-    return this.fetchDraftContent(normalizedPath, apiPath, cacheKey);
+    return this.fetchDraftContent(normalizedPath, apiPath, cacheKey, isProduction);
   }
 
   private async fetchPublishedContent(
@@ -125,6 +140,7 @@ export class ReadOperations {
     apiPath: string,
     cacheKey: string,
     releaseId: string | null,
+    shouldCache: boolean,
   ): Promise<string> {
     logger.debug("[ReadOperations] Fetching published content", {
       path: normalizedPath,
@@ -137,7 +153,9 @@ export class ReadOperations {
         path: normalizedPath,
         contentLength: content.length,
       });
-      this.cache.set(cacheKey, content);
+      if (shouldCache) {
+        this.cache.set(cacheKey, content);
+      }
       return content;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -145,7 +163,7 @@ export class ReadOperations {
 
       // Try fallback extensions for 404 errors
       if (is404Error) {
-        const fallbackContent = await this.tryFallbackExtensions(apiPath, cacheKey);
+        const fallbackContent = await this.tryFallbackExtensions(apiPath, cacheKey, shouldCache);
         if (fallbackContent !== null) {
           return fallbackContent;
         }
@@ -174,6 +192,7 @@ export class ReadOperations {
   private async tryFallbackExtensions(
     apiPath: string,
     cacheKey: string,
+    shouldCache: boolean,
   ): Promise<string | null> {
     const extMatch = apiPath.match(/\.(tsx|ts|jsx|js|mdx|md)$/);
     if (!extMatch) {
@@ -202,7 +221,9 @@ export class ReadOperations {
           contentLength: result.content.length,
         });
 
-        this.cache.set(cacheKey, result.content);
+        if (shouldCache) {
+          this.cache.set(cacheKey, result.content);
+        }
         return result.content;
       }
     } catch (error) {
@@ -213,7 +234,13 @@ export class ReadOperations {
 
       // Fallback to sequential approach if pattern search fails
       // (e.g., if the API doesn't support the pattern endpoint)
-      return this.tryFallbackExtensionsSequential(apiPath, originalExt, basePath, cacheKey);
+      return this.tryFallbackExtensionsSequential(
+        apiPath,
+        originalExt,
+        basePath,
+        cacheKey,
+        shouldCache,
+      );
     }
 
     return null;
@@ -229,6 +256,7 @@ export class ReadOperations {
     originalExt: string,
     basePath: string,
     cacheKey: string,
+    shouldCache: boolean,
   ): Promise<string | null> {
     for (const ext of EXTENSION_PRIORITY) {
       if (ext === originalExt) continue;
@@ -243,7 +271,9 @@ export class ReadOperations {
           contentLength: content.length,
         });
 
-        this.cache.set(cacheKey, content);
+        if (shouldCache) {
+          this.cache.set(cacheKey, content);
+        }
         return content;
       } catch {
         // Continue to next extension
@@ -257,6 +287,7 @@ export class ReadOperations {
     normalizedPath: string,
     apiPath: string,
     cacheKey: string,
+    shouldCache: boolean,
   ): Promise<string> {
     logger.debug("[ReadOperations] Fetching draft content", {
       path: normalizedPath,
@@ -264,7 +295,9 @@ export class ReadOperations {
       cacheKey,
     });
     const content = await this.client.getFileContent(apiPath);
-    this.cache.set(cacheKey, content);
+    if (shouldCache) {
+      this.cache.set(cacheKey, content);
+    }
     return content;
   }
 }

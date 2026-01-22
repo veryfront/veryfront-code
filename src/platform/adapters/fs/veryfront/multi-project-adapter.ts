@@ -224,6 +224,19 @@ export class MultiProjectFSAdapter implements FSAdapter {
       return undefined;
     }
   }
+
+  /**
+   * Get all source files with content for class extraction.
+   * Returns files from the current request's adapter.
+   */
+  async getAllSourceFiles(): Promise<Array<{ path: string; content?: string }>> {
+    try {
+      const adapter = await this.getAdapter();
+      return adapter.getAllSourceFiles?.() || [];
+    } catch {
+      return [];
+    }
+  }
 }
 
 export function isMultiProjectAdapter(adapter: unknown): adapter is MultiProjectFSAdapter {
