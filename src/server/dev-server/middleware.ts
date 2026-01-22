@@ -24,10 +24,28 @@ export function createRequestLoggerMiddleware() {
     const pathname = url.pathname;
     const incomingId = c.req.headers.get("x-request-id") || "";
     const requestId = generateRequestId(incomingId);
+
+    // Extract standard fields from headers
+    const host = c.req.headers.get("host") || "";
+    const domain = host.replace(/:\d+$/, "");
     const projectSlug = c.req.headers.get("x-project-slug") || undefined;
+    const projectId = c.req.headers.get("x-project-id") || undefined;
+    const releaseId = c.req.headers.get("x-release-id") || undefined;
+    const branchId = c.req.headers.get("x-branch-id") || undefined;
+    const branchName = c.req.headers.get("x-branch-name") || undefined;
 
     // Create request-scoped logger with bound context
-    const reqLogger = logger.child({ requestId, projectSlug, pathname });
+    const reqLogger = logger.child({
+      requestId,
+      request_url: c.req.url,
+      domain,
+      project_slug: projectSlug,
+      project_id: projectId,
+      release_id: releaseId,
+      branch_id: branchId,
+      branch_name: branchName,
+      pathname,
+    });
     c.var.requestId = requestId;
     c.var.logger = reqLogger;
 

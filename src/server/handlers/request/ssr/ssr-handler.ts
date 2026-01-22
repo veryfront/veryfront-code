@@ -138,18 +138,27 @@ export class SSRHandler extends BaseHandler {
         const prodMode = isProductionMode(ctx, url);
         const branch = ctx.parsedDomain?.branch ?? null;
 
-        this.logDebug("Using multi-project context", {
+        _logger.info("[SSR] Using multi-project context - entering runWithContext", {
           projectSlug: ctx.projectSlug,
           productionMode: prodMode,
           releaseId: prodMode ? ctx.releaseId : undefined,
           branch: !prodMode ? branch : undefined,
           environmentName: ctx.environmentName,
-        }, ctx);
+          slug,
+        });
 
+        const runWithContextStartTime = performance.now();
         return fsAdapter.runWithContext(
           ctx.projectSlug,
           ctx.proxyToken || "",
-          () => this.handleWithContext(req, ctx, slug, requestId, url),
+          () => {
+            _logger.info("[SSR] runWithContext callback started", {
+              projectSlug: ctx.projectSlug,
+              slug,
+              duration: `${(performance.now() - runWithContextStartTime).toFixed(2)}ms`,
+            });
+            return this.handleWithContext(req, ctx, slug, requestId, url);
+          },
           ctx.projectId,
           {
             productionMode: prodMode,
@@ -191,6 +200,13 @@ export class SSRHandler extends BaseHandler {
     requestId: string,
     url: URL,
   ): Promise<HandlerResult> {
+    const handleWithContextStartTime = performance.now();
+    _logger.info("[SSR] handleWithContext START", {
+      projectSlug: ctx.projectSlug,
+      projectId: ctx.projectId,
+      slug,
+    });
+
     // Extract studio_embed for Studio-specific features (bridge script, element selectors)
     const studioEmbed = url.searchParams.get("studio_embed") === "true";
 
@@ -219,7 +235,19 @@ export class SSRHandler extends BaseHandler {
     try {
       // Use centralized renderer factory with per-project LRU caching
       // This prevents memory growth in multi-project mode
+      _logger.info("[SSR] getRendererForProject START", {
+        projectSlug: ctx.projectSlug,
+        projectId: ctx.projectId,
+        slug,
+        elapsedInHandler: `${(performance.now() - handleWithContextStartTime).toFixed(2)}ms`,
+      });
+      const getRendererStartTime = performance.now();
       const renderer = await timeAsync("renderer-init", () => getRendererForProject(ctx));
+      _logger.info("[SSR] getRendererForProject DONE", {
+        projectSlug: ctx.projectSlug,
+        slug,
+        duration: `${(performance.now() - getRendererStartTime).toFixed(2)}ms`,
+      });
       this.logDebug("renderer obtained", { mode: ctx.mode, projectSlug: ctx.projectSlug }, ctx);
 
       // Extract route parameters for both App Router and Pages Router
@@ -289,6 +317,13 @@ export class SSRHandler extends BaseHandler {
       const renderSessionId = `${ctx.projectSlug || "default"}-${slug || "index"}-${Date.now()}`;
       startRenderSession(renderSessionId, ctx.projectSlug, slug);
 
+      _logger.info("[SSR] renderer.renderPage START", {
+        projectSlug: ctx.projectSlug,
+        projectId,
+        slug,
+        elapsedInHandler: `${(performance.now() - handleWithContextStartTime).toFixed(2)}ms`,
+      });
+      const renderPageStartTime = performance.now();
       const result = await timeAsync("render-page", () =>
         renderer.renderPage(slug, {
           delivery: "stream",
@@ -304,6 +339,13 @@ export class SSRHandler extends BaseHandler {
           proxyEnvironment: ctx.proxyEnvironment,
           projectSlug: ctx.projectSlug,
         }));
+      _logger.info("[SSR] renderer.renderPage DONE", {
+        projectSlug: ctx.projectSlug,
+        slug,
+        duration: `${(performance.now() - renderPageStartTime).toFixed(2)}ms`,
+        hasHtml: !!result.html,
+        hasStream: !!result.stream,
+      });
 
       // End tracking and record to manifest for future requests
       endRenderSession(renderSessionId);

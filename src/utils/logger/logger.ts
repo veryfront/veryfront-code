@@ -31,6 +31,14 @@ export interface LogEntry {
   requestId?: string;
   traceId?: string;
   projectSlug?: string;
+  // Standard fields for Loki filtering (snake_case for consistency)
+  project_slug?: string;
+  request_url?: string;
+  domain?: string;
+  project_id?: string;
+  release_id?: string;
+  branch_id?: string;
+  branch_name?: string;
   // Duration for timed operations
   durationMs?: number;
 }
@@ -345,6 +353,35 @@ class ConsoleLogger implements Logger {
     if ("durationMs" in mergedContext) {
       entry.durationMs = Number(mergedContext.durationMs);
       delete mergedContext.durationMs;
+    }
+    // Extract standard fields for Loki filtering
+    if ("project_slug" in mergedContext) {
+      entry.project_slug = String(mergedContext.project_slug);
+      delete mergedContext.project_slug;
+    }
+    if ("request_url" in mergedContext) {
+      entry.request_url = String(mergedContext.request_url);
+      delete mergedContext.request_url;
+    }
+    if ("domain" in mergedContext) {
+      entry.domain = String(mergedContext.domain);
+      delete mergedContext.domain;
+    }
+    if ("project_id" in mergedContext) {
+      entry.project_id = String(mergedContext.project_id);
+      delete mergedContext.project_id;
+    }
+    if ("release_id" in mergedContext) {
+      entry.release_id = String(mergedContext.release_id);
+      delete mergedContext.release_id;
+    }
+    if ("branch_id" in mergedContext) {
+      entry.branch_id = String(mergedContext.branch_id);
+      delete mergedContext.branch_id;
+    }
+    if ("branch_name" in mergedContext) {
+      entry.branch_name = String(mergedContext.branch_name);
+      delete mergedContext.branch_name;
     }
 
     if (Object.keys(mergedContext).length > 0) {

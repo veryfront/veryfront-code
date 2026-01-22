@@ -344,6 +344,14 @@ export async function getConfig(
   adapter: RuntimeAdapter,
   options?: GetConfigOptions,
 ): Promise<VeryfrontConfig> {
+  const getConfigStartTime = performance.now();
+  const cacheKeyForLog = options?.cacheKey || "unknown";
+
+  serverLogger.info("[CONFIG] getConfig START", {
+    projectDir,
+    cacheKey: cacheKeyForLog,
+  });
+
   return await withSpan(
     SpanNames.CONFIG_LOAD,
     async () => {
@@ -356,25 +364,63 @@ export async function getConfig(
         isVirtualFS && !!options?.cacheKey,
       );
 
+      serverLogger.info("[CONFIG] Cache key built", {
+        effectiveCacheKey,
+        isVirtualFS,
+        cacheKey: cacheKeyForLog,
+      });
+
       const cached = configCacheByProject.get(effectiveCacheKey);
       if (cached && cached.revision === cacheRevision) {
-        serverLogger.debug("[CONFIG] Using cached config", {
+        serverLogger.info("[CONFIG] Cache HIT - using cached config", {
           cacheKey: effectiveCacheKey,
           isVirtualFS,
+          duration: `${(performance.now() - getConfigStartTime).toFixed(2)}ms`,
         });
         return cached.config;
       }
+
+      serverLogger.info("[CONFIG] Cache MISS - loading config", {
+        cacheKey: effectiveCacheKey,
+        isVirtualFS,
+      });
 
       const configFiles = ["veryfront.config.js", "veryfront.config.ts", "veryfront.config.mjs"];
 
       for (const configFile of configFiles) {
         const configPath = join(projectDir, configFile);
 
+        serverLogger.info("[CONFIG] Checking config file existence", {
+          configFile,
+          configPath,
+          cacheKey: cacheKeyForLog,
+        });
+
+        const existsStart = performance.now();
         const exists = await adapter.fs.exists(configPath);
+        serverLogger.info("[CONFIG] Config file existence check done", {
+          configFile,
+          exists,
+          duration: `${(performance.now() - existsStart).toFixed(2)}ms`,
+          cacheKey: cacheKeyForLog,
+        });
+
         if (!exists) continue;
 
         try {
+          serverLogger.info("[CONFIG] Loading config file START", {
+            configFile,
+            configPath,
+            cacheKey: cacheKeyForLog,
+          });
+          const loadStart = performance.now();
           const merged = await loadAndMergeConfig(configPath, effectiveCacheKey, adapter);
+          serverLogger.info("[CONFIG] Loading config file DONE", {
+            configFile,
+            duration: `${(performance.now() - loadStart).toFixed(2)}ms`,
+            totalDuration: `${(performance.now() - getConfigStartTime).toFixed(2)}ms`,
+            cacheKey: cacheKeyForLog,
+          });
           if (merged) return merged;
         } catch (error) {
           if (isConfigError(error)) throw error;
@@ -385,6 +431,11 @@ export async function getConfig(
           });
         }
       }
+
+      serverLogger.info("[CONFIG] No config file found, using defaults", {
+        effectiveCacheKey,
+        duration: `${(performance.now() - getConfigStartTime).toFixed(2)}ms`,
+      });
 
       const defaultConfig = DEFAULT_CONFIG as VeryfrontConfig;
       configCacheByProject.set(effectiveCacheKey, {

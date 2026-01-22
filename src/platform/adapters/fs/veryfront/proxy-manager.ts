@@ -74,6 +74,15 @@ export class ProxyFSAdapterManager {
     environmentName?: string | null,
     branch?: string | null,
   ): Promise<VeryfrontFSAdapter> {
+    const getAdapterStartTime = performance.now();
+    logger.info("[ProxyFSAdapterManager] getAdapter START", {
+      projectSlug,
+      productionMode,
+      releaseId,
+      environmentName,
+      branch,
+    });
+
     // Normalize productionMode - must be explicitly set
     const effectiveProductionMode = productionMode ?? false;
     const effectiveReleaseId = releaseId ?? null;
@@ -221,9 +230,9 @@ export class ProxyFSAdapterManager {
         throw error;
       }
 
-      logger.debug("[ProxyFSAdapterManager] Reusing cached adapter", {
+      logger.info("[ProxyFSAdapterManager] Reusing cached adapter", {
         cacheKey,
-        contentContext: existing.adapter.getContentContext(),
+        duration: `${(performance.now() - getAdapterStartTime).toFixed(2)}ms`,
       });
 
       return existing.adapter;
@@ -232,7 +241,17 @@ export class ProxyFSAdapterManager {
     // Check for pending adapter creation to prevent concurrent creation
     const pending = this.pendingAdapters.get(cacheKey);
     if (pending) {
+      logger.info("[ProxyFSAdapterManager] Waiting for pending adapter creation", {
+        cacheKey,
+        projectSlug,
+      });
+      const waitStartTime = performance.now();
       const adapter = await pending;
+      logger.info("[ProxyFSAdapterManager] Pending adapter ready", {
+        cacheKey,
+        waitDuration: `${(performance.now() - waitStartTime).toFixed(2)}ms`,
+        totalDuration: `${(performance.now() - getAdapterStartTime).toFixed(2)}ms`,
+      });
       adapter.setRequestToken(token);
       return adapter;
     }
@@ -240,6 +259,12 @@ export class ProxyFSAdapterManager {
     if (this.adapters.size >= this.maxAdapters) {
       this.evictLeastRecentlyUsed();
     }
+
+    logger.info("[ProxyFSAdapterManager] Creating new adapter", {
+      cacheKey,
+      projectSlug,
+      elapsedBeforeCreate: `${(performance.now() - getAdapterStartTime).toFixed(2)}ms`,
+    });
 
     return this.createAdapter(
       cacheKey,
@@ -327,15 +352,25 @@ export class ProxyFSAdapterManager {
 
     // Store in pending map to prevent concurrent creation
     const initPromise = (async () => {
+      const initStartTime = performance.now();
+      logger.info("[ProxyFSAdapterManager] Adapter initialization START", {
+        cacheKey,
+        projectSlug,
+      });
       projectAdapter.initializing = adapter.initialize();
       try {
         await projectAdapter.initializing;
-        logger.debug("[ProxyFSAdapterManager] Adapter initialized", { cacheKey });
+        logger.info("[ProxyFSAdapterManager] Adapter initialization DONE", {
+          cacheKey,
+          projectSlug,
+          duration: `${(performance.now() - initStartTime).toFixed(2)}ms`,
+        });
         this.adapters.set(cacheKey, projectAdapter);
       } catch (error) {
         logger.error("[ProxyFSAdapterManager] Adapter initialization failed", {
           cacheKey,
           projectSlug,
+          duration: `${(performance.now() - initStartTime).toFixed(2)}ms`,
           error: error instanceof Error ? error.message : String(error),
         });
         throw error;
