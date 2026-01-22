@@ -551,7 +551,9 @@ export async function fetchAndCacheModule(
             actualFilePath,
             sourceLength: sourceCode.length,
             sourcePreview: sourceCode.slice(0, 200),
-            error: transformError instanceof Error ? transformError.message : String(transformError),
+            error: transformError instanceof Error
+              ? transformError.message
+              : String(transformError),
           });
           throw transformError;
         }
