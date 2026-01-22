@@ -192,7 +192,7 @@ export class RenderPipeline {
     const pipelineStartTime = performance.now();
     const projectSlug = options?.projectSlug || options?.projectId || "unknown";
 
-    logger.info("[RenderPipeline] renderPage START", {
+    logger.debug("[RenderPipeline] renderPage START", {
       slug,
       projectSlug,
       projectId: options?.projectId,
@@ -217,7 +217,7 @@ export class RenderPipeline {
         // ─────────────────────────────────────────────────────────────────────────
         // Stage 1: Page Resolution
         // ─────────────────────────────────────────────────────────────────────────
-        logger.info("[RenderPipeline] Stage 1: Page Resolution START", { slug, projectSlug });
+        logger.debug("[RenderPipeline] Stage 1: Page Resolution START", { slug, projectSlug });
         const stage1Start = performance.now();
         const pageInfo = await withSpan(
           "render.resolve_page",
@@ -229,7 +229,7 @@ export class RenderPipeline {
             ),
           { "render.slug": slug },
         );
-        logger.info("[RenderPipeline] Stage 1: Page Resolution DONE", {
+        logger.debug("[RenderPipeline] Stage 1: Page Resolution DONE", {
           slug,
           projectSlug,
           duration: `${(performance.now() - stage1Start).toFixed(2)}ms`,
@@ -240,7 +240,7 @@ export class RenderPipeline {
         // Stage 2: Layout Collection
         // Skip for dot-prefixed paths (e.g., .veryfront) - they don't use project layouts
         // ─────────────────────────────────────────────────────────────────────────
-        logger.info("[RenderPipeline] Stage 2: Layout Collection START", { slug, projectSlug });
+        logger.debug("[RenderPipeline] Stage 2: Layout Collection START", { slug, projectSlug });
         const stage2Start = performance.now();
         const skipLayouts = isDotPath(slug, pageInfo.entity.path);
 
@@ -254,7 +254,7 @@ export class RenderPipeline {
             ),
           { "render.slug": slug },
         );
-        logger.info("[RenderPipeline] Stage 2: Layout Collection DONE", {
+        logger.debug("[RenderPipeline] Stage 2: Layout Collection DONE", {
           slug,
           projectSlug,
           duration: `${(performance.now() - stage2Start).toFixed(2)}ms`,
@@ -285,7 +285,7 @@ export class RenderPipeline {
         // ─────────────────────────────────────────────────────────────────────────
         // Stage 3: Start Speculative Cache Check (runs in parallel with data fetching)
         // ─────────────────────────────────────────────────────────────────────────
-        logger.info("[RenderPipeline] Stage 3: Cache Check START", { slug, projectSlug });
+        logger.debug("[RenderPipeline] Stage 3: Cache Check START", { slug, projectSlug });
         const cacheCheckPromise = withSpan(
           SpanNames.CACHE_CHECK_SPECULATIVE,
           () => this.config.cacheCoordinator.checkCache(slug),
@@ -296,7 +296,7 @@ export class RenderPipeline {
         // Stage 4: Route Params Extraction
         // Stage 5: Two-Phase Data Fetching (parallel module loads, then parallel data fetches)
         // ─────────────────────────────────────────────────────────────────────────
-        logger.info("[RenderPipeline] Stage 4-5: Data Fetching START", { slug, projectSlug });
+        logger.debug("[RenderPipeline] Stage 4-5: Data Fetching START", { slug, projectSlug });
         const stage45Start = performance.now();
         if (options?.request && options?.url) {
           await withSpan(
@@ -339,7 +339,7 @@ export class RenderPipeline {
                   return;
                 }
 
-                logger.info("[RenderPipeline] Stage 5 Phase 1: Loading modules START", {
+                logger.debug("[RenderPipeline] Stage 5 Phase 1: Loading modules START", {
                   slug,
                   projectSlug,
                   count: modulesToLoad.length,
@@ -351,7 +351,7 @@ export class RenderPipeline {
                   () => this.loadModulesInParallel(modulesToLoad),
                   { "render.module_count": modulesToLoad.length },
                 );
-                logger.info("[RenderPipeline] Stage 5 Phase 1: Loading modules DONE", {
+                logger.debug("[RenderPipeline] Stage 5 Phase 1: Loading modules DONE", {
                   slug,
                   projectSlug,
                   duration: `${(performance.now() - phase1Start).toFixed(2)}ms`,
@@ -434,7 +434,7 @@ export class RenderPipeline {
           );
         }
 
-        logger.info("[RenderPipeline] Stage 4-5: Data Fetching DONE", {
+        logger.debug("[RenderPipeline] Stage 4-5: Data Fetching DONE", {
           slug,
           projectSlug,
           duration: `${(performance.now() - stage45Start).toFixed(2)}ms`,
@@ -444,10 +444,10 @@ export class RenderPipeline {
         // ─────────────────────────────────────────────────────────────────────────
         // Stage 6: Await Speculative Cache Check (started in parallel with data fetching)
         // ─────────────────────────────────────────────────────────────────────────
-        logger.info("[RenderPipeline] Stage 6: Cache Check Await START", { slug, projectSlug });
+        logger.debug("[RenderPipeline] Stage 6: Cache Check Await START", { slug, projectSlug });
         const stage6Start = performance.now();
         const cacheResult = await cacheCheckPromise;
-        logger.info("[RenderPipeline] Stage 6: Cache Check Await DONE", {
+        logger.debug("[RenderPipeline] Stage 6: Cache Check Await DONE", {
           slug,
           projectSlug,
           duration: `${(performance.now() - stage6Start).toFixed(2)}ms`,
@@ -466,7 +466,7 @@ export class RenderPipeline {
         // ─────────────────────────────────────────────────────────────────────────
         // Stage 7: Page Bundle Preparation
         // ─────────────────────────────────────────────────────────────────────────
-        logger.info("[RenderPipeline] Stage 7: Bundle Preparation START", { slug, projectSlug });
+        logger.debug("[RenderPipeline] Stage 7: Bundle Preparation START", { slug, projectSlug });
         const stage7Start = performance.now();
         const pageBundleResult = await withSpan(
           "render.prepare_bundles",
@@ -485,7 +485,7 @@ export class RenderPipeline {
           { "render.slug": slug },
         );
 
-        logger.info("[RenderPipeline] Stage 7: Bundle Preparation DONE", {
+        logger.debug("[RenderPipeline] Stage 7: Bundle Preparation DONE", {
           slug,
           projectSlug,
           duration: `${(performance.now() - stage7Start).toFixed(2)}ms`,
@@ -518,7 +518,7 @@ export class RenderPipeline {
         // ─────────────────────────────────────────────────────────────────────────
         // Stage 8: Layout Application
         // ─────────────────────────────────────────────────────────────────────────
-        logger.info("[RenderPipeline] Stage 8: Layout Application START", { slug, projectSlug });
+        logger.debug("[RenderPipeline] Stage 8: Layout Application START", { slug, projectSlug });
         const stage8Start = performance.now();
         const wrappedElement = await withSpan(
           "render.apply_layouts",
@@ -541,7 +541,7 @@ export class RenderPipeline {
             ),
           { "render.slug": slug, "render.layout_count": layoutResult.nestedLayouts.length },
         );
-        logger.info("[RenderPipeline] Stage 8: Layout Application DONE", {
+        logger.debug("[RenderPipeline] Stage 8: Layout Application DONE", {
           slug,
           projectSlug,
           duration: `${(performance.now() - stage8Start).toFixed(2)}ms`,
@@ -550,7 +550,7 @@ export class RenderPipeline {
         // ─────────────────────────────────────────────────────────────────────────
         // Stage 9: SSR Rendering
         // ─────────────────────────────────────────────────────────────────────────
-        logger.info("[RenderPipeline] Stage 9: SSR Rendering START", { slug, projectSlug });
+        logger.debug("[RenderPipeline] Stage 9: SSR Rendering START", { slug, projectSlug });
         const stage9Start = performance.now();
         const ssrResult = await withSpan(
           "render.ssr",
@@ -574,7 +574,7 @@ export class RenderPipeline {
             ),
           { "render.slug": slug, "render.delivery": mergedOptions?.delivery || "full" },
         );
-        logger.info("[RenderPipeline] Stage 9: SSR Rendering DONE", {
+        logger.debug("[RenderPipeline] Stage 9: SSR Rendering DONE", {
           slug,
           projectSlug,
           duration: `${(performance.now() - stage9Start).toFixed(2)}ms`,
@@ -585,7 +585,7 @@ export class RenderPipeline {
         // ─────────────────────────────────────────────────────────────────────────
         // Stage 10: Result Assembly
         // ─────────────────────────────────────────────────────────────────────────
-        logger.info("[RenderPipeline] Stage 10: Result Assembly START", { slug, projectSlug });
+        logger.debug("[RenderPipeline] Stage 10: Result Assembly START", { slug, projectSlug });
         const stage10Start = performance.now();
         const pageModule = pageBundleResult.clientModuleCode && pageBundleResult.pageModuleType
           ? {
@@ -609,14 +609,14 @@ export class RenderPipeline {
           await this.config.cacheCoordinator.persistResult(result, slug);
         }
 
-        logger.info("[RenderPipeline] Stage 10: Result Assembly DONE", {
+        logger.debug("[RenderPipeline] Stage 10: Result Assembly DONE", {
           slug,
           projectSlug,
           duration: `${(performance.now() - stage10Start).toFixed(2)}ms`,
         });
 
         const totalDuration = performance.now() - pipelineStartTime;
-        logger.info("[RenderPipeline] renderPage COMPLETE", {
+        logger.debug("[RenderPipeline] renderPage COMPLETE", {
           slug,
           projectSlug,
           totalDuration: `${totalDuration.toFixed(2)}ms`,
