@@ -5,6 +5,10 @@
  * - Memory: Local in-memory cache (fallback)
  * - Redis: Direct Redis access (local dev / open source)
  * - API: Centralized cache via veryfront-api (production)
+ *
+ * Performance features:
+ * - Circuit breaker on API backend to prevent cascade failures
+ * - Configurable limits for high-traffic scaling
  */
 
 import { logger } from "#veryfront/utils";
@@ -13,6 +17,8 @@ import { runtime } from "../platform/adapters/registry.ts";
 import { tryGetCacheKeyContext } from "./cache-key-builder.ts";
 import { getRuntimeEnv, isRuntimeEnvInitialized, type RuntimeEnv } from "../config/runtime-env.ts";
 import { getCurrentRequestContext } from "../platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import { CircuitBreakerOpen, getCircuitBreaker } from "../utils/circuit-breaker.ts";
+import { MEMORY_CACHE_MAX_ENTRIES } from "../utils/constants/cache.ts";
 
 const ENV_KEY_MAP: Record<string, keyof RuntimeEnv | undefined> = {
   VERYFRONT_API_BASE_URL: "apiBaseUrl",
@@ -65,7 +71,7 @@ export class MemoryCacheBackend implements CacheBackend {
   private store = new Map<string, { value: string; expiresAt: number }>();
   private maxEntries: number;
 
-  constructor(maxEntries = 1000) {
+  constructor(maxEntries = MEMORY_CACHE_MAX_ENTRIES) {
     this.maxEntries = maxEntries;
   }
 
@@ -208,6 +214,7 @@ export class RedisCacheBackend implements CacheBackend {
 /**
  * API cache backend for production.
  * Uses veryfront-api for centralized, project-scoped cache management.
+ * Includes circuit breaker to prevent cascade failures when API is degraded.
  */
 export class ApiCacheBackend implements CacheBackend {
   readonly type = "api" as const;
@@ -215,6 +222,11 @@ export class ApiCacheBackend implements CacheBackend {
   private keyPrefix: string;
   private timeoutMs: number;
   private env?: RuntimeEnv;
+  private circuitBreaker = getCircuitBreaker("api-cache", {
+    failureThreshold: 5, // Open after 5 failures
+    resetTimeoutMs: 30000, // Try again after 30s
+    successThreshold: 3, // Need 3 successes to close
+  });
 
   constructor(options: {
     apiBaseUrl?: string;
@@ -259,33 +271,45 @@ export class ApiCacheBackend implements CacheBackend {
       return null;
     }
 
-    const url = `${this.apiBaseUrl}/projects/${projectSlug}/cache${path}`;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
-
+    // Use circuit breaker to prevent cascade failures when API is degraded
     try {
-      const response = await fetch(url, {
-        method,
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: body ? JSON.stringify(body) : undefined,
-        signal: controller.signal,
+      return await this.circuitBreaker.execute(async () => {
+        const url = `${this.apiBaseUrl}/projects/${projectSlug}/cache${path}`;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
+
+        try {
+          const response = await fetch(url, {
+            method,
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: body ? JSON.stringify(body) : undefined,
+            signal: controller.signal,
+          });
+
+          if (!response.ok) {
+            // Non-2xx responses count as failures for circuit breaker
+            throw new Error(`HTTP ${response.status}`);
+          }
+
+          return (await response.json()) as T;
+        } finally {
+          clearTimeout(timeoutId);
+        }
       });
-
-      if (!response.ok) {
-        logger.debug("[ApiCacheBackend] Request failed", { status: response.status, path });
-        return null;
-      }
-
-      return (await response.json()) as T;
     } catch (error) {
-      const isTimeout = error instanceof Error && error.name === "AbortError";
-      logger.debug(`[ApiCacheBackend] Request ${isTimeout ? "timeout" : "error"}`, { path, error });
+      if (error instanceof CircuitBreakerOpen) {
+        logger.debug("[ApiCacheBackend] Circuit breaker open, failing fast", {
+          path,
+          nextAttemptMs: error.nextAttemptMs,
+        });
+      } else {
+        const isTimeout = error instanceof Error && error.name === "AbortError";
+        logger.debug(`[ApiCacheBackend] Request ${isTimeout ? "timeout" : "error"}`, { path });
+      }
       return null;
-    } finally {
-      clearTimeout(timeoutId);
     }
   }
 

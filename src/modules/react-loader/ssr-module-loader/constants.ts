@@ -47,10 +47,5 @@ export const MAX_CONCURRENT_TRANSFORMS = parseInt(
   10,
 );
 
-/**
- * Timeout for acquiring a transform semaphore permit (ms).
- * If a permit isn't available within this time, the request fails fast
- * with 503 instead of blocking indefinitely.
- * Default: 2000ms (2 seconds) - fail fast, let client retry
- */
-export const TRANSFORM_ACQUIRE_TIMEOUT_MS = 2000;
+/** Timeout for acquiring a transform semaphore permit (ms) */
+export const TRANSFORM_ACQUIRE_TIMEOUT_MS = 500;

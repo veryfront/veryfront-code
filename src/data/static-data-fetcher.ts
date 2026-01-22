@@ -4,9 +4,19 @@ import type { DataContext, DataResult, PageWithData } from "./types.ts";
 import { serverLogger } from "#veryfront/utils";
 import { DATA_FETCH_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
 import { TimeoutError, withTimeoutThrow } from "#veryfront/rendering/utils/stream-utils.ts";
+import { getSemaphore } from "#veryfront/utils/semaphore.ts";
+import {
+  MAX_CONCURRENT_REVALIDATIONS,
+  REVALIDATION_TIMEOUT_MS as REVALIDATION_TIMEOUT_CONFIG,
+} from "#veryfront/utils/constants/cache.ts";
 
 /** Shorter timeout for background revalidation (non-blocking, fire-and-forget) */
-const REVALIDATION_TIMEOUT_MS = 15000;
+const REVALIDATION_TIMEOUT_MS = REVALIDATION_TIMEOUT_CONFIG;
+
+/** Semaphore to limit concurrent revalidations and prevent resource exhaustion */
+const revalidationSemaphore = getSemaphore("revalidation", MAX_CONCURRENT_REVALIDATIONS, {
+  acquireTimeoutMs: 5000, // Don't wait more than 5s for a permit
+});
 
 export class StaticDataFetcher {
   private pendingRevalidations = new Map<string, Promise<void>>();
@@ -124,36 +134,52 @@ export class StaticDataFetcher {
     if (!pageModule.getStaticData) return;
 
     const pathname = context.url?.pathname || "unknown";
-    const start = performance.now();
 
+    // Use semaphore to limit concurrent revalidations
+    // This prevents resource exhaustion during traffic spikes
     try {
-      const result = await withTimeoutThrow(
-        Promise.resolve(pageModule.getStaticData({ params: context.params, url: context.url })),
-        REVALIDATION_TIMEOUT_MS,
-        `getStaticData revalidation for ${pathname}`,
-      );
+      await revalidationSemaphore.acquire(async () => {
+        const start = performance.now();
+        try {
+          const result = await withTimeoutThrow(
+            Promise.resolve(
+              pageModule.getStaticData!({ params: context.params, url: context.url }),
+            ),
+            REVALIDATION_TIMEOUT_MS,
+            `getStaticData revalidation for ${pathname}`,
+          );
 
-      this.cacheManager.set(cacheKey, {
-        data: result,
-        timestamp: Date.now(),
-        revalidate: result.revalidate,
+          this.cacheManager.set(cacheKey, {
+            data: result,
+            timestamp: Date.now(),
+            revalidate: result.revalidate,
+          });
+        } catch (error) {
+          const durationMs = Math.round(performance.now() - start);
+          if (error instanceof TimeoutError) {
+            serverLogger.error("DATA_REVALIDATION_TIMEOUT background revalidation timed out", {
+              pathname,
+              durationMs,
+              timeoutMs: REVALIDATION_TIMEOUT_MS,
+              cacheKey,
+            });
+          } else {
+            this.logError("DATA_REVALIDATION_ERROR background revalidation failed", error, {
+              pathname,
+              durationMs,
+              cacheKey,
+            });
+          }
+        }
       });
-    } catch (error) {
-      const durationMs = Math.round(performance.now() - start);
-      if (error instanceof TimeoutError) {
-        serverLogger.error("DATA_REVALIDATION_TIMEOUT background revalidation timed out", {
-          pathname,
-          durationMs,
-          timeoutMs: REVALIDATION_TIMEOUT_MS,
-          cacheKey,
-        });
-      } else {
-        this.logError("DATA_REVALIDATION_ERROR background revalidation failed", error, {
-          pathname,
-          durationMs,
-          cacheKey,
-        });
-      }
+    } catch {
+      // Semaphore timeout - too many concurrent revalidations, skip this one
+      serverLogger.warn("DATA_REVALIDATION_SKIPPED semaphore timeout", {
+        pathname,
+        cacheKey,
+        activeRevalidations: revalidationSemaphore.active,
+        waitingRevalidations: revalidationSemaphore.waitingCount,
+      });
     } finally {
       this.pendingRevalidations.delete(cacheKey);
     }

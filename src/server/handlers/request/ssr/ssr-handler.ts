@@ -331,6 +331,7 @@ export class SSRHandler extends BaseHandler {
 
       // Disable caching in development to prevent nonce mismatches
       // (cached HTML has old nonces, but each request generates a fresh nonce for CSP)
+      // Preview URLs use short cache - poke mechanism triggers hard refresh on content changes
       const cacheStrategy = ctx.mode === "development" ? "no-cache" : "short";
       const isHeadRequest = req.method.toUpperCase() === "HEAD";
       const builder = this.createResponseBuilder(ctx, nonce);
