@@ -8,12 +8,13 @@ import {
 import { getStudioScripts } from "./dev-scripts.ts";
 import { processMetadata } from "./metadata-builder.ts";
 import {
-  generateTailwind4CSS,
-  generateTailwindV4Theme,
+  cacheCSS,
+  extractCandidates,
+  formatCSSError,
+  generateTailwindCSS,
   generateThemeVariables,
   getDevStyles,
   getProductionStyles,
-  getTailwindCDNUrl,
 } from "./styles-builder/index.ts";
 import type { HTMLGenerationOptions } from "./types.ts";
 import {
@@ -136,16 +137,29 @@ export async function generateHTMLShellParts(
   props?: ComponentProps,
   contentForTailwind?: string,
 ): Promise<{ start: string; end: string }> {
-  // Generate JIT Tailwind CSS from content for both dev and prod
-  // This ensures consistent styling across environments
-  // Pass tailwind config and project-wide classes for complete coverage
-  const tailwindConfig = options.config?.tailwind;
-  const tailwindCSS = contentForTailwind
-    ? await generateTailwind4CSS(contentForTailwind, {
-      tailwindConfig,
-      projectClasses: options.projectClasses,
-    })
-    : "";
+  // Generate JIT Tailwind CSS using native Tailwind v4 compile() API
+  // Uses project's stylesheet (globals.css) for @theme, @plugin support
+  // Extracts candidates from: 1) project source files, 2) rendered HTML content
+  const stylesheetContent = options.globalCSS;
+  const isProduction = options.mode === "production" && options.proxyEnvironment !== "preview";
+
+  // Start with classes from all project source files (extracted fresh each request)
+  const candidates = new Set<string>(options.projectClasses || []);
+
+  // Add classes from rendered HTML content
+  if (contentForTailwind) {
+    for (const cls of extractCandidates(contentForTailwind)) {
+      candidates.add(cls);
+    }
+  }
+
+  const tailwindResult = await generateTailwindCSS(
+    stylesheetContent,
+    candidates,
+    { minify: isProduction },
+  );
+  const tailwindCSS = tailwindResult.css;
+  const tailwindError = tailwindResult.error;
 
   const {
     effectiveTitle,
@@ -199,20 +213,9 @@ export async function generateHTMLShellParts(
 
   const syntaxHighlightTheme = options.mode === "development" ? "github-dark" : "github";
 
-  // Tailwind v4 CDN for runtime CSS compilation
-  // Uses CSS-first configuration with @theme directive instead of JavaScript config
-  const tailwindCDNUrl = getTailwindCDNUrl(tailwindConfig);
-
-  // Generate Tailwind v4 @theme CSS with default design tokens
-  const tailwindV4Theme = generateTailwindV4Theme(tailwindConfig);
-
-  // Build Tailwind v4 CDN setup:
-  // 1. Tailwind v4 CDN script
-  // 2. @theme CSS with design tokens (colors, fonts, spacing)
-  const tailwindCDN = `<script src="${tailwindCDNUrl}"${nonce ? ` nonce="${nonce}"` : ""}></script>
-  <style type="text/tailwindcss"${nonce ? ` nonce="${nonce}"` : ""}>
-${tailwindV4Theme}
-  </style>`;
+  // Generate Tailwind CSS output - inline for preview, hashed link for production
+  // cacheCSS stores the CSS and returns the hash for later retrieval
+  const cssHash = tailwindCSS && isProduction ? cacheCSS(tailwindCSS) : "";
 
   // Generate modulepreload hints for page and layout modules (faster cold start)
   const modulePreloadHints = generateModulePreloadHints(options);
@@ -276,24 +279,37 @@ ${tailwindV4Theme}
   <!-- Modulepreload hints for faster cold start -->
   ${modulePreloadHints}
 
-  <!-- Tailwind CSS: JIT-compiled for both dev and prod (consistent styling) -->
-  <!-- CDN kept in dev/preview for live class editing during HMR -->
-  ${options.mode === "development" || options.proxyEnvironment === "preview" ? tailwindCDN : ""}
-  ${tailwindCSS ? `<style${nonce ? ` nonce="${nonce}"` : ""}>\n${tailwindCSS}\n  </style>` : ""}
-
-  <!-- CSS Variables for Theming (veryfront-renderer compatible) -->
+  <!-- Tailwind CSS: Server-side JIT compiled -->
   ${
     (() => {
-      // If project has globals.css, serve via link tag for proper HMR support
-      // Link tags can be hot-reloaded by updating href with cache-bust param
-      if (options.globalCSS) {
-        return `<link rel="stylesheet" href="/_vf_styles/globals.css">`;
+      if (!tailwindCSS) return "";
+      if (isProduction) {
+        // Production: link to hashed CSS file for immutable caching
+        return `<link rel="stylesheet" href="/_vf/css/${cssHash}.css">`;
+      } else {
+        // Preview/Dev: inline style with ID for HMR updates
+        return `<style id="vf-tailwind-css"${
+          nonce ? ` nonce="${nonce}"` : ""
+        }>\n${tailwindCSS}\n  </style>`;
       }
-      // Fallback: inline default theme variables if no globals.css exists
-      const css = generateThemeVariables();
-      return `<style${nonce ? ` nonce="${nonce}"` : ""}>
+    })()
+  }
+  ${tailwindError ? `<!-- Tailwind CSS Error: ${tailwindError.replace(/-->/g, "- ->")} -->` : ""}
+
+  <!-- CSS Variables for Theming -->
+  ${
+    (() => {
+      // globals.css is processed by Tailwind compiler - its content is in vf-tailwind-css
+      // In production, we could serve non-Tailwind parts separately, but for now
+      // the Tailwind output includes everything from globals.css
+      // Only need fallback theme variables if no globals.css exists
+      if (!options.globalCSS) {
+        const css = generateThemeVariables();
+        return `<style${nonce ? ` nonce="${nonce}"` : ""}>
 ${css}
   </style>`;
+      }
+      return "";
     })()
   }
 
@@ -335,6 +351,25 @@ ${css}
     mermaid.initialize({ startOnLoad: true, theme: 'default' });
   </script>`;
 
+  // Tailwind error overlay - inline version matching JS error overlay style
+  // Only show in preview/dev mode, not production
+  const tailwindErrorScript = (() => {
+    if (!tailwindError) return "";
+    if (options.mode === "production" && options.proxyEnvironment !== "preview") return "";
+    const errorInfo = formatCSSError(tailwindError);
+    const title = JSON.stringify(errorInfo.title);
+    const message = JSON.stringify(errorInfo.message);
+    const suggestion = JSON.stringify(errorInfo.suggestion);
+    return `<script${nonce ? ` nonce="${nonce}"` : ""}>
+    (function() {
+      var overlay = document.createElement('div');
+      overlay.id = 'veryfront-error-overlay';
+      overlay.innerHTML = '<div style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);color:white;font-family:Menlo,Monaco,Courier New,monospace;font-size:14px;padding:20px;overflow:auto;z-index:999999;"><div style="max-width:800px;margin:0 auto;"><h1 style="color:#ff6b6b;font-size:24px;margin-bottom:10px;">CSS Error</h1><div style="background:#1a1a1a;border:1px solid #333;border-radius:4px;padding:20px;margin:20px 0;"><div style="color:#ff6b6b;font-weight:bold;margin-bottom:10px;">' + ${title} + '</div><div style="color:#ccc;margin-bottom:20px;">' + ${message} + '</div><div style="background:#2a2a2a;border-left:3px solid #4fc3f7;padding:10px;margin-top:20px;"><div style="color:#4fc3f7;font-weight:bold;margin-bottom:5px;">Suggestion:</div><div style="color:#ccc;">' + ${suggestion} + '</div></div></div><button onclick="this.parentElement.parentElement.remove()" style="background:#333;border:1px solid #555;color:#ccc;padding:8px 16px;border-radius:4px;cursor:pointer;font-family:inherit;">Dismiss</button></div></div>';
+      document.body.appendChild(overlay);
+    })();
+  </script>`;
+  })();
+
   const end = `</div>
   </div>
   <div id="veryfront-portals"></div>
@@ -349,6 +384,7 @@ ${css}
   ${studioScripts}
   ${previewHMRScript}
   ${mermaidScript}
+  ${tailwindErrorScript}
 </body>
 </html>`;
 

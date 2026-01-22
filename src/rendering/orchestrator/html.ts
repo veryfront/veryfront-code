@@ -7,6 +7,7 @@ import {
   injectHTMLContent,
   isFullHTMLDocument,
 } from "#veryfront/html";
+import { extractCandidates } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
 import type { CollectedHead } from "#veryfront/react/head-collector.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type {
@@ -288,11 +289,12 @@ export class HTMLGenerator {
     context: HTMLGenerationContext,
     mergedFrontmatter: MDXFrontmatter,
   ): Promise<HTMLGenerationOptions> {
-    // Load app path and global CSS in parallel
+    // Load app path, global CSS, and extract project classes in parallel
     // Note: tailwind.config.js is not loaded - Tailwind v4 uses CSS @theme directive instead
-    const [appComponentPath, globalCSS] = await Promise.all([
+    const [appComponentPath, globalCSS, projectClasses] = await Promise.all([
       this.resolveAppPath().then((p) => p ?? undefined),
       this.loadProjectFile("globals.css"),
+      this.extractProjectClasses(),
     ]);
     logger.debug("[HTMLGenerator] App component resolution", {
       appComponentPath,
@@ -305,10 +307,6 @@ export class HTMLGenerator {
     const sourceHash = context.options?.studioEmbed && context.pageInfo.entity.content
       ? computeSourceHash(context.pageInfo.entity.content)
       : undefined;
-
-    // Get cached project classes from the adapter (if available)
-    // This ensures CSS includes all classes from source files, not just SSR HTML
-    const projectClasses = this.getProjectClasses();
 
     return {
       mode: this.config.mode,
@@ -337,17 +335,45 @@ export class HTMLGenerator {
   }
 
   /**
-   * Get cached project classes from the adapter.
-   * Returns undefined if adapter doesn't support class caching.
+   * Extract Tailwind classes from all project source files.
+   * This is done fresh each request (no caching) for predictable behavior.
    */
-  private getProjectClasses(): Set<string> | undefined {
-    // Check if adapter has getCachedClasses method (VeryfrontFSAdapter)
-    const adapter = this.config.adapter as unknown as {
-      getCachedClasses?: () => Set<string> | undefined;
+  private async extractProjectClasses(): Promise<Set<string>> {
+    const SOURCE_EXTENSIONS = [".tsx", ".jsx", ".mdx", ".ts", ".js"];
+    const classes = new Set<string>();
+
+    // Get the underlying FS adapter (unwrap from FSAdapterWrapper)
+    const wrappedFs = this.config.adapter.fs as unknown as {
+      getUnderlyingAdapter?: () => unknown;
     };
-    if (typeof adapter.getCachedClasses === "function") {
-      return adapter.getCachedClasses();
+
+    if (typeof wrappedFs.getUnderlyingAdapter !== "function") {
+      return classes;
     }
-    return undefined;
+
+    const fsAdapter = wrappedFs.getUnderlyingAdapter() as {
+      getAllSourceFiles?: () =>
+        | Array<{ path: string; content?: string }>
+        | Promise<Array<{ path: string; content?: string }>>;
+    };
+
+    if (typeof fsAdapter.getAllSourceFiles !== "function") {
+      return classes;
+    }
+
+    const files = await fsAdapter.getAllSourceFiles();
+
+    for (const file of files) {
+      if (!file.content) continue;
+      if (!SOURCE_EXTENSIONS.some((ext) => file.path.endsWith(ext))) continue;
+
+      // Extract candidates from file content
+      const extracted = extractCandidates(file.content);
+      for (const cls of extracted) {
+        classes.add(cls);
+      }
+    }
+
+    return classes;
   }
 }

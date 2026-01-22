@@ -147,7 +147,7 @@ describe("html-generation/html-shell-generator", () => {
       assertStringIncludes(result, '[data-theme="dark"]');
     });
 
-    it("should include Tailwind v4 CDN in development mode for HMR", async () => {
+    it("should include inline Tailwind CSS in development mode", async () => {
       const meta: RenderMetadata = {
         title: "Test Page",
         slug: "test",
@@ -161,15 +161,17 @@ describe("html-generation/html-shell-generator", () => {
 
       const result = await wrapInHTMLShell("<div>Content</div>", meta, options);
 
-      // Tailwind v4 CDN is included in dev for HMR live class editing
-      assertStringIncludes(result, "cdn.jsdelivr.net/npm/@tailwindcss/browser@4");
+      // Dev mode uses inline style for HMR hot-swapping
+      assertStringIncludes(result, 'id="vf-tailwind-css"');
       assertStringIncludes(
         result,
-        "<!-- Tailwind CSS: JIT-compiled for both dev and prod (consistent styling) -->",
+        "<!-- Tailwind CSS: Server-side JIT compiled -->",
       );
+      // No CDN in new architecture
+      assert(!result.includes("cdn.jsdelivr.net/npm/@tailwindcss/browser@4"));
     });
 
-    it("should NOT include Tailwind CDN in production mode (JIT only)", async () => {
+    it("should use hashed CSS link in production mode", async () => {
       const meta: RenderMetadata = {
         title: "Test Page",
         slug: "test",
@@ -183,10 +185,13 @@ describe("html-generation/html-shell-generator", () => {
 
       const result = await wrapInHTMLShell("<div>Content</div>", meta, options);
 
-      // Production mode uses JIT CSS only, no CDN
+      // Production mode uses hashed CSS link for immutable caching
+      assertStringIncludes(result, "/_vf/css/");
+      assertStringIncludes(result, ".css");
+      // No CDN in new architecture
       assert(!result.includes("cdn.jsdelivr.net/npm/@tailwindcss/browser@4"));
-      // Should have JIT CSS styles
-      assertStringIncludes(result, "tailwindcss v4");
+      // Should have JIT comment
+      assertStringIncludes(result, "<!-- Tailwind CSS: Server-side JIT compiled -->");
     });
 
     it("should include syntax highlighting styles", async () => {
