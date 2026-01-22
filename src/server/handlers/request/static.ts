@@ -25,7 +25,6 @@ import {
   PRIORITY_MEDIUM_STATIC,
 } from "#veryfront/utils/constants/index.ts";
 import { normalizeChunkPath } from "#veryfront/utils/chunk-utils.ts";
-import { shouldUseNoCacheHeaders } from "../../context/request-context.ts";
 
 export class StaticHandler extends BaseHandler {
   private static manifestCache = new Map<
@@ -147,15 +146,19 @@ export class StaticHandler extends BaseHandler {
         }
 
         // Determine cache strategy
-        // Development and preview modes always use no-cache HTTP headers
-        // Production mode uses appropriate caching based on content type
+        // Static files use ETag-based caching (browser validates freshness via If-None-Match)
+        // Only preview mode uses no-cache (remote preview needs instant updates)
+        // Local dev uses normal caching since ETag handles freshness efficiently
         const ext = getExtension(candidate.abs);
         const isHashed = hasHashedFilename(candidate.abs);
         const isVeryfrontAsset = reqPath.includes("/_veryfront/");
 
         let cacheStrategy: CacheStrategy;
-        if (shouldUseNoCacheHeaders(ctx.requestContext)) {
-          // Development/Preview: browser must fetch fresh, server handles caching
+        // Only preview mode (not local dev) uses no-cache for static files
+        const isPreviewMode = ctx.requestContext?.mode === "preview" &&
+          !ctx.requestContext?.isLocalDev;
+        if (isPreviewMode) {
+          // Preview: browser must fetch fresh, server handles caching
           cacheStrategy = "no-cache";
         } else if (
           isHashed ||
