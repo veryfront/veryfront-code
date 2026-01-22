@@ -368,12 +368,21 @@ export interface CacheBackendConfig {
 
 /** Check if API cache backend is available (production environment with API URL). */
 export function isApiCacheAvailable(env?: RuntimeEnv): boolean {
-  // Check NODE_ENV directly at process level - this is called at initialization time
+  // Detect production: PROXY_MODE=1 (K8s), NODE_ENV=production, or non-localhost API URL
   // deno-lint-ignore no-explicit-any
   const g = globalThis as any;
-  const nodeEnv = g.Deno?.env?.get("NODE_ENV") ?? g.process?.env?.NODE_ENV ?? "development";
-  const isLocalDev = nodeEnv !== "production";
-  return !isLocalDev && !!getEnvValue("VERYFRONT_API_BASE_URL", env);
+  const getEnvDirect = (key: string) => g.Deno?.env?.get(key) ?? g.process?.env?.[key];
+
+  const proxyMode = getEnvDirect("PROXY_MODE");
+  const nodeEnv = getEnvDirect("NODE_ENV");
+  const apiUrl = getEnvValue("VERYFRONT_API_BASE_URL", env);
+
+  // Production if: proxy mode enabled, NODE_ENV=production, or API URL is non-local
+  const isProduction = proxyMode === "1" ||
+    nodeEnv === "production" ||
+    !!(apiUrl && !apiUrl.includes("localhost") && !apiUrl.includes("lvh.me"));
+
+  return isProduction && !!apiUrl;
 }
 
 /**
