@@ -11,6 +11,7 @@ import { defineConfig, devices } from "@playwright/test";
  */
 export default defineConfig({
   testDir: ".",
+  testMatch: "*.playwright.ts", // Custom pattern to avoid bun test auto-discovery
   timeout: 30_000,
   retries: 0, // Zero tolerance - any failure blocks push
   workers: 1, // Sequential execution for deterministic results

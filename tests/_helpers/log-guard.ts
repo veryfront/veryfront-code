@@ -241,6 +241,13 @@ const allowedWarnings: string[] = [
   "[PREFETCH] WARN:",
   "document.head is not available",
   "skipping resource hint",
+
+  // Client-side router errors (expected in navigation failure tests)
+  "Failed to load /",
+  "✖ Failed to load /",
+  "[RENDERER] ERROR: Failed to load",
+  "Navigation failed:",
+  "Network error",
 ];
 
 function isAllowed(args: unknown[]): boolean {
