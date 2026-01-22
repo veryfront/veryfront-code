@@ -17,6 +17,38 @@ import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import { getReactImportMap, REACT_VERSION } from "./package-registry.ts";
 import { parseImports, replaceSpecifiers } from "./lexer.ts";
+import type { CacheBackend } from "#veryfront/cache/backend.ts";
+
+/** Lazy-loaded distributed cache backend for cross-pod sharing */
+let distributedCache: CacheBackend | null | undefined;
+const distributedCacheInit = new Singleflight<CacheBackend | null>();
+
+function getDistributedCache(): Promise<CacheBackend | null> {
+  if (distributedCache !== undefined) return Promise.resolve(distributedCache);
+
+  return distributedCacheInit.do("init", async () => {
+    try {
+      const { CacheBackends } = await import("#veryfront/cache/backend.ts");
+      const backend = await CacheBackends.httpModule();
+      // Only use distributed cache if API or Redis (not memory - that's per-process)
+      if (backend.type === "memory") {
+        distributedCache = null;
+        logger.debug("[HTTP-CACHE] No distributed cache available (memory only)");
+        return null;
+      }
+      distributedCache = backend;
+      logger.debug("[HTTP-CACHE] Distributed cache initialized", { type: backend.type });
+      return backend;
+    } catch (error) {
+      logger.debug("[HTTP-CACHE] Failed to initialize distributed cache", { error });
+      distributedCache = null;
+      return null;
+    }
+  });
+}
+
+/** TTL for cached modules in distributed cache (24 hours) */
+const DISTRIBUTED_CACHE_TTL_SECONDS = 86400;
 
 type CacheOptions = {
   cacheDir: string;
@@ -177,8 +209,9 @@ function cacheHttpModule(url: string, options: CacheOptions): Promise<string | n
   // file paths for files that haven't been written yet.
   return httpFetchFlight.do(cacheKey, async () => {
     const cachePath = join(cacheDir, `http-${simpleHash(normalizedUrl)}.mjs`);
+    const fs = createFileSystem();
 
-    // Double-check cache after acquiring flight (another request may have completed)
+    // Layer 1: Check filesystem cache (fast, local)
     if (await exists(cachePath)) {
       cachedPaths.set(cacheKey, cachePath);
       return cachePath;
@@ -196,7 +229,25 @@ function cacheHttpModule(url: string, options: CacheOptions): Promise<string | n
       return cachePath;
     }
 
-    logger.debug("[HTTP-CACHE] Fetching", { url: normalizedUrl });
+    // Layer 2: Check distributed cache (cross-pod sharing)
+    const distributed = await getDistributedCache();
+    if (distributed) {
+      try {
+        const cachedCode = await distributed.get(normalizedUrl);
+        if (cachedCode) {
+          logger.debug("[HTTP-CACHE] Distributed cache hit", { url: normalizedUrl });
+          await fs.mkdir(cacheDir, { recursive: true });
+          await fs.writeTextFile(cachePath, cachedCode);
+          cachedPaths.set(cacheKey, cachePath);
+          return cachePath;
+        }
+      } catch (error) {
+        logger.debug("[HTTP-CACHE] Distributed cache get failed", { url: normalizedUrl, error });
+      }
+    }
+
+    // Layer 3: Fetch from esm.sh
+    logger.debug("[HTTP-CACHE] Fetching from network", { url: normalizedUrl });
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
@@ -222,9 +273,16 @@ function cacheHttpModule(url: string, options: CacheOptions): Promise<string | n
       processingStack.delete(normalizedUrl);
     }
 
-    const fs = createFileSystem();
+    // Write to filesystem cache
     await fs.mkdir(cacheDir, { recursive: true });
     await fs.writeTextFile(cachePath, code);
+
+    // Store in distributed cache (fire-and-forget for performance)
+    if (distributed) {
+      distributed.set(normalizedUrl, code, DISTRIBUTED_CACHE_TTL_SECONDS).catch((error) => {
+        logger.debug("[HTTP-CACHE] Distributed cache set failed", { url: normalizedUrl, error });
+      });
+    }
 
     cachedPaths.set(cacheKey, cachePath);
     return cachePath;
