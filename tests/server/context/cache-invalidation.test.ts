@@ -1,8 +1,5 @@
 import { describe, it } from "@std/testing/bdd";
-import {
-  clearAllProjectCaches,
-  invalidateProjectCaches,
-} from "../../../src/server/context/cache-invalidation.ts";
+import { invalidateProjectCaches } from "../../../src/server/context/cache-invalidation.ts";
 
 describe("cache-invalidation", () => {
   describe("invalidateProjectCaches", () => {
@@ -13,14 +10,15 @@ describe("cache-invalidation", () => {
 
     it("supports selective invalidation with specific file paths", () => {
       // Verify selective invalidation completes without error
-      invalidateProjectCaches("test-project", ["pages/index.mdx", "components/Button.tsx"]);
+      invalidateProjectCaches("test-project", [
+        "pages/index.mdx",
+        "components/Button.tsx",
+      ]);
     });
-  });
 
-  describe("clearAllProjectCaches", () => {
-    it("clears all caches without throwing", () => {
+    it("clears all caches when no paths provided", () => {
       // Verify full cache clear completes without error
-      clearAllProjectCaches("test-project");
+      invalidateProjectCaches("test-project");
     });
   });
 });

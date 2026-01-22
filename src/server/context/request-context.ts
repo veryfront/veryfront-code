@@ -3,13 +3,31 @@
  *
  * Unified context for handling requests. Two orthogonal concerns:
  * - `mode`: Determined by `.preview.` in hostname (preview | production)
- * - `env`: Determined by NODE_ENV (development | production)
+ * - `isLocalDev`: Determined by NODE_ENV at initialization (not per-request)
  *
  * @module server/context/request-context
  */
 
 import { parseProjectDomain } from "../utils/domain-parser.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
+
+/**
+ * Environment configuration resolved at initialization time.
+ * Pass this to createRequestContext for testability.
+ */
+export interface EnvConfig {
+  /** Whether running in local development mode */
+  isLocalDev: boolean;
+}
+
+/**
+ * Create default environment config from current process environment.
+ * Call this once at server startup, not per-request.
+ */
+export function createEnvConfig(): EnvConfig {
+  const env = getEnv("NODE_ENV") || getEnv("DENO_ENV") || "development";
+  return { isLocalDev: env !== "production" };
+}
 
 /**
  * Request context containing all resolved request-scoped values.
@@ -25,7 +43,12 @@ export interface RequestContext {
   branch: string | null;
   /** Mode determines content source and CSS delivery */
   mode: "preview" | "production";
+  /** Whether running in local development mode (resolved at context creation) */
+  isLocalDev: boolean;
 }
+
+/** Default environment config, resolved once at module load */
+const DEFAULT_ENV_CONFIG = createEnvConfig();
 
 /**
  * Create request context from an incoming request.
@@ -41,9 +64,13 @@ export interface RequestContext {
  * 3. Default to production
  *
  * @param req - Incoming request
+ * @param envConfig - Environment config (defaults to process env, override for testing)
  * @returns Fully resolved request context
  */
-export function createRequestContext(req: Request): RequestContext {
+export function createRequestContext(
+  req: Request,
+  envConfig: EnvConfig = DEFAULT_ENV_CONFIG,
+): RequestContext {
   const url = new URL(req.url);
   const hostname = url.hostname;
   const parsed = parseProjectDomain(hostname);
@@ -61,11 +88,17 @@ export function createRequestContext(req: Request): RequestContext {
     slug: req.headers.get("x-project-slug") ?? parsed.slug ?? "",
     branch: parsed.branch,
     mode,
+    isLocalDev: envConfig.isLocalDev,
   };
 }
 
 /**
  * Check if running in local development environment.
+ *
+ * PREFER using `ctx.isLocalDev` when you have a RequestContext available.
+ * This function reads global env and should only be used for:
+ * - Handler registration (before any request context exists)
+ * - Module-level constants
  *
  * When true:
  * - ALL caching is disabled (both HTTP headers and memory caches)
@@ -76,8 +109,7 @@ export function createRequestContext(req: Request): RequestContext {
  * @returns true if NODE_ENV/DENO_ENV is not "production"
  */
 export function isLocalDev(): boolean {
-  const env = getEnv("NODE_ENV") || getEnv("DENO_ENV") || "development";
-  return env !== "production";
+  return DEFAULT_ENV_CONFIG.isLocalDev;
 }
 
 /**
@@ -87,11 +119,11 @@ export function isLocalDev(): boolean {
  * - `invalidate`: Cache with invalidation on file change (preview - instant updates)
  * - `immutable`: Cache by release ID (production - stable content)
  *
- * @param ctx - Request context
+ * @param ctx - Request context (uses ctx.isLocalDev, not global state)
  * @returns Caching strategy to use
  */
 export function getCacheStrategy(ctx: RequestContext): "none" | "invalidate" | "immutable" {
-  if (isLocalDev()) return "none";
+  if (ctx.isLocalDev) return "none";
   if (ctx.mode === "preview") return "invalidate";
   return "immutable";
 }
@@ -120,11 +152,15 @@ export function shouldEnableCache(ctx: RequestContext): boolean {
  * In production mode, callers should use appropriate cache headers
  * (short, medium, immutable) based on content type.
  *
- * @param ctx - Request context (optional, uses isLocalDev() if not provided)
+ * @param ctx - Request context (optional - falls back to isLocalDev() if not provided)
  * @returns true if HTTP headers should be no-cache
  */
 export function shouldUseNoCacheHeaders(ctx?: RequestContext): boolean {
-  if (isLocalDev()) return true;
-  if (ctx?.mode === "preview") return true;
-  return false;
+  if (ctx) {
+    if (ctx.isLocalDev) return true;
+    if (ctx.mode === "preview") return true;
+    return false;
+  }
+  // Fallback when no context: use global isLocalDev()
+  return isLocalDev();
 }

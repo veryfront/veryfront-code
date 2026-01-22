@@ -40,6 +40,8 @@ export interface HTMLGenerationOptions {
   headings?: Array<{ id: string; text: string; level: number }>;
   /** Tailwind classes extracted from all project source files */
   projectClasses?: Set<string>;
+  /** Whether running in local development mode (overrides isLocalDev() for testing) */
+  isLocalDev?: boolean;
 }
 
 export type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
