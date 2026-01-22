@@ -390,17 +390,46 @@ export async function fetchAndCacheModule(
   const existingFetch = inFlight.get(cacheKey);
   if (existingFetch) {
     logger.debug(
-      `${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] WAITING for in-flight fetch (potential deadlock if circular)`,
+      `${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] WAITING for in-flight fetch`,
       { projectSlug, normalizedPath, cacheKey },
     );
     const waitStart = performance.now();
-    const result = await existingFetch;
-    logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] in-flight wait DONE`, {
-      projectSlug,
-      normalizedPath,
-      waitMs: (performance.now() - waitStart).toFixed(1),
-    });
-    return result;
+
+    // Add timeout to prevent waiting forever on orphaned promises
+    // This can happen if the original request timed out but the fetch never completed
+    const IN_FLIGHT_WAIT_TIMEOUT_MS = 10000;
+
+    try {
+      const result = await Promise.race([
+        existingFetch,
+        new Promise<null>((_, reject) =>
+          setTimeout(
+            () => reject(new Error("In-flight wait timeout")),
+            IN_FLIGHT_WAIT_TIMEOUT_MS,
+          )
+        ),
+      ]);
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] in-flight wait DONE`, {
+        projectSlug,
+        normalizedPath,
+        waitMs: (performance.now() - waitStart).toFixed(1),
+      });
+      return result;
+    } catch (error) {
+      // Timeout waiting for in-flight fetch - likely orphaned from a previous request
+      // Remove the stale entry and continue with a fresh fetch
+      logger.warn(
+        `${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] in-flight wait TIMEOUT - removing stale entry and retrying`,
+        {
+          projectSlug,
+          normalizedPath,
+          waitMs: (performance.now() - waitStart).toFixed(1),
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
+      inFlight.delete(cacheKey);
+      // Fall through to start a fresh fetch
+    }
   }
 
   // Create a deferred promise to track this fetch
