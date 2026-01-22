@@ -173,12 +173,18 @@ export class Renderer {
     // Pass colorScheme so the pipeline cache also respects theme
     const services = this.createServicesForContext(ctx, options?.colorScheme);
 
+    // Compute contentSourceId for cache isolation between preview/production
+    const contentSourceId = ctx.environment === "production" && ctx.releaseId
+      ? `release-${ctx.releaseId}`
+      : `${ctx.environment}-draft`;
+
     // Run the render pipeline
     const result = await services.pipeline.renderPage(slug, {
       ...options,
       projectId: ctx.projectId,
       projectSlug: ctx.projectSlug,
       proxyEnvironment: ctx.environment,
+      contentSourceId,
     });
 
     // Cache the result (context-aware, includes colorScheme in key)
@@ -317,10 +323,15 @@ export class Renderer {
     });
 
     // Create layout orchestrator
+    // Compute contentSourceId for cache isolation between preview/production
+    const contentSourceId = ctx.environment === "production" && ctx.releaseId
+      ? `release-${ctx.releaseId}`
+      : `${ctx.environment}-draft`;
     const layoutOrchestrator = new LayoutOrchestrator({
       projectDir: ctx.projectDir,
       projectId: ctx.projectId,
       projectSlug: ctx.projectSlug,
+      contentSourceId,
       adapter: ctx.adapter,
       config: ctx.config,
       mode: ctx.mode,

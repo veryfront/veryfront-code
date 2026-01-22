@@ -15,6 +15,8 @@ export interface LayoutOrchestratorConfig {
   projectId?: string;
   /** Project slug for HTTP fallback in multi-project mode */
   projectSlug?: string;
+  /** Content source identifier for cache isolation (branch name or release ID) */
+  contentSourceId?: string;
   adapter: RuntimeAdapter;
   config: VeryfrontConfig;
   mode: "development" | "production";
@@ -66,6 +68,7 @@ export class LayoutOrchestrator {
       projectDir: this.config.projectDir,
       projectId: this.config.projectId,
       projectSlug: projectSlug ?? this.config.projectSlug,
+      contentSourceId: this.config.contentSourceId,
       adapter: this.config.adapter,
       config: this.config.config,
       layoutCache: this.config.layoutCache,

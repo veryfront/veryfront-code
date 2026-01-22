@@ -20,6 +20,7 @@ export async function applyLayoutsESM(
   layoutDataMap?: Map<string, Record<string, unknown>>,
   projectId?: string,
   projectSlug?: string,
+  contentSourceId?: string,
 ): Promise<BundledReact.ReactElement> {
   let element = pageElement;
 
@@ -37,6 +38,7 @@ export async function applyLayoutsESM(
             adapter,
             projectId,
             projectSlug,
+            contentSourceId,
           );
         } else if (item.kind === "tsx") {
           const props = item.componentPath ? layoutDataMap?.get(item.componentPath) : undefined;
@@ -67,6 +69,7 @@ export async function applyLayoutsESM(
       adapter,
       projectId,
       projectSlug,
+      contentSourceId,
     );
     logger.debug("[applyLayoutsESM] Named layoutBundle applied successfully");
   } else {
