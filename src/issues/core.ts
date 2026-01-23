@@ -1,0 +1,441 @@
+/**
+ * Core CRUD operations for file-based issue tracking
+ *
+ * Issues are stored as markdown files with YAML frontmatter in the `issues/` directory.
+ *
+ * @module issues/core
+ */
+
+import { join } from "#std/path.ts";
+import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
+import type {
+  CreateIssueOptions,
+  Issue,
+  IssueMetadata,
+  ListIssuesOptions,
+  ListIssuesResult,
+  UpdateIssueOptions,
+} from "./types.ts";
+import {
+  createIssueSchema,
+  generateIssueId,
+  ISSUE_ID_PATTERN,
+  type IssuePrefix,
+  listIssuesSchema,
+  updateIssueSchema,
+  validateMetadata,
+} from "./schema.ts";
+
+/**
+ * Default directory for issues
+ */
+export const ISSUES_DIR = "issues";
+
+/**
+ * Parse YAML frontmatter from markdown content
+ */
+export function parseFrontmatter(content: string): { frontmatter: string; body: string } | null {
+  const match = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+  if (!match || !match[1] || match[2] === undefined) return null;
+  return {
+    frontmatter: match[1],
+    body: match[2].trim(),
+  };
+}
+
+/**
+ * Simple YAML parser for frontmatter (handles our limited schema)
+ */
+export function parseYaml(yaml: string): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  const lines = yaml.split("\n");
+  let currentKey: string | null = null;
+  let arrayValues: string[] = [];
+  let inArray = false;
+
+  for (const line of lines) {
+    // Skip empty lines and comments
+    if (!line.trim() || line.trim().startsWith("#")) continue;
+
+    // Array item
+    if (line.match(/^\s+-\s+/)) {
+      const itemValue = line.replace(/^\s+-\s+/, "").trim();
+      // Remove quotes if present
+      const cleanValue = itemValue.replace(/^["']|["']$/g, "");
+      arrayValues.push(cleanValue);
+      continue;
+    }
+
+    // Key-value pair
+    const kvMatch = line.match(/^(\w+):\s*(.*)$/);
+    if (kvMatch) {
+      // Save previous array if any
+      if (inArray && currentKey) {
+        result[currentKey] = arrayValues;
+        arrayValues = [];
+        inArray = false;
+      }
+
+      const key = kvMatch[1];
+      const value = kvMatch[2];
+
+      if (!key) continue;
+      currentKey = key;
+
+      if (!value || value === "" || value === "[]") {
+        // Empty array or start of array block
+        inArray = true;
+        arrayValues = [];
+      } else if (value.startsWith("[") && value.endsWith("]")) {
+        // Inline array: [a, b, c]
+        const items = value
+          .slice(1, -1)
+          .split(",")
+          .map((s) => s.trim().replace(/^["']|["']$/g, ""))
+          .filter((s) => s);
+        result[key] = items;
+      } else {
+        // Scalar value
+        let cleanValue: unknown = value.replace(/^["']|["']$/g, "");
+        // Handle special values
+        if (cleanValue === "true") cleanValue = true;
+        else if (cleanValue === "false") cleanValue = false;
+        else if (cleanValue === "null" || cleanValue === "~") cleanValue = undefined;
+        result[key] = cleanValue;
+      }
+    }
+  }
+
+  // Save final array if any
+  if (inArray && currentKey) {
+    result[currentKey] = arrayValues;
+  }
+
+  return result;
+}
+
+/**
+ * Serialize metadata to YAML frontmatter
+ */
+export function serializeYaml(metadata: IssueMetadata): string {
+  const lines: string[] = [];
+
+  lines.push(`id: ${metadata.id}`);
+  lines.push(`title: "${metadata.title.replace(/"/g, '\\"')}"`);
+  lines.push(`state: ${metadata.state}`);
+
+  if (metadata.labels.length > 0) {
+    lines.push(`labels: [${metadata.labels.map((l) => `"${l}"`).join(", ")}]`);
+  } else {
+    lines.push("labels: []");
+  }
+
+  if (metadata.milestone) {
+    lines.push(`milestone: ${metadata.milestone}`);
+  }
+
+  if (metadata.assignees.length > 0) {
+    lines.push(`assignees: [${metadata.assignees.map((a) => `"${a}"`).join(", ")}]`);
+  } else {
+    lines.push("assignees: []");
+  }
+
+  lines.push(`created_at: ${metadata.created_at}`);
+  lines.push(`updated_at: ${metadata.updated_at}`);
+
+  return lines.join("\n");
+}
+
+/**
+ * Serialize issue to markdown file content
+ */
+export function serializeIssue(issue: Issue): string {
+  const yaml = serializeYaml(issue.metadata);
+  return `---\n${yaml}\n---\n\n${issue.body}`;
+}
+
+/**
+ * Parse issue from markdown file content
+ */
+export function parseIssue(content: string, path: string): Issue | null {
+  const parsed = parseFrontmatter(content);
+  if (!parsed) return null;
+
+  const rawMetadata = parseYaml(parsed.frontmatter);
+
+  try {
+    const metadata = validateMetadata(rawMetadata);
+    return {
+      metadata,
+      body: parsed.body,
+      path,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Issues manager for a project
+ */
+export class IssuesManager {
+  private fs: FileSystem;
+  private projectDir: string;
+  private issuesDir: string;
+
+  constructor(projectDir: string, fs?: FileSystem) {
+    this.projectDir = projectDir;
+    this.fs = fs ?? createFileSystem();
+    this.issuesDir = join(projectDir, ISSUES_DIR);
+  }
+
+  /**
+   * Ensure the issues directory exists
+   */
+  async ensureDir(): Promise<void> {
+    try {
+      await this.fs.mkdir(this.issuesDir, { recursive: true });
+    } catch (error) {
+      // Directory might already exist
+      if ((error as { code?: string }).code !== "EEXIST") {
+        throw error;
+      }
+    }
+  }
+
+  /**
+   * Get all issue IDs in the project
+   */
+  async listIds(): Promise<string[]> {
+    const ids: string[] = [];
+
+    try {
+      const entries = this.fs.readDir(this.issuesDir);
+      for await (const entry of entries) {
+        if (entry.isFile && entry.name.endsWith(".md")) {
+          const id = entry.name.replace(/\.md$/, "");
+          if (ISSUE_ID_PATTERN.test(id)) {
+            ids.push(id);
+          }
+        }
+      }
+    } catch {
+      // Directory doesn't exist yet
+    }
+
+    return ids;
+  }
+
+  /**
+   * Create a new issue
+   */
+  async create(options: CreateIssueOptions): Promise<Issue> {
+    const validated = createIssueSchema.parse(options);
+    await this.ensureDir();
+
+    const existingIds = await this.listIds();
+    const prefix = validated.prefix as IssuePrefix;
+    const id = generateIssueId(prefix, existingIds);
+    const now = new Date().toISOString();
+
+    const metadata: IssueMetadata = {
+      id,
+      title: validated.title,
+      state: "open",
+      labels: validated.labels ?? [],
+      milestone: validated.milestone,
+      assignees: validated.assignees ?? [],
+      created_at: now,
+      updated_at: now,
+    };
+
+    const path = `${ISSUES_DIR}/${id}.md`;
+    const issue: Issue = {
+      metadata,
+      body: validated.body ?? "",
+      path,
+    };
+
+    const content = serializeIssue(issue);
+    const fullPath = join(this.projectDir, path);
+    await this.fs.writeTextFile(fullPath, content);
+
+    return issue;
+  }
+
+  /**
+   * Get an issue by ID
+   */
+  async get(id: string): Promise<Issue | null> {
+    const path = `${ISSUES_DIR}/${id}.md`;
+    const fullPath = join(this.projectDir, path);
+
+    try {
+      const content = await this.fs.readTextFile(fullPath);
+      return parseIssue(content, path);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Update an existing issue
+   */
+  async update(id: string, options: UpdateIssueOptions): Promise<Issue | null> {
+    const validated = updateIssueSchema.parse(options);
+    const existing = await this.get(id);
+    if (!existing) return null;
+
+    const now = new Date().toISOString();
+
+    const metadata: IssueMetadata = {
+      ...existing.metadata,
+      title: validated.title ?? existing.metadata.title,
+      state: validated.state ?? existing.metadata.state,
+      labels: validated.labels ?? existing.metadata.labels,
+      assignees: validated.assignees ?? existing.metadata.assignees,
+      updated_at: now,
+    };
+
+    // Handle milestone (can be set to null to remove)
+    if (validated.milestone !== undefined) {
+      metadata.milestone = validated.milestone ?? undefined;
+    }
+
+    const body = validated.body ?? existing.body;
+
+    const issue: Issue = {
+      metadata,
+      body,
+      path: existing.path,
+    };
+
+    const content = serializeIssue(issue);
+    const fullPath = join(this.projectDir, existing.path);
+    await this.fs.writeTextFile(fullPath, content);
+
+    return issue;
+  }
+
+  /**
+   * Delete an issue
+   */
+  async delete(id: string): Promise<boolean> {
+    const path = `${ISSUES_DIR}/${id}.md`;
+    const fullPath = join(this.projectDir, path);
+
+    try {
+      await this.fs.remove(fullPath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * List issues with filtering and sorting
+   */
+  async list(options: ListIssuesOptions = {}): Promise<ListIssuesResult> {
+    const validated = listIssuesSchema.parse(options);
+    const ids = await this.listIds();
+    const issues: Issue[] = [];
+
+    for (const id of ids) {
+      // Filter by prefix early
+      if (validated.prefix && !id.startsWith(`${validated.prefix}-`)) {
+        continue;
+      }
+
+      const issue = await this.get(id);
+      if (!issue) continue;
+
+      // Apply filters
+      if (validated.state && issue.metadata.state !== validated.state) {
+        continue;
+      }
+
+      if (validated.labels && validated.labels.length > 0) {
+        const hasAllLabels = validated.labels.every((label) =>
+          issue.metadata.labels.includes(label)
+        );
+        if (!hasAllLabels) continue;
+      }
+
+      if (validated.milestone && issue.metadata.milestone !== validated.milestone) {
+        continue;
+      }
+
+      if (validated.assignee && !issue.metadata.assignees.includes(validated.assignee)) {
+        continue;
+      }
+
+      issues.push(issue);
+    }
+
+    // Sort
+    const sortKey = validated.sortBy ?? "created_at";
+    const sortDir = validated.sortDirection ?? "desc";
+
+    issues.sort((a, b) => {
+      let cmp: number;
+      if (sortKey === "id") {
+        cmp = a.metadata.id.localeCompare(b.metadata.id);
+      } else {
+        const aVal = a.metadata[sortKey];
+        const bVal = b.metadata[sortKey];
+        cmp = String(aVal).localeCompare(String(bVal));
+      }
+      return sortDir === "desc" ? -cmp : cmp;
+    });
+
+    const total = issues.length;
+
+    // Apply limit
+    const limited = validated.limit ? issues.slice(0, validated.limit) : issues;
+
+    return { issues: limited, total };
+  }
+
+  /**
+   * Close an issue
+   */
+  close(id: string): Promise<Issue | null> {
+    return this.update(id, { state: "closed" });
+  }
+
+  /**
+   * Reopen an issue
+   */
+  reopen(id: string): Promise<Issue | null> {
+    return this.update(id, { state: "open" });
+  }
+
+  /**
+   * Add labels to an issue
+   */
+  async addLabels(id: string, labels: string[]): Promise<Issue | null> {
+    const issue = await this.get(id);
+    if (!issue) return null;
+
+    const newLabels = [...new Set([...issue.metadata.labels, ...labels])];
+    return this.update(id, { labels: newLabels });
+  }
+
+  /**
+   * Remove labels from an issue
+   */
+  async removeLabels(id: string, labels: string[]): Promise<Issue | null> {
+    const issue = await this.get(id);
+    if (!issue) return null;
+
+    const newLabels = issue.metadata.labels.filter((l) => !labels.includes(l));
+    return this.update(id, { labels: newLabels });
+  }
+}
+
+/**
+ * Create an issues manager for a project directory
+ */
+export function createIssuesManager(projectDir: string, fs?: FileSystem): IssuesManager {
+  return new IssuesManager(projectDir, fs);
+}

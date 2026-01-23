@@ -18,6 +18,7 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { advancedTools } from "./advanced-tools.ts";
 import { remoteFileTools } from "./remote-file-tools.ts";
 import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { issuesMcpTools } from "../../issues/mcp.ts";
 
 // ============================================================================
 // Types
@@ -260,6 +261,8 @@ export const allTools: MCPTool[] = [
   ...advancedTools,
   // Remote file tools for editing remote project files via REST API
   ...remoteFileTools,
+  // Issues tools for file-based SDLC
+  ...issuesMcpTools,
   // Dev server tools
   vfGetErrors,
   vfGetLogs,
