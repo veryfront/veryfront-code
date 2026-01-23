@@ -53,7 +53,7 @@ const HOST = getEnv("HOST") || "0.0.0.0"; // Default to 0.0.0.0 for Kubernetes
 const WS_CONNECT_TIMEOUT_MS = 30000;
 
 // Initialize cache and proxy handler
-const cache = createCacheFromEnv();
+const cache = await createCacheFromEnv();
 const proxyHandler = createProxyHandler({
   config,
   cache,
