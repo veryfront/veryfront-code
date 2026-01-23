@@ -2,6 +2,7 @@ import { serverLogger as logger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { createVeryfrontHandler } from "./universal-handler/index.ts";
+import { requestTracker } from "./universal-handler/request-tracker.ts";
 import { bootstrapProd } from "./bootstrap.ts";
 import { cwd, onGlobalError, onSignal } from "#veryfront/platform/compat/process.ts";
 import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
@@ -185,22 +186,44 @@ if (import.meta.main) {
     logger.info("Server fully initialized, ready to accept traffic");
 
     // Graceful shutdown for direct CLI execution (e.g., deno run)
+    // Default drain timeout: 25 seconds (K8s default terminationGracePeriodSeconds is 30)
+    const drainTimeoutMs = parseInt(
+      adapter.env.get("SHUTDOWN_DRAIN_TIMEOUT_MS") ?? "25000",
+      10,
+    );
+
     let shuttingDown = false;
     const shutdown = async (signal: "SIGINT" | "SIGTERM") => {
       if (shuttingDown) return;
       shuttingDown = true;
-      logger.info(`Received ${signal}, shutting down production server...`);
 
-      // Mark server as not ready to stop accepting new requests
+      const inFlightCount = requestTracker.getInFlightCount();
+      logger.info(`Received ${signal}, initiating graceful shutdown...`, {
+        inFlightRequests: inFlightCount,
+        drainTimeoutMs,
+      });
+
+      // Phase 1: Mark server as not ready to stop K8s from routing new requests
       setServerInitialized(false);
+      logger.info("Server marked as not ready, waiting for in-flight requests to drain...");
 
       try {
-        // Stop memory monitoring
-        stopMemoryMonitoring();
+        // Phase 2: Wait for in-flight requests to complete (graceful drain)
+        const drained = await requestTracker.waitForDrain(drainTimeoutMs);
+        if (!drained) {
+          logger.warn("Drain timeout exceeded, forcing shutdown", {
+            remainingRequests: requestTracker.getInFlightCount(),
+          });
+        }
 
+        // Phase 3: Stop accepting new connections and clean up
+        stopMemoryMonitoring();
+        requestTracker.shutdown();
         shutdownController.abort();
         await server.stop();
         await shutdownOTLP();
+
+        logger.info("Graceful shutdown complete");
       } catch (error) {
         logger.warn("Error while shutting down production server:", error);
       }

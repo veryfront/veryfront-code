@@ -196,6 +196,64 @@ class RequestTracker {
   }
 
   /**
+   * Wait for all in-flight requests to complete (graceful drain).
+   *
+   * @param timeoutMs Maximum time to wait for requests to drain
+   * @param pollIntervalMs How often to check for completion (default: 100ms)
+   * @returns true if all requests drained, false if timed out
+   */
+  async waitForDrain(timeoutMs: number, pollIntervalMs = 100): Promise<boolean> {
+    const startTime = Date.now();
+
+    if (this.inFlight.size === 0) {
+      logger.info("[RequestTracker] No in-flight requests, drain complete");
+      return true;
+    }
+
+    logger.info("[RequestTracker] Waiting for in-flight requests to drain", {
+      inFlightCount: this.inFlight.size,
+      timeoutMs,
+    });
+
+    while (this.inFlight.size > 0) {
+      const elapsed = Date.now() - startTime;
+      if (elapsed >= timeoutMs) {
+        const remaining = Array.from(this.inFlight.values()).map((r) => ({
+          requestId: r.requestId,
+          projectSlug: r.projectSlug,
+          path: r.path,
+          method: r.method,
+          elapsedMs: Math.round(performance.now() - r.startTime),
+        }));
+
+        logger.warn("[RequestTracker] Drain timeout - forcing shutdown with in-flight requests", {
+          inFlightCount: this.inFlight.size,
+          timeoutMs,
+          remainingRequests: remaining.slice(0, 10), // Top 10
+        });
+        return false;
+      }
+
+      // Log progress every 5 seconds
+      if (elapsed > 0 && elapsed % 5000 < pollIntervalMs) {
+        logger.info("[RequestTracker] Drain progress", {
+          inFlightCount: this.inFlight.size,
+          elapsedMs: elapsed,
+          remainingMs: timeoutMs - elapsed,
+        });
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    }
+
+    const totalTime = Date.now() - startTime;
+    logger.info("[RequestTracker] All requests drained successfully", {
+      drainTimeMs: totalTime,
+    });
+    return true;
+  }
+
+  /**
    * Clean up (for testing or shutdown).
    */
   shutdown(): void {

@@ -24,6 +24,7 @@
  */
 
 import { join, resolve } from "@std/path";
+import { requestTracker } from "../src/server/universal-handler/request-tracker.ts";
 
 // Types
 interface Args {
@@ -281,10 +282,24 @@ async function main(): Promise<void> {
   // Mark server as ready
   app.setServerReady();
 
-  // Shutdown handler
+  // Graceful shutdown handler
+  let shuttingDown = false;
   const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+
+    const inFlightCount = requestTracker.getInFlightCount();
+    console.log(`\nShutting down... (${inFlightCount} in-flight requests)`);
+
+    // Wait for in-flight requests to drain (5 seconds for dev server)
+    if (inFlightCount > 0) {
+      console.log("Waiting for requests to complete...");
+      await requestTracker.waitForDrain(5000);
+    }
+
     app.stop();
     await mcpServer.stop();
+    requestTracker.shutdown();
     shutdownController.abort();
     await devServer.stop();
     await proxyHandler.close();
