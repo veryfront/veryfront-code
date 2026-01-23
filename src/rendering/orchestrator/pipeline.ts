@@ -40,9 +40,47 @@ import { setupSSRGlobals } from "../ssr-globals.ts";
 import { LAYOUT_EXTENSIONS } from "../layouts/types.ts";
 import type { LayoutItem } from "#veryfront/types";
 import { withTimeout, withTimeoutThrow } from "../utils/stream-utils.ts";
+import { generateTailwind4CSS } from "#veryfront/html/styles-builder/index.ts";
 
 /** Timeout for CSS generation SSR (shorter than full SSR since it's optional) */
 const CSS_SSR_TIMEOUT_MS = 5000;
+
+/**
+ * Per-page CSS cache to avoid redundant SSR for CSS generation.
+ * Key: projectId:environment:slug:contentVersion
+ * Value: Generated CSS string
+ */
+const pageCssCache = new Map<string, string>();
+const PAGE_CSS_CACHE_MAX_SIZE = 200;
+
+/** Create a cache key for page CSS */
+function getPageCssCacheKey(
+  projectId: string | undefined,
+  environment: string | undefined,
+  slug: string,
+  projectUpdatedAt: string | undefined,
+): string {
+  return `${projectId || "default"}:${environment || "preview"}:${slug}:${
+    projectUpdatedAt || "draft"
+  }`;
+}
+
+/** Get cached CSS for a page (if available) */
+function getCachedPageCss(cacheKey: string): string | undefined {
+  return pageCssCache.get(cacheKey);
+}
+
+/** Cache CSS for a page */
+function cachePageCss(cacheKey: string, css: string): void {
+  // LRU eviction
+  if (pageCssCache.size >= PAGE_CSS_CACHE_MAX_SIZE && !pageCssCache.has(cacheKey)) {
+    const firstKey = pageCssCache.keys().next().value;
+    if (firstKey) {
+      pageCssCache.delete(firstKey);
+    }
+  }
+  pageCssCache.set(cacheKey, css);
+}
 
 /** Timeout for module loading in resolvePageData (prevents hanging on slow transforms) */
 const MODULE_LOAD_TIMEOUT_MS = 10000;
@@ -684,36 +722,55 @@ export class RenderPipeline {
       }
     }
 
-    // 12. Generate CSS for SPA navigation via lightweight SSR render
-    // This ensures client-side navigation has all required styles (from actual rendered HTML)
-    // Uses timeout to prevent blocking other requests if SSR hangs
+    // 12. Generate CSS for SPA navigation
+    // Uses per-page CSS cache to avoid redundant SSR renders.
+    // Only does SSR if cache miss.
     let css: string | undefined;
-    try {
-      // Do a lightweight SSR render with timeout protection
-      const renderResult = await withTimeout(
-        this.renderPage(slug, {
-          ...options,
-          delivery: "string", // Full HTML string, not stream
-        }),
-        CSS_SSR_TIMEOUT_MS,
-        `CSS SSR for ${slug}`,
-      );
+    const cssCacheKey = getPageCssCacheKey(
+      options?.projectId,
+      options?.environment,
+      slug,
+      projectUpdatedAt,
+    );
 
-      // Generate CSS from rendered HTML (if render completed in time)
-      if (renderResult?.html) {
-        const { generateTailwind4CSS } = await import("#veryfront/html/styles-builder/index.ts");
-        css = await generateTailwind4CSS(renderResult.html);
-        logger.debug("[resolvePageData] Generated CSS from SSR HTML", {
+    // Check CSS cache first
+    const cachedCss = getCachedPageCss(cssCacheKey);
+    if (cachedCss) {
+      css = cachedCss;
+      logger.debug("[resolvePageData] CSS cache hit", { slug, cssLength: css.length });
+    } else {
+      // Cache miss - need to do SSR to generate CSS
+      try {
+        const renderResult = await withTimeout(
+          this.renderPage(slug, {
+            ...options,
+            delivery: "string",
+            skipCacheCheck: true, // Pipeline cache already checked
+          }),
+          CSS_SSR_TIMEOUT_MS,
+          `CSS SSR for ${slug}`,
+        );
+
+        if (renderResult?.html) {
+          css = await generateTailwind4CSS(renderResult.html);
+
+          // Cache the CSS for future requests
+          if (css) {
+            cachePageCss(cssCacheKey, css);
+          }
+
+          logger.debug("[resolvePageData] Generated and cached CSS", {
+            slug,
+            htmlLength: renderResult.html.length,
+            cssLength: css?.length || 0,
+          });
+        }
+      } catch (error) {
+        logger.warn("[resolvePageData] Failed to generate CSS via SSR", {
           slug,
-          htmlLength: renderResult.html.length,
-          cssLength: css?.length || 0,
+          error: error instanceof Error ? error.message : String(error),
         });
       }
-    } catch (error) {
-      logger.warn("[resolvePageData] Failed to generate CSS via SSR", {
-        slug,
-        error: error instanceof Error ? error.message : String(error),
-      });
     }
 
     logger.debug("[resolvePageData] Resolved page data", {

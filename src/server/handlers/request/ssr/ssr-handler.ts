@@ -44,6 +44,7 @@ import {
 import { VeryfrontAPIError } from "#veryfront/platform/adapters/veryfront-api-client/types.ts";
 import { shouldUseNoCacheHeaders } from "../../../context/request-context.ts";
 import { ErrorPages } from "../../../utils/error-html.ts";
+import { ErrorOverlay } from "../../../dev-server/error-overlay/index.ts";
 
 /**
  * Determine if request should serve production (released) content.
@@ -250,42 +251,8 @@ export class SSRHandler extends BaseHandler {
         ctx,
       );
 
-      // Extract route parameters for both App Router and Pages Router
-      // Run both extractions in parallel for better performance
-      let params: Record<string, string | string[]> | null | undefined;
-      try {
-        const { extractAppRouteParams, extractPagesRouteParams } = await import(
-          "../../../../rendering/router-detection.ts"
-        );
-
-        // Run both extractions in parallel - use the first non-null result
-        const [appParams, pagesParams] = await Promise.all([
-          timeAsync(
-            "extract-app-route-params",
-            () => extractAppRouteParams(ctx.projectDir, slug, ctx.adapter),
-          ),
-          typeof extractPagesRouteParams === "function"
-            ? timeAsync(
-              "extract-pages-route-params",
-              () => extractPagesRouteParams(ctx.projectDir, slug, ctx.adapter),
-            )
-            : Promise.resolve(null),
-        ]);
-
-        // Prefer App Router params, fallback to Pages Router
-        const extractedParams = appParams || pagesParams;
-
-        if (extractedParams) {
-          params = extractedParams;
-          this.logDebug("Extracted route params", { slug, params }, ctx);
-        }
-      } catch (paramError) {
-        // Param extraction is best-effort - continue without params if it fails
-        this.logDebug("Failed to extract params", {
-          slug,
-          error: this.getErrorMessage(paramError),
-        }, ctx);
-      }
+      // Route params are extracted by the render pipeline after page resolution,
+      // avoiding redundant filesystem walks. We don't pre-extract here.
 
       // Generate nonce for CSP before rendering
       const nonce = generateNonce();
@@ -327,7 +294,7 @@ export class SSRHandler extends BaseHandler {
       const result = await timeAsync("render-page", () =>
         renderer.renderPage(slug, {
           delivery: "stream",
-          params: params ?? undefined,
+          // params extracted by pipeline after page resolution
           request: req,
           url,
           nonce,
@@ -350,7 +317,7 @@ export class SSRHandler extends BaseHandler {
       // End tracking and record to manifest for future requests
       endRenderSession(renderSessionId);
 
-      this.logDebug("SSR successful", { slug, params }, ctx);
+      this.logDebug("SSR successful", { slug }, ctx);
       endRequest(requestId);
 
       // Memory profiling: log heap after render for debugging large projects
@@ -546,9 +513,6 @@ export class SSRHandler extends BaseHandler {
       // In development or preview mode, show error overlay with full stack trace
       // Preview is a dev environment (branch previews) so developers need detailed errors
       if (!isHead && (ctx.requestContext?.isLocalDev || ctx.requestContext?.mode === "preview")) {
-        const { ErrorOverlay } = await import(
-          "../../../dev-server/error-overlay/index.ts"
-        );
         const body = ErrorOverlay.createHTML({
           error: errorObj,
           type: "runtime",
