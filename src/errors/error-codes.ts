@@ -43,6 +43,7 @@ export const ErrorCode = {
   CACHE_ERROR: "VF503",
   FILE_WATCH_ERROR: "VF504",
   REQUEST_ERROR: "VF505",
+  SERVICE_OVERLOADED: "VF506",
 
   CLIENT_BOUNDARY_VIOLATION: "VF600",
   SERVER_ONLY_IN_CLIENT: "VF601",
@@ -105,6 +106,9 @@ export function inferErrorCode(error: Error): ErrorCodeType | null {
 
   if (message.includes("port") && (message.includes("in use") || message.includes("eaddrinuse"))) {
     return ErrorCode.PORT_IN_USE;
+  }
+  if (message.includes("capacity exceeded") || message.includes("service overloaded")) {
+    return ErrorCode.SERVICE_OVERLOADED;
   }
   if (message.includes("hydration")) return ErrorCode.HYDRATION_MISMATCH;
 

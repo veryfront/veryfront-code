@@ -49,3 +49,12 @@ export const MAX_CONCURRENT_TRANSFORMS = parseInt(
 
 /** Timeout for acquiring a transform semaphore permit (ms) */
 export const TRANSFORM_ACQUIRE_TIMEOUT_MS = 500;
+
+/** Timeout for waiting on in-progress transforms (ms) */
+export const IN_PROGRESS_WAIT_TIMEOUT_MS = 30_000;
+
+/** Maximum depth for recursive dependency transforms (prevents infinite recursion) */
+export const MAX_TRANSFORM_DEPTH = 15;
+
+/** Batch size for parallel transforms (limits concurrent work per level) */
+export const TRANSFORM_BATCH_SIZE = 10;

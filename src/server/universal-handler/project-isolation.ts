@@ -45,10 +45,10 @@ export interface IsolationCheckResult {
 }
 
 const DEFAULT_CONFIG: ProjectIsolationConfig = {
-  maxConcurrentPerProject: 100,
-  circuitBreakerThreshold: 20,
-  circuitResetTimeMs: 60_000,
-  failureWindowMs: 120_000,
+  maxConcurrentPerProject: 20, // Reduced from 100 - limits blast radius
+  circuitBreakerThreshold: 5, // Reduced from 20 - faster protection
+  circuitResetTimeMs: 30_000, // Reduced from 60s - faster recovery attempts
+  failureWindowMs: 60_000, // Reduced from 120s - tighter window
 };
 
 /**
@@ -241,9 +241,9 @@ export class ProjectIsolationManager {
 }
 
 // Singleton instance with configurable limits via env vars
-const maxConcurrent = parseInt(getEnv("PROJECT_MAX_CONCURRENT") || "100", 10);
-const circuitThreshold = parseInt(getEnv("PROJECT_CIRCUIT_THRESHOLD") || "20", 10);
-const circuitResetMs = parseInt(getEnv("PROJECT_CIRCUIT_RESET_MS") || "60000", 10);
+const maxConcurrent = parseInt(getEnv("PROJECT_MAX_CONCURRENT") || "20", 10);
+const circuitThreshold = parseInt(getEnv("PROJECT_CIRCUIT_THRESHOLD") || "5", 10);
+const circuitResetMs = parseInt(getEnv("PROJECT_CIRCUIT_RESET_MS") || "30000", 10);
 
 export const projectIsolation = new ProjectIsolationManager({
   maxConcurrentPerProject: maxConcurrent,

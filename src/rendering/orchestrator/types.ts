@@ -56,6 +56,8 @@ export interface RenderOptions {
   projectSlug?: string;
   /** Content source identifier for cache isolation (branch name or release ID) */
   contentSourceId?: string;
+  /** Skip cache check in pipeline (cache already checked by Renderer) */
+  skipCacheCheck?: boolean;
 }
 
 export interface RenderContext {

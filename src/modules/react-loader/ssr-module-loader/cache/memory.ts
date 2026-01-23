@@ -5,7 +5,7 @@
  *
  * Strategy:
  * - Redis: Primary storage for transformed code (shared across pods)
- * - Memory: Small bounded map for temp file path tracking only
+ * - Memory: Small LRU cache for temp file path tracking only
  *
  * The actual transformed code lives in Redis and temp files.
  * Memory only stores { tempPath, contentHash } pointers.
@@ -16,6 +16,7 @@
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { registerMapCache } from "#veryfront/cache/keys.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { MAX_CONCURRENT_TRANSFORMS, SSR_TMP_DIRS_MAX_ENTRIES } from "../constants.ts";
 import { Semaphore } from "../concurrency/semaphore.ts";
 import type { FailureRecord, ModuleCacheEntry } from "../types.ts";
@@ -24,65 +25,21 @@ import type { FailureRecord, ModuleCacheEntry } from "../types.ts";
 const TEMP_PATH_CACHE_MAX_ENTRIES = 500;
 
 /**
- * Bounded Map for temp file path tracking.
- * Only stores { tempPath, contentHash } pointers, not the actual code.
- * The code lives in Redis and temp files.
- */
-class BoundedMap<K, V> {
-  private map = new Map<K, V>();
-  constructor(private maxEntries: number) {}
-
-  get(key: K): V | undefined {
-    return this.map.get(key);
-  }
-
-  set(key: K, value: V): void {
-    if (this.map.size >= this.maxEntries && !this.map.has(key)) {
-      // Remove oldest entry (first in map)
-      const firstKey = this.map.keys().next().value;
-      if (firstKey !== undefined) {
-        this.map.delete(firstKey);
-      }
-    }
-    this.map.set(key, value);
-  }
-
-  delete(key: K): boolean {
-    return this.map.delete(key);
-  }
-
-  clear(): void {
-    this.map.clear();
-  }
-
-  get size(): number {
-    return this.map.size;
-  }
-
-  keys(): IterableIterator<K> {
-    return this.map.keys();
-  }
-
-  [Symbol.iterator](): IterableIterator<[K, V]> {
-    return this.map[Symbol.iterator]();
-  }
-}
-
-/**
  * Global module cache - stores temp file paths only.
+ * Uses proper LRU eviction for better cache efficiency.
  * The actual transformed code is in Redis.
  */
-export const globalModuleCache = new BoundedMap<string, ModuleCacheEntry>(
-  TEMP_PATH_CACHE_MAX_ENTRIES,
-);
+export const globalModuleCache = new LRUCache<string, ModuleCacheEntry>({
+  maxEntries: TEMP_PATH_CACHE_MAX_ENTRIES,
+});
 
 /**
  * Cache for cross-project imports (shared across requests).
  * Key format: projectSlug@version/@/path -> tempPath
  */
-export const globalCrossProjectCache = new BoundedMap<string, ModuleCacheEntry>(
-  TEMP_PATH_CACHE_MAX_ENTRIES,
-);
+export const globalCrossProjectCache = new LRUCache<string, ModuleCacheEntry>({
+  maxEntries: TEMP_PATH_CACHE_MAX_ENTRIES,
+});
 
 /**
  * Map of in-progress transforms to their completion promises.
@@ -91,9 +48,11 @@ export const globalCrossProjectCache = new BoundedMap<string, ModuleCacheEntry>(
 export const globalInProgress = new Map<string, Promise<void>>();
 
 /**
- * Temporary directory cache - small bounded map.
+ * Temporary directory cache - small LRU cache.
  */
-export const globalTmpDirs = new BoundedMap<string, string>(SSR_TMP_DIRS_MAX_ENTRIES);
+export const globalTmpDirs = new LRUCache<string, string>({
+  maxEntries: SSR_TMP_DIRS_MAX_ENTRIES,
+});
 
 /**
  * Circuit breaker tracking for failed components.
@@ -110,7 +69,7 @@ registerCache("ssr-module-cache", () => ({
   name: "ssr-module-cache",
   entries: globalModuleCache.size,
   maxEntries: TEMP_PATH_CACHE_MAX_ENTRIES,
-  mode: "redis-primary-memory-paths",
+  mode: "redis-primary-lru-paths",
 }));
 
 registerCache("ssr-tmp-dirs", () => ({
@@ -130,19 +89,31 @@ registerCache("ssr-transform-semaphore", () => ({
 // Using wrapper to expose keys() as Iterable for the registry
 const modulePathCache = {
   keys: () => globalModuleCache.keys(),
-  size: globalModuleCache.size,
+  get size() {
+    return globalModuleCache.size;
+  },
   delete: (key: string) => globalModuleCache.delete(key),
 };
 const crossProjectPathCache = {
   keys: () => globalCrossProjectCache.keys(),
-  size: globalCrossProjectCache.size,
+  get size() {
+    return globalCrossProjectCache.size;
+  },
   delete: (key: string) => globalCrossProjectCache.delete(key),
+};
+const tmpDirsCache = {
+  keys: () => globalTmpDirs.keys(),
+  get size() {
+    return globalTmpDirs.size;
+  },
+  delete: (key: string) => globalTmpDirs.delete(key),
 };
 registerMapCache("ssr-module-cache", modulePathCache as unknown as Map<string, unknown>);
 registerMapCache(
   "ssr-cross-project-cache",
   crossProjectPathCache as unknown as Map<string, unknown>,
 );
+registerMapCache("ssr-tmp-dirs", tmpDirsCache as unknown as Map<string, unknown>);
 registerMapCache("ssr-in-progress", globalInProgress);
 registerMapCache("ssr-failed-components", failedComponents);
 

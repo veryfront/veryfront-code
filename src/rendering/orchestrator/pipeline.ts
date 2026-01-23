@@ -47,6 +47,12 @@ const CSS_SSR_TIMEOUT_MS = 5000;
 /** Timeout for module loading in resolvePageData (prevents hanging on slow transforms) */
 const MODULE_LOAD_TIMEOUT_MS = 10000;
 
+/** Timeout for data fetching (getStaticData, getServerData) */
+const DATA_FETCH_TIMEOUT_MS = 15_000;
+
+/** Timeout for SSR rendering stage */
+const SSR_RENDER_TIMEOUT_MS = 20_000;
+
 /** Check if a path segment is a hidden dot-directory (not . or ..) */
 function isHiddenSegment(segment: string): boolean {
   return segment.startsWith(".") && segment !== "." && segment !== "..";
@@ -196,13 +202,18 @@ export class RenderPipeline {
 
     // ─────────────────────────────────────────────────────────────────────────
     // FAST PATH: Check cache FIRST before any expensive operations
+    // Skip if caller already checked cache (e.g., Renderer.renderPage())
     // ─────────────────────────────────────────────────────────────────────────
-    const cacheCheckStart = performance.now();
-    const cacheResult = await this.config.cacheCoordinator.checkCache(slug);
-    timing.cacheCheck = Math.round(performance.now() - cacheCheckStart);
-    if (cacheResult?.cachedResult) {
-      logger.info("[RenderPipeline] Cache HIT", { slug, projectSlug, timing });
-      return cacheResult.cachedResult;
+    let cacheResult: Awaited<ReturnType<typeof this.config.cacheCoordinator.checkCache>> | null =
+      null;
+    if (!options?.skipCacheCheck) {
+      const cacheCheckStart = performance.now();
+      cacheResult = await this.config.cacheCoordinator.checkCache(slug);
+      timing.cacheCheck = Math.round(performance.now() - cacheCheckStart);
+      if (cacheResult?.cachedResult) {
+        logger.info("[RenderPipeline] Cache HIT", { slug, projectSlug, timing });
+        return cacheResult.cachedResult;
+      }
     }
 
     // Set up browser globals before any module loading to prevent crashes
@@ -294,10 +305,15 @@ export class RenderPipeline {
 
                 if (modulesToLoad.length === 0) return;
 
-                // Phase 1: Load all modules in parallel
+                // Phase 1: Load all modules in parallel (with timeout to prevent hanging)
                 const loadedModules = await withSpan(
                   SpanNames.RENDER_LOAD_MODULES,
-                  () => this.loadModulesInParallel(modulesToLoad),
+                  () =>
+                    withTimeoutThrow(
+                      this.loadModulesInParallel(modulesToLoad),
+                      MODULE_LOAD_TIMEOUT_MS,
+                      `Module loading for ${slug}`,
+                    ),
                   { "render.module_count": modulesToLoad.length },
                 );
 
@@ -308,13 +324,17 @@ export class RenderPipeline {
                 const dataResults = await withSpan(
                   SpanNames.RENDER_FETCH_DATA,
                   () =>
-                    Promise.all(
-                      dataJobs.map((job) =>
-                        this.dataFetcher
-                          .fetchData(job.mod, dataContext, this.config.mode)
-                          .then((result) => ({ ...job, result, error: null as Error | null }))
-                          .catch((error: Error) => ({ ...job, result: null, error }))
+                    withTimeoutThrow(
+                      Promise.all(
+                        dataJobs.map((job) =>
+                          this.dataFetcher
+                            .fetchData(job.mod, dataContext, this.config.mode)
+                            .then((result) => ({ ...job, result, error: null as Error | null }))
+                            .catch((error: Error) => ({ ...job, result: null, error }))
+                        ),
                       ),
+                      DATA_FETCH_TIMEOUT_MS,
+                      `Data fetch for ${slug}`,
                     ),
                   { "render.data_job_count": dataJobs.length },
                 );
@@ -437,23 +457,27 @@ export class RenderPipeline {
         timing.layoutApply = Math.round(performance.now() - layoutApplyStart);
 
         // ─────────────────────────────────────────────────────────────────────────
-        // Stage 6: SSR Rendering
+        // Stage 6: SSR Rendering (with timeout protection)
         // ─────────────────────────────────────────────────────────────────────────
         const ssrStart = performance.now();
         const ssrResult = await withSpan(
           "render.ssr",
           () =>
-            this.config.ssrOrchestrator.performSSRRendering(
-              wrappedElement,
-              {
-                pageInfo,
-                pageBundle,
-                layoutBundle: layoutResult.layoutBundle,
-                nestedLayouts: layoutResult.nestedLayouts,
-                collectedMetadata: pageBundleResult.collectedMetadata,
-                slug,
-              },
-              mergedOptions,
+            withTimeoutThrow(
+              this.config.ssrOrchestrator.performSSRRendering(
+                wrappedElement,
+                {
+                  pageInfo,
+                  pageBundle,
+                  layoutBundle: layoutResult.layoutBundle,
+                  nestedLayouts: layoutResult.nestedLayouts,
+                  collectedMetadata: pageBundleResult.collectedMetadata,
+                  slug,
+                },
+                mergedOptions,
+              ),
+              SSR_RENDER_TIMEOUT_MS,
+              `SSR rendering for ${slug}`,
             ),
           { "render.slug": slug, "render.delivery": mergedOptions?.delivery || "full" },
         );

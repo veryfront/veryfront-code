@@ -27,9 +27,13 @@ import { extractComponent } from "../extract-component.ts";
 import {
   CIRCUIT_BREAKER_RESET_MS,
   CIRCUIT_BREAKER_THRESHOLD,
+  IN_PROGRESS_WAIT_TIMEOUT_MS,
   MAX_CONCURRENT_TRANSFORMS,
+  MAX_TRANSFORM_DEPTH,
   TRANSFORM_ACQUIRE_TIMEOUT_MS,
+  TRANSFORM_BATCH_SIZE,
 } from "./constants.ts";
+import { withTimeoutThrow } from "#veryfront/rendering/utils/stream-utils.ts";
 import {
   failedComponents,
   getFromRedis,
@@ -203,7 +207,7 @@ export class SSRModuleLoader {
       }
 
       const sourceCode = await response.text();
-      const contentHash = this.hashCode(sourceCode);
+      const contentHash = await this.hashContentAsync(sourceCode);
 
       const extMatch = path.match(/\.(tsx?|jsx?|mdx)$/);
       const ext = extMatch?.[0] ?? ".tsx";
@@ -273,10 +277,26 @@ export class SSRModuleLoader {
   private async transformWithDependencies(
     filePath: string,
     source?: string,
+    depth: number = 0,
   ): Promise<void> {
+    // Prevent infinite recursion with depth limit
+    if (depth > MAX_TRANSFORM_DEPTH) {
+      logger.warn("[SSR-MODULE-LOADER] Max transform depth exceeded", {
+        file: filePath.slice(-40),
+        depth,
+        maxDepth: MAX_TRANSFORM_DEPTH,
+      });
+      throw toError(createError({
+        type: "build",
+        message:
+          `Max transform depth exceeded (${MAX_TRANSFORM_DEPTH}, depth=${depth}) for ${filePath}. Check for circular dependencies.`,
+        context: { file: filePath, phase: "transform" },
+      }));
+    }
+
     const code = source ?? await this.options.adapter.fs.readFile(filePath);
 
-    const contentHash = this.hashCode(code);
+    const contentHash = await this.hashContentAsync(code);
     const contentCacheKey = this.getCacheKey(`${filePath}:${contentHash}`);
     const filePathCacheKey = this.getCacheKey(filePath);
     const inProgressKey = this.getCacheKey(filePath);
@@ -285,7 +305,7 @@ export class SSRModuleLoader {
     const cachedEntry = globalModuleCache.get(contentCacheKey);
     if (cachedEntry) {
       globalModuleCache.set(filePathCacheKey, cachedEntry);
-      await this.ensureDependenciesExist(code, filePath);
+      await this.ensureDependenciesExist(code, filePath, depth);
       return;
     }
 
@@ -306,16 +326,30 @@ export class SSRModuleLoader {
         logger.debug("[SSR-MODULE-LOADER] Redis cache hit", {
           file: filePath.slice(-40),
         });
-        await this.ensureDependenciesExist(code, filePath);
+        await this.ensureDependenciesExist(code, filePath, depth);
         return;
       }
     }
 
-    // Wait for in-progress transform
+    // Wait for in-progress transform with timeout protection
     const existingTransform = globalInProgress.get(inProgressKey);
     if (existingTransform) {
-      await existingTransform;
-      return;
+      try {
+        await withTimeoutThrow(
+          existingTransform,
+          IN_PROGRESS_WAIT_TIMEOUT_MS,
+          `Waiting for in-progress transform of ${filePath}`,
+        );
+        return;
+      } catch (error) {
+        // Transform timed out or failed - remove stale entry and proceed with our own transform
+        globalInProgress.delete(inProgressKey);
+        logger.warn("[SSR-MODULE-LOADER] In-progress transform timed out, retrying", {
+          file: filePath.slice(-40),
+          error: error instanceof Error ? error.message : String(error),
+        });
+        // Fall through to do our own transform
+      }
     }
 
     // Create completion promise
@@ -342,45 +376,56 @@ export class SSRModuleLoader {
       const crossProjectPaths = new Map<string, string>();
       const localFs = createFileSystem();
 
-      await Promise.all([
-        ...parseResult.imports.map(async (imp) => {
-          try {
-            let depSource: string;
-            if (imp.absolutePath.startsWith("/")) {
-              depSource = await localFs.readTextFile(imp.absolutePath);
-            } else {
-              depSource = await this.options.adapter.fs.readFile(
-                imp.absolutePath,
-              );
+      // Process local imports in batches to prevent resource exhaustion
+      for (let i = 0; i < parseResult.imports.length; i += TRANSFORM_BATCH_SIZE) {
+        const batch = parseResult.imports.slice(i, i + TRANSFORM_BATCH_SIZE);
+        await Promise.all(
+          batch.map(async (imp) => {
+            try {
+              let depSource: string;
+              if (imp.absolutePath.startsWith("/")) {
+                depSource = await localFs.readTextFile(imp.absolutePath);
+              } else {
+                depSource = await this.options.adapter.fs.readFile(
+                  imp.absolutePath,
+                );
+              }
+              await this.transformWithDependencies(imp.absolutePath, depSource, depth + 1);
+            } catch (error) {
+              this.missingDependencies.push({
+                specifier: imp.specifier,
+                fromFile: filePath,
+                reason: `Failed to read file: ${
+                  error instanceof Error ? error.message : String(error)
+                }`,
+              });
             }
-            await this.transformWithDependencies(imp.absolutePath, depSource);
-          } catch (error) {
-            this.missingDependencies.push({
-              specifier: imp.specifier,
-              fromFile: filePath,
-              reason: `Failed to read file: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
-            });
-          }
-        }),
-        ...parseResult.crossProjectImports.map(async (crossImport) => {
-          try {
-            const tempPath = await this.transformCrossProjectImport(
-              crossImport,
-            );
-            crossProjectPaths.set(crossImport.specifier, tempPath);
-          } catch (error) {
-            this.missingDependencies.push({
-              specifier: crossImport.specifier,
-              fromFile: filePath,
-              reason: `Failed to fetch cross-project import: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
-            });
-          }
-        }),
-      ]);
+          }),
+        );
+      }
+
+      // Process cross-project imports in batches
+      for (let i = 0; i < parseResult.crossProjectImports.length; i += TRANSFORM_BATCH_SIZE) {
+        const batch = parseResult.crossProjectImports.slice(i, i + TRANSFORM_BATCH_SIZE);
+        await Promise.all(
+          batch.map(async (crossImport) => {
+            try {
+              const tempPath = await this.transformCrossProjectImport(
+                crossImport,
+              );
+              crossProjectPaths.set(crossImport.specifier, tempPath);
+            } catch (error) {
+              this.missingDependencies.push({
+                specifier: crossImport.specifier,
+                fromFile: filePath,
+                reason: `Failed to fetch cross-project import: ${
+                  error instanceof Error ? error.message : String(error)
+                }`,
+              });
+            }
+          }),
+        );
+      }
 
       // Semaphore is a safety net, not a throttle. Skip if disabled (0).
       const useSemaphore = MAX_CONCURRENT_TRANSFORMS > 0;
@@ -464,7 +509,13 @@ export class SSRModuleLoader {
   private async ensureDependenciesExist(
     code: string,
     filePath: string,
+    depth: number = 0,
   ): Promise<void> {
+    // Prevent infinite recursion with depth limit
+    if (depth > MAX_TRANSFORM_DEPTH) {
+      return;
+    }
+
     const parseResult = await parseLocalImports(
       code,
       filePath,
@@ -478,44 +529,59 @@ export class SSRModuleLoader {
 
     const localFs = createFileSystem();
 
-    await Promise.all([
-      ...parseResult.imports.map(async (imp) => {
-        try {
-          let depSource: string;
-          if (imp.absolutePath.startsWith("/")) {
-            depSource = await localFs.readTextFile(imp.absolutePath);
-          } else {
-            depSource = await this.options.adapter.fs.readFile(
-              imp.absolutePath,
-            );
+    // Process local imports in batches
+    for (let i = 0; i < parseResult.imports.length; i += TRANSFORM_BATCH_SIZE) {
+      const batch = parseResult.imports.slice(i, i + TRANSFORM_BATCH_SIZE);
+      await Promise.all(
+        batch.map(async (imp) => {
+          try {
+            let depSource: string;
+            if (imp.absolutePath.startsWith("/")) {
+              depSource = await localFs.readTextFile(imp.absolutePath);
+            } else {
+              depSource = await this.options.adapter.fs.readFile(
+                imp.absolutePath,
+              );
+            }
+            await this.transformWithDependencies(imp.absolutePath, depSource, depth + 1);
+          } catch (error) {
+            this.missingDependencies.push({
+              specifier: imp.specifier,
+              fromFile: filePath,
+              reason: `Failed to read file: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            });
           }
-          await this.transformWithDependencies(imp.absolutePath, depSource);
-        } catch (error) {
-          this.missingDependencies.push({
-            specifier: imp.specifier,
-            fromFile: filePath,
-            reason: `Failed to read file: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          });
-        }
-      }),
-      ...parseResult.crossProjectImports.map(async (crossImport) => {
-        try {
-          await this.transformCrossProjectImport(crossImport);
-        } catch (error) {
-          this.missingDependencies.push({
-            specifier: crossImport.specifier,
-            fromFile: filePath,
-            reason: `Failed to fetch cross-project import: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          });
-        }
-      }),
-    ]);
+        }),
+      );
+    }
+
+    // Process cross-project imports in batches
+    for (let i = 0; i < parseResult.crossProjectImports.length; i += TRANSFORM_BATCH_SIZE) {
+      const batch = parseResult.crossProjectImports.slice(i, i + TRANSFORM_BATCH_SIZE);
+      await Promise.all(
+        batch.map(async (crossImport) => {
+          try {
+            await this.transformCrossProjectImport(crossImport);
+          } catch (error) {
+            this.missingDependencies.push({
+              specifier: crossImport.specifier,
+              fromFile: filePath,
+              reason: `Failed to fetch cross-project import: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            });
+          }
+        }),
+      );
+    }
   }
 
+  /**
+   * Fast sync hash for small strings (project IDs, etc.)
+   * Use hashContentAsync for large file content.
+   */
   private hashCode(str: string): string {
     let hash = 0;
     for (let i = 0; i < str.length; i++) {
@@ -524,6 +590,29 @@ export class SSRModuleLoader {
       hash = hash & hash;
     }
     return Math.abs(hash).toString(16);
+  }
+
+  /**
+   * Async hash for large content using Web Crypto API.
+   * Doesn't block event loop for large files.
+   */
+  private async hashContentAsync(content: string): Promise<string> {
+    // For small content, use sync hash to avoid crypto overhead
+    if (content.length < 10000) {
+      return this.hashCode(content);
+    }
+
+    try {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(content);
+      const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      // Use first 8 bytes for a shorter but still unique hash
+      return hashArray.slice(0, 8).map((b) => b.toString(16).padStart(2, "0")).join("");
+    } catch {
+      // Fallback to sync hash if crypto API unavailable
+      return this.hashCode(content);
+    }
   }
 
   private async getTempPath(

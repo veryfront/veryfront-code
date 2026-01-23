@@ -32,6 +32,8 @@
 
 import { rendererLogger as logger } from "#veryfront/utils";
 import { MDXCacheAdapter } from "#veryfront/transforms/mdx/index.ts";
+import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
+import { ErrorCode, VeryfrontError } from "#veryfront/errors/index.ts";
 import {
   createRenderContext,
   type CreateRenderContextOptions,
@@ -82,6 +84,25 @@ function getEnv(name: string): string | undefined {
  * Default increased to 60s to handle cold-start module transforms.
  */
 const RENDER_PIPELINE_TIMEOUT_MS = parseInt(getEnv("RENDER_TIMEOUT_MS") || "60000", 10);
+
+/**
+ * Maximum concurrent renders per pod.
+ * Configurable via RENDER_MAX_CONCURRENT env var.
+ * Prevents one pod from being overwhelmed when multiple projects have issues.
+ */
+const RENDER_MAX_CONCURRENT = parseInt(getEnv("RENDER_MAX_CONCURRENT") || "30", 10);
+
+/**
+ * Timeout for acquiring render permit (ms).
+ * If semaphore cannot be acquired within this time, request fails fast with 503.
+ */
+const RENDER_ACQUIRE_TIMEOUT_MS = 5000;
+
+/**
+ * Global render semaphore - limits concurrent renders across all projects per pod.
+ * This is a last-line defense against resource exhaustion.
+ */
+const renderSemaphore = new Semaphore(RENDER_MAX_CONCURRENT);
 
 /**
  * Options for initializing the Renderer
@@ -196,6 +217,38 @@ export class Renderer {
       return cacheResult.cachedResult;
     }
 
+    // Acquire render permit - fail fast if overloaded
+    const acquired = await renderSemaphore.tryAcquire(RENDER_ACQUIRE_TIMEOUT_MS);
+    if (!acquired) {
+      logger.error("[Renderer] Render capacity exceeded - service overloaded", {
+        slug,
+        projectId: ctx.projectId,
+        waiting: renderSemaphore.waiting,
+        available: renderSemaphore.available,
+      });
+      throw new VeryfrontError(
+        `Render capacity exceeded (${renderSemaphore.waiting} waiting). Service is overloaded.`,
+        ErrorCode.SERVICE_OVERLOADED,
+        { slug, projectId: ctx.projectId, waiting: renderSemaphore.waiting },
+      );
+    }
+
+    try {
+      return await this.doRenderPage(slug, ctx, options, startTime);
+    } finally {
+      renderSemaphore.release();
+    }
+  }
+
+  /**
+   * Internal render implementation (called after acquiring semaphore)
+   */
+  private async doRenderPage(
+    slug: string,
+    ctx: RenderContext,
+    options: RenderOptions | undefined,
+    startTime: number,
+  ): Promise<RenderResult> {
     // Create context-bound services (lightweight, ~1ms)
     // Pass colorScheme so the pipeline cache also respects theme
     const services = this.createServicesForContext(ctx, options?.colorScheme);
@@ -216,6 +269,7 @@ export class Renderer {
           projectSlug: ctx.projectSlug,
           environment: ctx.environment,
           contentSourceId,
+          skipCacheCheck: true, // Cache already checked by Renderer.renderPage()
         }),
         RENDER_PIPELINE_TIMEOUT_MS,
         `Render pipeline for ${ctx.projectId}:${slug}`,
@@ -340,6 +394,9 @@ export class Renderer {
    *
    * These services are lightweight to create (~1ms total) because
    * expensive initialization (esbuild, etc.) was done in shared services.
+   *
+   * Note: Service caching was removed because the pipeline holds closures
+   * over request-specific context (ctx, colorScheme) which cannot be shared.
    *
    * @param ctx - Render context
    * @param colorScheme - Optional color scheme for cache key variation
