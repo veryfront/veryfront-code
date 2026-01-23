@@ -8,6 +8,7 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { SecurityConfig } from "./types.ts";
 import { serverLogger } from "#veryfront/utils";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 /**
  * Validates security configuration structure
@@ -56,23 +57,25 @@ export function isValidSecurityConfig(config: unknown): config is SecurityConfig
  * }
  * ```
  */
-export async function loadSecurityConfig(
+export function loadSecurityConfig(
   projectDir: string,
   adapter: RuntimeAdapter,
 ): Promise<SecurityConfig | null> {
-  try {
-    const { getConfig } = await import("#veryfront/config");
-    const cfg = await getConfig(projectDir, adapter);
-    const securityConfig = (cfg as Record<string, unknown>)?.security;
+  return withSpan("security.config.load", async () => {
+    try {
+      const { getConfig } = await import("#veryfront/config");
+      const cfg = await getConfig(projectDir, adapter);
+      const securityConfig = (cfg as Record<string, unknown>)?.security;
 
-    if (!securityConfig) return null;
-    if (!isValidSecurityConfig(securityConfig)) {
-      serverLogger.warn("Invalid security configuration structure, ignoring");
+      if (!securityConfig) return null;
+      if (!isValidSecurityConfig(securityConfig)) {
+        serverLogger.warn("Invalid security configuration structure, ignoring");
+        return null;
+      }
+
+      return securityConfig;
+    } catch {
       return null;
     }
-
-    return securityConfig;
-  } catch {
-    return null;
-  }
+  }, { "security.projectDir": projectDir });
 }

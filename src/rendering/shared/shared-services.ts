@@ -13,6 +13,8 @@
 
 import { rendererLogger as logger } from "#veryfront/utils";
 import { initialize as initializeEsbuild } from "esbuild";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { ElementValidator, type ValidationOptions } from "../element-validator/index.ts";
 import { type CompileMDXFunction, CompilerService } from "../orchestrator/compiler-service.ts";
 
@@ -69,45 +71,52 @@ export async function initializeSharedServices(
     return initializationPromise;
   }
 
-  // Start initialization
-  initializationPromise = (async () => {
-    logger.debug("[SharedServices] Initializing shared renderer services");
-    const startTime = performance.now();
+  // Start initialization (withSpan is intentionally not awaited here to support concurrent initialization)
+  initializationPromise = withSpan(
+    SpanNames.SHARED_SERVICES_INIT,
+    async () => {
+      logger.debug("[SharedServices] Initializing shared renderer services");
+      const startTime = performance.now();
 
-    // Initialize esbuild (expensive, do once)
-    let esbuildInitialized = false;
-    try {
-      await initializeEsbuild({ worker: false });
-      esbuildInitialized = true;
-      logger.debug("[SharedServices] esbuild initialized");
-    } catch {
-      // Already initialized
-      esbuildInitialized = true;
-    }
+      // Initialize esbuild (expensive, do once)
+      let esbuildInitialized = false;
+      try {
+        await initializeEsbuild({ worker: false });
+        esbuildInitialized = true;
+        logger.debug("[SharedServices] esbuild initialized");
+      } catch {
+        // Already initialized
+        esbuildInitialized = true;
+      }
 
-    // Create element validator (stateless)
-    const validatorOptions: ValidationOptions = {
-      maxDepth: options.maxValidationDepth ?? 20,
-      debugMode: options.debugMode ?? false,
-    };
-    const elementValidator = new ElementValidator(validatorOptions);
+      // Create element validator (stateless)
+      const validatorOptions: ValidationOptions = {
+        maxDepth: options.maxValidationDepth ?? 20,
+        debugMode: options.debugMode ?? false,
+      };
+      const elementValidator = new ElementValidator(validatorOptions);
 
-    // Create compiler service (late-binding)
-    const compilerService = new CompilerService();
+      // Create compiler service (late-binding)
+      const compilerService = new CompilerService();
 
-    sharedServices = {
-      elementValidator,
-      compilerService,
-      esbuildInitialized,
-    };
+      sharedServices = {
+        elementValidator,
+        compilerService,
+        esbuildInitialized,
+      };
 
-    const duration = performance.now() - startTime;
-    logger.debug("[SharedServices] Shared services initialized", {
-      duration: `${duration.toFixed(2)}ms`,
-    });
+      const duration = performance.now() - startTime;
+      logger.debug("[SharedServices] Shared services initialized", {
+        duration: `${duration.toFixed(2)}ms`,
+      });
 
-    return sharedServices;
-  })();
+      return sharedServices;
+    },
+    {
+      "shared_services.debug_mode": options.debugMode ?? false,
+      "shared_services.max_validation_depth": options.maxValidationDepth ?? 20,
+    },
+  );
 
   try {
     return await initializationPromise;

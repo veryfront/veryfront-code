@@ -15,6 +15,7 @@ import { autoDetectContentPaths, isTailwindV4File } from "./detector.ts";
 import { countUtilities } from "./css-utils.ts";
 import { processWithLightningCSS } from "./lightning-processor.ts";
 import { createSecureFs } from "#veryfront/security";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 /**
  * Tailwind CSS v4 Processor with Lightning CSS
@@ -78,67 +79,80 @@ export class TailwindProcessor {
    * console.log(result.css)
    * ```
    */
-  async process(): Promise<TailwindProcessResult> {
-    const { inputFile, outputFile, content, minify, sourceMap, browserslist, projectDir, adapter } =
-      this.options;
-
-    // Create secure filesystem wrapper for build operations
-    const secureFs = createSecureFs({
-      baseDir: projectDir,
-      adapter,
-      context: "build",
-      throwOnError: true, // Throw on errors for build failures
-    });
-
-    logger.info("Processing Tailwind CSS v4...", { inputFile, outputFile });
-
-    // Read input CSS (using secure wrapper)
-    const inputCSS = await secureFs.readFile(inputFile);
-
-    // Check if this is a Tailwind v4 file
-    const isTailwind = await isTailwindV4File(inputFile, projectDir, adapter);
-    if (!isTailwind) {
-      logger.warn('File does not appear to be Tailwind v4 (@import "tailwindcss" not found)', {
-        inputFile,
-      });
-    }
-
-    // For Tailwind v4, we need to:
-    // 1. Resolve @import "tailwindcss" (would normally be handled by Tailwind's resolver)
-    // 2. Process with Lightning CSS for transforms
-    // 3. Apply content scanning for purging
-
-    // Since Tailwind v4 uses Lightning CSS natively, we can use Lightning CSS directly
-    // with custom import resolution for "tailwindcss"
-    const processedCSS = await processWithLightningCSS(inputCSS, {
-      filename: inputFile,
-      minify,
-      sourceMap,
-      browserslist,
-    });
-
-    // Auto-detect utilities used (simple heuristic)
-    const detectedUtilities = countUtilities(processedCSS);
-
-    const result: TailwindProcessResult = {
-      css: processedCSS,
-      processedFiles: [inputFile, ...(content ?? [])],
-      detectedUtilities,
-    };
-
-    // Write output if specified (using secure wrapper)
-    if (outputFile) {
-      const dirPath = dirname(outputFile);
-      await secureFs.mkdir(dirPath, { recursive: true });
-      await secureFs.writeFile(outputFile, processedCSS);
-      logger.info("Tailwind CSS processed successfully", {
+  process(): Promise<TailwindProcessResult> {
+    return withSpan("build.tailwind.process", async () => {
+      const {
         inputFile,
         outputFile,
-        size: processedCSS.length,
-        utilities: detectedUtilities,
-      });
-    }
+        content,
+        minify,
+        sourceMap,
+        browserslist,
+        projectDir,
+        adapter,
+      } = this.options;
 
-    return result;
+      // Create secure filesystem wrapper for build operations
+      const secureFs = createSecureFs({
+        baseDir: projectDir,
+        adapter,
+        context: "build",
+        throwOnError: true, // Throw on errors for build failures
+      });
+
+      logger.info("Processing Tailwind CSS v4...", { inputFile, outputFile });
+
+      // Read input CSS (using secure wrapper)
+      const inputCSS = await secureFs.readFile(inputFile);
+
+      // Check if this is a Tailwind v4 file
+      const isTailwind = await isTailwindV4File(inputFile, projectDir, adapter);
+      if (!isTailwind) {
+        logger.warn('File does not appear to be Tailwind v4 (@import "tailwindcss" not found)', {
+          inputFile,
+        });
+      }
+
+      // For Tailwind v4, we need to:
+      // 1. Resolve @import "tailwindcss" (would normally be handled by Tailwind's resolver)
+      // 2. Process with Lightning CSS for transforms
+      // 3. Apply content scanning for purging
+
+      // Since Tailwind v4 uses Lightning CSS natively, we can use Lightning CSS directly
+      // with custom import resolution for "tailwindcss"
+      const processedCSS = await processWithLightningCSS(inputCSS, {
+        filename: inputFile,
+        minify,
+        sourceMap,
+        browserslist,
+      });
+
+      // Auto-detect utilities used (simple heuristic)
+      const detectedUtilities = countUtilities(processedCSS);
+
+      const result: TailwindProcessResult = {
+        css: processedCSS,
+        processedFiles: [inputFile, ...(content ?? [])],
+        detectedUtilities,
+      };
+
+      // Write output if specified (using secure wrapper)
+      if (outputFile) {
+        const dirPath = dirname(outputFile);
+        await secureFs.mkdir(dirPath, { recursive: true });
+        await secureFs.writeFile(outputFile, processedCSS);
+        logger.info("Tailwind CSS processed successfully", {
+          inputFile,
+          outputFile,
+          size: processedCSS.length,
+          utilities: detectedUtilities,
+        });
+      }
+
+      return result;
+    }, {
+      "build.tailwind.inputFile": this.options.inputFile,
+      "build.tailwind.minify": this.options.minify ?? true,
+    });
   }
 }

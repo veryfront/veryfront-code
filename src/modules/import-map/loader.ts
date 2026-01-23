@@ -5,6 +5,7 @@ import { getConfig } from "#veryfront/config";
 import type { ImportMapConfig } from "./types.ts";
 import { getDefaultImportMap } from "./default-import-map.ts";
 import { mergeImportMaps } from "./merger.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 function normalizeImportMapForRuntime(importMap: ImportMapConfig): ImportMapConfig {
   const normalizeValue = (value: string): string => {
     if (!value.startsWith("npm:")) return value;
@@ -34,60 +35,62 @@ function normalizeImportMapForRuntime(importMap: ImportMapConfig): ImportMapConf
   return { imports, scopes };
 }
 
-export async function loadImportMap(
+export function loadImportMap(
   startPath: string,
   adapter?: RuntimeAdapter,
 ): Promise<ImportMapConfig> {
-  let runtimeAdapter = adapter;
-  if (!runtimeAdapter) {
-    const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
-    runtimeAdapter = await runtime.get();
-  }
-
-  try {
-    const cfg = await getConfig(startPath, runtimeAdapter!);
-    if (cfg?.resolve?.importMap && typeof cfg.resolve.importMap === "object") {
-      const merged = mergeImportMaps(
-        getDefaultImportMap(),
-        {
-          imports: cfg.resolve.importMap.imports ?? {},
-          scopes: cfg.resolve.importMap.scopes ?? {},
-        },
-      );
-      return normalizeImportMapForRuntime(merged);
+  return withSpan("modules.importMap.load", async () => {
+    let runtimeAdapter = adapter;
+    if (!runtimeAdapter) {
+      const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
+      runtimeAdapter = await runtime.get();
     }
-  } catch {
-    // Config not found or invalid, fall through to file-based discovery
-  }
-
-  let currentPath = startPath;
-
-  while (currentPath !== "/" && currentPath !== "") {
-    const denoJsonPath = join(currentPath, "deno.json");
 
     try {
-      const content = await runtimeAdapter!.fs.readFile(denoJsonPath);
-      const config = JSON.parse(content);
-
-      if (config.imports || config.scopes) {
-        logger.debug(`Loaded import map from ${denoJsonPath}`);
+      const cfg = await getConfig(startPath, runtimeAdapter!);
+      if (cfg?.resolve?.importMap && typeof cfg.resolve.importMap === "object") {
         const merged = mergeImportMaps(
           getDefaultImportMap(),
           {
-            imports: config.imports ?? {},
-            scopes: config.scopes ?? {},
+            imports: cfg.resolve.importMap.imports ?? {},
+            scopes: cfg.resolve.importMap.scopes ?? {},
           },
         );
         return normalizeImportMapForRuntime(merged);
       }
     } catch {
-      // deno.json not found in this directory, continue searching
+      // Config not found or invalid, fall through to file-based discovery
     }
 
-    const parent = dirname(currentPath);
-    if (parent === currentPath) break; // Reached root
-    currentPath = parent;
-  }
+    let currentPath = startPath;
 
-  return normalizeImportMapForRuntime(getDefaultImportMap());
+    while (currentPath !== "/" && currentPath !== "") {
+      const denoJsonPath = join(currentPath, "deno.json");
+
+      try {
+        const content = await runtimeAdapter!.fs.readFile(denoJsonPath);
+        const config = JSON.parse(content);
+
+        if (config.imports || config.scopes) {
+          logger.debug(`Loaded import map from ${denoJsonPath}`);
+          const merged = mergeImportMaps(
+            getDefaultImportMap(),
+            {
+              imports: config.imports ?? {},
+              scopes: config.scopes ?? {},
+            },
+          );
+          return normalizeImportMapForRuntime(merged);
+        }
+      } catch {
+        // deno.json not found in this directory, continue searching
+      }
+
+      const parent = dirname(currentPath);
+      if (parent === currentPath) break; // Reached root
+      currentPath = parent;
+    }
+
+    return normalizeImportMapForRuntime(getDefaultImportMap());
+  }, { "importMap.startPath": startPath });
 }

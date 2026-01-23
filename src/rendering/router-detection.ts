@@ -12,6 +12,8 @@ import { createFileSystem } from "../platform/compat/fs.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 
 // Re-export from app-route-resolver for backward compatibility
 export { getAppRouteEntity } from "./app-route-resolver.ts";
@@ -57,9 +59,18 @@ export async function detectAppRouter(
   const cached = routerDetectionCache.get(projectDir);
   if (cached !== undefined) return cached;
 
-  const result = await detectAppRouterImpl(projectDir, config, adapter);
-  routerDetectionCache.set(projectDir, result);
-  return result;
+  return await withSpan(
+    SpanNames.ROUTER_DETECT_APP,
+    async () => {
+      const result = await detectAppRouterImpl(projectDir, config, adapter);
+      routerDetectionCache.set(projectDir, result);
+      return result;
+    },
+    {
+      "router.project_dir": projectDir,
+      "router.config_router": config?.router || "auto",
+    },
+  );
 }
 
 /**

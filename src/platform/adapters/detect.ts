@@ -1,4 +1,5 @@
 import { logger } from "#veryfront/utils";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { RuntimeAdapter } from "./base.ts";
 import { createError, toError } from "../../errors/veryfront-error.ts";
 import { detectRuntime } from "./runtime-detection.ts";
@@ -29,47 +30,49 @@ export { runtime } from "./registry.ts";
  * @returns A new RuntimeAdapter instance for the detected runtime
  * @throws Error if the runtime is unsupported or requires manual initialization (Cloudflare)
  */
-export async function getAdapter(): Promise<RuntimeAdapter> {
+export function getAdapter(): Promise<RuntimeAdapter> {
   const runtimeId = detectRuntime();
 
-  switch (runtimeId) {
-    case "deno": {
-      const { denoAdapter } = await import("./deno.ts");
-      return denoAdapter;
-    }
+  return withSpan("platform.adapter.getAdapter", async () => {
+    switch (runtimeId) {
+      case "deno": {
+        const { denoAdapter } = await import("./deno.ts");
+        return denoAdapter;
+      }
 
-    case "bun": {
-      const { bunAdapter } = await import("./bun.ts");
-      return bunAdapter;
-    }
+      case "bun": {
+        const { bunAdapter } = await import("./bun.ts");
+        return bunAdapter;
+      }
 
-    case "node": {
-      const { nodeAdapter } = await import("./node.ts");
-      return nodeAdapter;
-    }
+      case "node": {
+        const { nodeAdapter } = await import("./node.ts");
+        return nodeAdapter;
+      }
 
-    case "cloudflare": {
-      const errorMsg = "Cloudflare adapter requires manual initialization with environment. " +
-        "Please use createCloudflareAdapter() with your environment context.";
-      logger.error("[Adapter Detection]", errorMsg);
-      throw toError(createError({
-        type: "config",
-        message: errorMsg,
-      }));
-    }
+      case "cloudflare": {
+        const errorMsg = "Cloudflare adapter requires manual initialization with environment. " +
+          "Please use createCloudflareAdapter() with your environment context.";
+        logger.error("[Adapter Detection]", errorMsg);
+        throw toError(createError({
+          type: "config",
+          message: errorMsg,
+        }));
+      }
 
-    default: {
-      const supportedRuntimes = ["deno", "bun", "node", "cloudflare"];
-      const errorMsg = `Unsupported runtime: ${runtimeId}. Supported runtimes: ${
-        supportedRuntimes.join(", ")
-      }`;
-      logger.error("[Adapter Detection]", errorMsg);
-      throw toError(createError({
-        type: "config",
-        message: errorMsg,
-      }));
+      default: {
+        const supportedRuntimes = ["deno", "bun", "node", "cloudflare"];
+        const errorMsg = `Unsupported runtime: ${runtimeId}. Supported runtimes: ${
+          supportedRuntimes.join(", ")
+        }`;
+        logger.error("[Adapter Detection]", errorMsg);
+        throw toError(createError({
+          type: "config",
+          message: errorMsg,
+        }));
+      }
     }
-  }
+  }, { "adapter.runtime": runtimeId });
 }
 
 export { denoAdapter } from "./deno.ts";

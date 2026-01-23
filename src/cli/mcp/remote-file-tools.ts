@@ -12,6 +12,7 @@
 import { z } from "zod";
 import type { MCPTool } from "./tools.ts";
 import { getRuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 // ============================================================================
 // Configuration
@@ -156,27 +157,29 @@ export const vfRemoteListFiles: MCPTool<RemoteListFilesInput, RemoteListFilesOut
   description:
     "List files in a remote Veryfront project. Returns file paths, types, and sizes. Use this to explore a project's structure.",
   inputSchema: remoteListFilesInput,
-  execute: async (input) => {
-    const params = new URLSearchParams();
-    if (input.pattern) params.set("pattern", input.pattern);
-    params.set("limit", String(input.limit));
-    params.set("fields", "(path,type,size)"); // Only fetch necessary fields
+  execute: (input) => {
+    return withSpan("cli.mcp.tool.vf_remote_list_files", async () => {
+      const params = new URLSearchParams();
+      if (input.pattern) params.set("pattern", input.pattern);
+      params.set("limit", String(input.limit));
+      params.set("fields", "(path,type,size)"); // Only fetch necessary fields
 
-    const branchPath = input.branch ? `/branches/${input.branch}` : "";
-    const path = `/${input.project}${branchPath}/files?${params.toString()}`;
+      const branchPath = input.branch ? `/branches/${input.branch}` : "";
+      const path = `/${input.project}${branchPath}/files?${params.toString()}`;
 
-    const result = await apiRequest<FileListResponse>("GET", path);
+      const result = await apiRequest<FileListResponse>("GET", path);
 
-    if (!result.ok) {
-      return { success: false, error: result.error };
-    }
+      if (!result.ok) {
+        return { success: false, error: result.error };
+      }
 
-    const files = result.data?.data || [];
-    return {
-      success: true,
-      files: files.map((f) => ({ path: f.path, type: f.type, size: f.size })),
-      total: files.length,
-    };
+      const files = result.data?.data || [];
+      return {
+        success: true,
+        files: files.map((f) => ({ path: f.path, type: f.type, size: f.size })),
+        total: files.length,
+      };
+    }, { "tool.project": input.project });
   },
 };
 
@@ -211,31 +214,33 @@ export const vfRemoteGetFile: MCPTool<RemoteGetFileInput, RemoteGetFileOutput> =
   description:
     "Read the content of a file from a remote Veryfront project. Always use this before modifying a file.",
   inputSchema: remoteGetFileInput,
-  execute: async (input) => {
-    const encodedPath = encodeFilePath(input.path);
-    const branchPath = input.branch ? `/branches/${input.branch}` : "";
-    const apiPath = `/${input.project}${branchPath}/files/${encodedPath}`;
+  execute: (input) => {
+    return withSpan("cli.mcp.tool.vf_remote_get_file", async () => {
+      const encodedPath = encodeFilePath(input.path);
+      const branchPath = input.branch ? `/branches/${input.branch}` : "";
+      const apiPath = `/${input.project}${branchPath}/files/${encodedPath}`;
 
-    const result = await apiRequest<RemoteFile>("GET", apiPath);
+      const result = await apiRequest<RemoteFile>("GET", apiPath);
 
-    if (!result.ok) {
-      return { success: false, error: result.error };
-    }
+      if (!result.ok) {
+        return { success: false, error: result.error };
+      }
 
-    const file = result.data;
-    if (!file) {
-      return { success: false, error: "File not found" };
-    }
+      const file = result.data;
+      if (!file) {
+        return { success: false, error: "File not found" };
+      }
 
-    return {
-      success: true,
-      file: {
-        path: file.path,
-        content: file.content,
-        size: file.size,
-        type: file.type,
-      },
-    };
+      return {
+        success: true,
+        file: {
+          path: file.path,
+          content: file.content,
+          size: file.size,
+          type: file.type,
+        },
+      };
+    }, { "tool.project": input.project, "tool.path": input.path });
   },
 };
 
@@ -268,24 +273,26 @@ export const vfRemoteUpdateFile: MCPTool<RemoteUpdateFileInput, RemoteUpdateFile
   description:
     "Create or update a file in a remote Veryfront project. Always read the file first before updating to understand its current state.",
   inputSchema: remoteUpdateFileInput,
-  execute: async (input) => {
-    const encodedPath = encodeFilePath(input.path);
-    const branchParam = input.branch ? `?branch_id=${input.branch}` : "";
-    const apiPath = `/${input.project}/files/${encodedPath}${branchParam}`;
+  execute: (input) => {
+    return withSpan("cli.mcp.tool.vf_remote_update_file", async () => {
+      const encodedPath = encodeFilePath(input.path);
+      const branchParam = input.branch ? `?branch_id=${input.branch}` : "";
+      const apiPath = `/${input.project}/files/${encodedPath}${branchParam}`;
 
-    const result = await apiRequest<{ id: string; path: string }>("PUT", apiPath, {
-      body: { content: input.content },
-    });
+      const result = await apiRequest<{ id: string; path: string }>("PUT", apiPath, {
+        body: { content: input.content },
+      });
 
-    if (!result.ok) {
-      return { success: false, error: result.error };
-    }
+      if (!result.ok) {
+        return { success: false, error: result.error };
+      }
 
-    return {
-      success: true,
-      path: result.data?.path || input.path,
-      created: result.status === 201,
-    };
+      return {
+        success: true,
+        path: result.data?.path || input.path,
+        created: result.status === 201,
+      };
+    }, { "tool.project": input.project, "tool.path": input.path });
   },
 };
 
@@ -363,29 +370,31 @@ export const vfRemoteSearchFiles: MCPTool<RemoteSearchFilesInput, RemoteSearchFi
   description:
     "Search for text patterns within file contents in a remote Veryfront project. Supports regex and glob patterns.",
   inputSchema: remoteSearchFilesInput,
-  execute: async (input) => {
-    const branchPath = input.branch ? `/branches/${input.branch}` : "";
-    const apiPath = `/${input.project}${branchPath}/files/search`;
+  execute: (input) => {
+    return withSpan("cli.mcp.tool.vf_remote_search_files", async () => {
+      const branchPath = input.branch ? `/branches/${input.branch}` : "";
+      const apiPath = `/${input.project}${branchPath}/files/search`;
 
-    const result = await apiRequest<SearchResponse>("POST", apiPath, {
-      body: {
-        query: input.query,
-        pattern: input.pattern,
-        is_regex: input.is_regex,
-        case_sensitive: input.case_sensitive,
-        max_results: input.max_results,
-      },
-    });
+      const result = await apiRequest<SearchResponse>("POST", apiPath, {
+        body: {
+          query: input.query,
+          pattern: input.pattern,
+          is_regex: input.is_regex,
+          case_sensitive: input.case_sensitive,
+          max_results: input.max_results,
+        },
+      });
 
-    if (!result.ok) {
-      return { success: false, error: result.error };
-    }
+      if (!result.ok) {
+        return { success: false, error: result.error };
+      }
 
-    return {
-      success: true,
-      results: result.data?.results || [],
-      total_files: result.data?.total_files || 0,
-    };
+      return {
+        success: true,
+        results: result.data?.results || [],
+        total_files: result.data?.total_files || 0,
+      };
+    }, { "tool.project": input.project, "tool.query": input.query });
   },
 };
 
@@ -721,80 +730,82 @@ export const vfRemoteCloneProject: MCPTool<RemoteCloneProjectInput, RemoteCloneP
   description:
     "Clone a Veryfront project by creating a new project and copying all files from the source.",
   inputSchema: remoteCloneProjectInput,
-  execute: async (input) => {
-    // Step 1: Create the new project
-    const createResult = await apiRequest<Project>("POST", "/projects", {
-      body: {
-        name: input.target_name,
-        slug: input.target_slug,
-      },
-    });
+  execute: (input) => {
+    return withSpan("cli.mcp.tool.vf_remote_clone_project", async () => {
+      // Step 1: Create the new project
+      const createResult = await apiRequest<Project>("POST", "/projects", {
+        body: {
+          name: input.target_name,
+          slug: input.target_slug,
+        },
+      });
 
-    if (!createResult.ok) {
-      return { success: false, error: `Failed to create project: ${createResult.error}` };
-    }
+      if (!createResult.ok) {
+        return { success: false, error: `Failed to create project: ${createResult.error}` };
+      }
 
-    const newProject = createResult.data;
-    if (!newProject) {
-      return { success: false, error: "Project created but no data returned" };
-    }
+      const newProject = createResult.data;
+      if (!newProject) {
+        return { success: false, error: "Project created but no data returned" };
+      }
 
-    // Step 2: List all files from source project
-    const params = new URLSearchParams();
-    params.set("limit", "1000");
-    if (input.file_pattern) params.set("pattern", input.file_pattern);
+      // Step 2: List all files from source project
+      const params = new URLSearchParams();
+      params.set("limit", "1000");
+      if (input.file_pattern) params.set("pattern", input.file_pattern);
 
-    const listResult = await apiRequest<FileListResponse>(
-      "GET",
-      `/${input.source_project}/files?${params.toString()}`,
-    );
-
-    if (!listResult.ok) {
-      return {
-        success: false,
-        error: `Project created but failed to list source files: ${listResult.error}`,
-        project: newProject,
-      };
-    }
-
-    const sourceFiles = listResult.data?.data || [];
-
-    // Step 3: Copy each file to the new project
-    let filesCopied = 0;
-    const errors: string[] = [];
-
-    for (const file of sourceFiles) {
-      // Get full file content
-      const getResult = await apiRequest<RemoteFile>(
+      const listResult = await apiRequest<FileListResponse>(
         "GET",
-        `/${input.source_project}/files/${encodeFilePath(file.path)}`,
+        `/${input.source_project}/files?${params.toString()}`,
       );
 
-      if (!getResult.ok || !getResult.data) {
-        errors.push(`Failed to read ${file.path}`);
-        continue;
+      if (!listResult.ok) {
+        return {
+          success: false,
+          error: `Project created but failed to list source files: ${listResult.error}`,
+          project: newProject,
+        };
       }
 
-      // Create file in new project
-      const createFileResult = await apiRequest<{ id: string; path: string }>(
-        "PUT",
-        `/${input.target_slug}/files/${encodeFilePath(file.path)}`,
-        { body: { content: getResult.data.content } },
-      );
+      const sourceFiles = listResult.data?.data || [];
 
-      if (createFileResult.ok) {
-        filesCopied++;
-      } else {
-        errors.push(`Failed to create ${file.path}: ${createFileResult.error}`);
+      // Step 3: Copy each file to the new project
+      let filesCopied = 0;
+      const errors: string[] = [];
+
+      for (const file of sourceFiles) {
+        // Get full file content
+        const getResult = await apiRequest<RemoteFile>(
+          "GET",
+          `/${input.source_project}/files/${encodeFilePath(file.path)}`,
+        );
+
+        if (!getResult.ok || !getResult.data) {
+          errors.push(`Failed to read ${file.path}`);
+          continue;
+        }
+
+        // Create file in new project
+        const createFileResult = await apiRequest<{ id: string; path: string }>(
+          "PUT",
+          `/${input.target_slug}/files/${encodeFilePath(file.path)}`,
+          { body: { content: getResult.data.content } },
+        );
+
+        if (createFileResult.ok) {
+          filesCopied++;
+        } else {
+          errors.push(`Failed to create ${file.path}: ${createFileResult.error}`);
+        }
       }
-    }
 
-    return {
-      success: errors.length === 0,
-      project: newProject,
-      files_copied: filesCopied,
-      error: errors.length > 0 ? errors.join("; ") : undefined,
-    };
+      return {
+        success: errors.length === 0,
+        project: newProject,
+        files_copied: filesCopied,
+        error: errors.length > 0 ? errors.join("; ") : undefined,
+      };
+    }, { "tool.source_project": input.source_project, "tool.target_slug": input.target_slug });
   },
 };
 

@@ -13,6 +13,7 @@ import {
   ValidationPresets,
   type ValidationResult,
 } from "./path-validation.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 export type SecurityContext =
   | "user-input" // User-provided paths (strict)
@@ -181,12 +182,14 @@ export class SecureFs {
     return result;
   }
 
-  async readFile(path: string): Promise<string> {
-    const validation = await this.validatePathForOperation(path, "readFile");
-    if (!validation.valid || !validation.canonicalPath) {
-      throw new SecurityError("Invalid path", validation.code, path);
-    }
-    return await this.config.adapter.fs.readFile(validation.canonicalPath);
+  readFile(path: string): Promise<string> {
+    return withSpan("security.secureFs.readFile", async () => {
+      const validation = await this.validatePathForOperation(path, "readFile");
+      if (!validation.valid || !validation.canonicalPath) {
+        throw new SecurityError("Invalid path", validation.code, path);
+      }
+      return await this.config.adapter.fs.readFile(validation.canonicalPath);
+    }, { "fs.path": path, "security.context": this.config.context });
   }
 
   async readFileBytes(path: string): Promise<Uint8Array> {
@@ -212,12 +215,14 @@ export class SecureFs {
     await this.config.adapter.fs.writeFile(validation.canonicalPath, content);
   }
 
-  async stat(path: string): Promise<FileInfo> {
-    const validation = await this.validatePathForOperation(path, "stat");
-    if (!validation.valid || !validation.canonicalPath) {
-      throw new SecurityError("Invalid path", validation.code, path);
-    }
-    return await this.config.adapter.fs.stat(validation.canonicalPath);
+  stat(path: string): Promise<FileInfo> {
+    return withSpan("security.secureFs.stat", async () => {
+      const validation = await this.validatePathForOperation(path, "stat");
+      if (!validation.valid || !validation.canonicalPath) {
+        throw new SecurityError("Invalid path", validation.code, path);
+      }
+      return await this.config.adapter.fs.stat(validation.canonicalPath);
+    }, { "fs.path": path, "security.context": this.config.context });
   }
 
   async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {

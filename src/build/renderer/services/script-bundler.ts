@@ -10,89 +10,97 @@ import { extractImports } from "../utils/import-utils.ts";
 import { getEsbuildLoader } from "../../utils/file-types.ts";
 import { createError, ensureError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 /**
  * Bundle JavaScript/TypeScript files
  */
-export async function bundleScript(
+export function bundleScript(
   source: { path: string; content: string; type: string },
   options: BundlerOptions,
   result: BundleResult,
   esbuildInstance: typeof esbuild,
   fileCache: Map<string, string>,
 ): Promise<void> {
-  const isProduction = options.mode === "production";
+  return withSpan("build.renderer.bundleScript", async () => {
+    const isProduction = options.mode === "production";
 
-  try {
-    // Add to file cache for resolution
-    fileCache.set(source.path, source.content);
+    try {
+      // Add to file cache for resolution
+      fileCache.set(source.path, source.content);
 
-    const buildResult = await esbuildInstance.build({
-      stdin: {
-        contents: source.content,
-        sourcefile: source.path,
-        resolveDir: options.projectDir,
-        loader: getEsbuildLoader(source.path) as esbuild.Loader,
-      },
-      bundle: true,
-      format: options.platform === "node" ? "cjs" : "esm",
-      platform: options.platform ?? "browser",
-      target: isProduction ? ["es2020"] : ["esnext"],
-      minify: isProduction,
-      sourcemap: isProduction ? false : "inline",
-      treeShaking: isProduction,
-      external: options.external ?? [],
-      write: false,
-      plugins: [
-        createResolvePlugin(fileCache, options.projectDir),
-        createDynamicImportPlugin(),
-        createCSSPlugin(result),
-      ],
-      define: {
-        "process.env.NODE_ENV": JSON.stringify(options.mode),
-      },
-      logLevel: "silent",
-    });
-
-    if (buildResult.outputFiles && buildResult.outputFiles.length > 0) {
-      const output = buildResult.outputFiles[0]!;
-      const outputPath = source.path.replace(/\.(tsx?|jsx?)$/, ".js");
-
-      if (!output.text) {
-        throw toError(createError({
-          type: "build",
-          message: `Build output missing for ${source.path}`,
-        }));
-      }
-      result.outputs.set(outputPath, {
-        path: outputPath,
-        content: output.text,
-        type: "js",
+      const buildResult = await esbuildInstance.build({
+        stdin: {
+          contents: source.content,
+          sourcefile: source.path,
+          resolveDir: options.projectDir,
+          loader: getEsbuildLoader(source.path) as esbuild.Loader,
+        },
+        bundle: true,
+        format: options.platform === "node" ? "cjs" : "esm",
+        platform: options.platform ?? "browser",
+        target: isProduction ? ["es2020"] : ["esnext"],
+        minify: isProduction,
+        sourcemap: isProduction ? false : "inline",
+        treeShaking: isProduction,
+        external: options.external ?? [],
+        write: false,
+        plugins: [
+          createResolvePlugin(fileCache, options.projectDir),
+          createDynamicImportPlugin(),
+          createCSSPlugin(result),
+        ],
+        define: {
+          "process.env.NODE_ENV": JSON.stringify(options.mode),
+        },
+        logLevel: "silent",
       });
 
-      // Track dependencies
-      const imports = extractImports(source.content);
-      result.dependencies.set(source.path, imports);
+      if (buildResult.outputFiles && buildResult.outputFiles.length > 0) {
+        const output = buildResult.outputFiles[0]!;
+        const outputPath = source.path.replace(/\.(tsx?|jsx?)$/, ".js");
 
-      logger.debug(`Bundled script: ${source.path} -> ${outputPath}`);
-    }
+        if (!output.text) {
+          throw toError(createError({
+            type: "build",
+            message: `Build output missing for ${source.path}`,
+          }));
+        }
+        result.outputs.set(outputPath, {
+          path: outputPath,
+          content: output.text,
+          type: "js",
+        });
 
-    // Add warnings
-    for (const warning of buildResult.warnings) {
-      result.warnings.push(formatEsbuildMessage(warning));
-    }
-  } catch (error) {
-    logger.error(`Failed to bundle script ${source.path}`, error);
+        // Track dependencies
+        const imports = extractImports(source.content);
+        result.dependencies.set(source.path, imports);
 
-    if (error instanceof Error && "errors" in error) {
-      const buildError = error as esbuild.BuildFailure;
-      for (const err of buildError.errors) {
-        result.errors.push(new Error(formatEsbuildMessage(err)));
+        logger.debug(`Bundled script: ${source.path} -> ${outputPath}`);
       }
-    } else {
-      result.errors.push(ensureError(error));
+
+      // Add warnings
+      for (const warning of buildResult.warnings) {
+        result.warnings.push(formatEsbuildMessage(warning));
+      }
+    } catch (error) {
+      logger.error(`Failed to bundle script ${source.path}`, error);
+
+      if (error instanceof Error && "errors" in error) {
+        const buildError = error as esbuild.BuildFailure;
+        for (const err of buildError.errors) {
+          result.errors.push(new Error(formatEsbuildMessage(err)));
+        }
+      } else {
+        result.errors.push(ensureError(error));
+      }
     }
-  }
+  }, {
+    "source.path": source.path,
+    "source.type": source.type,
+    "options.mode": options.mode,
+    "options.platform": options.platform ?? "browser",
+  });
 }
 
 function createResolvePlugin(fileCache: Map<string, string>, projectDir: string): esbuild.Plugin {

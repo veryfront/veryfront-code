@@ -8,6 +8,7 @@ import type { Agent } from "../types.ts";
 import type { Tool } from "#veryfront/tool";
 import { z } from "zod";
 import { agentLogger } from "#veryfront/utils/logger/logger.ts";
+import { setActiveSpanAttributes, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 /**
  * Convert an agent to a tool that can be called by other agents
@@ -47,13 +48,19 @@ export function agentAsTool(
     inputSchema: z.object({
       input: z.string().describe("Input for the agent"),
     }),
-    async execute({ input }) {
-      const response = await agent.generate({ input });
-      return {
-        text: response.text,
-        toolCalls: response.toolCalls.length,
-        status: response.status,
-      };
+    execute({ input }) {
+      return withSpan("agent.composition.agentAsTool.execute", async () => {
+        const response = await agent.generate({ input });
+        setActiveSpanAttributes({
+          "agent.tool_calls": response.toolCalls.length,
+          "agent.status": response.status,
+        });
+        return {
+          text: response.text,
+          toolCalls: response.toolCalls.length,
+          status: response.status,
+        };
+      }, { "agent.id": agent.id });
     },
   };
 }
@@ -118,49 +125,64 @@ export interface WorkflowResult {
  */
 export function createWorkflow(config: WorkflowConfig) {
   return {
-    async execute(input: string): Promise<WorkflowResult> {
-      const result: WorkflowResult = {
-        output: input,
-        steps: [],
-        context: { ...config.initialContext },
-      };
+    execute(input: string): Promise<WorkflowResult> {
+      return withSpan("agent.composition.workflow.execute", async () => {
+        const result: WorkflowResult = {
+          output: input,
+          steps: [],
+          context: { ...config.initialContext },
+        };
 
-      for (const step of config.steps) {
-        // Check if step should be skipped
-        if (step.skip && (await step.skip(result.context))) {
-          result.steps.push({
-            name: step.name,
-            output: "",
-            skipped: true,
-          });
-          continue;
+        for (const step of config.steps) {
+          await withSpan(`agent.composition.workflow.step.${step.name}`, async () => {
+            // Check if step should be skipped
+            if (step.skip && (await step.skip(result.context))) {
+              result.steps.push({
+                name: step.name,
+                output: "",
+                skipped: true,
+              });
+              setActiveSpanAttributes({ "workflow.step.skipped": true });
+              return;
+            }
+
+            // Execute agent
+            const response = await step.agent.generate({
+              input: result.output,
+              context: result.context,
+            });
+
+            // Transform output if needed
+            let output = response.text;
+            if (step.transform) {
+              output = await step.transform(output);
+            }
+
+            // Update result
+            result.output = output;
+            result.steps.push({
+              name: step.name,
+              output,
+              skipped: false,
+            });
+
+            // Update context
+            result.context[step.name] = output;
+
+            setActiveSpanAttributes({
+              "workflow.step.skipped": false,
+              "workflow.step.output_length": output.length,
+            });
+          }, { "workflow.step.name": step.name, "workflow.step.agent_id": step.agent.id });
         }
 
-        // Execute agent
-        const response = await step.agent.generate({
-          input: result.output,
-          context: result.context,
+        setActiveSpanAttributes({
+          "workflow.total_steps": config.steps.length,
+          "workflow.executed_steps": result.steps.filter((s) => !s.skipped).length,
         });
 
-        // Transform output if needed
-        let output = response.text;
-        if (step.transform) {
-          output = await step.transform(output);
-        }
-
-        // Update result
-        result.output = output;
-        result.steps.push({
-          name: step.name,
-          output,
-          skipped: false,
-        });
-
-        // Update context
-        result.context[step.name] = output;
-      }
-
-      return result;
+        return result;
+      }, { "workflow.steps_count": config.steps.length });
     },
   };
 }

@@ -8,6 +8,7 @@
  */
 
 import type { AgentContext, AgentMiddleware, AgentResponse } from "../types.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 /**
  * Middleware chain executor
@@ -23,17 +24,21 @@ export class MiddlewareChain {
     context: AgentContext,
     finalHandler: () => Promise<AgentResponse>,
   ): Promise<AgentResponse> {
-    let index = 0;
+    return withSpan("agent.middleware.chain.execute", () => {
+      let index = 0;
 
-    const dispatch = (): Promise<AgentResponse> => {
-      const currentMiddleware = this.middleware[index++];
-      if (!currentMiddleware) {
-        return finalHandler();
-      }
-      return currentMiddleware(context, dispatch);
-    };
+      const dispatch = (): Promise<AgentResponse> => {
+        const currentMiddleware = this.middleware[index++];
+        if (!currentMiddleware) {
+          return finalHandler();
+        }
+        return withSpan(`agent.middleware.chain.dispatch.${index}`, () => {
+          return currentMiddleware(context, dispatch);
+        }, { "middleware.index": index - 1 });
+      };
 
-    return dispatch();
+      return dispatch();
+    }, { "middleware.count": this.middleware.length });
   }
 
   use(middleware: AgentMiddleware): this {

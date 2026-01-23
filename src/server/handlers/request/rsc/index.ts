@@ -15,6 +15,7 @@ import { handleRSCEndpoint } from "./endpoints/index.ts";
 import { applySecurityHeaders } from "../api/security-headers.ts";
 import { applyCORSHeaders } from "#veryfront/security";
 import { HTTP_NOT_FOUND, PRIORITY_MEDIUM } from "#veryfront/utils/constants/index.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 export class RSCHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -25,50 +26,52 @@ export class RSCHandler extends BaseHandler {
     ],
   };
 
-  async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
+  handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const url = new URL(req.url);
     const pathname = url.pathname;
 
     if (!pathname.startsWith("/_veryfront/rsc/")) {
+      return Promise.resolve(this.continue());
+    }
+
+    return withSpan("rsc.handle", async () => {
+      // Always allow client.js, dom.js (needed for basic hydration even without full RSC)
+      // and flight_page (deprecated endpoint that always returns 410 Gone)
+      const sub = pathname.replace("/_veryfront/rsc/", "");
+      const isHydrationScript = sub === "client.js" || sub === "dom.js";
+      const isDeprecatedEndpoint = sub === "flight_page";
+
+      if (!isRSCEnabled(ctx.config) && !isHydrationScript && !isDeprecatedEndpoint) {
+        return this.respond(new Response("Not Found", { status: HTTP_NOT_FOUND }));
+      }
+
+      const res = await handleRSCEndpoint({
+        req,
+        pathname,
+        projectDir: ctx.projectDir,
+        adapter: ctx.adapter,
+        config: ctx.config,
+      });
+
+      if (res) {
+        // Wrap response with security and CORS headers
+        const headers = new Headers(res.headers);
+        await applyCORSHeaders({
+          request: req,
+          headers: headers,
+          config: ctx.securityConfig?.cors,
+        });
+        applySecurityHeaders(headers, ctx);
+
+        const wrappedRes = new Response(res.body, {
+          status: res.status,
+          statusText: res.statusText,
+          headers,
+        });
+        return this.respond(wrappedRes);
+      }
+
       return this.continue();
-    }
-
-    // Always allow client.js, dom.js (needed for basic hydration even without full RSC)
-    // and flight_page (deprecated endpoint that always returns 410 Gone)
-    const sub = pathname.replace("/_veryfront/rsc/", "");
-    const isHydrationScript = sub === "client.js" || sub === "dom.js";
-    const isDeprecatedEndpoint = sub === "flight_page";
-
-    if (!isRSCEnabled(ctx.config) && !isHydrationScript && !isDeprecatedEndpoint) {
-      return this.respond(new Response("Not Found", { status: HTTP_NOT_FOUND }));
-    }
-
-    const res = await handleRSCEndpoint({
-      req,
-      pathname,
-      projectDir: ctx.projectDir,
-      adapter: ctx.adapter,
-      config: ctx.config,
-    });
-
-    if (res) {
-      // Wrap response with security and CORS headers
-      const headers = new Headers(res.headers);
-      await applyCORSHeaders({
-        request: req,
-        headers: headers,
-        config: ctx.securityConfig?.cors,
-      });
-      applySecurityHeaders(headers, ctx);
-
-      const wrappedRes = new Response(res.body, {
-        status: res.status,
-        statusText: res.statusText,
-        headers,
-      });
-      return this.respond(wrappedRes);
-    }
-
-    return this.continue();
+    }, { "rsc.pathname": pathname, "rsc.endpoint": pathname.replace("/_veryfront/rsc/", "") });
   }
 }

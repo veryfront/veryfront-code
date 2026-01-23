@@ -1,30 +1,33 @@
 import { walk } from "#std/fs.ts";
 import { extname } from "#veryfront/platform/compat/path/index.ts";
 import { logger } from "#veryfront/utils";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SUPPORTED_EXTENSIONS } from "./constants.ts";
 
 const supportedExtensionsSet = new Set(SUPPORTED_EXTENSIONS);
 
-export async function findImages(dir: string): Promise<string[]> {
-  const images: string[] = [];
+export function findImages(dir: string): Promise<string[]> {
+  return withSpan("build.asset.findImages", async () => {
+    const images: string[] = [];
 
-  try {
-    for await (
-      const entry of walk(dir, {
-        includeDirs: false,
-        followSymlinks: false,
-      })
-    ) {
-      const ext = extname(entry.path).toLowerCase();
-      if (supportedExtensionsSet.has(ext)) {
-        images.push(entry.path);
+    try {
+      for await (
+        const entry of walk(dir, {
+          includeDirs: false,
+          followSymlinks: false,
+        })
+      ) {
+        const ext = extname(entry.path).toLowerCase();
+        if (supportedExtensionsSet.has(ext)) {
+          images.push(entry.path);
+        }
       }
+    } catch (error) {
+      logger.warn(`Failed to read directory ${dir}`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
-  } catch (error) {
-    logger.warn(`Failed to read directory ${dir}`, {
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
 
-  return images;
+    return images;
+  }, { "image.directory": dir });
 }

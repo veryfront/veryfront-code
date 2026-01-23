@@ -42,7 +42,11 @@ export class StaticDataFetcher {
       return await withSpan(
         "data.fetch_static",
         () => this.fetchFreshNoCache(pageModule, context),
-        { "data.fetch_method": "getStaticData", "data.pathname": pathname, "data.cache": "disabled" },
+        {
+          "data.fetch_method": "getStaticData",
+          "data.pathname": pathname,
+          "data.cache": "disabled",
+        },
       );
     }
 

@@ -13,44 +13,47 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/platform/compat/path-helper.ts";
 import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
-export async function loadHandlerModule(options: LoadModuleOptions): Promise<APIRoute | null> {
-  const { projectDir, modulePath, adapter, config } = options;
-  const fs = createFileSystem();
+export function loadHandlerModule(options: LoadModuleOptions): Promise<APIRoute | null> {
+  return withSpan("api.loadHandlerModule", async () => {
+    const { projectDir, modulePath, adapter, config } = options;
+    const fs = createFileSystem();
 
-  try {
-    let module: APIRoute;
+    try {
+      let module: APIRoute;
 
-    if (modulePath.endsWith(".js")) {
-      // JS files can be loaded directly
-      module = await loadJSModule(modulePath);
-    } else if (isDeno) {
-      // In Deno, try to directly import TypeScript files without bundling
-      // This allows modules to share the same runtime context (including singletons like agentRegistry)
-      // However, if the file doesn't exist locally (e.g., remote FSAdapter), fall back to transpile
-      const fileExistsLocally = await fs.exists(modulePath);
-      if (fileExistsLocally) {
-        module = await loadTSModuleDirect(modulePath);
+      if (modulePath.endsWith(".js")) {
+        // JS files can be loaded directly
+        module = await loadJSModule(modulePath);
+      } else if (isDeno) {
+        // In Deno, try to directly import TypeScript files without bundling
+        // This allows modules to share the same runtime context (including singletons like agentRegistry)
+        // However, if the file doesn't exist locally (e.g., remote FSAdapter), fall back to transpile
+        const fileExistsLocally = await fs.exists(modulePath);
+        if (fileExistsLocally) {
+          module = await loadTSModuleDirect(modulePath);
+        } else {
+          // File is remote (e.g., VeryfrontFSAdapter) - use adapter to read and transpile
+          logger.debug(`[API] File not local, using adapter-based loading: ${modulePath}`);
+          module = await loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
+        }
       } else {
-        // File is remote (e.g., VeryfrontFSAdapter) - use adapter to read and transpile
-        logger.debug(`[API] File not local, using adapter-based loading: ${modulePath}`);
+        // In Node.js, use esbuild to transpile TypeScript
+        // Singletons are shared via globalThis pattern (see src/ai/agent/composition.ts etc.)
         module = await loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
       }
-    } else {
-      // In Node.js, use esbuild to transpile TypeScript
-      // Singletons are shared via globalThis pattern (see src/ai/agent/composition.ts etc.)
-      module = await loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
-    }
 
-    return extractAPIRouteHandlers(module);
-  } catch (error: unknown) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    logger.error(`Failed to load API handler ${modulePath}:`, error);
-    throw toError(createError({
-      type: "api",
-      message: `Failed to load API handler: ${errorMsg}`,
-    }));
-  }
+      return extractAPIRouteHandlers(module);
+    } catch (error: unknown) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      logger.error(`Failed to load API handler ${modulePath}:`, error);
+      throw toError(createError({
+        type: "api",
+        message: `Failed to load API handler: ${errorMsg}`,
+      }));
+    }
+  }, { "api.modulePath": options.modulePath, "api.projectDir": options.projectDir });
 }
 
 /**
@@ -223,106 +226,108 @@ function createImportMapPlugin(
   };
 }
 
-async function loadAndTranspileModule(
+function loadAndTranspileModule(
   modulePath: string,
   projectDir: string,
   adapter: RuntimeAdapter,
   fs: FileSystem, // Pass fs compat instance
   config?: VeryfrontConfig,
 ): Promise<APIRoute> {
-  // Try to resolve the module path with various extensions if not found
-  let resolvedPath = modulePath;
-  let source: string | undefined;
+  return withSpan("api.loadAndTranspileModule", async () => {
+    // Try to resolve the module path with various extensions if not found
+    let resolvedPath = modulePath;
+    let source: string | undefined;
 
-  try {
-    source = await adapter.fs.readFile(modulePath);
-  } catch {
-    // If file not found, try with common extensions
-    const extensions = [".ts", ".tsx", ".js", ".jsx", ".mjs"];
+    try {
+      source = await adapter.fs.readFile(modulePath);
+    } catch {
+      // If file not found, try with common extensions
+      const extensions = [".ts", ".tsx", ".js", ".jsx", ".mjs"];
 
-    for (const ext of extensions) {
-      try {
-        const pathWithExt = modulePath + ext;
-        source = await adapter.fs.readFile(pathWithExt);
-        resolvedPath = pathWithExt;
-        break;
-      } catch {
-        // Continue trying other extensions
+      for (const ext of extensions) {
+        try {
+          const pathWithExt = modulePath + ext;
+          source = await adapter.fs.readFile(pathWithExt);
+          resolvedPath = pathWithExt;
+          break;
+        } catch {
+          // Continue trying other extensions
+        }
+      }
+
+      if (source === undefined) {
+        throw toError(createError({
+          type: "file",
+          message: `File not found: ${modulePath} (tried extensions: ${extensions.join(", ")})`,
+        }));
       }
     }
 
-    if (source === undefined) {
+    const loader = getEsbuildLoader(resolvedPath);
+
+    const allowedHosts = await loadSecurityConfig(projectDir, adapter);
+    validateHTTPImports(source, allowedHosts);
+
+    const { build } = await import("esbuild");
+
+    const plugins = [
+      createImportMapPlugin(projectDir, adapter, config),
+      createHTTPPlugin(allowedHosts),
+    ];
+
+    const externalPackages = [
+      "ai",
+      "ai/*",
+      "ai/react",
+      "@ai-sdk/*",
+      "zod",
+      "node:*",
+      // Veryfront packages - should use runtime resolution, not bundled
+      "veryfront",
+      "veryfront/*",
+      // OpenTelemetry packages used by veryfront modules
+      "@opentelemetry/*",
+      // Path module - Node.js built-in
+      "path",
+    ];
+
+    // Use the directory containing the source file as resolveDir
+    // This allows relative imports like ../../../ai/agents to resolve correctly
+    const resolveDir = pathHelper.dirname(resolvedPath);
+
+    const result: BuildResult = await build({
+      bundle: true,
+      write: false,
+      format: "esm",
+      platform: "neutral",
+      target: "es2022",
+      jsx: "automatic",
+      jsxImportSource: "react",
+      resolveExtensions: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
+      external: externalPackages,
+      stdin: {
+        contents: source,
+        loader,
+        resolveDir,
+        sourcefile: resolvedPath,
+      },
+      plugins,
+    });
+
+    if (result.errors && result.errors.length > 0) {
+      const first = result.errors[0]?.text || "unknown error";
       throw toError(createError({
-        type: "file",
-        message: `File not found: ${modulePath} (tried extensions: ${extensions.join(", ")})`,
+        type: "api",
+        message: `[API] handler build failed: ${first}`,
       }));
     }
-  }
 
-  const loader = getEsbuildLoader(resolvedPath);
+    logger.info(`[API] built handler ${resolvedPath}`);
+    const js = result.outputFiles?.[0]?.text ?? "export {}";
+    logger.debug(`[API] transpiled size ${js.length} bytes`);
 
-  const allowedHosts = await loadSecurityConfig(projectDir, adapter);
-  validateHTTPImports(source, allowedHosts);
-
-  const { build } = await import("esbuild");
-
-  const plugins = [
-    createImportMapPlugin(projectDir, adapter, config),
-    createHTTPPlugin(allowedHosts),
-  ];
-
-  const externalPackages = [
-    "ai",
-    "ai/*",
-    "ai/react",
-    "@ai-sdk/*",
-    "zod",
-    "node:*",
-    // Veryfront packages - should use runtime resolution, not bundled
-    "veryfront",
-    "veryfront/*",
-    // OpenTelemetry packages used by veryfront modules
-    "@opentelemetry/*",
-    // Path module - Node.js built-in
-    "path",
-  ];
-
-  // Use the directory containing the source file as resolveDir
-  // This allows relative imports like ../../../ai/agents to resolve correctly
-  const resolveDir = pathHelper.dirname(resolvedPath);
-
-  const result: BuildResult = await build({
-    bundle: true,
-    write: false,
-    format: "esm",
-    platform: "neutral",
-    target: "es2022",
-    jsx: "automatic",
-    jsxImportSource: "react",
-    resolveExtensions: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
-    external: externalPackages,
-    stdin: {
-      contents: source,
-      loader,
-      resolveDir,
-      sourcefile: resolvedPath,
-    },
-    plugins,
-  });
-
-  if (result.errors && result.errors.length > 0) {
-    const first = result.errors[0]?.text || "unknown error";
-    throw toError(createError({
-      type: "api",
-      message: `[API] handler build failed: ${first}`,
-    }));
-  }
-
-  logger.info(`[API] built handler ${resolvedPath}`);
-  const js = result.outputFiles?.[0]?.text ?? "export {}";
-  logger.debug(`[API] transpiled size ${js.length} bytes`);
-
-  return await loadModuleFromCode(js, adapter, projectDir, fs);
+    return await loadModuleFromCode(js, adapter, projectDir, fs);
+  }, { "api.modulePath": modulePath, "api.projectDir": projectDir });
 }
 
 async function loadModuleFromCode(

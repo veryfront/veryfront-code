@@ -5,6 +5,8 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { LayoutItem, MdxBundle, MDXComponents } from "#veryfront/types";
 import type { EntityInfo } from "#veryfront/types";
 import type { VeryfrontConfig } from "#veryfront/config";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import type { LayoutComponentCache } from "./utils/component-loader.ts";
 import { applyLayoutsESM, applyLayoutsFunctionBody } from "./utils/applicator.ts";
 import { resolveAppComponentPath } from "./utils/app-resolver.ts";
@@ -80,82 +82,93 @@ export class LayoutApplicator {
     nestedLayouts: LayoutItem[],
     layoutDataMap?: Map<string, Record<string, unknown>>,
   ): Promise<BundledReact.ReactElement> {
-    let wrappedElement = await this.applyLayoutsOnly(
-      pageElement,
-      layoutBundle,
-      nestedLayouts,
-      layoutDataMap,
+    return await withSpan(
+      SpanNames.LAYOUT_APPLY,
+      async () => {
+        let wrappedElement = await this.applyLayoutsOnly(
+          pageElement,
+          layoutBundle,
+          nestedLayouts,
+          layoutDataMap,
+        );
+
+        const useAppRouter = await detectAppRouter(this.projectDir, this.config, this.adapter);
+        const pageFilePath = pageInfo.entity.path;
+
+        // Skip App component wrapping for dot-prefixed paths (e.g., .veryfront) - these are
+        // framework-level pages that should not use user-defined App component
+        const isDotPath = pageFilePath.split("/").some((s) =>
+          s.startsWith(".") && s !== "." && s !== ".."
+        );
+
+        if (!useAppRouter && !isDotPath) {
+          wrappedElement = await this.wrapWithAppComponent(wrappedElement);
+        } else if (isDotPath) {
+          logger.debug("Skipping wrapWithAppComponent - dot-prefixed path");
+        }
+
+        if (useAppRouter) {
+          wrappedElement = await this.wrapWithReservedComponents(wrappedElement, pageFilePath);
+        }
+
+        // Wrap with RouterProvider to match client-side tree structure
+        // This ensures useId() generates consistent IDs between SSR and client
+        const React = await getProjectReact();
+
+        // Build page context with frontmatter for usePageContext() hook
+        // Use merged frontmatter (from MDX compilation + entity) when available
+        const headingsArray = this.headings || [];
+        const pageContext = {
+          slug: pageInfo.entity.slug || "",
+          path: pageFilePath,
+          params: {},
+          query: {},
+          frontmatter: this.frontmatter || pageInfo.entity.frontmatter || {},
+          headings: headingsArray,
+          mdxHeadings: headingsArray, // Alias for backwards compatibility
+        };
+        logger.debug("[LayoutApplicator] PageContext", {
+          frontmatterKeys: Object.keys(pageContext.frontmatter),
+          headingsCount: headingsArray.length,
+        });
+
+        // Wrap with PageContextProvider so layout components can access frontmatter via usePageContext()
+        wrappedElement = React.createElement(
+          PageContextProvider,
+          { pageContext, children: wrappedElement },
+        ) as BundledReact.ReactElement;
+        logger.debug("Wrapped element with PageContextProvider for frontmatter access");
+
+        // Build router value with domain from request URL for SSR
+        const ssrRouter = {
+          domain: this.requestUrl ? this.requestUrl.origin : "",
+          path: this.requestUrl?.pathname || pageFilePath,
+          pathname: this.requestUrl?.pathname || `/${pageInfo.entity.slug || ""}`,
+          params: {},
+          query: this.requestUrl ? Object.fromEntries(this.requestUrl.searchParams) : {},
+          isPreview: false,
+          isMounted: false,
+          navigate: async () => {},
+          push: async () => {},
+          replace: async () => {},
+          reload: async () => {},
+        };
+
+        wrappedElement = React.createElement(
+          RouterProvider,
+          { router: ssrRouter, children: wrappedElement },
+        ) as BundledReact.ReactElement;
+        logger.debug("Wrapped element with RouterProvider for SSR");
+
+        return wrappedElement;
+      },
+      {
+        "layout.page_path": pageInfo.entity.path,
+        "layout.nested_count": nestedLayouts.length,
+        "layout.has_bundle": !!layoutBundle,
+        "layout.project_dir": this.projectDir,
+      },
     );
-
-    const useAppRouter = await detectAppRouter(this.projectDir, this.config, this.adapter);
-    const pageFilePath = pageInfo.entity.path;
-
-    // Skip App component wrapping for dot-prefixed paths (e.g., .veryfront) - these are
-    // framework-level pages that should not use user-defined App component
-    const isDotPath = pageFilePath.split("/").some((s) =>
-      s.startsWith(".") && s !== "." && s !== ".."
-    );
-
-    if (!useAppRouter && !isDotPath) {
-      wrappedElement = await this.wrapWithAppComponent(wrappedElement);
-    } else if (isDotPath) {
-      logger.debug("Skipping wrapWithAppComponent - dot-prefixed path");
-    }
-
-    if (useAppRouter) {
-      wrappedElement = await this.wrapWithReservedComponents(wrappedElement, pageFilePath);
-    }
-
-    // Wrap with RouterProvider to match client-side tree structure
-    // This ensures useId() generates consistent IDs between SSR and client
-    const React = await getProjectReact();
-
-    // Build page context with frontmatter for usePageContext() hook
-    // Use merged frontmatter (from MDX compilation + entity) when available
-    const headingsArray = this.headings || [];
-    const pageContext = {
-      slug: pageInfo.entity.slug || "",
-      path: pageFilePath,
-      params: {},
-      query: {},
-      frontmatter: this.frontmatter || pageInfo.entity.frontmatter || {},
-      headings: headingsArray,
-      mdxHeadings: headingsArray, // Alias for backwards compatibility
-    };
-    logger.debug("[LayoutApplicator] PageContext", {
-      frontmatterKeys: Object.keys(pageContext.frontmatter),
-      headingsCount: headingsArray.length,
-    });
-
-    // Wrap with PageContextProvider so layout components can access frontmatter via usePageContext()
-    wrappedElement = React.createElement(
-      PageContextProvider,
-      { pageContext, children: wrappedElement },
-    ) as BundledReact.ReactElement;
-    logger.debug("Wrapped element with PageContextProvider for frontmatter access");
-
-    // Build router value with domain from request URL for SSR
-    const ssrRouter = {
-      domain: this.requestUrl ? this.requestUrl.origin : "",
-      path: this.requestUrl?.pathname || pageFilePath,
-      pathname: this.requestUrl?.pathname || `/${pageInfo.entity.slug || ""}`,
-      params: {},
-      query: this.requestUrl ? Object.fromEntries(this.requestUrl.searchParams) : {},
-      isPreview: false,
-      isMounted: false,
-      navigate: async () => {},
-      push: async () => {},
-      replace: async () => {},
-      reload: async () => {},
-    };
-
-    wrappedElement = React.createElement(
-      RouterProvider,
-      { router: ssrRouter, children: wrappedElement },
-    ) as BundledReact.ReactElement;
-    logger.debug("Wrapped element with RouterProvider for SSR");
-
-    return wrappedElement;
   }
 
   private async applyLayoutsOnly(
@@ -164,86 +177,104 @@ export class LayoutApplicator {
     nestedLayouts: LayoutItem[],
     layoutDataMap?: Map<string, Record<string, unknown>>,
   ): Promise<BundledReact.ReactElement> {
-    logger.debug("Applying layouts", {
-      nestedLayoutCount: nestedLayouts.length,
-      hasLayoutBundle: !!layoutBundle,
-    });
-    const useESMWrap = Boolean(this.config?.experimental?.esmLayouts);
+    return await withSpan(
+      SpanNames.LAYOUT_APPLY_ONLY,
+      async () => {
+        logger.debug("Applying layouts", {
+          nestedLayoutCount: nestedLayouts.length,
+          hasLayoutBundle: !!layoutBundle,
+        });
+        const useESMWrap = Boolean(this.config?.experimental?.esmLayouts);
 
-    if (useESMWrap) {
-      return await applyLayoutsESM(
-        pageElement,
-        layoutBundle,
-        nestedLayouts,
-        this.projectDir,
-        this.mergedComponents,
-        this.layoutCache,
-        this.adapter,
-        layoutDataMap,
-        this.projectId,
-        this.projectSlug,
-        this.contentSourceId,
-      );
-    }
+        if (useESMWrap) {
+          return await applyLayoutsESM(
+            pageElement,
+            layoutBundle,
+            nestedLayouts,
+            this.projectDir,
+            this.mergedComponents,
+            this.layoutCache,
+            this.adapter,
+            layoutDataMap,
+            this.projectId,
+            this.projectSlug,
+            this.contentSourceId,
+          );
+        }
 
-    return await applyLayoutsFunctionBody(
-      pageElement,
-      layoutBundle,
-      nestedLayouts,
-      this.mergedComponents,
-      this.layoutCache,
-      this.projectDir,
-      this.adapter,
-      layoutDataMap,
-      this.projectId,
-      this.projectSlug,
+        return await applyLayoutsFunctionBody(
+          pageElement,
+          layoutBundle,
+          nestedLayouts,
+          this.mergedComponents,
+          this.layoutCache,
+          this.projectDir,
+          this.adapter,
+          layoutDataMap,
+          this.projectId,
+          this.projectSlug,
+        );
+      },
+      {
+        "layout.nested_count": nestedLayouts.length,
+        "layout.has_bundle": !!layoutBundle,
+        "layout.use_esm": Boolean(this.config?.experimental?.esmLayouts),
+      },
     );
   }
 
   private async wrapWithAppComponent(
     pageElement: BundledReact.ReactElement,
   ): Promise<BundledReact.ReactElement> {
-    const appPath = await resolveAppComponentPath(this.projectDir, this.adapter, this.config);
-    if (!appPath) return pageElement;
+    return await withSpan(
+      SpanNames.LAYOUT_WRAP_APP_COMPONENT,
+      async () => {
+        const appPath = await resolveAppComponentPath(this.projectDir, this.adapter, this.config);
+        if (!appPath) return pageElement;
 
-    try {
-      logger.debug("Loading App component from", appPath);
-      const appSource = await this.adapter.fs.readFile(appPath);
-      const isMdx = appPath.endsWith(".mdx") || appPath.endsWith(".md");
+        try {
+          logger.debug("Loading App component from", appPath);
+          const appSource = await this.adapter.fs.readFile(appPath);
+          const isMdx = appPath.endsWith(".mdx") || appPath.endsWith(".md");
 
-      let App: React.ComponentType<Record<string, unknown>> | null = null;
+          let App: React.ComponentType<Record<string, unknown>> | null = null;
 
-      if (isMdx) {
-        // Handle MDX files - compile and load
-        App = await this.loadMdxAppComponent(appSource, appPath);
-      } else {
-        // Handle regular TSX/JSX files
-        const { loadComponentFromSource } = await import(
-          "@veryfront/modules/react-loader/index.ts"
-        );
-        App = await loadComponentFromSource(
-          appSource,
-          appPath,
-          this.projectDir,
-          this.adapter,
-          {
-            projectId: this.projectId ?? this.projectDir,
-            dev: this.mode === "development",
-            moduleServerUrl: this.config?.dev?.moduleServerUrl,
-          },
-        );
-      }
+          if (isMdx) {
+            // Handle MDX files - compile and load
+            App = await this.loadMdxAppComponent(appSource, appPath);
+          } else {
+            // Handle regular TSX/JSX files
+            const { loadComponentFromSource } = await import(
+              "@veryfront/modules/react-loader/index.ts"
+            );
+            App = await loadComponentFromSource(
+              appSource,
+              appPath,
+              this.projectDir,
+              this.adapter,
+              {
+                projectId: this.projectId ?? this.projectDir,
+                dev: this.mode === "development",
+                moduleServerUrl: this.config?.dev?.moduleServerUrl,
+              },
+            );
+          }
 
-      if (App) {
-        const React = await getProjectReact();
-        logger.debug("Wrapped page with App component");
-        return React.createElement(App, { children: pageElement }) as BundledReact.ReactElement;
-      }
-    } catch (error) {
-      logger.warn("Failed to load App component:", error);
-    }
+          if (App) {
+            const React = await getProjectReact();
+            logger.debug("Wrapped page with App component");
+            return React.createElement(App, { children: pageElement }) as BundledReact.ReactElement;
+          }
+        } catch (error) {
+          logger.warn("Failed to load App component:", error);
+        }
 
-    return pageElement;
+        return pageElement;
+      },
+      {
+        "layout.project_dir": this.projectDir,
+      },
+    );
   }
 
   private async loadMdxAppComponent(
@@ -304,47 +335,60 @@ export class LayoutApplicator {
     pageElement: BundledReact.ReactElement,
     pageFilePath: string,
   ): Promise<BundledReact.ReactElement> {
-    const React = await getProjectReact();
-    try {
-      const segmentDir = dirname(pageFilePath);
-      const appRootDir = join(this.projectDir, "app");
-      const searchDirs = await collectAncestorDirs(segmentDir, appRootDir);
+    return await withSpan(
+      SpanNames.LAYOUT_WRAP_RESERVED,
+      async () => {
+        const React = await getProjectReact();
+        try {
+          const segmentDir = dirname(pageFilePath);
+          const appRootDir = join(this.projectDir, "app");
+          const searchDirs = await collectAncestorDirs(segmentDir, appRootDir);
 
-      const loadingComp = await tryLoadReservedInDirs(
-        searchDirs,
-        "loading",
-        this.projectDir,
-        this.mode,
-        this.adapter,
-        this.projectId,
-      );
+          const loadingComp = await tryLoadReservedInDirs(
+            searchDirs,
+            "loading",
+            this.projectDir,
+            this.mode,
+            this.adapter,
+            this.projectId,
+          );
 
-      const errorComp = await tryLoadReservedInDirs(
-        searchDirs,
-        "error",
-        this.projectDir,
-        this.mode,
-        this.adapter,
-        this.projectId,
-      );
+          const errorComp = await tryLoadReservedInDirs(
+            searchDirs,
+            "error",
+            this.projectDir,
+            this.mode,
+            this.adapter,
+            this.projectId,
+          );
 
-      if (loadingComp) {
-        const fallbackEl = React.createElement(loadingComp, {});
-        pageElement = React.createElement(
-          React.Suspense,
-          { fallback: fallbackEl },
-          pageElement,
-        ) as BundledReact.ReactElement;
-      }
+          if (loadingComp) {
+            const fallbackEl = React.createElement(loadingComp, {});
+            pageElement = React.createElement(
+              React.Suspense,
+              { fallback: fallbackEl },
+              pageElement,
+            ) as BundledReact.ReactElement;
+          }
 
-      if (errorComp) {
-        const Boundary = createErrorBoundary(errorComp, React);
-        pageElement = React.createElement(Boundary, {}, pageElement) as BundledReact.ReactElement;
-      }
-    } catch (error) {
-      logger.warn("Failed applying reserved loading/error components", error);
-    }
+          if (errorComp) {
+            const Boundary = createErrorBoundary(errorComp, React);
+            pageElement = React.createElement(
+              Boundary,
+              {},
+              pageElement,
+            ) as BundledReact.ReactElement;
+          }
+        } catch (error) {
+          logger.warn("Failed applying reserved loading/error components", error);
+        }
 
-    return pageElement;
+        return pageElement;
+      },
+      {
+        "layout.page_path": pageFilePath,
+        "layout.project_dir": this.projectDir,
+      },
+    );
   }
 }

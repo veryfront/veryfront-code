@@ -9,64 +9,74 @@ import type { LoadComponentOptions } from "./types.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { SSRModuleLoader } from "./ssr-module-loader/index.ts";
 import { extractComponent } from "./extract-component.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
-export async function loadComponentFromSource(
+export function loadComponentFromSource(
   source: string,
   filePath: string,
   projectDir: string,
   adapter: RuntimeAdapter,
   options?: LoadComponentOptions,
 ): Promise<React.ComponentType<Record<string, unknown>>> {
-  const projectId = options?.projectId || projectDir;
-  const dev = options?.dev ?? true;
-  // Default to SSR mode for server-side execution (both Node and Deno)
-  // Browser mode (ssr=false) is only for client-side module transforms
-  const ssr = options?.ssr ?? true;
+  const fileName = filePath.split("/").pop() || filePath;
 
-  // SSR mode: Use SSRModuleLoader for proper recursive dependency transformation
-  if (ssr) {
-    const loader = new SSRModuleLoader({
-      projectDir,
+  return withSpan("modules.react.loadComponentFromSource", async () => {
+    const projectId = options?.projectId || projectDir;
+    const dev = options?.dev ?? true;
+    // Default to SSR mode for server-side execution (both Node and Deno)
+    // Browser mode (ssr=false) is only for client-side module transforms
+    const ssr = options?.ssr ?? true;
+
+    // SSR mode: Use SSRModuleLoader for proper recursive dependency transformation
+    if (ssr) {
+      const loader = new SSRModuleLoader({
+        projectDir,
+        projectId,
+        adapter,
+        dev,
+        contentSourceId: options?.contentSourceId,
+      });
+      return loader.loadModule(filePath, source);
+    }
+
+    // Browser mode: Single file transform (dependencies loaded via module server)
+    const moduleServerUrl = options?.moduleServerUrl ?? "/_vf_modules";
+    const vendorBundleHash = options?.vendorBundleHash;
+
+    const transformOpts: TransformOptions = {
       projectId,
-      adapter,
       dev,
-      contentSourceId: options?.contentSourceId,
-    });
-    return loader.loadModule(filePath, source);
-  }
+      moduleServerUrl,
+      vendorBundleHash,
+      ssr: false,
+    };
 
-  // Browser mode: Single file transform (dependencies loaded via module server)
-  const moduleServerUrl = options?.moduleServerUrl ?? "/_vf_modules";
-  const vendorBundleHash = options?.vendorBundleHash;
+    const transformedCode = await transformToESM(
+      source,
+      filePath,
+      projectDir,
+      adapter,
+      transformOpts,
+    );
 
-  const transformOpts: TransformOptions = {
-    projectId,
-    dev,
-    moduleServerUrl,
-    vendorBundleHash,
-    ssr: false,
-  };
+    const tmpDir = await getProjectTmpDir(projectId);
+    const relativeFilePath = resolveRelativePath(filePath, projectDir);
+    const componentFile = join(tmpDir, normalizeModulePath(relativeFilePath));
 
-  const transformedCode = await transformToESM(
-    source,
-    filePath,
-    projectDir,
-    adapter,
-    transformOpts,
-  );
+    const componentDir = componentFile.substring(0, componentFile.lastIndexOf("/"));
+    const fs = createFileSystem();
+    await fs.mkdir(componentDir, { recursive: true });
 
-  const tmpDir = await getProjectTmpDir(projectId);
-  const relativeFilePath = resolveRelativePath(filePath, projectDir);
-  const componentFile = join(tmpDir, normalizeModulePath(relativeFilePath));
+    await fs.writeTextFile(componentFile, transformedCode);
 
-  const componentDir = componentFile.substring(0, componentFile.lastIndexOf("/"));
-  const fs = createFileSystem();
-  await fs.mkdir(componentDir, { recursive: true });
+    const cacheBuster = Date.now();
+    const mod = await import(`file://${componentFile}?t=${cacheBuster}`);
 
-  await fs.writeTextFile(componentFile, transformedCode);
-
-  const cacheBuster = Date.now();
-  const mod = await import(`file://${componentFile}?t=${cacheBuster}`);
-
-  return extractComponent(mod, filePath);
+    return extractComponent(mod, filePath);
+  }, {
+    "react.file": fileName,
+    "react.projectDir": projectDir,
+    "react.ssr": options?.ssr ?? true,
+    "react.sourceLength": source.length,
+  });
 }

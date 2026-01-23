@@ -9,6 +9,7 @@ import { registerTool } from "#veryfront/mcp";
 import { agentRegistry } from "./composition/index.ts";
 import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 /**
  * Standard headers for Vercel AI SDK compatible streaming responses
@@ -121,38 +122,44 @@ export function agent(config: AgentConfig): Agent {
       input: string | Message[];
       context?: Record<string, unknown>;
     }): Promise<AgentResponse> {
-      return runtime.generate(input.input, input.context);
+      return withSpan("agent.factory.generate", () => {
+        return runtime.generate(input.input, input.context);
+      }, { "agent.id": id });
     },
 
-    async stream(input: {
+    stream(input: {
       input?: string;
       messages?: Message[];
       context?: Record<string, unknown>;
       onToolCall?: (toolCall: ToolCall) => void;
       onChunk?: (chunk: string) => void;
     }): Promise<AgentStreamResult> {
-      const inputMessages: Message[] = input.input
-        ? [{
-          id: `msg_${Date.now()}`,
-          role: "user" as const,
-          parts: [{ type: "text", text: input.input }],
-        }]
-        : input.messages || [];
+      return withSpan("agent.factory.stream", async () => {
+        const inputMessages: Message[] = input.input
+          ? [{
+            id: `msg_${Date.now()}`,
+            role: "user" as const,
+            parts: [{ type: "text", text: input.input }],
+          }]
+          : input.messages || [];
 
-      const stream = await runtime.stream(inputMessages, input.context, {
-        onToolCall: input.onToolCall,
-        onChunk: input.onChunk,
-      });
+        const stream = await runtime.stream(inputMessages, input.context, {
+          onToolCall: input.onToolCall,
+          onChunk: input.onChunk,
+        });
 
-      return createAgentStreamResult(stream);
+        return createAgentStreamResult(stream);
+      }, { "agent.id": id, "agent.input_type": input.input ? "string" : "messages" });
     },
 
-    async respond(request: Request): Promise<Response> {
-      const body = await request.json();
-      const messages = body.messages || [];
-      const stream = await runtime.stream(messages, body.context);
+    respond(request: Request): Promise<Response> {
+      return withSpan("agent.factory.respond", async () => {
+        const body = await request.json();
+        const messages = body.messages || [];
+        const stream = await runtime.stream(messages, body.context);
 
-      return new Response(stream, { headers: STREAMING_HEADERS });
+        return new Response(stream, { headers: STREAMING_HEADERS });
+      }, { "agent.id": id });
     },
 
     getMemory() {

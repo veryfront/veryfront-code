@@ -7,6 +7,7 @@
  */
 
 import { logger } from "#veryfront/utils";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { createError, toError } from "../../../errors/veryfront-error.ts";
 import type { TokenStorageAdapter, TokenStorageAdapterConfig } from "./veryfront/types.ts";
 
@@ -29,32 +30,34 @@ import type { TokenStorageAdapter, TokenStorageAdapterConfig } from "./veryfront
  * const adapter = await createTokenStorageAdapter({ type: "memory" });
  * ```
  */
-export async function createTokenStorageAdapter(
+export function createTokenStorageAdapter(
   config: TokenStorageAdapterConfig,
 ): Promise<TokenStorageAdapter> {
   const type = config.type || "memory";
 
-  logger.debug("[TokenAdapterFactory] Creating adapter", { type });
+  return withSpan("platform.token.createAdapter", async () => {
+    logger.debug("[TokenAdapterFactory] Creating adapter", { type });
 
-  if (type === "memory") {
-    const { MemoryTokenAdapter } = await import("./veryfront/memory-adapter.ts");
-    const adapter = new MemoryTokenAdapter();
-    await adapter.initialize?.();
-    return adapter;
-  }
+    if (type === "memory") {
+      const { MemoryTokenAdapter } = await import("./veryfront/memory-adapter.ts");
+      const adapter = new MemoryTokenAdapter();
+      await adapter.initialize?.();
+      return adapter;
+    }
 
-  if (type === "veryfront-api") {
-    const { VeryfrontTokenAdapter } = await import("./veryfront/adapter.ts");
-    const adapter = new VeryfrontTokenAdapter(config);
-    await adapter.initialize?.();
-    return adapter;
-  }
+    if (type === "veryfront-api") {
+      const { VeryfrontTokenAdapter } = await import("./veryfront/adapter.ts");
+      const adapter = new VeryfrontTokenAdapter(config);
+      await adapter.initialize?.();
+      return adapter;
+    }
 
-  throw toError(
-    createError({
-      type: "config",
-      message: `Token storage adapter type "${type}" is not implemented. ` +
-        `Supported types: "memory", "veryfront-api".`,
-    }),
-  );
+    throw toError(
+      createError({
+        type: "config",
+        message: `Token storage adapter type "${type}" is not implemented. ` +
+          `Supported types: "memory", "veryfront-api".`,
+      }),
+    );
+  }, { "token.adapter.type": type });
 }

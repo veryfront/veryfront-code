@@ -18,6 +18,7 @@
  */
 import { serverLogger } from "#veryfront/utils";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 export type Permission = "net" | "fs" | "env" | "run" | "read" | "write";
 
@@ -76,42 +77,44 @@ function createPermissionDescriptor(
  * Request permission using Deno's built-in permission system.
  * Deno requires explicit permission grants for security-sensitive operations.
  */
-async function requestDenoPermission(
+function requestDenoPermission(
   request: PermissionRequest,
 ): Promise<PermissionResult> {
-  // Check if Deno permissions API is available
-  if (
-    !isDeno ||
-    // @ts-ignore - Deno permissions API
-    !("permissions" in Deno) ||
-    // @ts-ignore - Deno permissions API
-    typeof Deno.permissions?.request !== "function"
-  ) {
-    return { state: "denied" };
-  }
+  return withSpan("security.permissions.requestDeno", async () => {
+    // Check if Deno permissions API is available
+    if (
+      !isDeno ||
+      // @ts-ignore - Deno permissions API
+      !("permissions" in Deno) ||
+      // @ts-ignore - Deno permissions API
+      typeof Deno.permissions?.request !== "function"
+    ) {
+      return { state: "denied" };
+    }
 
-  if (request.name === "fs") {
-    const path = request.path;
-    // @ts-ignore - Deno permissions API
-    const readStatus = await Deno.permissions.request({ name: "read", path });
-    if (readStatus.state !== "granted") {
-      return { state: readStatus.state };
+    if (request.name === "fs") {
+      const path = request.path;
+      // @ts-ignore - Deno permissions API
+      const readStatus = await Deno.permissions.request({ name: "read", path });
+      if (readStatus.state !== "granted") {
+        return { state: readStatus.state };
+      }
+
+      // @ts-ignore - Deno permissions API
+      const writeStatus = await Deno.permissions.request({ name: "write", path });
+      return { state: writeStatus.state };
+    }
+
+    const descriptor = createPermissionDescriptor(request);
+    if (!descriptor) {
+      serverLogger.warn("[permissions] Unsupported permission request", request);
+      return { state: "denied" };
     }
 
     // @ts-ignore - Deno permissions API
-    const writeStatus = await Deno.permissions.request({ name: "write", path });
-    return { state: writeStatus.state };
-  }
-
-  const descriptor = createPermissionDescriptor(request);
-  if (!descriptor) {
-    serverLogger.warn("[permissions] Unsupported permission request", request);
-    return { state: "denied" };
-  }
-
-  // @ts-ignore - Deno permissions API
-  const status = await Deno.permissions.request(descriptor);
-  return { state: status.state };
+    const status = await Deno.permissions.request(descriptor);
+    return { state: status.state };
+  }, { "permission.name": request.name });
 }
 
 /**
@@ -124,25 +127,27 @@ async function requestDenoPermission(
  * This abstraction allows code to be written with Deno's security model in mind
  * while still working on other runtimes.
  */
-export async function requestPermission(
+export function requestPermission(
   request: PermissionRequest,
 ): Promise<PermissionResult> {
-  try {
-    if (isDeno) {
-      return await requestDenoPermission(request);
-    }
+  return withSpan("security.permissions.request", async () => {
+    try {
+      if (isDeno) {
+        return await requestDenoPermission(request);
+      }
 
-    // Node.js and Bun don't have a permission system - everything is allowed.
-    // Return "granted" to allow operations to proceed.
-    serverLogger.debug("[permissions] Permission auto-granted (non-Deno runtime)", {
-      permission: request.name,
-    });
-    return { state: "granted" };
-  } catch (error) {
-    serverLogger.warn("[permissions] Permission request failed", {
-      permission: request.name,
-      error,
-    });
-    return { state: "denied" };
-  }
+      // Node.js and Bun don't have a permission system - everything is allowed.
+      // Return "granted" to allow operations to proceed.
+      serverLogger.debug("[permissions] Permission auto-granted (non-Deno runtime)", {
+        permission: request.name,
+      });
+      return { state: "granted" };
+    } catch (error) {
+      serverLogger.warn("[permissions] Permission request failed", {
+        permission: request.name,
+        error,
+      });
+      return { state: "denied" };
+    }
+  }, { "permission.name": request.name });
 }

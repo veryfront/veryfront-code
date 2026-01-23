@@ -339,6 +339,21 @@ export function setSpanAttributes(
 }
 
 /**
+ * Set attributes on the currently active span (if any).
+ * Useful for adding response metadata inside withSpan callbacks.
+ */
+export function setActiveSpanAttributes(
+  attributes: Record<string, string | number | boolean>,
+): void {
+  if (!traceApi) return;
+  const span = traceApi.trace.getSpan(traceApi.context.active());
+  if (!span) return;
+  for (const [key, value] of Object.entries(attributes)) {
+    span.setAttribute(key, value);
+  }
+}
+
+/**
  * Execute a function within a span context
  */
 export async function withContext<T>(

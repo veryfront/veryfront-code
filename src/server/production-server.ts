@@ -9,6 +9,7 @@ import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
 import {
   initializeOTLPWithApis,
   shutdownOTLP,
+  withSpan,
 } from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
   getMemorySnapshot,
@@ -38,79 +39,81 @@ export interface ServerHandle {
   stop: () => Promise<void>;
 }
 
-export async function startUniversalServer(
+export function startUniversalServer(
   options: ServerOptions & {
     debug?: boolean;
     adapter?: RuntimeAdapter;
   },
 ): Promise<ServerHandle> {
-  const { projectDir, port, bindAddress = "0.0.0.0", signal, debug, mode } = options;
-  const baseAdapter = options.adapter ?? (await runtime.get());
+  return withSpan("server.startUniversalServer", async () => {
+    const { projectDir, port, bindAddress = "0.0.0.0", signal, debug, mode } = options;
+    const baseAdapter = options.adapter ?? (await runtime.get());
 
-  // Bootstrap framework to initialize FSAdapter if configured
-  const bootstrap = await bootstrapProd(projectDir, baseAdapter);
-  const adapter = bootstrap.adapter;
+    // Bootstrap framework to initialize FSAdapter if configured
+    const bootstrap = await bootstrapProd(projectDir, baseAdapter);
+    const adapter = bootstrap.adapter;
 
-  if (bootstrap.usingFSAdapter) {
-    logger.debug("FSAdapter initialized", { type: bootstrap.fsAdapterType });
-  }
+    if (bootstrap.usingFSAdapter) {
+      logger.debug("FSAdapter initialized", { type: bootstrap.fsAdapterType });
+    }
 
-  // Enable SSR fetch interception to handle relative URLs during SSR
-  setSSRServerPort(port);
-  enableSSRFetchInterception();
+    // Enable SSR fetch interception to handle relative URLs during SSR
+    setSSRServerPort(port);
+    enableSSRFetchInterception();
 
-  // Enable client-only fetching for /api/* routes in production.
-  // This returns empty mock responses during SSR (instead of failing with
-  // "Invalid URL" or "Connection refused"). React Query will refetch
-  // the actual data client-side after hydration.
-  enableSSRClientOnlyFetching();
+    // Enable client-only fetching for /api/* routes in production.
+    // This returns empty mock responses during SSR (instead of failing with
+    // "Invalid URL" or "Connection refused"). React Query will refetch
+    // the actual data client-side after hydration.
+    enableSSRClientOnlyFetching();
 
-  logger.info("Starting universal production server", { projectDir, port, bindAddress });
+    logger.info("Starting universal production server", { projectDir, port, bindAddress });
 
-  const handler = createVeryfrontHandler(projectDir, adapter, {
-    projectDir,
-    debug,
-    config: bootstrap.config,
-    // When mode is "development", enable dev-only features (e.g., /_veryfront/fs/)
-    // Otherwise explicitly disable dev mode (don't rely on NODE_ENV which may not be set in tests)
-    envConfig: mode === "development" ? { isLocalDev: true } : { isLocalDev: false },
-  });
+    const handler = createVeryfrontHandler(projectDir, adapter, {
+      projectDir,
+      debug,
+      config: bootstrap.config,
+      // When mode is "development", enable dev-only features (e.g., /_veryfront/fs/)
+      // Otherwise explicitly disable dev mode (don't rely on NODE_ENV which may not be set in tests)
+      envConfig: mode === "development" ? { isLocalDev: true } : { isLocalDev: false },
+    });
 
-  let onListenResolve: (() => void) | null = null;
-  const listenReady = new Promise<void>((resolve) => (onListenResolve = resolve));
+    let onListenResolve: (() => void) | null = null;
+    const listenReady = new Promise<void>((resolve) => (onListenResolve = resolve));
 
-  const ready = Promise.all([
-    listenReady,
-    handler.ready ?? Promise.resolve(),
-  ]).then(() => {
-    // Mark server as initialized when ready resolves
-    setServerInitialized(true);
-  });
+    const ready = Promise.all([
+      listenReady,
+      handler.ready ?? Promise.resolve(),
+    ]).then(() => {
+      // Mark server as initialized when ready resolves
+      setServerInitialized(true);
+    });
 
-  const server = await adapter.serve(handler, {
-    port,
-    hostname: bindAddress, // Deno uses "hostname" for bind address
-    signal,
-    onListen: (params) => {
+    const server = await adapter.serve(handler, {
+      port,
+      hostname: bindAddress, // Deno uses "hostname" for bind address
+      signal,
+      onListen: (params) => {
+        try {
+          onListenResolve?.();
+          logger.info("Universal server listening", params);
+        } catch {
+          /* ignore */
+        }
+      },
+    });
+
+    const stop = async () => {
       try {
-        onListenResolve?.();
-        logger.info("Universal server listening", params);
+        setServerInitialized(false);
+        await server.stop();
       } catch {
         /* ignore */
       }
-    },
-  });
+    };
 
-  const stop = async () => {
-    try {
-      setServerInitialized(false);
-      await server.stop();
-    } catch {
-      /* ignore */
-    }
-  };
-
-  return { ready, stop };
+    return { ready, stop };
+  }, { "server.port": options.port, "server.bindAddress": options.bindAddress || "0.0.0.0" });
 }
 
 export async function startProductionServer(options: ServerOptions): Promise<ServerHandle> {

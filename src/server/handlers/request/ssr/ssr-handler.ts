@@ -45,6 +45,7 @@ import { VeryfrontAPIError } from "#veryfront/platform/adapters/veryfront-api-cl
 import { shouldUseNoCacheHeadersFromHandler } from "../../../context/enriched-context.ts";
 import { ErrorPages } from "../../../utils/error-html.ts";
 import { ErrorOverlay } from "../../../dev-server/error-overlay/index.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 /**
  * Determine if request should serve production (released) content.
@@ -200,288 +201,251 @@ export class SSRHandler extends BaseHandler {
     }
   }
 
-  private async handleWithContext(
+  private handleWithContext(
     req: Request,
     ctx: HandlerContext,
     slug: string,
     requestId: string,
     url: URL,
   ): Promise<HandlerResult> {
-    const handleWithContextStartTime = performance.now();
-    _logger.debug("[SSR] handleWithContext START", {
-      projectSlug: ctx.projectSlug,
-      projectId: ctx.projectId,
-      slug,
-    });
-
-    // Extract studio_embed for Studio-specific features (bridge script, element selectors)
-    const studioEmbed = url.searchParams.get("studio_embed") === "true";
-
-    // Pre-render memory check - reject if memory is critically high to prevent OOM
-    if (shouldRejectDueToMemory()) {
-      const nonce = generateNonce();
-      const builder = this.createResponseBuilder(ctx, nonce);
-      this.logDebug("Rejecting request due to memory pressure", { slug }, ctx);
-
-      return this.respond(
-        builder
-          .withCORS(req, ctx.securityConfig?.cors)
-          .withCache("no-cache")
-          .withContentType(
-            getContentType(".html"),
-            ErrorPages.memoryPressure(),
-            503,
-          ),
-      );
-    }
-
-    try {
-      // Use centralized renderer factory with per-project LRU caching
-      // This prevents memory growth in multi-project mode
-      _logger.debug("[SSR] getRendererForProject START", {
+    return withSpan("ssr.handleWithContext", async () => {
+      const handleWithContextStartTime = performance.now();
+      _logger.debug("[SSR] handleWithContext START", {
         projectSlug: ctx.projectSlug,
         projectId: ctx.projectId,
         slug,
-        elapsedInHandler: `${(performance.now() - handleWithContextStartTime).toFixed(2)}ms`,
       });
-      const _getRendererStartTime = performance.now();
-      const renderer = await timeAsync("renderer-init", () => getRendererForProject(ctx));
-      this.logDebug(
-        "renderer obtained",
-        { isDev: ctx.requestContext?.isLocalDev ?? false, projectSlug: ctx.projectSlug },
-        ctx,
-      );
 
-      // Route params are extracted by the render pipeline after page resolution,
-      // avoiding redundant filesystem walks. We don't pre-extract here.
+      // Extract studio_embed for Studio-specific features (bridge script, element selectors)
+      const studioEmbed = url.searchParams.get("studio_embed") === "true";
 
-      // Generate nonce for CSP before rendering
-      const nonce = generateNonce();
-      this.logDebug(`[NONCE-TRACE] Generated nonce for SSR: ${nonce}`, { slug }, ctx);
+      // Pre-render memory check - reject if memory is critically high to prevent OOM
+      if (shouldRejectDueToMemory()) {
+        const nonce = generateNonce();
+        const builder = this.createResponseBuilder(ctx, nonce);
+        this.logDebug("Rejecting request due to memory pressure", { slug }, ctx);
 
-      const projectId = ctx.projectId || url.searchParams.get("project_id") || ctx.projectSlug ||
-        undefined;
-      const pageId = url.searchParams.get("page_id") || undefined;
-
-      // Extract color scheme from client hints or color_mode query parameter
-      const { scheme: colorScheme, fromParam: colorSchemeFromParam } = getColorSchemeFromRequest(
-        req,
-        url,
-      );
-
-      // Memory profiling: log heap before render for debugging large projects
-      const preRenderHeap = getHeapStats();
-      if (preRenderHeap.heapUsedPercent > 30) {
-        _logger.debug("[SSR] Pre-render memory", {
-          projectSlug: ctx.projectSlug,
-          slug,
-          heapUsedMB: preRenderHeap.usedHeapSizeMB,
-          heapLimitMB: preRenderHeap.heapSizeLimitMB,
-          heapUsedPercent: preRenderHeap.heapUsedPercent,
-        });
+        return this.respond(
+          builder
+            .withCORS(req, ctx.securityConfig?.cors)
+            .withCache("no-cache")
+            .withContentType(
+              getContentType(".html"),
+              ErrorPages.memoryPressure(),
+              503,
+            ),
+        );
       }
 
-      // Start tracking modules for manifest (used for expanded modulepreload hints)
-      const renderSessionId = `${ctx.projectSlug || "default"}-${slug || "index"}-${Date.now()}`;
-      startRenderSession(renderSessionId, ctx.projectSlug, slug);
+      try {
+        // Use centralized renderer factory with per-project LRU caching
+        // This prevents memory growth in multi-project mode
+        _logger.debug("[SSR] getRendererForProject START", {
+          projectSlug: ctx.projectSlug,
+          projectId: ctx.projectId,
+          slug,
+          elapsedInHandler: `${(performance.now() - handleWithContextStartTime).toFixed(2)}ms`,
+        });
+        const _getRendererStartTime = performance.now();
+        const renderer = await timeAsync("renderer-init", () => getRendererForProject(ctx));
+        this.logDebug(
+          "renderer obtained",
+          { isDev: ctx.requestContext?.isLocalDev ?? false, projectSlug: ctx.projectSlug },
+          ctx,
+        );
 
-      _logger.debug("[SSR] renderer.renderPage START", {
-        projectSlug: ctx.projectSlug,
-        projectId,
-        slug,
-        elapsedInHandler: `${(performance.now() - handleWithContextStartTime).toFixed(2)}ms`,
-      });
-      const renderPageStartTime = performance.now();
-      const result = await timeAsync("render-page", () =>
-        renderer.renderPage(slug, {
-          delivery: "stream",
-          // params extracted by pipeline after page resolution
-          request: req,
+        // Route params are extracted by the render pipeline after page resolution,
+        // avoiding redundant filesystem walks. We don't pre-extract here.
+
+        // Generate nonce for CSP before rendering
+        const nonce = generateNonce();
+        this.logDebug(`[NONCE-TRACE] Generated nonce for SSR: ${nonce}`, { slug }, ctx);
+
+        const projectId = ctx.projectId || url.searchParams.get("project_id") || ctx.projectSlug ||
+          undefined;
+        const pageId = url.searchParams.get("page_id") || undefined;
+
+        // Extract color scheme from client hints or color_mode query parameter
+        const { scheme: colorScheme, fromParam: colorSchemeFromParam } = getColorSchemeFromRequest(
+          req,
           url,
-          nonce,
-          studioEmbed,
-          projectId,
-          pageId,
-          colorScheme,
-          colorSchemeFromParam,
-          environment: ctx.requestContext?.mode,
+        );
+
+        // Memory profiling: log heap before render for debugging large projects
+        const preRenderHeap = getHeapStats();
+        if (preRenderHeap.heapUsedPercent > 30) {
+          _logger.debug("[SSR] Pre-render memory", {
+            projectSlug: ctx.projectSlug,
+            slug,
+            heapUsedMB: preRenderHeap.usedHeapSizeMB,
+            heapLimitMB: preRenderHeap.heapSizeLimitMB,
+            heapUsedPercent: preRenderHeap.heapUsedPercent,
+          });
+        }
+
+        // Start tracking modules for manifest (used for expanded modulepreload hints)
+        const renderSessionId = `${ctx.projectSlug || "default"}-${slug || "index"}-${Date.now()}`;
+        startRenderSession(renderSessionId, ctx.projectSlug, slug);
+
+        _logger.debug("[SSR] renderer.renderPage START", {
           projectSlug: ctx.projectSlug,
-        }));
-      _logger.debug("[SSR] renderer.renderPage DONE", {
-        projectSlug: ctx.projectSlug,
-        slug,
-        duration: `${(performance.now() - renderPageStartTime).toFixed(2)}ms`,
-        hasHtml: !!result.html,
-        hasStream: !!result.stream,
-      });
-
-      // End tracking and record to manifest for future requests
-      endRenderSession(renderSessionId);
-
-      this.logDebug("SSR successful", { slug }, ctx);
-      endRequest(requestId);
-
-      // Memory profiling: log heap after render for debugging large projects
-      const postRenderHeap = getHeapStats();
-      const heapGrowthMB = postRenderHeap.usedHeapSizeMB - preRenderHeap.usedHeapSizeMB;
-      if (heapGrowthMB > 50 || postRenderHeap.heapUsedPercent > 50) {
-        _logger.debug("[SSR] Post-render memory", {
+          projectId,
+          slug,
+          elapsedInHandler: `${(performance.now() - handleWithContextStartTime).toFixed(2)}ms`,
+        });
+        const renderPageStartTime = performance.now();
+        const result = await timeAsync("render-page", () =>
+          renderer.renderPage(slug, {
+            delivery: "stream",
+            // params extracted by pipeline after page resolution
+            request: req,
+            url,
+            nonce,
+            studioEmbed,
+            projectId,
+            pageId,
+            colorScheme,
+            colorSchemeFromParam,
+            environment: ctx.requestContext?.mode,
+            projectSlug: ctx.projectSlug,
+          }));
+        _logger.debug("[SSR] renderer.renderPage DONE", {
           projectSlug: ctx.projectSlug,
           slug,
-          heapUsedMB: postRenderHeap.usedHeapSizeMB,
-          heapLimitMB: postRenderHeap.heapSizeLimitMB,
-          heapUsedPercent: postRenderHeap.heapUsedPercent,
-          heapGrowthMB: Math.round(heapGrowthMB * 100) / 100,
+          duration: `${(performance.now() - renderPageStartTime).toFixed(2)}ms`,
+          hasHtml: !!result.html,
+          hasStream: !!result.stream,
         });
-      }
 
-      // TRUE STREAMING: If we have a stream but no buffered HTML, this is true streaming mode
-      // Skip ETag/304 checks since we don't have the content to hash
-      const isTrueStreaming = result.stream && !result.html;
+        // End tracking and record to manifest for future requests
+        endRenderSession(renderSessionId);
 
-      // Disable caching in development to prevent nonce mismatches
-      // (cached HTML has old nonces, but each request generates a fresh nonce for CSP)
-      // Preview URLs use short cache - poke mechanism triggers hard refresh on content changes
-      // HTTP cache headers: no-cache for development and preview, short for production
-      // Preview uses no-cache HTTP headers because browser must fetch fresh content
-      // Server-side memory caches handle performance in preview mode (Phase 7)
-      const cacheStrategy = shouldUseNoCacheHeadersFromHandler(ctx) ? "no-cache" : "short";
-      const isHeadRequest = req.method.toUpperCase() === "HEAD";
-      const builder = this.createResponseBuilder(ctx, nonce);
+        this.logDebug("SSR successful", { slug }, ctx);
+        endRequest(requestId);
 
-      // For true streaming, skip ETag and return stream immediately for fast TTFB
-      if (isTrueStreaming) {
-        this.logDebug("True streaming SSR - returning stream immediately", { slug }, ctx);
+        // Memory profiling: log heap after render for debugging large projects
+        const postRenderHeap = getHeapStats();
+        const heapGrowthMB = postRenderHeap.usedHeapSizeMB - preRenderHeap.usedHeapSizeMB;
+        if (heapGrowthMB > 50 || postRenderHeap.heapUsedPercent > 50) {
+          _logger.debug("[SSR] Post-render memory", {
+            projectSlug: ctx.projectSlug,
+            slug,
+            heapUsedMB: postRenderHeap.usedHeapSizeMB,
+            heapLimitMB: postRenderHeap.heapSizeLimitMB,
+            heapUsedPercent: postRenderHeap.heapUsedPercent,
+            heapGrowthMB: Math.round(heapGrowthMB * 100) / 100,
+          });
+        }
+
+        // TRUE STREAMING: If we have a stream but no buffered HTML, this is true streaming mode
+        // Skip ETag/304 checks since we don't have the content to hash
+        const isTrueStreaming = result.stream && !result.html;
+
+        // Disable caching in development to prevent nonce mismatches
+        // (cached HTML has old nonces, but each request generates a fresh nonce for CSP)
+        // Preview URLs use short cache - poke mechanism triggers hard refresh on content changes
+        // HTTP cache headers: no-cache for development and preview, short for production
+        // Preview uses no-cache HTTP headers because browser must fetch fresh content
+        // Server-side memory caches handle performance in preview mode (Phase 7)
+        const cacheStrategy = shouldUseNoCacheHeadersFromHandler(ctx) ? "no-cache" : "short";
+        const isHeadRequest = req.method.toUpperCase() === "HEAD";
+        const builder = this.createResponseBuilder(ctx, nonce);
+
+        // For true streaming, skip ETag and return stream immediately for fast TTFB
+        if (isTrueStreaming) {
+          this.logDebug("True streaming SSR - returning stream immediately", { slug }, ctx);
+
+          const response = builder
+            .withCORS(req, ctx.securityConfig?.cors)
+            .withSecurity(ctx.securityConfig ?? undefined)
+            .withClientHints() // Enable Sec-CH-Prefers-Color-Scheme for theme detection
+            .withCache("no-cache") // Don't cache streaming responses
+            .withContentType(
+              getContentType(".html"),
+              result.stream!, // Non-null: isTrueStreaming already verified stream exists
+              HTTP_OK,
+            );
+
+          if (isHeadRequest) {
+            await response.body?.cancel().catch(() => {/* ignore */});
+            return this.respond(
+              new Response(null, { status: response.status, headers: response.headers }),
+            );
+          }
+
+          return this.respond(response);
+        }
+
+        // Buffered mode: compute ETag and support 304 responses
+        const etag = computeSSRETag(result.ssrHash, result.html);
+
+        // Check if-none-match for 304 response
+        // IMPORTANT: Skip 304 in dev mode to prevent CSP nonce mismatch
+        // (304 returns new nonce in CSP but browser uses cached HTML with old nonce)
+        const isDev = ctx.requestContext?.isLocalDev ?? false;
+        if (!isDev && hasMatchingEtag(req, etag)) {
+          return this.respond(
+            builder
+              .withCORS(req, ctx.securityConfig?.cors)
+              .withSecurity(ctx.securityConfig ?? undefined)
+              .withCache(cacheStrategy)
+              .notModified(etag),
+          );
+        }
 
         const response = builder
           .withCORS(req, ctx.securityConfig?.cors)
           .withSecurity(ctx.securityConfig ?? undefined)
           .withClientHints() // Enable Sec-CH-Prefers-Color-Scheme for theme detection
-          .withCache("no-cache") // Don't cache streaming responses
+          .withCache(cacheStrategy)
+          .withETag(etag)
           .withContentType(
             getContentType(".html"),
-            result.stream!, // Non-null: isTrueStreaming already verified stream exists
+            result.stream || result.html,
             HTTP_OK,
           );
 
         if (isHeadRequest) {
-          await response.body?.cancel().catch(() => {/* ignore */});
+          await response.body?.cancel().catch(() => {
+            /* ignore */
+          });
           return this.respond(
-            new Response(null, { status: response.status, headers: response.headers }),
+            new Response(null, {
+              status: response.status,
+              headers: response.headers,
+            }),
           );
         }
 
         return this.respond(response);
-      }
-
-      // Buffered mode: compute ETag and support 304 responses
-      const etag = computeSSRETag(result.ssrHash, result.html);
-
-      // Check if-none-match for 304 response
-      // IMPORTANT: Skip 304 in dev mode to prevent CSP nonce mismatch
-      // (304 returns new nonce in CSP but browser uses cached HTML with old nonce)
-      const isDev = ctx.requestContext?.isLocalDev ?? false;
-      if (!isDev && hasMatchingEtag(req, etag)) {
-        return this.respond(
-          builder
-            .withCORS(req, ctx.securityConfig?.cors)
-            .withSecurity(ctx.securityConfig ?? undefined)
-            .withCache(cacheStrategy)
-            .notModified(etag),
-        );
-      }
-
-      const response = builder
-        .withCORS(req, ctx.securityConfig?.cors)
-        .withSecurity(ctx.securityConfig ?? undefined)
-        .withClientHints() // Enable Sec-CH-Prefers-Color-Scheme for theme detection
-        .withCache(cacheStrategy)
-        .withETag(etag)
-        .withContentType(
-          getContentType(".html"),
-          result.stream || result.html,
-          HTTP_OK,
-        );
-
-      if (isHeadRequest) {
-        await response.body?.cancel().catch(() => {
-          /* ignore */
-        });
-        return this.respond(
-          new Response(null, {
-            status: response.status,
-            headers: response.headers,
-          }),
-        );
-      }
-
-      return this.respond(response);
-    } catch (error) {
-      if (error instanceof VeryfrontError && error.code === ErrorCode.FILE_NOT_FOUND) {
-        this.logDebug("SSR renderPage not found", {
-          slug,
-          error: this.getErrorMessage(error),
-        }, ctx);
-
-        // Generate nonce for 404 response HTML
-        const notFoundNonce = generateNonce();
-        const builder = this.createResponseBuilder(ctx, notFoundNonce);
-
-        // Try App Router not-found.tsx first
-        const notFoundResponse = await tryNotFoundFallback(req, slug, ctx, builder);
-        if (notFoundResponse) {
-          return this.respond(notFoundResponse);
-        }
-
-        // Try Pages Router custom 404 page
-        const customNotFoundResponse = await tryErrorPageFallback(req, ctx, builder, {
-          statusCode: HTTP_NOT_FOUND,
-          pathname: slug || "/",
-        });
-        if (customNotFoundResponse) {
-          return this.respond(customNotFoundResponse);
-        }
-
-        const isHeadRequest = req.method.toUpperCase() === "HEAD";
-        const body = isHeadRequest ? null : ErrorPages.notFound(slug || "/");
-
-        const response = builder
-          .withCORS(req, ctx.securityConfig?.cors)
-          .withSecurity(ctx.securityConfig ?? undefined)
-          .withCache("no-cache")
-          .withContentType(getContentType(".html"), body, HTTP_NOT_FOUND);
-
-        return this.respond(response);
-      }
-
-      // Check for API 404 errors from file LIST endpoints - means no content exists
-      // This handles both:
-      // - /environments/{name}/files (production mode, no release)
-      // - /branches/{name}/files (preview mode, no draft content)
-      // Important: Only match list endpoints, NOT individual file fetches (/files/{path})
-      if (error instanceof VeryfrontAPIError && error.status === 404) {
-        const errorDetails = error.details as { url?: string; responseText?: string } | undefined;
-        const apiUrl = errorDetails?.url || "";
-
-        // Check if this is a file list request (not a specific file fetch)
-        // List endpoints end with /files or /files?... (no path after /files/)
-        const isFileListRequest = apiUrl.includes("/files") &&
-          !apiUrl.includes("/files/") &&
-          (apiUrl.includes("/environments/") || apiUrl.includes("/branches/"));
-
-        // Show friendly page when listing files fails (no release or no draft content)
-        if (isFileListRequest) {
-          this.logDebug("No content found for project", {
-            projectSlug: ctx.projectSlug,
-            apiUrl,
+      } catch (error) {
+        if (error instanceof VeryfrontError && error.code === ErrorCode.FILE_NOT_FOUND) {
+          this.logDebug("SSR renderPage not found", {
+            slug,
             error: this.getErrorMessage(error),
           }, ctx);
 
-          const notDeployedNonce = generateNonce();
-          const builder = this.createResponseBuilder(ctx, notDeployedNonce);
-          const isHeadRequest = req.method.toUpperCase() === "HEAD";
+          // Generate nonce for 404 response HTML
+          const notFoundNonce = generateNonce();
+          const builder = this.createResponseBuilder(ctx, notFoundNonce);
 
-          const body = isHeadRequest ? null : ErrorPages.undeployed();
+          // Try App Router not-found.tsx first
+          const notFoundResponse = await tryNotFoundFallback(req, slug, ctx, builder);
+          if (notFoundResponse) {
+            return this.respond(notFoundResponse);
+          }
+
+          // Try Pages Router custom 404 page
+          const customNotFoundResponse = await tryErrorPageFallback(req, ctx, builder, {
+            statusCode: HTTP_NOT_FOUND,
+            pathname: slug || "/",
+          });
+          if (customNotFoundResponse) {
+            return this.respond(customNotFoundResponse);
+          }
+
+          const isHeadRequest = req.method.toUpperCase() === "HEAD";
+          const body = isHeadRequest ? null : ErrorPages.notFound(slug || "/");
 
           const response = builder
             .withCORS(req, ctx.securityConfig?.cors)
@@ -491,61 +455,100 @@ export class SSRHandler extends BaseHandler {
 
           return this.respond(response);
         }
-      }
 
-      // Always log SSR errors for debugging (not just in debug mode)
-      _logger.error("[SSR] renderPage failed", {
-        slug,
-        error: this.getErrorMessage(error),
-        stack: error instanceof Error ? error.stack : undefined,
-        projectSlug: ctx.projectSlug,
-      });
-      this.logDebug("SSR renderPage failed with error", {
-        slug,
-        error: this.getErrorMessage(error),
-      }, ctx);
+        // Check for API 404 errors from file LIST endpoints - means no content exists
+        // This handles both:
+        // - /environments/{name}/files (production mode, no release)
+        // - /branches/{name}/files (preview mode, no draft content)
+        // Important: Only match list endpoints, NOT individual file fetches (/files/{path})
+        if (error instanceof VeryfrontAPIError && error.status === 404) {
+          const errorDetails = error.details as { url?: string; responseText?: string } | undefined;
+          const apiUrl = errorDetails?.url || "";
 
-      // Generate nonce for error response HTML
-      const errorNonce = generateNonce();
-      const builder = this.createResponseBuilder(ctx, errorNonce);
-      const isHead = req.method.toUpperCase() === "HEAD";
-      const errorObj = error instanceof Error ? error : new Error(String(error));
+          // Check if this is a file list request (not a specific file fetch)
+          // List endpoints end with /files or /files?... (no path after /files/)
+          const isFileListRequest = apiUrl.includes("/files") &&
+            !apiUrl.includes("/files/") &&
+            (apiUrl.includes("/environments/") || apiUrl.includes("/branches/"));
 
-      // In development or preview mode, show error overlay with full stack trace
-      // Preview is a dev environment (branch previews) so developers need detailed errors
-      if (!isHead && (ctx.requestContext?.isLocalDev || ctx.requestContext?.mode === "preview")) {
-        const body = ErrorOverlay.createHTML({
-          error: errorObj,
-          type: "runtime",
+          // Show friendly page when listing files fails (no release or no draft content)
+          if (isFileListRequest) {
+            this.logDebug("No content found for project", {
+              projectSlug: ctx.projectSlug,
+              apiUrl,
+              error: this.getErrorMessage(error),
+            }, ctx);
+
+            const notDeployedNonce = generateNonce();
+            const builder = this.createResponseBuilder(ctx, notDeployedNonce);
+            const isHeadRequest = req.method.toUpperCase() === "HEAD";
+
+            const body = isHeadRequest ? null : ErrorPages.undeployed();
+
+            const response = builder
+              .withCORS(req, ctx.securityConfig?.cors)
+              .withSecurity(ctx.securityConfig ?? undefined)
+              .withCache("no-cache")
+              .withContentType(getContentType(".html"), body, HTTP_NOT_FOUND);
+
+            return this.respond(response);
+          }
+        }
+
+        // Always log SSR errors for debugging (not just in debug mode)
+        _logger.error("[SSR] renderPage failed", {
+          slug,
+          error: this.getErrorMessage(error),
+          stack: error instanceof Error ? error.stack : undefined,
+          projectSlug: ctx.projectSlug,
         });
+        this.logDebug("SSR renderPage failed with error", {
+          slug,
+          error: this.getErrorMessage(error),
+        }, ctx);
+
+        // Generate nonce for error response HTML
+        const errorNonce = generateNonce();
+        const builder = this.createResponseBuilder(ctx, errorNonce);
+        const isHead = req.method.toUpperCase() === "HEAD";
+        const errorObj = error instanceof Error ? error : new Error(String(error));
+
+        // In development or preview mode, show error overlay with full stack trace
+        // Preview is a dev environment (branch previews) so developers need detailed errors
+        if (!isHead && (ctx.requestContext?.isLocalDev || ctx.requestContext?.mode === "preview")) {
+          const body = ErrorOverlay.createHTML({
+            error: errorObj,
+            type: "runtime",
+          });
+          const response = builder
+            .withCORS(req, ctx.securityConfig?.cors)
+            .withSecurity(ctx.securityConfig ?? undefined)
+            .withCache("no-cache")
+            .withContentType(getContentType(".html"), body, HTTP_INTERNAL_SERVER_ERROR);
+          return this.respond(response);
+        }
+
+        // In production, try custom error pages first
+        const customErrorResponse = await tryErrorPageFallback(req, ctx, builder, {
+          statusCode: HTTP_INTERNAL_SERVER_ERROR,
+          error: errorObj,
+          pathname: slug || "/",
+        });
+        if (customErrorResponse) {
+          return this.respond(customErrorResponse);
+        }
+
+        // Generic error fallback
+        const body = isHead ? null : ErrorPages.serverError();
+
         const response = builder
           .withCORS(req, ctx.securityConfig?.cors)
           .withSecurity(ctx.securityConfig ?? undefined)
           .withCache("no-cache")
           .withContentType(getContentType(".html"), body, HTTP_INTERNAL_SERVER_ERROR);
+
         return this.respond(response);
       }
-
-      // In production, try custom error pages first
-      const customErrorResponse = await tryErrorPageFallback(req, ctx, builder, {
-        statusCode: HTTP_INTERNAL_SERVER_ERROR,
-        error: errorObj,
-        pathname: slug || "/",
-      });
-      if (customErrorResponse) {
-        return this.respond(customErrorResponse);
-      }
-
-      // Generic error fallback
-      const body = isHead ? null : ErrorPages.serverError();
-
-      const response = builder
-        .withCORS(req, ctx.securityConfig?.cors)
-        .withSecurity(ctx.securityConfig ?? undefined)
-        .withCache("no-cache")
-        .withContentType(getContentType(".html"), body, HTTP_INTERNAL_SERVER_ERROR);
-
-      return this.respond(response);
-    }
+    }, { "ssr.slug": slug, "ssr.projectSlug": ctx.projectSlug || "unknown" });
   }
 }

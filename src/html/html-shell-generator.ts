@@ -1,4 +1,6 @@
 import type { ComponentProps, RenderMetadata } from "#veryfront/types";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { escapeHTML } from "./html-escape.ts";
 import {
   generateHydrationData,
@@ -131,6 +133,30 @@ function generateModulePreloadHints(options: HTMLGenerationOptions): string {
  * Returns the start (before content) and end (after content) parts of the HTML document
  */
 export async function generateHTMLShellParts(
+  meta: RenderMetadata,
+  options: HTMLGenerationOptions,
+  params?: Record<string, string | string[]>,
+  props?: ComponentProps,
+  contentForTailwind?: string,
+): Promise<{ start: string; end: string }> {
+  return await withSpan(
+    SpanNames.HTML_GENERATE_SHELL_PARTS,
+    async () => {
+      return await generateHTMLShellPartsImpl(meta, options, params, props, contentForTailwind);
+    },
+    {
+      "html.slug": meta.slug || "",
+      "html.has_content": !!contentForTailwind,
+      "html.mode": options.mode || "production",
+      "html.is_local_dev": options.isLocalDev ?? false,
+    },
+  );
+}
+
+/**
+ * Internal implementation of generateHTMLShellParts
+ */
+async function generateHTMLShellPartsImpl(
   meta: RenderMetadata,
   options: HTMLGenerationOptions,
   params?: Record<string, string | string[]>,
@@ -411,15 +437,24 @@ export async function wrapInHTMLShell(
   params?: Record<string, string | string[]>,
   props?: ComponentProps,
 ): Promise<string> {
-  const cleanedContent = content.trim();
+  return await withSpan(
+    SpanNames.HTML_WRAP_IN_SHELL,
+    async () => {
+      const cleanedContent = content.trim();
 
-  const { start, end } = await generateHTMLShellParts(
-    meta,
-    options,
-    params,
-    props,
-    cleanedContent,
+      const { start, end } = await generateHTMLShellParts(
+        meta,
+        options,
+        params,
+        props,
+        cleanedContent,
+      );
+
+      return `${start}${cleanedContent}${end}`;
+    },
+    {
+      "html.slug": meta.slug || "",
+      "html.content_length": content.length,
+    },
   );
-
-  return `${start}${cleanedContent}${end}`;
 }

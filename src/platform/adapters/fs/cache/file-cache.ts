@@ -15,6 +15,7 @@
 
 import { logger } from "#veryfront/utils";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { CacheEntry, CacheStats, FileCacheOptions } from "./types.ts";
 import { estimateSize } from "./size-estimator.ts";
 // Direct import to avoid circular dependency through cache/index.ts barrel
@@ -60,7 +61,7 @@ export async function initializeFileCacheBackend(): Promise<boolean> {
     return cacheBackend?.type !== "memory";
   }
 
-  backendInitPromise = (async () => {
+  backendInitPromise = withSpan("platform.fs.cache.initializeBackend", async () => {
     try {
       cacheBackend = await CacheBackends.file();
       backendInitialized = true;
@@ -70,7 +71,7 @@ export async function initializeFileCacheBackend(): Promise<boolean> {
       cacheBackend = new MemoryCacheBackend(FALLBACK_MAX_ENTRIES);
       backendInitialized = true;
     }
-  })();
+  }) as Promise<void>;
 
   await backendInitPromise;
   backendInitPromise = null;
@@ -155,34 +156,37 @@ export class FileCache {
   /**
    * Async get - checks backend (primary) or fallback memory cache.
    */
-  async getAsync<T>(key: string): Promise<T | undefined> {
+  getAsync<T>(key: string): Promise<T | undefined> {
     if (!this.options.enabled) {
       this.misses++;
-      return undefined;
+      return Promise.resolve(undefined);
     }
 
     // Try backend first
     if (cacheBackend && cacheBackend.type !== "memory") {
-      try {
-        const raw = await cacheBackend.get(`file:${key}`);
-        if (raw) {
-          const entry = JSON.parse(raw) as CacheEntry<T>;
-          // When using backend (Redis/API), trust the backend's TTL for expiry.
-          // The backend has its own TTL (BACKEND_TTL_SECONDS) which handles expiry.
-          // Previously we checked against this.options.ttl (60s) which was shorter
-          // than the backend TTL (300s), causing premature cache misses.
-          this.hits++;
-          return entry.value;
+      const backend = cacheBackend;
+      return withSpan("platform.fs.cache.getAsync", async () => {
+        try {
+          const raw = await backend.get(`file:${key}`);
+          if (raw) {
+            const entry = JSON.parse(raw) as CacheEntry<T>;
+            // When using backend (Redis/API), trust the backend's TTL for expiry.
+            // The backend has its own TTL (BACKEND_TTL_SECONDS) which handles expiry.
+            // Previously we checked against this.options.ttl (60s) which was shorter
+            // than the backend TTL (300s), causing premature cache misses.
+            this.hits++;
+            return entry.value;
+          }
+        } catch (error) {
+          logger.debug("[FileCache] Backend get failed", { key, error });
         }
-      } catch (error) {
-        logger.debug("[FileCache] Backend get failed", { key, error });
-      }
-      this.misses++;
-      return undefined;
+        this.misses++;
+        return undefined;
+      }, { "cache.key": key, "cache.backend": backend.type });
     }
 
     // Fallback mode: check memory cache
-    return this.get<T>(key);
+    return Promise.resolve(this.get<T>(key));
   }
 
   /**
@@ -219,9 +223,9 @@ export class FileCache {
   /**
    * Async set - writes to backend (primary) or fallback memory cache.
    */
-  async setAsync<T>(key: string, value: T): Promise<void> {
+  setAsync<T>(key: string, value: T): Promise<void> {
     if (!this.options.enabled) {
-      return;
+      return Promise.resolve();
     }
 
     const size = estimateSize(value);
@@ -229,23 +233,37 @@ export class FileCache {
 
     // Try backend first
     if (cacheBackend && cacheBackend.type !== "memory") {
-      try {
-        await cacheBackend.set(`file:${key}`, JSON.stringify(entry), BACKEND_TTL_SECONDS);
-        return;
-      } catch (error) {
-        logger.debug("[FileCache] Backend set failed", { key, error });
-      }
+      const backend = cacheBackend;
+      return withSpan("platform.fs.cache.setAsync", async () => {
+        try {
+          await backend.set(`file:${key}`, JSON.stringify(entry), BACKEND_TTL_SECONDS);
+          return;
+        } catch (error) {
+          logger.debug("[FileCache] Backend set failed", { key, error });
+        }
+
+        // Fallback mode: write to memory cache
+        if (size > this.options.maxMemory) {
+          logger.warn("[FileCache] Value too large for fallback cache", { key, size });
+          return;
+        }
+
+        this.evictFallbackIfNeeded(size);
+        this.fallbackCache.set(key, entry as CacheEntry<unknown>);
+        this.fallbackMemoryUsed += size;
+      }, { "cache.key": key, "cache.backend": backend.type, "cache.size": size });
     }
 
     // Fallback mode: write to memory cache
     if (size > this.options.maxMemory) {
       logger.warn("[FileCache] Value too large for fallback cache", { key, size });
-      return;
+      return Promise.resolve();
     }
 
     this.evictFallbackIfNeeded(size);
     this.fallbackCache.set(key, entry as CacheEntry<unknown>);
     this.fallbackMemoryUsed += size;
+    return Promise.resolve();
   }
 
   has(key: string): boolean {
@@ -288,15 +306,17 @@ export class FileCache {
     return count;
   }
 
-  async deleteByPrefixAsync(prefix: string): Promise<number> {
-    const count = this.deleteByPrefix(prefix);
+  deleteByPrefixAsync(prefix: string): Promise<number> {
+    return withSpan("platform.fs.cache.deleteByPrefixAsync", async () => {
+      const count = this.deleteByPrefix(prefix);
 
-    // Await backend deletion for cross-pod consistency
-    if (cacheBackend?.delByPattern) {
-      await cacheBackend.delByPattern(`file:${prefix}*`);
-    }
+      // Await backend deletion for cross-pod consistency
+      if (cacheBackend?.delByPattern) {
+        await cacheBackend.delByPattern(`file:${prefix}*`);
+      }
 
-    return count;
+      return count;
+    }, { "cache.prefix": prefix });
   }
 
   deleteByPrefixAndSuffix(prefix: string, suffix: string): number {
@@ -318,15 +338,17 @@ export class FileCache {
     return count;
   }
 
-  async deleteByPrefixAndSuffixAsync(prefix: string, suffix: string): Promise<number> {
-    const count = this.deleteByPrefixAndSuffix(prefix, suffix);
+  deleteByPrefixAndSuffixAsync(prefix: string, suffix: string): Promise<number> {
+    return withSpan("platform.fs.cache.deleteByPrefixAndSuffixAsync", async () => {
+      const count = this.deleteByPrefixAndSuffix(prefix, suffix);
 
-    // Await backend deletion for cross-pod consistency
-    if (cacheBackend?.delByPattern) {
-      await cacheBackend.delByPattern(`file:${prefix}*:${suffix}`);
-    }
+      // Await backend deletion for cross-pod consistency
+      if (cacheBackend?.delByPattern) {
+        await cacheBackend.delByPattern(`file:${prefix}*:${suffix}`);
+      }
 
-    return count;
+      return count;
+    }, { "cache.prefix": prefix, "cache.suffix": suffix });
   }
 
   clear(): void {

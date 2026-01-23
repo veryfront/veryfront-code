@@ -5,40 +5,43 @@ import type { TransformOptions } from "#veryfront/transforms/esm/types.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { getProjectTmpDir } from "./temp-directory.ts";
 import type { ComponentMap, ComponentSource, LoadComponentOptions } from "./types.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
-export async function loadComponentsUnified(
+export function loadComponentsUnified(
   components: ComponentSource[],
   projectDir: string,
   adapter: RuntimeAdapter,
   options?: LoadComponentOptions,
 ): Promise<ComponentMap> {
-  const projectId = options?.projectId || projectDir;
-  const dev = options?.dev ?? true;
-  const moduleServerUrl = options?.moduleServerUrl;
+  return withSpan("modules.loadComponentsUnified", async () => {
+    const projectId = options?.projectId || projectDir;
+    const dev = options?.dev ?? true;
+    const moduleServerUrl = options?.moduleServerUrl;
 
-  const transformOpts: TransformOptions = { projectId, dev, moduleServerUrl };
-  const transformedComponents = await transformAllComponents(
-    components,
-    projectDir,
-    adapter,
-    transformOpts,
-  );
+    const transformOpts: TransformOptions = { projectId, dev, moduleServerUrl };
+    const transformedComponents = await transformAllComponents(
+      components,
+      projectDir,
+      adapter,
+      transformOpts,
+    );
 
-  const baseTmp = await getProjectTmpDir(projectId);
-  const uniqueTmp = `unified-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  const tmpDir = join(baseTmp, uniqueTmp);
-  await adapter.fs.mkdir(tmpDir, { recursive: true });
+    const baseTmp = await getProjectTmpDir(projectId);
+    const uniqueTmp = `unified-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const tmpDir = join(baseTmp, uniqueTmp);
+    await adapter.fs.mkdir(tmpDir, { recursive: true });
 
-  try {
-    await writeComponentFiles(tmpDir, transformedComponents, adapter);
+    try {
+      await writeComponentFiles(tmpDir, transformedComponents, adapter);
 
-    const entryCode = generateEntryPoint(transformedComponents);
-    await adapter.fs.writeFile(join(tmpDir, "entry.js"), entryCode);
+      const entryCode = generateEntryPoint(transformedComponents);
+      await adapter.fs.writeFile(join(tmpDir, "entry.js"), entryCode);
 
-    return importUnifiedComponents(tmpDir, transformedComponents);
-  } finally {
-    await cleanupTempDirectory(tmpDir, adapter);
-  }
+      return importUnifiedComponents(tmpDir, transformedComponents);
+    } finally {
+      await cleanupTempDirectory(tmpDir, adapter);
+    }
+  }, { "modules.projectDir": projectDir, "modules.componentCount": components.length });
 }
 
 async function transformAllComponents(

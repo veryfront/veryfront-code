@@ -13,6 +13,9 @@
 
 import { rendererLogger as logger } from "#veryfront/utils";
 import { getRedisClient, isRedisConfigured } from "#veryfront/utils/redis-client.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
+import type { Span } from "npm:@opentelemetry/api@1.9.0";
 
 /**
  * Interface for cache stores that can be registered.
@@ -241,34 +244,45 @@ class CacheRegistry {
    * @param pattern - Redis SCAN pattern (e.g., "veryfront:ssr-module:*")
    * @param limit - Maximum number of keys to return (default 1000)
    */
-  async scanRedisKeys(pattern: string, limit = 1000): Promise<string[]> {
+  scanRedisKeys(pattern: string, limit = 1000): Promise<string[]> {
     if (!isRedisConfigured()) {
-      return [];
+      return Promise.resolve([]);
     }
 
-    try {
-      const client = await getRedisClient();
-      const keys: string[] = [];
-      let cursor = 0;
+    return withSpan(
+      SpanNames.CACHE_REGISTRY_SCAN_REDIS,
+      async (span?: Span) => {
+        try {
+          const client = await getRedisClient();
+          const keys: string[] = [];
+          let cursor = 0;
 
-      do {
-        const result = await client.scan(cursor, {
-          MATCH: pattern,
-          COUNT: 100,
-        });
-        cursor = typeof result.cursor === "string" ? parseInt(result.cursor, 10) : result.cursor;
-        keys.push(...result.keys);
+          do {
+            const result = await client.scan(cursor, {
+              MATCH: pattern,
+              COUNT: 100,
+            });
+            cursor = typeof result.cursor === "string"
+              ? parseInt(result.cursor, 10)
+              : result.cursor;
+            keys.push(...result.keys);
 
-        if (keys.length >= limit) {
-          break;
+            if (keys.length >= limit) {
+              break;
+            }
+          } while (cursor !== 0);
+
+          const resultKeys = keys.slice(0, limit);
+          span?.setAttribute("cache.redis.keys_found", resultKeys.length);
+          return resultKeys;
+        } catch (error) {
+          logger.warn("[CacheRegistry] Redis scan failed", { pattern, error });
+          span?.setAttribute("cache.redis.error", true);
+          return [];
         }
-      } while (cursor !== 0);
-
-      return keys.slice(0, limit);
-    } catch (error) {
-      logger.warn("[CacheRegistry] Redis scan failed", { pattern, error });
-      return [];
-    }
+      },
+      { "cache.redis.pattern": pattern, "cache.redis.limit": limit },
+    );
   }
 
   /**
@@ -282,24 +296,34 @@ class CacheRegistry {
    * @param projectId - The project ID to filter by
    * @returns Map of Redis prefix to matching keys
    */
-  async getRedisKeysForProject(projectId: string): Promise<Map<string, string[]>> {
-    const result = new Map<string, string[]>();
+  getRedisKeysForProject(projectId: string): Promise<Map<string, string[]>> {
+    return withSpan(
+      SpanNames.CACHE_REGISTRY_GET_REDIS_KEYS,
+      async (span?: Span) => {
+        const result = new Map<string, string[]>();
 
-    const prefixes = [
-      "veryfront:ssr-module:",
-      "veryfront:file-cache:",
-      "veryfront:transform:",
-    ];
+        const prefixes = [
+          "veryfront:ssr-module:",
+          "veryfront:file-cache:",
+          "veryfront:transform:",
+        ];
 
-    for (const prefix of prefixes) {
-      const keys = await this.scanRedisKeys(`${prefix}*`);
-      const matchingKeys = keys.filter((key) => isKeyForProject(key, projectId));
-      if (matchingKeys.length > 0) {
-        result.set(prefix.replace(/:$/, ""), matchingKeys);
-      }
-    }
+        let totalKeys = 0;
+        for (const prefix of prefixes) {
+          const keys = await this.scanRedisKeys(`${prefix}*`);
+          const matchingKeys = keys.filter((key) => isKeyForProject(key, projectId));
+          if (matchingKeys.length > 0) {
+            result.set(prefix.replace(/:$/, ""), matchingKeys);
+            totalKeys += matchingKeys.length;
+          }
+        }
 
-    return result;
+        span?.setAttribute("cache.redis.total_keys", totalKeys);
+        span?.setAttribute("cache.redis.prefix_count", result.size);
+        return result;
+      },
+      { "cache.project_id": projectId },
+    );
   }
 
   /**
@@ -308,18 +332,26 @@ class CacheRegistry {
    * @param projectId - The project ID to filter by
    * @param includeRedis - Whether to scan Redis (default false for performance)
    */
-  async getAllKeysForProjectAsync(
+  getAllKeysForProjectAsync(
     projectId: string,
     includeRedis = false,
   ): Promise<{ memory: Map<string, string[]>; redis: Map<string, string[]> }> {
-    const memory = this.getKeysForProject(projectId);
+    return withSpan(
+      SpanNames.CACHE_KEYS_GET_ALL_ASYNC,
+      async (span?: Span) => {
+        const memory = this.getKeysForProject(projectId);
 
-    if (!includeRedis) {
-      return { memory, redis: new Map() };
-    }
+        if (!includeRedis) {
+          span?.setAttribute("cache.include_redis", false);
+          return { memory, redis: new Map() };
+        }
 
-    const redis = await this.getRedisKeysForProject(projectId);
-    return { memory, redis };
+        span?.setAttribute("cache.include_redis", true);
+        const redis = await this.getRedisKeysForProject(projectId);
+        return { memory, redis };
+      },
+      { "cache.project_id": projectId },
+    );
   }
 
   /**
@@ -328,40 +360,56 @@ class CacheRegistry {
    * @param projectId - The project ID to delete keys for
    * @returns Number of keys deleted
    */
-  async deleteRedisKeysForProject(projectId: string): Promise<number> {
+  deleteRedisKeysForProject(projectId: string): Promise<number> {
     if (!isRedisConfigured()) {
-      return 0;
+      return Promise.resolve(0);
     }
 
-    try {
-      const client = await getRedisClient();
-      const redisKeys = await this.getRedisKeysForProject(projectId);
+    return withSpan(
+      SpanNames.CACHE_REGISTRY_DELETE_REDIS_KEYS,
+      async (span?: Span) => {
+        try {
+          const client = await getRedisClient();
+          const redisKeys = await this.getRedisKeysForProject(projectId);
 
-      let deleted = 0;
-      for (const keys of redisKeys.values()) {
-        if (keys.length > 0) {
-          deleted += await client.del(keys);
+          let deleted = 0;
+          for (const keys of redisKeys.values()) {
+            if (keys.length > 0) {
+              deleted += await client.del(keys);
+            }
+          }
+
+          span?.setAttribute("cache.redis.deleted", deleted);
+          return deleted;
+        } catch (error) {
+          logger.warn("[CacheRegistry] Redis delete failed", { projectId, error });
+          span?.setAttribute("cache.redis.error", true);
+          return 0;
         }
-      }
-
-      return deleted;
-    } catch (error) {
-      logger.warn("[CacheRegistry] Redis delete failed", { projectId, error });
-      return 0;
-    }
+      },
+      { "cache.project_id": projectId },
+    );
   }
 
   /**
    * Delete all keys for a project from both memory and Redis.
    */
-  async deleteAllKeysForProjectAsync(projectId: string): Promise<{
+  deleteAllKeysForProjectAsync(projectId: string): Promise<{
     memoryDeleted: number;
     redisDeleted: number;
   }> {
-    const memoryDeleted = this.deleteKeysForProject(projectId);
-    const redisDeleted = await this.deleteRedisKeysForProject(projectId);
+    return withSpan(
+      SpanNames.CACHE_KEYS_DELETE_ALL_ASYNC,
+      async (span?: Span) => {
+        const memoryDeleted = this.deleteKeysForProject(projectId);
+        const redisDeleted = await this.deleteRedisKeysForProject(projectId);
 
-    return { memoryDeleted, redisDeleted };
+        span?.setAttribute("cache.memory.deleted", memoryDeleted);
+        span?.setAttribute("cache.redis.deleted", redisDeleted);
+        return { memoryDeleted, redisDeleted };
+      },
+      { "cache.project_id": projectId },
+    );
   }
 }
 

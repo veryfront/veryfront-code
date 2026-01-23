@@ -8,6 +8,7 @@
 import { join } from "#veryfront/platform/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isBun, isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 /**
  * Get the default runtime adapter for the current environment
@@ -321,11 +322,17 @@ async function* walkDirectory(
 export async function collectFiles(
   options: FileDiscoveryOptions,
 ): Promise<FileDiscoveryResult[]> {
-  const results: FileDiscoveryResult[] = [];
-  for await (const file of discoverFiles(options)) {
-    results.push(file);
-  }
-  return results;
+  return await withSpan("utils.collectFiles", async () => {
+    const results: FileDiscoveryResult[] = [];
+    for await (const file of discoverFiles(options)) {
+      results.push(file);
+    }
+    return results;
+  }, {
+    "discovery.baseDir": options.baseDir,
+    "discovery.recursive": options.recursive ?? true,
+    "discovery.extensions": options.extensions?.join(",") ?? "*",
+  });
 }
 
 /**
@@ -342,19 +349,28 @@ export async function collectFiles(
 export async function hasMatchingFiles(
   options: FileDiscoveryOptions,
 ): Promise<boolean> {
-  for await (const _file of discoverFiles(options)) {
-    return true; // Found at least one matching file
-  }
-  return false;
+  return await withSpan("utils.hasMatchingFiles", async () => {
+    for await (const _file of discoverFiles(options)) {
+      return true; // Found at least one matching file
+    }
+    return false;
+  }, {
+    "discovery.baseDir": options.baseDir,
+    "discovery.patterns": options.patterns?.join(",") ?? "*",
+  });
 }
 
 /**
  * Count files matching criteria
  */
 export async function countFiles(options: FileDiscoveryOptions): Promise<number> {
-  let count = 0;
-  for await (const _file of discoverFiles(options)) {
-    count++;
-  }
-  return count;
+  return await withSpan("utils.countFiles", async () => {
+    let count = 0;
+    for await (const _file of discoverFiles(options)) {
+      count++;
+    }
+    return count;
+  }, {
+    "discovery.baseDir": options.baseDir,
+  });
 }

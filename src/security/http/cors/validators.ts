@@ -1,6 +1,7 @@
 import type { CORSConfig, CORSValidationResult } from "./types.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { recordCorsRejection } from "#veryfront/observability";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 const NO_CORS_RESULT: CORSValidationResult = { allowedOrigin: null, allowCredentials: false };
 
@@ -106,26 +107,28 @@ function processFunctionResult(
 }
 
 /** Validate origin against CORS configuration */
-export async function validateOrigin(
+export function validateOrigin(
   requestOrigin: string | null,
   config?: boolean | CORSConfig,
 ): Promise<CORSValidationResult> {
-  const earlyResult = validateEarly(requestOrigin, config);
-  if (earlyResult) return earlyResult;
+  return withSpan("security.cors.validateOrigin", async () => {
+    const earlyResult = validateEarly(requestOrigin, config);
+    if (earlyResult) return earlyResult;
 
-  const corsConfig = config as CORSConfig;
+    const corsConfig = config as CORSConfig;
 
-  if (typeof corsConfig.origin === "function") {
-    try {
-      const result = await corsConfig.origin(requestOrigin!);
-      return processFunctionResult(result, requestOrigin!, corsConfig.credentials ?? false);
-    } catch (error) {
-      serverLogger.error("[CORS] Origin validation function error", error);
-      return { allowedOrigin: null, allowCredentials: false, error: "Origin validation error" };
+    if (typeof corsConfig.origin === "function") {
+      try {
+        const result = await corsConfig.origin(requestOrigin!);
+        return processFunctionResult(result, requestOrigin!, corsConfig.credentials ?? false);
+      } catch (error) {
+        serverLogger.error("[CORS] Origin validation function error", error);
+        return { allowedOrigin: null, allowCredentials: false, error: "Origin validation error" };
+      }
     }
-  }
 
-  return validateStaticOrigin(requestOrigin!, corsConfig);
+    return validateStaticOrigin(requestOrigin!, corsConfig);
+  }, { "cors.origin": requestOrigin ?? "null" });
 }
 
 /** Synchronous origin validation (async validators not supported) */

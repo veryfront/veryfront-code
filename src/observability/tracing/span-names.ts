@@ -94,4 +94,35 @@ export const SpanNames = {
   SSR_HTML_GENERATE: "ssr.html_generate",
   SSR_CONTENT_HASH: "ssr.content_hash",
   SSR_STREAM_CONVERT: "ssr.stream_convert",
+
+  // Distributed Cache
+  CACHE_DISTRIBUTED_INIT: "cache.distributed.init",
+  CACHE_BACKEND_CREATE: "cache.backend.create",
+  CACHE_REDIS_INIT: "cache.redis.init",
+  CACHE_REGISTRY_SCAN_REDIS: "cache.registry.scan_redis",
+  CACHE_REGISTRY_GET_REDIS_KEYS: "cache.registry.get_redis_keys",
+  CACHE_REGISTRY_DELETE_REDIS_KEYS: "cache.registry.delete_redis_keys",
+  CACHE_KEYS_GET_ALL_ASYNC: "cache.keys.get_all_async",
+  CACHE_KEYS_DELETE_ALL_ASYNC: "cache.keys.delete_all_async",
+
+  // Data Fetching
+  DATA_FETCH_STATIC_PATHS: "data.fetch_static_paths",
+
+  // HTML generation
+  HTML_GENERATE_SHELL_PARTS: "html.generate_shell_parts",
+  HTML_WRAP_IN_SHELL: "html.wrap_in_shell",
+  HTML_GENERATE_TAILWIND_CSS: "html.generate_tailwind_css",
+  HTML_GET_CSS_BY_HASH: "html.get_css_by_hash",
+
+  // Router detection
+  ROUTER_DETECT_APP: "router.detect_app",
+
+  // Shared services
+  SHARED_SERVICES_INIT: "shared.services.init",
+
+  // Layout application
+  LAYOUT_APPLY: "layout.apply",
+  LAYOUT_APPLY_ONLY: "layout.apply_only",
+  LAYOUT_WRAP_APP_COMPONENT: "layout.wrap_app_component",
+  LAYOUT_WRAP_RESERVED: "layout.wrap_reserved",
 } as const;

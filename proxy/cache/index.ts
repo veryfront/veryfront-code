@@ -24,6 +24,7 @@ import { RedisCache } from "./redis-cache.ts";
 import { ResilientCache } from "./resilient-cache.ts";
 import { getEnv } from "../../src/platform/compat/process.ts";
 import { proxyLogger } from "../logger.ts";
+import { withSpan } from "../tracing.ts";
 
 const logger = proxyLogger.child({ module: "cache" });
 
@@ -42,14 +43,16 @@ const logger = proxyLogger.child({ module: "cache" });
  * });
  * ```
  */
-export function createCache(options: CacheOptions): TokenCache {
-  switch (options.type) {
-    case "redis":
-      return new RedisCache(options.options);
-    case "memory":
-    default:
-      return new MemoryCache(options.options);
-  }
+export async function createCache(options: CacheOptions): Promise<TokenCache> {
+  return withSpan("cache.create", async () => {
+    switch (options.type) {
+      case "redis":
+        return new RedisCache(options.options);
+      case "memory":
+      default:
+        return new MemoryCache(options.options);
+    }
+  }, { "cache.type": options.type });
 }
 
 /**
@@ -63,26 +66,28 @@ export function createCache(options: CacheOptions): TokenCache {
  * When CACHE_TYPE=redis, automatically wraps with ResilientCache for
  * graceful fallback to memory when Redis is unavailable.
  */
-export function createCacheFromEnv(): TokenCache {
-  const cacheType = getEnv("CACHE_TYPE") || "memory";
+export async function createCacheFromEnv(): Promise<TokenCache> {
+  return withSpan("cache.createFromEnv", async () => {
+    const cacheType = getEnv("CACHE_TYPE") || "memory";
 
-  if (cacheType === "redis") {
-    const url = getEnv("REDIS_URL");
-    if (!url) {
-      logger.warn("[Cache] CACHE_TYPE=redis but REDIS_URL not set, falling back to memory");
-      return new MemoryCache();
+    if (cacheType === "redis") {
+      const url = getEnv("REDIS_URL");
+      if (!url) {
+        logger.warn("[Cache] CACHE_TYPE=redis but REDIS_URL not set, falling back to memory");
+        return new MemoryCache();
+      }
+
+      const redisCache = new RedisCache({
+        url,
+        prefix: getEnv("REDIS_PREFIX") || "vf:token:",
+      });
+
+      // Wrap Redis with resilient fallback to memory cache
+      // This ensures the proxy continues to function when Redis is unavailable
+      logger.info("[Cache] Using Redis with memory fallback (ResilientCache)");
+      return new ResilientCache(redisCache, new MemoryCache());
     }
 
-    const redisCache = new RedisCache({
-      url,
-      prefix: getEnv("REDIS_PREFIX") || "vf:token:",
-    });
-
-    // Wrap Redis with resilient fallback to memory cache
-    // This ensures the proxy continues to function when Redis is unavailable
-    logger.info("[Cache] Using Redis with memory fallback (ResilientCache)");
-    return new ResilientCache(redisCache, new MemoryCache());
-  }
-
-  return new MemoryCache();
+    return new MemoryCache();
+  }, { "cache.type": getEnv("CACHE_TYPE") || "memory" });
 }

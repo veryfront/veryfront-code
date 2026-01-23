@@ -10,7 +10,7 @@ import { getContentTypeForPath } from "#veryfront/server/handlers/utils/content-
 import { createSecureFs } from "#veryfront/security";
 import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
-import { injectContext } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { injectContext, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { injectNodePositions } from "#veryfront/transforms/plugins/babel-node-positions.ts";
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
 import { applySSRImportRewrites } from "./ssr-import-rewriter.ts";
@@ -48,201 +48,177 @@ export interface ModuleServerOptions {
 }
 
 /** Serve transformed module at /_vf_modules/* path */
-export async function serveModule(
+export function serveModule(
   req: Request,
   options: ModuleServerOptions,
 ): Promise<Response> {
-  const startTime = performance.now();
-  const timings: Record<string, number> = {};
-  // Note: projectUUID and releaseId are passed but not used here - context is set by handler layer
-  const {
-    projectId,
-    projectDir,
-    adapter,
-    dev = true,
-    projectUUID,
-    releaseId: _releaseId,
-    allowedImportDirs,
-  } = options;
-  const effectiveProjectId = projectUUID ?? projectId;
   const url = new URL(req.url);
-  const method = req.method.toUpperCase();
-  const isHeadRequest = method === "HEAD";
+  return withSpan("modules.serve", async () => {
+    const startTime = performance.now();
+    const timings: Record<string, number> = {};
+    // Note: projectUUID and releaseId are passed but not used here - context is set by handler layer
+    const {
+      projectId,
+      projectDir,
+      adapter,
+      dev = true,
+      projectUUID,
+      releaseId: _releaseId,
+      allowedImportDirs,
+    } = options;
+    const effectiveProjectId = projectUUID ?? projectId;
+    const method = req.method.toUpperCase();
+    const isHeadRequest = method === "HEAD";
 
-  // Create secure filesystem wrapper for module loading
-  const secureFs = createSecureFs({
-    baseDir: projectDir,
-    adapter,
-    context: "module-loading",
-    contextOptions: {
-      allowedImportDirs, // Pass through from config (undefined = no restrictions)
-    },
-    throwOnError: false, // Don't throw, return appropriate HTTP error
-    onSecurityEvent: (event) => {
-      if (event.type === "validation-failed") {
-        logger.warn("[ModuleServer] Security validation failed", {
-          operation: event.operation,
-          path: event.path,
-          error: event.error,
-        });
-      }
-    },
-  });
-
-  // Log User-Agent for debugging SSR detection
-  const debugUserAgent = req.headers.get("user-agent") || "";
-  logger.debug("[ModuleServer] Request", {
-    pathname: url.pathname,
-    userAgent: debugUserAgent.slice(0, 50),
-  });
-
-  if (!DEV_MODULE_PREFIX.test(url.pathname)) {
-    return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
-      "Content-Type": "text/plain; charset=utf-8",
-      "Cache-Control": "no-cache",
+    // Create secure filesystem wrapper for module loading
+    const secureFs = createSecureFs({
+      baseDir: projectDir,
+      adapter,
+      context: "module-loading",
+      contextOptions: {
+        allowedImportDirs, // Pass through from config (undefined = no restrictions)
+      },
+      throwOnError: false, // Don't throw, return appropriate HTTP error
+      onSecurityEvent: (event) => {
+        if (event.type === "validation-failed") {
+          logger.warn("[ModuleServer] Security validation failed", {
+            operation: event.operation,
+            path: event.path,
+            error: event.error,
+          });
+        }
+      },
     });
-  }
 
-  // Handle snippet module requests (/_vf_modules/_snippets/<hash>.js)
-  const snippetMatch = url.pathname.match(SNIPPET_MODULE_PREFIX);
-  if (snippetMatch) {
-    const hash = snippetMatch[1];
-    if (!hash) {
-      return createModuleResponse(
-        method,
-        "Missing snippet hash",
-        HTTP_NOT_FOUND,
-        {
-          "Content-Type": "text/plain; charset=utf-8",
-          "Cache-Control": "no-cache",
-        },
-      );
-    }
-    const { getCompiledSnippetAsync } = await import(
-      "@veryfront/rendering/snippet-renderer.ts"
-    );
-    const snippetCode = await getCompiledSnippetAsync(hash);
+    // Log User-Agent for debugging SSR detection
+    const debugUserAgent = req.headers.get("user-agent") || "";
+    logger.debug("[ModuleServer] Request", {
+      pathname: url.pathname,
+      userAgent: debugUserAgent.slice(0, 50),
+    });
 
-    if (!snippetCode) {
-      logger.warn("[ModuleServer] Snippet not found in cache", { hash });
-      return createModuleResponse(method, "Snippet not found", HTTP_NOT_FOUND, {
+    if (!DEV_MODULE_PREFIX.test(url.pathname)) {
+      return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
         "Content-Type": "text/plain; charset=utf-8",
         "Cache-Control": "no-cache",
       });
     }
 
-    // Extract project slug and branch from hostname using domain parser
-    // e.g., "shadcn-uizz--ffff.preview.lvh.me" → { slug: "shadcn-uizz", branch: "ffff" }
-    const { slug: snippetProjectSlug, branch: snippetBranch } = parseProjectDomain(url.host);
-
-    // Apply same transformations as regular modules
-    // Snippet code is already compiled JS, so use .tsx extension to skip MDX compilation
-    // but still apply import rewrites (React, @/ paths, etc.)
-    const userAgent = req.headers.get("user-agent") || "";
-    const isDenoRequest = userAgent.startsWith("Deno/");
-    const hasSSRParam = url.searchParams.get("ssr") === "true";
-    const isSSR = hasSSRParam || isDenoRequest;
-
-    logger.debug("[ModuleServer] Transforming snippet", {
-      hash,
-      isSSR,
-      snippetProjectSlug,
-      codeLength: snippetCode.length,
-    });
-
-    try {
-      let transformedCode = await transformToESM(
-        snippetCode,
-        `_snippets/${hash}.tsx`, // Use .tsx to apply import rewrites without MDX compilation
-        projectDir,
-        adapter,
-        { projectId: effectiveProjectId, dev, ssr: isSSR },
+    // Handle snippet module requests (/_vf_modules/_snippets/<hash>.js)
+    const snippetMatch = url.pathname.match(SNIPPET_MODULE_PREFIX);
+    if (snippetMatch) {
+      const hash = snippetMatch[1];
+      if (!hash) {
+        return createModuleResponse(
+          method,
+          "Missing snippet hash",
+          HTTP_NOT_FOUND,
+          {
+            "Content-Type": "text/plain; charset=utf-8",
+            "Cache-Control": "no-cache",
+          },
+        );
+      }
+      const { getCompiledSnippetAsync } = await import(
+        "@veryfront/rendering/snippet-renderer.ts"
       );
+      const snippetCode = await getCompiledSnippetAsync(hash);
 
-      // Apply SSR-specific rewrites using shared utility
-      if (isSSR && transformedCode) {
-        transformedCode = applySSRImportRewrites(transformedCode, {
-          projectSlug: snippetProjectSlug,
-          branch: snippetBranch,
+      if (!snippetCode) {
+        logger.warn("[ModuleServer] Snippet not found in cache", { hash });
+        return createModuleResponse(method, "Snippet not found", HTTP_NOT_FOUND, {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-cache",
         });
       }
 
-      logger.debug("[ModuleServer] Snippet transformed", {
+      // Extract project slug and branch from hostname using domain parser
+      // e.g., "shadcn-uizz--ffff.preview.lvh.me" → { slug: "shadcn-uizz", branch: "ffff" }
+      const { slug: snippetProjectSlug, branch: snippetBranch } = parseProjectDomain(url.host);
+
+      // Apply same transformations as regular modules
+      // Snippet code is already compiled JS, so use .tsx extension to skip MDX compilation
+      // but still apply import rewrites (React, @/ paths, etc.)
+      const userAgent = req.headers.get("user-agent") || "";
+      const isDenoRequest = userAgent.startsWith("Deno/");
+      const hasSSRParam = url.searchParams.get("ssr") === "true";
+      const isSSR = hasSSRParam || isDenoRequest;
+
+      logger.debug("[ModuleServer] Transforming snippet", {
         hash,
         isSSR,
-        transformedLength: transformedCode.length,
+        snippetProjectSlug,
+        codeLength: snippetCode.length,
       });
 
-      return createModuleResponse(method, transformedCode, HTTP_OK, {
-        "Content-Type": "application/javascript; charset=utf-8",
-        "Cache-Control": "no-cache",
-      });
-    } catch (error) {
-      const errorMsg = getErrorMessage(error);
-      logger.error("[ModuleServer] Snippet transform error", {
-        hash,
-        error: errorMsg,
-      });
-      return createModuleResponse(
-        method,
-        `// Transform Error\nthrow new Error(${JSON.stringify(errorMsg)});`,
-        HTTP_SERVER_ERROR,
-        {
+      try {
+        let transformedCode = await transformToESM(
+          snippetCode,
+          `_snippets/${hash}.tsx`, // Use .tsx to apply import rewrites without MDX compilation
+          projectDir,
+          adapter,
+          { projectId: effectiveProjectId, dev, ssr: isSSR },
+        );
+
+        // Apply SSR-specific rewrites using shared utility
+        if (isSSR && transformedCode) {
+          transformedCode = applySSRImportRewrites(transformedCode, {
+            projectSlug: snippetProjectSlug,
+            branch: snippetBranch,
+          });
+        }
+
+        logger.debug("[ModuleServer] Snippet transformed", {
+          hash,
+          isSSR,
+          transformedLength: transformedCode.length,
+        });
+
+        return createModuleResponse(method, transformedCode, HTTP_OK, {
           "Content-Type": "application/javascript; charset=utf-8",
           "Cache-Control": "no-cache",
-        },
-      );
-    }
-  }
-
-  // Handle cross-project module requests
-  // Versioned: /_vf_modules/_cross/<projectSlug>@<version>/@/<path>
-  // Versionless: /_vf_modules/_cross/<projectSlug>/@/<path> (defaults to "latest")
-  const versionedMatch = url.pathname.match(CROSS_PROJECT_VERSIONED_PREFIX);
-  const latestMatch = url.pathname.match(CROSS_PROJECT_LATEST_PREFIX);
-  const crossProjectMatch = versionedMatch || latestMatch;
-
-  if (crossProjectMatch) {
-    let crossProjectSlug: string | undefined;
-    let crossVersion: string | undefined;
-    let crossPath: string | undefined;
-
-    if (versionedMatch) {
-      [, crossProjectSlug, crossVersion, crossPath] = versionedMatch;
-    } else if (latestMatch) {
-      [, crossProjectSlug, crossPath] = latestMatch;
-      crossVersion = "latest";
-    }
-
-    if (!crossProjectSlug || !crossPath) {
-      return createModuleResponse(
-        method,
-        "Invalid cross-project import path",
-        HTTP_NOT_FOUND,
-        {
-          "Content-Type": "text/plain; charset=utf-8",
-          "Cache-Control": "no-cache",
-        },
-      );
-    }
-
-    // Build projectRef - omit version for versionless (API resolves to latest release)
-    const projectRef = crossVersion === "latest"
-      ? crossProjectSlug
-      : `${crossProjectSlug}@${crossVersion}`;
-    logger.debug("[ModuleServer] Cross-project import", {
-      projectRef,
-      path: crossPath,
-      isLatest: crossVersion === "latest",
-    });
-
-    try {
-      // Fetch source from registry API
-      const source = await fetchCrossProjectSource(projectRef, crossPath);
-      if (!source) {
+        });
+      } catch (error) {
+        const errorMsg = getErrorMessage(error);
+        logger.error("[ModuleServer] Snippet transform error", {
+          hash,
+          error: errorMsg,
+        });
         return createModuleResponse(
           method,
-          `Cross-project module not found: ${projectRef}/@/${crossPath}`,
+          `// Transform Error\nthrow new Error(${JSON.stringify(errorMsg)});`,
+          HTTP_SERVER_ERROR,
+          {
+            "Content-Type": "application/javascript; charset=utf-8",
+            "Cache-Control": "no-cache",
+          },
+        );
+      }
+    }
+
+    // Handle cross-project module requests
+    // Versioned: /_vf_modules/_cross/<projectSlug>@<version>/@/<path>
+    // Versionless: /_vf_modules/_cross/<projectSlug>/@/<path> (defaults to "latest")
+    const versionedMatch = url.pathname.match(CROSS_PROJECT_VERSIONED_PREFIX);
+    const latestMatch = url.pathname.match(CROSS_PROJECT_LATEST_PREFIX);
+    const crossProjectMatch = versionedMatch || latestMatch;
+
+    if (crossProjectMatch) {
+      let crossProjectSlug: string | undefined;
+      let crossVersion: string | undefined;
+      let crossPath: string | undefined;
+
+      if (versionedMatch) {
+        [, crossProjectSlug, crossVersion, crossPath] = versionedMatch;
+      } else if (latestMatch) {
+        [, crossProjectSlug, crossPath] = latestMatch;
+        crossVersion = "latest";
+      }
+
+      if (!crossProjectSlug || !crossPath) {
+        return createModuleResponse(
+          method,
+          "Invalid cross-project import path",
           HTTP_NOT_FOUND,
           {
             "Content-Type": "text/plain; charset=utf-8",
@@ -251,195 +227,221 @@ export async function serveModule(
         );
       }
 
-      // Detect SSR mode
-      const userAgent = req.headers.get("user-agent") || "";
-      const isSSR = url.searchParams.get("ssr") === "true" ||
-        userAgent.startsWith("Deno/");
-
-      // Transform using same pipeline as internal modules
-      let code = await transformToESM(source, crossPath, projectDir, adapter, {
-        projectId: effectiveProjectId,
-        dev,
-        ssr: isSSR,
-        moduleServerUrl: `http://${url.host}`,
-      });
-
-      // SSR: Apply cross-project specific rewrites for @/ paths
-      // @/ in cross-project code should resolve to the external project, not current
-      if (isSSR && code) {
-        code = applySSRImportRewrites(code, { crossProjectRef: projectRef });
-      }
-
-      return createModuleResponse(method, code, HTTP_OK, {
-        "Content-Type": "application/javascript; charset=utf-8",
-        "Cache-Control": "no-cache",
-      });
-    } catch (error) {
-      logger.error("[ModuleServer] Cross-project error", {
+      // Build projectRef - omit version for versionless (API resolves to latest release)
+      const projectRef = crossVersion === "latest"
+        ? crossProjectSlug
+        : `${crossProjectSlug}@${crossVersion}`;
+      logger.debug("[ModuleServer] Cross-project import", {
         projectRef,
-        error: String(error),
+        path: crossPath,
+        isLatest: crossVersion === "latest",
       });
-      return createModuleResponse(
-        method,
-        `// Error: ${String(error)}`,
-        HTTP_SERVER_ERROR,
-        {
+
+      try {
+        // Fetch source from registry API
+        const source = await fetchCrossProjectSource(projectRef, crossPath);
+        if (!source) {
+          return createModuleResponse(
+            method,
+            `Cross-project module not found: ${projectRef}/@/${crossPath}`,
+            HTTP_NOT_FOUND,
+            {
+              "Content-Type": "text/plain; charset=utf-8",
+              "Cache-Control": "no-cache",
+            },
+          );
+        }
+
+        // Detect SSR mode
+        const userAgent = req.headers.get("user-agent") || "";
+        const isSSR = url.searchParams.get("ssr") === "true" ||
+          userAgent.startsWith("Deno/");
+
+        // Transform using same pipeline as internal modules
+        let code = await transformToESM(source, crossPath, projectDir, adapter, {
+          projectId: effectiveProjectId,
+          dev,
+          ssr: isSSR,
+          moduleServerUrl: `http://${url.host}`,
+        });
+
+        // SSR: Apply cross-project specific rewrites for @/ paths
+        // @/ in cross-project code should resolve to the external project, not current
+        if (isSSR && code) {
+          code = applySSRImportRewrites(code, { crossProjectRef: projectRef });
+        }
+
+        return createModuleResponse(method, code, HTTP_OK, {
           "Content-Type": "application/javascript; charset=utf-8",
           "Cache-Control": "no-cache",
-        },
-      );
+        });
+      } catch (error) {
+        logger.error("[ModuleServer] Cross-project error", {
+          projectRef,
+          error: String(error),
+        });
+        return createModuleResponse(
+          method,
+          `// Error: ${String(error)}`,
+          HTTP_SERVER_ERROR,
+          {
+            "Content-Type": "application/javascript; charset=utf-8",
+            "Cache-Control": "no-cache",
+          },
+        );
+      }
     }
-  }
 
-  // Extract file path from URL
-  // /_vf_modules/components/app.js → components/app
-  let modulePath = url.pathname.replace(DEV_MODULE_PREFIX, "");
+    // Extract file path from URL
+    // /_vf_modules/components/app.js → components/app
+    let modulePath = url.pathname.replace(DEV_MODULE_PREFIX, "");
 
-  // Handle @/ path alias - maps to project root
-  // /_vf_modules/@/components/Button.js → components/Button
-  if (modulePath.startsWith("@/")) {
-    modulePath = modulePath.slice(2); // Remove @/ prefix
-  }
-
-  const filePathWithoutExt = modulePath.replace(/\.(?:mjs|js)$/i, "");
-
-  // Get project context from options (set by handler from proxy headers/domain lookup)
-  // Fall back to query params or hostname parsing for direct requests
-  // Priority: options > query params > hostname parsing
-  let projectSlug = options.projectSlug ?? url.searchParams.get("project");
-  let branch = options.branch ?? url.searchParams.get("branch");
-  if (!projectSlug) {
-    const parsedHost = parseProjectDomain(url.host);
-    projectSlug = parsedHost.slug;
-    if (!branch) {
-      branch = parsedHost.branch;
+    // Handle @/ path alias - maps to project root
+    // /_vf_modules/@/components/Button.js → components/Button
+    if (modulePath.startsWith("@/")) {
+      modulePath = modulePath.slice(2); // Remove @/ prefix
     }
-  }
 
-  // NOTE: In multi-project mode, the context (including token) is already set by the caller
-  // (ModuleHandler.withProxyContext) via AsyncLocalStorage. File operations will automatically
-  // use the existing context, so we don't need to call runWithContext again here.
+    const filePathWithoutExt = modulePath.replace(/\.(?:mjs|js)$/i, "");
 
-  try {
-    // Find source file (try .tsx, .ts, .jsx, .js, .mdx)
-    const findStart = performance.now();
+    // Get project context from options (set by handler from proxy headers/domain lookup)
+    // Fall back to query params or hostname parsing for direct requests
+    // Priority: options > query params > hostname parsing
+    let projectSlug = options.projectSlug ?? url.searchParams.get("project");
+    let branch = options.branch ?? url.searchParams.get("branch");
+    if (!projectSlug) {
+      const parsedHost = parseProjectDomain(url.host);
+      projectSlug = parsedHost.slug;
+      if (!branch) {
+        branch = parsedHost.branch;
+      }
+    }
 
-    const findResult = await findSourceFile(
-      secureFs,
-      projectDir,
-      filePathWithoutExt,
-    );
-    timings.findFile = performance.now() - findStart;
+    // NOTE: In multi-project mode, the context (including token) is already set by the caller
+    // (ModuleHandler.withProxyContext) via AsyncLocalStorage. File operations will automatically
+    // use the existing context, so we don't need to call runWithContext again here.
 
-    if (!findResult) {
-      logger.warn("Module not found", {
-        modulePath,
+    try {
+      // Find source file (try .tsx, .ts, .jsx, .js, .mdx)
+      const findStart = performance.now();
+
+      const findResult = await findSourceFile(
+        secureFs,
+        projectDir,
         filePathWithoutExt,
-        projectSlug,
-        projectDir,
-      });
-      return new Response("Module not found", {
-        status: HTTP_NOT_FOUND,
-        headers: { "Content-Type": "text/plain" },
-      });
-    }
-
-    const { path: sourceFile, isFrameworkFile } = findResult;
-
-    // Read source content
-    let code: string | undefined;
-
-    if (!isHeadRequest) {
-      // For framework lib files, read directly from filesystem instead of through adapter
-      // isFrameworkFile flag is set by findSourceFile when file is from framework lib
-      const readStart = performance.now();
-      const platformFs = createFileSystem();
-      let source = isFrameworkFile
-        ? await platformFs.readTextFile(sourceFile)
-        : await secureFs.readFile(sourceFile);
-      timings.readFile = performance.now() - readStart;
-
-      // Check for SSR mode via query parameter or Deno User-Agent
-      // Deno's fetch uses "Deno/x.x.x" as User-Agent, while browsers use different UAs
-      // This allows us to detect SSR requests even when query strings are lost
-      const userAgent = req.headers.get("user-agent") || "";
-      const isDenoRequest = userAgent.startsWith("Deno/");
-      const hasSSRParam = url.searchParams.get("ssr") === "true";
-      const isSSR = hasSSRParam || isDenoRequest;
-
-      const studioEmbed = url.searchParams.get("studio_embed") === "true";
-      const isJsxFile = /\.(tsx|jsx)$/i.test(sourceFile);
-      if (studioEmbed && !isFrameworkFile && isJsxFile) {
-        const injectStart = performance.now();
-        source = injectNodePositions(source, { filePath: sourceFile });
-        timings.injectPositions = performance.now() - injectStart;
-      }
-      logger.debug("[ModuleServer] SSR mode check", {
-        isSSR,
-        isDenoRequest,
-        hasSSRParam,
-        userAgent: userAgent.slice(0, 30),
-      });
-
-      // Transform to ESM
-      const transformStart = performance.now();
-      const transformOpts: TransformOptions = {
-        projectId: effectiveProjectId,
-        dev,
-        ssr: isSSR,
-        studioEmbed,
-      };
-      code = await transformToESM(
-        source,
-        sourceFile, // Pass actual source file path (with .mdx extension)
-        projectDir,
-        adapter,
-        transformOpts,
       );
-      timings.transform = performance.now() - transformStart;
+      timings.findFile = performance.now() - findStart;
 
-      // Apply SSR-specific rewrites using shared utility
-      if (isSSR && code) {
-        code = applySSRImportRewrites(code, {
+      if (!findResult) {
+        logger.warn("Module not found", {
+          modulePath,
+          filePathWithoutExt,
           projectSlug,
-          branch,
+          projectDir,
+        });
+        return new Response("Module not found", {
+          status: HTTP_NOT_FOUND,
+          headers: { "Content-Type": "text/plain" },
         });
       }
 
-      // Add HMR timestamps to all local imports for cache busting
-      // This is crucial for HMR to work - without it, nested imports
-      // would return cached versions even after file changes
-      const hmrTimestamp = url.searchParams.get("t");
-      if (hmrTimestamp && code) {
-        const hmrStart = performance.now();
-        code = await addHMRTimestamps(code, hmrTimestamp);
-        timings.hmrTimestamps = performance.now() - hmrStart;
-        logger.debug("[ModuleServer] HMR timestamp injection", {
-          path: modulePath,
-          timestamp: hmrTimestamp,
-          durationMs: timings.hmrTimestamps?.toFixed(1),
+      const { path: sourceFile, isFrameworkFile } = findResult;
+
+      // Read source content
+      let code: string | undefined;
+
+      if (!isHeadRequest) {
+        // For framework lib files, read directly from filesystem instead of through adapter
+        // isFrameworkFile flag is set by findSourceFile when file is from framework lib
+        const readStart = performance.now();
+        const platformFs = createFileSystem();
+        let source = isFrameworkFile
+          ? await platformFs.readTextFile(sourceFile)
+          : await secureFs.readFile(sourceFile);
+        timings.readFile = performance.now() - readStart;
+
+        // Check for SSR mode via query parameter or Deno User-Agent
+        // Deno's fetch uses "Deno/x.x.x" as User-Agent, while browsers use different UAs
+        // This allows us to detect SSR requests even when query strings are lost
+        const userAgent = req.headers.get("user-agent") || "";
+        const isDenoRequest = userAgent.startsWith("Deno/");
+        const hasSSRParam = url.searchParams.get("ssr") === "true";
+        const isSSR = hasSSRParam || isDenoRequest;
+
+        const studioEmbed = url.searchParams.get("studio_embed") === "true";
+        const isJsxFile = /\.(tsx|jsx)$/i.test(sourceFile);
+        if (studioEmbed && !isFrameworkFile && isJsxFile) {
+          const injectStart = performance.now();
+          source = injectNodePositions(source, { filePath: sourceFile });
+          timings.injectPositions = performance.now() - injectStart;
+        }
+        logger.debug("[ModuleServer] SSR mode check", {
+          isSSR,
+          isDenoRequest,
+          hasSSRParam,
+          userAgent: userAgent.slice(0, 30),
         });
+
+        // Transform to ESM
+        const transformStart = performance.now();
+        const transformOpts: TransformOptions = {
+          projectId: effectiveProjectId,
+          dev,
+          ssr: isSSR,
+          studioEmbed,
+        };
+        code = await transformToESM(
+          source,
+          sourceFile, // Pass actual source file path (with .mdx extension)
+          projectDir,
+          adapter,
+          transformOpts,
+        );
+        timings.transform = performance.now() - transformStart;
+
+        // Apply SSR-specific rewrites using shared utility
+        if (isSSR && code) {
+          code = applySSRImportRewrites(code, {
+            projectSlug,
+            branch,
+          });
+        }
+
+        // Add HMR timestamps to all local imports for cache busting
+        // This is crucial for HMR to work - without it, nested imports
+        // would return cached versions even after file changes
+        const hmrTimestamp = url.searchParams.get("t");
+        if (hmrTimestamp && code) {
+          const hmrStart = performance.now();
+          code = await addHMRTimestamps(code, hmrTimestamp);
+          timings.hmrTimestamps = performance.now() - hmrStart;
+          logger.debug("[ModuleServer] HMR timestamp injection", {
+            path: modulePath,
+            timestamp: hmrTimestamp,
+            durationMs: timings.hmrTimestamps?.toFixed(1),
+          });
+        }
       }
+
+      const headers = getDevModuleHeaders(modulePath);
+      logger.debug("[ModuleServer] Request complete", {
+        path: modulePath,
+        durationMs: (performance.now() - startTime).toFixed(1),
+      });
+      return createModuleResponse(method, code ?? "", HTTP_OK, headers);
+    } catch (error) {
+      const errorMsg = getErrorMessage(error);
+      logger.error("Module transform error", {
+        modulePath,
+        error: errorMsg,
+      });
+
+      const headers = getDevModuleHeaders(modulePath);
+      const errorBody = createDevModuleErrorBody(modulePath, errorMsg);
+
+      return createModuleResponse(method, errorBody, HTTP_SERVER_ERROR, headers);
     }
-
-    const headers = getDevModuleHeaders(modulePath);
-    logger.debug("[ModuleServer] Request complete", {
-      path: modulePath,
-      durationMs: (performance.now() - startTime).toFixed(1),
-    });
-    return createModuleResponse(method, code ?? "", HTTP_OK, headers);
-  } catch (error) {
-    const errorMsg = getErrorMessage(error);
-    logger.error("Module transform error", {
-      modulePath,
-      error: errorMsg,
-    });
-
-    const headers = getDevModuleHeaders(modulePath);
-    const errorBody = createDevModuleErrorBody(modulePath, errorMsg);
-
-    return createModuleResponse(method, errorBody, HTTP_SERVER_ERROR, headers);
-  }
+  }, { "modules.path": url.pathname, "modules.projectSlug": options.projectSlug || "unknown" });
 }
 
 // Get the veryfront-private root directory (where this code is running from)

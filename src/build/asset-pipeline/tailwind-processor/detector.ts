@@ -7,31 +7,34 @@ import { join } from "#veryfront/platform/compat/path/index.ts";
 import { logger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createSecureFs } from "#veryfront/security";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 /** Detect if a CSS file uses Tailwind v4 (@import "tailwindcss" syntax) */
-export async function isTailwindV4File(
+export function isTailwindV4File(
   filePath: string,
   projectDir: string,
   adapter: RuntimeAdapter,
 ): Promise<boolean> {
-  // Create secure filesystem wrapper for build operations
-  const secureFs = createSecureFs({
-    baseDir: projectDir,
-    adapter,
-    context: "build",
-    throwOnError: false, // Don't throw, just return false
-  });
+  return withSpan("build.asset.isTailwindV4File", async () => {
+    // Create secure filesystem wrapper for build operations
+    const secureFs = createSecureFs({
+      baseDir: projectDir,
+      adapter,
+      context: "build",
+      throwOnError: false, // Don't throw, just return false
+    });
 
-  try {
-    // Use secure wrapper (replaces direct Deno access)
-    const content = await secureFs.readFile(filePath);
-    // Tailwind v4 uses @import "tailwindcss" or @import 'tailwindcss' (with optional path suffix)
-    const tailwindV4ImportPattern = /@import\s+["']tailwindcss(?:\/[^"']*)?["']/;
-    return tailwindV4ImportPattern.test(content);
-  } catch (error) {
-    logger.debug(`Failed to check file for Tailwind CSS: ${filePath}`, error);
-    return false;
-  }
+    try {
+      // Use secure wrapper (replaces direct Deno access)
+      const content = await secureFs.readFile(filePath);
+      // Tailwind v4 uses @import "tailwindcss" or @import 'tailwindcss' (with optional path suffix)
+      const tailwindV4ImportPattern = /@import\s+["']tailwindcss(?:\/[^"']*)?["']/;
+      return tailwindV4ImportPattern.test(content);
+    } catch (error) {
+      logger.debug(`Failed to check file for Tailwind CSS: ${filePath}`, error);
+      return false;
+    }
+  }, { "tailwind.filePath": filePath });
 }
 
 /** Auto-detect content paths for Tailwind class scanning */

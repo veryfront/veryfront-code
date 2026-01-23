@@ -8,7 +8,7 @@
  */
 
 import { logger } from "#veryfront/utils";
-import { injectContext } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { injectContext, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 export interface DomainLookupResult {
   project_id: string;
@@ -90,54 +90,56 @@ function evictOldestEntries(): void {
  * @param config - API configuration
  * @returns The domain lookup result or null if not found
  */
-export async function lookupProjectByDomain(
+export function lookupProjectByDomain(
   domain: string,
   config: DomainLookupConfig,
 ): Promise<DomainLookupResult | null> {
-  const cacheKey = getCacheKey(domain);
-  const now = Date.now();
+  return withSpan("server.domainLookup.lookup", async () => {
+    const cacheKey = getCacheKey(domain);
+    const now = Date.now();
 
-  // Check cache first
-  const cached = domainCache.get(cacheKey);
-  if (cached && cached.expiresAt > now) {
-    logger.debug("[DomainLookup] Cache hit", {
-      domain,
-      projectSlug: cached.result?.project_slug,
-      ttlRemaining: cached.expiresAt - now,
-    });
-    return cached.result;
-  }
-
-  // Check for in-flight request to prevent duplicate API calls
-  const inFlight = inFlightRequests.get(cacheKey);
-  if (inFlight) {
-    logger.debug("[DomainLookup] Waiting for in-flight request", { domain });
-    return inFlight;
-  }
-
-  // Make API call
-  const requestPromise = fetchDomainLookup(domain, config);
-  inFlightRequests.set(cacheKey, requestPromise);
-
-  try {
-    const result = await requestPromise;
-
-    // Cache the result (including nulls for 404s)
-    domainCache.set(cacheKey, {
-      result,
-      expiresAt: now + DOMAIN_CACHE_TTL_MS,
-    });
-
-    // Cleanup periodically
-    if (domainCache.size > DOMAIN_CACHE_MAX_ENTRIES / 2) {
-      cleanupExpiredEntries();
-      evictOldestEntries();
+    // Check cache first
+    const cached = domainCache.get(cacheKey);
+    if (cached && cached.expiresAt > now) {
+      logger.debug("[DomainLookup] Cache hit", {
+        domain,
+        projectSlug: cached.result?.project_slug,
+        ttlRemaining: cached.expiresAt - now,
+      });
+      return cached.result;
     }
 
-    return result;
-  } finally {
-    inFlightRequests.delete(cacheKey);
-  }
+    // Check for in-flight request to prevent duplicate API calls
+    const inFlight = inFlightRequests.get(cacheKey);
+    if (inFlight) {
+      logger.debug("[DomainLookup] Waiting for in-flight request", { domain });
+      return inFlight;
+    }
+
+    // Make API call
+    const requestPromise = fetchDomainLookup(domain, config);
+    inFlightRequests.set(cacheKey, requestPromise);
+
+    try {
+      const result = await requestPromise;
+
+      // Cache the result (including nulls for 404s)
+      domainCache.set(cacheKey, {
+        result,
+        expiresAt: now + DOMAIN_CACHE_TTL_MS,
+      });
+
+      // Cleanup periodically
+      if (domainCache.size > DOMAIN_CACHE_MAX_ENTRIES / 2) {
+        cleanupExpiredEntries();
+        evictOldestEntries();
+      }
+
+      return result;
+    } finally {
+      inFlightRequests.delete(cacheKey);
+    }
+  }, { "domain.lookup.domain": domain });
 }
 
 /**
@@ -164,68 +166,70 @@ interface ProjectResponse {
  * Internal function to fetch project by domain from API.
  * Uses GET /projects/{domain} which resolves domains automatically.
  */
-async function fetchDomainLookup(
+function fetchDomainLookup(
   domain: string,
   config: DomainLookupConfig,
 ): Promise<DomainLookupResult | null> {
-  const domainWithoutPort = domain.replace(/:\d+$/, "");
-  const encodedDomain = encodeURIComponent(domainWithoutPort);
-  const url = `${config.apiBaseUrl}/projects/${encodedDomain}`;
+  return withSpan("server.domainLookup.fetch", async () => {
+    const domainWithoutPort = domain.replace(/:\d+$/, "");
+    const encodedDomain = encodeURIComponent(domainWithoutPort);
+    const url = `${config.apiBaseUrl}/projects/${encodedDomain}`;
 
-  logger.debug("[DomainLookup] Fetching from API", { domain, url });
+    logger.debug("[DomainLookup] Fetching from API", { domain, url });
 
-  try {
-    const headers = new Headers({
-      Authorization: `Bearer ${config.apiToken}`,
-      Accept: "application/json",
-    });
-    injectContext(headers);
+    try {
+      const headers = new Headers({
+        Authorization: `Bearer ${config.apiToken}`,
+        Accept: "application/json",
+      });
+      injectContext(headers);
 
-    const response = await fetch(url, { headers });
+      const response = await fetch(url, { headers });
 
-    if (response.status === 404) {
-      logger.debug("[DomainLookup] No project found for domain", { domain });
-      return null;
-    }
+      if (response.status === 404) {
+        logger.debug("[DomainLookup] No project found for domain", { domain });
+        return null;
+      }
 
-    if (!response.ok) {
-      logger.error("[DomainLookup] API error", {
+      if (!response.ok) {
+        logger.error("[DomainLookup] API error", {
+          domain,
+          status: response.status,
+          statusText: response.statusText,
+        });
+        return null;
+      }
+
+      const project = await response.json() as ProjectResponse;
+
+      // Find the environment that has this domain
+      const matchingEnv = project.environments?.find(
+        (env) => env.domains?.some((d) => d.toLowerCase() === domainWithoutPort.toLowerCase()),
+      );
+
+      const result: DomainLookupResult = {
+        project_id: project.id,
+        project_slug: project.slug,
+        project_name: project.name,
+        environment: matchingEnv ? { id: matchingEnv.id, name: matchingEnv.name } : null,
+        release_id: matchingEnv?.active_release_id ?? null,
+      };
+
+      logger.debug("[DomainLookup] Domain lookup result", {
         domain,
-        status: response.status,
-        statusText: response.statusText,
+        projectSlug: result.project_slug,
+        environment: result.environment?.name,
+      });
+
+      return result;
+    } catch (error) {
+      logger.error("[DomainLookup] Failed to lookup domain", {
+        domain,
+        error: error instanceof Error ? error.message : String(error),
       });
       return null;
     }
-
-    const project = await response.json() as ProjectResponse;
-
-    // Find the environment that has this domain
-    const matchingEnv = project.environments?.find(
-      (env) => env.domains?.some((d) => d.toLowerCase() === domainWithoutPort.toLowerCase()),
-    );
-
-    const result: DomainLookupResult = {
-      project_id: project.id,
-      project_slug: project.slug,
-      project_name: project.name,
-      environment: matchingEnv ? { id: matchingEnv.id, name: matchingEnv.name } : null,
-      release_id: matchingEnv?.active_release_id ?? null,
-    };
-
-    logger.debug("[DomainLookup] Domain lookup result", {
-      domain,
-      projectSlug: result.project_slug,
-      environment: result.environment?.name,
-    });
-
-    return result;
-  } catch (error) {
-    logger.error("[DomainLookup] Failed to lookup domain", {
-      domain,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return null;
-  }
+  }, { "domain.fetch.domain": domain });
 }
 
 /**

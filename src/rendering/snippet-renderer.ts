@@ -17,6 +17,7 @@ import {
   createCacheBackend,
   MemoryCacheBackend,
 } from "#veryfront/cache/backend.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 // Cache limits to prevent unbounded memory growth
 const SNIPPET_CACHE_MAX_ENTRIES = 500;
@@ -210,161 +211,166 @@ async function hashContent(content: string): Promise<string> {
  * 3. Import via module server URL (handles @/ resolution)
  * 4. Render to HTML with React SSR
  */
-export async function renderSnippet(
+export function renderSnippet(
   mdxContent: string,
   options: SnippetRenderOptions,
 ): Promise<SnippetRenderResult> {
-  logger.debug("[SnippetRenderer] Starting render", {
-    contentLength: mdxContent.length,
-    filePath: options.filePath,
-  });
-
-  try {
-    // 1. Compile MDX to JavaScript
-    const { compileMDXRuntime } = await import(
-      "@veryfront/transforms/mdx/compiler/index.ts"
-    );
-
-    const bundle = await compileMDXRuntime(
-      options.mode,
-      options.projectDir,
-      mdxContent,
-      undefined,
-      options.filePath,
-    );
-
-    logger.debug("[SnippetRenderer] MDX compiled", {
-      codeLength: bundle.compiledCode.length,
-      hasFrontmatter: !!bundle.frontmatter,
+  return withSpan("rendering.renderSnippet", async () => {
+    logger.debug("[SnippetRenderer] Starting render", {
+      contentLength: mdxContent.length,
+      filePath: options.filePath,
     });
 
-    // 2. Store RAW compiled code in cache - no import transformations
-    // module-server.ts will apply transformToESM to handle imports properly
-    // for both SSR (cached file://) and browser (esm.sh URLs) contexts
-    const hash = await hashContent(mdxContent + (options.projectSlug || ""));
-    const cacheEntry: SnippetCacheEntry = {
-      code: bundle.compiledCode,
-      frontmatter: bundle.frontmatter || {},
-    };
+    try {
+      // 1. Compile MDX to JavaScript
+      const { compileMDXRuntime } = await import(
+        "@veryfront/transforms/mdx/compiler/index.ts"
+      );
 
-    // Store in local cache (fast reads)
-    snippetCache.set(hash, cacheEntry);
+      const bundle = await compileMDXRuntime(
+        options.mode,
+        options.projectDir,
+        mdxContent,
+        undefined,
+        options.filePath,
+      );
 
-    // Store in distributed cache asynchronously (cross-pod sharing)
-    getDistributedSnippetCache()
-      .then((cache) => {
-        cache
-          .set(hash, JSON.stringify(cacheEntry), SNIPPET_DISTRIBUTED_CACHE_TTL_SECONDS)
-          .catch((error) => {
-            logger.debug(
-              "[SnippetRenderer] Failed to store in distributed cache",
-              { hash, error },
-            );
-          });
-      })
-      .catch(() => {
-        // Ignore - local cache is sufficient
+      logger.debug("[SnippetRenderer] MDX compiled", {
+        codeLength: bundle.compiledCode.length,
+        hasFrontmatter: !!bundle.frontmatter,
       });
 
-    logger.debug("[SnippetRenderer] Snippet cached", {
-      hash,
-      projectSlug: options.projectSlug,
-      codePreview: bundle.compiledCode.substring(0, 300),
-    });
+      // 2. Store RAW compiled code in cache - no import transformations
+      // module-server.ts will apply transformToESM to handle imports properly
+      // for both SSR (cached file://) and browser (esm.sh URLs) contexts
+      const hash = await hashContent(mdxContent + (options.projectSlug || ""));
+      const cacheEntry: SnippetCacheEntry = {
+        code: bundle.compiledCode,
+        frontmatter: bundle.frontmatter || {},
+      };
 
-    // 4. Import the snippet module via HTTP for SSR
-    // Ensure moduleServerBase is a full HTTP URL (not relative path)
-    let moduleServerBase = options.moduleServerUrl || "http://localhost:3002";
-    if (!moduleServerBase.startsWith("http://") && !moduleServerBase.startsWith("https://")) {
-      moduleServerBase = "http://localhost:3002";
-    }
-    // Add cache buster to ensure Deno fetches fresh module each time
-    const cacheBuster = Date.now();
-    const snippetUrl =
-      `${moduleServerBase}/_vf_modules/_snippets/${hash}.js?ssr=true&v=${cacheBuster}`;
+      // Store in local cache (fast reads)
+      snippetCache.set(hash, cacheEntry);
 
-    logger.debug("[SnippetRenderer] Loading snippet module", {
-      snippetUrl,
-      moduleServerBase,
-      providedUrl: options.moduleServerUrl,
-    });
+      // Store in distributed cache asynchronously (cross-pod sharing)
+      getDistributedSnippetCache()
+        .then((cache) => {
+          cache
+            .set(hash, JSON.stringify(cacheEntry), SNIPPET_DISTRIBUTED_CACHE_TTL_SECONDS)
+            .catch((error) => {
+              logger.debug(
+                "[SnippetRenderer] Failed to store in distributed cache",
+                { hash, error },
+              );
+            });
+        })
+        .catch(() => {
+          // Ignore - local cache is sufficient
+        });
 
-    const module = await import(snippetUrl);
+      logger.debug("[SnippetRenderer] Snippet cached", {
+        hash,
+        projectSlug: options.projectSlug,
+        codePreview: bundle.compiledCode.substring(0, 300),
+      });
 
-    const MDXContent = module.default || module.MDXContent;
-    if (!MDXContent) {
-      throw new Error("No MDXContent export found in compiled snippet");
-    }
-
-    // 5. Render to HTML string with React SSR
-    const { renderToString } = await import("react-dom/server");
-    const React = await import("react");
-
-    const element = React.createElement(MDXContent, {
-      frontmatter: bundle.frontmatter || {},
-    });
-    const bodyHtml = renderToString(element);
-
-    logger.debug("[SnippetRenderer] SSR complete", {
-      bodyHtmlLength: bodyHtml.length,
-    });
-
-    // 6. Wrap in HTML shell (same as regular pages)
-    const meta: RenderMetadata = {
-      title: (bundle.frontmatter?.name as string) || "Component Preview",
-      slug: options.filePath || "snippet",
-      frontmatter: bundle.frontmatter as RenderMetadata["frontmatter"],
-    };
-
-    // Merge config with HMR enabled for live reload
-    // Extract port from moduleServerUrl for HMR WebSocket connection
-    let serverPort: number | undefined;
-    if (options.moduleServerUrl) {
-      try {
-        const url = new URL(options.moduleServerUrl);
-        serverPort = url.port ? parseInt(url.port, 10) : undefined;
-      } catch {
-        // Ignore invalid URL
+      // 4. Import the snippet module via HTTP for SSR
+      // Ensure moduleServerBase is a full HTTP URL (not relative path)
+      let moduleServerBase = options.moduleServerUrl || "http://localhost:3002";
+      if (!moduleServerBase.startsWith("http://") && !moduleServerBase.startsWith("https://")) {
+        moduleServerBase = "http://localhost:3002";
       }
+      // Add cache buster to ensure Deno fetches fresh module each time
+      const cacheBuster = Date.now();
+      const snippetUrl =
+        `${moduleServerBase}/_vf_modules/_snippets/${hash}.js?ssr=true&v=${cacheBuster}`;
+
+      logger.debug("[SnippetRenderer] Loading snippet module", {
+        snippetUrl,
+        moduleServerBase,
+        providedUrl: options.moduleServerUrl,
+      });
+
+      const module = await import(snippetUrl);
+
+      const MDXContent = module.default || module.MDXContent;
+      if (!MDXContent) {
+        throw new Error("No MDXContent export found in compiled snippet");
+      }
+
+      // 5. Render to HTML string with React SSR
+      const { renderToString } = await import("react-dom/server");
+      const React = await import("react");
+
+      const element = React.createElement(MDXContent, {
+        frontmatter: bundle.frontmatter || {},
+      });
+      const bodyHtml = renderToString(element);
+
+      logger.debug("[SnippetRenderer] SSR complete", {
+        bodyHtmlLength: bodyHtml.length,
+      });
+
+      // 6. Wrap in HTML shell (same as regular pages)
+      const meta: RenderMetadata = {
+        title: (bundle.frontmatter?.name as string) || "Component Preview",
+        slug: options.filePath || "snippet",
+        frontmatter: bundle.frontmatter as RenderMetadata["frontmatter"],
+      };
+
+      // Merge config with HMR enabled for live reload
+      // Extract port from moduleServerUrl for HMR WebSocket connection
+      let serverPort: number | undefined;
+      if (options.moduleServerUrl) {
+        try {
+          const url = new URL(options.moduleServerUrl);
+          serverPort = url.port ? parseInt(url.port, 10) : undefined;
+        } catch {
+          // Ignore invalid URL
+        }
+      }
+
+      const snippetConfig = {
+        ...options.config,
+        dev: {
+          ...options.config?.dev,
+          hmr: true,
+          port: serverPort ?? options.config?.dev?.port,
+          // Don't set hmrPort explicitly - let dev-scripts.ts use the default port + 1 logic
+        },
+      };
+
+      const html = await wrapInHTMLShell(bodyHtml, meta, {
+        mode: options.mode,
+        config: snippetConfig,
+        projectDir: options.projectDir,
+        nonce: options.nonce,
+        studioEmbed: true, // Enable studio bridge for preview panel
+        pagePath: `_snippets/${hash}`, // Point to cached snippet module for hydration
+        pageId: options.pageId, // Pass entity UUID for Studio postMessage communication
+      });
+
+      return {
+        html,
+        frontmatter: bundle.frontmatter || {},
+      };
+    } catch (error) {
+      logger.error("[SnippetRenderer] Render failed", {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+
+      // Return error HTML
+      const errorHtml = generateErrorHTML(error, options);
+      return {
+        html: errorHtml,
+        frontmatter: {},
+      };
     }
-
-    const snippetConfig = {
-      ...options.config,
-      dev: {
-        ...options.config?.dev,
-        hmr: true,
-        port: serverPort ?? options.config?.dev?.port,
-        // Don't set hmrPort explicitly - let dev-scripts.ts use the default port + 1 logic
-      },
-    };
-
-    const html = await wrapInHTMLShell(bodyHtml, meta, {
-      mode: options.mode,
-      config: snippetConfig,
-      projectDir: options.projectDir,
-      nonce: options.nonce,
-      studioEmbed: true, // Enable studio bridge for preview panel
-      pagePath: `_snippets/${hash}`, // Point to cached snippet module for hydration
-      pageId: options.pageId, // Pass entity UUID for Studio postMessage communication
-    });
-
-    return {
-      html,
-      frontmatter: bundle.frontmatter || {},
-    };
-  } catch (error) {
-    logger.error("[SnippetRenderer] Render failed", {
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
-
-    // Return error HTML
-    const errorHtml = generateErrorHTML(error, options);
-    return {
-      html: errorHtml,
-      frontmatter: {},
-    };
-  }
+  }, {
+    "snippet.contentLength": mdxContent.length,
+    "snippet.filePath": options.filePath || "inline",
+  });
 }
 
 function generateErrorHTML(error: unknown, options: SnippetRenderOptions): string {

@@ -7,6 +7,7 @@
  */
 
 import type { AgentResponse } from "../../types.ts";
+import { setActiveSpanAttributes, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 export interface CacheConfig {
   /** Cache strategy */
@@ -316,32 +317,43 @@ function hashString(str: string): string {
 export function cacheMiddleware(config: CacheConfig) {
   const cache = createCache(config);
 
-  return async (
+  return (
     context: Record<string, unknown>,
     next: () => Promise<AgentResponse>,
   ): Promise<AgentResponse> => {
-    const inputString = typeof context.input === "string"
-      ? context.input
-      : JSON.stringify(context.input);
+    return withSpan("agent.middleware.cache", async () => {
+      const inputString = typeof context.input === "string"
+        ? context.input
+        : JSON.stringify(context.input);
 
-    // Check cache
-    const cached = cache.get(inputString, context);
+      // Check cache
+      const cached = cache.get(inputString, context);
 
-    if (cached) {
-      return {
-        ...cached,
-        metadata: {
-          ...cached.metadata,
-          fromCache: true,
-          cachedAt: Date.now(),
-        },
-      };
-    }
+      if (cached) {
+        setActiveSpanAttributes({
+          "cache.hit": true,
+          "cache.strategy": config.strategy,
+        });
+        return {
+          ...cached,
+          metadata: {
+            ...cached.metadata,
+            fromCache: true,
+            cachedAt: Date.now(),
+          },
+        };
+      }
 
-    // Execute and cache
-    const result = await next();
-    cache.set(inputString, result, context);
+      setActiveSpanAttributes({
+        "cache.hit": false,
+        "cache.strategy": config.strategy,
+      });
 
-    return result;
+      // Execute and cache
+      const result = await next();
+      cache.set(inputString, result, context);
+
+      return result;
+    }, { "cache.strategy": config.strategy });
   };
 }

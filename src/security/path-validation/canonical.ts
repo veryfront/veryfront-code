@@ -7,44 +7,47 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
 import { isWithinDirectory, normalizeSeparators, resolvePathSegments } from "./normalization.ts";
 import { PathValidationError, type ValidationResult } from "./types.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 /**
  * Get canonical path by resolving symlinks
  * Falls back to path resolution if adapter not available
  */
-export async function getCanonicalPath(
+export function getCanonicalPath(
   path: string,
   adapter?: RuntimeAdapter,
   followSymlinks = false,
 ): Promise<{ path: string; isSymlink: boolean }> {
-  // If no adapter or not following symlinks, just resolve path segments
-  if (!adapter || !followSymlinks) {
-    return {
-      path: resolvePathSegments(path),
-      isSymlink: false,
-    };
-  }
-
-  try {
-    const stat = await adapter.fs.stat(path);
-
-    if (stat.isSymlink) {
+  return withSpan("security.path.getCanonical", async () => {
+    // If no adapter or not following symlinks, just resolve path segments
+    if (!adapter || !followSymlinks) {
       return {
         path: resolvePathSegments(path),
-        isSymlink: true,
+        isSymlink: false,
       };
     }
 
-    return {
-      path: resolvePathSegments(path),
-      isSymlink: false,
-    };
-  } catch {
-    return {
-      path: resolvePathSegments(path),
-      isSymlink: false,
-    };
-  }
+    try {
+      const stat = await adapter.fs.stat(path);
+
+      if (stat.isSymlink) {
+        return {
+          path: resolvePathSegments(path),
+          isSymlink: true,
+        };
+      }
+
+      return {
+        path: resolvePathSegments(path),
+        isSymlink: false,
+      };
+    } catch {
+      return {
+        path: resolvePathSegments(path),
+        isSymlink: false,
+      };
+    }
+  }, { "path.input": path, "path.followSymlinks": followSymlinks });
 }
 
 /**

@@ -2,6 +2,7 @@ import { serverLogger as logger } from "#veryfront/utils";
 import { basename, join } from "#veryfront/platform/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type * as React from "react";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 export interface ComponentExports {
   default?: unknown;
@@ -46,13 +47,15 @@ export class ComponentRegistry {
     ];
   }
 
-  async discover(): Promise<void> {
-    this.initialized = false;
-    this.initializedPromise = (async () => {
-      await this._discoverInternal();
-      this.initialized = true;
-    })();
-    await this.initializedPromise;
+  discover(): Promise<void> {
+    return withSpan("modules.componentRegistry.discover", async () => {
+      this.initialized = false;
+      this.initializedPromise = (async () => {
+        await this._discoverInternal();
+        this.initialized = true;
+      })();
+      await this.initializedPromise;
+    }, { "registry.projectDir": this.options.projectDir });
   }
 
   private async _discoverInternal(): Promise<void> {
@@ -112,36 +115,42 @@ export class ComponentRegistry {
     }
   }
 
-  async loadComponent(name: string): Promise<ComponentInfo | null> {
-    if (this.initializedPromise) {
-      await this.initializedPromise;
-    }
-    const component = this.components.get(name);
-    if (!component) {
-      logger.warn(`Component not found: ${name}`);
-      return null;
-    }
+  loadComponent(name: string): Promise<ComponentInfo | null> {
+    return withSpan("modules.componentRegistry.loadComponent", async () => {
+      if (this.initializedPromise) {
+        await this.initializedPromise;
+      }
+      const component = this.components.get(name);
+      if (!component) {
+        logger.warn(`Component not found: ${name}`);
+        return null;
+      }
 
-    if (component.isLoaded) {
-      return component;
-    }
+      if (component.isLoaded) {
+        return component;
+      }
 
-    try {
-      component.content = await this.adapter.fs.readFile(component.path);
-      component.isLoaded = true;
+      try {
+        component.content = await this.adapter.fs.readFile(component.path);
+        component.isLoaded = true;
 
-      logger.debug(`Loaded component: ${name}`);
-      return component;
-    } catch (error) {
-      logger.error(`Failed to load component ${name}:`, error);
-      return null;
-    }
+        logger.debug(`Loaded component: ${name}`);
+        return component;
+      } catch (error) {
+        logger.error(`Failed to load component ${name}:`, error);
+        return null;
+      }
+    }, { "registry.componentName": name });
   }
 
-  async loadAll(): Promise<void> {
-    const loadPromises = Array.from(this.components.keys()).map((name) => this.loadComponent(name));
+  loadAll(): Promise<void> {
+    return withSpan("modules.componentRegistry.loadAll", async () => {
+      const loadPromises = Array.from(this.components.keys()).map((name) =>
+        this.loadComponent(name)
+      );
 
-    await Promise.all(loadPromises);
+      await Promise.all(loadPromises);
+    }, { "registry.componentCount": this.components.size });
   }
 
   get(name: string): ComponentInfo | undefined {

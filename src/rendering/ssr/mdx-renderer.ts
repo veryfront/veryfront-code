@@ -3,43 +3,46 @@ import * as React from "react";
 import { CompilationError } from "#veryfront/errors/index.ts";
 import { loadCompiledMDXModule } from "./mdx-module-loader.ts";
 import type { MDXRenderOptions } from "./types.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
-export async function renderMDXToReactAsync(
+export function renderMDXToReactAsync(
   compiledCode: string,
   options: MDXRenderOptions = {},
 ): Promise<React.ReactElement> {
-  try {
-    const cacheKey = await hashCode(compiledCode);
-    const module = await loadCompiledMDXModule(compiledCode, cacheKey);
+  return withSpan("mdx.renderToReact", async () => {
+    try {
+      const cacheKey = await hashCode(compiledCode);
+      const module = await loadCompiledMDXModule(compiledCode, cacheKey);
 
-    const MDXContent = module.default || module.MDXContent;
+      const MDXContent = module.default || module.MDXContent;
 
-    if (!MDXContent) {
-      throw new CompilationError("No MDXContent found in compiled module");
+      if (!MDXContent) {
+        throw new CompilationError("No MDXContent found in compiled module");
+      }
+
+      const moduleFrontmatter = module.frontmatter ?? {};
+      const optionFrontmatter = options.frontmatter ?? {};
+      const mergedProps: Record<string, unknown> = {
+        ...(options as Record<string, unknown>),
+        frontmatter: {
+          ...moduleFrontmatter,
+          ...optionFrontmatter,
+        },
+      };
+
+      if (React.isValidElement(MDXContent)) {
+        return MDXContent;
+      }
+
+      return React.createElement(
+        MDXContent as React.ComponentType<Record<string, unknown>>,
+        mergedProps,
+      );
+    } catch (error) {
+      logger.error("[MDX] Render error:", error);
+      return createErrorElement(error);
     }
-
-    const moduleFrontmatter = module.frontmatter ?? {};
-    const optionFrontmatter = options.frontmatter ?? {};
-    const mergedProps: Record<string, unknown> = {
-      ...(options as Record<string, unknown>),
-      frontmatter: {
-        ...moduleFrontmatter,
-        ...optionFrontmatter,
-      },
-    };
-
-    if (React.isValidElement(MDXContent)) {
-      return MDXContent;
-    }
-
-    return React.createElement(
-      MDXContent as React.ComponentType<Record<string, unknown>>,
-      mergedProps,
-    );
-  } catch (error) {
-    logger.error("[MDX] Render error:", error);
-    return createErrorElement(error);
-  }
+  }, {});
 }
 
 // Hex lookup table for efficient byte-to-hex conversion

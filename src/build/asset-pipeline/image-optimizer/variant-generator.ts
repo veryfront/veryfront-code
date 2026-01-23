@@ -1,6 +1,7 @@
 import { dirname, relative } from "#veryfront/platform/compat/path/index.ts";
 import { logger } from "#veryfront/utils";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { processFormat } from "./format-processor.ts";
 import { calculateAspectRatio, getVariantPath } from "../../utils/asset-utils.ts";
 import type {
@@ -11,7 +12,7 @@ import type {
   SharpMetadata,
 } from "./types.ts";
 
-export async function generateVariant(
+export function generateVariant(
   sharp: SharpConstructor,
   image: SharpInstance,
   relPath: string,
@@ -21,41 +22,48 @@ export async function generateVariant(
   quality: number,
   outputDir: string,
 ): Promise<ImageVariant | null> {
-  const fs = createFileSystem();
-  try {
-    const outputPath = getVariantPath(outputDir, relPath, format, width);
-    await fs.mkdir(dirname(outputPath), { recursive: true });
+  return withSpan("build.asset.generateVariant", async () => {
+    const fs = createFileSystem();
+    try {
+      const outputPath = getVariantPath(outputDir, relPath, format, width);
+      await fs.mkdir(dirname(outputPath), { recursive: true });
 
-    const processor = image.clone().resize(width, null, {
-      fit: "inside",
-      withoutEnlargement: true,
-    });
+      const processor = image.clone().resize(width, null, {
+        fit: "inside",
+        withoutEnlargement: true,
+      });
 
-    const formattedProcessor = processFormat(processor, format, quality);
-    const buffer = await formattedProcessor.toBuffer();
-    await fs.writeFile(outputPath, buffer);
+      const formattedProcessor = processFormat(processor, format, quality);
+      const buffer = await formattedProcessor.toBuffer();
+      await fs.writeFile(outputPath, buffer);
 
-    const processedMetadata = await sharp(buffer).metadata();
+      const processedMetadata = await sharp(buffer).metadata();
 
-    return {
-      format,
-      size: width,
-      width: processedMetadata.width || width,
-      height: processedMetadata.height || Math.round(
-        width / calculateAspectRatio(metadata.width, metadata.height),
-      ),
-      path: relative(outputDir, outputPath),
-      fileSize: buffer.length,
-    };
-  } catch (error) {
-    logger.error(`Failed to generate ${format} variant at ${width}px`, {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return null;
-  }
+      return {
+        format,
+        size: width,
+        width: processedMetadata.width || width,
+        height: processedMetadata.height || Math.round(
+          width / calculateAspectRatio(metadata.width, metadata.height),
+        ),
+        path: relative(outputDir, outputPath),
+        fileSize: buffer.length,
+      };
+    } catch (error) {
+      logger.error(`Failed to generate ${format} variant at ${width}px`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+  }, {
+    "image.path": relPath,
+    "image.format": format,
+    "image.width": width,
+    "image.quality": quality,
+  });
 }
 
-export async function generateImageVariants(
+export function generateImageVariants(
   sharp: SharpConstructor,
   image: SharpInstance,
   relPath: string,
@@ -65,30 +73,36 @@ export async function generateImageVariants(
   quality: number,
   outputDir: string,
 ): Promise<ImageVariant[]> {
-  const variants: ImageVariant[] = [];
-  const originalWidth = metadata.width || 1920;
+  return withSpan("build.asset.generateImageVariants", async () => {
+    const variants: ImageVariant[] = [];
+    const originalWidth = metadata.width || 1920;
 
-  // Filter sizes smaller than original, then add original width
-  const validSizes = sizes.filter((size) => !metadata.width || metadata.width >= size);
-  const allSizes = [...validSizes, originalWidth];
+    // Filter sizes smaller than original, then add original width
+    const validSizes = sizes.filter((size) => !metadata.width || metadata.width >= size);
+    const allSizes = [...validSizes, originalWidth];
 
-  for (const size of allSizes) {
-    for (const format of formats) {
-      const variant = await generateVariant(
-        sharp,
-        image,
-        relPath,
-        format,
-        size,
-        metadata,
-        quality,
-        outputDir,
-      );
-      if (variant) {
-        variants.push(variant);
+    for (const size of allSizes) {
+      for (const format of formats) {
+        const variant = await generateVariant(
+          sharp,
+          image,
+          relPath,
+          format,
+          size,
+          metadata,
+          quality,
+          outputDir,
+        );
+        if (variant) {
+          variants.push(variant);
+        }
       }
     }
-  }
 
-  return variants;
+    return variants;
+  }, {
+    "image.path": relPath,
+    "image.formats": formats.join(","),
+    "image.sizesCount": sizes.length,
+  });
 }

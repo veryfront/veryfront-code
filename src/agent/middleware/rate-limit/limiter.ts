@@ -8,6 +8,7 @@
  */
 
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { setActiveSpanAttributes, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 export interface RateLimitConfig {
   /** Strategy type */
@@ -224,16 +225,27 @@ export function rateLimitMiddleware(config: RateLimitConfig) {
   const limiter = createRateLimiter(config);
 
   return <T>(context: Record<string, unknown>, next: () => Promise<T>): Promise<T> => {
-    const result = limiter.check(context);
+    return withSpan("agent.middleware.rateLimit", () => {
+      const result = limiter.check(context);
 
-    if (!result.allowed) {
-      throw toError(createError({
-        type: "agent",
-        message: config.errorMessage ||
-          `Rate limit exceeded. Try again in ${result.retryAfter} seconds.`,
-      }));
-    }
+      setActiveSpanAttributes({
+        "rateLimit.allowed": result.allowed,
+        "rateLimit.remaining": result.remaining,
+        "rateLimit.strategy": config.strategy,
+      });
 
-    return next();
+      if (!result.allowed) {
+        setActiveSpanAttributes({
+          "rateLimit.retryAfter": result.retryAfter || 0,
+        });
+        throw toError(createError({
+          type: "agent",
+          message: config.errorMessage ||
+            `Rate limit exceeded. Try again in ${result.retryAfter} seconds.`,
+        }));
+      }
+
+      return next() as T;
+    }, { "rateLimit.strategy": config.strategy, "rateLimit.maxRequests": config.maxRequests });
   };
 }

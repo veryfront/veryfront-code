@@ -1,6 +1,7 @@
 import { parseImports, replaceSpecifiers, rewriteImports } from "./lexer.ts";
 import { REACT_DEFAULT_VERSION, TAILWIND_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 /**
  * Add HMR cache-busting timestamps to all local imports.
@@ -18,25 +19,27 @@ import { rendererLogger as logger } from "#veryfront/utils";
  * @returns Promise resolving to code with timestamped local imports
  */
 export function addHMRTimestamps(code: string, timestamp: string | number): Promise<string> {
-  return replaceSpecifiers(code, (specifier: string) => {
-    // Only add timestamp to local imports (relative paths and alias paths)
-    const isLocalImport = specifier.startsWith("./") ||
-      specifier.startsWith("../") ||
-      specifier.startsWith("/") ||
-      specifier.startsWith("@/");
+  return withSpan("transforms.esm.addHMRTimestamps", () => {
+    return replaceSpecifiers(code, (specifier: string) => {
+      // Only add timestamp to local imports (relative paths and alias paths)
+      const isLocalImport = specifier.startsWith("./") ||
+        specifier.startsWith("../") ||
+        specifier.startsWith("/") ||
+        specifier.startsWith("@/");
 
-    if (!isLocalImport) return null;
+      if (!isLocalImport) return null;
 
-    // Skip if already has a timestamp parameter
-    if (specifier.includes("?t=") || specifier.includes("&t=")) return null;
+      // Skip if already has a timestamp parameter
+      if (specifier.includes("?t=") || specifier.includes("&t=")) return null;
 
-    // Skip external URLs
-    if (specifier.startsWith("http://") || specifier.startsWith("https://")) return null;
+      // Skip external URLs
+      if (specifier.startsWith("http://") || specifier.startsWith("https://")) return null;
 
-    // Add timestamp as query parameter
-    const separator = specifier.includes("?") ? "&" : "?";
-    return `${specifier}${separator}t=${timestamp}`;
-  });
+      // Add timestamp as query parameter
+      const separator = specifier.includes("?") ? "&" : "?";
+      return `${specifier}${separator}t=${timestamp}`;
+    });
+  }, { "transforms.timestamp": String(timestamp) });
 }
 
 /** Track unversioned imports to warn only once per specifier */
@@ -93,127 +96,131 @@ function shouldSkipRewrite(specifier: string): boolean {
 }
 
 export function rewriteBareImports(code: string, _moduleServerUrl?: string): Promise<string> {
-  return Promise.resolve(replaceSpecifiers(code, (specifier) => {
-    const mapped = REACT_IMPORT_MAP[specifier];
-    if (mapped) return mapped;
+  return withSpan("transforms.esm.rewriteBareImports", () => {
+    return replaceSpecifiers(code, (specifier) => {
+      const mapped = REACT_IMPORT_MAP[specifier];
+      if (mapped) return mapped;
 
-    if (shouldSkipRewrite(specifier)) return null;
+      if (shouldSkipRewrite(specifier)) return null;
 
-    const normalized = normalizeVersionedSpecifier(specifier);
+      const normalized = normalizeVersionedSpecifier(specifier);
 
-    // Pin tailwindcss to unified version to prevent multiple versions loading
-    let finalSpecifier = normalized;
-    if (normalized === "tailwindcss" || normalized.startsWith("tailwindcss/")) {
-      finalSpecifier = normalized.replace(/^tailwindcss/, `tailwindcss@${TAILWIND_VERSION}`);
-    } else if (!hasVersionSpecifier(specifier)) {
-      warnUnversionedImport(specifier);
-    }
+      // Pin tailwindcss to unified version to prevent multiple versions loading
+      let finalSpecifier = normalized;
+      if (normalized === "tailwindcss" || normalized.startsWith("tailwindcss/")) {
+        finalSpecifier = normalized.replace(/^tailwindcss/, `tailwindcss@${TAILWIND_VERSION}`);
+      } else if (!hasVersionSpecifier(specifier)) {
+        warnUnversionedImport(specifier);
+      }
 
-    return `https://esm.sh/${finalSpecifier}?external=react&target=es2022`;
-  }));
+      return `https://esm.sh/${finalSpecifier}?external=react&target=es2022`;
+    });
+  }, { "transforms.code_length": code.length });
 }
 
-export async function rewriteVendorImports(
+export function rewriteVendorImports(
   code: string,
   moduleServerUrl: string,
   vendorBundleHash: string,
 ): Promise<string> {
-  const vendorUrl = `${moduleServerUrl}/_vendor.js?v=${vendorBundleHash}`;
+  return withSpan("transforms.esm.rewriteVendorImports", async () => {
+    const vendorUrl = `${moduleServerUrl}/_vendor.js?v=${vendorBundleHash}`;
 
-  const reactPackages = new Set([
-    "react",
-    "react-dom",
-    "react-dom/client",
-    "react-dom/server",
-    "react/jsx-runtime",
-    "react/jsx-dev-runtime",
-  ]);
+    const reactPackages = new Set([
+      "react",
+      "react-dom",
+      "react-dom/client",
+      "react-dom/server",
+      "react/jsx-runtime",
+      "react/jsx-dev-runtime",
+    ]);
 
-  // First, preserve export statements by only swapping the specifier
-  let result = await rewriteImports(code, (imp, statement) => {
-    if (!imp.n || !reactPackages.has(imp.n)) return null;
-    const trimmed = statement.trimStart();
-    if (!trimmed.startsWith("export")) return null;
+    // First, preserve export statements by only swapping the specifier
+    let result = await rewriteImports(code, (imp, statement) => {
+      if (!imp.n || !reactPackages.has(imp.n)) return null;
+      const trimmed = statement.trimStart();
+      if (!trimmed.startsWith("export")) return null;
 
-    const specStart = imp.s - imp.ss;
-    const specEnd = imp.e - imp.ss;
-    const before = statement.slice(0, specStart);
-    const after = statement.slice(specEnd);
-    return `${before}${vendorUrl}${after}`;
-  });
+      const specStart = imp.s - imp.ss;
+      const specEnd = imp.e - imp.ss;
+      const before = statement.slice(0, specStart);
+      const after = statement.slice(specEnd);
+      return `${before}${vendorUrl}${after}`;
+    });
 
-  // Re-parse after export rewrites
-  const baseSource = result;
-  const imports = await parseImports(baseSource);
+    // Re-parse after export rewrites
+    const baseSource = result;
+    const imports = await parseImports(baseSource);
 
-  // Process in reverse order to maintain indices
-  for (let i = imports.length - 1; i >= 0; i--) {
-    const imp = imports[i];
-    if (!imp) continue;
+    // Process in reverse order to maintain indices
+    for (let i = imports.length - 1; i >= 0; i--) {
+      const imp = imports[i];
+      if (!imp) continue;
 
-    // Skip if not a vendor package
-    if (!imp.n || !reactPackages.has(imp.n)) continue;
+      // Skip if not a vendor package
+      if (!imp.n || !reactPackages.has(imp.n)) continue;
 
-    const exportName = sanitizeVendorExportName(imp.n);
+      const exportName = sanitizeVendorExportName(imp.n);
 
-    if (imp.d > -1) {
-      // Dynamic import: import('react') -> import('vendor').then(m => m.react)
-      // imp.d is start of `import(`, imp.e is end of specifier content
+      if (imp.d > -1) {
+        // Dynamic import: import('react') -> import('vendor').then(m => m.react)
+        // imp.d is start of `import(`, imp.e is end of specifier content
 
-      // Find closing paren after the specifier
-      const afterSpecifier = baseSource.substring(imp.e);
-      // Matches closing quote then closing paren
-      const match = afterSpecifier.match(/^['"]\s*\)/);
+        // Find closing paren after the specifier
+        const afterSpecifier = baseSource.substring(imp.e);
+        // Matches closing quote then closing paren
+        const match = afterSpecifier.match(/^['"]\s*\)/);
 
-      if (!match) continue;
+        if (!match) continue;
 
-      const endOfCall = imp.e + match[0].length;
+        const endOfCall = imp.e + match[0].length;
 
-      const before = result.substring(0, imp.d);
-      const after = result.substring(endOfCall);
-      const replacement = `import('${vendorUrl}').then(m => m.${exportName})`;
+        const before = result.substring(0, imp.d);
+        const after = result.substring(endOfCall);
+        const replacement = `import('${vendorUrl}').then(m => m.${exportName})`;
 
-      result = before + replacement + after;
-    } else {
-      // Static import
-      // Extract the part between "import" and "from"
-      const beforeSpecifier = baseSource.substring(imp.ss, imp.s);
-      const fromIndex = beforeSpecifier.lastIndexOf("from");
+        result = before + replacement + after;
+      } else {
+        // Static import
+        // Extract the part between "import" and "from"
+        const beforeSpecifier = baseSource.substring(imp.ss, imp.s);
+        const fromIndex = beforeSpecifier.lastIndexOf("from");
 
-      if (fromIndex === -1) {
-        // Side-effect import: import 'react'
+        if (fromIndex === -1) {
+          // Side-effect import: import 'react'
+          const before = result.substring(0, imp.ss);
+          const after = result.substring(imp.se);
+          result = before + `import '${vendorUrl}'` + after;
+          continue;
+        }
+
+        // Extract the import clause (e.g., "{ useState }", "React", "* as React")
+        // "import " is length 7
+        const clause = beforeSpecifier.substring(6, fromIndex).trim();
+
+        let replacement = "";
+        if (clause.startsWith("*")) {
+          // import * as React from 'react'
+          replacement = `import ${clause} from '${vendorUrl}'`;
+        } else if (clause.startsWith("{")) {
+          // import { useState } from 'react'
+          // -> import { react } from 'vendor'; const { useState } = react;
+          replacement =
+            `import { ${exportName} } from '${vendorUrl}'; const ${clause} = ${exportName}`;
+        } else {
+          // import React from 'react'
+          // -> import { react as React } from 'vendor'
+          replacement = `import { ${exportName} as ${clause} } from '${vendorUrl}'`;
+        }
+
         const before = result.substring(0, imp.ss);
         const after = result.substring(imp.se);
-        result = before + `import '${vendorUrl}'` + after;
-        continue;
+        result = before + replacement + after;
       }
-
-      // Extract the import clause (e.g., "{ useState }", "React", "* as React")
-      // "import " is length 7
-      const clause = beforeSpecifier.substring(6, fromIndex).trim();
-
-      let replacement = "";
-      if (clause.startsWith("*")) {
-        // import * as React from 'react'
-        replacement = `import ${clause} from '${vendorUrl}'`;
-      } else if (clause.startsWith("{")) {
-        // import { useState } from 'react'
-        // -> import { react } from 'vendor'; const { useState } = react;
-        replacement =
-          `import { ${exportName} } from '${vendorUrl}'; const ${clause} = ${exportName}`;
-      } else {
-        // import React from 'react'
-        // -> import { react as React } from 'vendor'
-        replacement = `import { ${exportName} as ${clause} } from '${vendorUrl}'`;
-      }
-
-      const before = result.substring(0, imp.ss);
-      const after = result.substring(imp.se);
-      result = before + replacement + after;
     }
-  }
 
-  return result;
+    return result;
+  }, { "transforms.code_length": code.length, "transforms.vendor_hash": vendorBundleHash });
 }
 
 function sanitizeVendorExportName(pkg: string): string {

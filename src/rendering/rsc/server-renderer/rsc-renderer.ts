@@ -15,6 +15,7 @@ import { serverLogger as logger } from "#veryfront/utils";
 import type { ClientComponentMeta, RSCPayload, RSCRendererOptions } from "../types.ts";
 import { treeToHTML } from "./html-generator.ts";
 import { renderTree } from "./tree-processor.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 /**
  * RSC Renderer
@@ -46,25 +47,27 @@ export class RSCRenderer {
    * @param props - Props to pass to component
    * @returns RSC payload with HTML and client references
    */
-  async renderToPayload(
+  renderToPayload(
     Component: React.ComponentType<any> | React.ReactElement,
     props: Record<string, unknown> = {},
   ): Promise<RSCPayload> {
-    // Reset client refs for this render
-    this.clientRefs.clear();
+    return withSpan("rsc.renderToPayload", async () => {
+      // Reset client refs for this render
+      this.clientRefs.clear();
 
-    try {
-      const tree = await renderTree(Component, props, this.clientManifest, this.clientRefs);
-      const html = await treeToHTML(tree);
+      try {
+        const tree = await renderTree(Component, props, this.clientManifest, this.clientRefs);
+        const html = await treeToHTML(tree);
 
-      return {
-        html,
-        clientRefs: Object.fromEntries(this.clientRefs),
-        tree: this.mode === "development" ? tree : undefined,
-      };
-    } catch (error) {
-      logger.error("[RSC] Render error:", error);
-      throw error;
-    }
+        return {
+          html,
+          clientRefs: Object.fromEntries(this.clientRefs),
+          tree: this.mode === "development" ? tree : undefined,
+        };
+      } catch (error) {
+        logger.error("[RSC] Render error:", error);
+        throw error;
+      }
+    }, { "rsc.mode": this.mode });
   }
 }

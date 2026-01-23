@@ -9,6 +9,8 @@
  */
 
 import { rendererLogger as logger } from "#veryfront/utils";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import type { RenderResult } from "../orchestrator/types.ts";
 import type { CacheStore } from "../cache/types.ts";
 import { MemoryCacheStore, type MemoryCacheStoreOptions } from "../cache/stores/index.ts";
@@ -91,41 +93,53 @@ export class ContextAwareCacheCoordinator {
     const themeKey = colorScheme ? `:theme-${colorScheme}` : "";
     const cacheKey = createCacheKey(ctx, `page:${slug}${themeKey}`);
 
-    const cached = await this.store.get(cacheKey);
+    return await withSpan(
+      SpanNames.CACHE_CHECK_SPECULATIVE,
+      async () => {
+        const cached = await this.store.get(cacheKey);
 
-    if (cached && !this.isExpired(cached as CachePayload)) {
-      logger.debug("[ContextAwareCache] Cache hit", {
-        slug,
-        projectId: ctx.projectId,
-        environment: ctx.environment,
-      });
+        if (cached && !this.isExpired(cached as CachePayload)) {
+          logger.debug("[ContextAwareCache] Cache hit", {
+            slug,
+            projectId: ctx.projectId,
+            environment: ctx.environment,
+          });
 
-      return {
-        cachedResult: this.cloneResult((cached as CachePayload).result),
-        cacheKey,
-        hit: true,
-      };
-    }
+          return {
+            cachedResult: this.cloneResult((cached as CachePayload).result),
+            cacheKey,
+            hit: true,
+          };
+        }
 
-    if (cached) {
-      // Expired - clean up
-      await this.store.delete(cacheKey);
-      logger.debug("[ContextAwareCache] Cache expired", {
-        slug,
-        projectId: ctx.projectId,
-      });
-    }
+        if (cached) {
+          // Expired - clean up
+          await this.store.delete(cacheKey);
+          logger.debug("[ContextAwareCache] Cache expired", {
+            slug,
+            projectId: ctx.projectId,
+          });
+        }
 
-    logger.debug("[ContextAwareCache] Cache miss", {
-      slug,
-      cacheKey,
-      projectId: ctx.projectId,
-      environment: ctx.environment,
-    });
-    return {
-      cacheKey,
-      hit: false,
-    };
+        logger.debug("[ContextAwareCache] Cache miss", {
+          slug,
+          cacheKey,
+          projectId: ctx.projectId,
+          environment: ctx.environment,
+        });
+        return {
+          cacheKey,
+          hit: false,
+        };
+      },
+      {
+        "cache.key": cacheKey,
+        "cache.slug": slug,
+        "cache.project_id": ctx.projectId,
+        "cache.environment": ctx.environment,
+        "cache.color_scheme": colorScheme ?? "default",
+      },
+    );
   }
 
   /**

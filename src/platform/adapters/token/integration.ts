@@ -6,6 +6,7 @@
  */
 
 import { logger } from "#veryfront/utils";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { createTokenStorageAdapter } from "./factory.ts";
 import type { TokenStorageAdapter, TokenStorageAdapterConfig } from "./veryfront/types.ts";
 
@@ -18,15 +19,16 @@ let tokenStorageAdapter: TokenStorageAdapter | null = null;
  * Uses singleton pattern to share adapter across the application.
  * Configuration is auto-detected from environment variables.
  */
-export async function getTokenStorageAdapter(): Promise<TokenStorageAdapter> {
+export function getTokenStorageAdapter(): Promise<TokenStorageAdapter> {
   if (tokenStorageAdapter) {
-    return tokenStorageAdapter;
+    return Promise.resolve(tokenStorageAdapter);
   }
 
-  const adapterConfig = buildAdapterConfigFromEnv();
-  tokenStorageAdapter = await createTokenStorageAdapter(adapterConfig);
-
-  return tokenStorageAdapter;
+  return withSpan("platform.token.getTokenStorageAdapter", async () => {
+    const adapterConfig = buildAdapterConfigFromEnv();
+    tokenStorageAdapter = await createTokenStorageAdapter(adapterConfig);
+    return tokenStorageAdapter;
+  }, { "token.storage.type": getTokenStorageType() });
 }
 
 /**

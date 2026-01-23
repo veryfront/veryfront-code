@@ -6,6 +6,7 @@ import { PathNormalizer } from "./path-normalizer.ts";
 import { createError, toError } from "#veryfront/errors";
 import type { ContentContextProvider } from "./read-operations.ts";
 import { buildFileListCacheKey, buildStatCacheKeyPrefix } from "./cache-keys.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 const EXTENSION_PRIORITY = [".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"] as const;
 
@@ -39,69 +40,71 @@ export class StatOperations {
     private readonly contextProvider?: ContentContextProvider,
   ) {}
 
-  async stat(path: string): Promise<FileInfo> {
-    const normalizedPath = this.normalizer.normalize(path);
-    const ctx = this.contextProvider?.getContentContext();
-    const cacheKey = `${buildStatCacheKeyPrefix(ctx)}:${normalizedPath}`;
+  stat(path: string): Promise<FileInfo> {
+    return withSpan("fs.veryfront.stat", async () => {
+      const normalizedPath = this.normalizer.normalize(path);
+      const ctx = this.contextProvider?.getContentContext();
+      const cacheKey = `${buildStatCacheKeyPrefix(ctx)}:${normalizedPath}`;
 
-    logger.debug("[StatOperations] stat called", { path, normalizedPath, cacheKey });
+      logger.debug("[StatOperations] stat called", { path, normalizedPath, cacheKey });
 
-    // OPTIMIZATION: Check local file index FIRST before distributed cache.
-    // The local file index is an in-memory Map (nanosecond lookup) while
-    // distributed cache requires HTTP calls (200-300ms).
-    await this.ensureIndexBuilt();
+      // OPTIMIZATION: Check local file index FIRST before distributed cache.
+      // The local file index is an in-memory Map (nanosecond lookup) while
+      // distributed cache requires HTTP calls (200-300ms).
+      await this.ensureIndexBuilt();
 
-    const fileIdx = this.fileIndex;
-    const dirIdx = this.directoryIndex;
+      const fileIdx = this.fileIndex;
+      const dirIdx = this.directoryIndex;
 
-    if (!fileIdx || !dirIdx) {
-      logger.debug("[StatOperations] stat - no index available", { normalizedPath });
+      if (!fileIdx || !dirIdx) {
+        logger.debug("[StatOperations] stat - no index available", { normalizedPath });
+        throw toError(createError({
+          type: "file",
+          message: `Index not available for: ${normalizedPath}`,
+        }));
+      }
+
+      // 1. Check local file index first (fast in-memory lookup)
+      const file = fileIdx.get(normalizedPath);
+      if (file) {
+        logger.debug("[StatOperations] stat found file", { normalizedPath });
+        const info: FileInfo = {
+          size: file.size,
+          mtime: new Date(file.updated_at),
+          isDirectory: false,
+          isFile: true,
+          isSymlink: false,
+        };
+        return info;
+      }
+
+      // 2. Check directory index (fast in-memory lookup)
+      if (dirIdx.has(normalizedPath)) {
+        logger.debug("[StatOperations] stat found directory", { normalizedPath });
+        const info: FileInfo = {
+          size: 0,
+          mtime: new Date(),
+          isDirectory: true,
+          isFile: false,
+          isSymlink: false,
+        };
+        return info;
+      }
+
+      // 3. File not in local index - it doesn't exist
+      // The local file index is built from getAllFilesRaw() which fetches ALL files.
+      // If a file isn't in the local index, it definitively doesn't exist.
+      // No need to check distributed cache - the local index is authoritative.
+      // This avoids ~100-200ms HTTP calls to distributed cache for each missing file.
+      logger.debug("[StatOperations] stat file not found (not in index)", {
+        normalizedPath,
+        indexSize: fileIdx.size,
+      });
       throw toError(createError({
         type: "file",
-        message: `Index not available for: ${normalizedPath}`,
+        message: `File not found: ${normalizedPath}`,
       }));
-    }
-
-    // 1. Check local file index first (fast in-memory lookup)
-    const file = fileIdx.get(normalizedPath);
-    if (file) {
-      logger.debug("[StatOperations] stat found file", { normalizedPath });
-      const info: FileInfo = {
-        size: file.size,
-        mtime: new Date(file.updated_at),
-        isDirectory: false,
-        isFile: true,
-        isSymlink: false,
-      };
-      return info;
-    }
-
-    // 2. Check directory index (fast in-memory lookup)
-    if (dirIdx.has(normalizedPath)) {
-      logger.debug("[StatOperations] stat found directory", { normalizedPath });
-      const info: FileInfo = {
-        size: 0,
-        mtime: new Date(),
-        isDirectory: true,
-        isFile: false,
-        isSymlink: false,
-      };
-      return info;
-    }
-
-    // 3. File not in local index - it doesn't exist
-    // The local file index is built from getAllFilesRaw() which fetches ALL files.
-    // If a file isn't in the local index, it definitively doesn't exist.
-    // No need to check distributed cache - the local index is authoritative.
-    // This avoids ~100-200ms HTTP calls to distributed cache for each missing file.
-    logger.debug("[StatOperations] stat file not found (not in index)", {
-      normalizedPath,
-      indexSize: fileIdx.size,
-    });
-    throw toError(createError({
-      type: "file",
-      message: `File not found: ${normalizedPath}`,
-    }));
+    }, { "fs.path": path });
   }
 
   private async ensureIndexBuilt(): Promise<void> {

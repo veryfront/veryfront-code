@@ -1,6 +1,7 @@
 import type { RenderResult } from "../orchestrator/types.ts";
 import type { CachePayload, CacheStore } from "./types.ts";
 import { MemoryCacheStore, type MemoryCacheStoreOptions } from "./stores/index.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 export interface CacheCoordinatorOptions {
   store?: CacheStore;
@@ -28,53 +29,57 @@ export class CacheCoordinator {
       });
   }
 
-  async checkCache(slug: string): Promise<CacheLookupResult> {
-    const cached = await this.store.get(slug);
+  checkCache(slug: string): Promise<CacheLookupResult> {
+    return withSpan("cache.checkCache", async () => {
+      const cached = await this.store.get(slug);
 
-    if (cached && !this.isExpired(cached)) {
-      // Return cached result directly - no cloning needed on reads
-      // The cache stores immutable data; callers should not mutate it
+      if (cached && !this.isExpired(cached)) {
+        // Return cached result directly - no cloning needed on reads
+        // The cache stores immutable data; callers should not mutate it
+        return {
+          cachedResult: cached.result,
+          depAwareSlug: slug,
+          moduleCacheKey: slug,
+          cachedModule: cached.result.pageModule,
+        };
+      }
+
+      if (cached) {
+        await this.store.delete(slug);
+      }
+
       return {
-        cachedResult: cached.result,
         depAwareSlug: slug,
         moduleCacheKey: slug,
-        cachedModule: cached.result.pageModule,
       };
-    }
-
-    if (cached) {
-      await this.store.delete(slug);
-    }
-
-    return {
-      depAwareSlug: slug,
-      moduleCacheKey: slug,
-    };
+    }, { "cache.slug": slug });
   }
 
-  async persistResult(result: RenderResult, slug: string): Promise<void> {
-    if (!result || result.stream) {
-      return;
-    }
+  persistResult(result: RenderResult, slug: string): Promise<void> {
+    return withSpan("cache.persistResult", async () => {
+      if (!result || result.stream) {
+        return;
+      }
 
-    // Store result directly - shallow copy of primitives is sufficient
-    // The result object is not mutated after rendering completes
-    const payload: CachePayload = {
-      result: {
-        html: result.html,
-        css: result.css,
-        frontmatter: result.frontmatter,
-        headings: result.headings,
-        nodeMap: result.nodeMap,
-        stream: null,
-        ssrHash: result.ssrHash,
-        pageModule: result.pageModule,
-      },
-      storedAt: Date.now(),
-      expiresAt: this.ttlMs ? Date.now() + this.ttlMs : undefined,
-    };
+      // Store result directly - shallow copy of primitives is sufficient
+      // The result object is not mutated after rendering completes
+      const payload: CachePayload = {
+        result: {
+          html: result.html,
+          css: result.css,
+          frontmatter: result.frontmatter,
+          headings: result.headings,
+          nodeMap: result.nodeMap,
+          stream: null,
+          ssrHash: result.ssrHash,
+          pageModule: result.pageModule,
+        },
+        storedAt: Date.now(),
+        expiresAt: this.ttlMs ? Date.now() + this.ttlMs : undefined,
+      };
 
-    await this.store.set(slug, payload);
+      await this.store.set(slug, payload);
+    }, { "cache.slug": slug });
   }
 
   async clearAll(): Promise<void> {

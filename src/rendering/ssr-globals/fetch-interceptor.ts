@@ -13,6 +13,8 @@ import {
   isSSRClientOnlyFetching,
   originalFetch,
 } from "./context.ts";
+import { setActiveSpanAttributes, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 
 /** Check if hostname matches project domain (including www variant) */
 function isProjectDomain(hostname: string): boolean {
@@ -79,31 +81,65 @@ function createSSRFetch(): typeof fetch {
   return (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = extractUrl(input);
     const rewrittenUrl = rewriteFetchUrlForSSR(url);
+    const clientOnly = isSSRClientOnlyFetching() && isClientOnlyApiUrl(rewrittenUrl);
 
-    // In client-only mode, API fetches return empty responses during SSR.
-    // React Query will treat this as a successful fetch with empty data.
-    // After hydration, the client will refetch with actual data.
-    if (isSSRClientOnlyFetching() && isClientOnlyApiUrl(rewrittenUrl)) {
-      // Return a mock empty response - this prevents the Invalid URL error
-      // and allows SSR to complete. React Query will refetch client-side.
-      return Promise.resolve(
-        new Response(JSON.stringify({ data: [], _ssrSkipped: true }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
-      );
-    }
+    const method = init?.method ??
+      (input instanceof Request ? input.method : "GET");
+    const spanAttributes: Record<string, string | number | boolean> = {
+      "http.method": method,
+      "http.url": rewrittenUrl,
+      "veryfront.fetch_client_only": clientOnly,
+      "veryfront.fetch_rewritten": rewrittenUrl !== url,
+    };
 
     if (rewrittenUrl !== url) {
-      // Create new request with rewritten URL
-      if (typeof input === "string" || input instanceof URL) {
-        return originalFetch(rewrittenUrl, init);
-      }
-      // Clone request with new URL
-      return originalFetch(new Request(rewrittenUrl, input), init);
+      spanAttributes["http.original_url"] = url;
     }
 
-    return originalFetch(input, init);
+    try {
+      const parsed = new URL(rewrittenUrl);
+      spanAttributes["http.target"] = `${parsed.pathname}${parsed.search}`;
+      spanAttributes["http.host"] = parsed.host;
+      spanAttributes["http.scheme"] = parsed.protocol.replace(":", "");
+    } catch {
+      // Ignore - non-absolute URLs won't provide host/scheme
+    }
+
+    return withSpan(
+      SpanNames.HTTP_CLIENT_FETCH,
+      async () => {
+        // In client-only mode, API fetches return empty responses during SSR.
+        // React Query will treat this as a successful fetch with empty data.
+        // After hydration, the client will refetch with actual data.
+        if (clientOnly) {
+          // Return a mock empty response - this prevents the Invalid URL error
+          // and allows SSR to complete. React Query will refetch client-side.
+          const response = new Response(JSON.stringify({ data: [], _ssrSkipped: true }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+          setActiveSpanAttributes({ "http.status_code": response.status });
+          return response;
+        }
+
+        let response: Response;
+        if (rewrittenUrl !== url) {
+          // Create new request with rewritten URL
+          if (typeof input === "string" || input instanceof URL) {
+            response = await originalFetch(rewrittenUrl, init);
+          } else {
+            // Clone request with new URL
+            response = await originalFetch(new Request(rewrittenUrl, input), init);
+          }
+        } else {
+          response = await originalFetch(input, init);
+        }
+
+        setActiveSpanAttributes({ "http.status_code": response.status });
+        return response;
+      },
+      spanAttributes,
+    );
   };
 }
 

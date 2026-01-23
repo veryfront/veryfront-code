@@ -19,6 +19,7 @@ import {
 } from "../shared/config.ts";
 import { confirmPrompt, createSpinner, logInfo, logSuccess, logWarning } from "../utils/index.ts";
 import { getApiTokenEnv } from "#veryfront/config/env.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 /**
  * Pull source type - determines which API endpoint to use
@@ -397,110 +398,112 @@ async function pullSingleProject(
 /**
  * Pull files from Veryfront API
  */
-export async function pullCommand(options: PullOptions = {}): Promise<void> {
-  const {
-    projectSlug: slugOverride,
-    projects: projectsOverride,
-    projectDir = cwd(),
-    force = false,
-    dryRun = false,
-  } = options;
+export function pullCommand(options: PullOptions = {}): Promise<void> {
+  return withSpan("cli.command.pull", async () => {
+    const {
+      projectSlug: slugOverride,
+      projects: projectsOverride,
+      projectDir = cwd(),
+      force = false,
+      dryRun = false,
+    } = options;
 
-  // Resolve pull source from options (env > release > branch > main)
-  const source = resolvePullSource(options);
+    // Resolve pull source from options (env > release > branch > main)
+    const source = resolvePullSource(options);
 
-  const spinner = createSpinner("Resolving configuration...");
-  spinner.start();
+    const spinner = createSpinner("Resolving configuration...");
+    spinner.start();
 
-  // Read config file to get projects list if not provided via CLI
-  const configFile = await readConfigFile(projectDir);
-  const projects = projectsOverride ?? configFile?.projects;
+    // Read config file to get projects list if not provided via CLI
+    const configFile = await readConfigFile(projectDir);
+    const projects = projectsOverride ?? configFile?.projects;
 
-  let config: ResolvedConfig;
-  try {
-    config = await resolveConfig(projectDir);
-    // Override project slug if provided via CLI argument
-    if (slugOverride) {
-      config = { ...config, projectSlug: slugOverride };
+    let config: ResolvedConfig;
+    try {
+      config = await resolveConfig(projectDir);
+      // Override project slug if provided via CLI argument
+      if (slugOverride) {
+        config = { ...config, projectSlug: slugOverride };
+      }
+    } catch (error) {
+      spinner.stop();
+      // If projects list is provided (CLI or config), we don't need the local config's projectSlug
+      if (projects && projects.length > 0) {
+        // Create a minimal config with just the API token from env or config file
+        const apiToken = getApiTokenEnv();
+        const token = apiToken ?? configFile?.apiToken;
+        if (!token) {
+          throw new Error(
+            "VERYFRONT_API_TOKEN environment variable or apiToken in .veryfrontrc is required when using --projects",
+          );
+        }
+        config = {
+          apiUrl: configFile?.apiUrl ?? "https://api.veryfront.com",
+          apiToken: token,
+          projectSlug: "", // Will be overridden per-project
+        };
+      } else {
+        throw error;
+      }
     }
-  } catch (error) {
+
     spinner.stop();
-    // If projects list is provided (CLI or config), we don't need the local config's projectSlug
+
+    // Handle multiple projects
     if (projects && projects.length > 0) {
-      // Create a minimal config with just the API token from env or config file
-      const apiToken = getApiTokenEnv();
-      const token = apiToken ?? configFile?.apiToken;
-      if (!token) {
-        throw new Error(
-          "VERYFRONT_API_TOKEN environment variable or apiToken in .veryfrontrc is required when using --projects",
+      const fs = createFileSystem();
+      let totalWritten = 0;
+      let totalSkipped = 0;
+
+      for (const project of projects) {
+        const targetDir = join(projectDir, project);
+
+        // Create project directory
+        if (!dryRun) {
+          await fs.mkdir(targetDir, { recursive: true });
+        }
+
+        cliLogger.info(`\n--- Pulling ${project} into ${targetDir} ---`);
+
+        try {
+          const result = await pullSingleProject(
+            project,
+            targetDir,
+            source,
+            force,
+            dryRun,
+            config,
+          );
+          totalWritten += result.written;
+          totalSkipped += result.skipped;
+        } catch (error) {
+          cliLogger.error(`Failed to pull ${project}:`, error);
+          totalSkipped++;
+        }
+      }
+
+      cliLogger.info("");
+      if (dryRun) {
+        logInfo(
+          `Dry run complete. Would write ${totalWritten} files total across ${projects.length} projects.`,
         );
+      } else {
+        logSuccess(`Pulled ${totalWritten} files total across ${projects.length} projects.`);
+        if (totalSkipped > 0) {
+          logWarning(`Skipped ${totalSkipped} files due to errors.`);
+        }
       }
-      config = {
-        apiUrl: configFile?.apiUrl ?? "https://api.veryfront.com",
-        apiToken: token,
-        projectSlug: "", // Will be overridden per-project
-      };
-    } else {
-      throw error;
-    }
-  }
-
-  spinner.stop();
-
-  // Handle multiple projects
-  if (projects && projects.length > 0) {
-    const fs = createFileSystem();
-    let totalWritten = 0;
-    let totalSkipped = 0;
-
-    for (const project of projects) {
-      const targetDir = join(projectDir, project);
-
-      // Create project directory
-      if (!dryRun) {
-        await fs.mkdir(targetDir, { recursive: true });
-      }
-
-      cliLogger.info(`\n--- Pulling ${project} into ${targetDir} ---`);
-
-      try {
-        const result = await pullSingleProject(
-          project,
-          targetDir,
-          source,
-          force,
-          dryRun,
-          config,
-        );
-        totalWritten += result.written;
-        totalSkipped += result.skipped;
-      } catch (error) {
-        cliLogger.error(`Failed to pull ${project}:`, error);
-        totalSkipped++;
-      }
+      return;
     }
 
-    cliLogger.info("");
-    if (dryRun) {
-      logInfo(
-        `Dry run complete. Would write ${totalWritten} files total across ${projects.length} projects.`,
-      );
-    } else {
-      logSuccess(`Pulled ${totalWritten} files total across ${projects.length} projects.`);
-      if (totalSkipped > 0) {
-        logWarning(`Skipped ${totalSkipped} files due to errors.`);
-      }
-    }
-    return;
-  }
-
-  // Single project flow
-  await pullSingleProject(
-    config.projectSlug,
-    projectDir,
-    source,
-    force,
-    dryRun,
-    config,
-  );
+    // Single project flow
+    await pullSingleProject(
+      config.projectSlug,
+      projectDir,
+      source,
+      force,
+      dryRun,
+      config,
+    );
+  }, { "cli.dryRun": options.dryRun ?? false, "cli.source_type": resolvePullSource(options).type });
 }

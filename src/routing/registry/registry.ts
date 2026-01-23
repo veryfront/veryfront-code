@@ -1,5 +1,6 @@
 import type { Handler, HandlerContext, RouteRegistryConfig } from "./types.ts";
 import { serverLogger } from "#veryfront/utils";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 export class RouteRegistry {
   private handlers: Handler[] = [];
@@ -33,72 +34,81 @@ export class RouteRegistry {
     return this;
   }
 
-  async execute(req: Request, ctx: HandlerContext): Promise<Response | null> {
-    const startTime = Date.now();
-    const url = new URL(req.url);
+  execute(req: Request, ctx: HandlerContext): Promise<Response | null> {
+    return withSpan("routing.registry.execute", async () => {
+      const startTime = Date.now();
+      const url = new URL(req.url);
 
-    if (this.config.debug) {
-      serverLogger.debug(`[RouteRegistry] Processing ${req.method} ${url.pathname}`);
-    }
-
-    for (const handler of this.handlers) {
-      try {
-        if (handler.metadata.enabled && !handler.metadata.enabled(ctx)) {
-          if (this.config.debug) {
-            serverLogger.debug(
-              `[RouteRegistry] Skipping disabled handler: ${handler.metadata.name}`,
-            );
-          }
-          continue;
-        }
-
-        const handlerStart = Date.now();
-        const result = await handler.handle(req, ctx);
-        const handlerTime = Date.now() - handlerStart;
-
-        if (this.config.debug && this.config.enableMetrics) {
-          serverLogger.debug(
-            `[RouteRegistry] Handler ${handler.metadata.name} took ${handlerTime}ms`,
-          );
-        }
-
-        if (result.response) {
-          const totalTime = Date.now() - startTime;
-          if (this.config.debug) {
-            serverLogger.debug(
-              `[RouteRegistry] Response from ${handler.metadata.name} (total: ${totalTime}ms)`,
-            );
-          }
-          return result.response;
-        }
-
-        if (!result.continue) {
-          if (this.config.debug) {
-            serverLogger.debug(
-              `[RouteRegistry] Chain stopped by ${handler.metadata.name} without response`,
-            );
-          }
-          break;
-        }
-      } catch (error) {
-        // Always log handler errors - they should never be silently swallowed
-        serverLogger.error(`[RouteRegistry] Handler ${handler.metadata.name} threw an error`, {
-          handler: handler.metadata.name,
-          path: url.pathname,
-          method: req.method,
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
-        });
-        // Continue to next handler - a single handler failure shouldn't break the chain
+      if (this.config.debug) {
+        serverLogger.debug(`[RouteRegistry] Processing ${req.method} ${url.pathname}`);
       }
-    }
 
-    const totalTime = Date.now() - startTime;
-    if (this.config.debug) {
-      serverLogger.debug(`[RouteRegistry] No handler matched (total: ${totalTime}ms)`);
-    }
+      for (const handler of this.handlers) {
+        try {
+          if (handler.metadata.enabled && !handler.metadata.enabled(ctx)) {
+            if (this.config.debug) {
+              serverLogger.debug(
+                `[RouteRegistry] Skipping disabled handler: ${handler.metadata.name}`,
+              );
+            }
+            continue;
+          }
 
-    return null;
+          const handlerStart = Date.now();
+          const result = await withSpan(
+            `routing.handler.${handler.metadata.name}`,
+            () => handler.handle(req, ctx),
+            {
+              "handler.name": handler.metadata.name,
+              "handler.priority": handler.metadata.priority,
+            },
+          );
+          const handlerTime = Date.now() - handlerStart;
+
+          if (this.config.debug && this.config.enableMetrics) {
+            serverLogger.debug(
+              `[RouteRegistry] Handler ${handler.metadata.name} took ${handlerTime}ms`,
+            );
+          }
+
+          if (result.response) {
+            const totalTime = Date.now() - startTime;
+            if (this.config.debug) {
+              serverLogger.debug(
+                `[RouteRegistry] Response from ${handler.metadata.name} (total: ${totalTime}ms)`,
+              );
+            }
+            return result.response;
+          }
+
+          if (!result.continue) {
+            if (this.config.debug) {
+              serverLogger.debug(
+                `[RouteRegistry] Chain stopped by ${handler.metadata.name} without response`,
+              );
+            }
+            break;
+          }
+        } catch (error) {
+          // Always log handler errors - they should never be silently swallowed
+          serverLogger.error(`[RouteRegistry] Handler ${handler.metadata.name} threw an error`, {
+            handler: handler.metadata.name,
+            path: url.pathname,
+            method: req.method,
+            error: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
+          });
+          // Continue to next handler - a single handler failure shouldn't break the chain
+        }
+      }
+
+      const totalTime = Date.now() - startTime;
+      if (this.config.debug) {
+        serverLogger.debug(`[RouteRegistry] No handler matched (total: ${totalTime}ms)`);
+      }
+
+      return null;
+    }, { "http.method": req.method, "http.path": new URL(req.url).pathname });
   }
 
   getHandlers(): ReadonlyArray<Handler> {

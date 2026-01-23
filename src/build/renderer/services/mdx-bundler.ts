@@ -10,6 +10,7 @@ import { dirname, join } from "#veryfront/platform/compat/path/index.ts";
 import { getRehypePlugins, getRemarkPlugins } from "#veryfront/transforms/plugins/plugin-loader.ts";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type {
   BundleResult,
   BundlerOptions,
@@ -25,93 +26,94 @@ const fs = createFileSystem();
 /**
  * Bundle MDX content
  */
-export async function bundleMdx(
+export function bundleMdx(
   source: { path: string; content: string },
   options: BundlerOptions,
   result: BundleResult,
   compileMDXForImport: (source: string, options: BundlerOptions) => Promise<string>,
 ): Promise<void> {
-  try {
-    // Extract frontmatter (handle content without frontmatter)
-    let body = source.content;
-    let frontmatter: Record<string, unknown> = {};
+  return withSpan("build.renderer.bundleMDX", async () => {
+    try {
+      // Extract frontmatter (handle content without frontmatter)
+      let body = source.content;
+      let frontmatter: Record<string, unknown> = {};
 
-    if (source.content.trim().startsWith("---")) {
-      const extracted = extract(source.content);
-      body = extracted.body;
-      frontmatter = extracted.attrs as Record<string, unknown>;
-    }
+      if (source.content.trim().startsWith("---")) {
+        const extracted = extract(source.content);
+        body = extracted.body;
+        frontmatter = extracted.attrs as Record<string, unknown>;
+      }
 
-    const remarkPlugins = await getRemarkPlugins() as unknown as PluggableList;
-    const rehypePlugins = await getRehypePlugins() as unknown as PluggableList;
+      const remarkPlugins = await getRemarkPlugins() as unknown as PluggableList;
+      const rehypePlugins = await getRehypePlugins() as unknown as PluggableList;
 
-    const processedContent = await processImports(
-      body,
-      source.path,
-      options.projectDir,
-      async (importPath) => {
-        if (importPath.endsWith(".mdx")) {
-          try {
-            const importContent = await fs.readTextFile(importPath);
-            const compiledImport = await compileMDXForImport(importContent, options);
-
-            // Add to outputs
-            const outputPath = importPath.replace(/\.mdx$/, ".js");
-            result.outputs.set(outputPath, {
-              path: outputPath,
-              content: compiledImport,
-              type: "js",
-            });
-
-            return outputPath;
-          } catch (_error) {
-            return null;
-          }
-        }
-
-        // Validate local imports
-        if (importPath.startsWith(".") || importPath.startsWith("/")) {
-          const basePath = importPath.startsWith("/")
-            ? join(options.projectDir, importPath)
-            : join(dirname(source.path), importPath);
-
-          // Check with various extensions
-          const extensions = ["", ".js", ".ts", ".jsx", ".tsx", ".mjs"];
-          let found = false;
-
-          for (const ext of extensions) {
+      const processedContent = await processImports(
+        body,
+        source.path,
+        options.projectDir,
+        async (importPath) => {
+          if (importPath.endsWith(".mdx")) {
             try {
-              const stat = await fs.stat(basePath + ext);
-              if (stat.isFile) {
-                found = true;
-                break;
-              }
-            } catch {
-              // Extension not found, continue checking others
+              const importContent = await fs.readTextFile(importPath);
+              const compiledImport = await compileMDXForImport(importContent, options);
+
+              // Add to outputs
+              const outputPath = importPath.replace(/\.mdx$/, ".js");
+              result.outputs.set(outputPath, {
+                path: outputPath,
+                content: compiledImport,
+                type: "js",
+              });
+
+              return outputPath;
+            } catch (_error) {
+              return null;
             }
           }
 
-          if (!found) {
-            result.errors.push(
-              new Error(`Cannot find module '${importPath}' from '${source.path}'`),
-            );
+          // Validate local imports
+          if (importPath.startsWith(".") || importPath.startsWith("/")) {
+            const basePath = importPath.startsWith("/")
+              ? join(options.projectDir, importPath)
+              : join(dirname(source.path), importPath);
+
+            // Check with various extensions
+            const extensions = ["", ".js", ".ts", ".jsx", ".tsx", ".mjs"];
+            let found = false;
+
+            for (const ext of extensions) {
+              try {
+                const stat = await fs.stat(basePath + ext);
+                if (stat.isFile) {
+                  found = true;
+                  break;
+                }
+              } catch {
+                // Extension not found, continue checking others
+              }
+            }
+
+            if (!found) {
+              result.errors.push(
+                new Error(`Cannot find module '${importPath}' from '${source.path}'`),
+              );
+            }
           }
-        }
 
-        return null;
-      },
-    );
+          return null;
+        },
+      );
 
-    const compiled = await compileMdx(processedContent, {
-      outputFormat: "function-body",
-      development: options.mode === "development",
-      remarkPlugins: normalizePlugins(remarkPlugins as PluggableList),
-      rehypePlugins: normalizePlugins(rehypePlugins as PluggableList),
-      providerImportSource: undefined,
-    });
+      const compiled = await compileMdx(processedContent, {
+        outputFormat: "function-body",
+        development: options.mode === "development",
+        remarkPlugins: normalizePlugins(remarkPlugins as PluggableList),
+        rehypePlugins: normalizePlugins(rehypePlugins as PluggableList),
+        providerImportSource: undefined,
+      });
 
-    const slug = getSlugFromPath(source.path);
-    const moduleCode = `
+      const slug = getSlugFromPath(source.path);
+      const moduleCode = `
 import React from 'react';
 import { useMDXComponents } from '../shared/components/MDXProvider.tsx';
 
@@ -123,86 +125,91 @@ export default function MDXContent(props) {
 }
 
 export const meta = ${
-      JSON.stringify({
-        slug,
-        title: frontmatter.title ? frontmatter.title : slug,
-        description: frontmatter.description ? frontmatter.description : "",
-        ...frontmatter,
-      })
-    };
+        JSON.stringify({
+          slug,
+          title: frontmatter.title ? frontmatter.title : slug,
+          description: frontmatter.description ? frontmatter.description : "",
+          ...frontmatter,
+        })
+      };
 `;
 
-    const outputPath = source.path.replace(/\.mdx$/, ".js");
-    result.outputs.set(outputPath, {
-      path: outputPath,
-      content: moduleCode,
-      type: "js",
-      meta: frontmatter,
-    });
+      const outputPath = source.path.replace(/\.mdx$/, ".js");
+      result.outputs.set(outputPath, {
+        path: outputPath,
+        content: moduleCode,
+        type: "js",
+        meta: frontmatter,
+      });
 
-    const imports = extractImports(moduleCode);
-    result.dependencies.set(source.path, imports);
+      const imports = extractImports(moduleCode);
+      result.dependencies.set(source.path, imports);
 
-    logger.debug(`Bundled MDX: ${source.path} -> ${outputPath}`);
-  } catch (error) {
-    logger.error(`Failed to bundle MDX ${source.path}`, error);
-    result.errors.push(ensureError(error));
-  }
+      logger.debug(`Bundled MDX: ${source.path} -> ${outputPath}`);
+    } catch (error) {
+      logger.error(`Failed to bundle MDX ${source.path}`, error);
+      result.errors.push(ensureError(error));
+    }
+  }, {
+    "source.path": source.path,
+    "options.mode": options.mode,
+  });
 }
 
 /**
  * Bundle MDX with additional options
  */
-export async function bundleMDXWithOptions(options: MDXBundleOptions): Promise<MDXBundleResult> {
-  const {
-    content,
-    filePath,
-    mode = "production",
-    globals = {},
-    remarkPlugins = [],
-    rehypePlugins = [],
-  } = options;
+export function bundleMDXWithOptions(options: MDXBundleOptions): Promise<MDXBundleResult> {
+  return withSpan("build.renderer.bundleMDXWithOptions", async () => {
+    const {
+      content,
+      filePath,
+      mode = "production",
+      globals = {},
+      remarkPlugins = [],
+      rehypePlugins = [],
+    } = options;
 
-  logger.info(`Bundling MDX file: ${filePath}`);
+    logger.info(`Bundling MDX file: ${filePath}`);
 
-  try {
-    // Extract frontmatter (handle content without frontmatter)
-    let body = content;
-    let frontmatter: Record<string, unknown> = {};
+    try {
+      // Extract frontmatter (handle content without frontmatter)
+      let body = content;
+      let frontmatter: Record<string, unknown> = {};
 
-    if (content.trim().startsWith("---")) {
-      const extracted = extract(content);
-      body = extracted.body;
-      frontmatter = extracted.attrs as Record<string, unknown>;
-    }
+      if (content.trim().startsWith("---")) {
+        const extracted = extract(content);
+        body = extracted.body;
+        frontmatter = extracted.attrs as Record<string, unknown>;
+      }
 
-    const defaultRemarkPlugins = await getRemarkPlugins() as unknown as PluggableList;
-    const defaultRehypePlugins = await getRehypePlugins() as unknown as PluggableList;
-    const allRemarkPlugins = [
-      ...normalizePlugins(defaultRemarkPlugins),
-      ...normalizePlugins(remarkPlugins as PluggableList),
-    ];
-    const allRehypePlugins = [
-      ...normalizePlugins(defaultRehypePlugins),
-      ...normalizePlugins(rehypePlugins as PluggableList),
-    ];
+      const defaultRemarkPlugins = await getRemarkPlugins() as unknown as PluggableList;
+      const defaultRehypePlugins = await getRehypePlugins() as unknown as PluggableList;
+      const allRemarkPlugins = [
+        ...normalizePlugins(defaultRemarkPlugins),
+        ...normalizePlugins(remarkPlugins as PluggableList),
+      ];
+      const allRehypePlugins = [
+        ...normalizePlugins(defaultRehypePlugins),
+        ...normalizePlugins(rehypePlugins as PluggableList),
+      ];
 
-    const compiled = await compileMdx(body, {
-      outputFormat: "function-body",
-      development: mode === "development",
-      remarkPlugins: allRemarkPlugins,
-      rehypePlugins: allRehypePlugins,
-      providerImportSource: undefined,
-    });
+      const compiled = await compileMdx(body, {
+        outputFormat: "function-body",
+        development: mode === "development",
+        remarkPlugins: allRemarkPlugins,
+        rehypePlugins: allRehypePlugins,
+        providerImportSource: undefined,
+      });
 
-    const compiledStr = String(compiled);
-    const dependencies = extractImports(compiledStr);
+      const compiledStr = String(compiled);
+      const dependencies = extractImports(compiledStr);
 
-    const globalsImport = Object.keys(globals).length > 0
-      ? `const { ${Object.keys(globals).join(", ")} } = globalThis;`
-      : "";
+      const globalsImport = Object.keys(globals).length > 0
+        ? `const { ${Object.keys(globals).join(", ")} } = globalThis;`
+        : "";
 
-    const code = `
+      const code = `
 import * as React from "react";
 import { useMDXComponents } from "#veryfront/mdx-components';
 ${globalsImport}
@@ -217,18 +224,22 @@ export default function MDXContent(props) {
 export const meta = ${JSON.stringify(frontmatter)};
 `;
 
-    return {
-      code,
-      frontmatter,
-      dependencies,
-    };
-  } catch (error) {
-    logger.error(`Failed to bundle MDX: ${filePath}`, error);
-    return {
-      code: "",
-      frontmatter: {},
-      dependencies: [],
-      errors: [ensureError(error)],
-    };
-  }
+      return {
+        code,
+        frontmatter,
+        dependencies,
+      };
+    } catch (error) {
+      logger.error(`Failed to bundle MDX: ${filePath}`, error);
+      return {
+        code: "",
+        frontmatter: {},
+        dependencies: [],
+        errors: [ensureError(error)],
+      };
+    }
+  }, {
+    "file.path": options.filePath,
+    "options.mode": options.mode ?? "production",
+  });
 }

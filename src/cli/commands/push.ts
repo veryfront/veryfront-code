@@ -25,6 +25,7 @@ import {
   logSuccess,
   logWarning,
 } from "../utils/index.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 /**
  * Push command options
@@ -167,131 +168,135 @@ export async function uploadFiles(
  * - With --branch=<name>, creates a branch with that name
  * - With --branch=main, pushes directly to main (no branch creation)
  */
-export async function pushCommand(options: PushOptions = {}): Promise<void> {
-  const {
-    projectDir = cwd(),
-    branch,
-    force = false,
-    dryRun = false,
-    quiet = false,
-  } = options;
+export function pushCommand(options: PushOptions = {}): Promise<void> {
+  return withSpan("cli.command.push", async () => {
+    const {
+      projectDir = cwd(),
+      branch,
+      force = false,
+      dryRun = false,
+      quiet = false,
+    } = options;
 
-  // Create a no-op spinner for quiet mode
-  const spinner = quiet
-    ? { start: () => {}, stop: () => {}, update: (_msg: string) => {} }
-    : createSpinner("Resolving configuration...");
-  spinner.start();
+    // Create a no-op spinner for quiet mode
+    const spinner = quiet
+      ? { start: () => {}, stop: () => {}, update: (_msg: string) => {} }
+      : createSpinner("Resolving configuration...");
+    spinner.start();
 
-  let config: ResolvedConfig;
-  try {
-    config = await resolveConfig(projectDir);
-  } catch (error) {
-    spinner.stop();
-    throw error;
-  }
+    let config: ResolvedConfig;
+    try {
+      config = await resolveConfig(projectDir);
+    } catch (error) {
+      spinner.stop();
+      throw error;
+    }
 
-  spinner.update("Scanning local files...");
+    spinner.update("Scanning local files...");
 
-  const ops = await scanLocalFiles(projectDir);
+    const ops = await scanLocalFiles(projectDir);
 
-  if (ops.length === 0) {
-    spinner.stop();
-    if (!quiet) logInfo("No files to push.");
-    return;
-  }
-
-  spinner.stop();
-
-  const branchName = branch || generateBranchName();
-  const isMainBranch = branchName === "main";
-
-  if (!quiet) {
-    cliLogger.info(
-      `\nFound ${ops.length} files to push to ${isMainBranch ? "main" : `branch "${branchName}"`}.`,
-    );
-  }
-
-  // Confirm if not forced and not dry run
-  if (!force && !dryRun) {
-    const confirmMessage = isMainBranch
-      ? `Push ${ops.length} files directly to main?`
-      : `Create branch "${branchName}" and upload ${ops.length} files?`;
-    const confirmed = await confirmPrompt(confirmMessage, true);
-    if (!confirmed) {
-      cliLogger.info("Push cancelled.");
+    if (ops.length === 0) {
+      spinner.stop();
+      if (!quiet) logInfo("No files to push.");
       return;
     }
-  }
 
-  if (dryRun) {
-    await uploadFiles(createApiClient(config), config.projectSlug, null, ops, true);
+    spinner.stop();
+
+    const branchName = branch || generateBranchName();
+    const isMainBranch = branchName === "main";
+
     if (!quiet) {
-      logInfo(
-        `Dry run complete. Would upload ${ops.length} files to ${
+      cliLogger.info(
+        `\nFound ${ops.length} files to push to ${
           isMainBranch ? "main" : `branch "${branchName}"`
         }.`,
       );
     }
-    return;
-  }
 
-  const client = createApiClient(config);
+    // Confirm if not forced and not dry run
+    if (!force && !dryRun) {
+      const confirmMessage = isMainBranch
+        ? `Push ${ops.length} files directly to main?`
+        : `Create branch "${branchName}" and upload ${ops.length} files?`;
+      const confirmed = await confirmPrompt(confirmMessage, true);
+      if (!confirmed) {
+        cliLogger.info("Push cancelled.");
+        return;
+      }
+    }
 
-  // Step 1: Create branch (skip for main)
-  let branchId: string | null = null;
-  spinner.start();
-
-  if (!isMainBranch) {
-    spinner.update(`Creating branch "${branchName}"...`);
-
-    try {
-      const createdBranch = await createBranch(client, config.projectSlug, branchName);
-      branchId = createdBranch.id;
-    } catch (error) {
-      spinner.stop();
-      const message = error instanceof Error ? error.message : String(error);
-      if (message.includes("already exists")) {
-        logError(
-          `Branch "${branchName}" already exists. Use --branch to specify a different name.`,
+    if (dryRun) {
+      await uploadFiles(createApiClient(config), config.projectSlug, null, ops, true);
+      if (!quiet) {
+        logInfo(
+          `Dry run complete. Would upload ${ops.length} files to ${
+            isMainBranch ? "main" : `branch "${branchName}"`
+          }.`,
         );
-      } else {
-        logError(`Failed to create branch: ${message}`);
       }
       return;
     }
-  } else {
-    spinner.update("Pushing to main...");
-  }
 
-  // Step 2: Upload files
-  spinner.update("Uploading files...");
+    const client = createApiClient(config);
 
-  const result = await uploadFiles(
-    client,
-    config.projectSlug,
-    branchId,
-    ops,
-    false,
-  );
+    // Step 1: Create branch (skip for main)
+    let branchId: string | null = null;
+    spinner.start();
 
-  spinner.stop();
+    if (!isMainBranch) {
+      spinner.update(`Creating branch "${branchName}"...`);
 
-  if (!quiet) {
-    if (result.uploaded > 0) {
-      if (isMainBranch) {
-        logSuccess(`Pushed ${result.uploaded} files to main.`);
-      } else {
-        logSuccess(`Pushed ${result.uploaded} files to branch "${branchName}".`);
-        // Show merge instructions only for branches
-        cliLogger.info("");
-        logInfo(`To merge your changes, open Studio and merge the branch:`);
-        cliLogger.info(
-          `  https://studio.veryfront.com/${config.projectSlug}/branches`,
-        );
+      try {
+        const createdBranch = await createBranch(client, config.projectSlug, branchName);
+        branchId = createdBranch.id;
+      } catch (error) {
+        spinner.stop();
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes("already exists")) {
+          logError(
+            `Branch "${branchName}" already exists. Use --branch to specify a different name.`,
+          );
+        } else {
+          logError(`Failed to create branch: ${message}`);
+        }
+        return;
+      }
+    } else {
+      spinner.update("Pushing to main...");
+    }
+
+    // Step 2: Upload files
+    spinner.update("Uploading files...");
+
+    const result = await uploadFiles(
+      client,
+      config.projectSlug,
+      branchId,
+      ops,
+      false,
+    );
+
+    spinner.stop();
+
+    if (!quiet) {
+      if (result.uploaded > 0) {
+        if (isMainBranch) {
+          logSuccess(`Pushed ${result.uploaded} files to main.`);
+        } else {
+          logSuccess(`Pushed ${result.uploaded} files to branch "${branchName}".`);
+          // Show merge instructions only for branches
+          cliLogger.info("");
+          logInfo(`To merge your changes, open Studio and merge the branch:`);
+          cliLogger.info(
+            `  https://studio.veryfront.com/${config.projectSlug}/branches`,
+          );
+        }
+      }
+      if (result.failed > 0) {
+        logWarning(`Failed to upload ${result.failed} files.`);
       }
     }
-    if (result.failed > 0) {
-      logWarning(`Failed to upload ${result.failed} files.`);
-    }
-  }
+  }, { "cli.dryRun": options.dryRun ?? false });
 }

@@ -19,6 +19,8 @@ import { initializeSSRDistributedCache } from "#veryfront/modules/react-loader/s
 import { initializeFileCacheBackend } from "#veryfront/platform/adapters/fs/cache/file-cache.ts";
 import { isRedisConfigured } from "../utils/redis-client.ts";
 import { isApiCacheAvailable } from "./backend.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 
 export interface DistributedCacheStatus {
   backend: "api" | "redis" | "memory";
@@ -45,45 +47,57 @@ function wasSuccessful(result: PromiseSettledResult<boolean>): boolean {
  *
  * @returns Status object indicating which caches were enabled
  */
-export async function initializeDistributedCaches(): Promise<DistributedCacheStatus> {
+export function initializeDistributedCaches(): Promise<DistributedCacheStatus> {
   const backend = determineBackend();
 
   if (backend === "memory") {
-    logger.debug("[DistributedCache] No distributed backend available, using memory-only caches");
-    return { backend, transformCache: false, ssrModuleCache: false, fileCache: false };
-  }
-
-  logger.info("[DistributedCache] Initializing caches...", { backend });
-
-  const [transformResult, ssrResult, fileResult] = await Promise.allSettled([
-    initializeTransformCache(),
-    initializeSSRDistributedCache(),
-    initializeFileCacheBackend(),
-  ]);
-
-  const status: DistributedCacheStatus = {
-    backend,
-    transformCache: wasSuccessful(transformResult),
-    ssrModuleCache: wasSuccessful(ssrResult),
-    fileCache: wasSuccessful(fileResult),
-  };
-
-  const enabledCount = [status.transformCache, status.ssrModuleCache, status.fileCache]
-    .filter(Boolean).length;
-
-  if (enabledCount > 0) {
-    logger.info("[DistributedCache] Initialization complete", {
+    return Promise.resolve({
       backend,
-      enabled: enabledCount,
-      transform: status.transformCache,
-      ssrModule: status.ssrModuleCache,
-      file: status.fileCache,
-    });
-  } else {
-    logger.warn("[DistributedCache] No caches enabled despite backend being available", {
-      backend,
+      transformCache: false,
+      ssrModuleCache: false,
+      fileCache: false,
     });
   }
 
-  return status;
+  return withSpan(
+    SpanNames.CACHE_DISTRIBUTED_INIT,
+    async () => {
+      logger.info("[DistributedCache] Initializing caches...", { backend });
+
+      const [transformResult, ssrResult, fileResult] = await Promise.allSettled([
+        initializeTransformCache(),
+        initializeSSRDistributedCache(),
+        initializeFileCacheBackend(),
+      ]);
+
+      const status: DistributedCacheStatus = {
+        backend,
+        transformCache: wasSuccessful(transformResult),
+        ssrModuleCache: wasSuccessful(ssrResult),
+        fileCache: wasSuccessful(fileResult),
+      };
+
+      const enabledCount = [status.transformCache, status.ssrModuleCache, status.fileCache]
+        .filter(Boolean).length;
+
+      if (enabledCount > 0) {
+        logger.info("[DistributedCache] Initialization complete", {
+          backend,
+          enabled: enabledCount,
+          transform: status.transformCache,
+          ssrModule: status.ssrModuleCache,
+          file: status.fileCache,
+        });
+      } else {
+        logger.warn("[DistributedCache] No caches enabled despite backend being available", {
+          backend,
+        });
+      }
+
+      return status;
+    },
+    {
+      "cache.backend": backend,
+    },
+  );
 }

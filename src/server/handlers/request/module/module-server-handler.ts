@@ -9,6 +9,7 @@
 
 import type { HandlerContext, HandlerResult } from "../../types.ts";
 import { ResponseBuilder } from "#veryfront/security/index.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 /**
  * Handles module server requests for ES module serving.
@@ -34,7 +35,7 @@ import { ResponseBuilder } from "#veryfront/security/index.ts";
  * );
  * ```
  */
-export async function handleModuleServer(
+export function handleModuleServer(
   req: Request,
   ctx: HandlerContext,
   createResponseBuilder: (ctx: HandlerContext) => ResponseBuilder,
@@ -42,41 +43,44 @@ export async function handleModuleServer(
   logDebug: (message: string, data: Record<string, unknown>, ctx: HandlerContext) => void,
   getErrorMessage: (error: unknown) => string,
 ): Promise<HandlerResult> {
-  try {
-    const { serveModule } = await import("#veryfront/modules/server/index.ts");
-    const moduleResponse = await serveModule(req, {
-      projectId: ctx.projectId ?? ctx.projectDir,
-      projectDir: ctx.projectDir,
-      adapter: ctx.adapter,
-      dev: ctx.requestContext?.isLocalDev ?? false,
-      projectUUID: ctx.projectId,
-      // Pass project context from handler (set via proxy headers or domain lookup)
-      projectSlug: ctx.projectSlug,
-      branch: ctx.parsedDomain?.branch ?? null,
-      // Pass release ID for production mode (published files)
-      releaseId: ctx.releaseId ?? null,
-      // Pass security config for opt-in import restrictions
-      allowedImportDirs: ctx.config?.security?.allowedImportDirs,
-    });
+  const url = new URL(req.url);
+  return withSpan("module.server.handle", async () => {
+    try {
+      const { serveModule } = await import("#veryfront/modules/server/index.ts");
+      const moduleResponse = await serveModule(req, {
+        projectId: ctx.projectId ?? ctx.projectDir,
+        projectDir: ctx.projectDir,
+        adapter: ctx.adapter,
+        dev: ctx.requestContext?.isLocalDev ?? false,
+        projectUUID: ctx.projectId,
+        // Pass project context from handler (set via proxy headers or domain lookup)
+        projectSlug: ctx.projectSlug,
+        branch: ctx.parsedDomain?.branch ?? null,
+        // Pass release ID for production mode (published files)
+        releaseId: ctx.releaseId ?? null,
+        // Pass security config for opt-in import restrictions
+        allowedImportDirs: ctx.config?.security?.allowedImportDirs,
+      });
 
-    const builder = createResponseBuilder(ctx);
-    const response = builder
-      .withCORS(req, ctx.securityConfig?.cors)
-      .withSecurity(ctx.securityConfig ?? undefined)
-      .withHeaders(moduleResponse.headers)
-      .build(moduleResponse.body, moduleResponse.status);
+      const builder = createResponseBuilder(ctx);
+      const response = builder
+        .withCORS(req, ctx.securityConfig?.cors)
+        .withSecurity(ctx.securityConfig ?? undefined)
+        .withHeaders(moduleResponse.headers)
+        .build(moduleResponse.body, moduleResponse.status);
 
-    return respond(response);
-  } catch (e) {
-    logDebug("module server error", {
-      error: getErrorMessage(e),
-    }, ctx);
+      return respond(response);
+    } catch (e) {
+      logDebug("module server error", {
+        error: getErrorMessage(e),
+      }, ctx);
 
-    return respond(
-      ResponseBuilder.error(500, "Module Server Error", req, {
-        securityConfig: ctx.securityConfig,
-        corsConfig: ctx.securityConfig?.cors,
-      }),
-    );
-  }
+      return respond(
+        ResponseBuilder.error(500, "Module Server Error", req, {
+          securityConfig: ctx.securityConfig,
+          corsConfig: ctx.securityConfig?.cors,
+        }),
+      );
+    }
+  }, { "module.path": url.pathname, "module.projectSlug": ctx.projectSlug || "unknown" });
 }

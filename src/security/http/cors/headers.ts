@@ -4,6 +4,7 @@
 
 import type { CORSConfig, CORSHeaderOptions, CORSValidationResult } from "./types.ts";
 import { validateOrigin, validateOriginSync } from "./validators.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 /**
  * Apply CORS headers based on validation result.
@@ -51,9 +52,11 @@ function applyValidatedHeaders(
 }
 
 /** Apply CORS headers to a response or headers object */
-export async function applyCORSHeaders(options: CORSHeaderOptions): Promise<Response | void> {
-  const validation = await validateOrigin(options.request.headers.get("origin"), options.config);
-  return applyValidatedHeaders(validation, options);
+export function applyCORSHeaders(options: CORSHeaderOptions): Promise<Response | void> {
+  return withSpan("security.cors.applyHeaders", async () => {
+    const validation = await validateOrigin(options.request.headers.get("origin"), options.config);
+    return applyValidatedHeaders(validation, options);
+  }, { "cors.origin": options.request.headers.get("origin") ?? "unknown" });
 }
 
 /** Synchronous variant for immediate execution (e.g., fluent builder chains) */

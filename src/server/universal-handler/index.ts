@@ -301,6 +301,20 @@ export function createVeryfrontHandler(
     const trackingRequestId = req.headers.get("x-request-id") ?? crypto.randomUUID();
     const _url = new URL(req.url);
 
+    // Start tracing span for this request as early as possible
+    const parentContext = extractContext(req.headers);
+    const spanInfo = startServerSpan(req.method, _url.pathname, parentContext);
+    const span = spanInfo?.span;
+
+    // Set initial span attributes
+    if (span) {
+      setSpanAttributes(span, {
+        "http.url": req.url,
+        "http.host": req.headers.get("host") || _url.host,
+        "http.scheme": _url.protocol.replace(":", ""),
+      });
+    }
+
     // Get project info from headers for early tracking (before full context is built)
     const earlyProjectSlug = req.headers.get("x-project-slug") || undefined;
 
@@ -324,7 +338,7 @@ export function createVeryfrontHandler(
         } seconds.`
         : "Too many concurrent requests for this project. Please retry.";
 
-      return new Response(
+      const response = new Response(
         JSON.stringify({
           error: message,
           reason: isolationCheck.reason,
@@ -340,6 +354,8 @@ export function createVeryfrontHandler(
           },
         },
       );
+      endServerSpan(span, response.status);
+      return response;
     }
 
     // Start tracking for isolation
@@ -360,20 +376,6 @@ export function createVeryfrontHandler(
       await timeAsync("config:load", async () => {
         await configPromise;
       });
-
-      // Start tracing span for this request
-      const parentContext = extractContext(req.headers);
-      const spanInfo = startServerSpan(req.method, _url.pathname, parentContext);
-      const span = spanInfo?.span;
-
-      // Set initial span attributes
-      if (span) {
-        setSpanAttributes(span, {
-          "http.url": req.url,
-          "http.host": req.headers.get("host") || _url.host,
-          "http.scheme": _url.protocol.replace(":", ""),
-        });
-      }
 
       // Execute request handling within span context
       const executeHandler = async (): Promise<Response> => {

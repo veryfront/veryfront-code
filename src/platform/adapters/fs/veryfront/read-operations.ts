@@ -5,6 +5,7 @@ import { PathNormalizer } from "./path-normalizer.ts";
 import type { ResolvedContentContext } from "./types.ts";
 import { buildFileCacheKeyPrefix } from "./cache-keys.ts";
 import { getRequestScopedFile, setRequestScopedFile } from "./multi-project-adapter.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 export interface ContentContextProvider {
   isProductionMode: () => boolean;
@@ -211,16 +212,20 @@ export class ReadOperations {
     return undefined;
   }
 
-  async readFile(path: string): Promise<Uint8Array> {
-    const normalizedPath = this.normalizer.normalize(path);
-    const content = await this.fetchContent(normalizedPath);
-    return new TextEncoder().encode(content);
+  readFile(path: string): Promise<Uint8Array> {
+    return withSpan("fs.veryfront.readFile", async () => {
+      const normalizedPath = this.normalizer.normalize(path);
+      const content = await this.fetchContent(normalizedPath);
+      return new TextEncoder().encode(content);
+    }, { "fs.path": path });
   }
 
   readTextFile(path: string): Promise<string> {
-    const normalizedPath = this.normalizer.normalize(path);
-    logger.debug("[ReadOperations] readTextFile called", { path, normalizedPath });
-    return this.fetchContent(normalizedPath);
+    return withSpan("fs.veryfront.readTextFile", () => {
+      const normalizedPath = this.normalizer.normalize(path);
+      logger.debug("[ReadOperations] readTextFile called", { path, normalizedPath });
+      return this.fetchContent(normalizedPath);
+    }, { "fs.path": path });
   }
 
   private async fetchContent(normalizedPath: string): Promise<string> {

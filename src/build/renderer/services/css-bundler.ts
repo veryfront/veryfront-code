@@ -4,6 +4,7 @@
 
 import { bundlerLogger as logger } from "#veryfront/utils";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
+import { withSpanSync } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { BundleResult, BundlerOptions } from "../types/bundler-types.ts";
 
 /**
@@ -14,20 +15,27 @@ export function bundleCss(
   options: BundlerOptions,
   result: BundleResult,
 ): void {
-  try {
-    const processedCss = options.mode === "production" ? minifyCss(source.content) : source.content;
+  return withSpanSync("build.renderer.bundleCSS", () => {
+    try {
+      const processedCss = options.mode === "production"
+        ? minifyCss(source.content)
+        : source.content;
 
-    result.outputs.set(source.path, {
-      path: source.path,
-      content: processedCss,
-      type: "css",
-    });
+      result.outputs.set(source.path, {
+        path: source.path,
+        content: processedCss,
+        type: "css",
+      });
 
-    logger.debug(`Bundled CSS: ${source.path}`);
-  } catch (error) {
-    logger.error(`Failed to bundle CSS ${source.path}`, error);
-    result.errors.push(ensureError(error));
-  }
+      logger.debug(`Bundled CSS: ${source.path}`);
+    } catch (error) {
+      logger.error(`Failed to bundle CSS ${source.path}`, error);
+      result.errors.push(ensureError(error));
+    }
+  }, {
+    "source.path": source.path,
+    "options.mode": options.mode,
+  });
 }
 
 function minifyCss(css: string): string {

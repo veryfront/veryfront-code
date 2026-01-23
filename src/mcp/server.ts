@@ -13,6 +13,7 @@ import { resourceRegistry } from "#veryfront/resource";
 import { promptRegistry } from "#veryfront/prompt";
 import type { MCPServerConfig } from "./types.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 /**
  * JSON-RPC 2.0 Params type
@@ -80,25 +81,27 @@ export class MCPServer {
   /**
    * Handle JSON-RPC request
    */
-  async handleRequest(request: JSONRPCRequest): Promise<JSONRPCResponse> {
-    try {
-      const result = await this.dispatch(request.method, request.params);
+  handleRequest(request: JSONRPCRequest): Promise<JSONRPCResponse> {
+    return withSpan("mcp.handleRequest", async () => {
+      try {
+        const result = await this.dispatch(request.method, request.params);
 
-      return {
-        jsonrpc: "2.0",
-        id: request.id,
-        result,
-      };
-    } catch (error) {
-      return {
-        jsonrpc: "2.0",
-        id: request.id,
-        error: {
-          code: -32603,
-          message: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
+        return {
+          jsonrpc: "2.0",
+          id: request.id,
+          result,
+        };
+      } catch (error) {
+        return {
+          jsonrpc: "2.0",
+          id: request.id,
+          error: {
+            code: -32603,
+            message: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
+    }, { "mcp.method": request.method });
   }
 
   /**
@@ -184,7 +187,7 @@ export class MCPServer {
   /**
    * Call a tool
    */
-  private async callTool(params: JSONRPCParams | undefined): Promise<Record<string, unknown>> {
+  private callTool(params: JSONRPCParams | undefined): Promise<Record<string, unknown>> {
     const { name, arguments: args } = asParamsRecord(params);
 
     if (!name) {
@@ -194,16 +197,18 @@ export class MCPServer {
       }));
     }
 
-    const result = await executeTool(name as string, args);
+    return withSpan("mcp.callTool", async () => {
+      const result = await executeTool(name as string, args);
 
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(result, null, 2),
-        },
-      ],
-    };
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }, { "mcp.tool.name": name as string });
   }
 
   /**
@@ -228,7 +233,7 @@ export class MCPServer {
   /**
    * Read a resource
    */
-  private async readResource(params: JSONRPCParams | undefined): Promise<Record<string, unknown>> {
+  private readResource(params: JSONRPCParams | undefined): Promise<Record<string, unknown>> {
     const { uri } = asParamsRecord(params);
 
     if (!uri) {
@@ -238,30 +243,32 @@ export class MCPServer {
       }));
     }
 
-    const resource = resourceRegistry.findByPattern(uri as string);
+    return withSpan("mcp.readResource", async () => {
+      const resource = resourceRegistry.findByPattern(uri as string);
 
-    if (!resource) {
-      throw toError(createError({
-        type: "agent",
-        message: `Resource not found: ${uri}`,
-      }));
-    }
+      if (!resource) {
+        throw toError(createError({
+          type: "agent",
+          message: `Resource not found: ${uri}`,
+        }));
+      }
 
-    // Extract params from URI
-    const resourceParams = resourceRegistry.extractParams(uri as string, resource.pattern);
+      // Extract params from URI
+      const resourceParams = resourceRegistry.extractParams(uri as string, resource.pattern);
 
-    // Load resource data
-    const data = await resource.load(resourceParams);
+      // Load resource data
+      const data = await resource.load(resourceParams);
 
-    return {
-      contents: [
-        {
-          uri,
-          mimeType: "application/json",
-          text: JSON.stringify(data, null, 2),
-        },
-      ],
-    };
+      return {
+        contents: [
+          {
+            uri,
+            mimeType: "application/json",
+            text: JSON.stringify(data, null, 2),
+          },
+        ],
+      };
+    }, { "mcp.resource.uri": uri as string });
   }
 
   /**
@@ -284,7 +291,7 @@ export class MCPServer {
   /**
    * Get a prompt
    */
-  private async getPrompt(params: JSONRPCParams | undefined): Promise<Record<string, unknown>> {
+  private getPrompt(params: JSONRPCParams | undefined): Promise<Record<string, unknown>> {
     const { name, arguments: args } = asParamsRecord(params);
 
     if (!name) {
@@ -294,23 +301,25 @@ export class MCPServer {
       }));
     }
 
-    const content = await promptRegistry.getContent(
-      name as string,
-      args as Record<string, unknown> | undefined,
-    );
+    return withSpan("mcp.getPrompt", async () => {
+      const content = await promptRegistry.getContent(
+        name as string,
+        args as Record<string, unknown> | undefined,
+      );
 
-    return {
-      description: `Prompt: ${name}`,
-      messages: [
-        {
-          role: "user",
-          content: {
-            type: "text",
-            text: content,
+      return {
+        description: `Prompt: ${name}`,
+        messages: [
+          {
+            role: "user",
+            content: {
+              type: "text",
+              text: content,
+            },
           },
-        },
-      ],
-    };
+        ],
+      };
+    }, { "mcp.prompt.name": name as string });
   }
 
   /**

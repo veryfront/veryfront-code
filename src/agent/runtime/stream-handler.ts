@@ -12,6 +12,7 @@ import { AgentStreamEventSchema } from "../streaming/index.ts";
 import { sendSSE } from "./sse-utils.ts";
 import { isDynamicTool, parseToolArgs } from "./tool-helpers.ts";
 import { MAX_STREAM_BUFFER_SIZE } from "./constants.ts";
+import { setActiveSpanAttributes, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 /**
  * Tool call state during streaming.
@@ -151,7 +152,7 @@ export function handleStreamEvent(
  * Parse streaming data and process events.
  * Handles buffering and parsing of newline-delimited JSON.
  */
-export async function processStreamData(
+export function processStreamData(
   stream: ReadableStream,
   state: StreamState,
   controller: ReadableStreamDefaultController,
@@ -159,33 +160,61 @@ export async function processStreamData(
   textPartId: string | undefined,
   callbacks?: StreamCallbacks,
 ): Promise<void> {
-  const reader = stream.getReader();
-  const decoder = new TextDecoder();
-  let partial = "";
+  return withSpan("agent.runtime.processStreamData", async () => {
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+    let partial = "";
+    let eventCount = 0;
 
-  while (true) {
-    const { done, value } = await reader.read();
+    while (true) {
+      const { done, value } = await reader.read();
 
-    if (done) break;
+      if (done) break;
 
-    partial += decoder.decode(value, { stream: true });
+      partial += decoder.decode(value, { stream: true });
 
-    // Prevent unbounded buffer growth
-    if (partial.length > MAX_STREAM_BUFFER_SIZE) {
-      logger.warn("[AGENT] Stream buffer exceeded max size, truncating");
-      partial = partial.slice(-MAX_STREAM_BUFFER_SIZE / 2);
+      // Prevent unbounded buffer growth
+      if (partial.length > MAX_STREAM_BUFFER_SIZE) {
+        logger.warn("[AGENT] Stream buffer exceeded max size, truncating");
+        partial = partial.slice(-MAX_STREAM_BUFFER_SIZE / 2);
+      }
+
+      const segments = partial.split("\n");
+      partial = segments.pop() ?? "";
+      const lines = segments.filter((line) => line.trim());
+
+      for (const line of lines) {
+        try {
+          const rawEvent = JSON.parse(line);
+          const parseResult = AgentStreamEventSchema.safeParse(rawEvent);
+
+          if (parseResult.success) {
+            eventCount++;
+            handleStreamEvent(
+              parseResult.data,
+              state,
+              controller,
+              encoder,
+              textPartId,
+              callbacks,
+            );
+          } else {
+            logger.warn("[AGENT] Invalid stream event received:", parseResult.error);
+          }
+        } catch (e) {
+          logger.warn("[AGENT] Failed to parse stream line:", e);
+          continue;
+        }
+      }
     }
 
-    const segments = partial.split("\n");
-    partial = segments.pop() ?? "";
-    const lines = segments.filter((line) => line.trim());
-
-    for (const line of lines) {
+    // Process any remaining partial data
+    if (partial.trim()) {
       try {
-        const rawEvent = JSON.parse(line);
+        const rawEvent = JSON.parse(partial);
         const parseResult = AgentStreamEventSchema.safeParse(rawEvent);
-
         if (parseResult.success) {
+          eventCount++;
           handleStreamEvent(
             parseResult.data,
             state,
@@ -194,33 +223,16 @@ export async function processStreamData(
             textPartId,
             callbacks,
           );
-        } else {
-          logger.warn("[AGENT] Invalid stream event received:", parseResult.error);
         }
-      } catch (e) {
-        logger.warn("[AGENT] Failed to parse stream line:", e);
-        continue;
+      } catch {
+        // Ignore trailing partial
       }
     }
-  }
 
-  // Process any remaining partial data
-  if (partial.trim()) {
-    try {
-      const rawEvent = JSON.parse(partial);
-      const parseResult = AgentStreamEventSchema.safeParse(rawEvent);
-      if (parseResult.success) {
-        handleStreamEvent(
-          parseResult.data,
-          state,
-          controller,
-          encoder,
-          textPartId,
-          callbacks,
-        );
-      }
-    } catch {
-      // Ignore trailing partial
-    }
-  }
+    setActiveSpanAttributes({
+      "stream.event_count": eventCount,
+      "stream.tool_calls": state.toolCalls.size,
+      "stream.text_length": state.accumulatedText.length,
+    });
+  });
 }

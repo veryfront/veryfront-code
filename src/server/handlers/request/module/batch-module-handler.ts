@@ -11,6 +11,7 @@ import type { HandlerContext, HandlerResult } from "../../types.ts";
 import type { ResponseBuilder } from "#veryfront/security/index.ts";
 import { handleModuleBatch } from "#veryfront/modules/server/module-batch-handler.ts";
 import { serverLogger as logger } from "#veryfront/utils";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 /**
  * Handle batch module requests at /_vf_modules/_batch.
@@ -24,27 +25,29 @@ import { serverLogger as logger } from "#veryfront/utils";
  * @param respond - Response callback
  * @returns Handler result
  */
-export async function handleBatchModuleEndpoint(
+export function handleBatchModuleEndpoint(
   req: Request,
   ctx: HandlerContext,
   _createResponseBuilder: (ctx: HandlerContext) => ResponseBuilder,
   respond: (response: Response) => HandlerResult,
 ): Promise<HandlerResult> {
-  logger.debug("[BatchModuleHandler] Handling batch request", {
-    projectSlug: ctx.projectSlug,
-    url: req.url,
-  });
+  return withSpan("module.batch.handle", async () => {
+    logger.debug("[BatchModuleHandler] Handling batch request", {
+      projectSlug: ctx.projectSlug,
+      url: req.url,
+    });
 
-  const response = await handleModuleBatch(req, {
-    projectDir: ctx.projectDir,
-    adapter: ctx.adapter,
-    projectSlug: ctx.projectSlug,
-    projectId: ctx.projectId,
-    branch: ctx.parsedDomain?.branch ?? null,
-    dev: ctx.requestContext?.isLocalDev ?? false,
-    // Pass security config for opt-in import restrictions
-    allowedImportDirs: ctx.config?.security?.allowedImportDirs,
-  });
+    const response = await handleModuleBatch(req, {
+      projectDir: ctx.projectDir,
+      adapter: ctx.adapter,
+      projectSlug: ctx.projectSlug,
+      projectId: ctx.projectId,
+      branch: ctx.parsedDomain?.branch ?? null,
+      dev: ctx.requestContext?.isLocalDev ?? false,
+      // Pass security config for opt-in import restrictions
+      allowedImportDirs: ctx.config?.security?.allowedImportDirs,
+    });
 
-  return respond(response);
+    return respond(response);
+  }, { "module.batch.projectSlug": ctx.projectSlug || "unknown" });
 }

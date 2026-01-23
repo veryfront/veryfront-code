@@ -27,106 +27,122 @@ import { setupBuildDirectories } from "./build-setup.ts";
 import { runCodeSplitting } from "./code-splitter-orchestrator.ts";
 import { generateAllOutputs } from "./output-generator.ts";
 import { collectAllRoutes } from "./route-collector.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 /**
  * Main build production orchestrator
  */
-export async function buildProduction(options: BuildOptions): Promise<BuildStats> {
-  const startTime = Date.now();
+export function buildProduction(options: BuildOptions): Promise<BuildStats> {
+  return withSpan("build.production", async () => {
+    const startTime = Date.now();
 
-  // Normalize options
-  const normalizedOptions = normalizeBuildOptions(options);
+    // Normalize options
+    const normalizedOptions = normalizeBuildOptions(options);
 
-  // Validate project directory exists (using cross-platform filesystem)
-  try {
-    const fs = createFileSystem();
-    const exists = await fs.exists(normalizedOptions.projectDir);
-    if (!exists) {
-      throw new Error("Directory does not exist");
+    // Validate project directory exists (using cross-platform filesystem)
+    try {
+      const fs = createFileSystem();
+      const exists = await fs.exists(normalizedOptions.projectDir);
+      if (!exists) {
+        throw new Error("Directory does not exist");
+      }
+    } catch (error) {
+      logger.error(`Project directory check failed: ${error}`);
+      throw toError(createError({
+        type: "config",
+        message: `Invalid project directory: ${normalizedOptions.projectDir} does not exist`,
+      }));
     }
-  } catch (error) {
-    logger.error(`Project directory check failed: ${error}`);
-    throw toError(createError({
-      type: "config",
-      message: `Invalid project directory: ${normalizedOptions.projectDir} does not exist`,
-    }));
-  }
 
-  logger.info("Starting production build", options);
+    logger.info("Starting production build", options);
 
-  // Initialize build context
-  const context = await initializeBuildContext(options);
+    // Initialize build context
+    const context = await withSpan(
+      "build.initializeContext",
+      () => initializeBuildContext(options),
+      {},
+    );
 
-  // Setup build directories
-  await setupBuildDirectories(
-    context.adapter,
-    normalizedOptions.outputDir,
-    normalizedOptions.dryRun,
-  );
+    // Setup build directories
+    await withSpan("build.setupDirectories", () =>
+      setupBuildDirectories(
+        context.adapter,
+        normalizedOptions.outputDir,
+        normalizedOptions.dryRun,
+      ), {});
 
-  // Collect routes
-  const routes = await collectAllRoutes(
-    context.adapter,
-    normalizedOptions.projectDir,
-    normalizedOptions.ssg,
-    normalizedOptions.include,
-    normalizedOptions.exclude,
-  );
+    // Collect routes
+    const routes = await withSpan("build.collectRoutes", () =>
+      collectAllRoutes(
+        context.adapter,
+        normalizedOptions.projectDir,
+        normalizedOptions.ssg,
+        normalizedOptions.include,
+        normalizedOptions.exclude,
+      ), {});
 
-  // Run code splitting
-  const splitResult = await runCodeSplitting(
-    normalizedOptions.projectDir,
-    normalizedOptions.outputDir,
-    routes.pages,
-    normalizedOptions.enableSplitting,
-    normalizedOptions.dryRun,
-  );
-  context.stats.chunks = splitResult.chunks;
+    // Run code splitting
+    const splitResult = await withSpan("build.codeSplitting", () =>
+      runCodeSplitting(
+        normalizedOptions.projectDir,
+        normalizedOptions.outputDir,
+        routes.pages,
+        normalizedOptions.enableSplitting,
+        normalizedOptions.dryRun,
+      ), {});
+    context.stats.chunks = splitResult.chunks;
 
-  // Execute build
-  const buildResult = await executeBuild(routes.pages, routes.app, {
-    adapter: context.adapter,
-    projectDir: normalizedOptions.projectDir,
-    outputDir: normalizedOptions.outputDir,
-    renderer: context.renderer,
-    config: context.config,
-    enablePrefetch: normalizedOptions.enablePrefetch,
-    chunkManifest: splitResult.manifest,
-    baseUrl: (context.config as { build?: { baseUrl?: string } }).build?.baseUrl || "",
-    dryRun: normalizedOptions.dryRun,
-  });
+    // Execute build
+    const buildResult = await withSpan(
+      "build.execute",
+      () =>
+        executeBuild(routes.pages, routes.app, {
+          adapter: context.adapter,
+          projectDir: normalizedOptions.projectDir,
+          outputDir: normalizedOptions.outputDir,
+          renderer: context.renderer,
+          config: context.config,
+          enablePrefetch: normalizedOptions.enablePrefetch,
+          chunkManifest: splitResult.manifest,
+          baseUrl: (context.config as { build?: { baseUrl?: string } }).build?.baseUrl || "",
+          dryRun: normalizedOptions.dryRun,
+        }),
+      {},
+    );
 
-  context.stats.pages = buildResult.pages;
-  context.stats.totalSize = buildResult.totalSize;
+    context.stats.pages = buildResult.pages;
+    context.stats.totalSize = buildResult.totalSize;
 
-  // Generate all outputs
-  await generateAllOutputs({
-    adapter: context.adapter,
-    projectDir: normalizedOptions.projectDir,
-    outputDir: normalizedOptions.outputDir,
-    routes: routes.pages,
-    appRoutes: routes.app,
-    stats: context.stats,
-    enableSplitting: normalizedOptions.enableSplitting,
-    enablePrefetch: normalizedOptions.enablePrefetch,
-    enableCompression: normalizedOptions.enableCompression,
-    chunkManifest: splitResult.manifest,
-    dryRun: normalizedOptions.dryRun,
-  });
+    // Generate all outputs
+    await withSpan("build.generateOutputs", () =>
+      generateAllOutputs({
+        adapter: context.adapter,
+        projectDir: normalizedOptions.projectDir,
+        outputDir: normalizedOptions.outputDir,
+        routes: routes.pages,
+        appRoutes: routes.app,
+        stats: context.stats,
+        enableSplitting: normalizedOptions.enableSplitting,
+        enablePrefetch: normalizedOptions.enablePrefetch,
+        enableCompression: normalizedOptions.enableCompression,
+        chunkManifest: splitResult.manifest,
+        dryRun: normalizedOptions.dryRun,
+      }), {});
 
-  // Finalize stats
-  context.stats.duration = Date.now() - startTime;
+    // Finalize stats
+    context.stats.duration = Date.now() - startTime;
 
-  // Log completion
-  logBuildCompletion(context.stats);
+    // Log completion
+    logBuildCompletion(context.stats);
 
-  // Cleanup
-  await performCleanup(context.renderer);
+    // Cleanup
+    await performCleanup(context.renderer);
 
-  // Add SSG paths to stats (BuildStats already has ssgPaths as optional field)
-  context.stats.ssgPaths = buildResult.ssgPaths;
+    // Add SSG paths to stats (BuildStats already has ssgPaths as optional field)
+    context.stats.ssgPaths = buildResult.ssgPaths;
 
-  return context.stats;
+    return context.stats;
+  }, { "build.projectDir": options.projectDir });
 }
 
 // Re-export helper functions for testing

@@ -11,6 +11,7 @@ import { HTMLGenerator } from "./html.ts";
 import { RenderPipeline } from "./pipeline.ts";
 import { SSROrchestrator } from "./ssr-orchestrator.ts";
 import type { PageDataResponse, RendererOptions, RenderOptions, RenderResult } from "./types.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 // Re-export types for backward compatibility
 export type { PageDataResponse, RendererOptions, RenderOptions, RenderResult } from "./types.ts";
@@ -42,34 +43,36 @@ export class VeryfrontRenderer {
     this.projectId = options.projectId;
   }
 
-  async initialize(): Promise<void> {
-    logger.debug("Initializing VeryfrontRenderer");
+  initialize(): Promise<void> {
+    return withSpan("renderer.initialize", async () => {
+      logger.debug("Initializing VeryfrontRenderer");
 
-    if (!this.adapter) {
-      const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
-      this.adapter = await runtime.get();
-    }
+      if (!this.adapter) {
+        const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
+        this.adapter = await runtime.get();
+      }
 
-    this.configManager = new ConfigurationManager({
-      projectDir: this.projectDir,
-      mode: this.mode,
-      adapter: this.adapter,
-      config: this.preloadedConfig,
-    });
-    await this.configManager.initialize();
+      this.configManager = new ConfigurationManager({
+        projectDir: this.projectDir,
+        mode: this.mode,
+        adapter: this.adapter,
+        config: this.preloadedConfig,
+      });
+      await this.configManager.initialize();
 
-    this.lifecycle = new RendererLifecycle({
-      configManager: this.configManager,
-      port: this.port,
-      moduleServerUrl: this.moduleServerUrl,
-      projectId: this.projectId,
-    });
-    this.services = await this.lifecycle.initialize();
+      this.lifecycle = new RendererLifecycle({
+        configManager: this.configManager,
+        port: this.port,
+        moduleServerUrl: this.moduleServerUrl,
+        projectId: this.projectId,
+      });
+      this.services = await this.lifecycle.initialize();
 
-    this.initializeModules();
-    this.lifecycle.updateCompileMDX(this.mdxCompiler.compileMDX.bind(this.mdxCompiler));
+      this.initializeModules();
+      this.lifecycle.updateCompileMDX(this.mdxCompiler.compileMDX.bind(this.mdxCompiler));
 
-    logger.debug("VeryfrontRenderer initialized successfully");
+      logger.debug("VeryfrontRenderer initialized successfully");
+    }, { "renderer.projectDir": this.projectDir, "renderer.mode": this.mode });
   }
 
   private initializeModules(): void {
@@ -120,15 +123,21 @@ export class VeryfrontRenderer {
   }
 
   renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
-    return this.renderPipeline.renderPage(slug, options);
+    return withSpan("renderer.renderPage", () => {
+      return this.renderPipeline.renderPage(slug, options);
+    }, { "renderer.slug": slug });
   }
 
   resolvePageData(slug: string, options?: RenderOptions): Promise<PageDataResponse> {
-    return this.renderPipeline.resolvePageData(slug, options);
+    return withSpan("renderer.resolvePageData", () => {
+      return this.renderPipeline.resolvePageData(slug, options);
+    }, { "renderer.slug": slug });
   }
 
   getAllPages(): Promise<string[]> {
-    return this.services.pageResolver.getAllPages();
+    return withSpan("renderer.getAllPages", () => {
+      return this.services.pageResolver.getAllPages();
+    }, {});
   }
 
   clearCache(slug?: string): void {

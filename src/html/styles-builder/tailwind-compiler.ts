@@ -14,6 +14,8 @@ import {
   createCacheBackend,
   MemoryCacheBackend,
 } from "#veryfront/cache/backend.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 
 // =============================================================================
 // Types
@@ -172,34 +174,42 @@ export function getCSSByHash(hash: string): string | undefined {
  * Populates local cache on distributed hit for future fast access.
  */
 export async function getCSSByHashAsync(hash: string): Promise<string | undefined> {
-  // Check local cache first (fast path)
-  const local = localCssCache.get(hash);
-  if (local) {
-    // Move to end for LRU
-    localCssCache.delete(hash);
-    localCssCache.set(hash, local);
-    return local;
-  }
-
-  // Check distributed cache
-  try {
-    const cache = await getCssCache();
-    const css = await cache.get(hash);
-    if (css) {
-      // Populate local cache for future fast access
-      if (localCssCache.size >= LOCAL_CACHE_MAX_SIZE) {
-        const firstKey = localCssCache.keys().next().value;
-        if (firstKey) localCssCache.delete(firstKey);
+  return await withSpan(
+    SpanNames.HTML_GET_CSS_BY_HASH,
+    async () => {
+      // Check local cache first (fast path)
+      const local = localCssCache.get(hash);
+      if (local) {
+        // Move to end for LRU
+        localCssCache.delete(hash);
+        localCssCache.set(hash, local);
+        return local;
       }
-      localCssCache.set(hash, css);
-      logger.debug("[tailwind] CSS cache hit from distributed cache", { hash });
-      return css;
-    }
-  } catch (error) {
-    logger.debug("[tailwind] Failed to read from distributed CSS cache", { hash, error });
-  }
 
-  return undefined;
+      // Check distributed cache
+      try {
+        const cache = await getCssCache();
+        const css = await cache.get(hash);
+        if (css) {
+          // Populate local cache for future fast access
+          if (localCssCache.size >= LOCAL_CACHE_MAX_SIZE) {
+            const firstKey = localCssCache.keys().next().value;
+            if (firstKey) localCssCache.delete(firstKey);
+          }
+          localCssCache.set(hash, css);
+          logger.debug("[tailwind] CSS cache hit from distributed cache", { hash });
+          return css;
+        }
+      } catch (error) {
+        logger.debug("[tailwind] Failed to read from distributed CSS cache", { hash, error });
+      }
+
+      return undefined;
+    },
+    {
+      "css.hash": hash,
+    },
+  );
 }
 
 /**
@@ -407,29 +417,40 @@ export async function generateTailwindCSS(
   candidates: string[] | Set<string>,
   options?: GenerateOptions,
 ): Promise<TailwindResult> {
-  const css = stylesheet || DEFAULT_STYLESHEET;
   const candidateArray = Array.isArray(candidates) ? candidates : [...candidates];
 
-  try {
-    const comp = await getCompiler(css);
-    let output = comp.build(candidateArray);
+  return await withSpan(
+    SpanNames.HTML_GENERATE_TAILWIND_CSS,
+    async () => {
+      const css = stylesheet || DEFAULT_STYLESHEET;
 
-    // Minification: strip extra whitespace for production
-    if (options?.minify) {
-      output = output.replace(/\n\s*\n/g, "\n");
-    }
+      try {
+        const comp = await getCompiler(css);
+        let output = comp.build(candidateArray);
 
-    logger.debug("[tailwind] Generated CSS", {
-      candidateCount: candidateArray.length,
-      outputLength: output.length,
-    });
+        // Minification: strip extra whitespace for production
+        if (options?.minify) {
+          output = output.replace(/\n\s*\n/g, "\n");
+        }
 
-    return { css: output };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    logger.error("[tailwind] Compilation failed", { error: errorMessage });
-    return { css: "", error: errorMessage };
-  }
+        logger.debug("[tailwind] Generated CSS", {
+          candidateCount: candidateArray.length,
+          outputLength: output.length,
+        });
+
+        return { css: output };
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        logger.error("[tailwind] Compilation failed", { error: errorMessage });
+        return { css: "", error: errorMessage };
+      }
+    },
+    {
+      "tailwind.candidate_count": candidateArray.length,
+      "tailwind.has_stylesheet": !!stylesheet,
+      "tailwind.minify": options?.minify ?? false,
+    },
+  );
 }
 
 // =============================================================================

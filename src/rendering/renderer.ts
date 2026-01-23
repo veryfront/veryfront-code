@@ -34,6 +34,7 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import { MDXCacheAdapter } from "#veryfront/transforms/mdx/index.ts";
 import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
 import { ErrorCode, VeryfrontError } from "#veryfront/errors/index.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
   createRenderContext,
   createRenderContextFromEnriched,
@@ -190,55 +191,61 @@ export class Renderer {
    * @param options - Render options
    * @returns Render result with HTML, frontmatter, etc.
    */
-  async renderPage(
+  renderPage(
     slug: string,
     ctx: RenderContext,
     options?: RenderOptions,
   ): Promise<RenderResult> {
-    if (!this.initialized) {
-      throw new Error("Renderer not initialized. Call initialize() first.");
-    }
+    return withSpan("renderer.renderPage", async () => {
+      if (!this.initialized) {
+        throw new Error("Renderer not initialized. Call initialize() first.");
+      }
 
-    const startTime = performance.now();
-    logger.debug("[Renderer] Rendering page", {
-      slug,
-      projectId: ctx.projectId,
-      environment: ctx.environment,
+      const startTime = performance.now();
+      logger.debug("[Renderer] Rendering page", {
+        slug,
+        projectId: ctx.projectId,
+        environment: ctx.environment,
+      });
+
+      // Check cache first (context-aware, includes colorScheme in key)
+      const cacheResult = await this.cache.checkCache(slug, ctx, options?.colorScheme);
+      if (cacheResult.hit && cacheResult.cachedResult) {
+        logger.debug("[Renderer] Cache hit", {
+          slug,
+          projectId: ctx.projectId,
+          colorScheme: options?.colorScheme,
+          duration: `${(performance.now() - startTime).toFixed(2)}ms`,
+        });
+        return cacheResult.cachedResult;
+      }
+
+      // Acquire render permit - fail fast if overloaded
+      const acquired = await renderSemaphore.tryAcquire(RENDER_ACQUIRE_TIMEOUT_MS);
+      if (!acquired) {
+        logger.error("[Renderer] Render capacity exceeded - service overloaded", {
+          slug,
+          projectId: ctx.projectId,
+          waiting: renderSemaphore.waiting,
+          available: renderSemaphore.available,
+        });
+        throw new VeryfrontError(
+          `Render capacity exceeded (${renderSemaphore.waiting} waiting). Service is overloaded.`,
+          ErrorCode.SERVICE_OVERLOADED,
+          { slug, projectId: ctx.projectId, waiting: renderSemaphore.waiting },
+        );
+      }
+
+      try {
+        return await this.doRenderPage(slug, ctx, options, startTime);
+      } finally {
+        renderSemaphore.release();
+      }
+    }, {
+      "renderer.slug": slug,
+      "renderer.projectId": ctx.projectId,
+      "renderer.environment": ctx.environment,
     });
-
-    // Check cache first (context-aware, includes colorScheme in key)
-    const cacheResult = await this.cache.checkCache(slug, ctx, options?.colorScheme);
-    if (cacheResult.hit && cacheResult.cachedResult) {
-      logger.debug("[Renderer] Cache hit", {
-        slug,
-        projectId: ctx.projectId,
-        colorScheme: options?.colorScheme,
-        duration: `${(performance.now() - startTime).toFixed(2)}ms`,
-      });
-      return cacheResult.cachedResult;
-    }
-
-    // Acquire render permit - fail fast if overloaded
-    const acquired = await renderSemaphore.tryAcquire(RENDER_ACQUIRE_TIMEOUT_MS);
-    if (!acquired) {
-      logger.error("[Renderer] Render capacity exceeded - service overloaded", {
-        slug,
-        projectId: ctx.projectId,
-        waiting: renderSemaphore.waiting,
-        available: renderSemaphore.available,
-      });
-      throw new VeryfrontError(
-        `Render capacity exceeded (${renderSemaphore.waiting} waiting). Service is overloaded.`,
-        ErrorCode.SERVICE_OVERLOADED,
-        { slug, projectId: ctx.projectId, waiting: renderSemaphore.waiting },
-      );
-    }
-
-    try {
-      return await this.doRenderPage(slug, ctx, options, startTime);
-    } finally {
-      renderSemaphore.release();
-    }
   }
 
   /**

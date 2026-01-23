@@ -13,6 +13,7 @@ import type {
 } from "../../types.ts";
 import { getApiHandler } from "./pages-api-handler.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 /**
  * API handler wrapper for Pages and App Router
@@ -129,47 +130,53 @@ export class ApiHandlerWrapper extends BaseHandler {
   /**
    * Internal handler that runs within project context
    */
-  private async handleWithContext(
+  private handleWithContext(
     req: Request,
     ctx: HandlerContext,
     pathname: string,
   ): Promise<HandlerResult> {
-    try {
-      // Use the APIRouteHandler for all routes (Pages API and App Router)
-      // It discovers routes during initialization and can handle both types
-      const api = await getApiHandler(ctx);
-      const apiRes = await api.handle(req);
+    return withSpan("api.handleWithContext", async () => {
+      try {
+        // Use the APIRouteHandler for all routes (Pages API and App Router)
+        // It discovers routes during initialization and can handle both types
+        const api = await getApiHandler(ctx);
+        const apiRes = await api.handle(req);
 
-      if (apiRes) {
-        this.logDebug("[API-Wrapper] API handler returned response", {
-          pathname,
-          status: apiRes.status,
-        }, ctx);
-        const builder = this.createResponseBuilder(ctx);
-        const finalRes = builder
-          .withCORS(req, ctx.securityConfig?.cors)
-          .withSecurity(ctx.securityConfig ?? undefined)
-          .withHeaders(apiRes.headers)
-          .build(apiRes.body, apiRes.status);
-        return this.respond(finalRes);
-      } else {
-        this.logDebug("[API-Wrapper] API handler returned null, continuing to next handler", {
-          pathname,
-        }, ctx);
+        if (apiRes) {
+          this.logDebug("[API-Wrapper] API handler returned response", {
+            pathname,
+            status: apiRes.status,
+          }, ctx);
+          const builder = this.createResponseBuilder(ctx);
+          const finalRes = builder
+            .withCORS(req, ctx.securityConfig?.cors)
+            .withSecurity(ctx.securityConfig ?? undefined)
+            .withHeaders(apiRes.headers)
+            .build(apiRes.body, apiRes.status);
+          return this.respond(finalRes);
+        } else {
+          this.logDebug("[API-Wrapper] API handler returned null, continuing to next handler", {
+            pathname,
+          }, ctx);
+        }
+      } catch (error) {
+        // Log API errors at info level for better visibility
+        this.logDebug(
+          "[API-Wrapper] API handler error - falling through to next handler",
+          {
+            pathname,
+            error: this.getErrorMessage(error),
+            stack: error instanceof Error ? error.stack : undefined,
+          },
+          ctx,
+        );
       }
-    } catch (error) {
-      // Log API errors at info level for better visibility
-      this.logDebug(
-        "[API-Wrapper] API handler error - falling through to next handler",
-        {
-          pathname,
-          error: this.getErrorMessage(error),
-          stack: error instanceof Error ? error.stack : undefined,
-        },
-        ctx,
-      );
-    }
 
-    return this.continue();
+      return this.continue();
+    }, {
+      "api.pathname": pathname,
+      "api.method": req.method,
+      "api.projectSlug": ctx.projectSlug || "unknown",
+    });
   }
 }

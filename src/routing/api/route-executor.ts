@@ -15,6 +15,7 @@ import {
 } from "./method-validator.ts";
 import { handleAPIError } from "./error-handler.ts";
 import { isAbsolute, join } from "#veryfront/platform/compat/path/index.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 /**
  * Creates a project-scoped filesystem adapter that resolves relative paths
@@ -67,7 +68,7 @@ function toHeadResponse(response: Response): Response {
   });
 }
 
-export async function executeAppRoute(
+export function executeAppRoute(
   handler: APIRoute,
   request: Request,
   match: RouteMatch,
@@ -75,31 +76,33 @@ export async function executeAppRoute(
   adapter: RuntimeAdapter,
 ): Promise<Response> {
   const method = request.method.toUpperCase() as HTTPMethod;
-  const handlerModule = handler as Record<string, unknown>;
-  const handlerFn = handlerModule[method] as AppRouteHandler | undefined;
-  const defaultFn = handlerModule.default as AppRouteHandler | undefined;
-  let resolvedFn = handlerFn || defaultFn;
+  return withSpan("api.executeAppRoute", async () => {
+    const handlerModule = handler as Record<string, unknown>;
+    const handlerFn = handlerModule[method] as AppRouteHandler | undefined;
+    const defaultFn = handlerModule.default as AppRouteHandler | undefined;
+    let resolvedFn = handlerFn || defaultFn;
 
-  // HEAD requests can fall back to GET handler
-  if (!resolvedFn && method === "HEAD") {
-    resolvedFn = handlerModule.GET as AppRouteHandler | undefined;
-  }
+    // HEAD requests can fall back to GET handler
+    if (!resolvedFn && method === "HEAD") {
+      resolvedFn = handlerModule.GET as AppRouteHandler | undefined;
+    }
 
-  if (!resolvedFn) {
-    return createAppRouteMethodNotAllowed(handlerModule);
-  }
+    if (!resolvedFn) {
+      return createAppRouteMethodNotAllowed(handlerModule);
+    }
 
-  try {
-    const appContext: AppRouteContext = { params: normalizeParams(match.params) };
-    const response = await resolvedFn(request, appContext);
-    validateResponse(response);
-    return method === "HEAD" ? toHeadResponse(response) : response;
-  } catch (error) {
-    return handleAPIError(error, pathname, adapter);
-  }
+    try {
+      const appContext: AppRouteContext = { params: normalizeParams(match.params) };
+      const response = await resolvedFn(request, appContext);
+      validateResponse(response);
+      return method === "HEAD" ? toHeadResponse(response) : response;
+    } catch (error) {
+      return handleAPIError(error, pathname, adapter);
+    }
+  }, { "http.method": method, "http.path": pathname, "api.route.pattern": match.route.pattern });
 }
 
-export async function executePagesRoute(
+export function executePagesRoute(
   handler: APIRoute,
   request: Request,
   match: RouteMatch,
@@ -108,20 +111,22 @@ export async function executePagesRoute(
   projectDir?: string,
 ): Promise<Response> {
   const method = request.method as keyof APIRoute;
-  const methodHandler = handler[method] || handler.default;
+  return withSpan("api.executePagesRoute", async () => {
+    const methodHandler = handler[method] || handler.default;
 
-  if (!methodHandler) {
-    return createPagesRouteMethodNotAllowed(handler as Record<string, unknown>);
-  }
+    if (!methodHandler) {
+      return createPagesRouteMethodNotAllowed(handler as Record<string, unknown>);
+    }
 
-  try {
-    // Use project-scoped fs if projectDir is provided, otherwise use raw adapter.fs
-    const fs = projectDir ? createProjectScopedFs(adapter.fs, projectDir) : adapter.fs;
-    const ctx = createContext(request, match, fs);
-    const response = await (methodHandler as PagesRouteHandler)(ctx);
-    validateResponse(response);
-    return response;
-  } catch (error) {
-    return handleAPIError(error, pathname, adapter);
-  }
+    try {
+      // Use project-scoped fs if projectDir is provided, otherwise use raw adapter.fs
+      const fs = projectDir ? createProjectScopedFs(adapter.fs, projectDir) : adapter.fs;
+      const ctx = createContext(request, match, fs);
+      const response = await (methodHandler as PagesRouteHandler)(ctx);
+      validateResponse(response);
+      return response;
+    } catch (error) {
+      return handleAPIError(error, pathname, adapter);
+    }
+  }, { "http.method": method, "http.path": pathname, "api.route.pattern": match.route.pattern });
 }

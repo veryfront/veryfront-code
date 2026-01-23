@@ -11,6 +11,7 @@ import { createSecureFs, type SecureFs } from "#veryfront/security/secure-fs.ts"
 import { LightningCSSStrategy, MinificationStrategy, PurgeStrategy } from "./strategies/index.ts";
 import { CacheManager } from "./css-bundle-cache.ts";
 import { basicMinify, calculateSavings, findCSSFiles, getOutputPath } from "./utils.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 const DEFAULT_OPTIONS: Required<CSSOptimizationOptions> = {
   enabled: true,
@@ -85,45 +86,47 @@ export class CSSOptimizerService {
     return true;
   }
 
-  async optimize(): Promise<Map<string, CSSBundle>> {
-    const _isReady = await this.init();
+  optimize(): Promise<Map<string, CSSBundle>> {
+    return withSpan("build.cssOptimizer.optimize", async () => {
+      const _isReady = await this.init();
 
-    if (!this.options.enabled) {
-      return new Map();
-    }
+      if (!this.options.enabled) {
+        return new Map();
+      }
 
-    logger.info("Starting CSS optimization", {
-      inputDir: this.options.inputDir,
-      outputDir: this.options.outputDir,
-      minify: this.options.minify,
-      autoprefixer: this.options.autoprefixer,
-      purge: this.options.purge,
-    });
+      logger.info("Starting CSS optimization", {
+        inputDir: this.options.inputDir,
+        outputDir: this.options.outputDir,
+        minify: this.options.minify,
+        autoprefixer: this.options.autoprefixer,
+        purge: this.options.purge,
+      });
 
-    // Create output directory using secure filesystem
-    await this.secureFs.mkdir(this.options.outputDir, { recursive: true });
+      // Create output directory using secure filesystem
+      await this.secureFs.mkdir(this.options.outputDir, { recursive: true });
 
-    // Find all CSS files
-    const cssFiles = this.options.inputFiles.length > 0
-      ? this.options.inputFiles
-      : await findCSSFiles(this.options.inputDir);
+      // Find all CSS files
+      const cssFiles = this.options.inputFiles.length > 0
+        ? this.options.inputFiles
+        : await findCSSFiles(this.options.inputDir);
 
-    logger.info(`Found ${cssFiles.length} CSS files to optimize`);
+      logger.info(`Found ${cssFiles.length} CSS files to optimize`);
 
-    // Process CSS files
-    for (const cssFile of cssFiles) {
-      await this.optimizeFile(cssFile);
-    }
+      // Process CSS files
+      for (const cssFile of cssFiles) {
+        await this.optimizeFile(cssFile);
+      }
 
-    // Write manifest
-    await this.cacheManager.writeManifest(this.options.outputDir);
+      // Write manifest
+      await this.cacheManager.writeManifest(this.options.outputDir);
 
-    logger.info("CSS optimization complete", {
-      totalBundles: this.cacheManager.size(),
-      totalSavings: this.cacheManager.getTotalSavings(),
-    });
+      logger.info("CSS optimization complete", {
+        totalBundles: this.cacheManager.size(),
+        totalSavings: this.cacheManager.getTotalSavings(),
+      });
 
-    return this.cacheManager.getAllBundles();
+      return this.cacheManager.getAllBundles();
+    }, { "build.css.inputDir": this.options.inputDir, "build.css.minify": this.options.minify });
   }
 
   private async optimizeFile(cssPath: string): Promise<void> {

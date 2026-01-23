@@ -18,6 +18,7 @@
  */
 
 import { logger } from "#veryfront/utils";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { RuntimeAdapter, RuntimeId } from "./base.ts";
 import { detectRuntime } from "./runtime-detection.ts";
 
@@ -74,7 +75,9 @@ class AdapterRegistry {
     }
 
     // Start initialization
-    this.initializationPromise = this.doInitialize();
+    this.initializationPromise = withSpan("platform.registry.get", () => {
+      return this.doInitialize();
+    });
 
     try {
       return await this.initializationPromise;
@@ -88,80 +91,84 @@ class AdapterRegistry {
   /**
    * Internal initialization logic
    */
-  private async doInitialize(): Promise<RuntimeAdapter> {
+  private doInitialize(): Promise<RuntimeAdapter> {
     const runtimeId = detectRuntime();
 
-    if (runtimeId === "unknown") {
-      throw new Error(
-        "Unsupported runtime detected. Supported runtimes: deno, node, bun. " +
-          "For Cloudflare Workers, call runtime.set(createCloudflareAdapter(env)).",
-      );
-    }
+    return withSpan("platform.registry.doInitialize", async () => {
+      if (runtimeId === "unknown") {
+        throw new Error(
+          "Unsupported runtime detected. Supported runtimes: deno, node, bun. " +
+            "For Cloudflare Workers, call runtime.set(createCloudflareAdapter(env)).",
+        );
+      }
 
-    if (runtimeId === "cloudflare") {
-      throw new Error(
-        "Cloudflare Workers detected but requires manual initialization. " +
-          "Use: await runtime.set(createCloudflareAdapter(env))",
-      );
-    }
+      if (runtimeId === "cloudflare") {
+        throw new Error(
+          "Cloudflare Workers detected but requires manual initialization. " +
+            "Use: await runtime.set(createCloudflareAdapter(env))",
+        );
+      }
 
-    const loader = this.loaders.get(runtimeId);
-    if (!loader) {
-      throw new Error(
-        `No loader registered for runtime: ${runtimeId}. ` +
-          `Registered runtimes: ${[...this.loaders.keys()].join(", ")}`,
-      );
-    }
+      const loader = this.loaders.get(runtimeId);
+      if (!loader) {
+        throw new Error(
+          `No loader registered for runtime: ${runtimeId}. ` +
+            `Registered runtimes: ${[...this.loaders.keys()].join(", ")}`,
+        );
+      }
 
-    try {
-      this.instance = await loader();
-      await this.instance.initialize?.();
-      this.initialized = true;
-      return this.instance;
-    } catch (error) {
-      // Clear state on failure to allow retry
-      this.instance = null;
-      this.initialized = false;
-      throw error;
-    }
+      try {
+        this.instance = await loader();
+        await this.instance.initialize?.();
+        this.initialized = true;
+        return this.instance;
+      } catch (error) {
+        // Clear state on failure to allow retry
+        this.instance = null;
+        this.initialized = false;
+        throw error;
+      }
+    }, { "registry.runtime": runtimeId });
   }
 
   /**
    * Manually set the adapter (for Cloudflare Workers, testing, etc.)
    */
-  async set(adapter: RuntimeAdapter): Promise<void> {
-    // Validate adapter has required properties
-    if (!adapter.id || !adapter.name || !adapter.fs || !adapter.env || !adapter.server) {
-      throw new Error(
-        "Invalid adapter: must implement RuntimeAdapter interface with id, name, fs, env, and server properties",
-      );
-    }
-
-    const oldAdapter = this.instance && this.initialized ? this.instance : null;
-
-    // Set new adapter and initialize
-    this.instance = adapter;
-    this.initialized = false;
-    this.initializationPromise = null;
-
-    try {
-      await adapter.initialize?.();
-      this.initialized = true;
-
-      // Shutdown old adapter after new one is initialized
-      if (oldAdapter) {
-        try {
-          await oldAdapter.shutdown?.();
-        } catch (shutdownError) {
-          logger.warn("[Registry] Failed to shutdown old adapter", shutdownError);
-        }
+  set(adapter: RuntimeAdapter): Promise<void> {
+    return withSpan("platform.registry.set", async () => {
+      // Validate adapter has required properties
+      if (!adapter.id || !adapter.name || !adapter.fs || !adapter.env || !adapter.server) {
+        throw new Error(
+          "Invalid adapter: must implement RuntimeAdapter interface with id, name, fs, env, and server properties",
+        );
       }
-    } catch (error) {
-      // Restore old adapter on failure
-      this.instance = oldAdapter;
-      this.initialized = !!oldAdapter;
-      throw error;
-    }
+
+      const oldAdapter = this.instance && this.initialized ? this.instance : null;
+
+      // Set new adapter and initialize
+      this.instance = adapter;
+      this.initialized = false;
+      this.initializationPromise = null;
+
+      try {
+        await adapter.initialize?.();
+        this.initialized = true;
+
+        // Shutdown old adapter after new one is initialized
+        if (oldAdapter) {
+          try {
+            await oldAdapter.shutdown?.();
+          } catch (shutdownError) {
+            logger.warn("[Registry] Failed to shutdown old adapter", shutdownError);
+          }
+        }
+      } catch (error) {
+        // Restore old adapter on failure
+        this.instance = oldAdapter;
+        this.initialized = !!oldAdapter;
+        throw error;
+      }
+    }, { "registry.adapter.id": adapter.id, "registry.adapter.name": adapter.name });
   }
 
   /**
@@ -187,17 +194,19 @@ class AdapterRegistry {
   /**
    * Reset the registry (for testing)
    */
-  async reset(): Promise<void> {
-    if (this.instance && this.initialized) {
-      try {
-        await this.instance.shutdown?.();
-      } catch (error) {
-        logger.warn("[Registry] Failed to shutdown adapter during reset", error);
+  reset(): Promise<void> {
+    return withSpan("platform.registry.reset", async () => {
+      if (this.instance && this.initialized) {
+        try {
+          await this.instance.shutdown?.();
+        } catch (error) {
+          logger.warn("[Registry] Failed to shutdown adapter during reset", error);
+        }
       }
-    }
-    this.instance = null;
-    this.initialized = false;
-    this.initializationPromise = null;
+      this.instance = null;
+      this.initialized = false;
+      this.initializationPromise = null;
+    });
   }
 
   /**

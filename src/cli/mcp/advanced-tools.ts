@@ -14,6 +14,7 @@ import { ReloadNotifier } from "../../server/reload-notifier.ts";
 import { getErrorCollector } from "./error-collector.ts";
 import { getLogBuffer } from "./log-buffer.ts";
 import { getRuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 // ============================================================================
 // Types
@@ -252,22 +253,24 @@ export const vfListRoutes: MCPTool<ListRoutesInput, RouteInfo[]> = {
   description:
     "Discover all routes in the project. Returns pages, API routes, layouts, and special routes. Use this to understand the project structure before making changes.",
   inputSchema: listRoutesInput,
-  execute: async (input) => {
-    const projectDir = getProjectDir(input.projectPath);
-    const appDir = join(projectDir, "app");
-    const fs = getFs();
-    const routes: RouteInfo[] = [];
+  execute: (input) => {
+    return withSpan("cli.mcp.tool.vf_list_routes", async () => {
+      const projectDir = getProjectDir(input.projectPath);
+      const appDir = join(projectDir, "app");
+      const fs = getFs();
+      const routes: RouteInfo[] = [];
 
-    if (await directoryExists(appDir)) {
-      await scanDirectory(appDir, "", routes, fs);
-    }
+      if (await directoryExists(appDir)) {
+        await scanDirectory(appDir, "", routes, fs);
+      }
 
-    if (input.type === "all") {
-      return routes;
-    }
+      if (input.type === "all") {
+        return routes;
+      }
 
-    const allowedTypes = ROUTE_FILTER_MAP[input.type] || [];
-    return routes.filter((route) => allowedTypes.includes(route.type));
+      const allowedTypes = ROUTE_FILTER_MAP[input.type] || [];
+      return routes.filter((route) => allowedTypes.includes(route.type));
+    }, { "tool.filter_type": input.type });
   },
 };
 
@@ -372,27 +375,29 @@ export const vfGetProjectContext: MCPTool<GetProjectContextInput, ProjectContext
   description:
     "Get deep understanding of the project structure, conventions, and capabilities. Use this at the start of any coding session to understand the project before making changes.",
   inputSchema: getProjectContextInput,
-  execute: async (input) => {
-    const projectDir = getProjectDir(input.projectPath);
-    const fs = getFs();
+  execute: (input) => {
+    return withSpan("cli.mcp.tool.vf_get_project_context", async () => {
+      const projectDir = getProjectDir(input.projectPath);
+      const fs = getFs();
 
-    const hasApp = await directoryExists(join(projectDir, "app"));
-    const hasPages = await directoryExists(join(projectDir, "pages"));
-    const router = hasApp ? "app" : hasPages ? "pages" : "app";
+      const hasApp = await directoryExists(join(projectDir, "app"));
+      const hasPages = await directoryExists(join(projectDir, "pages"));
+      const router = hasApp ? "app" : hasPages ? "pages" : "app";
 
-    const routes: RouteInfo[] = [];
-    if (hasApp) {
-      await scanDirectory(join(projectDir, "app"), "", routes, fs);
-    }
+      const routes: RouteInfo[] = [];
+      if (hasApp) {
+        await scanDirectory(join(projectDir, "app"), "", routes, fs);
+      }
 
-    const directories = await detectDirectories(projectDir);
-    const hasAI = await directoryExists(join(projectDir, "ai")) ||
-      await fileExists(join(projectDir, "app/api/chat/route.ts"));
-    const integrations = await detectIntegrations(projectDir, fs);
-    const features = await detectFeatures(projectDir, hasAI);
-    const name = await getProjectName(projectDir, fs);
+      const directories = await detectDirectories(projectDir);
+      const hasAI = await directoryExists(join(projectDir, "ai")) ||
+        await fileExists(join(projectDir, "app/api/chat/route.ts"));
+      const integrations = await detectIntegrations(projectDir, fs);
+      const features = await detectFeatures(projectDir, hasAI);
+      const name = await getProjectName(projectDir, fs);
 
-    return { name, router, routes, directories, hasAI, integrations, features };
+      return { name, router, routes, directories, hasAI, integrations, features };
+    }, { "tool.projectDir": input.projectPath || "cwd" });
   },
 };
 
@@ -589,42 +594,44 @@ export const vfScaffold: MCPTool<ScaffoldInput, ScaffoldResult> = {
   description:
     "Generate new entities (pages, API routes, layouts, components, AI tools, agents, prompts) with proper conventions. This is the recommended way to create new files in a Veryfront project.",
   inputSchema: scaffoldInput,
-  execute: async (input) => {
-    const projectDir = getProjectDir(input.projectPath);
-    const fs = getFs();
-    const slug = toSlug(input.name);
-    const componentName = toComponentName(input.name);
+  execute: (input) => {
+    return withSpan("cli.mcp.tool.vf_scaffold", async () => {
+      const projectDir = getProjectDir(input.projectPath);
+      const fs = getFs();
+      const slug = toSlug(input.name);
+      const componentName = toComponentName(input.name);
 
-    const config = SCAFFOLD_CONFIGS[input.type];
-    const directory = config.getDirectory(projectDir, slug);
-    const filename = config.getFilename(slug, componentName);
-    const filePath = join(directory, filename);
+      const config = SCAFFOLD_CONFIGS[input.type];
+      const directory = config.getDirectory(projectDir, slug);
+      const filename = config.getFilename(slug, componentName);
+      const filePath = join(directory, filename);
 
-    try {
-      if (await fileExists(filePath)) {
+      try {
+        if (await fileExists(filePath)) {
+          return {
+            success: false,
+            files: [],
+            message: `${input.type} already exists at ${filePath}`,
+          };
+        }
+
+        await ensureDir(directory);
+        const content = config.getContent(input.name, slug, componentName, input.methods);
+        await fs.writeTextFile(filePath, content);
+
+        return {
+          success: true,
+          files: [{ path: filePath, created: true }],
+          message: `Created ${input.type} "${input.name}" successfully`,
+        };
+      } catch (error) {
         return {
           success: false,
           files: [],
-          message: `${input.type} already exists at ${filePath}`,
+          message: `Failed to create ${input.type}: ${formatError(error)}`,
         };
       }
-
-      await ensureDir(directory);
-      const content = config.getContent(input.name, slug, componentName, input.methods);
-      await fs.writeTextFile(filePath, content);
-
-      return {
-        success: true,
-        files: [{ path: filePath, created: true }],
-        message: `Created ${input.type} "${input.name}" successfully`,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        files: [],
-        message: `Failed to create ${input.type}: ${formatError(error)}`,
-      };
-    }
+    }, { "tool.type": input.type, "tool.name": input.name });
   },
 };
 
@@ -841,32 +848,34 @@ export const vfGetDebugContext: MCPTool<GetDebugContextInput, DebugContextResult
   description:
     "Get the current server context including project info, environment, and mode. Useful for debugging server configuration issues.",
   inputSchema: getDebugContextInput,
-  execute: async (input) => {
-    const host = input.project ? `${input.project}.lvh.me` : "lvh.me";
-    const url = `http://${host}:${input.port}/_vf_debug/context`;
+  execute: (input) => {
+    return withSpan("cli.mcp.tool.vf_get_debug_context", async () => {
+      const host = input.project ? `${input.project}.lvh.me` : "lvh.me";
+      const url = `http://${host}:${input.port}/_vf_debug/context`;
 
-    try {
-      const response = await fetch(url);
-      if (!response.ok) {
+      try {
+        const response = await fetch(url);
+        if (!response.ok) {
+          return {
+            success: false,
+            error: `Server returned ${response.status}: ${response.statusText}`,
+          };
+        }
+
+        const data = await response.json();
         return {
-          success: false,
-          error: `Server returned ${response.status}: ${response.statusText}`,
+          success: true,
+          context: {
+            projectSlug: data.context?.projectSlug || "",
+            projectDir: data.context?.projectDir || "",
+            requestContextMode: data.context?.requestContext?.mode || "unknown",
+            isMultiProjectMode: data.adapter?.isMultiProjectMode || false,
+          },
         };
+      } catch (error) {
+        return { success: false, error: formatError(error) };
       }
-
-      const data = await response.json();
-      return {
-        success: true,
-        context: {
-          projectSlug: data.context?.projectSlug || "",
-          projectDir: data.context?.projectDir || "",
-          requestContextMode: data.context?.requestContext?.mode || "unknown",
-          isMultiProjectMode: data.adapter?.isMultiProjectMode || false,
-        },
-      };
-    } catch (error) {
-      return { success: false, error: formatError(error) };
-    }
+    }, { "tool.port": input.port });
   },
 };
 
@@ -945,53 +954,55 @@ export const vfPreviewRoute: MCPTool<PreviewRouteInput, PreviewRouteResult> = {
   description:
     "Preview a route by making a request to the dev server. Returns the rendered output, HTTP status, and render time. Perfect for testing changes instantly.",
   inputSchema: previewRouteInput,
-  execute: async (input) => {
-    const port = input.port;
-    const url = `http://localhost:${port}${input.route}`;
-    const startTime = Date.now();
+  execute: (input) => {
+    return withSpan("cli.mcp.tool.vf_preview_route", async () => {
+      const port = input.port;
+      const url = `http://localhost:${port}${input.route}`;
+      const startTime = Date.now();
 
-    try {
-      const response = await fetch(url, {
-        headers: {
-          "Accept": input.format === "json" ? "application/json" : "text/html",
-        },
-      });
+      try {
+        const response = await fetch(url, {
+          headers: {
+            "Accept": input.format === "json" ? "application/json" : "text/html",
+          },
+        });
 
-      const renderTime = Date.now() - startTime;
-      const contentType = response.headers.get("content-type") || "";
+        const renderTime = Date.now() - startTime;
+        const contentType = response.headers.get("content-type") || "";
 
-      if (input.format === "status") {
+        if (input.format === "status") {
+          return {
+            success: response.ok,
+            status: response.status,
+            contentType,
+            renderTime,
+          };
+        }
+
+        const body = await response.text();
+        const headers: Record<string, string> = {};
+        response.headers.forEach((value, key) => {
+          headers[key] = value;
+        });
+
+        // For HTML, truncate if too long
+        const maxLength = input.format === "html" ? 5000 : 10000;
+        const truncatedBody = body.length > maxLength
+          ? body.slice(0, maxLength) + `\n\n[... truncated ${body.length - maxLength} characters]`
+          : body;
+
         return {
           success: response.ok,
           status: response.status,
           contentType,
+          body: truncatedBody,
+          headers,
           renderTime,
         };
+      } catch (error) {
+        return { success: false, status: 0, error: formatError(error) };
       }
-
-      const body = await response.text();
-      const headers: Record<string, string> = {};
-      response.headers.forEach((value, key) => {
-        headers[key] = value;
-      });
-
-      // For HTML, truncate if too long
-      const maxLength = input.format === "html" ? 5000 : 10000;
-      const truncatedBody = body.length > maxLength
-        ? body.slice(0, maxLength) + `\n\n[... truncated ${body.length - maxLength} characters]`
-        : body;
-
-      return {
-        success: response.ok,
-        status: response.status,
-        contentType,
-        body: truncatedBody,
-        headers,
-        renderTime,
-      };
-    } catch (error) {
-      return { success: false, status: 0, error: formatError(error) };
-    }
+    }, { "tool.route": input.route, "tool.port": input.port });
   },
 };
 
@@ -1047,51 +1058,53 @@ export const vfGetComponentTree: MCPTool<GetComponentTreeInput, ComponentTreeRes
   description:
     "Analyze the component hierarchy for a route. Shows layouts, providers, and components that render on this route. Helps understand the rendering structure.",
   inputSchema: getComponentTreeInput,
-  execute: async (input) => {
-    const projectDir = getProjectDir(input.projectPath);
-    const fs = getFs();
-    const tree: ComponentNode[] = [];
-    const layouts: string[] = [];
-    const providers: string[] = [];
+  execute: (input) => {
+    return withSpan("cli.mcp.tool.vf_get_component_tree", async () => {
+      const projectDir = getProjectDir(input.projectPath);
+      const fs = getFs();
+      const tree: ComponentNode[] = [];
+      const layouts: string[] = [];
+      const providers: string[] = [];
 
-    const routePaths = buildRoutePaths(input.route);
+      const routePaths = buildRoutePaths(input.route);
 
-    for (const routePath of routePaths) {
-      const layoutPath = join(projectDir, "app", routePath, "layout.tsx");
-      if (await fileExists(layoutPath)) {
-        const relativePath = toRelativePath(layoutPath, projectDir);
-        layouts.push(relativePath);
+      for (const routePath of routePaths) {
+        const layoutPath = join(projectDir, "app", routePath, "layout.tsx");
+        if (await fileExists(layoutPath)) {
+          const relativePath = toRelativePath(layoutPath, projectDir);
+          layouts.push(relativePath);
+          tree.push({
+            name: toComponentName(routePath || "Root") + "Layout",
+            type: "layout",
+            file: relativePath,
+          });
+        }
+      }
+
+      const pagePath = join(projectDir, "app", input.route, "page.tsx");
+      if (await fileExists(pagePath)) {
         tree.push({
-          name: toComponentName(routePath || "Root") + "Layout",
-          type: "layout",
-          file: relativePath,
+          name: toComponentName(input.route || "Home") + "Page",
+          type: "page",
+          file: toRelativePath(pagePath, projectDir),
         });
       }
-    }
 
-    const pagePath = join(projectDir, "app", input.route, "page.tsx");
-    if (await fileExists(pagePath)) {
-      tree.push({
-        name: toComponentName(input.route || "Home") + "Page",
-        type: "page",
-        file: toRelativePath(pagePath, projectDir),
-      });
-    }
-
-    const providersDir = join(projectDir, "providers");
-    if (await directoryExists(providersDir)) {
-      try {
-        for await (const entry of fs.readDir(providersDir)) {
-          if (entry.isFile && (entry.name.endsWith(".tsx") || entry.name.endsWith(".mdx"))) {
-            providers.push(`providers/${entry.name}`);
+      const providersDir = join(projectDir, "providers");
+      if (await directoryExists(providersDir)) {
+        try {
+          for await (const entry of fs.readDir(providersDir)) {
+            if (entry.isFile && (entry.name.endsWith(".tsx") || entry.name.endsWith(".mdx"))) {
+              providers.push(`providers/${entry.name}`);
+            }
           }
+        } catch {
+          // No providers
         }
-      } catch {
-        // No providers
       }
-    }
 
-    return { route: input.route, tree, layouts, providers };
+      return { route: input.route, tree, layouts, providers };
+    }, { "tool.route": input.route });
   },
 };
 
@@ -1172,86 +1185,88 @@ export const vfGetSkills: MCPTool<GetSkillsInput, GetSkillsResult> = {
   description:
     "Discover available Agent Skills for Veryfront development. Skills provide procedural knowledge for using MCP tools effectively. Call without name param to list all skills, or with name to get full skill content.",
   inputSchema: getSkillsInput,
-  execute: async (input) => {
-    const fs = getFs();
-    const skillsDir = getSkillsDir();
+  execute: (input) => {
+    return withSpan("cli.mcp.tool.vf_get_skills", async () => {
+      const fs = getFs();
+      const skillsDir = getSkillsDir();
 
-    try {
-      if (input.name) {
-        // Return specific skill content
-        const skillPath = join(skillsDir, input.name, "SKILL.md");
-        const content = await fs.readTextFile(skillPath);
-        const { metadata, body } = parseSkillFrontmatter(content);
+      try {
+        if (input.name) {
+          // Return specific skill content
+          const skillPath = join(skillsDir, input.name, "SKILL.md");
+          const content = await fs.readTextFile(skillPath);
+          const { metadata, body } = parseSkillFrontmatter(content);
 
-        // Check for reference files
-        const references: string[] = [];
-        const refsDir = join(skillsDir, input.name, "references");
-        if (await directoryExists(refsDir)) {
-          for await (const entry of fs.readDir(refsDir)) {
-            if (entry.isFile && entry.name.endsWith(".md")) {
-              references.push(`references/${entry.name}`);
+          // Check for reference files
+          const references: string[] = [];
+          const refsDir = join(skillsDir, input.name, "references");
+          if (await directoryExists(refsDir)) {
+            for await (const entry of fs.readDir(refsDir)) {
+              if (entry.isFile && entry.name.endsWith(".md")) {
+                references.push(`references/${entry.name}`);
+              }
             }
+          }
+
+          // Parse tools from metadata
+          const toolsStr = metadata.metadata as Record<string, unknown> | undefined;
+          const tools = toolsStr?.tools
+            ? String(toolsStr.tools).split(",").map((t) => t.trim())
+            : undefined;
+
+          return {
+            skill: {
+              name: String(metadata.name || input.name),
+              description: String(metadata.description || ""),
+              license: metadata.license ? String(metadata.license) : undefined,
+              compatibility: metadata.compatibility ? String(metadata.compatibility) : undefined,
+              tools,
+              content: body,
+              references: references.length > 0 ? references : undefined,
+            },
+          };
+        }
+
+        // List all skills
+        const skills: SkillMetadata[] = [];
+
+        if (!await directoryExists(skillsDir)) {
+          return { skills: [] };
+        }
+
+        for await (const entry of fs.readDir(skillsDir)) {
+          if (!entry.isDirectory) continue;
+
+          const skillPath = join(skillsDir, entry.name, "SKILL.md");
+          if (!await fileExists(skillPath)) continue;
+
+          try {
+            const content = await fs.readTextFile(skillPath);
+            const { metadata } = parseSkillFrontmatter(content);
+
+            // Parse tools from metadata
+            const metadataObj = metadata.metadata as Record<string, unknown> | undefined;
+            const tools = metadataObj?.tools
+              ? String(metadataObj.tools).split(",").map((t) => t.trim())
+              : undefined;
+
+            skills.push({
+              name: String(metadata.name || entry.name),
+              description: String(metadata.description || "No description"),
+              license: metadata.license ? String(metadata.license) : undefined,
+              compatibility: metadata.compatibility ? String(metadata.compatibility) : undefined,
+              tools,
+            });
+          } catch {
+            // Skip invalid skills
           }
         }
 
-        // Parse tools from metadata
-        const toolsStr = metadata.metadata as Record<string, unknown> | undefined;
-        const tools = toolsStr?.tools
-          ? String(toolsStr.tools).split(",").map((t) => t.trim())
-          : undefined;
-
-        return {
-          skill: {
-            name: String(metadata.name || input.name),
-            description: String(metadata.description || ""),
-            license: metadata.license ? String(metadata.license) : undefined,
-            compatibility: metadata.compatibility ? String(metadata.compatibility) : undefined,
-            tools,
-            content: body,
-            references: references.length > 0 ? references : undefined,
-          },
-        };
+        return { skills };
+      } catch (error) {
+        return { error: formatError(error) };
       }
-
-      // List all skills
-      const skills: SkillMetadata[] = [];
-
-      if (!await directoryExists(skillsDir)) {
-        return { skills: [] };
-      }
-
-      for await (const entry of fs.readDir(skillsDir)) {
-        if (!entry.isDirectory) continue;
-
-        const skillPath = join(skillsDir, entry.name, "SKILL.md");
-        if (!await fileExists(skillPath)) continue;
-
-        try {
-          const content = await fs.readTextFile(skillPath);
-          const { metadata } = parseSkillFrontmatter(content);
-
-          // Parse tools from metadata
-          const metadataObj = metadata.metadata as Record<string, unknown> | undefined;
-          const tools = metadataObj?.tools
-            ? String(metadataObj.tools).split(",").map((t) => t.trim())
-            : undefined;
-
-          skills.push({
-            name: String(metadata.name || entry.name),
-            description: String(metadata.description || "No description"),
-            license: metadata.license ? String(metadata.license) : undefined,
-            compatibility: metadata.compatibility ? String(metadata.compatibility) : undefined,
-            tools,
-          });
-        } catch {
-          // Skip invalid skills
-        }
-      }
-
-      return { skills };
-    } catch (error) {
-      return { error: formatError(error) };
-    }
+    }, { "tool.skill_name": input.name || "list_all" });
   },
 };
 
@@ -1426,14 +1441,16 @@ export const vfListLocalProjects: MCPTool<ListLocalProjectsInput, LocalProjectIn
   description:
     "Discover Veryfront projects on the local filesystem. Scans for veryfront.config.ts files and returns project info including template type and integrations.",
   inputSchema: listLocalProjectsInput,
-  execute: async (input) => {
-    const projects: LocalProjectInfo[] = [];
-    const baseDir = input.directory || cwd();
+  execute: (input) => {
+    return withSpan("cli.mcp.tool.vf_list_local_projects", async () => {
+      const projects: LocalProjectInfo[] = [];
+      const baseDir = input.directory || cwd();
 
-    await scanForProjects(baseDir, input.depth, projects);
+      await scanForProjects(baseDir, input.depth, projects);
 
-    // Sort by name
-    return projects.sort((a, b) => a.name.localeCompare(b.name));
+      // Sort by name
+      return projects.sort((a, b) => a.name.localeCompare(b.name));
+    }, { "tool.depth": input.depth });
   },
 };
 
@@ -1859,54 +1876,56 @@ export const vfCreateProject: MCPTool<CreateProjectInput, CreateProjectResult> =
   description:
     "Create a new Veryfront project from a template. This is the MCP equivalent of 'veryfront init'. Returns the project directory and next steps.",
   inputSchema: createProjectInput,
-  execute: async (input) => {
-    // Import the init command dynamically to avoid circular deps
-    try {
-      const { initCommand } = await import("../commands/init/index.ts");
+  execute: (input) => {
+    return withSpan("cli.mcp.tool.vf_create_project", async () => {
+      // Import the init command dynamically to avoid circular deps
+      try {
+        const { initCommand } = await import("../commands/init/index.ts");
 
-      const parentDir = input.directory || cwd();
-      const projectDir = join(parentDir, toSlug(input.name));
+        const parentDir = input.directory || cwd();
+        const projectDir = join(parentDir, toSlug(input.name));
 
-      // Check if directory already exists
-      if (await directoryExists(projectDir)) {
+        // Check if directory already exists
+        if (await directoryExists(projectDir)) {
+          return {
+            success: false,
+            message: `Directory already exists: ${projectDir}`,
+          };
+        }
+
+        // Create the project
+        await initCommand({
+          name: input.name,
+          template: input.template,
+          integrations: input.integrations as
+            | import("../templates/types.ts").IntegrationName[]
+            | undefined,
+          skipInstall: false,
+          skipEnvPrompt: true, // Skip prompts in MCP context
+        });
+
+        const nextSteps = [
+          `cd ${toSlug(input.name)}`,
+          "deno task dev",
+        ];
+
+        if (input.integrations && input.integrations.length > 0) {
+          nextSteps.push("Configure integration credentials in .env");
+        }
+
+        return {
+          success: true,
+          projectDir,
+          message: `Created project "${input.name}" with ${input.template} template`,
+          nextSteps,
+        };
+      } catch (error) {
         return {
           success: false,
-          message: `Directory already exists: ${projectDir}`,
+          message: `Failed to create project: ${formatError(error)}`,
         };
       }
-
-      // Create the project
-      await initCommand({
-        name: input.name,
-        template: input.template,
-        integrations: input.integrations as
-          | import("../templates/types.ts").IntegrationName[]
-          | undefined,
-        skipInstall: false,
-        skipEnvPrompt: true, // Skip prompts in MCP context
-      });
-
-      const nextSteps = [
-        `cd ${toSlug(input.name)}`,
-        "deno task dev",
-      ];
-
-      if (input.integrations && input.integrations.length > 0) {
-        nextSteps.push("Configure integration credentials in .env");
-      }
-
-      return {
-        success: true,
-        projectDir,
-        message: `Created project "${input.name}" with ${input.template} template`,
-        nextSteps,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        message: `Failed to create project: ${formatError(error)}`,
-      };
-    }
+    }, { "tool.name": input.name, "tool.template": input.template });
   },
 };
 
@@ -1936,38 +1955,40 @@ export const vfWaitForReady: MCPTool<WaitForReadyInput, WaitForReadyResult> = {
   description:
     "Wait for the server to be ready by polling the health endpoint. Use this after starting the server to ensure it's accepting requests.",
   inputSchema: waitForReadyInput,
-  execute: async (input) => {
-    const startTime = Date.now();
-    const deadline = startTime + input.timeout;
-    const url = `http://localhost:${input.port}/`;
+  execute: (input) => {
+    return withSpan("cli.mcp.tool.vf_wait_for_ready", async () => {
+      const startTime = Date.now();
+      const deadline = startTime + input.timeout;
+      const url = `http://localhost:${input.port}/`;
 
-    while (Date.now() < deadline) {
-      try {
-        const response = await fetch(url, {
-          method: "HEAD",
-          signal: AbortSignal.timeout(2000),
-        });
+      while (Date.now() < deadline) {
+        try {
+          const response = await fetch(url, {
+            method: "HEAD",
+            signal: AbortSignal.timeout(2000),
+          });
 
-        if (response.ok || response.status < 500) {
-          const elapsed = Date.now() - startTime;
-          return {
-            success: true,
-            message: `Server ready on port ${input.port}`,
-            elapsed,
-          };
+          if (response.ok || response.status < 500) {
+            const elapsed = Date.now() - startTime;
+            return {
+              success: true,
+              message: `Server ready on port ${input.port}`,
+              elapsed,
+            };
+          }
+        } catch {
+          // Server not ready yet, continue polling
         }
-      } catch {
-        // Server not ready yet, continue polling
+
+        await new Promise((resolve) => setTimeout(resolve, input.interval));
       }
 
-      await new Promise((resolve) => setTimeout(resolve, input.interval));
-    }
-
-    return {
-      success: false,
-      message: `Timeout waiting for server on port ${input.port} after ${input.timeout}ms`,
-      elapsed: input.timeout,
-    };
+      return {
+        success: false,
+        message: `Timeout waiting for server on port ${input.port} after ${input.timeout}ms`,
+        elapsed: input.timeout,
+      };
+    }, { "tool.port": input.port, "tool.timeout": input.timeout });
   },
 };
 
@@ -2022,75 +2043,77 @@ export const vfGetFlywheelStatus: MCPTool<GetFlywheelStatusInput, FlywheelStatus
   description:
     "Get aggregated status for the development flywheel. Shows server state, error counts, log summary, and HMR status in one view.",
   inputSchema: getFlywheelStatusInput,
-  execute: async (input) => {
-    const port = input.port;
-    const errorCollector = getErrorCollector();
-    const logBuffer = getLogBuffer();
-    const hmrMetrics = ReloadNotifier.getMetrics();
+  execute: (input) => {
+    return withSpan("cli.mcp.tool.vf_get_flywheel_status", async () => {
+      const port = input.port;
+      const errorCollector = getErrorCollector();
+      const logBuffer = getLogBuffer();
+      const hmrMetrics = ReloadNotifier.getMetrics();
 
-    // Check if server is running
-    let serverRunning = false;
-    let uptime: number | undefined;
-    try {
-      const response = await fetch(`http://localhost:${port}/`, {
-        method: "HEAD",
-        signal: AbortSignal.timeout(2000),
-      });
-      serverRunning = response.ok || response.status < 500;
-    } catch {
-      serverRunning = false;
-    }
+      // Check if server is running
+      let serverRunning = false;
+      let uptime: number | undefined;
+      try {
+        const response = await fetch(`http://localhost:${port}/`, {
+          method: "HEAD",
+          signal: AbortSignal.timeout(2000),
+        });
+        serverRunning = response.ok || response.status < 500;
+      } catch {
+        serverRunning = false;
+      }
 
-    // Get error counts
-    const errorCounts = errorCollector.countByType();
-    const allErrors = errorCollector.getAll();
-    const latestError = allErrors.length > 0 ? allErrors[allErrors.length - 1] : undefined;
+      // Get error counts
+      const errorCounts = errorCollector.countByType();
+      const allErrors = errorCollector.getAll();
+      const latestError = allErrors.length > 0 ? allErrors[allErrors.length - 1] : undefined;
 
-    // Get log counts
-    const logCounts = logBuffer.countByLevel();
+      // Get log counts
+      const logCounts = logBuffer.countByLevel();
 
-    // Calculate uptime if we have a start time in env
-    const env = getRuntimeEnv();
-    if (env.serverStartTime) {
-      uptime = Date.now() - parseInt(env.serverStartTime, 10);
-    }
+      // Calculate uptime if we have a start time in env
+      const env = getRuntimeEnv();
+      if (env.serverStartTime) {
+        uptime = Date.now() - parseInt(env.serverStartTime, 10);
+      }
 
-    return {
-      server: {
-        running: serverRunning,
-        port,
-        url: `http://localhost:${port}`,
-        uptime,
-      },
-      errors: {
-        total: allErrors.length,
-        compile: errorCounts.compile,
-        runtime: errorCounts.runtime,
-        bundle: errorCounts.bundle,
-        hmr: errorCounts.hmr,
-        module: errorCounts.module,
-        latest: latestError
-          ? {
-            type: latestError.type,
-            message: latestError.message,
-            file: latestError.file,
-            timestamp: latestError.timestamp,
-          }
-          : undefined,
-      },
-      logs: {
-        total: logBuffer.count,
-        errors: logCounts.error,
-        warnings: logCounts.warn,
-      },
-      hmr: {
-        enabled: hmrMetrics.activeReloadListeners > 0,
-        reloadListeners: hmrMetrics.activeReloadListeners,
-        invalidateListeners: hmrMetrics.activeInvalidateListeners,
-        triggerCalls: hmrMetrics.triggerCalls,
-        broadcastsSent: hmrMetrics.broadcastsSent,
-      },
-    };
+      return {
+        server: {
+          running: serverRunning,
+          port,
+          url: `http://localhost:${port}`,
+          uptime,
+        },
+        errors: {
+          total: allErrors.length,
+          compile: errorCounts.compile,
+          runtime: errorCounts.runtime,
+          bundle: errorCounts.bundle,
+          hmr: errorCounts.hmr,
+          module: errorCounts.module,
+          latest: latestError
+            ? {
+              type: latestError.type,
+              message: latestError.message,
+              file: latestError.file,
+              timestamp: latestError.timestamp,
+            }
+            : undefined,
+        },
+        logs: {
+          total: logBuffer.count,
+          errors: logCounts.error,
+          warnings: logCounts.warn,
+        },
+        hmr: {
+          enabled: hmrMetrics.activeReloadListeners > 0,
+          reloadListeners: hmrMetrics.activeReloadListeners,
+          invalidateListeners: hmrMetrics.activeInvalidateListeners,
+          triggerCalls: hmrMetrics.triggerCalls,
+          broadcastsSent: hmrMetrics.broadcastsSent,
+        },
+      };
+    }, { "tool.port": input.port });
   },
 };
 

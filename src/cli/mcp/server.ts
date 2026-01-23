@@ -7,6 +7,7 @@
  */
 
 import { readTextFile } from "#veryfront/platform/compat/fs.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { createHttpServer, type HttpServer } from "#veryfront/platform/compat/http/index.ts";
 import { writeStdoutAsync } from "#veryfront/platform/compat/process.ts";
 import { getStdinReader } from "#veryfront/platform/compat/stdin.ts";
@@ -230,22 +231,24 @@ export class MCPDevServer {
   /**
    * Handle a JSON-RPC request
    */
-  private async handleRequest(request: JSONRPCRequest): Promise<JSONRPCResponse> {
+  private handleRequest(request: JSONRPCRequest): Promise<JSONRPCResponse> {
     const { id, method, params } = request;
 
-    try {
-      const result = await this.dispatchMethod(method, params);
-      return { jsonrpc: "2.0", id, result };
-    } catch (e) {
-      return {
-        jsonrpc: "2.0",
-        id,
-        error: {
-          code: -32603,
-          message: e instanceof Error ? e.message : String(e),
-        },
-      };
-    }
+    return withSpan("cli.mcp.handleRequest", async () => {
+      try {
+        const result = await this.dispatchMethod(method, params);
+        return { jsonrpc: "2.0", id, result };
+      } catch (e) {
+        return {
+          jsonrpc: "2.0",
+          id,
+          error: {
+            code: -32603,
+            message: e instanceof Error ? e.message : String(e),
+          },
+        };
+      }
+    }, { "mcp.method": method });
   }
 
   /**
@@ -308,31 +311,33 @@ export class MCPDevServer {
   /**
    * Handle tools/call request
    */
-  private async handleToolsCall(params: unknown): Promise<unknown> {
+  private handleToolsCall(params: unknown): Promise<unknown> {
     const { name, arguments: args } = params as {
       name: string;
       arguments?: Record<string, unknown>;
     };
 
-    const tool = getTool(name);
-    if (!tool) {
-      throw new Error(`Unknown tool: ${name}`);
-    }
+    return withSpan("cli.mcp.handleToolsCall", async () => {
+      const tool = getTool(name);
+      if (!tool) {
+        throw new Error(`Unknown tool: ${name}`);
+      }
 
-    // Validate and parse input
-    const input = tool.inputSchema.parse(args ?? {});
+      // Validate and parse input
+      const input = tool.inputSchema.parse(args ?? {});
 
-    // Execute tool
-    const result = await tool.execute(input);
+      // Execute tool
+      const result = await tool.execute(input);
 
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(result, null, 2),
-        },
-      ],
-    };
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }, { "mcp.tool.name": name });
   }
 
   /**
@@ -372,87 +377,89 @@ export class MCPDevServer {
   /**
    * Handle resources/read request
    */
-  private async handleResourcesRead(params: unknown): Promise<unknown> {
+  private handleResourcesRead(params: unknown): Promise<unknown> {
     const { uri } = params as { uri: string };
 
-    if (uri === "veryfront://skill") {
-      try {
-        const skillPath = new URL("./skills/veryfront/SKILL.md", import.meta.url).pathname;
-        const content = await readTextFile(skillPath);
+    return withSpan("cli.mcp.handleResourcesRead", async () => {
+      if (uri === "veryfront://skill") {
+        try {
+          const skillPath = new URL("./skills/veryfront/SKILL.md", import.meta.url).pathname;
+          const content = await readTextFile(skillPath);
+          return {
+            contents: [
+              {
+                uri,
+                mimeType: "text/markdown",
+                text: content,
+              },
+            ],
+          };
+        } catch {
+          throw new Error("Skill file not found");
+        }
+      }
+
+      if (uri === "veryfront://errors") {
+        const errors = getErrorCollector().getAll();
         return {
           contents: [
             {
               uri,
-              mimeType: "text/markdown",
-              text: content,
+              mimeType: "application/json",
+              text: JSON.stringify(errors, null, 2),
             },
           ],
         };
-      } catch {
-        throw new Error("Skill file not found");
       }
-    }
 
-    if (uri === "veryfront://errors") {
-      const errors = getErrorCollector().getAll();
-      return {
-        contents: [
-          {
-            uri,
-            mimeType: "application/json",
-            text: JSON.stringify(errors, null, 2),
-          },
-        ],
-      };
-    }
-
-    if (uri === "veryfront://logs") {
-      const logs = getLogBuffer().tail(100);
-      return {
-        contents: [
-          {
-            uri,
-            mimeType: "application/json",
-            text: JSON.stringify(logs, null, 2),
-          },
-        ],
-      };
-    }
-
-    // Handle issues:// and issues://{id} URIs
-    if (uri === "issues://") {
-      const manager = createIssuesManager(cwd());
-      const result = await manager.list({ state: "open" });
-      return {
-        contents: [
-          {
-            uri,
-            mimeType: "application/json",
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
-    }
-
-    if (uri.startsWith("issues://")) {
-      const id = uri.replace("issues://", "");
-      const manager = createIssuesManager(cwd());
-      const issue = await manager.get(id);
-      if (!issue) {
-        throw new Error(`Issue not found: ${id}`);
+      if (uri === "veryfront://logs") {
+        const logs = getLogBuffer().tail(100);
+        return {
+          contents: [
+            {
+              uri,
+              mimeType: "application/json",
+              text: JSON.stringify(logs, null, 2),
+            },
+          ],
+        };
       }
-      return {
-        contents: [
-          {
-            uri,
-            mimeType: "application/json",
-            text: JSON.stringify(issue, null, 2),
-          },
-        ],
-      };
-    }
 
-    throw new Error(`Unknown resource: ${uri}`);
+      // Handle issues:// and issues://{id} URIs
+      if (uri === "issues://") {
+        const manager = createIssuesManager(cwd());
+        const result = await manager.list({ state: "open" });
+        return {
+          contents: [
+            {
+              uri,
+              mimeType: "application/json",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      if (uri.startsWith("issues://")) {
+        const id = uri.replace("issues://", "");
+        const manager = createIssuesManager(cwd());
+        const issue = await manager.get(id);
+        if (!issue) {
+          throw new Error(`Issue not found: ${id}`);
+        }
+        return {
+          contents: [
+            {
+              uri,
+              mimeType: "application/json",
+              text: JSON.stringify(issue, null, 2),
+            },
+          ],
+        };
+      }
+
+      throw new Error(`Unknown resource: ${uri}`);
+    }, { "mcp.resource.uri": uri });
   }
 
   /**
@@ -496,41 +503,43 @@ export class MCPDevServer {
    * Handle prompts/get request
    * Returns the content of a specific prompt (skill)
    */
-  private async handlePromptsGet(params: unknown): Promise<unknown> {
+  private handlePromptsGet(params: unknown): Promise<unknown> {
     const { name } = params as { name: string };
 
-    const promptFiles: Record<string, string> = {
-      "veryfront": "./skills/veryfront/SKILL.md",
-      "veryfront-routing": "./skills/veryfront/references/ROUTES.md",
-      "veryfront-ai-tools": "./skills/veryfront/references/AI-TOOLS.md",
-      "veryfront-components": "./skills/veryfront/references/COMPONENTS.md",
-      "flywheel": "./skills/flywheel/SKILL.md",
-    };
-
-    const filePath = promptFiles[name];
-    if (!filePath) {
-      throw new Error(`Unknown prompt: ${name}`);
-    }
-
-    try {
-      const fullPath = new URL(filePath, import.meta.url).pathname;
-      const content = await readTextFile(fullPath);
-
-      return {
-        description: `Veryfront skill: ${name}`,
-        messages: [
-          {
-            role: "user",
-            content: {
-              type: "text",
-              text: content,
-            },
-          },
-        ],
+    return withSpan("cli.mcp.handlePromptsGet", async () => {
+      const promptFiles: Record<string, string> = {
+        "veryfront": "./skills/veryfront/SKILL.md",
+        "veryfront-routing": "./skills/veryfront/references/ROUTES.md",
+        "veryfront-ai-tools": "./skills/veryfront/references/AI-TOOLS.md",
+        "veryfront-components": "./skills/veryfront/references/COMPONENTS.md",
+        "flywheel": "./skills/flywheel/SKILL.md",
       };
-    } catch {
-      throw new Error(`Failed to read prompt: ${name}`);
-    }
+
+      const filePath = promptFiles[name];
+      if (!filePath) {
+        throw new Error(`Unknown prompt: ${name}`);
+      }
+
+      try {
+        const fullPath = new URL(filePath, import.meta.url).pathname;
+        const content = await readTextFile(fullPath);
+
+        return {
+          description: `Veryfront skill: ${name}`,
+          messages: [
+            {
+              role: "user",
+              content: {
+                type: "text",
+                text: content,
+              },
+            },
+          ],
+        };
+      } catch {
+        throw new Error(`Failed to read prompt: ${name}`);
+      }
+    }, { "mcp.prompt.name": name });
   }
 
   /**

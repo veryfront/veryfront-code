@@ -12,6 +12,7 @@ import { createEntryPoints } from "./entry-points.ts";
 import { createBuildContext } from "./build-context.ts";
 import { buildManifest, getChunkInfo, writeManifest } from "./manifest-builder.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 /**
  * Main code splitter class for bundling and splitting application code
@@ -50,38 +51,43 @@ export class CodeSplitter {
    *
    * @returns Split result with entries, shared chunks, and manifest
    */
-  async split(): Promise<SplitResult> {
-    logger.info("Starting code splitting", {
-      routes: this.options.routes.length,
-      mode: this.options.mode,
+  split(): Promise<SplitResult> {
+    return withSpan("build.codeSplitter.split", async () => {
+      logger.info("Starting code splitting", {
+        routes: this.options.routes.length,
+        mode: this.options.mode,
+      });
+
+      await ensureDir(this.options.outDir);
+
+      const { entryPoints, routeMap } = createEntryPoints(this.options.routes);
+      const buildContext = await createBuildContext(this.options, entryPoints);
+
+      const result = await buildContext.rebuild();
+      await buildContext.dispose();
+
+      const manifest = await buildManifest(result.metafile!, routeMap, this.options.outDir);
+      await writeManifest(manifest, this.options.outDir);
+
+      if (!result.metafile?.outputs) {
+        throw toError(createError({
+          type: "build",
+          message: "Build failed to generate metafile outputs",
+        }));
+      }
+      const { entries, shared } = await this.processOutputs(result.metafile.outputs);
+
+      logger.info("Code splitting complete", {
+        entries: entries.size,
+        shared: shared.size,
+        totalSize: this.calculateTotalSize(entries, shared),
+      });
+
+      return { entries, shared, manifest };
+    }, {
+      "build.splitter.routeCount": this.options.routes.length,
+      "build.splitter.mode": this.options.mode,
     });
-
-    await ensureDir(this.options.outDir);
-
-    const { entryPoints, routeMap } = createEntryPoints(this.options.routes);
-    const buildContext = await createBuildContext(this.options, entryPoints);
-
-    const result = await buildContext.rebuild();
-    await buildContext.dispose();
-
-    const manifest = await buildManifest(result.metafile!, routeMap, this.options.outDir);
-    await writeManifest(manifest, this.options.outDir);
-
-    if (!result.metafile?.outputs) {
-      throw toError(createError({
-        type: "build",
-        message: "Build failed to generate metafile outputs",
-      }));
-    }
-    const { entries, shared } = await this.processOutputs(result.metafile.outputs);
-
-    logger.info("Code splitting complete", {
-      entries: entries.size,
-      shared: shared.size,
-      totalSize: this.calculateTotalSize(entries, shared),
-    });
-
-    return { entries, shared, manifest };
   }
 
   /**

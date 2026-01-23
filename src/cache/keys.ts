@@ -63,6 +63,9 @@
  */
 
 import { VERSION } from "#veryfront/utils/version.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
+import type { Span } from "npm:@opentelemetry/api@1.9.0";
 
 // ============================================================================
 // CACHE KEY PREFIXES (Constants)
@@ -617,11 +620,19 @@ export function getAllKeysForProject(projectId: string): Map<string, string[]> {
  * // memory: Map { "ssr-module-cache" => ["v1:proj_123:path", ...] }
  * // redis: Map { "veryfront:ssr-module" => ["veryfront:ssr-module:v1:proj_123:...", ...] }
  */
-export async function getAllKeysForProjectAsync(
+export function getAllKeysForProjectAsync(
   projectId: string,
   includeRedis = true,
 ): Promise<{ memory: Map<string, string[]>; redis: Map<string, string[]> }> {
-  return await cacheRegistry.getAllKeysForProjectAsync(projectId, includeRedis);
+  return withSpan(
+    SpanNames.CACHE_KEYS_GET_ALL_ASYNC,
+    async (span?: Span) => {
+      const result = await cacheRegistry.getAllKeysForProjectAsync(projectId, includeRedis);
+      span?.setAttribute("cache.include_redis", includeRedis);
+      return result;
+    },
+    { "cache.project_id": projectId },
+  );
 }
 
 /**
@@ -641,8 +652,17 @@ export function deleteAllKeysForProject(projectId: string): number {
  * @param projectId - The project ID to delete keys for
  * @returns Object with counts of deleted keys
  */
-export async function deleteAllKeysForProjectAsync(
+export function deleteAllKeysForProjectAsync(
   projectId: string,
 ): Promise<{ memoryDeleted: number; redisDeleted: number }> {
-  return await cacheRegistry.deleteAllKeysForProjectAsync(projectId);
+  return withSpan(
+    SpanNames.CACHE_KEYS_DELETE_ALL_ASYNC,
+    async (span?: Span) => {
+      const result = await cacheRegistry.deleteAllKeysForProjectAsync(projectId);
+      span?.setAttribute("cache.memory.deleted", result.memoryDeleted);
+      span?.setAttribute("cache.redis.deleted", result.redisDeleted);
+      return result;
+    },
+    { "cache.project_id": projectId },
+  );
 }

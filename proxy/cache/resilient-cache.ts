@@ -8,6 +8,7 @@
 
 import type { CacheStats, TokenCache, TokenCacheEntry } from "./types.ts";
 import { proxyLogger } from "../logger.ts";
+import { withSpan } from "../tracing.ts";
 
 const CIRCUIT_OPEN_DURATION_MS = 30_000; // 30 seconds
 const FAILURE_THRESHOLD = 3; // failures before circuit opens
@@ -74,103 +75,117 @@ export class ResilientCache implements TokenCache {
   }
 
   async get(key: string): Promise<TokenCacheEntry | null> {
-    // Try primary if circuit allows
-    if (this.shouldTryPrimary()) {
-      try {
-        const result = await this.primary.get(key);
-        this.recordSuccess();
-        return result;
-      } catch (error) {
-        this.recordFailure(error);
-        // Don't return here - try fallback
+    return withSpan("cache.resilient.get", async () => {
+      // Try primary if circuit allows
+      if (this.shouldTryPrimary()) {
+        try {
+          const result = await this.primary.get(key);
+          this.recordSuccess();
+          return result;
+        } catch (error) {
+          this.recordFailure(error);
+          // Don't return here - try fallback
+        }
       }
-    }
 
-    // Use fallback
-    return this.fallback.get(key);
+      // Use fallback
+      return this.fallback.get(key);
+    }, { "cache.key": key, "cache.usingFallback": this.usingFallback });
   }
 
   async set(key: string, entry: TokenCacheEntry): Promise<void> {
-    // Always try to set in fallback (local cache)
-    await this.fallback.set(key, entry);
+    return withSpan("cache.resilient.set", async () => {
+      // Always try to set in fallback (local cache)
+      await this.fallback.set(key, entry);
 
-    // Try primary if circuit allows
-    if (this.shouldTryPrimary()) {
-      try {
-        await this.primary.set(key, entry);
-        this.recordSuccess();
-      } catch (error) {
-        this.recordFailure(error);
-        // Fallback already set above, no need to retry
+      // Try primary if circuit allows
+      if (this.shouldTryPrimary()) {
+        try {
+          await this.primary.set(key, entry);
+          this.recordSuccess();
+        } catch (error) {
+          this.recordFailure(error);
+          // Fallback already set above, no need to retry
+        }
       }
-    }
+    }, { "cache.key": key, "cache.usingFallback": this.usingFallback });
   }
 
   async delete(key: string): Promise<void> {
-    // Delete from both
-    await this.fallback.delete(key);
+    return withSpan("cache.resilient.delete", async () => {
+      // Delete from both
+      await this.fallback.delete(key);
 
-    if (this.shouldTryPrimary()) {
-      try {
-        await this.primary.delete(key);
-        this.recordSuccess();
-      } catch (error) {
-        this.recordFailure(error);
+      if (this.shouldTryPrimary()) {
+        try {
+          await this.primary.delete(key);
+          this.recordSuccess();
+        } catch (error) {
+          this.recordFailure(error);
+        }
       }
-    }
+    }, { "cache.key": key });
   }
 
   async clear(): Promise<void> {
-    await this.fallback.clear();
+    return withSpan("cache.resilient.clear", async () => {
+      await this.fallback.clear();
 
-    if (this.shouldTryPrimary()) {
-      try {
-        await this.primary.clear();
-        this.recordSuccess();
-      } catch (error) {
-        this.recordFailure(error);
+      if (this.shouldTryPrimary()) {
+        try {
+          await this.primary.clear();
+          this.recordSuccess();
+        } catch (error) {
+          this.recordFailure(error);
+        }
       }
-    }
+    });
   }
 
   async has(key: string): Promise<boolean> {
-    if (this.shouldTryPrimary()) {
-      try {
-        const result = await this.primary.has(key);
-        this.recordSuccess();
-        return result;
-      } catch (error) {
-        this.recordFailure(error);
+    return withSpan("cache.resilient.has", async () => {
+      if (this.shouldTryPrimary()) {
+        try {
+          const result = await this.primary.has(key);
+          this.recordSuccess();
+          return result;
+        } catch (error) {
+          this.recordFailure(error);
+        }
       }
-    }
 
-    return this.fallback.has(key);
+      return this.fallback.has(key);
+    }, { "cache.key": key });
   }
 
   async stats(): Promise<CacheStats> {
-    const fallbackStats = await this.fallback.stats();
+    return withSpan("cache.resilient.stats", async () => {
+      const fallbackStats = await this.fallback.stats();
 
-    if (this.shouldTryPrimary()) {
-      try {
-        const primaryStats = await this.primary.stats();
-        this.recordSuccess();
-        return {
-          ...primaryStats,
-          type: this.usingFallback ? "memory" : "redis",
-        };
-      } catch (error) {
-        this.recordFailure(error);
+      if (this.shouldTryPrimary()) {
+        try {
+          const primaryStats = await this.primary.stats();
+          this.recordSuccess();
+          return {
+            ...primaryStats,
+            type: this.usingFallback ? "memory" as const : "redis" as const,
+          };
+        } catch (error) {
+          this.recordFailure(error);
+        }
       }
-    }
 
-    return {
-      ...fallbackStats,
-      type: "memory",
-    };
+      return {
+        ...fallbackStats,
+        type: "memory" as const,
+      };
+    }, { "cache.usingFallback": this.usingFallback });
   }
 
   async close(): Promise<void> {
-    await Promise.all([this.primary.close(), this.fallback.close()]);
+    return withSpan("cache.resilient.close", async () => {
+      await Promise.all([this.primary.close(), this.fallback.close()]);
+    });
   }
 
   /**

@@ -14,6 +14,7 @@
 import { logger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
+import type { Span } from "npm:@opentelemetry/api@1.9.0";
 import { getRedisClient, isRedisConfigured, type RedisClient } from "../utils/redis-client.ts";
 import { runtime } from "../platform/adapters/registry.ts";
 import { tryGetCacheKeyContext } from "./cache-key-builder.ts";
@@ -162,17 +163,25 @@ export class RedisCacheBackend implements CacheBackend {
     return `${this.keyPrefix}${key}`;
   }
 
-  async initialize(): Promise<boolean> {
+  initialize(): Promise<boolean> {
     if (!isRedisConfigured()) {
-      return false;
+      return Promise.resolve(false);
     }
-    try {
-      this.client = await getRedisClient();
-      return true;
-    } catch (error) {
-      logger.warn("[RedisCacheBackend] Failed to connect", { error });
-      return false;
-    }
+    return withSpan(
+      SpanNames.CACHE_REDIS_INIT,
+      async (span?: Span) => {
+        try {
+          this.client = await getRedisClient();
+          span?.setAttribute("cache.redis.connected", true);
+          return true;
+        } catch (error) {
+          span?.setAttribute("cache.redis.connected", false);
+          logger.warn("[RedisCacheBackend] Failed to connect", { error });
+          return false;
+        }
+      },
+      { "cache.key_prefix": this.keyPrefix },
+    );
   }
 
   async get(key: string): Promise<string | null> {
@@ -422,28 +431,40 @@ export function isApiCacheAvailable(env?: RuntimeEnv): boolean {
  * Create cache backend based on environment.
  * Preference: API (production) > Redis (local/OSS) > Memory (fallback)
  */
-export async function createCacheBackend(
+export function createCacheBackend(
   config: CacheBackendConfig = {},
 ): Promise<CacheBackend> {
   const { keyPrefix = "", memoryMaxEntries = 500, preferredBackend, apiBaseUrl, env } = config;
 
-  // If preferred backend is specified, try that first
-  if (preferredBackend === "api" || (!preferredBackend && isApiCacheAvailable(env))) {
-    logger.debug("[CacheBackend] Using API backend (centralized cache)");
-    return new ApiCacheBackend({ keyPrefix, apiBaseUrl, env });
-  }
+  return withSpan(
+    SpanNames.CACHE_BACKEND_CREATE,
+    async (span?: Span) => {
+      // If preferred backend is specified, try that first
+      if (preferredBackend === "api" || (!preferredBackend && isApiCacheAvailable(env))) {
+        logger.debug("[CacheBackend] Using API backend (centralized cache)");
+        span?.setAttribute("cache.backend.type", "api");
+        return new ApiCacheBackend({ keyPrefix, apiBaseUrl, env });
+      }
 
-  if (preferredBackend === "redis" || (!preferredBackend && isRedisConfigured())) {
-    const redisBackend = new RedisCacheBackend(keyPrefix ? `vf:${keyPrefix}:` : "vf:cache:");
-    if (await redisBackend.initialize()) {
-      logger.debug("[CacheBackend] Using Redis backend");
-      return redisBackend;
-    }
-  }
+      if (preferredBackend === "redis" || (!preferredBackend && isRedisConfigured())) {
+        const redisBackend = new RedisCacheBackend(keyPrefix ? `vf:${keyPrefix}:` : "vf:cache:");
+        if (await redisBackend.initialize()) {
+          logger.debug("[CacheBackend] Using Redis backend");
+          span?.setAttribute("cache.backend.type", "redis");
+          return redisBackend;
+        }
+      }
 
-  // Fall back to memory
-  logger.debug("[CacheBackend] Using memory backend");
-  return new MemoryCacheBackend(memoryMaxEntries);
+      // Fall back to memory
+      logger.debug("[CacheBackend] Using memory backend");
+      span?.setAttribute("cache.backend.type", "memory");
+      return new MemoryCacheBackend(memoryMaxEntries);
+    },
+    {
+      "cache.key_prefix": keyPrefix,
+      "cache.preferred_backend": preferredBackend ?? "auto",
+    },
+  );
 }
 
 /** Convenience wrappers for common cache patterns. */
