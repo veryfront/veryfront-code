@@ -158,9 +158,21 @@ async function createContextFromHandler(ctx: HandlerContext): Promise<RenderCont
   const contextStartTime = performance.now();
 
   // Use resolvedEnvironment from HandlerContext (set by universal-handler from proxyEnv/domain lookup)
-  // Falls back to requestContext.mode if not set
-  const resolvedEnvironment: "preview" | "production" = ctx.resolvedEnvironment ??
-    ctx.requestContext?.mode ?? "preview";
+  // Falls back to parsedDomain.environment mapping, then requestContext.mode
+  // This ensures staging/development domains are treated as preview even when
+  // resolvedEnvironment isn't set (e.g., tests or internal callers)
+  let resolvedEnvironment: "preview" | "production" = ctx.resolvedEnvironment ?? "preview";
+  if (!ctx.resolvedEnvironment) {
+    const domainEnv = ctx.parsedDomain?.environment;
+    if (domainEnv === "staging" || domainEnv === "development" || domainEnv === "preview") {
+      resolvedEnvironment = "preview";
+    } else if (domainEnv === "production") {
+      resolvedEnvironment = "production";
+    } else {
+      // Fall back to requestContext.mode
+      resolvedEnvironment = ctx.requestContext?.mode ?? "preview";
+    }
+  }
 
   // Build EnrichedContext with all resolved data
   const enriched = buildEnrichedContext({
