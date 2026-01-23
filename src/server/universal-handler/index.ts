@@ -634,13 +634,21 @@ export function createVeryfrontHandler(
         // This consolidates all resolved data into a single source of truth
         // Note: If config is undefined (proxy mode), EnrichedContext will be built later
         // in createContextFromHandler after config is loaded via the API adapter
+        //
+        // Environment resolution priority:
+        // 1. proxyEnv (from domain lookup or x-environment header) - most specific
+        // 2. reqCtx.mode (from hostname pattern) - fallback
+        const resolvedEnvironment = (proxyEnv === "preview" || proxyEnv === "production")
+          ? proxyEnv
+          : reqCtx.mode;
+
         const enrichedContext = effectiveConfig && projectSlug
           ? buildEnrichedContext({
             projectId: projectId ?? projectSlug,
             projectSlug,
             projectDir: effectiveProjectDir,
             token: isLocalProject ? "" : (proxyToken ?? ""),
-            environment: reqCtx.mode,
+            environment: resolvedEnvironment,
             branch: reqCtx.branch,
             isLocalDev: reqCtx.isLocalDev,
             parsedDomain,

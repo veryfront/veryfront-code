@@ -168,11 +168,21 @@ export function createRenderContext(
  * @param enriched - Pre-built EnrichedContext
  * @param options - Optional overrides
  * @returns RenderContext with values from EnrichedContext
+ * @throws Error if EnrichedContext is missing required fields
  */
 export function createRenderContextFromEnriched(
   enriched: EnrichedContext,
   options?: CreateRenderContextOptions,
 ): RenderContext {
+  // Validate required fields (same as slow path)
+  // EnrichedContext should always have these, but validate for safety
+  if (!enriched.config) {
+    throw new Error("EnrichedContext is missing required config");
+  }
+  if (!enriched.adapter) {
+    throw new Error("EnrichedContext is missing required adapter");
+  }
+
   return {
     projectId: enriched.projectId,
     projectSlug: enriched.projectSlug,

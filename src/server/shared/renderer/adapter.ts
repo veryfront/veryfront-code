@@ -157,13 +157,24 @@ async function createContextFromHandler(ctx: HandlerContext): Promise<RenderCont
   // This ensures consistent context throughout the pipeline
   const contextStartTime = performance.now();
 
+  // Environment resolution priority (same logic as universal-handler):
+  // 1. parsedDomain.environment from domain lookup - most specific
+  // 2. requestContext.mode from hostname pattern - fallback
+  // Map non-production environments to "preview" for cache isolation
+  const domainEnv = ctx.parsedDomain?.environment;
+  const resolvedEnvironment: "preview" | "production" = domainEnv === "production"
+    ? "production"
+    : domainEnv === "preview" || domainEnv === "development" || domainEnv === "staging"
+    ? "preview"
+    : ctx.requestContext?.mode ?? "preview";
+
   // Build EnrichedContext with all resolved data
   const enriched = buildEnrichedContext({
     projectId: ctx.projectId ?? ctx.projectSlug ?? "__single__",
     projectSlug: ctx.projectSlug ?? ctx.projectId ?? "__single__",
     projectDir: ctx.projectDir,
     token: ctx.proxyToken ?? "",
-    environment: ctx.requestContext?.mode ?? "preview",
+    environment: resolvedEnvironment,
     branch: ctx.requestContext?.branch ?? null,
     isLocalDev: ctx.requestContext?.isLocalDev ?? false,
     parsedDomain: ctx.parsedDomain ?? {
@@ -181,6 +192,10 @@ async function createContextFromHandler(ctx: HandlerContext): Promise<RenderCont
     moduleServerUrl: ctx.moduleServerUrl,
     debug: ctx.debug,
   });
+
+  // Attach enriched back to ctx for potential downstream use
+  // Note: This mutates ctx, but only in the slow path where enriched was undefined
+  (ctx as { enriched?: typeof enriched }).enriched = enriched;
 
   const renderContext = createRenderContextFromEnriched(enriched);
   logger.debug("[RendererAdapter] createRenderContext DONE (built EnrichedContext)", {
