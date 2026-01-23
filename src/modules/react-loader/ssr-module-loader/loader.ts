@@ -23,7 +23,7 @@ import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
 import { injectContext } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { withSpan } from "#veryfront/observability/tracing/index.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { extractComponent } from "../extract-component.ts";
 import {
@@ -148,7 +148,7 @@ export class SSRModuleLoader {
               import(
                 `file://${cacheEntry.tempPath}?v=${cacheEntry.contentHash}`
               ),
-            { attributes: { "ssr.file": fileName } },
+            { "ssr.file": fileName },
           );
 
           // Success - reset failure count
@@ -166,11 +166,9 @@ export class SSRModuleLoader {
         }
       },
       {
-        attributes: {
-          "ssr.file": fileName,
-          "ssr.project_id": this.options.projectId,
-          "ssr.source_length": source.length,
-        },
+        "ssr.file": fileName,
+        "ssr.project_id": this.options.projectId,
+        "ssr.source_length": source.length,
       },
     );
   }
@@ -314,10 +312,8 @@ export class SSRModuleLoader {
         await this.doTransformWithDependencies(filePath, source, depth);
       },
       {
-        attributes: {
-          "ssr.file": fileName,
-          "ssr.depth": depth,
-        },
+        "ssr.file": fileName,
+        "ssr.depth": depth,
       },
     );
   }
@@ -391,7 +387,7 @@ export class SSRModuleLoader {
               IN_PROGRESS_WAIT_TIMEOUT_MS,
               `Waiting for in-progress transform of ${filePath}`,
             ),
-          { attributes: { "ssr.file": filePath.split("/").pop() || filePath } },
+          { "ssr.file": filePath.split("/").pop() || filePath },
         );
         return;
       } catch (error) {
@@ -512,7 +508,7 @@ export class SSRModuleLoader {
               this.options.adapter,
               transformOpts,
             ),
-          { attributes: { "ssr.file": filePath.split("/").pop() || filePath } },
+          { "ssr.file": filePath.split("/").pop() || filePath },
         );
 
         // Rewrite cross-project imports to file:// paths

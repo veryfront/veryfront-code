@@ -10,7 +10,7 @@
 import { join } from "#std/path.ts";
 import React from "react";
 import { rendererLogger as logger } from "#veryfront/utils";
-import { withSpan } from "#veryfront/observability/tracing/index.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { getCacheNamespace } from "#veryfront/utils/cache/keys/namespace.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
@@ -416,10 +416,8 @@ export async function loadModuleESM(
     SpanNames.MDX_LOAD_MODULE_ESM,
     () => doLoadModuleESM(compiledProgramCode, context),
     {
-      attributes: {
-        "mdx.project_slug": projectSlug,
-        "mdx.code_length": compiledProgramCode.length,
-      },
+      "mdx.project_slug": projectSlug,
+      "mdx.code_length": compiledProgramCode.length,
     },
   );
 }
@@ -465,7 +463,7 @@ async function doLoadModuleESM(
     rewritten = await withSpan(
       SpanNames.MDX_PROCESS_VF_MODULES,
       () => processVfModuleImports(rewritten, vfModuleImports, context, projectDir),
-      { attributes: { "mdx.vf_module_count": vfModuleImports.length } },
+      { "mdx.vf_module_count": vfModuleImports.length },
     );
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: processVfModuleImports DONE`, { projectSlug });
 
@@ -474,7 +472,7 @@ async function doLoadModuleESM(
     rewritten = await withSpan(
       SpanNames.MDX_TRANSFORM_JSX,
       () => transformJsxImports(rewritten, adapter, esmCacheDir),
-      { attributes: { "mdx.project_slug": projectSlug } },
+      { "mdx.project_slug": projectSlug },
     );
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformJsxImports DONE`, { projectSlug });
 
@@ -488,7 +486,7 @@ async function doLoadModuleESM(
     rewritten = await withSpan(
       SpanNames.MDX_CACHE_HTTP,
       () => cacheHttpImports(rewritten, importMap),
-      { attributes: { "mdx.project_slug": projectSlug } },
+      { "mdx.project_slug": projectSlug },
     );
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: cacheHttpImports DONE`, { projectSlug });
 
@@ -581,7 +579,7 @@ async function doLoadModuleESM(
             __vfLayout?: React.ComponentType;
           }
         >,
-      { attributes: { "mdx.file_path": filePath.split("/").pop() || filePath } },
+      { "mdx.file_path": filePath.split("/").pop() || filePath },
     );
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: dynamic import DONE`, {
       projectSlug,
