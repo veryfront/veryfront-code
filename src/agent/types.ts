@@ -4,7 +4,7 @@
 
 import type { Tool } from "#veryfront/tool";
 import type { Platform } from "../platform/core-platform.ts";
-import type { Memory } from "./memory/index.ts";
+import type { Memory } from "./memory/memory-interface.ts";
 
 /**
  * Supported AI model providers
@@ -356,7 +356,7 @@ export interface Agent {
   /**
    * Get memory instance
    */
-  getMemory(): Memory;
+  getMemory(): Memory<Message>;
 
   /**
    * Get memory statistics

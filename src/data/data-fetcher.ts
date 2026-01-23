@@ -1,4 +1,5 @@
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/index.ts";
+// Direct import from base.ts to avoid circular dependency through barrel
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { CacheManager } from "./data-fetching-cache.ts";
 import { ServerDataFetcher } from "./server-data-fetcher.ts";
 import { StaticDataFetcher } from "./static-data-fetcher.ts";

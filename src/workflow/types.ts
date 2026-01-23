@@ -304,6 +304,19 @@ export interface WorkflowDefinition<
   ) => void | Promise<void>;
 }
 
+/**
+ * Created workflow with execution methods
+ * (interface moved from dsl/workflow.ts to break circular dependency)
+ */
+export interface Workflow<TInput = unknown, TOutput = unknown> {
+  /** Workflow definition */
+  definition: WorkflowDefinition<TInput, TOutput>;
+  /** Workflow ID */
+  id: string;
+  /** Workflow version */
+  version?: string;
+}
+
 // ============================================================================
 // Workflow Run State
 // ============================================================================

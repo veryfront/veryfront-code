@@ -8,11 +8,15 @@ import type { z } from "zod";
 import type {
   RetryConfig,
   StepBuilderContext,
+  Workflow,
   WorkflowContext,
   WorkflowDefinition,
   WorkflowNode,
 } from "../types.ts";
 import { workflowRegistry } from "../registry.ts";
+
+// Re-export Workflow type from types.ts for consumers
+export type { Workflow } from "../types.ts";
 
 /**
  * Options for creating a workflow
@@ -52,18 +56,6 @@ export interface WorkflowOptions<TInput = unknown, TOutput = unknown> {
     result: TOutput,
     context: WorkflowContext,
   ) => void | Promise<void>;
-}
-
-/**
- * Created workflow with execution methods
- */
-export interface Workflow<TInput = unknown, TOutput = unknown> {
-  /** Workflow definition */
-  definition: WorkflowDefinition<TInput, TOutput>;
-  /** Workflow ID */
-  id: string;
-  /** Workflow version */
-  version?: string;
 }
 
 /**

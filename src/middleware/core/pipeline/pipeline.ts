@@ -2,7 +2,8 @@ import type { ExecutionContext, MiddlewareHandler } from "../types.ts";
 import type { MiddlewarePipelineOptions } from "./types.ts";
 import { composeMiddleware } from "./composer.ts";
 import { executeMiddlewarePipeline } from "./executor.ts";
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/index.ts";
+// Direct import from base.ts to avoid circular dependency through barrel
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 
 export class MiddlewarePipeline {

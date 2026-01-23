@@ -4,7 +4,8 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { DynamicRouter } from "#veryfront/routing/api/index.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { RouteDirectory } from "./types.ts";
-import { withFallback } from "#veryfront/platform/adapters/index.ts";
+// Direct import to avoid circular dependency through barrel
+import { withFallback } from "#veryfront/platform/adapters/fallback-wrapper.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 
 /** Directories within .veryfront that should be excluded from routing */

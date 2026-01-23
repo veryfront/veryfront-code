@@ -91,13 +91,29 @@ export class StreamTimeoutError extends Error {
  * @param stream - The stream to read
  * @param timeoutMs - Timeout in milliseconds (default: SSR_TIMEOUT_MS)
  */
+/**
+ * Concatenate Uint8Array chunks into a single array.
+ * More efficient than string concatenation for binary data.
+ */
+function concatUint8Arrays(chunks: Uint8Array[], totalLength: number): Uint8Array {
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return result;
+}
+
 export async function streamToString(
   stream: ReadableStream,
   timeoutMs: number = SSR_TIMEOUT_MS,
 ): Promise<string> {
   const reader = stream.getReader();
-  const decoder = new TextDecoder();
-  const chunks: string[] = [];
+  // Accumulate binary chunks instead of decoded strings
+  // This avoids multiple TextDecoder calls with { stream: true } overhead
+  const binaryChunks: Uint8Array[] = [];
+  let totalBytes = 0;
 
   // Set up timeout
   let timedOut = false;
@@ -112,7 +128,9 @@ export async function streamToString(
     while (true) {
       // Check before AND after read - cancel() may cause read() to return done=true
       if (timedOut) {
-        const partial = chunks.join("");
+        // Decode partial content only when needed (timeout path)
+        const decoder = new TextDecoder();
+        const partial = decoder.decode(concatUint8Arrays(binaryChunks, totalBytes));
         logger.error("STREAM_TIMEOUT stream read timed out", {
           timeoutMs,
           partialLength: partial.length,
@@ -124,7 +142,8 @@ export async function streamToString(
 
       // Check again after read - timeout may have fired during await
       if (timedOut) {
-        const partial = chunks.join("");
+        const decoder = new TextDecoder();
+        const partial = decoder.decode(concatUint8Arrays(binaryChunks, totalBytes));
         logger.error("STREAM_TIMEOUT stream read timed out", {
           timeoutMs,
           partialLength: partial.length,
@@ -134,11 +153,14 @@ export async function streamToString(
 
       if (done) break;
       if (value) {
-        chunks.push(decoder.decode(value, { stream: true }));
+        binaryChunks.push(value);
+        totalBytes += value.byteLength;
       }
     }
 
-    return chunks.join("");
+    // Single decode at the end - handles multi-byte characters correctly
+    const decoder = new TextDecoder();
+    return decoder.decode(concatUint8Arrays(binaryChunks, totalBytes));
   } finally {
     clearTimeout(timeoutId);
     // Ensure reader is released

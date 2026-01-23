@@ -3,7 +3,8 @@
  * Loads and caches security configuration from veryfront.config.ts
  */
 
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/index.ts";
+// Direct import from base.ts to avoid circular dependency through barrel
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { SecurityConfig } from "#veryfront/types";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { getConfig } from "#veryfront/config";

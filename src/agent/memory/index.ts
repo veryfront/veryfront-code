@@ -1,14 +1,15 @@
-// Memory types and implementations
+// Memory interface (no circular dependencies)
 export {
-  BufferMemory,
-  ConversationMemory,
-  createMemory,
   estimateTokens,
   type Memory,
+  type MemoryConfigBase,
   type MemoryPersistence,
   type MemoryStats,
-  SummaryMemory,
-} from "./memory.ts";
+  type MinimalMessage,
+} from "./memory-interface.ts";
+
+// Memory implementations
+export { BufferMemory, ConversationMemory, createMemory, SummaryMemory } from "./memory.ts";
 
 // Redis memory
 export {

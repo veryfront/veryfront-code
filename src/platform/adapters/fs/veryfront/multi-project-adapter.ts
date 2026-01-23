@@ -288,3 +288,9 @@ export function getCurrentRequestContext(): RequestContext | null {
  * Re-export RequestContext type for use in cache-key-builder.
  */
 export type { RequestContext };
+
+// Register globally for lazy access from cache-key-builder to avoid circular dependency
+// deno-lint-ignore no-explicit-any
+(globalThis as any).__vf_multi_project_adapter = {
+  getCurrentRequestContext,
+};

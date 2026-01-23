@@ -4,20 +4,72 @@ import { LRUListManager } from "./lru-list-manager.ts";
 import { EvictionManager } from "../../eviction/eviction-manager.ts";
 import { EntryManager } from "./entry-manager.ts";
 
-function defaultSizeEstimator(value: unknown): number {
+// Depth limit for recursive size estimation to prevent stack overflow
+const MAX_ESTIMATION_DEPTH = 10;
+
+// Rough overhead per object/array for memory bookkeeping
+const OBJECT_OVERHEAD_BYTES = 32;
+const ARRAY_OVERHEAD_BYTES = 24;
+const STRING_OVERHEAD_BYTES = 16;
+
+/**
+ * Estimate size of a value without JSON.stringify serialization.
+ * Uses recursive traversal with depth limit for performance.
+ * Accuracy is traded for speed - estimates are approximate.
+ */
+function estimateSizeRecursive(value: unknown, depth: number, seen: WeakSet<object>): number {
   if (value == null) return 0;
-  if (typeof value === "string") return value.length * 2;
-  if (typeof value === "number" || typeof value === "bigint") return 8;
-  if (typeof value === "boolean") return 4;
-  if (value instanceof Uint8Array || ArrayBuffer.isView(value)) return value.byteLength;
+
+  // Primitive types - fast path
+  const type = typeof value;
+  if (type === "string") return (value as string).length * 2 + STRING_OVERHEAD_BYTES;
+  if (type === "number" || type === "bigint") return 8;
+  if (type === "boolean") return 4;
+
+  // Binary data - exact size
+  if (value instanceof Uint8Array || ArrayBuffer.isView(value)) {
+    return (value as Uint8Array).byteLength;
+  }
   if (value instanceof ArrayBuffer) return value.byteLength;
   if (typeof Blob !== "undefined" && value instanceof Blob) return value.size;
 
-  try {
-    return JSON.stringify(value).length * 2;
-  } catch {
-    return 0;
+  // Depth limit reached - return rough estimate
+  if (depth >= MAX_ESTIMATION_DEPTH) {
+    return OBJECT_OVERHEAD_BYTES * 2;
   }
+
+  // Objects/Arrays - recursive estimation with cycle detection
+  if (type === "object") {
+    // Cycle detection to prevent infinite loops
+    if (seen.has(value as object)) return 0;
+    seen.add(value as object);
+
+    if (Array.isArray(value)) {
+      let size = ARRAY_OVERHEAD_BYTES + value.length * 8; // 8 bytes per element pointer
+      for (const item of value) {
+        size += estimateSizeRecursive(item, depth + 1, seen);
+      }
+      return size;
+    }
+
+    // Plain object
+    let size = OBJECT_OVERHEAD_BYTES;
+    const obj = value as Record<string, unknown>;
+    for (const key in obj) {
+      if (Object.prototype.hasOwnProperty.call(obj, key)) {
+        size += key.length * 2 + 8; // Key string + pointer overhead
+        size += estimateSizeRecursive(obj[key], depth + 1, seen);
+      }
+    }
+    return size;
+  }
+
+  // Functions and symbols - rough estimate
+  return 64;
+}
+
+function defaultSizeEstimator(value: unknown): number {
+  return estimateSizeRecursive(value, 0, new WeakSet());
 }
 
 export class LRUCacheAdapter implements CacheAdapter {

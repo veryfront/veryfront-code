@@ -1,7 +1,8 @@
 import type { ExecutionContext, MiddlewareHandler } from "../types.ts";
 import { MiddlewareContext } from "../context.ts";
 import { HTTP_NOT_FOUND, HTTP_SERVER_ERROR } from "#veryfront/utils";
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/index.ts";
+// Direct import from base.ts to avoid circular dependency through barrel
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { ensureError, getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 

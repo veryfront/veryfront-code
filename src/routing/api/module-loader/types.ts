@@ -1,4 +1,5 @@
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/index.ts";
+// Direct import from base.ts to avoid circular dependency through barrel
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { APIContext } from "../context-builder.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 

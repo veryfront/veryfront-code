@@ -34,6 +34,9 @@ export class ReadOperations {
   // Prevents duplicate concurrent fetches for the same file
   private readonly inFlightRequests = new Map<string, InFlightEntry>();
   private lastCleanupTime = 0;
+  // Cached file list index for O(1) lookups (built lazily)
+  private fileListIndex: Map<string, string> | null = null;
+  private fileListIndexKey: string | null = null;
 
   constructor(
     private readonly client: VeryfrontAPIClient,
@@ -93,30 +96,68 @@ export class ReadOperations {
   }
 
   /**
+   * Build or retrieve a Map index from the file list for O(1) lookups.
+   * The index is invalidated when the underlying file list changes.
+   */
+  private async getOrBuildFileListIndex(): Promise<Map<string, string> | null> {
+    const fileList = await this.getFileListCache?.();
+    if (!fileList) {
+      return null;
+    }
+
+    // Generate a cache key based on file list length and first/last paths
+    // This cheaply detects when the file list has changed
+    const indexKey = `${fileList.length}:${fileList[0]?.path ?? ""}:${
+      fileList[fileList.length - 1]?.path ?? ""
+    }`;
+
+    // Return existing index if still valid
+    if (this.fileListIndex && this.fileListIndexKey === indexKey) {
+      return this.fileListIndex;
+    }
+
+    // Build new index: O(n) once, then O(1) for each lookup
+    const index = new Map<string, string>();
+    for (const file of fileList) {
+      if (file.content) {
+        index.set(file.path, file.content);
+      }
+    }
+
+    this.fileListIndex = index;
+    this.fileListIndexKey = indexKey;
+
+    logger.debug("[ReadOperations] Built file list index", {
+      fileListSize: fileList.length,
+      indexedWithContent: index.size,
+    });
+
+    return index;
+  }
+
+  /**
    * Check if content is available in the cached file list.
-   * This avoids redundant API calls when the file list already includes content.
+   * Uses Map index for O(1) lookups instead of O(n) array scan.
    * Now async to support Redis cache lookup across pods.
    */
   private async getContentFromFileList(normalizedPath: string): Promise<string | undefined> {
-    const fileList = await this.getFileListCache?.();
-    if (!fileList) {
+    const index = await this.getOrBuildFileListIndex();
+    if (!index) {
       logger.debug("[ReadOperations] No file list cache available");
       return undefined;
     }
 
-    const file = fileList.find((f) => f.path === normalizedPath);
-    if (file?.content) {
-      logger.debug("[ReadOperations] Found content in file list cache", {
+    const content = index.get(normalizedPath);
+    if (content) {
+      logger.debug("[ReadOperations] Found content in file list cache (indexed)", {
         path: normalizedPath,
-        contentLength: file.content.length,
+        contentLength: content.length,
       });
-      return file.content;
+      return content;
     }
-    logger.debug("[ReadOperations] Content not in file list cache", {
+    logger.debug("[ReadOperations] Content not in file list index", {
       path: normalizedPath,
-      fileFound: !!file,
-      hasContent: !!file?.content,
-      fileListSize: fileList.length,
+      indexSize: index.size,
     });
     return undefined;
   }

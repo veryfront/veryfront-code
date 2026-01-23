@@ -1,6 +1,7 @@
 import { getCacheNamespace } from "#veryfront/utils/cache/keys/namespace.ts";
 import { CompilationError, wrapError } from "#veryfront/errors/index.ts";
-import { runtime } from "#veryfront/platform/adapters/index.ts";
+// Direct import from registry.ts to avoid circular dependency through barrel
+import { runtime } from "#veryfront/platform/adapters/registry.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import type { MDXModule } from "./types.ts";

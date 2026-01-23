@@ -7,7 +7,7 @@
 
 import {
   generateCacheKey,
-  getCachedTransform,
+  getCachedTransformAsync,
   setCachedTransform,
 } from "../esm/transform-cache.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
@@ -100,7 +100,8 @@ export async function runPipeline(
         options.ssr ?? false,
         options.studioEmbed ?? false,
       );
-      const cached = getCachedTransform(cacheKey);
+      // Use async cache check to support distributed backends (Redis/API)
+      const cached = await getCachedTransformAsync(cacheKey);
 
       if (cached) {
         return {

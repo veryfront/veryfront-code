@@ -1,9 +1,11 @@
 import { join } from "#veryfront/platform/compat/path/index.ts";
-import { runtime } from "#veryfront/platform/adapters/index.ts";
+// Direct import from registry.ts to avoid circular dependency through barrel
+import { runtime } from "#veryfront/platform/adapters/registry.ts";
 import { getConfig } from "#veryfront/config";
 import { createRenderer, type VeryfrontRenderer } from "#veryfront/rendering/index.ts";
 import type { BuildOptions, BuildStats } from "#veryfront/server/build-types.ts";
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/index.ts";
+// Direct import from base.ts to avoid circular dependency through barrel
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 
 export interface BuildContext {

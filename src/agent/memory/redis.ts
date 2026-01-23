@@ -5,8 +5,13 @@
  * Enables conversation persistence across server restarts and horizontal scaling.
  */
 
-import type { MemoryConfig, Message } from "../types.ts";
-import { estimateTokens, type Memory, type MemoryStats } from "./memory.ts";
+import {
+  estimateTokens,
+  type Memory,
+  type MemoryConfigBase,
+  type MemoryStats,
+  type MinimalMessage,
+} from "./memory-interface.ts";
 
 /**
  * Redis client interface (compatible with ioredis and node-redis)
@@ -21,7 +26,7 @@ export interface RedisClient {
 /**
  * Redis memory configuration
  */
-export interface RedisMemoryConfig extends MemoryConfig {
+export interface RedisMemoryConfig extends MemoryConfigBase {
   type: "redis";
   /** Redis client instance */
   client: RedisClient;
@@ -42,7 +47,7 @@ const DEFAULT_KEY_PREFIX = "veryfront:agent:memory:";
  * - Conversation persistence across restarts
  * - Horizontal scaling
  */
-export class RedisMemory implements Memory {
+export class RedisMemory<M extends MinimalMessage = MinimalMessage> implements Memory<M> {
   private client: RedisClient;
   private agentId: string;
   private keyPrefix: string;
@@ -67,11 +72,11 @@ export class RedisMemory implements Memory {
   /**
    * Add a message to memory
    */
-  async add(message: Message): Promise<void> {
+  async add(message: M): Promise<void> {
     const key = this.getKey();
     const existingData = await this.client.get(key);
 
-    let messages: Message[] = [];
+    let messages: M[] = [];
     if (existingData) {
       try {
         messages = JSON.parse(existingData);
@@ -97,7 +102,7 @@ export class RedisMemory implements Memory {
   /**
    * Get all messages
    */
-  async getMessages(): Promise<Message[]> {
+  async getMessages(): Promise<M[]> {
     const key = this.getKey();
     const data = await this.client.get(key);
 
@@ -143,7 +148,7 @@ export class RedisMemory implements Memory {
   /**
    * Trim messages to token limit
    */
-  private trimToTokenLimit(messages: Message[]): Message[] {
+  private trimToTokenLimit(messages: M[]): M[] {
     if (!this.config.maxTokens) return messages;
 
     let tokenCount = estimateTokens(messages);
@@ -160,9 +165,9 @@ export class RedisMemory implements Memory {
 /**
  * Create Redis memory instance
  */
-export function createRedisMemory(
+export function createRedisMemory<M extends MinimalMessage = MinimalMessage>(
   agentId: string,
   config: RedisMemoryConfig,
-): RedisMemory {
-  return new RedisMemory(agentId, config);
+): RedisMemory<M> {
+  return new RedisMemory<M>(agentId, config);
 }

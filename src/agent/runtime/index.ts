@@ -60,7 +60,7 @@ import { createStreamState, processStreamData } from "./stream-handler.ts";
 export class AgentRuntime {
   private id: string;
   private config: AgentConfig;
-  private memory: Memory;
+  private memory: Memory<Message>;
   private status: AgentStatus = "idle";
 
   constructor(id: string, config: AgentConfig) {
@@ -68,7 +68,7 @@ export class AgentRuntime {
     this.config = config;
 
     const memoryConfig = config.memory || { type: "conversation", maxTokens: 4000 };
-    this.memory = createMemory(memoryConfig);
+    this.memory = createMemory<Message>(memoryConfig);
   }
 
   /**
@@ -624,7 +624,7 @@ export class AgentRuntime {
   /**
    * Get memory instance (for advanced use cases)
    */
-  getMemory(): Memory {
+  getMemory(): Memory<Message> {
     return this.memory;
   }
 

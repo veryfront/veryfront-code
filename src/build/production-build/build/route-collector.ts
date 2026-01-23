@@ -9,7 +9,8 @@
 
 import { serverLogger as logger } from "#veryfront/utils";
 import { collectAppRoutes, collectPagesRoutes } from "#veryfront/server/build-routes.ts";
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/index.ts";
+// Direct import from base.ts to avoid circular dependency through barrel
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { AppRouteInfo, RouteInfo } from "#veryfront/server/build-types.ts";
 
 export interface CollectedRoutes {

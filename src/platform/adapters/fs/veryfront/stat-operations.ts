@@ -22,8 +22,9 @@ export class StatOperations {
   private fileIndex: Map<string, ProjectFile> | null = null;
   private directoryIndex: Set<string> | null = null;
   private buildingIndex: Promise<void> | null = null;
-  // Mutex to prevent race conditions during index building
-  private indexBuildLock = false;
+  // Promise-based lock for coordinating concurrent index builds
+  private indexBuildLockResolver: (() => void) | null = null;
+  private indexBuildLockPromise: Promise<void> | null = null;
   // Map normalized paths to original API paths (for trailing slash files)
   private pathMapping: Map<string, string> = new Map();
 
@@ -121,21 +122,24 @@ export class StatOperations {
       return;
     }
 
-    // Acquire lock to prevent race conditions
+    // Promise-based lock to prevent race conditions without polling
     // Multiple requests can pass the buildingIndex check before it's set
-    if (this.indexBuildLock) {
-      // Another request acquired the lock, wait for the build promise
-      while (this.indexBuildLock && !this.buildingIndex) {
-        await new Promise((resolve) => setTimeout(resolve, 1));
-      }
+    if (this.indexBuildLockPromise) {
+      // Another request acquired the lock - wait on the Promise instead of polling
+      logger.debug("[StatOperations] ensureIndexBuilt - waiting for lock");
+      await this.indexBuildLockPromise;
+      // After lock released, buildingIndex should be set or index built
       if (this.buildingIndex) {
         await this.buildingIndex;
       }
       return;
     }
 
-    // Acquire lock and start building
-    this.indexBuildLock = true;
+    // Acquire lock using Promise (no polling)
+    this.indexBuildLockPromise = new Promise((resolve) => {
+      this.indexBuildLockResolver = resolve;
+    });
+
     try {
       // Double-check after acquiring lock (another request may have completed)
       if (this.fileIndex && this.directoryIndex) {
@@ -146,7 +150,12 @@ export class StatOperations {
       await this.buildingIndex;
     } finally {
       this.buildingIndex = null;
-      this.indexBuildLock = false;
+      // Release the lock by resolving the Promise
+      if (this.indexBuildLockResolver) {
+        this.indexBuildLockResolver();
+        this.indexBuildLockResolver = null;
+      }
+      this.indexBuildLockPromise = null;
     }
   }
 

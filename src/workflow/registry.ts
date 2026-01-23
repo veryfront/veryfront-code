@@ -8,8 +8,7 @@
  * Workflow RUNS are managed by WorkflowClient with backend-specific storage.
  */
 
-import type { WorkflowDefinition, WorkflowNode } from "./types.ts";
-import type { Workflow } from "./dsl/workflow.ts";
+import type { Workflow, WorkflowDefinition, WorkflowNode } from "./types.ts";
 import { zodToJsonSchema } from "#veryfront/tool/schema";
 import { agentLogger as logger } from "#veryfront/utils";
 

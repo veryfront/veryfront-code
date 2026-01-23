@@ -9,7 +9,8 @@
  */
 
 import { join } from "#veryfront/platform/compat/path/index.ts";
-import { runtime } from "#veryfront/platform/adapters/index.ts";
+// Direct import from registry.ts to avoid circular dependency through barrel
+import { runtime } from "#veryfront/platform/adapters/registry.ts";
 import { getConfig } from "#veryfront/config";
 import { buildProduction } from "#veryfront/build/production-build/index.ts";
 import { displayBuildConfig, displayBuildStart } from "./config-display.ts";

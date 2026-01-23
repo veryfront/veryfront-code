@@ -42,10 +42,17 @@ export class CacheManager {
   }
 
   clearPattern(pattern: string): void {
+    // Collect keys to delete first to avoid modifying Set during iteration
+    // which can cause unpredictable behavior in some JS engines
+    const keysToDelete: string[] = [];
     for (const key of this.cacheKeys) {
       if (key.includes(pattern)) {
-        this.delete(key);
+        keysToDelete.push(key);
       }
+    }
+    // Delete after iteration is complete
+    for (const key of keysToDelete) {
+      this.delete(key);
     }
   }
 

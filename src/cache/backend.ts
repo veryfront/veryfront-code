@@ -16,14 +16,13 @@ import { getRedisClient, isRedisConfigured, type RedisClient } from "../utils/re
 import { runtime } from "../platform/adapters/registry.ts";
 import { tryGetCacheKeyContext } from "./cache-key-builder.ts";
 import { getRuntimeEnv, isRuntimeEnvInitialized, type RuntimeEnv } from "../config/runtime-env.ts";
-// Lazy-loaded to avoid circular dependency (multi-project-adapter has React dependencies)
-let _getCurrentRequestContext: (() => { token?: string } | null) | undefined;
-async function getCurrentRequestContext(): Promise<{ token?: string } | null> {
-  if (!_getCurrentRequestContext) {
-    const mod = await import("../platform/adapters/fs/veryfront/multi-project-adapter.ts");
-    _getCurrentRequestContext = mod.getCurrentRequestContext;
-  }
-  return _getCurrentRequestContext();
+// Lazy-loaded via global to avoid circular dependency
+// (multi-project-adapter → proxy-manager → veryfront/index → adapter → file-cache → backend)
+// The multi-project-adapter registers itself at __vf_multi_project_adapter when loaded
+function getCurrentRequestContext(): { token?: string } | null {
+  // deno-lint-ignore no-explicit-any
+  const mod = (globalThis as any).__vf_multi_project_adapter;
+  return mod?.getCurrentRequestContext?.() ?? null;
 }
 import { CircuitBreakerOpen, getCircuitBreaker } from "../utils/circuit-breaker.ts";
 import { MEMORY_CACHE_MAX_ENTRIES } from "../utils/constants/cache.ts";
@@ -268,12 +267,12 @@ export class ApiCacheBackend implements CacheBackend {
     return this.keyPrefix ? `${this.keyPrefix}:${key}` : key;
   }
 
-  private async getAuthToken(): Promise<string | null> {
+  private getAuthToken(): string | null {
     // Static token from env (non-proxy mode) or request context token (proxy mode)
     const envToken = getEnvValue("VERYFRONT_API_TOKEN", this.env);
     if (envToken) return envToken;
 
-    const ctx = await getCurrentRequestContext();
+    const ctx = getCurrentRequestContext();
     return ctx?.token ?? null;
   }
 
@@ -286,7 +285,7 @@ export class ApiCacheBackend implements CacheBackend {
     path: string,
     body?: Record<string, unknown>,
   ): Promise<T | null> {
-    const token = await this.getAuthToken();
+    const token = this.getAuthToken();
     const projectSlug = this.getProjectSlug();
 
     if (!token || !projectSlug) {

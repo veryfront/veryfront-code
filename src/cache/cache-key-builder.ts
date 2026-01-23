@@ -17,10 +17,23 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { z } from "zod";
 import type { HandlerContext } from "../types/server.ts";
-import {
-  getCurrentRequestContext,
-  type RequestContext as MultiProjectRequestContextType,
-} from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+
+// Type-only import to avoid circular dependency
+// The actual getCurrentRequestContext is loaded lazily below
+type MultiProjectRequestContextType = {
+  projectSlug: string;
+  projectId?: string;
+  token: string;
+  productionMode: boolean;
+  releaseId?: string | null;
+  branch?: string | null;
+  environmentName?: string | null;
+};
+
+// Lazy-loaded to avoid circular dependency
+// (multi-project-adapter → proxy-manager → veryfront/index → adapter → file-cache → cache/backend → cache-key-builder)
+// undefined = not yet initialized, null = initialized but module not available
+let _getCurrentRequestContext: (() => MultiProjectRequestContextType | null) | null | undefined;
 
 // ============================================================================
 // ZOD SCHEMAS FOR VALIDATION
@@ -122,6 +135,32 @@ export function getCurrentCacheKeyContext(): CacheKeyContext {
 }
 
 /**
+ * Lazily load getCurrentRequestContext to avoid circular dependency.
+ * The module is loaded once on first call.
+ * Returns undefined if not yet initialized, null if initialized but unavailable.
+ */
+function getRequestContextFn(): (() => MultiProjectRequestContextType | null) | null {
+  if (_getCurrentRequestContext === undefined) {
+    // Try synchronous require-style import for the function
+    // This works because the module will be loaded by the time this is called
+    try {
+      // deno-lint-ignore no-explicit-any
+      const mod = (globalThis as any).__vf_multi_project_adapter;
+      if (mod?.getCurrentRequestContext) {
+        _getCurrentRequestContext = mod.getCurrentRequestContext;
+      } else {
+        // Module not yet loaded, return null
+        _getCurrentRequestContext = null;
+      }
+    } catch {
+      _getCurrentRequestContext = null;
+    }
+  }
+  // At this point _getCurrentRequestContext is either a function or null (not undefined)
+  return _getCurrentRequestContext ?? null;
+}
+
+/**
  * Try to get the current cache key context.
  * Checks in order: 1) explicit cache context, 2) multi-project adapter context
  * @returns Context or null if not set
@@ -131,10 +170,13 @@ export function tryGetCacheKeyContext(): CacheKeyContext | null {
   const explicitCtx = cacheKeyContextStorage.getStore();
   if (explicitCtx) return explicitCtx;
 
-  // Fallback: try to get context from multi-project adapter
-  const reqCtx = getCurrentRequestContext();
-  if (reqCtx) {
-    return extractCacheKeyContextFromMultiProjectContext(reqCtx);
+  // Fallback: try to get context from multi-project adapter (if initialized)
+  const getReqCtx = getRequestContextFn();
+  if (getReqCtx) {
+    const reqCtx = getReqCtx();
+    if (reqCtx) {
+      return extractCacheKeyContextFromMultiProjectContext(reqCtx);
+    }
   }
 
   return null;

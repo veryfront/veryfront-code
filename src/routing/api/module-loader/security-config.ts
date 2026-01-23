@@ -1,5 +1,6 @@
 import { serverLogger as logger } from "#veryfront/utils";
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/index.ts";
+// Direct import from base.ts to avoid circular dependency through barrel
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { DEFAULT_ALLOWED_CDN_HOSTS } from "#veryfront/utils";
 

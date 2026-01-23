@@ -7,71 +7,37 @@
  * - Summary: Summarize old messages to save tokens
  */
 
-import { getTextFromParts, type MemoryConfig, type Message } from "../types.ts";
+import {
+  estimateTokens,
+  getTextFromMemoryParts,
+  type Memory,
+  type MemoryConfigBase,
+  type MemoryPersistence,
+  type MemoryStats,
+  type MinimalMessage,
+} from "./memory-interface.ts";
 
-/**
- * Estimate token count for messages.
- * Uses a rough estimation of ~4 characters per token.
- */
-export function estimateTokens(messages: Message[]): number {
-  const totalChars = messages.reduce(
-    (sum, msg) => sum + getTextFromParts(msg.parts).length,
-    0,
-  );
-  return Math.ceil(totalChars / 4);
-}
-
-/**
- * Memory interface
- */
-export interface Memory {
-  /**
-   * Add a message to memory
-   */
-  add(message: Message): Promise<void>;
-
-  /**
-   * Get messages for the current context
-   */
-  getMessages(): Promise<Message[]>;
-
-  /**
-   * Clear all messages
-   */
-  clear(): Promise<void>;
-
-  /**
-   * Get memory stats
-   */
-  getStats(): Promise<MemoryStats>;
-}
-
-/**
- * Memory statistics
- */
-export interface MemoryStats {
-  /** Total messages stored */
-  totalMessages: number;
-
-  /** Estimated token count */
-  estimatedTokens: number;
-
-  /** Memory type */
-  type: string;
-}
+// Re-export from interface for backwards compatibility
+export {
+  estimateTokens,
+  type Memory,
+  type MemoryPersistence,
+  type MemoryStats,
+  type MinimalMessage,
+};
 
 /**
  * Conversation Memory - Keeps all messages
  */
-export class ConversationMemory implements Memory {
-  private messages: Message[] = [];
-  private config: MemoryConfig;
+export class ConversationMemory<M extends MinimalMessage = MinimalMessage> implements Memory<M> {
+  private messages: M[] = [];
+  private config: MemoryConfigBase;
 
-  constructor(config: MemoryConfig) {
+  constructor(config: MemoryConfigBase) {
     this.config = config;
   }
 
-  async add(message: Message): Promise<void> {
+  async add(message: M): Promise<void> {
     this.messages.push(message);
 
     // Trim if max messages exceeded
@@ -88,7 +54,7 @@ export class ConversationMemory implements Memory {
     }
   }
 
-  getMessages(): Promise<Message[]> {
+  getMessages(): Promise<M[]> {
     return Promise.resolve([...this.messages]);
   }
 
@@ -125,17 +91,17 @@ export class ConversationMemory implements Memory {
 /**
  * Buffer Memory - Keeps last N messages
  */
-export class BufferMemory implements Memory {
-  private messages: Message[] = [];
-  private config: MemoryConfig;
+export class BufferMemory<M extends MinimalMessage = MinimalMessage> implements Memory<M> {
+  private messages: M[] = [];
+  private config: MemoryConfigBase;
   private bufferSize: number;
 
-  constructor(config: MemoryConfig) {
+  constructor(config: MemoryConfigBase) {
     this.config = config;
     this.bufferSize = config.maxMessages || 10;
   }
 
-  add(message: Message): Promise<void> {
+  add(message: M): Promise<void> {
     this.messages.push(message);
 
     // Keep only last N messages
@@ -145,7 +111,7 @@ export class BufferMemory implements Memory {
     return Promise.resolve();
   }
 
-  getMessages(): Promise<Message[]> {
+  getMessages(): Promise<M[]> {
     return Promise.resolve([...this.messages]);
   }
 
@@ -167,18 +133,18 @@ export class BufferMemory implements Memory {
  * Summary Memory - Summarizes old messages
  * (Simplified version - full implementation would use LLM for summarization)
  */
-export class SummaryMemory implements Memory {
-  private messages: Message[] = [];
+export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements Memory<M> {
+  private messages: M[] = [];
   private summary: string = "";
-  private config: MemoryConfig;
+  private config: MemoryConfigBase;
   private summaryThreshold: number;
 
-  constructor(config: MemoryConfig) {
+  constructor(config: MemoryConfigBase) {
     this.config = config;
     this.summaryThreshold = config.maxMessages || 20;
   }
 
-  async add(message: Message): Promise<void> {
+  async add(message: M): Promise<void> {
     this.messages.push(message);
 
     // Summarize if threshold exceeded
@@ -187,18 +153,19 @@ export class SummaryMemory implements Memory {
     }
   }
 
-  getMessages(): Promise<Message[]> {
+  getMessages(): Promise<M[]> {
     // If we have a summary, include it as first message
     if (this.summary) {
-      return Promise.resolve([
-        {
-          id: "summary",
-          role: "system",
-          parts: [{ type: "text", text: `Previous conversation summary:\n${this.summary}` }],
-          timestamp: Date.now(),
-        },
-        ...this.messages,
-      ]);
+      // Create a summary message that conforms to M
+      // Note: This cast is necessary because we're creating a new message
+      const summaryMessage = {
+        id: "summary",
+        role: "system" as const,
+        parts: [{ type: "text" as const, text: `Previous conversation summary:\n${this.summary}` }],
+        timestamp: Date.now(),
+      } as unknown as M;
+
+      return Promise.resolve([summaryMessage, ...this.messages]);
     }
 
     return Promise.resolve([...this.messages]);
@@ -231,7 +198,9 @@ export class SummaryMemory implements Memory {
     // Simple summarization (in production, use LLM)
     const topics = toSummarize
       .filter((m) => m.role === "user")
-      .map((m) => getTextFromParts(m.parts).substring(0, 50))
+      .map((m) =>
+        getTextFromMemoryParts(m.parts as Array<{ type: string; text?: string }>).substring(0, 50)
+      )
       .join("; ");
 
     this.summary = `Discussed: ${topics}`;
@@ -240,25 +209,19 @@ export class SummaryMemory implements Memory {
   }
 }
 
-const MEMORY_CONSTRUCTORS: Record<string, new (config: MemoryConfig) => Memory> = {
-  conversation: ConversationMemory,
-  buffer: BufferMemory,
-  summary: SummaryMemory,
-};
-
 /**
  * Create memory instance based on config
  */
-export function createMemory(config: MemoryConfig): Memory {
-  const Constructor = MEMORY_CONSTRUCTORS[config.type] ?? ConversationMemory;
-  return new Constructor(config);
-}
-
-/**
- * Memory persistence interface (for future implementation)
- */
-export interface MemoryPersistence {
-  save(agentId: string, messages: Message[]): Promise<void>;
-  load(agentId: string): Promise<Message[]>;
-  clear(agentId: string): Promise<void>;
+export function createMemory<M extends MinimalMessage = MinimalMessage>(
+  config: MemoryConfigBase,
+): Memory<M> {
+  switch (config.type) {
+    case "buffer":
+      return new BufferMemory<M>(config);
+    case "summary":
+      return new SummaryMemory<M>(config);
+    case "conversation":
+    default:
+      return new ConversationMemory<M>(config);
+  }
 }
