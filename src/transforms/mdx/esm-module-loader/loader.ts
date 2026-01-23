@@ -207,19 +207,33 @@ async function processVfModuleImports(
 
   const fetchStart = performance.now();
 
-  // Fetch all modules in parallel
+  // Fetch all modules in parallel with individual tracing
   const results = await Promise.all(
     imports.map(async ({ original, path }, index) => {
-      const moduleStart = performance.now();
-      logger.debug(`${LOG_PREFIX_MDX_LOADER} Fetching module START`, { projectSlug, index, path });
-      const filePath = await fetchAndCacheModule(path, fetcherContext);
-      logger.debug(`${LOG_PREFIX_MDX_LOADER} Fetching module DONE`, {
-        projectSlug,
-        index,
-        path,
-        durationMs: (performance.now() - moduleStart).toFixed(1),
-      });
-      return { original, filePath, path };
+      return await withSpan(
+        SpanNames.MDX_FETCH_MODULE,
+        async () => {
+          const moduleStart = performance.now();
+          logger.debug(`${LOG_PREFIX_MDX_LOADER} Fetching module START`, {
+            projectSlug,
+            index,
+            path,
+          });
+          const filePath = await fetchAndCacheModule(path, fetcherContext);
+          logger.debug(`${LOG_PREFIX_MDX_LOADER} Fetching module DONE`, {
+            projectSlug,
+            index,
+            path,
+            durationMs: (performance.now() - moduleStart).toFixed(1),
+          });
+          return { original, filePath, path };
+        },
+        {
+          "mdx.module_path": path,
+          "mdx.module_index": index,
+          "mdx.project_slug": projectSlug,
+        },
+      );
     }),
   );
 

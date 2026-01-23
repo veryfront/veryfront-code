@@ -14,6 +14,8 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import { simpleHash } from "#veryfront/utils/hash-utils.ts";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import { getReactImportMap, REACT_VERSION } from "./package-registry.ts";
@@ -258,14 +260,26 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
   // Layer 3: Fetch from esm.sh
   logger.debug("[HTTP-CACHE] Fetching from network", { url: normalizedUrl });
 
+  const urlObj = new URL(normalizedUrl);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30000);
 
-  const response = await fetch(normalizedUrl, {
-    headers: { "user-agent": "Mozilla/5.0 Veryfront/1.0" },
-    signal: controller.signal,
-    redirect: "follow",
-  });
+  const response = await withSpan(
+    SpanNames.HTTP_CLIENT_FETCH,
+    () =>
+      fetch(normalizedUrl, {
+        headers: { "user-agent": "Mozilla/5.0 Veryfront/1.0" },
+        signal: controller.signal,
+        redirect: "follow",
+      }),
+    {
+      "http.method": "GET",
+      "http.url": normalizedUrl,
+      "http.host": urlObj.host,
+      "http.scheme": urlObj.protocol.replace(":", ""),
+      "esm.package_fetch": true,
+    },
+  );
   clearTimeout(timeout);
 
   if (!response.ok) {

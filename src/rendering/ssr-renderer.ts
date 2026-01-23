@@ -13,6 +13,8 @@ import {
   renderToStringAdapter,
 } from "#veryfront/react";
 import { isCompiledBinary, rendererLogger as logger } from "#veryfront/utils";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import type * as React from "react";
 import { streamToString } from "./utils/index.ts";
 import { setupSSRGlobals } from "./ssr-globals.ts";
@@ -205,9 +207,18 @@ export class SSRRenderer {
 
       // Use consistent identifierPrefix to ensure useId() generates matching IDs
       // between SSR and browser hydration (prevents hydration mismatch errors)
-      const renderResult = await renderToStreamAdapter(pageElement, {
-        identifierPrefix: "vf",
-      });
+      const renderResult = await withSpan(
+        SpanNames.SSR_REACT_RENDER,
+        () =>
+          renderToStreamAdapter(pageElement, {
+            identifierPrefix: "vf",
+          }),
+        {
+          "ssr.method": "streaming",
+          "ssr.react_version": versionInfo.version,
+          "ssr.wants_stream": options.wantsStream,
+        },
+      );
 
       if (renderResult.stream) {
         // TRUE STREAMING: If client wants stream, return it directly WITHOUT buffering
@@ -256,7 +267,14 @@ export class SSRRenderer {
         reactVersion: versionInfo.version,
       });
 
-      html = await renderToStringAdapter(pageElement);
+      html = await withSpan(
+        SpanNames.SSR_REACT_RENDER,
+        () => renderToStringAdapter(pageElement),
+        {
+          "ssr.method": "string",
+          "ssr.react_version": versionInfo.version,
+        },
+      );
     }
 
     return { html, stream };

@@ -12,6 +12,8 @@
  */
 
 import { logger } from "#veryfront/utils";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { getRedisClient, isRedisConfigured, type RedisClient } from "../utils/redis-client.ts";
 import { runtime } from "../platform/adapters/registry.ts";
 import { tryGetCacheKeyContext } from "./cache-key-builder.ts";
@@ -303,15 +305,26 @@ export class ApiCacheBackend implements CacheBackend {
         const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
 
         try {
-          const response = await fetch(url, {
-            method,
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
+          const response = await withSpan(
+            SpanNames.HTTP_CLIENT_FETCH,
+            () =>
+              fetch(url, {
+                method,
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${token}`,
+                },
+                body: body ? JSON.stringify(body) : undefined,
+                signal: controller.signal,
+              }),
+            {
+              "http.method": method,
+              "http.url": url,
+              "http.host": new URL(this.apiBaseUrl).host,
+              "cache.operation": path,
+              "cache.project_slug": projectSlug,
             },
-            body: body ? JSON.stringify(body) : undefined,
-            signal: controller.signal,
-          });
+          );
 
           if (!response.ok) {
             // Non-2xx responses count as failures for circuit breaker

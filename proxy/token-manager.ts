@@ -9,6 +9,7 @@
 import { fetchOAuthToken, type TokenResponse } from "./oauth-client.ts";
 import type { TokenCache, TokenCacheEntry } from "./cache/types.ts";
 import { MemoryCache } from "./cache/memory-cache.ts";
+import { ProxySpanNames, withSpan } from "./tracing.ts";
 
 export type TokenScope = "preview" | "production";
 
@@ -48,27 +49,38 @@ export class TokenManager {
     projectSlug?: string,
     customDomain?: string,
   ): Promise<string> {
-    const cacheKey = this.getCacheKey(scope, projectSlug || customDomain);
-    const cached = await this.cache.get(cacheKey);
+    return await withSpan(
+      ProxySpanNames.PROXY_TOKEN_FETCH,
+      async () => {
+        const cacheKey = this.getCacheKey(scope, projectSlug || customDomain);
+        const cached = await this.cache.get(cacheKey);
 
-    if (cached && this.isTokenValid(cached)) {
-      return cached.token;
-    }
+        if (cached && this.isTokenValid(cached)) {
+          return cached.token;
+        }
 
-    // Prevent duplicate concurrent requests for the same token
-    const pending = this.pendingRequests.get(cacheKey);
-    if (pending) {
-      return pending;
-    }
+        // Prevent duplicate concurrent requests for the same token
+        const pending = this.pendingRequests.get(cacheKey);
+        if (pending) {
+          return pending;
+        }
 
-    const tokenPromise = this.fetchAndCacheToken(scope, projectSlug, customDomain);
-    this.pendingRequests.set(cacheKey, tokenPromise);
+        const tokenPromise = this.fetchAndCacheToken(scope, projectSlug, customDomain);
+        this.pendingRequests.set(cacheKey, tokenPromise);
 
-    try {
-      return await tokenPromise;
-    } finally {
-      this.pendingRequests.delete(cacheKey);
-    }
+        try {
+          return await tokenPromise;
+        } finally {
+          this.pendingRequests.delete(cacheKey);
+        }
+      },
+      {
+        "proxy.token_scope": scope,
+        "proxy.project_slug": projectSlug || "",
+        "proxy.custom_domain": customDomain || "",
+        "proxy.cache_key": this.getCacheKey(scope, projectSlug || customDomain),
+      },
+    );
   }
 
   /**

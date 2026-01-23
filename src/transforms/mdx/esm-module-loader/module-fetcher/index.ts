@@ -15,6 +15,8 @@
 import { join, posix } from "#std/path.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { CacheBackend } from "#veryfront/cache/backend.ts";
 import { transformToESM } from "../../../esm-transform.ts";
@@ -379,7 +381,17 @@ async function fetchModuleViaHTTP(
   const host = projectSlug ? `${projectSlug}.lvh.me` : "localhost";
   const moduleUrl = `http://${host}:${port}/${normalizedPath}?ssr=true`;
 
-  const response = await fetch(moduleUrl);
+  const response = await withSpan(
+    SpanNames.HTTP_CLIENT_FETCH,
+    () => fetch(moduleUrl),
+    {
+      "http.method": "GET",
+      "http.url": moduleUrl,
+      "http.target": `/${normalizedPath}`,
+      "http.host": host,
+      "mdx.module_path": normalizedPath,
+    },
+  );
   if (!response.ok) {
     logger.warn(
       `${LOG_PREFIX_MDX_LOADER} HTTP fetch also failed: ${moduleUrl} (${response.status})`,

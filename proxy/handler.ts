@@ -18,7 +18,7 @@ import type { TokenCache } from "./cache/types.ts";
 import { createFileSystem } from "../src/platform/compat/fs.ts";
 import { cwd } from "../src/platform/compat/process.ts";
 import { join } from "../src/platform/compat/path/index.ts";
-import { injectContext } from "./tracing.ts";
+import { injectContext, ProxySpanNames, withSpan } from "./tracing.ts";
 
 /**
  * Domain lookup result from API.
@@ -41,44 +41,60 @@ async function lookupProjectByDomain(
   token: string,
   logger?: ProxyLogger,
 ): Promise<DomainLookupResult | null> {
-  const domainWithoutPort = domain.replace(/:\d+$/, "");
-  const url = `${apiBaseUrl}/projects/${encodeURIComponent(domainWithoutPort)}`;
+  return await withSpan(
+    ProxySpanNames.PROXY_DOMAIN_LOOKUP,
+    async () => {
+      const domainWithoutPort = domain.replace(/:\d+$/, "");
+      const url = `${apiBaseUrl}/projects/${encodeURIComponent(domainWithoutPort)}`;
+      const urlObj = new URL(url);
 
-  logger?.debug("Looking up project by domain", { domain, url });
+      logger?.debug("Looking up project by domain", { domain, url });
 
-  const headers = new Headers({
-    Authorization: `Bearer ${token}`,
-    Accept: "application/json",
-  });
-  injectContext(headers);
+      const headers = new Headers({
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+      });
+      injectContext(headers);
 
-  try {
-    const response = await fetch(url, { headers });
+      try {
+        const response = await withSpan(
+          ProxySpanNames.HTTP_CLIENT_FETCH,
+          () => fetch(url, { headers }),
+          {
+            "http.method": "GET",
+            "http.url": url,
+            "http.host": urlObj.host,
+            "proxy.domain_lookup": domain,
+          },
+        );
 
-    if (!response.ok) {
-      // Consume response body to prevent resource leak
-      await response.body?.cancel();
-      if (response.status !== 404) {
-        logger?.error("Domain lookup API error", undefined, {
+        if (!response.ok) {
+          // Consume response body to prevent resource leak
+          await response.body?.cancel();
+          if (response.status !== 404) {
+            logger?.error("Domain lookup API error", undefined, {
+              domain,
+              status: response.status,
+              statusText: response.statusText,
+            });
+          }
+          return null;
+        }
+
+        const result = await response.json() as DomainLookupResult;
+        logger?.debug("Domain lookup successful", {
           domain,
-          status: response.status,
-          statusText: response.statusText,
+          projectSlug: result.slug,
+          environments: result.environments?.map((e) => e.name),
         });
+        return result;
+      } catch (error) {
+        logger?.error("Domain lookup failed", error as Error, { domain });
+        return null;
       }
-      return null;
-    }
-
-    const result = await response.json() as DomainLookupResult;
-    logger?.debug("Domain lookup successful", {
-      domain,
-      projectSlug: result.slug,
-      environments: result.environments?.map((e) => e.name),
-    });
-    return result;
-  } catch (error) {
-    logger?.error("Domain lookup failed", error as Error, { domain });
-    return null;
-  }
+    },
+    { "proxy.domain": domain },
+  );
 }
 
 export interface ProxyConfig {

@@ -1,6 +1,8 @@
-import { rendererLogger as logger, timeAsync } from "#veryfront/utils";
+import { rendererLogger as logger } from "#veryfront/utils";
 import type * as React from "react";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import type { ElementValidator } from "../element-validator/index.ts";
 import type { SSRRenderer } from "../ssr-renderer.ts";
 import { computeHash } from "../utils/index.ts";
@@ -57,18 +59,13 @@ export class SSROrchestrator {
     resetHeadCollector();
 
     const wantsStream = options?.delivery === "stream";
-    const { html, stream } = await timeAsync(
-      "ssr-react-render",
-      () =>
-        this.config.ssrRenderer.renderToHTML(
-          validatedElement,
-          {
-            mode: this.config.mode,
-            wantsStream,
-            debugMode: this.config.debugMode,
-          },
-        ),
-      "ssr-rendering",
+    const { html, stream } = await this.config.ssrRenderer.renderToHTML(
+      validatedElement,
+      {
+        mode: this.config.mode,
+        wantsStream,
+        debugMode: this.config.debugMode,
+      },
     );
 
     // Flush collected head data after render
@@ -116,14 +113,14 @@ export class SSROrchestrator {
     }
 
     // Otherwise, use buffered HTML generation
-    const ssrHash = await timeAsync(
-      "ssr-content-hash",
+    const ssrHash = await withSpan(
+      SpanNames.SSR_CONTENT_HASH,
       () => computeHash(html),
-      "ssr-rendering",
+      { "ssr.html_length": html.length },
     );
 
-    const fullHtml = await timeAsync(
-      "ssr-html-generation",
+    const fullHtml = await withSpan(
+      SpanNames.SSR_HTML_GENERATE,
       () =>
         this.config.htmlGenerator.generateFullHTML({
           ...generationContext,
@@ -132,7 +129,7 @@ export class SSROrchestrator {
           options: mergedOptions,
           collectedHead,
         }),
-      "ssr-rendering",
+      { "ssr.hash": ssrHash },
     );
 
     const finalStream = wantsStream ? this.createStream(fullHtml) : null;

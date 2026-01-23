@@ -180,4 +180,55 @@ export function getTraceContext(): { traceId?: string; spanId?: string } {
   return { traceId: ctx.traceId, spanId: ctx.spanId };
 }
 
+/**
+ * Span names for proxy tracing.
+ */
+export const ProxySpanNames = {
+  PROXY_REQUEST: "proxy.request",
+  PROXY_PROCESS: "proxy.process",
+  PROXY_TOKEN_FETCH: "proxy.token_fetch",
+  PROXY_DOMAIN_LOOKUP: "proxy.domain_lookup",
+  OAUTH_TOKEN_REQUEST: "oauth.token_request",
+  HTTP_CLIENT_FETCH: "http.client.fetch",
+} as const;
+
+/**
+ * Execute an async function within a tracing span.
+ * If tracing is disabled, executes the function directly.
+ */
+export async function withSpan<T>(
+  name: string,
+  fn: () => Promise<T>,
+  attributes?: Record<string, string | number | boolean>,
+): Promise<T> {
+  if (!traceApi || !tracer) {
+    return await fn();
+  }
+
+  const parentContext = traceApi.context.active();
+  const span = tracer.startSpan(name, {
+    kind: traceApi.SpanKind.INTERNAL,
+    attributes,
+  }, parentContext);
+
+  const spanContext = traceApi.trace.setSpan(parentContext, span);
+
+  try {
+    const result = await traceApi.context.with(spanContext, fn);
+    span.setStatus({ code: traceApi.SpanStatusCode.OK });
+    return result;
+  } catch (error) {
+    span.setStatus({
+      code: traceApi.SpanStatusCode.ERROR,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    if (error instanceof Error) {
+      span.recordException(error);
+    }
+    throw error;
+  } finally {
+    span.end();
+  }
+}
+
 export { initializeOTLP as initializeOTLPWithApis };

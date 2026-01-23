@@ -2,6 +2,7 @@ export const SpanNames = {
   // HTTP layer
   HTTP_REQUEST: "http.request",
   HTTP_HANDLER: "http.handler",
+  HTTP_CLIENT_FETCH: "http.client.fetch",
 
   // Rendering pipeline
   RENDER_PAGE: "render.page",
@@ -83,7 +84,14 @@ export const SpanNames = {
   // MDX ESM Loading
   MDX_LOAD_MODULE_ESM: "mdx.load_module_esm",
   MDX_PROCESS_VF_MODULES: "mdx.process_vf_modules",
+  MDX_FETCH_MODULE: "mdx.fetch_module",
   MDX_TRANSFORM_JSX: "mdx.transform_jsx",
   MDX_CACHE_HTTP: "mdx.cache_http",
   MDX_DYNAMIC_IMPORT: "mdx.dynamic_import",
+
+  // SSR Rendering Phases
+  SSR_REACT_RENDER: "ssr.react_render",
+  SSR_HTML_GENERATE: "ssr.html_generate",
+  SSR_CONTENT_HASH: "ssr.content_hash",
+  SSR_STREAM_CONVERT: "ssr.stream_convert",
 } as const;

@@ -22,9 +22,11 @@ import {
   extractContext,
   initializeOTLPWithApis,
   injectContext,
+  ProxySpanNames,
   shutdownOTLP,
   startServerSpan,
   withContext,
+  withSpan,
 } from "./tracing.ts";
 import { proxyLogger } from "./logger.ts";
 import { parseProjectDomain } from "../src/server/utils/domain-parser.ts";
@@ -256,12 +258,23 @@ function forwardToRenderer(req: Request): Promise<Response> {
       injectContext(newHeaders);
 
       const rendererUrl = new URL(url.pathname + url.search, RENDERER_URL);
-      const response = await fetch(rendererUrl.toString(), {
-        method: req.method,
-        headers: newHeaders,
-        body: req.body,
-        redirect: "manual",
-      });
+      const response = await withSpan(
+        ProxySpanNames.HTTP_CLIENT_FETCH,
+        () =>
+          fetch(rendererUrl.toString(), {
+            method: req.method,
+            headers: newHeaders,
+            body: req.body,
+            redirect: "manual",
+          }),
+        {
+          "http.method": req.method,
+          "http.url": rendererUrl.toString(),
+          "http.host": rendererUrl.host,
+          "proxy.target": "renderer",
+          "proxy.project_slug": ctx.projectSlug || "",
+        },
+      );
 
       const ms = Math.round(performance.now() - startTime);
       reqLogger.info(`${response.status} ${req.method} ${url.pathname}`, { ms });
@@ -312,19 +325,31 @@ async function handleApiProxy(req: Request): Promise<Response> {
   // Strip /_vf/api prefix and forward to API
   const apiPath = url.pathname.replace(/^\/_vf\/api/, "");
   const apiUrl = `${config.apiBaseUrl}${apiPath}${url.search}`;
+  const apiUrlObj = new URL(apiUrl);
 
   try {
-    const response = await fetch(apiUrl, {
-      method: req.method,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/json",
-        "Content-Type": req.headers.get("Content-Type") || "application/json",
+    const response = await withSpan(
+      ProxySpanNames.HTTP_CLIENT_FETCH,
+      () =>
+        fetch(apiUrl, {
+          method: req.method,
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json",
+            "Content-Type": req.headers.get("Content-Type") || "application/json",
+          },
+          body: req.method !== "GET" && req.method !== "HEAD"
+            ? req.body
+            : undefined,
+        }),
+      {
+        "http.method": req.method,
+        "http.url": apiUrl,
+        "http.host": apiUrlObj.host,
+        "proxy.target": "api",
+        "proxy.api_path": apiPath,
       },
-      body: req.method !== "GET" && req.method !== "HEAD"
-        ? req.body
-        : undefined,
-    });
+    );
 
     return new Response(response.body, {
       status: response.status,
