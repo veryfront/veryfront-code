@@ -33,6 +33,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private dirOps: DirectoryOperations;
   private statOps: StatOperations;
   private initialized = false;
+  /** Resolves when file list initialization is complete (for coordinating reads) */
+  private fileListReadyResolve: (() => void) | null = null;
+  /** Rejects when file list initialization fails */
+  private fileListReadyReject: ((error: Error) => void) | null = null;
   private projectData?: Project;
   private ws: WebSocket | null = null;
   private wsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -146,6 +150,14 @@ export class VeryfrontFSAdapter implements FSAdapter {
       return;
     }
 
+    // Create a promise that file reads will wait on until file list is ready
+    // This prevents individual API calls while bulk file list is being fetched
+    const fileListReadyPromise = new Promise<void>((resolve, reject) => {
+      this.fileListReadyResolve = resolve;
+      this.fileListReadyReject = reject;
+    });
+    this.readOps.setFileListReadyPromise(fileListReadyPromise);
+
     // Step 1: Initialize API client
     logger.debug("[VeryfrontFSAdapter] Step 1: client.initialize START", { projectSlug });
     const step1Start = performance.now();
@@ -197,54 +209,75 @@ export class VeryfrontFSAdapter implements FSAdapter {
     const cacheKey = buildFileListCacheKey(this.contentContext);
     logger.debug("[VeryfrontFSAdapter] Step 4: fetchFileList START", { projectSlug, cacheKey });
     const _step4Start = performance.now();
-    const files = await this.fetchFileList();
 
-    // Count files with content for Tailwind class extraction debugging
-    const filesWithContent = files.filter((f) => f.content);
-    const sourceFiles = files.filter((f) =>
-      f.path.endsWith(".tsx") || f.path.endsWith(".jsx") ||
-      f.path.endsWith(".mdx") || f.path.endsWith(".ts") || f.path.endsWith(".js")
-    );
-    const sourceFilesWithContent = sourceFiles.filter((f) => f.content);
+    try {
+      const files = await this.fetchFileList();
 
-    await this.cache.setAsync(cacheKey, files);
+      // Count files with content for Tailwind class extraction debugging
+      const filesWithContent = files.filter((f) => f.content);
+      const sourceFiles = files.filter((f) =>
+        f.path.endsWith(".tsx") || f.path.endsWith(".jsx") ||
+        f.path.endsWith(".mdx") || f.path.endsWith(".ts") || f.path.endsWith(".js")
+      );
+      const sourceFilesWithContent = sourceFiles.filter((f) => f.content);
 
-    logger.debug("[VeryfrontFSAdapter] Fetched files during initialization", {
-      cacheKey,
-      totalFiles: files.length,
-      filesWithContent: filesWithContent.length,
-      sourceFiles: sourceFiles.length,
-      sourceFilesWithContent: sourceFilesWithContent.length,
-    });
+      await this.cache.setAsync(cacheKey, files);
 
-    this.initialized = true;
+      // Signal that file list is ready - any waiting file reads can now proceed
+      // They'll find content in the file list cache instead of making individual API calls
+      if (this.fileListReadyResolve) {
+        this.fileListReadyResolve();
+        this.fileListReadyResolve = null;
+        this.fileListReadyReject = null;
+      }
 
-    logger.debug("[VeryfrontFSAdapter] initialize COMPLETE", {
-      projectSlug,
-      fileCount: files.length,
-      totalDuration: `${(performance.now() - initStartTime).toFixed(2)}ms`,
-    });
-
-    // Connect to WebSocket for real-time cache invalidation (branch mode only)
-    // Environment/release/domain modes serve immutable published content
-    // Note: In proxy mode, WebSocket uses the original M2M project-scoped token (this.apiToken),
-    // not per-request user tokens. setRequestToken() only updates the API client, not apiToken.
-    if (this.contentContext.sourceType === "branch") {
-      logger.debug("[VeryfrontFSAdapter] Initialized (branch mode)", {
-        projectId: this.client.getProjectId(),
-        files: files.length,
-        branch: this.contentContext.branch,
-        proxyMode: this.proxyMode,
+      logger.debug("[VeryfrontFSAdapter] Fetched files during initialization", {
+        cacheKey,
+        totalFiles: files.length,
+        filesWithContent: filesWithContent.length,
+        sourceFiles: sourceFiles.length,
+        sourceFilesWithContent: sourceFilesWithContent.length,
       });
-      this.connectWebSocket(projectId);
-    } else {
-      logger.debug("[VeryfrontFSAdapter] Initialized (published mode)", {
-        projectId: this.client.getProjectId(),
-        files: files.length,
-        sourceType: this.contentContext.sourceType,
-        environmentName: this.contentContext.environmentName,
-        releaseId: this.contentContext.releaseId,
+
+      this.initialized = true;
+
+      logger.debug("[VeryfrontFSAdapter] initialize COMPLETE", {
+        projectSlug,
+        fileCount: files.length,
+        totalDuration: `${(performance.now() - initStartTime).toFixed(2)}ms`,
       });
+
+      // Connect to WebSocket for real-time cache invalidation (branch mode only)
+      // Environment/release/domain modes serve immutable published content
+      // Note: In proxy mode, WebSocket uses the original M2M project-scoped token (this.apiToken),
+      // not per-request user tokens. setRequestToken() only updates the API client, not apiToken.
+      if (this.contentContext.sourceType === "branch") {
+        logger.debug("[VeryfrontFSAdapter] Initialized (branch mode)", {
+          projectId: this.client.getProjectId(),
+          files: files.length,
+          branch: this.contentContext.branch,
+          proxyMode: this.proxyMode,
+        });
+        this.connectWebSocket(projectId);
+      } else {
+        logger.debug("[VeryfrontFSAdapter] Initialized (published mode)", {
+          projectId: this.client.getProjectId(),
+          files: files.length,
+          sourceType: this.contentContext.sourceType,
+          environmentName: this.contentContext.environmentName,
+          releaseId: this.contentContext.releaseId,
+        });
+      }
+    } catch (error) {
+      // Signal failure to any waiting file reads so they can fall back to individual fetches
+      if (this.fileListReadyReject) {
+        this.fileListReadyReject(
+          error instanceof Error ? error : new Error(String(error)),
+        );
+        this.fileListReadyResolve = null;
+        this.fileListReadyReject = null;
+      }
+      throw error;
     }
   }
 

@@ -41,6 +41,8 @@ export class ReadOperations {
   // Cached file list index for O(1) lookups (built lazily)
   private fileListIndex: Map<string, string> | null = null;
   private fileListIndexKey: string | null = null;
+  // Promise that resolves when file list is available (set by adapter during init)
+  private fileListReadyPromise: Promise<void> | null = null;
 
   constructor(
     private readonly client: VeryfrontAPIClient,
@@ -55,6 +57,14 @@ export class ReadOperations {
       Array<{ path: string; content?: string }> | undefined
     >,
   ) {}
+
+  /**
+   * Set a promise that will be awaited before checking the file list cache.
+   * Called by the adapter during initialization to ensure file list is ready.
+   */
+  setFileListReadyPromise(promise: Promise<void>): void {
+    this.fileListReadyPromise = promise;
+  }
 
   /**
    * Clean up stale in-flight requests to prevent memory leaks.
@@ -143,8 +153,20 @@ export class ReadOperations {
    * Check if content is available in the cached file list.
    * Uses Map index for O(1) lookups instead of O(n) array scan.
    * Now async to support Redis cache lookup across pods.
+   * Waits for file list initialization if a ready promise is set.
    */
   private async getContentFromFileList(normalizedPath: string): Promise<string | undefined> {
+    // Wait for file list to be ready if initialization is in progress
+    // This prevents individual API calls when the bulk file list is being fetched
+    if (this.fileListReadyPromise) {
+      try {
+        await this.fileListReadyPromise;
+      } catch {
+        // Initialization failed, fall through to individual fetch
+        logger.debug("[ReadOperations] File list initialization failed, will fetch individually");
+      }
+    }
+
     const index = await this.getOrBuildFileListIndex();
     if (!index) {
       logger.debug("[ReadOperations] No file list cache available");
