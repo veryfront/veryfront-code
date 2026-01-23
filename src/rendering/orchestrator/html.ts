@@ -291,9 +291,10 @@ export class HTMLGenerator {
   ): Promise<HTMLGenerationOptions> {
     // Load app path, global CSS, and extract project classes in parallel
     // Note: tailwind.config.js is not loaded - Tailwind v4 uses CSS @theme directive instead
+    const stylesheetPath = this.config.config?.tailwind?.stylesheet || "globals.css";
     const [appComponentPath, globalCSS, projectClasses] = await Promise.all([
       this.resolveAppPath().then((p) => p ?? undefined),
-      this.loadProjectFile("globals.css"),
+      this.loadProjectFile(stylesheetPath),
       this.extractProjectClasses(),
     ]);
     logger.debug("[HTMLGenerator] App component resolution", {

@@ -296,6 +296,22 @@ export const veryfrontConfigSchema = z
       })
       .partial()
       .optional(),
+    tailwind: z
+      .object({
+        stylesheet: z.string().optional(),
+        plugins: z
+          .array(z.enum(["forms", "typography", "aspect-ratio", "container-queries"]))
+          .optional(),
+        theme: z
+          .object({
+            extend: z.record(z.unknown()).optional(),
+          })
+          .partial()
+          .optional(),
+        customCSS: z.string().optional(),
+      })
+      .partial()
+      .optional(),
   })
   .partial();
 

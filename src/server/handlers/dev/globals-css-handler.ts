@@ -29,9 +29,11 @@ export class GlobalsCSSHandler extends BaseHandler {
 
     // Wrap in proxy context for multi-project mode file resolution
     return await this.withProxyContext(ctx, async () => {
+      // Load stylesheet from project root (configurable via tailwind.stylesheet)
+      const stylesheetPath = ctx.config?.tailwind?.stylesheet || "globals.css";
+      const filePath = joinPath(ctx.projectDir, stylesheetPath);
+
       try {
-        // Load globals.css from project root
-        const filePath = joinPath(ctx.projectDir, "globals.css");
         const rawCss = await ctx.adapter.fs.readFile(filePath);
 
         // Compile using Tailwind's API - properly handles @theme, @utility, @variant, etc.
@@ -43,14 +45,14 @@ export class GlobalsCSSHandler extends BaseHandler {
 
         return this.respond(response);
       } catch (error) {
-        this.logDebug("globals.css not found", { error: this.getErrorMessage(error) }, ctx);
+        this.logDebug(`${stylesheetPath} not found`, { error: this.getErrorMessage(error) }, ctx);
 
         // Return empty CSS if file doesn't exist
         const response = this.createResponseBuilder(ctx)
           .withCache("no-cache")
           .withContentType(
             "text/css; charset=utf-8",
-            "/* globals.css not found */",
+            `/* ${stylesheetPath} not found */`,
             HTTP_NOT_FOUND,
           );
 

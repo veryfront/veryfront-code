@@ -233,6 +233,8 @@ export interface VeryfrontConfig {
     preferredRouter?: "app-router" | "pages-router";
   };
   tailwind?: {
+    /** Path to the global stylesheet (default: "globals.css") */
+    stylesheet?: string;
     /** Enable built-in Tailwind CDN plugins (forms, typography, aspect-ratio, container-queries) */
     plugins?: Array<"forms" | "typography" | "aspect-ratio" | "container-queries">;
     /** Extend the Tailwind theme (merged with veryfront defaults) */
