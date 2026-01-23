@@ -111,9 +111,7 @@ function generateMinimalErrorHtml(
   pathname?: string,
 ): string {
   const pathDisplay = pathname ? ` "${pathname}"` : "";
-  const fullMessage = pathname
-    ? message.replace("{path}", pathDisplay)
-    : message;
+  const fullMessage = pathname ? message.replace("{path}", pathDisplay) : message;
 
   return `<!DOCTYPE html>
 <html lang="en">

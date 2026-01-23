@@ -269,4 +269,3 @@ async function renderErrorPage(
     .withCache("no-cache")
     .html(html, statusCode);
 }
-
