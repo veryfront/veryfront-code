@@ -1,4 +1,3 @@
-import { readSync as nodeReadSync } from "node:fs";
 import { isBun as IS_BUN, isDeno as IS_DENO } from "./runtime.ts";
 
 const nodeProcess = (globalThis as { process?: typeof import("node:process") }).process;
@@ -449,44 +448,20 @@ export async function writeStdoutAsync(data: Uint8Array): Promise<number> {
 }
 
 /**
- * Synchronous prompt function that works across Deno, Bun, and Node.js
- * Displays a message and reads user input from stdin
+ * Synchronous prompt function that works across Deno and Bun.
+ * Displays a message and reads user input from stdin.
+ *
+ * Note: This relies on globalThis.prompt which is available in Deno and Bun.
+ * Returns null in environments where prompt is not available (e.g., Node.js ESM).
  */
 export function promptSync(message?: string): string | null {
-  // Use globalThis.prompt when available (Deno, Bun, browsers)
+  // Use globalThis.prompt when available (Deno, Bun)
   // This check comes first to allow tests to mock globalThis.prompt
   if (typeof globalThis.prompt === "function") {
     return globalThis.prompt(message ?? "") ?? null;
   }
 
-  if (hasNodeProcess) {
-    // Print the message
-    if (message) {
-      nodeProcess!.stdout.write(message + " ");
-    }
-
-    // Read synchronously using fs
-    // This works by reading from file descriptor 0 (stdin)
-    // Use Uint8Array for cross-platform compatibility
-    const bufferSize = 1024;
-    const uint8Array = new Uint8Array(bufferSize);
-    let input = "";
-
-    try {
-      // Read from stdin (fd 0) synchronously
-      const bytesRead = nodeReadSync(0, uint8Array, 0, bufferSize, null);
-      if (bytesRead > 0) {
-        const decoder = new TextDecoder("utf-8");
-        input = decoder.decode(uint8Array.subarray(0, bytesRead)).trim();
-      }
-    } catch {
-      // If stdin is not available or EOF, return null
-      return null;
-    }
-
-    return input || null;
-  }
-
+  // Not available in this runtime (e.g., Node.js ESM, browsers)
   return null;
 }
 
