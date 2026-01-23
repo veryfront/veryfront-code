@@ -12,8 +12,10 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import { getConfig } from "#veryfront/config";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import type { HandlerContext } from "../../handlers/types.ts";
+import { buildEnrichedContext } from "../../context/enriched-context.ts";
 import {
   createRenderContext,
+  createRenderContextFromEnriched,
   destroyRenderer as destroySharedRenderer,
   getRenderer,
   initializeRenderer,
@@ -115,13 +117,23 @@ async function getOrInitRenderer(): Promise<Renderer> {
 /**
  * Create a render context from handler context, loading config if needed.
  *
- * IMPORTANT: For proxy mode (API-backed) projects, ctx.config is intentionally
- * set to undefined to signal that we should load the project-specific config
- * from the API. We use projectId or projectSlug as the cache key to ensure
- * correct per-project config caching.
+ * Fast path: If ctx.enriched is present (built in universal-handler), use it directly.
+ * This avoids redundant config loading and computation.
+ *
+ * Slow path (proxy mode): ctx.config is intentionally set to undefined to signal
+ * that we should load the project-specific config from the API. We then build
+ * EnrichedContext after config is loaded.
  */
 async function createContextFromHandler(ctx: HandlerContext): Promise<RenderContext> {
   const projectSlug = ctx.projectSlug || "unknown";
+
+  // Fast path: EnrichedContext already built (local projects)
+  if (ctx.enriched) {
+    logger.debug("[RendererAdapter] Using pre-built EnrichedContext", { projectSlug });
+    return createRenderContextFromEnriched(ctx.enriched);
+  }
+
+  // Slow path: Need to load config and build context (proxy mode)
   let config = ctx.config;
 
   if (!config) {
@@ -142,10 +154,37 @@ async function createContextFromHandler(ctx: HandlerContext): Promise<RenderCont
     });
   }
 
-  logger.debug("[RendererAdapter] createRenderContext START", { projectSlug });
+  // Build EnrichedContext now that we have config
+  // This ensures consistent context throughout the pipeline
   const contextStartTime = performance.now();
-  const renderContext = createRenderContext({ ...ctx, config });
-  logger.debug("[RendererAdapter] createRenderContext DONE", {
+
+  // Build EnrichedContext with all resolved data
+  const enriched = buildEnrichedContext({
+    projectId: ctx.projectId ?? ctx.projectSlug ?? "__single__",
+    projectSlug: ctx.projectSlug ?? ctx.projectId ?? "__single__",
+    projectDir: ctx.projectDir,
+    token: ctx.proxyToken ?? "",
+    environment: ctx.requestContext?.mode ?? "preview",
+    branch: ctx.requestContext?.branch ?? null,
+    isLocalDev: ctx.requestContext?.isLocalDev ?? false,
+    parsedDomain: ctx.parsedDomain ?? {
+      slug: null,
+      branch: null,
+      environment: null,
+      isVeryfrontDomain: false,
+      isDraft: false,
+      allowIframeEmbed: false,
+    },
+    adapter: ctx.adapter,
+    config,
+    releaseId: ctx.releaseId,
+    environmentName: ctx.environmentName,
+    moduleServerUrl: ctx.moduleServerUrl,
+    debug: ctx.debug,
+  });
+
+  const renderContext = createRenderContextFromEnriched(enriched);
+  logger.debug("[RendererAdapter] createRenderContext DONE (built EnrichedContext)", {
     projectSlug,
     duration: `${(performance.now() - contextStartTime).toFixed(2)}ms`,
   });

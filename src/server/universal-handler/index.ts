@@ -81,6 +81,7 @@ import { SecurityConfigLoader } from "#veryfront/security/http/config.ts";
 import { getConfig } from "#veryfront/config/loader.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { createRequestContext } from "../context/request-context.ts";
+import { buildEnrichedContext } from "../context/enriched-context.ts";
 
 // Import handlers (from new location)
 import { AuthHandler } from "#veryfront/security/http/auth.ts";
@@ -629,6 +630,29 @@ export function createVeryfrontHandler(
           });
         }
 
+        // Build EnrichedContext when all required data is available
+        // This consolidates all resolved data into a single source of truth
+        // Note: If config is undefined (proxy mode), EnrichedContext will be built later
+        // in createContextFromHandler after config is loaded via the API adapter
+        const enrichedContext = effectiveConfig && projectSlug
+          ? buildEnrichedContext({
+            projectId: projectId ?? projectSlug,
+            projectSlug,
+            projectDir: effectiveProjectDir,
+            token: isLocalProject ? "" : (proxyToken ?? ""),
+            environment: reqCtx.mode,
+            branch: reqCtx.branch,
+            isLocalDev: reqCtx.isLocalDev,
+            parsedDomain,
+            adapter: effectiveAdapter,
+            config: effectiveConfig,
+            releaseId,
+            environmentName,
+            moduleServerUrl: opts.moduleServerUrl,
+            debug: opts.debug,
+          })
+          : undefined;
+
         // Create handler context
         const ctx: HandlerContext = {
           projectDir: effectiveProjectDir,
@@ -646,6 +670,7 @@ export function createVeryfrontHandler(
           environmentName,
           requestContext: reqCtx, // Contains mode (preview/production) - use ctx.requestContext?.mode
           routeRegistry: registry,
+          enriched: enrichedContext, // Unified context when available
         };
 
         // Track metrics

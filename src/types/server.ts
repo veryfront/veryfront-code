@@ -1,6 +1,7 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { RequestContext } from "../server/context/request-context.ts";
+import type { EnrichedContext } from "../server/context/enriched-context.ts";
 
 export interface ParsedDomain {
   /** Project slug extracted from host (e.g., "my-project" from "my-project.preview.veryfront.dev") */
@@ -72,6 +73,12 @@ export interface HandlerContext {
       handlerNames: string[];
     };
   };
+  /**
+   * Enriched context containing all resolved request data.
+   * Built once at request entry, passed through all stages.
+   * When present, use this instead of individual fields for better performance.
+   */
+  enriched?: EnrichedContext;
 }
 
 export interface HandlerResult {

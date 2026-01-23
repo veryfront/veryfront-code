@@ -11,6 +11,7 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { HandlerContext } from "../../server/handlers/types.ts";
+import type { EnrichedContext } from "../../server/context/enriched-context.ts";
 import {
   buildRenderCacheKey,
   buildRenderCachePrefix,
@@ -101,6 +102,10 @@ export interface CreateRenderContextOptions {
  * It extracts all necessary data from the handler context and computes
  * the cache prefix for tenant isolation.
  *
+ * When EnrichedContext is available (ctx.enriched), uses pre-computed values
+ * to avoid redundant computation. Otherwise falls back to computing from
+ * individual HandlerContext fields.
+ *
  * @param ctx - Handler context from request processing
  * @param options - Optional overrides
  * @returns Fully populated RenderContext
@@ -110,6 +115,12 @@ export function createRenderContext(
   ctx: HandlerContext,
   options?: CreateRenderContextOptions,
 ): RenderContext {
+  // Fast path: Use EnrichedContext if available (pre-computed values)
+  if (ctx.enriched) {
+    return createRenderContextFromEnriched(ctx.enriched, options);
+  }
+
+  // Fallback: Compute from individual HandlerContext fields
   // Validate required fields
   if (!ctx.config) {
     throw new Error("RenderContext requires config to be pre-loaded");
@@ -145,6 +156,37 @@ export function createRenderContext(
     moduleServerUrl: options?.moduleServerUrl ?? ctx.moduleServerUrl,
     port: options?.port,
     nonce: options?.nonce,
+  };
+}
+
+/**
+ * Create RenderContext from EnrichedContext (fast path)
+ *
+ * Uses pre-computed values from EnrichedContext, avoiding redundant
+ * computation of projectId, cachePrefix, environment, etc.
+ *
+ * @param enriched - Pre-built EnrichedContext
+ * @param options - Optional overrides
+ * @returns RenderContext with values from EnrichedContext
+ */
+export function createRenderContextFromEnriched(
+  enriched: EnrichedContext,
+  options?: CreateRenderContextOptions,
+): RenderContext {
+  return {
+    projectId: enriched.projectId,
+    projectSlug: enriched.projectSlug,
+    projectDir: enriched.projectDir,
+    config: enriched.config,
+    mode: enriched.mode,
+    adapter: enriched.adapter,
+    cachePrefix: enriched.cachePrefix, // Already computed in EnrichedContext
+    environment: enriched.environment,
+    releaseId: enriched.releaseId,
+    proxyToken: enriched.token || undefined,
+    moduleServerUrl: options?.moduleServerUrl ?? enriched.moduleServerUrl,
+    port: options?.port,
+    nonce: options?.nonce ?? enriched.nonce,
   };
 }
 

@@ -36,6 +36,7 @@ import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/con
 import { ErrorCode, VeryfrontError } from "#veryfront/errors/index.ts";
 import {
   createRenderContext,
+  createRenderContextFromEnriched,
   type CreateRenderContextOptions,
   type RenderContext,
 } from "./context/render-context.ts";
@@ -528,7 +529,12 @@ export class Renderer {
  *
  * Convenience re-export for use in handlers.
  */
-export { createRenderContext, type CreateRenderContextOptions, type RenderContext };
+export {
+  createRenderContext,
+  createRenderContextFromEnriched,
+  type CreateRenderContextOptions,
+  type RenderContext,
+};
 
 /**
  * Singleton renderer instance
