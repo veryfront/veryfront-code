@@ -147,7 +147,7 @@ async function flushBatch(ctx: RequestCacheContext, backend: CacheBackend): Prom
   }
 
   // Deduplicate keys
-  const uniqueKeys = [...new Set(requests.map(r => r.key))];
+  const uniqueKeys = [...new Set(requests.map((r) => r.key))];
 
   logger.debug("[RequestCacheBatcher] Flushing batch", {
     requested: requests.length,
@@ -164,7 +164,7 @@ async function flushBatch(ctx: RequestCacheContext, backend: CacheBackend): Prom
     } else {
       // Fall back to individual requests
       results = new Map();
-      const promises = uniqueKeys.map(async key => {
+      const promises = uniqueKeys.map(async (key) => {
         const value = await backend.get(key);
         results.set(key, value);
       });

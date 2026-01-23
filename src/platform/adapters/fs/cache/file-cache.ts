@@ -20,7 +20,10 @@ import type { CacheEntry, CacheStats, FileCacheOptions } from "./types.ts";
 import { estimateSize } from "./size-estimator.ts";
 // Direct import to avoid circular dependency through cache/index.ts barrel
 import { type CacheBackend, CacheBackends, MemoryCacheBackend } from "../../../../cache/backend.ts";
-import { getCachedWithBatching, setInRequestCache } from "../../../../cache/request-cache-batcher.ts";
+import {
+  getCachedWithBatching,
+  setInRequestCache,
+} from "../../../../cache/request-cache-batcher.ts";
 
 // Register with memory profiler
 // Note: entries shows backend size when available, -1 for distributed backends

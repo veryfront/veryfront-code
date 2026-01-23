@@ -243,7 +243,7 @@ export class RedisCacheBackend implements CacheBackend {
     try {
       // Redis client doesn't have mGet, use parallel individual gets
       // This is still fast since Redis is local
-      const promises = keys.map(async key => {
+      const promises = keys.map(async (key) => {
         const value = await this.get(key);
         return { key, value };
       });
@@ -273,7 +273,7 @@ export class RedisCacheBackend implements CacheBackend {
     try {
       // Redis client doesn't have multi/pipeline, use parallel individual sets
       // This is still fast since Redis is local
-      const promises = entries.map(entry => {
+      const promises = entries.map((entry) => {
         const ttl = entry.ttl ?? 300;
         return this.set(entry.key, entry.value, ttl);
       });
@@ -456,7 +456,7 @@ export class ApiCacheBackend implements CacheBackend {
     const results = new Map<string, string | null>();
     if (keys.length === 0) return results;
 
-    const prefixedKeys = keys.map(k => this.prefixKey(k));
+    const prefixedKeys = keys.map((k) => this.prefixKey(k));
     const response = await this.request<{ values: Record<string, string | null> }>(
       "POST",
       "/get-batch",
@@ -484,7 +484,7 @@ export class ApiCacheBackend implements CacheBackend {
   /** Helper to fetch keys individually (used as fallback when batch fails). */
   private async getIndividually(keys: string[]): Promise<Map<string, string | null>> {
     const results = await Promise.all(
-      keys.map(async key => ({ key, value: await this.get(key) })),
+      keys.map(async (key) => ({ key, value: await this.get(key) })),
     );
     return new Map(results.map(({ key, value }) => [key, value]));
   }
@@ -500,7 +500,7 @@ export class ApiCacheBackend implements CacheBackend {
   async setBatch(entries: Array<{ key: string; value: string; ttl?: number }>): Promise<void> {
     if (entries.length === 0) return;
 
-    const prefixedEntries = entries.map(e => ({
+    const prefixedEntries = entries.map((e) => ({
       key: this.prefixKey(e.key),
       value: e.value,
       ttl: e.ttl,
