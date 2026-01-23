@@ -18,7 +18,16 @@ export interface ContentContextProvider {
    * Optional for backward compatibility with tests/mocks.
    */
   getFileList?: () => Promise<
-    Array<{ id?: string; path: string; content?: string; type?: string; size?: number; updated_at?: string }> | undefined
+    Array<
+      {
+        id?: string;
+        path: string;
+        content?: string;
+        type?: string;
+        size?: number;
+        updated_at?: string;
+      }
+    > | undefined
   >;
 }
 
