@@ -10,6 +10,8 @@
 import { join } from "#std/path.ts";
 import React from "react";
 import { rendererLogger as logger } from "#veryfront/utils";
+import { withSpan } from "#veryfront/observability/tracing/index.ts";
+import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { getCacheNamespace } from "#veryfront/utils/cache/keys/namespace.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
@@ -408,6 +410,24 @@ export async function loadModuleESM(
   compiledProgramCode: string,
   context: ESMLoaderContext,
 ): Promise<MDXModule> {
+  const projectSlug = context.projectSlug || "unknown";
+
+  return await withSpan(
+    SpanNames.MDX_LOAD_MODULE_ESM,
+    () => doLoadModuleESM(compiledProgramCode, context),
+    {
+      attributes: {
+        "mdx.project_slug": projectSlug,
+        "mdx.code_length": compiledProgramCode.length,
+      },
+    },
+  );
+}
+
+async function doLoadModuleESM(
+  compiledProgramCode: string,
+  context: ESMLoaderContext,
+): Promise<MDXModule> {
   const loadStart = performance.now();
   const projectSlug = context.projectSlug || "unknown";
 
@@ -442,12 +462,20 @@ export async function loadModuleESM(
     // Step 3: Find and process /_vf_modules/ imports
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: processVfModuleImports START`, { projectSlug });
     const vfModuleImports = findVfModuleImports(rewritten);
-    rewritten = await processVfModuleImports(rewritten, vfModuleImports, context, projectDir);
+    rewritten = await withSpan(
+      SpanNames.MDX_PROCESS_VF_MODULES,
+      () => processVfModuleImports(rewritten, vfModuleImports, context, projectDir),
+      { attributes: { "mdx.vf_module_count": vfModuleImports.length } },
+    );
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: processVfModuleImports DONE`, { projectSlug });
 
     // Step 4: Transform JSX imports
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformJsxImports START`, { projectSlug });
-    rewritten = await transformJsxImports(rewritten, adapter, esmCacheDir);
+    rewritten = await withSpan(
+      SpanNames.MDX_TRANSFORM_JSX,
+      () => transformJsxImports(rewritten, adapter, esmCacheDir),
+      { attributes: { "mdx.project_slug": projectSlug } },
+    );
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformJsxImports DONE`, { projectSlug });
 
     // Add MDXLayout export if present
@@ -457,7 +485,11 @@ export async function loadModuleESM(
 
     // Step 5: Cache HTTP imports to local file:// paths
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: cacheHttpImports START`, { projectSlug });
-    rewritten = await cacheHttpImports(rewritten, importMap);
+    rewritten = await withSpan(
+      SpanNames.MDX_CACHE_HTTP,
+      () => cacheHttpImports(rewritten, importMap),
+      { attributes: { "mdx.project_slug": projectSlug } },
+    );
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: cacheHttpImports DONE`, { projectSlug });
 
     // Step 5.5: Transform React imports to local file:// paths for Bun/Node
@@ -541,9 +573,16 @@ export async function loadModuleESM(
     // Set up browser globals before importing
     setupSSRGlobals();
 
-    const mod = await import(`file://${filePath}?v=${codeHash}`) as Record<string, unknown> & {
-      __vfLayout?: React.ComponentType;
-    };
+    const mod = await withSpan(
+      SpanNames.MDX_DYNAMIC_IMPORT,
+      () =>
+        import(`file://${filePath}?v=${codeHash}`) as Promise<
+          Record<string, unknown> & {
+            __vfLayout?: React.ComponentType;
+          }
+        >,
+      { attributes: { "mdx.file_path": filePath.split("/").pop() || filePath } },
+    );
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: dynamic import DONE`, {
       projectSlug,
       exports: Object.keys(mod),

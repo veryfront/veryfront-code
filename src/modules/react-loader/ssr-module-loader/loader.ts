@@ -23,6 +23,8 @@ import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
 import { injectContext } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { withSpan } from "#veryfront/observability/tracing/index.ts";
+import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { extractComponent } from "../extract-component.ts";
 import {
   CIRCUIT_BREAKER_RESET_MS,
@@ -68,90 +70,109 @@ export class SSRModuleLoader {
     filePath: string,
     source: string,
   ): Promise<React.ComponentType<Record<string, unknown>>> {
-    // Check circuit breaker before attempting load
-    const circuitKey = this.getCacheKey(filePath);
-    const failureRecord = failedComponents.get(circuitKey);
-    if (failureRecord) {
-      const timeSinceFailure = Date.now() - failureRecord.lastFailure;
-      if (
-        failureRecord.count >= CIRCUIT_BREAKER_THRESHOLD &&
-        timeSinceFailure < CIRCUIT_BREAKER_RESET_MS
-      ) {
-        throw toError(createError({
-          type: "build",
-          message:
-            `Component ${filePath} is temporarily blocked due to repeated failures. Will retry in ${
-              Math.ceil((CIRCUIT_BREAKER_RESET_MS - timeSinceFailure) / 1000)
-            }s.`,
-          context: {
-            file: filePath,
-            phase: "circuit-breaker",
-            failures: failureRecord.count,
-          },
-        }));
-      }
-      // Reset circuit breaker if enough time has passed
-      if (timeSinceFailure >= CIRCUIT_BREAKER_RESET_MS) {
-        failedComponents.delete(circuitKey);
-      }
-    }
+    const fileName = filePath.split("/").pop() || filePath;
 
-    // Reset missing dependencies for this load
-    this.missingDependencies = [];
+    return await withSpan(
+      SpanNames.SSR_LOAD_MODULE,
+      async () => {
+        // Check circuit breaker before attempting load
+        const circuitKey = this.getCacheKey(filePath);
+        const failureRecord = failedComponents.get(circuitKey);
+        if (failureRecord) {
+          const timeSinceFailure = Date.now() - failureRecord.lastFailure;
+          if (
+            failureRecord.count >= CIRCUIT_BREAKER_THRESHOLD &&
+            timeSinceFailure < CIRCUIT_BREAKER_RESET_MS
+          ) {
+            throw toError(createError({
+              type: "build",
+              message:
+                `Component ${filePath} is temporarily blocked due to repeated failures. Will retry in ${
+                  Math.ceil((CIRCUIT_BREAKER_RESET_MS - timeSinceFailure) / 1000)
+                }s.`,
+              context: {
+                file: filePath,
+                phase: "circuit-breaker",
+                failures: failureRecord.count,
+              },
+            }));
+          }
+          // Reset circuit breaker if enough time has passed
+          if (timeSinceFailure >= CIRCUIT_BREAKER_RESET_MS) {
+            failedComponents.delete(circuitKey);
+          }
+        }
 
-    try {
-      await this.transformWithDependencies(filePath, source);
+        // Reset missing dependencies for this load
+        this.missingDependencies = [];
 
-      // Check if any dependencies were missing
-      if (this.missingDependencies.length > 0) {
-        const missingList = this.missingDependencies
-          .map((m) => `  - ${m.specifier} (from ${m.fromFile.slice(-40)}): ${m.reason}`)
-          .join("\n");
+        try {
+          await this.transformWithDependencies(filePath, source);
 
-        logger.error("[SSR-MODULE-LOADER] Missing dependencies detected", {
-          file: filePath.slice(-60),
-          missing: this.missingDependencies.length,
-          details: this.missingDependencies,
-        });
+          // Check if any dependencies were missing
+          if (this.missingDependencies.length > 0) {
+            const missingList = this.missingDependencies
+              .map((m) => `  - ${m.specifier} (from ${m.fromFile.slice(-40)}): ${m.reason}`)
+              .join("\n");
 
-        throw toError(createError({
-          type: "build",
-          message: `Component has missing dependencies:\n${missingList}`,
-          context: {
-            file: filePath,
-            phase: "dependency-resolution",
-            missing: this.missingDependencies,
-          },
-        }));
-      }
+            logger.error("[SSR-MODULE-LOADER] Missing dependencies detected", {
+              file: filePath.slice(-60),
+              missing: this.missingDependencies.length,
+              details: this.missingDependencies,
+            });
 
-      const cacheKey = this.getCacheKey(filePath);
-      const cacheEntry = globalModuleCache.get(cacheKey);
-      if (!cacheEntry) {
-        throw toError(createError({
-          type: "build",
-          message: `Failed to transform module: ${filePath}`,
-          context: { file: filePath, phase: "transform" },
-        }));
-      }
+            throw toError(createError({
+              type: "build",
+              message: `Component has missing dependencies:\n${missingList}`,
+              context: {
+                file: filePath,
+                phase: "dependency-resolution",
+                missing: this.missingDependencies,
+              },
+            }));
+          }
 
-      const mod = await import(
-        `file://${cacheEntry.tempPath}?v=${cacheEntry.contentHash}`
-      );
+          const cacheKey = this.getCacheKey(filePath);
+          const cacheEntry = globalModuleCache.get(cacheKey);
+          if (!cacheEntry) {
+            throw toError(createError({
+              type: "build",
+              message: `Failed to transform module: ${filePath}`,
+              context: { file: filePath, phase: "transform" },
+            }));
+          }
 
-      // Success - reset failure count
-      failedComponents.delete(circuitKey);
+          const mod = await withSpan(
+            SpanNames.SSR_DYNAMIC_IMPORT,
+            () =>
+              import(
+                `file://${cacheEntry.tempPath}?v=${cacheEntry.contentHash}`
+              ),
+            { attributes: { "ssr.file": fileName } },
+          );
 
-      return extractComponent(mod, filePath);
-    } catch (error) {
-      // Track failure for circuit breaker
-      const existing = failedComponents.get(circuitKey);
-      failedComponents.set(circuitKey, {
-        count: (existing?.count ?? 0) + 1,
-        lastFailure: Date.now(),
-      });
-      throw error;
-    }
+          // Success - reset failure count
+          failedComponents.delete(circuitKey);
+
+          return extractComponent(mod, filePath);
+        } catch (error) {
+          // Track failure for circuit breaker
+          const existing = failedComponents.get(circuitKey);
+          failedComponents.set(circuitKey, {
+            count: (existing?.count ?? 0) + 1,
+            lastFailure: Date.now(),
+          });
+          throw error;
+        }
+      },
+      {
+        attributes: {
+          "ssr.file": fileName,
+          "ssr.project_id": this.options.projectId,
+          "ssr.source_length": source.length,
+        },
+      },
+    );
   }
 
   private getCacheKey(filePath: string): string {
@@ -285,6 +306,27 @@ export class SSRModuleLoader {
     source?: string,
     depth: number = 0,
   ): Promise<void> {
+    const fileName = filePath.split("/").pop() || filePath;
+
+    return await withSpan(
+      SpanNames.SSR_TRANSFORM_DEPENDENCIES,
+      async () => {
+        await this.doTransformWithDependencies(filePath, source, depth);
+      },
+      {
+        attributes: {
+          "ssr.file": fileName,
+          "ssr.depth": depth,
+        },
+      },
+    );
+  }
+
+  private async doTransformWithDependencies(
+    filePath: string,
+    source?: string,
+    depth: number = 0,
+  ): Promise<void> {
     // Prevent infinite recursion with depth limit
     if (depth > MAX_TRANSFORM_DEPTH) {
       logger.warn("[SSR-MODULE-LOADER] Max transform depth exceeded", {
@@ -341,10 +383,15 @@ export class SSRModuleLoader {
     const existingTransform = globalInProgress.get(inProgressKey);
     if (existingTransform) {
       try {
-        await withTimeoutThrow(
-          existingTransform,
-          IN_PROGRESS_WAIT_TIMEOUT_MS,
-          `Waiting for in-progress transform of ${filePath}`,
+        await withSpan(
+          SpanNames.SSR_WAIT_IN_PROGRESS,
+          () =>
+            withTimeoutThrow(
+              existingTransform,
+              IN_PROGRESS_WAIT_TIMEOUT_MS,
+              `Waiting for in-progress transform of ${filePath}`,
+            ),
+          { attributes: { "ssr.file": filePath.split("/").pop() || filePath } },
         );
         return;
       } catch (error) {
@@ -455,12 +502,17 @@ export class SSRModuleLoader {
           apiBaseUrl: this.options.apiBaseUrl,
         };
 
-        let transformed = await transformToESM(
-          code,
-          filePath,
-          this.options.projectDir,
-          this.options.adapter,
-          transformOpts,
+        let transformed = await withSpan(
+          SpanNames.SSR_TRANSFORM_SINGLE,
+          () =>
+            transformToESM(
+              code,
+              filePath,
+              this.options.projectDir,
+              this.options.adapter,
+              transformOpts,
+            ),
+          { attributes: { "ssr.file": filePath.split("/").pop() || filePath } },
         );
 
         // Rewrite cross-project imports to file:// paths

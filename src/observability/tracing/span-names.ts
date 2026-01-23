@@ -72,4 +72,18 @@ export const SpanNames = {
 
   // Static file serving
   STATIC_SERVE: "static.serve",
+
+  // SSR Module Loader
+  SSR_LOAD_MODULE: "ssr.load_module",
+  SSR_TRANSFORM_DEPENDENCIES: "ssr.transform_dependencies",
+  SSR_TRANSFORM_SINGLE: "ssr.transform_single",
+  SSR_DYNAMIC_IMPORT: "ssr.dynamic_import",
+  SSR_WAIT_IN_PROGRESS: "ssr.wait_in_progress",
+
+  // MDX ESM Loading
+  MDX_LOAD_MODULE_ESM: "mdx.load_module_esm",
+  MDX_PROCESS_VF_MODULES: "mdx.process_vf_modules",
+  MDX_TRANSFORM_JSX: "mdx.transform_jsx",
+  MDX_CACHE_HTTP: "mdx.cache_http",
+  MDX_DYNAMIC_IMPORT: "mdx.dynamic_import",
 } as const;
