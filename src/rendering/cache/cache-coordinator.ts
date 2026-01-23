@@ -32,8 +32,10 @@ export class CacheCoordinator {
     const cached = await this.store.get(slug);
 
     if (cached && !this.isExpired(cached)) {
+      // Return cached result directly - no cloning needed on reads
+      // The cache stores immutable data; callers should not mutate it
       return {
-        cachedResult: this.cloneResult(cached.result),
+        cachedResult: cached.result,
         depAwareSlug: slug,
         moduleCacheKey: slug,
         cachedModule: cached.result.pageModule,
@@ -55,8 +57,19 @@ export class CacheCoordinator {
       return;
     }
 
+    // Store result directly - shallow copy of primitives is sufficient
+    // The result object is not mutated after rendering completes
     const payload: CachePayload = {
-      result: this.cloneResult(result),
+      result: {
+        html: result.html,
+        css: result.css,
+        frontmatter: result.frontmatter,
+        headings: result.headings,
+        nodeMap: result.nodeMap,
+        stream: null,
+        ssrHash: result.ssrHash,
+        pageModule: result.pageModule,
+      },
       storedAt: Date.now(),
       expiresAt: this.ttlMs ? Date.now() + this.ttlMs : undefined,
     };
@@ -78,23 +91,5 @@ export class CacheCoordinator {
 
   private isExpired(entry: CachePayload): boolean {
     return typeof entry.expiresAt === "number" && Date.now() > entry.expiresAt;
-  }
-
-  private cloneResult(result: RenderResult): RenderResult {
-    const cloned: RenderResult = {
-      html: result.html,
-      css: result.css,
-      frontmatter: { ...result.frontmatter },
-      headings: result.headings ? [...result.headings] : [],
-      nodeMap: result.nodeMap ? new Map(result.nodeMap) : undefined,
-      stream: null,
-      ssrHash: result.ssrHash,
-    };
-
-    if (result.pageModule) {
-      cloned.pageModule = { ...result.pageModule };
-    }
-
-    return cloned;
   }
 }

@@ -7,33 +7,37 @@ export async function computeDepsHash(
   nestedLayouts: LayoutItem[],
   adapter: RuntimeAdapter,
 ): Promise<string> {
-  let depsHash = "";
   try {
-    const depParts: string[] = [];
+    // Parallelize all hash computations for better performance
+    const hashPromises: Promise<string>[] = [];
 
+    // Hash the main layout bundle
     if (layoutBundle) {
       const code = String(layoutBundle.compiledCode || "");
-      depParts.push(await computeHash(code));
+      hashPromises.push(computeHash(code));
     }
 
+    // Hash all nested layouts in parallel
     for (const item of nestedLayouts) {
       if (!item) continue;
       if (item.componentPath) {
-        try {
-          const src = await adapter.fs.readFile(item.componentPath);
-          depParts.push(await computeHash(src));
-        } catch (e) {
-          logger.debug("[layout] reading tsx layout for dep hash failed", e as Error);
-        }
+        hashPromises.push(
+          adapter.fs.readFile(item.componentPath)
+            .then((src) => computeHash(src))
+            .catch((e) => {
+              logger.debug("[layout] reading tsx layout for dep hash failed", e as Error);
+              return "";
+            }),
+        );
       } else if (item.bundle?.compiledCode) {
-        depParts.push(await computeHash(String(item.bundle.compiledCode)));
+        hashPromises.push(computeHash(String(item.bundle.compiledCode)));
       }
     }
 
-    depsHash = depParts.join(":");
+    const depParts = await Promise.all(hashPromises);
+    return depParts.filter(Boolean).join(":");
   } catch (e) {
     logger.debug("[layout] dep hash computation failed", e as Error);
+    return "";
   }
-
-  return depsHash;
 }

@@ -165,23 +165,20 @@ async function resolveLocalImportPath(
     return null;
   }
 
-  // Try with extensions
-  for (const ext of EXTENSIONS) {
-    const fullPath = basePath + ext;
-    if (await checkFileExists(fullPath, adapter)) {
-      return fullPath;
-    }
-  }
+  // Parallelize extension checks for better performance
+  // Check all extensions and index files concurrently
+  const candidates = [
+    ...EXTENSIONS.map((ext) => basePath + ext),
+    ...EXTENSIONS.map((ext) => basePath + "/index" + ext),
+  ];
 
-  // Try index files
-  for (const ext of EXTENSIONS) {
-    const indexPath = basePath + "/index" + ext;
-    if (await checkFileExists(indexPath, adapter)) {
-      return indexPath;
-    }
-  }
+  const results = await Promise.all(
+    candidates.map(async (path) => ({ path, exists: await checkFileExists(path, adapter) })),
+  );
 
-  return null;
+  // Return first match (maintains extension priority order)
+  const found = results.find((r) => r.exists);
+  return found?.path ?? null;
 }
 
 /**
@@ -202,17 +199,20 @@ async function resolveAliasImportPath(
   // This avoids expensive project file lookups for framework utilities
   if (normalizedPath.startsWith("lib/")) {
     const fs = createFileSystem();
-    for (const ext of EXTENSIONS) {
-      const frameworkPath = join(FRAMEWORK_ROOT, "src", normalizedPath + ext);
-      try {
-        const stat = await fs.stat(frameworkPath);
-        if (stat.isFile) {
-          return frameworkPath;
+    // Parallelize extension checks
+    const candidates = EXTENSIONS.map((ext) => join(FRAMEWORK_ROOT, "src", normalizedPath + ext));
+    const results = await Promise.all(
+      candidates.map(async (path) => {
+        try {
+          const stat = await fs.stat(path);
+          return stat.isFile ? path : null;
+        } catch {
+          return null;
         }
-      } catch {
-        // Continue trying other extensions
-      }
-    }
+      }),
+    );
+    const found = results.find((r) => r !== null);
+    if (found) return found;
     // If not in framework, fall through to project lookup
   }
 
@@ -250,49 +250,29 @@ async function resolveAliasImportPath(
     return null;
   }
 
-  // Try common extensions
-  for (const ext of EXTENSIONS) {
-    const absolutePath = join(projectNormalizedDir, normalizedPath + ext);
-    try {
-      const stat = await localFs.stat(absolutePath);
-      if (stat.isFile) {
-        return absolutePath;
-      }
-    } catch {
-      // Continue trying other extensions
-    }
-  }
+  // Parallelize all extension and index file checks
+  const candidates = [
+    ...EXTENSIONS.map((ext) => join(projectNormalizedDir, normalizedPath + ext)),
+    ...EXTENSIONS.map((ext) => join(projectNormalizedDir, normalizedPath, "index" + ext)),
+    // Include framework lib paths for lib/* imports
+    ...(normalizedPath.startsWith("lib/")
+      ? EXTENSIONS.map((ext) => join(FRAMEWORK_ROOT, "src", normalizedPath + ext))
+      : []),
+  ];
 
-  // Try index files
-  for (const ext of EXTENSIONS) {
-    const absolutePath = join(projectNormalizedDir, normalizedPath, "index" + ext);
-    try {
-      const stat = await localFs.stat(absolutePath);
-      if (stat.isFile) {
-        return absolutePath;
-      }
-    } catch {
-      // Continue trying other extensions
-    }
-  }
-
-  // Legacy fallback: For lib/* imports not found in project, check framework lib directory
-  // This provides framework utilities like lib/Head, lib/Router, lib/usePageContext
-  if (normalizedPath.startsWith("lib/")) {
-    for (const ext of EXTENSIONS) {
-      const frameworkPath = join(FRAMEWORK_ROOT, "src", normalizedPath + ext);
+  const results = await Promise.all(
+    candidates.map(async (path) => {
       try {
-        const stat = await localFs.stat(frameworkPath);
-        if (stat.isFile) {
-          return frameworkPath;
-        }
+        const stat = await localFs.stat(path);
+        return stat.isFile ? path : null;
       } catch {
-        // Continue trying other paths
+        return null;
       }
-    }
-  }
+    }),
+  );
 
-  return null;
+  // Return first match (maintains extension priority order)
+  return results.find((r) => r !== null) ?? null;
 }
 
 function resolveRelative(fromDir: string, importPath: string): string {

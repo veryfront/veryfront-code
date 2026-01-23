@@ -18,7 +18,10 @@ export interface ContentContextProvider {
 const EXTENSION_PRIORITY = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"] as const;
 
 /** Maximum time (ms) to keep an in-flight request before cleanup */
-const IN_FLIGHT_REQUEST_TIMEOUT_MS = 60_000;
+const IN_FLIGHT_REQUEST_TIMEOUT_MS = 15_000; // Reduced from 60s to 15s
+
+/** Maximum number of in-flight requests to prevent memory leaks */
+const MAX_IN_FLIGHT_REQUESTS = 100;
 
 /** Entry for tracking in-flight requests with timeout */
 interface InFlightEntry {
@@ -30,6 +33,7 @@ export class ReadOperations {
   // In-flight request deduplication map with timeout tracking
   // Prevents duplicate concurrent fetches for the same file
   private readonly inFlightRequests = new Map<string, InFlightEntry>();
+  private lastCleanupTime = 0;
 
   constructor(
     private readonly client: VeryfrontAPIClient,
@@ -48,11 +52,20 @@ export class ReadOperations {
   /**
    * Clean up stale in-flight requests to prevent memory leaks.
    * Requests older than IN_FLIGHT_REQUEST_TIMEOUT_MS are removed.
+   * Also enforces MAX_IN_FLIGHT_REQUESTS limit by removing oldest entries.
    */
   private cleanupStaleInFlightRequests(): void {
     const now = Date.now();
+
+    // Throttle cleanup to avoid overhead on every request
+    if (now - this.lastCleanupTime < 1000) {
+      return;
+    }
+    this.lastCleanupTime = now;
+
     let cleanedCount = 0;
 
+    // Remove stale entries
     for (const [key, entry] of this.inFlightRequests) {
       if (now - entry.startedAt > IN_FLIGHT_REQUEST_TIMEOUT_MS) {
         this.inFlightRequests.delete(key);
@@ -60,8 +73,19 @@ export class ReadOperations {
       }
     }
 
+    // Enforce max size by removing oldest entries
+    if (this.inFlightRequests.size > MAX_IN_FLIGHT_REQUESTS) {
+      const entries = [...this.inFlightRequests.entries()]
+        .sort((a, b) => a[1].startedAt - b[1].startedAt);
+      const toRemove = entries.slice(0, this.inFlightRequests.size - MAX_IN_FLIGHT_REQUESTS);
+      for (const [key] of toRemove) {
+        this.inFlightRequests.delete(key);
+        cleanedCount++;
+      }
+    }
+
     if (cleanedCount > 0) {
-      logger.warn("[ReadOperations] Cleaned up stale in-flight requests", {
+      logger.warn("[ReadOperations] Cleaned up in-flight requests", {
         cleanedCount,
         remainingCount: this.inFlightRequests.size,
       });

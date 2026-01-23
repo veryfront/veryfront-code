@@ -77,6 +77,8 @@ export class MemoryCacheBackend implements CacheBackend {
   readonly type = "memory" as const;
   private store = new Map<string, { value: string; expiresAt: number }>();
   private maxEntries: number;
+  // Cache compiled regexes for pattern matching (avoids recompilation per call)
+  private regexCache = new Map<string, RegExp>();
 
   constructor(maxEntries = MEMORY_CACHE_MAX_ENTRIES) {
     this.maxEntries = maxEntries;
@@ -111,11 +113,22 @@ export class MemoryCacheBackend implements CacheBackend {
   }
 
   delByPattern(pattern: string): Promise<number> {
-    const regex = new RegExp(
-      "^" + pattern.replace(/\*/g, ".*").replace(/\?/g, ".") + "$",
-    );
+    // Use cached regex to avoid recompilation per call
+    let regex = this.regexCache.get(pattern);
+    if (!regex) {
+      regex = new RegExp(
+        "^" + pattern.replace(/\*/g, ".*").replace(/\?/g, ".") + "$",
+      );
+      // Limit regex cache size to prevent memory leak
+      if (this.regexCache.size >= 100) {
+        const firstKey = this.regexCache.keys().next().value;
+        if (firstKey) this.regexCache.delete(firstKey);
+      }
+      this.regexCache.set(pattern, regex);
+    }
+
     let deleted = 0;
-    for (const key of [...this.store.keys()]) {
+    for (const key of this.store.keys()) {
       if (regex.test(key)) {
         this.store.delete(key);
         deleted++;
@@ -126,6 +139,7 @@ export class MemoryCacheBackend implements CacheBackend {
 
   clear(): void {
     this.store.clear();
+    this.regexCache.clear();
   }
 
   get size(): number {
