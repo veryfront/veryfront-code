@@ -167,11 +167,12 @@ export class FileCache {
         const raw = await cacheBackend.get(`file:${key}`);
         if (raw) {
           const entry = JSON.parse(raw) as CacheEntry<T>;
-          const now = Date.now();
-          if (now - entry.timestamp < this.options.ttl) {
-            this.hits++;
-            return entry.value;
-          }
+          // When using backend (Redis/API), trust the backend's TTL for expiry.
+          // The backend has its own TTL (BACKEND_TTL_SECONDS) which handles expiry.
+          // Previously we checked against this.options.ttl (60s) which was shorter
+          // than the backend TTL (300s), causing premature cache misses.
+          this.hits++;
+          return entry.value;
         }
       } catch (error) {
         logger.debug("[FileCache] Backend get failed", { key, error });
