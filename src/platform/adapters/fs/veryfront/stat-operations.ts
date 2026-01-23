@@ -236,15 +236,30 @@ export class StatOperations {
   }
 
   private async getAllFilesRaw(): Promise<ProjectFile[]> {
+    const cacheStart = performance.now();
+
+    // Use the adapter's cached file list (single source of truth)
+    // This avoids duplicate API calls - the adapter fetches the file list once during init
+    if (this.contextProvider?.getFileList) {
+      const files = await this.contextProvider.getFileList();
+      if (files) {
+        const cacheMs = Math.round(performance.now() - cacheStart);
+        logger.debug("[StatOperations] getAllFilesRaw - from adapter cache", {
+          cacheMs,
+          fileCount: files.length,
+        });
+        return files as ProjectFile[];
+      }
+    }
+
+    // Fallback: direct cache lookup (shouldn't normally happen if adapter is initialized)
     const ctx = this.contextProvider?.getContentContext();
     const cacheKey = buildFileListCacheKey(ctx);
 
-    // Check cache first (memory + Redis)
-    const cacheStart = performance.now();
     const cached = await this.cache.getAsync<ProjectFile[]>(cacheKey);
     const cacheMs = Math.round(performance.now() - cacheStart);
     if (cached) {
-      logger.debug("[StatOperations] getAllFilesRaw - cache HIT", {
+      logger.debug("[StatOperations] getAllFilesRaw - fallback cache HIT", {
         cacheKey,
         cacheMs,
         fileCount: cached.length,

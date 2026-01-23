@@ -152,13 +152,42 @@ export class DirectoryOperations {
   }
 
   private async getAllFilesRaw(): Promise<ProjectFile[]> {
+    const cacheStart = performance.now();
+
+    // Use the adapter's cached file list (single source of truth)
+    // This avoids duplicate API calls - the adapter fetches the file list once during init
+    if (this.contextProvider?.getFileList) {
+      const files = await this.contextProvider.getFileList();
+      if (files) {
+        const cacheMs = Math.round(performance.now() - cacheStart);
+        logger.debug("[DirectoryOperations] getAllFilesRaw - from adapter cache", {
+          cacheMs,
+          fileCount: files.length,
+        });
+        return files as ProjectFile[];
+      }
+    }
+
+    // Fallback: direct cache lookup (shouldn't normally happen if adapter is initialized)
     const ctx = this.contextProvider?.getContentContext();
     const cacheKey = buildFileListCacheKey(ctx);
 
-    const cached = this.cache.get<ProjectFile[]>(cacheKey);
+    // Use getAsync to support both memory and Redis cache backends
+    const cached = await this.cache.getAsync<ProjectFile[]>(cacheKey);
+    const cacheMs = Math.round(performance.now() - cacheStart);
     if (cached) {
+      logger.debug("[DirectoryOperations] getAllFilesRaw - fallback cache HIT", {
+        cacheKey,
+        cacheMs,
+        fileCount: cached.length,
+      });
       return cached;
     }
+
+    logger.warn("[DirectoryOperations] getAllFilesRaw - cache MISS, fetching from API", {
+      cacheKey,
+      cacheMs,
+    });
 
     // Fetch based on source type
     const isPublished = ctx?.sourceType !== "branch";

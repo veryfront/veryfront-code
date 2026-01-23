@@ -10,6 +10,16 @@ export interface ContentContextProvider {
   isProductionMode: () => boolean;
   getReleaseId: () => string | null;
   getContentContext: () => ResolvedContentContext | null;
+  /**
+   * Get the cached file list from the adapter's initialization.
+   * This is the single source of truth - StatOperations and DirectoryOperations
+   * should use this instead of fetching their own copy.
+   * Returns undefined if the file list hasn't been fetched yet.
+   * Optional for backward compatibility with tests/mocks.
+   */
+  getFileList?: () => Promise<
+    Array<{ id?: string; path: string; content?: string; type?: string; size?: number; updated_at?: string }> | undefined
+  >;
 }
 
 /**

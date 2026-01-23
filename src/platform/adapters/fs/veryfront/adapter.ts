@@ -91,10 +91,28 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.normalizer = new PathNormalizer(config.projectDir);
 
     // Create content context getter for operations (resolved lazily during init)
+    // This is the single source of truth for the file list - StatOperations and
+    // DirectoryOperations use getFileList() instead of fetching their own copy.
     const contentContextGetter = {
       isProductionMode: () => this.contentContext?.sourceType !== "branch",
       getReleaseId: () => this.contentContext?.releaseId ?? null,
       getContentContext: () => this.contentContext,
+      getFileList: async () => {
+        if (!this.contentContext) {
+          logger.debug("[VeryfrontFSAdapter] getFileList: no contentContext");
+          return undefined;
+        }
+        const cacheKey = buildFileListCacheKey(this.contentContext);
+        const result = await this.cache.getAsync<
+          Array<{ id?: string; path: string; content?: string; type?: string; size?: number; updated_at?: string }>
+        >(cacheKey);
+        logger.debug("[VeryfrontFSAdapter] getFileList lookup", {
+          cacheKey,
+          hasResult: !!result,
+          resultSize: result?.length ?? 0,
+        });
+        return result;
+      },
     };
 
     // Create statOps first so readOps can use its getOriginalApiPath method
