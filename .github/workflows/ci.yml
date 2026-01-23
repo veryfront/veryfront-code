@@ -221,13 +221,13 @@ jobs:
             --from-literal=API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY="$API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY" \
             --from-literal=REDIS_URL="$REDIS_URL" \
             --from-literal=VERYFRONT_API_BASE_URL="https://api.veryfront.com" \
-            --from-literal=OTEL_EXPORTER_OTLP_HEADERS="$OTEL_EXPORTER_OTLP_HEADERS" \
+            --from-literal=OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic $OTEL_EXPORTER_OTLP_HEADERS" \
             --dry-run=client -o yaml | kubectl apply -f -
 
           kubectl create secret generic veryfront-renderer-secret \
             --namespace veryfront-production \
             --from-literal=VERYFRONT_API_BASE_URL="https://api.veryfront.com" \
-            --from-literal=OTEL_EXPORTER_OTLP_HEADERS="$OTEL_EXPORTER_OTLP_HEADERS" \
+            --from-literal=OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic $OTEL_EXPORTER_OTLP_HEADERS" \
             --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Deploy via Helm
