@@ -89,7 +89,6 @@ export async function initializeOTLP(): Promise<void> {
 
   try {
     // Dynamic imports for tree-shaking when disabled
-    const { trace } = await import("@opentelemetry/api");
     const { BasicTracerProvider, BatchSpanProcessor } = await import(
       "@opentelemetry/sdk-trace-base"
     );
