@@ -4,6 +4,10 @@ import { FileCache } from "../cache/file-cache.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 import type { ResolvedContentContext } from "./types.ts";
 import { buildFileCacheKeyPrefix } from "./cache-keys.ts";
+import {
+  getRequestScopedFile,
+  setRequestScopedFile,
+} from "./multi-project-adapter.ts";
 
 export interface ContentContextProvider {
   isProductionMode: () => boolean;
@@ -195,23 +199,40 @@ export class ReadOperations {
       isProduction,
     });
 
-    // Check cache first (memory + Redis) - only in production
+    // Check request-scoped cache first (dedupes within single HTTP request)
+    // This works in BOTH production and preview modes to prevent duplicate API calls
+    const requestCached = getRequestScopedFile(cacheKey);
+    if (requestCached) {
+      logger.debug("[ReadOperations] Request-scoped cache hit", {
+        path: normalizedPath,
+        cacheKey,
+      });
+      return requestCached;
+    }
+
+    // Check persistent cache (memory + Redis) - only in production
     if (isProduction) {
       const cached = await this.cache.getAsync<string>(cacheKey);
       if (cached) {
         logger.debug("[ReadOperations] Cache hit", { path: normalizedPath, cacheKey });
+        // Also store in request-scoped cache for faster subsequent access
+        setRequestScopedFile(cacheKey, cached);
         return cached;
       }
     }
 
     // Check if content is available in the file list cache (memory + Redis)
-    // Skip in non-production mode to ensure fresh content
-    if (isProduction) {
-      const fileListContent = await this.getContentFromFileList(normalizedPath);
-      if (fileListContent) {
+    // This is checked in BOTH production and preview modes because:
+    // - File list is fetched during initialize() with latest branch/release content
+    // - Using cached file list avoids redundant individual API calls
+    // - Content is still "fresh" - it's from the same fetch that populated the list
+    const fileListContent = await this.getContentFromFileList(normalizedPath);
+    if (fileListContent) {
+      if (isProduction) {
         this.cache.set(cacheKey, fileListContent);
-        return fileListContent;
       }
+      setRequestScopedFile(cacheKey, fileListContent);
+      return fileListContent;
     }
 
     // Cleanup stale in-flight requests periodically (prevents memory leaks)
@@ -290,6 +311,8 @@ export class ReadOperations {
       if (shouldCache) {
         this.cache.set(cacheKey, content);
       }
+      // Always store in request-scoped cache for deduplication within this request
+      setRequestScopedFile(cacheKey, content);
       return content;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -358,6 +381,8 @@ export class ReadOperations {
         if (shouldCache) {
           this.cache.set(cacheKey, result.content);
         }
+        // Always store in request-scoped cache for deduplication within this request
+        setRequestScopedFile(cacheKey, result.content);
         return result.content;
       }
     } catch (error) {
@@ -409,6 +434,8 @@ export class ReadOperations {
         if (shouldCache) {
           this.cache.set(cacheKey, content);
         }
+        // Always store in request-scoped cache for deduplication within this request
+        setRequestScopedFile(cacheKey, content);
         return content;
       } catch {
         // Continue to next extension
@@ -433,6 +460,8 @@ export class ReadOperations {
     if (shouldCache) {
       this.cache.set(cacheKey, content);
     }
+    // Always store in request-scoped cache for deduplication within this request
+    setRequestScopedFile(cacheKey, content);
     return content;
   }
 }

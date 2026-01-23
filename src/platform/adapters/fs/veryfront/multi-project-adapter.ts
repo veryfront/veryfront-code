@@ -16,6 +16,12 @@ interface RequestContext {
   branch?: string | null;
   /** Actual environment name from API (e.g., "Development", "Production") */
   environmentName?: string | null;
+  /**
+   * Request-scoped file content cache.
+   * Deduplicates file fetches within a single HTTP request.
+   * This is especially important in preview mode where the persistent cache is disabled.
+   */
+  fileCache?: Map<string, string>;
 }
 
 interface RunWithContextOptions {
@@ -89,6 +95,8 @@ export class MultiProjectFSAdapter implements FSAdapter {
       releaseId: productionMode ? releaseId : null,
       branch: productionMode ? null : branch,
       environmentName,
+      // Request-scoped file cache to dedupe fetches within this request
+      fileCache: new Map<string, string>(),
     };
 
     logger.debug("[MultiProjectFSAdapter] asyncLocalStorage.run START", { projectSlug });
@@ -285,6 +293,24 @@ export function getCurrentRequestContext(): RequestContext | null {
 }
 
 /**
+ * Get a file from the request-scoped cache.
+ * Returns undefined if not in a request context or file not cached.
+ */
+export function getRequestScopedFile(cacheKey: string): string | undefined {
+  const context = asyncLocalStorage.getStore();
+  return context?.fileCache?.get(cacheKey);
+}
+
+/**
+ * Set a file in the request-scoped cache.
+ * No-op if not in a request context.
+ */
+export function setRequestScopedFile(cacheKey: string, content: string): void {
+  const context = asyncLocalStorage.getStore();
+  context?.fileCache?.set(cacheKey, content);
+}
+
+/**
  * Re-export RequestContext type for use in cache-key-builder.
  */
 export type { RequestContext };
@@ -293,4 +319,6 @@ export type { RequestContext };
 // deno-lint-ignore no-explicit-any
 (globalThis as any).__vf_multi_project_adapter = {
   getCurrentRequestContext,
+  getRequestScopedFile,
+  setRequestScopedFile,
 };
