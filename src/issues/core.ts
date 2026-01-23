@@ -19,8 +19,8 @@ import type {
 import {
   createIssueSchema,
   generateIssueId,
-  type IssuePrefix,
   ISSUE_ID_PATTERN,
+  type IssuePrefix,
   listIssuesSchema,
   updateIssueSchema,
   validateMetadata,

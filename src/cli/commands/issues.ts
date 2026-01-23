@@ -19,10 +19,10 @@ function formatIssue(issue: Issue, verbose = false): string {
   const reset = "\x1b[0m";
 
   const labels = metadata.labels.length > 0 ? ` [${metadata.labels.join(", ")}]` : "";
-  const assignees =
-    metadata.assignees.length > 0 ? ` → ${metadata.assignees.join(", ")}` : "";
+  const assignees = metadata.assignees.length > 0 ? ` → ${metadata.assignees.join(", ")}` : "";
 
-  let line = `${stateColor}${stateIcon}${reset} ${metadata.id}: ${metadata.title}${labels}${assignees}`;
+  let line =
+    `${stateColor}${stateIcon}${reset} ${metadata.id}: ${metadata.title}${labels}${assignees}`;
 
   if (verbose) {
     line += `\n  Created: ${metadata.created_at}`;
@@ -201,7 +201,9 @@ export async function issuesCommand(args: {
     case "update": {
       const id = args._[2] as string;
       if (!id) {
-        cliLogger.error("Issue ID is required. Usage: veryfront issues edit ISSUE-001 --state closed");
+        cliLogger.error(
+          "Issue ID is required. Usage: veryfront issues edit ISSUE-001 --state closed",
+        );
         return;
       }
 

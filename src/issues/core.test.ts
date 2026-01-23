@@ -113,9 +113,9 @@ Deno.test("serializeYaml - produces valid YAML", () => {
   };
 
   const yaml = serializeYaml(metadata);
-  assertEquals(yaml.includes('id: ISSUE-001'), true);
+  assertEquals(yaml.includes("id: ISSUE-001"), true);
   assertEquals(yaml.includes('title: "Test issue"'), true);
-  assertEquals(yaml.includes('state: open'), true);
+  assertEquals(yaml.includes("state: open"), true);
   assertEquals(yaml.includes('labels: ["bug", "priority:high"]'), true);
   assertEquals(yaml.includes('assignees: ["alice"]'), true);
 });

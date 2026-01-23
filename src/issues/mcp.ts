@@ -20,7 +20,9 @@ import { ISSUE_PREFIXES, parseState } from "./schema.ts";
 const issuesCreateInput = z.object({
   title: z.string().describe("Issue title"),
   body: z.string().optional().describe("Issue description in markdown"),
-  labels: z.array(z.string()).optional().describe("Labels to apply (e.g., ['bug', 'priority:high'])"),
+  labels: z.array(z.string()).optional().describe(
+    "Labels to apply (e.g., ['bug', 'priority:high'])",
+  ),
   milestone: z.string().optional().describe("Milestone to assign"),
   assignees: z.array(z.string()).optional().describe("Users to assign"),
   prefix: z.enum(ISSUE_PREFIXES).optional().describe("ID prefix: ISSUE, TASK, or PLAN"),
@@ -31,8 +33,7 @@ type IssuesCreateInput = z.infer<typeof issuesCreateInput>;
 
 const issuesCreate: MCPTool<IssuesCreateInput, Issue> = {
   name: "issues_create",
-  description:
-    "Create a new issue, task, or plan as a markdown file. " +
+  description: "Create a new issue, task, or plan as a markdown file. " +
     "Use prefix 'TASK' for small work items, 'PLAN' for proposals/RFCs, 'ISSUE' for bugs/features.",
   inputSchema: issuesCreateInput,
   execute: async (input) => {
@@ -90,8 +91,7 @@ type IssuesUpdateInput = z.infer<typeof issuesUpdateInput>;
 
 const issuesUpdate: MCPTool<IssuesUpdateInput, Issue | null> = {
   name: "issues_update",
-  description:
-    "Update an existing issue. Only provided fields are updated. " +
+  description: "Update an existing issue. Only provided fields are updated. " +
     "Returns the updated issue or null if not found.",
   inputSchema: issuesUpdateInput,
   execute: async (input) => {
@@ -140,8 +140,7 @@ interface IssuesListOutput {
 
 const issuesList: MCPTool<IssuesListInput, IssuesListOutput> = {
   name: "issues_list",
-  description:
-    "List issues with filtering and sorting. " +
+  description: "List issues with filtering and sorting. " +
     "Returns matching issues and total count.",
   inputSchema: issuesListInput,
   execute: async (input) => {
@@ -199,8 +198,7 @@ interface IssuesDeleteOutput {
 
 const issuesDelete: MCPTool<IssuesDeleteInput, IssuesDeleteOutput> = {
   name: "issues_delete",
-  description:
-    "Permanently delete an issue file. " +
+  description: "Permanently delete an issue file. " +
     "Use with caution - this cannot be undone.",
   inputSchema: issuesDeleteInput,
   execute: async (input) => {
