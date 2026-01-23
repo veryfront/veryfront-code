@@ -14,7 +14,6 @@ import { getEnv } from "#veryfront/platform/compat/process.ts";
 import type { HandlerContext } from "../../handlers/types.ts";
 import { buildEnrichedContext } from "../../context/enriched-context.ts";
 import {
-  createRenderContext,
   createRenderContextFromEnriched,
   destroyRenderer as destroySharedRenderer,
   getRenderer,
