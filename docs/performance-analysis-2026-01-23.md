@@ -205,3 +205,8 @@ Investigation needed to determine what happens during this gap.
 4. `0930bed5` - fix: pass resolvedEnvironment through HandlerContext for proxy mode
    - Add resolvedEnvironment field to HandlerContext
    - Ensure domain lookup environment reaches adapter slow path
+
+5. `9469d247` - fix: use resolvedEnvironment consistently for cache and HTTP headers
+   - Update extractCacheKeyContext to prefer resolvedEnvironment
+   - Add shouldUseNoCacheHeadersFromHandler helper for handlers
+   - Update SSR/module handlers to use resolvedEnvironment for cache decisions
