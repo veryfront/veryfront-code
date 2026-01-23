@@ -636,7 +636,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     // Notify browser to reload with changed paths for smart HMR
     this.pokeMetrics.invalidationsTriggered++;
-    this.invalidationCallbacks.triggerReload?.(changedPaths);
+    this.invalidationCallbacks.triggerReload?.(changedPaths, {
+      projectSlug: this.projectSlug,
+      projectId: this.client.getProjectId(),
+    });
 
     const durationMs = Date.now() - startTime;
     logger.debug("[VeryfrontFSAdapter] Selective invalidation complete", {
@@ -758,7 +761,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
     // Step 3: Trigger reload - content is now guaranteed to be available
     this.pokeMetrics.invalidationsTriggered++;
     logger.debug("[VeryfrontFSAdapter] TRIGGERING BROWSER RELOAD via ReloadNotifier");
-    this.invalidationCallbacks.triggerReload?.();
+    this.invalidationCallbacks.triggerReload?.(undefined, {
+      projectSlug: this.projectSlug,
+      projectId: this.client.getProjectId(),
+    });
 
     logger.debug("[VeryfrontFSAdapter] CACHE INVALIDATION COMPLETE", {
       fileCacheCleared: totalFileCount,
