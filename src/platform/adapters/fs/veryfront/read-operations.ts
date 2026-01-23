@@ -4,10 +4,7 @@ import { FileCache } from "../cache/file-cache.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 import type { ResolvedContentContext } from "./types.ts";
 import { buildFileCacheKeyPrefix } from "./cache-keys.ts";
-import {
-  getRequestScopedFile,
-  setRequestScopedFile,
-} from "./multi-project-adapter.ts";
+import { getRequestScopedFile, setRequestScopedFile } from "./multi-project-adapter.ts";
 
 export interface ContentContextProvider {
   isProductionMode: () => boolean;

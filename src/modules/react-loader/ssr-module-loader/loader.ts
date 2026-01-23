@@ -650,7 +650,9 @@ export class SSRModuleLoader {
     const cacheBaseDir = getCacheBaseDir();
     const baseDir = isAbsolute(cacheBaseDir) ? cacheBaseDir : join(cwd(), cacheBaseDir);
     // Include contentSourceId in cache key for branch/release isolation
-    const cacheKey = `${baseDir}|${buildSSRModuleProjectKey(projectDir, projectId)}|${contentSourceId ?? "default"}`;
+    const cacheKey = `${baseDir}|${buildSSRModuleProjectKey(projectDir, projectId)}|${
+      contentSourceId ?? "default"
+    }`;
 
     const existingDir = globalTmpDirs.get(cacheKey);
     if (existingDir) {
@@ -659,9 +661,7 @@ export class SSRModuleLoader {
 
     const projectKey = projectId ? this.hashCode(projectId) : "default";
     // Sanitize contentSourceId for filesystem (replace / with -)
-    const sourceKey = contentSourceId
-      ? this.hashCode(contentSourceId)
-      : "default";
+    const sourceKey = contentSourceId ? this.hashCode(contentSourceId) : "default";
     const tmpDir = join(
       baseDir,
       "veryfront-ssr",
