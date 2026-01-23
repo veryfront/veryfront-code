@@ -210,3 +210,8 @@ Investigation needed to determine what happens during this gap.
    - Update extractCacheKeyContext to prefer resolvedEnvironment
    - Add shouldUseNoCacheHeadersFromHandler helper for handlers
    - Update SSR/module handlers to use resolvedEnvironment for cache decisions
+
+6. `9e8d3841` - fix: propagate resolvedEnvironment into requestContext.mode (root cause)
+   - Override requestContext.mode with resolvedEnvironment in HandlerContext
+   - All consumers of requestContext.mode now get the authoritative value
+   - Update base-handler.ts to prefer resolvedEnvironment directly
