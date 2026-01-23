@@ -9,6 +9,7 @@
 import { compile } from "tailwindcss";
 import { serverLogger as logger } from "#veryfront/utils";
 import { getTailwindCSSUrl } from "#veryfront/utils/constants/cdn.ts";
+import { type CacheBackend, createCacheBackend, MemoryCacheBackend } from "#veryfront/cache/backend.ts";
 
 // =============================================================================
 // Types
@@ -47,11 +48,39 @@ const pluginErrors = new Map<string, string>();
 
 /**
  * CSS cache by hash - stores generated CSS for production hashed URLs
+ * Uses distributed cache (API/Redis) for cross-pod sharing in production.
+ * Falls back to memory-only cache if distributed backend unavailable.
+ *
  * Key: CSS hash (8 chars), Value: CSS content
- * Limited to 100 entries per project with LRU eviction
  */
-const cssCache = new Map<string, string>();
-const CSS_CACHE_MAX_SIZE = 100;
+let cssCache: CacheBackend | null = null;
+let cssCacheInitPromise: Promise<CacheBackend> | null = null;
+const CSS_CACHE_TTL_SECONDS = 3600; // 1 hour TTL for distributed cache
+
+/** Local memory cache for fast reads (always available) */
+const localCssCache = new Map<string, string>();
+const LOCAL_CACHE_MAX_SIZE = 100;
+
+/**
+ * Get or initialize the CSS cache backend.
+ * Uses distributed cache in production, memory in development.
+ */
+function getCssCache(): Promise<CacheBackend> {
+  if (cssCache) return Promise.resolve(cssCache);
+  if (cssCacheInitPromise) return cssCacheInitPromise;
+
+  cssCacheInitPromise = createCacheBackend({ keyPrefix: "css" }).then((backend) => {
+    cssCache = backend;
+    logger.debug("[tailwind] CSS cache initialized", { type: backend.type });
+    return backend;
+  }).catch((error) => {
+    logger.warn("[tailwind] Failed to initialize distributed CSS cache, using memory", { error });
+    cssCache = new MemoryCacheBackend(LOCAL_CACHE_MAX_SIZE);
+    return cssCache;
+  });
+
+  return cssCacheInitPromise;
+}
 
 // =============================================================================
 // Constants
@@ -87,48 +116,94 @@ export function hashCSS(css: string): string {
 /**
  * Store CSS in cache for later retrieval by hash.
  * Called when generating production HTML with hashed CSS URLs.
+ * Stores in both local memory (fast) and distributed cache (cross-pod).
  */
 export function cacheCSS(css: string): string {
   const hash = hashCSS(css);
 
-  // If already cached, just return hash
-  if (cssCache.has(hash)) {
-    return hash;
-  }
-
-  // LRU eviction - remove oldest entries if at capacity
-  if (cssCache.size >= CSS_CACHE_MAX_SIZE) {
-    const firstKey = cssCache.keys().next().value;
-    if (firstKey) {
-      cssCache.delete(firstKey);
+  // Always store in local memory for fast subsequent reads
+  if (!localCssCache.has(hash)) {
+    // LRU eviction - remove oldest entries if at capacity
+    if (localCssCache.size >= LOCAL_CACHE_MAX_SIZE) {
+      const firstKey = localCssCache.keys().next().value;
+      if (firstKey) {
+        localCssCache.delete(firstKey);
+      }
     }
+    localCssCache.set(hash, css);
   }
 
-  cssCache.set(hash, css);
+  // Store in distributed cache asynchronously (fire and forget)
+  getCssCache().then((cache) => {
+    cache.set(hash, css, CSS_CACHE_TTL_SECONDS).catch((error) => {
+      logger.debug("[tailwind] Failed to store CSS in distributed cache", { hash, error });
+    });
+  }).catch(() => {
+    // Ignore - local cache is sufficient
+  });
+
   return hash;
 }
 
 /**
- * Retrieve CSS from cache by hash.
+ * Retrieve CSS from cache by hash (sync version for handler).
+ * Checks local memory cache only - for fast synchronous access.
  * Returns undefined if not found (cache miss).
  */
 export function getCSSByHash(hash: string): string | undefined {
-  const css = cssCache.get(hash);
+  const css = localCssCache.get(hash);
 
   // Move to end for LRU (re-insert)
   if (css) {
-    cssCache.delete(hash);
-    cssCache.set(hash, css);
+    localCssCache.delete(hash);
+    localCssCache.set(hash, css);
   }
 
   return css;
 }
 
 /**
+ * Retrieve CSS from cache by hash (async version).
+ * Checks local memory first, then falls back to distributed cache.
+ * Populates local cache on distributed hit for future fast access.
+ */
+export async function getCSSByHashAsync(hash: string): Promise<string | undefined> {
+  // Check local cache first (fast path)
+  const local = localCssCache.get(hash);
+  if (local) {
+    // Move to end for LRU
+    localCssCache.delete(hash);
+    localCssCache.set(hash, local);
+    return local;
+  }
+
+  // Check distributed cache
+  try {
+    const cache = await getCssCache();
+    const css = await cache.get(hash);
+    if (css) {
+      // Populate local cache for future fast access
+      if (localCssCache.size >= LOCAL_CACHE_MAX_SIZE) {
+        const firstKey = localCssCache.keys().next().value;
+        if (firstKey) localCssCache.delete(firstKey);
+      }
+      localCssCache.set(hash, css);
+      logger.debug("[tailwind] CSS cache hit from distributed cache", { hash });
+      return css;
+    }
+  } catch (error) {
+    logger.debug("[tailwind] Failed to read from distributed CSS cache", { hash, error });
+  }
+
+  return undefined;
+}
+
+/**
  * Clear CSS cache (useful for testing or memory management)
  */
 export function clearCSSCache(): void {
-  cssCache.clear();
+  localCssCache.clear();
+  // Note: distributed cache entries will expire via TTL
 }
 
 // =============================================================================
