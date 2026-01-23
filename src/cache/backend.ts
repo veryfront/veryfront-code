@@ -243,9 +243,9 @@ export class ApiCacheBackend implements CacheBackend {
   private timeoutMs: number;
   private env?: RuntimeEnv;
   private circuitBreaker = getCircuitBreaker("api-cache", {
-    failureThreshold: 5, // Open after 5 failures
-    resetTimeoutMs: 30000, // Try again after 30s
-    successThreshold: 3, // Need 3 successes to close
+    failureThreshold: 10, // Open after 10 failures (increased from 5 for slow cache ops)
+    resetTimeoutMs: 15000, // Try again after 15s (reduced from 30s for faster recovery)
+    successThreshold: 2, // Need 2 successes to close (reduced from 3)
   });
 
   constructor(options: {
@@ -260,7 +260,9 @@ export class ApiCacheBackend implements CacheBackend {
       getEnvValue("VERYFRONT_API_BASE_URL", this.env) ||
       "https://api.veryfront.com";
     this.keyPrefix = options.keyPrefix || "";
-    this.timeoutMs = options.timeoutMs || 5000;
+    // Increased from 5000ms to 10000ms to handle slow API cache responses
+    // (observed 1000ms+ latency for large cache entries like file lists)
+    this.timeoutMs = options.timeoutMs || 10000;
   }
 
   private prefixKey(key: string): string {
@@ -329,7 +331,12 @@ export class ApiCacheBackend implements CacheBackend {
         });
       } else {
         const isTimeout = error instanceof Error && error.name === "AbortError";
-        logger.debug(`[ApiCacheBackend] Request ${isTimeout ? "timeout" : "error"}`, { path });
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        logger.debug(`[ApiCacheBackend] Request ${isTimeout ? "timeout" : "error"}`, {
+          path,
+          error: errorMsg,
+          isTimeout,
+        });
       }
       return null;
     }
