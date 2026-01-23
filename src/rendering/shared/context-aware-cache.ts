@@ -87,7 +87,8 @@ export class ContextAwareCacheCoordinator {
     colorScheme?: "light" | "dark",
   ): Promise<ContextAwareCacheLookupResult> {
     // Include colorScheme in cache key to prevent serving wrong theme
-    const themeKey = colorScheme ? `:theme=${colorScheme}` : "";
+    // Use hyphen instead of equals sign (API cache key validation only allows: a-z A-Z 0-9 _ : . * - /)
+    const themeKey = colorScheme ? `:theme-${colorScheme}` : "";
     const cacheKey = createCacheKey(ctx, `page:${slug}${themeKey}`);
 
     const cached = await this.store.get(cacheKey);
@@ -147,7 +148,8 @@ export class ContextAwareCacheCoordinator {
     }
 
     // Include colorScheme in cache key to prevent serving wrong theme
-    const themeKey = colorScheme ? `:theme=${colorScheme}` : "";
+    // Use hyphen instead of equals sign (API cache key validation only allows: a-z A-Z 0-9 _ : . * - /)
+    const themeKey = colorScheme ? `:theme-${colorScheme}` : "";
     const cacheKey = createCacheKey(ctx, `page:${slug}${themeKey}`);
 
     const payload: CachePayload = {
