@@ -57,7 +57,7 @@ export async function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapte
         clearRouterDetectionCacheForProject,
         clearSnippetCacheForProject,
         clearRendererCacheForProject,
-        triggerReload: (changedPaths, _project) => ReloadNotifier.triggerReload(changedPaths),
+        triggerReload: (changedPaths, project) => ReloadNotifier.triggerReload(changedPaths, project?.projectSlug),
       },
     };
 

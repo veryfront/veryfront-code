@@ -63,10 +63,12 @@ export class HMRHandler extends BaseHandler {
     // Subscribe to ReloadNotifier to broadcast HMR messages
     // When changedPaths are provided, send update messages for smart HMR
     // Otherwise, send reload message for full page refresh
-    HMRHandler.reloadUnsubscribe = ReloadNotifier.subscribe((changedPaths) => {
+    // Note: ReloadNotifier now provides projectSlug for per-project invalidation
+    HMRHandler.reloadUnsubscribe = ReloadNotifier.subscribe((changedPaths, projectSlug) => {
       // Invalidate server-side caches first (Phase 8: Preview HMR cache invalidation)
       // This ensures next request gets fresh content
-      invalidateProjectCaches("preview", changedPaths);
+      // Use projectSlug for targeted invalidation when available
+      invalidateProjectCaches(projectSlug || "preview", changedPaths);
       // Then notify browser clients to refresh
       HMRHandler.broadcastUpdate(changedPaths);
     });

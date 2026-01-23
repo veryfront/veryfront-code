@@ -4,9 +4,9 @@
  * Provides a unified interface for invalidating all project caches.
  * Used by Preview HMR to ensure fresh content after file changes.
  *
- * NOTE: This module uses GLOBAL cache clearing functions. For multi-tenant
- * deployments, prefer per-project clearing via the FSAdapter's invalidation
- * callbacks which have access to projectId and projectDir.
+ * Supports both global clearing (legacy) and per-project clearing (preferred).
+ * When projectSlug is provided, uses per-project clearing for better isolation
+ * in multi-tenant deployments.
  *
  * @module server/context/cache-invalidation
  */
@@ -17,9 +17,15 @@ import {
   invalidateModulePaths,
 } from "#veryfront/transforms/mdx/esm-module-loader/index.ts";
 import { clearSSRModuleCache } from "#veryfront/modules/react-loader/ssr-module-loader/index.ts";
-import { clearRendererCaches } from "../../rendering/renderer.ts";
+import {
+  clearRendererCacheForProject,
+  clearRendererCaches,
+} from "../../rendering/renderer.ts";
 import { clearRouterDetectionCache } from "../../rendering/router-detection.ts";
-import { clearSnippetCache } from "../../rendering/snippet-renderer.ts";
+import {
+  clearSnippetCache,
+  clearSnippetCacheForProject,
+} from "../../rendering/snippet-renderer.ts";
 
 /**
  * Invalidate all caches for a project when files change.
@@ -36,11 +42,11 @@ import { clearSnippetCache } from "../../rendering/snippet-renderer.ts";
  * - Router detection cache (app vs pages router)
  * - Snippet cache (MDX snippets)
  *
- * NOTE: This function uses GLOBAL cache clearing. In multi-tenant deployments,
- * this clears caches for ALL projects. For per-project clearing, use the
- * FSAdapter's invalidation callbacks which have projectId context.
+ * When projectSlug is provided (not generic "preview"), uses per-project
+ * clearing for better isolation in multi-tenant deployments. This prevents
+ * clearing other projects' caches unnecessarily.
  *
- * @param projectSlug - Project slug (used for logging only)
+ * @param projectSlug - Project slug for per-project clearing, or "preview" for global clear
  * @param changedPaths - Array of changed file paths (for selective invalidation)
  */
 export function invalidateProjectCaches(
@@ -49,9 +55,13 @@ export function invalidateProjectCaches(
 ): void {
   const startTime = Date.now();
 
+  // Check if we have a real project slug (not generic "preview")
+  const hasRealProjectSlug = projectSlug && projectSlug !== "preview";
+
   logger.debug("[CacheInvalidation] Starting cache invalidation", {
     projectSlug,
     changedPaths: changedPaths?.length ?? "all",
+    mode: hasRealProjectSlug ? "per-project" : "global",
   });
 
   // Selective invalidation for specific changed files (faster)
@@ -62,16 +72,31 @@ export function invalidateProjectCaches(
     clearModulePathCache();
   }
 
-  // Always clear these caches on any file change
+  // Clear SSR module cache (always global - modules may be shared)
   clearSSRModuleCache();
-  clearRendererCaches();
-  clearRouterDetectionCache();
-  clearSnippetCache();
 
-  const durationMs = Date.now() - startTime;
-  logger.debug("[CacheInvalidation] Cache invalidation complete", {
-    projectSlug,
-    durationMs,
-    changedPaths: changedPaths?.length ?? "all",
-  });
+  // Clear router detection cache (always global)
+  clearRouterDetectionCache();
+
+  // For render and snippet caches, use per-project clearing when available
+  // This is critical for multi-tenant performance - avoids clearing other projects' caches
+  if (hasRealProjectSlug) {
+    // Per-project clearing (preferred for multi-tenant)
+    clearRendererCacheForProject(projectSlug);
+    clearSnippetCacheForProject(projectSlug);
+    logger.debug("[CacheInvalidation] Per-project cache invalidation complete", {
+      projectSlug,
+      durationMs: Date.now() - startTime,
+      changedPaths: changedPaths?.length ?? "all",
+    });
+  } else {
+    // Global clearing (fallback when no project context)
+    clearRendererCaches();
+    clearSnippetCache();
+    logger.debug("[CacheInvalidation] Global cache invalidation complete", {
+      projectSlug,
+      durationMs: Date.now() - startTime,
+      changedPaths: changedPaths?.length ?? "all",
+    });
+  }
 }

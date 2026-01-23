@@ -13,7 +13,7 @@
 
 import { serverLogger as logger } from "#veryfront/utils";
 
-type ReloadListener = (changedPaths?: string[]) => void;
+type ReloadListener = (changedPaths?: string[], projectSlug?: string) => void;
 type InvalidateListener = () => void;
 
 const DEBOUNCE_MS = 300;
@@ -23,6 +23,7 @@ class ReloadNotifierImpl {
   private invalidateListeners = new Set<InvalidateListener>();
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingChangedPaths: Set<string> = new Set();
+  private pendingProjectSlug: string | undefined = undefined;
   /** Metrics for observability */
   private metrics = {
     triggerCalls: 0,
@@ -50,8 +51,9 @@ class ReloadNotifierImpl {
   /**
    * Trigger a reload notification to all subscribers (debounced)
    * @param changedPaths - Optional array of changed file paths for smart HMR
+   * @param projectSlug - Optional project slug for per-project cache invalidation
    */
-  triggerReload(changedPaths?: string[]): void {
+  triggerReload(changedPaths?: string[], projectSlug?: string): void {
     this.metrics.triggerCalls++;
     this.metrics.lastTriggerTime = Date.now();
 
@@ -59,6 +61,7 @@ class ReloadNotifierImpl {
       invalidateListeners: this.invalidateListeners.size,
       reloadListeners: this.listeners.size,
       changedPaths: changedPaths?.length ?? 0,
+      projectSlug,
     });
 
     // Accumulate changed paths for batching
@@ -66,6 +69,11 @@ class ReloadNotifierImpl {
       for (const path of changedPaths) {
         this.pendingChangedPaths.add(path);
       }
+    }
+
+    // Track projectSlug for the pending reload (last one wins if multiple projects)
+    if (projectSlug) {
+      this.pendingProjectSlug = projectSlug;
     }
 
     // First, trigger immediate invalidation for cache clearing
@@ -80,12 +88,15 @@ class ReloadNotifierImpl {
       const paths = this.pendingChangedPaths.size > 0
         ? Array.from(this.pendingChangedPaths)
         : undefined;
+      const slug = this.pendingProjectSlug;
       this.pendingChangedPaths.clear();
+      this.pendingProjectSlug = undefined;
       logger.debug("[ReloadNotifier] Debounce complete, notifying reload listeners", {
         listenerCount: this.listeners.size,
         changedPaths: paths?.length ?? 0,
+        projectSlug: slug,
       });
-      this.notifyListeners(paths);
+      this.notifyListeners(paths, slug);
     }, DEBOUNCE_MS);
   }
 
@@ -102,15 +113,16 @@ class ReloadNotifierImpl {
     }
   }
 
-  private notifyListeners(changedPaths?: string[]): void {
+  private notifyListeners(changedPaths?: string[], projectSlug?: string): void {
     this.metrics.broadcastsSent++;
     logger.debug("[ReloadNotifier] Notifying reload listeners", {
       count: this.listeners.size,
       changedPaths: changedPaths?.length ?? 0,
+      projectSlug,
     });
     for (const listener of this.listeners) {
       try {
-        listener(changedPaths);
+        listener(changedPaths, projectSlug);
       } catch (error) {
         logger.error("[ReloadNotifier] Listener error:", error);
       }
@@ -159,6 +171,7 @@ class ReloadNotifierImpl {
       this.debounceTimer = null;
     }
     this.pendingChangedPaths.clear();
+    this.pendingProjectSlug = undefined;
     this.metrics = {
       triggerCalls: 0,
       broadcastsSent: 0,
