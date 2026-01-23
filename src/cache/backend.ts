@@ -325,14 +325,14 @@ export class ApiCacheBackend implements CacheBackend {
       });
     } catch (error) {
       if (error instanceof CircuitBreakerOpen) {
-        logger.debug("[ApiCacheBackend] Circuit breaker open, failing fast", {
+        logger.info("[ApiCacheBackend] Circuit breaker open, failing fast", {
           path,
           nextAttemptMs: error.nextAttemptMs,
         });
       } else {
         const isTimeout = error instanceof Error && error.name === "AbortError";
         const errorMsg = error instanceof Error ? error.message : String(error);
-        logger.debug(`[ApiCacheBackend] Request ${isTimeout ? "timeout" : "error"}`, {
+        logger.info(`[ApiCacheBackend] Request ${isTimeout ? "timeout" : "error"}`, {
           path,
           error: errorMsg,
           isTimeout,

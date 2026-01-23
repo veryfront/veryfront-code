@@ -125,6 +125,11 @@ export async function initializeOTLP(): Promise<void> {
     provider.register({ contextManager });
     tracerProvider = provider;
 
+    // Store the trace API module for use by withSpan and other functions
+    // This MUST be set before marking as initialized, otherwise withSpan
+    // will skip creating spans because traceApi is null.
+    traceApi = await import("@opentelemetry/api");
+
     initialized = true;
     logger.info("[otel] OpenTelemetry OTLP tracing initialized", {
       serviceName: config.serviceName,
@@ -132,7 +137,7 @@ export async function initializeOTLP(): Promise<void> {
     });
 
     // Get a tracer for verification
-    const _tracer = trace.getTracer(config.serviceName);
+    const _tracer = traceApi.trace.getTracer(config.serviceName);
     logger.debug("[otel] Tracer obtained", { name: config.serviceName });
   } catch (error) {
     logger.error("[otel] Failed to initialize OTLP tracing", { error });
