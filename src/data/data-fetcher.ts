@@ -1,5 +1,7 @@
 // Direct import from base.ts to avoid circular dependency through barrel
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { CacheManager } from "./data-fetching-cache.ts";
 import { ServerDataFetcher } from "./server-data-fetcher.ts";
 import { StaticDataFetcher } from "./static-data-fetcher.ts";
@@ -25,16 +27,31 @@ export class DataFetcher {
     mode: "development" | "production" = "development",
   ): Promise<DataResult> {
     const preferServerData = mode === "development" || !pageModule.getStaticData;
+    const fetchType = preferServerData && pageModule.getServerData
+      ? "server"
+      : pageModule.getStaticData
+      ? "static"
+      : "none";
 
-    if (preferServerData && pageModule.getServerData) {
-      return await this.serverFetcher.fetch(pageModule, context);
-    }
+    return await withSpan(
+      SpanNames.DATA_FETCH,
+      async () => {
+        if (preferServerData && pageModule.getServerData) {
+          return await this.serverFetcher.fetch(pageModule, context);
+        }
 
-    if (pageModule.getStaticData) {
-      return await this.staticFetcher.fetch(pageModule, context);
-    }
+        if (pageModule.getStaticData) {
+          return await this.staticFetcher.fetch(pageModule, context);
+        }
 
-    return { props: {} };
+        return { props: {} };
+      },
+      {
+        "data.fetch_type": fetchType,
+        "data.mode": mode,
+        "data.pathname": context.url?.pathname || "unknown",
+      },
+    );
   }
 
   getStaticPaths(pageModule: PageWithData): Promise<StaticPathsResult | null> {

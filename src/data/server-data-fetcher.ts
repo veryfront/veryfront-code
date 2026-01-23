@@ -4,6 +4,7 @@ import type { DataContext, DataResult, PageWithData } from "./types.ts";
 import { serverLogger } from "#veryfront/utils";
 import { DATA_FETCH_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
 import { TimeoutError, withTimeoutThrow } from "#veryfront/rendering/utils/stream-utils.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 export class ServerDataFetcher {
   constructor(private adapter?: RuntimeAdapter) {}
@@ -14,40 +15,51 @@ export class ServerDataFetcher {
     }
 
     const pathname = context.url?.pathname || "unknown";
-    const start = performance.now();
 
-    try {
-      const result = await withTimeoutThrow(
-        Promise.resolve(pageModule.getServerData(context)),
-        DATA_FETCH_TIMEOUT_MS,
-        `getServerData for ${pathname}`,
-      );
+    return await withSpan(
+      "data.fetch_server",
+      async () => {
+        const start = performance.now();
 
-      if (result.redirect) {
-        return { redirect: result.redirect };
-      }
+        try {
+          const result = await withTimeoutThrow(
+            Promise.resolve(pageModule.getServerData!(context)),
+            DATA_FETCH_TIMEOUT_MS,
+            `getServerData for ${pathname}`,
+          );
 
-      if (result.notFound) {
-        return { notFound: true };
-      }
+          if (result.redirect) {
+            return { redirect: result.redirect };
+          }
 
-      return {
-        props: result.props ?? {},
-        revalidate: result.revalidate,
-      };
-    } catch (error) {
-      const durationMs = Math.round(performance.now() - start);
-      if (error instanceof TimeoutError) {
-        serverLogger.error("DATA_FETCH_TIMEOUT getServerData timed out", {
-          pathname,
-          durationMs,
-          timeoutMs: DATA_FETCH_TIMEOUT_MS,
-        });
-      } else {
-        this.logError("DATA_FETCH_ERROR getServerData failed", error, { pathname, durationMs });
-      }
-      throw error;
-    }
+          if (result.notFound) {
+            return { notFound: true };
+          }
+
+          return {
+            props: result.props ?? {},
+            revalidate: result.revalidate,
+          };
+        } catch (error) {
+          const durationMs = Math.round(performance.now() - start);
+          if (error instanceof TimeoutError) {
+            serverLogger.error("DATA_FETCH_TIMEOUT getServerData timed out", {
+              pathname,
+              durationMs,
+              timeoutMs: DATA_FETCH_TIMEOUT_MS,
+            });
+          } else {
+            this.logError("DATA_FETCH_ERROR getServerData failed", error, { pathname, durationMs });
+          }
+          throw error;
+        }
+      },
+      {
+        "data.fetch_method": "getServerData",
+        "data.pathname": pathname,
+        "data.timeout_ms": DATA_FETCH_TIMEOUT_MS,
+      },
+    );
   }
 
   private logError(message: string, error: unknown, context?: Record<string, unknown>): void {

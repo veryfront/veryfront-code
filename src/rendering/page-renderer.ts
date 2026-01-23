@@ -19,6 +19,7 @@ import { handleScriptPage } from "./script-page-handling.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { ComponentRegistry } from "./ssr/component-registry.ts";
 import type { RenderResult } from "./orchestrator/types.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 export interface PageRenderOptions {
   params?: Record<string, string | string[]>;
@@ -136,112 +137,141 @@ export class PageRenderer {
     cachedModule: RenderResult["pageModule"] | undefined,
     options?: PageRenderOptions,
   ): Promise<PageBundleResult> {
-    const mergedComponents = this.getMergedComponents();
     const pageType = this.detectPageType(pageInfo);
 
-    logger.debug(`Page file info:`, {
-      path: pageInfo.entity.path,
-      extension: pageType.extension,
-      type: pageType.type,
-      slug,
-    });
+    return await withSpan(
+      "render.prepare_page",
+      async () => {
+        const mergedComponents = this.getMergedComponents();
 
-    // Initialize result
-    let pageElement: React.ReactElement | undefined;
-    let pageBundle: PageBundle | undefined;
-    let clientModuleCode: string | undefined = cachedModule?.code;
-    let pageModuleType: "mdx" | "component" | undefined = cachedModule?.type;
-    let collectedMetadata: Record<string, unknown> = {};
+        logger.debug(`Page file info:`, {
+          path: pageInfo.entity.path,
+          extension: pageType.extension,
+          type: pageType.type,
+          slug,
+        });
 
-    // Dispatch to appropriate handler based on page type
-    switch (pageType.type) {
-      case "component": {
-        // Extract params from path if not provided (fallback extraction)
-        let params = options?.params;
-        if (!params || Object.keys(params).length === 0) {
-          const extracted = extractRouteParams(pageInfo.entity.path, slug);
-          params = extracted.matched ? extracted.params : undefined;
+        // Initialize result
+        let pageElement: React.ReactElement | undefined;
+        let pageBundle: PageBundle | undefined;
+        let clientModuleCode: string | undefined = cachedModule?.code;
+        let pageModuleType: "mdx" | "component" | undefined = cachedModule?.type;
+        let collectedMetadata: Record<string, unknown> = {};
+
+        // Dispatch to appropriate handler based on page type
+        switch (pageType.type) {
+          case "component": {
+            // Extract params from path if not provided (fallback extraction)
+            let params = options?.params;
+            if (!params || Object.keys(params).length === 0) {
+              const extracted = extractRouteParams(pageInfo.entity.path, slug);
+              params = extracted.matched ? extracted.params : undefined;
+            }
+
+            // For App Router pages, params should be passed as props
+            const componentProps = {
+              ...options?.props,
+              ...(params && Object.keys(params).length > 0 ? { params } : {}),
+            };
+
+            const result = await withSpan(
+              "render.handle_component",
+              () =>
+                handleComponentPage(
+                  pageInfo,
+                  slug,
+                  this.projectDir,
+                  this.componentRegistry,
+                  this.adapter,
+                  {
+                    props: componentProps,
+                    cachedClientModule: cachedModule?.type === "component"
+                      ? cachedModule.code
+                      : undefined,
+                    moduleServerUrl: this.moduleServerUrl,
+                    projectId: options?.projectId,
+                    studioEmbed: options?.studioEmbed,
+                  },
+                ),
+              { "render.component_path": pageInfo.entity.path },
+            );
+            pageElement = result.pageElement;
+            pageBundle = result.pageBundle;
+            clientModuleCode = result.pageBundle.clientModuleCode ?? clientModuleCode;
+            pageModuleType = "component";
+            break;
+          }
+
+          case "script": {
+            // Script pages return early with their own result
+            const scriptResult = await withSpan(
+              "render.handle_script",
+              () =>
+                handleScriptPage(pageInfo, slug, {
+                  mode: this.mode,
+                  config: this.config,
+                  projectDir: this.projectDir,
+                  adapter: this.adapter,
+                  params: options?.params,
+                  props: options?.props,
+                  nonce: options?.nonce,
+                }),
+              { "render.script_path": pageInfo.entity.path },
+            );
+            return {
+              collectedMetadata: {},
+              scriptResult,
+            };
+          }
+
+          case "mdx":
+          default: {
+            const mdxResult = await withSpan(
+              "render.handle_mdx",
+              () =>
+                handleMDXPage(
+                  pageInfo,
+                  slug,
+                  this.projectDir,
+                  mergedComponents,
+                  this.compileMDX,
+                  this.adapter,
+                  {
+                    params: options?.params,
+                    precompiledModule: cachedModule?.type === "mdx" ? cachedModule.code : undefined,
+                    projectId: options?.projectId,
+                    studioEmbed: options?.studioEmbed,
+                    projectSlug: options?.projectSlug,
+                    contentSourceId: options?.contentSourceId,
+                  },
+                ),
+              { "render.mdx_path": pageInfo.entity.path },
+            );
+
+            pageElement = mdxResult.pageElement;
+            pageBundle = mdxResult.pageBundle;
+            collectedMetadata = mdxResult.collectedMetadata;
+            clientModuleCode = mdxResult.pageBundle.clientModuleCode;
+            pageModuleType = "mdx";
+            break;
+          }
         }
 
-        // For App Router pages, params should be passed as props
-        const componentProps = {
-          ...options?.props,
-          ...(params && Object.keys(params).length > 0 ? { params } : {}),
-        };
-
-        const result = await handleComponentPage(
-          pageInfo,
-          slug,
-          this.projectDir,
-          this.componentRegistry,
-          this.adapter,
-          {
-            props: componentProps,
-            cachedClientModule: cachedModule?.type === "component" ? cachedModule.code : undefined,
-            moduleServerUrl: this.moduleServerUrl,
-            projectId: options?.projectId,
-            studioEmbed: options?.studioEmbed,
-          },
-        );
-        pageElement = result.pageElement;
-        pageBundle = result.pageBundle;
-        clientModuleCode = result.pageBundle.clientModuleCode ?? clientModuleCode;
-        pageModuleType = "component";
-        break;
-      }
-
-      case "script": {
-        // Script pages return early with their own result
-        const scriptResult = await handleScriptPage(pageInfo, slug, {
-          mode: this.mode,
-          config: this.config,
-          projectDir: this.projectDir,
-          adapter: this.adapter,
-          params: options?.params,
-          props: options?.props,
-          nonce: options?.nonce,
-        });
         return {
-          collectedMetadata: {},
-          scriptResult,
+          pageElement,
+          pageBundle,
+          clientModuleCode,
+          pageModuleType,
+          collectedMetadata,
         };
-      }
-
-      case "mdx":
-      default: {
-        const mdxResult = await handleMDXPage(
-          pageInfo,
-          slug,
-          this.projectDir,
-          mergedComponents,
-          this.compileMDX,
-          this.adapter,
-          {
-            params: options?.params,
-            precompiledModule: cachedModule?.type === "mdx" ? cachedModule.code : undefined,
-            projectId: options?.projectId,
-            studioEmbed: options?.studioEmbed,
-            projectSlug: options?.projectSlug,
-            contentSourceId: options?.contentSourceId,
-          },
-        );
-
-        pageElement = mdxResult.pageElement;
-        pageBundle = mdxResult.pageBundle;
-        collectedMetadata = mdxResult.collectedMetadata;
-        clientModuleCode = mdxResult.pageBundle.clientModuleCode;
-        pageModuleType = "mdx";
-        break;
-      }
-    }
-
-    return {
-      pageElement,
-      pageBundle,
-      clientModuleCode,
-      pageModuleType,
-      collectedMetadata,
-    };
+      },
+      {
+        "render.page_type": pageType.type,
+        "render.slug": slug,
+        "render.path": pageInfo.entity.path,
+        "render.has_cached_module": !!cachedModule,
+      },
+    );
   }
 
   /**

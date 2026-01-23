@@ -10,6 +10,8 @@ import {
   MAX_CONCURRENT_REVALIDATIONS,
   REVALIDATION_TIMEOUT_MS as REVALIDATION_TIMEOUT_CONFIG,
 } from "#veryfront/utils/constants/cache.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 
 /** Shorter timeout for background revalidation (non-blocking, fire-and-forget) */
 const REVALIDATION_TIMEOUT_MS = REVALIDATION_TIMEOUT_CONFIG;
@@ -32,17 +34,31 @@ export class StaticDataFetcher {
       return { props: {} };
     }
 
+    const pathname = context.url?.pathname || "unknown";
     const cacheKey = this.cacheManager.createCacheKey(context);
 
     // No caching in preview mode (cacheKey is null)
     if (!cacheKey) {
-      return await this.fetchFreshNoCache(pageModule, context);
+      return await withSpan(
+        "data.fetch_static",
+        () => this.fetchFreshNoCache(pageModule, context),
+        { "data.fetch_method": "getStaticData", "data.pathname": pathname, "data.cache": "disabled" },
+      );
     }
 
-    const cached = this.cacheManager.get(cacheKey);
+    // Check cache
+    const cached = await withSpan(
+      SpanNames.DATA_CACHE_GET,
+      () => Promise.resolve(this.cacheManager.get(cacheKey)),
+      { "data.cache_key": cacheKey, "data.pathname": pathname },
+    );
 
     if (!cached) {
-      return await this.fetchFresh(pageModule, context, cacheKey);
+      return await withSpan(
+        "data.fetch_static",
+        () => this.fetchFresh(pageModule, context, cacheKey),
+        { "data.fetch_method": "getStaticData", "data.pathname": pathname, "data.cache": "miss" },
+      );
     }
 
     if (this.cacheManager.shouldRevalidate(cached)) {
@@ -100,11 +116,18 @@ export class StaticDataFetcher {
         `getStaticData for ${pathname}`,
       );
 
-      this.cacheManager.set(cacheKey, {
-        data: result,
-        timestamp: Date.now(),
-        revalidate: result.revalidate,
-      });
+      await withSpan(
+        SpanNames.DATA_CACHE_SET,
+        () => {
+          this.cacheManager.set(cacheKey, {
+            data: result,
+            timestamp: Date.now(),
+            revalidate: result.revalidate,
+          });
+          return Promise.resolve();
+        },
+        { "data.cache_key": cacheKey, "data.revalidate": result.revalidate ?? 0 },
+      );
 
       return result;
     } catch (error) {

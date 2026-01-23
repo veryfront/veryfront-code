@@ -3,6 +3,7 @@
  */
 
 import type { CacheStats, MemoryCacheOptions, TokenCache, TokenCacheEntry } from "./types.ts";
+import { withSpan } from "../tracing.ts";
 
 const DEFAULT_MAX_SIZE = 1000;
 const DEFAULT_CLEANUP_INTERVAL = 60_000;
@@ -21,74 +22,82 @@ export class MemoryCache implements TokenCache {
   }
 
   get(key: string): Promise<TokenCacheEntry | null> {
-    const entry = this.cache.get(key);
+    return withSpan("cache.memory.get", async () => {
+      const entry = this.cache.get(key);
 
-    if (!entry) {
-      this.misses++;
-      return Promise.resolve(null);
-    }
+      if (!entry) {
+        this.misses++;
+        return null;
+      }
 
-    if (Date.now() >= entry.expiresAt) {
-      this.cache.delete(key);
-      this.misses++;
-      return Promise.resolve(null);
-    }
+      if (Date.now() >= entry.expiresAt) {
+        this.cache.delete(key);
+        this.misses++;
+        return null;
+      }
 
-    this.hits++;
-    return Promise.resolve(entry);
+      this.hits++;
+      return entry;
+    }, { "cache.key": key });
   }
 
   set(key: string, entry: TokenCacheEntry): Promise<void> {
-    if (this.cache.size >= this.maxSize) {
-      const firstKey = this.cache.keys().next().value;
-      if (firstKey) {
-        this.cache.delete(firstKey);
+    return withSpan("cache.memory.set", async () => {
+      if (this.cache.size >= this.maxSize) {
+        const firstKey = this.cache.keys().next().value;
+        if (firstKey) {
+          this.cache.delete(firstKey);
+        }
       }
-    }
-    this.cache.set(key, entry);
-    return Promise.resolve();
+      this.cache.set(key, entry);
+    }, { "cache.key": key });
   }
 
   delete(key: string): Promise<void> {
-    this.cache.delete(key);
-    return Promise.resolve();
+    return withSpan("cache.memory.delete", async () => {
+      this.cache.delete(key);
+    }, { "cache.key": key });
   }
 
   clear(): Promise<void> {
-    this.cache.clear();
-    this.hits = 0;
-    this.misses = 0;
-    return Promise.resolve();
-  }
-
-  has(key: string): Promise<boolean> {
-    const entry = this.cache.get(key);
-    if (!entry) return Promise.resolve(false);
-
-    if (Date.now() >= entry.expiresAt) {
-      this.cache.delete(key);
-      return Promise.resolve(false);
-    }
-
-    return Promise.resolve(true);
-  }
-
-  stats(): Promise<CacheStats> {
-    return Promise.resolve({
-      hits: this.hits,
-      misses: this.misses,
-      size: this.cache.size,
-      type: "memory",
+    return withSpan("cache.memory.clear", async () => {
+      this.cache.clear();
+      this.hits = 0;
+      this.misses = 0;
     });
   }
 
+  has(key: string): Promise<boolean> {
+    return withSpan("cache.memory.has", async () => {
+      const entry = this.cache.get(key);
+      if (!entry) return false;
+
+      if (Date.now() >= entry.expiresAt) {
+        this.cache.delete(key);
+        return false;
+      }
+
+      return true;
+    }, { "cache.key": key });
+  }
+
+  stats(): Promise<CacheStats> {
+    return withSpan("cache.memory.stats", async () => ({
+      hits: this.hits,
+      misses: this.misses,
+      size: this.cache.size,
+      type: "memory" as const,
+    }));
+  }
+
   close(): Promise<void> {
-    if (this.cleanupTimer) {
-      clearInterval(this.cleanupTimer);
-      this.cleanupTimer = null;
-    }
-    this.cache.clear();
-    return Promise.resolve();
+    return withSpan("cache.memory.close", async () => {
+      if (this.cleanupTimer) {
+        clearInterval(this.cleanupTimer);
+        this.cleanupTimer = null;
+      }
+      this.cache.clear();
+    });
   }
 
   private cleanup(): void {
