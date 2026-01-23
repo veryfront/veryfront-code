@@ -708,7 +708,7 @@ export const COMMANDS: CommandRegistry = {
         description: "Comma-separated labels (e.g., bug,priority:high)",
       },
       {
-        flag: "--state, -s <state>",
+        flag: "--state <state>",
         description: "Issue state: open, closed",
       },
       {

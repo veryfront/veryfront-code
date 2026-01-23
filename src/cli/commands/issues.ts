@@ -164,7 +164,7 @@ export async function issuesCommand(args: {
           cliLogger.info("No issues found.");
         } else {
           for (const issue of result.issues) {
-            console.log(formatIssue(issue, args.verbose || args.v));
+            console.log(formatIssue(issue, args.verbose));
           }
           if (result.total > result.issues.length) {
             cliLogger.info(`\nShowing ${result.issues.length} of ${result.total} issues`);
@@ -343,7 +343,7 @@ Create Options:
   --prefix <type>          ID prefix: ISSUE, TASK, or PLAN
 
 List Options:
-  --state, -s <state>      Filter by state (open/closed)
+  --state <state>          Filter by state (open/closed)
   --labels, -l <labels>    Filter by labels (comma-separated)
   --milestone, -m <name>   Filter by milestone
   --assignee <user>        Filter by assignee
@@ -355,13 +355,13 @@ List Options:
 Edit Options:
   --title, -t <title>      New title
   --body, -b <body>        New body content
-  --state, -s <state>      New state (open/closed)
+  --state <state>          New state (open/closed)
   --labels, -l <labels>    Labels to set
   --delete, -d             Delete the issue
 
 Global Options:
   --json, -j               Output as JSON
-  --verbose, -v            Show more details
+  --verbose                Show more details
 
 Examples:
   veryfront issues create --title "Fix login bug" --labels bug,priority:high
