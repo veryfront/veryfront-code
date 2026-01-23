@@ -55,42 +55,56 @@ export function invalidateProjectCaches(
   // Check if we have a real project slug (not generic "preview")
   const hasRealProjectSlug = projectSlug && projectSlug !== "preview";
 
-  logger.debug("[CacheInvalidation] Starting cache invalidation", {
+  logger.info("[CacheInvalidation] ▶ Starting cache invalidation", {
     projectSlug,
+    hasRealProjectSlug,
     changedPaths: changedPaths?.length ?? "all",
+    changedFiles: changedPaths?.slice(0, 5), // Log first 5 paths
     mode: hasRealProjectSlug ? "per-project" : "global",
   });
 
   // Selective invalidation for specific changed files (faster)
   if (changedPaths && changedPaths.length > 0) {
+    logger.debug("[CacheInvalidation] Clearing module paths (selective)", {
+      projectSlug,
+      pathCount: changedPaths.length,
+    });
     invalidateModulePaths(changedPaths);
   } else {
-    // Full cache clear
+    logger.debug("[CacheInvalidation] Clearing module path cache (full)", { projectSlug });
     clearModulePathCache();
   }
 
   // Clear SSR module cache (always global - modules may be shared)
+  logger.debug("[CacheInvalidation] Clearing SSR module cache", { projectSlug });
   clearSSRModuleCache();
 
   // Clear router detection cache (always global)
+  logger.debug("[CacheInvalidation] Clearing router detection cache", { projectSlug });
   clearRouterDetectionCache();
 
   // For render and snippet caches, use per-project clearing when available
   // This is critical for multi-tenant performance - avoids clearing other projects' caches
   if (hasRealProjectSlug) {
     // Per-project clearing (preferred for multi-tenant)
+    logger.debug("[CacheInvalidation] Clearing renderer cache (per-project)", { projectSlug });
     clearRendererCacheForProject(projectSlug);
+    logger.debug("[CacheInvalidation] Clearing snippet cache (per-project)", { projectSlug });
     clearSnippetCacheForProject(projectSlug);
-    logger.debug("[CacheInvalidation] Per-project cache invalidation complete", {
+    logger.info("[CacheInvalidation] ✓ Per-project cache invalidation complete", {
       projectSlug,
       durationMs: Date.now() - startTime,
       changedPaths: changedPaths?.length ?? "all",
     });
   } else {
     // Global clearing (fallback when no project context)
+    logger.warn("[CacheInvalidation] Using GLOBAL cache clearing (no project slug)", {
+      projectSlug,
+      reason: "projectSlug is 'preview' or undefined",
+    });
     clearRendererCaches();
     clearSnippetCache();
-    logger.debug("[CacheInvalidation] Global cache invalidation complete", {
+    logger.info("[CacheInvalidation] ✓ Global cache invalidation complete", {
       projectSlug,
       durationMs: Date.now() - startTime,
       changedPaths: changedPaths?.length ?? "all",

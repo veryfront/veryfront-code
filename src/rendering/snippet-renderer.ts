@@ -149,7 +149,13 @@ export async function getCompiledSnippetAsync(
  * @deprecated Use clearSnippetCacheForProject for multi-tenant deployments
  */
 export function clearSnippetCache(): void {
+  const startTime = Date.now();
+  const entriesCleared = snippetCache.size;
   snippetCache.clear();
+  logger.info("[SnippetRenderer] ✓ Global snippet cache cleared", {
+    entriesCleared,
+    durationMs: Date.now() - startTime,
+  });
 }
 
 /**
@@ -161,10 +167,18 @@ export function clearSnippetCache(): void {
  * which entries belong to which project. For now, this clears all snippets.
  * A future optimization could store projectSlug separately in the cache entry.
  */
-export function clearSnippetCacheForProject(_projectSlug: string): void {
+export function clearSnippetCacheForProject(projectSlug: string): void {
+  const startTime = Date.now();
+  const entriesCleared = snippetCache.size;
   // TODO(#127): Implement per-project snippet clearing once cache entries store projectSlug
   // For now, clear all to ensure correctness over efficiency
   snippetCache.clear();
+  logger.info("[SnippetRenderer] ✓ Snippet cache cleared for project", {
+    projectSlug,
+    entriesCleared,
+    note: "Currently clears all entries - per-project clearing not yet implemented",
+    durationMs: Date.now() - startTime,
+  });
 }
 
 // Hex lookup table for efficient byte-to-hex conversion

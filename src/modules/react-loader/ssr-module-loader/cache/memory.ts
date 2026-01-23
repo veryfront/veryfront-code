@@ -121,9 +121,14 @@ registerMapCache("ssr-failed-components", failedComponents);
  * Clear the global SSR module cache.
  */
 export function clearSSRModuleCache(): void {
+  const moduleCount = globalModuleCache.size;
+  const failedCount = failedComponents.size;
   globalModuleCache.clear();
   failedComponents.clear();
-  logger.debug("[SSR-MODULE-LOADER] Cache cleared");
+  logger.info("[SSR-MODULE-LOADER] ✓ Global cache cleared", {
+    modulesCleared: moduleCount,
+    failedComponentsCleared: failedCount,
+  });
 }
 
 /**
@@ -169,10 +174,10 @@ export function clearSSRModuleCacheForProject(projectId: string): void {
     }
   }
 
-  if (cleared > 0) {
-    logger.debug("[SSR-MODULE-LOADER] Project cache cleared", {
-      projectId,
-      entriesCleared: cleared,
-    });
-  }
+  logger.info("[SSR-MODULE-LOADER] ✓ Project cache cleared", {
+    projectId,
+    prefix,
+    entriesCleared: cleared,
+    remainingModules: globalModuleCache.size,
+  });
 }

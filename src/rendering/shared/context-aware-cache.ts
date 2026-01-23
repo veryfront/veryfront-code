@@ -175,16 +175,23 @@ export class ContextAwareCacheCoordinator {
    * @param ctx - Render context to clear cache for
    */
   async clearForContext(ctx: RenderContext): Promise<void> {
+    const startTime = Date.now();
     if (this.store.deleteByPrefix) {
+      logger.debug("[ContextAwareCache] Clearing cache for context", {
+        projectId: ctx.projectId,
+        environment: ctx.environment,
+        cachePrefix: ctx.cachePrefix,
+      });
       const deleted = await this.store.deleteByPrefix(ctx.cachePrefix);
-      logger.debug("[ContextAwareCache] Cleared cache for context", {
+      logger.info("[ContextAwareCache] ✓ Cleared cache for context", {
         projectId: ctx.projectId,
         environment: ctx.environment,
         cachePrefix: ctx.cachePrefix,
         entriesDeleted: deleted,
+        durationMs: Date.now() - startTime,
       });
     } else {
-      logger.debug("[ContextAwareCache] Store does not support prefix deletion", {
+      logger.warn("[ContextAwareCache] Store does not support prefix deletion", {
         projectId: ctx.projectId,
         cachePrefix: ctx.cachePrefix,
       });
@@ -198,15 +205,23 @@ export class ContextAwareCacheCoordinator {
    * @param projectId - Project ID to clear caches for
    */
   async clearForProject(projectId: string): Promise<void> {
+    const startTime = Date.now();
+    const prefix = `${projectId}:`;
     if (this.store.deleteByPrefix) {
-      // Cache keys are prefixed with projectId, so clear all with that prefix
-      const deleted = await this.store.deleteByPrefix(`${projectId}:`);
-      logger.debug("[ContextAwareCache] Cleared cache for project", {
+      logger.debug("[ContextAwareCache] Clearing cache for project", {
         projectId,
+        prefix,
+      });
+      // Cache keys are prefixed with projectId, so clear all with that prefix
+      const deleted = await this.store.deleteByPrefix(prefix);
+      logger.info("[ContextAwareCache] ✓ Cleared cache for project", {
+        projectId,
+        prefix,
         entriesDeleted: deleted,
+        durationMs: Date.now() - startTime,
       });
     } else {
-      logger.debug("[ContextAwareCache] Store does not support prefix deletion", {
+      logger.warn("[ContextAwareCache] Store does not support prefix deletion", {
         projectId,
       });
     }

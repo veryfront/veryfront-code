@@ -367,8 +367,12 @@ export class Renderer {
    * @deprecated Use clearCacheForProject for multi-tenant deployments
    */
   async clearAllCaches(): Promise<void> {
+    const startTime = Date.now();
+    logger.info("[Renderer] Clearing ALL render caches (global)");
     await this.cache.clearAll();
-    logger.debug("[Renderer] All caches cleared");
+    logger.info("[Renderer] ✓ All render caches cleared", {
+      durationMs: Date.now() - startTime,
+    });
   }
 
   /**
@@ -376,8 +380,13 @@ export class Renderer {
    * Use this in multi-tenant deployments to avoid clearing other projects' caches.
    */
   async clearCacheForProject(projectId: string): Promise<void> {
+    const startTime = Date.now();
+    logger.info("[Renderer] Clearing render cache for project", { projectId });
     await this.cache.clearForProject(projectId);
-    logger.debug("[Renderer] Project caches cleared", { projectId });
+    logger.info("[Renderer] ✓ Project render cache cleared", {
+      projectId,
+      durationMs: Date.now() - startTime,
+    });
   }
 
   /**
@@ -578,10 +587,15 @@ export async function destroyRenderer(): Promise<void> {
  * @deprecated Use clearRendererCacheForProject for multi-tenant deployments
  */
 export function clearRendererCaches(): void {
+  logger.debug("[Renderer] clearRendererCaches called (global)", {
+    hasRenderer: !!renderer,
+  });
   if (renderer) {
     renderer.clearAllCaches().catch((err) => {
       logger.warn("[Renderer] Failed to clear caches", { error: String(err) });
     });
+  } else {
+    logger.debug("[Renderer] No renderer instance, skipping cache clear");
   }
 }
 
@@ -590,6 +604,10 @@ export function clearRendererCaches(): void {
  * Safe to call even if renderer is not initialized (no-op).
  */
 export function clearRendererCacheForProject(projectId: string): void {
+  logger.debug("[Renderer] clearRendererCacheForProject called", {
+    projectId,
+    hasRenderer: !!renderer,
+  });
   if (renderer) {
     renderer.clearCacheForProject(projectId).catch((err) => {
       logger.warn("[Renderer] Failed to clear project caches", {
@@ -597,6 +615,8 @@ export function clearRendererCacheForProject(projectId: string): void {
         error: String(err),
       });
     });
+  } else {
+    logger.debug("[Renderer] No renderer instance, skipping project cache clear", { projectId });
   }
 }
 
