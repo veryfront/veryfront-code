@@ -14,6 +14,8 @@ import type { StdinReader } from "#veryfront/platform/compat/stdin.ts";
 import { allTools, getTool, setServerStartTime } from "./tools.ts";
 import { getErrorCollector } from "./error-collector.ts";
 import { getLogBuffer } from "./log-buffer.ts";
+import { createIssuesManager } from "../../issues/core.ts";
+import { cwd } from "#veryfront/platform/compat/process.ts";
 
 // ============================================================================
 // Types
@@ -357,6 +359,12 @@ export class MCPDevServer {
           description: "Recent server logs",
           mimeType: "application/json",
         },
+        {
+          uri: "issues://",
+          name: "Project Issues",
+          description: "File-based issues, tasks, and plans",
+          mimeType: "application/json",
+        },
       ],
     };
   }
@@ -406,6 +414,39 @@ export class MCPDevServer {
             uri,
             mimeType: "application/json",
             text: JSON.stringify(logs, null, 2),
+          },
+        ],
+      };
+    }
+
+    // Handle issues:// and issues://{id} URIs
+    if (uri === "issues://") {
+      const manager = createIssuesManager(cwd());
+      const result = await manager.list({ state: "open" });
+      return {
+        contents: [
+          {
+            uri,
+            mimeType: "application/json",
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (uri.startsWith("issues://")) {
+      const id = uri.replace("issues://", "");
+      const manager = createIssuesManager(cwd());
+      const issue = await manager.get(id);
+      if (!issue) {
+        throw new Error(`Issue not found: ${id}`);
+      }
+      return {
+        contents: [
+          {
+            uri,
+            mimeType: "application/json",
+            text: JSON.stringify(issue, null, 2),
           },
         ],
       };

@@ -22,6 +22,7 @@ import { deployCommand, parseDeployArgs } from "../commands/deploy.ts";
 import { parseUpArgs, upCommand } from "../commands/up.ts";
 import { newCommand, parseNewArgs } from "../commands/new.ts";
 import { promptProjectName, showMainMenu } from "../commands/main.ts";
+import { issuesCommand } from "../commands/issues.ts";
 import { login, logout, whoami } from "../auth/index.ts";
 import { COMMANDS } from "../help/command-definitions.ts";
 import {
@@ -468,6 +469,11 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
           });
           await server.stop();
         }
+        break;
+
+      case "issues":
+        // File-based issue tracking
+        await issuesCommand(args);
         break;
 
       case "help":
