@@ -22,10 +22,12 @@ export class StatOperations {
   private fileIndex: Map<string, ProjectFile> | null = null;
   private directoryIndex: Set<string> | null = null;
   private buildingIndex: Promise<void> | null = null;
+  // Mutex to prevent race conditions during index building
+  private indexBuildLock = false;
   // Map normalized paths to original API paths (for trailing slash files)
   private pathMapping: Map<string, string> = new Map();
 
-  // Circuit breaker for API searches
+  // Circuit breaker for API searches (used in resolveFile)
   private apiSearchFailures = 0;
   private apiSearchDisabledUntil = 0;
 
@@ -102,11 +104,13 @@ export class StatOperations {
   }
 
   private async ensureIndexBuilt(): Promise<void> {
+    // Fast path: index already built
     if (this.fileIndex && this.directoryIndex) {
       logger.debug("[StatOperations] ensureIndexBuilt - index already built");
       return;
     }
 
+    // Check if another request is already building the index
     if (this.buildingIndex) {
       logger.debug("[StatOperations] ensureIndexBuilt - waiting for concurrent build");
       const waitStart = performance.now();
@@ -117,9 +121,33 @@ export class StatOperations {
       return;
     }
 
-    this.buildingIndex = this.buildIndex();
-    await this.buildingIndex;
-    this.buildingIndex = null;
+    // Acquire lock to prevent race conditions
+    // Multiple requests can pass the buildingIndex check before it's set
+    if (this.indexBuildLock) {
+      // Another request acquired the lock, wait for the build promise
+      while (this.indexBuildLock && !this.buildingIndex) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+      if (this.buildingIndex) {
+        await this.buildingIndex;
+      }
+      return;
+    }
+
+    // Acquire lock and start building
+    this.indexBuildLock = true;
+    try {
+      // Double-check after acquiring lock (another request may have completed)
+      if (this.fileIndex && this.directoryIndex) {
+        return;
+      }
+
+      this.buildingIndex = this.buildIndex();
+      await this.buildingIndex;
+    } finally {
+      this.buildingIndex = null;
+      this.indexBuildLock = false;
+    }
   }
 
   private async buildIndex(): Promise<void> {

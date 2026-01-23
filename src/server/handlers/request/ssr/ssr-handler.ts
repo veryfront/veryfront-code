@@ -43,6 +43,7 @@ import {
 } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
 import { VeryfrontAPIError } from "#veryfront/platform/adapters/veryfront-api-client/types.ts";
 import { shouldUseNoCacheHeaders } from "../../../context/request-context.ts";
+import { ErrorPages } from "../../../utils/error-html.ts";
 
 /**
  * Determine if request should serve production (released) content.
@@ -226,11 +227,7 @@ export class SSRHandler extends BaseHandler {
           .withCache("no-cache")
           .withContentType(
             getContentType(".html"),
-            generateStyledErrorHtml(
-              503,
-              "Service Unavailable",
-              "The server is under heavy load. Please try again.",
-            ),
+            ErrorPages.memoryPressure(),
             503,
           ),
       );
@@ -478,11 +475,7 @@ export class SSRHandler extends BaseHandler {
         }
 
         const isHeadRequest = req.method.toUpperCase() === "HEAD";
-        const body = isHeadRequest ? null : generateStyledErrorHtml(
-          404,
-          "Not Found",
-          `The requested path "${slug || "/"}" could not be found`,
-        );
+        const body = isHeadRequest ? null : ErrorPages.notFound(slug || "/");
 
         const response = builder
           .withCORS(req, ctx.securityConfig?.cors)
@@ -520,11 +513,7 @@ export class SSRHandler extends BaseHandler {
           const builder = this.createResponseBuilder(ctx, notDeployedNonce);
           const isHeadRequest = req.method.toUpperCase() === "HEAD";
 
-          const body = isHeadRequest ? null : generateStyledErrorHtml(
-            404,
-            "Nothing here yet",
-            "This project hasn't been deployed",
-          );
+          const body = isHeadRequest ? null : ErrorPages.undeployed();
 
           const response = builder
             .withCORS(req, ctx.securityConfig?.cors)
@@ -583,11 +572,7 @@ export class SSRHandler extends BaseHandler {
       }
 
       // Generic error fallback
-      const body = isHead ? null : generateStyledErrorHtml(
-        500,
-        "Internal Server Error",
-        "Something went wrong while rendering this page",
-      );
+      const body = isHead ? null : ErrorPages.serverError();
 
       const response = builder
         .withCORS(req, ctx.securityConfig?.cors)
@@ -598,75 +583,4 @@ export class SSRHandler extends BaseHandler {
       return this.respond(response);
     }
   }
-}
-
-/**
- * Generate a styled error page for any status code.
- * Styled to match the Veryfront design system.
- */
-function generateStyledErrorHtml(
-  statusCode: number,
-  title: string,
-  message: string,
-): string {
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width">
-  <link rel="icon" type="image/png" href="https://cdn.veryfront.com/images/veryfront-favicon.png">
-  <title>${statusCode} ${title} — Veryfront</title>
-  <style>
-    :root {
-      --bg: #ffffff;
-      --title: #374151;
-      --message: #9ca3af;
-    }
-    /* Dark mode: system preference, .dark class, or data-theme="dark" */
-    @media (prefers-color-scheme: dark) {
-      :root:not(.light):not([data-theme="light"]) {
-        --bg: #0d0e11;
-        --title: #949A9F;
-        --message: #6b7280;
-      }
-    }
-    :root.dark, :root[data-theme="dark"] {
-      --bg: #0d0e11;
-      --title: #949A9F;
-      --message: #6b7280;
-    }
-    body {
-      margin: 0;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: var(--bg);
-      min-height: 100dvh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .container {
-      text-align: center;
-      padding: 2rem;
-    }
-    .title {
-      margin: 0 0 0.75rem;
-      font-size: 1.875rem;
-      font-weight: 500;
-      color: var(--title);
-      letter-spacing: -0.025em;
-    }
-    .message {
-      margin: 0;
-      font-size: 1rem;
-      color: var(--message);
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1 class="title">${title}</h1>
-    <p class="message">${message}</p>
-  </div>
-</body>
-</html>`;
 }

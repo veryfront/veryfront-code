@@ -81,10 +81,15 @@ export class RouteRegistry {
           break;
         }
       } catch (error) {
-        if (this.config.debug) {
-          serverLogger.debug(`[RouteRegistry] Handler ${handler.metadata.name} error:`, error);
-          serverLogger.debug(`[RouteRegistry] Continuing after error in ${handler.metadata.name}`);
-        }
+        // Always log handler errors - they should never be silently swallowed
+        serverLogger.error(`[RouteRegistry] Handler ${handler.metadata.name} threw an error`, {
+          handler: handler.metadata.name,
+          path: url.pathname,
+          method: req.method,
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        });
+        // Continue to next handler - a single handler failure shouldn't break the chain
       }
     }
 

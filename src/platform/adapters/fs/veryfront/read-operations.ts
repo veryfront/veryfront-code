@@ -17,10 +17,19 @@ export interface ContentContextProvider {
  */
 const EXTENSION_PRIORITY = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"] as const;
 
+/** Maximum time (ms) to keep an in-flight request before cleanup */
+const IN_FLIGHT_REQUEST_TIMEOUT_MS = 60_000;
+
+/** Entry for tracking in-flight requests with timeout */
+interface InFlightEntry {
+  promise: Promise<string>;
+  startedAt: number;
+}
+
 export class ReadOperations {
-  // In-flight request deduplication map
+  // In-flight request deduplication map with timeout tracking
   // Prevents duplicate concurrent fetches for the same file
-  private readonly inFlightRequests = new Map<string, Promise<string>>();
+  private readonly inFlightRequests = new Map<string, InFlightEntry>();
 
   constructor(
     private readonly client: VeryfrontAPIClient,
@@ -35,6 +44,29 @@ export class ReadOperations {
       Array<{ path: string; content?: string }> | undefined
     >,
   ) {}
+
+  /**
+   * Clean up stale in-flight requests to prevent memory leaks.
+   * Requests older than IN_FLIGHT_REQUEST_TIMEOUT_MS are removed.
+   */
+  private cleanupStaleInFlightRequests(): void {
+    const now = Date.now();
+    let cleanedCount = 0;
+
+    for (const [key, entry] of this.inFlightRequests) {
+      if (now - entry.startedAt > IN_FLIGHT_REQUEST_TIMEOUT_MS) {
+        this.inFlightRequests.delete(key);
+        cleanedCount++;
+      }
+    }
+
+    if (cleanedCount > 0) {
+      logger.warn("[ReadOperations] Cleaned up stale in-flight requests", {
+        cleanedCount,
+        remainingCount: this.inFlightRequests.size,
+      });
+    }
+  }
 
   /**
    * Check if content is available in the cached file list.
@@ -117,17 +149,21 @@ export class ReadOperations {
       }
     }
 
+    // Cleanup stale in-flight requests periodically (prevents memory leaks)
+    this.cleanupStaleInFlightRequests();
+
     // Request deduplication: check if there's already an in-flight request for this file
     // This prevents duplicate concurrent fetches when multiple parts of the code
     // request the same file simultaneously (e.g., pages/index.mdx fetched 3x)
     const inFlightKey = cacheKey;
-    const existingRequest = this.inFlightRequests.get(inFlightKey);
-    if (existingRequest) {
+    const existingEntry = this.inFlightRequests.get(inFlightKey);
+    if (existingEntry) {
       logger.debug("[ReadOperations] Deduplicating request - joining existing fetch", {
         path: normalizedPath,
         cacheKey: inFlightKey,
+        ageMs: Date.now() - existingEntry.startedAt,
       });
-      return existingRequest;
+      return existingEntry.promise;
     }
 
     // Fetch based on source type
@@ -159,8 +195,11 @@ export class ReadOperations {
       }
     })();
 
-    // Store the promise for other concurrent requests to join
-    this.inFlightRequests.set(inFlightKey, fetchPromise);
+    // Store the promise with timestamp for other concurrent requests to join
+    this.inFlightRequests.set(inFlightKey, {
+      promise: fetchPromise,
+      startedAt: Date.now(),
+    });
 
     return fetchPromise;
   }
@@ -278,8 +317,9 @@ export class ReadOperations {
 
   /**
    * Sequential fallback for extension resolution.
-   * Used as backup if pattern search is unavailable.
-   * @deprecated Prefer pattern-based resolution via tryFallbackExtensions
+   * Used as backup when pattern search API is unavailable or fails.
+   * This is intentionally kept as a fallback for API compatibility.
+   * @internal Not deprecated - required for backward compatibility with older APIs
    */
   private async tryFallbackExtensionsSequential(
     apiPath: string,

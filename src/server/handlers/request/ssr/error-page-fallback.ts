@@ -13,6 +13,7 @@ import type { ResponseBuilder } from "#veryfront/security/index.ts";
 import { join as joinPath } from "#veryfront/platform/compat/path/index.ts";
 import { serverLogger as logger } from "#veryfront/utils";
 import { buildErrorPageCacheKey } from "#veryfront/cache";
+import { generateErrorHtml } from "../../../utils/error-html.ts";
 
 type ErrorPageType = "404" | "500" | "_error";
 
@@ -237,11 +238,19 @@ async function renderErrorPage(
       error: renderError,
     });
     // Return null to fall back to default error handling
+    const fallbackHtml = generateErrorHtml({
+      statusCode,
+      title: statusCode === 404 ? "Not Found" : "Server Error",
+      message: statusCode === 404
+        ? (pathname ? `The page "${pathname}" could not be found.` : "Page not found.")
+        : "An unexpected error occurred.",
+      minimal: true,
+    });
     return builder
       .withCORS(req, ctx.securityConfig?.cors)
       .withSecurity(ctx.securityConfig ?? undefined)
       .withCache("no-cache")
-      .html(generateFallbackHtml(statusCode, pathname), statusCode);
+      .html(fallbackHtml, statusCode);
   }
 
   const html = `<!DOCTYPE html>
@@ -261,27 +270,3 @@ async function renderErrorPage(
     .html(html, statusCode);
 }
 
-/**
- * Generate a simple fallback HTML when rendering fails
- */
-function generateFallbackHtml(statusCode: number, pathname?: string): string {
-  const isNotFound = statusCode === 404;
-  const title = isNotFound ? "Not Found" : "Server Error";
-  const pathDisplay = pathname ? `"${pathname}" ` : "";
-  const message = isNotFound
-    ? `The page ${pathDisplay}could not be found.`
-    : "An unexpected error occurred.";
-
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>${statusCode} ${title}</title>
-</head>
-<body>
-  <h1>${statusCode} ${title}</h1>
-  <p>${message}</p>
-</body>
-</html>`;
-}
