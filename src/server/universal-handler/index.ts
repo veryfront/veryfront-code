@@ -677,7 +677,7 @@ export function createVeryfrontHandler(
           proxyToken: isLocalProject ? undefined : proxyToken, // Don't pass token for local projects
           environmentName,
           resolvedEnvironment, // From domain lookup or proxy headers - use for cache isolation
-          requestContext: reqCtx, // Contains mode (preview/production) - use ctx.requestContext?.mode
+          requestContext: { ...reqCtx, mode: resolvedEnvironment }, // Override mode with authoritative resolvedEnvironment
           routeRegistry: registry,
           enriched: enrichedContext, // Unified context when available
         };
