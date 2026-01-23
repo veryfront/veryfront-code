@@ -165,18 +165,22 @@ async function resolveLocalImportPath(
     return null;
   }
 
-  // Parallelize extension checks for better performance
-  // Check all extensions and index files concurrently
-  const candidates = [
-    ...EXTENSIONS.map((ext) => basePath + ext),
-    ...EXTENSIONS.map((ext) => basePath + "/index" + ext),
-  ];
+  // Progressive resolution: check most likely extensions first with early-exit
+  // This avoids creating unnecessary promises for the common case (file exists)
+  // Extensions are ordered by likelihood: .tsx, .ts, .jsx, .js, .mdx
+  for (const ext of EXTENSIONS) {
+    const candidate = basePath + ext;
+    if (await checkFileExists(candidate, adapter)) {
+      return candidate;
+    }
+  }
 
+  // Fallback: check index files (less common, parallelize for efficiency)
+  const indexCandidates = EXTENSIONS.map((ext) => basePath + "/index" + ext);
   const results = await Promise.all(
-    candidates.map(async (path) => ({ path, exists: await checkFileExists(path, adapter) })),
+    indexCandidates.map(async (path) => ({ path, exists: await checkFileExists(path, adapter) })),
   );
 
-  // Return first match (maintains extension priority order)
   const found = results.find((r) => r.exists);
   return found?.path ?? null;
 }

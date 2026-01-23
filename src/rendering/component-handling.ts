@@ -119,13 +119,23 @@ export async function handleComponentPage(
   }
 }
 
-// Generate SHA-256 hash for content
+// Hex lookup table for efficient byte-to-hex conversion (avoids allocations in hot path)
+const HEX_CHARS = "0123456789abcdef";
+
+// Generate SHA-256 hash for content - optimized single-pass hex encoding
 async function generateContentHash(str: string): Promise<string> {
   const encoder = new TextEncoder();
   const data = encoder.encode(str);
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 16);
+  const bytes = new Uint8Array(hashBuffer);
+  // Single-pass hex encoding without intermediate array allocations
+  // Only need first 8 bytes for 16 hex chars
+  let hex = "";
+  for (let i = 0; i < 8; i++) {
+    const byte = bytes[i]!;
+    hex += HEX_CHARS.charAt(byte >> 4) + HEX_CHARS.charAt(byte & 0xf);
+  }
+  return hex;
 }
 
 async function bundleComponentForClient(

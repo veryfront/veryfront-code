@@ -152,27 +152,42 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       return localProjects[slug];
     }
 
-    // Dynamically check common project directories
+    // Dynamically check common project directories - parallelized for performance
     const projectDirs = ["projects", "data/projects", "examples"];
     const basePath = cwd();
-    for (const dir of projectDirs) {
-      const projectPath = join(basePath, dir, slug);
+
+    // Check all directories in parallel
+    const candidatePaths = projectDirs.map((dir) => join(basePath, dir, slug));
+    const existsResults = await Promise.all(
+      candidatePaths.map(async (projectPath) => {
+        try {
+          const exists = await fs.exists(projectPath);
+          return exists ? projectPath : null;
+        } catch {
+          return null;
+        }
+      }),
+    );
+
+    // For each existing path, check app/pages/components in parallel
+    for (const projectPath of existsResults) {
+      if (!projectPath) continue;
+
       try {
-        const exists = await fs.exists(projectPath);
-        if (exists) {
-          // Verify it has app/ or pages/ or components/
-          const hasApp = await fs.exists(join(projectPath, "app"));
-          const hasPages = await fs.exists(join(projectPath, "pages"));
-          const hasComponents = await fs.exists(join(projectPath, "components"));
-          if (hasApp || hasPages || hasComponents) {
-            // Cache for future requests
-            localProjects[slug] = projectPath;
-            logger?.debug("Dynamically discovered local project", { slug, projectPath });
-            return projectPath;
-          }
+        const [hasApp, hasPages, hasComponents] = await Promise.all([
+          fs.exists(join(projectPath, "app")),
+          fs.exists(join(projectPath, "pages")),
+          fs.exists(join(projectPath, "components")),
+        ]);
+
+        if (hasApp || hasPages || hasComponents) {
+          // Cache for future requests
+          localProjects[slug] = projectPath;
+          logger?.debug("Dynamically discovered local project", { slug, projectPath });
+          return projectPath;
         }
       } catch {
-        // Directory doesn't exist, continue
+        // Directory check failed, continue
       }
     }
     return undefined;

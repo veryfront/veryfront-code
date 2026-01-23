@@ -497,33 +497,43 @@ export class VeryfrontFSAdapter implements FSAdapter {
     // Invalidate file content, stat, and directory caches for changed files (all source type variants)
     // Cache keys are structured as: {type}:{sourceType}:{projectSlug}:{qualifier}:{path}
     // e.g., file:branch:codersociety:main:components/HeroSection.tsx
-    // Await Redis deletions to prevent stale data race conditions
-    const deletionPromises: Promise<number>[] = [];
-    const parentDirs = new Set<string>();
+    // All deletions run in parallel via Promise.all() for optimal performance
 
+    // Source type variants to clear (branch, release, env)
+    const sourceTypes = ["branch:", "release:", "env:"] as const;
+    // Cache types for file operations (file content and stat)
+    const fileTypes = ["file:", "stat:"] as const;
+
+    const parentDirs = new Set<string>();
+    const deletionPromises: Promise<number>[] = [];
+
+    // Pre-calculate all deletion operations for batch execution
     for (const path of changedPaths) {
-      // Delete file content cache - all source type variants
-      deletionPromises.push(this.cache.deleteByPrefixAndSuffixAsync("file:branch:", path));
-      deletionPromises.push(this.cache.deleteByPrefixAndSuffixAsync("file:release:", path));
-      deletionPromises.push(this.cache.deleteByPrefixAndSuffixAsync("file:env:", path));
-      // Delete stat cache - all source type variants
-      deletionPromises.push(this.cache.deleteByPrefixAndSuffixAsync("stat:branch:", path));
-      deletionPromises.push(this.cache.deleteByPrefixAndSuffixAsync("stat:release:", path));
-      deletionPromises.push(this.cache.deleteByPrefixAndSuffixAsync("stat:env:", path));
       // Track parent directories for directory cache invalidation
-      // Root-level files (no "/") have empty string as parent dir to match normalized cache keys
       const slashIndex = path.lastIndexOf("/");
       const parentDir = slashIndex > 0 ? path.substring(0, slashIndex) : "";
       parentDirs.add(parentDir);
+
+      // Queue file and stat cache deletions for all source types
+      for (const fileType of fileTypes) {
+        for (const sourceType of sourceTypes) {
+          deletionPromises.push(
+            this.cache.deleteByPrefixAndSuffixAsync(fileType + sourceType, path),
+          );
+        }
+      }
     }
 
-    // Invalidate parent directory caches (for new/deleted files)
+    // Queue directory cache deletions for all source types
     for (const parentDir of parentDirs) {
-      deletionPromises.push(this.cache.deleteByPrefixAndSuffixAsync("dir:branch:", parentDir));
-      deletionPromises.push(this.cache.deleteByPrefixAndSuffixAsync("dir:release:", parentDir));
-      deletionPromises.push(this.cache.deleteByPrefixAndSuffixAsync("dir:env:", parentDir));
+      for (const sourceType of sourceTypes) {
+        deletionPromises.push(
+          this.cache.deleteByPrefixAndSuffixAsync("dir:" + sourceType, parentDir),
+        );
+      }
     }
 
+    // Execute all deletions in parallel
     await Promise.all(deletionPromises);
 
     logger.debug("[VeryfrontFSAdapter] Cache entries deleted for changed paths", {

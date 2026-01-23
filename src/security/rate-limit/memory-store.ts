@@ -8,6 +8,9 @@
 
 import type { RateLimitState, RateLimitStore } from "./types.ts";
 
+/** Maximum timestamps to keep per key to prevent memory exhaustion under attack */
+const MAX_TIMESTAMPS_PER_KEY = 1000;
+
 export class MemoryRateLimitStore implements RateLimitStore {
   private store: Map<string, RateLimitState> = new Map();
   private cleanupInterval: ReturnType<typeof setInterval> | null = null;
@@ -43,6 +46,17 @@ export class MemoryRateLimitStore implements RateLimitStore {
     state.count++;
     if (state.requestTimestamps) {
       state.requestTimestamps.push(now);
+      // Prevent unbounded memory growth - keep only recent timestamps
+      // Use sliding window: remove timestamps older than window + keep max limit
+      if (state.requestTimestamps.length > MAX_TIMESTAMPS_PER_KEY) {
+        // Keep only the most recent timestamps within the window
+        const windowStart = state.resetTime - 60000; // 1 minute window
+        state.requestTimestamps = state.requestTimestamps.filter((t) => t >= windowStart);
+        // If still over limit, keep only the most recent MAX_TIMESTAMPS_PER_KEY
+        if (state.requestTimestamps.length > MAX_TIMESTAMPS_PER_KEY) {
+          state.requestTimestamps = state.requestTimestamps.slice(-MAX_TIMESTAMPS_PER_KEY);
+        }
+      }
     }
 
     return Promise.resolve(state.count);

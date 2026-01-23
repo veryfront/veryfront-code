@@ -99,9 +99,19 @@ export async function fetchEsmModule(
     urlArray.map((esmUrl) => fetchEsmModule(esmUrl, tmpDir, localAdapter, esmCache)),
   );
 
-  // Replace all occurrences with cached paths
-  for (let i = 0; i < urlArray.length; i++) {
-    code = code.split(urlArray[i]!).join(`file://${cachedPaths[i]}`);
+  // Replace all occurrences with cached paths using single-pass replacement
+  // This avoids O(n²) complexity from repeated split/join operations
+  if (urlArray.length > 0) {
+    const replacementMap = new Map<string, string>();
+    for (let i = 0; i < urlArray.length; i++) {
+      replacementMap.set(urlArray[i]!, `file://${cachedPaths[i]}`);
+    }
+
+    // Build regex that matches any of the URLs (escaped for regex safety)
+    const escapedUrls = urlArray.map((u) => u.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    const combinedPattern = new RegExp(escapedUrls.join("|"), "g");
+
+    code = code.replace(combinedPattern, (match) => replacementMap.get(match) ?? match);
   }
 
   // Generate hash for the URL to create unique filename

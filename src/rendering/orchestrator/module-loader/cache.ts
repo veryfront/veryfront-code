@@ -6,16 +6,26 @@
  * @module rendering/orchestrator/module-loader/cache
  */
 
+// Hex lookup table for efficient byte-to-hex conversion
+const HEX_CHARS = "0123456789abcdef";
+
 /**
  * Generate a short hash from a string.
  * Used to create unique filenames for cached modules.
+ * Optimized single-pass hex encoding to avoid intermediate allocations.
  */
 export async function generateHash(str: string): Promise<string> {
   const encoder = new TextEncoder();
   const data = encoder.encode(str);
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 16);
+  const bytes = new Uint8Array(hashBuffer);
+  // Single-pass hex encoding without Array.from/map/join overhead
+  let hex = "";
+  for (let i = 0; i < 8; i++) {
+    const byte = bytes[i]!;
+    hex += HEX_CHARS.charAt(byte >> 4) + HEX_CHARS.charAt(byte & 0xf);
+  }
+  return hex;
 }
 
 /**
