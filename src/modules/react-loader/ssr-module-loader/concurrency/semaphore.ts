@@ -10,6 +10,10 @@
 
 /**
  * Semaphore with timeout support for concurrency control.
+ *
+ * IMPORTANT: Only use tryAcquire() with a timeout - never use blocking acquire
+ * patterns as they can cause deadlocks when multiple concurrent operations
+ * compete for limited permits.
  */
 export class Semaphore {
   private permits: number;
@@ -20,25 +24,12 @@ export class Semaphore {
   }
 
   /**
-   * Acquire a permit. Resolves immediately if one is available,
-   * otherwise waits until one becomes available.
-   *
-   * @deprecated Use tryAcquire() with timeout instead to avoid indefinite blocking
-   */
-  acquire(): Promise<void> {
-    if (this.permits > 0) {
-      this.permits--;
-      return Promise.resolve();
-    }
-    return new Promise<void>((resolve, reject) => {
-      this.waitQueue.push({ resolve, reject });
-    });
-  }
-
-  /**
    * Try to acquire a permit within a timeout.
    * Returns true if acquired, false if timed out.
-   * This is the preferred method - fails fast instead of blocking forever.
+   *
+   * This is the only way to acquire permits - it fails fast instead of
+   * blocking forever, preventing deadlocks when multiple concurrent
+   * operations compete for limited permits.
    *
    * @param timeoutMs - Maximum time to wait for a permit (default: 100ms)
    * @returns true if permit acquired, false if timed out

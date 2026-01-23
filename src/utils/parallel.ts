@@ -10,7 +10,10 @@
 import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
 
 /** Default max concurrent operations */
-const DEFAULT_CONCURRENCY = 10;
+const DEFAULT_CONCURRENCY = 20;
+
+/** Timeout for acquiring semaphore permits (ms) */
+const ACQUIRE_TIMEOUT_MS = 30_000;
 
 /** Global semaphore for API calls - shared across all parallel operations */
 const apiSemaphore = new Semaphore(DEFAULT_CONCURRENCY);
@@ -39,16 +42,23 @@ const apiSemaphore = new Semaphore(DEFAULT_CONCURRENCY);
 export async function parallelMap<T, R>(
   items: T[],
   fn: (item: T, index: number) => Promise<R>,
-  options: { concurrency?: number; semaphore?: Semaphore } = {},
+  options: { concurrency?: number; semaphore?: Semaphore; timeoutMs?: number } = {},
 ): Promise<R[]> {
   if (items.length === 0) return [];
 
   const semaphore = options.semaphore ?? apiSemaphore;
+  const timeoutMs = options.timeoutMs ?? ACQUIRE_TIMEOUT_MS;
   const results: R[] = new Array(items.length);
 
   await Promise.all(
     items.map(async (item, index) => {
-      await semaphore.acquire();
+      // Use tryAcquire with timeout to prevent deadlocks
+      const acquired = await semaphore.tryAcquire(timeoutMs);
+      if (!acquired) {
+        throw new Error(
+          `parallelMap: timed out waiting for semaphore after ${timeoutMs}ms (available: ${semaphore.available}, waiting: ${semaphore.waiting})`,
+        );
+      }
       try {
         results[index] = await fn(item, index);
       } finally {
@@ -80,7 +90,7 @@ export async function parallelMap<T, R>(
  */
 export function parallelAll<T extends readonly (() => Promise<unknown>)[]>(
   fns: T,
-  options: { concurrency?: number; semaphore?: Semaphore } = {},
+  options: { concurrency?: number; semaphore?: Semaphore; timeoutMs?: number } = {},
 ): Promise<{ [K in keyof T]: Awaited<ReturnType<T[K]>> }> {
   return parallelMap(
     [...fns] as (() => Promise<unknown>)[],
@@ -110,11 +120,12 @@ export function parallelAll<T extends readonly (() => Promise<unknown>)[]>(
 export async function parallelFind<T>(
   items: T[],
   predicate: (item: T, index: number) => Promise<boolean>,
-  options: { concurrency?: number; semaphore?: Semaphore } = {},
+  options: { concurrency?: number; semaphore?: Semaphore; timeoutMs?: number } = {},
 ): Promise<T | undefined> {
   if (items.length === 0) return undefined;
 
   const semaphore = options.semaphore ?? apiSemaphore;
+  const timeoutMs = options.timeoutMs ?? ACQUIRE_TIMEOUT_MS;
   let found: T | undefined;
   let foundIndex = Infinity;
 
@@ -123,7 +134,13 @@ export async function parallelFind<T>(
       // Skip if we already found an earlier match
       if (index >= foundIndex) return;
 
-      await semaphore.acquire();
+      // Use tryAcquire with timeout to prevent deadlocks
+      const acquired = await semaphore.tryAcquire(timeoutMs);
+      if (!acquired) {
+        throw new Error(
+          `parallelFind: timed out waiting for semaphore after ${timeoutMs}ms (available: ${semaphore.available}, waiting: ${semaphore.waiting})`,
+        );
+      }
       try {
         // Check again after acquiring permit
         if (index >= foundIndex) return;
@@ -153,7 +170,7 @@ export async function parallelFind<T>(
 export async function parallelFilter<T>(
   items: T[],
   predicate: (item: T, index: number) => Promise<boolean>,
-  options: { concurrency?: number; semaphore?: Semaphore } = {},
+  options: { concurrency?: number; semaphore?: Semaphore; timeoutMs?: number } = {},
 ): Promise<T[]> {
   const results = await parallelMap(
     items,
