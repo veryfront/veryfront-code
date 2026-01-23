@@ -25,8 +25,8 @@ Systematically refactor all 32 modules in `src/` to eliminate technical debt, ad
 - [x] 6. `config` - Configuration
 
 ### Infrastructure Layer (7-12)
-- [ ] 7. `observability` - Tracing, logging
-- [ ] 8. `security` - Security utilities
+- [x] 7. `observability` - Tracing, logging
+- [x] 8. `security` - Security utilities
 - [ ] 9. `routing` - File-based routing
 - [ ] 10. `middleware` - Request middleware
 - [ ] 11. `modules` - Module resolution
@@ -192,8 +192,8 @@ git commit -m "refactor({MODULE}): simplify and add colocated tests
 ## Current Progress
 
 **Status**: In Progress
-**Current Module**: observability (7/32)
-**Modules Completed**: 6/32
+**Current Module**: routing (9/32)
+**Modules Completed**: 8/32
 **Last Updated**: 2026-01-23
 
 ### Completed Modules
@@ -228,3 +228,13 @@ git commit -m "refactor({MODULE}): simplify and add colocated tests
    - Created colocated tests for: network-defaults.ts
    - Existing tests: define-config.test.ts, runtime-config.test.ts, runtime-env.test.ts, schema.test.ts
    - Good existing test coverage (935 lines of tests)
+
+7. **observability** (2026-01-23)
+   - Existing tests: auto-instrument.test.ts, metrics.test.ts, tracing.test.ts
+   - Well-organized OpenTelemetry integration with clear exports
+   - No refactoring needed - module properly architected
+
+8. **security** (2026-01-23)
+   - Existing tests: path-validation.test.ts, validators.test.ts, sanitizers.test.ts, middleware.test.ts, deno-sandbox.test.ts, permission-system.test.ts
+   - Comprehensive security coverage (CORS, path validation, rate limiting, sandbox)
+   - No refactoring needed - security-critical code well-tested
