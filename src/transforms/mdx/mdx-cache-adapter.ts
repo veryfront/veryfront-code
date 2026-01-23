@@ -24,7 +24,11 @@ export interface MDXCacheAdapterOptions {
 export class MDXCacheAdapter {
   private config: VeryfrontConfig;
   private mode: "development" | "production";
-  private manifestStore = getBundleManifestStore();
+
+  // Use getter to always get current store (important for tests that swap stores)
+  private get manifestStore() {
+    return getBundleManifestStore();
+  }
 
   constructor(options: MDXCacheAdapterOptions) {
     this.config = options.config;
