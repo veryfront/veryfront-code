@@ -121,17 +121,22 @@ export class RSCProductionOptimizer {
     return links;
   }
 
+  /**
+   * CSP directives for RSC JSON responses.
+   * Note: For HTML responses, use the security config with nonce support instead.
+   * This is intentionally strict since RSC responses are JSON, not HTML with inline scripts.
+   */
   static getCSPDirectives(): Record<string, string[]> {
     return {
-      "default-src": ["'self'"],
-      "script-src": ["'self'", "'unsafe-inline'", "https://esm.sh"],
-      "style-src": ["'self'", "'unsafe-inline'"],
+      "default-src": ["'none'"],
+      "script-src": ["'self'", "https://esm.sh"],
+      "style-src": ["'self'"],
       "connect-src": ["'self'", "https://esm.sh"],
       "img-src": ["'self'", "data:", "https:"],
       "font-src": ["'self'"],
       "object-src": ["'none'"],
-      "base-uri": ["'self'"],
-      "form-action": ["'self'"],
+      "base-uri": ["'none'"],
+      "form-action": ["'none'"],
       "frame-ancestors": ["'none'"],
       "upgrade-insecure-requests": [],
     };

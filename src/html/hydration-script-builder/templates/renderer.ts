@@ -59,6 +59,13 @@ export const getRendererScript = () => `
           }
         }
 
+        // Defensive null check - pageModule should always be defined here due to
+        // fallback logic above, but check explicitly to prevent runtime crashes
+        if (!pageModule) {
+          logError('Page module failed to load');
+          return;
+        }
+
         const PageComponent = pageModule.default || pageModule;
 
         if (!PageComponent) {

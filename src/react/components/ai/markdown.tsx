@@ -66,7 +66,7 @@ async function loadMermaid() {
   mermaidModule.default.initialize({
     startOnLoad: false,
     theme: "neutral",
-    securityLevel: "loose",
+    securityLevel: "strict",
   });
   return mermaidModule;
 }

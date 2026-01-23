@@ -31,6 +31,36 @@ if (OPENAI_KEY || ANTHROPIC_KEY) {
   hasProviders = true;
 }
 
+/**
+ * Safe math expression evaluator.
+ * Only allows numbers, basic operators, parentheses, and whitespace.
+ */
+function safeMathEval(expression: string): number {
+  const sanitized = expression.replace(/\s+/g, '');
+  const safePattern = /^[\d+\-*/().]+$/;
+
+  if (!safePattern.test(sanitized)) {
+    throw new Error('Expression contains invalid characters');
+  }
+
+  // Validate balanced parentheses
+  let depth = 0;
+  for (const char of sanitized) {
+    if (char === '(') depth++;
+    if (char === ')') depth--;
+    if (depth < 0) throw new Error('Unbalanced parentheses');
+  }
+  if (depth !== 0) throw new Error('Unbalanced parentheses');
+
+  // Use Function constructor with validated input
+  const fn = new Function(`return (${sanitized})`);
+  const result = fn();
+  if (typeof result !== 'number' || !isFinite(result)) {
+    throw new Error('Result is not a valid number');
+  }
+  return result;
+}
+
 // Define a tool for the agent
 const calculator = tool({
   id: "calculator",
@@ -39,9 +69,7 @@ const calculator = tool({
     expression: z.string().describe("The math expression to evaluate"),
   }),
   execute: ({ expression }: { expression: string }) => {
-    // Safety: simple eval for demo purposes only
-    // In production use a math parser
-    return String(eval(expression));
+    return String(safeMathEval(expression));
   },
 });
 

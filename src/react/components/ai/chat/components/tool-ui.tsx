@@ -52,17 +52,40 @@ export function ToolStatusBadge({ state }: { state: string }) {
 }
 
 /**
+ * Escape HTML special characters to prevent XSS
+ */
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+/**
  * Format JSON with syntax highlighting
+ * Note: Escapes HTML first to prevent XSS, then applies safe highlighting
  */
 function formatJsonWithHighlight(obj: unknown): React.ReactNode {
   if (obj == null) return null;
 
   const jsonStr = typeof obj === "string" ? obj : JSON.stringify(obj, null, 2);
 
-  // Simple syntax highlighting
-  const highlighted = jsonStr
-    .replace(/"([^"]+)":/g, '<span class="text-green-600 dark:text-green-400">"$1"</span>:')
-    .replace(/: "([^"]*)"/g, ': <span class="text-amber-600 dark:text-amber-400">"$1"</span>')
+  // SECURITY: Escape HTML first to prevent XSS attacks
+  const escaped = escapeHtml(jsonStr);
+
+  // Apply syntax highlighting to the escaped content
+  // The escaped content uses &quot; for quotes, so we match those
+  const highlighted = escaped
+    .replace(
+      /&quot;([^&]*)&quot;:/g,
+      '<span class="text-green-600 dark:text-green-400">&quot;$1&quot;</span>:',
+    )
+    .replace(
+      /: &quot;([^&]*)&quot;/g,
+      ': <span class="text-amber-600 dark:text-amber-400">&quot;$1&quot;</span>',
+    )
     .replace(/: (\d+)/g, ': <span class="text-blue-600 dark:text-blue-400">$1</span>')
     .replace(/: (true|false)/g, ': <span class="text-purple-600 dark:text-purple-400">$1</span>');
 
