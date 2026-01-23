@@ -157,16 +157,10 @@ async function createContextFromHandler(ctx: HandlerContext): Promise<RenderCont
   // This ensures consistent context throughout the pipeline
   const contextStartTime = performance.now();
 
-  // Environment resolution priority (same logic as universal-handler):
-  // 1. parsedDomain.environment from domain lookup - most specific
-  // 2. requestContext.mode from hostname pattern - fallback
-  // Map non-production environments to "preview" for cache isolation
-  const domainEnv = ctx.parsedDomain?.environment;
-  const resolvedEnvironment: "preview" | "production" = domainEnv === "production"
-    ? "production"
-    : domainEnv === "preview" || domainEnv === "development" || domainEnv === "staging"
-    ? "preview"
-    : ctx.requestContext?.mode ?? "preview";
+  // Use resolvedEnvironment from HandlerContext (set by universal-handler from proxyEnv/domain lookup)
+  // Falls back to requestContext.mode if not set
+  const resolvedEnvironment: "preview" | "production" = ctx.resolvedEnvironment ??
+    ctx.requestContext?.mode ?? "preview";
 
   // Build EnrichedContext with all resolved data
   const enriched = buildEnrichedContext({

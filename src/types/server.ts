@@ -62,6 +62,12 @@ export interface HandlerContext {
   proxyToken?: string;
   /** Actual environment name from API (e.g., "Development", "Production") */
   environmentName?: string;
+  /**
+   * Resolved environment from domain lookup or proxy headers.
+   * This takes precedence over requestContext.mode for cache isolation.
+   * Values: "preview" | "production"
+   */
+  resolvedEnvironment?: "preview" | "production";
   /** Unified request context (token, slug, branch, mode) */
   requestContext?: RequestContext;
   /** Route registry for handler chain inspection (dev dashboard) */
