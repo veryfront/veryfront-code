@@ -1,6 +1,6 @@
 # Coding Agent Example
 
-A powerful AI coding assistant built with Veryfront AI framework that can:
+An AI coding assistant example built with Veryfront AI framework that can:
 
 - Read and write files in your project
 - Search your codebase for patterns

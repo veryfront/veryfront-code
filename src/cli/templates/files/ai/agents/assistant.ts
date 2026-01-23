@@ -7,7 +7,7 @@ function getSystemPrompt(): string {
     const content = prompt.getContent();
     return typeof content === "string" ? content : "";
   }
-  return "You are a helpful AI assistant.";
+  return "You answer questions for this template.";
 }
 
 export default agent({

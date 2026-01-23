@@ -1,7 +1,7 @@
 # AI Code Assistant
 
-A production-ready AI code assistant built with Veryfront AI. Demonstrates
-streaming, tool calling, MCP integration, middleware, and a beautiful chat UI.
+An AI code assistant example built with Veryfront AI. Demonstrates streaming,
+tool calling, MCP integration, middleware, and a chat UI.
 
 ## Features
 
@@ -25,7 +25,7 @@ streaming, tool calling, MCP integration, middleware, and a beautiful chat UI.
 
 ### Frontend
 
-- **Modern Chat UI**
+- **Chat UI**
   - Real-time streaming responses
   - Tool call visualization with JSON pretty-print
   - Code syntax highlighting

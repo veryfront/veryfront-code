@@ -1,7 +1,7 @@
 /**
  * Veryfront AI - Complete Demo
  *
- * Demonstrates all 8 phases working together in a production-ready setup.
+ * Demonstrates all 8 phases working together in a complete demo setup.
  */
 
 // Core
@@ -109,7 +109,7 @@ console.log('✅ Phase 3: Agent Enhancements\n');
 const assistantAgent = agent({
   id: 'assistant',
   model: 'openai/gpt-4o',
-  system: 'You are a helpful AI assistant.',
+  system: 'You answer questions concisely and explain assumptions.',
   memory: {
     type: 'conversation',
     maxTokens: 4000,
@@ -158,7 +158,7 @@ const costTracker = createCostTracker({
 const productionAgent = agent({
   id: 'productionAgent',
   model: 'openai/gpt-4o',
-  system: 'You are a production-ready assistant.',
+  system: 'You provide concise, correct answers for this demo.',
   tools: {
     calculate: true,
   },
@@ -273,5 +273,5 @@ console.log(`  Registered Prompts: ${stats.prompts}`);
 console.log(`  Platform: ${platform}`);
 console.log('');
 
-console.log('The Veryfront AI Native Framework is production-ready! 🚀');
+console.log('Veryfront AI Native Framework demo complete.');
 console.log('Start building AI applications with convention-driven development.\n');

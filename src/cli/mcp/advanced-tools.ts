@@ -2,7 +2,7 @@
  * Advanced MCP Tools for Coding Agents
  *
  * These tools give coding agents deep understanding of Veryfront projects
- * and powerful scaffolding capabilities with guardrails.
+ * and scaffolding capabilities with guardrails.
  */
 
 import { z } from "zod";
@@ -529,7 +529,7 @@ export default prompt({
     input: z.string().describe("User input"),
   }),
   getContent: ({ input }) => [
-    { role: "system", content: "You are a helpful AI assistant." },
+    { role: "system", content: "Role: describe what this assistant should do and its limits." },
     { role: "user", content: input },
   ],
 });

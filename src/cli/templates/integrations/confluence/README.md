@@ -221,7 +221,7 @@ This integration works well with:
 
 ## TypeScript
 
-All files are strongly typed with comprehensive TypeScript interfaces:
+All files are strongly typed with detailed TypeScript interfaces:
 
 - `ConfluenceSpace`: Space metadata
 - `ConfluencePage`: Page structure and content

@@ -437,7 +437,7 @@ Have a useful example? Contributions welcome!
 
 When contributing examples:
 - ✅ Create a directory with a complete runnable app
-- ✅ Include comprehensive README.md with setup instructions
+- ✅ Include a README.md with setup instructions
 - ✅ Keep it focused on one feature or pattern
 - ✅ Test with `.env` file support
 - ✅ Test that it works with `veryfront dev` or `deno run`
@@ -461,12 +461,12 @@ See our [Contributing Guide](../CONTRIBUTING.md) for more details.
 
 ## Tips
 
-- **All examples are production-ready** - Code quality is high
+- **Examples are starting points** - Review and harden for production use
 - **Each example is self-contained** - No dependencies between examples
-- **Examples use real patterns** - Not just toy examples
+- **Examples focus on patterns** - Keep them small and clear
 - **Deno is primary** - But most work with Node.js/Bun too
 - **.env files are supported** - Easy configuration
-- **READMEs are comprehensive** - Each example has full docs
+- **READMEs include setup** - Add only what is needed to run the example
 
 ---
 

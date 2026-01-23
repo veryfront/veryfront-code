@@ -2,13 +2,13 @@
  * AI SDK Integration Example
  *
  * Demonstrates flexibility:
- * - Use AI SDK providers (30+ options, battle-tested)
+ * - Use AI SDK providers (30+ options)
  * - Use custom providers (full control, special cases)
  * - Use both in the same app (no lock-in)
  * - Veryfront enhancements work with both
  */
 
-// AI SDK re-exports (battle-tested)
+// AI SDK re-exports
 import { openai, anthropic, streamText, generateText } from 'veryfront/provider';
 
 // Veryfront custom providers (for special cases)

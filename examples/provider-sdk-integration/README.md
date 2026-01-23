@@ -30,7 +30,7 @@ deno run --allow-net --allow-env --allow-read example.ts
 
 ## What It Does
 
-1. **AI SDK Providers**: Uses battle-tested Vercel AI SDK providers
+1. **AI SDK Providers**: Uses Vercel AI SDK providers
 2. **Custom Providers**: Demonstrates custom provider implementation
 3. **Hybrid Usage**: Shows using both approaches in same app
 4. **Veryfront Enhancements**: Tools, agents, MCP work with both
@@ -115,7 +115,7 @@ All Veryfront features work regardless of provider choice:
 
 **Use AI SDK Providers when:**
 - You need a standard LLM provider
-- You want battle-tested, production-ready code
+- You want a maintained, standard integration
 - You prefer industry-standard approach
 
 **Use Custom Providers when:**

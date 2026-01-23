@@ -48,7 +48,7 @@ console.log('=== 1. Memory Strategies ===\n');
 const conversationAgent = agent({
   id: 'conversationAgent',
   model: 'openai/gpt-4o',
-  system: 'You are a helpful assistant with perfect recall',
+  system: 'You are a concise assistant with perfect recall.',
   memory: {
     type: 'conversation',
     maxTokens: 4000,
@@ -64,7 +64,7 @@ console.log('  Behavior: Keeps all messages\n');
 const bufferAgent = agent({
   id: 'bufferAgent',
   model: 'openai/gpt-4o',
-  system: 'You are a helpful assistant',
+  system: 'You are a concise assistant.',
   memory: {
     type: 'buffer',
     maxMessages: 5,
@@ -80,7 +80,7 @@ console.log('  Behavior: Keeps only last 5 messages\n');
 const summaryAgent = agent({
   id: 'summaryAgent',
   model: 'openai/gpt-4o',
-  system: 'You are a helpful assistant',
+  system: 'You are a concise assistant.',
   memory: {
     type: 'summary',
     maxMessages: 10,
@@ -102,7 +102,7 @@ console.log('=== 2. Agent Composition ===\n');
 const researchAgent = agent({
   id: 'researcher',
   model: 'openai/gpt-4o',
-  system: 'You are an expert researcher. Provide thorough, factual information.',
+  system: 'You are a researcher. Provide thorough, factual information.',
   memory: {
     type: 'buffer',
     maxMessages: 3,
@@ -112,7 +112,7 @@ const researchAgent = agent({
 const writerAgent = agent({
   id: 'writer',
   model: 'openai/gpt-4o',
-  system: 'You are a skilled content writer. Write engaging, clear content.',
+  system: 'You are a content writer. Write clear, engaging content.',
   memory: {
     type: 'buffer',
     maxMessages: 3,
@@ -120,8 +120,8 @@ const writerAgent = agent({
 });
 
 console.log('Created specialized agents:');
-console.log('  - researcher: Expert at finding information');
-console.log('  - writer: Skilled at writing content\n');
+console.log('  - researcher: Finds factual information');
+console.log('  - writer: Writes clear content\n');
 
 // Register agents for composition
 registerAgent('researcher', researchAgent);

@@ -126,7 +126,7 @@ export default tool({
         message: `Found ${results.length} matches${lines.length > maxResults ? ` (showing first ${maxResults})` : ''} for "${query}"`,
       };
     } catch (error: any) {
-      // If grep command not found, provide helpful error
+      // If grep command not found, provide a clear error
       if (error instanceof Deno.errors.NotFound || error.code === 'ENOENT') {
         return {
           success: false,

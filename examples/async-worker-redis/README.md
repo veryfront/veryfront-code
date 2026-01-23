@@ -1,6 +1,6 @@
 # Async Worker with Redis Streams
 
-This example demonstrates a scalable, production-ready architecture for long-running AI tasks.
+This example demonstrates a scalable architecture for long-running AI tasks.
 
 It uses **Redis Streams** to decouple the API (producer) from the Agents (consumers), allowing you to scale workers horizontally.
 

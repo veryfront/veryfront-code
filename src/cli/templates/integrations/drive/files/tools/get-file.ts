@@ -9,7 +9,7 @@ const DEFAULT_USER_ID = "demo-user";
 export default tool({
   id: "get-file",
   description:
-    "Get detailed metadata about a specific file or folder in Google Drive. Returns comprehensive information including sharing settings, owners, and capabilities.",
+    "Get detailed metadata about a specific file or folder in Google Drive. Returns detailed information including sharing settings, owners, and capabilities.",
   inputSchema: z.object({
     fileId: z
       .string()

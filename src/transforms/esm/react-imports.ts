@@ -7,7 +7,10 @@ import { getLocalReactPaths } from "#veryfront/platform/compat/react-paths.ts";
  * Get the src directory path for resolving veryfront modules.
  * Cached to avoid repeated URL parsing.
  */
-const srcDir = new URL(".", import.meta.url).pathname.replace(/\/build\/transforms\/esm\/?$/, "");
+const srcDir = new URL(".", import.meta.url).pathname.replace(
+  /\/(build|src)\/transforms\/esm\/?$/,
+  "",
+);
 
 /**
  * Get absolute file:// paths for veryfront SSR modules.

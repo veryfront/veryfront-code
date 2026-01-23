@@ -3,8 +3,7 @@
 /**
  * AI Code Assistant - Main Page
  *
- * A sleek, modern chat interface with Apple-inspired design.
- * Features real-time streaming, tool execution, and session management.
+ * Chat interface with streaming, tool execution, and session management.
  */
 
 import React, { useEffect, useState, useRef } from 'react';

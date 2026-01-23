@@ -26,7 +26,7 @@ export default function App({ children }: AppProps) {
       <main className="max-w-3xl mx-auto px-6 py-12">{children}</main>
 
       <footer className="border-t border-neutral-200 dark:border-neutral-800 py-6 text-center text-sm text-neutral-500 dark:text-neutral-400">
-        <p>Built with Veryfront - A modern React framework</p>
+        <p>Built with Veryfront</p>
       </footer>
     </div>
   );

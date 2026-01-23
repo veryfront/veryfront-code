@@ -141,7 +141,7 @@ console.log('\n=== Agent Creation ===');
 const mathAgent = agent({
   id: 'mathAssistant',
   model: 'openai/gpt-4o',
-  system: `You are a helpful math assistant.
+  system: `You are a math assistant.
 When the user asks a math question, use the calculator tool to compute the answer.
 Always show your work and explain the result.`,
 
@@ -223,7 +223,7 @@ if (apiKey && apiKey !== 'sk-test') {
     const streamingAgent = agent({
       id: 'mathAssistantStreaming',
       model: 'openai/gpt-4o',
-      system: `You are a helpful math assistant.
+      system: `You are a math assistant.
 When the user asks a math question, use the calculator tool to compute the answer.
 Always show your work and explain the result.`,
 

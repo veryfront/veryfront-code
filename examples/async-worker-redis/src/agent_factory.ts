@@ -87,7 +87,7 @@ export async function executeAgent(input: string, agentId: string): Promise<stri
   // In a real app, you might cache this or load config from DB based on agentId
   const myAgent = agent({
     model: "openai/gpt-4o-mini", // Default to fast model
-    system: "You are a helpful background worker agent.",
+    system: "You are a background worker agent. Process the task and return the result.",
     tools: { calculator },
   });
 

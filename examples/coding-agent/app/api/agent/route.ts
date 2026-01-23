@@ -133,7 +133,7 @@ export async function POST(request: Request) {
     const codingAgent = agent({
       model: MODEL_ID,
 
-      system: `You are an expert coding assistant with comprehensive capabilities.
+      system: `You are a coding assistant for this project.
 
 ## Your Capabilities:
 
@@ -153,12 +153,12 @@ export async function POST(request: Request) {
    - Debugging error messages
    - Finding code examples
    - Checking best practices
-3. **Explain Your Work**: Always explain what you're doing and why
+3. **Explain Your Work**: Explain what you're doing and why
 4. **Ask for Confirmation**: Request approval before:
    - Deleting files
    - Making large-scale changes
 
-Be helpful, thorough, and always prioritize code quality and maintainability.`,
+Be thorough and prioritize code quality and maintainability.`,
 
       // Reference auto-discovered tools by their IDs (filenames in kebab-case)
       tools: {

@@ -138,7 +138,7 @@ const searchTool = tool({
 // Agent
 const ragAgent = agent({
   model: "openai/gpt-4o-mini", // Fast and cheap
-  system: `You are a helpful Veryfront documentation assistant. 
+  system: `You are a Veryfront documentation assistant. 
   ALWAYS use the 'searchDocs' tool to find information before answering questions.
   If the search results don't contain the answer, admit that you don't know based on the available documentation.
   Cite the source files provided in the search results.`,

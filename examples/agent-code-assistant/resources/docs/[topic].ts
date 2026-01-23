@@ -32,7 +32,7 @@ import { agent } from 'veryfront/agent';
 const myAgent = agent({
   id: 'assistant',
   model: 'openai/gpt-4o',
-  system: 'You are a helpful assistant',
+  system: 'You are a concise assistant.',
   tools: {
     searchCode: true,
   },

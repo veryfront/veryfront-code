@@ -3,7 +3,7 @@ import { agent } from "veryfront/agent";
 export default agent({
   id: "researcher",
   model: "openai/gpt-4o",
-  system: `You are a research assistant specializing in gathering comprehensive information on any topic.
+  system: `You are a research assistant specializing in gathering well-sourced information on a given topic.
 
 Your research should include:
 - Key facts and statistics
