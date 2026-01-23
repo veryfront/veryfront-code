@@ -11,6 +11,7 @@ import { join } from "../platform/compat/path-helper.ts";
 import { createFileSystem } from "../platform/compat/fs.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 
 // Re-export from app-route-resolver for backward compatibility
 export { getAppRouteEntity } from "./app-route-resolver.ts";
@@ -20,7 +21,11 @@ export { extractAppRouteParams, extractPagesRouteParams } from "./route-params-e
 
 // Cache for router detection results - avoids repeated filesystem calls
 // Key is projectDir, value is whether app router should be used
-const routerDetectionCache = new Map<string, boolean>();
+// LRU bounded to prevent memory leaks in multi-tenant deployments
+const routerDetectionCache = new LRUCache<string, boolean>({
+  maxEntries: 200, // Bounded - each project has one entry
+  ttlMs: 60_000, // 1 minute - config can change during development
+});
 
 /**
  * Clear the router detection cache. Call when filesystem changes.

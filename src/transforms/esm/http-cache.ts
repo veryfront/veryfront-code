@@ -13,6 +13,7 @@ import { cwd } from "#veryfront/platform/compat/process.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { simpleHash } from "#veryfront/utils/hash-utils.ts";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import { getReactImportMap, REACT_VERSION } from "./package-registry.ts";
@@ -60,13 +61,19 @@ type CacheOptions = {
 /**
  * In-memory cache for resolved HTTP module paths.
  *
+ * LRU bounded to prevent memory leaks in long-running servers.
+ * No TTL - HTTP module URLs (esm.sh) are immutable and versioned.
+ * The filesystem cache is the source of truth; this is just a fast lookup.
+ *
  * Note: Singleflight was previously used for fetch deduplication but caused deadlocks
  * when processing packages with complex dependency graphs (like zod). The recursive
  * rewriteModuleImports calls would create nested Singleflight entries that blocked
  * on each other. The filesystem cache + processingStack already provide sufficient
  * deduplication and circular dependency handling.
  */
-const cachedPaths = new Map<string, string>();
+const cachedPaths = new LRUCache<string, string>({
+  maxEntries: 2000, // Each entry is URL:path (~200 bytes), so ~400KB max
+});
 
 // Track currently processing URLs to detect circular dependencies
 const processingStack = new Set<string>();

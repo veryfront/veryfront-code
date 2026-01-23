@@ -66,8 +66,8 @@ export class APICacheStore implements CacheStore {
     });
   }
 
-  private async getBackend(): Promise<CacheBackend> {
-    if (this.backend) return this.backend;
+  private getBackend(): Promise<CacheBackend> {
+    if (this.backend) return Promise.resolve(this.backend);
     if (this.backendInitPromise) return this.backendInitPromise;
 
     this.backendInitPromise = createCacheBackend({ keyPrefix: this.keyPrefix })

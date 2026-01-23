@@ -17,10 +17,7 @@ import {
   invalidateModulePaths,
 } from "#veryfront/transforms/mdx/esm-module-loader/index.ts";
 import { clearSSRModuleCache } from "#veryfront/modules/react-loader/ssr-module-loader/index.ts";
-import {
-  clearRendererCacheForProject,
-  clearRendererCaches,
-} from "../../rendering/renderer.ts";
+import { clearRendererCacheForProject, clearRendererCaches } from "../../rendering/renderer.ts";
 import { clearRouterDetectionCache } from "../../rendering/router-detection.ts";
 import {
   clearSnippetCache,
