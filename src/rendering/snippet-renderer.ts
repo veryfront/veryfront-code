@@ -12,10 +12,16 @@ import { wrapInHTMLShell } from "../html/html-shell-generator.ts";
 import { LRUCache } from "../utils/lru-wrapper.ts";
 import { registerCache } from "../utils/memory/index.ts";
 import { escapeHtml } from "../html/html-escape.ts";
+import {
+  type CacheBackend,
+  createCacheBackend,
+  MemoryCacheBackend,
+} from "#veryfront/cache/backend.ts";
 
 // Cache limits to prevent unbounded memory growth
 const SNIPPET_CACHE_MAX_ENTRIES = 500;
 const SNIPPET_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const SNIPPET_DISTRIBUTED_CACHE_TTL_SECONDS = 600; // 10 minutes for distributed cache
 
 export interface SnippetRenderOptions {
   mode: "development" | "production";
@@ -61,10 +67,81 @@ registerCache("snippet-cache", () => ({
 }));
 
 /**
- * Get a snippet from cache by hash
+ * Distributed cache for cross-pod snippet sharing.
+ * Uses API/Redis in production, memory fallback in development.
+ */
+let distributedSnippetCache: CacheBackend | null = null;
+let distributedCacheInitPromise: Promise<CacheBackend> | null = null;
+
+/**
+ * Get or initialize the distributed snippet cache backend.
+ */
+function getDistributedSnippetCache(): Promise<CacheBackend> {
+  if (distributedSnippetCache) return Promise.resolve(distributedSnippetCache);
+  if (distributedCacheInitPromise) return distributedCacheInitPromise;
+
+  distributedCacheInitPromise = createCacheBackend({ keyPrefix: "snippet" })
+    .then((backend) => {
+      distributedSnippetCache = backend;
+      logger.debug("[SnippetRenderer] Distributed cache initialized", {
+        type: backend.type,
+      });
+      return backend;
+    })
+    .catch((error) => {
+      logger.warn(
+        "[SnippetRenderer] Failed to initialize distributed cache, using memory",
+        { error },
+      );
+      distributedSnippetCache = new MemoryCacheBackend(SNIPPET_CACHE_MAX_ENTRIES);
+      return distributedSnippetCache;
+    });
+
+  return distributedCacheInitPromise;
+}
+
+/**
+ * Get a snippet from cache by hash (sync version for backwards compatibility).
+ * Checks local memory cache only.
  */
 export function getCompiledSnippet(hash: string): string | undefined {
   return snippetCache.get(hash)?.code;
+}
+
+/**
+ * Get a snippet from cache by hash (async version).
+ * Checks local memory first, then falls back to distributed cache.
+ */
+export async function getCompiledSnippetAsync(
+  hash: string,
+): Promise<string | undefined> {
+  // Check local cache first (fast path)
+  const local = snippetCache.get(hash);
+  if (local) {
+    return local.code;
+  }
+
+  // Check distributed cache
+  try {
+    const cache = await getDistributedSnippetCache();
+    const cached = await cache.get(hash);
+    if (cached) {
+      // Parse the cached JSON and populate local cache
+      const entry = JSON.parse(cached) as SnippetCacheEntry;
+      snippetCache.set(hash, entry);
+      logger.debug("[SnippetRenderer] Snippet cache hit from distributed cache", {
+        hash,
+      });
+      return entry.code;
+    }
+  } catch (error) {
+    logger.debug("[SnippetRenderer] Failed to read from distributed cache", {
+      hash,
+      error,
+    });
+  }
+
+  return undefined;
 }
 
 /**
@@ -142,10 +219,29 @@ export async function renderSnippet(
     // module-server.ts will apply transformToESM to handle imports properly
     // for both SSR (cached file://) and browser (esm.sh URLs) contexts
     const hash = await hashContent(mdxContent + (options.projectSlug || ""));
-    snippetCache.set(hash, {
+    const cacheEntry: SnippetCacheEntry = {
       code: bundle.compiledCode,
       frontmatter: bundle.frontmatter || {},
-    });
+    };
+
+    // Store in local cache (fast reads)
+    snippetCache.set(hash, cacheEntry);
+
+    // Store in distributed cache asynchronously (cross-pod sharing)
+    getDistributedSnippetCache()
+      .then((cache) => {
+        cache
+          .set(hash, JSON.stringify(cacheEntry), SNIPPET_DISTRIBUTED_CACHE_TTL_SECONDS)
+          .catch((error) => {
+            logger.debug(
+              "[SnippetRenderer] Failed to store in distributed cache",
+              { hash, error },
+            );
+          });
+      })
+      .catch(() => {
+        // Ignore - local cache is sufficient
+      });
 
     logger.debug("[SnippetRenderer] Snippet cached", {
       hash,

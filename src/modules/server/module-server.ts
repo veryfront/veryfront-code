@@ -118,10 +118,10 @@ export async function serveModule(
         },
       );
     }
-    const { getCompiledSnippet } = await import(
+    const { getCompiledSnippetAsync } = await import(
       "@veryfront/rendering/snippet-renderer.ts"
     );
-    const snippetCode = getCompiledSnippet(hash);
+    const snippetCode = await getCompiledSnippetAsync(hash);
 
     if (!snippetCode) {
       logger.warn("[ModuleServer] Snippet not found in cache", { hash });
