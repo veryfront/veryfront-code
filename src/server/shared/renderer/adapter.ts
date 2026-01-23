@@ -10,6 +10,7 @@
 
 import { rendererLogger as logger } from "#veryfront/utils";
 import { getConfig } from "#veryfront/config";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
 import type { HandlerContext } from "../../handlers/types.ts";
 import {
   createRenderContext,
@@ -19,6 +20,7 @@ import {
   isRendererInitialized,
   type RenderContext,
   Renderer,
+  type RendererOptions,
 } from "../../../rendering/renderer.ts";
 import type {
   PageDataResponse,
@@ -26,6 +28,7 @@ import type {
   RenderResult,
 } from "../../../rendering/orchestrator/types.ts";
 import type { MdxBundle } from "#veryfront/types";
+import { APICacheStore } from "../../../rendering/cache/stores/api-store.ts";
 
 /**
  * Minimal renderer interface that handlers actually use.
@@ -64,6 +67,8 @@ let rendererInitPromise: Promise<Renderer> | null = null;
  * Get or initialize the renderer
  *
  * This is idempotent - multiple calls will return the same instance.
+ * In proxy mode (production), uses API-backed distributed cache for
+ * cross-pod render result sharing.
  */
 async function getOrInitRenderer(): Promise<Renderer> {
   if (isRendererInitialized()) {
@@ -74,8 +79,31 @@ async function getOrInitRenderer(): Promise<Renderer> {
     return rendererInitPromise;
   }
 
-  logger.debug("[RendererAdapter] Initializing renderer");
-  rendererInitPromise = initializeRenderer();
+  // Check if we're in proxy mode (production K8s deployment)
+  // In proxy mode, use distributed API cache for cross-pod sharing
+  const isProxyMode = getEnv("PROXY_MODE") === "1";
+
+  const options: RendererOptions = {};
+
+  if (isProxyMode) {
+    // Use API-backed distributed cache for render results
+    // This enables: Pod A renders → Pod B serves from cache
+    logger.debug("[RendererAdapter] Using API-backed distributed render cache");
+    options.cache = {
+      store: new APICacheStore({
+        keyPrefix: "render",
+        ttlSeconds: 3600, // 1 hour TTL
+        localMaxEntries: 200, // Local memory cache for fast reads
+      }),
+    };
+  }
+
+  logger.debug("[RendererAdapter] Initializing renderer", {
+    proxyMode: isProxyMode,
+    cacheType: isProxyMode ? "api-distributed" : "memory",
+  });
+
+  rendererInitPromise = initializeRenderer(options);
 
   try {
     return await rendererInitPromise;
