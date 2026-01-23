@@ -114,9 +114,19 @@ export class VeryfrontFSAdapter implements FSAdapter {
       // Pass file list cache getter to avoid redundant API calls when content is already fetched
       // Now async to support Redis cache lookup across pods
       async () => {
-        if (!this.contentContext) return undefined;
+        if (!this.contentContext) {
+          logger.debug("[VeryfrontFSAdapter] getFileListCache: no contentContext");
+          return undefined;
+        }
         const cacheKey = buildFileListCacheKey(this.contentContext);
-        return await this.cache.getAsync<Array<{ path: string; content?: string }>>(cacheKey);
+        const result = await this.cache.getAsync<Array<{ path: string; content?: string }>>(cacheKey);
+        logger.debug("[VeryfrontFSAdapter] getFileListCache lookup", {
+          cacheKey,
+          hasResult: !!result,
+          resultSize: result?.length ?? 0,
+          hasContent: result?.filter((f) => f.content)?.length ?? 0,
+        });
+        return result;
       },
     );
     this.dirOps = new DirectoryOperations(

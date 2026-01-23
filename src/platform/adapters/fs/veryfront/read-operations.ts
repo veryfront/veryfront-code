@@ -111,8 +111,13 @@ export class ReadOperations {
    * The index is invalidated when the underlying file list changes.
    */
   private async getOrBuildFileListIndex(): Promise<Map<string, string> | null> {
-    const fileList = await this.getFileListCache?.();
+    if (!this.getFileListCache) {
+      logger.debug("[ReadOperations] getOrBuildFileListIndex: no getFileListCache function");
+      return null;
+    }
+    const fileList = await this.getFileListCache();
     if (!fileList) {
+      logger.debug("[ReadOperations] getOrBuildFileListIndex: getFileListCache returned null/undefined");
       return null;
     }
 
