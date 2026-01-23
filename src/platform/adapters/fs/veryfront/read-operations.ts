@@ -117,7 +117,9 @@ export class ReadOperations {
     }
     const fileList = await this.getFileListCache();
     if (!fileList) {
-      logger.debug("[ReadOperations] getOrBuildFileListIndex: getFileListCache returned null/undefined");
+      logger.debug(
+        "[ReadOperations] getOrBuildFileListIndex: getFileListCache returned null/undefined",
+      );
       return null;
     }
 
