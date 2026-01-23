@@ -12,6 +12,7 @@ import type {
 } from "#veryfront/types";
 import { ResponseBuilder } from "./response/index.ts";
 import { serverLogger } from "#veryfront/utils";
+import { runWithCacheBatching } from "#veryfront/cache/request-cache-batcher.ts";
 
 /**
  * Pre-bound handler helper methods.
@@ -245,6 +246,7 @@ export abstract class BaseHandler implements Handler {
       fsWrapper.setRequestToken(ctx.proxyToken);
     }
 
-    return fn();
+    // Wrap with cache batching for request-scoped deduplication (same as multi-project mode)
+    return runWithCacheBatching(fn);
   }
 }

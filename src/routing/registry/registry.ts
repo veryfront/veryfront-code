@@ -55,14 +55,10 @@ export class RouteRegistry {
           }
 
           const handlerStart = Date.now();
-          const result = await withSpan(
-            `routing.handler.${handler.metadata.name}`,
-            () => handler.handle(req, ctx),
-            {
-              "handler.name": handler.metadata.name,
-              "handler.priority": handler.metadata.priority,
-            },
-          );
+          // Note: Individual handler spans removed to reduce trace noise.
+          // Most handlers are very fast (< 1ms) and just check if they should handle.
+          // The outer routing.registry.execute span captures total routing time.
+          const result = await handler.handle(req, ctx);
           const handlerTime = Date.now() - handlerStart;
 
           if (this.config.debug && this.config.enableMetrics) {

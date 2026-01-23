@@ -20,6 +20,7 @@ import type { CacheEntry, CacheStats, FileCacheOptions } from "./types.ts";
 import { estimateSize } from "./size-estimator.ts";
 // Direct import to avoid circular dependency through cache/index.ts barrel
 import { type CacheBackend, CacheBackends, MemoryCacheBackend } from "../../../../cache/backend.ts";
+import { getCachedWithBatching, setInRequestCache } from "../../../../cache/request-cache-batcher.ts";
 
 // Register with memory profiler
 // Note: entries shows backend size when available, -1 for distributed backends
@@ -155,6 +156,7 @@ export class FileCache {
 
   /**
    * Async get - checks backend (primary) or fallback memory cache.
+   * Uses request-scoped batching for API backend to reduce N+1 queries.
    */
   getAsync<T>(key: string): Promise<T | undefined> {
     if (!this.options.enabled) {
@@ -167,7 +169,9 @@ export class FileCache {
       const backend = cacheBackend;
       return withSpan("platform.fs.cache.getAsync", async () => {
         try {
-          const raw = await backend.get(`file:${key}`);
+          // Use request-scoped batching to dedupe and batch cache requests
+          const cacheKey = `file:${key}`;
+          const raw = await getCachedWithBatching(backend, cacheKey);
           if (raw) {
             const entry = JSON.parse(raw) as CacheEntry<T>;
             // When using backend (Redis/API), trust the backend's TTL for expiry.
@@ -202,8 +206,12 @@ export class FileCache {
 
     // In distributed mode, fire-and-forget to backend
     if (cacheBackend && cacheBackend.type !== "memory") {
+      const cacheKey = `file:${key}`;
       const entry: CacheEntry<T> = { value, timestamp: Date.now(), size };
-      cacheBackend.set(`file:${key}`, JSON.stringify(entry), BACKEND_TTL_SECONDS).catch(() => {});
+      const serialized = JSON.stringify(entry);
+      // Update request-scoped cache so subsequent reads in same request see the new value
+      setInRequestCache(cacheKey, serialized);
+      cacheBackend.set(cacheKey, serialized, BACKEND_TTL_SECONDS).catch(() => {});
       return;
     }
 
@@ -236,34 +244,33 @@ export class FileCache {
       const backend = cacheBackend;
       return withSpan("platform.fs.cache.setAsync", async () => {
         try {
-          await backend.set(`file:${key}`, JSON.stringify(entry), BACKEND_TTL_SECONDS);
+          const cacheKey = `file:${key}`;
+          const serialized = JSON.stringify(entry);
+          // Update request-scoped cache so subsequent reads in same request see the new value
+          setInRequestCache(cacheKey, serialized);
+          await backend.set(cacheKey, serialized, BACKEND_TTL_SECONDS);
           return;
         } catch (error) {
-          logger.debug("[FileCache] Backend set failed", { key, error });
+          logger.debug("[FileCache] Backend set failed, using fallback", { key, error });
+          this.setToFallback(key, entry, size);
         }
-
-        // Fallback mode: write to memory cache
-        if (size > this.options.maxMemory) {
-          logger.warn("[FileCache] Value too large for fallback cache", { key, size });
-          return;
-        }
-
-        this.evictFallbackIfNeeded(size);
-        this.fallbackCache.set(key, entry as CacheEntry<unknown>);
-        this.fallbackMemoryUsed += size;
       }, { "cache.key": key, "cache.backend": backend.type, "cache.size": size });
     }
 
     // Fallback mode: write to memory cache
+    this.setToFallback(key, entry, size);
+    return Promise.resolve();
+  }
+
+  /** Write to fallback memory cache with size check and eviction. */
+  private setToFallback<T>(key: string, entry: CacheEntry<T>, size: number): void {
     if (size > this.options.maxMemory) {
       logger.warn("[FileCache] Value too large for fallback cache", { key, size });
-      return Promise.resolve();
+      return;
     }
-
     this.evictFallbackIfNeeded(size);
     this.fallbackCache.set(key, entry as CacheEntry<unknown>);
     this.fallbackMemoryUsed += size;
-    return Promise.resolve();
   }
 
   has(key: string): boolean {

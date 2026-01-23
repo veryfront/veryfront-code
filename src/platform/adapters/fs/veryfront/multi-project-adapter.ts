@@ -4,6 +4,7 @@ import type { DirectoryEntry, FSAdapter, FSAdapterConfig } from "./types.ts";
 import type { FileInfo } from "../../base.ts";
 import { ProxyFSAdapterManager } from "./proxy-manager.ts";
 import type { VeryfrontFSAdapter } from "./index.ts";
+import { runWithCacheBatching } from "../../../../cache/request-cache-batcher.ts";
 
 interface RequestContext {
   projectSlug: string;
@@ -105,7 +106,8 @@ export class MultiProjectFSAdapter implements FSAdapter {
         projectSlug,
         duration: `${(performance.now() - runWithContextStartTime).toFixed(2)}ms`,
       });
-      const result = await fn();
+      // Wrap with cache batching to dedupe and batch cache requests within this request
+      const result = await runWithCacheBatching(fn);
       logger.debug("[MultiProjectFSAdapter] runWithContext callback complete", {
         projectSlug,
         totalDuration: `${(performance.now() - runWithContextStartTime).toFixed(2)}ms`,

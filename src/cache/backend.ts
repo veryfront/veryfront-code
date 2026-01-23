@@ -61,8 +61,14 @@ export interface CacheBackend {
   /** Get a value from cache */
   get(key: string): Promise<string | null>;
 
+  /** Get multiple values from cache (batch operation) */
+  getBatch?(keys: string[]): Promise<Map<string, string | null>>;
+
   /** Set a value in cache with optional TTL (seconds) */
   set(key: string, value: string, ttlSeconds?: number): Promise<void>;
+
+  /** Set multiple values in cache (batch operation) */
+  setBatch?(entries: Array<{ key: string; value: string; ttl?: number }>): Promise<void>;
 
   /** Delete a key from cache */
   del(key: string): Promise<void>;
@@ -96,6 +102,23 @@ export class MemoryCacheBackend implements CacheBackend {
     return Promise.resolve(entry.value);
   }
 
+  getBatch(keys: string[]): Promise<Map<string, string | null>> {
+    const results = new Map<string, string | null>();
+    const now = Date.now();
+    for (const key of keys) {
+      const entry = this.store.get(key);
+      if (!entry) {
+        results.set(key, null);
+      } else if (now > entry.expiresAt) {
+        this.store.delete(key);
+        results.set(key, null);
+      } else {
+        results.set(key, entry.value);
+      }
+    }
+    return Promise.resolve(results);
+  }
+
   set(key: string, value: string, ttlSeconds = 300): Promise<void> {
     // Evict oldest if at capacity
     if (this.store.size >= this.maxEntries && !this.store.has(key)) {
@@ -106,6 +129,23 @@ export class MemoryCacheBackend implements CacheBackend {
       value,
       expiresAt: Date.now() + ttlSeconds * 1000,
     });
+    return Promise.resolve();
+  }
+
+  setBatch(entries: Array<{ key: string; value: string; ttl?: number }>): Promise<void> {
+    const now = Date.now();
+    for (const entry of entries) {
+      const ttlSeconds = entry.ttl ?? 300;
+      // Evict oldest if at capacity
+      if (this.store.size >= this.maxEntries && !this.store.has(entry.key)) {
+        const oldest = this.store.keys().next().value;
+        if (oldest) this.store.delete(oldest);
+      }
+      this.store.set(entry.key, {
+        value: entry.value,
+        expiresAt: now + ttlSeconds * 1000,
+      });
+    }
     return Promise.resolve();
   }
 
@@ -194,12 +234,52 @@ export class RedisCacheBackend implements CacheBackend {
     }
   }
 
+  async getBatch(keys: string[]): Promise<Map<string, string | null>> {
+    const results = new Map<string, string | null>();
+    if (!this.client || keys.length === 0) {
+      for (const key of keys) results.set(key, null);
+      return results;
+    }
+    try {
+      // Redis client doesn't have mGet, use parallel individual gets
+      // This is still fast since Redis is local
+      const promises = keys.map(async key => {
+        const value = await this.get(key);
+        return { key, value };
+      });
+      const fetchedResults = await Promise.all(promises);
+      for (const { key, value } of fetchedResults) {
+        results.set(key, value);
+      }
+      return results;
+    } catch (error) {
+      logger.debug("[RedisCacheBackend] GetBatch failed", { keyCount: keys.length, error });
+      for (const key of keys) results.set(key, null);
+      return results;
+    }
+  }
+
   async set(key: string, value: string, ttlSeconds = 300): Promise<void> {
     if (!this.client) return;
     try {
       await this.client.set(this.prefixKey(key), value, { EX: ttlSeconds });
     } catch (error) {
       logger.debug("[RedisCacheBackend] Set failed", { key, error });
+    }
+  }
+
+  async setBatch(entries: Array<{ key: string; value: string; ttl?: number }>): Promise<void> {
+    if (!this.client || entries.length === 0) return;
+    try {
+      // Redis client doesn't have multi/pipeline, use parallel individual sets
+      // This is still fast since Redis is local
+      const promises = entries.map(entry => {
+        const ttl = entry.ttl ?? 300;
+        return this.set(entry.key, entry.value, ttl);
+      });
+      await Promise.all(promises);
+    } catch (error) {
+      logger.debug("[RedisCacheBackend] SetBatch failed", { entryCount: entries.length, error });
     }
   }
 
@@ -372,12 +452,61 @@ export class ApiCacheBackend implements CacheBackend {
     return result?.value ?? null;
   }
 
+  async getBatch(keys: string[]): Promise<Map<string, string | null>> {
+    const results = new Map<string, string | null>();
+    if (keys.length === 0) return results;
+
+    const prefixedKeys = keys.map(k => this.prefixKey(k));
+    const response = await this.request<{ values: Record<string, string | null> }>(
+      "POST",
+      "/get-batch",
+      { keys: prefixedKeys },
+    );
+
+    // Batch succeeded - map results back to original keys
+    if (response?.values) {
+      for (let i = 0; i < keys.length; i++) {
+        const originalKey = keys[i]!;
+        const prefixedKey = prefixedKeys[i]!;
+        results.set(originalKey, response.values[prefixedKey] ?? null);
+      }
+      return results;
+    }
+
+    // Batch endpoint failed - fall back to individual gets
+    // This handles deployment rollouts where batch endpoint isn't available yet
+    logger.debug("[ApiCacheBackend] Batch endpoint failed, falling back to individual gets", {
+      keyCount: keys.length,
+    });
+    return this.getIndividually(keys);
+  }
+
+  /** Helper to fetch keys individually (used as fallback when batch fails). */
+  private async getIndividually(keys: string[]): Promise<Map<string, string | null>> {
+    const results = await Promise.all(
+      keys.map(async key => ({ key, value: await this.get(key) })),
+    );
+    return new Map(results.map(({ key, value }) => [key, value]));
+  }
+
   async set(key: string, value: string, ttlSeconds = 300): Promise<void> {
     await this.request("POST", "/set", {
       key: this.prefixKey(key),
       value,
       ttl: ttlSeconds,
     });
+  }
+
+  async setBatch(entries: Array<{ key: string; value: string; ttl?: number }>): Promise<void> {
+    if (entries.length === 0) return;
+
+    const prefixedEntries = entries.map(e => ({
+      key: this.prefixKey(e.key),
+      value: e.value,
+      ttl: e.ttl,
+    }));
+
+    await this.request("POST", "/set-batch", { entries: prefixedEntries });
   }
 
   async del(key: string): Promise<void> {

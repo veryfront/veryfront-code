@@ -7,47 +7,47 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
 import { isWithinDirectory, normalizeSeparators, resolvePathSegments } from "./normalization.ts";
 import { PathValidationError, type ValidationResult } from "./types.ts";
-import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 /**
  * Get canonical path by resolving symlinks
  * Falls back to path resolution if adapter not available
+ *
+ * Note: This function is intentionally not traced - it's a fast synchronous
+ * path operation (< 1ms) and tracing adds noise without value.
  */
-export function getCanonicalPath(
+export async function getCanonicalPath(
   path: string,
   adapter?: RuntimeAdapter,
   followSymlinks = false,
 ): Promise<{ path: string; isSymlink: boolean }> {
-  return withSpan("security.path.getCanonical", async () => {
-    // If no adapter or not following symlinks, just resolve path segments
-    if (!adapter || !followSymlinks) {
+  // If no adapter or not following symlinks, just resolve path segments
+  if (!adapter || !followSymlinks) {
+    return {
+      path: resolvePathSegments(path),
+      isSymlink: false,
+    };
+  }
+
+  try {
+    const stat = await adapter.fs.stat(path);
+
+    if (stat.isSymlink) {
       return {
         path: resolvePathSegments(path),
-        isSymlink: false,
+        isSymlink: true,
       };
     }
 
-    try {
-      const stat = await adapter.fs.stat(path);
-
-      if (stat.isSymlink) {
-        return {
-          path: resolvePathSegments(path),
-          isSymlink: true,
-        };
-      }
-
-      return {
-        path: resolvePathSegments(path),
-        isSymlink: false,
-      };
-    } catch {
-      return {
-        path: resolvePathSegments(path),
-        isSymlink: false,
-      };
-    }
-  }, { "path.input": path, "path.followSymlinks": followSymlinks });
+    return {
+      path: resolvePathSegments(path),
+      isSymlink: false,
+    };
+  } catch {
+    return {
+      path: resolvePathSegments(path),
+      isSymlink: false,
+    };
+  }
 }
 
 /**
