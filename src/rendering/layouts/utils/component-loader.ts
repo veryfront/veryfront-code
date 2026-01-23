@@ -65,11 +65,18 @@ export async function loadTSXComponent(
   cache: LayoutComponentCache,
   adapter: RuntimeAdapter,
   projectId?: string,
+  contentSourceId?: string,
 ): Promise<BundledReact.ComponentType> {
   const source = await adapter.fs.readFile(componentPath);
   const hash = await computeHash(source);
   const effectiveProjectId = projectId ?? projectDir;
-  const cacheKey = buildLayoutComponentCacheKey(effectiveProjectId, componentPath, hash);
+  // Include contentSourceId in cache key for branch/release isolation
+  const cacheKey = buildLayoutComponentCacheKey(
+    effectiveProjectId,
+    componentPath,
+    hash,
+    contentSourceId,
+  );
   let component = cache.get(cacheKey);
 
   if (!component) {
@@ -78,7 +85,7 @@ export async function loadTSXComponent(
       componentPath,
       projectDir,
       adapter,
-      { dev: true, projectId: projectId ?? projectDir, ssr: true },
+      { dev: true, projectId: projectId ?? projectDir, ssr: true, contentSourceId },
     );
 
     if (loadedComponent) {
@@ -152,6 +159,7 @@ export async function applyTSXLayout(
   adapter: RuntimeAdapter,
   props?: Record<string, unknown>,
   projectId?: string,
+  contentSourceId?: string,
 ): Promise<BundledReact.ReactElement> {
   const start = performance.now();
   logger.debug("[applyTSXLayout] START", { componentPath: item.componentPath, projectId });
@@ -165,6 +173,7 @@ export async function applyTSXLayout(
       tsxLayoutModuleCache,
       adapter,
       projectId,
+      contentSourceId,
     );
     logger.debug("[applyTSXLayout] loadTSXComponent DONE", {
       componentPath: item.componentPath,

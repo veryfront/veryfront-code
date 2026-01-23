@@ -36,6 +36,8 @@ export async function handleComponentPage(
     projectId?: string;
     /** Enable node position injection for Studio Navigator */
     studioEmbed?: boolean;
+    /** Content source ID for cache isolation (branch name or release ID) */
+    contentSourceId?: string;
   },
 ): Promise<ComponentPageResult> {
   try {
@@ -76,6 +78,7 @@ export async function handleComponentPage(
         dev: true,
         moduleServerUrl: options?.moduleServerUrl,
         ssr: true, // SSR mode for proper import resolution
+        contentSourceId: options?.contentSourceId,
       },
     );
 

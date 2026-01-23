@@ -10,6 +10,9 @@ export interface LoadComponentOptions {
   vendorBundleHash?: string;
 
   ssr?: boolean; // If true, don't rewrite imports for module server (for server-side execution)
+
+  /** Content source ID for cache isolation (branch name or release ID) */
+  contentSourceId?: string;
 }
 
 export interface ComponentSource {

@@ -422,8 +422,10 @@ export function buildLayoutComponentCacheKey(
   projectId: string,
   componentPath: string,
   hash: string,
+  contentSourceId?: string,
 ): string {
-  return `${CacheKeyPrefix.LAYOUT}:${projectId}:${componentPath}:${hash}`;
+  const sourceKey = contentSourceId ?? "default";
+  return `${CacheKeyPrefix.LAYOUT}:${projectId}:${sourceKey}:${componentPath}:${hash}`;
 }
 
 // ============================================================================

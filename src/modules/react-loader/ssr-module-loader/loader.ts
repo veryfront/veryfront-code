@@ -155,7 +155,13 @@ export class SSRModuleLoader {
   }
 
   private getCacheKey(filePath: string): string {
-    return buildSSRModuleCacheKey(TRANSFORM_CACHE_VERSION, this.options.projectId, filePath);
+    // Include contentSourceId for branch/release isolation
+    const sourceId = this.options.contentSourceId ?? "default";
+    return buildSSRModuleCacheKey(
+      TRANSFORM_CACHE_VERSION,
+      this.options.projectId,
+      `${sourceId}:${filePath}`,
+    );
   }
 
   private getRegistryBaseUrl(): string {
@@ -634,6 +640,7 @@ export class SSRModuleLoader {
   private async ensureTmpDir(): Promise<string> {
     let projectDir = this.options.projectDir;
     const projectId = this.options.projectId;
+    const contentSourceId = this.options.contentSourceId;
 
     // Ensure absolute path for file:// URLs
     if (!projectDir.startsWith("/")) {
@@ -642,7 +649,8 @@ export class SSRModuleLoader {
 
     const cacheBaseDir = getCacheBaseDir();
     const baseDir = isAbsolute(cacheBaseDir) ? cacheBaseDir : join(cwd(), cacheBaseDir);
-    const cacheKey = `${baseDir}|${buildSSRModuleProjectKey(projectDir, projectId)}`;
+    // Include contentSourceId in cache key for branch/release isolation
+    const cacheKey = `${baseDir}|${buildSSRModuleProjectKey(projectDir, projectId)}|${contentSourceId ?? "default"}`;
 
     const existingDir = globalTmpDirs.get(cacheKey);
     if (existingDir) {
@@ -650,10 +658,15 @@ export class SSRModuleLoader {
     }
 
     const projectKey = projectId ? this.hashCode(projectId) : "default";
+    // Sanitize contentSourceId for filesystem (replace / with -)
+    const sourceKey = contentSourceId
+      ? this.hashCode(contentSourceId)
+      : "default";
     const tmpDir = join(
       baseDir,
       "veryfront-ssr",
       projectKey,
+      sourceKey,
     );
 
     await this.fs.mkdir(tmpDir, { recursive: true });

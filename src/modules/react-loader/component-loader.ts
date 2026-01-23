@@ -30,6 +30,7 @@ export async function loadComponentFromSource(
       projectId,
       adapter,
       dev,
+      contentSourceId: options?.contentSourceId,
     });
     return loader.loadModule(filePath, source);
   }

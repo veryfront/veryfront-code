@@ -17,6 +17,8 @@ export interface SSRModuleLoaderOptions {
   adapter: RuntimeAdapter;
   dev: boolean;
   apiBaseUrl?: string;
+  /** Content source ID for cache isolation (branch name or release ID) */
+  contentSourceId?: string;
 }
 
 /**

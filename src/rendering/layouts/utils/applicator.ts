@@ -71,6 +71,7 @@ export async function applyLayoutsESM(
             adapter,
             props,
             projectId,
+            contentSourceId,
           );
           logger.debug("[applyLayoutsESM] applyTSXLayout DONE", {
             projectSlug,
@@ -117,6 +118,7 @@ export async function applyLayoutsFunctionBody(
   layoutDataMap?: Map<string, Record<string, unknown>>,
   projectId?: string,
   _projectSlug?: string,
+  contentSourceId?: string,
 ): Promise<BundledReact.ReactElement> {
   const React = await getProjectReact();
   let element = pageElement;
@@ -152,6 +154,7 @@ export async function applyLayoutsFunctionBody(
             tsxLayoutModuleCache,
             adapter,
             projectId,
+            contentSourceId,
           );
           const child = ensureValidChild(element, React);
           logger.debug("Applying TSX layout:", {
