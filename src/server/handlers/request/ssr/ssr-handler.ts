@@ -42,13 +42,13 @@ import {
   startRenderSession,
 } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
 import { VeryfrontAPIError } from "#veryfront/platform/adapters/veryfront-api-client/types.ts";
-import { shouldUseNoCacheHeaders } from "../../../context/request-context.ts";
+import { shouldUseNoCacheHeadersFromHandler } from "../../../context/enriched-context.ts";
 import { ErrorPages } from "../../../utils/error-html.ts";
 import { ErrorOverlay } from "../../../dev-server/error-overlay/index.ts";
 
 /**
  * Determine if request should serve production (released) content.
- * Uses RequestContext.mode which unifies hostname and x-environment header.
+ * Uses resolvedEnvironment (from domain lookup) with fallback to requestContext.mode.
  * Config override (PRODUCTION_MODE) takes precedence.
  */
 export function isProductionMode(ctx: HandlerContext, _url?: URL): boolean {
@@ -57,9 +57,10 @@ export function isProductionMode(ctx: HandlerContext, _url?: URL): boolean {
     return true;
   }
 
-  // Use RequestContext.mode (unified from hostname/header)
+  // Priority: resolvedEnvironment (domain lookup) > requestContext.mode (hostname pattern)
   // Default to preview (safer for development) if no context
-  return ctx.requestContext?.mode === "production";
+  const environment = ctx.resolvedEnvironment ?? ctx.requestContext?.mode;
+  return environment === "production";
 }
 
 /**
@@ -344,7 +345,7 @@ export class SSRHandler extends BaseHandler {
       // HTTP cache headers: no-cache for development and preview, short for production
       // Preview uses no-cache HTTP headers because browser must fetch fresh content
       // Server-side memory caches handle performance in preview mode (Phase 7)
-      const cacheStrategy = shouldUseNoCacheHeaders(ctx.requestContext) ? "no-cache" : "short";
+      const cacheStrategy = shouldUseNoCacheHeadersFromHandler(ctx) ? "no-cache" : "short";
       const isHeadRequest = req.method.toUpperCase() === "HEAD";
       const builder = this.createResponseBuilder(ctx, nonce);
 

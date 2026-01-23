@@ -16,7 +16,7 @@
 
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
-import type { ParsedDomain } from "../../types/server.ts";
+import type { HandlerContext, ParsedDomain } from "../../types/server.ts";
 import { buildRenderCachePrefix } from "../../cache/keys.ts";
 
 /**
@@ -265,5 +265,31 @@ export function shouldEnableCacheFromEnriched(enriched: EnrichedContext): boolea
 export function shouldUseNoCacheHeadersFromEnriched(enriched: EnrichedContext): boolean {
   if (enriched.isLocalDev) return true;
   if (enriched.environment === "preview") return true;
+  return false;
+}
+
+/**
+ * Check if HTTP response should use no-cache headers from HandlerContext.
+ *
+ * Uses the correct priority for environment resolution:
+ * 1. enriched.environment (pre-computed from domain lookup)
+ * 2. resolvedEnvironment (from domain lookup, stored on HandlerContext)
+ * 3. requestContext.mode (from hostname pattern, fallback)
+ *
+ * This ensures staging/preview custom domains get correct cache behavior.
+ */
+export function shouldUseNoCacheHeadersFromHandler(ctx: HandlerContext): boolean {
+  // Fast path: use EnrichedContext if available
+  if (ctx.enriched) {
+    return shouldUseNoCacheHeadersFromEnriched(ctx.enriched);
+  }
+
+  // Slow path: check individual fields
+  if (ctx.requestContext?.isLocalDev) return true;
+
+  // Priority: resolvedEnvironment > requestContext.mode
+  const environment = ctx.resolvedEnvironment ?? ctx.requestContext?.mode;
+  if (environment === "preview") return true;
+
   return false;
 }

@@ -247,12 +247,15 @@ export function getProjectScopedKeyAlways(
 
 /**
  * Extract CacheKeyContext from HandlerContext.
+ *
+ * Uses resolvedEnvironment (from domain lookup) as the authoritative source,
+ * falling back to requestContext.mode for backward compatibility.
  */
 export function extractCacheKeyContext(handlerCtx: HandlerContext): CacheKeyContext {
   const projectId = handlerCtx.projectId || handlerCtx.projectSlug || "default";
 
-  // Use requestContext.mode (unified from hostname/headers)
-  const mode = handlerCtx.requestContext?.mode || "preview";
+  // Priority: resolvedEnvironment (domain lookup) > requestContext.mode (hostname pattern)
+  const mode = handlerCtx.resolvedEnvironment ?? handlerCtx.requestContext?.mode ?? "preview";
 
   // Version: releaseId (production) or branch (preview)
   const versionId = mode === "production"

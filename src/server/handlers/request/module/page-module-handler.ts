@@ -7,7 +7,7 @@ import type { HandlerContext, HandlerResult } from "../../types.ts";
 import { computeEtag, hasMatchingEtag } from "../../utils/etag.ts";
 import { ResponseBuilder } from "#veryfront/security/index.ts";
 import { getRendererForProject } from "../../../shared/renderer-factory.ts";
-import { shouldUseNoCacheHeaders } from "../../../context/request-context.ts";
+import { shouldUseNoCacheHeadersFromHandler } from "../../../context/enriched-context.ts";
 
 /**
  * Handles page module generation requests.
@@ -60,7 +60,7 @@ export async function handlePageModule(
       builder
         .withCORS(req, ctx.securityConfig?.cors)
         .withSecurity(ctx.securityConfig ?? undefined)
-        .withCache(shouldUseNoCacheHeaders(ctx.requestContext) ? "no-cache" : "short")
+        .withCache(shouldUseNoCacheHeadersFromHandler(ctx) ? "no-cache" : "short")
         .withETag(etag)
         .javascript(code, 200),
     );
