@@ -293,6 +293,15 @@ export class RenderPipeline {
         );
         timing.layoutCollect = Math.round(performance.now() - layoutCollectStart);
 
+        // ─────────────────────────────────────────────────────────────────────────
+        // Start layout module preloading in background (parallel with Stage 4)
+        // Layout paths are known after collectLayouts, so we can start loading modules
+        // now while page bundle preparation runs. This avoids sequential loading.
+        // ─────────────────────────────────────────────────────────────────────────
+        const layoutPreloadPromise = !skipLayouts && layoutResult.nestedLayouts.length > 0
+          ? this.config.layoutOrchestrator.preloadLayoutModules(layoutResult.nestedLayouts)
+          : Promise.resolve();
+
         let dataFetchingProps: Record<string, unknown> | undefined;
         const layoutDataMap = new Map<string, Record<string, unknown>>();
 
@@ -474,7 +483,9 @@ export class RenderPipeline {
 
         // ─────────────────────────────────────────────────────────────────────────
         // Stage 5: Layout Application
+        // Await layout preload (ran in parallel with Stage 3 & 4) before applying
         // ─────────────────────────────────────────────────────────────────────────
+        await layoutPreloadPromise;
         const layoutApplyStart = performance.now();
         const wrappedElement = await withSpan(
           "render.apply_layouts",

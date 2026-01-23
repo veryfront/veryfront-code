@@ -206,17 +206,32 @@ export class VeryfrontFSAdapter implements FSAdapter {
       duration: `${(performance.now() - step1Start).toFixed(2)}ms`,
     });
 
-    // Step 2: Get project data
+    // Step 2: Get project data (use cached data from client.initialize() to avoid redundant API call)
     const projectId = this.client.getProjectId();
     logger.debug("[VeryfrontFSAdapter] Step 2: getProject START", { projectSlug, projectId });
     const step2Start = performance.now();
-    this.projectData = await this.client.getProject(projectId);
-    logger.debug("[VeryfrontFSAdapter] Step 2: getProject DONE", {
-      projectSlug,
-      provider: this.projectData.provider,
-      layout: this.projectData.layout,
-      duration: `${(performance.now() - step2Start).toFixed(2)}ms`,
-    });
+
+    // Use cached project data from client initialization if available
+    // This eliminates a redundant API call (~150ms savings)
+    const cachedProject = this.client.getCachedProject();
+    if (cachedProject) {
+      this.projectData = cachedProject;
+      logger.debug("[VeryfrontFSAdapter] Step 2: getProject DONE (from cache)", {
+        projectSlug,
+        provider: this.projectData.provider,
+        layout: this.projectData.layout,
+        duration: `${(performance.now() - step2Start).toFixed(2)}ms`,
+      });
+    } else {
+      // Fallback to API call if no cached data (e.g., projectId was in config)
+      this.projectData = await this.client.getProject(projectId);
+      logger.debug("[VeryfrontFSAdapter] Step 2: getProject DONE (from API)", {
+        projectSlug,
+        provider: this.projectData.provider,
+        layout: this.projectData.layout,
+        duration: `${(performance.now() - step2Start).toFixed(2)}ms`,
+      });
+    }
 
     // Step 3: Resolve content source to content context (skip if already set by setContentContext)
     if (!this.contentContext) {

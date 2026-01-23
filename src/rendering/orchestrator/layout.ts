@@ -7,6 +7,7 @@ import { LayoutApplicator } from "../layouts/index.ts";
 import { createDefaultMDXComponents } from "../utils/index.ts";
 import type { LayoutCollector, LayoutCompiler } from "../layouts/index.ts";
 import type { LayoutComponentCache } from "../layouts/utils/component-loader.ts";
+import { loadTSXComponent } from "../layouts/utils/component-loader.ts";
 import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/index.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 
@@ -48,6 +49,63 @@ export class LayoutOrchestrator {
     const result = await this.config.layoutCollector.collectLayouts(pageInfo);
     await this.config.layoutCompiler.compileLayouts(result.nestedLayouts);
     return result;
+  }
+
+  /**
+   * Preload layout modules into cache in parallel.
+   * Call this after collectLayouts() to start loading TSX layouts in the background
+   * while page bundle preparation runs. When applyLayoutsAndWrappers() is called,
+   * the layouts will already be in cache, avoiding sequential loading.
+   *
+   * @param nestedLayouts - Layouts from collectLayouts() result
+   * @returns Promise that resolves when all TSX layouts are preloaded (or failed)
+   */
+  async preloadLayoutModules(nestedLayouts: LayoutItem[]): Promise<void> {
+    const tsxLayouts = nestedLayouts.filter(
+      (layout) => layout.kind === "tsx" && layout.componentPath,
+    );
+
+    if (tsxLayouts.length === 0) {
+      return;
+    }
+
+    const preloadStart = performance.now();
+    logger.debug("[LayoutOrchestrator] Preloading TSX layout modules", {
+      count: tsxLayouts.length,
+      paths: tsxLayouts.map((l) => l.componentPath),
+    });
+
+    // Load all TSX layouts in parallel into the cache
+    const preloadPromises = tsxLayouts.map(async (layout) => {
+      try {
+        await loadTSXComponent(
+          layout.componentPath!,
+          this.config.projectDir,
+          this.config.layoutCache,
+          this.config.adapter,
+          this.config.projectId,
+          this.config.contentSourceId,
+        );
+        return { path: layout.componentPath, success: true };
+      } catch (error) {
+        // Log but don't throw - preload failures will be handled during actual application
+        logger.warn("[LayoutOrchestrator] Failed to preload layout (will retry during apply)", {
+          path: layout.componentPath,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return { path: layout.componentPath, success: false };
+      }
+    });
+
+    const results = await Promise.all(preloadPromises);
+    const successCount = results.filter((r) => r.success).length;
+
+    logger.debug("[LayoutOrchestrator] Preload complete", {
+      total: tsxLayouts.length,
+      success: successCount,
+      failed: tsxLayouts.length - successCount,
+      duration: `${(performance.now() - preloadStart).toFixed(2)}ms`,
+    });
   }
 
   async applyLayoutsAndWrappers(

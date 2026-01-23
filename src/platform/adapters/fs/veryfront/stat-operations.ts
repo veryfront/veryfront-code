@@ -396,6 +396,22 @@ export class StatOperations {
       return null;
     }
 
+    // 6b. Skip API search if we have the complete file list from adapter initialization.
+    // The contextProvider.getFileList() returns ALL files, so if a file isn't in our index,
+    // it definitively doesn't exist - no need to search via API pattern.
+    // This eliminates ~263ms of unnecessary API calls on cold starts.
+    if (this.contextProvider?.getFileList) {
+      const totalMs = Math.round(performance.now() - resolveStart);
+      logger.debug("[StatOperations] resolveFile not found (complete index, skipping API search)", {
+        normalizedPath,
+        pathWithoutExt,
+        indexSize: fileIdx.size,
+        indexMs,
+        totalMs,
+      });
+      return null;
+    }
+
     // 7. Check circuit breaker before API search
     if (Date.now() < this.apiSearchDisabledUntil) {
       logger.warn("[StatOperations] API search circuit breaker open, skipping", { normalizedPath });

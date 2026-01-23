@@ -30,6 +30,8 @@ export class VeryfrontAPIClient {
   private requestBranch?: string | null;
   private initialized = false;
   private initializingPromise?: Promise<void>;
+  /** Cached project data from initialization - avoids redundant API calls */
+  private cachedProjectData?: Awaited<ReturnType<VeryfrontAPIOperations["getProject"]>>;
 
   constructor(config: VeryfrontAPIConfig) {
     const retryConfig = {
@@ -187,6 +189,9 @@ export class VeryfrontAPIClient {
       apiDuration: `${(performance.now() - getProjectStart).toFixed(2)}ms`,
     });
 
+    // Cache the project data to avoid redundant API calls
+    // Adapter can use getCachedProject() instead of calling getProject() again
+    this.cachedProjectData = project;
     this.operations.setProjectId(project.id);
     this.initialized = true;
     logger.debug("[VeryfrontAPIClient] doInitialize DONE", {
@@ -204,6 +209,15 @@ export class VeryfrontAPIClient {
 
   getProjectId(): string {
     return this.operations.getProjectId();
+  }
+
+  /**
+   * Get the cached project data from initialization.
+   * Returns undefined if not yet initialized or if projectId was provided in config.
+   * Use this instead of calling getProject() to avoid redundant API calls.
+   */
+  getCachedProject(): Awaited<ReturnType<VeryfrontAPIOperations["getProject"]>> | undefined {
+    return this.cachedProjectData;
   }
 
   // =============================================================================
