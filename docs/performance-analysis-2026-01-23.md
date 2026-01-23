@@ -197,3 +197,11 @@ Investigation needed to determine what happens during this gap.
 
 2. `e6511a82` - perf: implement EnrichedContext for unified request data
    - Fix 4: Context enrichment architecture
+
+3. `8adc29f7` - fix: improve proxy-mode context enrichment and validation
+   - Add validation to fast path in createRenderContextFromEnriched()
+   - Attach enriched back to ctx in proxy mode slow path
+
+4. `0930bed5` - fix: pass resolvedEnvironment through HandlerContext for proxy mode
+   - Add resolvedEnvironment field to HandlerContext
+   - Ensure domain lookup environment reaches adapter slow path
