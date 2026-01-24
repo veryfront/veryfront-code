@@ -1,20 +1,9 @@
 /**
  * Hashed CSS Handler
  *
- * Serves Tailwind CSS by hash at /_vf/css/[hash].css
- *
- * In production, CSS is generated during SSR and cached by hash.
- * The browser requests the hashed URL and receives the cached CSS
- * with immutable caching headers for optimal performance.
- *
- * Flow:
- * 1. SSR generates HTML with <link href="/_vf/css/[hash].css">
- * 2. cacheCSSAsync() stores CSS in memory + distributed cache
- * 3. Browser requests /_vf/css/[hash].css
- * 4. This handler retrieves CSS by hash and serves it
- *
- * Note: The distributed cache (API) is project-scoped, so we must set up
- * the cache context from HandlerContext before looking up CSS.
+ * Serves Tailwind CSS by hash at /_vf/css/[hash].css with immutable caching.
+ * CSS is generated during SSR and cached (local + distributed). The distributed
+ * cache is project-scoped, so we set cache context from HandlerContext before lookup.
  */
 
 import { BaseHandler } from "../response/base.ts";
@@ -53,17 +42,11 @@ export class CSSHandler extends BaseHandler {
       return this.continue();
     }
 
-    // Extract cache context from handler context for distributed cache lookup.
-    // The distributed cache (API) is project-scoped, so we need context to find
-    // CSS that was stored during SSR (which may have been on a different pod).
+    // Set cache context for project-scoped distributed cache lookup
     const cacheCtx = extractCacheKeyContext(ctx);
-
-    // Retrieve CSS from cache by hash (checks local then distributed cache)
     const css = await runWithCacheKeyContext(cacheCtx, () => getCSSByHashAsync(cssHash));
 
     if (!css) {
-      // Cache miss - CSS was either never cached or evicted
-      // This can happen if server restarted between SSR and CSS request
       this.logDebug(`CSS hash not found: ${cssHash}`, {}, ctx);
 
       const builder = this.createResponseBuilder(ctx);
@@ -79,7 +62,6 @@ export class CSSHandler extends BaseHandler {
       );
     }
 
-    // Serve CSS with immutable caching (hash-based URLs never change)
     const builder = this.createResponseBuilder(ctx);
     return this.respond(
       builder
