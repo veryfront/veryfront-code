@@ -31,11 +31,12 @@ class ReloadNotifierImpl {
     this.metrics.triggerCalls++;
     this.metrics.lastTriggerTime = Date.now();
 
-    logger.debug("[ReloadNotifier] triggerReload called", {
+    logger.info("[ReloadNotifier] triggerReload called", {
       invalidateListeners: this.invalidateListeners.size,
       reloadListeners: this.listeners.size,
-      changedPaths: changedPaths?.length ?? 0,
+      changedPaths,
       projectSlug,
+      timestamp: new Date().toISOString(),
     });
 
     if (changedPaths?.length) {
@@ -59,12 +60,13 @@ class ReloadNotifierImpl {
       this.pendingChangedPaths.clear();
       this.pendingProjectSlug = undefined;
 
-      logger.debug(
+      logger.info(
         "[ReloadNotifier] Debounce complete, notifying reload listeners",
         {
           listenerCount: this.listeners.size,
-          changedPaths: paths?.length ?? 0,
+          changedPaths: paths,
           projectSlug: slug,
+          timestamp: new Date().toISOString(),
         },
       );
 
@@ -89,18 +91,23 @@ class ReloadNotifierImpl {
   private notifyListeners(changedPaths?: string[], projectSlug?: string): void {
     this.metrics.broadcastsSent++;
 
-    logger.debug("[ReloadNotifier] Notifying reload listeners", {
+    logger.info("[ReloadNotifier] Notifying reload listeners", {
       count: this.listeners.size,
-      changedPaths: changedPaths?.length ?? 0,
+      changedPaths,
       projectSlug,
+      timestamp: new Date().toISOString(),
     });
 
+    let listenerIndex = 0;
     for (const listener of this.listeners) {
       try {
+        logger.info(`[ReloadNotifier] Calling listener ${listenerIndex + 1}/${this.listeners.size}`);
         listener(changedPaths, projectSlug);
+        logger.info(`[ReloadNotifier] Listener ${listenerIndex + 1} completed`);
       } catch (error) {
         logger.error("[ReloadNotifier] Listener error:", error);
       }
+      listenerIndex++;
     }
   }
 

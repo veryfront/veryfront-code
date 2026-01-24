@@ -462,15 +462,26 @@ document.head.appendChild(errorScript);
 // Connects to /_ws WebSocket and handles true HMR updates
 
 (function() {
+  console.log('[Preview HMR] Script loaded at', new Date().toISOString());
+  console.log('[Preview HMR] Location:', window.location.href);
+  console.log('[Preview HMR] Global functions available:', {
+    __veryfrontRenderPage: typeof window.__veryfrontRenderPage,
+    __veryfrontSetHMRRefreshTimestamp: typeof window.__veryfrontSetHMRRefreshTimestamp,
+    __veryfrontClearComponentCache: typeof window.__veryfrontClearComponentCache
+  });
+
   // Notify Studio that the app is ready (clears loading indicator)
   if (window.parent !== window) {
     try {
+      console.log('[Preview HMR] Notifying Studio of initial load');
       window.parent.postMessage({
         action: 'appUpdated',
         isInitialLoad: true,
         url: window.location.href
       }, '*');
-    } catch (e) { /* postMessage may fail in cross-origin iframes */ }
+    } catch (e) {
+      console.warn('[Preview HMR] Failed to notify Studio:', e.message);
+    }
   }
 
   // Determine WebSocket URL (same host, use wss for https)
@@ -512,25 +523,28 @@ document.head.appendChild(errorScript);
     };
 
     ws.onmessage = (event) => {
+      console.log('[Preview HMR] Raw message received:', event.data);
       try {
         const data = JSON.parse(event.data);
+        console.log('[Preview HMR] Parsed message:', JSON.stringify(data, null, 2));
 
         switch (data.type) {
           case 'update':
+            console.log('[Preview HMR] Handling update for path:', data.path);
             handleUpdate(data);
             break;
           case 'reload':
-            console.log('[Preview HMR] Full reload requested');
+            console.log('[Preview HMR] Full reload requested by server');
             notifyStudioAndReload();
             break;
           case 'connected':
-            console.log('[Preview HMR] Server acknowledged connection');
+            console.log('[Preview HMR] Server acknowledged connection, clientId:', data.clientId || 'none');
             break;
           default:
-            console.log('[Preview HMR] Unknown message type:', data.type);
+            console.log('[Preview HMR] Unknown message type:', data.type, data);
         }
       } catch (e) {
-        console.error('[Preview HMR] Failed to parse message', e);
+        console.error('[Preview HMR] Failed to parse message:', e, 'Raw:', event.data);
       }
     };
 
@@ -553,15 +567,22 @@ document.head.appendChild(errorScript);
   }
 
   async function handleUpdate(update) {
+    console.log('[Preview HMR] handleUpdate called with:', JSON.stringify(update));
     if (!update.path) {
       console.warn('[Preview HMR] Update message missing path');
       return;
     }
 
-    console.log('[Preview HMR] Update received for:', update.path);
+    console.log('[Preview HMR] Processing update for:', update.path);
+    console.log('[Preview HMR] Current global functions state:', {
+      __veryfrontRenderPage: typeof window.__veryfrontRenderPage,
+      __veryfrontSetHMRRefreshTimestamp: typeof window.__veryfrontSetHMRRefreshTimestamp,
+      __veryfrontClearComponentCache: typeof window.__veryfrontClearComponentCache
+    });
 
     // Handle CSS updates without full reload
     if (update.path.endsWith('.css')) {
+      console.log('[Preview HMR] CSS update detected, calling updateCSS');
       updateCSS(update.path);
       notifyStudio();
       return;
@@ -569,22 +590,26 @@ document.head.appendChild(errorScript);
 
     // Use smart HMR: clear component cache and re-render without full reload
     // This is faster than full page reload and preserves client-side state
+    console.log('[Preview HMR] JS update detected, calling updateJS');
     await updateJS(update.path);
   }
 
   async function updateCSS(path) {
-    console.log('[Preview HMR] Updating CSS:', path);
+    console.log('[Preview HMR] updateCSS called with path:', path);
     let updated = false;
 
     // Try to update linked stylesheets
-    for (const link of document.querySelectorAll('link[rel="stylesheet"]')) {
+    const links = document.querySelectorAll('link[rel="stylesheet"]');
+    console.log('[Preview HMR] Found', links.length, 'stylesheet links');
+    for (const link of links) {
       try {
         const url = new URL(link.href);
+        console.log('[Preview HMR] Checking stylesheet:', url.pathname);
         if (url.pathname === path || url.pathname.includes(path)) {
           const newUrl = new URL(link.href);
           newUrl.searchParams.set('t', Date.now().toString());
           link.href = newUrl.toString();
-          console.log('[Preview HMR] CSS link updated:', path);
+          console.log('[Preview HMR] CSS link updated:', path, '→', newUrl.toString());
           updated = true;
         }
       } catch (error) {
@@ -594,12 +619,17 @@ document.head.appendChild(errorScript);
 
     // Try to update inline Tailwind CSS style tag
     const tailwindStyle = document.getElementById('vf-tailwind-css');
+    console.log('[Preview HMR] Tailwind style element found:', !!tailwindStyle);
     if (tailwindStyle && (path.includes('globals.css') || path.endsWith('.css'))) {
       try {
         // Fetch fresh compiled CSS from globals endpoint
-        const response = await fetch('/_vf_styles/globals.css?t=' + Date.now());
+        const cssUrl = '/_vf_styles/globals.css?t=' + Date.now();
+        console.log('[Preview HMR] Fetching fresh CSS from:', cssUrl);
+        const response = await fetch(cssUrl);
+        console.log('[Preview HMR] CSS fetch response:', response.status, response.statusText);
         if (response.ok) {
           const newCSS = await response.text();
+          console.log('[Preview HMR] CSS fetched, length:', newCSS.length);
           tailwindStyle.textContent = newCSS;
           console.log('[Preview HMR] Inline Tailwind CSS updated');
           updated = true;
@@ -613,26 +643,38 @@ document.head.appendChild(errorScript);
     if (!updated) {
       console.log('[Preview HMR] No matching stylesheet for ' + path + ', reloading page');
       notifyStudioAndReload();
+    } else {
+      console.log('[Preview HMR] CSS update complete');
     }
   }
 ${getUpdateJSFunction("[Preview HMR]")}
 
   function notifyStudio() {
+    console.log('[Preview HMR] notifyStudio called, isInIframe:', window.parent !== window);
     if (window.parent !== window) {
       try {
-        window.parent.postMessage({
+        const message = {
           action: 'appUpdated',
           isInitialLoad: false,
           url: window.location.href
-        }, '*');
-      } catch (e) { /* ignore */ }
+        };
+        console.log('[Preview HMR] Posting message to Studio:', JSON.stringify(message));
+        window.parent.postMessage(message, '*');
+        console.log('[Preview HMR] Message posted successfully');
+      } catch (e) {
+        console.warn('[Preview HMR] Failed to notify Studio:', e.message);
+      }
     }
   }
 
   function notifyStudioAndReload() {
+    console.log('[Preview HMR] notifyStudioAndReload called - will reload in 100ms');
     notifyStudio();
     // Small delay to let Studio know, then reload
-    setTimeout(() => window.location.reload(), 100);
+    setTimeout(() => {
+      console.log('[Preview HMR] Reloading page now');
+      window.location.reload();
+    }, 100);
   }
 
   // Start connection

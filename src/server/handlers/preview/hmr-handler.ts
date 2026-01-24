@@ -63,41 +63,67 @@ export class HMRHandler extends BaseHandler {
     HMRHandler.metrics.broadcastsSent++;
     HMRHandler.metrics.lastBroadcastTime = timestamp;
 
+    logger.info("[HMRHandler] broadcastUpdate called", {
+      changedPaths,
+      totalClients: HMRHandler.clientsMap.size,
+      clientIds: Array.from(HMRHandler.clientsMap.keys()),
+    });
+
     const needsFullReload = !changedPaths?.length ||
       changedPaths.some((path) => HMRHandler.requiresFullReload(path));
 
     if (needsFullReload) {
-      HMRHandler.broadcastMessage(JSON.stringify({ type: "reload", timestamp }));
-      HMRHandler.metrics.messagesForwarded++;
-      logger.debug("[HMRHandler] Broadcast reload", {
-        changedPaths: changedPaths?.length ?? 0,
-        totalClients: HMRHandler.clientsMap.size,
+      const message = JSON.stringify({ type: "reload", timestamp });
+      logger.info("[HMRHandler] Broadcasting full reload", {
+        message,
         reason: changedPaths?.length ? "server-rendered content" : "no paths",
+        changedPaths,
       });
+      HMRHandler.broadcastMessage(message);
+      HMRHandler.metrics.messagesForwarded++;
       return;
     }
 
     for (const path of changedPaths) {
-      HMRHandler.broadcastMessage(JSON.stringify({ type: "update", path, timestamp }));
+      const message = JSON.stringify({ type: "update", path, timestamp });
+      logger.info("[HMRHandler] Broadcasting update message", { message, path });
+      HMRHandler.broadcastMessage(message);
       HMRHandler.metrics.messagesForwarded++;
     }
 
-    logger.debug("[HMRHandler] Broadcast update", {
+    logger.info("[HMRHandler] Broadcast update complete", {
       changedPaths: changedPaths.length,
       totalClients: HMRHandler.clientsMap.size,
     });
   }
 
   private static broadcastMessage(message: string): void {
+    let sentCount = 0;
+    let skippedCount = 0;
+
     for (const client of HMRHandler.clients) {
-      if (client.readyState !== WebSocket.OPEN) continue;
+      if (client.readyState !== WebSocket.OPEN) {
+        skippedCount++;
+        logger.debug("[HMRHandler] Skipping client - not open", {
+          readyState: client.readyState,
+        });
+        continue;
+      }
 
       try {
         client.send(message);
+        sentCount++;
       } catch (error) {
-        logger.debug("[HMRHandler] Failed to send to client", { error });
+        logger.warn("[HMRHandler] Failed to send to client", { error });
       }
     }
+
+    logger.info("[HMRHandler] broadcastMessage complete", {
+      message: message.substring(0, 200),
+      sentCount,
+      skippedCount,
+      totalClientsInSet: HMRHandler.clients.size,
+    });
   }
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {

@@ -492,9 +492,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
             }
           }
 
-          logger.debug("[VeryfrontFSAdapter] POKE ACCEPTED - triggering cache invalidation", {
+          logger.info("[VeryfrontFSAdapter] POKE ACCEPTED - triggering cache invalidation", {
             changedPathsCount: changedPaths?.length || 0,
             changedPaths: changedPaths || [],
+            projectSlug: this.projectSlug,
+            branch: this.contentContext?.branch,
           });
 
           if (changedPaths?.length) {
@@ -687,13 +689,21 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
 
     this.pokeMetrics.invalidationsTriggered++;
+
+    logger.info("[VeryfrontFSAdapter] TRIGGERING HMR RELOAD via invalidationCallbacks.triggerReload", {
+      changedPaths,
+      projectSlug: this.projectSlug,
+      projectId: this.client.getProjectId(),
+      hasTriggerReloadCallback: !!this.invalidationCallbacks.triggerReload,
+    });
+
     this.invalidationCallbacks.triggerReload?.(changedPaths, {
       projectSlug: this.projectSlug,
       projectId: this.client.getProjectId(),
     });
 
-    logger.debug("[VeryfrontFSAdapter] Selective invalidation complete", {
-      changedPaths: changedPaths.length,
+    logger.info("[VeryfrontFSAdapter] Selective invalidation complete - HMR triggered", {
+      changedPaths,
       durationMs: Date.now() - startTime,
       totalInvalidations: this.pokeMetrics.invalidationsTriggered,
     });
@@ -799,7 +809,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
 
     this.pokeMetrics.invalidationsTriggered++;
-    logger.debug("[VeryfrontFSAdapter] TRIGGERING BROWSER RELOAD via ReloadNotifier");
+    logger.info("[VeryfrontFSAdapter] TRIGGERING FULL BROWSER RELOAD via ReloadNotifier", {
+      projectSlug: this.projectSlug,
+      projectId: this.client.getProjectId(),
+      hasTriggerReloadCallback: !!this.invalidationCallbacks.triggerReload,
+    });
     this.invalidationCallbacks.triggerReload?.(undefined, {
       projectSlug: this.projectSlug,
       projectId: this.client.getProjectId(),
