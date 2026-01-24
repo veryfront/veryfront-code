@@ -61,11 +61,19 @@ export class SSROrchestrator {
     resetHeadCollector();
 
     const wantsStream = options?.delivery === "stream";
-    const { html, stream } = await this.config.ssrRenderer.renderToHTML(validatedElement, {
-      mode: this.config.mode,
-      wantsStream,
-      debugMode: this.config.debugMode,
-    });
+    const { html, stream } = await withSpan(
+      SpanNames.SSR_ORCHESTRATOR_RENDER,
+      () =>
+        this.config.ssrRenderer.renderToHTML(validatedElement, {
+          mode: this.config.mode,
+          wantsStream,
+          debugMode: this.config.debugMode,
+        }),
+      {
+        "ssr.wants_stream": wantsStream,
+        "ssr.mode": this.config.mode,
+      },
+    );
 
     const collectedHead = flushHeadCollector();
 

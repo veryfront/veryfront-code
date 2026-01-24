@@ -43,11 +43,17 @@ const LOCAL_CACHE_MAX_SIZE = 100;
 // Project-level CSS cache - uses distributed backend (API/Redis)
 const PROJECT_CSS_CACHE_TTL_SECONDS = CSS_CACHE_TTL_SECONDS;
 const PROJECT_CSS_LOCAL_FALLBACK_MAX = 50;
+const PROJECT_CSS_LOCAL_TTL_MS = PROJECT_CSS_CACHE_TTL_SECONDS * 1000;
 
 let projectCSSBackend: CacheBackend | null = null;
 let projectCSSInitialized = false;
 let projectCSSInitPromise: Promise<void> | null = null;
-const projectCSSLocalFallback = new Map<string, ProjectCSSCacheEntry>();
+
+interface ProjectCSSLocalEntry extends ProjectCSSCacheEntry {
+  expiresAt: number;
+}
+
+const projectCSSLocalFallback = new Map<string, ProjectCSSLocalEntry>();
 
 registerCache("project-css-cache", () => ({
   name: "project-css-cache",
@@ -113,17 +119,19 @@ export async function getProjectCSS(
   // 1. Try local fallback first (fastest)
   const localCached = projectCSSLocalFallback.get(cacheKey);
   if (localCached) {
-    if (localCached.candidatesHash === candidatesHash) {
+    if (Date.now() > localCached.expiresAt) {
+      projectCSSLocalFallback.delete(cacheKey);
+    } else if (localCached.candidatesHash === candidatesHash) {
       logger.debug("[tailwind] Project CSS cache hit (local)", {
         projectSlug,
         hash: localCached.hash,
       });
       await cacheCSSAsync(localCached.css, localCached.hash);
       return { css: localCached.css, hash: localCached.hash, fromCache: true };
+    } else {
+      // Candidates changed; drop local entry
+      projectCSSLocalFallback.delete(cacheKey);
     }
-
-    // Candidates changed; drop local entry
-    projectCSSLocalFallback.delete(cacheKey);
   }
 
   if (!projectCSSInitialized) {
@@ -231,7 +239,8 @@ export async function invalidateProjectCSSAsync(projectSlug: string): Promise<vo
 }
 
 function setProjectCSSLocalFallback(key: string, entry: ProjectCSSCacheEntry): void {
-  projectCSSLocalFallback.set(key, entry);
+  const expiresAt = Date.now() + PROJECT_CSS_LOCAL_TTL_MS;
+  projectCSSLocalFallback.set(key, { ...entry, expiresAt });
   if (projectCSSLocalFallback.size > PROJECT_CSS_LOCAL_FALLBACK_MAX) {
     pruneProjectCSSLocalFallback();
   }

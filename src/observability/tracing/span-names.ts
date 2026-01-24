@@ -42,6 +42,10 @@ export const SpanNames = {
 
   LAYOUT_APPLY: "layout.apply",
   LAYOUT_APPLY_ONLY: "layout.apply_only",
+  LAYOUT_APPLY_LAYOUTS_ESM: "layout.apply_layouts_esm",
+  LAYOUT_APPLY_MDX: "layout.apply_mdx",
+  LAYOUT_APPLY_TSX: "layout.apply_tsx",
+  LAYOUT_LOAD_MDX: "layout.load_mdx",
   LAYOUT_WRAP_APP_COMPONENT: "layout.wrap_app_component",
   LAYOUT_WRAP_RESERVED: "layout.wrap_reserved",
 
@@ -79,6 +83,9 @@ export const SpanNames = {
   SSR_WAIT_IN_PROGRESS: "ssr.wait_in_progress",
 
   SSR_REACT_RENDER: "ssr.react_render",
+  SSR_REACT_RENDER_TO_STRING: "ssr.react_render_to_string",
+  SSR_REACT_RENDER_TO_STREAM: "ssr.react_render_to_stream",
+  SSR_ORCHESTRATOR_RENDER: "ssr.orchestrator_render",
   SSR_HTML_GENERATE: "ssr.html_generate",
   SSR_CONTENT_HASH: "ssr.content_hash",
   SSR_STREAM_CONVERT: "ssr.stream_convert",

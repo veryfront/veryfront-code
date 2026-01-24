@@ -1010,16 +1010,35 @@ export class VeryfrontFSAdapter implements FSAdapter {
     files: Array<{ path: string; content?: string }>,
   ): Promise<void> {
     try {
-      const { pregenerateCSSFromFiles, findGlobalStylesheet } = await import(
+      const { pregenerateCSSFromFiles, findStylesheetFromFiles } = await import(
         "../../../../html/styles-builder/css-pregeneration.ts"
       );
 
-      const stylesheet = findGlobalStylesheet(files);
+      let stylesheetPath: string | undefined;
+      const projectDir = this.normalizer.getProjectDir();
+      if (projectDir) {
+        try {
+          const { runtime } = await import("#veryfront/platform/adapters/registry.ts");
+          const { getConfig } = await import("#veryfront/config");
+          const adapter = await runtime.get();
+          const cacheKey = this.client.getProjectId() || this.projectSlug;
+          const config = await getConfig(projectDir, adapter, { cacheKey });
+          stylesheetPath = config?.tailwind?.stylesheet;
+        } catch (error) {
+          logger.debug("[VeryfrontFSAdapter] Failed to load config for CSS pre-generation", {
+            projectSlug: this.projectSlug,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
+      const stylesheet = findStylesheetFromFiles(files, stylesheetPath);
 
       await pregenerateCSSFromFiles({
         projectSlug: this.projectSlug,
         files,
         stylesheet,
+        stylesheetPath,
         minify: true,
       });
     } catch (error) {

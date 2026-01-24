@@ -4,6 +4,8 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { LayoutItem, MdxBundle, MDXComponents, MDXModule } from "#veryfront/types";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { preloadImportMap, transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
 import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import { loadComponentFromSource } from "#veryfront/modules/react-loader/component-loader.ts";
@@ -116,7 +118,7 @@ export async function loadTSXComponent(
  * @param contentSourceId Optional content source ID for cache isolation
  * @param preloadedImportMap Optional preloaded import map to avoid reloading
  */
-export async function loadMDXLayout(
+export function loadMDXLayout(
   bundle: MdxBundle,
   projectDir: string,
   adapter: RuntimeAdapter,
@@ -125,55 +127,53 @@ export async function loadMDXLayout(
   contentSourceId?: string,
   preloadedImportMap?: ImportMapConfig,
 ): Promise<BundledReact.ComponentType<{ components?: MDXComponents }> | undefined> {
-  const loadStart = performance.now();
-  logger.debug("[loadMDXLayout] START", {
-    projectSlug,
-    hasPreloadedImportMap: !!preloadedImportMap,
-  });
+  return withSpan(
+    SpanNames.LAYOUT_LOAD_MDX,
+    async () => {
+      logger.debug("[loadMDXLayout] START", {
+        projectSlug,
+        hasPreloadedImportMap: !!preloadedImportMap,
+      });
 
-  // Use preloaded import map if available, otherwise load it
-  let map: ImportMapConfig;
-  if (preloadedImportMap) {
-    map = preloadedImportMap;
-    logger.debug("[loadMDXLayout] Using preloaded import map", { projectSlug });
-  } else {
-    logger.debug("[loadMDXLayout] loadImportMap START", { projectSlug });
-    const mapStart = performance.now();
-    map = await preloadImportMap(projectDir, adapter);
-    logger.debug("[loadMDXLayout] loadImportMap DONE", {
-      projectSlug,
-      duration: `${(performance.now() - mapStart).toFixed(2)}ms`,
-    });
-  }
+      // Use preloaded import map if available, otherwise load it
+      let map: ImportMapConfig;
+      if (preloadedImportMap) {
+        map = preloadedImportMap;
+        logger.debug("[loadMDXLayout] Using preloaded import map", { projectSlug });
+      } else {
+        logger.debug("[loadMDXLayout] loadImportMap START", { projectSlug });
+        map = await preloadImportMap(projectDir, adapter);
+        logger.debug("[loadMDXLayout] loadImportMap DONE", { projectSlug });
+      }
 
-  const code = transformImportsWithMap(bundle.compiledCode, map);
-  logger.debug("[loadMDXLayout] Loading module via loadModuleESM START", {
-    projectSlug,
-    codeLength: code.length,
-  });
+      const code = transformImportsWithMap(bundle.compiledCode, map);
+      logger.debug("[loadMDXLayout] Loading module via loadModuleESM START", {
+        projectSlug,
+        codeLength: code.length,
+      });
 
-  const modStart = performance.now();
-  const mod = (await mdxRenderer.loadModuleESM(
-    code,
-    adapter,
-    projectId,
-    projectDir,
-    projectSlug,
-    contentSourceId,
-  )) as MDXModule;
+      const mod = (await mdxRenderer.loadModuleESM(
+        code,
+        adapter,
+        projectId,
+        projectDir,
+        projectSlug,
+        contentSourceId,
+      )) as MDXModule;
 
-  logger.debug("[loadMDXLayout] loadModuleESM DONE", {
-    projectSlug,
-    duration: `${(performance.now() - modStart).toFixed(2)}ms`,
-    exports: Object.keys(mod),
-  });
+      logger.debug("[loadMDXLayout] loadModuleESM DONE", {
+        projectSlug,
+        exports: Object.keys(mod),
+      });
 
-  logger.debug("[loadMDXLayout] DONE", {
-    projectSlug,
-    totalDuration: `${(performance.now() - loadStart).toFixed(2)}ms`,
-  });
-
-  return mod.MDXLayout || mod.MainLayout || mod.default;
+      return mod.MDXLayout || mod.MainLayout || mod.default;
+    },
+    {
+      "layout.project_slug": projectSlug || "",
+      "layout.has_preloaded_import_map": !!preloadedImportMap,
+      "layout.code_length": bundle.compiledCode?.length || 0,
+    },
+  );
 }
 
 /**

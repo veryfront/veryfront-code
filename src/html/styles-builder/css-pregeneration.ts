@@ -16,6 +16,8 @@ export interface CSSPregenerationOptions {
   files: Array<{ path: string; content?: string }>;
   /** Optional custom stylesheet (globals.css content) */
   stylesheet?: string;
+  /** Optional stylesheet path (from config) to locate content in files */
+  stylesheetPath?: string;
   /** Enable minification (default: true) */
   minify?: boolean;
 }
@@ -35,7 +37,7 @@ export interface CSSPregenerationOptions {
 export async function pregenerateCSSFromFiles(
   options: CSSPregenerationOptions,
 ): Promise<void> {
-  const { projectSlug, files, stylesheet, minify = true } = options;
+  const { projectSlug, files, stylesheet, stylesheetPath, minify = true } = options;
 
   const startTime = performance.now();
 
@@ -51,15 +53,17 @@ export async function pregenerateCSSFromFiles(
       return;
     }
 
+    const resolvedStylesheet = stylesheet ?? findStylesheetFromFiles(files, stylesheetPath);
+
     logger.debug("[CSSPregeneration] Starting", {
       projectSlug,
       fileCount: files.length,
       candidateCount: candidates.size,
-      hasStylesheet: !!stylesheet,
+      hasStylesheet: !!resolvedStylesheet,
     });
 
     // Generate CSS (will be cached by getProjectCSS)
-    const result = await getProjectCSS(projectSlug, stylesheet, candidates, { minify });
+    const result = await getProjectCSS(projectSlug, resolvedStylesheet, candidates, { minify });
 
     const duration = performance.now() - startTime;
 
@@ -80,6 +84,26 @@ export async function pregenerateCSSFromFiles(
     });
     // Don't rethrow - this is fire-and-forget
   }
+}
+
+/**
+ * Find stylesheet content from file list using a configured path or defaults.
+ */
+export function findStylesheetFromFiles(
+  files: Array<{ path: string; content?: string }>,
+  stylesheetPath?: string,
+): string | undefined {
+  if (stylesheetPath) {
+    const normalized = stylesheetPath.replace(/^\/+/, "");
+    const file = files.find((f) =>
+      !!f.content && (f.path === normalized || f.path.endsWith(`/${normalized}`))
+    );
+    if (file?.content) {
+      return file.content;
+    }
+  }
+
+  return findGlobalStylesheet(files);
 }
 
 /**

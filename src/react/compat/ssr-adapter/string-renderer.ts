@@ -1,5 +1,7 @@
 import * as React from "react";
 import { rendererLogger as logger } from "#veryfront/utils";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { getReactDOMServer } from "./server-loader.ts";
 import type { SSROptions } from "./types.ts";
 
@@ -26,12 +28,17 @@ export async function renderToStringAdapter(
 
   if (server.renderToReadableStream) {
     try {
-      const stream = await server.renderToReadableStream(element, {
-        onError: (error: unknown) => {
-          logger.error("SSR renderToReadableStream error", error);
-          options.onError?.(error as Error);
-        },
-      });
+      const stream = await withSpan(
+        SpanNames.SSR_REACT_RENDER_TO_STREAM,
+        () =>
+          server.renderToReadableStream(element, {
+            onError: (error: unknown) => {
+              logger.error("SSR renderToReadableStream error", error);
+              options.onError?.(error as Error);
+            },
+          }),
+        { "ssr.method": "renderToReadableStream" },
+      ) as ReadableStream<Uint8Array>;
       return await streamToString(stream);
     } catch (error) {
       logger.warn("SSR renderToReadableStream failed, falling back to renderToString", error);
@@ -39,7 +46,11 @@ export async function renderToStringAdapter(
   }
 
   try {
-    return server.renderToString(element);
+    return (await withSpan(
+      SpanNames.SSR_REACT_RENDER_TO_STRING,
+      () => server.renderToString(element),
+      { "ssr.method": "renderToString" },
+    )) as string;
   } catch (error) {
     logger.error("SSR renderToString failed", error);
     options.onError?.(error as Error);

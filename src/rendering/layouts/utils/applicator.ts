@@ -3,6 +3,8 @@ import * as BundledReact from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { LayoutItem, MdxBundle, MDXComponents } from "#veryfront/types";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import type { LayoutComponentCache } from "./component-loader.ts";
 import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import { applyMDXLayout, applyTSXLayout, loadTSXComponent } from "./component-loader.ts";
@@ -10,7 +12,7 @@ import { getElementTypeName } from "../../element-validator/primitive-checks.ts"
 import { getProjectReact } from "#veryfront/react";
 import { ensureValidChild } from "./ensure-valid-child.ts";
 
-export async function applyLayoutsESM(
+export function applyLayoutsESM(
   pageElement: BundledReact.ReactElement,
   layoutBundle: MdxBundle | undefined,
   nestedLayouts: LayoutItem[],
@@ -24,97 +26,116 @@ export async function applyLayoutsESM(
   contentSourceId?: string,
   preloadedImportMap?: ImportMapConfig,
 ): Promise<BundledReact.ReactElement> {
-  let element = pageElement;
+  return withSpan(
+    SpanNames.LAYOUT_APPLY_LAYOUTS_ESM,
+    async () => {
+      let element = pageElement;
 
-  logger.debug("[applyLayoutsESM] START", {
-    projectSlug,
-    nestedLayoutsCount: nestedLayouts.length,
-    hasLayoutBundle: !!layoutBundle,
-  });
+      logger.debug("[applyLayoutsESM] START", {
+        projectSlug,
+        nestedLayoutsCount: nestedLayouts.length,
+        hasLayoutBundle: !!layoutBundle,
+      });
 
-  for (let i = nestedLayouts.length - 1; i >= 0; i--) {
-    const item = nestedLayouts[i];
-    if (!item) continue;
+      for (let i = nestedLayouts.length - 1; i >= 0; i--) {
+        const item = nestedLayouts[i];
+        if (!item) continue;
 
-    logger.debug("[applyLayoutsESM] Processing layout", {
-      projectSlug,
-      index: i,
-      kind: item.kind,
-      componentPath: item.componentPath,
-      hasBundleCode: !!item.bundle?.compiledCode,
-    });
-
-    const layoutStart = performance.now();
-
-    try {
-      if (item.kind === "mdx" && item.bundle?.compiledCode) {
-        logger.debug("[applyLayoutsESM] Calling applyMDXLayout START", { projectSlug, index: i });
-        element = await applyMDXLayout(
-          element,
-          item.bundle,
-          projectDir,
-          mergedComponents,
-          adapter,
-          projectId,
-          projectSlug,
-          contentSourceId,
-          preloadedImportMap,
-        );
-        logger.debug("[applyLayoutsESM] applyMDXLayout DONE", {
+        logger.debug("[applyLayoutsESM] Processing layout", {
           projectSlug,
           index: i,
-          duration: `${(performance.now() - layoutStart).toFixed(2)}ms`,
+          kind: item.kind,
+          componentPath: item.componentPath,
+          hasBundleCode: !!item.bundle?.compiledCode,
         });
-        continue;
+
+        try {
+          if (item.kind === "mdx" && item.bundle?.compiledCode) {
+            element = await withSpan(
+              SpanNames.LAYOUT_APPLY_MDX,
+              () =>
+                applyMDXLayout(
+                  element,
+                  item.bundle!,
+                  projectDir,
+                  mergedComponents,
+                  adapter,
+                  projectId,
+                  projectSlug,
+                  contentSourceId,
+                  preloadedImportMap,
+                ),
+              {
+                "layout.index": i,
+                "layout.kind": "mdx",
+                "layout.path": item.componentPath || item.path || "",
+              },
+            );
+            continue;
+          }
+
+          if (item.kind === "tsx") {
+            const props = item.componentPath ? layoutDataMap?.get(item.componentPath) : undefined;
+            element = await withSpan(
+              SpanNames.LAYOUT_APPLY_TSX,
+              () =>
+                applyTSXLayout(
+                  element,
+                  item,
+                  tsxLayoutModuleCache,
+                  projectDir,
+                  adapter,
+                  props,
+                  projectId,
+                  contentSourceId,
+                ),
+              {
+                "layout.index": i,
+                "layout.kind": "tsx",
+                "layout.path": item.componentPath || item.path || "",
+              },
+            );
+          }
+        } catch (e) {
+          logger.error("Failed to apply nested layout:", e);
+          throw e;
+        }
       }
 
-      if (item.kind === "tsx") {
-        logger.debug("[applyLayoutsESM] Calling applyTSXLayout START", { projectSlug, index: i });
-        const props = item.componentPath ? layoutDataMap?.get(item.componentPath) : undefined;
-        element = await applyTSXLayout(
-          element,
-          item,
-          tsxLayoutModuleCache,
-          projectDir,
-          adapter,
-          props,
-          projectId,
-          contentSourceId,
-        );
-        logger.debug("[applyLayoutsESM] applyTSXLayout DONE", {
-          projectSlug,
-          index: i,
-          duration: `${(performance.now() - layoutStart).toFixed(2)}ms`,
-        });
+      logger.debug("[applyLayoutsESM] All nested layouts applied", { projectSlug });
+
+      if (!layoutBundle) {
+        logger.debug("[applyLayoutsESM] No layoutBundle to apply");
+        return element;
       }
-    } catch (e) {
-      logger.error("Failed to apply nested layout:", e);
-      throw e;
-    }
-  }
 
-  logger.debug("[applyLayoutsESM] All nested layouts applied", { projectSlug });
+      logger.debug("[applyLayoutsESM] Applying named layoutBundle (frontmatter layout)");
+      element = await withSpan(
+        SpanNames.LAYOUT_APPLY_MDX,
+        () =>
+          applyMDXLayout(
+            element,
+            layoutBundle,
+            projectDir,
+            mergedComponents,
+            adapter,
+            projectId,
+            projectSlug,
+            contentSourceId,
+            preloadedImportMap,
+          ),
+        { "layout.kind": "mdx", "layout.type": "named" },
+      );
+      logger.debug("[applyLayoutsESM] Named layoutBundle applied successfully");
 
-  if (!layoutBundle) {
-    logger.debug("[applyLayoutsESM] No layoutBundle to apply");
-    return element;
-  }
-
-  logger.debug("[applyLayoutsESM] Applying named layoutBundle (frontmatter layout)");
-  element = await applyMDXLayout(
-    element,
-    layoutBundle,
-    projectDir,
-    mergedComponents,
-    adapter,
-    projectId,
-    projectSlug,
-    contentSourceId,
-    preloadedImportMap,
+      return element;
+    },
+    {
+      "layout.nested_count": nestedLayouts.length,
+      "layout.has_bundle": !!layoutBundle,
+      "layout.project_slug": projectSlug || "",
+    },
   );
-  logger.debug("[applyLayoutsESM] Named layoutBundle applied successfully");
-
-  return element;
 }
 
 export async function applyLayoutsFunctionBody(
