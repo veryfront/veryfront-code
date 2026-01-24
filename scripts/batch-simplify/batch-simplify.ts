@@ -63,7 +63,7 @@ interface BatchRequest {
   body: {
     model: string;
     messages: Array<{ role: "system" | "user"; content: string }>;
-    max_tokens: number;
+    max_completion_tokens: number;
     temperature: number;
   };
 }
@@ -109,7 +109,7 @@ async function collectFiles(): Promise<string[]> {
 }
 
 function createBatchRequest(filePath: string, content: string): BatchRequest {
-  const customId = filePath.replace(/[\/\\]/g, "__").replace(/\./g, "_");
+  const customId = encodeURIComponent(filePath);
 
   return {
     custom_id: customId,
@@ -124,13 +124,25 @@ function createBatchRequest(filePath: string, content: string): BatchRequest {
           content: `File: ${filePath}\n\n${content}`,
         },
       ],
-      max_tokens: CONFIG.maxTokens,
+      max_completion_tokens: CONFIG.maxTokens,
       temperature: 0,
     },
   };
 }
 
 async function prepare(): Promise<void> {
+  // Check if there's an active batch
+  try {
+    const existingState: BatchState = JSON.parse(await Deno.readTextFile(CONFIG.stateFile));
+    if (existingState.batchId && existingState.status !== "completed" && existingState.status !== "failed") {
+      console.error(`❌ Active batch exists: ${existingState.batchId} (status: ${existingState.status})`);
+      console.error(`   Run 'deno task batch:status' to check progress, or delete ${CONFIG.stateFile} to start fresh.`);
+      Deno.exit(1);
+    }
+  } catch {
+    // No state file exists, continue
+  }
+
   console.log("📁 Collecting TypeScript files...");
 
   const files = await collectFiles();
@@ -267,16 +279,30 @@ async function status(): Promise<void> {
   console.log(`   Failed: ${batch.request_counts?.failed ?? 0}`);
 
   if (batch.status === "completed") {
-    console.log(`\n✅ Batch completed!`);
-    console.log(`   Output file: ${batch.output_file_id}`);
-    console.log(`\nNext: Run 'deno task batch:download' to get results`);
+    if (batch.request_counts?.failed > 0 && batch.error_file_id) {
+      console.log(`\n⚠️  Batch completed with ${batch.request_counts.failed} failures`);
+      console.log(`   Error file: ${batch.error_file_id}`);
+      console.log(`\nRun 'deno task batch:errors' to view error details`);
 
-    state.status = "completed";
-    await Deno.writeTextFile(CONFIG.stateFile, JSON.stringify({ ...state, outputFileId: batch.output_file_id }, null, 2));
+      state.status = "completed";
+      await Deno.writeTextFile(CONFIG.stateFile, JSON.stringify({ ...state, errorFileId: batch.error_file_id }, null, 2));
+    } else {
+      console.log(`\n✅ Batch completed!`);
+      console.log(`   Output file: ${batch.output_file_id}`);
+      console.log(`\nNext: Run 'deno task batch:download' to get results`);
+
+      state.status = "completed";
+      await Deno.writeTextFile(CONFIG.stateFile, JSON.stringify({ ...state, outputFileId: batch.output_file_id }, null, 2));
+    }
   } else if (batch.status === "failed") {
     console.log(`\n❌ Batch failed`);
     if (batch.errors) {
       console.log("Errors:", JSON.stringify(batch.errors, null, 2));
+    }
+    if (batch.error_file_id) {
+      console.log(`Error file: ${batch.error_file_id}`);
+      console.log(`\nRun 'deno task batch:errors' to view error details`);
+      await Deno.writeTextFile(CONFIG.stateFile, JSON.stringify({ ...state, status: "failed", errorFileId: batch.error_file_id }, null, 2));
     }
   } else {
     const progress = batch.request_counts
@@ -341,8 +367,8 @@ async function apply(): Promise<void> {
   let errors = 0;
 
   for (const result of results) {
-    // Convert custom_id back to file path
-    const filePath = result.custom_id.replace(/__/g, "/").replace(/_ts$/, ".ts").replace(/_tsx$/, ".tsx");
+    // Convert custom_id back to file path (URL encoded)
+    const filePath = decodeURIComponent(result.custom_id);
 
     if (result.error) {
       console.log(`❌ ${filePath}: ${result.error.message}`);
@@ -392,6 +418,44 @@ async function apply(): Promise<void> {
   console.log(`   Applied: ${applied}`);
   console.log(`   Unchanged: ${unchanged}`);
   console.log(`   Errors: ${errors}`);
+}
+
+async function errors(): Promise<void> {
+  const apiKey = await getApiKey();
+  const state = JSON.parse(await Deno.readTextFile(CONFIG.stateFile));
+
+  if (!state.errorFileId) {
+    console.error("No error file ID. Run 'deno task batch:status' first.");
+    Deno.exit(1);
+  }
+
+  console.log("📥 Downloading error details...\n");
+
+  const response = await fetch(`https://api.openai.com/v1/files/${state.errorFileId}/content`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    console.error("Download failed:", error);
+    Deno.exit(1);
+  }
+
+  const content = await response.text();
+  const lines = content.trim().split("\n");
+
+  // Group errors by message
+  const errorCounts = new Map<string, number>();
+  for (const line of lines) {
+    const parsed = JSON.parse(line);
+    const msg = parsed.response?.body?.error?.message || parsed.error?.message || "Unknown error";
+    errorCounts.set(msg, (errorCounts.get(msg) || 0) + 1);
+  }
+
+  console.log(`Found ${lines.length} errors:\n`);
+  for (const [msg, count] of errorCounts) {
+    console.log(`  ${count}x: ${msg}`);
+  }
 }
 
 async function estimate(): Promise<void> {
@@ -449,6 +513,9 @@ switch (command) {
   case "apply":
     await apply();
     break;
+  case "errors":
+    await errors();
+    break;
   case "estimate":
     await estimate();
     break;
@@ -461,6 +528,7 @@ Commands:
   prepare    Create JSONL batch file from src/
   submit     Upload and submit batch to OpenAI
   status     Check batch processing status
+  errors     View error details (if batch failed)
   download   Download completed results
   apply      Apply simplifications to files
 
@@ -473,6 +541,6 @@ Workflow:
   6. deno run -A scripts/batch-simplify/batch-simplify.ts apply
 
 Environment:
-  OPENAI_API_KEY - Required for submit/status/download
+  OPENAI_API_KEY - Required for submit/status/download/errors
 `);
 }

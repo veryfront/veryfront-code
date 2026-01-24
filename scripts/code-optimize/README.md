@@ -1,40 +1,33 @@
-# Hybrid Code Optimizer
+# Hybrid Code Optimizer & Generator
 
-Combines **RLM** (cross-file awareness) + **Batch API** (guaranteed coverage) for optimal codebase optimization.
+Combines **RLM** (cross-file awareness) + **Batch API** (guaranteed coverage) for:
+- **Optimization**: Simplify, refactor with consistent patterns
+- **Generation**: Tests, docs, features from PRD
 
-## Why Hybrid?
-
-| Approach | Pros | Cons |
-|----------|------|------|
-| Batch API only | ✅ Every file processed, 50% cheaper | ❌ No cross-file awareness |
-| RLM only | ✅ Cross-file patterns, consistency | ❌ May miss files, slower |
-| **Hybrid** | ✅ Both benefits | ✅ Best of both worlds |
-
-## Pipeline
+## How It Works
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Phase 1: RLM Analysis (~$2)                                │
-│  • Scans entire codebase                                    │
-│  • Extracts patterns, conventions, anti-patterns            │
-│  • Generates rules.json for batch processing                │
-└─────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Phase 2: Batch API (~$30)                                  │
-│  • Processes EVERY file with RLM-generated rules            │
-│  • Guaranteed coverage - no file missed                     │
-│  • 50% cost discount, parallel processing                   │
-└─────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Phase 3: RLM Verification (~$2)                            │
-│  • Spot-checks consistency across codebase                  │
-│  • Identifies any remaining issues                          │
-│  • Provides consistency score                               │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│  Phase 1: RLM Analysis                                           │
+│  • Loads entire codebase as variable                             │
+│  • Explores programmatically to extract patterns                 │
+│  • Generates rules/context for batch processing                  │
+└──────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  Phase 2: Batch API Processing                                   │
+│  • Every file processed with RLM-extracted context               │
+│  • Guaranteed coverage - no file missed                          │
+│  • 50% cost discount, parallel processing                        │
+└──────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  Phase 3: RLM Verification (optional)                            │
+│  • Checks consistency across codebase                            │
+│  • Identifies remaining issues                                   │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ## Setup
@@ -50,109 +43,171 @@ Add to `.env`:
 OPENAI_API_KEY=sk-...
 ```
 
-## Full Workflow
-
-```bash
-# Estimate cost
-uv run python code-optimize.py estimate
-
-# Phase 1: RLM extracts codebase patterns
-uv run python code-optimize.py analyze
-cat output/rules.json | jq '.rules | keys'  # Review rules
-
-# Phase 2: Batch processes every file with rules
-uv run python code-optimize.py prepare
-uv run python code-optimize.py submit
-uv run python code-optimize.py status      # Repeat until complete
-uv run python code-optimize.py download
-uv run python code-optimize.py apply
-
-# Phase 3: RLM verifies consistency
-uv run python code-optimize.py verify
-
-# Review and validate
-git diff
-deno task verify
-```
-
 ## Commands
 
-| Command | Phase | Description |
-|---------|-------|-------------|
-| `estimate` | - | Show cost estimate |
-| `analyze` | 1 | RLM extracts patterns → `rules.json` |
-| `prepare` | 2a | Create batch with RLM rules |
-| `submit` | 2b | Upload batch to OpenAI |
-| `status` | 2c | Check batch progress |
-| `download` | 2d | Get batch results |
-| `apply` | 2e | Write changes to files |
-| `verify` | 3 | RLM consistency check |
+### Optimization
+
+| Command | Description |
+|---------|-------------|
+| `estimate` | Show cost estimate |
+| `analyze` | Phase 1: RLM extracts codebase patterns → `rules.json` |
+| `prepare` | Phase 2a: Create batch with RLM rules |
+| `submit` | Phase 2b: Submit batch to OpenAI |
+| `status` | Phase 2c: Check batch progress |
+| `download` | Phase 2d: Download results |
+| `apply` | Phase 2e: Apply changes to files |
+| `verify` | Phase 3: RLM consistency verification |
+
+### Generation
+
+| Command | Description |
+|---------|-------------|
+| `generate tests` | Generate tests for files without them |
+| `generate docs` | Generate JSDoc/TSDoc for exports |
+| `generate feature <prd.md>` | Implement feature from PRD |
+| `apply-feature` | Apply generated feature files |
+
+## Workflows
+
+### Optimize Codebase
+
+```bash
+uv run python code-optimize.py estimate
+uv run python code-optimize.py analyze      # RLM extracts patterns
+uv run python code-optimize.py prepare      # Create batch with rules
+uv run python code-optimize.py submit
+uv run python code-optimize.py status       # Wait for completion
+uv run python code-optimize.py download
+uv run python code-optimize.py apply
+uv run python code-optimize.py verify       # Optional consistency check
+
+git diff && deno task verify
+```
+
+### Generate Tests
+
+```bash
+uv run python code-optimize.py generate tests   # RLM finds untested files
+uv run python code-optimize.py submit
+uv run python code-optimize.py status
+uv run python code-optimize.py download
+uv run python code-optimize.py apply            # Creates .test.ts files
+
+deno task test
+```
+
+### Generate Documentation
+
+```bash
+uv run python code-optimize.py generate docs    # RLM finds undocumented exports
+uv run python code-optimize.py submit
+uv run python code-optimize.py status
+uv run python code-optimize.py download
+uv run python code-optimize.py apply            # Adds JSDoc to files
+
+git diff
+```
+
+### Generate Feature from PRD
+
+```bash
+# Create PRD file first
+cat > feature.md << 'EOF'
+# Feature: User Notifications
+
+## Requirements
+- Real-time notifications via WebSocket
+- Toast component for display
+- Notification preferences in settings
+- Mark as read/unread functionality
+
+## API
+- GET /api/notifications
+- POST /api/notifications/:id/read
+- WebSocket /ws/notifications
+EOF
+
+uv run python code-optimize.py generate feature feature.md
+# Review feature-context.json to see planned files
+uv run python code-optimize.py submit
+uv run python code-optimize.py status
+uv run python code-optimize.py download
+uv run python code-optimize.py apply-feature
+
+git diff && deno task verify
+```
 
 ## Output Files
 
 ```
 scripts/code-optimize/output/
-├── rules.json           # Phase 1: Extracted codebase rules
-├── batch-requests.jsonl # Phase 2: Batch input
-├── batch-results.jsonl  # Phase 2: Batch output
-├── state.json           # Pipeline state tracking
-├── changes-summary.json # Applied changes summary
-└── verification.json    # Phase 3: Consistency report
+├── rules.json              # Optimization: extracted patterns
+├── test-patterns.json      # Tests: testing conventions
+├── doc-patterns.json       # Docs: documentation style
+├── feature-context.json    # Feature: architecture analysis
+├── batch-requests.jsonl    # Batch input
+├── batch-results.jsonl     # Batch output
+├── state.json              # Pipeline state
+├── changes-summary.json    # Applied changes
+└── verification.json       # Consistency report
 ```
 
-## Example Rules Output (Phase 1)
-
-```json
-{
-  "rules": {
-    "naming": {
-      "description": "camelCase for functions, PascalCase for components",
-      "examples": ["good: getUserData", "bad: get_user_data"],
-      "apply": "Rename any snake_case to camelCase"
-    },
-    "imports": {
-      "description": "Sort: react, external, internal, relative",
-      "apply": "Reorder imports to match convention"
-    }
-  },
-  "shared_utilities": {
-    "src/utils/string.ts": ["slugify", "Use instead of inline implementations"]
-  },
-  "anti_patterns": [
-    {
-      "pattern": "Nested ternaries for conditionals",
-      "fix": "Replace with if/else or switch",
-      "affected_files": ["src/components/Nav.tsx"]
-    }
-  ]
-}
-```
-
-## How It Works
-
-1. **Phase 1**: RLM loads entire codebase as a variable, explores it programmatically, extracts patterns that should be followed
-
-2. **Phase 2**: Each batch request includes:
-   - System prompt with RLM-generated rules
-   - Single file to simplify
-   - Guaranteed every file is processed
-
-3. **Phase 3**: RLM loads updated codebase, compares against rules, reports any inconsistencies
-
-## Cost Breakdown
+## Cost Estimates
 
 For ~2000 files:
-- Phase 1 (RLM): ~$2 (50K tokens, efficient exploration)
-- Phase 2 (Batch): ~$30 (2.6M tokens, 50% discount)
-- Phase 3 (RLM): ~$2 (50K tokens)
-- **Total: ~$34**
 
-## Troubleshooting
+| Task | RLM | Batch | Total |
+|------|-----|-------|-------|
+| Optimization | $4 | $30 | ~$34 |
+| Tests (50% untested) | $2 | $15 | ~$17 |
+| Docs (30% undocumented) | $2 | $9 | ~$11 |
+| Feature | $2 | ~$5 | ~$7 |
 
-**RLM not installed**: `uv pip install rlm`
+## How Generation Works
 
-**Phase 1 takes long**: RLM explores recursively, can take 5-10 minutes
+### Tests
 
-**Batch stuck**: Check `status` - large batches take 1-24 hours
+1. **RLM Phase**: Analyzes existing `*.test.ts` files to extract:
+   - Test framework (Deno test, Vitest, etc.)
+   - Structure (describe/it patterns)
+   - Mocking conventions
+   - Assertion styles
+   - Which files lack tests
 
-**Inconsistent results**: Review `rules.json`, may need manual tuning
+2. **Batch Phase**: For each untested file:
+   - Includes test patterns as context
+   - Generates comprehensive tests
+   - Follows exact codebase conventions
+
+### Docs
+
+1. **RLM Phase**: Analyzes existing JSDoc/TSDoc to extract:
+   - Documentation style
+   - Required tags (@param, @returns, etc.)
+   - Which exports lack documentation
+
+2. **Batch Phase**: For each undocumented file:
+   - Adds docs matching codebase style
+   - Documents all exports
+   - Preserves existing code
+
+### Features
+
+1. **RLM Phase**: Analyzes codebase + PRD to determine:
+   - Architecture and patterns
+   - Similar existing features to reference
+   - Files to create and modify
+   - Integration points
+
+2. **Batch Phase**: For each planned file:
+   - Creates new files following patterns
+   - Modifies existing files as needed
+   - Uses reference code as templates
+
+## Tips
+
+- **Review before apply**: Always check `git diff` after applying
+- **Verify after**: Run `deno task verify` to catch issues
+- **Incremental**: You can revert individual files with `git checkout`
+- **Re-run safe**: Pipeline is idempotent, safe to re-run
+- **Custom scope**: Edit `CONFIG` in script to change directories/extensions
