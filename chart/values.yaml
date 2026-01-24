@@ -170,8 +170,9 @@ renderer:
     PROXY_MODE: "1"
     # Max concurrent SSR/API requests per project per pod (default: 20)
     # Lightweight requests (modules, CSS) are exempt from this limit
-    # With 4 pods: 400 effective concurrent SSR requests per project
-    PROJECT_MAX_CONCURRENT: "100"
+    # High limit is safe because SSR is I/O-bound (async file/API calls)
+    # With 4 pods: 2000 effective concurrent SSR requests per project
+    PROJECT_MAX_CONCURRENT: "500"
     # API URL for domain lookups and other internal API calls
     # Use internal K8s service for performance (no public internet roundtrip)
     VERYFRONT_API_BASE_URL: "http://veryfront-api:80"
