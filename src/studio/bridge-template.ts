@@ -642,6 +642,9 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
   async function captureScreenshot(options) {
     const { scrollTo, fullPage, quality = 0.8 } = options || {};
 
+    // Save original scroll position to restore later
+    const originalScrollY = window.scrollY;
+
     try {
       await loadHtml2Canvas();
 
@@ -654,7 +657,8 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       const target = document.body;
       const canvasOptions = {
         useCORS: true,
-        allowTaint: true,
+        // Don't use allowTaint - it causes SecurityError on cross-origin images
+        // With useCORS only, we get partial screenshots instead of hard failures
         logging: false,
         scale: window.devicePixelRatio || 1,
       };
@@ -670,6 +674,9 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       const canvas = await window.html2canvas(target, canvasOptions);
       const dataUrl = canvas.toDataURL('image/png', quality);
 
+      // Restore original scroll position
+      window.scrollTo(0, originalScrollY);
+
       return {
         success: true,
         data: dataUrl,
@@ -681,6 +688,8 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
         url: window.location.href
       };
     } catch (error) {
+      // Restore scroll position even on error
+      window.scrollTo(0, originalScrollY);
       return {
         success: false,
         error: error.message || String(error)
@@ -689,21 +698,28 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
   }
 
   async function captureMultipleSections(sectionCount) {
+    // Save original scroll position to restore after all captures
+    const originalScrollY = window.scrollY;
     const results = [];
     const totalHeight = document.documentElement.scrollHeight;
     const viewportHeight = window.innerHeight;
     const sections = sectionCount || Math.ceil(totalHeight / viewportHeight);
 
-    for (let i = 0; i < sections; i++) {
-      const scrollY = Math.min(i * viewportHeight, totalHeight - viewportHeight);
-      const result = await captureScreenshot({ scrollTo: scrollY });
-      if (result.success) {
-        results.push({
-          ...result,
-          section: i + 1,
-          totalSections: sections
-        });
+    try {
+      for (let i = 0; i < sections; i++) {
+        const scrollY = Math.min(i * viewportHeight, totalHeight - viewportHeight);
+        const result = await captureScreenshot({ scrollTo: scrollY });
+        if (result.success) {
+          results.push({
+            ...result,
+            section: i + 1,
+            totalSections: sections
+          });
+        }
       }
+    } finally {
+      // Restore original scroll position
+      window.scrollTo(0, originalScrollY);
     }
 
     return results;
