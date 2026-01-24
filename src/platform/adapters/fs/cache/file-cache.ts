@@ -173,8 +173,9 @@ export class FileCache {
       return withSpan("platform.fs.cache.getAsync", async () => {
         try {
           // Use request-scoped batching to dedupe and batch cache requests
-          const cacheKey = `file:${key}`;
-          const raw = await getCachedWithBatching(backend, cacheKey);
+          // Note: key already includes the full prefix from buildFileCacheKeyPrefix (e.g., "file:env:project:...")
+          // The backend will add its own namespace prefix, so we pass the key as-is
+          const raw = await getCachedWithBatching(backend, key);
           if (raw) {
             const entry = JSON.parse(raw) as CacheEntry<T>;
             // When using backend (Redis/API), trust the backend's TTL for expiry.
@@ -208,13 +209,13 @@ export class FileCache {
     const size = estimateSize(value);
 
     // In distributed mode, fire-and-forget to backend
+    // Note: key already includes the full prefix from buildFileCacheKeyPrefix (e.g., "file:env:project:...")
     if (cacheBackend && cacheBackend.type !== "memory") {
-      const cacheKey = `file:${key}`;
       const entry: CacheEntry<T> = { value, timestamp: Date.now(), size };
       const serialized = JSON.stringify(entry);
       // Update request-scoped cache so subsequent reads in same request see the new value
-      setInRequestCache(cacheKey, serialized);
-      cacheBackend.set(cacheKey, serialized, BACKEND_TTL_SECONDS).catch(() => {});
+      setInRequestCache(key, serialized);
+      cacheBackend.set(key, serialized, BACKEND_TTL_SECONDS).catch(() => {});
       return;
     }
 
@@ -243,15 +244,15 @@ export class FileCache {
     const entry: CacheEntry<T> = { value, timestamp: Date.now(), size };
 
     // Try backend first
+    // Note: key already includes the full prefix from buildFileCacheKeyPrefix (e.g., "file:env:project:...")
     if (cacheBackend && cacheBackend.type !== "memory") {
       const backend = cacheBackend;
       return withSpan("platform.fs.cache.setAsync", async () => {
         try {
-          const cacheKey = `file:${key}`;
           const serialized = JSON.stringify(entry);
           // Update request-scoped cache so subsequent reads in same request see the new value
-          setInRequestCache(cacheKey, serialized);
-          await backend.set(cacheKey, serialized, BACKEND_TTL_SECONDS);
+          setInRequestCache(key, serialized);
+          await backend.set(key, serialized, BACKEND_TTL_SECONDS);
           return;
         } catch (error) {
           logger.debug("[FileCache] Backend set failed, using fallback", { key, error });

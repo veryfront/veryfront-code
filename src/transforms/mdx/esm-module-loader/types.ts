@@ -94,6 +94,12 @@ export interface ModuleFetcherContext {
   projectSlug?: string;
   /** Whether running in local development mode (affects HTTP fallback behavior) */
   isLocalDev?: boolean;
+  /**
+   * Tracks modules currently being processed to detect circular imports.
+   * Key: normalized module path, Value: promise resolving to cached path.
+   * This prevents infinite recursion when A imports B which imports A.
+   */
+  inFlightModules?: Map<string, Promise<string | null>>;
 }
 
 /**

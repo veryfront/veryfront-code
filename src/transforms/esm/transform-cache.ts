@@ -104,6 +104,7 @@ export function generateCacheKey(
 
 /**
  * Get cached transform from backend or local fallback.
+ * Note: Backend (from CacheBackends.transform) adds "transform:" prefix automatically.
  */
 export async function getCachedTransformAsync(
   key: string,
@@ -111,7 +112,7 @@ export async function getCachedTransformAsync(
   // Try backend first
   if (cacheBackend) {
     try {
-      const raw = await cacheBackend.get(`transform:${key}`);
+      const raw = await cacheBackend.get(key);
       if (raw) {
         return JSON.parse(raw) as TransformCacheEntry;
       }
@@ -140,6 +141,7 @@ export function getCachedTransform(key: string): TransformCacheEntry | undefined
 
 /**
  * Set cached transform in backend.
+ * Note: Backend (from CacheBackends.transform) adds "transform:" prefix automatically.
  */
 export async function setCachedTransformAsync(
   key: string,
@@ -157,7 +159,7 @@ export async function setCachedTransformAsync(
   if (cacheBackend) {
     try {
       const ttl = ttlSeconds > 0 ? ttlSeconds : DEFAULT_TTL_SECONDS;
-      await cacheBackend.set(`transform:${key}`, JSON.stringify(entry), ttl);
+      await cacheBackend.set(key, JSON.stringify(entry), ttl);
       return;
     } catch (error) {
       logger.debug("[TransformCache] Backend set failed", { key, error });
@@ -171,6 +173,7 @@ export async function setCachedTransformAsync(
 /**
  * Set cached transform (fire-and-forget).
  * Writes to backend or local fallback.
+ * Note: Backend (from CacheBackends.transform) adds "transform:" prefix automatically.
  */
 export function setCachedTransform(
   key: string,
@@ -187,7 +190,7 @@ export function setCachedTransform(
   // Fire-and-forget write to backend
   if (cacheBackend) {
     const ttl = ttlSeconds > 0 ? ttlSeconds : DEFAULT_TTL_SECONDS;
-    cacheBackend.set(`transform:${key}`, JSON.stringify(entry), ttl).catch((error) => {
+    cacheBackend.set(key, JSON.stringify(entry), ttl).catch((error) => {
       logger.debug("[TransformCache] Backend set failed", { key, error });
     });
 

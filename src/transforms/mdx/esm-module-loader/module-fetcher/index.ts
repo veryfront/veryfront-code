@@ -441,11 +441,21 @@ export async function fetchAndCacheModule(
   const normalizedPath = normalizePath(modulePath, parentModulePath);
   const projectSlug = context.projectSlug || "unknown";
 
-  // NOTE: In-flight deduplication is DISABLED.
-  // It caused deadlocks even within a single request because page + layout
-  // modules are fetched in parallel and share state. Layout's Footer.js would
-  // wait on page's Footer.js which was still processing nested imports.
-  // The file cache handles deduplication anyway - parallel fetches write to same path.
+  // Circular import detection: check if this module is already being processed
+  // This prevents infinite recursion when A imports B which imports A
+  const inFlight = context.inFlightModules;
+  if (inFlight) {
+    const existingPromise = inFlight.get(normalizedPath);
+    if (existingPromise) {
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] CIRCULAR IMPORT detected`, {
+        projectSlug,
+        normalizedPath,
+        parentModulePath,
+      });
+      // Wait for the existing processing to complete
+      return existingPromise;
+    }
+  }
 
   logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] START`, {
     projectSlug,
@@ -459,221 +469,247 @@ export async function fetchAndCacheModule(
     return fetchAndCacheModule(path, context, parent);
   };
 
-  // Now do the actual fetch
-  const result = await (async (): Promise<string | null> => {
-    const { esmCacheDir, adapter, projectDir, projectId, projectSlug } = context;
+  // Create a promise for this module and register it to detect circular imports
+  const fetchPromise = doFetchAndCacheModule(
+    normalizedPath,
+    context,
+    fetchAndCacheModuleFn,
+    projectSlug,
+  );
 
-    // Check persistent module path cache first (per-pod filesystem cache).
-    // NOTE: This cache uses path + version key (no content hash), but this is safe
-    // because poke invalidation calls clearModulePathCache() which clears this cache.
-    // The distributed transform cache (below) uses content hash for cross-pod sharing.
-    const pathCache = await getModulePathCache(esmCacheDir);
-    const versionedKey = getVersionedPathCacheKey(normalizedPath);
-    const cachedPath = pathCache.get(versionedKey);
-    if (cachedPath) {
-      // Verify the file still exists
-      try {
-        const localFs = getLocalFs();
-        const stat = await localFs.stat(cachedPath);
-        if (stat?.isFile) {
-          // Record to session even when returning from cache
-          // This ensures manifest tracks all modules loaded per render
-          const session = getCurrentSession();
-          if (session) {
-            const moduleUrlPath = normalizedPath
-              .replace(/^_vf_modules\//, "")
-              .replace(/\.(tsx|ts|jsx|mdx)$/, ".js");
-            session.modules.add(moduleUrlPath);
-          }
-          return cachedPath;
+  // Register in-flight to detect circular imports from nested modules
+  if (inFlight) {
+    inFlight.set(normalizedPath, fetchPromise);
+  }
+
+  try {
+    const result = await fetchPromise;
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] DONE`, {
+      projectSlug,
+      normalizedPath,
+      hasResult: result !== null,
+    });
+    return result;
+  } finally {
+    // Clean up in-flight tracking after processing completes
+    if (inFlight) {
+      inFlight.delete(normalizedPath);
+    }
+  }
+}
+
+/**
+ * Internal implementation of module fetching.
+ */
+async function doFetchAndCacheModule(
+  normalizedPath: string,
+  context: ModuleFetcherContext,
+  fetchAndCacheModuleFn: (path: string, parent?: string) => Promise<string | null>,
+  projectSlug: string,
+): Promise<string | null> {
+  const { esmCacheDir, adapter, projectDir, projectId } = context;
+
+  // Check persistent module path cache first (per-pod filesystem cache).
+  // NOTE: This cache uses path + version key (no content hash), but this is safe
+  // because poke invalidation calls clearModulePathCache() which clears this cache.
+  // The distributed transform cache (below) uses content hash for cross-pod sharing.
+  const pathCache = await getModulePathCache(esmCacheDir);
+  const versionedKey = getVersionedPathCacheKey(normalizedPath);
+  const cachedPath = pathCache.get(versionedKey);
+  if (cachedPath) {
+    // Verify the file still exists
+    try {
+      const localFs = getLocalFs();
+      const stat = await localFs.stat(cachedPath);
+      if (stat?.isFile) {
+        // Record to session even when returning from cache
+        // This ensures manifest tracks all modules loaded per render
+        const session = getCurrentSession();
+        if (session) {
+          const moduleUrlPath = normalizedPath
+            .replace(/^_vf_modules\//, "")
+            .replace(/\.(tsx|ts|jsx|mdx)$/, ".js");
+          session.modules.add(moduleUrlPath);
         }
-      } catch {
-        // Cache entry is stale, remove it
-        pathCache.delete(versionedKey);
+        return cachedPath;
+      }
+    } catch {
+      // Cache entry is stale, remove it
+      pathCache.delete(versionedKey);
+    }
+  }
+
+  // Try to find and read the source file directly
+  try {
+    const resolved = await resolveModuleFile(normalizedPath, adapter, projectDir);
+
+    if (!resolved) {
+      // Fallback to HTTP fetch if direct file read fails
+      const moduleCode = await fetchModuleViaHTTP(
+        normalizedPath,
+        adapter,
+        fetchAndCacheModuleFn,
+        projectSlug,
+        context.isLocalDev,
+      );
+      if (moduleCode) {
+        return await cacheModule(normalizedPath, moduleCode, esmCacheDir, pathCache);
+      }
+      return null;
+    }
+
+    const { sourceCode, actualFilePath } = resolved;
+
+    // Compute content hash for distributed cache key
+    const contentHash = hashString(sourceCode);
+    const transformCacheKey = getTransformCacheKey(projectId, normalizedPath, contentHash);
+
+    // Check distributed transform cache first (cross-pod sharing)
+    let moduleCode: string | null = null;
+    const distributedCache = await getDistributedTransformCache();
+    if (distributedCache) {
+      try {
+        const cached = await distributedCache.get(transformCacheKey);
+        if (cached) {
+          moduleCode = cached;
+          logger.debug(`${LOG_PREFIX_MDX_LOADER} Distributed transform cache HIT`, {
+            projectSlug,
+            normalizedPath,
+            cacheKey: transformCacheKey,
+          });
+        }
+      } catch (error) {
+        logger.debug(`${LOG_PREFIX_MDX_LOADER} Distributed cache get failed`, {
+          normalizedPath,
+          error,
+        });
       }
     }
 
-    // Try to find and read the source file directly
-    try {
-      const resolved = await resolveModuleFile(normalizedPath, adapter, projectDir);
-
-      if (!resolved) {
-        // Fallback to HTTP fetch if direct file read fails
-        const moduleCode = await fetchModuleViaHTTP(
-          normalizedPath,
-          adapter,
-          fetchAndCacheModuleFn,
-          projectSlug,
-          context.isLocalDev,
+    // If not in distributed cache, transform the source code
+    if (!moduleCode) {
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] transformToESM START`, {
+        projectSlug,
+        normalizedPath,
+        actualFilePath,
+        sourceLength: sourceCode.length,
+      });
+      const transformStart = performance.now();
+      try {
+        moduleCode = await transformToESM(
+          sourceCode,
+          actualFilePath,
+          projectDir,
+          adapter as RuntimeAdapter,
+          { projectId, dev: true, ssr: true },
         );
-        if (moduleCode) {
-          return await cacheModule(normalizedPath, moduleCode, esmCacheDir, pathCache);
-        }
-        return null;
-      }
-
-      const { sourceCode, actualFilePath } = resolved;
-
-      // Compute content hash for distributed cache key
-      const contentHash = hashString(sourceCode);
-      const transformCacheKey = getTransformCacheKey(projectId, normalizedPath, contentHash);
-
-      // Check distributed transform cache first (cross-pod sharing)
-      let moduleCode: string | null = null;
-      const distributedCache = await getDistributedTransformCache();
-      if (distributedCache) {
-        try {
-          const cached = await distributedCache.get(transformCacheKey);
-          if (cached) {
-            moduleCode = cached;
-            logger.debug(`${LOG_PREFIX_MDX_LOADER} Distributed transform cache HIT`, {
-              projectSlug,
-              normalizedPath,
-              cacheKey: transformCacheKey,
-            });
-          }
-        } catch (error) {
-          logger.debug(`${LOG_PREFIX_MDX_LOADER} Distributed cache get failed`, {
-            normalizedPath,
-            error,
-          });
-        }
-      }
-
-      // If not in distributed cache, transform the source code
-      if (!moduleCode) {
-        logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] transformToESM START`, {
-          projectSlug,
+      } catch (transformError) {
+        logger.error(`${LOG_PREFIX_MDX_LOADER} Transform failed for module`, {
           normalizedPath,
           actualFilePath,
           sourceLength: sourceCode.length,
+          sourcePreview: sourceCode.slice(0, 200),
+          error: transformError instanceof Error ? transformError.message : String(transformError),
         });
-        const transformStart = performance.now();
-        try {
-          moduleCode = await transformToESM(
-            sourceCode,
-            actualFilePath,
-            projectDir,
-            adapter as RuntimeAdapter,
-            { projectId, dev: true, ssr: true },
-          );
-        } catch (transformError) {
-          logger.error(`${LOG_PREFIX_MDX_LOADER} Transform failed for module`, {
-            normalizedPath,
-            actualFilePath,
-            sourceLength: sourceCode.length,
-            sourcePreview: sourceCode.slice(0, 200),
-            error: transformError instanceof Error
-              ? transformError.message
-              : String(transformError),
-          });
-          throw transformError;
-        }
-        logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] transformToESM DONE`, {
-          projectSlug,
-          normalizedPath,
-          transformMs: (performance.now() - transformStart).toFixed(1),
-          outputLength: moduleCode.length,
-        });
-
-        // Rewrite veryfront/* imports to /_vf_modules/ paths so they can be resolved
-        // This is needed because cached .mjs files don't have access to deno.json import maps
-        moduleCode = rewriteVeryfrontImports(moduleCode);
-
-        // Store in distributed cache (fire-and-forget for performance)
-        if (distributedCache) {
-          distributedCache.set(transformCacheKey, moduleCode, TRANSFORM_CACHE_TTL_SECONDS).catch(
-            (error) => {
-              logger.debug(`${LOG_PREFIX_MDX_LOADER} Distributed cache set failed`, {
-                normalizedPath,
-                error,
-              });
-            },
-          );
-        }
+        throw transformError;
       }
-
-      // Find and recursively process nested imports
-      const { vfModules, relative } = findNestedImports(moduleCode);
-      logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] found nested imports`, {
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] transformToESM DONE`, {
         projectSlug,
         normalizedPath,
-        vfModulesCount: vfModules.length,
-        relativeCount: relative.length,
-        vfModulePaths: vfModules.map((m) => m.path).slice(0, 5),
-        relativePaths: relative.map((m) => m.path).slice(0, 5),
+        transformMs: (performance.now() - transformStart).toFixed(1),
+        outputLength: moduleCode.length,
       });
 
-      // Process nested /_vf_modules/ imports recursively in parallel
-      logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing vfModules START`, {
-        projectSlug,
-        normalizedPath,
-        count: vfModules.length,
-      });
-      const vfStart = performance.now();
-      const nestedResults = await Promise.all(
-        vfModules.map(async ({ original, path }) => {
-          const nestedFilePath = await fetchAndCacheModuleFn(path, normalizedPath);
-          return { original, nestedFilePath, nestedPath: path };
-        }),
-      );
-      logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing vfModules DONE`, {
-        projectSlug,
-        normalizedPath,
-        vfMs: (performance.now() - vfStart).toFixed(1),
-      });
-      moduleCode = await processNestedImports(moduleCode, nestedResults, esmCacheDir);
+      // Rewrite veryfront/* imports to /_vf_modules/ paths so they can be resolved
+      // This is needed because cached .mjs files don't have access to deno.json import maps
+      moduleCode = rewriteVeryfrontImports(moduleCode);
 
-      // Process relative imports in parallel
-      logger.debug(
-        `${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing relative imports START`,
-        {
-          projectSlug,
-          normalizedPath,
-          count: relative.length,
-        },
-      );
-      const relStart = performance.now();
-      const relativeResults = await Promise.all(
-        relative.map(async ({ original, path }) => {
-          const nestedFilePath = await fetchAndCacheModuleFn(path, normalizedPath);
-          return { original, nestedFilePath, relativePath: path };
-        }),
-      );
-      logger.debug(
-        `${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing relative imports DONE`,
-        {
-          projectSlug,
-          normalizedPath,
-          relMs: (performance.now() - relStart).toFixed(1),
-        },
-      );
-      moduleCode = await processNestedImports(moduleCode, relativeResults, esmCacheDir);
-
-      logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] cacheModule START`, {
-        projectSlug,
-        normalizedPath,
-      });
-      const cacheStart = performance.now();
-      const cachedPath = await cacheModule(normalizedPath, moduleCode, esmCacheDir, pathCache);
-      logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] cacheModule DONE`, {
-        projectSlug,
-        normalizedPath,
-        cacheMs: (performance.now() - cacheStart).toFixed(1),
-      });
-      return cachedPath;
-    } catch (error) {
-      logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to process ${normalizedPath}`, error);
-      return null;
+      // Store in distributed cache (fire-and-forget for performance)
+      if (distributedCache) {
+        distributedCache.set(transformCacheKey, moduleCode, TRANSFORM_CACHE_TTL_SECONDS).catch(
+          (error) => {
+            logger.debug(`${LOG_PREFIX_MDX_LOADER} Distributed cache set failed`, {
+              normalizedPath,
+              error,
+            });
+          },
+        );
+      }
     }
-  })();
 
-  logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] DONE`, {
-    projectSlug,
-    normalizedPath,
-    hasResult: result !== null,
-  });
-  return result;
+    // Find and recursively process nested imports
+    const { vfModules, relative } = findNestedImports(moduleCode);
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] found nested imports`, {
+      projectSlug,
+      normalizedPath,
+      vfModulesCount: vfModules.length,
+      relativeCount: relative.length,
+      vfModulePaths: vfModules.map((m) => m.path).slice(0, 5),
+      relativePaths: relative.map((m) => m.path).slice(0, 5),
+    });
+
+    // Process nested /_vf_modules/ imports recursively in parallel
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing vfModules START`, {
+      projectSlug,
+      normalizedPath,
+      count: vfModules.length,
+    });
+    const vfStart = performance.now();
+    const nestedResults = await Promise.all(
+      vfModules.map(async ({ original, path }) => {
+        const nestedFilePath = await fetchAndCacheModuleFn(path, normalizedPath);
+        return { original, nestedFilePath, nestedPath: path };
+      }),
+    );
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing vfModules DONE`, {
+      projectSlug,
+      normalizedPath,
+      vfMs: (performance.now() - vfStart).toFixed(1),
+    });
+    moduleCode = await processNestedImports(moduleCode, nestedResults, esmCacheDir);
+
+    // Process relative imports in parallel
+    logger.debug(
+      `${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing relative imports START`,
+      {
+        projectSlug,
+        normalizedPath,
+        count: relative.length,
+      },
+    );
+    const relStart = performance.now();
+    const relativeResults = await Promise.all(
+      relative.map(async ({ original, path }) => {
+        const nestedFilePath = await fetchAndCacheModuleFn(path, normalizedPath);
+        return { original, nestedFilePath, relativePath: path };
+      }),
+    );
+    logger.debug(
+      `${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing relative imports DONE`,
+      {
+        projectSlug,
+        normalizedPath,
+        relMs: (performance.now() - relStart).toFixed(1),
+      },
+    );
+    moduleCode = await processNestedImports(moduleCode, relativeResults, esmCacheDir);
+
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] cacheModule START`, {
+      projectSlug,
+      normalizedPath,
+    });
+    const cacheStart = performance.now();
+    const cachedPath = await cacheModule(normalizedPath, moduleCode, esmCacheDir, pathCache);
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] cacheModule DONE`, {
+      projectSlug,
+      normalizedPath,
+      cacheMs: (performance.now() - cacheStart).toFixed(1),
+    });
+    return cachedPath;
+  } catch (error) {
+    logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to process ${normalizedPath}`, error);
+    return null;
+  }
 }
 
 /**
@@ -686,5 +722,13 @@ export function createModuleFetcherContext(
   projectId: string,
   options?: { isLocalDev?: boolean; projectSlug?: string },
 ): ModuleFetcherContext {
-  return { esmCacheDir, adapter, projectDir, projectId, ...options };
+  return {
+    esmCacheDir,
+    adapter,
+    projectDir,
+    projectId,
+    ...options,
+    // Initialize in-flight tracking for circular import detection
+    inFlightModules: new Map(),
+  };
 }
