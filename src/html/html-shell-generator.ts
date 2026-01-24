@@ -189,8 +189,10 @@ async function generateHTMLShellPartsImpl(
 
   const nonce = options.nonce ?? "";
 
-  const skipDevHMR = options.environment === "preview";
-  const useDevScripts = localDev;
+  const isPreviewMode = options.environment === "preview";
+  const skipDevHMR = isPreviewMode;
+  // Enable dev scripts for local dev OR preview mode (for HMR support in Studio)
+  const useDevScripts = localDev || isPreviewMode;
 
   const modeScripts = useDevScripts
     ? getDevScripts(meta.slug || "", options.config, params, props, nonce, { skipDevHMR })

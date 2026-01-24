@@ -27,8 +27,16 @@ export function createRequestContext(
   const { hostname } = new URL(req.url);
   const parsed = parseProjectDomain(hostname);
 
+  // Check both hostname and x-environment header for preview mode
+  const xEnvironment = req.headers.get("x-environment");
+  const forwardedHost = req.headers.get("x-forwarded-host");
+
   let mode: "preview" | "production" = "production";
-  if (hostname.includes(".preview.") || req.headers.get("x-environment") === "preview") {
+  if (
+    hostname.includes(".preview.") ||
+    forwardedHost?.includes(".preview.") ||
+    xEnvironment === "preview"
+  ) {
     mode = "preview";
   }
 
