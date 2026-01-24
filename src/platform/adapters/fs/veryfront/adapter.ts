@@ -277,6 +277,14 @@ export class VeryfrontFSAdapter implements FSAdapter {
         sourceFilesWithContent: sourceFilesWithContent.length,
       });
 
+      // Trigger CSS pre-generation for non-branch environments (fire-and-forget)
+      // This runs in parallel with the rest of initialization
+      if (this.contentContext?.sourceType !== "branch" && sourceFilesWithContent.length > 0) {
+        this.triggerCSSPregeneration(files).catch(() => {
+          // Error already logged in triggerCSSPregeneration
+        });
+      }
+
       this.initialized = true;
 
       logger.debug("[VeryfrontFSAdapter] initialize COMPLETE", {
@@ -990,5 +998,35 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private async ensureInitialized(): Promise<void> {
     if (this.initialized) return;
     await this.initialize();
+  }
+
+  /**
+   * Trigger CSS pre-generation for faster first-request latency.
+   *
+   * Runs CSS extraction and generation in parallel with other initialization.
+   * Uses dynamic import to avoid circular dependencies.
+   */
+  private async triggerCSSPregeneration(
+    files: Array<{ path: string; content?: string }>,
+  ): Promise<void> {
+    try {
+      const { pregenerateCSSFromFiles, findGlobalStylesheet } = await import(
+        "../../../../html/styles-builder/css-pregeneration.ts"
+      );
+
+      const stylesheet = findGlobalStylesheet(files);
+
+      await pregenerateCSSFromFiles({
+        projectSlug: this.projectSlug,
+        files,
+        stylesheet,
+        minify: true,
+      });
+    } catch (error) {
+      logger.warn("[VeryfrontFSAdapter] CSS pre-generation failed", {
+        projectSlug: this.projectSlug,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 }

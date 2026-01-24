@@ -588,4 +588,7 @@ export const CacheBackends = {
 
   /** HTTP module cache for ESM.sh modules (cross-pod sharing). */
   httpModule: () => createCacheBackend({ keyPrefix: "http-module" }),
+
+  /** Project CSS cache for Tailwind CSS output (cross-pod sharing). */
+  projectCSS: () => createCacheBackend({ keyPrefix: "project-css" }),
 };

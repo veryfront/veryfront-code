@@ -17,6 +17,7 @@ import { logger } from "../utils/logger/logger.ts";
 import { initializeTransformCache } from "#veryfront/transforms/esm/transform-cache.ts";
 import { initializeSSRDistributedCache } from "#veryfront/modules/react-loader/ssr-module-loader/index.ts";
 import { initializeFileCacheBackend } from "#veryfront/platform/adapters/fs/cache/file-cache.ts";
+import { initializeProjectCSSCache } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
 import { isRedisConfigured } from "../utils/redis-client.ts";
 import { isApiCacheAvailable } from "./backend.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -27,6 +28,7 @@ export interface DistributedCacheStatus {
   transformCache: boolean;
   ssrModuleCache: boolean;
   fileCache: boolean;
+  projectCSSCache: boolean;
 }
 
 function determineBackend(): DistributedCacheStatus["backend"] {
@@ -56,6 +58,7 @@ export function initializeDistributedCaches(): Promise<DistributedCacheStatus> {
       transformCache: false,
       ssrModuleCache: false,
       fileCache: false,
+      projectCSSCache: false,
     });
   }
 
@@ -64,10 +67,11 @@ export function initializeDistributedCaches(): Promise<DistributedCacheStatus> {
     async () => {
       logger.info("[DistributedCache] Initializing caches...", { backend });
 
-      const [transformResult, ssrResult, fileResult] = await Promise.allSettled([
+      const [transformResult, ssrResult, fileResult, projectCSSResult] = await Promise.allSettled([
         initializeTransformCache(),
         initializeSSRDistributedCache(),
         initializeFileCacheBackend(),
+        initializeProjectCSSCache(),
       ]);
 
       const status: DistributedCacheStatus = {
@@ -75,11 +79,15 @@ export function initializeDistributedCaches(): Promise<DistributedCacheStatus> {
         transformCache: wasSuccessful(transformResult),
         ssrModuleCache: wasSuccessful(ssrResult),
         fileCache: wasSuccessful(fileResult),
+        projectCSSCache: wasSuccessful(projectCSSResult),
       };
 
-      const enabled = [status.transformCache, status.ssrModuleCache, status.fileCache].filter(
-        Boolean,
-      ).length;
+      const enabled = [
+        status.transformCache,
+        status.ssrModuleCache,
+        status.fileCache,
+        status.projectCSSCache,
+      ].filter(Boolean).length;
 
       if (enabled > 0) {
         logger.info("[DistributedCache] Initialization complete", {
@@ -88,6 +96,7 @@ export function initializeDistributedCaches(): Promise<DistributedCacheStatus> {
           transform: status.transformCache,
           ssrModule: status.ssrModuleCache,
           file: status.fileCache,
+          projectCSS: status.projectCSSCache,
         });
       } else {
         logger.warn("[DistributedCache] No caches enabled despite backend being available", {

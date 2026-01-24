@@ -3,11 +3,13 @@ import { serverLogger as logger } from "#veryfront/utils";
 import { getTailwindCSSUrl } from "#veryfront/utils/constants/cdn.ts";
 import {
   type CacheBackend,
+  CacheBackends,
   createCacheBackend,
   MemoryCacheBackend,
 } from "#veryfront/cache/backend.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
+import { registerCache } from "#veryfront/utils/memory/index.ts";
 
 export interface TailwindResult {
   css: string;
@@ -38,8 +40,65 @@ const CSS_CACHE_TTL_SECONDS = 3600;
 const localCssCache = new Map<string, string>();
 const LOCAL_CACHE_MAX_SIZE = 100;
 
-// Project-level CSS cache - keyed by projectSlug:stylesheetHash
-const projectCssCache = new Map<string, { css: string; hash: string }>();
+// Project-level CSS cache - uses distributed backend (API/Redis)
+const PROJECT_CSS_CACHE_TTL_SECONDS = CSS_CACHE_TTL_SECONDS;
+const PROJECT_CSS_LOCAL_FALLBACK_MAX = 50;
+
+let projectCSSBackend: CacheBackend | null = null;
+let projectCSSInitialized = false;
+let projectCSSInitPromise: Promise<void> | null = null;
+const projectCSSLocalFallback = new Map<string, ProjectCSSCacheEntry>();
+
+registerCache("project-css-cache", () => ({
+  name: "project-css-cache",
+  entries: projectCSSLocalFallback.size,
+  maxEntries: PROJECT_CSS_LOCAL_FALLBACK_MAX,
+  backend: projectCSSBackend?.type ?? "uninitialized",
+}));
+
+interface ProjectCSSCacheEntry {
+  css: string;
+  hash: string;
+  candidatesHash: string;
+}
+
+/**
+ * Initialize project CSS distributed cache.
+ * Call this at server startup alongside other distributed caches.
+ *
+ * @returns true if distributed backend was successfully initialized
+ */
+export async function initializeProjectCSSCache(): Promise<boolean> {
+  if (projectCSSInitialized) {
+    return projectCSSBackend?.type !== "memory";
+  }
+
+  if (!projectCSSInitPromise) {
+    projectCSSInitPromise = (async () => {
+      try {
+        projectCSSBackend = await CacheBackends.projectCSS();
+        logger.info("[ProjectCSSCache] Initialized", { backend: projectCSSBackend.type });
+      } catch (error) {
+        logger.warn("[ProjectCSSCache] Backend init failed, using memory", { error });
+        projectCSSBackend = new MemoryCacheBackend(100);
+      } finally {
+        projectCSSInitialized = true;
+      }
+    })();
+  }
+
+  await projectCSSInitPromise;
+  projectCSSInitPromise = null;
+
+  return projectCSSBackend?.type !== "memory";
+}
+
+/**
+ * Check if distributed project CSS cache is enabled.
+ */
+export function isProjectCSSCacheDistributed(): boolean {
+  return projectCSSBackend?.type !== "memory" && projectCSSBackend !== null;
+}
 
 export async function getProjectCSS(
   projectSlug: string,
@@ -48,13 +107,57 @@ export async function getProjectCSS(
   options?: GenerateOptions,
 ): Promise<{ css: string; hash: string; fromCache: boolean }> {
   const stylesheetHash = hashString(stylesheet ?? DEFAULT_STYLESHEET);
+  const candidatesHash = hashCandidates(candidates);
   const cacheKey = `${projectSlug}:${stylesheetHash}`;
 
-  const cached = projectCssCache.get(cacheKey);
-  if (cached) {
-    return { css: cached.css, hash: cached.hash, fromCache: true };
+  // 1. Try local fallback first (fastest)
+  const localCached = projectCSSLocalFallback.get(cacheKey);
+  if (localCached) {
+    if (localCached.candidatesHash === candidatesHash) {
+      logger.debug("[tailwind] Project CSS cache hit (local)", {
+        projectSlug,
+        hash: localCached.hash,
+      });
+      await cacheCSSAsync(localCached.css, localCached.hash);
+      return { css: localCached.css, hash: localCached.hash, fromCache: true };
+    }
+
+    // Candidates changed; drop local entry
+    projectCSSLocalFallback.delete(cacheKey);
   }
 
+  if (!projectCSSInitialized) {
+    await initializeProjectCSSCache();
+  }
+
+  // Try distributed cache (API/Redis)
+  if (projectCSSBackend) {
+    try {
+      const raw = await projectCSSBackend.get(cacheKey);
+      if (raw) {
+        const entry = JSON.parse(raw) as ProjectCSSCacheEntry;
+        // Validate candidates hash matches (files may have changed)
+        if (entry.candidatesHash === candidatesHash) {
+          logger.debug("[tailwind] Project CSS cache hit (distributed)", {
+            projectSlug,
+            hash: entry.hash,
+          });
+          setProjectCSSLocalFallback(cacheKey, entry);
+          await cacheCSSAsync(entry.css, entry.hash);
+          return { css: entry.css, hash: entry.hash, fromCache: true };
+        }
+        logger.debug("[tailwind] Project CSS cache miss (candidates changed)", {
+          projectSlug,
+          cachedCandidatesHash: entry.candidatesHash,
+          currentCandidatesHash: candidatesHash,
+        });
+      }
+    } catch (error) {
+      logger.debug("[tailwind] Failed to read from project CSS cache", { cacheKey, error });
+    }
+  }
+
+  // Generate CSS (cache miss)
   const result = await generateTailwindCSS(stylesheet, candidates, options);
 
   if (result.error) {
@@ -63,8 +166,20 @@ export async function getProjectCSS(
   }
 
   const hash = hashCSS(result.css);
-  projectCssCache.set(cacheKey, { css: result.css, hash });
-  storeInLocalCache(hash, result.css);
+  const entry: ProjectCSSCacheEntry = { css: result.css, hash, candidatesHash };
+
+  // Store in distributed cache
+  if (projectCSSBackend) {
+    projectCSSBackend.set(cacheKey, JSON.stringify(entry), PROJECT_CSS_CACHE_TTL_SECONDS).catch(
+      (error) => {
+        logger.debug("[tailwind] Failed to store in project CSS cache", { cacheKey, error });
+      },
+    );
+  }
+
+  // Also store in per-hash cache for getCSSByHash lookups
+  setProjectCSSLocalFallback(cacheKey, entry);
+  await cacheCSSAsync(result.css, hash);
 
   logger.debug("[tailwind] Project CSS generated", {
     projectSlug,
@@ -76,11 +191,61 @@ export async function getProjectCSS(
   return { css: result.css, hash, fromCache: false };
 }
 
+/**
+ * Hash candidates set to detect when Tailwind classes change.
+ * Uses sorted array to ensure consistent hash regardless of Set iteration order.
+ */
+function hashCandidates(candidates: Set<string>): string {
+  return hashString(Array.from(candidates).sort().join(","));
+}
+
+/**
+ * Invalidate project CSS cache for a specific project.
+ */
 export function invalidateProjectCSS(projectSlug: string): void {
-  for (const key of projectCssCache.keys()) {
+  // Clear local fallback
+  for (const key of projectCSSLocalFallback.keys()) {
     if (key.startsWith(`${projectSlug}:`)) {
-      projectCssCache.delete(key);
+      projectCSSLocalFallback.delete(key);
     }
+  }
+
+  // Fire off async cache clear (non-blocking)
+  invalidateProjectCSSAsync(projectSlug).catch((error) => {
+    logger.debug("[tailwind] Failed to invalidate project CSS cache", { projectSlug, error });
+  });
+}
+
+/**
+ * Invalidate project CSS cache for a specific project (async version).
+ */
+export async function invalidateProjectCSSAsync(projectSlug: string): Promise<void> {
+  if (!projectCSSBackend?.delByPattern) return;
+
+  try {
+    const deleted = await projectCSSBackend.delByPattern(`${projectSlug}:*`);
+    logger.debug("[tailwind] Cleared project CSS cache", { projectSlug, deleted });
+  } catch (error) {
+    logger.debug("[tailwind] Failed to clear project CSS cache", { projectSlug, error });
+  }
+}
+
+function setProjectCSSLocalFallback(key: string, entry: ProjectCSSCacheEntry): void {
+  projectCSSLocalFallback.set(key, entry);
+  if (projectCSSLocalFallback.size > PROJECT_CSS_LOCAL_FALLBACK_MAX) {
+    pruneProjectCSSLocalFallback();
+  }
+}
+
+function pruneProjectCSSLocalFallback(): void {
+  const excess = projectCSSLocalFallback.size - PROJECT_CSS_LOCAL_FALLBACK_MAX;
+  if (excess <= 0) return;
+
+  const keys = projectCSSLocalFallback.keys();
+  for (let i = 0; i < excess; i++) {
+    const result = keys.next();
+    if (result.done) break;
+    projectCSSLocalFallback.delete(result.value);
   }
 }
 
@@ -134,18 +299,21 @@ function getCssCache(): Promise<CacheBackend> {
   return cssCacheInitPromise;
 }
 
-export async function cacheCSSAsync(css: string): Promise<string> {
-  const hash = hashCSS(css);
-  storeInLocalCache(hash, css);
+export async function cacheCSSAsync(css: string, hash?: string): Promise<string> {
+  const resolvedHash = hash ?? hashCSS(css);
+  storeInLocalCache(resolvedHash, css);
 
   try {
     const cache = await getCssCache();
-    await cache.set(hash, css, CSS_CACHE_TTL_SECONDS);
+    await cache.set(resolvedHash, css, CSS_CACHE_TTL_SECONDS);
   } catch (error) {
-    logger.debug("[tailwind] Failed to store CSS in distributed cache", { hash, error });
+    logger.debug("[tailwind] Failed to store CSS in distributed cache", {
+      hash: resolvedHash,
+      error,
+    });
   }
 
-  return hash;
+  return resolvedHash;
 }
 
 export function getCSSByHash(hash: string): string | undefined {

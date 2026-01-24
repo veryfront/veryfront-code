@@ -49,7 +49,7 @@ export function runInWorker<T = unknown>(code: string, options: SandboxOptions =
         `  try { result = await (async () => {` +
         `    return await (new Function(code))();` +
         `  })(); } catch (error) {` +
-        `    self.postMessage({ error: String(err && error.message || err) });` +
+        `    self.postMessage({ error: String(error && error.message || error) });` +
         `    return;` +
         `  }` +
         `  self.postMessage({ result });` +

@@ -2,6 +2,7 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import * as BundledReact from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { LayoutItem, MdxBundle, MDXComponents } from "#veryfront/types";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import type { LayoutComponentCache } from "./component-loader.ts";
 import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import { applyMDXLayout, applyTSXLayout, loadTSXComponent } from "./component-loader.ts";
@@ -21,6 +22,7 @@ export async function applyLayoutsESM(
   projectId?: string,
   projectSlug?: string,
   contentSourceId?: string,
+  preloadedImportMap?: ImportMapConfig,
 ): Promise<BundledReact.ReactElement> {
   let element = pageElement;
 
@@ -56,6 +58,7 @@ export async function applyLayoutsESM(
           projectId,
           projectSlug,
           contentSourceId,
+          preloadedImportMap,
         );
         logger.debug("[applyLayoutsESM] applyMDXLayout DONE", {
           projectSlug,
@@ -107,6 +110,7 @@ export async function applyLayoutsESM(
     projectId,
     projectSlug,
     contentSourceId,
+    preloadedImportMap,
   );
   logger.debug("[applyLayoutsESM] Named layoutBundle applied successfully");
 

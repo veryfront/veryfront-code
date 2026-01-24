@@ -2,11 +2,13 @@ import * as React from "react";
 import type { EntityInfo, LayoutItem, MdxBundle, MDXComponents } from "#veryfront/types";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import { LayoutApplicator } from "../layouts/index.ts";
 import { createDefaultMDXComponents } from "../utils/index.ts";
 import type { LayoutCollector, LayoutCompiler } from "../layouts/index.ts";
 import type { LayoutComponentCache } from "../layouts/utils/component-loader.ts";
-import { loadTSXComponent } from "../layouts/utils/component-loader.ts";
+import { loadTSXComponent, preloadMDXLayoutModule } from "../layouts/utils/component-loader.ts";
+import { clearImportMapCache, preloadImportMap } from "#veryfront/modules/import-map/index.ts";
 import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/index.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -35,14 +37,23 @@ export interface LayoutCollectionResult {
 
 export class LayoutOrchestrator {
   private config: LayoutOrchestratorConfig;
+  /** Preloaded import map for MDX layout application */
+  private _preloadedImportMap: ImportMapConfig | null = null;
 
   constructor(config: LayoutOrchestratorConfig) {
     this.config = config;
   }
 
+  /** Get preloaded import map if available */
+  getPreloadedImportMap(): ImportMapConfig | null {
+    return this._preloadedImportMap;
+  }
+
   clearCache(): void {
     this.config.layoutCache.clear();
     clearSSRModuleCacheForProject(this.config.projectId ?? this.config.projectDir);
+    clearImportMapCache(this.config.projectDir);
+    this._preloadedImportMap = null;
   }
 
   collectLayouts(pageInfo: EntityInfo): Promise<LayoutCollectionResult> {
@@ -64,55 +75,118 @@ export class LayoutOrchestrator {
         const tsxLayouts = nestedLayouts.filter(
           (layout) => layout.kind === "tsx" && layout.componentPath,
         );
+        const mdxLayouts = nestedLayouts.filter(
+          (layout) => layout.kind === "mdx" && layout.bundle,
+        );
 
-        if (!tsxLayouts.length) {
+        const hasTsxLayouts = tsxLayouts.length > 0;
+        const hasMdxLayouts = mdxLayouts.length > 0;
+
+        if (!hasTsxLayouts && !hasMdxLayouts) {
           return;
         }
 
         const preloadStart = performance.now();
-        logger.debug("[LayoutOrchestrator] Preloading TSX layout modules", {
-          count: tsxLayouts.length,
-          paths: tsxLayouts.map((l) => l.componentPath),
+        logger.debug("[LayoutOrchestrator] Preloading layout modules", {
+          tsxCount: tsxLayouts.length,
+          mdxCount: mdxLayouts.length,
+          tsxPaths: tsxLayouts.map((l) => l.componentPath),
         });
 
-        const results = await Promise.all(
-          tsxLayouts.map(async (layout) => {
-            const componentPath = layout.componentPath!;
+        // Build array of preload promises
+        const preloadPromises: Array<Promise<{ type: string; path?: string; success: boolean }>> =
+          [];
 
-            try {
-              await loadTSXComponent(
-                componentPath,
-                this.config.projectDir,
-                this.config.layoutCache,
-                this.config.adapter,
-                this.config.projectId,
-                this.config.contentSourceId,
-              );
-              return { path: componentPath, success: true };
-            } catch (error) {
-              // Log but don't throw - preload failures will be handled during actual application
-              logger.warn(
-                "[LayoutOrchestrator] Failed to preload layout (will retry during apply)",
-                {
-                  path: componentPath,
+        // 1. Preload import map (needed for MDX layouts)
+        if (hasMdxLayouts) {
+          preloadPromises.push(
+            preloadImportMap(this.config.projectDir, this.config.adapter)
+              .then((importMap) => {
+                this._preloadedImportMap = importMap;
+                return { type: "importMap", success: true };
+              })
+              .catch((error) => {
+                logger.warn("[LayoutOrchestrator] Failed to preload import map", {
                   error: error instanceof Error ? error.message : String(error),
-                },
-              );
-              return { path: componentPath, success: false };
-            }
-          }),
-        );
+                });
+                this._preloadedImportMap = null;
+                return { type: "importMap", success: false };
+              }),
+          );
+        }
 
-        const successCount = results.filter((r) => r.success).length;
+        // 2. Preload TSX layouts
+        for (const layout of tsxLayouts) {
+          const componentPath = layout.componentPath!;
+          preloadPromises.push(
+            loadTSXComponent(
+              componentPath,
+              this.config.projectDir,
+              this.config.layoutCache,
+              this.config.adapter,
+              this.config.projectId,
+              this.config.contentSourceId,
+            )
+              .then(() => ({ type: "tsx", path: componentPath, success: true }))
+              .catch((error) => {
+                logger.warn(
+                  "[LayoutOrchestrator] Failed to preload TSX layout (will retry during apply)",
+                  {
+                    path: componentPath,
+                    error: error instanceof Error ? error.message : String(error),
+                  },
+                );
+                return { type: "tsx", path: componentPath, success: false };
+              }),
+          );
+        }
+
+        // 3. Preload MDX layout modules (after import map)
+        for (const layout of mdxLayouts) {
+          preloadPromises.push(
+            preloadMDXLayoutModule(
+              layout.bundle!,
+              this.config.projectDir,
+              this.config.adapter,
+              this.config.projectId,
+              this.config.projectSlug,
+              this.config.contentSourceId,
+            )
+              .then(() => ({ type: "mdx", path: layout.path, success: true }))
+              .catch((error) => {
+                logger.warn(
+                  "[LayoutOrchestrator] Failed to preload MDX layout (will retry during apply)",
+                  {
+                    path: layout.path,
+                    error: error instanceof Error ? error.message : String(error),
+                  },
+                );
+                return { type: "mdx", path: layout.path, success: false };
+              }),
+          );
+        }
+
+        // Run all preloads in parallel
+        const results = await Promise.all(preloadPromises);
+
+        const tsxResults = results.filter((r) => r.type === "tsx");
+        const mdxResults = results.filter((r) => r.type === "mdx");
+        const importMapResult = results.find((r) => r.type === "importMap");
 
         logger.debug("[LayoutOrchestrator] Preload complete", {
-          total: tsxLayouts.length,
-          success: successCount,
-          failed: tsxLayouts.length - successCount,
+          tsxTotal: tsxResults.length,
+          tsxSuccess: tsxResults.filter((r) => r.success).length,
+          mdxTotal: mdxResults.length,
+          mdxSuccess: mdxResults.filter((r) => r.success).length,
+          importMapSuccess: importMapResult?.success ?? "n/a",
           duration: `${(performance.now() - preloadStart).toFixed(2)}ms`,
         });
       },
-      { "layout.preloadCount": nestedLayouts.length },
+      {
+        "layout.preloadCount": nestedLayouts.length,
+        "layout.tsxCount": nestedLayouts.filter((l) => l.kind === "tsx").length,
+        "layout.mdxCount": nestedLayouts.filter((l) => l.kind === "mdx").length,
+      },
     );
   }
 
@@ -140,6 +214,7 @@ export class LayoutOrchestrator {
           projectId: this.config.projectId,
           projectSlug: projectSlug ?? this.config.projectSlug,
           contentSourceId: this.config.contentSourceId,
+          preloadedImportMap: this._preloadedImportMap,
           adapter: this.config.adapter,
           config: this.config.config,
           layoutCache: this.config.layoutCache,

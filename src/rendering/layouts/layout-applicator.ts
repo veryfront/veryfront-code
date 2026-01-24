@@ -5,6 +5,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { LayoutItem, MdxBundle, MDXComponents } from "#veryfront/types";
 import type { EntityInfo } from "#veryfront/types";
 import type { VeryfrontConfig } from "#veryfront/config";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import type { LayoutComponentCache } from "./utils/component-loader.ts";
@@ -28,6 +29,8 @@ export interface LayoutApplicationOptions {
   projectSlug?: string;
   /** Content source identifier for cache isolation (branch name or release ID) */
   contentSourceId?: string;
+  /** Preloaded import map for MDX layout application */
+  preloadedImportMap?: ImportMapConfig | null;
   adapter: RuntimeAdapter;
   config: VeryfrontConfig;
   layoutCache: LayoutComponentCache;
@@ -55,12 +58,14 @@ export class LayoutApplicator {
   private projectId?: string;
   private projectSlug?: string;
   private contentSourceId?: string;
+  private preloadedImportMap?: ImportMapConfig | null;
 
   constructor(options: LayoutApplicationOptions) {
     this.projectDir = options.projectDir;
     this.projectId = options.projectId;
     this.projectSlug = options.projectSlug;
     this.contentSourceId = options.contentSourceId;
+    this.preloadedImportMap = options.preloadedImportMap;
     this.adapter = options.adapter;
     this.config = options.config;
     this.layoutCache = options.layoutCache;
@@ -191,6 +196,7 @@ export class LayoutApplicator {
             this.projectId,
             this.projectSlug,
             this.contentSourceId,
+            this.preloadedImportMap ?? undefined,
           );
         }
 

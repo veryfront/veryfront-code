@@ -11,7 +11,6 @@ import {
 import { getStudioScripts } from "./dev-scripts.ts";
 import { processMetadata } from "./metadata-builder.ts";
 import {
-  cacheCSSAsync,
   extractCandidates,
   formatCSSError,
   generateTailwindCSS,
@@ -149,10 +148,6 @@ async function generateHTMLShellPartsImpl(
     });
     tailwindCSS = projectCSS.css;
     cssHash = projectCSS.hash;
-
-    if (!projectCSS.fromCache && tailwindCSS) {
-      await cacheCSSAsync(tailwindCSS);
-    }
   } else {
     const result = await generateTailwindCSS(stylesheetContent, candidates, { minify: false });
     tailwindCSS = result.css;

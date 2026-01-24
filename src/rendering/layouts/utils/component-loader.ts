@@ -2,8 +2,9 @@ import { computeHash, rendererLogger as logger, TSX_LAYOUT_MAX_ENTRIES } from "#
 import * as BundledReact from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { LayoutItem, MdxBundle, MDXComponents, MDXModule } from "#veryfront/types";
+import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
-import { loadImportMap, transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
+import { preloadImportMap, transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
 import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import { loadComponentFromSource } from "#veryfront/modules/react-loader/component-loader.ts";
 import { getProjectReact } from "#veryfront/react";
@@ -104,6 +105,17 @@ export async function loadTSXComponent(
   return loaded;
 }
 
+/**
+ * Load an MDX layout module from a bundle.
+ *
+ * @param bundle The MDX bundle containing compiled code
+ * @param projectDir The project directory
+ * @param adapter Runtime adapter for file system access
+ * @param projectId Optional project ID for caching
+ * @param projectSlug Optional project slug for logging
+ * @param contentSourceId Optional content source ID for cache isolation
+ * @param preloadedImportMap Optional preloaded import map to avoid reloading
+ */
 export async function loadMDXLayout(
   bundle: MdxBundle,
   projectDir: string,
@@ -111,17 +123,28 @@ export async function loadMDXLayout(
   projectId?: string,
   projectSlug?: string,
   contentSourceId?: string,
+  preloadedImportMap?: ImportMapConfig,
 ): Promise<BundledReact.ComponentType<{ components?: MDXComponents }> | undefined> {
   const loadStart = performance.now();
-  logger.debug("[loadMDXLayout] START", { projectSlug });
-
-  logger.debug("[loadMDXLayout] loadImportMap START", { projectSlug });
-  const mapStart = performance.now();
-  const map = await loadImportMap(projectDir, adapter);
-  logger.debug("[loadMDXLayout] loadImportMap DONE", {
+  logger.debug("[loadMDXLayout] START", {
     projectSlug,
-    duration: `${(performance.now() - mapStart).toFixed(2)}ms`,
+    hasPreloadedImportMap: !!preloadedImportMap,
   });
+
+  // Use preloaded import map if available, otherwise load it
+  let map: ImportMapConfig;
+  if (preloadedImportMap) {
+    map = preloadedImportMap;
+    logger.debug("[loadMDXLayout] Using preloaded import map", { projectSlug });
+  } else {
+    logger.debug("[loadMDXLayout] loadImportMap START", { projectSlug });
+    const mapStart = performance.now();
+    map = await preloadImportMap(projectDir, adapter);
+    logger.debug("[loadMDXLayout] loadImportMap DONE", {
+      projectSlug,
+      duration: `${(performance.now() - mapStart).toFixed(2)}ms`,
+    });
+  }
 
   const code = transformImportsWithMap(bundle.compiledCode, map);
   logger.debug("[loadMDXLayout] Loading module via loadModuleESM START", {
@@ -151,6 +174,31 @@ export async function loadMDXLayout(
   });
 
   return mod.MDXLayout || mod.MainLayout || mod.default;
+}
+
+/**
+ * Preload an MDX layout module for later use.
+ *
+ * This is a fire-and-forget operation that loads the module into cache
+ * so that subsequent calls to loadMDXLayout will be faster.
+ *
+ * @param bundle The MDX bundle containing compiled code
+ * @param projectDir The project directory
+ * @param adapter Runtime adapter for file system access
+ * @param projectId Optional project ID for caching
+ * @param projectSlug Optional project slug for logging
+ * @param contentSourceId Optional content source ID for cache isolation
+ */
+export async function preloadMDXLayoutModule(
+  bundle: MdxBundle,
+  projectDir: string,
+  adapter: RuntimeAdapter,
+  projectId?: string,
+  projectSlug?: string,
+  contentSourceId?: string,
+): Promise<void> {
+  // Just call loadMDXLayout - the module loader will cache the result
+  await loadMDXLayout(bundle, projectDir, adapter, projectId, projectSlug, contentSourceId);
 }
 
 export async function applyTSXLayout(
@@ -213,6 +261,7 @@ export async function applyMDXLayout(
   projectId?: string,
   projectSlug?: string,
   contentSourceId?: string,
+  preloadedImportMap?: ImportMapConfig,
 ): Promise<BundledReact.ReactElement> {
   const React = await getProjectReact();
   const LayoutFn = await loadMDXLayout(
@@ -222,6 +271,7 @@ export async function applyMDXLayout(
     projectId,
     projectSlug,
     contentSourceId,
+    preloadedImportMap,
   );
 
   if (!LayoutFn) {
