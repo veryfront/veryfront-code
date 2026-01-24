@@ -160,7 +160,7 @@ class CacheRegistry {
     for (const store of this.stores.values()) {
       totalDeleted += store.deleteWhere?.((key) => {
         if (!isKeyForProject(key, projectId)) return false;
-        return key.includes(contentSourceId);
+        return isKeyForContentSource(key, projectId, contentSourceId);
       }) ?? 0;
     }
 
@@ -319,7 +319,10 @@ class CacheRegistry {
       SpanNames.CACHE_KEYS_DELETE_ALL_ASYNC,
       async (span?: Span) => {
         const memoryDeleted = this.deleteKeysForProjectEnvironment(projectId, environment);
-        const redisDeleted = await this.deleteRedisKeysForProjectEnvironment(projectId, environment);
+        const redisDeleted = await this.deleteRedisKeysForProjectEnvironment(
+          projectId,
+          environment,
+        );
 
         span?.setAttribute("cache.memory.deleted", memoryDeleted);
         span?.setAttribute("cache.redis.deleted", redisDeleted);
@@ -386,6 +389,8 @@ export function isKeyForProject(key: string, projectId: string): boolean {
   return parts.includes(projectId);
 }
 
+type CacheEnvironment = "production" | "preview";
+
 /** Check if a cache key belongs to a specific project and environment */
 export function isKeyForProjectEnvironment(
   key: string,
@@ -394,32 +399,140 @@ export function isKeyForProjectEnvironment(
 ): boolean {
   if (!isKeyForProject(key, projectId)) return false;
 
-  const parts = key.split(":");
-
-  // Check for explicit environment in key
-  if (parts.includes(environment)) return true;
-
-  // For production, also match keys with release IDs (rel_xxx)
-  if (environment === "production") {
-    return parts.some((p) => p.startsWith("rel_") || p === "latest" || p === "production");
-  }
-
-  // For preview, match branch names or "preview"
-  return parts.some(
-    (p) =>
-      p === "preview" ||
-      p === "main" ||
-      p === "master" ||
-      // Common branch patterns
-      p.startsWith("feature-") ||
-      p.startsWith("fix-") ||
-      p.startsWith("dev-"),
-  );
+  const detected = getEnvironmentFromKey(key, projectId);
+  return detected === environment;
 }
 
 export function extractProjectIdFromKey(key: string): string | null {
   const parts = key.split(":");
   return parts[1] ?? null;
+}
+
+const REDIS_KEY_PREFIXES = [
+  "veryfront:ssr-module:",
+  "veryfront:file-cache:",
+  "veryfront:transform:",
+];
+
+function stripRedisPrefix(key: string): string {
+  for (const prefix of REDIS_KEY_PREFIXES) {
+    if (key.startsWith(prefix)) return key.slice(prefix.length);
+  }
+  return key;
+}
+
+function getEnvironmentFromContentSourceId(
+  contentSourceId: string | undefined,
+): CacheEnvironment | null {
+  if (!contentSourceId) return null;
+  if (
+    contentSourceId.startsWith("preview-") || contentSourceId === "preview" ||
+    contentSourceId === "preview-draft"
+  ) {
+    return "preview";
+  }
+  if (
+    contentSourceId.startsWith("release-") ||
+    contentSourceId.startsWith("production-") ||
+    contentSourceId.startsWith("prod-") ||
+    contentSourceId === "production" ||
+    contentSourceId === "latest"
+  ) {
+    return "production";
+  }
+  return null;
+}
+
+function getEnvironmentFromKey(key: string, projectId: string): CacheEnvironment | null {
+  const normalizedKey = stripRedisPrefix(key);
+  const parts = normalizedKey.split(":");
+  if (parts.length < 2) return null;
+
+  // Render cache keys: {projectId}:{environment}:{releaseKey}:{version}:...
+  if (
+    parts[0] === projectId &&
+    (parts[1] === "production" || parts[1] === "preview")
+  ) {
+    return parts[1] as CacheEnvironment;
+  }
+
+  // SSR module cache keys: v{version}:{projectId}:{contentSourceId}:...
+  if (parts[0].startsWith("v") && parts[1] === projectId) {
+    return getEnvironmentFromContentSourceId(parts[2]);
+  }
+
+  // Layout component cache keys: layout:{projectId}:{contentSourceId}:...
+  if (parts[0] === "layout" && parts[1] === projectId) {
+    return getEnvironmentFromContentSourceId(parts[2]);
+  }
+
+  // Proxy manager cache keys: proxy:{projectSlug}:{environment}:{qualifier}
+  if (
+    parts[0] === "proxy" &&
+    (parts[2] === "production" || parts[2] === "preview")
+  ) {
+    return parts[2] as CacheEnvironment;
+  }
+
+  // File/dir/stat/list cache keys: {prefix}:{sourceType}:{projectSlug}:{qualifier}:...
+  if (parts[0] === "file" || parts[0] === "stat" || parts[0] === "dir" || parts[0] === "files") {
+    const sourceType = parts[1];
+    if (sourceType === "branch") return "preview";
+    if (sourceType === "release") return "production";
+    if (sourceType === "env" && (parts[3] === "preview" || parts[3] === "production")) {
+      return parts[3] as CacheEnvironment;
+    }
+  }
+
+  return null;
+}
+
+function isKeyForContentSource(
+  key: string,
+  projectId: string,
+  contentSourceId: string,
+): boolean {
+  const normalizedKey = stripRedisPrefix(key);
+  const parts = normalizedKey.split(":");
+
+  const candidates = new Set<string>([
+    contentSourceId,
+    `preview-${contentSourceId}`,
+    `release-${contentSourceId}`,
+    `production-${contentSourceId}`,
+    `prod-${contentSourceId}`,
+  ]);
+
+  // Render cache keys: {projectId}:{environment}:{releaseKey}:{version}:...
+  if (
+    parts[0] === projectId &&
+    (parts[1] === "production" || parts[1] === "preview")
+  ) {
+    return candidates.has(parts[2]);
+  }
+
+  // SSR module cache keys: v{version}:{projectId}:{contentSourceId}:...
+  if (parts[0].startsWith("v") && parts[1] === projectId) {
+    return candidates.has(parts[2]);
+  }
+
+  // Layout component cache keys: layout:{projectId}:{contentSourceId}:...
+  if (parts[0] === "layout" && parts[1] === projectId) {
+    return candidates.has(parts[2]);
+  }
+
+  // File/dir/stat/list cache keys: {prefix}:{sourceType}:{projectSlug}:{qualifier}:...
+  if (parts[0] === "file" || parts[0] === "stat" || parts[0] === "dir" || parts[0] === "files") {
+    const sourceType = parts[1];
+    if (sourceType === "branch" || sourceType === "release") {
+      return candidates.has(parts[3]);
+    }
+    if (sourceType === "env") {
+      return candidates.has(parts[3]) || candidates.has(parts[4] ?? "");
+    }
+  }
+
+  return false;
 }
 
 export const cacheRegistry = new CacheRegistry();

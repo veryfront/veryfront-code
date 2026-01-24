@@ -21,10 +21,7 @@ export function getSSRModuleRedisTTL(isProduction: boolean): number {
   return getDistributedCacheTTL("ssr-module", isProduction);
 }
 
-export {
-  DISTRIBUTED_SSR_MODULE_TTL_PREVIEW_SEC,
-  DISTRIBUTED_SSR_MODULE_TTL_PRODUCTION_SEC,
-};
+export { DISTRIBUTED_SSR_MODULE_TTL_PREVIEW_SEC, DISTRIBUTED_SSR_MODULE_TTL_PRODUCTION_SEC };
 
 export const CIRCUIT_BREAKER_THRESHOLD = 3;
 export const CIRCUIT_BREAKER_RESET_MS = 60 * 1000;

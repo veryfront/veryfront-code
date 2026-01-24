@@ -19,6 +19,7 @@ export interface RenderContext {
   adapter: RuntimeAdapter;
   cachePrefix: string;
   environment: RenderEnvironment;
+  branch?: string | null;
   releaseId?: string;
   proxyToken?: string;
   moduleServerUrl?: string;
@@ -48,9 +49,12 @@ export function createRenderContext(
   }
 
   const environment: RenderEnvironment = ctx.requestContext?.mode ?? "preview";
+  const branch = ctx.requestContext?.branch ?? null;
   const projectId = ctx.projectId ?? ctx.projectSlug ?? "__single__";
   const projectSlug = ctx.projectSlug ?? ctx.projectId ?? "__single__";
-  const releaseKey = ctx.releaseId ?? "draft";
+  const releaseKey = environment === "production"
+    ? (ctx.releaseId ?? "latest")
+    : (branch ?? "main");
   const cachePrefix = buildRenderCachePrefix(projectId, environment, releaseKey);
 
   return {
@@ -62,6 +66,7 @@ export function createRenderContext(
     adapter: ctx.adapter,
     cachePrefix,
     environment,
+    branch,
     releaseId: ctx.releaseId,
     proxyToken: ctx.proxyToken,
     moduleServerUrl: options?.moduleServerUrl ?? ctx.moduleServerUrl,
@@ -90,6 +95,7 @@ export function createRenderContextFromEnriched(
     adapter: enriched.adapter,
     cachePrefix: enriched.cachePrefix,
     environment: enriched.environment,
+    branch: enriched.branch,
     releaseId: enriched.releaseId,
     proxyToken: enriched.token ?? undefined,
     moduleServerUrl: options?.moduleServerUrl ?? enriched.moduleServerUrl,

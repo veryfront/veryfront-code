@@ -50,6 +50,7 @@ export class APICacheStore implements CacheStore {
     this.ttlSeconds = options.ttlSeconds ?? 3600; // 1 hour default
     this.localCache = new MemoryCacheStore({
       maxEntries: options.localMaxEntries ?? 200,
+      ttlMs: this.ttlSeconds * 1000,
     });
   }
 

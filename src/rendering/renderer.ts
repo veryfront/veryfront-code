@@ -81,10 +81,11 @@ function getEnv(name: string): string | undefined {
 }
 
 function getContentSourceId(ctx: RenderContext): string {
-  if (ctx.environment === "production" && ctx.releaseId) {
-    return `release-${ctx.releaseId}`;
+  if (ctx.environment === "production") {
+    return `release-${ctx.releaseId ?? "latest"}`;
   }
-  return `${ctx.environment}-draft`;
+  const branch = ctx.branch ?? "main";
+  return `preview-${branch}`;
 }
 
 /**

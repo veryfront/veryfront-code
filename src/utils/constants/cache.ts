@@ -115,13 +115,9 @@ export function getDistributedCacheTTL(
         ? DISTRIBUTED_TRANSFORM_TTL_PRODUCTION_SEC
         : DISTRIBUTED_TRANSFORM_TTL_PREVIEW_SEC;
     case "file":
-      return isProduction
-        ? DISTRIBUTED_FILE_TTL_PRODUCTION_SEC
-        : DISTRIBUTED_FILE_TTL_PREVIEW_SEC;
+      return isProduction ? DISTRIBUTED_FILE_TTL_PRODUCTION_SEC : DISTRIBUTED_FILE_TTL_PREVIEW_SEC;
     case "css":
-      return isProduction
-        ? DISTRIBUTED_CSS_TTL_PRODUCTION_SEC
-        : DISTRIBUTED_CSS_TTL_PREVIEW_SEC;
+      return isProduction ? DISTRIBUTED_CSS_TTL_PRODUCTION_SEC : DISTRIBUTED_CSS_TTL_PREVIEW_SEC;
   }
 }
 

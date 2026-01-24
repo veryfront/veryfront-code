@@ -189,6 +189,28 @@ export class SSRModuleLoader {
     );
   }
 
+  private isProductionContentSource(): boolean {
+    const sourceId = this.options.contentSourceId;
+    if (sourceId) {
+      if (
+        sourceId.startsWith("preview-") || sourceId === "preview" || sourceId === "preview-draft"
+      ) {
+        return false;
+      }
+      if (
+        sourceId.startsWith("release-") ||
+        sourceId.startsWith("production-") ||
+        sourceId.startsWith("prod-") ||
+        sourceId === "production" ||
+        sourceId === "latest"
+      ) {
+        return true;
+      }
+    }
+
+    return !this.options.dev;
+  }
+
   private getRegistryBaseUrl(): string {
     const apiBaseUrl = this.options.apiBaseUrl || getApiBaseUrlEnv();
     return apiBaseUrl.replace(/\/api\/?$/, "");
@@ -480,7 +502,9 @@ export class SSRModuleLoader {
         await this.fs.writeTextFile(tempPath, transformed);
 
         if (redisEnabled && redisClient) {
-          setInRedis(contentCacheKey, transformed).catch(() => {});
+          setInRedis(contentCacheKey, transformed, {
+            isProduction: this.isProductionContentSource(),
+          }).catch(() => {});
         }
 
         const entry: ModuleCacheEntry = { tempPath, contentHash };

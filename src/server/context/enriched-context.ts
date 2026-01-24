@@ -62,7 +62,9 @@ export interface BuildEnrichedContextOptions {
 }
 
 export function buildEnrichedContext(options: BuildEnrichedContextOptions): EnrichedContext {
-  const releaseKey = options.releaseId ?? "draft";
+  const releaseKey = options.environment === "production"
+    ? (options.releaseId ?? "latest")
+    : (options.branch ?? "main");
 
   return {
     projectId: options.projectId,

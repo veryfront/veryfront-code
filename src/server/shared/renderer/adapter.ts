@@ -63,13 +63,15 @@ async function getOrInitRenderer(): Promise<Renderer> {
   const options: RendererOptions = {};
 
   if (isProxyMode) {
+    const renderCacheTtlSeconds = 3600;
     logger.debug("[RendererAdapter] Using API-backed distributed render cache");
     options.cache = {
       store: new APICacheStore({
         keyPrefix: "render",
-        ttlSeconds: 3600,
+        ttlSeconds: renderCacheTtlSeconds,
         localMaxEntries: 200,
       }),
+      ttlMs: renderCacheTtlSeconds * 1000,
     };
   }
 
