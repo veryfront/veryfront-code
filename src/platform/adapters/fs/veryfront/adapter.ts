@@ -664,6 +664,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
       durationMs: Date.now() - startTime,
       totalInvalidations: this.pokeMetrics.invalidationsTriggered,
     });
+
+    this.sendPokeAck("selective", changedPaths);
   }
 
   private async performInvalidation(): Promise<void> {
@@ -778,6 +780,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
       durationMs: Date.now() - startTime,
       totalInvalidations: this.pokeMetrics.invalidationsTriggered,
     });
+
+    this.sendPokeAck("full");
   }
 
   getPokeMetrics(): {
@@ -787,6 +791,30 @@ export class VeryfrontFSAdapter implements FSAdapter {
     connectionId: string | null;
   } {
     return { ...this.pokeMetrics, connectionId: this.wsConnectionId };
+  }
+
+  /** Send acknowledgment back to API after cache invalidation completes */
+  private sendPokeAck(type: "selective" | "full", changedPaths?: string[]): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+
+    try {
+      this.ws.send(JSON.stringify({
+        type: "poke_ack",
+        data: {
+          invalidationType: type,
+          changedPaths: changedPaths ?? [],
+          timestamp: Date.now(),
+          connectionId: this.wsConnectionId,
+          totalInvalidations: this.pokeMetrics.invalidationsTriggered,
+        },
+      }));
+      logger.debug("[VeryfrontFSAdapter] Poke acknowledgment sent", {
+        type,
+        changedPathsCount: changedPaths?.length ?? 0,
+      });
+    } catch (error) {
+      logger.warn("[VeryfrontFSAdapter] Failed to send poke acknowledgment", { error });
+    }
   }
 
   async readFile(path: string): Promise<string> {
