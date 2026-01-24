@@ -31,6 +31,7 @@ export const resolveBarePlugin: TransformPlugin = {
       if (!cachedMap) {
         ctx.metadata.set("importMap", importMap);
       }
+
       code = transformImportsWithMap(
         code,
         importMap,

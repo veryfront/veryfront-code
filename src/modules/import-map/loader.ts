@@ -3,9 +3,10 @@ import { dirname, join } from "#veryfront/platform/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getConfig } from "#veryfront/config";
 import type { ImportMapConfig } from "./types.ts";
-import { getDefaultImportMap } from "./default-import-map.ts";
+import { getDefaultImportMap, getDenoReactImportMap } from "./default-import-map.ts";
 import { mergeImportMaps } from "./merger.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 function normalizeImportMapForRuntime(importMap: ImportMapConfig): ImportMapConfig {
   const normalizeValue = (value: string): string => {
     if (!value.startsWith("npm:")) return value;
@@ -15,7 +16,7 @@ function normalizeImportMapForRuntime(importMap: ImportMapConfig): ImportMapConf
     return query ? `${url}?${query}` : `${url}?target=es2022`;
   };
 
-  const imports = importMap.imports
+  let imports = importMap.imports
     ? Object.fromEntries(
       Object.entries(importMap.imports).map(([key, value]) => [key, normalizeValue(value)]),
     )
@@ -32,7 +33,28 @@ function normalizeImportMapForRuntime(importMap: ImportMapConfig): ImportMapConf
     )
     : undefined;
 
-  return { imports, scopes };
+  // CRITICAL: For Deno SSR, always use shared-*.ts files for React.
+  // Project configs may have esm.sh URLs which would create multiple React instances.
+  // Override React mappings AFTER all other processing to ensure single instance.
+  if (isDeno && imports) {
+    const reactMap = getDenoReactImportMap();
+    imports = { ...imports, ...reactMap };
+  }
+
+  // For Deno SSR, ensure esm.sh scope has React mappings to shared-*.ts files.
+  // This is critical because esm.sh modules with external=react have bare `react`
+  // imports that need to resolve to our shared React instance.
+  let finalScopes = scopes;
+  if (isDeno) {
+    const reactMap = getDenoReactImportMap();
+    const esmShScope = scopes?.["https://esm.sh/"] ?? {};
+    finalScopes = {
+      ...scopes,
+      "https://esm.sh/": { ...esmShScope, ...reactMap },
+    };
+  }
+
+  return { imports, scopes: finalScopes };
 }
 
 export function loadImportMap(

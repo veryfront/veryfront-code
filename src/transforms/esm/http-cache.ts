@@ -19,6 +19,8 @@ import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import { getReactImportMap, REACT_VERSION } from "./package-registry.ts";
+import { getDenoReactImportMap } from "#veryfront/modules/import-map/default-import-map.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { parseImports, replaceSpecifiers } from "./lexer.ts";
 import type { CacheBackend } from "#veryfront/cache/backend.ts";
 
@@ -132,12 +134,14 @@ function normalizeEsmShUrl(url: URL): void {
   }
 
   const pathname = url.pathname.replace(/^\/+/, "");
-  // Check if this is a React core package (react or react-dom)
-  const isReactCore = pathname.startsWith("react@") || pathname.startsWith("react/") ||
-    pathname.startsWith("react-dom@") || pathname.startsWith("react-dom/");
-  if (!isReactCore) {
-    // Externalize both react and react-dom to ensure version consistency
-    // This prevents esm.sh from bundling its own versions of these packages
+  // Check if this is the BASE React package (not subpaths like jsx-runtime).
+  // Only the base react@version should skip external=react (since it IS React).
+  // React subpaths (jsx-runtime, etc.) and react-dom need external=react.
+  // Pattern: react@19.1.1 or react@19.1.1?... (no subpath after version)
+  const isBaseReact = /^react@[\d.]+(?:\?|$)/.test(pathname);
+  if (!isBaseReact) {
+    // Add external=react to ensure all packages use the same React instance.
+    // This includes react-dom, react/jsx-runtime, and all third-party packages.
     const existing = url.searchParams.get("external");
     const externals = existing ? existing.split(",") : [];
     let needsUpdate = false;
@@ -145,7 +149,9 @@ function normalizeEsmShUrl(url: URL): void {
       externals.push("react");
       needsUpdate = true;
     }
-    if (!externals.includes("react-dom")) {
+    // Also externalize react-dom for third-party packages (but not for react-dom itself)
+    const isReactDom = pathname.startsWith("react-dom@") || pathname.startsWith("react-dom/");
+    if (!isReactDom && !externals.includes("react-dom")) {
       externals.push("react-dom");
       needsUpdate = true;
     }
@@ -175,19 +181,40 @@ function resolveBareSpecifier(
   importMap: ImportMapConfig,
   reactVersion: string = REACT_VERSION,
 ): string {
-  // All bare specifiers (including React) go through esm.sh and get cached to file://
-  // This ensures cross-runtime compatibility without loader hooks.
-  const reactMap = getReactImportMap(reactVersion);
-  if (reactMap[specifier]) return reactMap[specifier]!;
-
-  if (specifier.startsWith("react/")) {
-    const subpath = specifier.slice("react/".length);
-    return `https://esm.sh/react@${reactVersion}/${subpath}?target=es2022`;
+  // For Deno SSR: Resolve React to shared-*.ts files to ensure single instance.
+  // These are file:// URLs that all point to the same cached React exports.
+  // Without this, esm.sh modules with external=react would import esm.sh/react,
+  // creating duplicate React instances and breaking context propagation.
+  if (isDeno) {
+    const reactMap = getDenoReactImportMap();
+    const denoMatch = reactMap[specifier];
+    if (denoMatch) {
+      return denoMatch;
+    }
+    // Handle react/* subpaths by using the shared-react.ts file
+    // (React's re-exports should handle subpath imports)
+    // For unknown subpaths, fall through to esm.sh resolution
   }
 
+  // For non-Deno runtimes: Use esm.sh URLs with consistent versioning.
+  // This ensures all modules use the same React version.
+  const reactImports = getReactImportMap(reactVersion);
+  const reactMatch = reactImports[specifier];
+  if (reactMatch) {
+    return reactMatch;
+  }
+
+  // Handle react/* and react-dom/* subpaths not in the map
+  // Use external=react to ensure single React instance
+  if (specifier.startsWith("react/")) {
+    return `https://esm.sh/react@${reactVersion}/${
+      specifier.slice(6)
+    }?external=react&target=es2022`;
+  }
   if (specifier.startsWith("react-dom/")) {
-    const subpath = specifier.slice("react-dom/".length);
-    return `https://esm.sh/react-dom@${reactVersion}/${subpath}?target=es2022`;
+    return `https://esm.sh/react-dom@${reactVersion}/${
+      specifier.slice(10)
+    }?external=react&target=es2022`;
   }
 
   const mapped = resolveImport(specifier, importMap);

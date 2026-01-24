@@ -55,11 +55,11 @@ function resolveReactForRuntime(specifier: string): string | null {
   }
   if (specifier.startsWith("react/")) {
     const subpath = specifier.slice("react/".length);
-    return `https://esm.sh/react@${REACT_VERSION}/${subpath}?target=es2022`;
+    return `https://esm.sh/react@${REACT_VERSION}/${subpath}?external=react&target=es2022`;
   }
   if (specifier.startsWith("react-dom/")) {
     const subpath = specifier.slice("react-dom/".length);
-    return `https://esm.sh/react-dom@${REACT_VERSION}/${subpath}?target=es2022`;
+    return `https://esm.sh/react-dom@${REACT_VERSION}/${subpath}?external=react&target=es2022`;
   }
   return null;
 }

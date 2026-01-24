@@ -14,16 +14,19 @@ import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/index.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
-import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 
 const LOG_PREFIX = "[SSR-HTTP-CACHE]";
 
 export const ssrHttpCachePlugin: TransformPlugin = {
   name: "ssr-http-cache",
   stage: TransformStage.FINALIZE - 1, // Run just before finalize
-  // Skip on Deno - it supports HTTP imports natively, and local file:// paths
-  // would break distributed caching (paths are pod-specific)
-  condition: () => !isDeno,
+  // Previously skipped on Deno since it supports HTTP imports natively.
+  // However, esm.sh modules with external=react have bare `react` imports
+  // that Deno can't resolve to our shared-*.ts files (import maps don't
+  // apply to imports inside HTTPS modules). Caching to file:// lets us
+  // rewrite their internal imports to use our shared React instance.
+  // Note: file:// paths are pod-specific but hash-based so consistent.
+  condition: () => true,
 
   async transform(ctx) {
     const cachedMap = ctx.metadata.get("importMap") as ImportMapConfig | undefined;

@@ -2,9 +2,12 @@ import type { ImportMapConfig, TransformOptions } from "./types.ts";
 import { resolveImport } from "./resolver.ts";
 
 function shouldResolve(specifier: string, options?: TransformOptions): boolean {
-  // Always process esm.sh URLs to normalize them
+  // esm.sh URLs with query params are already normalized - skip to prevent stripping external=react
+  // URLs without query params (e.g., from npm packages) should be normalized
   if (specifier.startsWith("https://esm.sh/") || specifier.startsWith("http://esm.sh/")) {
-    return true;
+    // If it has query params (contains ?), it's already been processed - don't re-process
+    // This prevents multiple regex passes from stripping external=react from the URL
+    return !specifier.includes("?");
   }
 
   const isBare = !specifier.startsWith("http") &&

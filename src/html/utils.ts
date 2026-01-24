@@ -108,10 +108,10 @@ interface CdnUrlTemplates {
 const CDN_URL_TEMPLATES: Record<CdnProvider, CdnUrlTemplates> = {
   "esm.sh": {
     react: (v) => `https://esm.sh/react@${v}?target=es2022`,
-    reactDom: (v) => `https://esm.sh/react-dom@${v}?target=es2022`,
-    reactDomClient: (v) => `https://esm.sh/react-dom@${v}/client?target=es2022`,
-    jsxRuntime: (v) => `https://esm.sh/react@${v}/jsx-runtime?target=es2022`,
-    jsxDevRuntime: (v) => `https://esm.sh/react@${v}/jsx-dev-runtime?target=es2022`,
+    reactDom: (v) => `https://esm.sh/react-dom@${v}?external=react&target=es2022`,
+    reactDomClient: (v) => `https://esm.sh/react-dom@${v}/client?external=react&target=es2022`,
+    jsxRuntime: (v) => `https://esm.sh/react@${v}/jsx-runtime?external=react&target=es2022`,
+    jsxDevRuntime: (v) => `https://esm.sh/react@${v}/jsx-dev-runtime?external=react&target=es2022`,
     veryfrontAgentReact: (v) =>
       `https://esm.sh/veryfront@${v}/agent/react?external=react,react-dom&target=es2022`,
     veryfrontComponentsAi: (v) =>
@@ -269,13 +269,16 @@ export async function buildImportMapJson(
 
     // Only include React in import map for bundled mode
     // Use ?target=es2022 to match SSR build
+    // Use ?external=react on react sub-packages to ensure single React instance
     const imports: Record<string, string> = {
       "react": `https://esm.sh/react@${versions.react}?target=es2022`,
-      "react-dom": `https://esm.sh/react-dom@${versions.react}?target=es2022`,
-      "react-dom/client": `https://esm.sh/react-dom@${versions.react}/client?target=es2022`,
-      "react/jsx-runtime": `https://esm.sh/react@${versions.react}/jsx-runtime?target=es2022`,
+      "react-dom": `https://esm.sh/react-dom@${versions.react}?external=react&target=es2022`,
+      "react-dom/client":
+        `https://esm.sh/react-dom@${versions.react}/client?external=react&target=es2022`,
+      "react/jsx-runtime":
+        `https://esm.sh/react@${versions.react}/jsx-runtime?external=react&target=es2022`,
       "react/jsx-dev-runtime":
-        `https://esm.sh/react@${versions.react}/jsx-dev-runtime?target=es2022`,
+        `https://esm.sh/react@${versions.react}/jsx-dev-runtime?external=react&target=es2022`,
       ...customImports,
     };
 

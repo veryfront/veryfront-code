@@ -1,5 +1,5 @@
 import { parseImports, replaceSpecifiers, rewriteImports } from "./lexer.ts";
-import { REACT_DEFAULT_VERSION, TAILWIND_VERSION } from "#veryfront/utils/constants/cdn.ts";
+import { TAILWIND_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
@@ -71,16 +71,19 @@ function normalizeVersionedSpecifier(specifier: string): string {
   return specifier.replace(/@[\d^~x][\d.x^~-]*(?=\/|$)/, "");
 }
 
-/** React import map with consistent es2022 target for SSR/browser parity */
-const REACT_IMPORT_MAP: Record<string, string> = {
-  "react": `https://esm.sh/react@${REACT_DEFAULT_VERSION}?target=es2022`,
-  "react-dom": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}?target=es2022`,
-  "react-dom/client": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/client?target=es2022`,
-  "react-dom/server": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/server?target=es2022`,
-  "react/jsx-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-runtime?target=es2022`,
-  "react/jsx-dev-runtime":
-    `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-dev-runtime?target=es2022`,
-};
+/**
+ * React packages that should NOT be rewritten to esm.sh URLs.
+ * These remain as bare specifiers so Deno's import map resolves them to shared-react.ts,
+ * ensuring a single React instance across all modules.
+ */
+const REACT_PACKAGES = new Set([
+  "react",
+  "react-dom",
+  "react-dom/client",
+  "react-dom/server",
+  "react/jsx-runtime",
+  "react/jsx-dev-runtime",
+]);
 
 function shouldSkipRewrite(specifier: string): boolean {
   return (
@@ -98,8 +101,9 @@ function shouldSkipRewrite(specifier: string): boolean {
 export function rewriteBareImports(code: string, _moduleServerUrl?: string): Promise<string> {
   return withSpan("transforms.esm.rewriteBareImports", () => {
     return replaceSpecifiers(code, (specifier) => {
-      const mapped = REACT_IMPORT_MAP[specifier];
-      if (mapped) return mapped;
+      // Don't rewrite React packages - let Deno's import map resolve them
+      // to shared-react.ts for a single React instance
+      if (REACT_PACKAGES.has(specifier)) return null;
 
       if (shouldSkipRewrite(specifier)) return null;
 
