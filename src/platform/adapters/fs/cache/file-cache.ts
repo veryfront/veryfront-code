@@ -310,8 +310,9 @@ export class FileCache {
     }
 
     // Fire-and-forget backend deletion
+    // Note: prefix already includes "file:" from buildFileCacheKeyPrefix, don't add it again
     if (cacheBackend?.delByPattern) {
-      cacheBackend.delByPattern(`file:${prefix}*`).catch(() => {});
+      cacheBackend.delByPattern(`${prefix}*`).catch(() => {});
     }
 
     return count;
@@ -322,8 +323,9 @@ export class FileCache {
       const count = this.deleteByPrefix(prefix);
 
       // Await backend deletion for cross-pod consistency
+      // Note: prefix already includes "file:" from buildFileCacheKeyPrefix, don't add it again
       if (cacheBackend?.delByPattern) {
-        await cacheBackend.delByPattern(`file:${prefix}*`);
+        await cacheBackend.delByPattern(`${prefix}*`);
       }
 
       return count;
@@ -342,8 +344,9 @@ export class FileCache {
     }
 
     // Fire-and-forget backend deletion
+    // Note: prefix already includes "file:" from buildFileCacheKeyPrefix, don't add it again
     if (cacheBackend?.delByPattern) {
-      cacheBackend.delByPattern(`file:${prefix}*:${suffix}`).catch(() => {});
+      cacheBackend.delByPattern(`${prefix}*:${suffix}`).catch(() => {});
     }
 
     return count;
@@ -354,8 +357,9 @@ export class FileCache {
       const count = this.deleteByPrefixAndSuffix(prefix, suffix);
 
       // Await backend deletion for cross-pod consistency
+      // Note: prefix already includes "file:" from buildFileCacheKeyPrefix, don't add it again
       if (cacheBackend?.delByPattern) {
-        await cacheBackend.delByPattern(`file:${prefix}*:${suffix}`);
+        await cacheBackend.delByPattern(`${prefix}*:${suffix}`);
       }
 
       return count;

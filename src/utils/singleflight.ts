@@ -30,7 +30,3 @@ export class Singleflight<T> {
     return this.inflight.size;
   }
 }
-
-export const httpCacheFlight = new Singleflight<string>();
-export const mdxCompileFlight = new Singleflight<string>();
-export const fileWriteFlight = new Singleflight<void>();

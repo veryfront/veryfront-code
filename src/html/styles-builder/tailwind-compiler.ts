@@ -120,24 +120,9 @@ export function hashCSS(css: string): string {
 }
 
 /**
- * Store CSS in cache for later retrieval by hash (sync version).
- * @deprecated Use cacheCSSAsync() in production to avoid cross-pod 404s
- */
-export function cacheCSS(css: string): string {
-  const hash = hashCSS(css);
-  storeInLocalCache(hash, css);
-  // Fire-and-forget to distributed cache (may cause 404s on different pods)
-  getCssCache().then((cache) => {
-    cache.set(hash, css, CSS_CACHE_TTL_SECONDS).catch(() => {});
-  }).catch(() => {});
-  return hash;
-}
-
-/**
- * Store CSS in cache for later retrieval by hash (async version).
- * MUST be used in production to ensure CSS is available across pods before
- * returning HTML. The sync version causes 404s when browser requests CSS
- * from a different pod before the distributed cache write completes.
+ * Store CSS in cache for later retrieval by hash.
+ * Awaits distributed cache write to ensure CSS is available across pods
+ * before returning HTML (prevents cross-pod 404s).
  */
 export async function cacheCSSAsync(css: string): Promise<string> {
   const hash = hashCSS(css);

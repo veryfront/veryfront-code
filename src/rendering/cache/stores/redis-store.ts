@@ -7,16 +7,21 @@ interface RedisClient {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   get(key: string): Promise<string | null>;
-  set(key: string, value: string): Promise<string | null>;
+  set(key: string, value: string, options?: { EX?: number }): Promise<string | null>;
   del(key: string): Promise<number>;
   scan(cursor: number, options?: { MATCH?: string; COUNT?: number }): Promise<[number, string[]]>;
   on?(event: string, listener: (...args: unknown[]) => void): void;
 }
 
+/** Default TTL for Redis cache entries (1 hour) */
+const DEFAULT_TTL_SECONDS = 3600;
+
 export interface RedisCacheStoreOptions {
   url?: string;
   keyPrefix?: string;
   enableFallback?: boolean;
+  /** TTL in seconds for cache entries (default: 3600 = 1 hour) */
+  ttlSeconds?: number;
 }
 
 export class RedisCacheStore implements CacheStore {
@@ -24,6 +29,7 @@ export class RedisCacheStore implements CacheStore {
   private readonly url?: string;
   private readonly keyPrefix: string;
   private readonly enableFallback: boolean;
+  private readonly ttlSeconds: number;
   private fallbackStore: MemoryCacheStore | null = null;
   private redisUnavailable = false;
   private errorLogged = false;
@@ -32,6 +38,7 @@ export class RedisCacheStore implements CacheStore {
     this.url = options.url;
     this.keyPrefix = options.keyPrefix ?? "veryfront:render:";
     this.enableFallback = options.enableFallback ?? true;
+    this.ttlSeconds = options.ttlSeconds ?? DEFAULT_TTL_SECONDS;
   }
 
   private getFallbackStore(): MemoryCacheStore {
@@ -119,7 +126,8 @@ export class RedisCacheStore implements CacheStore {
 
     try {
       const client = await this.ensureClient();
-      await client.set(this.storageKey(key), JSON.stringify(value));
+      // Apply TTL to prevent unbounded Redis growth
+      await client.set(this.storageKey(key), JSON.stringify(value), { EX: this.ttlSeconds });
     } catch (error) {
       if (this.enableFallback) {
         logger.warn("[redis] set failed, using fallback", { key, error });

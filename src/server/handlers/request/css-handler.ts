@@ -9,7 +9,7 @@
  *
  * Flow:
  * 1. SSR generates HTML with <link href="/_vf/css/[hash].css">
- * 2. cacheCSS() stores the CSS in memory keyed by hash
+ * 2. cacheCSSAsync() stores CSS in memory + distributed cache
  * 3. Browser requests /_vf/css/[hash].css
  * 4. This handler retrieves CSS by hash and serves it
  */

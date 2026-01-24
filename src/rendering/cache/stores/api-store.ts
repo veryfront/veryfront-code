@@ -200,14 +200,27 @@ export class APICacheStore implements CacheStore {
     // Clear matching entries from local cache
     const localDeleted = await this.localCache.deleteByPrefix?.(prefix) ?? 0;
 
-    // Distributed cache doesn't support prefix deletion directly
-    // Entries will expire via TTL
-    logger.debug("[APICacheStore] deleteByPrefix (local only)", {
+    // Clear from distributed cache using pattern deletion
+    let distributedDeleted = 0;
+    try {
+      const backend = await this.getBackend();
+      if (backend.delByPattern) {
+        distributedDeleted = await backend.delByPattern(`${prefix}*`);
+      }
+    } catch (error) {
+      logger.debug("[APICacheStore] Failed to delete from distributed cache", {
+        prefix,
+        error,
+      });
+    }
+
+    logger.debug("[APICacheStore] deleteByPrefix", {
       prefix,
       localDeleted,
+      distributedDeleted,
     });
 
-    return localDeleted;
+    return localDeleted + distributedDeleted;
   }
 
   async clear(): Promise<void> {

@@ -244,19 +244,28 @@ export class ContextAwareCacheCoordinator {
   }
 
   /**
-   * Clear a specific slug from cache
+   * Clear a specific slug from cache (including all theme variants)
    *
    * @param slug - Page slug to clear
    * @param ctx - Render context for tenant isolation
    */
   async clearSlug(slug: string, ctx: RenderContext): Promise<void> {
-    const cacheKey = createCacheKey(ctx, `page:${slug}`);
-    await this.store.delete(cacheKey);
+    // Clear base key and both theme variants
+    // Cache keys include :theme-light or :theme-dark suffix when colorScheme is used
+    const baseKey = createCacheKey(ctx, `page:${slug}`);
+    const lightKey = createCacheKey(ctx, `page:${slug}:theme-light`);
+    const darkKey = createCacheKey(ctx, `page:${slug}:theme-dark`);
 
-    logger.debug("[ContextAwareCache] Cleared slug from cache", {
+    await Promise.all([
+      this.store.delete(baseKey),
+      this.store.delete(lightKey),
+      this.store.delete(darkKey),
+    ]);
+
+    logger.debug("[ContextAwareCache] Cleared slug from cache (all variants)", {
       slug,
       projectId: ctx.projectId,
-      cacheKey,
+      keys: [baseKey, lightKey, darkKey],
     });
   }
 
