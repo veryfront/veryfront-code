@@ -13,27 +13,27 @@ export const REACT_VERSION_19 = "19.1.1";
 export const REACT_DEFAULT_VERSION = REACT_VERSION_19;
 
 export function getReactCDNUrl(version: string = REACT_DEFAULT_VERSION): string {
-  return `${ESM_CDN_BASE}/react@${version}?target=es2022`;
+  return `${ESM_CDN_BASE}/react@${version}`;
 }
 
 export function getReactDOMCDNUrl(version: string = REACT_DEFAULT_VERSION): string {
-  return `${ESM_CDN_BASE}/react-dom@${version}?external=react&target=es2022`;
+  return `${ESM_CDN_BASE}/react-dom@${version}`;
 }
 
 export function getReactDOMClientCDNUrl(version: string = REACT_DEFAULT_VERSION): string {
-  return `${ESM_CDN_BASE}/react-dom@${version}/client?external=react&target=es2022`;
+  return `${ESM_CDN_BASE}/react-dom@${version}/client`;
 }
 
 export function getReactDOMServerCDNUrl(version: string = REACT_DEFAULT_VERSION): string {
-  return `${ESM_CDN_BASE}/react-dom@${version}/server?external=react&target=es2022`;
+  return `${ESM_CDN_BASE}/react-dom@${version}/server`;
 }
 
 export function getReactJSXRuntimeCDNUrl(version: string = REACT_DEFAULT_VERSION): string {
-  return `${ESM_CDN_BASE}/react@${version}/jsx-runtime?external=react&target=es2022`;
+  return `${ESM_CDN_BASE}/react@${version}/jsx-runtime`;
 }
 
 export function getReactJSXDevRuntimeCDNUrl(version: string = REACT_DEFAULT_VERSION): string {
-  return `${ESM_CDN_BASE}/react@${version}/jsx-dev-runtime?external=react&target=es2022`;
+  return `${ESM_CDN_BASE}/react@${version}/jsx-dev-runtime`;
 }
 
 export function getReactImportMap(version: string = REACT_DEFAULT_VERSION): Record<string, string> {

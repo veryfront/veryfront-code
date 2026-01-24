@@ -8,7 +8,7 @@
 import { rendererLogger as logger } from "#veryfront/utils";
 import type { Plugin } from "esbuild";
 import { replaceSpecifiers } from "./lexer.ts";
-import { getReactUrls, REACT_VERSION } from "./package-registry.ts";
+import { getReactUrls } from "./package-registry.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import { isReactSpecifier } from "#veryfront/platform/compat/react-paths.ts";
@@ -197,15 +197,22 @@ export function bundleHttpImports(
     if (!specifier.includes("target=")) {
       params.push("target=es2022");
     }
-    // Only add external and deps to non-React packages
-    // Use external=react to not bundle React (let import map resolve it)
-    // Use deps=react@X,react-dom@X to pin dependency versions (prevents version mismatches)
+    // Only add external to non-React packages
+    // Include both react AND react-dom to ensure version consistency
     if (!isReactPackage) {
-      if (!specifier.includes("external=react")) {
-        params.push("external=react");
-      }
-      if (!specifier.includes("deps=")) {
-        params.push(`deps=react@${REACT_VERSION},react-dom@${REACT_VERSION}`);
+      const hasExternalReact = specifier.includes("external=react");
+      const hasExternalReactDom = specifier.includes("external=react-dom") ||
+        specifier.includes("external=react,react-dom") ||
+        specifier.includes("external=react-dom,react");
+      if (!hasExternalReact && !hasExternalReactDom) {
+        params.push("external=react,react-dom");
+      } else if (hasExternalReact && !hasExternalReactDom) {
+        // Already has external=react, need to add react-dom
+        // This replaces the specifier to include both
+        const updated = specifier.replace("external=react", "external=react,react-dom");
+        if (updated !== specifier) {
+          return !specifier.includes("target=") ? updated + "&target=es2022" : updated;
+        }
       }
     }
     if (params.length === 0) {

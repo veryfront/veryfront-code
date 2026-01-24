@@ -26,9 +26,8 @@ function getVeryfrontModulePaths(): Record<string, string> {
 /**
  * Resolve React imports based on target environment.
  *
- * SSR in Deno: Keep React as bare specifiers so Deno's import map resolves them
- * to shared-react.ts, ensuring a single React instance across all modules.
- * Third-party packages use external=react,react-dom which also resolve via import map.
+ * SSR in Deno: Transform React to esm.sh URLs which are later cached to file://
+ * during the SSR HTTP cache stage for runtime-agnostic loading.
  *
  * SSR in Bun/Node: Keep React as local file:// paths to node_modules,
  * ensuring the same React instance is used by both user components and react-dom-server.
@@ -52,12 +51,10 @@ export async function resolveReactImports(
     return replaceSpecifiers(code, (specifier) => reactImports[specifier] || null);
   }
 
-  // SSR in Deno: Keep React as bare specifiers (resolved by import map to shared-react.ts)
-  // SSR in Node/Bun: Transform to local file:// paths to node_modules
-  // Only resolve veryfront modules for both
+  // SSR: Resolve veryfront module imports + React paths
   const ssrImports: Record<string, string> = {
     ...getVeryfrontModulePaths(),
-    ...(isDeno ? {} : getLocalReactPaths()), // Deno: bare specifiers; Node/Bun: local paths
+    ...(isDeno ? getReactImportMap(reactVersion) : getLocalReactPaths()),
   };
 
   return replaceSpecifiers(code, (specifier) => ssrImports[specifier] || null);
@@ -65,15 +62,13 @@ export async function resolveReactImports(
 
 /**
  * Add deps/external params to esm.sh URLs for React version consistency.
- * esm.sh URLs that don't already have React version pinned get params added.
+ * esm.sh URLs that don't already have React version pinned get ?external added.
  *
- * Uses two esm.sh features:
- * - `external=react` - Don't bundle React, let import map resolve it
- * - `deps=react@X,react-dom@X` - Pin dependency versions to prevent mismatches
- *
- * The `deps` param is critical because third-party packages often have loose
- * version ranges like `react-dom@^18.3.1` which esm.sh would resolve to 18.x,
- * causing "ReactCurrentBatchConfig" errors when mixed with React 19.
+ * IMPORTANT: We use `?external=react,react-dom` to ensure version consistency.
+ * Without externalizing react-dom, packages like @tanstack/react-query will
+ * bundle their own react-dom version (often 18.x), causing "Cannot read
+ * properties of undefined (reading 'ReactCurrentBatchConfig')" errors when
+ * used with React 19 (which renamed internal APIs).
  *
  * @param code - Source code to transform
  * @param _forSSR - Whether this is for SSR (unused but kept for API compatibility)
@@ -84,8 +79,6 @@ export function addDepsToEsmShUrls(
   _forSSR: boolean = false,
   reactVersion: string = REACT_VERSION,
 ): Promise<string> {
-  // Pin both react and react-dom to our version to prevent version mismatches
-  const deps = `deps=react@${reactVersion},react-dom@${reactVersion}`;
   return Promise.resolve(replaceSpecifiers(code, (specifier) => {
     if (
       specifier.startsWith("https://esm.sh/") &&
@@ -93,7 +86,7 @@ export function addDepsToEsmShUrls(
     ) {
       const hasQuery = specifier.includes("?");
       if (hasQuery) return null;
-      return `${specifier}?${deps}&external=react&target=es2022`;
+      return `${specifier}?external=react,react-dom&target=es2022`;
     }
     return null;
   }));
