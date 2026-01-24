@@ -12,11 +12,11 @@ export interface MDXProviderProps {
 export function MDXProvider({
   components = {},
   children,
-}: MDXProviderProps) {
+}: MDXProviderProps): React.ReactNode {
   return <MDXContext.Provider value={components}>{children}</MDXContext.Provider>;
 }
 
 export function useMDXComponents(components?: MDXComponents): MDXComponents {
   const contextComponents = useContext(MDXContext);
-  return { ...contextComponents, ...components };
+  return { ...contextComponents, ...(components ?? {}) };
 }

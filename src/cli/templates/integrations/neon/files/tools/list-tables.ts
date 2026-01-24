@@ -8,9 +8,10 @@ export default tool({
     "List all tables in the connected database. Returns table names, schemas, and row counts to help understand the database structure.",
   inputSchema: z.object({
     schema: z.string().default("public").describe("Schema name to list tables from"),
-    includeRowCounts: z.boolean().default(false).describe(
-      "Whether to include row counts for each table (slower but more informative)",
-    ),
+    includeRowCounts: z
+      .boolean()
+      .default(false)
+      .describe("Whether to include row counts for each table (slower but more informative)"),
   }),
   async execute({ schema, includeRowCounts }) {
     const tables = await listTables(schema);
@@ -31,8 +32,7 @@ export default tool({
       if (includeRowCounts) {
         try {
           result.rowCount = await getTableRowCount(table.tablename, schema);
-        } catch (_error) {
-          // Skip row count if there's an error
+        } catch {
           result.rowCount = undefined;
         }
       }

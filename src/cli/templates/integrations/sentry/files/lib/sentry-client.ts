@@ -2,8 +2,6 @@ import { getApiKey, getOrg } from "./token-store.ts";
 
 const SENTRY_API_BASE_URL = "https://sentry.io/api/0";
 
-// Sentry API Types
-
 export interface Organization {
   id: string;
   slug: string;
@@ -137,10 +135,17 @@ export interface Event {
   }>;
 }
 
-async function sentryFetch<T>(
-  endpoint: string,
-  options: RequestInit = {},
-): Promise<T> {
+function getRequiredOrg(): string {
+  const org = getOrg();
+  if (!org) {
+    throw new Error(
+      "Sentry organization not configured. Please set SENTRY_ORG environment variable.",
+    );
+  }
+  return org;
+}
+
+async function sentryFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const authToken = getApiKey() || process.env.SENTRY_AUTH_TOKEN;
   if (!authToken) {
     throw new Error("Not authenticated with Sentry. Please set SENTRY_AUTH_TOKEN.");
@@ -149,60 +154,36 @@ async function sentryFetch<T>(
   const response = await fetch(`${SENTRY_API_BASE_URL}${endpoint}`, {
     ...options,
     headers: {
-      "Authorization": `Bearer ${authToken}`,
+      Authorization: `Bearer ${authToken}`,
       "Content-Type": "application/json",
       ...options.headers,
     },
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    const errorMessage = (error as { detail?: string }).detail ||
-      `Sentry API error: ${response.status} ${response.statusText}`;
-    throw new Error(errorMessage);
+    const error = (await response.json().catch(() => ({}))) as { detail?: string };
+    throw new Error(
+      error.detail ?? `Sentry API error: ${response.status} ${response.statusText}`,
+    );
   }
 
   return response.json();
 }
 
-/**
- * List all organizations for the authenticated user
- */
 export function listOrganizations(): Promise<Organization[]> {
   return sentryFetch<Organization[]>("/organizations/");
 }
 
-/**
- * List all projects in the configured organization
- */
 export function listProjects(): Promise<Project[]> {
-  const org = getOrg();
-  if (!org) {
-    throw new Error(
-      "Sentry organization not configured. Please set SENTRY_ORG environment variable.",
-    );
-  }
-
+  const org = getRequiredOrg();
   return sentryFetch<Project[]>(`/organizations/${org}/projects/`);
 }
 
-/**
- * Get details for a specific project
- */
 export function getProject(projectSlug: string): Promise<Project> {
-  const org = getOrg();
-  if (!org) {
-    throw new Error(
-      "Sentry organization not configured. Please set SENTRY_ORG environment variable.",
-    );
-  }
-
+  const org = getRequiredOrg();
   return sentryFetch<Project>(`/projects/${org}/${projectSlug}/`);
 }
 
-/**
- * List issues in a project with optional filters
- */
 export function listIssues(
   projectSlug: string,
   options: {
@@ -212,57 +193,30 @@ export function listIssues(
     limit?: number;
   } = {},
 ): Promise<Issue[]> {
-  const org = getOrg();
-  if (!org) {
-    throw new Error(
-      "Sentry organization not configured. Please set SENTRY_ORG environment variable.",
-    );
-  }
+  const org = getRequiredOrg();
 
-  const params = new URLSearchParams();
-  params.append("project", projectSlug);
+  const params = new URLSearchParams({ project: projectSlug });
 
-  if (options.query) {
-    params.append("query", options.query);
-  }
-  if (options.status) {
-    params.append("query", `is:${options.status}`);
-  }
-  if (options.sort) {
-    params.append("sort", options.sort);
-  }
-  if (options.limit) {
-    params.append("limit", options.limit.toString());
-  }
+  if (options.query) params.append("query", options.query);
+  if (options.status) params.append("query", `is:${options.status}`);
+  if (options.sort) params.append("sort", options.sort);
+  if (options.limit) params.append("limit", options.limit.toString());
 
   return sentryFetch<Issue[]>(`/organizations/${org}/issues/?${params.toString()}`);
 }
 
-/**
- * Get detailed information about a specific issue
- */
 export function getIssue(issueId: string): Promise<Issue> {
   return sentryFetch<Issue>(`/issues/${issueId}/`);
 }
 
-/**
- * Update an issue (e.g., resolve, ignore, assign)
- */
 export function resolveIssue(issueId: string): Promise<Issue> {
   return sentryFetch<Issue>(`/issues/${issueId}/`, {
     method: "PUT",
-    body: JSON.stringify({
-      status: "resolved",
-    }),
+    body: JSON.stringify({ status: "resolved" }),
   });
 }
 
-/**
- * List events for a specific issue
- */
 export function listEvents(issueId: string, limit: number = 10): Promise<Event[]> {
-  const params = new URLSearchParams();
-  params.append("limit", limit.toString());
-
+  const params = new URLSearchParams({ limit: limit.toString() });
   return sentryFetch<Event[]>(`/issues/${issueId}/events/?${params.toString()}`);
 }

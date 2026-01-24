@@ -1,6 +1,6 @@
-/**
+/**************************
  * Main Menu - Interactive CLI launcher
- */
+ **************************/
 
 import { writeStdout } from "#veryfront/platform/compat/process.ts";
 import { getStdinReader, setRawMode } from "#veryfront/platform/compat/stdin.ts";
@@ -16,7 +16,10 @@ const HIDE_CURSOR = `${ESC}[?25l`;
 const SHOW_CURSOR = `${ESC}[?25h`;
 const CLEAR_LINE = `${ESC}[2K`;
 const COL_1 = `${ESC}[1G`;
-const moveUp = (n = 1) => `${ESC}[${n}A`;
+
+function moveUp(n = 1): string {
+  return `${ESC}[${n}A`;
+}
 
 function write(s: string): void {
   writeStdout(s);
@@ -90,7 +93,7 @@ function generateRandomName(): string {
 
 export type MenuAction = "new" | "dev" | "deploy" | "login" | "help" | "exit";
 
-const MENU_OPTIONS: { id: MenuAction; label: string; desc: string }[] = [
+const MENU_OPTIONS: Array<{ id: MenuAction; label: string; desc: string }> = [
   { id: "new", label: "New Project", desc: "Create a new Veryfront project" },
   { id: "dev", label: "Start Dev", desc: "Start the development server" },
   { id: "deploy", label: "Deploy", desc: "Deploy to production" },
@@ -114,16 +117,15 @@ export async function promptProjectName(): Promise<string | null> {
   let input = "";
   let lines = 0;
 
-  function draw() {
+  function draw(): void {
     if (lines > 0) clearLines(lines);
+
     console.log();
     console.log("  " + bold("Project name") + " " + muted("(Enter to accept default)"));
-    if (input.length === 0) {
-      // Show default as placeholder
-      console.log("  " + brand("❯") + " " + muted(defaultName) + brand("█"));
-    } else {
-      console.log("  " + brand("❯") + " " + input + brand("█"));
-    }
+    console.log(
+      "  " + brand("❯") + " " + (input.length === 0 ? muted(defaultName) : input) + brand("█"),
+    );
+
     lines = 3;
   }
 
@@ -140,21 +142,19 @@ export async function promptProjectName(): Promise<string | null> {
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
+
       const key = dec.decode(value);
 
-      // Ctrl+C to cancel
       if (key === "\x03") {
         result = null;
         break;
       }
 
-      // Enter to submit (use default if empty)
       if (key === "\r" || key === "\n") {
         result = input.length > 0 ? input : defaultName;
         break;
       }
 
-      // Backspace
       if (key === "\x7f" || key === "\b") {
         if (input.length > 0) {
           input = input.slice(0, -1);
@@ -163,7 +163,6 @@ export async function promptProjectName(): Promise<string | null> {
         continue;
       }
 
-      // Only allow valid project name characters
       if (/^[a-z0-9-]$/.test(key)) {
         input += key;
         draw();
@@ -187,31 +186,25 @@ export async function promptProjectName(): Promise<string | null> {
 }
 
 export async function showMainMenu(): Promise<MenuAction | null> {
-  if (!isTTY()) {
-    return null;
-  }
+  if (!isTTY()) return null;
 
   let idx = 0;
   let lines = 0;
 
-  function draw() {
+  function draw(): void {
     if (lines > 0) clearLines(lines);
 
-    // Header
     console.log();
     console.log("  " + bold(brand("Veryfront")));
     console.log();
     lines = 3;
 
-    // Options
     for (let i = 0; i < MENU_OPTIONS.length; i++) {
-      const opt = MENU_OPTIONS[i];
-      if (!opt) continue;
-      const sel = i === idx;
-      const pointer = sel ? brand("❯") : " ";
-      const label = sel ? brand(opt.label) : opt.label;
-      const desc = muted(opt.desc);
-      console.log(`  ${pointer} ${label}  ${desc}`);
+      const opt = MENU_OPTIONS[i]!;
+      const selected = i === idx;
+      const pointer = selected ? brand("❯") : " ";
+      const label = selected ? brand(opt.label) : opt.label;
+      console.log(`  ${pointer} ${label}  ${muted(opt.desc)}`);
       lines++;
     }
 
@@ -233,28 +226,25 @@ export async function showMainMenu(): Promise<MenuAction | null> {
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
+
       const key = dec.decode(value);
 
-      // Ctrl+C or q to exit
       if (key === "\x03" || key === "q" || key === "Q") {
         result = "exit";
         break;
       }
 
-      // Enter to select
       if (key === "\r" || key === "\n") {
-        const selected = MENU_OPTIONS[idx];
-        result = selected?.id ?? null;
+        result = MENU_OPTIONS[idx]?.id ?? null;
         break;
       }
 
-      // Arrow up or k
       if (key === "\x1b[A" || key === "k") {
         idx = idx > 0 ? idx - 1 : MENU_OPTIONS.length - 1;
         draw();
+        continue;
       }
 
-      // Arrow down or j
       if (key === "\x1b[B" || key === "j") {
         idx = idx < MENU_OPTIONS.length - 1 ? idx + 1 : 0;
         draw();
@@ -268,7 +258,6 @@ export async function showMainMenu(): Promise<MenuAction | null> {
   write(SHOW_CURSOR);
   clearLines(lines);
 
-  // Show selection
   if (result && result !== "exit") {
     const selected = MENU_OPTIONS.find((o) => o.id === result);
     if (selected) {

@@ -2,11 +2,16 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 
-// Skip all tests if not running in Deno - this file specifically tests the Deno adapter
+function assertFunction(value: unknown): void {
+  assertExists(value);
+  assertEquals(typeof value, "function");
+}
+
 if (!isDeno) {
   describe("DenoAdapter", { skip: true }, () => {
     it("skipped - not running in Deno", () => {});
   });
+
   describe("denoAdapter singleton", { skip: true }, () => {
     it("skipped - not running in Deno", () => {});
   });
@@ -16,18 +21,15 @@ if (!isDeno) {
   describe("DenoAdapter", () => {
     describe("class instantiation", () => {
       it("should be instantiable", () => {
-        const adapter = new DenoAdapter();
-        assertExists(adapter);
+        assertExists(new DenoAdapter());
       });
 
       it("should have correct id", () => {
-        const adapter = new DenoAdapter();
-        assertEquals(adapter.id, "deno");
+        assertEquals(new DenoAdapter().id, "deno");
       });
 
       it("should have correct name", () => {
-        const adapter = new DenoAdapter();
-        assertEquals(adapter.name, "deno");
+        assertEquals(new DenoAdapter().name, "deno");
       });
     });
 
@@ -75,53 +77,43 @@ if (!isDeno) {
       });
 
       it("should have readFile method", () => {
-        assertExists(denoAdapter.fs.readFile);
-        assertEquals(typeof denoAdapter.fs.readFile, "function");
+        assertFunction(denoAdapter.fs.readFile);
       });
 
       it("should have readFileBytes method", () => {
-        assertExists(denoAdapter.fs.readFileBytes);
-        assertEquals(typeof denoAdapter.fs.readFileBytes, "function");
+        assertFunction(denoAdapter.fs.readFileBytes);
       });
 
       it("should have writeFile method", () => {
-        assertExists(denoAdapter.fs.writeFile);
-        assertEquals(typeof denoAdapter.fs.writeFile, "function");
+        assertFunction(denoAdapter.fs.writeFile);
       });
 
       it("should have exists method", () => {
-        assertExists(denoAdapter.fs.exists);
-        assertEquals(typeof denoAdapter.fs.exists, "function");
+        assertFunction(denoAdapter.fs.exists);
       });
 
       it("should have readDir method", () => {
-        assertExists(denoAdapter.fs.readDir);
-        assertEquals(typeof denoAdapter.fs.readDir, "function");
+        assertFunction(denoAdapter.fs.readDir);
       });
 
       it("should have stat method", () => {
-        assertExists(denoAdapter.fs.stat);
-        assertEquals(typeof denoAdapter.fs.stat, "function");
+        assertFunction(denoAdapter.fs.stat);
       });
 
       it("should have mkdir method", () => {
-        assertExists(denoAdapter.fs.mkdir);
-        assertEquals(typeof denoAdapter.fs.mkdir, "function");
+        assertFunction(denoAdapter.fs.mkdir);
       });
 
       it("should have remove method", () => {
-        assertExists(denoAdapter.fs.remove);
-        assertEquals(typeof denoAdapter.fs.remove, "function");
+        assertFunction(denoAdapter.fs.remove);
       });
 
       it("should have makeTempDir method", () => {
-        assertExists(denoAdapter.fs.makeTempDir);
-        assertEquals(typeof denoAdapter.fs.makeTempDir, "function");
+        assertFunction(denoAdapter.fs.makeTempDir);
       });
 
       it("should have watch method", () => {
-        assertExists(denoAdapter.fs.watch);
-        assertEquals(typeof denoAdapter.fs.watch, "function");
+        assertFunction(denoAdapter.fs.watch);
       });
     });
 
@@ -131,18 +123,15 @@ if (!isDeno) {
       });
 
       it("should have get method", () => {
-        assertExists(denoAdapter.env.get);
-        assertEquals(typeof denoAdapter.env.get, "function");
+        assertFunction(denoAdapter.env.get);
       });
 
       it("should have set method", () => {
-        assertExists(denoAdapter.env.set);
-        assertEquals(typeof denoAdapter.env.set, "function");
+        assertFunction(denoAdapter.env.set);
       });
 
       it("should have toObject method", () => {
-        assertExists(denoAdapter.env.toObject);
-        assertEquals(typeof denoAdapter.env.toObject, "function");
+        assertFunction(denoAdapter.env.toObject);
       });
     });
 
@@ -152,8 +141,7 @@ if (!isDeno) {
       });
 
       it("should have upgradeWebSocket method", () => {
-        assertExists(denoAdapter.server.upgradeWebSocket);
-        assertEquals(typeof denoAdapter.server.upgradeWebSocket, "function");
+        assertFunction(denoAdapter.server.upgradeWebSocket);
       });
     });
 
@@ -163,27 +151,23 @@ if (!isDeno) {
       });
 
       it("should have statSync method", () => {
-        assertExists(denoAdapter.shell.statSync);
-        assertEquals(typeof denoAdapter.shell.statSync, "function");
+        assertFunction(denoAdapter.shell.statSync);
       });
 
       it("should have readFileSync method", () => {
-        assertExists(denoAdapter.shell.readFileSync);
-        assertEquals(typeof denoAdapter.shell.readFileSync, "function");
+        assertFunction(denoAdapter.shell.readFileSync);
       });
     });
 
     describe("serve method", () => {
       it("should have serve method", () => {
-        assertExists(denoAdapter.serve);
-        assertEquals(typeof denoAdapter.serve, "function");
+        assertFunction(denoAdapter.serve);
       });
     });
 
     describe("shutdown method", () => {
       it("should have shutdown method", () => {
-        assertExists(denoAdapter.shutdown);
-        assertEquals(typeof denoAdapter.shutdown, "function");
+        assertFunction(denoAdapter.shutdown);
       });
     });
   });
@@ -197,4 +181,4 @@ if (!isDeno) {
       assertEquals(denoAdapter, denoAdapter);
     });
   });
-} // end else isDeno
+}

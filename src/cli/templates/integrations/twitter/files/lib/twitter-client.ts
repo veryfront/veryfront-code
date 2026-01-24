@@ -4,20 +4,14 @@
  * Provides a type-safe interface to Twitter API v2 operations.
  */
 
-import { tokenStore as _tokenStore } from "./token-store.ts";
 import { getValidToken } from "./oauth.ts";
 
 // Helper for Cross-Platform environment access
 function getEnv(key: string): string | undefined {
   // @ts-ignore - Deno global
-  if (typeof Deno !== "undefined") {
-    // @ts-ignore - Deno global
-    return Deno.env.get(key);
-  } // @ts-ignore - process global
-  else if (typeof process !== "undefined" && process.env) {
-    // @ts-ignore - process global
-    return process.env[key];
-  }
+  if (typeof Deno !== "undefined") return Deno.env.get(key);
+  // @ts-ignore - process global
+  if (typeof process !== "undefined" && process.env) return process.env[key];
   return undefined;
 }
 
@@ -79,8 +73,8 @@ export const twitterOAuthProvider = {
   name: "twitter",
   authorizationUrl: "https://twitter.com/i/oauth2/authorize",
   tokenUrl: "https://api.twitter.com/2/oauth2/token",
-  clientId: getEnv("TWITTER_CLIENT_ID") || "",
-  clientSecret: getEnv("TWITTER_CLIENT_SECRET") || "",
+  clientId: getEnv("TWITTER_CLIENT_ID") ?? "",
+  clientSecret: getEnv("TWITTER_CLIENT_SECRET") ?? "",
   scopes: [
     "tweet.read",
     "tweet.write",
@@ -95,19 +89,35 @@ export const twitterOAuthProvider = {
 /**
  * Create a Twitter client for a specific user
  */
-export function createTwitterClient(userId: string) {
-  const getAccessToken = async (): Promise<string> => {
+export function createTwitterClient(userId: string): {
+  getMe: () => Promise<TwitterUser>;
+  getUserById: (userId: string) => Promise<TwitterUser>;
+  getTweets: (
+    userId: string,
+    options?: { maxResults?: number; excludeReplies?: boolean },
+  ) => Promise<Tweet[]>;
+  getTweet: (tweetId: string) => Promise<Tweet>;
+  postTweet: (text: string) => Promise<{ id: string; text: string }>;
+  searchTweets: (
+    query: string,
+    options?: { maxResults?: number; sortOrder?: "recency" | "relevancy" },
+  ) => Promise<SearchResult>;
+  getTimeline: (options?: { maxResults?: number }) => Promise<Tweet[]>;
+} {
+  async function getAccessToken(): Promise<string> {
     const token = await getValidToken(twitterOAuthProvider, userId, "twitter");
     if (!token) {
-      throw new Error("Twitter not connected. Please connect your Twitter account first.");
+      throw new Error(
+        "Twitter not connected. Please connect your Twitter account first.",
+      );
     }
     return token;
-  };
+  }
 
-  const twitterFetch = async <T>(
+  async function twitterFetch<T>(
     endpoint: string,
     options: RequestInit = {},
-  ): Promise<T> => {
+  ): Promise<T> {
     const accessToken = await getAccessToken();
 
     const response = await fetch(`${TWITTER_API_BASE}${endpoint}`, {
@@ -120,18 +130,22 @@ export function createTwitterClient(userId: string) {
     });
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: response.statusText }));
-      throw new Error(`Twitter API error: ${error.detail || error.title || response.statusText}`);
+      const error = await response
+        .json()
+        .catch(() => ({ detail: response.statusText }));
+      throw new Error(
+        `Twitter API error: ${error.detail || error.title || response.statusText}`,
+      );
     }
 
     return response.json();
-  };
+  }
 
   return {
     /**
      * Get authenticated user information
      */
-    getMe: async (): Promise<TwitterUser> => {
+    async getMe(): Promise<TwitterUser> {
       const result = await twitterFetch<{ data: TwitterUser }>(
         "/users/me?user.fields=created_at,description,location,profile_image_url,public_metrics,verified",
       );
@@ -141,7 +155,7 @@ export function createTwitterClient(userId: string) {
     /**
      * Get user by ID
      */
-    getUserById: async (userId: string): Promise<TwitterUser> => {
+    async getUserById(userId: string): Promise<TwitterUser> {
       const result = await twitterFetch<{ data: TwitterUser }>(
         `/users/${userId}?user.fields=created_at,description,location,profile_image_url,public_metrics,verified`,
       );
@@ -151,29 +165,27 @@ export function createTwitterClient(userId: string) {
     /**
      * Get user's tweets
      */
-    getTweets: async (
+    async getTweets(
       userId: string,
       options: { maxResults?: number; excludeReplies?: boolean } = {},
-    ): Promise<Tweet[]> => {
+    ): Promise<Tweet[]> {
       const params = new URLSearchParams({
-        "max_results": String(options.maxResults || 10),
+        max_results: String(options.maxResults ?? 10),
         "tweet.fields": "created_at,public_metrics,referenced_tweets,entities",
       });
 
-      if (options.excludeReplies) {
-        params.set("exclude", "replies");
-      }
+      if (options.excludeReplies) params.set("exclude", "replies");
 
       const result = await twitterFetch<{ data: Tweet[] }>(
         `/users/${userId}/tweets?${params.toString()}`,
       );
-      return result.data || [];
+      return result.data ?? [];
     },
 
     /**
      * Get single tweet by ID
      */
-    getTweet: async (tweetId: string): Promise<Tweet> => {
+    async getTweet(tweetId: string): Promise<Tweet> {
       const result = await twitterFetch<{ data: Tweet }>(
         `/tweets/${tweetId}?tweet.fields=created_at,public_metrics,referenced_tweets,entities,author_id`,
       );
@@ -183,7 +195,7 @@ export function createTwitterClient(userId: string) {
     /**
      * Post a new tweet
      */
-    postTweet: async (text: string): Promise<{ id: string; text: string }> => {
+    async postTweet(text: string): Promise<{ id: string; text: string }> {
       const result = await twitterFetch<{ data: { id: string; text: string } }>(
         "/tweets",
         {
@@ -197,15 +209,16 @@ export function createTwitterClient(userId: string) {
     /**
      * Search recent tweets
      */
-    searchTweets: (
+    searchTweets(
       query: string,
       options: { maxResults?: number; sortOrder?: "recency" | "relevancy" } = {},
-    ): Promise<SearchResult> => {
+    ): Promise<SearchResult> {
       const params = new URLSearchParams({
         query,
-        "max_results": String(options.maxResults || 10),
-        "tweet.fields": "created_at,public_metrics,referenced_tweets,entities,author_id",
-        "sort_order": options.sortOrder || "recency",
+        max_results: String(options.maxResults ?? 10),
+        "tweet.fields":
+          "created_at,public_metrics,referenced_tweets,entities,author_id",
+        sort_order: options.sortOrder ?? "recency",
       });
 
       return twitterFetch<SearchResult>(
@@ -216,19 +229,20 @@ export function createTwitterClient(userId: string) {
     /**
      * Get home timeline (reverse chronological tweets from followed accounts)
      */
-    getTimeline: async (options: { maxResults?: number } = {}): Promise<Tweet[]> => {
+    async getTimeline(options: { maxResults?: number } = {}): Promise<Tweet[]> {
       const me = await twitterFetch<{ data: TwitterUser }>("/users/me");
-      const userId = me.data.id;
+      const timelineUserId = me.data.id;
 
       const params = new URLSearchParams({
-        "max_results": String(options.maxResults || 10),
-        "tweet.fields": "created_at,public_metrics,referenced_tweets,entities,author_id",
+        max_results: String(options.maxResults ?? 10),
+        "tweet.fields":
+          "created_at,public_metrics,referenced_tweets,entities,author_id",
       });
 
       const result = await twitterFetch<{ data: Tweet[] }>(
-        `/users/${userId}/timelines/reverse_chronological?${params.toString()}`,
+        `/users/${timelineUserId}/timelines/reverse_chronological?${params.toString()}`,
       );
-      return result.data || [];
+      return result.data ?? [];
     },
   };
 }

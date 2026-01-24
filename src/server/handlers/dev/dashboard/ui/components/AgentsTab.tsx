@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { Agent, Tool } from "../App.tsx";
-import { Sidebar } from "./Sidebar.tsx";
 import { Card } from "./Card.tsx";
+import { Sidebar } from "./Sidebar.tsx";
 import { DetailHeader, EmptyState, TwoColumnLayout } from "./shared.tsx";
 
 interface AgentsTabProps {
@@ -10,12 +10,21 @@ interface AgentsTabProps {
   onNavigateToMCP: (subTab: "tools" | "resources" | "prompts", itemId: string) => void;
 }
 
-export function AgentsTab({ agents, tools, onNavigateToMCP }: AgentsTabProps) {
+export function AgentsTab({ agents, tools, onNavigateToMCP }: AgentsTabProps): React.JSX.Element {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
 
-  const filteredAgents = agents.filter((a) => a.id.toLowerCase().includes(search.toLowerCase()));
-  const selectedAgent = agents.find((a) => a.id === selectedId);
+  const searchLower = search.toLowerCase();
+
+  const filteredAgents = useMemo(
+    () => agents.filter((a) => a.id.toLowerCase().includes(searchLower)),
+    [agents, searchLower],
+  );
+
+  const selectedAgent = useMemo(
+    () => agents.find((a) => a.id === selectedId),
+    [agents, selectedId],
+  );
 
   const sidebar = (
     <Sidebar
@@ -31,13 +40,7 @@ export function AgentsTab({ agents, tools, onNavigateToMCP }: AgentsTabProps) {
   return (
     <TwoColumnLayout sidebar={sidebar}>
       {selectedAgent
-        ? (
-          <AgentDetail
-            agent={selectedAgent}
-            tools={tools}
-            onNavigateToMCP={onNavigateToMCP}
-          />
-        )
+        ? <AgentDetail agent={selectedAgent} tools={tools} onNavigateToMCP={onNavigateToMCP} />
         : <EmptyState message="Select an agent" />}
     </TwoColumnLayout>
   );
@@ -49,12 +52,12 @@ interface AgentDetailProps {
   onNavigateToMCP: (subTab: "tools" | "resources" | "prompts", itemId: string) => void;
 }
 
-function AgentDetail({ agent, tools, onNavigateToMCP }: AgentDetailProps) {
-  const toolIds = Object.keys(agent.tools || {}).filter((k) => agent.tools[k]);
+function AgentDetail({ agent, tools, onNavigateToMCP }: AgentDetailProps): React.JSX.Element {
+  const toolIds = Object.keys(agent.tools ?? {}).filter((k) => agent.tools?.[k]);
 
   return (
     <div>
-      <DetailHeader title={agent.id} description={agent.description || "No description"} />
+      <DetailHeader title={agent.id} description={agent.description ?? "No description"} />
 
       <Card title="Configuration" className="mb-6">
         <table className="w-full text-sm">
@@ -66,15 +69,17 @@ function AgentDetail({ agent, tools, onNavigateToMCP }: AgentDetailProps) {
         </table>
       </Card>
 
-      {agent.system && (
-        <Card title="System Prompt" className="mb-6">
-          <div className="p-4">
-            <pre className="text-sm text-gray-700 whitespace-pre-wrap font-mono bg-gray-50 p-3 rounded-lg max-h-64 overflow-auto">
+      {agent.system
+        ? (
+          <Card title="System Prompt" className="mb-6">
+            <div className="p-4">
+              <pre className="text-sm text-gray-700 whitespace-pre-wrap font-mono bg-gray-50 p-3 rounded-lg max-h-64 overflow-auto">
               {agent.system}
-            </pre>
-          </div>
-        </Card>
-      )}
+              </pre>
+            </div>
+          </Card>
+        )
+        : null}
 
       <Card title={`Tools (${toolIds.length})`} className="mb-6">
         <div className="p-3">
@@ -84,37 +89,40 @@ function AgentDetail({ agent, tools, onNavigateToMCP }: AgentDetailProps) {
               <div className="flex flex-wrap gap-1.5">
                 {toolIds.map((id) => {
                   const exists = tools.some((t) => t.id === id);
-                  return (
-                    <Badge
-                      key={id}
-                      label={id}
-                      exists={exists}
-                      onClick={exists ? () => onNavigateToMCP("tools", id) : undefined}
-                    />
-                  );
+                  const handleClick = exists ? () => onNavigateToMCP("tools", id) : undefined;
+
+                  return <Badge key={id} label={id} exists={exists} onClick={handleClick} />;
                 })}
               </div>
             )}
         </div>
       </Card>
 
-      {agent.memory && (
-        <Card title="Memory">
-          <table className="w-full text-sm">
-            <tbody>
-              <ConfigRow label="Type" value={agent.memory.type || "-"} />
-              <ConfigRow label="Max Tokens" value={agent.memory.maxTokens || "-"} last />
-            </tbody>
-          </table>
-        </Card>
-      )}
+      {agent.memory
+        ? (
+          <Card title="Memory">
+            <table className="w-full text-sm">
+              <tbody>
+                <ConfigRow label="Type" value={agent.memory.type || "-"} />
+                <ConfigRow label="Max Tokens" value={agent.memory.maxTokens || "-"} last />
+              </tbody>
+            </table>
+          </Card>
+        )
+        : null}
     </div>
   );
 }
 
-function ConfigRow(
-  { label, value, last }: { label: string; value: string | number; last?: boolean },
-) {
+function ConfigRow({
+  label,
+  value,
+  last,
+}: {
+  label: string;
+  value: string | number;
+  last?: boolean;
+}): React.JSX.Element {
   return (
     <tr className={last ? "" : "border-b"}>
       <td className="px-3 py-2.5 w-28 font-medium text-gray-600">{label}</td>
@@ -123,13 +131,21 @@ function ConfigRow(
   );
 }
 
-function Badge(
-  { label, exists, onClick }: { label: string; exists: boolean; onClick?: () => void },
-) {
+function Badge({
+  label,
+  exists,
+  onClick,
+}: {
+  label: string;
+  exists: boolean;
+  onClick?: () => void;
+}): React.JSX.Element {
   const base = "px-2.5 py-1 text-xs font-medium rounded transition-colors";
+
   if (!exists) {
     return <span className={`${base} bg-gray-100 text-gray-400`}>{label} (not found)</span>;
   }
+
   return (
     <button
       type="button"

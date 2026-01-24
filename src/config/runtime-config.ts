@@ -1,4 +1,4 @@
-/**
+/****
  * Runtime Configuration
  *
  * Combines file-based config (veryfront.config.ts) with runtime environment.
@@ -80,9 +80,6 @@ export const DEFAULT_CONFIG: Partial<VeryfrontConfig> = {
   },
 };
 
-/**
- * Create RuntimeInfo from RuntimeEnv.
- */
 function createRuntimeInfo(env: RuntimeEnv): RuntimeInfo {
   return {
     env,
@@ -94,24 +91,17 @@ function createRuntimeInfo(env: RuntimeEnv): RuntimeInfo {
   };
 }
 
-/**
- * Merge file config with environment overrides.
- * Environment variables take precedence for certain values.
- */
 function mergeConfigWithEnv(fileConfig: VeryfrontConfig, env: RuntimeEnv): VeryfrontConfig {
   return {
     ...fileConfig,
 
-    // Project slug from env takes precedence
     projectSlug: env.projectSlug || fileConfig.projectSlug,
 
-    // Experimental features - env can enable but not disable
     experimental: {
       ...fileConfig.experimental,
       rsc: fileConfig.experimental?.rsc ?? env.experimentalRsc,
     },
 
-    // Cache config - env overrides
     cache: {
       ...fileConfig.cache,
       dir: env.cacheDir || fileConfig.cache?.dir,
@@ -121,13 +111,11 @@ function mergeConfigWithEnv(fileConfig: VeryfrontConfig, env: RuntimeEnv): Veryf
       },
     },
 
-    // Dev config - port from env
     dev: {
       ...fileConfig.dev,
       port: env.port || fileConfig.dev?.port,
     },
 
-    // Observability - merge with env
     observability: {
       tracing: {
         enabled: env.otelEnabled || fileConfig.observability?.tracing?.enabled,
@@ -144,31 +132,11 @@ function mergeConfigWithEnv(fileConfig: VeryfrontConfig, env: RuntimeEnv): Veryf
   };
 }
 
-/**
- * Create a RuntimeConfig from file config and environment.
- *
- * @param fileConfig - Configuration from veryfront.config.ts (or defaults)
- * @param env - Runtime environment (defaults to current environment)
- * @returns Complete RuntimeConfig with runtime info
- *
- * @example
- * ```typescript
- * // In application code
- * const config = createRuntimeConfig(loadedConfig);
- *
- * if (config.runtime.isProduction) {
- *   // Production-specific behavior
- * }
- * ```
- */
 export function createRuntimeConfig(
   fileConfig: VeryfrontConfig = {},
   env: RuntimeEnv = getRuntimeEnv(),
 ): RuntimeConfig {
-  const mergedConfig = mergeConfigWithEnv(
-    { ...DEFAULT_CONFIG, ...fileConfig },
-    env,
-  );
+  const mergedConfig = mergeConfigWithEnv({ ...DEFAULT_CONFIG, ...fileConfig }, env);
 
   return {
     ...mergedConfig,
@@ -180,72 +148,32 @@ export function createRuntimeConfig(
 // Global Config Singleton
 // ============================================================================
 
-let _runtimeConfig: RuntimeConfig | null = null;
+let runtimeConfig: RuntimeConfig | null = null;
 
-/**
- * Initialize the global RuntimeConfig.
- * Should be called once at application startup after loading file config.
- *
- * @param fileConfig - Configuration from veryfront.config.ts
- * @returns Initialized RuntimeConfig
- */
 export function initRuntimeConfig(fileConfig: VeryfrontConfig = {}): RuntimeConfig {
-  if (_runtimeConfig) return _runtimeConfig;
+  if (runtimeConfig) return runtimeConfig;
 
-  _runtimeConfig = createRuntimeConfig(fileConfig);
-  return _runtimeConfig;
+  runtimeConfig = createRuntimeConfig(fileConfig);
+  return runtimeConfig;
 }
 
-/**
- * Get the global RuntimeConfig.
- * Auto-initializes with defaults if not already initialized.
- *
- * @returns RuntimeConfig
- */
 export function getRuntimeConfig(): RuntimeConfig {
-  if (!_runtimeConfig) {
-    return initRuntimeConfig();
-  }
-  return _runtimeConfig;
+  return runtimeConfig ?? initRuntimeConfig();
 }
 
-/**
- * Check if RuntimeConfig has been initialized.
- */
 export function isRuntimeConfigInitialized(): boolean {
-  return _runtimeConfig !== null;
+  return runtimeConfig !== null;
 }
 
-/**
- * Update the global RuntimeConfig with new file config.
- * Useful when config file changes (e.g., HMR).
- *
- * @param fileConfig - New file configuration
- * @returns Updated RuntimeConfig
- */
 export function updateRuntimeConfig(fileConfig: VeryfrontConfig): RuntimeConfig {
-  _runtimeConfig = createRuntimeConfig(fileConfig);
-  return _runtimeConfig;
+  runtimeConfig = createRuntimeConfig(fileConfig);
+  return runtimeConfig;
 }
 
 // ============================================================================
 // Test Utilities
 // ============================================================================
 
-/**
- * Create a RuntimeConfig for testing without affecting globals.
- *
- * @param overrides - Partial config to merge with defaults
- * @returns New RuntimeConfig for test use
- *
- * @example
- * ```typescript
- * const config = createTestConfig({
- *   experimental: { rsc: true },
- *   runtime: { env: { debug: true } }
- * });
- * ```
- */
 export function createTestConfig(
   overrides: Partial<VeryfrontConfig> & {
     runtime?: { env?: Partial<RuntimeEnv> };
@@ -259,27 +187,17 @@ export function createTestConfig(
   return createRuntimeConfig(fileConfig, testEnv);
 }
 
-/**
- * Override the global RuntimeConfig for testing.
- *
- * @param config - Full RuntimeConfig or partial overrides
- * @internal Test use only
- */
 export function _setRuntimeConfigForTesting(
   config: Partial<RuntimeConfig> | RuntimeConfig,
 ): void {
   if ("runtime" in config && config.runtime) {
-    _runtimeConfig = config as RuntimeConfig;
-  } else {
-    _runtimeConfig = createTestConfig(config);
+    runtimeConfig = config as RuntimeConfig;
+    return;
   }
+
+  runtimeConfig = createTestConfig(config);
 }
 
-/**
- * Reset RuntimeConfig to uninitialized state.
- *
- * @internal Test use only
- */
 export function _resetRuntimeConfig(): void {
-  _runtimeConfig = null;
+  runtimeConfig = null;
 }

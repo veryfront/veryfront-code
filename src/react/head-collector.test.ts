@@ -15,22 +15,19 @@ describe("head-collector", () => {
   describe("collectHead", () => {
     it("collects title", () => {
       collectHead({ title: "My Page" });
-      const head = flushHeadCollector();
-      assertEquals(head.title, "My Page");
+      assertEquals(flushHeadCollector().title, "My Page");
     });
 
     it("collects description from direct field", () => {
       collectHead({ description: "Page description" });
-      const head = flushHeadCollector();
-      assertEquals(head.description, "Page description");
+      assertEquals(flushHeadCollector().description, "Page description");
     });
 
     it("collects description from meta tag", () => {
       collectHead({
         metas: [{ name: "description", content: "Meta description" }],
       });
-      const head = flushHeadCollector();
-      assertEquals(head.description, "Meta description");
+      assertEquals(flushHeadCollector().description, "Meta description");
     });
 
     it("collects meta tags", () => {
@@ -40,10 +37,11 @@ describe("head-collector", () => {
           { property: "og:title", content: "OG Title" },
         ],
       });
-      const head = flushHeadCollector();
-      assertEquals(head.metas.length, 2);
-      assertEquals(head.metas[0], { name: "author", content: "John Doe" });
-      assertEquals(head.metas[1], { property: "og:title", content: "OG Title" });
+
+      const { metas } = flushHeadCollector();
+      assertEquals(metas.length, 2);
+      assertEquals(metas[0], { name: "author", content: "John Doe" });
+      assertEquals(metas[1], { property: "og:title", content: "OG Title" });
     });
 
     it("collects link tags", () => {
@@ -53,16 +51,18 @@ describe("head-collector", () => {
           { rel: "icon", href: "/favicon.ico" },
         ],
       });
-      const head = flushHeadCollector();
-      assertEquals(head.links.length, 2);
-      assertEquals(head.links[0], { rel: "stylesheet", href: "/style.css" });
+
+      const { links } = flushHeadCollector();
+      assertEquals(links.length, 2);
+      assertEquals(links[0], { rel: "stylesheet", href: "/style.css" });
     });
 
     it("collects style tags", () => {
       collectHead({ styles: [".foo { color: red; }"] });
-      const head = flushHeadCollector();
-      assertEquals(head.styles.length, 1);
-      assertEquals(head.styles[0], ".foo { color: red; }");
+
+      const { styles } = flushHeadCollector();
+      assertEquals(styles.length, 1);
+      assertEquals(styles[0], ".foo { color: red; }");
     });
 
     it("accumulates multiple calls", () => {
@@ -80,14 +80,14 @@ describe("head-collector", () => {
     it("last title wins", () => {
       collectHead({ title: "First" });
       collectHead({ title: "Second" });
-      const head = flushHeadCollector();
-      assertEquals(head.title, "Second");
+      assertEquals(flushHeadCollector().title, "Second");
     });
   });
 
   describe("flushHeadCollector", () => {
     it("returns collected data and resets", () => {
       collectHead({ title: "Test" });
+
       const first = flushHeadCollector();
       const second = flushHeadCollector();
 
@@ -100,8 +100,8 @@ describe("head-collector", () => {
     it("clears all collected data", () => {
       collectHead({ title: "Title", metas: [{ content: "x" }] });
       resetHeadCollector();
-      const head = flushHeadCollector();
 
+      const head = flushHeadCollector();
       assertEquals(head.title, undefined);
       assertEquals(head.metas.length, 0);
     });

@@ -1,8 +1,3 @@
-/**
- * Metrics Recorder
- * Functions for recording metrics across all categories
- */
-
 import type { MetricsInstruments, RuntimeState } from "./types.ts";
 
 export class MetricsRecorder {
@@ -37,11 +32,10 @@ export class MetricsRecorder {
 
   recordCacheGet(hit: boolean, attributes?: Record<string, string>): void {
     this.instruments.cacheGetCounter?.add(1, attributes);
-    if (hit) {
-      this.instruments.cacheHitCounter?.add(1, attributes);
-    } else {
-      this.instruments.cacheMissCounter?.add(1, attributes);
-    }
+    (hit ? this.instruments.cacheHitCounter : this.instruments.cacheMissCounter)?.add(
+      1,
+      attributes,
+    );
   }
 
   recordCacheSet(attributes?: Record<string, string>): void {
@@ -64,7 +58,6 @@ export class MetricsRecorder {
     this.runtimeState.cacheSize = size;
   }
 
-  // Render Metrics
   recordRender(durationMs: number, attributes?: Record<string, string>): void {
     this.instruments.renderDuration?.record(durationMs, attributes);
     this.instruments.renderCounter?.add(1, attributes);
@@ -74,7 +67,6 @@ export class MetricsRecorder {
     this.instruments.renderErrorCounter?.add(1, attributes);
   }
 
-  // RSC Metrics
   recordRSCRender(
     durationMs: number,
     attributes?: Record<string, string>,
@@ -93,20 +85,26 @@ export class MetricsRecorder {
     type: "manifest" | "page" | "stream" | "action",
     attributes?: Record<string, string>,
   ): void {
-    const counters = {
-      manifest: this.instruments.rscManifestCounter,
-      page: this.instruments.rscPageCounter,
-      stream: this.instruments.rscStreamCounter,
-      action: this.instruments.rscActionCounter,
-    };
-    counters[type]?.add(1, attributes);
+    switch (type) {
+      case "manifest":
+        this.instruments.rscManifestCounter?.add(1, attributes);
+        return;
+      case "page":
+        this.instruments.rscPageCounter?.add(1, attributes);
+        return;
+      case "stream":
+        this.instruments.rscStreamCounter?.add(1, attributes);
+        return;
+      case "action":
+        this.instruments.rscActionCounter?.add(1, attributes);
+        return;
+    }
   }
 
   recordRSCError(attributes?: Record<string, string>): void {
     this.instruments.rscErrorCounter?.add(1, attributes);
   }
 
-  // Build Metrics
   recordBuild(durationMs: number, attributes?: Record<string, string>): void {
     this.instruments.buildDuration?.record(durationMs, attributes);
   }
@@ -116,7 +114,6 @@ export class MetricsRecorder {
     this.instruments.bundleCounter?.add(1, attributes);
   }
 
-  // Data Fetching Metrics
   recordDataFetch(
     durationMs: number,
     attributes?: Record<string, string>,
@@ -129,7 +126,6 @@ export class MetricsRecorder {
     this.instruments.dataFetchErrorCounter?.add(1, attributes);
   }
 
-  // Security Metrics
   recordCorsRejection(attributes?: Record<string, string>): void {
     this.instruments.corsRejectionCounter?.add(1, attributes);
   }

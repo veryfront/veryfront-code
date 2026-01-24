@@ -24,6 +24,14 @@ export interface SSRRenderingResult {
   ssrHash: string;
 }
 
+function getElementTypeName(el: React.ReactElement | null | undefined): string {
+  if (!el?.type) return "unknown";
+  if (typeof el.type === "string") return el.type;
+
+  const type = el.type as { name?: string; displayName?: string };
+  return type.name || type.displayName || "Component";
+}
+
 export class SSROrchestrator {
   private config: SSROrchestratorConfig;
 
@@ -36,43 +44,31 @@ export class SSROrchestrator {
     generationContext: Omit<HTMLGenerationContext, "html" | "ssrHash">,
     options?: RenderOptions,
   ): Promise<SSRRenderingResult> {
-    const getElementTypeName = (el: React.ReactElement | null | undefined): string => {
-      if (!el?.type) return "unknown";
-      if (typeof el.type === "string") return el.type;
-      return (el.type as { name?: string; displayName?: string }).name ||
-        (el.type as { displayName?: string }).displayName ||
-        "Component";
-    };
     logger.debug("[SSROrchestrator] performSSRRendering called", {
       elementType: getElementTypeName(pageElement),
       hasChildren: !!pageElement?.props?.children,
     });
+
     const validatedElement = this.config.elementValidator.ensureValidReactElement(
       pageElement,
       this.config.debugMode,
     );
+
     logger.debug("[SSROrchestrator] Element validated", {
       validatedType: getElementTypeName(validatedElement),
     });
 
-    // Reset head collector before render
     resetHeadCollector();
 
     const wantsStream = options?.delivery === "stream";
-    const { html, stream } = await this.config.ssrRenderer.renderToHTML(
-      validatedElement,
-      {
-        mode: this.config.mode,
-        wantsStream,
-        debugMode: this.config.debugMode,
-      },
-    );
+    const { html, stream } = await this.config.ssrRenderer.renderToHTML(validatedElement, {
+      mode: this.config.mode,
+      wantsStream,
+      debugMode: this.config.debugMode,
+    });
 
-    // Flush collected head data after render
     const collectedHead = flushHeadCollector();
 
-    // Merge options from generationContext with the passed options parameter
-    // to avoid losing props that were set in generationContext.options
     const mergedOptions = {
       ...generationContext.options,
       ...options,
@@ -82,12 +78,7 @@ export class SSROrchestrator {
       },
     };
 
-    // If we have a stream, use TRUE STREAMING HTML generation
-    // This sends HTML shell immediately without waiting for React to finish rendering
     if (stream && wantsStream) {
-      // TRUE STREAMING: html is empty (not buffered), so skip content-based hash
-      // Use a timestamp-based hash since we can't compute ETag from unbuffered stream
-      // ETag will be skipped for streaming responses in the handler
       const ssrHash = html ? await computeHash(html) : `stream-${Date.now()}`;
 
       logger.debug("[SSROrchestrator] True streaming mode - sending HTML shell immediately", {
@@ -95,24 +86,16 @@ export class SSROrchestrator {
         ssrHash,
       });
 
-      const contextWithHash = {
+      const finalStream = await this.config.htmlGenerator.generateHTMLStream(stream, {
         ...generationContext,
         ssrHash,
         options: mergedOptions,
         collectedHead,
-      };
+      });
 
-      const finalStream = await this.config.htmlGenerator.generateHTMLStream(
-        stream,
-        contextWithHash,
-      );
-
-      // fullHtml is empty for true streaming (this is intentional!)
-      // The handler will skip ETag for streaming responses
       return { fullHtml: html, finalStream, ssrHash };
     }
 
-    // Otherwise, use buffered HTML generation
     const ssrHash = await withSpan(
       SpanNames.SSR_CONTENT_HASH,
       () => computeHash(html),
@@ -141,7 +124,6 @@ export class SSROrchestrator {
     try {
       return new Response(html).body ?? null;
     } catch (error) {
-      // Failed to create ReadableStream from HTML string - this should not be silently ignored
       logger.error("Failed to create stream from HTML:", error);
       throw toError(
         createError({

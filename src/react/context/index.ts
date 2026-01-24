@@ -1,7 +1,3 @@
-/**
- * Page context exports for veryfront/context
- * Provides page context for MDX pages
- */
 import React from "react";
 
 export interface MdxHeading {
@@ -22,8 +18,6 @@ export interface PageContextValue {
   mdxHeadings: MdxHeading[];
 }
 
-const PageContextContext = React.createContext<PageContextValue | null>(null);
-
 const defaultPageContext: PageContextValue = {
   slug: "/",
   path: "/",
@@ -34,20 +28,25 @@ const defaultPageContext: PageContextValue = {
   mdxHeadings: [],
 };
 
+const PageContextContext = React.createContext<PageContextValue>(defaultPageContext);
+
 export interface PageContextProviderProps {
   children: React.ReactNode;
   pageContext?: PageContextValue;
 }
 
-export function PageContextProvider({ children, pageContext }: PageContextProviderProps) {
+export function PageContextProvider({
+  children,
+  pageContext,
+}: PageContextProviderProps): React.ReactElement {
   return React.createElement(PageContextContext.Provider, {
-    value: pageContext || defaultPageContext,
+    value: pageContext ?? defaultPageContext,
     children,
   });
 }
 
 export function usePageContext(): PageContextValue {
-  return React.useContext(PageContextContext) ?? defaultPageContext;
+  return React.useContext(PageContextContext);
 }
 
 export default usePageContext;

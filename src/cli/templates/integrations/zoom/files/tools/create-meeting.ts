@@ -9,7 +9,7 @@ export default tool({
     topic: z.string().describe("The topic/title of the meeting"),
     type: z
       .enum(["1", "2", "3", "8"])
-      .transform((val) => parseInt(val) as 1 | 2 | 3 | 8)
+      .transform((val) => parseInt(val, 10) as 1 | 2 | 3 | 8)
       .default("2")
       .describe(
         "Meeting type: 1=Instant, 2=Scheduled, 3=Recurring with no fixed time, 8=Recurring with fixed time",
@@ -18,27 +18,14 @@ export default tool({
       .string()
       .optional()
       .describe("Start time in ISO 8601 format (e.g., 2024-12-07T10:00:00Z)"),
-    duration: z
-      .number()
-      .min(1)
-      .optional()
-      .describe("Meeting duration in minutes"),
+    duration: z.number().min(1).optional().describe("Meeting duration in minutes"),
     timezone: z
       .string()
       .optional()
       .describe("Timezone (e.g., America/New_York, Europe/London)"),
-    password: z
-      .string()
-      .optional()
-      .describe("Meeting password"),
-    agenda: z
-      .string()
-      .optional()
-      .describe("Meeting agenda or description"),
-    hostVideo: z
-      .boolean()
-      .default(true)
-      .describe("Start video when host joins"),
+    password: z.string().optional().describe("Meeting password"),
+    agenda: z.string().optional().describe("Meeting agenda or description"),
+    hostVideo: z.boolean().default(true).describe("Start video when host joins"),
     participantVideo: z
       .boolean()
       .default(true)
@@ -56,34 +43,21 @@ export default tool({
       .default("none")
       .describe("Automatic recording setting"),
   }),
-  async execute({
-    topic,
-    type,
-    startTime,
-    duration,
-    timezone,
-    password,
-    agenda,
-    hostVideo,
-    participantVideo,
-    joinBeforeHost,
-    muteUponEntry,
-    autoRecording,
-  }) {
+  async execute(input) {
     const meeting = await createMeeting({
-      topic,
-      type,
-      startTime,
-      duration,
-      timezone,
-      password,
-      agenda,
+      topic: input.topic,
+      type: input.type,
+      startTime: input.startTime,
+      duration: input.duration,
+      timezone: input.timezone,
+      password: input.password,
+      agenda: input.agenda,
       settings: {
-        hostVideo,
-        participantVideo,
-        joinBeforeHost,
-        muteUponEntry,
-        autoRecording,
+        hostVideo: input.hostVideo,
+        participantVideo: input.participantVideo,
+        joinBeforeHost: input.joinBeforeHost,
+        muteUponEntry: input.muteUponEntry,
+        autoRecording: input.autoRecording,
         audio: "both",
       },
     });

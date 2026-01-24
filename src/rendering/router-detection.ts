@@ -1,11 +1,11 @@
-/**
+/**************************
  * Router Detection
  *
  * Determines whether to use App Router or Pages Router based on:
  * - Explicit configuration (config.router)
  * - Directory structure analysis
  * - Route file presence detection
- */
+ **************************/
 
 import { join } from "../platform/compat/path-helper.ts";
 import { createFileSystem } from "../platform/compat/fs.ts";
@@ -21,12 +21,9 @@ export { getAppRouteEntity } from "./app-route-resolver.ts";
 // Re-export from route-params-extractor for backward compatibility
 export { extractAppRouteParams, extractPagesRouteParams } from "./route-params-extractor.ts";
 
-// Cache for router detection results - avoids repeated filesystem calls
-// Key is projectDir, value is whether app router should be used
-// LRU bounded to prevent memory leaks in multi-tenant deployments
 const routerDetectionCache = new LRUCache<string, boolean>({
-  maxEntries: 200, // Bounded - each project has one entry
-  ttlMs: 60_000, // 1 minute - config can change during development
+  maxEntries: 200,
+  ttlMs: 60_000,
 });
 
 /**
@@ -68,65 +65,39 @@ export async function detectAppRouter(
     },
     {
       "router.project_dir": projectDir,
-      "router.config_router": config?.router || "auto",
+      "router.config_router": config?.router ?? "auto",
     },
   );
 }
 
-/**
- * Internal implementation of router detection
- */
 async function detectAppRouterImpl(
   projectDir: string,
   config: VeryfrontConfig,
   adapter: RuntimeAdapter,
 ): Promise<boolean> {
-  // Check if app directory exists AND contains route files
-  const appDirName = config?.directories?.app || "app";
-  const pagesDirName = config?.directories?.pages || "pages";
+  const appDirName = config?.directories?.app ?? "app";
+  const pagesDirName = config?.directories?.pages ?? "pages";
 
   const appDir = join(projectDir, appDirName);
   const pagesDir = join(projectDir, pagesDirName);
 
-  let hasAppRoutes = false;
-  let hasPagesRoutes = false;
-
   const appStat = await statWithFallback(appDir, adapter);
-  if (appStat?.isDirectory) {
-    hasAppRoutes = await hasRouteFiles(appDir, adapter);
-  }
-
-  // Check for pages routes
   const pagesStat = await statWithFallback(pagesDir, adapter);
-  if (pagesStat?.isDirectory) {
-    hasPagesRoutes = await hasRouteFiles(pagesDir, adapter);
-  }
 
-  // If both have routes, prefer app router
-  // If only one has routes, use that one
-  if (hasAppRoutes) return true;
-  if (hasPagesRoutes) return false;
-
-  // If neither has routes, check which directory exists
   const hasAppDir = Boolean(appStat?.isDirectory);
   const hasPagesDir = Boolean(pagesStat?.isDirectory);
 
-  // If pages dir exists (even without routes), use pages router for legacy support
-  // Otherwise default to app router (modern default)
+  if (hasAppDir && (await hasRouteFiles(appDir, adapter))) return true;
+  if (hasPagesDir && (await hasRouteFiles(pagesDir, adapter))) return false;
+
   if (hasPagesDir && !hasAppDir) return false;
-  return true; // Default to app router
+  return true;
 }
 
 const ROUTE_EXTENSIONS = new Set([".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"]);
 const ROUTE_PATTERNS = ["page", "layout", "error", "loading", "not-found", "index"];
 
-/**
- * Check if a directory contains route files
- */
-async function hasRouteFiles(
-  dir: string,
-  adapter: RuntimeAdapter,
-): Promise<boolean> {
+async function hasRouteFiles(dir: string, adapter: RuntimeAdapter): Promise<boolean> {
   const entries = await readDirWithFallback(dir, adapter);
 
   for (const entry of entries) {
@@ -134,11 +105,19 @@ async function hasRouteFiles(
       const name = entry.name.toLowerCase();
       const dotIndex = name.lastIndexOf(".");
       const ext = dotIndex === -1 ? "" : name.slice(dotIndex);
-      const isRouteFile = ROUTE_EXTENSIONS.has(ext) &&
-        ROUTE_PATTERNS.some((pattern) => name.startsWith(pattern));
-      if (isRouteFile) return true;
-    } else if (entry.isDirectory) {
-      if (await hasRouteFiles(join(dir, entry.name), adapter)) return true;
+
+      if (
+        ROUTE_EXTENSIONS.has(ext) &&
+        ROUTE_PATTERNS.some((pattern) => name.startsWith(pattern))
+      ) {
+        return true;
+      }
+
+      continue;
+    }
+
+    if (entry.isDirectory && (await hasRouteFiles(join(dir, entry.name), adapter))) {
+      return true;
     }
   }
 
@@ -160,9 +139,6 @@ type NormalizedDirEntry = {
   isSymlink: boolean;
 };
 
-/**
- * Execute an async operation with adapter, falling back to native fs on failure.
- */
 async function withAdapterFallback<T>(
   adapterFn: () => Promise<T>,
   fallbackFn: () => Promise<T>,
@@ -184,8 +160,9 @@ async function statWithFallback(
   adapter: RuntimeAdapter,
 ): Promise<NormalizedStat | null> {
   const fs = createFileSystem();
+
   return await withAdapterFallback(
-    async () => await adapter.fs.stat(path) as NormalizedStat,
+    async () => (await adapter.fs.stat(path)) as NormalizedStat,
     async () => {
       const stat = await fs.stat(path);
       return {
@@ -201,9 +178,12 @@ async function statWithFallback(
 }
 
 async function collectDirEntries(
-  iterable: AsyncIterable<
-    { name: string; isFile: boolean; isDirectory: boolean; isSymlink?: boolean }
-  >,
+  iterable: AsyncIterable<{
+    name: string;
+    isFile: boolean;
+    isDirectory: boolean;
+    isSymlink?: boolean;
+  }>,
 ): Promise<NormalizedDirEntry[]> {
   const entries: NormalizedDirEntry[] = [];
   for await (const entry of iterable) {

@@ -22,8 +22,7 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
-import { injectContext } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { injectContext, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { extractComponent } from "../extract-component.ts";
 import {
@@ -66,97 +65,48 @@ export class SSRModuleLoader {
   /**
    * Load and transform a module for SSR.
    */
-  async loadModule(
+  loadModule(
     filePath: string,
     source: string,
   ): Promise<React.ComponentType<Record<string, unknown>>> {
     const fileName = filePath.split("/").pop() || filePath;
 
-    return await withSpan(
+    return withSpan(
       SpanNames.SSR_LOAD_MODULE,
       async () => {
-        // Check circuit breaker before attempting load
         const circuitKey = this.getCacheKey(filePath);
-        const failureRecord = failedComponents.get(circuitKey);
-        if (failureRecord) {
-          const timeSinceFailure = Date.now() - failureRecord.lastFailure;
-          if (
-            failureRecord.count >= CIRCUIT_BREAKER_THRESHOLD &&
-            timeSinceFailure < CIRCUIT_BREAKER_RESET_MS
-          ) {
-            throw toError(createError({
-              type: "build",
-              message:
-                `Component ${filePath} is temporarily blocked due to repeated failures. Will retry in ${
-                  Math.ceil((CIRCUIT_BREAKER_RESET_MS - timeSinceFailure) / 1000)
-                }s.`,
-              context: {
-                file: filePath,
-                phase: "circuit-breaker",
-                failures: failureRecord.count,
-              },
-            }));
-          }
-          // Reset circuit breaker if enough time has passed
-          if (timeSinceFailure >= CIRCUIT_BREAKER_RESET_MS) {
-            failedComponents.delete(circuitKey);
-          }
-        }
+        this.checkCircuitBreaker(circuitKey, filePath);
 
-        // Reset missing dependencies for this load
         this.missingDependencies = [];
 
         try {
           await this.transformWithDependencies(filePath, source);
 
-          // Check if any dependencies were missing
           if (this.missingDependencies.length > 0) {
-            const missingList = this.missingDependencies
-              .map((m) => `  - ${m.specifier} (from ${m.fromFile.slice(-40)}): ${m.reason}`)
-              .join("\n");
-
-            logger.error("[SSR-MODULE-LOADER] Missing dependencies detected", {
-              file: filePath.slice(-60),
-              missing: this.missingDependencies.length,
-              details: this.missingDependencies,
-            });
-
-            throw toError(createError({
-              type: "build",
-              message: `Component has missing dependencies:\n${missingList}`,
-              context: {
-                file: filePath,
-                phase: "dependency-resolution",
-                missing: this.missingDependencies,
-              },
-            }));
+            this.throwMissingDependencies(filePath);
           }
 
           const cacheKey = this.getCacheKey(filePath);
           const cacheEntry = globalModuleCache.get(cacheKey);
           if (!cacheEntry) {
-            throw toError(createError({
-              type: "build",
-              message: `Failed to transform module: ${filePath}`,
-              context: { file: filePath, phase: "transform" },
-            }));
+            throw toError(
+              createError({
+                type: "build",
+                message: `Failed to transform module: ${filePath}`,
+                context: { file: filePath, phase: "transform" },
+              }),
+            );
           }
 
           const mod = await withSpan(
             SpanNames.SSR_DYNAMIC_IMPORT,
-            () =>
-              import(
-                `file://${cacheEntry.tempPath}?v=${cacheEntry.contentHash}`
-              ),
+            () => import(`file://${cacheEntry.tempPath}?v=${cacheEntry.contentHash}`),
             { "ssr.file": fileName },
           );
 
-          // Success - reset failure count
           failedComponents.delete(circuitKey);
-
           return extractComponent(mod, filePath);
         } catch (error) {
-          // Track failure for circuit breaker
           const existing = failedComponents.get(circuitKey);
           failedComponents.set(circuitKey, {
             count: (existing?.count ?? 0) + 1,
@@ -173,8 +123,64 @@ export class SSRModuleLoader {
     );
   }
 
+  private checkCircuitBreaker(circuitKey: string, filePath: string): void {
+    const failureRecord = failedComponents.get(circuitKey);
+    if (!failureRecord) return;
+
+    const timeSinceFailure = Date.now() - failureRecord.lastFailure;
+
+    if (
+      failureRecord.count >= CIRCUIT_BREAKER_THRESHOLD &&
+      timeSinceFailure < CIRCUIT_BREAKER_RESET_MS
+    ) {
+      throw toError(
+        createError({
+          type: "build",
+          message:
+            `Component ${filePath} is temporarily blocked due to repeated failures. Will retry in ${
+              Math.ceil(
+                (CIRCUIT_BREAKER_RESET_MS - timeSinceFailure) / 1000,
+              )
+            }s.`,
+          context: {
+            file: filePath,
+            phase: "circuit-breaker",
+            failures: failureRecord.count,
+          },
+        }),
+      );
+    }
+
+    if (timeSinceFailure >= CIRCUIT_BREAKER_RESET_MS) {
+      failedComponents.delete(circuitKey);
+    }
+  }
+
+  private throwMissingDependencies(filePath: string): never {
+    const missingList = this.missingDependencies
+      .map((m) => `  - ${m.specifier} (from ${m.fromFile.slice(-40)}): ${m.reason}`)
+      .join("\n");
+
+    logger.error("[SSR-MODULE-LOADER] Missing dependencies detected", {
+      file: filePath.slice(-60),
+      missing: this.missingDependencies.length,
+      details: this.missingDependencies,
+    });
+
+    throw toError(
+      createError({
+        type: "build",
+        message: `Component has missing dependencies:\n${missingList}`,
+        context: {
+          file: filePath,
+          phase: "dependency-resolution",
+          missing: this.missingDependencies,
+        },
+      }),
+    );
+  }
+
   private getCacheKey(filePath: string): string {
-    // Include contentSourceId for branch/release isolation
     const sourceId = this.options.contentSourceId ?? "default";
     return buildSSRModuleCacheKey(
       TRANSFORM_CACHE_VERSION,
@@ -198,9 +204,7 @@ export class SSRModuleLoader {
     const cacheKey = specifier;
 
     const cachedEntry = globalCrossProjectCache.get(cacheKey);
-    if (cachedEntry) {
-      return cachedEntry.tempPath;
-    }
+    if (cachedEntry) return cachedEntry.tempPath;
 
     const registryBaseUrl = this.getRegistryBaseUrl();
     const projectRef = `${projectSlug}@${version}`;
@@ -219,10 +223,8 @@ export class SSRModuleLoader {
         Accept: "text/plain, application/javascript, */*",
       });
       injectContext(headers);
-      const response = await fetch(registryUrl, {
-        signal: controller.signal,
-        headers,
-      });
+
+      const response = await fetch(registryUrl, { signal: controller.signal, headers });
       clearTimeout(timeout);
 
       if (!response.ok) {
@@ -234,15 +236,11 @@ export class SSRModuleLoader {
       const sourceCode = await response.text();
       const contentHash = await this.hashContentAsync(sourceCode);
 
-      const extMatch = path.match(/\.(tsx?|jsx?|mdx)$/);
-      const ext = extMatch?.[0] ?? ".tsx";
-
+      const ext = path.match(/\.(tsx?|jsx?|mdx)$/)?.[0] ?? ".tsx";
       const syntheticFilePath = `cross-project/${projectRef}/@/${path}`;
       const tempPath = await this.getTempPath(syntheticFilePath);
-      const tempDir = tempPath.substring(0, tempPath.lastIndexOf("/"));
-      await this.fs.mkdir(tempDir, { recursive: true });
+      await this.fs.mkdir(tempPath.substring(0, tempPath.lastIndexOf("/")), { recursive: true });
 
-      // Semaphore is a safety net, not a throttle. Skip if disabled (0).
       const useSemaphore = MAX_CONCURRENT_TRANSFORMS > 0;
       if (useSemaphore) {
         const acquired = await transformSemaphore.tryAcquire(TRANSFORM_ACQUIRE_TIMEOUT_MS);
@@ -252,6 +250,7 @@ export class SSRModuleLoader {
           );
         }
       }
+
       try {
         const transformOpts: TransformOptions = {
           projectId: this.options.projectId,
@@ -274,8 +273,7 @@ export class SSRModuleLoader {
 
         await this.fs.writeTextFile(tempPath, transformed);
 
-        const entry: ModuleCacheEntry = { tempPath, contentHash };
-        globalCrossProjectCache.set(cacheKey, entry);
+        globalCrossProjectCache.set(cacheKey, { tempPath, contentHash });
 
         logger.debug("[SSR-MODULE-LOADER] Cross-project import transformed", {
           specifier,
@@ -284,9 +282,7 @@ export class SSRModuleLoader {
 
         return tempPath;
       } finally {
-        if (useSemaphore) {
-          transformSemaphore.release();
-        }
+        if (useSemaphore) transformSemaphore.release();
       }
     } catch (error) {
       clearTimeout(timeout);
@@ -299,18 +295,16 @@ export class SSRModuleLoader {
     }
   }
 
-  private async transformWithDependencies(
+  private transformWithDependencies(
     filePath: string,
     source?: string,
     depth: number = 0,
   ): Promise<void> {
     const fileName = filePath.split("/").pop() || filePath;
 
-    return await withSpan(
+    return withSpan(
       SpanNames.SSR_TRANSFORM_DEPENDENCIES,
-      async () => {
-        await this.doTransformWithDependencies(filePath, source, depth);
-      },
+      () => this.doTransformWithDependencies(filePath, source, depth),
       {
         "ssr.file": fileName,
         "ssr.depth": depth,
@@ -323,29 +317,29 @@ export class SSRModuleLoader {
     source?: string,
     depth: number = 0,
   ): Promise<void> {
-    // Prevent infinite recursion with depth limit
     if (depth > MAX_TRANSFORM_DEPTH) {
       logger.warn("[SSR-MODULE-LOADER] Max transform depth exceeded", {
         file: filePath.slice(-40),
         depth,
         maxDepth: MAX_TRANSFORM_DEPTH,
       });
-      throw toError(createError({
-        type: "build",
-        message:
-          `Max transform depth exceeded (${MAX_TRANSFORM_DEPTH}, depth=${depth}) for ${filePath}. Check for circular dependencies.`,
-        context: { file: filePath, phase: "transform" },
-      }));
+      throw toError(
+        createError({
+          type: "build",
+          message:
+            `Max transform depth exceeded (${MAX_TRANSFORM_DEPTH}, depth=${depth}) for ${filePath}. Check for circular dependencies.`,
+          context: { file: filePath, phase: "transform" },
+        }),
+      );
     }
 
-    const code = source ?? await this.options.adapter.fs.readFile(filePath);
+    const code = source ?? (await this.options.adapter.fs.readFile(filePath));
 
     const contentHash = await this.hashContentAsync(code);
     const contentCacheKey = this.getCacheKey(`${filePath}:${contentHash}`);
     const filePathCacheKey = this.getCacheKey(filePath);
-    const inProgressKey = this.getCacheKey(filePath);
+    const inProgressKey = filePathCacheKey;
 
-    // Check memory cache first
     const cachedEntry = globalModuleCache.get(contentCacheKey);
     if (cachedEntry) {
       globalModuleCache.set(filePathCacheKey, cachedEntry);
@@ -353,29 +347,26 @@ export class SSRModuleLoader {
       return;
     }
 
-    // Check Redis cache
     const redisEnabled = getRedisEnabled();
     const redisClient = getRedisClientInstance();
     if (redisEnabled && redisClient) {
       const redisCode = await getFromRedis(contentCacheKey);
       if (redisCode) {
         const tempPath = await this.getTempPath(filePath);
-        const tempDir = tempPath.substring(0, tempPath.lastIndexOf("/"));
-        await this.fs.mkdir(tempDir, { recursive: true });
+        await this.fs.mkdir(tempPath.substring(0, tempPath.lastIndexOf("/")), { recursive: true });
         await this.fs.writeTextFile(tempPath, redisCode);
 
         const entry: ModuleCacheEntry = { tempPath, contentHash };
         globalModuleCache.set(contentCacheKey, entry);
         globalModuleCache.set(filePathCacheKey, entry);
-        logger.debug("[SSR-MODULE-LOADER] Redis cache hit", {
-          file: filePath.slice(-40),
-        });
+
+        logger.debug("[SSR-MODULE-LOADER] Redis cache hit", { file: filePath.slice(-40) });
+
         await this.ensureDependenciesExist(code, filePath, depth);
         return;
       }
     }
 
-    // Wait for in-progress transform with timeout protection
     const existingTransform = globalInProgress.get(inProgressKey);
     if (existingTransform) {
       try {
@@ -391,19 +382,16 @@ export class SSRModuleLoader {
         );
         return;
       } catch (error) {
-        // Transform timed out or failed - remove stale entry and proceed with our own transform
         globalInProgress.delete(inProgressKey);
         logger.warn("[SSR-MODULE-LOADER] In-progress transform timed out, retrying", {
           file: filePath.slice(-40),
           error: error instanceof Error ? error.message : String(error),
         });
-        // Fall through to do our own transform
       }
     }
 
-    // Create completion promise
-    let resolveTransform: () => void;
-    let rejectTransform: (err: Error) => void;
+    let resolveTransform!: () => void;
+    let rejectTransform!: (err: Error) => void;
     const transformPromise = new Promise<void>((resolve, reject) => {
       resolveTransform = resolve;
       rejectTransform = reject;
@@ -425,43 +413,14 @@ export class SSRModuleLoader {
       const crossProjectPaths = new Map<string, string>();
       const localFs = createFileSystem();
 
-      // Process local imports in batches to prevent resource exhaustion
-      for (let i = 0; i < parseResult.imports.length; i += TRANSFORM_BATCH_SIZE) {
-        const batch = parseResult.imports.slice(i, i + TRANSFORM_BATCH_SIZE);
-        await Promise.all(
-          batch.map(async (imp) => {
-            try {
-              let depSource: string;
-              if (imp.absolutePath.startsWith("/")) {
-                depSource = await localFs.readTextFile(imp.absolutePath);
-              } else {
-                depSource = await this.options.adapter.fs.readFile(
-                  imp.absolutePath,
-                );
-              }
-              await this.transformWithDependencies(imp.absolutePath, depSource, depth + 1);
-            } catch (error) {
-              this.missingDependencies.push({
-                specifier: imp.specifier,
-                fromFile: filePath,
-                reason: `Failed to read file: ${
-                  error instanceof Error ? error.message : String(error)
-                }`,
-              });
-            }
-          }),
-        );
-      }
+      await this.processLocalImports(parseResult.imports, filePath, depth, localFs);
 
-      // Process cross-project imports in batches
       for (let i = 0; i < parseResult.crossProjectImports.length; i += TRANSFORM_BATCH_SIZE) {
         const batch = parseResult.crossProjectImports.slice(i, i + TRANSFORM_BATCH_SIZE);
         await Promise.all(
           batch.map(async (crossImport) => {
             try {
-              const tempPath = await this.transformCrossProjectImport(
-                crossImport,
-              );
+              const tempPath = await this.transformCrossProjectImport(crossImport);
               crossProjectPaths.set(crossImport.specifier, tempPath);
             } catch (error) {
               this.missingDependencies.push({
@@ -476,17 +435,18 @@ export class SSRModuleLoader {
         );
       }
 
-      // Semaphore is a safety net, not a throttle. Skip if disabled (0).
       const useSemaphore = MAX_CONCURRENT_TRANSFORMS > 0;
       if (useSemaphore) {
         const acquired = await transformSemaphore.tryAcquire(TRANSFORM_ACQUIRE_TIMEOUT_MS);
         if (!acquired) {
-          throw toError(createError({
-            type: "build",
-            message:
-              `Transform capacity exceeded (${transformSemaphore.waiting} waiting). Service is overloaded.`,
-            context: { file: filePath, phase: "transform" },
-          }));
+          throw toError(
+            createError({
+              type: "build",
+              message:
+                `Transform capacity exceeded (${transformSemaphore.waiting} waiting). Service is overloaded.`,
+              context: { file: filePath, phase: "transform" },
+            }),
+          );
         }
       }
 
@@ -511,31 +471,12 @@ export class SSRModuleLoader {
           { "ssr.file": filePath.split("/").pop() || filePath },
         );
 
-        // Rewrite cross-project imports to file:// paths
         for (const [specifier, tempPath] of crossProjectPaths.entries()) {
-          const jsSpecifier = specifier.replace(/\.(tsx?|jsx|mdx)$/, ".js");
-          const escapedSpecifier = specifier.replace(
-            /[.*+?^${}()|[\]\\]/g,
-            "\\$&",
-          );
-          const escapedJsSpecifier = jsSpecifier.replace(
-            /[.*+?^${}()|[\]\\]/g,
-            "\\$&",
-          );
-
-          const pattern = new RegExp(
-            `from\\s+["'](${escapedSpecifier}|${escapedJsSpecifier})["']`,
-            "g",
-          );
-          transformed = transformed.replace(
-            pattern,
-            `from "file://${tempPath}"`,
-          );
+          transformed = this.rewriteCrossProjectImport(transformed, specifier, tempPath);
         }
 
         const tempPath = await this.getTempPath(filePath);
-        const tempDir = tempPath.substring(0, tempPath.lastIndexOf("/"));
-        await this.fs.mkdir(tempDir, { recursive: true });
+        await this.fs.mkdir(tempPath.substring(0, tempPath.lastIndexOf("/")), { recursive: true });
         await this.fs.writeTextFile(tempPath, transformed);
 
         if (redisEnabled && redisClient) {
@@ -546,18 +487,58 @@ export class SSRModuleLoader {
         globalModuleCache.set(contentCacheKey, entry);
         globalModuleCache.set(filePathCacheKey, entry);
       } finally {
-        if (useSemaphore) {
-          transformSemaphore.release();
-        }
+        if (useSemaphore) transformSemaphore.release();
       }
 
-      resolveTransform!();
+      resolveTransform();
     } catch (err) {
-      rejectTransform!(err instanceof Error ? err : new Error(String(err)));
+      rejectTransform(err instanceof Error ? err : new Error(String(err)));
       throw err;
     } finally {
       globalInProgress.delete(inProgressKey);
     }
+  }
+
+  private async processLocalImports(
+    imports: Array<{ absolutePath: string; specifier: string }>,
+    fromFilePath: string,
+    depth: number,
+    localFs: ReturnType<typeof createFileSystem>,
+  ): Promise<void> {
+    for (let i = 0; i < imports.length; i += TRANSFORM_BATCH_SIZE) {
+      const batch = imports.slice(i, i + TRANSFORM_BATCH_SIZE);
+      await Promise.all(
+        batch.map(async (imp) => {
+          try {
+            const depSource = imp.absolutePath.startsWith("/")
+              ? await localFs.readTextFile(imp.absolutePath)
+              : await this.options.adapter.fs.readFile(imp.absolutePath);
+
+            await this.transformWithDependencies(imp.absolutePath, depSource, depth + 1);
+          } catch (error) {
+            this.missingDependencies.push({
+              specifier: imp.specifier,
+              fromFile: fromFilePath,
+              reason: `Failed to read file: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            });
+          }
+        }),
+      );
+    }
+  }
+
+  private rewriteCrossProjectImport(
+    transformed: string,
+    specifier: string,
+    tempPath: string,
+  ): string {
+    const jsSpecifier = specifier.replace(/\.(tsx?|jsx|mdx)$/, ".js");
+    const escapedSpecifier = specifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const escapedJsSpecifier = jsSpecifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(`from\\s+["'](${escapedSpecifier}|${escapedJsSpecifier})["']`, "g");
+    return transformed.replace(pattern, `from "file://${tempPath}"`);
   }
 
   private async ensureDependenciesExist(
@@ -565,10 +546,7 @@ export class SSRModuleLoader {
     filePath: string,
     depth: number = 0,
   ): Promise<void> {
-    // Prevent infinite recursion with depth limit
-    if (depth > MAX_TRANSFORM_DEPTH) {
-      return;
-    }
+    if (depth > MAX_TRANSFORM_DEPTH) return;
 
     const parseResult = await parseLocalImports(
       code,
@@ -582,36 +560,8 @@ export class SSRModuleLoader {
     }
 
     const localFs = createFileSystem();
+    await this.processLocalImports(parseResult.imports, filePath, depth, localFs);
 
-    // Process local imports in batches
-    for (let i = 0; i < parseResult.imports.length; i += TRANSFORM_BATCH_SIZE) {
-      const batch = parseResult.imports.slice(i, i + TRANSFORM_BATCH_SIZE);
-      await Promise.all(
-        batch.map(async (imp) => {
-          try {
-            let depSource: string;
-            if (imp.absolutePath.startsWith("/")) {
-              depSource = await localFs.readTextFile(imp.absolutePath);
-            } else {
-              depSource = await this.options.adapter.fs.readFile(
-                imp.absolutePath,
-              );
-            }
-            await this.transformWithDependencies(imp.absolutePath, depSource, depth + 1);
-          } catch (error) {
-            this.missingDependencies.push({
-              specifier: imp.specifier,
-              fromFile: filePath,
-              reason: `Failed to read file: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
-            });
-          }
-        }),
-      );
-    }
-
-    // Process cross-project imports in batches
     for (let i = 0; i < parseResult.crossProjectImports.length; i += TRANSFORM_BATCH_SIZE) {
       const batch = parseResult.crossProjectImports.slice(i, i + TRANSFORM_BATCH_SIZE);
       await Promise.all(
@@ -640,7 +590,7 @@ export class SSRModuleLoader {
     let hash = 0;
     for (let i = 0; i < str.length; i++) {
       const char = str.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
+      hash = (hash << 5) - hash + char;
       hash = hash & hash;
     }
     return Math.abs(hash).toString(16);
@@ -651,35 +601,28 @@ export class SSRModuleLoader {
    * Doesn't block event loop for large files.
    */
   private async hashContentAsync(content: string): Promise<string> {
-    // For small content, use sync hash to avoid crypto overhead
-    if (content.length < 10000) {
-      return this.hashCode(content);
-    }
+    if (content.length < 10000) return this.hashCode(content);
 
     try {
-      const encoder = new TextEncoder();
-      const data = encoder.encode(content);
+      const data = new TextEncoder().encode(content);
       const hashBuffer = await crypto.subtle.digest("SHA-256", data);
       const hashArray = Array.from(new Uint8Array(hashBuffer));
-      // Use first 8 bytes for a shorter but still unique hash
-      return hashArray.slice(0, 8).map((b) => b.toString(16).padStart(2, "0")).join("");
+      return hashArray
+        .slice(0, 8)
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
     } catch {
-      // Fallback to sync hash if crypto API unavailable
       return this.hashCode(content);
     }
   }
 
-  private async getTempPath(
-    filePath: string,
-    _contentHash?: string,
-  ): Promise<string> {
+  private async getTempPath(filePath: string, _contentHash?: string): Promise<string> {
     const tmpDir = await this.ensureTmpDir();
 
-    let relativePath = filePath;
     const projectDir = this.options.projectDir.replace(/\/$/, "");
-    if (filePath.startsWith(projectDir)) {
-      relativePath = filePath.substring(projectDir.length);
-    }
+    const relativePath = filePath.startsWith(projectDir)
+      ? filePath.substring(projectDir.length)
+      : filePath;
 
     const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js");
     return join(tmpDir, jsPath);
@@ -687,35 +630,25 @@ export class SSRModuleLoader {
 
   private async ensureTmpDir(): Promise<string> {
     let projectDir = this.options.projectDir;
-    const projectId = this.options.projectId;
-    const contentSourceId = this.options.contentSourceId;
+    const { projectId, contentSourceId } = this.options;
 
-    // Ensure absolute path for file:// URLs
     if (!projectDir.startsWith("/")) {
       projectDir = join(cwd(), projectDir);
     }
 
     const cacheBaseDir = getCacheBaseDir();
     const baseDir = isAbsolute(cacheBaseDir) ? cacheBaseDir : join(cwd(), cacheBaseDir);
-    // Include contentSourceId in cache key for branch/release isolation
+
     const cacheKey = `${baseDir}|${buildSSRModuleProjectKey(projectDir, projectId)}|${
       contentSourceId ?? "default"
     }`;
 
     const existingDir = globalTmpDirs.get(cacheKey);
-    if (existingDir) {
-      return existingDir;
-    }
+    if (existingDir) return existingDir;
 
     const projectKey = projectId ? this.hashCode(projectId) : "default";
-    // Sanitize contentSourceId for filesystem (replace / with -)
     const sourceKey = contentSourceId ? this.hashCode(contentSourceId) : "default";
-    const tmpDir = join(
-      baseDir,
-      "veryfront-ssr",
-      projectKey,
-      sourceKey,
-    );
+    const tmpDir = join(baseDir, "veryfront-ssr", projectKey, sourceKey);
 
     await this.fs.mkdir(tmpDir, { recursive: true });
     globalTmpDirs.set(cacheKey, tmpDir);

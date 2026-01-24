@@ -1,9 +1,3 @@
-/**
- * Project directory paths and file extensions
- *
- * For internal veryfront URL endpoints, see ./constants/server.ts
- */
-
 import {
   BUILD_DIRS,
   INTERNAL_ENDPOINTS,
@@ -27,5 +21,4 @@ export const FILE_EXTENSIONS = {
   ALL: [".mdx", ".md", ".tsx", ".ts", ".jsx", ".js", ".css"],
 } as const;
 
-// Re-export for convenience
 export { BUILD_DIRS, INTERNAL_ENDPOINTS, INTERNAL_PATH_PREFIXES, INTERNAL_PREFIX };

@@ -1,11 +1,3 @@
-/**
- * Hashed CSS Handler
- *
- * Serves Tailwind CSS by hash at /_vf/css/[hash].css with immutable caching.
- * CSS is generated during SSR and cached (local + distributed). The distributed
- * cache is project-scoped, so we set cache context from HandlerContext before lookup.
- */
-
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { getCSSByHashAsync } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
@@ -30,48 +22,26 @@ export class CSSHandler extends BaseHandler {
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const method = req.method.toUpperCase();
-    if (method !== "GET" && method !== "HEAD") {
-      return this.continue();
-    }
+    if (method !== "GET" && method !== "HEAD") return this.continue();
 
-    const url = new URL(req.url);
-    const match = url.pathname.match(CSS_URL_PATTERN);
-
-    const cssHash = match?.[1];
-    if (!cssHash) {
-      return this.continue();
-    }
+    const cssHash = new URL(req.url).pathname.match(CSS_URL_PATTERN)?.[1];
+    if (!cssHash) return this.continue();
 
     // Set cache context for project-scoped distributed cache lookup
     const cacheCtx = extractCacheKeyContext(ctx);
     const css = await runWithCacheKeyContext(cacheCtx, () => getCSSByHashAsync(cssHash));
 
-    if (!css) {
-      this.logDebug(`CSS hash not found: ${cssHash}`, {}, ctx);
+    if (!css) this.logDebug(`CSS hash not found: ${cssHash}`, {}, ctx);
 
-      const builder = this.createResponseBuilder(ctx);
-      return this.respond(
-        builder
-          .withCORS(req, ctx.securityConfig?.cors)
-          .withCache("no-cache")
-          .withContentType(
-            "text/css; charset=utf-8",
-            method === "HEAD" ? null : `/* CSS ${cssHash} not found - page may need refresh */`,
-            HTTP_NOT_FOUND,
-          ),
+    const response = this.createResponseBuilder(ctx)
+      .withCORS(req, ctx.securityConfig?.cors)
+      .withCache(css ? "immutable" : "no-cache")
+      .withContentType(
+        "text/css; charset=utf-8",
+        method === "HEAD" ? null : css ?? `/* CSS ${cssHash} not found - page may need refresh */`,
+        css ? HTTP_OK : HTTP_NOT_FOUND,
       );
-    }
 
-    const builder = this.createResponseBuilder(ctx);
-    return this.respond(
-      builder
-        .withCORS(req, ctx.securityConfig?.cors)
-        .withCache("immutable")
-        .withContentType(
-          "text/css; charset=utf-8",
-          method === "HEAD" ? null : css,
-          HTTP_OK,
-        ),
-    );
+    return this.respond(response);
   }
 }

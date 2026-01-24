@@ -1,21 +1,9 @@
-/**
- * Demo step definitions
- *
- * @module cli/commands/demo/steps
- */
-
 export interface DemoStep {
-  /** Step ID */
   id: string;
-  /** Title shown at top of step */
   title: string;
-  /** Description lines (each line animated separately) */
   description: string[];
-  /** Command to display and execute */
   command?: string;
-  /** Whether this step has an action that runs on Enter */
   hasAction?: boolean;
-  /** Skip waiting for Enter after action (e.g., for dev server that keeps running) */
   skipPostWait?: boolean;
 }
 

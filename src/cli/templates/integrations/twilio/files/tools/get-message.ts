@@ -4,7 +4,8 @@ import { getMessage } from "../../lib/twilio-client.ts";
 
 export default tool({
   id: "get-message",
-  description: "Get detailed information about a specific SMS or WhatsApp message by its SID (Message ID)",
+  description:
+    "Get detailed information about a specific SMS or WhatsApp message by its SID (Message ID)",
   inputSchema: z.object({
     messageSid: z
       .string()
@@ -38,20 +39,24 @@ export default tool({
         summary: `Message ${message.sid}: ${message.direction} ${message.status} message from ${message.from} to ${message.to}`,
       };
     } catch (error) {
-      if (error instanceof Error) {
-        if (error.message.includes("not configured")) {
-          return {
-            error: "Twilio not configured. Please set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER.",
-            setupUrl: "https://console.twilio.com/",
-          };
-        }
+      if (!(error instanceof Error)) throw error;
 
-        if (error.message.includes("20404")) {
-          return {
-            error: `Message not found. The SID '${messageSid}' does not exist in your account.`,
-          };
-        }
+      const message = error.message;
+
+      if (message.includes("not configured")) {
+        return {
+          error:
+            "Twilio not configured. Please set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER.",
+          setupUrl: "https://console.twilio.com/",
+        };
       }
+
+      if (message.includes("20404")) {
+        return {
+          error: `Message not found. The SID '${messageSid}' does not exist in your account.`,
+        };
+      }
+
       throw error;
     }
   },

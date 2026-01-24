@@ -17,7 +17,7 @@ export function isServerInitialized(): boolean {
 export class HealthHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "HealthHandler",
-    priority: PRIORITY_HIGH as HandlerPriority, // HIGH priority
+    priority: PRIORITY_HIGH as HandlerPriority,
     patterns: [
       { pattern: "/healthz", exact: true },
       { pattern: "/readyz", exact: true },
@@ -26,11 +26,11 @@ export class HealthHandler extends BaseHandler {
   };
 
   private async checkReadiness(ctx: HandlerContext): Promise<boolean> {
-    try {
-      if (!serverInitialized || !ctx.adapter) {
-        return false;
-      }
+    if (!serverInitialized || !ctx.adapter) {
+      return false;
+    }
 
+    try {
       const isProxyMode = ctx.config?.fs?.veryfront?.proxyMode === true;
       if (isProxyMode) {
         return true;
@@ -53,36 +53,35 @@ export class HealthHandler extends BaseHandler {
       .withCORS(req, ctx.securityConfig?.cors)
       .withSecurity(ctx.securityConfig ?? undefined);
 
-    switch (pathname) {
-      case "/healthz":
-        return this.respond(builder.text("ok", HTTP_OK));
-
-      case "/readyz": {
-        const isReady = await this.checkReadiness(ctx);
-        return this.respond(
-          builder.text(isReady ? "ready" : "not-ready", isReady ? HTTP_OK : HTTP_UNAVAILABLE),
-        );
-      }
-
-      case "/_health": {
-        const hasStaticBuild = await this.hasDistDirectory(ctx);
-        const tracingDegraded = isTracingDegraded();
-        const payload = {
-          status: tracingDegraded ? "degraded" : "ok",
-          timestamp: new Date().toISOString(),
-          mode: hasStaticBuild ? "static+ssr" : "ssr",
-          version: "0.1.0",
-          tracing: {
-            enabled: isTracingEnabled(),
-            degraded: tracingDegraded,
-          },
-        };
-        return this.respond(builder.withCache("no-cache").json(payload, HTTP_OK));
-      }
-
-      default:
-        return this.continue();
+    if (pathname === "/healthz") {
+      return this.respond(builder.text("ok", HTTP_OK));
     }
+
+    if (pathname === "/readyz") {
+      const isReady = await this.checkReadiness(ctx);
+      const status = isReady ? HTTP_OK : HTTP_UNAVAILABLE;
+      return this.respond(builder.text(isReady ? "ready" : "not-ready", status));
+    }
+
+    if (pathname === "/_health") {
+      const hasStaticBuild = await this.hasDistDirectory(ctx);
+      const tracingDegraded = isTracingDegraded();
+
+      const payload = {
+        status: tracingDegraded ? "degraded" : "ok",
+        timestamp: new Date().toISOString(),
+        mode: hasStaticBuild ? "static+ssr" : "ssr",
+        version: "0.1.0",
+        tracing: {
+          enabled: isTracingEnabled(),
+          degraded: tracingDegraded,
+        },
+      };
+
+      return this.respond(builder.withCache("no-cache").json(payload, HTTP_OK));
+    }
+
+    return this.continue();
   }
 
   private async hasDistDirectory(ctx: HandlerContext): Promise<boolean> {

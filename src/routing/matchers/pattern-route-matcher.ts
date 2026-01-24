@@ -10,29 +10,24 @@ export class DynamicRouter {
   addRoute(pattern: string, page: string): void {
     const route = parseRoute(pattern, page);
     this.routes.push(route);
-    this.routes.sort((a, b) => {
-      const aScore = getSpecificityScore(a);
-      const bScore = getSpecificityScore(b);
-      return bScore - aScore;
-    });
+    this.routes.sort((a, b) => getSpecificityScore(b) - getSpecificityScore(a));
   }
 
   match(pathname: string): RouteMatch | null {
-    if (this.cache.has(pathname)) {
-      return this.cache.get(pathname)!;
-    }
+    const cached = this.cache.get(pathname);
+    if (cached !== undefined) return cached;
 
-    pathname = normalizePath(pathname);
+    const normalizedPathname = normalizePath(pathname);
 
     for (const route of this.routes) {
-      const match = matchRoute(pathname, route);
-      if (match) {
-        this.cache.set(pathname, match);
-        return match;
-      }
+      const match = matchRoute(normalizedPathname, route);
+      if (!match) continue;
+
+      this.cache.set(normalizedPathname, match);
+      return match;
     }
 
-    this.cache.set(pathname, null);
+    this.cache.set(normalizedPathname, null);
     return null;
   }
 

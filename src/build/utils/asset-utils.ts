@@ -14,12 +14,8 @@ import {
   isImageFile as checkIsImage,
 } from "./file-types.ts";
 
-// CSS-related utilities
 export const CSS_EXTENSIONS = [".css", ".scss", ".sass", ".less"];
 
-/**
- * Find all CSS files in a directory
- */
 export async function findCSSFiles(dir: string): Promise<string[]> {
   const cssFiles: string[] = [];
 
@@ -42,14 +38,10 @@ export async function findCSSFiles(dir: string): Promise<string[]> {
   return cssFiles;
 }
 
-/**
- * Simple glob pattern matching for file discovery
- */
 export async function globFiles(pattern: string): Promise<string[]> {
-  // Extract directory and file pattern
-  const parts = pattern.split("**/");
-  const baseDir = parts[0] ? parts[0] : ".";
-  const filePattern = parts[1] ? parts[1] : pattern;
+  const [baseDirPart, filePatternPart] = pattern.split("**/");
+  const baseDir = baseDirPart || ".";
+  const filePattern = filePatternPart || pattern;
 
   const files: string[] = [];
 
@@ -60,9 +52,13 @@ export async function globFiles(pattern: string): Promise<string[]> {
         followSymlinks: false,
       })
     ) {
-      if (!filePattern || entry.name.includes(filePattern.replace("*", ""))) {
+      if (!filePattern) {
         files.push(entry.path);
+        continue;
       }
+
+      const match = filePattern.replace("*", "");
+      if (entry.name.includes(match)) files.push(entry.path);
     }
   } catch (error) {
     logger.warn(`Failed to glob files with pattern ${pattern}`, {
@@ -73,16 +69,10 @@ export async function globFiles(pattern: string): Promise<string[]> {
   return files;
 }
 
-/**
- * Check if a selector is pseudo-class/pseudo-element
- */
 export function isPseudoSelector(selector: string): boolean {
   return selector.includes(":");
 }
 
-/**
- * Get list of standard pseudo-selectors to preserve
- */
 export function getStandardPseudoSelectors(): string[] {
   return [
     ":hover",
@@ -101,11 +91,6 @@ export function getStandardPseudoSelectors(): string[] {
   ];
 }
 
-// Image-related utilities
-
-/**
- * Get variant path for optimized image
- */
 export function getVariantPath(
   outputDir: string,
   relPath: string,
@@ -117,26 +102,18 @@ export function getVariantPath(
   return join(outputDir, dir, `${name}-${size}w.${format}`);
 }
 
-/**
- * Generate srcSet string for responsive images
- */
 export function generateSrcSet(
   _imagePath: string,
   metadata: OptimizedImageMetadata,
   outputDir: string,
   format?: ImageFormat,
 ): string {
-  const targetFormat = format || metadata.defaultFormat;
+  const targetFormat = format ?? metadata.defaultFormat;
   const variants = metadata.variants.filter((v) => v.format === targetFormat);
 
-  return variants
-    .map((v) => `/${join(outputDir, v.path)} ${v.width}w`)
-    .join(", ");
+  return variants.map((v) => `/${join(outputDir, v.path)} ${v.width}w`).join(", ");
 }
 
-/**
- * Calculate aspect ratio from width and height
- */
 export function calculateAspectRatio(
   width: number | undefined,
   height: number | undefined,
@@ -144,29 +121,22 @@ export function calculateAspectRatio(
   return width && height ? width / height : 1;
 }
 
-/**
- * Re-export from centralized file-types module
- */
 export const getOptimizedFormat = getOptimizedImageFormat;
 export const isImageFile = checkIsImage;
 
-/**
- * Get image dimensions from metadata
- */
 export function getImageDimensions(metadata: OptimizedImageMetadata): {
   width: number;
   height: number;
 } {
   const original = metadata.variants.find((v) => v.format === metadata.defaultFormat) ??
     metadata.variants[0];
+
   if (!original) {
     throw toError(createError({
       type: "build",
       message: "No image variants found in metadata",
     }));
   }
-  return {
-    width: original.width,
-    height: original.height,
-  };
+
+  return { width: original.width, height: original.height };
 }

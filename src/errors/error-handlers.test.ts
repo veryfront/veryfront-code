@@ -18,7 +18,7 @@ describe("error-handlers", () => {
 
       assertEquals(wrapped.message, "Wrapper message: Original error");
       assertEquals(wrapped.code, ErrorCode.RENDER_ERROR);
-      assertEquals((wrapped.context as Record<string, unknown>).key, "value");
+      assertEquals(wrapped.context?.key, "value");
     });
 
     it("should preserve error code from VeryfrontError", () => {
@@ -37,20 +37,17 @@ describe("error-handlers", () => {
 
   describe("handleError", () => {
     it("should not throw when handling regular Error", () => {
-      const error = new Error("Test error");
-      handleError(error);
+      handleError(new Error("Test error"));
     });
 
     it("should not throw when handling VeryfrontError with context", () => {
-      const error = new VeryfrontError("Test", ErrorCode.BUILD_ERROR, { test: true });
-      handleError(error);
+      handleError(new VeryfrontError("Test", ErrorCode.BUILD_ERROR, { test: true }));
     });
   });
 
   describe("logAndThrow", () => {
     it("should throw the original Error", () => {
-      const error = new Error("Test error");
-      assertThrows(() => logAndThrow(error), Error, "Test error");
+      assertThrows(() => logAndThrow(new Error("Test error")), Error, "Test error");
     });
 
     it("should convert non-Error to Error and throw", () => {
@@ -58,8 +55,7 @@ describe("error-handlers", () => {
     });
 
     it("should include custom message in log", () => {
-      const error = new Error("Original");
-      assertThrows(() => logAndThrow(error, "Custom context"), Error, "Original");
+      assertThrows(() => logAndThrow(new Error("Original"), "Custom context"), Error, "Original");
     });
   });
 
@@ -110,17 +106,20 @@ describe("error-handlers", () => {
   describe("retryWithBackoff", () => {
     it("should return result on first success", async () => {
       let attempts = 0;
+
       const result = await retryWithBackoff(async () => {
         await Promise.resolve();
         attempts++;
         return "success";
       });
+
       assertEquals(result, "success");
       assertEquals(attempts, 1);
     });
 
     it("should retry on failure and succeed", async () => {
       let attempts = 0;
+
       const result = await retryWithBackoff(
         async () => {
           await Promise.resolve();
@@ -130,26 +129,28 @@ describe("error-handlers", () => {
         },
         { maxRetries: 3, initialDelay: 1 },
       );
+
       assertEquals(result, "success");
       assertEquals(attempts, 2);
     });
 
     it("should throw after max retries", async () => {
       let attempts = 0;
+
       await assertRejects(
-        async () => {
-          await retryWithBackoff(
+        () =>
+          retryWithBackoff(
             async () => {
               await Promise.resolve();
               attempts++;
               throw new Error("always fails");
             },
             { maxRetries: 2, initialDelay: 1 },
-          );
-        },
+          ),
         Error,
         "always fails",
       );
+
       assertEquals(attempts, 2);
     });
   });

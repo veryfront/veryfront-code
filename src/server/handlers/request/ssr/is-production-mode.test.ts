@@ -13,7 +13,23 @@ function createContext(overrides: Partial<HandlerContext> = {}): HandlerContext 
   };
 }
 
-const prodConfig = { fs: { veryfront: { apiBaseUrl: "http://test", productionMode: true } } };
+const prodConfig = {
+  fs: { veryfront: { apiBaseUrl: "http://test", productionMode: true } },
+};
+
+const previewRequestContext = {
+  mode: "preview" as const,
+  slug: "test",
+  branch: null,
+  token: "",
+};
+
+const productionRequestContext = {
+  mode: "production" as const,
+  slug: "test",
+  branch: null,
+  token: "",
+};
 
 describe("isProductionMode", () => {
   it("returns true when config.productionMode is true", () => {
@@ -24,34 +40,28 @@ describe("isProductionMode", () => {
   it("config.productionMode takes priority over requestContext.mode", () => {
     const ctx = createContext({
       config: prodConfig,
-      requestContext: { mode: "preview", slug: "test", branch: null, token: "" },
+      requestContext: previewRequestContext,
     });
     assertEquals(isProductionMode(ctx), true);
   });
 
   it("returns true when requestContext.mode is production", () => {
-    const ctx = createContext({
-      requestContext: { mode: "production", slug: "test", branch: null, token: "" },
-    });
+    const ctx = createContext({ requestContext: productionRequestContext });
     assertEquals(isProductionMode(ctx), true);
   });
 
   it("returns false when requestContext.mode is preview", () => {
-    const ctx = createContext({
-      requestContext: { mode: "preview", slug: "test", branch: null, token: "" },
-    });
+    const ctx = createContext({ requestContext: previewRequestContext });
     assertEquals(isProductionMode(ctx), false);
   });
 
   it("returns false when no requestContext present", () => {
-    const ctx = createContext({});
+    const ctx = createContext();
     assertEquals(isProductionMode(ctx), false);
   });
 
   it("works without URL parameter (backward compatible)", () => {
-    const ctx = createContext({
-      requestContext: { mode: "production", slug: "test", branch: null, token: "" },
-    });
+    const ctx = createContext({ requestContext: productionRequestContext });
     assertEquals(isProductionMode(ctx), true);
   });
 });

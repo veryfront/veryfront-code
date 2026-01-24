@@ -18,22 +18,13 @@ function hasReactHook(hookName: string): boolean {
 export function useFormStatusCompat(): FormStatus {
   if (hasFeature("useFormStatus") && hasReactHook("useFormStatus")) {
     try {
-      type ReactWithFormStatus = typeof React & {
-        useFormStatus: () => FormStatus;
-      };
-      const { useFormStatus } = React as ReactWithFormStatus;
-      return useFormStatus();
-    } catch (_error) {
+      return (React as typeof React & { useFormStatus: () => FormStatus }).useFormStatus();
+    } catch {
       logger.warn("useFormStatus not available in current React version");
     }
   }
 
-  return {
-    pending: false,
-    data: null,
-    method: null,
-    action: null,
-  };
+  return { pending: false, data: null, method: null, action: null };
 }
 
 export function useOptimisticCompat<State, OptimisticState = State>(
@@ -42,15 +33,15 @@ export function useOptimisticCompat<State, OptimisticState = State>(
 ): [State, (action: OptimisticStateAction<OptimisticState>) => void] {
   if (hasFeature("useOptimistic") && hasReactHook("useOptimistic")) {
     try {
-      type ReactWithOptimistic = typeof React & {
-        useOptimistic: <S, O = S>(
-          state: S,
-          updateFn?: (currentState: S, optimisticValue: O) => S,
-        ) => [S, (action: OptimisticStateAction<O>) => void];
-      };
-      const { useOptimistic } = React as ReactWithOptimistic;
-      return useOptimistic(state, updateFn);
-    } catch (_error) {
+      return (
+        React as typeof React & {
+          useOptimistic: <S, O = S>(
+            state: S,
+            updateFn?: (currentState: S, optimisticValue: O) => S,
+          ) => [S, (action: OptimisticStateAction<O>) => void];
+        }
+      ).useOptimistic(state, updateFn);
+    } catch {
       logger.warn("useOptimistic not available in current React version");
     }
   }
@@ -65,16 +56,18 @@ export function useOptimisticCompat<State, OptimisticState = State>(
     (action: OptimisticStateAction<OptimisticState>) => {
       if (typeof action === "function") {
         const actionFn = action as (currentState: State) => State;
-        setOptimisticState((current: State) => {
+        setOptimisticState((current) => {
           const newState = actionFn(current);
           return updateFn ? updateFn(current, newState as State & OptimisticState) : newState;
         });
-      } else {
-        const nextState = updateFn
-          ? updateFn(optimisticState, action)
-          : (action as State & OptimisticState);
-        setOptimisticState(nextState);
+        return;
       }
+
+      const nextState = updateFn
+        ? updateFn(optimisticState, action)
+        : (action as State & OptimisticState);
+
+      setOptimisticState(nextState);
     },
     [optimisticState, updateFn],
   );
@@ -82,13 +75,13 @@ export function useOptimisticCompat<State, OptimisticState = State>(
   return [optimisticState, updateOptimisticState];
 }
 
-export function useTransitionCompat() {
+export function useTransitionCompat(): ReturnType<typeof React.useTransition> {
   const versionInfo = getReactVersionInfo();
 
   if (versionInfo.isReact18 || versionInfo.isReact19) {
     try {
       return React.useTransition();
-    } catch (_error) {
+    } catch {
       logger.warn("useTransition not available, falling back to mock");
     }
   }
@@ -113,7 +106,7 @@ export function useDeferredValueCompat<T>(value: T): T {
   if (versionInfo.isReact18 || versionInfo.isReact19) {
     try {
       return React.useDeferredValue(value);
-    } catch (_error) {
+    } catch {
       logger.warn("useDeferredValue not available, returning value directly");
     }
   }
@@ -123,13 +116,13 @@ export function useDeferredValueCompat<T>(value: T): T {
 
 let idCounter = 0;
 
-export function useIdCompat() {
+export function useIdCompat(): string {
   const versionInfo = getReactVersionInfo();
 
   if (versionInfo.isReact18 || versionInfo.isReact19) {
     try {
       return React.useId();
-    } catch (_error) {
+    } catch {
       logger.warn("useId not available, using fallback");
     }
   }
@@ -144,7 +137,7 @@ export function SuspenseCompat({
 }: {
   children: React.ReactNode;
   fallback: React.ReactNode;
-}) {
+}): React.ReactElement {
   if (!hasFeature("suspense")) {
     logger.warn("Limited Suspense support in React 17");
     return React.createElement(React.Fragment, null, children);
@@ -163,19 +156,18 @@ export interface CompatHooks {
 
 // Lazy-initialized context to avoid module-level React.createContext() calls
 // that can fail during parallel test execution with inconsistent React instances
-let _compatHooksContext: React.Context<CompatHooks> | null = null;
+let compatHooksContext: React.Context<CompatHooks> | null = null;
 
 function getCompatHooksContext(): React.Context<CompatHooks> {
-  if (!_compatHooksContext) {
-    _compatHooksContext = React.createContext<CompatHooks>({
-      useFormStatus: useFormStatusCompat,
-      useOptimistic: useOptimisticCompat,
-      useTransition: useTransitionCompat,
-      useDeferredValue: useDeferredValueCompat,
-      useId: useIdCompat,
-    });
-  }
-  return _compatHooksContext;
+  compatHooksContext ??= React.createContext<CompatHooks>({
+    useFormStatus: useFormStatusCompat,
+    useOptimistic: useOptimisticCompat,
+    useTransition: useTransitionCompat,
+    useDeferredValue: useDeferredValueCompat,
+    useId: useIdCompat,
+  });
+
+  return compatHooksContext;
 }
 
 /**
@@ -183,27 +175,30 @@ function getCompatHooksContext(): React.Context<CompatHooks> {
  * Call this between tests to prevent React instance conflicts.
  */
 export function resetCompatHooksContext(): void {
-  _compatHooksContext = null;
+  compatHooksContext = null;
 }
 
-// Export getter for backward compatibility - callers should use the getter
 export const CompatHooksContext = {
-  get Provider() {
+  get Provider(): React.Provider<CompatHooks> {
     return getCompatHooksContext().Provider;
   },
-  get Consumer() {
+  get Consumer(): React.Consumer<CompatHooks> {
     return getCompatHooksContext().Consumer;
   },
-  get displayName() {
+  get displayName(): string | undefined {
     return getCompatHooksContext().displayName;
   },
 };
 
-export function useCompatHooks() {
+export function useCompatHooks(): CompatHooks {
   return React.useContext(getCompatHooksContext());
 }
 
-export function CompatHooksProvider({ children }: { children: React.ReactNode }) {
+export function CompatHooksProvider({
+  children,
+}: {
+  children: React.ReactNode;
+}): React.ReactElement {
   const hooks: CompatHooks = {
     useFormStatus: useFormStatusCompat,
     useOptimistic: useOptimisticCompat,

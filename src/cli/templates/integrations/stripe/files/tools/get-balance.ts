@@ -2,6 +2,24 @@ import { tool } from "veryfront/tool";
 import { z } from "zod";
 import { formatAmount, getBalance } from "../../lib/stripe-client.ts";
 
+function mapBalanceItem(bal: {
+  amount: number;
+  currency: string;
+  source_types: unknown;
+}): {
+  amount: string;
+  amountRaw: number;
+  currency: string;
+  sourceTypes: unknown;
+} {
+  return {
+    amount: formatAmount(bal.amount, bal.currency),
+    amountRaw: bal.amount,
+    currency: bal.currency,
+    sourceTypes: bal.source_types,
+  };
+}
+
 export default tool({
   id: "get-balance",
   description: "Retrieve the current Stripe account balance including available and pending funds.",
@@ -11,18 +29,8 @@ export default tool({
 
     return {
       livemode: balance.livemode,
-      available: balance.available.map((bal) => ({
-        amount: formatAmount(bal.amount, bal.currency),
-        amountRaw: bal.amount,
-        currency: bal.currency,
-        sourceTypes: bal.source_types,
-      })),
-      pending: balance.pending.map((bal) => ({
-        amount: formatAmount(bal.amount, bal.currency),
-        amountRaw: bal.amount,
-        currency: bal.currency,
-        sourceTypes: bal.source_types,
-      })),
+      available: balance.available.map(mapBalanceItem),
+      pending: balance.pending.map(mapBalanceItem),
     };
   },
 });

@@ -1,9 +1,3 @@
-/**
- * Pipeline stages barrel export.
- *
- * Each stage handles one concern in the ESM transform pipeline.
- */
-
 export { parsePlugin } from "./parse.ts";
 export { compilePlugin } from "./compile.ts";
 export { resolveAliasesPlugin } from "./resolve-aliases.ts";

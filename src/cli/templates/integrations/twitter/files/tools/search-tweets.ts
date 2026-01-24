@@ -26,16 +26,18 @@ export default tool({
   }),
   execute: async ({ query, maxResults, sortOrder }, context) => {
     // Default to "current-user" for development; in production, always pass userId from session
-    const userId = (context?.userId as string | undefined) || "current-user";
+    const userId = context?.userId ?? "current-user";
 
     try {
       const twitter = createTwitterClient(userId);
       const result = await twitter.searchTweets(query, {
-        maxResults: maxResults || 10,
-        sortOrder: sortOrder || "recency",
+        maxResults: maxResults ?? 10,
+        sortOrder: sortOrder ?? "recency",
       });
 
-      if (!result.data || result.data.length === 0) {
+      const tweets = result.data ?? [];
+
+      if (tweets.length === 0) {
         return {
           success: true,
           tweets: [],
@@ -46,7 +48,7 @@ export default tool({
 
       return {
         success: true,
-        tweets: result.data.map((tweet) => ({
+        tweets: tweets.map((tweet) => ({
           id: tweet.id,
           text: tweet.text,
           author_id: tweet.author_id,

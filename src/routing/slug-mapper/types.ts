@@ -4,6 +4,5 @@ export interface RouteParams {
 
 export interface PathCandidates {
   appRouter: string[];
-
   pagesRouter: string[];
 }

@@ -8,24 +8,27 @@ export function loadESMModule(
   projectDir: string,
   adapter: RuntimeAdapter,
 ): Promise<MDXModule> {
-  return withSpan("transforms.mdx.loadESMModule", async () => {
-    const { loadImportMap, transformImportsWithMap } = await import(
-      "../../../../modules/import-map/index.ts"
-    );
-    const importMap = await loadImportMap(projectDir, adapter);
+  return withSpan(
+    "transforms.mdx.loadESMModule",
+    async () => {
+      const { loadImportMap, transformImportsWithMap } = await import(
+        "../../../../modules/import-map/index.ts"
+      );
 
-    const transformed = transformImportsWithMap(moduleCode, importMap, undefined, {
-      resolveBare: true,
-    });
+      const importMap = await loadImportMap(projectDir, adapter);
+      const transformed = transformImportsWithMap(moduleCode, importMap, undefined, {
+        resolveBare: true,
+      });
 
-    const tmpDir = await adapter.fs.makeTempDir("veryfront-mdx-esm-");
-    const tmpFile = `${tmpDir}/${crypto.randomUUID()}.mjs`;
+      const tmpDir = await adapter.fs.makeTempDir("veryfront-mdx-esm-");
+      const tmpFile = `${tmpDir}/${crypto.randomUUID()}.mjs`;
 
-    await adapter.fs.writeFile(tmpFile, transformed);
+      await adapter.fs.writeFile(tmpFile, transformed);
 
-    const module = await import(`file://${tmpFile}?v=${Date.now()}`);
-    return module as MDXModule;
-  }, { "mdx.code_length": moduleCode.length });
+      return (await import(`file://${tmpFile}?v=${Date.now()}`)) as MDXModule;
+    },
+    { "mdx.code_length": moduleCode.length },
+  );
 }
 
 export function isESMModule(moduleCode: string): boolean {

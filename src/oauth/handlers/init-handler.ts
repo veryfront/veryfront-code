@@ -1,9 +1,3 @@
-/**
- * OAuth Init Handler
- *
- * Reusable handler for initiating OAuth flows.
- */
-
 import { type EnvReader, OAuthService } from "../providers/base.ts";
 import type { AuthorizationUrlOptions, OAuthServiceConfig, TokenStore } from "../types.ts";
 import { memoryTokenStore } from "../token-store/memory.ts";
@@ -27,31 +21,17 @@ export interface OAuthInitHandlerOptions {
   envReader?: EnvReader;
 }
 
-/**
- * Create an OAuth init route handler
- *
- * @example
- * ```typescript
- * // app/api/auth/gmail/route.ts
- * import { createOAuthInitHandler } from "veryfront/oauth";
- * import { gmailConfig } from "veryfront/oauth/providers";
- *
- * export const GET = createOAuthInitHandler(gmailConfig);
- * ```
- */
 export function createOAuthInitHandler(
   config: OAuthServiceConfig,
   options: OAuthInitHandlerOptions = {},
 ): () => Promise<Response> {
-  const {
-    tokenStore = memoryTokenStore,
-    baseUrl,
-    authOptions = {},
-    env = getRuntimeEnv(),
-    envReader = getEnv,
-  } = options;
+  const tokenStore = options.tokenStore ?? memoryTokenStore;
+  const baseUrl = options.baseUrl;
+  const authOptions = options.authOptions ?? {};
+  const env = options.env ?? getRuntimeEnv();
+  const envReader = options.envReader ?? getEnv;
 
-  return async (): Promise<Response> => {
+  return async function handler(): Promise<Response> {
     const service = new OAuthService(config, tokenStore, envReader);
 
     if (!service.isConfigured()) {
@@ -64,23 +44,18 @@ export function createOAuthInitHandler(
       );
     }
 
-    // Use APP_URL from env, or default to localhost:3000 (the standard veryfront dev port)
-    const appUrl = baseUrl || env.appUrl || "http://localhost:3000";
-
+    const appUrl = baseUrl ?? env.appUrl ?? "http://localhost:3000";
     const redirectUri = `${appUrl}/api/auth/${config.serviceId}/callback`;
 
     try {
-      const { url, state } = await service.createAuthorizationUrl({
-        ...authOptions,
-        redirectUri,
-      });
+      const { url, state } = await service.createAuthorizationUrl({ ...authOptions, redirectUri });
 
-      // Store state for CSRF protection
       await tokenStore.setState(state);
 
       return Response.redirect(url);
     } catch (error) {
       console.error(`OAuth init error for ${config.serviceId}:`, error);
+
       return Response.json(
         {
           error: "Failed to initiate OAuth flow",
@@ -100,25 +75,14 @@ export interface OAuthStatusHandlerOptions {
   envReader?: EnvReader;
 }
 
-/**
- * Create an OAuth status check handler
- *
- * @example
- * ```typescript
- * // app/api/auth/gmail/status/route.ts
- * import { createOAuthStatusHandler } from "veryfront/oauth";
- * import { gmailConfig } from "veryfront/oauth/providers";
- *
- * export const GET = createOAuthStatusHandler(gmailConfig);
- * ```
- */
 export function createOAuthStatusHandler(
   config: OAuthServiceConfig,
   options: OAuthStatusHandlerOptions = {},
 ): () => Promise<Response> {
-  const { tokenStore = memoryTokenStore, envReader = getEnv } = options;
+  const tokenStore = options.tokenStore ?? memoryTokenStore;
+  const envReader = options.envReader ?? getEnv;
 
-  return async (): Promise<Response> => {
+  return async function handler(): Promise<Response> {
     const tokens = await tokenStore.getTokens(config.serviceId);
 
     const isConnected = !!tokens?.accessToken;
@@ -136,25 +100,13 @@ export function createOAuthStatusHandler(
   };
 }
 
-/**
- * Create an OAuth disconnect handler
- *
- * @example
- * ```typescript
- * // app/api/auth/gmail/route.ts
- * import { createOAuthDisconnectHandler } from "veryfront/oauth";
- * import { gmailConfig } from "veryfront/oauth/providers";
- *
- * export const DELETE = createOAuthDisconnectHandler(gmailConfig);
- * ```
- */
 export function createOAuthDisconnectHandler(
   config: OAuthServiceConfig,
   options: { tokenStore?: TokenStore } = {},
 ): () => Promise<Response> {
-  const { tokenStore = memoryTokenStore } = options;
+  const tokenStore = options.tokenStore ?? memoryTokenStore;
 
-  return async (): Promise<Response> => {
+  return async function handler(): Promise<Response> {
     await tokenStore.clearTokens(config.serviceId);
 
     return Response.json({

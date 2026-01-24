@@ -16,16 +16,9 @@ export function normalizeSeparators(path: string): string {
  * Supports Unix (/path) and Windows (C:\path, \\UNC\path)
  */
 export function isAbsolutePath(path: string): boolean {
-  // Unix absolute path
   if (path.startsWith("/")) return true;
-
-  // Windows drive letter (C:\ or C:/)
   if (/^[A-Za-z]:[\/\\]/.test(path)) return true;
-
-  // Windows UNC path (\\server\share)
-  if (/^\\\\[^\\]+\\[^\\]+/.test(path)) return true;
-
-  return false;
+  return /^\\\\[^\\]+\\[^\\]+/.test(path);
 }
 
 /**
@@ -34,24 +27,22 @@ export function isAbsolutePath(path: string): boolean {
  */
 export function resolvePathSegments(path: string): string {
   const normalized = normalizeSeparators(path);
-  const parts = normalized.split("/").filter((p) => p.length > 0);
+  const parts = normalized.split("/").filter(Boolean);
   const resolved: string[] = [];
 
   for (const part of parts) {
-    if (part === ".") {
+    if (part === ".") continue;
+
+    if (part === "..") {
+      if (resolved.length) resolved.pop();
       continue;
-    } else if (part === "..") {
-      if (resolved.length > 0) {
-        resolved.pop();
-      }
-    } else {
-      resolved.push(part);
     }
+
+    resolved.push(part);
   }
 
   // Preserve leading slash for absolute paths
-  const isAbs = normalized.startsWith("/");
-  return isAbs ? `/${resolved.join("/")}` : resolved.join("/");
+  return normalized.startsWith("/") ? `/${resolved.join("/")}` : resolved.join("/");
 }
 
 /**
@@ -71,6 +62,5 @@ export function isWithinDirectory(baseDir: string, targetPath: string): boolean 
   const normalizedBase = normalizeSeparators(baseDir).replace(/\/$/, "");
   const normalizedTarget = normalizeSeparators(targetPath).replace(/\/$/, "");
 
-  return normalizedTarget === normalizedBase ||
-    normalizedTarget.startsWith(`${normalizedBase}/`);
+  return normalizedTarget === normalizedBase || normalizedTarget.startsWith(`${normalizedBase}/`);
 }

@@ -5,7 +5,7 @@ export const DEFAULT_PREVIEW_SERVER_PORT = 5000;
 export const DEFAULT_METRICS_PORT = 9000;
 
 export const BYTES_PER_KB = 1024;
-export const BYTES_PER_MB = 1024 * 1024;
+export const BYTES_PER_MB = BYTES_PER_KB * BYTES_PER_KB;
 
 export const DEFAULT_IMAGE_THUMBNAIL_SIZE = 256;
 export const DEFAULT_IMAGE_SMALL_SIZE = 512;
@@ -26,7 +26,6 @@ export const RESPONSIVE_IMAGE_WIDTHS = [
 export const MAX_CHUNK_SIZE_KB = 4096;
 
 export const MIN_PORT = 1;
-
 export const MAX_PORT = 65535;
 
 export const DEFAULT_SERVER_PORT = 8000;

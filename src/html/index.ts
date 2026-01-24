@@ -1,6 +1,5 @@
 export { getDevStyles } from "./dev-scripts.ts";
 export { isFullHTMLDocument } from "./html-detection.ts";
-
 export { buildAttributes, escapeHTML, escapeHtml } from "./html-escape.ts";
 export type { InjectHTMLContentOptions } from "./html-injection.ts";
 export { injectHTMLContent } from "./html-injection.ts";
@@ -27,7 +26,6 @@ export type {
   ImportMapConfig,
   MDXFrontmatter,
 } from "./types.ts";
-
 export {
   buildContentAttributes,
   buildImportMapJson,

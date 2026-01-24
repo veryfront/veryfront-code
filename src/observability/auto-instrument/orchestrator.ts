@@ -19,8 +19,13 @@ export async function initAutoInstrumentation(
   const finalConfig = mergeConfig(config);
 
   try {
-    await initializeTracing(finalConfig, adapter);
-    await initializeMetrics(finalConfig, adapter);
+    if (finalConfig.tracing?.enabled) {
+      await initTracing(finalConfig.tracing, adapter);
+    }
+
+    if (finalConfig.metrics?.enabled) {
+      await initMetrics(finalConfig.metrics, adapter);
+    }
 
     initialized = true;
     logInitialization(finalConfig);
@@ -42,28 +47,10 @@ export function __resetAutoInstrumentForTests(): void {
   initialized = false;
 }
 
-async function initializeTracing(
-  config: AutoInstrumentConfig,
-  adapter?: RuntimeAdapter,
-): Promise<void> {
-  if (config.tracing?.enabled) {
-    await initTracing(config.tracing, adapter);
-  }
-}
-
-async function initializeMetrics(
-  config: AutoInstrumentConfig,
-  adapter?: RuntimeAdapter,
-): Promise<void> {
-  if (config.metrics?.enabled) {
-    await initMetrics(config.metrics, adapter);
-  }
-}
-
 function logInitialization(config: AutoInstrumentConfig): void {
   logger.info("[auto-instrument] Auto-instrumentation initialized", {
-    tracing: config.tracing?.enabled || false,
-    metrics: config.metrics?.enabled || false,
+    tracing: config.tracing?.enabled ?? false,
+    metrics: config.metrics?.enabled ?? false,
     http: config.instrumentHttp,
     fetch: config.instrumentFetch,
     react: config.instrumentReact,

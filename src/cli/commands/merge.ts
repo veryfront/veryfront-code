@@ -33,13 +33,12 @@ export type MergeOptions = z.infer<typeof MergeArgsSchema>;
  * Parse CLI arguments into validated MergeOptions
  */
 export function parseMergeArgs(args: ParsedArgs): z.SafeParseReturnType<unknown, MergeOptions> {
-  const rawArgs = {
+  return MergeArgsSchema.safeParse({
     branch: args._.length > 1 ? String(args._[1]) : undefined,
     into: args.into ? String(args.into) : undefined,
     dryRun: Boolean(args["dry-run"]),
     force: Boolean(args.force) || Boolean(args.f),
-  };
-  return MergeArgsSchema.safeParse(rawArgs);
+  });
 }
 
 /**
@@ -92,8 +91,11 @@ export async function getBranchByName(
   let cursor: string | undefined;
 
   do {
-    const params: Record<string, string> = { search: name, limit: "100" };
-    if (cursor) params.cursor = cursor;
+    const params: Record<string, string> = {
+      search: name,
+      limit: "100",
+      ...(cursor ? { cursor } : {}),
+    };
 
     const response = await client.get<ListBranchesResponse>(
       `/projects/${projectSlug}/branches`,
@@ -112,36 +114,34 @@ export async function getBranchByName(
 /**
  * Merge a branch into target (or main)
  */
-export async function mergeBranch(
+export function mergeBranch(
   client: ApiClient,
   projectSlug: string,
   branchId: string,
   targetBranchId?: string,
 ): Promise<MergeResponse> {
-  return await client.post<MergeResponse>(
-    `/projects/${projectSlug}/branches/${branchId}/merge`,
-    { target_branch_id: targetBranchId || null },
-  );
+  return client.post<MergeResponse>(`/projects/${projectSlug}/branches/${branchId}/merge`, {
+    target_branch_id: targetBranchId ?? null,
+  });
 }
 
 /**
  * Get merge preview
  */
-async function getMergePreview(
+function getMergePreview(
   client: ApiClient,
   projectSlug: string,
   branchId: string,
   targetBranchId?: string,
 ): Promise<MergePreviewDiff[]> {
-  const params: Record<string, string> = {};
-  if (targetBranchId) {
-    params.target_branch_id = targetBranchId;
-  }
-  const response = await client.get<{ diffs: MergePreviewDiff[] }>(
-    `/projects/${projectSlug}/branches/${branchId}/merge-preview`,
-    params,
-  );
-  return response.diffs;
+  const params: Record<string, string> = targetBranchId ? { target_branch_id: targetBranchId } : {};
+
+  return client
+    .get<{ diffs: MergePreviewDiff[] }>(
+      `/projects/${projectSlug}/branches/${branchId}/merge-preview`,
+      params,
+    )
+    .then((response) => response.diffs);
 }
 
 /**
@@ -158,14 +158,14 @@ export async function mergeCommand(options: MergeOptions): Promise<void> {
 
   spinner.update(`Looking up branch "${branch}"...`);
 
-  // Look up source branch
   const sourceBranch = await getBranchByName(client, config.projectSlug, branch);
   if (!sourceBranch) {
     spinner.stop();
     throw new Error(`Branch "${branch}" not found`);
   }
 
-  // Look up target branch if specified
+  const targetName = into || "main";
+
   let targetBranchId: string | undefined;
   if (into && into !== "main") {
     spinner.update(`Looking up target branch "${into}"...`);
@@ -177,9 +177,6 @@ export async function mergeCommand(options: MergeOptions): Promise<void> {
     targetBranchId = targetBranch.id;
   }
 
-  const targetName = into || "main";
-
-  // Dry run: fetch merge preview
   if (dryRun) {
     spinner.update("Fetching merge preview...");
     const diffs = await getMergePreview(
@@ -204,19 +201,14 @@ export async function mergeCommand(options: MergeOptions): Promise<void> {
 
   spinner.stop();
 
-  // Confirm
   if (!force) {
-    const confirmed = await confirmPrompt(
-      `Merge branch "${branch}" into ${targetName}?`,
-      true,
-    );
+    const confirmed = await confirmPrompt(`Merge branch "${branch}" into ${targetName}?`, true);
     if (!confirmed) {
       cliLogger.info("Merge cancelled.");
       return;
     }
   }
 
-  // Execute merge
   spinner.start();
   spinner.update(`Merging "${branch}" into ${targetName}...`);
 

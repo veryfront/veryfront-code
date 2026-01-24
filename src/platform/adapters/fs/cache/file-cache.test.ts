@@ -5,28 +5,28 @@ import { FileCache, initializeFileCacheRedis, isFileCacheRedisEnabled } from "./
 describe("FileCache", () => {
   let cache: FileCache;
 
-  beforeEach(() => {
+  beforeEach((): void => {
     cache = new FileCache();
   });
 
-  afterEach(() => {
+  afterEach((): void => {
     cache.clear();
   });
 
   describe("class instantiation", () => {
     it("should be instantiable with default options", () => {
-      const c = new FileCache();
-      assertExists(c);
+      assertExists(new FileCache());
     });
 
     it("should be instantiable with custom options", () => {
-      const c = new FileCache({
-        enabled: true,
-        ttl: 30000,
-        maxSize: 500,
-        maxMemory: 50 * 1024 * 1024,
-      });
-      assertExists(c);
+      assertExists(
+        new FileCache({
+          enabled: true,
+          ttl: 30000,
+          maxSize: 500,
+          maxMemory: 50 * 1024 * 1024,
+        }),
+      );
     });
   });
 
@@ -82,9 +82,7 @@ describe("FileCache", () => {
       cache.set("prefix:key2", "value2");
       cache.set("other:key3", "value3");
 
-      const deleted = cache.deleteByPrefix("prefix:");
-
-      assertEquals(deleted, 2);
+      assertEquals(cache.deleteByPrefix("prefix:"), 2);
       assertEquals(cache.has("prefix:key1"), false);
       assertEquals(cache.has("prefix:key2"), false);
       assertEquals(cache.has("other:key3"), true);
@@ -97,9 +95,7 @@ describe("FileCache", () => {
       cache.set("prefix:other:suffix", "value2");
       cache.set("prefix:data:other", "value3");
 
-      const deleted = cache.deleteByPrefixAndSuffix("prefix:", "suffix");
-
-      assertEquals(deleted, 2);
+      assertEquals(cache.deleteByPrefixAndSuffix("prefix:", "suffix"), 2);
       assertEquals(cache.has("prefix:data:suffix"), false);
       assertEquals(cache.has("prefix:other:suffix"), false);
       assertEquals(cache.has("prefix:data:other"), true);
@@ -151,8 +147,7 @@ describe("Redis functions", () => {
     });
 
     it("should return boolean", async () => {
-      const result = await initializeFileCacheRedis();
-      assertEquals(typeof result, "boolean");
+      assertEquals(typeof (await initializeFileCacheRedis()), "boolean");
     });
   });
 
@@ -163,8 +158,7 @@ describe("Redis functions", () => {
     });
 
     it("should return boolean", () => {
-      const result = isFileCacheRedisEnabled();
-      assertEquals(typeof result, "boolean");
+      assertEquals(typeof isFileCacheRedisEnabled(), "boolean");
     });
   });
 });

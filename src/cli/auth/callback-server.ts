@@ -146,8 +146,16 @@ function renderErrorPage(error: string): string {
 </html>`;
 }
 
-const successHtml = () => renderSuccessPage();
-const errorHtml = (err: string) => renderErrorPage(err);
+function createWaitForCallback(callbackPromise: Promise<CallbackResult>) {
+  return function waitForCallback(
+    timeoutMs: number = DEFAULT_LOGIN_TIMEOUT_MS,
+  ): Promise<CallbackResult> {
+    const timeout = new Promise<CallbackResult>((_, reject) => {
+      setTimeout(() => reject(new Error("Login timed out. Please try again.")), timeoutMs);
+    });
+    return Promise.race([callbackPromise, timeout]);
+  };
+}
 
 async function findAvailablePort(startPort: number): Promise<number> {
   let port = startPort;
@@ -159,22 +167,24 @@ async function findAvailablePort(startPort: number): Promise<number> {
         const listener = Deno.listen({ port, hostname: "127.0.0.1" });
         listener.close();
         return port;
-      } else {
-        const net = await import("node:net");
-        const available = await new Promise<boolean>((resolve) => {
-          const server = net.createServer();
-          server.once("error", () => resolve(false));
-          server.once("listening", () => {
-            server.close();
-            resolve(true);
-          });
-          server.listen(port, "127.0.0.1");
-        });
-        if (available) return port;
       }
+
+      const net = await import("node:net");
+      const available = await new Promise<boolean>((resolve) => {
+        const server = net.createServer();
+        server.once("error", () => resolve(false));
+        server.once("listening", () => {
+          server.close();
+          resolve(true);
+        });
+        server.listen(port, "127.0.0.1");
+      });
+
+      if (available) return port;
     } catch {
       // Port in use
     }
+
     port++;
   }
 
@@ -185,16 +195,15 @@ function handleCallback(url: URL): { result: CallbackResult; html: string } {
   const token = url.searchParams.get("token");
   const error = url.searchParams.get("error");
 
-  if (error) return { result: { token: "", error }, html: errorHtml(error) };
-  if (token) return { result: { token }, html: successHtml() };
-  return {
-    result: { token: "", error: "No token received" },
-    html: errorHtml("No token received"),
-  };
+  if (error) return { result: { token: "", error }, html: renderErrorPage(error) };
+  if (token) return { result: { token }, html: renderSuccessPage() };
+
+  const message = "No token received";
+  return { result: { token: "", error: message }, html: renderErrorPage(message) };
 }
 
 function startDenoServer(port: number): CallbackServer {
-  let resolveCallback: (result: CallbackResult) => void;
+  let resolveCallback!: (result: CallbackResult) => void;
   const callbackPromise = new Promise<CallbackResult>((resolve) => {
     resolveCallback = resolve;
   });
@@ -204,27 +213,25 @@ function startDenoServer(port: number): CallbackServer {
     { port, hostname: "127.0.0.1", onListen: () => {} },
     (request: Request) => {
       const url = new URL(request.url);
-      if (url.pathname === "/callback") {
-        const { result, html } = handleCallback(url);
-        resolveCallback!(result);
-        // Close connection immediately to allow clean server shutdown
-        return new Response(html, {
-          headers: { "Content-Type": "text/html; charset=utf-8", Connection: "close" },
-        });
+
+      if (url.pathname !== "/callback") {
+        return new Response("Not Found", { status: 404, headers: { Connection: "close" } });
       }
-      return new Response("Not Found", { status: 404, headers: { Connection: "close" } });
+
+      const { result, html } = handleCallback(url);
+      resolveCallback(result);
+
+      // Close connection immediately to allow clean server shutdown
+      return new Response(html, {
+        headers: { "Content-Type": "text/html; charset=utf-8", Connection: "close" },
+      });
     },
   );
 
   return {
     port,
-    waitForCallback: (timeoutMs = DEFAULT_LOGIN_TIMEOUT_MS) => {
-      const timeout = new Promise<CallbackResult>((_, reject) => {
-        setTimeout(() => reject(new Error("Login timed out. Please try again.")), timeoutMs);
-      });
-      return Promise.race([callbackPromise, timeout]);
-    },
-    stop: async () => {
+    waitForCallback: createWaitForCallback(callbackPromise),
+    stop: async (): Promise<void> => {
       await server.shutdown();
     },
   };
@@ -232,40 +239,39 @@ function startDenoServer(port: number): CallbackServer {
 
 async function startNodeServer(port: number): Promise<CallbackServer> {
   const http = await import("node:http");
-  let resolveCallback: (result: CallbackResult) => void;
+
+  let resolveCallback!: (result: CallbackResult) => void;
   const callbackPromise = new Promise<CallbackResult>((resolve) => {
     resolveCallback = resolve;
   });
 
   const server = http.createServer((req, res) => {
-    const url = new URL(req.url || "/", `http://127.0.0.1:${port}`);
-    if (url.pathname === "/callback") {
-      const { result, html } = handleCallback(url);
-      resolveCallback!(result);
-      res.setHeader("Content-Type", "text/html; charset=utf-8");
-      res.end(html);
+    const url = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
+
+    if (url.pathname !== "/callback") {
+      res.statusCode = 404;
+      res.end("Not Found");
       return;
     }
-    res.statusCode = 404;
-    res.end("Not Found");
+
+    const { result, html } = handleCallback(url);
+    resolveCallback(result);
+
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.end(html);
   });
 
   await new Promise<void>((resolve) => server.listen(port, "127.0.0.1", resolve));
 
   return {
     port,
-    waitForCallback: (timeoutMs = DEFAULT_LOGIN_TIMEOUT_MS) => {
-      const timeout = new Promise<CallbackResult>((_, reject) => {
-        setTimeout(() => reject(new Error("Login timed out. Please try again.")), timeoutMs);
-      });
-      return Promise.race([callbackPromise, timeout]);
-    },
-    stop: () => new Promise((resolve) => server.close(() => resolve())),
+    waitForCallback: createWaitForCallback(callbackPromise),
+    stop: (): Promise<void> => new Promise<void>((resolve) => server.close(() => resolve())),
   };
 }
 
 export async function startCallbackServer(
-  preferredPort = DEFAULT_CALLBACK_PORT,
+  preferredPort: number = DEFAULT_CALLBACK_PORT,
 ): Promise<CallbackServer> {
   const port = await findAvailablePort(preferredPort);
   return isDeno ? startDenoServer(port) : startNodeServer(port);

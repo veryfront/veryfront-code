@@ -13,7 +13,6 @@ describe("hash-utils", () => {
   describe("computeHash", () => {
     it("should compute SHA-256 hash of content", async () => {
       const hash = await computeHash("hello world");
-      // SHA-256 produces 64 hex characters
       assertEquals(hash.length, 64);
       assertEquals(/^[0-9a-f]+$/.test(hash), true);
     });
@@ -43,16 +42,18 @@ describe("hash-utils", () => {
 
   describe("getContentHash (deprecated alias)", () => {
     it("should be an alias for computeHash", async () => {
-      const hash1 = await computeHash("test");
-      const hash2 = await getContentHash("test");
+      const input = "test";
+      const hash1 = await computeHash(input);
+      const hash2 = await getContentHash(input);
       assertEquals(hash1, hash2);
     });
   });
 
   describe("computeContentHash (deprecated alias)", () => {
     it("should be an alias for computeHash", async () => {
-      const hash1 = await computeHash("test");
-      const hash2 = await computeContentHash("test");
+      const input = "test";
+      const hash1 = await computeHash(input);
+      const hash2 = await computeContentHash(input);
       assertEquals(hash1, hash2);
     });
   });
@@ -64,18 +65,20 @@ describe("hash-utils", () => {
     });
 
     it("should include css in hash when provided", async () => {
-      const hashWithoutCss = await computeCodeHash({ code: "const x = 1;" });
+      const bundle = { code: "const x = 1;" };
+      const hashWithoutCss = await computeCodeHash(bundle);
       const hashWithCss = await computeCodeHash({
-        code: "const x = 1;",
+        ...bundle,
         css: ".foo { color: red; }",
       });
       assertNotEquals(hashWithoutCss, hashWithCss);
     });
 
     it("should include sourceMap in hash when provided", async () => {
-      const hashWithoutMap = await computeCodeHash({ code: "const x = 1;" });
+      const bundle = { code: "const x = 1;" };
+      const hashWithoutMap = await computeCodeHash(bundle);
       const hashWithMap = await computeCodeHash({
-        code: "const x = 1;",
+        ...bundle,
         sourceMap: "//# sourceMappingURL=...",
       });
       assertNotEquals(hashWithoutMap, hashWithMap);
@@ -100,17 +103,16 @@ describe("hash-utils", () => {
     });
 
     it("should produce non-negative numbers", () => {
-      const hash1 = simpleHash("test");
-      const hash2 = simpleHash("another string");
-      const hash3 = simpleHash("negative test");
-      assertEquals(hash1 >= 0, true);
-      assertEquals(hash2 >= 0, true);
-      assertEquals(hash3 >= 0, true);
+      const inputs = ["test", "another string", "negative test"];
+      for (const input of inputs) {
+        assertEquals(simpleHash(input) >= 0, true);
+      }
     });
 
     it("should produce consistent hashes", () => {
-      const hash1 = simpleHash("consistent");
-      const hash2 = simpleHash("consistent");
+      const input = "consistent";
+      const hash1 = simpleHash(input);
+      const hash2 = simpleHash(input);
       assertEquals(hash1, hash2);
     });
 
@@ -121,22 +123,23 @@ describe("hash-utils", () => {
     });
 
     it("should handle empty string", () => {
-      const hash = simpleHash("");
-      assertEquals(hash, 0);
+      assertEquals(simpleHash(""), 0);
     });
   });
 
   describe("shortHash", () => {
     it("should return first 8 characters of full hash", async () => {
-      const full = await computeHash("test content");
-      const short = await shortHash("test content");
+      const input = "test content";
+      const full = await computeHash(input);
+      const short = await shortHash(input);
       assertEquals(short.length, 8);
       assertEquals(short, full.slice(0, 8));
     });
 
     it("should produce consistent short hashes", async () => {
-      const hash1 = await shortHash("hello");
-      const hash2 = await shortHash("hello");
+      const input = "hello";
+      const hash1 = await shortHash(input);
+      const hash2 = await shortHash(input);
       assertEquals(hash1, hash2);
     });
 

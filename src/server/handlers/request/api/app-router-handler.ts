@@ -14,25 +14,10 @@ import { methodNotAllowed } from "#veryfront/http/responses";
 
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
 
-/**
- * Gets the list of allowed HTTP methods from a route module
- */
 function getAllowedMethods(mod: RouteHandlerModule): string[] {
   return HTTP_METHODS.filter((m) => typeof mod[m] === "function");
 }
 
-/**
- * Resolves the handler function for a given HTTP method
- *
- * @param mod - The route handler module
- * @param method - HTTP method (uppercase)
- * @returns Handler function and whether it's a HEAD->GET shim
- *
- * @example
- * ```ts
- * const [fn, isHeadShim] = resolveHandlerFunction(mod, "GET");
- * ```
- */
 function resolveHandlerFunction(
   mod: RouteHandlerModule,
   method: string,
@@ -42,7 +27,6 @@ function resolveHandlerFunction(
     return [methodFn as HandlerFn, false];
   }
 
-  // HEAD fallback to GET
   if (method === "HEAD" && typeof mod.GET === "function") {
     return [mod.GET as HandlerFn, true];
   }
@@ -50,19 +34,6 @@ function resolveHandlerFunction(
   return [undefined, false];
 }
 
-/**
- * Handles App Router route.ts requests
- *
- * @param req - The incoming request
- * @param pathname - Request pathname
- * @param ctx - Handler context
- * @returns Response or null if not handled
- *
- * @example
- * ```ts
- * const response = await handleAppRouter(req, "/api/users", ctx);
- * ```
- */
 export async function handleAppRouter(
   req: Request,
   pathname: string,
@@ -70,40 +41,31 @@ export async function handleAppRouter(
 ): Promise<Response | null> {
   try {
     const match = await resolveAppRouteFile(pathname, ctx);
-    if (!match) {
-      return null;
-    }
+    if (!match) return null;
 
     const mod = (await import(`file://${match.file}`)) as RouteHandlerModule;
     const method = req.method.toUpperCase();
 
     const [fn, headShim] = resolveHandlerFunction(mod, method);
+    if (!fn) return methodNotAllowed(getAllowedMethods(mod));
 
-    if (!fn) {
-      return methodNotAllowed(getAllowedMethods(mod));
-    }
-
-    // Execute the handler
     const res = await fn(req, { params: match.params });
 
-    // Apply CORS and security headers
-    const h = new Headers(res.headers);
+    const headers = new Headers(res.headers);
 
-    // Apply CORS
     await applyCORSHeaders({
       request: req,
-      headers: h,
+      headers,
       config: ctx.securityConfig?.cors,
     });
 
-    // Apply security headers
-    applySecurityHeaders(h, ctx);
+    applySecurityHeaders(headers, ctx);
 
     if (headShim) {
-      return new Response(null, { status: res.status, headers: h });
+      return new Response(null, { status: res.status, headers });
     }
 
-    return new Response(res.body, { status: res.status, headers: h });
+    return new Response(res.body, { status: res.status, headers });
   } catch (error) {
     serverLogger.error("[AppRouterAPIHandler] Failed to handle request", error);
     return null;

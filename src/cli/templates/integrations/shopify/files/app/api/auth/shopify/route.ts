@@ -1,7 +1,3 @@
-/**
- * Shopify OAuth Init
- */
-
-import { shopifyConfig, createOAuthInitHandler } from "veryfront/oauth";
+import { createOAuthInitHandler, shopifyConfig } from "veryfront/oauth";
 
 export const GET = createOAuthInitHandler(shopifyConfig);

@@ -40,21 +40,20 @@ async function multiSelect(
   options: MultiSelectOption[],
   hint?: string,
 ): Promise<AIToolId[] | null> {
-  if (!isTTY()) {
-    return options.filter((o) => o.selected).map((o) => o.value) as AIToolId[];
-  }
+  if (!isTTY()) return options.filter((o) => o.selected).map((o) => o.value as AIToolId);
 
   let idx = 0;
   let lines = 0;
-  const selected = new Set(options.filter((o) => o.selected).map((o) => o.value));
+  const selected = new Set<AIToolId>(
+    options.filter((o) => o.selected).map((o) => o.value as AIToolId),
+  );
 
-  function draw() {
+  function draw(): void {
     if (lines > 0) clearLines(lines);
 
     console.log();
     console.log(
-      "  " + bold("Select AI Coding Tools") + " " +
-        dim("(space to toggle, enter to confirm)"),
+      "  " + bold("Select AI Coding Tools") + " " + dim("(space to toggle, enter to confirm)"),
     );
     console.log("  " + dim("Install integrations for your AI assistants."));
     console.log();
@@ -63,7 +62,7 @@ async function multiSelect(
     for (let i = 0; i < options.length; i++) {
       const opt = options[i]!;
       const isCurrent = i === idx;
-      const isSelected = selected.has(opt.value);
+      const isSelected = selected.has(opt.value as AIToolId);
       const pointer = isCurrent ? brand("❯") : " ";
       const checkbox = isSelected ? brand("[✓]") : dim("[ ]");
       const label = isCurrent ? opt.label : muted(opt.label);
@@ -94,33 +93,46 @@ async function multiSelect(
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
+
       const key = dec.decode(value);
 
       if (key === "\x03" || key === "q" || key === "Q") {
         result = null;
         break;
       }
+
       if (key === "\r" || key === "\n") {
-        result = Array.from(selected) as AIToolId[];
+        result = Array.from(selected);
         break;
       }
+
       if (key === " ") {
         const opt = options[idx]!;
-        selected.has(opt.value) ? selected.delete(opt.value) : selected.add(opt.value);
+        const value = opt.value as AIToolId;
+        if (selected.has(value)) selected.delete(value);
+        else selected.add(value);
         draw();
+        continue;
       }
+
       if (key === "\x1b[A" || key === "k") {
         idx = idx > 0 ? idx - 1 : options.length - 1;
         draw();
+        continue;
       }
+
       if (key === "\x1b[B" || key === "j") {
         idx = idx < options.length - 1 ? idx + 1 : 0;
         draw();
+        continue;
       }
+
       if (key === "a" || key === "A") {
-        options.forEach((o) => selected.add(o.value));
+        for (const o of options) selected.add(o.value as AIToolId);
         draw();
+        continue;
       }
+
       if (key === "n" || key === "N") {
         selected.clear();
         draw();
@@ -136,10 +148,16 @@ async function multiSelect(
   return result;
 }
 
-const TargetFlagSchema = z.string().transform((val) => {
-  if (val === "all") return AI_TOOLS.map((t) => t.id);
-  return val.split(",").map((t) => t.trim()).filter(isValidToolId);
-}).refine((arr) => arr.length > 0, { message: "No valid targets specified" });
+const TargetFlagSchema = z
+  .string()
+  .transform((val) => {
+    if (val === "all") return AI_TOOLS.map((t) => t.id);
+    return val
+      .split(",")
+      .map((t) => t.trim())
+      .filter(isValidToolId);
+  })
+  .refine((arr) => arr.length > 0, { message: "No valid targets specified" });
 
 export function parseTargetFlag(target: string): AIToolId[] {
   return TargetFlagSchema.parse(target);
@@ -166,8 +184,7 @@ export async function installTargets(
 
     await mkdir(dirname(dest), { recursive: true });
 
-    const fileExists = await exists(dest);
-    if (!options.force && fileExists) {
+    if (!options.force && (await exists(dest))) {
       console.log(`  ${warning("!")} ${tool.file} ${muted("exists (use --force to overwrite)")}`);
       continue;
     }
@@ -187,8 +204,7 @@ export async function installCommand(options: InstallOptions = {}): Promise<void
   const cwd = validated.cwd ?? getCwd();
 
   if (validated.target) {
-    const targets = parseTargetFlag(validated.target);
-    await installTargets(targets, { ...validated, cwd });
+    await installTargets(parseTargetFlag(validated.target), { ...validated, cwd });
     return;
   }
 
@@ -203,7 +219,7 @@ export async function installCommand(options: InstallOptions = {}): Promise<void
   }));
 
   const selected = await multiSelect(selectOptions, hint);
-  if (!selected || selected.length === 0) {
+  if (!selected?.length) {
     console.log();
     console.log("  " + muted("No tools selected."));
     console.log();

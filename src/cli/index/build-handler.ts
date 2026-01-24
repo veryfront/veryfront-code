@@ -5,16 +5,11 @@
  */
 
 import { cliLogger } from "#veryfront/utils";
+import { cwd } from "#veryfront/platform/compat/process.ts";
 import { buildCommand } from "../commands/build.ts";
 import { parseArrayArg } from "./arg-parser.ts";
 import type { BuildCommandArgs } from "./types.ts";
-import { cwd } from "#veryfront/platform/compat/process.ts";
 
-/**
- * Handle the build command execution
- *
- * @param args - Build command arguments
- */
 export async function handleBuildCommand(args: BuildCommandArgs): Promise<void> {
   const projectDir = cwd();
   const outputDir = args.output || args.o;
@@ -34,16 +29,10 @@ export async function handleBuildCommand(args: BuildCommandArgs): Promise<void> 
     ssg: args.ssg !== false && args["no-ssg"] !== true,
     include: parseArrayArg(args.include),
     exclude: parseArrayArg(args.exclude),
-    dryRun: Boolean(args["dry-run"]) || Boolean(args.dryrun),
+    dryRun: Boolean(args["dry-run"] ?? args.dryrun),
   });
 }
 
-/**
- * Handle the embedded preset build
- *
- * @param projectDir - Project directory
- * @param outputDir - Optional output directory
- */
 async function handleEmbeddedBuild(projectDir: string, outputDir?: string): Promise<void> {
   const { bold, cyan, dim, green, yellow } = await import("std/fmt/colors.ts");
   const { join } = await import("std/path/mod.ts");

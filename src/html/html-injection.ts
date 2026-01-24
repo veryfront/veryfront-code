@@ -38,27 +38,25 @@ export function injectHTMLContent(
   html = html.replace(/{{\s*description\s*}}/gi, metadata.description || "");
 
   if (/{{\s*meta\s*}}/i.test(html)) {
-    const metaTags = generateMetaTags(metadata);
-    html = html.replace(/{{\s*meta\s*}}/gi, metaTags);
+    html = html.replace(/{{\s*meta\s*}}/gi, generateMetaTags(metadata));
   }
 
   if (/{{\s*links\s*}}/i.test(html)) {
-    const linkTags = generateLinkTags(metadata);
-    html = html.replace(/{{\s*links\s*}}/gi, linkTags);
+    html = html.replace(/{{\s*links\s*}}/gi, generateLinkTags(metadata));
   }
 
   if (/{{\s*scripts\s*}}/i.test(html)) {
-    const scriptTags = generateScriptTags(metadata);
-    html = html.replace(/{{\s*scripts\s*}}/gi, scriptTags);
+    html = html.replace(/{{\s*scripts\s*}}/gi, generateScriptTags(metadata));
   }
 
   if (/{{\s*styles\s*}}/i.test(html)) {
-    const styleTags = generateStyleTags(metadata);
-    html = html.replace(/{{\s*styles\s*}}/gi, styleTags);
+    html = html.replace(/{{\s*styles\s*}}/gi, generateStyleTags(metadata));
   }
 
+  const hasBodyClose = /<\/body>/i.test(html);
+
   // Inject hydration data for 'use client' pages (before scripts, so client.js can find it)
-  if (options.pagePath && options.isClientPage && /<\/body>/i.test(html)) {
+  if (options.pagePath && options.isClientPage && hasBodyClose) {
     const hydrationData = JSON.stringify({
       pagePath: options.pagePath,
       slug: options.slug,
@@ -66,52 +64,36 @@ export function injectHTMLContent(
     });
     const hydrationScript =
       `<script id="veryfront-hydration-data" type="application/json">${hydrationData}</script>`;
-    // Insert before </body> - will be before the dev/prod scripts we add below
     html = html.replace(/<\/body>/i, `${hydrationScript}</body>`);
   }
 
-  // Track if dev scripts placeholder was found and replaced
-  let devScriptsInjected = false;
-
   if (options.mode === "development") {
-    // HMR port is detected at runtime in the hmr.js script
-    if (/{{\s*devScripts\s*}}/i.test(html)) {
-      html = html.replace(
-        /{{\s*devScripts\s*}}/gi,
-        getDevScripts(),
-      );
-      devScriptsInjected = true;
+    const hasDevScriptsPlaceholder = /{{\s*devScripts\s*}}/i.test(html);
+
+    if (hasDevScriptsPlaceholder) {
+      html = html.replace(/{{\s*devScripts\s*}}/gi, getDevScripts());
     }
+
     html = html.replace(/{{\s*devStyles\s*}}/gi, getDevStyles());
 
-    // If no placeholder was found, inject scripts before </body>
-    if (!devScriptsInjected && /<\/body>/i.test(html)) {
-      const devScripts = getDevScripts();
-      const devStyles = getDevStyles();
-      html = html.replace(
-        /<\/body>/i,
-        `${devStyles}${devScripts}</body>`,
-      );
+    if (!hasDevScriptsPlaceholder && hasBodyClose) {
+      html = html.replace(/<\/body>/i, `${getDevStyles()}${getDevScripts()}</body>`);
     }
   } else {
     html = html.replace(/{{\s*devScripts\s*}}/gi, "");
     html = html.replace(/{{\s*devStyles\s*}}/gi, "");
 
-    let prodScriptsInjected = false;
-    if (/{{\s*prodScripts\s*}}/i.test(html)) {
-      html = html.replace(/{{\s*prodScripts\s*}}/gi, getProdScripts(options.slug));
-      prodScriptsInjected = true;
-    }
+    const hasProdScriptsPlaceholder = /{{\s*prodScripts\s*}}/i.test(html);
 
-    // If no placeholder was found, inject scripts before </body>
-    if (!prodScriptsInjected && /<\/body>/i.test(html)) {
-      const prodScripts = getProdScripts(options.slug);
-      html = html.replace(/<\/body>/i, `${prodScripts}</body>`);
+    if (hasProdScriptsPlaceholder) {
+      html = html.replace(/{{\s*prodScripts\s*}}/gi, getProdScripts(options.slug));
+    } else if (hasBodyClose) {
+      html = html.replace(/<\/body>/i, `${getProdScripts(options.slug)}</body>`);
     }
   }
 
   // Inject Studio bridge script when embedded in Studio iframe
-  if (options.studioEmbed && /<\/body>/i.test(html)) {
+  if (options.studioEmbed && hasBodyClose) {
     const studioScripts = getStudioScripts({
       projectId: options.projectId || options.slug,
       pageId: options.pageId || options.slug,

@@ -30,23 +30,29 @@ export interface KeyboardOptions {
  * Shared key press handler for all runtimes
  */
 function handleKeyPress(key: string, options: KeyboardOptions): void {
-  // Check for number keys 1-9
   if (key >= "1" && key <= "9") {
-    options.onNumber?.(parseInt(key, 10));
+    options.onNumber?.(Number.parseInt(key, 10));
     return;
   }
 
   switch (key.toLowerCase()) {
     case "o":
       options.onOpen?.();
-      break;
+      return;
     case "c":
       options.onClear?.();
-      break;
+      return;
     case "q":
       options.onQuit?.();
-      break;
+      return;
   }
+}
+
+function createNoopHandler(): KeyboardHandler {
+  return {
+    start() {},
+    stop() {},
+  };
 }
 
 // Cross-runtime implementation using platform abstractions
@@ -54,31 +60,35 @@ function createPlatformHandler(options: KeyboardOptions): KeyboardHandler {
   let running = false;
   let reader: ReturnType<typeof getStdinReader> | null = null;
 
-  const readLoop = async () => {
+  async function readLoop(): Promise<void> {
     if (!reader) return;
+
     while (running) {
       try {
         const { value, done } = await reader.read();
-        if (done || !value) break;
+        if (done || !value) return;
+
         const byte = value[0];
         if (byte === undefined) continue;
+
         // Handle Ctrl+C (0x03)
         if (byte === 0x03) {
           options.onQuit?.();
-          break;
+          return;
         }
-        const char = String.fromCharCode(byte);
-        handleKeyPress(char, options);
+
+        handleKeyPress(String.fromCharCode(byte), options);
       } catch {
         // stdin closed or error, exit loop
-        break;
+        return;
       }
     }
-  };
+  }
 
   return {
     start() {
       if (!isStdoutTTY()) return;
+
       try {
         setRawMode(true);
         reader = getStdinReader();
@@ -91,11 +101,10 @@ function createPlatformHandler(options: KeyboardOptions): KeyboardHandler {
     },
     stop() {
       running = false;
+
       try {
-        if (reader) {
-          reader.releaseLock();
-          reader = null;
-        }
+        reader?.releaseLock();
+        reader = null;
         setRawMode(false);
       } catch {
         // Ignore errors restoring terminal
@@ -109,14 +118,6 @@ function createPlatformHandler(options: KeyboardOptions): KeyboardHandler {
  * Uses platform abstractions that work across Deno, Node.js, and Bun
  */
 export function createKeyboardHandler(options: KeyboardOptions): KeyboardHandler {
-  // Check if we have a TTY - if not, return no-op handler
-  if (!isStdoutTTY()) {
-    return {
-      start() {},
-      stop() {},
-    };
-  }
-
-  // Use platform abstractions which handle all runtimes
+  if (!isStdoutTTY()) return createNoopHandler();
   return createPlatformHandler(options);
 }

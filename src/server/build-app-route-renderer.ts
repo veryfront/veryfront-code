@@ -4,11 +4,34 @@
 
 import { serverLogger as logger } from "#veryfront/utils";
 import { join } from "#veryfront/platform/compat/path/index.ts";
-import * as React from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getProjectReact, renderToStringAdapter } from "#veryfront/react";
 import { loadComponentFromSource } from "#veryfront/modules/react-loader/index.ts";
 import { CompilationError } from "#veryfront/errors/index.ts";
+
+type ReactComponentLike = import("react").ComponentType<{ children?: import("react").ReactNode }>;
+
+async function fileExists(adapter: RuntimeAdapter, filePath: string): Promise<boolean> {
+  try {
+    const st = await adapter.fs.stat(filePath);
+    return st.isFile;
+  } catch {
+    return false;
+  }
+}
+
+async function loadComponent(
+  adapter: RuntimeAdapter,
+  filePath: string,
+  projectDir: string,
+): Promise<unknown> {
+  const src = await adapter.fs.readFile(filePath);
+  return loadComponentFromSource(src, filePath, projectDir, adapter, {
+    projectId: projectDir,
+    dev: false,
+    moduleServerUrl: "", // Empty string forces CDN URLs, no module server available
+  });
+}
 
 /**
  * Render an App Router route to HTML
@@ -20,72 +43,38 @@ export async function renderAppRouteToHTML(args: {
   pageFile: string;
 }): Promise<string> {
   const { adapter, projectDir, routePath, pageFile } = args;
-  // Load root and segment layouts
+
   const appRoot = join(projectDir, "app");
   const layouts: string[] = [];
+
   const rootLayout = join(appRoot, "layout.tsx");
-  try {
-    const st = await adapter.fs.stat(rootLayout);
-    if (st.isFile) layouts.push(rootLayout);
-  } catch {
-    // Root layout not found, continue without it
-  }
+  if (await fileExists(adapter, rootLayout)) layouts.push(rootLayout);
+
   const segments = routePath === "/" ? [] : routePath.split("/").filter(Boolean);
   let current = appRoot;
+
   for (const seg of segments) {
     current = join(current, seg);
-    const lf = join(current, "layout.tsx");
-    try {
-      const st = await adapter.fs.stat(lf);
-      if (st.isFile) layouts.push(lf);
-    } catch {
-      // Segment layout not found, continue without it
-    }
+    const layoutFile = join(current, "layout.tsx");
+    if (await fileExists(adapter, layoutFile)) layouts.push(layoutFile);
   }
 
   // Get React from the project's node_modules to ensure element symbols match
   const React = await getProjectReact();
 
-  // Load page component using ESM loader
-  const pageSrc = await adapter.fs.readFile(pageFile);
-  const Page = await loadComponentFromSource(
-    pageSrc,
-    pageFile,
-    projectDir,
-    adapter,
-    {
-      projectId: projectDir,
-      dev: false,
-      moduleServerUrl: "", // Empty string forces CDN URLs, no module server available
-    },
-  );
+  const Page = await loadComponent(adapter, pageFile, projectDir);
   if (typeof Page !== "function") {
-    throw new CompilationError("Invalid page component", {
-      pageFile,
-      type: typeof Page,
-    });
+    throw new CompilationError("Invalid page component", { pageFile, type: typeof Page });
   }
 
-  // Type-safe component wrapper
-  type ReactComponentLike = React.ComponentType<{ children?: React.ReactNode }>;
+  let element: import("react").ReactNode = React.createElement(Page as ReactComponentLike);
 
-  // Wrap with layouts using project's React.createElement
-  let element: React.ReactNode = React.createElement(Page as ReactComponentLike);
   for (let i = layouts.length - 1; i >= 0; i--) {
-    const layoutPath = layouts[i]!;
+    const layoutPath = layouts[i];
+    if (!layoutPath) continue;
+
     try {
-      const src = await adapter.fs.readFile(layoutPath);
-      const Layout = await loadComponentFromSource(
-        src,
-        layoutPath,
-        projectDir,
-        adapter,
-        {
-          projectId: projectDir,
-          dev: false,
-          moduleServerUrl: "", // Empty string forces CDN URLs, no module server available
-        },
-      );
+      const Layout = await loadComponent(adapter, layoutPath, projectDir);
       if (typeof Layout === "function") {
         element = React.createElement(Layout as ReactComponentLike, { children: element });
       }
@@ -99,6 +88,7 @@ export async function renderAppRouteToHTML(args: {
 
   const htmlInner = await renderToStringAdapter(element);
   const title = "Veryfront App";
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>

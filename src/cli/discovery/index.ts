@@ -29,7 +29,6 @@ interface FileDiscoveryContext {
 const transpileCache = new Map<string, unknown>();
 
 function createFsAdapterPlugin(fsAdapter: FileSystemAdapter): Plugin {
-  // Cache existence checks to avoid repeated remote calls
   const existsCache = new Map<string, boolean>();
 
   async function checkExists(filePath: string): Promise<boolean> {
@@ -41,31 +40,21 @@ function createFsAdapterPlugin(fsAdapter: FileSystemAdapter): Plugin {
     return exists;
   }
 
-  // Try to resolve a path with various extensions
   async function resolveWithExtensions(basePath: string): Promise<string | null> {
-    // If path already has an extension, use it directly
     if (/\.(ts|tsx|js|jsx|mjs|json)$/i.test(basePath)) {
-      if (await checkExists(basePath)) {
-        return basePath;
-      }
-      return null;
+      return (await checkExists(basePath)) ? basePath : null;
     }
 
-    // Try common TypeScript/JavaScript extensions
     const extensions = [".ts", ".tsx", ".js", ".jsx", ".mjs"];
+
     for (const ext of extensions) {
       const fullPath = basePath + ext;
-      if (await checkExists(fullPath)) {
-        return fullPath;
-      }
+      if (await checkExists(fullPath)) return fullPath;
     }
 
-    // Try index files (for directory imports)
     for (const ext of extensions) {
       const indexPath = pathHelper.join(basePath, `index${ext}`);
-      if (await checkExists(indexPath)) {
-        return indexPath;
-      }
+      if (await checkExists(indexPath)) return indexPath;
     }
 
     return null;
@@ -74,101 +63,67 @@ function createFsAdapterPlugin(fsAdapter: FileSystemAdapter): Plugin {
   return {
     name: "veryfront-fsadapter",
     setup(build: PluginBuild) {
-      // Intercept relative imports (./foo or ../foo)
-      build.onResolve(
-        { filter: /^\.\.?\// },
-        async (args: { path: string; importer: string; resolveDir: string }) => {
-          // Resolve path relative to importer's directory
-          const importerDir = args.importer ? pathHelper.dirname(args.importer) : args.resolveDir;
-          const basePath = pathHelper.resolve(importerDir, args.path);
+      build.onResolve({ filter: /^\.\.?\// }, async (args) => {
+        const importerDir = args.importer ? pathHelper.dirname(args.importer) : args.resolveDir;
+        const basePath = pathHelper.resolve(importerDir, args.path);
 
-          // Try to find the file with various extensions
-          const resolvedPath = await resolveWithExtensions(basePath);
-          if (resolvedPath) {
-            return {
-              path: resolvedPath,
-              namespace: "fsadapter",
-            };
-          }
+        const resolvedPath = await resolveWithExtensions(basePath);
+        if (resolvedPath) {
+          return { path: resolvedPath, namespace: "fsadapter" };
+        }
 
-          // File not found - return error
+        return {
+          errors: [{
+            text: `Could not resolve "${args.path}" from "${importerDir}" via fsAdapter`,
+          }],
+        };
+      });
+
+      build.onLoad({ filter: /.*/, namespace: "fsadapter" }, async (args) => {
+        try {
+          const content = await fsAdapter.readFile(args.path);
+          return {
+            contents: content,
+            loader: getEsbuildLoader(args.path),
+            resolveDir: pathHelper.dirname(args.path),
+          };
+        } catch (error) {
           return {
             errors: [{
-              text: `Could not resolve "${args.path}" from "${importerDir}" via fsAdapter`,
+              text: `Failed to load "${args.path}" from fsAdapter: ${error}`,
             }],
           };
-        },
-      );
-
-      // Load files from fsAdapter
-      build.onLoad(
-        { filter: /.*/, namespace: "fsadapter" },
-        async (args: { path: string }) => {
-          try {
-            const content = await fsAdapter.readFile(args.path);
-            return {
-              contents: content,
-              loader: getEsbuildLoader(args.path),
-              resolveDir: pathHelper.dirname(args.path),
-            };
-          } catch (error) {
-            return {
-              errors: [{
-                text: `Failed to load "${args.path}" from fsAdapter: ${error}`,
-              }],
-            };
-          }
-        },
-      );
+        }
+      });
     },
   };
 }
 
-async function importModule(
-  file: string,
-  context: FileDiscoveryContext,
-): Promise<unknown> {
-  // Check cache first
-  const cacheKey = file;
-  if (transpileCache.has(cacheKey)) {
-    return transpileCache.get(cacheKey);
-  }
+async function importModule(file: string, context: FileDiscoveryContext): Promise<unknown> {
+  if (transpileCache.has(file)) return transpileCache.get(file);
 
   const filePath = file.replace("file://", "");
 
-  // Read the source file - use fsAdapter if available (Veryfront Cloud), otherwise local fs
   let source: string;
   try {
     if (context.fsAdapter) {
       source = await context.fsAdapter.readFile(filePath);
     } else {
-      const fs = createFileSystem();
-      source = await fs.readTextFile(filePath);
+      source = await createFileSystem().readTextFile(filePath);
     }
   } catch (error) {
     throw new Error(`Failed to read file ${filePath}: ${error}`);
   }
 
   const loader = getEsbuildLoader(filePath);
-
-  // Transpile with esbuild
   const { build } = await import("esbuild");
-
-  // Get the directory containing the file for resolving relative imports
   const fileDir = pathHelper.dirname(filePath);
 
-  // In Deno, esbuild runs as WASM which doesn't support plugins.
-  // We mark relative imports as external and let Deno's native TS support handle them.
-  const relativeImports: string[] = isDeno
-    ? [...source.matchAll(/from\s+["'](\.\.[^"']+)["']/g)]
-      .map((m) => m[1])
-      .filter((p): p is string => p !== undefined)
+  const relativeImports = isDeno
+    ? [...source.matchAll(/from\s+["'](\.\.[^"']+)["']/g)].map((m) => m[1]!).filter(Boolean)
     : [];
 
-  // In Node.js with fsAdapter, use plugin to load relative imports from remote storage.
-  // This properly bundles all dependencies instead of marking them external.
-  const usePlugin = !isDeno && !!context.fsAdapter;
-  const plugins = usePlugin ? [createFsAdapterPlugin(context.fsAdapter!)] : [];
+  const plugins = !isDeno && context.fsAdapter ? [createFsAdapterPlugin(context.fsAdapter)] : [];
 
   const result = await build({
     bundle: true,
@@ -190,7 +145,6 @@ async function importModule(
       "veryfront/*",
       "@opentelemetry/*",
       "path",
-      // Only mark relative imports as external in Deno (plugin handles them in Node.js)
       ...relativeImports,
     ],
     stdin: {
@@ -201,33 +155,27 @@ async function importModule(
     },
   });
 
-  if (result.errors && result.errors.length > 0) {
-    const first = result.errors[0]?.text || "unknown error";
-    throw new Error(`Failed to transpile ${filePath}: ${first}`);
+  if (result.errors?.length) {
+    throw new Error(
+      `Failed to transpile ${filePath}: ${result.errors[0]?.text || "unknown error"}`,
+    );
   }
 
   const js = result.outputFiles?.[0]?.text ?? "export {}";
 
-  // Use local filesystem for temp files
   const localFs = createFileSystem();
   const tempDir = await localFs.makeTempDir({ prefix: "vf-discovery-" });
   const tempFile = pathHelper.join(tempDir, "module.mjs");
 
-  // Rewrite package imports based on platform
-  // - Deno: npm: specifiers + file:// for relative imports
-  // - Node.js: resolve packages to file:// URLs from node_modules
-  let transformedCode: string;
-  if (isDeno) {
-    transformedCode = rewriteForDeno(js, fileDir);
-  } else {
-    transformedCode = await rewriteDiscoveryImports(js, context.baseDir || ".", localFs, fileDir);
-  }
+  const transformedCode = isDeno
+    ? rewriteForDeno(js, fileDir)
+    : await rewriteDiscoveryImports(js, context.baseDir ?? ".", localFs, fileDir);
 
   await localFs.writeTextFile(tempFile, transformedCode);
 
   try {
     const module = await import(`file://${tempFile}?v=${Date.now()}`);
-    transpileCache.set(cacheKey, module);
+    transpileCache.set(file, module);
     return module;
   } finally {
     await localFs.remove(tempDir, { recursive: true });
@@ -235,8 +183,7 @@ async function importModule(
 }
 
 function rewriteForDeno(code: string, fileDir: string): string {
-  // Rewrite external packages to npm: specifiers
-  const npmReplacements: [RegExp, string][] = [
+  const npmReplacements: Array<[RegExp, string]> = [
     [/from\s+["']ai["']/g, 'from "npm:ai"'],
     [/from\s+["']ai\/([^"']+)["']/g, 'from "npm:ai/$1"'],
     [/from\s+["']@ai-sdk\/([^"']+)["']/g, 'from "npm:@ai-sdk/$1"'],
@@ -250,17 +197,10 @@ function rewriteForDeno(code: string, fileDir: string): string {
     transformed = transformed.replace(pattern, replacement);
   }
 
-  // Rewrite relative imports to absolute file:// URLs
-  // This handles imports like "../../lib/github-client.ts" that were marked external
-  transformed = transformed.replace(
+  return transformed.replace(
     /from\s+["'](\.\.\/[^"']+)["']/g,
-    (_match, relativePath: string) => {
-      const absolutePath = pathHelper.resolve(fileDir, relativePath);
-      return `from "file://${absolutePath}"`;
-    },
+    (_match, relativePath: string) => `from "file://${pathHelper.resolve(fileDir, relativePath)}"`,
   );
-
-  return transformed;
 }
 
 async function rewriteDiscoveryImports(
@@ -274,20 +214,15 @@ async function rewriteDiscoveryImports(
   try {
     const { pathToFileURL } = await import("node:url");
 
-    // Rewrite relative imports to absolute file:// URLs
-    // This handles imports like "../../lib/github-client" that were marked external in Deno
     transformed = transformed.replace(
       /from\s+["'](\.\.\/[^"']+)["']/g,
-      (_match, relativePath: string) => {
-        const absolutePath = pathHelper.resolve(fileDir, relativePath);
-        return `from "${pathToFileURL(absolutePath).href}"`;
-      },
+      (_match, relativePath: string) =>
+        `from "${pathToFileURL(pathHelper.resolve(fileDir, relativePath)).href}"`,
     );
 
-    // Helper to resolve a package to absolute file:// URL
-    // Walks up the directory tree to find node_modules
     const resolvePackageToFileUrl = async (packageName: string): Promise<string | null> => {
       let searchDir = projectDir;
+
       for (let i = 0; i < 10; i++) {
         const packagePath = pathHelper.join(searchDir, "node_modules", packageName);
         const packageJsonPath = pathHelper.join(packagePath, "package.json");
@@ -297,37 +232,36 @@ async function rewriteDiscoveryImports(
           const dotExport = pkgJson.exports?.["."];
           const entryPoint =
             (typeof dotExport === "string" ? dotExport : dotExport?.import ?? dotExport?.default) ??
-              pkgJson.module ?? pkgJson.main ?? "index.js";
-          const resolvedPath = pathHelper.join(packagePath, entryPoint);
-          return pathToFileURL(resolvedPath).href;
+              pkgJson.module ??
+              pkgJson.main ??
+              "index.js";
+
+          return pathToFileURL(pathHelper.join(packagePath, entryPoint)).href;
         } catch {
-          // Not found in this directory, try parent
           const parent = pathHelper.dirname(searchDir);
-          if (parent === searchDir) break; // Reached root
+          if (parent === searchDir) break;
           searchDir = parent;
         }
       }
+
       return null;
     };
 
-    // Rewrite package imports to resolved file:// URLs
-    const rewritePackageImports = async (code: string, pkg: string): Promise<string> => {
+    const rewritePackageImports = async (input: string, pkg: string): Promise<string> => {
       const escapedPkg = pkg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const staticImportRegex = new RegExp(`from\\s+["']${escapedPkg}["']`, "g");
       const dynamicImportRegex = new RegExp(`import\\s*\\(\\s*["']${escapedPkg}["']\\s*\\)`, "g");
 
-      const needsRewrite = staticImportRegex.test(code) || dynamicImportRegex.test(code);
-      if (!needsRewrite) return code;
+      if (!staticImportRegex.test(input) && !dynamicImportRegex.test(input)) return input;
 
       const resolvedUrl = await resolvePackageToFileUrl(pkg);
-      if (!resolvedUrl) return code;
+      if (!resolvedUrl) return input;
 
-      return code
+      return input
         .replace(staticImportRegex, `from "${resolvedUrl}"`)
         .replace(dynamicImportRegex, `import("${resolvedUrl}")`);
     };
 
-    // List of external packages that need to be resolved
     const externalPackages = [
       "zod",
       "ai",
@@ -343,8 +277,6 @@ async function rewriteDiscoveryImports(
       transformed = await rewritePackageImports(transformed, pkg);
     }
 
-    // Resolve veryfront imports
-    // First try node_modules, then fall back to local deno.json exports
     let vfPackagePath = pathHelper.join(projectDir, "node_modules", "veryfront");
     let exportsMap: Record<string, string | { import?: string }> = {};
 
@@ -353,9 +285,8 @@ async function rewriteDiscoveryImports(
       const pkgJson = JSON.parse(await fs.readTextFile(vfPackageJsonPath));
       exportsMap = pkgJson.exports || {};
     } catch {
-      // veryfront not in node_modules - try to find local deno.json
-      // Walk up from projectDir to find deno.json with veryfront exports
       let searchDir = projectDir;
+
       for (let i = 0; i < 5; i++) {
         try {
           const denoJsonPath = pathHelper.join(searchDir, "deno.json");
@@ -366,13 +297,12 @@ async function rewriteDiscoveryImports(
             break;
           }
         } catch {
-          // Continue searching
+          // continue searching
         }
         searchDir = pathHelper.dirname(searchDir);
       }
     }
 
-    // Helper to get the resolved path from an export entry
     const getExportPath = (entry: string | { import?: string } | undefined): string | null => {
       if (!entry) return null;
       if (typeof entry === "string") return entry;
@@ -381,30 +311,25 @@ async function rewriteDiscoveryImports(
 
     transformed = transformed.replace(
       /from\s+["'](veryfront\/[^"']+)["']/g,
-      (_match, fullSpecifier: string) => {
+      (match, fullSpecifier: string) => {
         const subpath = "./" + fullSpecifier.replace("veryfront/", "");
         const exportPath = getExportPath(exportsMap[subpath]);
-        if (exportPath) {
-          const resolvedPath = pathHelper.join(vfPackagePath, exportPath);
-          return `from "${pathToFileURL(resolvedPath).href}"`;
-        }
-        return _match;
+        if (!exportPath) return match;
+
+        const resolvedPath = pathHelper.join(vfPackagePath, exportPath);
+        return `from "${pathToFileURL(resolvedPath).href}"`;
       },
     );
 
-    transformed = transformed.replace(
-      /from\s+["']veryfront["']/g,
-      () => {
-        const exportPath = getExportPath(exportsMap["."]);
-        if (exportPath) {
-          const resolvedPath = pathHelper.join(vfPackagePath, exportPath);
-          return `from "${pathToFileURL(resolvedPath).href}"`;
-        }
-        return 'from "veryfront"';
-      },
-    );
+    transformed = transformed.replace(/from\s+["']veryfront["']/g, () => {
+      const exportPath = getExportPath(exportsMap["."]);
+      if (!exportPath) return 'from "veryfront"';
+
+      const resolvedPath = pathHelper.join(vfPackagePath, exportPath);
+      return `from "${pathToFileURL(resolvedPath).href}"`;
+    });
   } catch {
-    // If node:url import fails, return code as-is
+    return transformed;
   }
 
   return transformed;
@@ -430,9 +355,7 @@ export interface DiscoveryResult {
   errors: Array<{ file: string; error: Error }>;
 }
 
-export async function discoverAll(
-  config: DiscoveryConfig,
-): Promise<DiscoveryResult> {
+export async function discoverAll(config: DiscoveryConfig): Promise<DiscoveryResult> {
   const baseDir = config.baseDir;
 
   const context: FileDiscoveryContext = {
@@ -450,29 +373,23 @@ export async function discoverAll(
     errors: [],
   };
 
-  // Flat directory structure at project root
-  const toolDirs = config.toolDirs || ["tools"];
-  for (const dir of toolDirs) {
+  for (const dir of config.toolDirs ?? ["tools"]) {
     await discoverTools(`${baseDir}/${dir}`, result, context, config.verbose);
   }
 
-  const agentDirs = config.agentDirs || ["agents"];
-  for (const dir of agentDirs) {
+  for (const dir of config.agentDirs ?? ["agents"]) {
     await discoverAgents(`${baseDir}/${dir}`, result, context, config.verbose);
   }
 
-  const resourceDirs = config.resourceDirs || ["resources"];
-  for (const dir of resourceDirs) {
+  for (const dir of config.resourceDirs ?? ["resources"]) {
     await discoverResources(`${baseDir}/${dir}`, result, context, config.verbose);
   }
 
-  const promptDirs = config.promptDirs || ["prompts"];
-  for (const dir of promptDirs) {
+  for (const dir of config.promptDirs ?? ["prompts"]) {
     await discoverPrompts(`${baseDir}/${dir}`, result, context, config.verbose);
   }
 
-  const workflowDirs = config.workflowDirs || ["workflows"];
-  for (const dir of workflowDirs) {
+  for (const dir of config.workflowDirs ?? ["workflows"]) {
     await discoverWorkflows(`${baseDir}/${dir}`, result, context, config.verbose);
   }
 
@@ -503,7 +420,7 @@ async function discoverItems<T>(
   for (const file of files) {
     try {
       const module = await importModule(file, context);
-      const item = (module as { default?: T }).default as T;
+      const item = (module as { default?: T }).default;
 
       if (!handler.validate(item)) {
         if (verbose) {
@@ -592,7 +509,6 @@ const workflowHandler: DiscoveryHandler<Workflow> = {
     typeof (item as Workflow).id === "string",
   getId: (workflow) => workflow.id,
   register: (_id, workflow) => {
-    // workflow() DSL already auto-registers, but ensure it's registered
     registerWorkflow(workflow);
     return workflow;
   },
@@ -644,84 +560,66 @@ function discoverWorkflows(
   return discoverItems(dir, result, context, workflowHandler, verbose);
 }
 
-async function findTypeScriptFiles(
-  dir: string,
-  context: FileDiscoveryContext,
-): Promise<string[]> {
+async function findTypeScriptFiles(dir: string, context: FileDiscoveryContext): Promise<string[]> {
   const files: string[] = [];
 
   try {
     if (context.fsAdapter) {
-      const exists = await context.fsAdapter.exists(dir);
-      if (!exists) {
-        return files;
-      }
+      if (!(await context.fsAdapter.exists(dir))) return files;
 
       for await (const entry of context.fsAdapter.readDir(dir)) {
         const filePath = `${dir}/${entry.name}`;
 
         if (entry.isFile && (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx"))) {
           files.push(`file://${filePath}`);
-        } else if (entry.isDirectory) {
-          const subFiles = await findTypeScriptFiles(filePath, context);
-          files.push(...subFiles);
+          continue;
+        }
+
+        if (entry.isDirectory) {
+          files.push(...await findTypeScriptFiles(filePath, context));
         }
       }
-    } else {
-      const { fs, path } = await getNodeDeps(context);
 
-      if (!fs || !path) {
-        return files;
+      return files;
+    }
+
+    const { fs, path } = await getNodeDeps(context);
+    if (!fs.existsSync(dir)) return files;
+
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const filePath = path.join(dir, entry.name);
+
+      if (entry.isFile() && (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx"))) {
+        files.push(`file://${path.resolve(filePath)}`);
+        continue;
       }
 
-      if (!fs.existsSync(dir)) {
-        return files;
-      }
-
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
-
-      for (const entry of entries) {
-        const filePath = path.join(dir, entry.name);
-
-        if (entry.isFile() && (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx"))) {
-          files.push(`file://${path.resolve(filePath)}`);
-        } else if (entry.isDirectory()) {
-          const subFiles = await findTypeScriptFiles(filePath, context);
-          files.push(...subFiles);
-        }
+      if (entry.isDirectory()) {
+        files.push(...await findTypeScriptFiles(filePath, context));
       }
     }
   } catch {
-    // Directory doesn't exist or is not accessible
     return files;
   }
 
   return files;
 }
 
-async function getNodeDeps(context: FileDiscoveryContext) {
-  if (context.nodeDeps) {
-    return context.nodeDeps;
-  }
+async function getNodeDeps(
+  context: FileDiscoveryContext,
+): Promise<{ fs: typeof import("node:fs"); path: typeof import("node:path") }> {
+  if (context.nodeDeps) return context.nodeDeps;
 
   if (context.fsAdapter) {
     context.nodeDeps = {
-      fs: {} as unknown as typeof import("node:fs"),
-      path: {} as unknown as typeof import("node:path"),
+      fs: {} as typeof import("node:fs"),
+      path: {} as typeof import("node:path"),
     };
     return context.nodeDeps;
   }
 
-  const [fsModule, pathModule] = await Promise.all([
-    import("node:fs"),
-    import("node:path"),
-  ]);
-
-  context.nodeDeps = {
-    fs: fsModule,
-    path: pathModule,
-  };
-
+  const [fsModule, pathModule] = await Promise.all([import("node:fs"), import("node:path")]);
+  context.nodeDeps = { fs: fsModule, path: pathModule };
   return context.nodeDeps;
 }
 
@@ -735,37 +633,25 @@ function filenameToId(filePath: string): string {
 function filePathToPattern(filePath: string, baseDir: string): string {
   const cleanPath = filePath.replace("file://", "");
 
-  let pattern = cleanPath
-    .replace(baseDir, "")
-    .replace(/\.(ts|tsx|js|jsx)$/, "");
+  let pattern = cleanPath.replace(baseDir, "").replace(/\.(ts|tsx|js|jsx)$/, "");
+  pattern = pattern.replace(/\[(\w+)\]/g, ":$1").replace(/^\/+/, "");
 
-  pattern = pattern.replace(/\[(\w+)\]/g, ":$1");
-  pattern = pattern.replace(/^\/+/, "");
-  pattern = "/" + pattern;
-
-  return pattern;
+  return "/" + pattern;
 }
 
 const discoveredAgentPaths = new Map<string, string>();
 
-export async function generateAgentIndex(
-  baseDir: string,
-): Promise<void> {
+export async function generateAgentIndex(baseDir: string): Promise<void> {
   const generatedDir = `${baseDir}/.generated`;
   const indexPath = `${generatedDir}/agents.ts`;
 
-  // Ensure the .generated directory exists
   try {
-    const [fsModule, pathModule] = await Promise.all([
-      import("node:fs"),
-      import("node:path"),
-    ]);
+    const [fsModule, pathModule] = await Promise.all([import("node:fs"), import("node:path")]);
 
     if (!fsModule.existsSync(generatedDir)) {
       fsModule.mkdirSync(generatedDir, { recursive: true });
     }
 
-    // Generate the index file content
     const lines: string[] = [
       "/**",
       " * Auto-generated by veryfront",
@@ -774,27 +660,24 @@ export async function generateAgentIndex(
       "",
     ];
 
-    // Add exports for each discovered agent
     for (const [id, filePath] of discoveredAgentPaths) {
-      // Convert absolute path to relative from .generated directory
       const cleanPath = filePath.replace("file://", "");
-      const relativePath = pathModule.relative(generatedDir, cleanPath)
-        .replace(/\.(ts|tsx|js|jsx)$/, "");
-
+      const relativePath = pathModule.relative(generatedDir, cleanPath).replace(
+        /\.(ts|tsx|js|jsx)$/,
+        "",
+      );
       lines.push(`export { default as ${id} } from '${relativePath}';`);
     }
 
-    // Add an agents object for runtime lookup
     lines.push("");
     lines.push("// Runtime lookup object");
+
     const agentIds = Array.from(discoveredAgentPaths.keys());
-    if (agentIds.length > 0) {
+    if (agentIds.length) {
       lines.push(`import { ${agentIds.join(", ")} } from './agents';`);
       lines.push("");
       lines.push("export const agents = {");
-      for (const id of agentIds) {
-        lines.push(`  ${id},`);
-      }
+      for (const id of agentIds) lines.push(`  ${id},`);
       lines.push("} as const;");
     } else {
       lines.push("export const agents = {} as const;");
@@ -802,7 +685,6 @@ export async function generateAgentIndex(
 
     lines.push("");
 
-    // Write the file
     fsModule.writeFileSync(indexPath, lines.join("\n"));
     agentLogger.debug(`[Discovery] Generated agent index: ${indexPath}`);
   } catch (error) {

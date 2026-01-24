@@ -1,18 +1,10 @@
-/**
- * Page Renderer
- *
- * Handles preparation and dispatching of different page types (MDX, Component, Script).
- * Manages client module code generation and page bundle creation.
- */
-
 import * as React from "react";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { ErrorCode, VeryfrontError } from "#veryfront/errors/index.ts";
 import { createDefaultMDXComponents } from "./utils/index.ts";
 import { extractRouteParams } from "#veryfront/utils/route-path-utils.ts";
-import type { EntityInfo } from "#veryfront/types";
+import type { ComponentProps, EntityInfo, MDXComponents, PageBundle } from "#veryfront/types";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import type { ComponentProps, MDXComponents, PageBundle } from "#veryfront/types";
 import { handleComponentPage } from "./component-handling.ts";
 import { handleMDXPage } from "./page-rendering.ts";
 import { handleScriptPage } from "./script-page-handling.ts";
@@ -44,16 +36,6 @@ export interface PageBundleResult {
   scriptResult?: RenderResult;
 }
 
-/**
- * PageRenderer - Handles page type detection and rendering
- *
- * This class manages the preparation of different page types:
- * - MDX pages (.mdx files)
- * - Component pages (.tsx, .jsx files)
- * - Script pages (.ts, .js files that return Response)
- *
- * It dispatches to the appropriate handler and manages client module code.
- */
 export class PageRenderer {
   private readonly projectDir: string;
   private readonly mode: string;
@@ -89,49 +71,29 @@ export class PageRenderer {
     this.moduleServerUrl = options.moduleServerUrl;
   }
 
-  /**
-   * Get merged MDX components (default + registered)
-   */
   private getMergedComponents(): MDXComponents {
-    const components = this.componentRegistry.getAllAsComponents();
-    const defaultComponents = createDefaultMDXComponents();
-    return { ...defaultComponents, ...components };
+    return {
+      ...createDefaultMDXComponents(),
+      ...this.componentRegistry.getAllAsComponents(),
+    };
   }
 
-  /**
-   * Detect page type from file extension
-   */
   private detectPageType(pageInfo: EntityInfo): {
     type: "mdx" | "component" | "script";
     extension: string;
   } {
-    // File paths always have extensions - extract from entity.path
-    const parts = pageInfo.entity.path.split(".");
-    const fileExtension = parts.pop()!.toLowerCase();
+    const extension = pageInfo.entity.path.split(".").pop()!.toLowerCase();
 
-    const isComponentPage = fileExtension === "tsx" || fileExtension === "jsx";
-    const isScriptPage = fileExtension === "ts" || fileExtension === "js";
-
-    if (isComponentPage) {
-      return { type: "component", extension: fileExtension };
+    if (extension === "tsx" || extension === "jsx") {
+      return { type: "component", extension };
     }
-    if (isScriptPage) {
-      return { type: "script", extension: fileExtension };
+    if (extension === "ts" || extension === "js") {
+      return { type: "script", extension };
     }
-    return { type: "mdx", extension: fileExtension };
+    return { type: "mdx", extension };
   }
 
-  /**
-   * Prepare page bundles based on file type
-   * Handles MDX, TSX/JSX components, and TS/JS scripts
-   *
-   * @param pageInfo - The page entity information
-   * @param slug - The page slug
-   * @param cachedModule - Optional cached module code
-   * @param options - Rendering options (params, props)
-   * @returns Page bundle result with element, metadata, and client code
-   */
-  async preparePageBundles(
+  preparePageBundles(
     pageInfo: EntityInfo,
     slug: string,
     cachedModule: RenderResult["pageModule"] | undefined,
@@ -139,11 +101,9 @@ export class PageRenderer {
   ): Promise<PageBundleResult> {
     const pageType = this.detectPageType(pageInfo);
 
-    return await withSpan(
+    return withSpan(
       "render.prepare_page",
       async () => {
-        const mergedComponents = this.getMergedComponents();
-
         logger.debug(`Page file info:`, {
           path: pageInfo.entity.path,
           extension: pageType.extension,
@@ -151,111 +111,106 @@ export class PageRenderer {
           slug,
         });
 
-        // Initialize result
+        if (pageType.type === "script") {
+          const scriptResult = await withSpan(
+            "render.handle_script",
+            () =>
+              handleScriptPage(pageInfo, slug, {
+                mode: this.mode,
+                config: this.config,
+                projectDir: this.projectDir,
+                adapter: this.adapter,
+                params: options?.params,
+                props: options?.props,
+                nonce: options?.nonce,
+              }),
+            { "render.script_path": pageInfo.entity.path },
+          );
+
+          return { collectedMetadata: {}, scriptResult };
+        }
+
         let pageElement: React.ReactElement | undefined;
         let pageBundle: PageBundle | undefined;
         let clientModuleCode: string | undefined = cachedModule?.code;
         let pageModuleType: "mdx" | "component" | undefined = cachedModule?.type;
         let collectedMetadata: Record<string, unknown> = {};
 
-        // Dispatch to appropriate handler based on page type
-        switch (pageType.type) {
-          case "component": {
-            // Extract params from path if not provided (fallback extraction)
-            let params = options?.params;
-            if (!params || Object.keys(params).length === 0) {
-              const extracted = extractRouteParams(pageInfo.entity.path, slug);
-              params = extracted.matched ? extracted.params : undefined;
-            }
-
-            // For App Router pages, params should be passed as props
-            const componentProps = {
-              ...options?.props,
-              ...(params && Object.keys(params).length > 0 ? { params } : {}),
-            };
-
-            const result = await withSpan(
-              "render.handle_component",
-              () =>
-                handleComponentPage(
-                  pageInfo,
-                  slug,
-                  this.projectDir,
-                  this.componentRegistry,
-                  this.adapter,
-                  {
-                    props: componentProps,
-                    cachedClientModule: cachedModule?.type === "component"
-                      ? cachedModule.code
-                      : undefined,
-                    moduleServerUrl: this.moduleServerUrl,
-                    projectId: options?.projectId,
-                    studioEmbed: options?.studioEmbed,
-                  },
-                ),
-              { "render.component_path": pageInfo.entity.path },
-            );
-            pageElement = result.pageElement;
-            pageBundle = result.pageBundle;
-            clientModuleCode = result.pageBundle.clientModuleCode ?? clientModuleCode;
-            pageModuleType = "component";
-            break;
+        if (pageType.type === "component") {
+          let params = options?.params;
+          if (!params || Object.keys(params).length === 0) {
+            const extracted = extractRouteParams(pageInfo.entity.path, slug);
+            params = extracted.matched ? extracted.params : undefined;
           }
 
-          case "script": {
-            // Script pages return early with their own result
-            const scriptResult = await withSpan(
-              "render.handle_script",
-              () =>
-                handleScriptPage(pageInfo, slug, {
-                  mode: this.mode,
-                  config: this.config,
-                  projectDir: this.projectDir,
-                  adapter: this.adapter,
-                  params: options?.params,
-                  props: options?.props,
-                  nonce: options?.nonce,
-                }),
-              { "render.script_path": pageInfo.entity.path },
-            );
-            return {
-              collectedMetadata: {},
-              scriptResult,
-            };
-          }
+          const componentProps = {
+            ...options?.props,
+            ...(params && Object.keys(params).length > 0 ? { params } : {}),
+          };
 
-          case "mdx":
-          default: {
-            const mdxResult = await withSpan(
-              "render.handle_mdx",
-              () =>
-                handleMDXPage(
-                  pageInfo,
-                  slug,
-                  this.projectDir,
-                  mergedComponents,
-                  this.compileMDX,
-                  this.adapter,
-                  {
-                    params: options?.params,
-                    precompiledModule: cachedModule?.type === "mdx" ? cachedModule.code : undefined,
-                    projectId: options?.projectId,
-                    studioEmbed: options?.studioEmbed,
-                    projectSlug: options?.projectSlug,
-                    contentSourceId: options?.contentSourceId,
-                  },
-                ),
-              { "render.mdx_path": pageInfo.entity.path },
-            );
+          const result = await withSpan(
+            "render.handle_component",
+            () =>
+              handleComponentPage(
+                pageInfo,
+                slug,
+                this.projectDir,
+                this.componentRegistry,
+                this.adapter,
+                {
+                  props: componentProps,
+                  cachedClientModule: cachedModule?.type === "component"
+                    ? cachedModule.code
+                    : undefined,
+                  moduleServerUrl: this.moduleServerUrl,
+                  projectId: options?.projectId,
+                  studioEmbed: options?.studioEmbed,
+                },
+              ),
+            { "render.component_path": pageInfo.entity.path },
+          );
 
-            pageElement = mdxResult.pageElement;
-            pageBundle = mdxResult.pageBundle;
-            collectedMetadata = mdxResult.collectedMetadata;
-            clientModuleCode = mdxResult.pageBundle.clientModuleCode;
-            pageModuleType = "mdx";
-            break;
-          }
+          pageElement = result.pageElement;
+          pageBundle = result.pageBundle;
+          clientModuleCode = result.pageBundle.clientModuleCode ?? clientModuleCode;
+          pageModuleType = "component";
+
+          return {
+            pageElement,
+            pageBundle,
+            clientModuleCode,
+            pageModuleType,
+            collectedMetadata,
+          };
         }
+
+        const mdxResult = await withSpan(
+          "render.handle_mdx",
+          () =>
+            handleMDXPage(
+              pageInfo,
+              slug,
+              this.projectDir,
+              this.getMergedComponents(),
+              this.compileMDX,
+              this.adapter,
+              {
+                params: options?.params,
+                precompiledModule: cachedModule?.type === "mdx" ? cachedModule.code : undefined,
+                projectId: options?.projectId,
+                studioEmbed: options?.studioEmbed,
+                projectSlug: options?.projectSlug,
+                contentSourceId: options?.contentSourceId,
+              },
+            ),
+          { "render.mdx_path": pageInfo.entity.path },
+        );
+
+        pageElement = mdxResult.pageElement;
+        pageBundle = mdxResult.pageBundle;
+        collectedMetadata = mdxResult.collectedMetadata;
+        clientModuleCode = mdxResult.pageBundle.clientModuleCode;
+        pageModuleType = "mdx";
 
         return {
           pageElement,
@@ -274,9 +229,6 @@ export class PageRenderer {
     );
   }
 
-  /**
-   * Get page type information
-   */
   getPageType(pageInfo: EntityInfo): {
     type: "mdx" | "component" | "script";
     extension: string;
@@ -284,33 +236,24 @@ export class PageRenderer {
   } {
     const detected = this.detectPageType(pageInfo);
 
-    const descriptions = {
+    const descriptions: Record<typeof detected.type, string> = {
       mdx: "MDX content page with React components",
       component: "React component page (TSX/JSX)",
       script: "Script page returning Response (TS/JS)",
     };
 
-    return {
-      ...detected,
-      description: descriptions[detected.type],
-    };
+    return { ...detected, description: descriptions[detected.type] };
   }
 
-  /**
-   * Validate that page bundle was successfully created
-   */
   validatePageBundle(result: PageBundleResult, slug: string): void {
-    // Script pages are valid even without element/bundle
-    if (result.scriptResult) {
-      return;
-    }
+    if (result.scriptResult) return;
 
-    if (!result.pageElement || !result.pageBundle) {
-      throw new VeryfrontError(
-        "Failed to prepare page bundle",
-        ErrorCode.RENDER_ERROR,
-        { slug, hasElement: !!result.pageElement, hasBundle: !!result.pageBundle },
-      );
-    }
+    if (result.pageElement && result.pageBundle) return;
+
+    throw new VeryfrontError("Failed to prepare page bundle", ErrorCode.RENDER_ERROR, {
+      slug,
+      hasElement: !!result.pageElement,
+      hasBundle: !!result.pageBundle,
+    });
   }
 }

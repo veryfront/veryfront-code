@@ -1,25 +1,7 @@
-/**
- * Veryfront API Schemas
- *
- * Zod schemas for runtime validation of API responses.
- *
- * API uses flexible identifiers:
- * - projectReference: UUID or slug (auto-detected)
- * - environmentName: string like "production", "preview", "staging"
- * - branchName: string like "main"
- * - version: "latest" or specific version string
- * - pathOrId: file path (e.g., "pages/index.tsx") or file UUID
- */
-
 import { z } from "zod";
-
-// =============================================================================
-// Shared Primitives
-// =============================================================================
 
 const FileTypeEnum = z.enum(["page", "function", "component", "file"]);
 
-// Links can be either a string URL or an object with href/method
 const LinkValueSchema = z.union([
   z.string(),
   z.object({
@@ -28,14 +10,15 @@ const LinkValueSchema = z.union([
   }),
 ]);
 
-const LinksSchema = z.object({
-  self: LinkValueSchema.optional(),
-  content: LinkValueSchema.optional(),
-  project: LinkValueSchema.optional(),
-  files: LinkValueSchema.optional(),
-}).passthrough();
+const LinksSchema = z
+  .object({
+    self: LinkValueSchema.optional(),
+    content: LinkValueSchema.optional(),
+    project: LinkValueSchema.optional(),
+    files: LinkValueSchema.optional(),
+  })
+  .passthrough();
 
-// Base fields shared by all file schemas
 const BaseFileFields = {
   path: z.string(),
   type: FileTypeEnum,
@@ -44,9 +27,21 @@ const BaseFileFields = {
   _links: LinksSchema.optional(),
 };
 
-// =============================================================================
-// Base Schemas
-// =============================================================================
+const VersionedFileFields = {
+  id: z.string(),
+  version_id: z.string(),
+};
+
+const ReleaseMetaFields = {
+  release_id: z.string(),
+  release_version: z.string().nullable(),
+};
+
+const EnvironmentMetaFields = {
+  environment_id: z.string(),
+  environment_name: z.string(),
+  ...ReleaseMetaFields,
+};
 
 export const ProjectSchema = z.object({
   id: z.string().uuid(),
@@ -89,15 +84,10 @@ export const EnvironmentSchema = z.object({
   name: z.string(),
 });
 
-// =============================================================================
-// Branch Files
-// GET /projects/{projectRef}/branches/{branchName}/files[/{pathOrId}]
-// =============================================================================
-
 export const BranchFileListItemSchema = z.object({
   id: z.string().optional(),
-  version_id: z.string().optional(), // Draft files may not have version_id
-  content: z.string(), // API always includes content per Zalando #157
+  version_id: z.string().optional(),
+  content: z.string(),
   ...BaseFileFields,
 });
 
@@ -109,36 +99,14 @@ export const ListBranchFilesResponseSchema = z.object({
 
 export const BranchFileDetailSchema = z.object({
   id: z.string().optional(),
-  version_id: z.string().optional(), // Draft files may not have version_id
+  version_id: z.string().optional(),
   content: z.string(),
   ...BaseFileFields,
 });
 
-// =============================================================================
-// Environment Files
-// GET /projects/{projectRef}/environments/{environmentName}/files[/{pathOrId}]
-// =============================================================================
-
-// Shared fields for environment/release responses
-const VersionedFileFields = {
-  id: z.string(),
-  version_id: z.string(),
-};
-
-const ReleaseMetaFields = {
-  release_id: z.string(),
-  release_version: z.string().nullable(),
-};
-
-const EnvironmentMetaFields = {
-  environment_id: z.string(),
-  environment_name: z.string(),
-  ...ReleaseMetaFields,
-};
-
 export const EnvironmentFileListItemSchema = z.object({
   ...VersionedFileFields,
-  content: z.string(), // API always includes content per Zalando #157
+  content: z.string(),
   ...BaseFileFields,
 });
 
@@ -156,14 +124,9 @@ export const EnvironmentFileDetailSchema = z.object({
   ...EnvironmentMetaFields,
 });
 
-// =============================================================================
-// Release Files
-// GET /projects/{projectRef}/releases/{version}/files[/{pathOrId}]
-// =============================================================================
-
 export const ReleaseFileListItemSchema = z.object({
   ...VersionedFileFields,
-  content: z.string(), // API always includes content per Zalando #157
+  content: z.string(),
   ...BaseFileFields,
 });
 
@@ -181,18 +144,9 @@ export const ReleaseFileDetailSchema = z.object({
   ...ReleaseMetaFields,
 });
 
-// =============================================================================
-// Projects
-// =============================================================================
-
 export const ListProjectsResponseSchema = z.object({
   data: z.array(ProjectSchema),
 });
-
-// =============================================================================
-// Domain Lookup Response
-// Transformed from GET /projects/{domain} response
-// =============================================================================
 
 export const LookupDomainResponseSchema = z.object({
   project_id: z.string().uuid(),
@@ -201,10 +155,6 @@ export const LookupDomainResponseSchema = z.object({
   environment: EnvironmentSchema.nullable(),
   release_id: z.string().uuid().nullable(),
 });
-
-// =============================================================================
-// Type Exports
-// =============================================================================
 
 export type Project = z.infer<typeof ProjectSchema>;
 export type ProjectFile = z.infer<typeof ProjectFileSchema>;
@@ -224,10 +174,6 @@ export type ListReleaseFilesResponse = z.infer<typeof ListReleaseFilesResponseSc
 export type ReleaseFileDetail = z.infer<typeof ReleaseFileDetailSchema>;
 
 export type LookupDomainResponse = z.infer<typeof LookupDomainResponseSchema>;
-
-// =============================================================================
-// Endpoint Registry
-// =============================================================================
 
 export const API_ENDPOINTS = {
   listProjects: {

@@ -3,13 +3,9 @@ import { HTTP_REDIRECT_FOUND } from "#veryfront/utils";
 
 export class MiddlewareContext implements Context {
   req: Request;
-
   request: Request;
-
   env: Record<string, unknown>;
-
   executionCtx?: ExecutionContext;
-
   var: Record<string, unknown> = {};
 
   private store = new Map<string, unknown>();
@@ -31,19 +27,25 @@ export class MiddlewareContext implements Context {
 
   text(text: string, init?: ResponseInit): Response {
     return new Response(text, {
-      headers: { "content-type": "text/plain; charset=utf-8" },
       ...init,
+      headers: {
+        "content-type": "text/plain; charset=utf-8",
+        ...(init?.headers ?? {}),
+      },
     });
   }
 
   html(html: string, init?: ResponseInit): Response {
     return new Response(html, {
-      headers: { "content-type": "text/html; charset=utf-8" },
       ...init,
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        ...(init?.headers ?? {}),
+      },
     });
   }
 
-  redirect(location: string, status = HTTP_REDIRECT_FOUND): Response {
+  redirect(location: string, status: number = HTTP_REDIRECT_FOUND): Response {
     return new Response(null, {
       status,
       headers: { Location: location },

@@ -39,8 +39,10 @@ async function tryStream(q: string): Promise<boolean> {
   try {
     const res = await fetch(RSC_PATH_PREFIX + "stream" + q);
     if (!res.ok || !res.body) return false;
+
     const ctrl = new AbortController();
     addEventListener("pagehide", () => ctrl.abort(), { once: true });
+
     await consumeNdjsonStream(res, document, ctrl.signal);
     return true;
   } catch (e) {
@@ -64,23 +66,18 @@ async function hydrateMarkers(): Promise<void> {
 // Direct React hydration for 'use client' page components
 async function hydratePageComponent(pagePath: string): Promise<boolean> {
   try {
-    // Import React and ReactDOM
     const React = await import(getReactCDNUrl(REACT_DEFAULT_VERSION));
-    const ReactDOM = await import(
-      getReactDOMClientCDNUrl(REACT_DEFAULT_VERSION)
-    );
+    const ReactDOM = await import(getReactDOMClientCDNUrl(REACT_DEFAULT_VERSION));
 
-    // Convert the page file path to the /_veryfront/fs/ URL format
     const base64Path = toBase64Url(pagePath);
     if (!base64Path) {
       console.debug?.("[RSC] Failed to encode page path");
       return false;
     }
-    const moduleUrl = FS_PATH_PREFIX + base64Path + ".js";
 
+    const moduleUrl = FS_PATH_PREFIX + base64Path + ".js";
     console.debug?.("[RSC] Loading component from:", moduleUrl);
 
-    // Import the component module
     const mod = await import(moduleUrl);
     const Component = mod.default;
 
@@ -89,19 +86,15 @@ async function hydratePageComponent(pagePath: string): Promise<boolean> {
       return false;
     }
 
-    // Find the root element to hydrate
-    // Look for body's first child div or the first child with content
     const root = document.body.querySelector("div[class]") ||
       document.body.firstElementChild ||
       document.body;
 
-    // Use hydrateRoot for proper React hydration
-    // identifierPrefix must match SSR to prevent useId() mismatch
-    // Suppress recoverable hydration errors - common with animation libraries
     ReactDOM.hydrateRoot(root, React.createElement(Component, {}), {
       identifierPrefix: "vf",
-      onRecoverableError: () => {}, // Silently ignore hydration mismatches
+      onRecoverableError: () => {},
     });
+
     console.debug?.("[RSC] Page component hydrated successfully");
     return true;
   } catch (e) {
@@ -110,54 +103,55 @@ async function hydratePageComponent(pagePath: string): Promise<boolean> {
   }
 }
 
+async function applyPayload(q: string): Promise<boolean> {
+  try {
+    const res = await fetch(RSC_PATH_PREFIX + "payload" + q);
+    if (!res.ok) return false;
+
+    const data = await res.json();
+
+    if (data?.slots) {
+      for (const [id, html] of Object.entries(data.slots)) {
+        const el = getContainer(document, id);
+        el.innerHTML = String(html || "");
+      }
+    } else {
+      const el = getContainer(document, RSC_ROOT_ID);
+      el.innerHTML = String(data?.html || "");
+    }
+
+    return true;
+  } catch (e) {
+    console.debug?.("[RSC] payload fetch failed", e);
+    return false;
+  }
+}
+
 export async function boot(): Promise<void> {
   try {
     const q = globalThis.window?.location.search || "";
 
-    // FIRST: Check hydration data for the pagePath
-    // This handles 'use client' pages that need direct React hydration
     const hydrationData = getHydrationData();
-    if (hydrationData && hydrationData.pagePath) {
-      console.debug?.(
-        "[RSC] Found page component in hydration data:",
-        hydrationData.pagePath,
-      );
-      const hydrated = await hydratePageComponent(hydrationData.pagePath);
-      if (hydrated) {
+    const pagePath = hydrationData?.pagePath;
+
+    if (pagePath) {
+      console.debug?.("[RSC] Found page component in hydration data:", pagePath);
+      if (await hydratePageComponent(pagePath)) {
         console.debug?.("[RSC] Client component hydrated successfully");
         return;
       }
     }
 
-    // If no client page components, try RSC streaming for server components
-    const streamed = await tryStream(q);
-    if (streamed) {
+    if (await tryStream(q)) {
       await hydrateMarkers();
       return;
     }
 
-    // Try payload-based approach
-    try {
-      const res = await fetch(RSC_PATH_PREFIX + "payload" + q);
-      if (res.ok) {
-        const data = await res.json();
-        if (data && data.slots) {
-          for (const [id, html] of Object.entries(data.slots)) {
-            const el = getContainer(document, id);
-            el.innerHTML = String(html || "");
-          }
-        } else {
-          const el = getContainer(document, RSC_ROOT_ID);
-          el.innerHTML = String(data.html || "");
-        }
-        await hydrateMarkers();
-        return;
-      }
-    } catch (e) {
-      console.debug?.("[RSC] payload fetch failed", e);
+    if (await applyPayload(q)) {
+      await hydrateMarkers();
+      return;
     }
 
-    // Final fallback: just run marker-based hydration
     await hydrateMarkers();
   } catch (e) {
     console.error("[RSC] boot failed", e);

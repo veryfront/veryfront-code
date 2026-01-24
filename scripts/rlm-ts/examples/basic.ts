@@ -4,7 +4,7 @@
  * Demonstrates core functionality of the RLM library
  */
 
-import { createRLM, createLogger } from "../src/index.ts";
+import { createRLM } from "../src/index.ts";
 
 // Load environment variables
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
@@ -133,13 +133,13 @@ async function callbackExample() {
       apiKey: OPENAI_API_KEY,
       model: "gpt-4o-mini",
     },
-    onIteration: async (iteration) => {
+    onIteration: (iteration) => {
       console.log(`[Iteration ${iteration.index}]`);
       console.log(`  Tokens: ${iteration.tokens?.totalTokens ?? 0}`);
       console.log(`  Code blocks: ${iteration.parsedResponse.codeBlocks.length}`);
       console.log(`  Has final answer: ${iteration.parsedResponse.hasFinalAnswer}`);
     },
-    onCodeExecution: async (code, result) => {
+    onCodeExecution: (_code, result) => {
       console.log(`[Code Execution]`);
       console.log(`  Success: ${result.success}`);
       if (result.output.stdout) {

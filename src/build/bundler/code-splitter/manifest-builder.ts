@@ -15,34 +15,38 @@ const fs = createFileSystem();
 export function extractEntryName(entryPoint: string): string {
   const filename = entryPoint.split("/").pop();
   if (!filename) {
-    throw toError(createError({
-      type: "config",
-      message: `Invalid entry point path: ${entryPoint}`,
-    }));
+    throw toError(
+      createError({
+        type: "config",
+        message: `Invalid entry point path: ${entryPoint}`,
+      }),
+    );
   }
-  const nameWithoutExt = filename.replace(/\.(ts|tsx|js|jsx|mdx)$/, "");
-  return nameWithoutExt || "unknown";
+
+  return filename.replace(/\.(ts|tsx|js|jsx|mdx)$/, "") || "unknown";
 }
 
 /** Extracts chunk name from file path */
 export function extractChunkName(file: string): string {
   const base = file.split("/").pop();
   if (!base) {
-    throw toError(createError({
-      type: "config",
-      message: `Invalid chunk file path: ${file}`,
-    }));
+    throw toError(
+      createError({
+        type: "config",
+        message: `Invalid chunk file path: ${file}`,
+      }),
+    );
   }
+
   return base.replace(/\.(js|css)$/, "");
 }
 
 /** Calculates SHA-256 hash of file content (returns first 8 hex chars) */
 export async function calculateFileHash(content: Uint8Array): Promise<string> {
-  // Ensure proper BufferSource type for Deno 2 compatibility
-  const buffer = new Uint8Array(content);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("").substring(0, 8);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", content);
+  return Array.from(new Uint8Array(hashBuffer), (b) => b.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, 8);
 }
 
 /** Determines which imports are critical and should be preloaded */
@@ -52,11 +56,11 @@ export function isCriticalImport(path: string): boolean {
 
 /** Gets preload hints for critical imports */
 export function getPreloadHints(output: MetafileOutput, outDir: string): string[] {
-  if (!output.imports) return [];
-
-  return output.imports
-    .filter((imp) => isCriticalImport(imp.path))
-    .map((imp) => relative(outDir, imp.path));
+  return (
+    output.imports
+      ?.filter((imp) => isCriticalImport(imp.path))
+      .map((imp) => relative(outDir, imp.path)) ?? []
+  );
 }
 
 /** Extracts chunk information from metafile output */
@@ -86,11 +90,10 @@ export function addRouteToManifest(
   routeMap: Map<string, string>,
   outDir: string,
 ): void {
-  if (!output.entryPoint) {
-    return;
-  }
+  if (!output.entryPoint) return;
+
   const entryName = extractEntryName(output.entryPoint);
-  const routePath = routeMap.get(entryName) || `/${entryName}`;
+  const routePath = routeMap.get(entryName) ?? `/${entryName}`;
 
   manifest.routes[routePath] = {
     entry: relativePath,
@@ -117,14 +120,14 @@ export async function buildManifest(
     if (!outputFile.endsWith(".js")) continue;
 
     const relativePath = relative(outDir, outputFile);
-    const chunkInfo = await getChunkInfo(outputFile, output, outDir);
-    manifest.chunks[relativePath] = chunkInfo;
+    manifest.chunks[relativePath] = await getChunkInfo(outputFile, output, outDir);
 
     if (output.entryPoint) {
       addRouteToManifest(manifest, output, relativePath, routeMap, outDir);
-    } else {
-      manifest.shared.push(relativePath);
+      continue;
     }
+
+    manifest.shared.push(relativePath);
   }
 
   return manifest;
@@ -132,8 +135,5 @@ export async function buildManifest(
 
 /** Writes manifest to disk as JSON */
 export async function writeManifest(manifest: ChunkManifest, outDir: string): Promise<void> {
-  await fs.writeTextFile(
-    join(outDir, "manifest.json"),
-    JSON.stringify(manifest, null, 2),
-  );
+  await fs.writeTextFile(join(outDir, "manifest.json"), JSON.stringify(manifest, null, 2));
 }

@@ -7,23 +7,28 @@ export default tool({
   description: "Get detailed information about a specific file or folder in Box.",
   inputSchema: z.object({
     itemId: z.string().describe("The ID of the file or folder"),
-    itemType: z.enum(["file", "folder"]).default("file").describe("Whether the item is a file or folder"),
+    itemType: z
+      .enum(["file", "folder"])
+      .default("file")
+      .describe("Whether the item is a file or folder"),
   }),
   async execute({ itemId, itemType }) {
     const item = await getFile(itemId, itemType);
+    const isFile = item.type === "file";
+    const path = item.path_collection?.entries.map((e) => e.name).join("/") ?? "/";
 
     return {
       id: item.id,
       type: item.type,
       name: item.name,
-      size: item.type === "file" ? item.size : undefined,
+      size: isFile ? item.size : undefined,
       description: item.description,
       createdAt: item.created_at,
       modifiedAt: item.modified_at,
       createdBy: item.created_by?.name,
       modifiedBy: item.modified_by?.name,
-      path: item.path_collection?.entries.map((e) => e.name).join("/") || "/",
-      sharedLink: item.type === "file" ? item.shared_link?.url : undefined,
+      path,
+      sharedLink: isFile ? item.shared_link?.url : undefined,
     };
   },
 });

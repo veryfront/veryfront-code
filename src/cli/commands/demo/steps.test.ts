@@ -31,10 +31,9 @@ describe("DEMO_STEPS", () => {
 
   it("should have command on steps with hasAction", () => {
     for (const step of DEMO_STEPS) {
-      if (step.hasAction && step.id !== "login") {
-        // Login step may or may not show a command since it's interactive
-        assertExists(step.command, `Step ${step.id} with hasAction should have command`);
-      }
+      if (!step.hasAction || step.id === "login") continue;
+      // Login step may or may not show a command since it's interactive
+      assertExists(step.command, `Step ${step.id} with hasAction should have command`);
     }
   });
 
@@ -60,7 +59,6 @@ describe("DEMO_STEPS", () => {
 
   it("should have unique step ids", () => {
     const ids = DEMO_STEPS.map((s) => s.id);
-    const uniqueIds = new Set(ids);
-    assertEquals(ids.length, uniqueIds.size, "All step ids should be unique");
+    assertEquals(ids.length, new Set(ids).size, "All step ids should be unique");
   });
 });

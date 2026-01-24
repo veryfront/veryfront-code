@@ -1,6 +1,5 @@
 import * as React from "react";
-import type { EntityInfo } from "#veryfront/types";
-import type { LayoutItem, MdxBundle, MDXComponents } from "#veryfront/types";
+import type { EntityInfo, LayoutItem, MdxBundle, MDXComponents } from "#veryfront/types";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { LayoutApplicator } from "../layouts/index.ts";
@@ -47,70 +46,74 @@ export class LayoutOrchestrator {
   }
 
   collectLayouts(pageInfo: EntityInfo): Promise<LayoutCollectionResult> {
-    return withSpan("layout.collectLayouts", async () => {
-      const result = await this.config.layoutCollector.collectLayouts(pageInfo);
-      await this.config.layoutCompiler.compileLayouts(result.nestedLayouts);
-      return result;
-    }, { "layout.pagePath": pageInfo.entity.path });
+    return withSpan(
+      "layout.collectLayouts",
+      async () => {
+        const result = await this.config.layoutCollector.collectLayouts(pageInfo);
+        await this.config.layoutCompiler.compileLayouts(result.nestedLayouts);
+        return result;
+      },
+      { "layout.pagePath": pageInfo.entity.path },
+    );
   }
 
-  /**
-   * Preload layout modules into cache in parallel.
-   * Call this after collectLayouts() to start loading TSX layouts in the background
-   * while page bundle preparation runs. When applyLayoutsAndWrappers() is called,
-   * the layouts will already be in cache, avoiding sequential loading.
-   *
-   * @param nestedLayouts - Layouts from collectLayouts() result
-   * @returns Promise that resolves when all TSX layouts are preloaded (or failed)
-   */
   preloadLayoutModules(nestedLayouts: LayoutItem[]): Promise<void> {
-    return withSpan("layout.preloadModules", async () => {
-      const tsxLayouts = nestedLayouts.filter(
-        (layout) => layout.kind === "tsx" && layout.componentPath,
-      );
+    return withSpan(
+      "layout.preloadModules",
+      async () => {
+        const tsxLayouts = nestedLayouts.filter(
+          (layout) => layout.kind === "tsx" && layout.componentPath,
+        );
 
-      if (tsxLayouts.length === 0) {
-        return;
-      }
-
-      const preloadStart = performance.now();
-      logger.debug("[LayoutOrchestrator] Preloading TSX layout modules", {
-        count: tsxLayouts.length,
-        paths: tsxLayouts.map((l) => l.componentPath),
-      });
-
-      // Load all TSX layouts in parallel into the cache
-      const preloadPromises = tsxLayouts.map(async (layout) => {
-        try {
-          await loadTSXComponent(
-            layout.componentPath!,
-            this.config.projectDir,
-            this.config.layoutCache,
-            this.config.adapter,
-            this.config.projectId,
-            this.config.contentSourceId,
-          );
-          return { path: layout.componentPath, success: true };
-        } catch (error) {
-          // Log but don't throw - preload failures will be handled during actual application
-          logger.warn("[LayoutOrchestrator] Failed to preload layout (will retry during apply)", {
-            path: layout.componentPath,
-            error: error instanceof Error ? error.message : String(error),
-          });
-          return { path: layout.componentPath, success: false };
+        if (!tsxLayouts.length) {
+          return;
         }
-      });
 
-      const results = await Promise.all(preloadPromises);
-      const successCount = results.filter((r) => r.success).length;
+        const preloadStart = performance.now();
+        logger.debug("[LayoutOrchestrator] Preloading TSX layout modules", {
+          count: tsxLayouts.length,
+          paths: tsxLayouts.map((l) => l.componentPath),
+        });
 
-      logger.debug("[LayoutOrchestrator] Preload complete", {
-        total: tsxLayouts.length,
-        success: successCount,
-        failed: tsxLayouts.length - successCount,
-        duration: `${(performance.now() - preloadStart).toFixed(2)}ms`,
-      });
-    }, { "layout.preloadCount": nestedLayouts.length });
+        const results = await Promise.all(
+          tsxLayouts.map(async (layout) => {
+            const componentPath = layout.componentPath!;
+
+            try {
+              await loadTSXComponent(
+                componentPath,
+                this.config.projectDir,
+                this.config.layoutCache,
+                this.config.adapter,
+                this.config.projectId,
+                this.config.contentSourceId,
+              );
+              return { path: componentPath, success: true };
+            } catch (error) {
+              // Log but don't throw - preload failures will be handled during actual application
+              logger.warn(
+                "[LayoutOrchestrator] Failed to preload layout (will retry during apply)",
+                {
+                  path: componentPath,
+                  error: error instanceof Error ? error.message : String(error),
+                },
+              );
+              return { path: componentPath, success: false };
+            }
+          }),
+        );
+
+        const successCount = results.filter((r) => r.success).length;
+
+        logger.debug("[LayoutOrchestrator] Preload complete", {
+          total: tsxLayouts.length,
+          success: successCount,
+          failed: tsxLayouts.length - successCount,
+          duration: `${(performance.now() - preloadStart).toFixed(2)}ms`,
+        });
+      },
+      { "layout.preloadCount": nestedLayouts.length },
+    );
   }
 
   applyLayoutsAndWrappers(
@@ -124,43 +127,52 @@ export class LayoutOrchestrator {
     headings?: Array<{ id: string; text: string; level: number }>,
     projectSlug?: string,
   ): Promise<React.ReactElement> {
-    return withSpan("layout.applyLayoutsAndWrappers", async () => {
-      const defaultComponents = createDefaultMDXComponents();
-      const mergedComponents = { ...defaultComponents, ...this.config.componentRegistry };
+    return withSpan(
+      "layout.applyLayoutsAndWrappers",
+      async () => {
+        const mergedComponents = {
+          ...createDefaultMDXComponents(),
+          ...this.config.componentRegistry,
+        };
 
-      const layoutApplicator = new LayoutApplicator({
-        projectDir: this.config.projectDir,
-        projectId: this.config.projectId,
-        projectSlug: projectSlug ?? this.config.projectSlug,
-        contentSourceId: this.config.contentSourceId,
-        adapter: this.config.adapter,
-        config: this.config.config,
-        layoutCache: this.config.layoutCache,
-        mergedComponents,
-        mode: this.config.mode,
-        moduleServerUrl: this.config.moduleServerUrl,
-        requestUrl,
-        frontmatter,
-        headings,
-      });
+        const layoutApplicator = new LayoutApplicator({
+          projectDir: this.config.projectDir,
+          projectId: this.config.projectId,
+          projectSlug: projectSlug ?? this.config.projectSlug,
+          contentSourceId: this.config.contentSourceId,
+          adapter: this.config.adapter,
+          config: this.config.config,
+          layoutCache: this.config.layoutCache,
+          mergedComponents,
+          mode: this.config.mode,
+          moduleServerUrl: this.config.moduleServerUrl,
+          requestUrl,
+          frontmatter,
+          headings,
+        });
 
-      const pageType = pageElement?.type;
-      logger.debug("[LayoutOrchestrator] Before applyLayouts", {
-        pageElementType: typeof pageType === "function" ? pageType.name : typeof pageType,
-      });
-      const result = await layoutApplicator.applyLayouts(
-        pageElement,
-        pageInfo,
-        layoutBundle,
-        nestedLayouts,
-        layoutDataMap,
-      );
-      const resultType = result?.type;
-      logger.debug("[LayoutOrchestrator] After applyLayouts", {
-        resultType: typeof resultType === "function" ? resultType.name : typeof resultType,
-        isSameElement: result === pageElement,
-      });
-      return result;
-    }, { "layout.pagePath": pageInfo.entity.path, "layout.nestedCount": nestedLayouts.length });
+        const pageType = pageElement.type;
+        logger.debug("[LayoutOrchestrator] Before applyLayouts", {
+          pageElementType: typeof pageType === "function" ? pageType.name : typeof pageType,
+        });
+
+        const result = await layoutApplicator.applyLayouts(
+          pageElement,
+          pageInfo,
+          layoutBundle,
+          nestedLayouts,
+          layoutDataMap,
+        );
+
+        const resultType = result.type;
+        logger.debug("[LayoutOrchestrator] After applyLayouts", {
+          resultType: typeof resultType === "function" ? resultType.name : typeof resultType,
+          isSameElement: result === pageElement,
+        });
+
+        return result;
+      },
+      { "layout.pagePath": pageInfo.entity.path, "layout.nestedCount": nestedLayouts.length },
+    );
   }
 }

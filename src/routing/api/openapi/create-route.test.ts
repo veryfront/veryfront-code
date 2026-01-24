@@ -7,6 +7,14 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createRoute, z } from "./create-route.ts";
 import { OPENAPI_METADATA, type OpenAPIRouteMetadata } from "./types.ts";
 
+function getMetadata(handler: unknown): OpenAPIRouteMetadata {
+  const metadata = (handler as Record<string | symbol, unknown>)[
+    OPENAPI_METADATA
+  ] as OpenAPIRouteMetadata;
+  assertExists(metadata);
+  return metadata;
+}
+
 describe("createRoute", () => {
   it("should attach metadata to handler", () => {
     const handler = createRoute({
@@ -14,8 +22,7 @@ describe("createRoute", () => {
       handler: () => new Response("ok"),
     });
 
-    const metadata = handler[OPENAPI_METADATA] as OpenAPIRouteMetadata;
-    assertExists(metadata);
+    const metadata = getMetadata(handler);
     assertEquals(metadata.summary, "Get user");
   });
 
@@ -27,7 +34,7 @@ describe("createRoute", () => {
       handler: () => new Response("ok"),
     });
 
-    const metadata = handler[OPENAPI_METADATA] as OpenAPIRouteMetadata;
+    const metadata = getMetadata(handler);
     assertExists(metadata.params);
     assertEquals(metadata.params.type, "object");
     assertExists(metadata.params.properties?.id);
@@ -42,7 +49,7 @@ describe("createRoute", () => {
       handler: () => new Response("ok"),
     });
 
-    const metadata = handler[OPENAPI_METADATA] as OpenAPIRouteMetadata;
+    const metadata = getMetadata(handler);
     assertExists(metadata.query);
     assertEquals(metadata.query.type, "object");
     assertExists(metadata.query.properties?.page);
@@ -58,7 +65,7 @@ describe("createRoute", () => {
       handler: () => new Response("ok"),
     });
 
-    const metadata = handler[OPENAPI_METADATA] as OpenAPIRouteMetadata;
+    const metadata = getMetadata(handler);
     assertExists(metadata.body);
     assertEquals(metadata.body.type, "object");
     assertExists(metadata.body.properties?.name);
@@ -73,7 +80,7 @@ describe("createRoute", () => {
       handler: () => new Response("ok"),
     });
 
-    const metadata = handler[OPENAPI_METADATA] as OpenAPIRouteMetadata;
+    const metadata = getMetadata(handler);
     assertExists(metadata.responses);
     assertExists(metadata.responses["200"]);
     assertEquals(metadata.responses["200"].description, "Successful response");
@@ -94,7 +101,7 @@ describe("createRoute", () => {
       handler: () => new Response("ok"),
     });
 
-    const metadata = handler[OPENAPI_METADATA] as OpenAPIRouteMetadata;
+    const metadata = getMetadata(handler);
     assertExists(metadata.responses);
     assertExists(metadata.responses["200"]);
     assertExists(metadata.responses["404"]);
@@ -109,7 +116,7 @@ describe("createRoute", () => {
       handler: () => new Response("ok"),
     });
 
-    const metadata = handler[OPENAPI_METADATA] as OpenAPIRouteMetadata;
+    const metadata = getMetadata(handler);
     assertEquals(metadata.tags, ["Users", "Admin"]);
     assertEquals(metadata.deprecated, true);
   });

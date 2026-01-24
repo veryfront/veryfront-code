@@ -2,7 +2,6 @@ import { assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 
-// This test uses Deno.Command directly - skip in Node.js/Bun
 const denoOnlyDescribe = isDeno ? describe : describe.skip;
 
 denoOnlyDescribe("demo command integration", () => {
@@ -14,49 +13,44 @@ denoOnlyDescribe("demo command integration", () => {
       stderr: "piped",
       stdin: "null",
     });
+
     const { code, stdout, stderr } = await command.output();
-    const output = new TextDecoder().decode(stdout) + new TextDecoder().decode(stderr);
+    const decoder = new TextDecoder();
+    const output = decoder.decode(stdout) + decoder.decode(stderr);
+
     return { code, output };
+  }
+
+  async function assertHelpIncludes(...includes: string[]): Promise<void> {
+    const { output } = await runDemo(["--help"]);
+    for (const text of includes) assertStringIncludes(output, text);
   }
 
   describe("--help flag", () => {
     it("should display help information", async () => {
-      const { output } = await runDemo(["--help"]);
-      assertStringIncludes(output, "veryfront demo");
-      assertStringIncludes(output, "Interactive guided tour");
+      await assertHelpIncludes("veryfront demo", "Interactive guided tour");
     });
 
     it("should show --auto option in help", async () => {
-      const { output } = await runDemo(["--help"]);
-      assertStringIncludes(output, "--auto");
-      assertStringIncludes(output, "Auto-advance");
+      await assertHelpIncludes("--auto", "Auto-advance");
     });
 
     it("should show --login option in help", async () => {
-      const { output } = await runDemo(["--help"]);
-      assertStringIncludes(output, "--login");
-      assertStringIncludes(output, "google");
-      assertStringIncludes(output, "github");
-      assertStringIncludes(output, "microsoft");
-      assertStringIncludes(output, "token");
+      await assertHelpIncludes("--login", "google", "github", "microsoft", "token");
     });
 
     it("should show examples in help", async () => {
-      const { output } = await runDemo(["--help"]);
-      assertStringIncludes(output, "Examples:");
-      assertStringIncludes(output, "my-first-app");
+      await assertHelpIncludes("Examples:", "my-first-app");
     });
   });
 
   describe("non-TTY behavior", () => {
     it("should exit gracefully when not in TTY", async () => {
-      // Without TTY, demo should exit with a message
       const { output } = await runDemo([]);
       assertStringIncludes(output, "interactive terminal");
     });
 
     it("should exit gracefully with --auto flag when not in TTY", async () => {
-      // Even with --auto, still requires TTY
       const { output } = await runDemo(["--auto"]);
       assertStringIncludes(output, "interactive terminal");
     });
@@ -70,7 +64,6 @@ denoOnlyDescribe("demo command integration", () => {
   describe("command-line argument parsing", () => {
     it("should accept project name argument", async () => {
       const { output } = await runDemo(["my-custom-project"]);
-      // Should still fail due to non-TTY, but args are parsed
       assertStringIncludes(output, "interactive terminal");
     });
 
@@ -82,7 +75,6 @@ denoOnlyDescribe("demo command integration", () => {
     it("should accept all login methods", async () => {
       for (const method of ["google", "github", "microsoft", "token"]) {
         const { output } = await runDemo(["--auto", "--login", method]);
-        // Should not show "unknown option" error
         assertStringIncludes(output, "interactive terminal");
       }
     });

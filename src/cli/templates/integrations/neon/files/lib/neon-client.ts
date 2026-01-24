@@ -3,7 +3,6 @@ import { Client } from "pg";
 
 const NEON_API_BASE_URL = "https://console.neon.tech/api/v2";
 
-// Management API Types
 interface NeonProject {
   id: string;
   platform_id: string;
@@ -95,13 +94,6 @@ interface NeonEndpointsResponse {
   endpoints: NeonEndpoint[];
 }
 
-// Database Query Types
-interface QueryResult {
-  rows: Record<string, unknown>[];
-  rowCount: number;
-  fields: Array<{ name: string; dataTypeID: number }>;
-}
-
 interface TableInfo {
   tablename: string;
   schemaname: string;
@@ -116,11 +108,8 @@ interface ColumnInfo {
   character_maximum_length: number | null;
 }
 
-async function neonFetch<T>(
-  endpoint: string,
-  options: RequestInit = {},
-): Promise<T> {
-  const apiKey = getApiKey() || process.env.NEON_API_KEY;
+async function neonFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  const apiKey = getApiKey() ?? process.env.NEON_API_KEY;
   if (!apiKey) {
     throw new Error("Not authenticated with Neon. Please set NEON_API_KEY.");
   }
@@ -128,28 +117,26 @@ async function neonFetch<T>(
   const response = await fetch(`${NEON_API_BASE_URL}${endpoint}`, {
     ...options,
     headers: {
-      "Authorization": `Bearer ${apiKey}`,
+      Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
-      "Accept": "application/json",
+      Accept: "application/json",
       ...options.headers,
     },
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
+    const error = await response.json().catch(() => ({} as { message?: string }));
     throw new Error(
       `Neon API error: ${response.status} ${error.message || response.statusText}`,
     );
   }
 
-  return response.json();
+  return response.json() as Promise<T>;
 }
 
-// Management API Functions
-
 export async function listProjects(): Promise<NeonProject[]> {
-  const response = await neonFetch<NeonProjectsResponse>("/projects");
-  return response.projects;
+  const { projects } = await neonFetch<NeonProjectsResponse>("/projects");
+  return projects;
 }
 
 export function getProject(projectId: string): Promise<NeonProject> {
@@ -157,10 +144,10 @@ export function getProject(projectId: string): Promise<NeonProject> {
 }
 
 export async function listBranches(projectId: string): Promise<NeonBranch[]> {
-  const response = await neonFetch<NeonBranchesResponse>(
+  const { branches } = await neonFetch<NeonBranchesResponse>(
     `/projects/${projectId}/branches`,
   );
-  return response.branches;
+  return branches;
 }
 
 export async function createBranch(
@@ -172,53 +159,41 @@ export async function createBranch(
     parentTimestamp?: string;
   },
 ): Promise<NeonBranch> {
-  const body: Record<string, unknown> = {
-    branch: {
-      name: options.name,
-    },
-  };
+  const branch: Record<string, unknown> = { name: options.name };
 
-  if (options.parentId) {
-    body.branch = { ...body.branch, parent_id: options.parentId };
-  }
-  if (options.parentLsn) {
-    body.branch = { ...body.branch, parent_lsn: options.parentLsn };
-  }
-  if (options.parentTimestamp) {
-    body.branch = { ...body.branch, parent_timestamp: options.parentTimestamp };
-  }
+  if (options.parentId) branch.parent_id = options.parentId;
+  if (options.parentLsn) branch.parent_lsn = options.parentLsn;
+  if (options.parentTimestamp) branch.parent_timestamp = options.parentTimestamp;
 
-  const response = await neonFetch<{ branch: NeonBranch }>(
+  const { branch: createdBranch } = await neonFetch<{ branch: NeonBranch }>(
     `/projects/${projectId}/branches`,
     {
       method: "POST",
-      body: JSON.stringify(body),
+      body: JSON.stringify({ branch }),
     },
   );
 
-  return response.branch;
+  return createdBranch;
 }
 
 export async function listEndpoints(projectId: string): Promise<NeonEndpoint[]> {
-  const response = await neonFetch<NeonEndpointsResponse>(
+  const { endpoints } = await neonFetch<NeonEndpointsResponse>(
     `/projects/${projectId}/endpoints`,
   );
-  return response.endpoints;
+  return endpoints;
 }
-
-// Database Query Functions
 
 async function getDbClient(): Promise<Client> {
   const databaseUrl = getDatabaseUrl();
   if (!databaseUrl) {
-    throw new Error("DATABASE_URL not configured. Please set DATABASE_URL environment variable.");
+    throw new Error(
+      "DATABASE_URL not configured. Please set DATABASE_URL environment variable.",
+    );
   }
 
   const client = new Client({
     connectionString: databaseUrl,
-    ssl: {
-      rejectUnauthorized: false,
-    },
+    ssl: { rejectUnauthorized: false },
   });
 
   await client.connect();
@@ -235,7 +210,7 @@ export async function query<T = Record<string, unknown>>(
     const result = await client.query(sql, params);
     return {
       rows: result.rows as T[],
-      rowCount: result.rowCount || 0,
+      rowCount: result.rowCount ?? 0,
     };
   } finally {
     await client.end();
@@ -257,11 +232,7 @@ export async function listTables(schema: string = "public"): Promise<TableInfo[]
 export async function describeTable(
   tableName: string,
   schema: string = "public",
-): Promise<{
-  tableName: string;
-  schema: string;
-  columns: ColumnInfo[];
-}> {
+): Promise<{ tableName: string; schema: string; columns: ColumnInfo[] }> {
   const result = await query<ColumnInfo>(
     `SELECT
       column_name,
@@ -275,11 +246,7 @@ export async function describeTable(
     [schema, tableName],
   );
 
-  return {
-    tableName,
-    schema,
-    columns: result.rows,
-  };
+  return { tableName, schema, columns: result.rows };
 }
 
 export async function getTableRowCount(
@@ -290,5 +257,5 @@ export async function getTableRowCount(
     `SELECT COUNT(*) as count FROM "${schema}"."${tableName}"`,
   );
 
-  return parseInt(result.rows[0]?.count || "0", 10);
+  return parseInt(result.rows[0]?.count ?? "0", 10);
 }

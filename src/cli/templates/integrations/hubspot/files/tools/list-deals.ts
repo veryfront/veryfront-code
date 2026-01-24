@@ -11,30 +11,31 @@ export default tool({
     properties: z.array(z.string()).optional().describe("Additional properties to retrieve"),
   }),
   async execute({ limit, properties }) {
-    const response = await listDeals({
-      limit,
-      properties,
-    });
+    const response = await listDeals({ limit, properties });
 
     return {
-      deals: response.results.map((deal) => ({
-        id: deal.id,
-        name: formatDealName(deal),
-        amount: deal.properties.amount,
-        stage: deal.properties.dealstage,
-        pipeline: deal.properties.pipeline,
-        closeDate: deal.properties.closedate,
-        createdAt: deal.createdAt,
-        updatedAt: deal.updatedAt,
-        additionalProperties: properties
+      deals: response.results.map((deal) => {
+        const additionalProperties = properties
           ? Object.fromEntries(
-            properties
-              .filter((prop) => deal.properties[prop] !== undefined)
-              .map((prop) => [prop, deal.properties[prop]]),
-          )
-          : undefined,
-      })),
-      hasMore: !!response.paging?.next,
+              properties
+                .filter((prop) => deal.properties[prop] !== undefined)
+                .map((prop) => [prop, deal.properties[prop]]),
+            )
+          : undefined;
+
+        return {
+          id: deal.id,
+          name: formatDealName(deal),
+          amount: deal.properties.amount,
+          stage: deal.properties.dealstage,
+          pipeline: deal.properties.pipeline,
+          closeDate: deal.properties.closedate,
+          createdAt: deal.createdAt,
+          updatedAt: deal.updatedAt,
+          additionalProperties,
+        };
+      }),
+      hasMore: response.paging?.next != null,
       nextAfter: response.paging?.next?.after,
     };
   },

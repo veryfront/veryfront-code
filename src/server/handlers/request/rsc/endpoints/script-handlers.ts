@@ -1,59 +1,32 @@
-/**
- * Script endpoint handlers (client.js, dom.js)
- * @module rsc-endpoints/script-handlers
- */
-
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { serverLogger } from "#veryfront/utils";
 
-/**
- * Handle client.js endpoint
- * @returns Response with client boot script
- */
-/**
- * Handle client.js endpoint
- * @returns Response with client boot script
- */
-export async function handleClientScript(
+function shouldStopEsbuild(): boolean {
+  return !(globalThis as Record<string, unknown>).__vfTestPreserveEsbuild;
+}
+
+async function buildOrServeScript(
   adapter: RuntimeAdapter,
+  path: string,
+  fallbackBundle: string,
+  esbuildOptions: Omit<import("esbuild").BuildOptions, "stdin"> & {
+    stdin: import("esbuild").StdinOptions;
+  },
 ): Promise<Response> {
-  const p = new URL(
-    "../../../../../rendering/rsc/client-boot.ts",
-    import.meta.url,
-  ).pathname;
   let esbuild: typeof import("esbuild") | null = null;
+
   try {
     esbuild = await import("esbuild");
-    const src = await adapter.fs.readFile(p);
-    const result = await esbuild.build({
-      bundle: true,
-      write: false,
-      format: "esm",
-      platform: "browser",
-      target: "es2020",
-      stdin: {
-        contents: src,
-        loader: "ts",
-        resolveDir: p.substring(0, p.lastIndexOf("/")),
-        sourcefile: p,
-      },
-      // We need to externalize the dynamic imports that are expected to be available at runtime
-      // or handled by the browser (like CDN imports)
-      external: [
-        "https://esm.sh/*",
-        "/_veryfront/*",
-      ],
-    });
+    const src = await adapter.fs.readFile(path);
+    const result = await esbuild.build(esbuildOptions);
     const out = result.outputFiles?.[0]?.text ?? src;
 
     return new Response(out, {
       headers: { "content-type": "application/javascript" },
     });
   } catch (error) {
-    // Fallback for npm build where esbuild/fs might not be available
-    // CLIENT_BOOT_BUNDLE will be injected by the build script
-    if (CLIENT_BOOT_BUNDLE) {
-      return new Response(CLIENT_BOOT_BUNDLE, {
+    if (fallbackBundle) {
+      return new Response(fallbackBundle, {
         headers: { "content-type": "application/javascript" },
       });
     }
@@ -62,13 +35,12 @@ export async function handleClientScript(
       "[ScriptHandlers] Build failed, serving raw TypeScript",
       error,
     );
-    const src = await adapter.fs.readFile(p);
+    const src = await adapter.fs.readFile(path);
     return new Response(src, {
       headers: { "content-type": "application/typescript" },
     });
   } finally {
-    // Only stop esbuild if not in test mode with global initialization
-    if (!(globalThis as Record<string, unknown>).__vfTestPreserveEsbuild) {
+    if (shouldStopEsbuild()) {
       try {
         esbuild?.stop?.();
       } catch (stopError) {
@@ -81,70 +53,50 @@ export async function handleClientScript(
 // Placeholder for build-time injection
 export const CLIENT_BOOT_BUNDLE = "";
 
-/**
- * Handle dom.js endpoint - provides DOM utilities for RSC streaming
- * Inlined to avoid file system dependencies in npm package context
- * @returns Response with DOM utilities
- */
-export async function handleDomScript(
+// Placeholder for build-time injection
+export const CLIENT_DOM_BUNDLE = "";
+
+export async function handleClientScript(
   adapter: RuntimeAdapter,
 ): Promise<Response> {
-  const p = new URL(
+  const path = new URL(
+    "../../../../../rendering/rsc/client-boot.ts",
+    import.meta.url,
+  ).pathname;
+
+  return buildOrServeScript(adapter, path, CLIENT_BOOT_BUNDLE, {
+    bundle: true,
+    write: false,
+    format: "esm",
+    platform: "browser",
+    target: "es2020",
+    stdin: {
+      contents: await adapter.fs.readFile(path),
+      loader: "ts",
+      resolveDir: path.substring(0, path.lastIndexOf("/")),
+      sourcefile: path,
+    },
+    external: ["https://esm.sh/*", "/_veryfront/*"],
+  });
+}
+
+export async function handleDomScript(adapter: RuntimeAdapter): Promise<Response> {
+  const path = new URL(
     "../../../../../rendering/rsc/client-dom.ts",
     import.meta.url,
   ).pathname;
-  let esbuild: typeof import("esbuild") | null = null;
-  try {
-    // Use native esbuild for proper file system access during bundling
-    // In npm build, this will be replaced by the injected bundle
-    esbuild = await import("esbuild");
-    const src = await adapter.fs.readFile(p);
-    const result = await esbuild.build({
-      bundle: true,
-      write: false,
-      format: "esm",
-      platform: "browser",
-      target: "es2020",
-      stdin: {
-        contents: src,
-        loader: "ts",
-        resolveDir: p.substring(0, p.lastIndexOf("/")),
-        sourcefile: p,
-      },
-    });
-    const out = result.outputFiles?.[0]?.text ?? src;
 
-    return new Response(out, {
-      headers: { "content-type": "application/javascript" },
-    });
-  } catch (error) {
-    // Fallback for npm build where esbuild/fs might not be available
-    // CLIENT_DOM_BUNDLE will be injected by the build script
-    if (CLIENT_DOM_BUNDLE) {
-      return new Response(CLIENT_DOM_BUNDLE, {
-        headers: { "content-type": "application/javascript" },
-      });
-    }
-
-    serverLogger.debug(
-      "[ScriptHandlers] Build failed, serving raw TypeScript",
-      error,
-    );
-    const src = await adapter.fs.readFile(p);
-    return new Response(src, {
-      headers: { "content-type": "application/typescript" },
-    });
-  } finally {
-    // Only stop esbuild if not in test mode with global initialization
-    if (!(globalThis as Record<string, unknown>).__vfTestPreserveEsbuild) {
-      try {
-        esbuild?.stop?.();
-      } catch (stopError) {
-        serverLogger.debug("[ScriptHandlers] esbuild stop failed", stopError);
-      }
-    }
-  }
+  return buildOrServeScript(adapter, path, CLIENT_DOM_BUNDLE, {
+    bundle: true,
+    write: false,
+    format: "esm",
+    platform: "browser",
+    target: "es2020",
+    stdin: {
+      contents: await adapter.fs.readFile(path),
+      loader: "ts",
+      resolveDir: path.substring(0, path.lastIndexOf("/")),
+      sourcefile: path,
+    },
+  });
 }
-
-// Placeholder for build-time injection
-export const CLIENT_DOM_BUNDLE = "";

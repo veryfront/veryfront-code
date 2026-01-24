@@ -18,12 +18,16 @@ describe("GitHubDirectoryOperations", () => {
     cache: { enabled: true, ttl: 60000, maxSize: 1000, maxMemory: 104857600 },
   };
 
-  // Mock stat operations
   const mockStatOps = {
     isDirectory: (_path: string) => false,
     getFilesInDirectory: (_path: string) => [],
     getSubdirectories: (_path: string) => [],
-  } as any;
+  };
+
+  function createOps(): GitHubDirectoryOperations {
+    const cache = new FileCache();
+    return new GitHubDirectoryOperations(mockConfig, cache, mockStatOps as any);
+  }
 
   describe("class", () => {
     it("should export GitHubDirectoryOperations class", () => {
@@ -32,30 +36,26 @@ describe("GitHubDirectoryOperations", () => {
     });
 
     it("should be instantiable", () => {
-      const cache = new FileCache();
-      const ops = new GitHubDirectoryOperations(mockConfig, cache, mockStatOps);
+      const ops = createOps();
       assertExists(ops);
     });
   });
 
   describe("methods", () => {
     it("should have readdir method", () => {
-      const cache = new FileCache();
-      const ops = new GitHubDirectoryOperations(mockConfig, cache, mockStatOps);
+      const ops = createOps();
       assertExists(ops.readdir);
       assertEquals(typeof ops.readdir, "function");
     });
 
     it("should have readDir method", () => {
-      const cache = new FileCache();
-      const ops = new GitHubDirectoryOperations(mockConfig, cache, mockStatOps);
+      const ops = createOps();
       assertExists(ops.readDir);
       assertEquals(typeof ops.readDir, "function");
     });
 
     it("should return empty array for non-existent directory", () => {
-      const cache = new FileCache();
-      const ops = new GitHubDirectoryOperations(mockConfig, cache, mockStatOps);
+      const ops = createOps();
       const entries = ops.readdir("/non-existent");
       assertEquals(entries, []);
     });

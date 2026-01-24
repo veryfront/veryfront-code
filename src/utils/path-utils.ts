@@ -1,13 +1,13 @@
 import { logger } from "./logger/logger.ts";
 
 export function normalizePath(pathname: string): string {
-  pathname = pathname.replace(/\\+/g, "/").replace(/\/\.+\//g, "/");
+  let normalized = pathname.replace(/\\+/g, "/").replace(/\/\.+\//g, "/");
 
-  if (pathname !== "/" && pathname.endsWith("/")) {
-    pathname = pathname.slice(0, -1);
+  if (normalized !== "/" && normalized.endsWith("/")) {
+    normalized = normalized.slice(0, -1);
   }
 
-  return pathname;
+  return normalized;
 }
 
 export function joinPath(a: string, b: string): string {
@@ -17,21 +17,21 @@ export function joinPath(a: string, b: string): string {
 export function isWithinDirectory(root: string, target: string): boolean {
   const normalizedRoot = normalizePath(root);
   const normalizedTarget = normalizePath(target);
-  return normalizedTarget.startsWith(`${normalizedRoot}/`) || normalizedTarget === normalizedRoot;
+
+  return normalizedTarget === normalizedRoot || normalizedTarget.startsWith(`${normalizedRoot}/`);
 }
 
 export function getExtension(path: string): string {
   const lastDot = path.lastIndexOf(".");
-  if (lastDot === -1 || lastDot === path.length - 1) {
-    return "";
-  }
+  if (lastDot === -1 || lastDot === path.length - 1) return "";
   return path.slice(lastDot);
 }
 
 export function getDirectory(path: string): string {
   const normalized = normalizePath(path);
   const lastSlash = normalized.lastIndexOf("/");
-  return lastSlash <= 0 ? "/" : normalized.slice(0, lastSlash);
+  if (lastSlash <= 0) return "/";
+  return normalized.slice(0, lastSlash);
 }
 
 export function hasHashedFilename(path: string): boolean {
@@ -57,18 +57,23 @@ export function isAbsolutePath(path: string): boolean {
 }
 
 export function toBase64Url(s: string): string {
-  const b64 = btoa(s);
-  return b64.replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+  return btoa(s).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
 }
 
-const BASE64_PADDING: Record<number, string> = { 2: "==", 3: "=" };
-
 function getBase64Padding(length: number): string {
-  return BASE64_PADDING[length % 4] ?? "";
+  switch (length % 4) {
+    case 2:
+      return "==";
+    case 3:
+      return "=";
+    default:
+      return "";
+  }
 }
 
 export function fromBase64Url(encoded: string): string {
   const b64 = encoded.replaceAll("-", "+").replaceAll("_", "/");
+
   try {
     return atob(b64 + getBase64Padding(b64.length));
   } catch (error) {

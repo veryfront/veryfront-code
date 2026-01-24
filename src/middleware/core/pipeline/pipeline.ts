@@ -2,7 +2,6 @@ import type { ExecutionContext, MiddlewareHandler } from "../types.ts";
 import type { MiddlewarePipelineOptions } from "./types.ts";
 import { composeMiddleware } from "./composer.ts";
 import { executeMiddlewarePipeline } from "./executor.ts";
-// Direct import from base.ts to avoid circular dependency through barrel
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 
@@ -38,18 +37,21 @@ export class MiddlewarePipeline {
     executionCtx?: ExecutionContext,
     adapter?: RuntimeAdapter,
   ): Promise<Response> {
-    return executeMiddlewarePipeline(req, this.compose(), env, executionCtx, adapter);
+    const handler = this.compose();
+    return executeMiddlewarePipeline(req, handler, env, executionCtx, adapter);
   }
 
   async teardown(): Promise<void> {
-    for (const cb of this.teardownCallbacks) {
+    const callbacks = this.teardownCallbacks;
+    this.teardownCallbacks = [];
+
+    for (const cb of callbacks) {
       try {
         await cb();
       } catch (e) {
         serverLogger.warn("middleware teardown failed", e);
       }
     }
-    this.teardownCallbacks = [];
   }
 
   getMiddleware(): Array<{ name?: string; order?: number }> {

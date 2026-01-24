@@ -11,9 +11,7 @@ describe("convertNodeRequestToWebRequest", () => {
   it("should convert a GET request", () => {
     const mockReq = {
       method: "GET",
-      headers: {
-        "content-type": "application/json",
-      },
+      headers: { "content-type": "application/json" },
     };
 
     const result = convertNodeRequestToWebRequest(mockReq as any, "http://localhost/test");
@@ -26,9 +24,7 @@ describe("convertNodeRequestToWebRequest", () => {
   it("should convert a POST request", () => {
     const mockReq = {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
+      headers: { "content-type": "application/json" },
     };
 
     const result = convertNodeRequestToWebRequest(mockReq as any, "http://localhost/api");
@@ -43,7 +39,7 @@ describe("convertNodeRequestToWebRequest", () => {
       method: "GET",
       headers: {
         "x-custom-header": "custom-value",
-        "authorization": "Bearer token",
+        authorization: "Bearer token",
       },
     };
 

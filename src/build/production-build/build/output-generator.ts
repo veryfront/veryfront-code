@@ -49,24 +49,21 @@ export async function generateClientScripts(
 ): Promise<void> {
   logger.info("Copying client scripts...");
 
-  if (!dryRun) {
-    await adapter.fs.writeFile(join(outputDir, "_veryfront/app.js"), generateAppModule());
+  if (dryRun) return;
 
-    await adapter.fs.writeFile(
-      join(outputDir, "_veryfront/client.js"),
-      await generateClientModule(),
-    );
+  await adapter.fs.writeFile(join(outputDir, "_veryfront/app.js"), generateAppModule());
 
-    await adapter.fs.writeFile(
-      join(outputDir, "_veryfront/router.js"),
-      await generateRouterScript(adapter),
-    );
+  await adapter.fs.writeFile(join(outputDir, "_veryfront/client.js"), await generateClientModule());
 
-    await adapter.fs.writeFile(
-      join(outputDir, "_veryfront/prefetch.js"),
-      await generatePrefetchScript(adapter),
-    );
-  }
+  await adapter.fs.writeFile(
+    join(outputDir, "_veryfront/router.js"),
+    await generateRouterScript(adapter),
+  );
+
+  await adapter.fs.writeFile(
+    join(outputDir, "_veryfront/prefetch.js"),
+    await generatePrefetchScript(adapter),
+  );
 }
 
 /**
@@ -85,15 +82,17 @@ export async function generateManifestAndServiceWorker(
     chunkManifest: options.chunkManifest,
   });
 
-  if (!options.dryRun) {
-    await options.adapter.fs.writeFile(
-      join(options.outputDir, "_veryfront/manifest.json"),
-      JSON.stringify(manifest, null, 2),
-    );
+  if (options.dryRun) return;
 
-    const sw = generateServiceWorker(manifest);
-    await options.adapter.fs.writeFile(join(options.outputDir, "sw.js"), sw);
-  }
+  await options.adapter.fs.writeFile(
+    join(options.outputDir, "_veryfront/manifest.json"),
+    JSON.stringify(manifest, null, 2),
+  );
+
+  await options.adapter.fs.writeFile(
+    join(options.outputDir, "sw.js"),
+    generateServiceWorker(manifest),
+  );
 }
 
 /**
@@ -104,21 +103,20 @@ export async function generateRedirectsFile(
   outputDir: string,
   dryRun: boolean,
 ): Promise<void> {
-  if (!dryRun) {
-    await adapter.fs.writeFile(join(outputDir, "_redirects"), generateRedirects());
-  }
+  if (dryRun) return;
+  await adapter.fs.writeFile(join(outputDir, "_redirects"), generateRedirects());
 }
 
 /**
  * Copy static assets and return statistics
  */
-export async function copyAssets(
+export function copyAssets(
   adapter: RuntimeAdapter,
   projectDir: string,
   outputDir: string,
   dryRun: boolean,
 ): Promise<{ assets: number; totalSize: number }> {
-  return await copyStaticAssets(adapter, projectDir, outputDir, dryRun);
+  return copyStaticAssets(adapter, projectDir, outputDir, dryRun);
 }
 
 /**
@@ -133,10 +131,10 @@ export async function generateAllOutputs(options: OutputGeneratorOptions): Promi
     options.outputDir,
     options.dryRun,
   );
+
   options.stats.assets = assetStats.assets;
   options.stats.totalSize += assetStats.totalSize;
 
   await generateManifestAndServiceWorker(options);
-
   await generateRedirectsFile(options.adapter, options.outputDir, options.dryRun);
 }

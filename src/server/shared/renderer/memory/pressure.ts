@@ -21,49 +21,34 @@ const THRESHOLDS = {
   CRITICAL: 90,
 } as const;
 
-/**
- * Get current memory pressure level.
- */
 export function getMemoryPressure(): {
   level: MemoryPressureLevel;
   heapUsedPercent: number;
 } {
-  const heap = getHeapStats();
-  const percent = heap.heapUsedPercent;
+  const heapUsedPercent = getHeapStats().heapUsedPercent;
 
-  if (percent >= THRESHOLDS.CRITICAL) return { level: "critical", heapUsedPercent: percent };
-  if (percent >= THRESHOLDS.HIGH) return { level: "high", heapUsedPercent: percent };
-  if (percent >= THRESHOLDS.WARNING) return { level: "warning", heapUsedPercent: percent };
-  return { level: "normal", heapUsedPercent: percent };
+  if (heapUsedPercent >= THRESHOLDS.CRITICAL) return { level: "critical", heapUsedPercent };
+  if (heapUsedPercent >= THRESHOLDS.HIGH) return { level: "high", heapUsedPercent };
+  if (heapUsedPercent >= THRESHOLDS.WARNING) return { level: "warning", heapUsedPercent };
+  return { level: "normal", heapUsedPercent };
 }
 
-/**
- * Check if memory is too high to safely process a request.
- * Returns true if the request should be rejected to prevent OOM.
- */
 export function shouldRejectDueToMemory(): boolean {
   const { level, heapUsedPercent } = getMemoryPressure();
-  if (level === "critical") {
-    rendererLogger.warn("[Renderer] Rejecting request - memory critical", { heapUsedPercent });
-    return true;
-  }
-  return false;
+  if (level !== "critical") return false;
+
+  rendererLogger.warn("[Renderer] Rejecting request - memory critical", { heapUsedPercent });
+  return true;
 }
 
-/**
- * Get recommended cache TTL multiplier based on memory pressure.
- * Returns 1.0 for normal, 0.5 for warning, 0.25 for high pressure.
- */
 export function getCacheTTLMultiplier(): number {
   const { level } = getMemoryPressure();
-  if (level === "high" || level === "critical") return 0.25;
+
   if (level === "warning") return 0.5;
+  if (level === "high" || level === "critical") return 0.25;
   return 1.0;
 }
 
-/**
- * Check if aggressive cache eviction should be triggered.
- */
 export function shouldEvictAggressively(): boolean {
   const { level } = getMemoryPressure();
   return level === "high" || level === "critical";

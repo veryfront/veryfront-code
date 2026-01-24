@@ -55,8 +55,9 @@ export class RequestHandler {
     }
 
     if (pathname === "/readyz") {
-      return new Response(this.isReady() ? "ready" : "not-ready", {
-        status: this.isReady() ? HTTP_OK : HTTP_UNAVAILABLE,
+      const ready = this.isReady();
+      return new Response(ready ? "ready" : "not-ready", {
+        status: ready ? HTTP_OK : HTTP_UNAVAILABLE,
         headers: { "content-type": "text/plain" },
       });
     }
@@ -72,26 +73,20 @@ export class RequestHandler {
 
   private handleDevEndpoint(req: Request, pathname: string): Response | null {
     const normalized = this.normalizeDevEndpoint(pathname);
-    if (!normalized) {
-      return null;
-    }
+    if (!normalized) return null;
 
     const isHeadRequest = req.method.toUpperCase() === "HEAD";
-    const builder = createResponseBuilder({ isDev: true })
-      .withHeaders({
-        "cache-control": "no-cache",
-        "X-Content-Type-Options": "nosniff",
-      });
+    const builder = createResponseBuilder({ isDev: true }).withHeaders({
+      "cache-control": "no-cache",
+      "X-Content-Type-Options": "nosniff",
+    });
 
-    if (normalized === DEV_SERVER_ENDPOINTS.HMR_RUNTIME && this.hmrServer) {
-      if (isHeadRequest) {
-        return builder.withContentType(HTTP_CONTENT_TYPES.JS, "", HTTP_OK);
-      }
+    if (normalized === DEV_SERVER_ENDPOINTS.HMR_RUNTIME) {
+      if (!this.hmrServer) return null;
+      if (isHeadRequest) return builder.withContentType(HTTP_CONTENT_TYPES.JS, "", HTTP_OK);
 
       const runtime = this.getHMRRuntime();
-      if (runtime === null) {
-        return null;
-      }
+      if (runtime === null) return null;
 
       return builder.withContentType(HTTP_CONTENT_TYPES.JS, runtime, HTTP_OK);
     }
@@ -105,26 +100,24 @@ export class RequestHandler {
   }
 
   private normalizeDevEndpoint(pathname: string): string | null {
-    const validEndpoints: Set<string> = new Set([
+    const validEndpoints = new Set<string>([
       DEV_SERVER_ENDPOINTS.HMR_RUNTIME,
       DEV_SERVER_ENDPOINTS.ERROR_OVERLAY,
     ]);
 
     if (validEndpoints.has(pathname)) return pathname;
 
-    if (pathname.startsWith("/__veryfront/")) {
-      const rewritten = pathname.replace("/__veryfront/", "/_veryfront/");
-      if (validEndpoints.has(rewritten)) return rewritten;
-    }
+    if (!pathname.startsWith("/__veryfront/")) return null;
 
-    return null;
+    const rewritten = pathname.replace("/__veryfront/", "/_veryfront/");
+    return validEndpoints.has(rewritten) ? rewritten : null;
   }
 
   private getHMRRuntime(): string | null {
-    if (!this.hmrServer) return null;
-
-    const runtimeProvider = this.hmrServer as unknown as { getHMRRuntime?: () => string };
-    if (typeof runtimeProvider.getHMRRuntime !== "function") return null;
+    const runtimeProvider = this.hmrServer as unknown as
+      | { getHMRRuntime?: () => string }
+      | undefined;
+    if (typeof runtimeProvider?.getHMRRuntime !== "function") return null;
 
     try {
       return runtimeProvider.getHMRRuntime();
@@ -149,17 +142,20 @@ export class RequestHandler {
       });
     }
 
-    return await this.universalHandler(req);
+    return this.universalHandler(req);
   }
 
   invalidateUniversalHandler(): void {
     this.universalHandler = undefined;
+
     // Also reset the API handler cache to pick up new/modified handlers
     resetApiHandler(this.projectDir).catch((error) => {
       logger.debug("[dev] resetApiHandler failed", error);
     });
+
     // Clear config cache so HMR picks up config changes
     clearConfigCache();
+
     // Clear layout discovery cache so HMR picks up layout changes
     clearLayoutDiscoveryCache();
   }

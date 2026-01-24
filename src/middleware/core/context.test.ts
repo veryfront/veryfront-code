@@ -2,6 +2,11 @@ import { assert, assertEquals, assertInstanceOf } from "#veryfront/testing/asser
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MiddlewareContext } from "./context.ts";
 
+function createCtx(env?: Record<string, unknown>, executionCtx?: unknown): MiddlewareContext {
+  const req = new Request("https://example.com/test");
+  return new MiddlewareContext(req, env ?? {}, executionCtx as never);
+}
+
 describe("MiddlewareContext", () => {
   describe("constructor", () => {
     it("should initialize with request", () => {
@@ -32,8 +37,7 @@ describe("MiddlewareContext", () => {
     });
 
     it("should initialize var as empty object", () => {
-      const req = new Request("https://example.com/test");
-      const ctx = new MiddlewareContext(req);
+      const ctx = createCtx();
 
       assertEquals(ctx.var, {});
     });
@@ -41,14 +45,13 @@ describe("MiddlewareContext", () => {
 
   describe("json", () => {
     it("should return JSON response", async () => {
-      const req = new Request("https://example.com/test");
-      const ctx = new MiddlewareContext(req);
+      const ctx = createCtx();
 
       const response = ctx.json({ message: "hello" });
 
       assertInstanceOf(response, Response);
       // Content-Type may include charset (e.g., "application/json;charset=utf-8" in Bun)
-      const contentType = response.headers.get("content-type") || "";
+      const contentType = response.headers.get("content-type") ?? "";
       assert(
         contentType.startsWith("application/json"),
         `Expected application/json, got ${contentType}`,
@@ -57,8 +60,7 @@ describe("MiddlewareContext", () => {
     });
 
     it("should accept custom init options", () => {
-      const req = new Request("https://example.com/test");
-      const ctx = new MiddlewareContext(req);
+      const ctx = createCtx();
 
       const response = ctx.json({ error: "Not Found" }, { status: 404 });
 
@@ -68,22 +70,17 @@ describe("MiddlewareContext", () => {
 
   describe("text", () => {
     it("should return plain text response", async () => {
-      const req = new Request("https://example.com/test");
-      const ctx = new MiddlewareContext(req);
+      const ctx = createCtx();
 
       const response = ctx.text("Hello World");
 
       assertInstanceOf(response, Response);
-      assertEquals(
-        response.headers.get("content-type"),
-        "text/plain; charset=utf-8",
-      );
+      assertEquals(response.headers.get("content-type"), "text/plain; charset=utf-8");
       assertEquals(await response.text(), "Hello World");
     });
 
     it("should accept custom init options", () => {
-      const req = new Request("https://example.com/test");
-      const ctx = new MiddlewareContext(req);
+      const ctx = createCtx();
 
       const response = ctx.text("Created", { status: 201 });
 
@@ -93,22 +90,17 @@ describe("MiddlewareContext", () => {
 
   describe("html", () => {
     it("should return HTML response", async () => {
-      const req = new Request("https://example.com/test");
-      const ctx = new MiddlewareContext(req);
+      const ctx = createCtx();
 
       const response = ctx.html("<h1>Hello</h1>");
 
       assertInstanceOf(response, Response);
-      assertEquals(
-        response.headers.get("content-type"),
-        "text/html; charset=utf-8",
-      );
+      assertEquals(response.headers.get("content-type"), "text/html; charset=utf-8");
       assertEquals(await response.text(), "<h1>Hello</h1>");
     });
 
     it("should accept custom init options", () => {
-      const req = new Request("https://example.com/test");
-      const ctx = new MiddlewareContext(req);
+      const ctx = createCtx();
 
       const response = ctx.html("<h1>Error</h1>", { status: 500 });
 
@@ -118,8 +110,7 @@ describe("MiddlewareContext", () => {
 
   describe("redirect", () => {
     it("should return redirect response with default status 302", () => {
-      const req = new Request("https://example.com/test");
-      const ctx = new MiddlewareContext(req);
+      const ctx = createCtx();
 
       const response = ctx.redirect("/new-location");
 
@@ -128,8 +119,7 @@ describe("MiddlewareContext", () => {
     });
 
     it("should accept custom status code", () => {
-      const req = new Request("https://example.com/test");
-      const ctx = new MiddlewareContext(req);
+      const ctx = createCtx();
 
       const response = ctx.redirect("/permanent", 301);
 
@@ -138,8 +128,7 @@ describe("MiddlewareContext", () => {
     });
 
     it("should handle external URLs", () => {
-      const req = new Request("https://example.com/test");
-      const ctx = new MiddlewareContext(req);
+      const ctx = createCtx();
 
       const response = ctx.redirect("https://other.com/path");
 
@@ -149,23 +138,20 @@ describe("MiddlewareContext", () => {
 
   describe("set and get", () => {
     it("should store and retrieve values", () => {
-      const req = new Request("https://example.com/test");
-      const ctx = new MiddlewareContext(req);
+      const ctx = createCtx();
 
       ctx.set("userId", "123");
       assertEquals(ctx.get("userId"), "123");
     });
 
     it("should return undefined for non-existent keys", () => {
-      const req = new Request("https://example.com/test");
-      const ctx = new MiddlewareContext(req);
+      const ctx = createCtx();
 
       assertEquals(ctx.get("nonexistent"), undefined);
     });
 
     it("should handle different value types", () => {
-      const req = new Request("https://example.com/test");
-      const ctx = new MiddlewareContext(req);
+      const ctx = createCtx();
 
       ctx.set("number", 42);
       ctx.set("object", { key: "value" });
@@ -179,8 +165,7 @@ describe("MiddlewareContext", () => {
     });
 
     it("should overwrite existing values", () => {
-      const req = new Request("https://example.com/test");
-      const ctx = new MiddlewareContext(req);
+      const ctx = createCtx();
 
       ctx.set("key", "first");
       ctx.set("key", "second");

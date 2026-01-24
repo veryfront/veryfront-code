@@ -9,7 +9,6 @@ describe("pattern-route-matcher", () => {
       router.addRoute("/about", "about.tsx");
 
       const match = router.match("/about");
-      assertEquals(match !== null, true);
       assertEquals(match?.route.pattern, "/about");
     });
 
@@ -18,8 +17,7 @@ describe("pattern-route-matcher", () => {
       router.addRoute("/users/[id]", "user.tsx");
 
       const match = router.match("/users/123");
-      assertEquals(match !== null, true);
-      assertEquals(match?.params["id"], "123");
+      assertEquals(match?.params.id, "123");
     });
 
     it("should prioritize static over dynamic routes", () => {
@@ -44,9 +42,7 @@ describe("pattern-route-matcher", () => {
       const router = new DynamicRouter();
       router.addRoute("/about", "about.tsx");
 
-      // First match
       const match1 = router.match("/about");
-      // Second match should be cached
       const match2 = router.match("/about");
 
       assertEquals(match1, match2);
@@ -56,10 +52,9 @@ describe("pattern-route-matcher", () => {
       const router = new DynamicRouter();
       router.addRoute("/test", "test.tsx");
 
-      router.match("/test"); // Populate cache
+      router.match("/test");
       router.clearCache();
 
-      // Should still work after cache clear
       const match = router.match("/test");
       assertEquals(match !== null, true);
     });
@@ -77,8 +72,8 @@ describe("pattern-route-matcher", () => {
       router.addRoute("/blog/[year]/[month]", "archive.tsx");
 
       const match = router.match("/blog/2024/03");
-      assertEquals(match?.params["year"], "2024");
-      assertEquals(match?.params["month"], "03");
+      assertEquals(match?.params.year, "2024");
+      assertEquals(match?.params.month, "03");
     });
 
     it("should get all routes", () => {

@@ -6,43 +6,45 @@ export type { ParsedMDX };
 
 export function parseMDXCode(compiledCode: string): ParsedMDX {
   logger.debug("Parsing MDX code, first 200 chars:", compiledCode.substring(0, 200));
+
   const importRegex = /^\s*import\s+(?:{([^}]+)}|(\w+))\s+from\s+['"]([^'"]+)['"]\s*;?\s*$/gm;
+
   const imports = new Map<string, MDXImportInfo>();
 
   for (const match of compiledCode.matchAll(importRegex)) {
     const path = match[3];
     if (!path) continue;
 
-    if (match[1]) {
-      // Named imports: import { a, b } from 'path'
-      for (const name of match[1].split(",").map((n) => n.trim())) {
+    const namedImports = match[1];
+    if (namedImports) {
+      for (const name of namedImports.split(",").map((n) => n.trim())) {
         imports.set(name, { name, path, isDefault: false });
       }
-    } else if (match[2]) {
-      // Default import: import X from 'path'
-      imports.set(match[2], { name: match[2], path, isDefault: true });
+      continue;
+    }
+
+    const defaultImport = match[2];
+    if (defaultImport) {
+      imports.set(defaultImport, { name: defaultImport, path, isDefault: true });
     }
   }
 
-  // Clean up imports, exports, and React runtime declarations
-  const cleanupPatterns: [RegExp, string][] = [
-    [importRegex, ""], // Remove top-level imports
-    [/^\s*export\s+\{[\s\S]*?\};?\s*$/gm, ""], // Remove named exports
-    [/^\s*export\s+default\s+function/gm, "function"], // Convert default export function
-    [/^\s*export\s+default\s+/gm, ""], // Remove other default exports
-    [/^\s*export\s+(const|function)\s+/gm, "$1 "], // Convert export const/function
-    [/^\s*import\s+React\s+from.*?;?\s*$/gm, ""], // Remove React imports
-    [/^\s*const\s+(React|Fragment|Fragment2|jsx|jsx2|jsxs|jsxs2)\s*=.*?;?\s*$/gm, ""], // Remove runtime declarations
-  ];
-
-  const cleanedCode = cleanupPatterns.reduce(
-    (code, [pattern, replacement]) => code.replace(pattern, replacement),
-    compiledCode,
-  );
+  const cleanedCode = compiledCode
+    .replace(importRegex, "") // Remove top-level imports
+    .replace(/^\s*export\s+\{[\s\S]*?\};?\s*$/gm, "") // Remove named exports
+    .replace(/^\s*export\s+default\s+function/gm, "function") // Convert default export function
+    .replace(/^\s*export\s+default\s+/gm, "") // Remove other default exports
+    .replace(/^\s*export\s+(const|function)\s+/gm, "$1 ") // Convert export const/function
+    .replace(/^\s*import\s+React\s+from.*?;?\s*$/gm, "") // Remove React imports
+    .replace(
+      /^\s*const\s+(React|Fragment|Fragment2|jsx|jsx2|jsxs|jsxs2)\s*=.*?;?\s*$/gm,
+      "",
+    ); // Remove runtime declarations
 
   if (cleanedCode.includes("import React")) {
     logger.warn("Import React still in cleaned code");
   }
+
   if (cleanedCode.includes("const React") || cleanedCode.includes("var React")) {
     logger.warn("React declaration found in cleaned code");
     logger.debug("Code snippet:", cleanedCode.substring(0, 200));
@@ -51,9 +53,7 @@ export function parseMDXCode(compiledCode: string): ParsedMDX {
   const exports: MDXExports = {};
 
   const frontmatter = extractFrontmatter(cleanedCode);
-  if (frontmatter) {
-    exports.frontmatter = frontmatter;
-  }
+  if (frontmatter) exports.frontmatter = frontmatter;
 
   const metadata = extractMetadata(cleanedCode);
   for (const [key, value] of Object.entries(metadata)) {

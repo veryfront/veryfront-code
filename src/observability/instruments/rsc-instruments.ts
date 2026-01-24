@@ -1,17 +1,7 @@
-/**
- * RSC Metrics Instruments
- * Creation of React Server Components metric instruments
- *
- * @module
- */
-
 import type { Counter, Histogram, Meter } from "@opentelemetry/api";
 import { DURATION_HISTOGRAM_BOUNDARIES_MS } from "../../config/defaults.ts";
 import type { MetricsConfig } from "../metrics/types.ts";
 
-/**
- * RSC metric instruments
- */
 export interface RscInstruments {
   rscRenderDuration: Histogram | null;
   rscStreamDuration: Histogram | null;
@@ -22,80 +12,42 @@ export interface RscInstruments {
   rscErrorCounter: Counter | null;
 }
 
-/**
- * Create RSC metric instruments
- *
- * @param meter - OpenTelemetry meter instance
- * @param config - Metrics configuration
- * @returns RSC metric instruments
- *
- * @example
- * ```ts
- * const rscInstruments = createRscInstruments(meter, config);
- * rscInstruments.rscPageCounter?.add(1);
- * ```
- */
 export function createRscInstruments(
   meter: Meter,
   config: MetricsConfig,
 ): RscInstruments {
-  const rscRenderDuration = meter.createHistogram(
-    `${config.prefix}.rsc.render.duration`,
-    {
-      description: "RSC render duration",
-      unit: "ms",
-      advice: { explicitBucketBoundaries: DURATION_HISTOGRAM_BOUNDARIES_MS },
-    },
-  );
+  const prefix = `${config.prefix}.rsc`;
 
-  const rscStreamDuration = meter.createHistogram(
-    `${config.prefix}.rsc.stream.duration`,
-    {
-      description: "RSC stream duration",
-      unit: "ms",
-      advice: { explicitBucketBoundaries: DURATION_HISTOGRAM_BOUNDARIES_MS },
-    },
-  );
+  const rscRenderDuration = meter.createHistogram(`${prefix}.render.duration`, {
+    description: "RSC render duration",
+    unit: "ms",
+    advice: { explicitBucketBoundaries: [...DURATION_HISTOGRAM_BOUNDARIES_MS] },
+  });
 
-  const rscManifestCounter = meter.createCounter(
-    `${config.prefix}.rsc.manifest`,
-    {
-      description: "RSC manifest requests",
+  const rscStreamDuration = meter.createHistogram(`${prefix}.stream.duration`, {
+    description: "RSC stream duration",
+    unit: "ms",
+    advice: { explicitBucketBoundaries: [...DURATION_HISTOGRAM_BOUNDARIES_MS] },
+  });
+
+  const createRequestCounter = (name: string, description: string): Counter =>
+    meter.createCounter(`${prefix}.${name}`, {
+      description,
       unit: "requests",
-    },
-  );
+    });
 
-  const rscPageCounter = meter.createCounter(
-    `${config.prefix}.rsc.page`,
-    {
-      description: "RSC page requests",
-      unit: "requests",
-    },
+  const rscManifestCounter = createRequestCounter(
+    "manifest",
+    "RSC manifest requests",
   );
+  const rscPageCounter = createRequestCounter("page", "RSC page requests");
+  const rscStreamCounter = createRequestCounter("stream", "RSC stream requests");
+  const rscActionCounter = createRequestCounter("action", "RSC action requests");
 
-  const rscStreamCounter = meter.createCounter(
-    `${config.prefix}.rsc.stream`,
-    {
-      description: "RSC stream requests",
-      unit: "requests",
-    },
-  );
-
-  const rscActionCounter = meter.createCounter(
-    `${config.prefix}.rsc.action`,
-    {
-      description: "RSC action requests",
-      unit: "requests",
-    },
-  );
-
-  const rscErrorCounter = meter.createCounter(
-    `${config.prefix}.rsc.errors`,
-    {
-      description: "RSC errors",
-      unit: "errors",
-    },
-  );
+  const rscErrorCounter = meter.createCounter(`${prefix}.errors`, {
+    description: "RSC errors",
+    unit: "errors",
+  });
 
   return {
     rscRenderDuration,

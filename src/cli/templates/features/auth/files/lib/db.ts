@@ -1,6 +1,3 @@
-// Mock database for the auth feature
-// In a real app, replace this with your actual database connection
-
 export type User = {
   id: string;
   email: string;
@@ -9,27 +6,34 @@ export type User = {
   createdAt: number;
 };
 
-// In-memory store (will reset on server restart)
 const users: User[] = [
   {
     id: "user_1",
     email: "demo@example.com",
-    // hash for "password"
     passwordHash: "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8",
     name: "Demo User",
     createdAt: Date.now(),
   },
 ];
 
+function findUserByEmail(email: string): User | null {
+  return users.find((u) => u.email === email) ?? null;
+}
+
+function createUser(data: Omit<User, "id" | "createdAt">): User {
+  const now = Date.now();
+  const newUser: User = { ...data, id: `user_${now}`, createdAt: now };
+  users.push(newUser);
+  return newUser;
+}
+
 export const db = {
   user: {
-    findUnique: ({ where }: { where: { email: string } }): Promise<User | null> => {
-      return Promise.resolve(users.find((u) => u.email === where.email) || null);
+    findUnique({ where }: { where: { email: string } }): Promise<User | null> {
+      return Promise.resolve(findUserByEmail(where.email));
     },
-    create: ({ data }: { data: Omit<User, "id" | "createdAt"> }): Promise<User> => {
-      const newUser = { ...data, id: `user_${Date.now()}`, createdAt: Date.now() };
-      users.push(newUser);
-      return Promise.resolve(newUser);
+    create({ data }: { data: Omit<User, "id" | "createdAt"> }): Promise<User> {
+      return Promise.resolve(createUser(data));
     },
   },
 };

@@ -70,31 +70,46 @@ const COMPACT_OPTIONS: Partial<DotMatrixOptions> = {
 
 const RESET = "\x1b[0m";
 
+function resolveOptions(options: DotMatrixOptions): Required<DotMatrixOptions> {
+  if (options.compact) return { ...DEFAULT_OPTIONS, ...COMPACT_OPTIONS, ...options };
+  return { ...DEFAULT_OPTIONS, ...options };
+}
+
+function renderPattern(pattern: number[][], opts: Required<DotMatrixOptions>): string[] {
+  return pattern.map((row) => {
+    const dots = row.map((dot) =>
+      dot === 1
+        ? `${opts.litColor}${opts.litChar}${RESET}`
+        : `${opts.offColor}${opts.offChar}${RESET}`
+    );
+    return opts.prefix + dots.join(opts.spacing);
+  });
+}
+
+function renderPatternWithText(
+  pattern: number[][],
+  textLines: string[],
+  opts: Required<DotMatrixOptions>,
+): string {
+  const faceLines = renderPattern(pattern, opts);
+
+  const faceHeight = faceLines.length;
+  const startLine = Math.floor((faceHeight - textLines.length) / 2);
+
+  const result = faceLines.map((line, i) => {
+    const textIndex = i - startLine;
+    if (textIndex < 0 || textIndex >= textLines.length) return line;
+    return line + "   " + textLines[textIndex];
+  });
+
+  return result.join("\n");
+}
+
 /**
  * Render a dot matrix pattern to a string
  */
-export function renderDotMatrix(
-  pattern: number[][],
-  options: DotMatrixOptions = {},
-): string {
-  // Apply compact overrides if compact mode is enabled
-  const baseOpts = options.compact
-    ? { ...DEFAULT_OPTIONS, ...COMPACT_OPTIONS, ...options }
-    : { ...DEFAULT_OPTIONS, ...options };
-  const opts = baseOpts;
-  const lines: string[] = [];
-
-  for (const row of pattern) {
-    const dots = row.map((dot) => {
-      if (dot === 1) {
-        return `${opts.litColor}${opts.litChar}${RESET}`;
-      }
-      return `${opts.offColor}${opts.offChar}${RESET}`;
-    });
-    lines.push(opts.prefix + dots.join(opts.spacing));
-  }
-
-  return lines.join("\n");
+export function renderDotMatrix(pattern: number[][], options: DotMatrixOptions = {}): string {
+  return renderPattern(pattern, resolveOptions(options)).join("\n");
 }
 
 /**
@@ -106,12 +121,9 @@ export function renderDotMatrix(
  * @returns Pattern with snake animation
  */
 export function generateSpinnerFrame(frameIndex: number, tailLength = 3): number[][] {
-  // Start with empty grid
   const pattern: number[][] = Array.from({ length: 7 }, () => Array(7).fill(0));
-
   const totalPositions = V_LOGO_POSITIONS.length;
 
-  // Light up the snake tail (tailLength dots ending at frameIndex)
   for (let i = 0; i < tailLength; i++) {
     const posIndex = (frameIndex - i + totalPositions) % totalPositions;
     const [row, col] = V_LOGO_POSITIONS[posIndex]!;
@@ -125,11 +137,7 @@ export function generateSpinnerFrame(frameIndex: number, tailLength = 3): number
  * Generate all spinner frames for the snake animation
  */
 export function generateSpinnerFrames(tailLength = 3): number[][][] {
-  const frames: number[][][] = [];
-  for (let i = 0; i < V_LOGO_POSITIONS.length; i++) {
-    frames.push(generateSpinnerFrame(i, tailLength));
-  }
-  return frames;
+  return V_LOGO_POSITIONS.map((_, i) => generateSpinnerFrame(i, tailLength));
 }
 
 /**
@@ -147,40 +155,7 @@ export function getAgentFaceWithText(
   textLines: string[],
   options: DotMatrixOptions = {},
 ): string {
-  // Apply compact overrides if compact mode is enabled
-  const opts = options.compact
-    ? { ...DEFAULT_OPTIONS, ...COMPACT_OPTIONS, ...options }
-    : { ...DEFAULT_OPTIONS, ...options };
-  const faceLines: string[] = [];
-
-  // Render face
-  for (const row of AGENT_FACE) {
-    const dots = row.map((dot) => {
-      if (dot === 1) {
-        return `${opts.litColor}${opts.litChar}${RESET}`;
-      }
-      return `${opts.offColor}${opts.offChar}${RESET}`;
-    });
-    faceLines.push(opts.prefix + dots.join(opts.spacing));
-  }
-
-  // Calculate vertical centering for text
-  const faceHeight = faceLines.length;
-  const textHeight = textLines.length;
-  const startLine = Math.floor((faceHeight - textHeight) / 2);
-
-  // Combine face with text
-  const result: string[] = [];
-  for (let i = 0; i < faceHeight; i++) {
-    let line = faceLines[i]!;
-    const textIndex = i - startLine;
-    if (textIndex >= 0 && textIndex < textLines.length) {
-      line += "   " + textLines[textIndex];
-    }
-    result.push(line);
-  }
-
-  return result.join("\n");
+  return renderPatternWithText(AGENT_FACE, textLines, resolveOptions(options));
 }
 
 /**
@@ -196,10 +171,7 @@ export class AnimatedDotMatrix {
 
   constructor(options: DotMatrixOptions = {}) {
     this.pattern = AGENT_FACE;
-    // Apply compact overrides if compact mode is enabled
-    this.options = options.compact
-      ? { ...DEFAULT_OPTIONS, ...COMPACT_OPTIONS, ...options } as Required<DotMatrixOptions>
-      : { ...DEFAULT_OPTIONS, ...options };
+    this.options = resolveOptions(options);
     this.spinnerFrames = generateSpinnerFrames(4); // 4-dot tail for nice snake effect
   }
 
@@ -214,43 +186,14 @@ export class AnimatedDotMatrix {
    * Render current frame
    */
   render(): string {
-    return renderDotMatrix(this.pattern, this.options);
+    return renderPattern(this.pattern, this.options).join("\n");
   }
 
   /**
    * Render current frame with text aligned horizontally
    */
   renderWithText(textLines: string[]): string {
-    const faceLines: string[] = [];
-
-    // Render face pattern
-    for (const row of this.pattern) {
-      const dots = row.map((dot) => {
-        if (dot === 1) {
-          return `${this.options.litColor}${this.options.litChar}${RESET}`;
-        }
-        return `${this.options.offColor}${this.options.offChar}${RESET}`;
-      });
-      faceLines.push(this.options.prefix + dots.join(this.options.spacing));
-    }
-
-    // Calculate vertical centering for text
-    const faceHeight = faceLines.length;
-    const textHeight = textLines.length;
-    const startLine = Math.floor((faceHeight - textHeight) / 2);
-
-    // Combine face with text
-    const result: string[] = [];
-    for (let i = 0; i < faceHeight; i++) {
-      let line = faceLines[i]!;
-      const textIndex = i - startLine;
-      if (textIndex >= 0 && textIndex < textLines.length) {
-        line += "   " + textLines[textIndex];
-      }
-      result.push(line);
-    }
-
-    return result.join("\n");
+    return renderPatternWithText(this.pattern, textLines, this.options);
   }
 
   /**
@@ -258,6 +201,16 @@ export class AnimatedDotMatrix {
    */
   getHeight(): number {
     return this.pattern.length;
+  }
+
+  private clearInterval(): void {
+    if (!this.intervalId) return;
+    clearInterval(this.intervalId);
+    this.intervalId = null;
+  }
+
+  private startInterval(onTick: () => void, intervalMs: number): void {
+    this.intervalId = setInterval(onTick, intervalMs);
   }
 
   /**
@@ -269,11 +222,10 @@ export class AnimatedDotMatrix {
     this._spinning = true;
     this.frameIndex = 0;
 
-    // Immediately show first frame
     this.pattern = this.spinnerFrames[0]!;
     onFrame(this.render());
 
-    this.intervalId = setInterval(() => {
+    this.startInterval(() => {
       this.frameIndex = (this.frameIndex + 1) % this.spinnerFrames.length;
       this.pattern = this.spinnerFrames[this.frameIndex]!;
       onFrame(this.render());
@@ -292,11 +244,10 @@ export class AnimatedDotMatrix {
     this._spinning = true;
     this.frameIndex = 0;
 
-    // Immediately show first frame
     this.pattern = this.spinnerFrames[0]!;
     onFrame(this.renderWithText(textLines));
 
-    this.intervalId = setInterval(() => {
+    this.startInterval(() => {
       this.frameIndex = (this.frameIndex + 1) % this.spinnerFrames.length;
       this.pattern = this.spinnerFrames[this.frameIndex]!;
       onFrame(this.renderWithText(textLines));
@@ -307,11 +258,7 @@ export class AnimatedDotMatrix {
    * Spin for a specific number of rounds, then show complete logo
    * Returns a promise that resolves when animation completes
    */
-  spinRounds(
-    rounds: number,
-    onFrame: (frame: string) => void,
-    intervalMs = 80,
-  ): Promise<void> {
+  spinRounds(rounds: number, onFrame: (frame: string) => void, intervalMs = 80): Promise<void> {
     return new Promise((resolve) => {
       this.stop();
       this._spinning = true;
@@ -320,21 +267,20 @@ export class AnimatedDotMatrix {
       const totalFrames = this.spinnerFrames.length * rounds;
       let frameCount = 0;
 
-      // Immediately show first frame
       this.pattern = this.spinnerFrames[0]!;
       onFrame(this.render());
 
-      this.intervalId = setInterval(() => {
+      this.startInterval(() => {
         frameCount++;
         this.frameIndex = (this.frameIndex + 1) % this.spinnerFrames.length;
         this.pattern = this.spinnerFrames[this.frameIndex]!;
         onFrame(this.render());
 
-        if (frameCount >= totalFrames) {
-          this.stopSpinner();
-          onFrame(this.render()); // Show complete logo
-          resolve();
-        }
+        if (frameCount < totalFrames) return;
+
+        this.stopSpinner();
+        onFrame(this.render());
+        resolve();
       }, intervalMs);
     });
   }
@@ -357,21 +303,20 @@ export class AnimatedDotMatrix {
       const totalFrames = this.spinnerFrames.length * rounds;
       let frameCount = 0;
 
-      // Immediately show first frame
       this.pattern = this.spinnerFrames[0]!;
       onFrame(this.renderWithText(textLines));
 
-      this.intervalId = setInterval(() => {
+      this.startInterval(() => {
         frameCount++;
         this.frameIndex = (this.frameIndex + 1) % this.spinnerFrames.length;
         this.pattern = this.spinnerFrames[this.frameIndex]!;
         onFrame(this.renderWithText(textLines));
 
-        if (frameCount >= totalFrames) {
-          this.stopSpinner();
-          onFrame(this.renderWithText(textLines)); // Show complete logo
-          resolve();
-        }
+        if (frameCount < totalFrames) return;
+
+        this.stopSpinner();
+        onFrame(this.renderWithText(textLines));
+        resolve();
       }, intervalMs);
     });
   }
@@ -381,10 +326,7 @@ export class AnimatedDotMatrix {
    */
   stopSpinner(): void {
     this._spinning = false;
-    if (this.intervalId) {
-      clearInterval(this.intervalId);
-      this.intervalId = null;
-    }
+    this.clearInterval();
     this.pattern = AGENT_FACE;
   }
 
@@ -393,10 +335,7 @@ export class AnimatedDotMatrix {
    */
   stop(): void {
     this._spinning = false;
-    if (this.intervalId) {
-      clearInterval(this.intervalId);
-      this.intervalId = null;
-    }
+    this.clearInterval();
     this.pattern = AGENT_FACE;
   }
 
@@ -427,6 +366,5 @@ export function agentSays(message: string, options: DotMatrixOptions = {}): stri
  * Compact inline face (single line using special characters)
  */
 export function getInlineFace(): string {
-  // Using Braille patterns for a compact representation
   return "\x1b[97m⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏\x1b[0m";
 }

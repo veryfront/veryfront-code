@@ -1,22 +1,8 @@
-/**
+/****
  * S3-compatible blob storage client
  *
  * Supports AWS S3, MinIO, Cloudflare R2, and other S3-compatible services
  */
-
-// Helper for Cross-Platform environment access
-function _getEnv(key: string): string | undefined {
-  // @ts-ignore - Deno global
-  if (typeof Deno !== "undefined") {
-    // @ts-ignore - Deno global
-    return Deno.env.get(key);
-  } // @ts-ignore - process global
-  else if (typeof process !== "undefined" && process.env) {
-    // @ts-ignore - process global
-    return process.env[key];
-  }
-  return undefined;
-}
 
 export interface BlobRef {
   id: string;
@@ -37,22 +23,24 @@ export interface UploadOptions {
 // In production, replace with actual S3 client
 const blobs = new Map<string, { data: ArrayBuffer; ref: BlobRef }>();
 
+function toArrayBuffer(data: ArrayBuffer | Uint8Array | string): ArrayBuffer {
+  if (typeof data === "string") return new TextEncoder().encode(data).buffer;
+  if (data instanceof Uint8Array) return data.buffer;
+  return data;
+}
+
 export function uploadBlob(
   data: ArrayBuffer | Uint8Array | string,
   options: UploadOptions = {},
 ): Promise<BlobRef> {
   const id = crypto.randomUUID();
-  const buffer: ArrayBuffer = typeof data === "string"
-    ? new TextEncoder().encode(data).buffer as ArrayBuffer
-    : data instanceof Uint8Array
-    ? data.buffer as ArrayBuffer
-    : data;
+  const buffer = toArrayBuffer(data);
 
   const ref: BlobRef = {
     id,
-    filename: options.filename || `file-${id}`,
+    filename: options.filename ?? `file-${id}`,
     size: buffer.byteLength,
-    mimeType: options.mimeType || "application/octet-stream",
+    mimeType: options.mimeType ?? "application/octet-stream",
     createdAt: Date.now(),
     url: `/api/upload/${id}`,
   };
@@ -64,33 +52,28 @@ export function uploadBlob(
 }
 
 export function getBlob(id: string): Promise<ArrayBuffer | null> {
-  const blob = blobs.get(id);
-  return Promise.resolve(blob ? blob.data : null);
+  return Promise.resolve(blobs.get(id)?.data ?? null);
 }
 
 export function getBlobRef(id: string): Promise<BlobRef | null> {
-  const blob = blobs.get(id);
-  return Promise.resolve(blob ? blob.ref : null);
+  return Promise.resolve(blobs.get(id)?.ref ?? null);
 }
 
 export function deleteBlob(id: string): Promise<boolean> {
   const existed = blobs.delete(id);
-  if (existed) {
-    console.log(`[Storage] Deleted blob ${id}`);
-  }
+  if (existed) console.log(`[Storage] Deleted blob ${id}`);
   return Promise.resolve(existed);
 }
 
 export function listBlobs(): Promise<BlobRef[]> {
-  return Promise.resolve(
-    Array.from(blobs.values())
-      .map((b) => b.ref)
-      .sort((a, b) => b.createdAt - a.createdAt),
+  const refs = Array.from(blobs.values(), (b) => b.ref).sort(
+    (a, b) => b.createdAt - a.createdAt,
   );
+  return Promise.resolve(refs);
 }
 
 export function getBlobText(id: string): Promise<string | null> {
-  const blob = blobs.get(id);
-  if (!blob) return Promise.resolve(null);
-  return Promise.resolve(new TextDecoder().decode(blob.data));
+  const data = blobs.get(id)?.data;
+  if (!data) return Promise.resolve(null);
+  return Promise.resolve(new TextDecoder().decode(data));
 }

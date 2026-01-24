@@ -1,13 +1,5 @@
-/**
- * Cache module - centralized caching infrastructure
- *
- * @module cache
- */
-
-// Backend exports
 export * from "./backend.ts";
 
-// Cache key builder exports
 export {
   type CacheKeyContext,
   extractCacheKeyContext,
@@ -20,11 +12,6 @@ export {
   tryGetCacheKeyContext,
 } from "./cache-key-builder.ts";
 
-// Re-export utilities from their canonical locations
-export { isKeyForProject } from "./registry.ts";
-export { createCacheKeyFilter } from "./keys.ts";
-
-// Key builder exports (avoiding conflicts with cache-key-builder)
 export {
   buildComponentCacheKey,
   buildConfigCacheKey,
@@ -55,6 +42,7 @@ export {
   buildTransformCacheKey,
   CacheKeyPrefix,
   cacheRegistry,
+  createCacheKeyFilter,
   deleteAllKeysForProject,
   deleteAllKeysForProjectAsync,
   type FileOperationContext,
@@ -65,10 +53,10 @@ export {
   parseRenderCacheKey,
 } from "./keys.ts";
 
-// Registry exports (avoiding conflicts with keys.ts)
 export {
   type CacheStore,
   extractProjectIdFromKey,
+  isKeyForProject,
   LRUCacheStore,
   MapCacheStore,
   registerLRUCache,

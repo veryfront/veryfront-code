@@ -39,35 +39,11 @@ export interface ProviderMessage {
  * providers (e.g., assistant message with only tool calls, no text).
  */
 export function convertMessageToProvider(msg: Message): ProviderMessage {
-  const content = getTextFromParts(msg.parts);
-
   const providerMsg: ProviderMessage = {
     role: msg.role,
-    content,
+    content: getTextFromParts(msg.parts),
   };
 
-  // Extract tool calls from parts
-  // AI SDK v5 uses tool-${toolName} pattern (e.g., "tool-weather")
-  // Also support legacy "tool-call" for backwards compatibility
-  // Exclude "tool-result" which also starts with "tool-"
-  const toolCallParts = msg.parts.filter(
-    (p): p is ToolCallPart | (MessagePart & { type: "tool-call" }) =>
-      p.type === "tool-call" || (p.type.startsWith("tool-") && p.type !== "tool-result"),
-  );
-
-  if (toolCallParts.length > 0) {
-    providerMsg.tool_calls = toolCallParts.map((tc) => ({
-      id: tc.toolCallId,
-      type: "function",
-      function: {
-        name: tc.toolName,
-        // Use type-safe helper to extract args/input (throws if missing)
-        arguments: JSON.stringify(getToolArguments(tc as ToolCallPart)),
-      },
-    }));
-  }
-
-  // Extract tool result info from parts
   const toolResultPart = msg.parts.find(
     (p): p is ToolResultPart => p.type === "tool-result",
   );
@@ -75,6 +51,23 @@ export function convertMessageToProvider(msg: Message): ProviderMessage {
   if (toolResultPart && msg.role === "tool") {
     providerMsg.tool_call_id = toolResultPart.toolCallId;
     providerMsg.content = JSON.stringify(toolResultPart.result);
+    return providerMsg;
+  }
+
+  const toolCallParts = msg.parts.filter(
+    (p): p is ToolCallPart | (MessagePart & { type: "tool-call" }) =>
+      p.type === "tool-call" || (p.type.startsWith("tool-") && p.type !== "tool-result"),
+  );
+
+  if (toolCallParts.length) {
+    providerMsg.tool_calls = toolCallParts.map((tc) => ({
+      id: tc.toolCallId,
+      type: "function",
+      function: {
+        name: tc.toolName,
+        arguments: JSON.stringify(getToolArguments(tc as ToolCallPart)),
+      },
+    }));
   }
 
   return providerMsg;
@@ -89,32 +82,34 @@ export function convertProviderToMessage(
 ): Message {
   const parts: MessagePart[] = [];
 
-  // Add text content if present
   if (providerMsg.content) {
     parts.push({ type: "text", text: providerMsg.content });
   }
 
-  // Add tool calls if present
-  if (providerMsg.tool_calls) {
-    for (const tc of providerMsg.tool_calls) {
-      let args: Record<string, unknown> = {};
-      try {
-        args = JSON.parse(tc.function.arguments);
-      } catch {
-        // Keep empty args on parse failure
-      }
-
-      parts.push({
-        type: `tool-${tc.function.name}`,
-        toolCallId: tc.id,
-        toolName: tc.function.name,
-        args,
-      });
+  for (const tc of providerMsg.tool_calls ?? []) {
+    let args: Record<string, unknown> = {};
+    try {
+      args = JSON.parse(tc.function.arguments);
+    } catch {
+      // Keep empty args on parse failure
     }
+
+    parts.push({
+      type: `tool-${tc.function.name}`,
+      toolCallId: tc.id,
+      toolName: tc.function.name,
+      args,
+    });
   }
 
+  if (typeof messageId === "string" && messageId.trim().length === 0) {
+    throw new Error("Message id cannot be empty.");
+  }
+
+  const resolvedId = messageId ?? `msg_${Date.now()}`;
+
   return {
-    id: messageId || `msg_${Date.now()}`,
+    id: resolvedId,
     role: providerMsg.role as Message["role"],
     parts,
     timestamp: Date.now(),

@@ -11,21 +11,20 @@ import { dirname, join, resolve } from "#veryfront/platform/compat/path/index.ts
 export function extractImports(code: string): string[] {
   const imports: string[] = [];
 
-  // Match ES6 imports
   const importRegex = /import\s+(?:(?:\{[^}]*\}|\*\s+as\s+\w+|\w+)\s+from\s+)?['"]([^'"]+)['"]/g;
+  const dynamicImportRegex = /import\s*\(['"]([^'"]+)['"]\)/g;
+
   let match: RegExpExecArray | null;
 
   while ((match = importRegex.exec(code)) !== null) {
     if (match[1]) imports.push(match[1]);
   }
 
-  // Match dynamic imports
-  const dynamicImportRegex = /import\s*\(['"]([^'"]+)['"]\)/g;
   while ((match = dynamicImportRegex.exec(code)) !== null) {
     if (match[1]) imports.push(match[1]);
   }
 
-  return [...new Set(imports)]; // Remove duplicates
+  return [...new Set(imports)];
 }
 
 /**
@@ -40,9 +39,8 @@ export function resolveImportPath(
     return resolve(dirname(fromFile), importPath);
   }
 
-  // Check if it's a node_modules import
   if (!importPath.startsWith("/") && !importPath.includes(":")) {
-    return importPath; // Keep as-is for esbuild to resolve
+    return importPath;
   }
 
   return importPath;
@@ -55,16 +53,11 @@ export function findComponent(basePath: string, _projectDir: string): string | n
   const extensions = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
 
   for (const ext of extensions) {
-    const fullPath = basePath + ext;
-    if (existsSync(fullPath)) {
-      return fullPath;
-    }
+    const fullPath = `${basePath}${ext}`;
+    if (existsSync(fullPath)) return fullPath;
 
-    // Check with /index suffix
     const indexPath = join(basePath, `index${ext}`);
-    if (existsSync(indexPath)) {
-      return indexPath;
-    }
+    if (existsSync(indexPath)) return indexPath;
   }
 
   return null;
@@ -86,13 +79,12 @@ export async function processImports(
     const resolvedPath = resolveImportPath(importPath, filePath, projectDir);
     const newPath = await processImport(resolvedPath);
 
-    if (newPath && newPath !== importPath) {
-      // Replace the import path in the code
-      processedCode = processedCode.replace(
-        new RegExp(`(['"])${importPath}\\1`, "g"),
-        `$1${newPath}$1`,
-      );
-    }
+    if (!newPath || newPath === importPath) continue;
+
+    processedCode = processedCode.replace(
+      new RegExp(`(['"])${importPath}\\1`, "g"),
+      `$1${newPath}$1`,
+    );
   }
 
   return processedCode;

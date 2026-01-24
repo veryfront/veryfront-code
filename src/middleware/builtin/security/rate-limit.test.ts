@@ -1,10 +1,9 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { MemoryRateLimitStore, rateLimit } from "./rate-limit.ts";
-import { MiddlewareContext } from "../../core/context.ts";
 import { delay } from "#std/async.ts";
+import { MiddlewareContext } from "../../core/context.ts";
+import { MemoryRateLimitStore, rateLimit } from "./rate-limit.ts";
 
-// Disable LRU interval during tests
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 
 describe("MemoryRateLimitStore", () => {
@@ -42,15 +41,12 @@ describe("MemoryRateLimitStore", () => {
     });
 
     it("should reset expired entries", async () => {
-      // Use a short window for testing with sufficient margin for concurrent execution
       const shortWindow = 50;
       const entry1 = await store.increment("test-key", shortWindow);
       assertEquals(entry1.count, 1);
 
-      // Wait for window to expire (2x margin for concurrent execution stability)
       await delay(120);
 
-      // Should reset to 1 after expiry
       const entry2 = await store.increment("test-key", shortWindow);
       assertEquals(entry2.count, 1);
     });
@@ -66,7 +62,6 @@ describe("MemoryRateLimitStore", () => {
     });
 
     it("should handle non-existent key", async () => {
-      // Should not throw
       await store.reset("non-existent");
     });
   });
@@ -101,13 +96,11 @@ describe("rateLimit middleware", () => {
   it("should block requests over limit", async () => {
     const middleware = rateLimit({ maxRequests: 2, windowMs: 60000 });
 
-    // Make 2 requests (at limit)
     for (let i = 0; i < 2; i++) {
       const ctx = createContext("same-ip");
       await middleware(ctx, () => Promise.resolve(new Response("OK")));
     }
 
-    // Third request should be blocked
     const ctx = createContext("same-ip");
     const response = await middleware(ctx, () => Promise.resolve(new Response("OK")));
 
@@ -139,7 +132,7 @@ describe("rateLimit middleware", () => {
       maxRequests: 10,
       windowMs: 60000,
       keyGenerator: (req) => {
-        capturedKey = req.headers.get("x-api-key") || "anonymous";
+        capturedKey = req.headers.get("x-api-key") ?? "anonymous";
         return capturedKey;
       },
     });
@@ -158,16 +151,13 @@ describe("rateLimit middleware", () => {
   it("should track different IPs separately", async () => {
     const middleware = rateLimit({ maxRequests: 1, windowMs: 60000 });
 
-    // First IP
     const ctx1 = createContext("ip-1");
     await middleware(ctx1, () => Promise.resolve(new Response("OK")));
 
-    // Second request from first IP should be blocked
     const ctx2 = createContext("ip-1");
     const response1 = await middleware(ctx2, () => Promise.resolve(new Response("OK")));
     assertEquals(response1?.status, 429);
 
-    // Different IP should be allowed
     const ctx3 = createContext("ip-2");
     const response2 = await middleware(ctx3, () => Promise.resolve(new Response("OK")));
     assertEquals(response2?.status, 200);

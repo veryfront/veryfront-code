@@ -1,10 +1,3 @@
-/**
- * Bitbucket API Client
- *
- * Provides a type-safe interface to Bitbucket API operations.
- */
-
-import { tokenStore as _tokenStore } from "./token-store.ts";
 import { getValidToken } from "./oauth.ts";
 
 // Helper for Cross-Platform environment access
@@ -13,11 +6,14 @@ function getEnv(key: string): string | undefined {
   if (typeof Deno !== "undefined") {
     // @ts-ignore - Deno global
     return Deno.env.get(key);
-  } // @ts-ignore - process global
-  else if (typeof process !== "undefined" && process.env) {
+  }
+
+  // @ts-ignore - process global
+  if (typeof process !== "undefined" && process.env) {
     // @ts-ignore - process global
     return process.env[key];
   }
+
   return undefined;
 }
 
@@ -113,11 +109,16 @@ export const bitbucketOAuthProvider = {
   name: "bitbucket",
   authorizationUrl: "https://bitbucket.org/site/oauth2/authorize",
   tokenUrl: "https://bitbucket.org/site/oauth2/access_token",
-  clientId: getEnv("BITBUCKET_CLIENT_ID") || "",
-  clientSecret: getEnv("BITBUCKET_CLIENT_SECRET") || "",
+  clientId: getEnv("BITBUCKET_CLIENT_ID") ?? "",
+  clientSecret: getEnv("BITBUCKET_CLIENT_SECRET") ?? "",
   scopes: ["repository", "pullrequest", "issue", "account"],
   callbackPath: "/api/auth/bitbucket/callback",
 };
+
+function buildQuery(params: URLSearchParams): string {
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
 
 /**
  * Create a Bitbucket client for a specific user
@@ -131,10 +132,7 @@ export function createBitbucketClient(userId: string) {
     return token;
   }
 
-  async function apiRequest<T>(
-    endpoint: string,
-    options: RequestInit = {},
-  ): Promise<T> {
+  async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const accessToken = await getAccessToken();
 
     const response = await fetch(`${BITBUCKET_API_BASE}${endpoint}`, {
@@ -166,17 +164,18 @@ export function createBitbucketClient(userId: string) {
     /**
      * List user's repositories
      */
-    async listRepositories(options: {
-      role?: "owner" | "contributor" | "member";
-      perPage?: number;
-    } = {}): Promise<Repository[]> {
+    async listRepositories(
+      options: {
+        role?: "owner" | "contributor" | "member";
+        perPage?: number;
+      } = {},
+    ): Promise<Repository[]> {
       const params = new URLSearchParams();
       if (options.role) params.set("role", options.role);
       if (options.perPage) params.set("pagelen", String(options.perPage));
 
-      const query = params.toString();
       const response = await apiRequest<{ values: Repository[] }>(
-        `/repositories?${query ? query : ""}`,
+        `/repositories${buildQuery(params)}`,
       );
       return response.values;
     },
@@ -203,9 +202,8 @@ export function createBitbucketClient(userId: string) {
       if (options.state) params.set("state", options.state);
       if (options.perPage) params.set("pagelen", String(options.perPage));
 
-      const query = params.toString();
       const response = await apiRequest<{ values: PullRequest[] }>(
-        `/repositories/${workspace}/${repoSlug}/pullrequests${query ? `?${query}` : ""}`,
+        `/repositories/${workspace}/${repoSlug}/pullrequests${buildQuery(params)}`,
       );
       return response.values;
     },
@@ -218,9 +216,7 @@ export function createBitbucketClient(userId: string) {
       repoSlug: string,
       pullRequestId: number,
     ): Promise<PullRequest> {
-      return apiRequest(
-        `/repositories/${workspace}/${repoSlug}/pullrequests/${pullRequestId}`,
-      );
+      return apiRequest(`/repositories/${workspace}/${repoSlug}/pullrequests/${pullRequestId}`);
     },
 
     /**
@@ -242,12 +238,8 @@ export function createBitbucketClient(userId: string) {
         body: JSON.stringify({
           title: options.title,
           description: options.description,
-          source: {
-            branch: { name: options.sourceBranch },
-          },
-          destination: {
-            branch: { name: options.destinationBranch },
-          },
+          source: { branch: { name: options.sourceBranch } },
+          destination: { branch: { name: options.destinationBranch } },
           close_source_branch: options.closeSourceBranch,
         }),
       });
@@ -280,9 +272,8 @@ export function createBitbucketClient(userId: string) {
       if (options.priority) params.set("priority", options.priority);
       if (options.perPage) params.set("pagelen", String(options.perPage));
 
-      const query = params.toString();
       const response = await apiRequest<{ values: Issue[] }>(
-        `/repositories/${workspace}/${repoSlug}/issues${query ? `?${query}` : ""}`,
+        `/repositories/${workspace}/${repoSlug}/issues${buildQuery(params)}`,
       );
       return response.values;
     },
@@ -305,8 +296,8 @@ export function createBitbucketClient(userId: string) {
         body: JSON.stringify({
           title: options.title,
           content: options.description ? { raw: options.description } : undefined,
-          kind: options.kind || "bug",
-          priority: options.priority || "major",
+          kind: options.kind ?? "bug",
+          priority: options.priority ?? "major",
         }),
       });
     },

@@ -1,6 +1,3 @@
-/**
- * VoyageAI Embedding Provider
- */
 import { z } from "zod";
 import { BaseEmbeddingProvider } from "../base.ts";
 import type { EmbeddingDimension, EmbeddingRequest, EmbeddingResponse } from "../types.ts";
@@ -24,9 +21,7 @@ export class VoyageAIEmbeddingProvider extends BaseEmbeddingProvider {
   defaultDimension: EmbeddingDimension = 1024;
 
   protected getHeaders(): Record<string, string> {
-    return {
-      Authorization: `Bearer ${this.config.apiKey}`,
-    };
+    return { Authorization: `Bearer ${this.config.apiKey}` };
   }
 
   protected getEndpoint(): string {
@@ -40,24 +35,22 @@ export class VoyageAIEmbeddingProvider extends BaseEmbeddingProvider {
     return {
       model,
       input: request.inputs,
-      input_type: "document", // For semantic search indexing
+      input_type: "document",
     };
   }
 
-  protected transformResponse(response: unknown, _model: string): EmbeddingResponse {
+  protected transformResponse(response: unknown): EmbeddingResponse {
     const parsed = VoyageAIEmbeddingResponseSchema.parse(response);
     const dimension = parsed.data[0]?.embedding.length ?? this.defaultDimension;
+    const totalTokens = parsed.usage.total_tokens;
 
     return {
-      embeddings: parsed.data.map((d) => ({
-        index: d.index,
-        embedding: d.embedding,
-      })),
+      embeddings: parsed.data.map(({ index, embedding }) => ({ index, embedding })),
       model: parsed.model,
       dimension,
       usage: {
-        promptTokens: parsed.usage.total_tokens,
-        totalTokens: parsed.usage.total_tokens,
+        promptTokens: totalTokens,
+        totalTokens,
       },
     };
   }

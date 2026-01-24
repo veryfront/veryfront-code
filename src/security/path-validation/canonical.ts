@@ -20,33 +20,17 @@ export async function getCanonicalPath(
   adapter?: RuntimeAdapter,
   followSymlinks = false,
 ): Promise<{ path: string; isSymlink: boolean }> {
-  // If no adapter or not following symlinks, just resolve path segments
+  const resolvedPath = resolvePathSegments(path);
+
   if (!adapter || !followSymlinks) {
-    return {
-      path: resolvePathSegments(path),
-      isSymlink: false,
-    };
+    return { path: resolvedPath, isSymlink: false };
   }
 
   try {
     const stat = await adapter.fs.stat(path);
-
-    if (stat.isSymlink) {
-      return {
-        path: resolvePathSegments(path),
-        isSymlink: true,
-      };
-    }
-
-    return {
-      path: resolvePathSegments(path),
-      isSymlink: false,
-    };
+    return { path: resolvedPath, isSymlink: stat.isSymlink };
   } catch {
-    return {
-      path: resolvePathSegments(path),
-      isSymlink: false,
-    };
+    return { path: resolvedPath, isSymlink: false };
   }
 }
 
@@ -58,11 +42,9 @@ export function validateAllowedDirs(
   baseDir: string,
   allowedDirs: string[],
 ): ValidationResult {
-  // Resolve path segments (. and ..) in both paths for consistent comparison
   const normalizedBase = resolvePathSegments(normalizeSeparators(baseDir)).replace(/\/$/, "");
   const normalizedPath = resolvePathSegments(normalizeSeparators(canonicalPath)).replace(/\/$/, "");
 
-  // Path must be within base directory
   if (!isWithinDirectory(normalizedBase, normalizedPath)) {
     return {
       valid: false,
@@ -71,21 +53,15 @@ export function validateAllowedDirs(
     };
   }
 
-  // If no allowed dirs specified, any path in base is OK
-  if (!allowedDirs || allowedDirs.length === 0) {
+  if (!allowedDirs?.length) {
     return { valid: true, canonicalPath };
   }
 
-  // Check if path is in one of the allowed directories
-  const relativePath = normalizedPath === normalizedBase
-    ? ""
-    : normalizedPath.slice(normalizedBase.length + 1);
-
-  if (!relativePath) {
-    // Base directory itself is always allowed
+  if (normalizedPath === normalizedBase) {
     return { valid: true, canonicalPath };
   }
 
+  const relativePath = normalizedPath.slice(normalizedBase.length + 1);
   const topLevelDir = relativePath.split("/")[0] ?? "";
 
   if (!topLevelDir || !allowedDirs.includes(topLevelDir)) {

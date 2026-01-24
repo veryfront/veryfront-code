@@ -1,4 +1,4 @@
-/**
+/****
  * Inline Text Input Component
  *
  * Renders an input prompt at the bottom of the TUI that stays inline
@@ -15,17 +15,13 @@ export interface InlineInputOptions {
 /**
  * Render the inline input prompt
  */
-export function renderInput(input: InputState, options: InlineInputOptions = {}): string {
-  if (!input.active) {
-    return "";
-  }
-
-  const { maxWidth: _maxWidth = 80 } = options;
+export function renderInput(input: InputState, _options: InlineInputOptions = {}): string {
+  if (!input.active) return "";
 
   // Build the input line with cursor
   const prompt = `  ${brand(">")} ${input.prompt}: `;
   const beforeCursor = input.value.slice(0, input.cursorPos);
-  const cursorChar = input.value[input.cursorPos] || " ";
+  const cursorChar = input.value[input.cursorPos] ?? " ";
   const afterCursor = input.value.slice(input.cursorPos + 1);
 
   // Cursor is rendered as inverse video
@@ -43,30 +39,25 @@ export function renderInput(input: InputState, options: InlineInputOptions = {})
  * Render the logs area
  */
 export function renderLogs(logs: LogEntry[], maxLines: number = 5, maxWidth: number = 80): string {
-  if (logs.length === 0) {
-    return "";
-  }
+  if (logs.length === 0) return "";
 
-  const lines: string[] = [];
-
-  // Take the last maxLines logs
   const recentLogs = logs.slice(-maxLines);
 
-  for (const log of recentLogs) {
-    const time = formatTime(log.time);
-    const levelColor = getLevelColor(log.level);
-    const levelPrefix = getLevelPrefix(log.level);
+  return recentLogs
+    .map((log) => {
+      const time = formatTime(log.time);
+      const levelColor = getLevelColor(log.level);
+      const levelPrefix = getLevelPrefix(log.level);
 
-    // Truncate message if too long
-    const maxMsgLen = maxWidth - 15; // Account for time and level
-    const msg = log.message.length > maxMsgLen
-      ? log.message.slice(0, maxMsgLen - 3) + "..."
-      : log.message;
+      // Truncate message if too long
+      const maxMsgLen = maxWidth - 15; // Account for time and level
+      const msg = log.message.length > maxMsgLen
+        ? `${log.message.slice(0, maxMsgLen - 3)}...`
+        : log.message;
 
-    lines.push(`  ${dim(time)} ${levelColor(levelPrefix)} ${msg}`);
-  }
-
-  return lines.join("\n");
+      return `  ${dim(time)} ${levelColor(levelPrefix)} ${msg}`;
+    })
+    .join("\n");
 }
 
 /**
@@ -85,11 +76,11 @@ function formatTime(date: Date): string {
 function getLevelColor(level: LogEntry["level"]): (s: string) => string {
   switch (level) {
     case "error":
-      return (s) => `\x1b[31m${s}\x1b[0m`; // red
+      return (s: string) => `\x1b[31m${s}\x1b[0m`; // red
     case "warn":
-      return (s) => `\x1b[33m${s}\x1b[0m`; // yellow
+      return (s: string) => `\x1b[33m${s}\x1b[0m`; // yellow
     case "info":
-      return (s) => `\x1b[36m${s}\x1b[0m`; // cyan
+      return (s: string) => `\x1b[36m${s}\x1b[0m`; // cyan
     case "debug":
       return dim;
   }
@@ -120,77 +111,38 @@ export function handleInputKey(
   value: string,
   cursorPos: number,
 ): { value: string; cursorPos: number } | { action: "submit" | "cancel" } {
-  // Enter - submit
-  if (key === "\r" || key === "\n") {
-    return { action: "submit" };
-  }
+  if (key === "\r" || key === "\n") return { action: "submit" };
+  if (key === "\x1b" || key === "\x03") return { action: "cancel" };
 
-  // Escape - cancel
-  if (key === "\x1b") {
-    return { action: "cancel" };
-  }
-
-  // Ctrl+C - cancel
-  if (key === "\x03") {
-    return { action: "cancel" };
-  }
-
-  // Backspace
   if (key === "\x7f" || key === "\b") {
-    if (cursorPos > 0) {
-      return {
-        value: value.slice(0, cursorPos - 1) + value.slice(cursorPos),
-        cursorPos: cursorPos - 1,
-      };
-    }
-    return { value, cursorPos };
+    if (cursorPos === 0) return { value, cursorPos };
+
+    return {
+      value: value.slice(0, cursorPos - 1) + value.slice(cursorPos),
+      cursorPos: cursorPos - 1,
+    };
   }
 
-  // Delete
   if (key === "\x1b[3~") {
-    if (cursorPos < value.length) {
-      return {
-        value: value.slice(0, cursorPos) + value.slice(cursorPos + 1),
-        cursorPos,
-      };
-    }
-    return { value, cursorPos };
+    if (cursorPos >= value.length) return { value, cursorPos };
+
+    return {
+      value: value.slice(0, cursorPos) + value.slice(cursorPos + 1),
+      cursorPos,
+    };
   }
 
-  // Left arrow
-  if (key === "\x1b[D") {
-    return { value, cursorPos: Math.max(0, cursorPos - 1) };
-  }
+  if (key === "\x1b[D") return { value, cursorPos: Math.max(0, cursorPos - 1) };
+  if (key === "\x1b[C") return { value, cursorPos: Math.min(value.length, cursorPos + 1) };
+  if (key === "\x01" || key === "\x1b[H") return { value, cursorPos: 0 };
+  if (key === "\x05" || key === "\x1b[F") return { value, cursorPos: value.length };
+  if (key === "\x15") return { value: "", cursorPos: 0 };
 
-  // Right arrow
-  if (key === "\x1b[C") {
-    return { value, cursorPos: Math.min(value.length, cursorPos + 1) };
-  }
-
-  // Home (Ctrl+A or Home key)
-  if (key === "\x01" || key === "\x1b[H") {
-    return { value, cursorPos: 0 };
-  }
-
-  // End (Ctrl+E or End key)
-  if (key === "\x05" || key === "\x1b[F") {
-    return { value, cursorPos: value.length };
-  }
-
-  // Ctrl+U - clear line
-  if (key === "\x15") {
-    return { value: "", cursorPos: 0 };
-  }
-
-  // Ctrl+W - delete word backward
   if (key === "\x17") {
     if (cursorPos === 0) return { value, cursorPos };
 
-    // Find the start of the previous word
     let newPos = cursorPos - 1;
-    // Skip trailing spaces
     while (newPos > 0 && value[newPos] === " ") newPos--;
-    // Skip the word
     while (newPos > 0 && value[newPos - 1] !== " ") newPos--;
 
     return {
@@ -199,7 +151,6 @@ export function handleInputKey(
     };
   }
 
-  // Printable characters
   if (key.length === 1 && key >= " " && key <= "~") {
     return {
       value: value.slice(0, cursorPos) + key + value.slice(cursorPos),
@@ -207,6 +158,5 @@ export function handleInputKey(
     };
   }
 
-  // Ignore other keys
   return { value, cursorPos };
 }

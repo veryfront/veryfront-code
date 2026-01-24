@@ -12,6 +12,7 @@ import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } 
 import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
 import { getSSRModuleCacheStats } from "#veryfront/modules/react-loader/ssr-module-loader/index.ts";
 import type { MultiProjectFSAdapter } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+
 export class DebugContextHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "DebugContextHandler",
@@ -27,11 +28,13 @@ export class DebugContextHandler extends BaseHandler {
     }
 
     const token = req.headers.get("x-token");
+    const url = new URL(req.url);
+
     const debugInfo = {
       timestamp: new Date().toISOString(),
       request: {
         url: req.url,
-        host: new URL(req.url).host,
+        host: url.host,
         headers: {
           "x-project-slug": req.headers.get("x-project-slug"),
           "x-token": token ? `[${token.length} chars]` : null,
@@ -57,23 +60,21 @@ export class DebugContextHandler extends BaseHandler {
         parsedDomain: ctx.parsedDomain,
       },
       adapter: {
-        type: ctx.adapter?.fs?.constructor?.name || "unknown",
+        type: ctx.adapter?.fs?.constructor?.name ?? "unknown",
         isMultiProjectMode: this.checkMultiProjectMode(ctx),
         managerStats: this.getManagerStats(ctx),
       },
       ssrModuleCache: getSSRModuleCacheStats(),
     };
 
-    const response = this.createResponseBuilder(ctx)
-      .withCache("no-cache")
-      .json(debugInfo, HTTP_OK);
+    const response = this.createResponseBuilder(ctx).withCache("no-cache").json(debugInfo, HTTP_OK);
 
     return Promise.resolve(this.respond(response));
   }
 
   private checkMultiProjectMode(ctx: HandlerContext): boolean {
     try {
-      const fs = ctx.adapter?.fs as { isMultiProjectMode?: () => boolean };
+      const fs = ctx.adapter?.fs as { isMultiProjectMode?: () => boolean } | undefined;
       return typeof fs?.isMultiProjectMode === "function" && fs.isMultiProjectMode();
     } catch {
       return false;
@@ -84,16 +85,20 @@ export class DebugContextHandler extends BaseHandler {
     ctx: HandlerContext,
   ): { adapters: number; stats: Record<string, unknown> } | null {
     try {
-      const fs = ctx.adapter?.fs as {
-        getUnderlyingAdapter?: () => { getManagerStats?: () => unknown };
-      };
-      if (typeof fs?.getUnderlyingAdapter === "function") {
-        const underlying = fs.getUnderlyingAdapter() as MultiProjectFSAdapter;
-        if (typeof underlying?.getManagerStats === "function") {
-          return underlying.getManagerStats();
-        }
+      const fs = ctx.adapter?.fs as
+        | { getUnderlyingAdapter?: () => { getManagerStats?: () => unknown } }
+        | undefined;
+
+      if (typeof fs?.getUnderlyingAdapter !== "function") {
+        return null;
       }
-      return null;
+
+      const underlying = fs.getUnderlyingAdapter() as MultiProjectFSAdapter;
+      if (typeof underlying?.getManagerStats !== "function") {
+        return null;
+      }
+
+      return underlying.getManagerStats();
     } catch {
       return null;
     }

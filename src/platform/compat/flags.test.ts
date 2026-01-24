@@ -5,16 +5,14 @@ import { parse } from "./flags.ts";
 describe("Flags Compat", () => {
   describe("basic parsing", () => {
     it("parses basic flags", () => {
-      const args = ["--foo", "bar", "--baz"];
-      const parsed = parse(args);
+      const parsed = parse(["--foo", "bar", "--baz"]);
 
       assertEquals(parsed.foo, "bar");
       assertEquals(parsed.baz, true);
     });
 
     it("parses positional arguments", () => {
-      const args = ["arg1", "arg2", "--flag", "value"];
-      const parsed = parse(args);
+      const parsed = parse(["arg1", "arg2", "--flag", "value"]);
 
       assertEquals(parsed._, ["arg1", "arg2"]);
       assertEquals(parsed.flag, "value");
@@ -26,16 +24,14 @@ describe("Flags Compat", () => {
     });
 
     it("parses with empty options", () => {
-      const args = ["--foo", "bar"];
-      const parsed = parse(args, {});
+      const parsed = parse(["--foo", "bar"], {});
       assertEquals(parsed.foo, "bar");
     });
   });
 
   describe("alias option", () => {
     it("parses with alias option", () => {
-      const args = ["-f", "value"];
-      const parsed = parse(args, {
+      const parsed = parse(["-f", "value"], {
         alias: { f: "foo" },
       });
 
@@ -44,8 +40,7 @@ describe("Flags Compat", () => {
     });
 
     it("parses with multiple aliases", () => {
-      const args = ["-v"];
-      const parsed = parse(args, {
+      const parsed = parse(["-v"], {
         alias: { v: ["verbose", "version"] },
       });
 
@@ -57,8 +52,7 @@ describe("Flags Compat", () => {
 
   describe("boolean option", () => {
     it("parses with boolean option", () => {
-      const args = ["--verbose", "--debug", "value"];
-      const parsed = parse(args, {
+      const parsed = parse(["--verbose", "--debug", "value"], {
         boolean: ["verbose"],
       });
 
@@ -67,8 +61,7 @@ describe("Flags Compat", () => {
     });
 
     it("parses boolean array", () => {
-      const args = ["--verbose", "--debug"];
-      const parsed = parse(args, {
+      const parsed = parse(["--verbose", "--debug"], {
         boolean: ["verbose", "debug"],
       });
 
@@ -77,8 +70,7 @@ describe("Flags Compat", () => {
     });
 
     it("parses boolean false values", () => {
-      const args = ["--verbose=false", "--debug=true"];
-      const parsed = parse(args, {
+      const parsed = parse(["--verbose=false", "--debug=true"], {
         boolean: ["verbose", "debug"],
       });
 
@@ -89,8 +81,7 @@ describe("Flags Compat", () => {
 
   describe("string option", () => {
     it("parses with string option", () => {
-      const args = ["--port", "3000", "--count", "42"];
-      const parsed = parse(args, {
+      const parsed = parse(["--port", "3000", "--count", "42"], {
         string: ["port"],
       });
 
@@ -99,8 +90,7 @@ describe("Flags Compat", () => {
     });
 
     it("parses string array", () => {
-      const args = ["--host", "localhost", "--port", "3000"];
-      const parsed = parse(args, {
+      const parsed = parse(["--host", "localhost", "--port", "3000"], {
         string: ["host", "port"],
       });
 
@@ -111,8 +101,7 @@ describe("Flags Compat", () => {
 
   describe("default option", () => {
     it("parses with default values", () => {
-      const args = ["--foo", "bar"];
-      const parsed = parse(args, {
+      const parsed = parse(["--foo", "bar"], {
         default: { foo: "default-foo", baz: "default-baz" },
       });
 
@@ -121,8 +110,7 @@ describe("Flags Compat", () => {
     });
 
     it("parses with default overrides", () => {
-      const args: any[] = [];
-      const parsed = parse(args, {
+      const parsed = parse([], {
         default: {
           port: 3000,
           host: "localhost",
@@ -138,8 +126,7 @@ describe("Flags Compat", () => {
 
   describe("stopEarly option", () => {
     it("parses with stopEarly option", () => {
-      const args = ["--foo", "bar", "cmd", "--baz", "qux"];
-      const parsed = parse(args, {
+      const parsed = parse(["--foo", "bar", "cmd", "--baz", "qux"], {
         stopEarly: true,
       });
 
@@ -150,8 +137,7 @@ describe("Flags Compat", () => {
 
   describe("collect option", () => {
     it("parses with collect option - single value", () => {
-      const args = ["--tag", "value1"];
-      const parsed = parse(args, {
+      const parsed = parse(["--tag", "value1"], {
         collect: ["tag"],
       });
 
@@ -159,8 +145,7 @@ describe("Flags Compat", () => {
     });
 
     it("parses with collect option - multiple values", () => {
-      const args = ["--tag", "value1", "--tag", "value2", "--tag", "value3"];
-      const parsed = parse(args, {
+      const parsed = parse(["--tag", "value1", "--tag", "value2", "--tag", "value3"], {
         collect: ["tag"],
       });
 
@@ -168,8 +153,7 @@ describe("Flags Compat", () => {
     });
 
     it("parses with collect option - array of keys", () => {
-      const args = ["--tag", "t1", "--label", "l1", "--tag", "t2", "--label", "l2"];
-      const parsed = parse(args, {
+      const parsed = parse(["--tag", "t1", "--label", "l1", "--tag", "t2", "--label", "l2"], {
         collect: ["tag", "label"],
       });
 
@@ -180,8 +164,7 @@ describe("Flags Compat", () => {
 
   describe("negatable option", () => {
     it("parses with negatable option", () => {
-      const args = ["--no-color"];
-      const parsed = parse(args, {
+      const parsed = parse(["--no-color"], {
         negatable: ["color"],
       });
 
@@ -190,8 +173,7 @@ describe("Flags Compat", () => {
     });
 
     it("parses with negatable option - positive", () => {
-      const args = ["--color"];
-      const parsed = parse(args, {
+      const parsed = parse(["--color"], {
         negatable: ["color"],
       });
 
@@ -199,8 +181,7 @@ describe("Flags Compat", () => {
     });
 
     it("parses with negatable option - array", () => {
-      const args = ["--no-color", "--no-interactive"];
-      const parsed = parse(args, {
+      const parsed = parse(["--no-color", "--no-interactive"], {
         negatable: ["color", "interactive"],
       });
 
@@ -213,8 +194,8 @@ describe("Flags Compat", () => {
     // Note: The unknown option handler is a more complex feature that has
     // different behavior in the Node.js shim vs @std/flags. Skip this test.
     it("parses basic flags even with unknown handler option", () => {
-      const args = ["--known", "value", "--another", "value2"];
-      const parsed = parse(args);
+      const parsed = parse(["--known", "value", "--another", "value2"]);
+
       assertEquals(parsed.known, "value");
       assertEquals(parsed.another, "value2");
     });
@@ -222,8 +203,7 @@ describe("Flags Compat", () => {
 
   describe("short flags", () => {
     it("parses short flags", () => {
-      const args = ["-f", "-b", "-c", "value"];
-      const parsed = parse(args);
+      const parsed = parse(["-f", "-b", "-c", "value"]);
 
       assertEquals(parsed.f, true);
       assertEquals(parsed.b, true);
@@ -231,8 +211,7 @@ describe("Flags Compat", () => {
     });
 
     it("parses combined short flags", () => {
-      const args = ["-abc"];
-      const parsed = parse(args, {
+      const parsed = parse(["-abc"], {
         boolean: ["a", "b", "c"],
       });
 
@@ -244,8 +223,7 @@ describe("Flags Compat", () => {
 
   describe("equals syntax", () => {
     it("parses equals syntax", () => {
-      const args = ["--foo=bar", "--baz=qux"];
-      const parsed = parse(args);
+      const parsed = parse(["--foo=bar", "--baz=qux"]);
 
       assertEquals(parsed.foo, "bar");
       assertEquals(parsed.baz, "qux");
@@ -254,44 +232,37 @@ describe("Flags Compat", () => {
 
   describe("numeric values", () => {
     it("parses numeric values", () => {
-      const args = ["--count", "42", "--rate", "3.14"];
-      const parsed = parse(args);
+      const parsed = parse(["--count", "42", "--rate", "3.14"]);
 
       assertEquals(parsed.count, 42);
       assertEquals(parsed.rate, 3.14);
     });
 
     it("parses negative numbers", () => {
-      const args = ["--value=-42"];
-      const parsed = parse(args);
-
+      const parsed = parse(["--value=-42"]);
       assertEquals(parsed.value, -42);
 
-      const args2 = ["--", "-42"];
-      const parsed2 = parse(args2);
+      const parsed2 = parse(["--", "-42"]);
       assertEquals(parsed2._, ["-42"]);
     });
   });
 
   describe("double dash", () => {
     it("parses double dash", () => {
-      const args = ["--foo", "bar", "--", "--not-a-flag", "arg"];
-      const parsed = parse(args);
+      const parsed = parse(["--foo", "bar", "--", "--not-a-flag", "arg"]);
 
       assertEquals(parsed.foo, "bar");
       assertEquals(parsed._, ["--not-a-flag", "arg"]);
     });
 
     it("handles trailing dashes", () => {
-      const args = ["--", "arg1", "arg2"];
-      const parsed = parse(args);
+      const parsed = parse(["--", "arg1", "arg2"]);
 
       assertEquals(parsed._, ["arg1", "arg2"]);
     });
 
     it("parses single dash", () => {
-      const args = ["-"];
-      const parsed = parse(args);
+      const parsed = parse(["-"]);
 
       assertEquals(parsed._, ["-"]);
     });
@@ -299,16 +270,14 @@ describe("Flags Compat", () => {
 
   describe("flag naming", () => {
     it("parses camelCase flags", () => {
-      const args = ["--camelCase", "value", "--kebab-case", "value2"];
-      const parsed = parse(args);
+      const parsed = parse(["--camelCase", "value", "--kebab-case", "value2"]);
 
       assertEquals(parsed.camelCase, "value");
       assertEquals(parsed["kebab-case"], "value2");
     });
 
     it("parses underscore flags", () => {
-      const args = ["--snake_case", "value"];
-      const parsed = parse(args);
+      const parsed = parse(["--snake_case", "value"]);
 
       assertEquals(parsed.snake_case, "value");
     });
@@ -316,15 +285,13 @@ describe("Flags Compat", () => {
 
   describe("value handling", () => {
     it("handles empty string values", () => {
-      const args = ["--value", ""];
-      const parsed = parse(args);
+      const parsed = parse(["--value", ""]);
 
       assertEquals(parsed.value, "");
     });
 
     it("handles whitespace", () => {
-      const args = ["--text", "hello world"];
-      const parsed = parse(args, {
+      const parsed = parse(["--text", "hello world"], {
         string: ["text"],
       });
 
@@ -332,8 +299,7 @@ describe("Flags Compat", () => {
     });
 
     it("handles quoted values with spaces", () => {
-      const args = ["--message", "hello world", "--name", "test"];
-      const parsed = parse(args, {
+      const parsed = parse(["--message", "hello world", "--name", "test"], {
         string: ["message"],
       });
 
@@ -344,27 +310,28 @@ describe("Flags Compat", () => {
 
   describe("complex examples", () => {
     it("parses complex real-world example", () => {
-      const args = [
-        "--verbose",
-        "--port",
-        "3000",
-        "--host",
-        "localhost",
-        "--tag",
-        "t1",
-        "--tag",
-        "t2",
-        "--no-color",
-        "build",
-        "src/",
-      ];
-
-      const parsed = parse(args, {
-        boolean: ["verbose"],
-        string: ["port", "host"],
-        collect: ["tag"],
-        negatable: ["color"],
-      });
+      const parsed = parse(
+        [
+          "--verbose",
+          "--port",
+          "3000",
+          "--host",
+          "localhost",
+          "--tag",
+          "t1",
+          "--tag",
+          "t2",
+          "--no-color",
+          "build",
+          "src/",
+        ],
+        {
+          boolean: ["verbose"],
+          string: ["port", "host"],
+          collect: ["tag"],
+          negatable: ["color"],
+        },
+      );
 
       assertEquals(parsed.verbose, true);
       assertEquals(parsed.port, "3000");
@@ -375,9 +342,7 @@ describe("Flags Compat", () => {
     });
 
     it("parses with mixed options", () => {
-      const args = ["-v", "--debug", "--port=8080", "start"];
-
-      const parsed = parse(args, {
+      const parsed = parse(["-v", "--debug", "--port=8080", "start"], {
         boolean: ["verbose", "debug"],
         alias: { v: "verbose" },
         string: ["port"],

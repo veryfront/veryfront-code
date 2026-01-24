@@ -50,7 +50,6 @@ export {
   MAX_STREAM_BUFFER_SIZE,
 } from "./constants.ts";
 
-// Import helpers
 import { DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE } from "./constants.ts";
 import { generateMessageId, sendSSE } from "./sse-utils.ts";
 import { getAvailableTools, isDynamicTool, parseToolArgs } from "./tool-helpers.ts";
@@ -85,10 +84,7 @@ export class AgentRuntime {
       });
 
       const inputMessages = normalizeInput(input);
-
-      for (const msg of inputMessages) {
-        await this.memory.add(msg);
-      }
+      for (const msg of inputMessages) await this.memory.add(msg);
 
       const messages = await this.memory.getMessages();
       const systemPrompt = await this.resolveSystemPrompt();
@@ -122,23 +118,14 @@ export class AgentRuntime {
       onChunk?: (chunk: string) => void;
     },
   ): Promise<ReadableStream> {
-    for (const msg of messages) {
-      await this.memory.add(msg);
-    }
+    for (const msg of messages) await this.memory.add(msg);
 
     const memoryMessages = await this.memory.getMessages();
     const systemPrompt = await this.resolveSystemPrompt();
     const { provider, model } = getProviderFromModel(this.config.model);
 
     const encoder = new TextEncoder();
-
-    // Build tool execution context - merge user context with agent context
-    const toolContext = {
-      agentId: this.id,
-      ...context,
-    };
-
-    // Generate a unique text part ID for UI message stream
+    const toolContext = { agentId: this.id, ...context };
     const textPartId = generateId("text");
 
     return new ReadableStream({
@@ -146,11 +133,8 @@ export class AgentRuntime {
         try {
           this.status = "streaming";
 
-          // Send start event (UI Message Stream Protocol v5)
           const messageId = generateMessageId();
           sendSSE(controller, encoder, { type: "start", messageId });
-
-          // Send text-start event with ID
           sendSSE(controller, encoder, { type: "text-start", id: textPartId });
 
           await this.executeAgentLoopStreaming(
@@ -165,21 +149,15 @@ export class AgentRuntime {
             toolContext,
           );
 
-          // Send text-end event (UI Message Stream Protocol v5)
           sendSSE(controller, encoder, { type: "text-end", id: textPartId });
-
-          // Send finish event (UI Message Stream Protocol v5)
           sendSSE(controller, encoder, { type: "finish" });
-
           controller.close();
         } catch (error) {
           this.status = "error";
-
           sendSSE(controller, encoder, {
             type: "error",
             error: error instanceof Error ? error.message : String(error),
           });
-
           controller.close();
         }
       },
@@ -196,16 +174,12 @@ export class AgentRuntime {
     messages: Message[],
   ): Promise<AgentResponse> {
     return await withSpan("agent.execution_loop", async (loopSpan) => {
-      const capabilities = getPlatformCapabilities();
-      const maxSteps = this.computeMaxSteps(capabilities.maxAgentSteps);
+      const { maxAgentSteps } = getPlatformCapabilities();
+      const maxSteps = this.computeMaxSteps(maxAgentSteps);
 
       const toolCalls: ToolCall[] = [];
       const currentMessages = [...messages];
-      const totalUsage = {
-        promptTokens: 0,
-        completionTokens: 0,
-        totalTokens: 0,
-      };
+      const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
       for (let step = 0; step < maxSteps; step++) {
         this.status = "thinking";
@@ -214,30 +188,23 @@ export class AgentRuntime {
         const tools = getAvailableTools(this.config.tools);
 
         const response = await withSpan("agent.provider_complete", async (span) => {
-          setSpanAttributes(span, {
-            model,
-            "messages.count": currentMessages.length,
-          });
+          setSpanAttributes(span, { model, "messages.count": currentMessages.length });
           return await provider.complete({
             model,
             system: systemPrompt,
-            messages: currentMessages.map((m) => convertMessageToProvider(m)),
-            tools: tools.length > 0 ? tools : undefined,
-            maxTokens: this.config.memory?.maxTokens || DEFAULT_MAX_TOKENS,
+            messages: currentMessages.map(convertMessageToProvider),
+            tools: tools.length ? tools : undefined,
+            maxTokens: this.config.memory?.maxTokens ?? DEFAULT_MAX_TOKENS,
             temperature: DEFAULT_TEMPERATURE,
           });
         });
 
         accumulateUsage(totalUsage, response.usage);
 
-        // Build parts array for v5 Message
         const assistantParts: MessagePart[] = [];
-        if (response.text) {
-          assistantParts.push({ type: "text", text: response.text });
-        }
-        if (response.toolCalls) {
+        if (response.text) assistantParts.push({ type: "text", text: response.text });
+        if (response.toolCalls?.length) {
           for (const tc of response.toolCalls) {
-            // Use AI SDK v5 tool-${toolName} pattern
             assistantParts.push({
               type: `tool-${tc.name}`,
               toolCallId: tc.id,
@@ -256,88 +223,82 @@ export class AgentRuntime {
         currentMessages.push(assistantMessage);
         await this.memory.add(assistantMessage);
 
-        if (response.toolCalls && response.toolCalls.length > 0) {
-          this.status = "tool_execution";
-          addSpanEvent(loopSpan, "tool_execution_start", {
-            count: response.toolCalls.length,
-          });
+        if (!response.toolCalls?.length) {
+          this.status = "completed";
+          addSpanEvent(loopSpan, "loop_complete");
+          return {
+            text: response.text,
+            messages: currentMessages,
+            toolCalls,
+            status: this.status,
+            usage: totalUsage,
+          };
+        }
 
-          for (const tc of response.toolCalls) {
-            const toolCall: ToolCall = {
-              id: tc.id,
-              name: tc.name,
-              args: tc.arguments,
-              status: "pending",
-            };
+        this.status = "tool_execution";
+        addSpanEvent(loopSpan, "tool_execution_start", { count: response.toolCalls.length });
 
-            await withSpan("agent.tool_execute", async (toolSpan) => {
-              setSpanAttributes(toolSpan, {
-                "tool.name": tc.name,
-                "tool.id": tc.id,
-              });
+        for (const tc of response.toolCalls) {
+          const toolCall: ToolCall = {
+            id: tc.id,
+            name: tc.name,
+            args: tc.arguments,
+            status: "pending",
+          };
 
-              try {
-                toolCall.status = "executing";
-                const startTime = Date.now();
+          await withSpan("agent.tool_execute", async (toolSpan) => {
+            setSpanAttributes(toolSpan, { "tool.name": tc.name, "tool.id": tc.id });
 
-                const result = await executeTool(tc.name, tc.arguments, {
-                  agentId: this.id,
-                });
+            try {
+              toolCall.status = "executing";
+              const startTime = Date.now();
 
-                toolCall.status = "completed";
-                toolCall.result = result;
-                toolCall.executionTime = Date.now() - startTime;
+              const result = await executeTool(tc.name, tc.arguments, { agentId: this.id });
 
-                const toolResultMessage: Message = {
-                  id: `tool_${tc.id}`,
-                  role: "tool",
-                  parts: [{
+              toolCall.status = "completed";
+              toolCall.result = result;
+              toolCall.executionTime = Date.now() - startTime;
+
+              const toolResultMessage: Message = {
+                id: `tool_${tc.id}`,
+                role: "tool",
+                parts: [
+                  {
                     type: "tool-result",
                     toolCallId: tc.id,
                     toolName: tc.name,
                     result,
-                  }],
-                  timestamp: Date.now(),
-                };
-                currentMessages.push(toolResultMessage);
-                await this.memory.add(toolResultMessage);
-              } catch (error) {
-                toolCall.status = "error";
-                toolCall.error = error instanceof Error ? error.message : String(error);
-                setSpanAttributes(toolSpan, { "error": true, "error.message": toolCall.error });
+                  },
+                ],
+                timestamp: Date.now(),
+              };
+              currentMessages.push(toolResultMessage);
+              await this.memory.add(toolResultMessage);
+            } catch (error) {
+              toolCall.status = "error";
+              toolCall.error = error instanceof Error ? error.message : String(error);
+              setSpanAttributes(toolSpan, { error: true, "error.message": toolCall.error });
 
-                const errorMessage: Message = {
-                  id: `tool_error_${tc.id}`,
-                  role: "tool",
-                  parts: [{
+              const errorMessage: Message = {
+                id: `tool_error_${tc.id}`,
+                role: "tool",
+                parts: [
+                  {
                     type: "tool-result",
                     toolCallId: tc.id,
                     toolName: tc.name,
                     result: { error: toolCall.error },
-                  }],
-                  timestamp: Date.now(),
-                };
-                currentMessages.push(errorMessage);
-                await this.memory.add(errorMessage);
-              }
+                  },
+                ],
+                timestamp: Date.now(),
+              };
+              currentMessages.push(errorMessage);
+              await this.memory.add(errorMessage);
+            }
 
-              toolCalls.push(toolCall);
-            });
-          }
-
-          continue;
+            toolCalls.push(toolCall);
+          });
         }
-
-        this.status = "completed";
-        addSpanEvent(loopSpan, "loop_complete");
-
-        return {
-          text: response.text,
-          messages: currentMessages,
-          toolCalls,
-          status: this.status,
-          usage: totalUsage,
-        };
       }
 
       this.status = "completed";
@@ -350,9 +311,7 @@ export class AgentRuntime {
         toolCalls,
         status: this.status,
         usage: totalUsage,
-        metadata: {
-          warning: `Max steps (${maxSteps}) reached`,
-        },
+        metadata: { warning: `Max steps (${maxSteps}) reached` },
       };
     });
   }
@@ -375,52 +334,36 @@ export class AgentRuntime {
     textPartId?: string,
     toolContext?: Record<string, unknown>,
   ): Promise<AgentResponse> {
-    const capabilities = getPlatformCapabilities();
-    const maxSteps = this.computeMaxSteps(capabilities.maxAgentSteps);
+    const { maxAgentSteps } = getPlatformCapabilities();
+    const maxSteps = this.computeMaxSteps(maxAgentSteps);
 
     const toolCalls: ToolCall[] = [];
     const currentMessages = [...messages];
-    const totalUsage = {
-      promptTokens: 0,
-      completionTokens: 0,
-      totalTokens: 0,
-    };
+    const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
     for (let step = 0; step < maxSteps; step++) {
-      // Send start-step event (Veryfront extension, not part of standard AI SDK v5 protocol)
       sendSSE(controller, encoder, { type: "start-step" });
 
       const tools = getAvailableTools(this.config.tools);
-
       const stream = await provider.stream({
         model,
         system: systemPrompt,
-        messages: currentMessages.map((m) => convertMessageToProvider(m)),
-        tools: tools.length > 0 ? tools : undefined,
-        maxTokens: this.config.memory?.maxTokens || DEFAULT_MAX_TOKENS,
+        messages: currentMessages.map(convertMessageToProvider),
+        tools: tools.length ? tools : undefined,
+        maxTokens: this.config.memory?.maxTokens ?? DEFAULT_MAX_TOKENS,
         temperature: DEFAULT_TEMPERATURE,
       });
 
-      // Create stream state and process the stream
       const state = createStreamState();
-      await processStreamData(
-        stream,
-        state,
-        controller,
-        encoder,
-        textPartId,
-        {
-          onChunk: callbacks?.onChunk,
-          onUsage: (usage) => accumulateUsage(totalUsage, usage),
-        },
-      );
+      await processStreamData(stream, state, controller, encoder, textPartId, {
+        onChunk: callbacks?.onChunk,
+        onUsage: (usage) => accumulateUsage(totalUsage, usage),
+      });
 
-      // Build v5 parts array from accumulated state
       const streamParts: MessagePart[] = [];
-      if (state.accumulatedText) {
-        streamParts.push({ type: "text", text: state.accumulatedText });
-      }
-      if (state.toolCalls.size > 0) {
+      if (state.accumulatedText) streamParts.push({ type: "text", text: state.accumulatedText });
+
+      if (state.toolCalls.size) {
         for (const tc of state.toolCalls.values()) {
           const { args, error } = parseToolArgs(tc.arguments);
           if (error) {
@@ -429,7 +372,6 @@ export class AgentRuntime {
               error,
             });
           }
-          // Use AI SDK v5 tool-${toolName} pattern
           streamParts.push({
             type: `tool-${tc.name}`,
             toolCallId: tc.id,
@@ -445,113 +387,99 @@ export class AgentRuntime {
         parts: streamParts,
         timestamp: Date.now(),
       };
-
       currentMessages.push(assistantMessage);
       await this.memory.add(assistantMessage);
 
-      if (state.finishReason === "tool_calls" && state.toolCalls.size > 0) {
-        this.status = "tool_execution";
+      if (state.finishReason !== "tool_calls" || !state.toolCalls.size) {
+        sendSSE(controller, encoder, { type: "finish-step" });
+        break;
+      }
 
-        for (const tc of state.toolCalls.values()) {
-          const { args, error: argError } = parseToolArgs(tc.arguments);
-          const toolCall: ToolCall = {
-            id: tc.id,
-            name: tc.name,
-            args,
-            status: "pending",
-          };
+      this.status = "tool_execution";
 
-          if (argError) {
-            logger.warn("[AGENT] Invalid streamed tool arguments", {
-              toolCallId: tc.id,
-              error: argError,
-            });
-            // Send tool-input-error event (AI SDK v5 UI Message Stream Protocol)
-            const dynamic = isDynamicTool(tc.name);
-            sendSSE(controller, encoder, {
-              type: "tool-input-error",
-              toolCallId: tc.id,
-              errorText: `Invalid tool arguments: ${argError}`,
-              ...(dynamic && { dynamic: true }),
-            });
-            await this.recordToolError(
-              toolCall,
-              `Invalid tool arguments: ${argError}`,
-              controller,
-              encoder,
-              currentMessages,
-              toolCalls,
-            );
-            continue;
-          }
+      for (const tc of state.toolCalls.values()) {
+        const { args, error: argError } = parseToolArgs(tc.arguments);
+        const toolCall: ToolCall = { id: tc.id, name: tc.name, args, status: "pending" };
 
-          try {
-            toolCall.status = "executing";
-            const startTime = Date.now();
+        if (argError) {
+          logger.warn("[AGENT] Invalid streamed tool arguments", {
+            toolCallId: tc.id,
+            error: argError,
+          });
 
-            if (callbacks?.onToolCall) {
-              callbacks.onToolCall(toolCall);
-            }
+          const dynamic = isDynamicTool(tc.name);
+          sendSSE(controller, encoder, {
+            type: "tool-input-error",
+            toolCallId: tc.id,
+            errorText: `Invalid tool arguments: ${argError}`,
+            ...(dynamic && { dynamic: true }),
+          });
 
-            // Note: tool-input-available was already sent during streaming
-            // Proceed directly to tool execution
+          await this.recordToolError(
+            toolCall,
+            `Invalid tool arguments: ${argError}`,
+            controller,
+            encoder,
+            currentMessages,
+            toolCalls,
+          );
+          continue;
+        }
 
-            const result = await executeTool(tc.name, toolCall.args, {
-              agentId: this.id,
-              ...toolContext,
-            });
+        try {
+          toolCall.status = "executing";
+          const startTime = Date.now();
 
-            toolCall.status = "completed";
-            toolCall.result = result;
-            toolCall.executionTime = Date.now() - startTime;
-            toolCalls.push(toolCall);
+          callbacks?.onToolCall?.(toolCall);
 
-            // Send tool-output-available event (AI SDK v5 UI Message Stream Protocol)
-            const dynamic = isDynamicTool(tc.name);
-            sendSSE(controller, encoder, {
-              type: "tool-output-available",
-              toolCallId: toolCall.id,
-              output: result,
-              ...(dynamic && { dynamic: true }),
-            });
+          const result = await executeTool(tc.name, toolCall.args, {
+            agentId: this.id,
+            ...toolContext,
+          });
 
-            const toolResultMessage: Message = {
-              id: `tool_${tc.id}`,
-              role: "tool",
-              parts: [{
+          toolCall.status = "completed";
+          toolCall.result = result;
+          toolCall.executionTime = Date.now() - startTime;
+          toolCalls.push(toolCall);
+
+          const dynamic = isDynamicTool(tc.name);
+          sendSSE(controller, encoder, {
+            type: "tool-output-available",
+            toolCallId: toolCall.id,
+            output: result,
+            ...(dynamic && { dynamic: true }),
+          });
+
+          const toolResultMessage: Message = {
+            id: `tool_${tc.id}`,
+            role: "tool",
+            parts: [
+              {
                 type: "tool-result",
                 toolCallId: tc.id,
                 toolName: tc.name,
                 result,
-              }],
-              timestamp: Date.now(),
-            };
-            currentMessages.push(toolResultMessage);
-            await this.memory.add(toolResultMessage);
-          } catch (error) {
-            const errorStr = error instanceof Error ? error.message : String(error);
-            await this.recordToolError(
-              toolCall,
-              errorStr,
-              controller,
-              encoder,
-              currentMessages,
-              toolCalls,
-            );
-          }
+              },
+            ],
+            timestamp: Date.now(),
+          };
+          currentMessages.push(toolResultMessage);
+          await this.memory.add(toolResultMessage);
+        } catch (error) {
+          const errorStr = error instanceof Error ? error.message : String(error);
+          await this.recordToolError(
+            toolCall,
+            errorStr,
+            controller,
+            encoder,
+            currentMessages,
+            toolCalls,
+          );
         }
-
-        // Send finish-step event (Veryfront extension, not part of standard AI SDK v5 protocol)
-        sendSSE(controller, encoder, { type: "finish-step" });
-
-        this.status = "thinking";
-        continue;
       }
 
-      // Send finish-step event (Veryfront extension, not part of standard AI SDK v5 protocol)
       sendSSE(controller, encoder, { type: "finish-step" });
-
-      break;
+      this.status = "thinking";
     }
 
     const lastMessage = currentMessages[currentMessages.length - 1];
@@ -579,7 +507,6 @@ export class AgentRuntime {
     toolCall.error = errorStr;
     toolCalls.push(toolCall);
 
-    // Send tool-output-error event (AI SDK v5 UI Message Stream Protocol)
     const dynamic = isDynamicTool(toolCall.name);
     sendSSE(controller, encoder, {
       type: "tool-output-error",
@@ -591,12 +518,14 @@ export class AgentRuntime {
     const errorMessage: Message = {
       id: `tool_error_${toolCall.id}`,
       role: "tool",
-      parts: [{
-        type: "tool-result",
-        toolCallId: toolCall.id,
-        toolName: toolCall.name,
-        result: { error: errorStr },
-      }],
+      parts: [
+        {
+          type: "tool-result",
+          toolCallId: toolCall.id,
+          toolName: toolCall.name,
+          result: { error: errorStr },
+        },
+      ],
       timestamp: Date.now(),
     };
     currentMessages.push(errorMessage);
@@ -631,7 +560,11 @@ export class AgentRuntime {
   /**
    * Get memory stats
    */
-  async getMemoryStats() {
+  async getMemoryStats(): Promise<{
+    totalMessages: number;
+    estimatedTokens: number;
+    type: string;
+  }> {
     return await this.memory.getStats();
   }
 

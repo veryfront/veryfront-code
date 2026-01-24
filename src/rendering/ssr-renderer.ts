@@ -36,28 +36,17 @@ function supportsStreamingSSR(
 async function pipeToString(
   pipeFn: (writable: NodeJS.WritableStream) => void,
 ): Promise<string> {
-  // Dynamically import Node.js modules for Node environments
-  // In Deno, renderToReadableStream is used instead, so this won't be called
   const { PassThrough } = await import("node:stream");
   const { Buffer } = await import("node:buffer");
 
-  return new Promise((resolve, reject) => {
+  return await new Promise((resolve, reject) => {
     const chunks: Uint8Array[] = [];
     const passThrough = new PassThrough();
 
-    passThrough.on("data", (chunk: Uint8Array) => {
-      chunks.push(chunk);
-    });
+    passThrough.on("data", (chunk: Uint8Array) => chunks.push(chunk));
+    passThrough.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
+    passThrough.on("error", (err: Error) => reject(err));
 
-    passThrough.on("end", () => {
-      resolve(Buffer.concat(chunks).toString("utf-8"));
-    });
-
-    passThrough.on("error", (err: Error) => {
-      reject(err);
-    });
-
-    // Pipe the React output to our PassThrough stream
     try {
       pipeFn(passThrough);
     } catch (err) {
@@ -75,7 +64,6 @@ async function pipeToString(
 function pipeToReadableStream(
   pipeFn: (writable: NodeJS.WritableStream) => void,
 ): ReadableStream<Uint8Array> {
-  // Use ReadableStream.from with an async generator for clean stream conversion
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       const { PassThrough } = await import("node:stream");
@@ -84,16 +72,9 @@ function pipeToReadableStream(
       passThrough.on("data", (chunk: Uint8Array) => {
         controller.enqueue(new Uint8Array(chunk));
       });
+      passThrough.on("end", () => controller.close());
+      passThrough.on("error", (err: Error) => controller.error(err));
 
-      passThrough.on("end", () => {
-        controller.close();
-      });
-
-      passThrough.on("error", (err: Error) => {
-        controller.error(err);
-      });
-
-      // Start piping React output
       try {
         pipeFn(passThrough);
       } catch (err) {
@@ -114,15 +95,6 @@ export interface SSRRenderResult {
   stream: ReadableStream | null;
 }
 
-/**
- * SSRRenderer - Handles server-side rendering of React elements
- *
- * This class manages the React SSR process, supporting:
- * - React 18/19 streaming SSR (renderToReadableStream)
- * - React 17 string SSR (renderToString)
- * - Per-project version detection for multi-tenant rendering
- * - Stream/string delivery modes
- */
 export class SSRRenderer {
   private readonly mode: string;
   private readonly adapter?: RuntimeAdapter;
@@ -135,61 +107,34 @@ export class SSRRenderer {
     this.projectDir = projectDir;
   }
 
-  /**
-   * Get React version info, using per-project detection for multi-tenant support.
-   */
   private async getVersionInfo(): Promise<ReturnType<typeof getReactVersionInfo>> {
-    if (this.versionInfo) {
-      return this.versionInfo;
-    }
+    if (this.versionInfo) return this.versionInfo;
 
     if (this.projectDir) {
       const { getReactVersionInfoForProject } = await import("#veryfront/react");
       this.versionInfo = await getReactVersionInfoForProject(this.projectDir);
-    } else {
-      this.versionInfo = getReactVersionInfo();
+      return this.versionInfo;
     }
 
+    this.versionInfo = getReactVersionInfo();
     return this.versionInfo;
   }
 
-  /**
-   * Render React element to HTML
-   *
-   * Automatically selects the best rendering method based on:
-   * - React version (18/19 for streaming, 17 for string)
-   * - Delivery mode (stream vs string)
-   * - Production vs development mode
-   *
-   * @param pageElement - The React element to render
-   * @param options - Rendering options
-   * @returns HTML string and optional stream
-   */
   async renderToHTML(
     pageElement: React.ReactElement,
     options: SSRRenderOptions,
   ): Promise<SSRRenderResult> {
-    // Set up browser globals before rendering to prevent crashes when
-    // libraries check for browser features during SSR
     setupSSRGlobals();
 
-    let html = "";
-    let stream: ReadableStream | null = null;
-    // Use per-project version detection for multi-tenant support
     const versionInfo = await this.getVersionInfo();
+    const wantsStreamingMode = this.mode === "production" || options.wantsStream;
+    const compiledBinary = isCompiledBinary();
 
-    // Determine if we should use streaming
-    // IMPORTANT: Disable streaming in compiled binaries because React's streaming SSR
-    // uses Workers with blob URLs internally, which fail in deno compile binaries
-    // Error: "Module not found: blob:null/..." in worker
-    const useStreaming = !isCompiledBinary() &&
-      (this.mode === "production" || options.wantsStream) &&
+    const useStreaming = !compiledBinary &&
+      wantsStreamingMode &&
       supportsStreamingSSR(versionInfo);
 
-    if (
-      isCompiledBinary() &&
-      (this.mode === "production" || options.wantsStream)
-    ) {
+    if (compiledBinary && wantsStreamingMode) {
       logger.debug(
         "Streaming SSR disabled in compiled binary (using string rendering)",
         {
@@ -199,75 +144,13 @@ export class SSRRenderer {
       );
     }
 
-    if (useStreaming) {
-      logger.debug("Rendering via streaming adapter", {
-        reactVersion: versionInfo.version,
-        delivery: options.wantsStream ? "stream" : "string",
-      });
-
-      // Use consistent identifierPrefix to ensure useId() generates matching IDs
-      // between SSR and browser hydration (prevents hydration mismatch errors)
-      const renderResult = await withSpan(
-        SpanNames.SSR_REACT_RENDER,
-        () =>
-          renderToStreamAdapter(pageElement, {
-            identifierPrefix: "vf",
-          }),
-        {
-          "ssr.method": "streaming",
-          "ssr.react_version": versionInfo.version,
-          "ssr.wants_stream": options.wantsStream,
-        },
-      );
-
-      if (renderResult.stream) {
-        // TRUE STREAMING: If client wants stream, return it directly WITHOUT buffering
-        // This enables immediate TTFB - the HTML shell is sent before React finishes rendering
-        if (options.wantsStream) {
-          stream = renderResult.stream as ReadableStream;
-          // Don't buffer! HTML stays empty, ETag will be skipped for streaming responses
-          // This is the key optimization for fast TTFB
-          logger.debug("True streaming SSR - returning stream without buffering");
-        } else {
-          // Client doesn't want stream - buffer it for HTML string response
-          html = await streamToString(renderResult.stream);
-
-          if (options.debugMode) {
-            logger.debug("Streaming SSR completed (buffered)", {
-              htmlLength: html.length,
-            });
-          }
-        }
-      } else if (renderResult.pipe) {
-        // Handle Node.js renderToPipeableStream result
-        if (options.wantsStream) {
-          // TRUE STREAMING: Convert Node.js pipe to Web ReadableStream
-          logger.debug("Converting pipeable stream to ReadableStream for true streaming");
-          stream = pipeToReadableStream(renderResult.pipe);
-        } else {
-          logger.debug("Converting pipeable stream to string (Node.js renderToPipeableStream)");
-          html = await pipeToString(renderResult.pipe);
-
-          if (options.debugMode) {
-            logger.debug("Pipeable SSR completed", { htmlLength: html.length });
-          }
-        }
-      } else if (renderResult.html) {
-        html = renderResult.html;
-      } else {
-        throw new VeryfrontError(
-          "SSR failed - no output",
-          ErrorCode.RENDER_ERROR,
-        );
-      }
-    } else {
-      // Use string rendering for React 17 or development mode
+    if (!useStreaming) {
       logger.debug("Using string SSR", {
         mode: this.mode,
         reactVersion: versionInfo.version,
       });
 
-      html = await withSpan(
+      const html = await withSpan(
         SpanNames.SSR_REACT_RENDER,
         () => renderToStringAdapter(pageElement),
         {
@@ -275,14 +158,66 @@ export class SSRRenderer {
           "ssr.react_version": versionInfo.version,
         },
       );
+
+      return { html, stream: null };
     }
 
-    return { html, stream };
+    logger.debug("Rendering via streaming adapter", {
+      reactVersion: versionInfo.version,
+      delivery: options.wantsStream ? "stream" : "string",
+    });
+
+    const renderResult = await withSpan(
+      SpanNames.SSR_REACT_RENDER,
+      () =>
+        renderToStreamAdapter(pageElement, {
+          identifierPrefix: "vf",
+        }),
+      {
+        "ssr.method": "streaming",
+        "ssr.react_version": versionInfo.version,
+        "ssr.wants_stream": options.wantsStream,
+      },
+    );
+
+    if (renderResult.stream) {
+      if (options.wantsStream) {
+        logger.debug("True streaming SSR - returning stream without buffering");
+        return { html: "", stream: renderResult.stream as ReadableStream };
+      }
+
+      const html = await streamToString(renderResult.stream);
+
+      if (options.debugMode) {
+        logger.debug("Streaming SSR completed (buffered)", { htmlLength: html.length });
+      }
+
+      return { html, stream: null };
+    }
+
+    if (renderResult.pipe) {
+      if (options.wantsStream) {
+        logger.debug("Converting pipeable stream to ReadableStream for true streaming");
+        return { html: "", stream: pipeToReadableStream(renderResult.pipe) };
+      }
+
+      logger.debug("Converting pipeable stream to string (Node.js renderToPipeableStream)");
+      const html = await pipeToString(renderResult.pipe);
+
+      if (options.debugMode) {
+        logger.debug("Pipeable SSR completed", { htmlLength: html.length });
+      }
+
+      return { html, stream: null };
+    }
+
+    if (renderResult.html) {
+      return { html: renderResult.html, stream: null };
+    }
+
+    throw new VeryfrontError("SSR failed - no output", ErrorCode.RENDER_ERROR);
   }
 
-  /**
-   * Get rendering strategy info for current React version
-   */
   getRenderingStrategy(): {
     method: "streaming" | "string";
     reactVersion: string;
@@ -307,9 +242,6 @@ export class SSRRenderer {
     };
   }
 
-  /**
-   * Check if streaming is supported and recommended
-   */
   supportsStreaming(): boolean {
     return supportsStreamingSSR(getReactVersionInfo());
   }

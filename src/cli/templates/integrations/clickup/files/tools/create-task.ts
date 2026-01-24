@@ -12,40 +12,19 @@ export default tool({
     assignees: z.array(z.number()).optional().describe("Array of user IDs to assign the task to"),
     tags: z.array(z.string()).optional().describe("Array of tag names to add to the task"),
     status: z.string().optional().describe("Status name for the task"),
-    priority: z.number().min(1).max(4).optional().describe(
-      "Priority level: 1 (urgent), 2 (high), 3 (normal), 4 (low)",
-    ),
+    priority: z
+      .number()
+      .min(1)
+      .max(4)
+      .optional()
+      .describe("Priority level: 1 (urgent), 2 (high), 3 (normal), 4 (low)"),
     dueDate: z.number().optional().describe("Due date in Unix timestamp (milliseconds)"),
     startDate: z.number().optional().describe("Start date in Unix timestamp (milliseconds)"),
     timeEstimate: z.number().optional().describe("Time estimate in milliseconds"),
     notifyAll: z.boolean().default(false).describe("Notify all assignees when task is created"),
   }),
-  async execute({
-    listId,
-    name,
-    description,
-    assignees,
-    tags,
-    status,
-    priority,
-    dueDate,
-    startDate,
-    timeEstimate,
-    notifyAll,
-  }) {
-    const task = await createTask({
-      listId,
-      name,
-      description,
-      assignees,
-      tags,
-      status,
-      priority,
-      dueDate,
-      startDate,
-      timeEstimate,
-      notifyAll,
-    });
+  async execute(input) {
+    const task = await createTask(input);
 
     return {
       success: true,
@@ -53,8 +32,8 @@ export default tool({
         id: task.id,
         name: task.name,
         status: task.status.status,
-        dueDate: task.due_date ? new Date(parseInt(task.due_date)).toISOString() : null,
-        priority: task.priority?.priority || "none",
+        dueDate: task.due_date ? new Date(Number(task.due_date)).toISOString() : null,
+        priority: task.priority?.priority ?? "none",
         assignees: task.assignees.map((a) => a.username),
         list: task.list.name,
         url: `https://app.clickup.com/t/${task.id}`,

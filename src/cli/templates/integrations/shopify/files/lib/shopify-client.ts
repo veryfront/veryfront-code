@@ -1,6 +1,6 @@
 import { getAccessToken } from "./token-store.ts";
 
-const SHOPIFY_SHOP_DOMAIN = process.env.SHOPIFY_SHOP_DOMAIN || "shop.myshopify.com";
+const SHOPIFY_SHOP_DOMAIN = process.env.SHOPIFY_SHOP_DOMAIN ?? "shop.myshopify.com";
 const SHOPIFY_API_VERSION = "2024-01";
 const SHOPIFY_BASE_URL = `https://${SHOPIFY_SHOP_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}`;
 
@@ -88,10 +88,12 @@ interface ShopifyCustomer {
   }>;
 }
 
-async function shopifyFetch<T>(
-  endpoint: string,
-  options: RequestInit = {},
-): Promise<T> {
+function buildQuery(params: URLSearchParams): string {
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+async function shopifyFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = await getAccessToken();
   if (!token) {
     throw new Error("Not authenticated with Shopify. Please connect your account.");
@@ -107,9 +109,9 @@ async function shopifyFetch<T>(
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
+    const error = await response.json().catch(() => ({} as { errors?: string }));
     throw new Error(
-      `Shopify API error: ${response.status} ${error.errors || response.statusText}`,
+      `Shopify API error: ${response.status} ${error.errors ?? response.statusText}`,
     );
   }
 
@@ -126,8 +128,9 @@ export async function listProducts(options?: {
   if (options?.status) params.set("status", options.status);
   if (options?.productType) params.set("product_type", options.productType);
 
-  const query = params.toString() ? `?${params}` : "";
-  const response = await shopifyFetch<{ products: ShopifyProduct[] }>(`/products.json${query}`);
+  const response = await shopifyFetch<{ products: ShopifyProduct[] }>(
+    `/products.json${buildQuery(params)}`,
+  );
   return response.products;
 }
 
@@ -148,8 +151,9 @@ export async function listOrders(options?: {
   if (options?.financialStatus) params.set("financial_status", options.financialStatus);
   if (options?.fulfillmentStatus) params.set("fulfillment_status", options.fulfillmentStatus);
 
-  const query = params.toString() ? `?${params}` : "";
-  const response = await shopifyFetch<{ orders: ShopifyOrder[] }>(`/orders.json${query}`);
+  const response = await shopifyFetch<{ orders: ShopifyOrder[] }>(
+    `/orders.json${buildQuery(params)}`,
+  );
   return response.orders;
 }
 
@@ -158,21 +162,21 @@ export async function getOrder(orderId: number | string): Promise<ShopifyOrder> 
   return response.order;
 }
 
-export async function listCustomers(options?: {
-  limit?: number;
-  query?: string;
-}): Promise<ShopifyCustomer[]> {
+export async function listCustomers(options?: { limit?: number; query?: string }): Promise<ShopifyCustomer[]> {
   const params = new URLSearchParams();
   if (options?.limit) params.set("limit", options.limit.toString());
   if (options?.query) params.set("query", options.query);
 
-  const query = params.toString() ? `?${params}` : "";
-  const response = await shopifyFetch<{ customers: ShopifyCustomer[] }>(`/customers.json${query}`);
+  const response = await shopifyFetch<{ customers: ShopifyCustomer[] }>(
+    `/customers.json${buildQuery(params)}`,
+  );
   return response.customers;
 }
 
 export async function getCustomer(customerId: number | string): Promise<ShopifyCustomer> {
-  const response = await shopifyFetch<{ customer: ShopifyCustomer }>(`/customers/${customerId}.json`);
+  const response = await shopifyFetch<{ customer: ShopifyCustomer }>(
+    `/customers/${customerId}.json`,
+  );
   return response.customer;
 }
 
@@ -194,5 +198,6 @@ export async function getShopInfo(): Promise<{
       timezone: string;
     };
   }>("/shop.json");
+
   return response.shop;
 }

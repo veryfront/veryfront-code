@@ -1,19 +1,13 @@
-/**
- * Zendesk OAuth Callback Route
- *
- * Handles the OAuth callback and exchanges the code for tokens.
- */
-
 import { setZendeskTokens } from "../../../../../lib/token-store.ts";
 
-const getEnv = (name: string): string | undefined => {
+function getEnv(name: string): string | undefined {
   if (typeof Deno !== "undefined") {
     // @ts-ignore: Deno global
     return Deno.env.get(name);
   }
   // @ts-ignore: Node process
   return globalThis.process?.env?.[name];
-};
+}
 
 export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url);
@@ -21,21 +15,18 @@ export async function GET(request: Request): Promise<Response> {
   const error = url.searchParams.get("error");
   const errorDescription = url.searchParams.get("error_description");
 
-  const baseUrl = getEnv("NEXT_PUBLIC_APP_URL") || `${url.protocol}//${url.host}`;
+  const baseUrl = getEnv("NEXT_PUBLIC_APP_URL") ?? `${url.protocol}//${url.host}`;
 
   if (error) {
     console.error("Zendesk OAuth error:", error, errorDescription);
+    const description = encodeURIComponent(errorDescription ?? error);
     return Response.redirect(
-      `${baseUrl}/?error=zendesk_oauth_failed&description=${
-        encodeURIComponent(errorDescription || error)
-      }`,
+      `${baseUrl}/?error=zendesk_oauth_failed&description=${description}`,
       302,
     );
   }
 
-  if (!code) {
-    return Response.redirect(`${baseUrl}/?error=no_code`, 302);
-  }
+  if (!code) return Response.redirect(`${baseUrl}/?error=no_code`, 302);
 
   const subdomain = getEnv("ZENDESK_SUBDOMAIN");
   const clientId = getEnv("ZENDESK_CLIENT_ID");
@@ -48,14 +39,11 @@ export async function GET(request: Request): Promise<Response> {
   const redirectUri = `${baseUrl}/api/auth/zendesk/callback`;
 
   try {
-    // Exchange code for tokens
     const tokenResponse = await fetch(
       `https://${subdomain}.zendesk.com/oauth/tokens`,
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           grant_type: "authorization_code",
           code,
@@ -75,11 +63,12 @@ export async function GET(request: Request): Promise<Response> {
 
     const tokens = await tokenResponse.json();
 
-    // Store tokens
     await setZendeskTokens({
       accessToken: tokens.access_token,
       refreshToken: tokens.refresh_token,
-      expiresAt: tokens.expires_in ? Date.now() + tokens.expires_in * 1000 : undefined,
+      expiresAt: tokens.expires_in
+        ? Date.now() + tokens.expires_in * 1000
+        : undefined,
       subdomain,
     });
 

@@ -1,4 +1,4 @@
-/**
+/*************************
  * Simple VCR (Video Cassette Recorder) for API testing
  * Uses cross-runtime platform abstractions.
  *
@@ -6,14 +6,14 @@
  * Replay:  deno task test:vcr (default)
  *
  * @module cli/test-utils/vcr
- */
+ *************************/
 
 import { load } from "#std/dotenv.ts";
 import { cliLogger } from "#veryfront/utils";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import type { ApiClient } from "../shared/config.ts";
 import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import type { ApiClient } from "../shared/config.ts";
 
 // Load .env.local for credentials in record mode (skip validation against .env.example)
 try {
@@ -37,6 +37,27 @@ interface VCRCassette {
   entries: VCREntry[];
 }
 
+function parseCassette(parsed: unknown): VCRCassette | undefined {
+  if (Array.isArray(parsed)) {
+    const firstEntry = parsed[0];
+    const firstUrl = firstEntry && typeof firstEntry === "object" && "url" in firstEntry
+      ? String(firstEntry.url)
+      : "";
+    const match = firstUrl.match(/\/projects\/([^/]+)/);
+
+    return {
+      meta: { projectSlug: match?.[1] ?? "test-project", recordedAt: "" },
+      entries: parsed as VCREntry[],
+    };
+  }
+
+  if (parsed && typeof parsed === "object" && "entries" in parsed) {
+    return parsed as VCRCassette;
+  }
+
+  return undefined;
+}
+
 /**
  * Create a VCR-wrapped API client
  *
@@ -55,59 +76,41 @@ export async function createVCRClient(
   const cassettePath = `${fixturesDir}/${cassetteName}.json`;
 
   let cassette: VCRCassette = {
-    meta: { projectSlug: projectSlug || "", recordedAt: "" },
+    meta: { projectSlug: projectSlug ?? "", recordedAt: "" },
     entries: [],
   };
+
   const usedIndices = new Set<number>();
 
-  // Load existing cassette for playback
-  if (!recording) {
+  if (recording) {
+    if (!projectSlug) {
+      throw new Error("projectSlug required for VCR=record mode");
+    }
+    cassette.meta = { projectSlug, recordedAt: new Date().toISOString() };
+  } else {
     try {
       const content = await fs.readTextFile(cassettePath);
-      const parsed: unknown = JSON.parse(content);
-      // Handle both old (array) and new (object with meta) format
-      if (Array.isArray(parsed)) {
-        // Extract project slug from first URL
-        const firstEntry = parsed[0];
-        const firstUrl = (firstEntry && typeof firstEntry === "object" && "url" in firstEntry)
-          ? String(firstEntry.url)
-          : "";
-        const match = firstUrl.match(/\/projects\/([^/]+)/);
-        cassette = {
-          meta: { projectSlug: match?.[1] || "test-project", recordedAt: "" },
-          entries: parsed,
-        };
-      } else if (parsed && typeof parsed === "object" && "entries" in parsed) {
-        cassette = parsed as VCRCassette;
-      }
+      const parsed = parseCassette(JSON.parse(content));
+      if (parsed) cassette = parsed;
     } catch {
       throw new Error(
         `Cassette not found: ${cassettePath}\nRun with VCR=record to create it.`,
       );
     }
-  } else {
-    if (!projectSlug) {
-      throw new Error("projectSlug required for VCR=record mode");
-    }
-    cassette.meta = {
-      projectSlug,
-      recordedAt: new Date().toISOString(),
-    };
   }
 
-  // Find matching entry by method and url
   function findEntry(method: string, url: string): VCREntry | undefined {
     for (let i = 0; i < cassette.entries.length; i++) {
       const entry = cassette.entries[i];
-      if (entry && !usedIndices.has(i) && entry.method === method && entry.url === url) {
-        usedIndices.add(i);
-        return entry;
-      }
+      if (!entry || usedIndices.has(i)) continue;
+      if (entry.method !== method || entry.url !== url) continue;
+
+      usedIndices.add(i);
+      return entry;
     }
     return undefined;
   }
 
-  // Record or replay a request
   async function recordOrReplay<T>(
     method: string,
     url: string,
@@ -115,24 +118,17 @@ export async function createVCRClient(
     realCall: () => Promise<T>,
   ): Promise<T> {
     if (recording) {
-      if (!realClient) {
-        throw new Error("Real client required for VCR=record mode");
-      }
+      if (!realClient) throw new Error("Real client required for VCR=record mode");
       const response = await realCall();
       cassette.entries.push({ method, url, body, response });
       return response;
-    } else {
-      const entry = findEntry(method, url);
-      if (!entry) {
-        throw new Error(`No recorded response for: ${method.toUpperCase()} ${url}`);
-      }
-      // VCR responses are stored as unknown - caller expects T
-      // This is safe because the same call that recorded T will replay it
-      return entry.response as T;
     }
+
+    const entry = findEntry(method, url);
+    if (!entry) throw new Error(`No recorded response for: ${method.toUpperCase()} ${url}`);
+    return entry.response as T;
   }
 
-  // Build client with explicit method implementations
   const client: ApiClient = {
     get<T>(url: string, params?: Record<string, string>): Promise<T> {
       return recordOrReplay("get", url, params, () => realClient!.get<T>(url, params));
@@ -152,14 +148,11 @@ export async function createVCRClient(
   };
 
   async function save(): Promise<void> {
-    if (recording && cassette.entries.length > 0) {
-      await fs.mkdir(fixturesDir, { recursive: true });
-      await fs.writeTextFile(
-        cassettePath,
-        JSON.stringify(cassette, null, 2) + "\n",
-      );
-      cliLogger.info(`Saved cassette: ${cassettePath} (${cassette.entries.length} entries)`);
-    }
+    if (!recording || cassette.entries.length === 0) return;
+
+    await fs.mkdir(fixturesDir, { recursive: true });
+    await fs.writeTextFile(cassettePath, `${JSON.stringify(cassette, null, 2)}\n`);
+    cliLogger.info(`Saved cassette: ${cassettePath} (${cassette.entries.length} entries)`);
   }
 
   return { client, save, projectSlug: cassette.meta.projectSlug };
@@ -186,52 +179,25 @@ export interface VCRTestContext {
  *
  * Call this in beforeAll to set up the VCR client. Returns context that
  * should be used throughout the test suite.
- *
- * Usage:
- * ```ts
- * import { initVCRTest, isRecording, type VCRTestContext } from "../test-utils/vcr.ts";
- *
- * describe("my command integration", () => {
- *   let ctx: VCRTestContext;
- *
- *   beforeAll(async () => {
- *     ctx = await initVCRTest("my-cassette");
- *   });
- *
- *   afterAll(async () => {
- *     await ctx.save();
- *   });
- *
- *   it("should do something", async () => {
- *     const result = await myFunction(ctx.client, ctx.projectSlug);
- *   });
- * });
- * ```
  */
 export async function initVCRTest(
   cassetteName: string,
   env: RuntimeEnv = getRuntimeEnv(),
 ): Promise<VCRTestContext> {
-  if (isRecording(env)) {
-    if (!env.projectSlug) {
-      throw new Error("VCR=record requires VERYFRONT_PROJECT_SLUG");
-    }
-    // Dynamic import to avoid loading config module in playback mode
-    const { createApiClient, resolveConfig } = await import("../shared/config.ts");
-    const config = await resolveConfig(cwd());
-    const realClient = createApiClient(config);
-    const vcr = await createVCRClient(cassetteName, realClient, env.projectSlug, env);
-    return {
-      client: vcr.client,
-      projectSlug: vcr.projectSlug,
-      save: vcr.save,
-    };
-  } else {
+  if (!isRecording(env)) {
     const vcr = await createVCRClient(cassetteName);
-    return {
-      client: vcr.client,
-      projectSlug: vcr.projectSlug,
-      save: vcr.save,
-    };
+    return { client: vcr.client, projectSlug: vcr.projectSlug, save: vcr.save };
   }
+
+  if (!env.projectSlug) {
+    throw new Error("VCR=record requires VERYFRONT_PROJECT_SLUG");
+  }
+
+  // Dynamic import to avoid loading config module in playback mode
+  const { createApiClient, resolveConfig } = await import("../shared/config.ts");
+  const config = await resolveConfig(cwd());
+  const realClient = createApiClient(config);
+  const vcr = await createVCRClient(cassetteName, realClient, env.projectSlug, env);
+
+  return { client: vcr.client, projectSlug: vcr.projectSlug, save: vcr.save };
 }

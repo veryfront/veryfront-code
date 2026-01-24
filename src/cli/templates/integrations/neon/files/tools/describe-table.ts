@@ -13,13 +13,7 @@ export default tool({
   async execute({ tableName, schema }) {
     const tableInfo = await describeTable(tableName, schema);
 
-    let rowCount: number | undefined;
-    try {
-      rowCount = await getTableRowCount(tableName, schema);
-    } catch (_error) {
-      // Row count is optional
-      rowCount = undefined;
-    }
+    const rowCount = await getTableRowCount(tableName, schema).catch(() => undefined);
 
     return {
       tableName: tableInfo.tableName,

@@ -159,7 +159,7 @@
 
     "@veryfront/testing": "./src/testing/index.ts",
     "@veryfront/testing/assert": "./src/testing/assert.ts",
-    "@veryfront/testing/bdd": "./src/testing/bdd.deno.ts",
+    "@veryfront/testing/bdd": "./src/testing/bdd.ts",
     "@veryfront/testing/deno-compat": "./src/testing/deno-compat.ts",
     "@veryfront/testing/utils": "./src/testing/utils.ts",
 
@@ -306,6 +306,7 @@
     "batch:prepare": "deno run -A scripts/batch-simplify/batch-simplify.ts prepare",
     "batch:submit": "deno run -A scripts/batch-simplify/batch-simplify.ts submit",
     "batch:status": "deno run -A scripts/batch-simplify/batch-simplify.ts status",
+    "batch:errors": "deno run -A scripts/batch-simplify/batch-simplify.ts errors",
     "batch:download": "deno run -A scripts/batch-simplify/batch-simplify.ts download",
     "batch:apply": "deno run -A scripts/batch-simplify/batch-simplify.ts apply"
   },
@@ -341,13 +342,11 @@
       "dist/",
       "coverage/"
     ],
-    "options": {
-      "useTabs": false,
-      "lineWidth": 100,
-      "indentWidth": 2,
-      "semiColons": true,
-      "singleQuote": false,
-      "proseWrap": "preserve"
-    }
+    "useTabs": false,
+    "lineWidth": 100,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": false,
+    "proseWrap": "preserve"
   }
 }

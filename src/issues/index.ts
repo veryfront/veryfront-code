@@ -1,10 +1,3 @@
-/**
- * File-based issue tracking module
- *
- * @module issues
- */
-
-// Types
 export type {
   CreateIssueOptions,
   Issue,
@@ -15,7 +8,6 @@ export type {
   UpdateIssueOptions,
 } from "./types.ts";
 
-// Schema and validation
 export {
   createIssueSchema,
   generateIssueId,
@@ -33,7 +25,6 @@ export {
 } from "./schema.ts";
 export type { IssuePrefix } from "./schema.ts";
 
-// Core CRUD
 export {
   createIssuesManager,
   ISSUES_DIR,
@@ -45,5 +36,4 @@ export {
   serializeYaml,
 } from "./core.ts";
 
-// MCP tools
 export { issuesMcpTools } from "./mcp.ts";

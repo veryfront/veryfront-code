@@ -4,19 +4,15 @@ import { StaticPathsFetcher } from "./static-paths-fetcher.ts";
 import type { PageWithData } from "./types.ts";
 
 describe("StaticPathsFetcher", () => {
-  describe("constructor", () => {
-    it("should create a new instance", () => {
-      const fetcher = new StaticPathsFetcher();
-      assertExists(fetcher);
-    });
+  it("should create a new instance", () => {
+    const fetcher = new StaticPathsFetcher();
+    assertExists(fetcher);
   });
 
   describe("fetch", () => {
     it("should return null when getStaticPaths is not defined", async () => {
       const fetcher = new StaticPathsFetcher();
-      const pageModule: PageWithData = {
-        default: () => null,
-      };
+      const pageModule: PageWithData = { default: () => null };
 
       const result = await fetcher.fetch(pageModule);
 
@@ -58,7 +54,8 @@ describe("StaticPathsFetcher", () => {
 
       const result = await fetcher.fetch(pageModule);
 
-      assertEquals(result!.fallback, false);
+      assertExists(result);
+      assertEquals(result.fallback, false);
     });
 
     it("should return fallback: true", async () => {
@@ -73,7 +70,8 @@ describe("StaticPathsFetcher", () => {
 
       const result = await fetcher.fetch(pageModule);
 
-      assertEquals(result!.fallback, true);
+      assertExists(result);
+      assertEquals(result.fallback, true);
     });
 
     it("should return fallback: blocking", async () => {
@@ -88,7 +86,8 @@ describe("StaticPathsFetcher", () => {
 
       const result = await fetcher.fetch(pageModule);
 
-      assertEquals(result!.fallback, "blocking");
+      assertExists(result);
+      assertEquals(result.fallback, "blocking");
     });
 
     it("should handle array params for catch-all routes", async () => {

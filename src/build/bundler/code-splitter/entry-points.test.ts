@@ -1,7 +1,3 @@
-/**
- * Tests for entry point creation and path conversion utilities
- */
-
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
 import { convertPathToName, createEntryPoints } from "./entry-points.ts";
@@ -25,7 +21,11 @@ describe("entry-points", () => {
 
     it("should use custom name when provided", () => {
       const routes = [
-        { path: "/blog/post", file: "/project/pages/blog/post.tsx", name: "blog-post-custom" },
+        {
+          path: "/blog/post",
+          file: "/project/pages/blog/post.tsx",
+          name: "blog-post-custom",
+        },
       ];
       const result = createEntryPoints(routes);
 
@@ -36,9 +36,7 @@ describe("entry-points", () => {
     });
 
     it("should generate name from path when name not provided", () => {
-      const routes = [
-        { path: "/blog/post", file: "/project/pages/blog/post.tsx" },
-      ];
+      const routes = [{ path: "/blog/post", file: "/project/pages/blog/post.tsx" }];
       const result = createEntryPoints(routes);
 
       expect(result.entryPoints).toEqual({
@@ -47,8 +45,7 @@ describe("entry-points", () => {
     });
 
     it("should handle empty routes array", () => {
-      const routes: Array<{ path: string; file: string; name?: string }> = [];
-      const result = createEntryPoints(routes);
+      const result = createEntryPoints([]);
 
       expect(result.entryPoints).toEqual({});
       expect(result.routeMap.size).toBe(0);
@@ -89,9 +86,7 @@ describe("entry-points", () => {
     });
 
     it("should handle nested routes", () => {
-      const routes = [
-        { path: "/blog/post/detail", file: "/project/pages/blog/post/detail.tsx" },
-      ];
+      const routes = [{ path: "/blog/post/detail", file: "/project/pages/blog/post/detail.tsx" }];
       const result = createEntryPoints(routes);
 
       expect(result.entryPoints).toEqual({
@@ -102,63 +97,51 @@ describe("entry-points", () => {
 
   describe("convertPathToName", () => {
     it("should convert root path to index", () => {
-      const result = convertPathToName("/");
-      expect(result).toBe("index");
+      expect(convertPathToName("/")).toBe("index");
     });
 
     it("should convert simple path", () => {
-      const result = convertPathToName("/about");
-      expect(result).toBe("about");
+      expect(convertPathToName("/about")).toBe("about");
     });
 
     it("should convert nested path with slashes to hyphens", () => {
-      const result = convertPathToName("/blog/post");
-      expect(result).toBe("blog-post");
+      expect(convertPathToName("/blog/post")).toBe("blog-post");
     });
 
     it("should remove leading slash", () => {
-      const result = convertPathToName("/contact");
-      expect(result).toBe("contact");
+      expect(convertPathToName("/contact")).toBe("contact");
     });
 
     it("should convert deep nested paths", () => {
-      const result = convertPathToName("/blog/post/detail");
-      expect(result).toBe("blog-post-detail");
+      expect(convertPathToName("/blog/post/detail")).toBe("blog-post-detail");
     });
 
     it("should handle path with multiple segments", () => {
-      const result = convertPathToName("/users/profile/settings");
-      expect(result).toBe("users-profile-settings");
+      expect(convertPathToName("/users/profile/settings")).toBe("users-profile-settings");
     });
 
     it("should handle path with trailing slash", () => {
-      const result = convertPathToName("/about/");
-      expect(result).toBe("about-");
+      expect(convertPathToName("/about/")).toBe("about-");
     });
 
     it("should handle path without leading slash", () => {
-      const result = convertPathToName("about");
-      expect(result).toBe("about");
+      expect(convertPathToName("about")).toBe("about");
     });
 
     it("should handle empty path segments", () => {
-      const result = convertPathToName("/blog//post");
-      expect(result).toBe("blog--post");
+      expect(convertPathToName("/blog//post")).toBe("blog--post");
     });
 
     it("should preserve existing hyphens in path", () => {
-      const result = convertPathToName("/my-blog/my-post");
-      expect(result).toBe("my-blog-my-post");
+      expect(convertPathToName("/my-blog/my-post")).toBe("my-blog-my-post");
     });
 
     it("should handle numeric paths", () => {
-      const result = convertPathToName("/2024/01");
-      expect(result).toBe("2024-01");
+      expect(convertPathToName("/2024/01")).toBe("2024-01");
     });
 
     it("should handle mixed alphanumeric paths", () => {
-      const result = convertPathToName("/blog/post-123");
-      expect(result).toBe("blog-post-123");
+      expect(convertPathToName("/blog/post-123")).toBe("blog-post-123");
     });
   });
 

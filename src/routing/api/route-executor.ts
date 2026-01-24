@@ -17,55 +17,41 @@ import { handleAPIError } from "./error-handler.ts";
 import { isAbsolute, join } from "#veryfront/platform/compat/path/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
-/**
- * Creates a project-scoped filesystem adapter that resolves relative paths
- * against the project directory.
- */
 function createProjectScopedFs(fs: FileSystemAdapter, projectDir: string): FileSystemAdapter {
-  const resolvePath = (path: string): string => {
-    if (isAbsolute(path)) return path;
-    return join(projectDir, path);
-  };
+  const resolvePath = (path: string): string => (isAbsolute(path) ? path : join(projectDir, path));
 
   return {
     readFile: (path: string) => fs.readFile(resolvePath(path)),
     readFileBytes: fs.readFileBytes
       ? (path: string) => fs.readFileBytes!(resolvePath(path))
       : undefined,
-    writeFile: fs.writeFile
-      ? (path: string, content: string) => fs.writeFile!(resolvePath(path), content)
-      : undefined,
+    writeFile: (path: string, content: string) => fs.writeFile(resolvePath(path), content),
     exists: (path: string) => fs.exists(resolvePath(path)),
     readDir: (path: string) => fs.readDir(resolvePath(path)),
     stat: (path: string) => fs.stat(resolvePath(path)),
-    mkdir: fs.mkdir
-      ? (path: string, options?: { recursive?: boolean }) => fs.mkdir!(resolvePath(path), options)
-      : undefined,
-    remove: fs.remove
-      ? (path: string, options?: { recursive?: boolean }) => fs.remove!(resolvePath(path), options)
-      : undefined,
+    mkdir: (path: string, options?: { recursive?: boolean }) =>
+      fs.mkdir(resolvePath(path), options),
+    remove: (path: string, options?: { recursive?: boolean }) =>
+      fs.remove(resolvePath(path), options),
     makeTempDir: fs.makeTempDir,
     watch: fs.watch,
     resolveFile: fs.resolveFile ? (path: string) => fs.resolveFile!(resolvePath(path)) : undefined,
-  } as FileSystemAdapter;
+  };
 }
 
-/** Validates that a handler returned a Response instance */
 function validateResponse(response: unknown): asserts response is Response {
-  if (!(response instanceof Response)) {
-    throw toError(createError({
+  if (response instanceof Response) return;
+
+  throw toError(
+    createError({
       type: "api",
       message: "API handler must return a Response",
-    }));
-  }
+    }),
+  );
 }
 
-/** Creates a HEAD response from an existing response (body stripped) */
 function toHeadResponse(response: Response): Response {
-  return new Response(null, {
-    status: response.status,
-    headers: response.headers,
-  });
+  return new Response(null, { status: response.status, headers: response.headers });
 }
 
 export function executeAppRoute(
@@ -76,30 +62,33 @@ export function executeAppRoute(
   adapter: RuntimeAdapter,
 ): Promise<Response> {
   const method = request.method.toUpperCase() as HTTPMethod;
-  return withSpan("api.executeAppRoute", async () => {
-    const handlerModule = handler as Record<string, unknown>;
-    const handlerFn = handlerModule[method] as AppRouteHandler | undefined;
-    const defaultFn = handlerModule.default as AppRouteHandler | undefined;
-    let resolvedFn = handlerFn || defaultFn;
 
-    // HEAD requests can fall back to GET handler
-    if (!resolvedFn && method === "HEAD") {
-      resolvedFn = handlerModule.GET as AppRouteHandler | undefined;
-    }
+  return withSpan(
+    "api.executeAppRoute",
+    async () => {
+      const handlerModule = handler as Record<string, unknown>;
+      const handlerFn = handlerModule[method] as AppRouteHandler | undefined;
+      const defaultFn = handlerModule.default as AppRouteHandler | undefined;
 
-    if (!resolvedFn) {
-      return createAppRouteMethodNotAllowed(handlerModule);
-    }
+      let resolvedFn = handlerFn ?? defaultFn;
 
-    try {
-      const appContext: AppRouteContext = { params: normalizeParams(match.params) };
-      const response = await resolvedFn(request, appContext);
-      validateResponse(response);
-      return method === "HEAD" ? toHeadResponse(response) : response;
-    } catch (error) {
-      return handleAPIError(error, pathname, adapter);
-    }
-  }, { "http.method": method, "http.path": pathname, "api.route.pattern": match.route.pattern });
+      if (!resolvedFn && method === "HEAD") {
+        resolvedFn = handlerModule.GET as AppRouteHandler | undefined;
+      }
+
+      if (!resolvedFn) return createAppRouteMethodNotAllowed(handlerModule);
+
+      try {
+        const appContext: AppRouteContext = { params: normalizeParams(match.params) };
+        const response = await resolvedFn(request, appContext);
+        validateResponse(response);
+        return method === "HEAD" ? toHeadResponse(response) : response;
+      } catch (error) {
+        return handleAPIError(error, pathname, adapter);
+      }
+    },
+    { "http.method": method, "http.path": pathname, "api.route.pattern": match.route.pattern },
+  );
 }
 
 export function executePagesRoute(
@@ -111,22 +100,26 @@ export function executePagesRoute(
   projectDir?: string,
 ): Promise<Response> {
   const method = request.method as keyof APIRoute;
-  return withSpan("api.executePagesRoute", async () => {
-    const methodHandler = handler[method] || handler.default;
 
-    if (!methodHandler) {
-      return createPagesRouteMethodNotAllowed(handler as Record<string, unknown>);
-    }
+  return withSpan(
+    "api.executePagesRoute",
+    async () => {
+      const methodHandler = handler[method] ?? handler.default;
 
-    try {
-      // Use project-scoped fs if projectDir is provided, otherwise use raw adapter.fs
-      const fs = projectDir ? createProjectScopedFs(adapter.fs, projectDir) : adapter.fs;
-      const ctx = createContext(request, match, fs);
-      const response = await (methodHandler as PagesRouteHandler)(ctx);
-      validateResponse(response);
-      return response;
-    } catch (error) {
-      return handleAPIError(error, pathname, adapter);
-    }
-  }, { "http.method": method, "http.path": pathname, "api.route.pattern": match.route.pattern });
+      if (!methodHandler) {
+        return createPagesRouteMethodNotAllowed(handler as Record<string, unknown>);
+      }
+
+      try {
+        const fs = projectDir ? createProjectScopedFs(adapter.fs, projectDir) : adapter.fs;
+        const ctx = createContext(request, match, fs);
+        const response = await (methodHandler as PagesRouteHandler)(ctx);
+        validateResponse(response);
+        return response;
+      } catch (error) {
+        return handleAPIError(error, pathname, adapter);
+      }
+    },
+    { "http.method": method, "http.path": pathname, "api.route.pattern": match.route.pattern },
+  );
 }

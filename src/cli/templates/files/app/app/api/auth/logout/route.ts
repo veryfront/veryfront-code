@@ -1,11 +1,12 @@
 import { deleteSession } from "../../../../lib/auth.ts";
 
-export async function POST(request: Request) {
+export async function POST(request: Request): Promise<Response> {
   try {
-    const cookieHeader = request.headers.get("cookie");
+    const cookieHeader = request.headers.get("cookie") ?? "";
     const sessionToken = cookieHeader
-      ?.split(";")
-      .find((c) => c.trim().startsWith("session="))
+      .split(";")
+      .map((c) => c.trim())
+      .find((c) => c.startsWith("session="))
       ?.split("=")[1];
 
     if (sessionToken) {
@@ -16,8 +17,7 @@ export async function POST(request: Request) {
       { success: true },
       {
         headers: {
-          "Set-Cookie":
-            "session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0",
+          "Set-Cookie": "session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0",
         },
       }
     );

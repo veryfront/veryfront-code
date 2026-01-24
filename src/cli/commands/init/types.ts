@@ -2,9 +2,7 @@ import type { FeatureName, IntegrationName } from "../../templates/types.ts";
 
 export type InitTemplate = "ai" | "app" | "blog" | "docs" | "minimal";
 
-export interface EnvValues {
-  [key: string]: string;
-}
+export type EnvValues = Record<string, string>;
 
 export interface InitOptions {
   name?: string;

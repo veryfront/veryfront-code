@@ -85,31 +85,23 @@ export interface TestSuite {
  * console.log(`Passed: ${results.results.filter(r => r.passed).length}/${results.results.length}`);
  * ```
  */
-export async function testAgent(
-  agent: Agent,
-  testCases: TestCase[],
-): Promise<TestSuite> {
-  const suite: TestSuite = {
-    name: agent.id,
-    results: [],
-    passed: true,
-    totalTime: 0,
-  };
-
+export async function testAgent(agent: Agent, testCases: TestCase[]): Promise<TestSuite> {
   const suiteStartTime = Date.now();
+  const results: TestResult[] = [];
+  let passed = true;
 
   for (const testCase of testCases) {
     const result = await runTestCase(agent, testCase);
-    suite.results.push(result);
-
-    if (!result.passed) {
-      suite.passed = false;
-    }
+    results.push(result);
+    if (!result.passed) passed = false;
   }
 
-  suite.totalTime = Date.now() - suiteStartTime;
-
-  return suite;
+  return {
+    name: agent.id,
+    results,
+    passed,
+    totalTime: Date.now() - suiteStartTime,
+  };
 }
 
 /**
@@ -119,70 +111,25 @@ async function runTestCase(agent: Agent, testCase: TestCase): Promise<TestResult
   const startTime = Date.now();
 
   try {
-    // Set timeout
-    const timeout = testCase.timeout || 30000;
+    const timeoutMs = testCase.timeout ?? 30000;
+
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error("Test timeout")), timeout);
+      setTimeout(() => reject(new Error("Test timeout")), timeoutMs);
     });
 
-    // Execute agent
-    const responsePromise = agent.generate({
-      input: testCase.input,
-    });
-
+    const responsePromise = agent.generate({ input: testCase.input });
     const response = await Promise.race([responsePromise, timeoutPromise]);
 
     const executionTime = Date.now() - startTime;
     const toolCalls = response.toolCalls.map((tc) => tc.name);
 
-    // Validate response
-    let passed = true;
-    let error: string | undefined;
-
-    // Check expected output
-    if (testCase.expected) {
-      if (testCase.expected instanceof RegExp) {
-        passed = testCase.expected.test(response.text);
-        if (!passed) {
-          error = `Output "${response.text}" does not match pattern ${testCase.expected}`;
-        }
-      } else {
-        passed = response.text.includes(testCase.expected);
-        if (!passed) {
-          error = `Output does not contain expected text: "${testCase.expected}"`;
-        }
-      }
-    }
-
-    // Check expected tool calls
-    if (passed && testCase.expectToolCalls) {
-      const expectedTools = testCase.expectToolCalls;
-      const missingTools = expectedTools.filter((t) => !toolCalls.includes(t));
-
-      if (missingTools.length > 0) {
-        passed = false;
-        error = `Expected tool calls not found: ${missingTools.join(", ")}`;
-      }
-    }
-
-    // Custom validation
-    if (passed && testCase.validate) {
-      try {
-        passed = await testCase.validate(response);
-        if (!passed) {
-          error = "Custom validation failed";
-        }
-      } catch (err) {
-        passed = false;
-        error = `Custom validation error: ${err instanceof Error ? err.message : String(err)}`;
-      }
-    }
+    const validation = await validateTestCase(testCase, response, toolCalls);
 
     return {
       name: testCase.name,
-      passed,
+      passed: validation.passed,
       response,
-      error,
+      error: validation.error,
       executionTime,
       toolCalls,
     };
@@ -195,6 +142,59 @@ async function runTestCase(agent: Agent, testCase: TestCase): Promise<TestResult
       toolCalls: [],
     };
   }
+}
+
+async function validateTestCase(
+  testCase: TestCase,
+  response: AgentResponse,
+  toolCalls: string[],
+): Promise<{ passed: boolean; error?: string }> {
+  const expected = testCase.expected;
+
+  if (expected) {
+    if (expected instanceof RegExp) {
+      const passed = expected.test(response.text);
+      if (!passed) {
+        return {
+          passed: false,
+          error: `Output "${response.text}" does not match pattern ${expected}`,
+        };
+      }
+    } else {
+      const passed = response.text.includes(expected);
+      if (!passed) {
+        return {
+          passed: false,
+          error: `Output does not contain expected text: "${expected}"`,
+        };
+      }
+    }
+  }
+
+  const expectedTools = testCase.expectToolCalls;
+  if (expectedTools) {
+    const missingTools = expectedTools.filter((t) => !toolCalls.includes(t));
+    if (missingTools.length > 0) {
+      return {
+        passed: false,
+        error: `Expected tool calls not found: ${missingTools.join(", ")}`,
+      };
+    }
+  }
+
+  if (testCase.validate) {
+    try {
+      const passed = await testCase.validate(response);
+      if (!passed) return { passed: false, error: "Custom validation failed" };
+    } catch (err) {
+      return {
+        passed: false,
+        error: `Custom validation error: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
+  return { passed: true };
 }
 
 /**

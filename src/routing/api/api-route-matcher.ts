@@ -1,6 +1,6 @@
 import type { Route, RouteMatch } from "#veryfront/routing/matchers/types.ts";
-import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { getDisableLruIntervalEnv } from "#veryfront/config/env.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 
 export type { Route, RouteMatch };
 
@@ -44,10 +44,14 @@ export class DynamicRouter {
         paramNames.push(match[1]);
         isOptionalCatchAll = true;
         isCatchAll = true;
-      } else if (match[2]) {
+        continue;
+      }
+      if (match[2]) {
         paramNames.push(match[2]);
         isCatchAll = true;
-      } else if (match[3]) {
+        continue;
+      }
+      if (match[3]) {
         paramNames.push(match[3]);
       }
     }
@@ -98,24 +102,16 @@ export class DynamicRouter {
     const normalizedPath = this.normalizePathname(path);
 
     const cached = this.routeCache.get(normalizedPath);
-    if (cached !== undefined) {
-      return cached;
-    }
+    if (cached !== undefined) return cached;
 
-    const sortedRoutes = this.sortRoutesByPriority();
-
-    for (const [, routeData] of sortedRoutes) {
+    for (const [, routeData] of this.sortRoutesByPriority()) {
       const match = normalizedPath.match(routeData.regex);
-      if (match) {
-        const params = this.extractParams(
-          match,
-          routeData.paramNames,
-          routeData.route,
-        );
-        const result = { params, route: routeData.route };
-        this.routeCache.set(normalizedPath, result);
-        return result;
-      }
+      if (!match) continue;
+
+      const params = this.extractParams(match, routeData.paramNames, routeData.route);
+      const result = { params, route: routeData.route };
+      this.routeCache.set(normalizedPath, result);
+      return result;
     }
 
     this.routeCache.set(normalizedPath, null);
@@ -128,27 +124,28 @@ export class DynamicRouter {
     route: Route,
   ): Record<string, string | string[]> {
     const params: Record<string, string | string[]> = {};
-
     const catchAllParamNames = new Set<string>();
-    route.pattern.replace(/\[\[\.\.\.(\w+)\]\]/g, (_, paramName: string) => {
+
+    route.pattern.replace(/\[\[\.\.\.(\w+)\]\]/g, (_: string, paramName: string) => {
       catchAllParamNames.add(paramName);
       return "";
     });
-    route.pattern.replace(/\[\.\.\.(\w+)\]/g, (_, paramName: string) => {
+    route.pattern.replace(/\[\.\.\.(\w+)\]/g, (_: string, paramName: string) => {
       catchAllParamNames.add(paramName);
       return "";
     });
 
     for (let i = 0; i < paramNames.length; i++) {
-      const paramName = paramNames[i] as string;
+      const paramName = paramNames[i]!;
       const value = match[i + 1];
 
       if (catchAllParamNames.has(paramName)) {
         const segments = value ? value.split("/").filter((segment) => segment.length > 0) : [];
         params[paramName] = segments.map((segment) => decodeURIComponent(segment));
-      } else {
-        params[paramName] = decodeURIComponent(value ?? "");
+        continue;
       }
+
+      params[paramName] = decodeURIComponent(value ?? "");
     }
 
     return params;
@@ -173,12 +170,11 @@ export class DynamicRouter {
 }
 
 function shouldDisableLruInterval(): boolean {
-  if ((globalThis as Record<string, unknown>).__vfDisableLruInterval === true) {
-    return true;
-  }
+  if ((globalThis as Record<string, unknown>).__vfDisableLruInterval === true) return true;
+
   try {
     return getDisableLruIntervalEnv();
-  } catch (_error) {
+  } catch {
     return false;
   }
 }

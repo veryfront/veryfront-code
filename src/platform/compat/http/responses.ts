@@ -1,9 +1,3 @@
-/**
- * Centralized HTTP response factory for clean, consistent error handling.
- * Follows clean code principles: DRY, single responsibility, and clear naming.
- */
-
-/** HTTP Status codes as named constants for clarity */
 export const HttpStatus = {
   OK: 200,
   CREATED: 201,
@@ -26,32 +20,29 @@ export const HttpStatus = {
   GATEWAY_TIMEOUT: 504,
 } as const;
 
-export type HttpStatusCode = typeof HttpStatus[keyof typeof HttpStatus];
+export type HttpStatusCode = (typeof HttpStatus)[keyof typeof HttpStatus];
 
-/** Response options for additional headers and metadata */
 interface ResponseOptions extends ResponseInit {
   headers?: HeadersInit;
   correlationId?: string;
 }
 
-/**
- * Creates a standardized error response.
- * Simple, clear, and consistent across the application.
- */
+function withCorrelationId(headers: Headers, options?: ResponseOptions): void {
+  const correlationId = options?.correlationId;
+  if (correlationId) headers.set("X-Correlation-Id", correlationId);
+}
+
 export function errorResponse(
   status: HttpStatusCode,
   message?: string,
   options?: ResponseOptions,
 ): Response {
   const statusText = getStatusText(status);
-  const body = message || statusText;
+  const body = message ?? statusText;
 
   const headers = new Headers(options?.headers);
   headers.set("Content-Type", "text/plain; charset=utf-8");
-
-  if (options?.correlationId) {
-    headers.set("X-Correlation-Id", options.correlationId);
-  }
+  withCorrelationId(headers, options);
 
   return new Response(body, {
     ...options,
@@ -61,10 +52,6 @@ export function errorResponse(
   });
 }
 
-/**
- * Creates a JSON response with proper content type.
- * Handles serialization errors gracefully.
- */
 export function jsonResponse<T>(
   data: T,
   status: HttpStatusCode = HttpStatus.OK,
@@ -72,10 +59,10 @@ export function jsonResponse<T>(
 ): Response {
   const headers = new Headers(options?.headers);
   headers.set("Content-Type", "application/json; charset=utf-8");
+  withCorrelationId(headers, options);
 
   try {
-    const body = JSON.stringify(data);
-    return new Response(body, {
+    return new Response(JSON.stringify(data), {
       ...options,
       status,
       headers,
@@ -88,26 +75,19 @@ export function jsonResponse<T>(
   }
 }
 
-/**
- * Creates a redirect response.
- * Validates URL to prevent open redirect vulnerabilities.
- */
 export function redirectResponse(
   url: string,
   permanent = false,
   options?: ResponseOptions,
 ): Response {
-  // Simple URL validation to prevent open redirects
   if (!isValidRedirectUrl(url)) {
-    return errorResponse(
-      HttpStatus.BAD_REQUEST,
-      "Invalid redirect URL",
-    );
+    return errorResponse(HttpStatus.BAD_REQUEST, "Invalid redirect URL");
   }
 
   const status = permanent ? HttpStatus.MOVED_PERMANENTLY : HttpStatus.FOUND;
   const headers = new Headers(options?.headers);
   headers.set("Location", url);
+  withCorrelationId(headers, options);
 
   return new Response(null, {
     ...options,
@@ -116,60 +96,68 @@ export function redirectResponse(
   });
 }
 
-// Convenience methods for common responses
-export const notFound = (message?: string, options?: ResponseOptions) =>
-  errorResponse(HttpStatus.NOT_FOUND, message, options);
+export function notFound(message?: string, options?: ResponseOptions): Response {
+  return errorResponse(HttpStatus.NOT_FOUND, message, options);
+}
 
-export const badRequest = (message?: string, options?: ResponseOptions) =>
-  errorResponse(HttpStatus.BAD_REQUEST, message, options);
+export function badRequest(message?: string, options?: ResponseOptions): Response {
+  return errorResponse(HttpStatus.BAD_REQUEST, message, options);
+}
 
-export const unauthorized = (message?: string, options?: ResponseOptions) =>
-  errorResponse(HttpStatus.UNAUTHORIZED, message, options);
+export function unauthorized(message?: string, options?: ResponseOptions): Response {
+  return errorResponse(HttpStatus.UNAUTHORIZED, message, options);
+}
 
-export const forbidden = (message?: string, options?: ResponseOptions) =>
-  errorResponse(HttpStatus.FORBIDDEN, message, options);
+export function forbidden(message?: string, options?: ResponseOptions): Response {
+  return errorResponse(HttpStatus.FORBIDDEN, message, options);
+}
 
-export const internalServerError = (message?: string, options?: ResponseOptions) =>
-  errorResponse(HttpStatus.INTERNAL_SERVER_ERROR, message, options);
+export function internalServerError(message?: string, options?: ResponseOptions): Response {
+  return errorResponse(HttpStatus.INTERNAL_SERVER_ERROR, message, options);
+}
 
-export const badGateway = (message?: string, options?: ResponseOptions) =>
-  errorResponse(HttpStatus.BAD_GATEWAY, message, options);
+export function badGateway(message?: string, options?: ResponseOptions): Response {
+  return errorResponse(HttpStatus.BAD_GATEWAY, message, options);
+}
 
-export const serviceUnavailable = (message?: string, options?: ResponseOptions) =>
-  errorResponse(HttpStatus.SERVICE_UNAVAILABLE, message, options);
+export function serviceUnavailable(message?: string, options?: ResponseOptions): Response {
+  return errorResponse(HttpStatus.SERVICE_UNAVAILABLE, message, options);
+}
 
-export const methodNotAllowed = (allowed: string[], options?: ResponseOptions) => {
+export function methodNotAllowed(allowed: string[], options?: ResponseOptions): Response {
+  const allow = allowed.join(", ");
   const headers = new Headers(options?.headers);
-  headers.set("Allow", allowed.join(", "));
+  headers.set("Allow", allow);
+  withCorrelationId(headers, options);
+
   return errorResponse(
     HttpStatus.METHOD_NOT_ALLOWED,
-    `Method not allowed. Allowed methods: ${allowed.join(", ")}`,
+    `Method not allowed. Allowed methods: ${allow}`,
     { ...options, headers },
   );
-};
+}
 
-export const ok = <T>(data?: T, options?: ResponseOptions) =>
-  data === undefined
-    ? new Response(null, { status: HttpStatus.OK, ...options })
-    : jsonResponse(data, HttpStatus.OK, options);
+export function ok<T>(data?: T, options?: ResponseOptions): Response {
+  if (data === undefined) return new Response(null, { status: HttpStatus.OK, ...options });
+  return jsonResponse(data, HttpStatus.OK, options);
+}
 
-export const created = <T>(data?: T, location?: string, options?: ResponseOptions) => {
+export function created<T>(data?: T, location?: string, options?: ResponseOptions): Response {
   const headers = new Headers(options?.headers);
-  if (location) {
-    headers.set("Location", location);
+  if (location) headers.set("Location", location);
+  withCorrelationId(headers, options);
+
+  if (data === undefined) {
+    return new Response(null, { status: HttpStatus.CREATED, headers, ...options });
   }
-  return data === undefined
-    ? new Response(null, { status: HttpStatus.CREATED, headers, ...options })
-    : jsonResponse(data, HttpStatus.CREATED, { ...options, headers });
-};
 
-export const noContent = (options?: ResponseOptions) =>
-  new Response(null, { status: HttpStatus.NO_CONTENT, ...options });
+  return jsonResponse(data, HttpStatus.CREATED, { ...options, headers });
+}
 
-/**
- * Creates a JSON error response with { ok: false, error: message } format.
- * Commonly used for API error responses.
- */
+export function noContent(options?: ResponseOptions): Response {
+  return new Response(null, { status: HttpStatus.NO_CONTENT, ...options });
+}
+
 export function jsonErrorResponse(
   status: HttpStatusCode,
   error: string,
@@ -177,6 +165,7 @@ export function jsonErrorResponse(
 ): Response {
   const headers = new Headers(options?.headers);
   headers.set("Content-Type", "application/json; charset=utf-8");
+  withCorrelationId(headers, options);
 
   return new Response(JSON.stringify({ ok: false, error }), {
     ...options,
@@ -185,10 +174,6 @@ export function jsonErrorResponse(
   });
 }
 
-/**
- * Helper function to get human-readable status text.
- * Keeps the mapping simple and maintainable.
- */
 function getStatusText(status: HttpStatusCode): string {
   const statusTexts: Record<HttpStatusCode, string> = {
     [HttpStatus.OK]: "OK",
@@ -212,23 +197,17 @@ function getStatusText(status: HttpStatusCode): string {
     [HttpStatus.GATEWAY_TIMEOUT]: "Gateway Timeout",
   };
 
-  return statusTexts[status] || "Unknown Status";
+  return statusTexts[status] ?? "Unknown Status";
 }
 
-/**
- * Simple URL validation for redirect safety.
- * Prevents open redirect vulnerabilities.
- */
 function isValidRedirectUrl(url: string): boolean {
   try {
-    const parsed = new URL(url, "http://localhost"); // Base URL for relative URLs
+    const parsed = new URL(url, "http://localhost");
 
-    // Allow relative URLs and same-origin absolute URLs
     if (url.startsWith("/") || url.startsWith("./") || url.startsWith("../")) {
       return true;
     }
 
-    // For absolute URLs, could add domain whitelist here if needed
     return parsed.protocol === "http:" || parsed.protocol === "https:";
   } catch {
     return false;

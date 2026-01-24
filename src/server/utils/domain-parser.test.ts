@@ -4,7 +4,6 @@ import { getEffectiveProjectSlug, isVeryfrontDomain, parseProjectDomain } from "
 
 describe("domain-parser", () => {
   describe("parseProjectDomain", () => {
-    // Local development (veryfront.me - preferred)
     it("veryfront.me preview", () => {
       const result = parseProjectDomain("myproject.preview.veryfront.me:8080");
       assertEquals(result.slug, "myproject");
@@ -44,7 +43,6 @@ describe("domain-parser", () => {
       assertEquals(result.isDraft, true);
     });
 
-    // Local development (lvh.me - alternative)
     it("lvh.me preview", () => {
       const result = parseProjectDomain("myproject.preview.lvh.me:3001");
       assertEquals(result.slug, "myproject");
@@ -82,7 +80,6 @@ describe("domain-parser", () => {
       assertEquals(result.isVeryfrontDomain, true);
     });
 
-    // Production (veryfront.com)
     it("veryfront.com preview", () => {
       const result = parseProjectDomain("myproject.preview.veryfront.com");
       assertEquals(result.slug, "myproject");
@@ -123,7 +120,6 @@ describe("domain-parser", () => {
       assertEquals(result.isVeryfrontDomain, true);
     });
 
-    // Custom domains
     it("custom domain (not recognized)", () => {
       const result = parseProjectDomain("example.com");
       assertEquals(result.slug, null);
@@ -131,7 +127,6 @@ describe("domain-parser", () => {
       assertEquals(result.isVeryfrontDomain, false);
     });
 
-    // Edge cases
     it("handles mixed case domains", () => {
       const result = parseProjectDomain("MyProject.preview.lvh.me");
       assertEquals(result.slug, "MyProject");

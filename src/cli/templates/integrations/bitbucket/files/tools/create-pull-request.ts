@@ -6,43 +6,35 @@ export default tool({
   id: "create-pull-request",
   description: "Create a new pull request in a Bitbucket repository",
   inputSchema: z.object({
-    workspace: z
-      .string()
-      .describe("Workspace name or UUID"),
-    repoSlug: z
-      .string()
-      .describe("Repository slug (e.g., 'my-repo')"),
-    title: z
-      .string()
-      .min(1)
-      .describe("Pull request title"),
+    workspace: z.string().describe("Workspace name or UUID"),
+    repoSlug: z.string().describe("Repository slug (e.g., 'my-repo')"),
+    title: z.string().min(1).describe("Pull request title"),
     description: z
       .string()
       .optional()
       .describe("Pull request description (supports Markdown)"),
-    sourceBranch: z
-      .string()
-      .describe("Source branch name"),
-    destinationBranch: z
-      .string()
-      .describe("Destination branch name"),
+    sourceBranch: z.string().describe("Source branch name"),
+    destinationBranch: z.string().describe("Destination branch name"),
     closeSourceBranch: z
       .boolean()
       .optional()
       .default(false)
       .describe("Close source branch after merge"),
   }),
-  execute: async ({
-    workspace,
-    repoSlug,
-    title,
-    description,
-    sourceBranch,
-    destinationBranch,
-    closeSourceBranch,
-  }, context) => {
+  execute: async (
+    {
+      workspace,
+      repoSlug,
+      title,
+      description,
+      sourceBranch,
+      destinationBranch,
+      closeSourceBranch,
+    },
+    context,
+  ) => {
     // Default to "current-user" for development; in production, always pass userId from session
-    const userId = (context?.userId as string | undefined) || "current-user";
+    const userId = context?.userId ?? "current-user";
 
     try {
       const bitbucket = createBitbucketClient(userId);

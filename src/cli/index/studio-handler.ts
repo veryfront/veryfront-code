@@ -5,16 +5,15 @@ import { formatUserError } from "#veryfront/errors/user-friendly/index.ts";
 import { exitProcess } from "../utils/index.ts";
 
 export async function handleStudioCommand(args: ParsedArgs): Promise<void> {
-  // Project is optional - will be auto-detected if not provided
-  const project = args._[1] as string | undefined;
-  const branch = args.branch as string | undefined;
-  const file = args.file as string | undefined;
+  const project = args._[1];
+  const branch = args.branch;
+  const file = args.file;
 
   try {
     await studioCommand({
-      project, // undefined = auto-detect
-      branch,
-      file,
+      project: typeof project === "string" ? project : undefined,
+      branch: typeof branch === "string" ? branch : undefined,
+      file: typeof file === "string" ? file : undefined,
     });
   } catch (error) {
     const formattedError = error instanceof Error ? formatUserError(error) : String(error);

@@ -1,12 +1,3 @@
-/**
- * Domain Lookup Service
- *
- * Resolves custom domains to project slugs and environments.
- * Used for JIT rendering of production sites with custom domains.
- *
- * Results are cached to avoid API calls on every request.
- */
-
 import { logger } from "#veryfront/utils";
 import { injectContext, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
@@ -23,128 +14,91 @@ export interface DomainLookupConfig {
   apiToken: string;
 }
 
-/**
- * Domain lookup cache entry.
- * Stores both successful results and 404s to prevent repeated lookups.
- */
 interface CacheEntry {
   result: DomainLookupResult | null;
   expiresAt: number;
 }
 
-/** Cache TTL in milliseconds (60 seconds) */
 const DOMAIN_CACHE_TTL_MS = 60_000;
-
-/** Maximum cache entries before cleanup */
 const DOMAIN_CACHE_MAX_ENTRIES = 1000;
 
-/** In-memory cache for domain lookups */
 const domainCache = new Map<string, CacheEntry>();
-
-/** In-flight requests to prevent duplicate API calls */
 const inFlightRequests = new Map<string, Promise<DomainLookupResult | null>>();
 
-/**
- * Get cache key for domain lookup.
- */
-function getCacheKey(domain: string): string {
+function normalizeDomain(domain: string): string {
   return domain.replace(/:\d+$/, "").toLowerCase();
 }
 
-/**
- * Clean up expired cache entries.
- */
 function cleanupExpiredEntries(): void {
   const now = Date.now();
   for (const [key, entry] of domainCache) {
-    if (entry.expiresAt < now) {
-      domainCache.delete(key);
-    }
+    if (entry.expiresAt < now) domainCache.delete(key);
   }
 }
 
-/**
- * Evict oldest entries if cache is too large.
- */
 function evictOldestEntries(): void {
   if (domainCache.size < DOMAIN_CACHE_MAX_ENTRIES) return;
 
-  // Convert to array and sort by expiration time
   const entries = [...domainCache.entries()].sort((a, b) => a[1].expiresAt - b[1].expiresAt);
-
-  // Remove oldest 10%
   const toRemove = Math.ceil(entries.length * 0.1);
+
   for (let i = 0; i < toRemove; i++) {
     const entry = entries[i];
-    if (entry) {
-      domainCache.delete(entry[0]);
-    }
+    if (entry) domainCache.delete(entry[0]);
   }
 }
 
-/**
- * Look up project info by custom domain.
- * Results are cached to avoid API calls on every request.
- *
- * @param domain - The domain to look up
- * @param config - API configuration
- * @returns The domain lookup result or null if not found
- */
 export function lookupProjectByDomain(
   domain: string,
   config: DomainLookupConfig,
 ): Promise<DomainLookupResult | null> {
-  return withSpan("server.domainLookup.lookup", async () => {
-    const cacheKey = getCacheKey(domain);
-    const now = Date.now();
+  return withSpan(
+    "server.domainLookup.lookup",
+    async () => {
+      const cacheKey = normalizeDomain(domain);
+      const now = Date.now();
 
-    // Check cache first
-    const cached = domainCache.get(cacheKey);
-    if (cached && cached.expiresAt > now) {
-      logger.debug("[DomainLookup] Cache hit", {
-        domain,
-        projectSlug: cached.result?.project_slug,
-        ttlRemaining: cached.expiresAt - now,
-      });
-      return cached.result;
-    }
-
-    // Check for in-flight request to prevent duplicate API calls
-    const inFlight = inFlightRequests.get(cacheKey);
-    if (inFlight) {
-      logger.debug("[DomainLookup] Waiting for in-flight request", { domain });
-      return inFlight;
-    }
-
-    // Make API call
-    const requestPromise = fetchDomainLookup(domain, config);
-    inFlightRequests.set(cacheKey, requestPromise);
-
-    try {
-      const result = await requestPromise;
-
-      // Cache the result (including nulls for 404s)
-      domainCache.set(cacheKey, {
-        result,
-        expiresAt: now + DOMAIN_CACHE_TTL_MS,
-      });
-
-      // Cleanup periodically
-      if (domainCache.size > DOMAIN_CACHE_MAX_ENTRIES / 2) {
-        cleanupExpiredEntries();
-        evictOldestEntries();
+      const cached = domainCache.get(cacheKey);
+      if (cached?.expiresAt && cached.expiresAt > now) {
+        logger.debug("[DomainLookup] Cache hit", {
+          domain,
+          projectSlug: cached.result?.project_slug,
+          ttlRemaining: cached.expiresAt - now,
+        });
+        return cached.result;
       }
 
-      return result;
-    } finally {
-      inFlightRequests.delete(cacheKey);
-    }
-  }, { "domain.lookup.domain": domain });
+      const inFlight = inFlightRequests.get(cacheKey);
+      if (inFlight) {
+        logger.debug("[DomainLookup] Waiting for in-flight request", { domain });
+        return inFlight;
+      }
+
+      const requestPromise = fetchDomainLookup(domain, config);
+      inFlightRequests.set(cacheKey, requestPromise);
+
+      try {
+        const result = await requestPromise;
+
+        domainCache.set(cacheKey, {
+          result,
+          expiresAt: now + DOMAIN_CACHE_TTL_MS,
+        });
+
+        if (domainCache.size > DOMAIN_CACHE_MAX_ENTRIES / 2) {
+          cleanupExpiredEntries();
+          evictOldestEntries();
+        }
+
+        return result;
+      } finally {
+        inFlightRequests.delete(cacheKey);
+      }
+    },
+    { "domain.lookup.domain": domain },
+  );
 }
 
-/**
- * Project API response environment type.
- */
 interface ProjectEnvironment {
   id: string;
   name: string;
@@ -152,9 +106,6 @@ interface ProjectEnvironment {
   active_release_id?: string | null;
 }
 
-/**
- * Project API response type.
- */
 interface ProjectResponse {
   id: string;
   name: string;
@@ -162,121 +113,98 @@ interface ProjectResponse {
   environments?: ProjectEnvironment[];
 }
 
-/**
- * Internal function to fetch project by domain from API.
- * Uses GET /projects/{domain} which resolves domains automatically.
- */
 function fetchDomainLookup(
   domain: string,
   config: DomainLookupConfig,
 ): Promise<DomainLookupResult | null> {
-  return withSpan("server.domainLookup.fetch", async () => {
-    const domainWithoutPort = domain.replace(/:\d+$/, "");
-    const encodedDomain = encodeURIComponent(domainWithoutPort);
-    const url = `${config.apiBaseUrl}/projects/${encodedDomain}`;
+  return withSpan(
+    "server.domainLookup.fetch",
+    async () => {
+      const domainWithoutPort = domain.replace(/:\d+$/, "");
+      const normalizedDomain = domainWithoutPort.toLowerCase();
+      const url = `${config.apiBaseUrl}/projects/${encodeURIComponent(domainWithoutPort)}`;
 
-    logger.debug("[DomainLookup] Fetching from API", { domain, url });
+      logger.debug("[DomainLookup] Fetching from API", { domain, url });
 
-    try {
-      const headers = new Headers({
-        Authorization: `Bearer ${config.apiToken}`,
-        Accept: "application/json",
-      });
-      injectContext(headers);
+      try {
+        const headers = new Headers({
+          Authorization: `Bearer ${config.apiToken}`,
+          Accept: "application/json",
+        });
+        injectContext(headers);
 
-      const response = await fetch(url, { headers });
+        const response = await fetch(url, { headers });
 
-      if (response.status === 404) {
-        logger.debug("[DomainLookup] No project found for domain", { domain });
-        return null;
-      }
+        if (response.status === 404) {
+          logger.debug("[DomainLookup] No project found for domain", { domain });
+          return null;
+        }
 
-      if (!response.ok) {
-        logger.error("[DomainLookup] API error", {
+        if (!response.ok) {
+          logger.error("[DomainLookup] API error", {
+            domain,
+            status: response.status,
+            statusText: response.statusText,
+          });
+          return null;
+        }
+
+        const project = (await response.json()) as ProjectResponse;
+
+        const matchingEnv = project.environments?.find((env) =>
+          env.domains?.some((d) => d.toLowerCase() === normalizedDomain)
+        );
+
+        const result: DomainLookupResult = {
+          project_id: project.id,
+          project_slug: project.slug,
+          project_name: project.name,
+          environment: matchingEnv ? { id: matchingEnv.id, name: matchingEnv.name } : null,
+          release_id: matchingEnv?.active_release_id ?? null,
+        };
+
+        logger.debug("[DomainLookup] Domain lookup result", {
           domain,
-          status: response.status,
-          statusText: response.statusText,
+          projectSlug: result.project_slug,
+          environment: result.environment?.name,
+        });
+
+        return result;
+      } catch (error) {
+        logger.error("[DomainLookup] Failed to lookup domain", {
+          domain,
+          error: error instanceof Error ? error.message : String(error),
         });
         return null;
       }
-
-      const project = await response.json() as ProjectResponse;
-
-      // Find the environment that has this domain
-      const matchingEnv = project.environments?.find(
-        (env) => env.domains?.some((d) => d.toLowerCase() === domainWithoutPort.toLowerCase()),
-      );
-
-      const result: DomainLookupResult = {
-        project_id: project.id,
-        project_slug: project.slug,
-        project_name: project.name,
-        environment: matchingEnv ? { id: matchingEnv.id, name: matchingEnv.name } : null,
-        release_id: matchingEnv?.active_release_id ?? null,
-      };
-
-      logger.debug("[DomainLookup] Domain lookup result", {
-        domain,
-        projectSlug: result.project_slug,
-        environment: result.environment?.name,
-      });
-
-      return result;
-    } catch (error) {
-      logger.error("[DomainLookup] Failed to lookup domain", {
-        domain,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return null;
-    }
-  }, { "domain.fetch.domain": domain });
+    },
+    { "domain.fetch.domain": domain },
+  );
 }
 
-/**
- * Clear the domain lookup cache.
- * Useful for testing or when domains are updated.
- */
 export function clearDomainCache(): void {
   domainCache.clear();
   inFlightRequests.clear();
   logger.debug("[DomainLookup] Cache cleared");
 }
 
-/**
- * Get cache statistics for monitoring.
- */
 export function getDomainCacheStats(): { size: number; maxSize: number } {
-  return {
-    size: domainCache.size,
-    maxSize: DOMAIN_CACHE_MAX_ENTRIES,
-  };
+  return { size: domainCache.size, maxSize: DOMAIN_CACHE_MAX_ENTRIES };
 }
 
-/**
- * Determine the environment type from the lookup result.
- */
 export function getEnvironmentType(
   result: DomainLookupResult | null,
 ): "preview" | "production" | undefined {
-  if (!result?.environment) {
-    return undefined;
-  }
+  const envName = result?.environment?.name.toLowerCase();
+  if (!envName) return undefined;
 
-  const envName = result.environment.name.toLowerCase();
+  if (envName.includes("production") || envName === "prod") return "production";
 
-  // Production environments typically contain "production" or "prod"
-  if (envName.includes("production") || envName === "prod") {
-    return "production";
-  }
-
-  // Preview/staging environments
   if (
-    envName.includes("preview") || envName.includes("staging") ||
-    envName.includes("development")
+    envName.includes("preview") || envName.includes("staging") || envName.includes("development")
   ) {
     return "preview";
   }
 
-  // Default to production for custom domains (most common use case)
   return "production";
 }

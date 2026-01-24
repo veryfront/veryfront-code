@@ -8,18 +8,15 @@ import { runtime } from "#veryfront/platform/adapters/detect.ts";
 
 export async function compileAllMDX(options: CompileOptions): Promise<Map<string, CompileResult>> {
   const results = new Map<string, CompileResult>();
-
   const directories = ["pages", "layouts", "providers"];
 
   for (const dir of directories) {
     const fullPath = join(options.projectDir, dir);
-    if (await pathExists(fullPath)) {
-      await compileMDXDirectory(fullPath, options, results);
-    }
+    if (!(await pathExists(fullPath))) continue;
+    await compileMDXDirectory(fullPath, options, results);
   }
 
   logger.info(`Compiled ${results.size} MDX files`);
-
   return results;
 }
 
@@ -29,17 +26,11 @@ export async function compileMDXDirectory(
   results: Map<string, CompileResult>,
 ): Promise<void> {
   const adapter = await runtime.get();
-  for await (
-    const file of discoverFiles({
-      baseDir: dir,
-      extensions: [".mdx"],
-      adapter,
-    })
-  ) {
+
+  for await (const file of discoverFiles({ baseDir: dir, extensions: [".mdx"], adapter })) {
     try {
       const content = await adapter.fs.readFile(file.path);
-      const result = await compileMDXFile(file.path, content, options);
-      results.set(file.path, result);
+      results.set(file.path, await compileMDXFile(file.path, content, options));
     } catch (error) {
       logger.error(`Failed to compile ${file.path}:`, error);
     }

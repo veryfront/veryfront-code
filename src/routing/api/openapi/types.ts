@@ -25,27 +25,17 @@ export interface OpenAPIRouteConfig<
   TQuery extends z.ZodTypeAny = z.ZodTypeAny,
   TBody extends z.ZodTypeAny = z.ZodTypeAny,
 > {
-  /** Short summary of what the endpoint does */
   summary?: string;
-  /** Longer description with details */
   description?: string;
-  /** Tags for grouping endpoints in documentation */
   tags?: string[];
-  /** Zod schema for path parameters (e.g., { id: z.string() }) */
   params?: TParams;
-  /** Zod schema for query string parameters */
   query?: TQuery;
-  /** Zod schema for request body (POST/PUT/PATCH) */
   body?: TBody;
-  /** Response schemas by status code */
-  response?: {
-    [statusCode: number]:
-      | z.ZodTypeAny
-      | { schema: z.ZodTypeAny; description?: string };
-  };
-  /** Mark endpoint as deprecated */
+  response?: Record<
+    number,
+    z.ZodTypeAny | { schema: z.ZodTypeAny; description?: string }
+  >;
   deprecated?: boolean;
-  /** The actual route handler function */
   handler: AppRouteHandler;
 }
 
@@ -58,21 +48,18 @@ export interface OpenAPIRouteMetadata {
   description?: string;
   tags?: string[];
   deprecated?: boolean;
-  /** JSON Schema for path parameters */
   params?: JsonSchema;
-  /** JSON Schema for query parameters */
   query?: JsonSchema;
-  /** JSON Schema for request body */
   body?: JsonSchema;
-  /** Response schemas by status code */
-  responses?: {
-    [statusCode: string]: {
+  responses?: Record<
+    string,
+    {
       description?: string;
       content?: {
         "application/json"?: { schema: JsonSchema };
       };
-    };
-  };
+    }
+  >;
 }
 
 /**

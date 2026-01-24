@@ -40,29 +40,25 @@ export function createRelativeFsPlugin(projectDir: string, adapter: RuntimeAdapt
           : joinPath(basedir, args.path);
 
         const candidates: string[] = [candidate];
-        for (const ext of exts) {
-          candidates.push(candidate + ext);
-        }
-        for (const ext of exts) {
-          candidates.push(joinPath(candidate, `index${ext}`));
-        }
+        for (const ext of exts) candidates.push(candidate + ext);
+        for (const ext of exts) candidates.push(joinPath(candidate, `index${ext}`));
 
         for (const f of candidates) {
           try {
             const st = await adapter.fs.stat(f);
             if (st.isFile) return { path: f };
           } catch {
-            /* next */
+            // next
           }
         }
+
         return undefined;
       });
 
       build.onLoad({ filter: /\.(tsx?|jsx?|mjs)$/ }, async (args: OnLoadArgs) => {
         try {
           const contents = await adapter.fs.readFile(args.path);
-          const loader = getLoaderForPath(args.path);
-          return { contents, loader };
+          return { contents, loader: getLoaderForPath(args.path) };
         } catch (error) {
           return {
             errors: [
@@ -80,7 +76,7 @@ export function createRelativeFsPlugin(projectDir: string, adapter: RuntimeAdapt
 
 /** Map of common packages to their esm.sh URLs for browser imports */
 const ESM_PACKAGE_MAP: Record<string, string> = {
-  "react": getReactCDNUrl(REACT_DEFAULT_VERSION),
+  react: getReactCDNUrl(REACT_DEFAULT_VERSION),
   "react-dom": getReactDOMCDNUrl(REACT_DEFAULT_VERSION),
   "react-dom/client": getReactDOMClientCDNUrl(REACT_DEFAULT_VERSION),
   "react/jsx-runtime": getReactJSXRuntimeCDNUrl(REACT_DEFAULT_VERSION),
@@ -92,6 +88,28 @@ export interface BareExternalPluginOptions {
   lockfile?: LockfileManager;
   projectDir?: string;
   strict?: boolean;
+}
+
+function isBareImport(path: string): boolean {
+  return !path.startsWith(".") &&
+    !path.startsWith("/") &&
+    !path.startsWith("http://") &&
+    !path.startsWith("https://");
+}
+
+function toEsmUrl(path: string): string {
+  return ESM_PACKAGE_MAP[path] ?? `https://esm.sh/${path}`;
+}
+
+function resolveAsExternalOrHttps(
+  path: string,
+  bundle: boolean,
+): { path: string; external: true } | {
+  path: string;
+  namespace: "https";
+} {
+  if (bundle) return { path, namespace: "https" };
+  return { path, external: true };
 }
 
 /** Create bare module external plugin that rewrites npm imports to esm.sh URLs */
@@ -109,89 +127,77 @@ export function createBareExternalPlugin(
     name: "veryfront-bare-ext",
     setup(build: PluginBuild) {
       build.onResolve({ filter: /.*/ }, (args: OnResolveArgs) => {
-        const isBare = !args.path.startsWith(".") &&
-          !args.path.startsWith("/") &&
-          !args.path.startsWith("http://") &&
-          !args.path.startsWith("https://");
-        if (!isBare) return undefined;
-        if (args.kind === "import-statement" || args.kind === "dynamic-import") {
-          const esmUrl = ESM_PACKAGE_MAP[args.path];
-          if (esmUrl) {
-            if (bundle) {
-              return { path: esmUrl, namespace: "https" };
-            }
-            return { path: esmUrl, external: true };
-          }
-          const fallbackUrl = `https://esm.sh/${args.path}`;
-          if (bundle) {
-            return { path: fallbackUrl, namespace: "https" };
-          }
-          return { path: fallbackUrl, external: true };
-        }
-        return undefined;
+        if (!isBareImport(args.path)) return undefined;
+        if (args.kind !== "import-statement" && args.kind !== "dynamic-import") return undefined;
+
+        return resolveAsExternalOrHttps(toEsmUrl(args.path), bundle);
       });
 
-      if (bundle) {
-        build.onLoad({ filter: /.*/, namespace: "https" }, async (args: OnLoadArgs) => {
-          if (lockfile) {
-            const cached = await lockfile.get(args.path);
-            if (cached) {
-              logger.debug(`[bare-ext] lockfile hit: ${args.path}`);
-              try {
-                const response = await fetch(cached.resolved);
-                if (response.ok) {
-                  const contents = await response.text();
-                  const integrity = await computeIntegrity(contents);
-                  if (integrity === cached.integrity) {
-                    return { contents, loader: "js" };
-                  }
-                  if (strict) {
-                    return {
-                      errors: [{
+      if (!bundle) return;
+
+      build.onLoad({ filter: /.*/, namespace: "https" }, async (args: OnLoadArgs) => {
+        if (lockfile) {
+          const cached = await lockfile.get(args.path);
+          if (cached) {
+            logger.debug(`[bare-ext] lockfile hit: ${args.path}`);
+            try {
+              const response = await fetch(cached.resolved);
+              if (response.ok) {
+                const contents = await response.text();
+                const integrity = await computeIntegrity(contents);
+
+                if (integrity === cached.integrity) return { contents, loader: "js" };
+
+                if (strict) {
+                  return {
+                    errors: [
+                      {
                         text:
                           `Integrity mismatch for ${args.path}: expected ${cached.integrity}, got ${integrity}`,
                         location: null,
-                      }],
-                    };
-                  }
-                  logger.warn(`[bare-ext] integrity mismatch, refetching: ${args.path}`);
+                      },
+                    ],
+                  };
                 }
-              } catch {
-                logger.warn(`[bare-ext] cached URL failed, refetching: ${args.path}`);
+
+                logger.warn(`[bare-ext] integrity mismatch, refetching: ${args.path}`);
               }
+            } catch {
+              logger.warn(`[bare-ext] cached URL failed, refetching: ${args.path}`);
             }
           }
+        }
 
-          try {
-            const response = await fetch(args.path, { redirect: "follow" });
-            if (!response.ok) {
-              throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
-            const contents = await response.text();
-            const resolvedUrl = response.url || args.path;
+        try {
+          const response = await fetch(args.path, { redirect: "follow" });
+          if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
 
-            if (lockfile) {
-              const integrity = await computeIntegrity(contents);
-              await lockfile.set(args.path, {
-                resolved: resolvedUrl,
-                integrity,
-                fetchedAt: new Date().toISOString(),
-              });
-              await lockfile.flush();
-              logger.debug(`[bare-ext] lockfile updated: ${args.path} -> ${resolvedUrl}`);
-            }
+          const contents = await response.text();
+          const resolvedUrl = response.url || args.path;
 
-            return { contents, loader: "js" };
-          } catch (error) {
-            return {
-              errors: [{
+          if (lockfile) {
+            const integrity = await computeIntegrity(contents);
+            await lockfile.set(args.path, {
+              resolved: resolvedUrl,
+              integrity,
+              fetchedAt: new Date().toISOString(),
+            });
+            await lockfile.flush();
+            logger.debug(`[bare-ext] lockfile updated: ${args.path} -> ${resolvedUrl}`);
+          }
+
+          return { contents, loader: "js" };
+        } catch (error) {
+          return {
+            errors: [
+              {
                 text: `Failed to fetch ${args.path}: ${String(error)}`,
                 location: null,
-              }],
-            };
-          }
-        });
-      }
+              },
+            ],
+          };
+        }
+      });
     },
   };
 }

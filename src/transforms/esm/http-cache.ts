@@ -33,12 +33,13 @@ function getDistributedCache(): Promise<CacheBackend | null> {
     try {
       const { CacheBackends } = await import("#veryfront/cache/backend.ts");
       const backend = await CacheBackends.httpModule();
-      // Only use distributed cache if API or Redis (not memory - that's per-process)
+
       if (backend.type === "memory") {
         distributedCache = null;
         logger.debug("[HTTP-CACHE] No distributed cache available (memory only)");
         return null;
       }
+
       distributedCache = backend;
       logger.debug("[HTTP-CACHE] Distributed cache initialized", { type: backend.type });
       return backend;
@@ -60,24 +61,7 @@ type CacheOptions = {
   reactVersion?: string;
 };
 
-/**
- * In-memory cache for resolved HTTP module paths.
- *
- * LRU bounded to prevent memory leaks in long-running servers.
- * No TTL - HTTP module URLs (esm.sh) are immutable and versioned.
- * The filesystem cache is the source of truth; this is just a fast lookup.
- *
- * Note: Singleflight was previously used for fetch deduplication but caused deadlocks
- * when processing packages with complex dependency graphs (like zod). The recursive
- * rewriteModuleImports calls would create nested Singleflight entries that blocked
- * on each other. The filesystem cache + processingStack already provide sufficient
- * deduplication and circular dependency handling.
- */
-const cachedPaths = new LRUCache<string, string>({
-  maxEntries: 2000, // Each entry is URL:path (~200 bytes), so ~400KB max
-});
-
-// Track currently processing URLs to detect circular dependencies
+const cachedPaths = new LRUCache<string, string>({ maxEntries: 2000 });
 const processingStack = new Set<string>();
 
 function ensureAbsoluteDir(path: string): string {
@@ -98,8 +82,6 @@ function isHttpUrl(specifier: string): boolean {
  * @see src/react/shared-react.ts - Cross-runtime React facade
  */
 function isReactCoreUrl(_url: string): boolean {
-  // With shared React facades, all React modules can be safely cached.
-  // The facades ensure a single React instance across all runtimes.
   return false;
 }
 
@@ -132,26 +114,25 @@ function normalizeEsmShUrl(url: URL): void {
   }
 
   const pathname = url.pathname.replace(/^\/+/, "");
-  // Check if this is a React core package (react or react-dom)
   const isReactCore = pathname.startsWith("react@") || pathname.startsWith("react/") ||
     pathname.startsWith("react-dom@") || pathname.startsWith("react-dom/");
-  if (!isReactCore) {
-    // Externalize both react and react-dom to ensure version consistency
-    // This prevents esm.sh from bundling its own versions of these packages
-    const existing = url.searchParams.get("external");
-    const externals = existing ? existing.split(",") : [];
-    let needsUpdate = false;
-    if (!externals.includes("react")) {
-      externals.push("react");
-      needsUpdate = true;
-    }
-    if (!externals.includes("react-dom")) {
-      externals.push("react-dom");
-      needsUpdate = true;
-    }
-    if (needsUpdate) {
-      url.searchParams.set("external", externals.join(","));
-    }
+
+  if (isReactCore) return;
+
+  const existing = url.searchParams.get("external");
+  const externals = existing ? existing.split(",") : [];
+  let needsUpdate = false;
+
+  if (!externals.includes("react")) {
+    externals.push("react");
+    needsUpdate = true;
+  }
+  if (!externals.includes("react-dom")) {
+    externals.push("react-dom");
+    needsUpdate = true;
+  }
+  if (needsUpdate) {
+    url.searchParams.set("external", externals.join(","));
   }
 }
 
@@ -175,10 +156,9 @@ function resolveBareSpecifier(
   importMap: ImportMapConfig,
   reactVersion: string = REACT_VERSION,
 ): string {
-  // All bare specifiers (including React) go through esm.sh and get cached to file://
-  // This ensures cross-runtime compatibility without loader hooks.
   const reactMap = getReactImportMap(reactVersion);
-  if (reactMap[specifier]) return reactMap[specifier]!;
+  const reactMapped = reactMap[specifier];
+  if (reactMapped) return reactMapped;
 
   if (specifier.startsWith("react/")) {
     const subpath = specifier.slice("react/".length);
@@ -191,9 +171,7 @@ function resolveBareSpecifier(
   }
 
   const mapped = resolveImport(specifier, importMap);
-  if (mapped !== specifier) {
-    return mapped;
-  }
+  if (mapped !== specifier) return mapped;
 
   return `https://esm.sh/${specifier}?target=es2022`;
 }
@@ -201,7 +179,6 @@ function resolveBareSpecifier(
 async function cacheHttpModule(url: string, options: CacheOptions): Promise<string | null> {
   const normalizedUrl = normalizeHttpUrl(url);
 
-  // Don't cache React core modules - they must use the same instance as framework components
   if (isReactCoreUrl(normalizedUrl)) {
     logger.debug("[HTTP-CACHE] Skipping React core module (prevents multiple instances)", {
       url: normalizedUrl,
@@ -213,26 +190,16 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
   const cacheKey = `${cacheDir}:${normalizedUrl}`;
 
   const existing = cachedPaths.get(cacheKey);
-  if (existing) {
-    return existing;
-  }
-
-  // No Singleflight - it caused deadlocks with complex dependency graphs.
-  // Filesystem cache + processingStack provide sufficient deduplication.
-  // Multiple concurrent fetches for the same URL may occur briefly, but
-  // this is acceptable since fetch results are deterministic and cached.
+  if (existing) return existing;
 
   const cachePath = join(cacheDir, `http-${simpleHash(normalizedUrl)}.mjs`);
   const fs = createFileSystem();
 
-  // Layer 1: Check filesystem cache (fast, local)
   if (await exists(cachePath)) {
     cachedPaths.set(cacheKey, cachePath);
     return cachePath;
   }
 
-  // Check circular dependency - if we're already processing this URL in the call stack,
-  // return the expected path to break the cycle. The file will be written by the outer call.
   if (processingStack.has(normalizedUrl)) {
     logger.debug("[HTTP-CACHE] Circular dependency detected, returning expected path", {
       url: normalizedUrl,
@@ -240,7 +207,6 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
     return cachePath;
   }
 
-  // Layer 2: Check distributed cache (cross-pod sharing)
   const distributed = await getDistributedCache();
   if (distributed) {
     try {
@@ -257,7 +223,6 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
     }
   }
 
-  // Layer 3: Fetch from esm.sh
   logger.debug("[HTTP-CACHE] Fetching from network", { url: normalizedUrl });
 
   const urlObj = new URL(normalizedUrl);
@@ -288,7 +253,6 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
 
   let code = await response.text();
 
-  // Track this URL as being processed before rewriting imports
   processingStack.add(normalizedUrl);
   try {
     code = await rewriteModuleImports(code, normalizedUrl, options);
@@ -296,11 +260,9 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
     processingStack.delete(normalizedUrl);
   }
 
-  // Write to filesystem cache
   await fs.mkdir(cacheDir, { recursive: true });
   await fs.writeTextFile(cachePath, code);
 
-  // Store in distributed cache (fire-and-forget for performance)
   if (distributed) {
     distributed.set(normalizedUrl, code, DISTRIBUTED_CACHE_TTL_SECONDS).catch((error) => {
       logger.debug("[HTTP-CACHE] Distributed cache set failed", { url: normalizedUrl, error });
@@ -316,41 +278,53 @@ async function resolveSpecifier(
   baseUrl: string | undefined,
   options: CacheOptions,
 ): Promise<string | null> {
-  if (isExternalScheme(specifier)) return null;
+  if (isExternalScheme(specifier) || isInternalBare(specifier)) return null;
 
   if (specifier.startsWith("npm:")) {
-    const url = toEsmShUrlFromNpm(specifier);
-    const cached = await cacheHttpModule(url, options);
-    // If caching returned null (e.g., React modules), return the URL unchanged
+    const cached = await cacheHttpModule(toEsmShUrlFromNpm(specifier), options);
     return cached ? `file://${cached}` : null;
   }
 
   if (isHttpUrl(specifier)) {
     const cached = await cacheHttpModule(specifier, options);
-    // If caching returned null (e.g., React modules), return the URL unchanged
     return cached ? `file://${cached}` : null;
   }
 
   if (isRelative(specifier)) {
-    if (baseUrl && isHttpUrl(baseUrl)) {
-      const resolved = new URL(specifier, baseUrl).toString();
-      const cached = await cacheHttpModule(resolved, options);
-      // If caching returned null (e.g., React modules), keep the resolved URL
-      return cached ? `file://${cached}` : null;
-    }
-    return null;
-  }
+    if (!baseUrl || !isHttpUrl(baseUrl)) return null;
 
-  if (isInternalBare(specifier)) {
-    return null;
+    const resolved = new URL(specifier, baseUrl).toString();
+    const cached = await cacheHttpModule(resolved, options);
+    return cached ? `file://${cached}` : null;
   }
 
   const mapped = resolveBareSpecifier(specifier, options.importMap, options.reactVersion);
-  if (mapped === specifier) {
-    return null;
+  if (mapped === specifier) return null;
+
+  return resolveSpecifier(mapped, baseUrl, options);
+}
+
+async function buildReplacements(
+  code: string,
+  baseUrl: string | undefined,
+  options: CacheOptions,
+): Promise<Map<string, string>> {
+  const imports = await parseImports(code);
+  const uniqueSpecifiers = [...new Set(imports.filter((imp) => imp.n).map((imp) => imp.n!))];
+
+  const results = await Promise.all(
+    uniqueSpecifiers.map(async (specifier) => ({
+      specifier,
+      resolved: await resolveSpecifier(specifier, baseUrl, options),
+    })),
+  );
+
+  const replacements = new Map<string, string>();
+  for (const { specifier, resolved } of results) {
+    if (resolved && resolved !== specifier) replacements.set(specifier, resolved);
   }
 
-  return await resolveSpecifier(mapped, baseUrl, options);
+  return replacements;
 }
 
 async function rewriteModuleImports(
@@ -358,29 +332,10 @@ async function rewriteModuleImports(
   moduleUrl: string,
   options: CacheOptions,
 ): Promise<string> {
-  const imports = await parseImports(code);
-  const replacements = new Map<string, string>();
-
-  // Get unique specifiers to avoid duplicate resolution work
-  const uniqueSpecifiers = [...new Set(imports.filter((imp) => imp.n).map((imp) => imp.n!))];
-
-  // Resolve all imports in parallel for better performance
-  const results = await Promise.all(
-    uniqueSpecifiers.map(async (specifier) => {
-      const resolved = await resolveSpecifier(specifier, moduleUrl, options);
-      return { specifier, resolved };
-    }),
-  );
-
-  for (const { specifier, resolved } of results) {
-    if (resolved && resolved !== specifier) {
-      replacements.set(specifier, resolved);
-    }
-  }
-
+  const replacements = await buildReplacements(code, moduleUrl, options);
   if (replacements.size === 0) return code;
 
-  return await replaceSpecifiers(code, (specifier) => replacements.get(specifier) ?? null);
+  return replaceSpecifiers(code, (specifier) => replacements.get(specifier) ?? null);
 }
 
 /**
@@ -390,33 +345,12 @@ export async function cacheHttpImportsToLocal(
   code: string,
   options: CacheOptions,
 ): Promise<string> {
-  const imports = await parseImports(code);
-  const replacements = new Map<string, string>();
-
-  // Get unique specifiers to avoid duplicate resolution work
-  const uniqueSpecifiers = [...new Set(imports.filter((imp) => imp.n).map((imp) => imp.n!))];
-
-  // Resolve all imports in parallel for better performance
-  const results = await Promise.all(
-    uniqueSpecifiers.map(async (specifier) => {
-      const resolved = await resolveSpecifier(specifier, undefined, options);
-      return { specifier, resolved };
-    }),
-  );
-
-  for (const { specifier, resolved } of results) {
-    if (resolved && resolved !== specifier) {
-      replacements.set(specifier, resolved);
-    }
-  }
-
+  const replacements = await buildReplacements(code, undefined, options);
   if (replacements.size === 0) return code;
 
-  logger.debug("[HTTP-CACHE] Cached HTTP imports", {
-    count: replacements.size,
-  });
+  logger.debug("[HTTP-CACHE] Cached HTTP imports", { count: replacements.size });
 
-  return await replaceSpecifiers(code, (specifier) => replacements.get(specifier) ?? null);
+  return replaceSpecifiers(code, (specifier) => replacements.get(specifier) ?? null);
 }
 
 /**
@@ -428,21 +362,11 @@ export async function cacheHttpImportsToLocal(
  * @param cacheDir - The cache directory path
  * @returns The local file:// URL path, or the original URL if caching fails
  */
-export async function cacheModuleToLocal(
-  url: string,
-  cacheDir: string,
-): Promise<string> {
-  if (!isHttpUrl(url)) {
-    return url;
-  }
+export async function cacheModuleToLocal(url: string, cacheDir: string): Promise<string> {
+  if (!isHttpUrl(url)) return url;
 
   const importMap = { imports: {}, scopes: {} };
   const cached = await cacheHttpModule(url, { cacheDir, importMap });
 
-  if (cached) {
-    return `file://${cached}`;
-  }
-
-  // Fallback to original URL if caching fails
-  return url;
+  return cached ? `file://${cached}` : url;
 }

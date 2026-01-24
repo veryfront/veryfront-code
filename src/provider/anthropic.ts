@@ -50,7 +50,7 @@ export class AnthropicProvider extends BaseProvider {
   constructor(config: AnthropicConfig) {
     super(config);
     this.apiKey = config.apiKey;
-    this.baseURL = config.baseURL || "https://api.anthropic.com";
+    this.baseURL = config.baseURL ?? "https://api.anthropic.com";
   }
 
   protected getHeaders(): Record<string, string> {
@@ -65,20 +65,19 @@ export class AnthropicProvider extends BaseProvider {
     return `${this.baseURL}/v1/messages`;
   }
 
-  protected transformRequest(
-    request: CompletionRequest,
-  ): Record<string, unknown> {
-    // Transform messages to Anthropic format
+  protected transformRequest(request: CompletionRequest): Record<string, unknown> {
     // Anthropic doesn't support "tool" role - tool results must be sent as "user" messages
     const transformedMessages = request.messages.map((msg): AnthropicMessage => {
       if (msg.role === "tool") {
-        // Convert tool result message to user message with tool_result content block
         if (!msg.tool_call_id) {
-          throw toError(createError({
-            type: "agent",
-            message: "Tool result message missing tool_call_id",
-          }));
+          throw toError(
+            createError({
+              type: "agent",
+              message: "Tool result message missing tool_call_id",
+            }),
+          );
         }
+
         return {
           role: "user",
           content: [
@@ -91,57 +90,34 @@ export class AnthropicProvider extends BaseProvider {
         };
       }
 
-      // Transform assistant messages with tool_calls to Anthropic format
-      if (msg.role === "assistant" && msg.tool_calls && msg.tool_calls.length > 0) {
-        const content: AnthropicContentBlock[] = [];
-
-        // Add text content if present
-        if (msg.content) {
-          content.push({
-            type: "text",
-            text: msg.content,
-          });
-        }
-
-        // Add tool use blocks (runtime sends OpenAI-format tool_calls)
-        for (const toolCall of msg.tool_calls) {
-          content.push({
-            type: "tool_use",
-            id: toolCall.id,
-            name: toolCall.function.name,
-            input: typeof toolCall.function.arguments === "string"
-              ? JSON.parse(toolCall.function.arguments)
-              : toolCall.function.arguments,
-          });
-        }
-
-        return {
-          role: "assistant",
-          content,
-        };
-      }
-
-      // For all other assistant messages, ensure only role and content are sent
       if (msg.role === "assistant") {
-        return {
-          role: "assistant",
-          content: msg.content,
-        };
+        if (msg.tool_calls?.length) {
+          const content: AnthropicContentBlock[] = [];
+
+          if (msg.content) {
+            content.push({ type: "text", text: msg.content });
+          }
+
+          for (const toolCall of msg.tool_calls) {
+            content.push({
+              type: "tool_use",
+              id: toolCall.id,
+              name: toolCall.function.name,
+              input: typeof toolCall.function.arguments === "string"
+                ? JSON.parse(toolCall.function.arguments)
+                : toolCall.function.arguments,
+            });
+          }
+
+          return { role: "assistant", content };
+        }
+
+        return { role: "assistant", content: msg.content };
       }
 
-      // For user messages, only send role and content
-      if (msg.role === "user") {
-        return {
-          role: "user",
-          content: msg.content,
-        };
-      }
-
-      // Fallback for any other message types - cast to unknown format
-      return msg as unknown as AnthropicMessage;
+      return { role: "user", content: msg.content };
     });
 
-    // Debug: Log transformed messages
     agentLogger.debug(
       "Anthropic transformRequest - transformed messages:",
       JSON.stringify(transformedMessages, null, 2),
@@ -150,30 +126,15 @@ export class AnthropicProvider extends BaseProvider {
     const body: Record<string, unknown> = {
       model: request.model,
       messages: transformedMessages,
-      stream: request.stream || false,
+      stream: request.stream ?? false,
+      max_tokens: request.maxTokens ?? 4096,
     };
 
-    // Anthropic requires system prompt as separate field
-    if (request.system) {
-      body.system = request.system;
-    }
+    if (request.system) body.system = request.system;
+    if (request.temperature !== undefined) body.temperature = request.temperature;
+    if (request.topP !== undefined) body.top_p = request.topP;
 
-    if (request.maxTokens) {
-      body.max_tokens = request.maxTokens;
-    } else {
-      // Anthropic requires max_tokens
-      body.max_tokens = 4096;
-    }
-
-    if (request.temperature !== undefined) {
-      body.temperature = request.temperature;
-    }
-
-    if (request.topP !== undefined) {
-      body.top_p = request.topP;
-    }
-
-    if (request.tools && request.tools.length > 0) {
+    if (request.tools?.length) {
       body.tools = request.tools.map((tool) => ({
         name: tool.name,
         description: tool.description,
@@ -185,22 +146,22 @@ export class AnthropicProvider extends BaseProvider {
   }
 
   protected transformResponse(response: AnthropicResponse): CompletionResponse {
-    const content = response.content;
+    const { content } = response;
 
-    if (!content || !Array.isArray(content)) {
-      throw toError(createError({
-        type: "config",
-        message: "Anthropic: Invalid response format",
-      }));
+    if (!Array.isArray(content)) {
+      throw toError(
+        createError({
+          type: "config",
+          message: "Anthropic: Invalid response format",
+        }),
+      );
     }
 
-    // Extract text content
-    const textContent = content
+    const text = content
       .filter((c): c is AnthropicTextContent => c.type === "text")
       .map((c) => c.text)
       .join("");
 
-    // Extract tool calls
     const toolCalls = content
       .filter((c): c is AnthropicToolUseContent => c.type === "tool_use")
       .map((c) => ({
@@ -209,14 +170,16 @@ export class AnthropicProvider extends BaseProvider {
         arguments: c.input,
       }));
 
+    const promptTokens = response.usage?.input_tokens ?? 0;
+    const completionTokens = response.usage?.output_tokens ?? 0;
+
     return {
-      text: textContent,
-      toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+      text,
+      toolCalls: toolCalls.length ? toolCalls : undefined,
       usage: {
-        promptTokens: response.usage?.input_tokens || 0,
-        completionTokens: response.usage?.output_tokens || 0,
-        totalTokens: (response.usage?.input_tokens || 0) +
-          (response.usage?.output_tokens || 0),
+        promptTokens,
+        completionTokens,
+        totalTokens: promptTokens + completionTokens,
       },
       finishReason: this.mapStopReason(response.stop_reason),
     };
@@ -229,6 +192,7 @@ export class AnthropicProvider extends BaseProvider {
       tool_use: "tool_calls",
       stop_sequence: "stop",
     };
+
     return STOP_REASON_MAP[reason] ?? "stop";
   }
 
@@ -236,16 +200,16 @@ export class AnthropicProvider extends BaseProvider {
     const reader = stream.getReader();
     const decoder = new TextDecoder();
     const encoder = new TextEncoder();
-
-    // Capture mapStopReason method reference before entering ReadableStream context
     const mapStopReason = this.mapStopReason.bind(this);
 
-    // Track tool calls being accumulated
-    const toolCalls = new Map<number, {
-      id?: string;
-      name?: string;
-      input: string;
-    }>();
+    const toolCalls = new Map<
+      number,
+      {
+        id?: string;
+        name?: string;
+        input: string;
+      }
+    >();
 
     let currentBlockIndex = 0;
 
@@ -254,121 +218,123 @@ export class AnthropicProvider extends BaseProvider {
         try {
           while (true) {
             const { done, value } = await reader.read();
-
             if (done) {
               controller.close();
-              break;
+              return;
             }
 
             const chunk = decoder.decode(value, { stream: true });
             const lines = chunk.split("\n").filter((line) => line.trim());
 
             for (const line of lines) {
-              if (line.startsWith("data: ")) {
-                const data = line.slice(6);
+              if (!line.startsWith("data: ")) continue;
 
-                try {
-                  const parsed = JSON.parse(data);
+              const data = line.slice(6);
 
-                  // Anthropic stream event types:
-                  // - message_start: Contains model, role, usage
-                  // - content_block_start: Start of content/tool_use block
-                  // - content_block_delta: Text or tool input deltas
-                  // - content_block_stop: End of block
-                  // - message_delta: Contains stop_reason, usage delta
-                  // - message_stop: End of message
+              try {
+                const parsed = JSON.parse(data);
 
-                  if (parsed.type === "message_start") {
-                    // Extract and emit initial usage (input tokens)
-                    if (parsed.message?.usage) {
-                      const usageEvent = JSON.stringify({
+                if (parsed.type === "message_start") {
+                  const usage = parsed.message?.usage;
+                  if (!usage) continue;
+
+                  const promptTokens = usage.input_tokens ?? 0;
+                  const completionTokens = usage.output_tokens ?? 0;
+
+                  controller.enqueue(
+                    encoder.encode(
+                      JSON.stringify({
                         type: "usage",
                         usage: {
-                          promptTokens: parsed.message.usage.input_tokens || 0,
-                          completionTokens: parsed.message.usage.output_tokens || 0,
-                          totalTokens: (parsed.message.usage.input_tokens || 0) +
-                            (parsed.message.usage.output_tokens || 0),
+                          promptTokens,
+                          completionTokens,
+                          totalTokens: promptTokens + completionTokens,
                         },
-                      });
-                      controller.enqueue(encoder.encode(usageEvent + "\n"));
-                    }
-                  } else if (parsed.type === "content_block_start") {
-                    const block = parsed.content_block;
+                      }) + "\n",
+                    ),
+                  );
+                  continue;
+                }
 
-                    // Track tool use blocks
-                    if (block?.type === "tool_use") {
-                      const index = parsed.index ?? currentBlockIndex;
-                      currentBlockIndex = index;
+                if (parsed.type === "content_block_start") {
+                  const block = parsed.content_block;
+                  if (block?.type !== "tool_use") continue;
 
-                      toolCalls.set(index, {
-                        id: block.id,
-                        name: block.name,
-                        input: "",
-                      });
+                  const index = parsed.index ?? currentBlockIndex;
+                  currentBlockIndex = index;
 
-                      // Emit tool call start event
-                      const startEvent = JSON.stringify({
+                  toolCalls.set(index, { id: block.id, name: block.name, input: "" });
+
+                  controller.enqueue(
+                    encoder.encode(
+                      JSON.stringify({
                         type: "tool_call_start",
-                        toolCall: {
-                          id: block.id,
-                          name: block.name,
-                          index,
-                        },
-                      });
-                      controller.enqueue(encoder.encode(startEvent + "\n"));
-                    }
-                  } else if (parsed.type === "content_block_delta") {
-                    const delta = parsed.delta;
+                        toolCall: { id: block.id, name: block.name, index },
+                      }) + "\n",
+                    ),
+                  );
+                  continue;
+                }
 
-                    // Handle text content deltas
-                    if (delta?.type === "text_delta" && delta.text) {
-                      const contentEvent = JSON.stringify({
-                        type: "content",
-                        content: delta.text,
-                      });
-                      controller.enqueue(encoder.encode(contentEvent + "\n"));
-                    }
+                if (parsed.type === "content_block_delta") {
+                  const delta = parsed.delta;
 
-                    // Handle tool input deltas
-                    if (delta?.type === "input_json_delta" && delta.partial_json) {
-                      const index = parsed.index ?? currentBlockIndex;
-                      const tc = toolCalls.get(index);
+                  if (delta?.type === "text_delta" && delta.text) {
+                    controller.enqueue(
+                      encoder.encode(
+                        JSON.stringify({ type: "content", content: delta.text }) + "\n",
+                      ),
+                    );
+                  }
 
-                      if (tc) {
-                        tc.input += delta.partial_json;
+                  if (delta?.type === "input_json_delta" && delta.partial_json) {
+                    const index = parsed.index ?? currentBlockIndex;
+                    const tc = toolCalls.get(index);
+                    if (!tc) continue;
 
-                        // Emit tool call delta event
-                        const deltaEvent = JSON.stringify({
+                    tc.input += delta.partial_json;
+
+                    controller.enqueue(
+                      encoder.encode(
+                        JSON.stringify({
                           type: "tool_call_delta",
                           id: tc.id,
                           index,
                           arguments: delta.partial_json,
-                        });
-                        controller.enqueue(encoder.encode(deltaEvent + "\n"));
-                      }
-                    }
-                  } else if (parsed.type === "message_delta") {
-                    // Extract and emit usage delta (output tokens)
-                    if (parsed.usage) {
-                      const usageDeltaEvent = JSON.stringify({
-                        type: "usage",
-                        usage: {
-                          promptTokens: 0, // Only output tokens in delta
-                          completionTokens: parsed.usage.output_tokens || 0,
-                          totalTokens: parsed.usage.output_tokens || 0,
-                        },
-                      });
-                      controller.enqueue(encoder.encode(usageDeltaEvent + "\n"));
-                    }
+                        }) + "\n",
+                      ),
+                    );
+                  }
 
-                    // Handle stop reason
-                    if (parsed.delta?.stop_reason) {
-                      const stopReason = parsed.delta.stop_reason;
+                  continue;
+                }
 
-                      // Emit complete tool calls if stop reason is tool_use
-                      if (stopReason === "tool_use") {
-                        for (const [index, tc] of toolCalls.entries()) {
-                          const completeEvent = JSON.stringify({
+                if (parsed.type === "message_delta") {
+                  if (parsed.usage) {
+                    const completionTokens = parsed.usage.output_tokens ?? 0;
+
+                    controller.enqueue(
+                      encoder.encode(
+                        JSON.stringify({
+                          type: "usage",
+                          usage: {
+                            promptTokens: 0,
+                            completionTokens,
+                            totalTokens: completionTokens,
+                          },
+                        }) + "\n",
+                      ),
+                    );
+                  }
+
+                  const stopReason = parsed.delta?.stop_reason;
+                  if (!stopReason) continue;
+
+                  if (stopReason === "tool_use") {
+                    for (const [index, tc] of toolCalls.entries()) {
+                      controller.enqueue(
+                        encoder.encode(
+                          JSON.stringify({
                             type: "tool_call_complete",
                             toolCall: {
                               id: tc.id!,
@@ -376,26 +342,23 @@ export class AnthropicProvider extends BaseProvider {
                               index,
                               arguments: tc.input,
                             },
-                          });
-                          controller.enqueue(encoder.encode(completeEvent + "\n"));
-                        }
-                      }
-
-                      // Map Anthropic stop reason to our format
-                      const finishReason = mapStopReason(stopReason);
-
-                      // Emit finish event
-                      const finishEvent = JSON.stringify({
-                        type: "finish",
-                        finishReason,
-                      });
-                      controller.enqueue(encoder.encode(finishEvent + "\n"));
+                          }) + "\n",
+                        ),
+                      );
                     }
                   }
-                } catch (e) {
-                  // Skip invalid JSON
-                  agentLogger.warn("Failed to parse stream chunk:", e);
+
+                  controller.enqueue(
+                    encoder.encode(
+                      JSON.stringify({
+                        type: "finish",
+                        finishReason: mapStopReason(stopReason),
+                      }) + "\n",
+                    ),
+                  );
                 }
+              } catch (e) {
+                agentLogger.warn("Failed to parse stream chunk:", e);
               }
             }
           }

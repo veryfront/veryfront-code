@@ -8,12 +8,25 @@ export default tool({
     "Get detailed information about a specific contact in HubSpot CRM by their contact ID.",
   inputSchema: z.object({
     contactId: z.string().describe("The HubSpot contact ID"),
-    properties: z.array(z.string()).optional().describe(
-      "Additional properties to retrieve (e.g., website, city, state, notes)",
-    ),
+    properties: z
+      .array(z.string())
+      .optional()
+      .describe(
+        "Additional properties to retrieve (e.g., website, city, state, notes)",
+      ),
   }),
   async execute({ contactId, properties }) {
     const contact = await getContact(contactId, properties);
+
+    let additionalProperties: Record<string, unknown> | undefined;
+
+    if (properties) {
+      additionalProperties = Object.fromEntries(
+        properties
+          .filter((prop) => contact.properties[prop] !== undefined)
+          .map((prop) => [prop, contact.properties[prop]]),
+      );
+    }
 
     return {
       id: contact.id,
@@ -26,13 +39,7 @@ export default tool({
       createdAt: contact.createdAt,
       updatedAt: contact.updatedAt,
       archived: contact.archived,
-      additionalProperties: properties
-        ? Object.fromEntries(
-          properties
-            .filter((prop) => contact.properties[prop] !== undefined)
-            .map((prop) => [prop, contact.properties[prop]]),
-        )
-        : undefined,
+      additionalProperties,
       allProperties: contact.properties,
     };
   },

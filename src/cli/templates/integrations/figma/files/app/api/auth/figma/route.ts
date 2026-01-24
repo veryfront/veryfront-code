@@ -1,9 +1,3 @@
-/**
- * Figma OAuth Initiation
- */
-
 import { createOAuthInitHandler, figmaConfig, memoryTokenStore } from "veryfront/oauth";
 
-export const GET = createOAuthInitHandler(figmaConfig, {
-  tokenStore: memoryTokenStore,
-});
+export const GET = createOAuthInitHandler(figmaConfig, { tokenStore: memoryTokenStore });

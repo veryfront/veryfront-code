@@ -3,11 +3,24 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { requestWithRetry } from "./retry-handler.ts";
 import { VeryfrontAPIError } from "./types.ts";
 
-// Capture original fetch once at module level for reliable restoration
 const originalFetch = globalThis.fetch;
 
+function setFetch(
+  handler: (url: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
+): void {
+  globalThis.fetch = handler as typeof fetch;
+}
+
+async function captureVeryfrontError(fn: () => Promise<unknown>): Promise<VeryfrontAPIError> {
+  try {
+    await fn();
+  } catch (e) {
+    return e as VeryfrontAPIError;
+  }
+  throw new Error("Expected function to throw");
+}
+
 describe("retry-handler", () => {
-  // Restore fetch after each test to prevent interference
   afterEach(() => {
     globalThis.fetch = originalFetch;
   });
@@ -23,12 +36,10 @@ describe("retry-handler", () => {
 
       beforeEach(() => {
         capturedHeaders = null;
-        globalThis.fetch = ((_url, init) => {
+        setFetch((_url, init) => {
           capturedHeaders = init?.headers as Headers;
-          return Promise.resolve(
-            new Response(JSON.stringify({ ok: true }), { status: 200 }),
-          );
-        }) as typeof fetch;
+          return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+        });
       });
 
       it("should pass headers to fetch for trace context injection", async () => {
@@ -45,128 +56,69 @@ describe("retry-handler", () => {
     });
 
     describe("4xx error handling - no retry", () => {
-      let fetchCallCount: number;
+      let fetchCallCount = 0;
 
       beforeEach(() => {
         fetchCallCount = 0;
       });
 
-      it("should NOT retry 401 errors - fail fast for auth failures", async () => {
-        globalThis.fetch = (() => {
+      async function expectNoRetry(
+        status: number,
+        statusText: string,
+        body: string,
+        token: string,
+      ) {
+        setFetch(() => {
           fetchCallCount++;
-          return Promise.resolve(
-            new Response("Unauthorized", { status: 401, statusText: "Unauthorized" }),
-          );
-        }) as typeof fetch;
+          return Promise.resolve(new Response(body, { status, statusText }));
+        });
 
-        let caughtError: VeryfrontAPIError | null = null;
-        try {
-          await requestWithRetry(
+        const error = await captureVeryfrontError(() =>
+          requestWithRetry(
             "https://api.test.com/endpoint",
-            "invalid-token",
+            token,
             { maxRetries: 3, initialDelay: 100, maxDelay: 1000 },
-          );
-        } catch (e) {
-          caughtError = e as VeryfrontAPIError;
-        }
+          )
+        );
 
-        assertExists(caughtError, "Should throw an error");
-        assertEquals(fetchCallCount, 1, "Should only call fetch once - no retries for 401");
-        assertEquals(caughtError.status, 401);
+        assertEquals(fetchCallCount, 1, `Should only call fetch once - no retries for ${status}`);
+        assertEquals(error.status, status);
+      }
+
+      it("should NOT retry 401 errors - fail fast for auth failures", async () => {
+        await expectNoRetry(401, "Unauthorized", "Unauthorized", "invalid-token");
       });
 
       it("should NOT retry 403 errors", async () => {
-        globalThis.fetch = (() => {
-          fetchCallCount++;
-          return Promise.resolve(
-            new Response("Forbidden", { status: 403, statusText: "Forbidden" }),
-          );
-        }) as typeof fetch;
-
-        let caughtError: VeryfrontAPIError | null = null;
-        try {
-          await requestWithRetry(
-            "https://api.test.com/endpoint",
-            "test-token",
-            { maxRetries: 3, initialDelay: 100, maxDelay: 1000 },
-          );
-        } catch (e) {
-          caughtError = e as VeryfrontAPIError;
-        }
-
-        assertExists(caughtError, "Should throw an error");
-        assertEquals(fetchCallCount, 1, "Should only call fetch once - no retries for 403");
-        assertEquals(caughtError.status, 403);
+        await expectNoRetry(403, "Forbidden", "Forbidden", "test-token");
       });
 
       it("should NOT retry 404 errors", async () => {
-        globalThis.fetch = (() => {
-          fetchCallCount++;
-          return Promise.resolve(
-            new Response("Not Found", { status: 404, statusText: "Not Found" }),
-          );
-        }) as typeof fetch;
-
-        let caughtError: VeryfrontAPIError | null = null;
-        try {
-          await requestWithRetry(
-            "https://api.test.com/endpoint",
-            "test-token",
-            { maxRetries: 3, initialDelay: 100, maxDelay: 1000 },
-          );
-        } catch (e) {
-          caughtError = e as VeryfrontAPIError;
-        }
-
-        assertExists(caughtError, "Should throw an error");
-        assertEquals(fetchCallCount, 1, "Should only call fetch once - no retries for 404");
-        assertEquals(caughtError.status, 404);
+        await expectNoRetry(404, "Not Found", "Not Found", "test-token");
       });
 
       it("should NOT retry 400 errors", async () => {
-        globalThis.fetch = (() => {
-          fetchCallCount++;
-          return Promise.resolve(
-            new Response("Bad Request", { status: 400, statusText: "Bad Request" }),
-          );
-        }) as typeof fetch;
-
-        let caughtError: VeryfrontAPIError | null = null;
-        try {
-          await requestWithRetry(
-            "https://api.test.com/endpoint",
-            "test-token",
-            { maxRetries: 3, initialDelay: 100, maxDelay: 1000 },
-          );
-        } catch (e) {
-          caughtError = e as VeryfrontAPIError;
-        }
-
-        assertExists(caughtError, "Should throw an error");
-        assertEquals(fetchCallCount, 1, "Should only call fetch once - no retries for 400");
-        assertEquals(caughtError.status, 400);
+        await expectNoRetry(400, "Bad Request", "Bad Request", "test-token");
       });
     });
 
     describe("429 rate limiting - should retry", () => {
-      let fetchCallCount: number;
+      let fetchCallCount = 0;
 
       beforeEach(() => {
         fetchCallCount = 0;
       });
 
       it("should retry 429 errors with backoff", async () => {
-        globalThis.fetch = (() => {
+        setFetch(() => {
           fetchCallCount++;
           if (fetchCallCount < 3) {
             return Promise.resolve(
               new Response("Too Many Requests", { status: 429, statusText: "Too Many Requests" }),
             );
           }
-          return Promise.resolve(
-            new Response(JSON.stringify({ ok: true }), { status: 200 }),
-          );
-        }) as typeof fetch;
+          return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+        });
 
         const result = await requestWithRetry(
           "https://api.test.com/endpoint",
@@ -180,14 +132,14 @@ describe("retry-handler", () => {
     });
 
     describe("5xx server errors - should retry", () => {
-      let fetchCallCount: number;
+      let fetchCallCount = 0;
 
       beforeEach(() => {
         fetchCallCount = 0;
       });
 
       it("should retry 500 errors with backoff", async () => {
-        globalThis.fetch = (() => {
+        setFetch(() => {
           fetchCallCount++;
           if (fetchCallCount < 3) {
             return Promise.resolve(
@@ -197,10 +149,8 @@ describe("retry-handler", () => {
               }),
             );
           }
-          return Promise.resolve(
-            new Response(JSON.stringify({ ok: true }), { status: 200 }),
-          );
-        }) as typeof fetch;
+          return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+        });
 
         const result = await requestWithRetry(
           "https://api.test.com/endpoint",
@@ -213,17 +163,15 @@ describe("retry-handler", () => {
       });
 
       it("should retry 502 errors", async () => {
-        globalThis.fetch = (() => {
+        setFetch(() => {
           fetchCallCount++;
           if (fetchCallCount < 2) {
             return Promise.resolve(
               new Response("Bad Gateway", { status: 502, statusText: "Bad Gateway" }),
             );
           }
-          return Promise.resolve(
-            new Response(JSON.stringify({ ok: true }), { status: 200 }),
-          );
-        }) as typeof fetch;
+          return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+        });
 
         const result = await requestWithRetry(
           "https://api.test.com/endpoint",
@@ -236,7 +184,7 @@ describe("retry-handler", () => {
       });
 
       it("should retry 503 errors", async () => {
-        globalThis.fetch = (() => {
+        setFetch(() => {
           fetchCallCount++;
           if (fetchCallCount < 2) {
             return Promise.resolve(
@@ -246,10 +194,8 @@ describe("retry-handler", () => {
               }),
             );
           }
-          return Promise.resolve(
-            new Response(JSON.stringify({ ok: true }), { status: 200 }),
-          );
-        }) as typeof fetch;
+          return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+        });
 
         const result = await requestWithRetry(
           "https://api.test.com/endpoint",
@@ -262,7 +208,7 @@ describe("retry-handler", () => {
       });
 
       it("should fail after max retries exhausted", async () => {
-        globalThis.fetch = (() => {
+        setFetch(() => {
           fetchCallCount++;
           return Promise.resolve(
             new Response("Internal Server Error", {
@@ -270,41 +216,34 @@ describe("retry-handler", () => {
               statusText: "Internal Server Error",
             }),
           );
-        }) as typeof fetch;
+        });
 
-        let caughtError: VeryfrontAPIError | null = null;
-        try {
-          await requestWithRetry(
+        const error = await captureVeryfrontError(() =>
+          requestWithRetry(
             "https://api.test.com/endpoint",
             "test-token",
             { maxRetries: 2, initialDelay: 10, maxDelay: 100 },
-          );
-        } catch (e) {
-          caughtError = e as VeryfrontAPIError;
-        }
+          )
+        );
 
-        assertExists(caughtError, "Should throw an error after retries exhausted");
+        assertExists(error, "Should throw an error after retries exhausted");
         assertEquals(fetchCallCount, 3, "Should attempt 1 initial + 2 retries = 3 total");
       });
     });
 
     describe("network errors - should retry", () => {
-      let fetchCallCount: number;
+      let fetchCallCount = 0;
 
       beforeEach(() => {
         fetchCallCount = 0;
       });
 
       it("should retry network failures", async () => {
-        globalThis.fetch = (() => {
+        setFetch(() => {
           fetchCallCount++;
-          if (fetchCallCount < 2) {
-            return Promise.reject(new Error("Network error"));
-          }
-          return Promise.resolve(
-            new Response(JSON.stringify({ ok: true }), { status: 200 }),
-          );
-        }) as typeof fetch;
+          if (fetchCallCount < 2) return Promise.reject(new Error("Network error"));
+          return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+        });
 
         const result = await requestWithRetry(
           "https://api.test.com/endpoint",
@@ -319,11 +258,9 @@ describe("retry-handler", () => {
 
     describe("successful requests", () => {
       it("should return JSON response on success", async () => {
-        globalThis.fetch = (() => {
-          return Promise.resolve(
-            new Response(JSON.stringify({ data: "test" }), { status: 200 }),
-          );
-        }) as typeof fetch;
+        setFetch(() =>
+          Promise.resolve(new Response(JSON.stringify({ data: "test" }), { status: 200 }))
+        );
 
         const result = await requestWithRetry(
           "https://api.test.com/endpoint",
@@ -335,11 +272,7 @@ describe("retry-handler", () => {
       });
 
       it("should return text response when returnText option is true", async () => {
-        globalThis.fetch = (() => {
-          return Promise.resolve(
-            new Response("plain text response", { status: 200 }),
-          );
-        }) as typeof fetch;
+        setFetch(() => Promise.resolve(new Response("plain text response", { status: 200 })));
 
         const result = await requestWithRetry(
           "https://api.test.com/endpoint",

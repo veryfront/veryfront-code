@@ -16,10 +16,7 @@ describe("createFileCache", () => {
   });
 
   it("should create a FileCache instance with custom options", () => {
-    const cache = createFileCache({
-      maxSize: 1000,
-      ttl: 60000,
-    });
+    const cache = createFileCache({ maxSize: 1000, ttl: 60000 });
     assertExists(cache);
     assertEquals(cache instanceof FileCache, true);
   });

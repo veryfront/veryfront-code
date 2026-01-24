@@ -1,10 +1,9 @@
-import { getProjectToken, getApiSecret, getProjectId } from "./token-store.ts";
+import { getApiSecret, getProjectId, getProjectToken } from "./token-store.ts";
 
 const MIXPANEL_API_BASE = "https://mixpanel.com/api";
 const MIXPANEL_TRACK_BASE = "https://api.mixpanel.com";
 const MIXPANEL_DATA_BASE = "https://data.mixpanel.com/api/2.0";
 
-// Types
 export interface MixpanelEvent {
   event: string;
   properties: Record<string, unknown>;
@@ -64,7 +63,6 @@ interface MixpanelError {
   request: string;
 }
 
-// Helper function to create basic auth header
 function getAuthHeader(): string {
   const apiSecret = getApiSecret();
   if (!apiSecret) {
@@ -72,60 +70,52 @@ function getAuthHeader(): string {
       "Not authenticated with Mixpanel. Please set MIXPANEL_API_SECRET.",
     );
   }
+
   // Mixpanel uses Basic auth with API secret as username and empty password
-  const credentials = btoa(`${apiSecret}:`);
-  return `Basic ${credentials}`;
+  return `Basic ${btoa(`${apiSecret}:`)}`;
 }
 
-// Helper function for Mixpanel API calls with auth
 async function mixpanelFetch<T>(
   baseUrl: string,
   endpoint: string,
-  options: RequestInit & { params?: Record<string, string | number | boolean> } = {},
+  options: RequestInit & { params?: Record<string, string | number | boolean> } =
+    {},
 ): Promise<T> {
-  // Build URL with query parameters
-  let url = `${baseUrl}${endpoint}`;
+  const url = new URL(`${baseUrl}${endpoint}`);
+
   if (options.params) {
-    const params = new URLSearchParams();
-    Object.entries(options.params).forEach(([key, value]) => {
-      params.append(key, String(value));
-    });
-    url += `?${params.toString()}`;
+    for (const [key, value] of Object.entries(options.params)) {
+      url.searchParams.append(key, String(value));
+    }
   }
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    ...options.headers as Record<string, string>,
+    ...(options.headers as Record<string, string> | undefined),
   };
 
-  // Add auth header for data API calls
   if (baseUrl === MIXPANEL_DATA_BASE || baseUrl === MIXPANEL_API_BASE) {
-    headers["Authorization"] = getAuthHeader();
+    headers.Authorization = getAuthHeader();
   }
 
-  const response = await fetch(url, {
-    ...options,
-    headers,
-  });
+  const response = await fetch(url.toString(), { ...options, headers });
 
   if (!response.ok) {
     let errorMessage = `Mixpanel API error: ${response.status} ${response.statusText}`;
+
     try {
-      const errorData = await response.json() as MixpanelError;
-      if (errorData.error) {
-        errorMessage = `Mixpanel API error: ${errorData.error}`;
-      }
+      const errorData = (await response.json()) as MixpanelError;
+      if (errorData.error) errorMessage = `Mixpanel API error: ${errorData.error}`;
     } catch {
       // If parsing JSON fails, use default error message
     }
+
     throw new Error(errorMessage);
   }
 
-  const data = await response.json();
-  return data as T;
+  return (await response.json()) as T;
 }
 
-// Track event - uses ingestion API with project token
 export async function trackEvent(
   event: string,
   properties: Record<string, unknown>,
@@ -150,9 +140,7 @@ export async function trackEvent(
 
   const response = await fetch(`${MIXPANEL_TRACK_BASE}/track`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify([payload]),
   });
 
@@ -164,11 +152,9 @@ export async function trackEvent(
     };
   }
 
-  const result = await response.json() as { status: number; error?: string };
-  return result;
+  return (await response.json()) as { status: number; error?: string };
 }
 
-// Query events - uses export API
 export async function queryEvents(
   from: string,
   to: string,
@@ -179,14 +165,8 @@ export async function queryEvents(
     throw new Error("Project ID not set. Please set MIXPANEL_PROJECT_ID.");
   }
 
-  const params: Record<string, string> = {
-    from_date: from,
-    to_date: to,
-  };
-
-  if (event) {
-    params.event = JSON.stringify([event]);
-  }
+  const params: Record<string, string> = { from_date: from, to_date: to };
+  if (event) params.event = JSON.stringify([event]);
 
   const response = await mixpanelFetch<string[]>(
     MIXPANEL_DATA_BASE,
@@ -194,28 +174,23 @@ export async function queryEvents(
     { params },
   );
 
-  // Parse JSONL response (each line is a JSON object)
   const events: MixpanelEventResult[] = [];
-  if (Array.isArray(response)) {
-    for (const line of response) {
-      if (typeof line === "string" && line.trim()) {
-        try {
-          const parsed = JSON.parse(line);
-          events.push({
-            event: parsed.event,
-            properties: parsed.properties,
-          });
-        } catch {
-          // Skip malformed lines
-        }
-      }
+  if (!Array.isArray(response)) return events;
+
+  for (const line of response) {
+    if (typeof line !== "string" || !line.trim()) continue;
+
+    try {
+      const parsed = JSON.parse(line) as MixpanelEventResult;
+      events.push({ event: parsed.event, properties: parsed.properties });
+    } catch {
+      // Skip malformed lines
     }
   }
 
   return events;
 }
 
-// Get funnel data
 export async function getFunnel(
   funnelId: number,
   from: string,
@@ -228,14 +203,11 @@ export async function getFunnel(
     unit: "day",
   };
 
-  return mixpanelFetch<MixpanelFunnel>(
-    MIXPANEL_DATA_BASE,
-    "/funnels",
-    { params },
-  );
+  return mixpanelFetch<MixpanelFunnel>(MIXPANEL_DATA_BASE, "/funnels", {
+    params,
+  });
 }
 
-// Get retention data
 export async function getRetention(
   from: string,
   to: string,
@@ -257,34 +229,22 @@ export async function getRetention(
     { params },
   );
 
-  // Convert object to array
-  return Object.entries(response).map(([date, data]) => ({
-    date,
-    ...data,
-  }));
+  return Object.entries(response).map(([date, data]) => ({ date, ...data }));
 }
 
-// List cohorts
 export async function listCohorts(): Promise<MixpanelCohort[]> {
   const projectId = getProjectId();
   if (!projectId) {
     throw new Error("Project ID not set. Please set MIXPANEL_PROJECT_ID.");
   }
 
-  const response = await mixpanelFetch<MixpanelCohort[]>(
+  return mixpanelFetch<MixpanelCohort[]>(
     MIXPANEL_API_BASE,
-    `/2.0/cohorts/list`,
-    {
-      params: {
-        project_id: projectId,
-      },
-    },
+    "/2.0/cohorts/list",
+    { params: { project_id: projectId } },
   );
-
-  return response;
 }
 
-// Helper functions
 export function formatDate(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -297,23 +257,16 @@ export function getDateRange(days: number): { from: string; to: string } {
   const from = new Date();
   from.setDate(from.getDate() - days);
 
-  return {
-    from: formatDate(from),
-    to: formatDate(to),
-  };
+  return { from: formatDate(from), to: formatDate(to) };
 }
 
 export function calculateFunnelConversionRate(funnel: MixpanelFunnel): number {
-  if (!funnel.steps || funnel.steps.length < 2) {
-    return 0;
-  }
+  if (!funnel.steps || funnel.steps.length < 2) return 0;
 
   const firstStep = funnel.steps[0];
   const lastStep = funnel.steps[funnel.steps.length - 1];
 
-  if (!firstStep || !lastStep || firstStep.count === 0) {
-    return 0;
-  }
+  if (!firstStep || !lastStep || firstStep.count === 0) return 0;
 
   return (lastStep.count / firstStep.count) * 100;
 }

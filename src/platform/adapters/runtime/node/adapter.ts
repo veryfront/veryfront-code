@@ -31,15 +31,17 @@ export class NodeAdapter implements RuntimeAdapter {
     handler: (request: Request) => Promise<Response> | Response,
     options: ServeOptions = {},
   ): Promise<Server> {
-    this.activeServer = await createNodeServer(handler, options);
-    return this.activeServer;
+    const server = await createNodeServer(handler, options);
+    this.activeServer = server;
+    return server;
   }
 
   async shutdown(): Promise<void> {
-    if (this.activeServer) {
-      await this.activeServer.stop();
-      this.activeServer = null;
-    }
+    const server = this.activeServer;
+    if (!server) return;
+
+    this.activeServer = null;
+    await server.stop();
   }
 }
 

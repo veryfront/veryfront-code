@@ -37,15 +37,16 @@ describe("cache/keys", () => {
 
   describe("buildRenderCacheKey", () => {
     it("should append content key to prefix", () => {
-      const key = buildRenderCacheKey("prefix:here", "page:blog/post");
-      assertEquals(key, "prefix:here:page:blog/post");
+      assertEquals(
+        buildRenderCacheKey("prefix:here", "page:blog/post"),
+        "prefix:here:page:blog/post",
+      );
     });
   });
 
   describe("parseRenderCacheKey", () => {
     it("should parse valid cache key", () => {
-      const result = parseRenderCacheKey("proj:production:rel:1.0.0:page:content");
-      assertEquals(result, {
+      assertEquals(parseRenderCacheKey("proj:production:rel:1.0.0:page:content"), {
         projectId: "proj",
         environment: "production",
         releaseKey: "rel",
@@ -55,25 +56,21 @@ describe("cache/keys", () => {
     });
 
     it("should return null for invalid key (too few parts)", () => {
-      const result = parseRenderCacheKey("proj:production:rel");
-      assertEquals(result, null);
+      assertEquals(parseRenderCacheKey("proj:production:rel"), null);
     });
 
     it("should handle content key with colons", () => {
-      const result = parseRenderCacheKey("proj:prod:rel:1.0:a:b:c");
-      assertEquals(result?.contentKey, "a:b:c");
+      assertEquals(parseRenderCacheKey("proj:prod:rel:1.0:a:b:c")?.contentKey, "a:b:c");
     });
   });
 
   describe("buildConfigCacheKey", () => {
     it("should build key for virtual filesystem", () => {
-      const key = buildConfigCacheKey("codersociety", true);
-      assertMatch(key, /^vf:codersociety:.+$/);
+      assertMatch(buildConfigCacheKey("codersociety", true), /^vf:codersociety:.+$/);
     });
 
     it("should build key for local filesystem", () => {
-      const key = buildConfigCacheKey("/path/to/project", false);
-      assertMatch(key, /^\/path\/to\/project:.+$/);
+      assertMatch(buildConfigCacheKey("/path/to/project", false), /^\/path\/to\/project:.+$/);
     });
   });
 });

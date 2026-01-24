@@ -1,10 +1,3 @@
-/**
- * AgentCard Component - Layer 3 (Styled)
- *
- * Production-ready agent status and tool visualization.
- * Built on Layer 2 primitives.
- */
-
 import * as React from "react";
 import {
   AgentContainer,
@@ -40,20 +33,6 @@ export interface AgentCardProps {
   renderTool?: (toolCall: ToolCall) => React.ReactNode;
 }
 
-/**
- * AgentCard - Agent status and tool visualization
- *
- * @example
- * ```tsx
- * import { AgentCard } from 'veryfront/components/ai';
- * import { useAgent } from 'veryfront/agent/react';
- *
- * export default function AgentInterface() {
- *   const agent = useAgent({ agent: 'support' });
- *   return <AgentCard {...agent} />;
- * }
- * ```
- */
 export const AgentCard = React.forwardRef<HTMLDivElement, AgentCardProps>(
   (
     {
@@ -69,15 +48,32 @@ export const AgentCard = React.forwardRef<HTMLDivElement, AgentCardProps>(
   ) => {
     const theme = mergeThemes(defaultAgentTheme, userTheme);
 
+    const toolRenderer = renderTool ??
+      ((tool: ToolCall) => (
+        <ToolInvocation
+          name={tool.name}
+          args={tool.args}
+          status={tool.status}
+          className={theme.tool}
+        >
+          {tool.result !== undefined && (
+            <ToolResult result={tool.result} className={theme.toolResult} />
+          )}
+          {tool.error && (
+            <div className="mt-2 p-3 bg-red-50 dark:bg-red-900/20 text-red-900 dark:text-red-100 rounded-xl text-sm border border-red-200 dark:border-red-800">
+              Error: {tool.error}
+            </div>
+          )}
+        </ToolInvocation>
+      ));
+
     return (
       <AgentContainer ref={ref} className={cn(theme.container, className)}>
-        {/* Status */}
         <AgentStatusPrimitive
           status={status}
           className={cn(theme.status, getStatusColor(status))}
         />
 
-        {/* Thinking indicator */}
         {thinking && (
           <ThinkingIndicator className={theme.thinking}>
             <span className="font-semibold">Thinking:</span>
@@ -85,7 +81,6 @@ export const AgentCard = React.forwardRef<HTMLDivElement, AgentCardProps>(
           </ThinkingIndicator>
         )}
 
-        {/* Tool calls */}
         {toolCalls.length > 0 && (
           <div className="space-y-3">
             <h3 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">
@@ -94,51 +89,35 @@ export const AgentCard = React.forwardRef<HTMLDivElement, AgentCardProps>(
             <ToolList
               toolCalls={toolCalls}
               className="space-y-3"
-              renderTool={renderTool ||
-                ((tool) => (
-                  <ToolInvocation
-                    name={tool.name}
-                    args={tool.args}
-                    status={tool.status}
-                    className={theme.tool}
-                  >
-                    {tool.result !== undefined && (
-                      <ToolResult result={tool.result} className={theme.toolResult} />
-                    )}
-                    {tool.error && (
-                      <div className="mt-2 p-3 bg-red-50 dark:bg-red-900/20 text-red-900 dark:text-red-100 rounded-xl text-sm border border-red-200 dark:border-red-800">
-                        Error: {tool.error}
-                      </div>
-                    )}
-                  </ToolInvocation>
-                ))}
+              renderTool={toolRenderer}
             />
           </div>
         )}
 
-        {/* Messages (if provided) */}
-        {messages && messages.length > 0 && (
-          <div className="space-y-3">
-            <h3 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">
-              Messages
-            </h3>
-            <div className="space-y-2 max-h-96 overflow-y-auto">
-              {messages.map((msg) => (
-                <div
-                  key={msg.id}
-                  className="text-sm p-3 rounded-xl bg-neutral-50 dark:bg-neutral-800"
-                >
-                  <span className="font-semibold capitalize text-neutral-900 dark:text-neutral-100">
-                    {msg.role}:
-                  </span>
-                  <span className="text-neutral-600 dark:text-neutral-400 ml-1">
-                    {msg.content.substring(0, 200)}...
-                  </span>
-                </div>
-              ))}
+        {messages?.length
+          ? (
+            <div className="space-y-3">
+              <h3 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">
+                Messages
+              </h3>
+              <div className="space-y-2 max-h-96 overflow-y-auto">
+                {messages.map((msg) => (
+                  <div
+                    key={msg.id}
+                    className="text-sm p-3 rounded-xl bg-neutral-50 dark:bg-neutral-800"
+                  >
+                    <span className="font-semibold capitalize text-neutral-900 dark:text-neutral-100">
+                      {msg.role}:
+                    </span>
+                    <span className="text-neutral-600 dark:text-neutral-400 ml-1">
+                      {msg.content.substring(0, 200)}...
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
-        )}
+          )
+          : null}
       </AgentContainer>
     );
   },
@@ -146,9 +125,6 @@ export const AgentCard = React.forwardRef<HTMLDivElement, AgentCardProps>(
 
 AgentCard.displayName = "AgentCard";
 
-/**
- * Get status color classes - Apple-inspired status colors
- */
 function getStatusColor(status: AgentStatus): string {
   switch (status) {
     case "idle":

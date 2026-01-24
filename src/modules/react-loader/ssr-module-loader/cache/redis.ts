@@ -12,10 +12,9 @@ import {
   isRedisConfigured,
   type RedisClient,
 } from "#veryfront/utils/redis-client.ts";
-import { REDIS_TTL_SECONDS } from "../constants.ts";
 import { buildRedisSSRModuleKey } from "#veryfront/cache";
+import { REDIS_TTL_SECONDS } from "../constants.ts";
 
-// Redis state
 let redisEnabled = false;
 let redisClient: RedisClient | null = null;
 let redisInitialized = false;
@@ -34,9 +33,7 @@ export function redisKey(key: string): string {
  * Call this at startup if you want to enable cross-pod cache sharing.
  */
 export async function initializeSSRDistributedCache(): Promise<boolean> {
-  if (redisInitialized) {
-    return redisEnabled;
-  }
+  if (redisInitialized) return redisEnabled;
 
   if (redisInitPromise) {
     await redisInitPromise;
@@ -53,17 +50,18 @@ export async function initializeSSRDistributedCache(): Promise<boolean> {
     try {
       redisClient = await getRedisClient();
       redisEnabled = true;
-      redisInitialized = true;
       logger.debug("[SSR-MODULE-LOADER] Redis cache enabled");
     } catch (error) {
       logger.warn("[SSR-MODULE-LOADER] Redis unavailable, falling back to memory cache", { error });
       redisEnabled = false;
+    } finally {
       redisInitialized = true;
     }
   })();
 
   await redisInitPromise;
   redisInitPromise = null;
+
   return redisEnabled;
 }
 

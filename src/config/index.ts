@@ -9,7 +9,6 @@ export { defineConfig } from "./define-config.ts";
 
 export type { VeryfrontConfig } from "./types.ts";
 
-// Runtime configuration (env-decoupled)
 export type { RuntimeEnv } from "./runtime-env.ts";
 export {
   _resetRuntimeEnv,

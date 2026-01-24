@@ -1,8 +1,8 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { discoverAppRoutes } from "./route-discovery.ts";
-import { DynamicRouter } from "./api-route-matcher.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { DynamicRouter } from "./api-route-matcher.ts";
+import { discoverAppRoutes } from "./route-discovery.ts";
 
 const routers: DynamicRouter[] = [];
 
@@ -12,11 +12,16 @@ function createRouter(): DynamicRouter {
   return router;
 }
 
+function file(name: string) {
+  return { name, isFile: true, isDirectory: false, isSymlink: false };
+}
+
+function dir(name: string) {
+  return { name, isFile: false, isDirectory: true, isSymlink: false };
+}
+
 afterEach(() => {
-  while (routers.length > 0) {
-    const router = routers.pop();
-    router?.destroy();
-  }
+  while (routers.length) routers.pop()?.destroy();
 });
 
 describe("route-discovery.ts - App Router Discovery", () => {
@@ -24,14 +29,12 @@ describe("route-discovery.ts - App Router Discovery", () => {
     it("should discover route.ts files", async () => {
       const adapter = createMockAdapter();
       const router = createRouter();
-      const dir = "/project/app/api";
-      const prefix = "/api";
 
       adapter.fs.readDir = async function* (_path: string) {
-        yield { name: "route.ts", isFile: true, isDirectory: false, isSymlink: false };
+        yield file("route.ts");
       };
 
-      await discoverAppRoutes(router, dir, prefix, adapter);
+      await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
       const routes = router.listRoutes();
       assertEquals(routes.length, 1);
@@ -42,14 +45,12 @@ describe("route-discovery.ts - App Router Discovery", () => {
     it("should discover route.js files", async () => {
       const adapter = createMockAdapter();
       const router = createRouter();
-      const dir = "/project/app/api";
-      const prefix = "/api";
 
       adapter.fs.readDir = async function* (_path: string) {
-        yield { name: "route.js", isFile: true, isDirectory: false, isSymlink: false };
+        yield file("route.js");
       };
 
-      await discoverAppRoutes(router, dir, prefix, adapter);
+      await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
       const routes = router.listRoutes();
       assertEquals(routes.length, 1);
@@ -59,14 +60,12 @@ describe("route-discovery.ts - App Router Discovery", () => {
     it("should discover route.tsx files", async () => {
       const adapter = createMockAdapter();
       const router = createRouter();
-      const dir = "/project/app/api";
-      const prefix = "/api";
 
       adapter.fs.readDir = async function* (_path: string) {
-        yield { name: "route.tsx", isFile: true, isDirectory: false, isSymlink: false };
+        yield file("route.tsx");
       };
 
-      await discoverAppRoutes(router, dir, prefix, adapter);
+      await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
       const routes = router.listRoutes();
       assertEquals(routes.length, 1);
@@ -76,14 +75,12 @@ describe("route-discovery.ts - App Router Discovery", () => {
     it("should discover route.jsx files", async () => {
       const adapter = createMockAdapter();
       const router = createRouter();
-      const dir = "/project/app/api";
-      const prefix = "/api";
 
       adapter.fs.readDir = async function* (_path: string) {
-        yield { name: "route.jsx", isFile: true, isDirectory: false, isSymlink: false };
+        yield file("route.jsx");
       };
 
-      await discoverAppRoutes(router, dir, prefix, adapter);
+      await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
       const routes = router.listRoutes();
       assertEquals(routes.length, 1);
@@ -93,19 +90,17 @@ describe("route-discovery.ts - App Router Discovery", () => {
     it("should ignore non-route files", async () => {
       const adapter = createMockAdapter();
       const router = createRouter();
-      const dir = "/project/app/api";
-      const prefix = "/api";
 
       adapter.fs.readDir = async function* (_path: string) {
-        yield { name: "page.tsx", isFile: true, isDirectory: false, isSymlink: false };
-        yield { name: "layout.tsx", isFile: true, isDirectory: false, isSymlink: false };
-        yield { name: "loading.tsx", isFile: true, isDirectory: false, isSymlink: false };
-        yield { name: "error.tsx", isFile: true, isDirectory: false, isSymlink: false };
-        yield { name: "not-found.tsx", isFile: true, isDirectory: false, isSymlink: false };
-        yield { name: "helpers.ts", isFile: true, isDirectory: false, isSymlink: false };
+        yield file("page.tsx");
+        yield file("layout.tsx");
+        yield file("loading.tsx");
+        yield file("error.tsx");
+        yield file("not-found.tsx");
+        yield file("helpers.ts");
       };
 
-      await discoverAppRoutes(router, dir, prefix, adapter);
+      await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
       const routes = router.listRoutes();
       assertEquals(routes.length, 0, "Should not discover non-route files");
@@ -114,13 +109,10 @@ describe("route-discovery.ts - App Router Discovery", () => {
     it("should handle empty directory", async () => {
       const adapter = createMockAdapter();
       const router = createRouter();
-      const dir = "/project/app/api";
-      const prefix = "/api";
 
-      adapter.fs.readDir = async function* (_path: string) {
-      };
+      adapter.fs.readDir = async function* (_path: string) {};
 
-      await discoverAppRoutes(router, dir, prefix, adapter);
+      await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
       const routes = router.listRoutes();
       assertEquals(routes.length, 0);
@@ -129,14 +121,12 @@ describe("route-discovery.ts - App Router Discovery", () => {
     it("should handle root-level route.ts with empty prefix", async () => {
       const adapter = createMockAdapter();
       const router = createRouter();
-      const dir = "/project/app";
-      const prefix = "";
 
       adapter.fs.readDir = async function* (_path: string) {
-        yield { name: "route.ts", isFile: true, isDirectory: false, isSymlink: false };
+        yield file("route.ts");
       };
 
-      await discoverAppRoutes(router, dir, prefix, adapter);
+      await discoverAppRoutes(router, "/project/app", "", adapter);
 
       const routes = router.listRoutes();
       assertEquals(routes.length, 1);
@@ -148,18 +138,13 @@ describe("route-discovery.ts - App Router Discovery", () => {
     it("should discover routes in nested directories", async () => {
       const adapter = createMockAdapter();
       const router = createRouter();
-      const dir = "/project/app/api";
-      const prefix = "/api";
 
       adapter.fs.readDir = async function* (path: string) {
-        if (path === "/project/app/api") {
-          yield { name: "users", isFile: false, isDirectory: true, isSymlink: false };
-        } else if (path === "/project/app/api/users") {
-          yield { name: "route.ts", isFile: true, isDirectory: false, isSymlink: false };
-        }
+        if (path === "/project/app/api") yield dir("users");
+        if (path === "/project/app/api/users") yield file("route.ts");
       };
 
-      await discoverAppRoutes(router, dir, prefix, adapter);
+      await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
       const routes = router.listRoutes();
       assertEquals(routes.length, 1);
@@ -170,20 +155,14 @@ describe("route-discovery.ts - App Router Discovery", () => {
     it("should discover routes in deeply nested directories", async () => {
       const adapter = createMockAdapter();
       const router = createRouter();
-      const dir = "/project/app/api";
-      const prefix = "/api";
 
       adapter.fs.readDir = async function* (path: string) {
-        if (path === "/project/app/api") {
-          yield { name: "v1", isFile: false, isDirectory: true, isSymlink: false };
-        } else if (path === "/project/app/api/v1") {
-          yield { name: "users", isFile: false, isDirectory: true, isSymlink: false };
-        } else if (path === "/project/app/api/v1/users") {
-          yield { name: "route.ts", isFile: true, isDirectory: false, isSymlink: false };
-        }
+        if (path === "/project/app/api") yield dir("v1");
+        if (path === "/project/app/api/v1") yield dir("users");
+        if (path === "/project/app/api/v1/users") yield file("route.ts");
       };
 
-      await discoverAppRoutes(router, dir, prefix, adapter);
+      await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
       const routes = router.listRoutes();
       assertEquals(routes.length, 1);
@@ -193,19 +172,16 @@ describe("route-discovery.ts - App Router Discovery", () => {
     it("should discover multiple routes at different levels", async () => {
       const adapter = createMockAdapter();
       const router = createRouter();
-      const dir = "/project/app/api";
-      const prefix = "/api";
 
       adapter.fs.readDir = async function* (path: string) {
         if (path === "/project/app/api") {
-          yield { name: "route.ts", isFile: true, isDirectory: false, isSymlink: false };
-          yield { name: "users", isFile: false, isDirectory: true, isSymlink: false };
-        } else if (path === "/project/app/api/users") {
-          yield { name: "route.ts", isFile: true, isDirectory: false, isSymlink: false };
+          yield file("route.ts");
+          yield dir("users");
         }
+        if (path === "/project/app/api/users") yield file("route.ts");
       };
 
-      await discoverAppRoutes(router, dir, prefix, adapter);
+      await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
       const routes = router.listRoutes();
       assertEquals(routes.length, 2);
@@ -217,20 +193,14 @@ describe("route-discovery.ts - App Router Discovery", () => {
     it("should recurse through directories without route files", async () => {
       const adapter = createMockAdapter();
       const router = createRouter();
-      const dir = "/project/app/api";
-      const prefix = "/api";
 
       adapter.fs.readDir = async function* (path: string) {
-        if (path === "/project/app/api") {
-          yield { name: "v1", isFile: false, isDirectory: true, isSymlink: false };
-        } else if (path === "/project/app/api/v1") {
-          yield { name: "admin", isFile: false, isDirectory: true, isSymlink: false };
-        } else if (path === "/project/app/api/v1/admin") {
-          yield { name: "route.ts", isFile: true, isDirectory: false, isSymlink: false };
-        }
+        if (path === "/project/app/api") yield dir("v1");
+        if (path === "/project/app/api/v1") yield dir("admin");
+        if (path === "/project/app/api/v1/admin") yield file("route.ts");
       };
 
-      await discoverAppRoutes(router, dir, prefix, adapter);
+      await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
       const routes = router.listRoutes();
       assertEquals(routes.length, 1);
@@ -242,18 +212,13 @@ describe("route-discovery.ts - App Router Discovery", () => {
     it("should discover dynamic parameter routes [id]", async () => {
       const adapter = createMockAdapter();
       const router = createRouter();
-      const dir = "/project/app/api";
-      const prefix = "/api";
 
       adapter.fs.readDir = async function* (path: string) {
-        if (path === "/project/app/api") {
-          yield { name: "[id]", isFile: false, isDirectory: true, isSymlink: false };
-        } else if (path === "/project/app/api/[id]") {
-          yield { name: "route.ts", isFile: true, isDirectory: false, isSymlink: false };
-        }
+        if (path === "/project/app/api") yield dir("[id]");
+        if (path === "/project/app/api/[id]") yield file("route.ts");
       };
 
-      await discoverAppRoutes(router, dir, prefix, adapter);
+      await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
       const routes = router.listRoutes();
       assertEquals(routes.length, 1);
@@ -263,18 +228,13 @@ describe("route-discovery.ts - App Router Discovery", () => {
     it("should discover catch-all routes [...slug]", async () => {
       const adapter = createMockAdapter();
       const router = createRouter();
-      const dir = "/project/app/api";
-      const prefix = "/api";
 
       adapter.fs.readDir = async function* (path: string) {
-        if (path === "/project/app/api") {
-          yield { name: "[...slug]", isFile: false, isDirectory: true, isSymlink: false };
-        } else if (path === "/project/app/api/[...slug]") {
-          yield { name: "route.ts", isFile: true, isDirectory: false, isSymlink: false };
-        }
+        if (path === "/project/app/api") yield dir("[...slug]");
+        if (path === "/project/app/api/[...slug]") yield file("route.ts");
       };
 
-      await discoverAppRoutes(router, dir, prefix, adapter);
+      await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
       const routes = router.listRoutes();
       assertEquals(routes.length, 1);
@@ -284,18 +244,13 @@ describe("route-discovery.ts - App Router Discovery", () => {
     it("should discover optional catch-all routes [[...slug]]", async () => {
       const adapter = createMockAdapter();
       const router = createRouter();
-      const dir = "/project/app/api";
-      const prefix = "/api";
 
       adapter.fs.readDir = async function* (path: string) {
-        if (path === "/project/app/api") {
-          yield { name: "[[...slug]]", isFile: false, isDirectory: true, isSymlink: false };
-        } else if (path === "/project/app/api/[[...slug]]") {
-          yield { name: "route.ts", isFile: true, isDirectory: false, isSymlink: false };
-        }
+        if (path === "/project/app/api") yield dir("[[...slug]]");
+        if (path === "/project/app/api/[[...slug]]") yield file("route.ts");
       };
 
-      await discoverAppRoutes(router, dir, prefix, adapter);
+      await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
       const routes = router.listRoutes();
       assertEquals(routes.length, 1);
@@ -305,24 +260,16 @@ describe("route-discovery.ts - App Router Discovery", () => {
     it("should discover nested dynamic routes", async () => {
       const adapter = createMockAdapter();
       const router = createRouter();
-      const dir = "/project/app/api";
-      const prefix = "/api";
 
       adapter.fs.readDir = async function* (path: string) {
-        if (path === "/project/app/api") {
-          yield { name: "users", isFile: false, isDirectory: true, isSymlink: false };
-        } else if (path === "/project/app/api/users") {
-          yield { name: "[userId]", isFile: false, isDirectory: true, isSymlink: false };
-        } else if (path === "/project/app/api/users/[userId]") {
-          yield { name: "posts", isFile: false, isDirectory: true, isSymlink: false };
-        } else if (path === "/project/app/api/users/[userId]/posts") {
-          yield { name: "[postId]", isFile: false, isDirectory: true, isSymlink: false };
-        } else if (path === "/project/app/api/users/[userId]/posts/[postId]") {
-          yield { name: "route.ts", isFile: true, isDirectory: false, isSymlink: false };
-        }
+        if (path === "/project/app/api") yield dir("users");
+        if (path === "/project/app/api/users") yield dir("[userId]");
+        if (path === "/project/app/api/users/[userId]") yield dir("posts");
+        if (path === "/project/app/api/users/[userId]/posts") yield dir("[postId]");
+        if (path === "/project/app/api/users/[userId]/posts/[postId]") yield file("route.ts");
       };
 
-      await discoverAppRoutes(router, dir, prefix, adapter);
+      await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
       const routes = router.listRoutes();
       assertEquals(routes.length, 1);
@@ -334,18 +281,13 @@ describe("route-discovery.ts - App Router Discovery", () => {
     it("should handle directories with special characters", async () => {
       const adapter = createMockAdapter();
       const router = createRouter();
-      const dir = "/project/app/api";
-      const prefix = "/api";
 
       adapter.fs.readDir = async function* (path: string) {
-        if (path === "/project/app/api") {
-          yield { name: "user-profile", isFile: false, isDirectory: true, isSymlink: false };
-        } else if (path === "/project/app/api/user-profile") {
-          yield { name: "route.ts", isFile: true, isDirectory: false, isSymlink: false };
-        }
+        if (path === "/project/app/api") yield dir("user-profile");
+        if (path === "/project/app/api/user-profile") yield file("route.ts");
       };
 
-      await discoverAppRoutes(router, dir, prefix, adapter);
+      await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
       const routes = router.listRoutes();
       assertEquals(routes.length, 1);
@@ -355,18 +297,13 @@ describe("route-discovery.ts - App Router Discovery", () => {
     it("should handle numeric directory names", async () => {
       const adapter = createMockAdapter();
       const router = createRouter();
-      const dir = "/project/app/api";
-      const prefix = "/api";
 
       adapter.fs.readDir = async function* (path: string) {
-        if (path === "/project/app/api") {
-          yield { name: "v2", isFile: false, isDirectory: true, isSymlink: false };
-        } else if (path === "/project/app/api/v2") {
-          yield { name: "route.ts", isFile: true, isDirectory: false, isSymlink: false };
-        }
+        if (path === "/project/app/api") yield dir("v2");
+        if (path === "/project/app/api/v2") yield file("route.ts");
       };
 
-      await discoverAppRoutes(router, dir, prefix, adapter);
+      await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
       const routes = router.listRoutes();
       assertEquals(routes.length, 1);
@@ -376,17 +313,15 @@ describe("route-discovery.ts - App Router Discovery", () => {
     it("should only match exact route file names", async () => {
       const adapter = createMockAdapter();
       const router = createRouter();
-      const dir = "/project/app/api";
-      const prefix = "/api";
 
       adapter.fs.readDir = async function* (_path: string) {
-        yield { name: "routes.ts", isFile: true, isDirectory: false, isSymlink: false };
-        yield { name: "route-handler.ts", isFile: true, isDirectory: false, isSymlink: false };
-        yield { name: "route.backup.ts", isFile: true, isDirectory: false, isSymlink: false };
-        yield { name: "route.ts", isFile: true, isDirectory: false, isSymlink: false };
+        yield file("routes.ts");
+        yield file("route-handler.ts");
+        yield file("route.backup.ts");
+        yield file("route.ts");
       };
 
-      await discoverAppRoutes(router, dir, prefix, adapter);
+      await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
       const routes = router.listRoutes();
       assertEquals(routes.length, 1, "Should only match exact route.ts name");
@@ -396,14 +331,12 @@ describe("route-discovery.ts - App Router Discovery", () => {
     it("should preserve full file paths correctly", async () => {
       const adapter = createMockAdapter();
       const router = createRouter();
-      const dir = "/very/long/path/to/project/app/api";
-      const prefix = "/api";
 
       adapter.fs.readDir = async function* (_path: string) {
-        yield { name: "route.ts", isFile: true, isDirectory: false, isSymlink: false };
+        yield file("route.ts");
       };
 
-      await discoverAppRoutes(router, dir, prefix, adapter);
+      await discoverAppRoutes(router, "/very/long/path/to/project/app/api", "/api", adapter);
 
       const routes = router.listRoutes();
       assertEquals(routes.length, 1);
@@ -413,14 +346,12 @@ describe("route-discovery.ts - App Router Discovery", () => {
     it("should handle different prefix paths", async () => {
       const adapter = createMockAdapter();
       const router = createRouter();
-      const dir = "/project/app/custom";
-      const prefix = "/custom";
 
       adapter.fs.readDir = async function* (_path: string) {
-        yield { name: "route.ts", isFile: true, isDirectory: false, isSymlink: false };
+        yield file("route.ts");
       };
 
-      await discoverAppRoutes(router, dir, prefix, adapter);
+      await discoverAppRoutes(router, "/project/app/custom", "/custom", adapter);
 
       const routes = router.listRoutes();
       assertEquals(routes.length, 1);
@@ -432,18 +363,13 @@ describe("route-discovery.ts - App Router Discovery", () => {
     it("should add routes that can be matched by DynamicRouter", async () => {
       const adapter = createMockAdapter();
       const router = createRouter();
-      const dir = "/project/app/api";
-      const prefix = "/api";
 
       adapter.fs.readDir = async function* (path: string) {
-        if (path === "/project/app/api") {
-          yield { name: "users", isFile: false, isDirectory: true, isSymlink: false };
-        } else if (path === "/project/app/api/users") {
-          yield { name: "route.ts", isFile: true, isDirectory: false, isSymlink: false };
-        }
+        if (path === "/project/app/api") yield dir("users");
+        if (path === "/project/app/api/users") yield file("route.ts");
       };
 
-      await discoverAppRoutes(router, dir, prefix, adapter);
+      await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
       const match = router.match("/api/users");
       assertExists(match);
@@ -454,20 +380,14 @@ describe("route-discovery.ts - App Router Discovery", () => {
     it("should add dynamic routes that extract parameters", async () => {
       const adapter = createMockAdapter();
       const router = createRouter();
-      const dir = "/project/app/api";
-      const prefix = "/api";
 
       adapter.fs.readDir = async function* (path: string) {
-        if (path === "/project/app/api") {
-          yield { name: "users", isFile: false, isDirectory: true, isSymlink: false };
-        } else if (path === "/project/app/api/users") {
-          yield { name: "[id]", isFile: false, isDirectory: true, isSymlink: false };
-        } else if (path === "/project/app/api/users/[id]") {
-          yield { name: "route.ts", isFile: true, isDirectory: false, isSymlink: false };
-        }
+        if (path === "/project/app/api") yield dir("users");
+        if (path === "/project/app/api/users") yield dir("[id]");
+        if (path === "/project/app/api/users/[id]") yield file("route.ts");
       };
 
-      await discoverAppRoutes(router, dir, prefix, adapter);
+      await discoverAppRoutes(router, "/project/app/api", "/api", adapter);
 
       const match = router.match("/api/users/42");
       assertExists(match);

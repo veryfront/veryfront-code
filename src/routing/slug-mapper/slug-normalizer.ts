@@ -1,7 +1,7 @@
 export function normalizeSlug(slug: string): string {
   return slug
     .split("/")
-    .filter((part) => part.length > 0)
+    .filter(Boolean)
     .join("/");
 }
 
@@ -16,14 +16,11 @@ export function pathToSlug(path: string): string {
 
 export function getSlugFromPath(filePath: string): string {
   const parts = filePath.split("/");
-  const fileName = parts[parts.length - 1] || "";
-
+  const fileName = parts.at(-1) ?? "";
   const slug = fileName.replace(/\.(mdx?|tsx?|jsx?|ts|js)$/, "");
 
-  if (slug === "index" || slug === "page") {
-    const parentDir = parts[parts.length - 2];
-    return parentDir === "pages" || parentDir === "app" ? "" : parentDir || "";
-  }
+  if (slug !== "index" && slug !== "page") return slug;
 
-  return slug;
+  const parentDir = parts.at(-2) ?? "";
+  return parentDir === "pages" || parentDir === "app" ? "" : parentDir;
 }

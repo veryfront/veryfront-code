@@ -13,81 +13,85 @@ interface FSIntegrationConfig {
   fs?: FSAdapterConfig;
 }
 
+function isLocalFS(config: FSIntegrationConfig): boolean {
+  return !config.fs?.type || config.fs.type === "local";
+}
+
 export function enhanceAdapterWithFS(
   adapter: RuntimeAdapter,
   config: FSIntegrationConfig,
   projectDir?: string,
 ): Promise<RuntimeAdapter> {
-  if (!config.fs || config.fs.type === "local" || !config.fs.type) {
+  if (isLocalFS(config)) {
     logger.debug("[FSIntegration] Using local filesystem (default)");
     return Promise.resolve(adapter);
   }
 
-  return withSpan("platform.fs.enhanceAdapterWithFS", async () => {
-    try {
-      logger.debug("[FSIntegration] Initializing FSAdapter", {
-        type: config.fs!.type,
-        projectSlug: config.fs!.veryfront?.projectSlug,
-      });
+  const fsType = config.fs!.type ?? "unknown";
 
-      const fsAdapterConfig: FSAdapterConfig = {
-        ...config.fs as FSAdapterConfig,
-        projectDir,
-      };
-      const fsAdapter = await createFSAdapter(fsAdapterConfig);
+  return withSpan(
+    "platform.fs.enhanceAdapterWithFS",
+    async () => {
+      try {
+        logger.debug("[FSIntegration] Initializing FSAdapter", {
+          type: fsType,
+          projectSlug: config.fs?.veryfront?.projectSlug,
+        });
 
-      const wrappedFS = wrapFSAdapter(fsAdapter);
+        const fsAdapterConfig: FSAdapterConfig = {
+          ...(config.fs as FSAdapterConfig),
+          projectDir,
+        };
 
-      const enhancedAdapter: RuntimeAdapter = new Proxy(adapter, {
-        get(target, prop, receiver) {
-          if (prop === "fs") {
-            return wrappedFS;
-          }
-          const value = Reflect.get(target, prop, receiver);
-          if (typeof value === "function") {
-            return value.bind(target);
-          }
-          return value;
-        },
-      });
+        const fsAdapter = await createFSAdapter(fsAdapterConfig);
+        const wrappedFS = wrapFSAdapter(fsAdapter);
 
-      logger.debug("[FSIntegration] FSAdapter initialized successfully", {
-        type: config.fs!.type,
-      });
+        const enhancedAdapter: RuntimeAdapter = new Proxy(adapter, {
+          get(target, prop, receiver) {
+            if (prop === "fs") return wrappedFS;
 
-      return enhancedAdapter;
-    } catch (error) {
-      logger.error("[FSIntegration] Failed to initialize FSAdapter", {
-        error: error instanceof Error ? error.message : String(error),
-        type: config.fs!.type,
-      });
+            const value = Reflect.get(target, prop, receiver);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
 
-      logger.warn("[FSIntegration] Falling back to local filesystem");
-      return adapter;
-    }
-  }, { "fs.adapter.type": config.fs.type });
+        logger.debug("[FSIntegration] FSAdapter initialized successfully", {
+          type: fsType,
+        });
+
+        return enhancedAdapter;
+      } catch (error) {
+        logger.error("[FSIntegration] Failed to initialize FSAdapter", {
+          error: error instanceof Error ? error.message : String(error),
+          type: fsType,
+        });
+
+        logger.warn("[FSIntegration] Falling back to local filesystem");
+        return adapter;
+      }
+    },
+    { "fs.adapter.type": fsType },
+  );
 }
 
 export function createFSAdapterFromConfig(
   config: FSIntegrationConfig,
 ): Promise<FSAdapter | null> {
-  if (!config.fs || config.fs.type === "local" || !config.fs.type) {
-    return Promise.resolve(null);
-  }
+  if (isLocalFS(config)) return Promise.resolve(null);
 
-  return withSpan("platform.fs.createFSAdapterFromConfig", () => {
-    return createFSAdapter(config.fs as FSAdapterConfig);
-  }, { "fs.adapter.type": config.fs.type });
-}
+  const fsType = config.fs!.type ?? "unknown";
 
-export function isFSAdapterConfigured(config: FSIntegrationConfig): boolean {
-  return !!(
-    config.fs &&
-    config.fs.type &&
-    config.fs.type !== "local"
+  return withSpan(
+    "platform.fs.createFSAdapterFromConfig",
+    () => createFSAdapter(config.fs as FSAdapterConfig),
+    { "fs.adapter.type": fsType },
   );
 }
 
+export function isFSAdapterConfigured(config: FSIntegrationConfig): boolean {
+  return !!config.fs?.type && config.fs.type !== "local";
+}
+
 export function getFSAdapterType(config: FSIntegrationConfig): string {
-  return config.fs?.type || "local";
+  return config.fs?.type ?? "local";
 }

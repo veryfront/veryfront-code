@@ -78,12 +78,8 @@ export interface ConfluenceSearchResult {
   };
 }
 
-async function confluenceFetch<T>(
-  endpoint: string,
-  options: RequestInit = {},
-): Promise<T> {
-  const token = await getAccessToken();
-  const cloudId = await getCloudId();
+async function confluenceFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  const [token, cloudId] = await Promise.all([getAccessToken(), getCloudId()]);
 
   if (!token || !cloudId) {
     throw new Error("Not authenticated with Confluence. Please connect your Atlassian account.");
@@ -94,18 +90,16 @@ async function confluenceFetch<T>(
   const response = await fetch(url, {
     ...options,
     headers: {
-      "Authorization": `Bearer ${token}`,
-      "Accept": "application/json",
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
       "Content-Type": "application/json",
       ...options.headers,
     },
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(
-      `Confluence API error: ${response.status} ${error.message || response.statusText}`,
-    );
+    const error = await response.json().catch(() => ({} as { message?: string }));
+    throw new Error(`Confluence API error: ${response.status} ${error.message ?? response.statusText}`);
   }
 
   return response.json();
@@ -117,18 +111,14 @@ export async function listSpaces(options?: {
 }): Promise<ConfluenceSpace[]> {
   const params = new URLSearchParams();
 
-  if (options?.limit) {
-    params.set("limit", options.limit.toString());
-  }
-  if (options?.type) {
-    params.set("type", options.type);
-  }
+  if (options?.limit) params.set("limit", options.limit.toString());
+  if (options?.type) params.set("type", options.type);
 
   const query = params.toString();
   const endpoint = `/wiki/rest/api/space${query ? `?${query}` : ""}`;
 
   const response = await confluenceFetch<ConfluenceResponse<ConfluenceSpace>>(endpoint);
-  return response.results || [];
+  return response.results ?? [];
 }
 
 export async function searchContent(
@@ -141,32 +131,23 @@ export async function searchContent(
 ): Promise<ConfluenceSearchResult[]> {
   const params = new URLSearchParams();
 
-  // Build CQL query
-  let cqlQuery = options?.cql || `title ~ "${query}" OR text ~ "${query}"`;
-
-  if (options?.spaceKey) {
-    cqlQuery += ` AND space = "${options.spaceKey}"`;
-  }
+  let cqlQuery = options?.cql ?? `title ~ "${query}" OR text ~ "${query}"`;
+  if (options?.spaceKey) cqlQuery += ` AND space = "${options.spaceKey}"`;
 
   params.set("cql", cqlQuery);
-
-  if (options?.limit) {
-    params.set("limit", options.limit.toString());
-  }
+  if (options?.limit) params.set("limit", options.limit.toString());
 
   const response = await confluenceFetch<ConfluenceResponse<ConfluenceSearchResult>>(
     `/wiki/rest/api/search?${params.toString()}`,
   );
 
-  return response.results || [];
+  return response.results ?? [];
 }
 
 export function getPage(pageId: string, expand?: string[]): Promise<ConfluencePage> {
   const params = new URLSearchParams();
 
-  if (expand && expand.length > 0) {
-    params.set("expand", expand.join(","));
-  }
+  if (expand?.length) params.set("expand", expand.join(","));
 
   const query = params.toString();
   const endpoint = `/wiki/rest/api/content/${pageId}${query ? `?${query}` : ""}`;
@@ -186,20 +167,16 @@ export function createPage(options: {
   type?: "page" | "blogpost";
 }): Promise<ConfluencePage> {
   const body = {
-    type: options.type || "page",
+    type: options.type ?? "page",
     title: options.title,
-    space: {
-      key: options.spaceKey,
-    },
+    space: { key: options.spaceKey },
     body: {
       storage: {
         value: options.content,
         representation: "storage" as const,
       },
     },
-    ...(options.parentId && {
-      ancestors: [{ id: options.parentId }],
-    }),
+    ...(options.parentId ? { ancestors: [{ id: options.parentId }] } : {}),
   };
 
   return confluenceFetch<ConfluencePage>("/wiki/rest/api/content", {
@@ -217,7 +194,7 @@ export async function updatePage(
     versionMessage?: string;
   },
 ): Promise<ConfluencePage> {
-  const _currentPage = await getPage(pageId, ["version"]);
+  await getPage(pageId, ["version"]);
 
   const body: Record<string, unknown> = {
     version: {
@@ -227,9 +204,7 @@ export async function updatePage(
     type: "page",
   };
 
-  if (options.title) {
-    body.title = options.title;
-  }
+  if (options.title) body.title = options.title;
 
   if (options.content) {
     body.body = {
@@ -246,9 +221,7 @@ export async function updatePage(
   });
 }
 
-// Helper function to convert storage format to plain text
 export function extractPlainText(storageHtml: string): string {
-  // Remove HTML tags and decode entities
   return storageHtml
     .replace(/<[^>]*>/g, " ")
     .replace(/&nbsp;/g, " ")
@@ -261,14 +234,10 @@ export function extractPlainText(storageHtml: string): string {
     .trim();
 }
 
-// Helper to format text as Confluence storage format (simple HTML)
 export function formatAsStorage(text: string): string {
-  // Split by double newlines for paragraphs
   const paragraphs = text.split("\n\n").filter((p) => p.trim());
 
-  return paragraphs
-    .map((p) => `<p>${escapeHtml(p.trim())}</p>`)
-    .join("\n");
+  return paragraphs.map((p) => `<p>${escapeHtml(p.trim())}</p>`).join("\n");
 }
 
 function escapeHtml(text: string): string {

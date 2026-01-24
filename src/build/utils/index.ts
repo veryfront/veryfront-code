@@ -18,6 +18,5 @@ export {
   isPseudoSelector,
 } from "./asset-utils.ts";
 
-// Re-export existing utilities that don't need consolidation yet
 export * from "../renderer/utils/import-utils.ts";
 export * from "../renderer/utils/loader-utils.ts";

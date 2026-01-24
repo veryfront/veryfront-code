@@ -9,55 +9,53 @@ export default tool({
   inputSchema: z.object({
     query: z.string().describe("Search query to find files or folders"),
     path: z.string().optional().describe("Optional path to limit search to a specific folder"),
-    maxResults: z.number().min(1).max(100).default(20).describe(
-      "Maximum number of results to return",
-    ),
-    fileCategories: z.array(
-      z.enum([
-        "image",
-        "document",
-        "pdf",
-        "spreadsheet",
-        "presentation",
-        "audio",
-        "video",
-        "folder",
-        "paper",
-        "others",
-      ]),
-    ).optional().describe("Filter by file categories"),
+    maxResults: z
+      .number()
+      .min(1)
+      .max(100)
+      .default(20)
+      .describe("Maximum number of results to return"),
+    fileCategories: z
+      .array(
+        z.enum([
+          "image",
+          "document",
+          "pdf",
+          "spreadsheet",
+          "presentation",
+          "audio",
+          "video",
+          "folder",
+          "paper",
+          "others",
+        ]),
+      )
+      .optional()
+      .describe("Filter by file categories"),
   }),
   async execute({ query, path, maxResults, fileCategories }) {
-    const result = await searchFiles(query, {
-      path,
-      maxResults,
-      fileCategories,
-    });
+    const result = await searchFiles(query, { path, maxResults, fileCategories });
 
     const matches = result.matches.map((match) => {
       const metadata = match.metadata.metadata;
-      const matchType = match.match_type[".tag"];
-
       const baseInfo = {
         name: metadata.name,
-        path: metadata.path_display || metadata.path_lower || "",
+        path: metadata.path_display ?? metadata.path_lower ?? "",
         id: metadata.id,
         type: metadata[".tag"],
-        matchType,
+        matchType: match.match_type[".tag"],
       };
 
-      if (isFile(metadata)) {
-        return {
-          ...baseInfo,
-          size: metadata.size,
-          sizeFormatted: formatFileSize(metadata.size),
-          modified: metadata.server_modified,
-          clientModified: metadata.client_modified,
-          isDownloadable: metadata.is_downloadable,
-        };
-      }
+      if (!isFile(metadata)) return baseInfo;
 
-      return baseInfo;
+      return {
+        ...baseInfo,
+        size: metadata.size,
+        sizeFormatted: formatFileSize(metadata.size),
+        modified: metadata.server_modified,
+        clientModified: metadata.client_modified,
+        isDownloadable: metadata.is_downloadable,
+      };
     });
 
     return {

@@ -11,6 +11,12 @@ export class NodeEnvironmentAdapter implements EnvironmentAdapter {
   }
 
   toObject(): Record<string, string> {
-    return { ...process.env } as Record<string, string>;
+    const result: Record<string, string> = {};
+
+    for (const [key, value] of Object.entries(process.env)) {
+      if (value !== undefined) result[key] = value;
+    }
+
+    return result;
   }
 }

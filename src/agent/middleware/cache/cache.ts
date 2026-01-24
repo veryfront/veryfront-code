@@ -1,46 +1,21 @@
-/**
- * Response Caching System
- *
- * Cache agent responses to reduce API calls and improve performance.
- *
- * @module veryfront/agent/middleware/cache
- */
-
 import type { AgentResponse } from "../../types.ts";
 import { setActiveSpanAttributes, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 export interface CacheConfig {
-  /** Cache strategy */
   strategy: "memory" | "lru" | "ttl";
-
-  /** Maximum cache size (for LRU) */
   maxSize?: number;
-
-  /** Time to live in milliseconds (for TTL) */
   ttl?: number;
-
-  /** Generate cache key */
   keyGenerator?: (input: string, context?: Record<string, unknown>) => string;
 }
 
 export interface CacheEntry {
-  /** Cached response */
   response: AgentResponse;
-
-  /** Timestamp when cached */
   cachedAt: number;
-
-  /** Expiration timestamp (for TTL) */
   expiresAt?: number;
-
-  /** Access count */
   accessCount: number;
-
-  /** Last accessed timestamp */
   lastAccessedAt: number;
 }
 
-/** Creates a new cache entry with initial values */
 function createCacheEntry(response: AgentResponse, expiresAt?: number): CacheEntry {
   const now = Date.now();
   return {
@@ -52,15 +27,11 @@ function createCacheEntry(response: AgentResponse, expiresAt?: number): CacheEnt
   };
 }
 
-/** Updates access stats on a cache entry */
 function markAccessed(entry: CacheEntry): void {
   entry.accessCount++;
   entry.lastAccessedAt = Date.now();
 }
 
-/**
- * Memory Cache (simple in-memory storage)
- */
 class MemoryCache {
   private cache = new Map<string, CacheEntry>();
 
@@ -93,29 +64,17 @@ class MemoryCache {
   }
 }
 
-/**
- * LRU Cache (Least Recently Used eviction)
- */
 class LRUCache {
   private cache = new Map<string, CacheEntry>();
-  private maxSize: number;
 
-  constructor(maxSize: number = 100) {
-    this.maxSize = maxSize;
-  }
+  constructor(private maxSize: number = 100) {}
 
   set(key: string, response: AgentResponse): void {
-    // If key exists, delete it first (will re-add to end)
-    if (this.cache.has(key)) {
-      this.cache.delete(key);
-    }
+    if (this.cache.has(key)) this.cache.delete(key);
 
-    // If at max size, remove least recently used (first entry)
     if (this.cache.size >= this.maxSize) {
-      const firstKey = this.cache.keys().next().value;
-      if (firstKey !== undefined) {
-        this.cache.delete(firstKey);
-      }
+      const firstKey = this.cache.keys().next().value as string | undefined;
+      if (firstKey !== undefined) this.cache.delete(firstKey);
     }
 
     this.cache.set(key, createCacheEntry(response));
@@ -125,7 +84,6 @@ class LRUCache {
     const entry = this.cache.get(key);
     if (!entry) return null;
 
-    // Move to end (mark as recently used)
     this.cache.delete(key);
     markAccessed(entry);
     this.cache.set(key, entry);
@@ -150,29 +108,28 @@ class LRUCache {
   }
 }
 
-/**
- * TTL Cache (Time To Live eviction)
- */
 class TTLCache {
   private cache = new Map<string, CacheEntry>();
-  private ttl: number;
   private cleanupInterval: ReturnType<typeof setInterval> | null = null;
+  private ttl?: number;
 
   constructor(ttl: number = 300000) {
-    this.ttl = ttl;
-    this.startCleanup();
+    this.ttl = ttl > 0 ? ttl : undefined;
+    if (this.ttl !== undefined) {
+      this.startCleanup();
+    }
   }
 
   set(key: string, response: AgentResponse): void {
-    this.cache.set(key, createCacheEntry(response, Date.now() + this.ttl));
+    const expiresAt = this.ttl !== undefined ? Date.now() + this.ttl : undefined;
+    this.cache.set(key, createCacheEntry(response, expiresAt));
   }
 
   get(key: string): AgentResponse | null {
     const entry = this.cache.get(key);
     if (!entry) return null;
 
-    // Check if expired
-    if (entry.expiresAt && Date.now() >= entry.expiresAt) {
+    if (entry.expiresAt !== undefined && Date.now() >= entry.expiresAt) {
       this.cache.delete(key);
       return null;
     }
@@ -183,11 +140,9 @@ class TTLCache {
 
   has(key: string): boolean {
     const entry = this.cache.get(key);
-
     if (!entry) return false;
 
-    // Check if expired
-    if (entry.expiresAt && Date.now() >= entry.expiresAt) {
+    if (entry.expiresAt !== undefined && Date.now() >= entry.expiresAt) {
       this.cache.delete(key);
       return false;
     }
@@ -216,11 +171,12 @@ class TTLCache {
   }
 
   private startCleanup(): void {
+    if (this.ttl === undefined) return;
+
     this.cleanupInterval = setInterval(() => {
       const now = Date.now();
-
       for (const [key, entry] of this.cache.entries()) {
-        if (entry.expiresAt && now >= entry.expiresAt) {
+        if (entry.expiresAt !== undefined && now >= entry.expiresAt) {
           this.cache.delete(key);
         }
       }
@@ -228,132 +184,108 @@ class TTLCache {
   }
 }
 
-/** Factory for creating cache instances by strategy */
-function createCacheByStrategy(config: CacheConfig): MemoryCache | LRUCache | TTLCache {
-  switch (config.strategy) {
-    case "lru":
-      return new LRUCache(config.maxSize ?? 100);
-    case "ttl":
-      return new TTLCache(config.ttl ?? 300000);
-    default:
-      return new MemoryCache();
-  }
+type CacheInstance = Pick<MemoryCache, "set" | "get" | "has" | "delete" | "clear" | "size">;
+
+function createCacheByStrategy(config: CacheConfig): CacheInstance {
+  if (config.strategy === "lru") return new LRUCache(config.maxSize ?? 100);
+  if (config.strategy === "ttl") return new TTLCache(config.ttl ?? 300000);
+  return new MemoryCache();
 }
 
-/**
- * Create a cache instance
- */
-export function createCache(config: CacheConfig) {
+export function createCache(config: CacheConfig): {
+  get(input: string, context?: Record<string, unknown>): AgentResponse | null;
+  set(input: string, response: AgentResponse, context?: Record<string, unknown>): void;
+  has(input: string, context?: Record<string, unknown>): boolean;
+  delete(input: string, context?: Record<string, unknown>): void;
+  clear(): void;
+  size(): number;
+} {
   const cache = createCacheByStrategy(config);
-  const keyGenerator = config.keyGenerator || ((input: string) => `cache_${hashString(input)}`);
+  const keyGenerator = config.keyGenerator ?? ((input: string) => `cache_${hashString(input)}`);
+
+  function keyFor(input: string, context?: Record<string, unknown>): string {
+    return keyGenerator(input, context);
+  }
 
   return {
-    /**
-     * Get cached response
-     */
     get(input: string, context?: Record<string, unknown>): AgentResponse | null {
-      const key = keyGenerator(input, context);
-      return cache.get(key);
+      return cache.get(keyFor(input, context));
     },
-
-    /**
-     * Set cached response
-     */
     set(input: string, response: AgentResponse, context?: Record<string, unknown>): void {
-      const key = keyGenerator(input, context);
-      cache.set(key, response);
+      cache.set(keyFor(input, context), response);
     },
-
-    /**
-     * Check if cached
-     */
     has(input: string, context?: Record<string, unknown>): boolean {
-      const key = keyGenerator(input, context);
-      return cache.has(key);
+      return cache.has(keyFor(input, context));
     },
-
-    /**
-     * Delete cached entry
-     */
     delete(input: string, context?: Record<string, unknown>): void {
-      const key = keyGenerator(input, context);
-      cache.delete(key);
+      cache.delete(keyFor(input, context));
     },
-
-    /**
-     * Clear all cache
-     */
     clear(): void {
       cache.clear();
     },
-
-    /**
-     * Get cache size
-     */
     size(): number {
       return cache.size();
     },
   };
 }
 
-/**
- * Simple string hash function
- */
 function hashString(str: string): string {
   let hash = 0;
 
   for (let i = 0; i < str.length; i++) {
     const char = str.charCodeAt(i);
     hash = (hash << 5) - hash + char;
-    hash = hash & hash; // Convert to 32-bit integer
+    hash &= hash;
   }
 
   return Math.abs(hash).toString(36);
 }
 
-/**
- * Cache middleware for agents
- */
-export function cacheMiddleware(config: CacheConfig) {
+export function cacheMiddleware(
+  config: CacheConfig,
+): (
+  context: Record<string, unknown>,
+  next: () => Promise<AgentResponse>,
+) => Promise<AgentResponse> {
   const cache = createCache(config);
 
   return (
     context: Record<string, unknown>,
     next: () => Promise<AgentResponse>,
-  ): Promise<AgentResponse> => {
-    return withSpan("agent.middleware.cache", async () => {
-      const inputString = typeof context.input === "string"
-        ? context.input
-        : JSON.stringify(context.input);
+  ): Promise<AgentResponse> =>
+    withSpan(
+      "agent.middleware.cache",
+      async () => {
+        const inputString = typeof context.input === "string"
+          ? context.input
+          : JSON.stringify(context.input);
 
-      // Check cache
-      const cached = cache.get(inputString, context);
+        const cached = cache.get(inputString, context);
+        if (cached) {
+          setActiveSpanAttributes({
+            "cache.hit": true,
+            "cache.strategy": config.strategy,
+          });
 
-      if (cached) {
+          return {
+            ...cached,
+            metadata: {
+              ...cached.metadata,
+              fromCache: true,
+              cachedAt: Date.now(),
+            },
+          };
+        }
+
         setActiveSpanAttributes({
-          "cache.hit": true,
+          "cache.hit": false,
           "cache.strategy": config.strategy,
         });
-        return {
-          ...cached,
-          metadata: {
-            ...cached.metadata,
-            fromCache: true,
-            cachedAt: Date.now(),
-          },
-        };
-      }
 
-      setActiveSpanAttributes({
-        "cache.hit": false,
-        "cache.strategy": config.strategy,
-      });
-
-      // Execute and cache
-      const result = await next();
-      cache.set(inputString, result, context);
-
-      return result;
-    }, { "cache.strategy": config.strategy });
-  };
+        const result = await next();
+        cache.set(inputString, result, context);
+        return result;
+      },
+      { "cache.strategy": config.strategy },
+    );
 }

@@ -4,11 +4,8 @@ import { hasReactDOM, hasVeryFrontCache } from "./global-guards.ts";
 
 describe("global-guards", () => {
   describe("hasReactDOM", () => {
-    it("should return false for null", () => {
+    it("should return false for null/undefined", () => {
       assertEquals(hasReactDOM(null), false);
-    });
-
-    it("should return false for undefined", () => {
       assertEquals(hasReactDOM(undefined), false);
     });
 
@@ -34,11 +31,8 @@ describe("global-guards", () => {
   });
 
   describe("hasVeryFrontCache", () => {
-    it("should return false for null", () => {
+    it("should return false for null/undefined", () => {
       assertEquals(hasVeryFrontCache(null), false);
-    });
-
-    it("should return false for undefined", () => {
       assertEquals(hasVeryFrontCache(undefined), false);
     });
 

@@ -15,8 +15,8 @@ export class StepNodeHandler extends BaseNodeHandler<StepNodeConfig> {
   readonly nodeType = "step" as const;
 
   constructor(
-    private stepExecutor: StepExecutor,
-    private callbacks?: StepNodeCallbacks,
+    private readonly stepExecutor: StepExecutor,
+    private readonly callbacks?: StepNodeCallbacks,
   ) {
     super();
   }

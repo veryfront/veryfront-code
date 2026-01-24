@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { createUser } from "../../../../lib/users.ts";
-import { createSession } from "../../../../lib/auth.ts";
 import { getEnv } from "veryfront/platform";
+import { createSession } from "../../../../lib/auth.ts";
+import { createUser } from "../../../../lib/users.ts";
 
 const registerSchema = z.object({
   email: z.string().email(),
@@ -9,16 +9,15 @@ const registerSchema = z.object({
   password: z.string().min(8).max(100),
 });
 
-export async function POST(request: Request) {
+export async function POST(request: Request): Promise<Response> {
   try {
     const body = await request.json();
     const { email, name, password } = registerSchema.parse(body);
 
     const user = await createUser({ email, name, password });
-    const session = await createSession(user as any);
+    const session = await createSession(user);
 
-    const isProduction = getEnv("NODE_ENV") === "production";
-    const secureFlag = isProduction ? "; Secure" : "";
+    const secureFlag = getEnv("NODE_ENV") === "production" ? "; Secure" : "";
 
     return Response.json(
       { user, token: session.token },

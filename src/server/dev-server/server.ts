@@ -46,7 +46,7 @@ export class DevServer {
   }
 
   private isDebug(): boolean {
-    return !!this.adapter?.env.get("VERYFRONT_DEBUG");
+    return this.adapter?.env.get("VERYFRONT_DEBUG") === "1";
   }
 
   private async logRSCStatus(): Promise<void> {
@@ -105,8 +105,6 @@ export class DevServer {
 
     await this.logRSCStatus();
 
-    // Module serving is now handled by the main server at /_vf_modules/
-    // No separate module server needed
     if (this.options.enableHMR) {
       this.hmrServer = new HMRServer({
         port: this.options.hmrPort || this.options.port + 1,
@@ -114,13 +112,13 @@ export class DevServer {
         reactRefresh: this.options.enableFastRefresh,
         adapter: this.adapter,
       });
+
       await this.hmrServer.start();
       await this.setupFileWatchers();
 
       // Subscribe to immediate invalidation for cache clearing (fires immediately)
       this.invalidateUnsubscribe = ReloadNotifier.subscribeInvalidate(() => {
         logger.debug("[DevServer] INVALIDATE callback triggered - clearing universal handler");
-        // Invalidate universal handler immediately to clear cached API handlers
         this.requestHandler?.invalidateUniversalHandler();
       });
 
@@ -135,7 +133,6 @@ export class DevServer {
       });
     }
 
-    // Module server is integrated into main server now
     const moduleServerUrl = buildLocalhostUrl(this.options.port);
     const vendorBundleHash = "dev-vendor-bundle";
 
@@ -153,15 +150,11 @@ export class DevServer {
       this.appConfig,
     );
 
-    // Skip component/route discovery in proxy mode - each request handles a different project
     const isProxyMode = this.appConfig?.fs?.veryfront?.proxyMode === true;
-    if (!isProxyMode) {
-      await Promise.all([
-        this.componentRegistry.discover(),
-        routeDiscovery.discoverRoutes(),
-      ]);
-    } else {
+    if (isProxyMode) {
       logger.debug("[DevServer] Skipping component/route discovery in proxy mode");
+    } else {
+      await Promise.all([this.componentRegistry.discover(), routeDiscovery.discoverRoutes()]);
     }
 
     const requestHandler = new RequestHandler(
@@ -182,18 +175,15 @@ export class DevServer {
       this.adapter,
     );
 
-    // Create handler with optional request interceptor (for combined proxy mode)
     // NOTE: WebSocket upgrade requests MUST NOT be intercepted because the interceptor
     // creates a new Request object, which breaks Deno.upgradeWebSocket() - it needs
     // the original request to maintain the connection.
     const baseHandler = (req: Request) => this.pipeline.execute(req, this.adapter.env.toObject());
     const handler = this.options.requestInterceptor
       ? async (req: Request) => {
-        // Skip interceptor for WebSocket upgrade requests
         const isWebSocketUpgrade = req.headers.get("upgrade")?.toLowerCase() === "websocket";
-        if (isWebSocketUpgrade) {
-          return baseHandler(req);
-        }
+        if (isWebSocketUpgrade) return baseHandler(req);
+
         const interceptedReq = await this.options.requestInterceptor!(req);
         return baseHandler(interceptedReq);
       }
@@ -203,26 +193,25 @@ export class DevServer {
       port: this.options.port,
       hostname: LOCALHOST.IPV4,
       signal: this.options.signal,
-      onListen: ({ hostname: _hostname, port }: { hostname: string; port: number }) => {
+      onListen: ({ port }: { hostname: string; port: number }) => {
         const url = buildLocalhostUrl(port);
         logger.info(`Dev server running at ${url}`);
 
         try {
           this._isReady = true;
-          this._resolveReady?.();
+          this._resolveReady();
         } catch (error) {
           logger.debug("[dev] mark ready failed", error);
         }
       },
     });
+
     this._isReady = true;
   }
 
   private async setupFileWatchers(): Promise<void> {
     if (!this.hmrServer) return;
 
-    // Skip file watching in proxy mode - each request is for a different project
-    // and file watching doesn't work with the veryfront-api remote adapter
     const isProxyMode = this.appConfig?.fs?.veryfront?.proxyMode === true;
     if (isProxyMode) {
       logger.debug("[DevServer] Skipping file watchers in proxy mode");
@@ -256,7 +245,6 @@ export class DevServer {
   async stop(): Promise<void> {
     logger.info("Shutting down dev server...");
 
-    // Unsubscribe from reload and invalidation notifications
     this.reloadUnsubscribe?.();
     this.invalidateUnsubscribe?.();
 

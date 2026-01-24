@@ -1,21 +1,7 @@
-/**
- * Data Processing Pipeline Workflow
- *
- * A DAG-based data processing workflow demonstrating:
- * - Complex dependencies using dependsOn
- * - Parallel processing paths
- * - Checkpointing for durability
- */
-
 import { dependsOn, step, workflow } from "veryfront/workflow";
 
-/**
- * Input for the data processing pipeline
- */
 export interface DataProcessingInput {
-  /** Source data URL */
   sourceUrl: string;
-  /** Processing options */
   options?: {
     chunkSize?: number;
     format?: "json" | "csv" | "parquet";
@@ -23,13 +9,8 @@ export interface DataProcessingInput {
   };
 }
 
-/**
- * Output from the data processing pipeline
- */
 export interface DataProcessingOutput {
-  /** Processed data URL */
   outputUrl: string;
-  /** Processing statistics */
   stats: {
     recordsProcessed: number;
     duration: number;
@@ -37,56 +18,45 @@ export interface DataProcessingOutput {
   };
 }
 
-/**
- * Data Processing Pipeline
- *
- * DAG Structure:
- *
- *   fetch --> validate --> [transform, aggregate] --> merge --> export
- */
 export const dataProcessingPipeline = workflow<DataProcessingInput, DataProcessingOutput>({
   id: "data-processing",
   description: "DAG-based data processing with checkpointing",
   version: "1.0.0",
+  steps: ({ input }) => {
+    const format = input.options?.format ?? "json";
 
-  steps: ({ input }) => [
-    // Step 1: Fetch data
-    step("fetch", {
+    const fetch = step("fetch", {
       tool: "dataFetcher",
       input: { url: input.sourceUrl },
       checkpoint: true,
-    }),
+    });
 
-    // Step 2: Validate (depends on fetch)
-    dependsOn(
+    const validate = dependsOn(
       step("validate", {
         tool: "dataValidator",
         input: { stepId: "fetch" },
       }),
       "fetch",
-    ),
+    );
 
-    // Step 3a: Transform (depends on validate)
-    dependsOn(
+    const transform = dependsOn(
       step("transform", {
         tool: "dataTransformer",
         input: { stepId: "validate" },
         checkpoint: true,
       }),
       "validate",
-    ),
+    );
 
-    // Step 3b: Aggregate (depends on validate, parallel with transform)
-    dependsOn(
+    const aggregate = dependsOn(
       step("aggregate", {
         tool: "dataAggregator",
         input: { stepId: "validate" },
       }),
       "validate",
-    ),
+    );
 
-    // Step 4: Merge (depends on transform, aggregate)
-    dependsOn(
+    const merge = dependsOn(
       dependsOn(
         step("merge", {
           tool: "dataMerger",
@@ -96,20 +66,21 @@ export const dataProcessingPipeline = workflow<DataProcessingInput, DataProcessi
         "transform",
       ),
       "aggregate",
-    ),
+    );
 
-    // Step 5: Export (depends on merge)
-    dependsOn(
+    const exportStep = dependsOn(
       step("export", {
         tool: "dataExporter",
         input: {
-          format: input.options?.format || "json",
+          format,
           compress: input.options?.compress,
         },
       }),
       "merge",
-    ),
-  ],
+    );
+
+    return [fetch, validate, transform, aggregate, merge, exportStep];
+  },
 });
 
 export default dataProcessingPipeline;

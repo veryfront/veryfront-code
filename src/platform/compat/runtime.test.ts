@@ -18,41 +18,32 @@ describe("Runtime Detection", () => {
     });
 
     it("should have exactly one main runtime active (excluding Cloudflare)", () => {
-      // Only one of isDeno, isNode, isBun should be true
-      // (Cloudflare can be detected alongside another runtime in some edge cases)
-      const mainRuntimes = [isDeno, isNode, isBun];
-      const activeCount = mainRuntimes.filter(Boolean).length;
+      const activeCount = [isDeno, isNode, isBun].filter(Boolean).length;
       assertEquals(activeCount, 1, "Exactly one main runtime should be detected");
     });
   });
 
   describe("isDeno", () => {
     it("should correctly detect Deno runtime", () => {
-      // isDeno should be true only in Deno
-      if (isDeno) {
-        assertEquals(isNode, false);
-        assertEquals(isBun, false);
-      }
+      if (!isDeno) return;
+      assertEquals(isNode, false);
+      assertEquals(isBun, false);
     });
   });
 
   describe("isNode", () => {
     it("should correctly detect Node.js runtime", () => {
-      // isNode should be true only in Node.js
-      if (isNode) {
-        assertEquals(isDeno, false);
-        assertEquals(isBun, false);
-      }
+      if (!isNode) return;
+      assertEquals(isDeno, false);
+      assertEquals(isBun, false);
     });
   });
 
   describe("isBun", () => {
     it("should correctly detect Bun runtime", () => {
-      // isBun should be true only in Bun
-      if (isBun) {
-        assertEquals(isDeno, false);
-        assertEquals(isNode, false);
-      }
+      if (!isBun) return;
+      assertEquals(isDeno, false);
+      assertEquals(isNode, false);
     });
   });
 
@@ -62,8 +53,7 @@ describe("Runtime Detection", () => {
     });
 
     it("should be callable as a function", () => {
-      const result = isNodeRuntime();
-      assertEquals(typeof result, "boolean");
+      assertEquals(typeof isNodeRuntime(), "boolean");
     });
   });
 });

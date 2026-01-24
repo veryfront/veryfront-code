@@ -1,26 +1,19 @@
-/** ETag computation for SSR responses */
+/**** ETag computation for SSR responses */
 
 import { computeEtag } from "../../utils/etag.ts";
 
 function normalizeWeakEtag(hash: string): string {
-  let value = hash.trim();
+  const trimmed = hash.trim();
+  if (!trimmed) return computeEtag("");
 
-  if (value.length === 0) {
-    return computeEtag("");
-  }
-
-  if (value.startsWith("W/")) {
-    value = value.slice(2);
-  }
-
-  // Strip surrounding quotes to avoid duplication
+  const value = trimmed.startsWith("W/") ? trimmed.slice(2) : trimmed;
   const unquoted = value.replace(/^"+|"+$/g, "").trim();
-  const quoted = `"${unquoted}"`;
 
-  return `W/${quoted}`;
+  return `W/"${unquoted}"`;
 }
 
 /** Compute ETag for SSR result (prefers ssrHash if available) */
 export function computeSSRETag(ssrHash: string | undefined, html: string): string {
-  return ssrHash ? normalizeWeakEtag(ssrHash) : computeEtag(html);
+  if (ssrHash) return normalizeWeakEtag(ssrHash);
+  return computeEtag(html);
 }

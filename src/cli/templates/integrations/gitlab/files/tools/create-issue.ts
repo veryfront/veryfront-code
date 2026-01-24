@@ -37,10 +37,7 @@ export default tool({
         title: issue.title,
         state: issue.state,
         labels: issue.labels,
-        assignees: issue.assignees.map((a) => ({
-          username: a.username,
-          name: a.name,
-        })),
+        assignees: issue.assignees.map(({ username, name }) => ({ username, name })),
         webUrl: issue.web_url,
         createdAt: issue.created_at,
       },

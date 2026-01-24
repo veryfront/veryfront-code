@@ -1,12 +1,3 @@
-/**
- * SSR Browser Globals - Re-export from modular implementation
- *
- * This file maintains backward compatibility by re-exporting
- * from the new modular ssr-globals/ directory.
- *
- * @module rendering/ssr-globals
- */
-
 export {
   createDocumentStub,
   createElementClass,

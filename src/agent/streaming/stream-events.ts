@@ -1,15 +1,5 @@
-/**
- * Stream Event Schemas and Types
- *
- * Defines the event format for agent streaming responses.
- * Compatible with Vercel AI SDK Data Stream Protocol.
- */
-
 import { z } from "zod";
 
-/**
- * Schema for agent stream events
- */
 export const AgentStreamEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("content"),
@@ -51,41 +41,24 @@ export const AgentStreamEventSchema = z.discriminatedUnion("type", [
 
 export type AgentStreamEvent = z.infer<typeof AgentStreamEventSchema>;
 
-/**
- * Stream event emitter helper
- */
 export class StreamEventEmitter {
-  private encoder: TextEncoder;
-  private controller: ReadableStreamDefaultController;
+  private encoder = new TextEncoder();
 
-  constructor(controller: ReadableStreamDefaultController) {
-    this.encoder = new TextEncoder();
-    this.controller = controller;
-  }
+  constructor(private controller: ReadableStreamDefaultController) {}
 
-  /**
-   * Emit an SSE-formatted event
-   */
   emit(event: Record<string, unknown>): void {
-    const data = JSON.stringify(event);
-    this.controller.enqueue(this.encoder.encode(`data: ${data}\n\n`));
+    this.controller.enqueue(this.encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
   }
 
-  /**
-   * Helper to emit tool events with optional dynamic flag
-   */
   private emitToolEvent(
     type: string,
     toolCallId: string,
     extra: Record<string, unknown>,
     dynamic?: boolean,
   ): void {
-    this.emit({
-      type,
-      toolCallId,
-      ...extra,
-      ...(dynamic && { dynamic: true }),
-    });
+    const event: Record<string, unknown> = { type, toolCallId, ...extra };
+    if (dynamic) event.dynamic = true;
+    this.emit(event);
   }
 
   emitStart(messageId: string): void {

@@ -10,13 +10,14 @@ import { isTailwindV4File } from "./detector.ts";
 export function processTailwindCSS(
   options: TailwindProcessorOptions,
 ): Promise<TailwindProcessResult> {
-  return withSpan("build.asset.processTailwindCSS", () => {
-    const processor = new TailwindProcessor(options);
-    return processor.process();
-  }, {
-    "tailwind.inputFile": options.inputFile,
-    "tailwind.outputFile": options.outputFile ?? "",
-  });
+  return withSpan(
+    "build.asset.processTailwindCSS",
+    () => new TailwindProcessor(options).process(),
+    {
+      "tailwind.inputFile": options.inputFile,
+      "tailwind.outputFile": options.outputFile ?? "",
+    },
+  );
 }
 
 export function processTailwindCSSInDirectory(
@@ -24,39 +25,43 @@ export function processTailwindCSSInDirectory(
   cssDir: string = "styles",
   outputDir: string = ".veryfront/css",
 ): Promise<TailwindProcessResult[]> {
-  return withSpan("build.asset.processTailwindCSSInDirectory", async () => {
-    const results: TailwindProcessResult[] = [];
-    const cssPath = join(projectDir, cssDir);
-    const fs = createFileSystem();
-    const adapter = await runtime.get();
+  return withSpan(
+    "build.asset.processTailwindCSSInDirectory",
+    async () => {
+      const results: TailwindProcessResult[] = [];
+      const cssPath = join(projectDir, cssDir);
+      const fs = createFileSystem();
+      const adapter = await runtime.get();
 
-    try {
-      for await (const entry of fs.readDir(cssPath)) {
-        if (entry.isFile && (entry.name.endsWith(".css"))) {
+      try {
+        for await (const entry of fs.readDir(cssPath)) {
+          if (!entry.isFile || !entry.name.endsWith(".css")) continue;
+
           const filePath = join(cssPath, entry.name);
+          const isTailwind = await isTailwindV4File(filePath, projectDir, adapter);
+          if (!isTailwind) continue;
 
-          if (await isTailwindV4File(filePath, projectDir, adapter)) {
-            logger.info("Found Tailwind v4 file", { file: filePath });
+          logger.info("Found Tailwind v4 file", { file: filePath });
 
-            const result = await processTailwindCSS({
+          results.push(
+            await processTailwindCSS({
               projectDir,
               adapter,
               inputFile: filePath,
               outputFile: join(projectDir, outputDir, entry.name),
-            });
-
-            results.push(result);
-          }
+            }),
+          );
         }
+      } catch (error) {
+        logger.error("Error processing Tailwind CSS directory", error);
       }
-    } catch (error) {
-      logger.error("Error processing Tailwind CSS directory", error);
-    }
 
-    return results;
-  }, {
-    "tailwind.projectDir": projectDir,
-    "tailwind.cssDir": cssDir,
-    "tailwind.outputDir": outputDir,
-  });
+      return results;
+    },
+    {
+      "tailwind.projectDir": projectDir,
+      "tailwind.cssDir": cssDir,
+      "tailwind.outputDir": outputDir,
+    },
+  );
 }

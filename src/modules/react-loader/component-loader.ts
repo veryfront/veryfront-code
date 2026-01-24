@@ -20,63 +20,57 @@ export function loadComponentFromSource(
 ): Promise<React.ComponentType<Record<string, unknown>>> {
   const fileName = filePath.split("/").pop() || filePath;
 
-  return withSpan("modules.react.loadComponentFromSource", async () => {
-    const projectId = options?.projectId || projectDir;
-    const dev = options?.dev ?? true;
-    // Default to SSR mode for server-side execution (both Node and Deno)
-    // Browser mode (ssr=false) is only for client-side module transforms
-    const ssr = options?.ssr ?? true;
+  return withSpan(
+    "modules.react.loadComponentFromSource",
+    async () => {
+      const projectId = options?.projectId ?? projectDir;
+      const dev = options?.dev ?? true;
+      const ssr = options?.ssr ?? true;
 
-    // SSR mode: Use SSRModuleLoader for proper recursive dependency transformation
-    if (ssr) {
-      const loader = new SSRModuleLoader({
-        projectDir,
+      if (ssr) {
+        const loader = new SSRModuleLoader({
+          projectDir,
+          projectId,
+          adapter,
+          dev,
+          contentSourceId: options?.contentSourceId,
+        });
+        return loader.loadModule(filePath, source);
+      }
+
+      const transformOpts: TransformOptions = {
         projectId,
-        adapter,
         dev,
-        contentSourceId: options?.contentSourceId,
-      });
-      return loader.loadModule(filePath, source);
-    }
+        moduleServerUrl: options?.moduleServerUrl ?? "/_vf_modules",
+        vendorBundleHash: options?.vendorBundleHash,
+        ssr: false,
+      };
 
-    // Browser mode: Single file transform (dependencies loaded via module server)
-    const moduleServerUrl = options?.moduleServerUrl ?? "/_vf_modules";
-    const vendorBundleHash = options?.vendorBundleHash;
+      const transformedCode = await transformToESM(
+        source,
+        filePath,
+        projectDir,
+        adapter,
+        transformOpts,
+      );
 
-    const transformOpts: TransformOptions = {
-      projectId,
-      dev,
-      moduleServerUrl,
-      vendorBundleHash,
-      ssr: false,
-    };
+      const tmpDir = await getProjectTmpDir(projectId);
+      const relativeFilePath = resolveRelativePath(filePath, projectDir);
+      const componentFile = join(tmpDir, normalizeModulePath(relativeFilePath));
 
-    const transformedCode = await transformToESM(
-      source,
-      filePath,
-      projectDir,
-      adapter,
-      transformOpts,
-    );
+      const componentDir = componentFile.substring(0, componentFile.lastIndexOf("/"));
+      const fs = createFileSystem();
+      await fs.mkdir(componentDir, { recursive: true });
+      await fs.writeTextFile(componentFile, transformedCode);
 
-    const tmpDir = await getProjectTmpDir(projectId);
-    const relativeFilePath = resolveRelativePath(filePath, projectDir);
-    const componentFile = join(tmpDir, normalizeModulePath(relativeFilePath));
-
-    const componentDir = componentFile.substring(0, componentFile.lastIndexOf("/"));
-    const fs = createFileSystem();
-    await fs.mkdir(componentDir, { recursive: true });
-
-    await fs.writeTextFile(componentFile, transformedCode);
-
-    const cacheBuster = Date.now();
-    const mod = await import(`file://${componentFile}?t=${cacheBuster}`);
-
-    return extractComponent(mod, filePath);
-  }, {
-    "react.file": fileName,
-    "react.projectDir": projectDir,
-    "react.ssr": options?.ssr ?? true,
-    "react.sourceLength": source.length,
-  });
+      const mod = await import(`file://${componentFile}?t=${Date.now()}`);
+      return extractComponent(mod, filePath);
+    },
+    {
+      "react.file": fileName,
+      "react.projectDir": projectDir,
+      "react.ssr": options?.ssr ?? true,
+      "react.sourceLength": source.length,
+    },
+  );
 }

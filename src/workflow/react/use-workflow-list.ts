@@ -27,9 +27,7 @@ export interface UseWorkflowListResult {
 /**
  * List and filter workflow runs.
  */
-export function useWorkflowList(
-  options: UseWorkflowListOptions = {},
-): UseWorkflowListResult {
+export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkflowListResult {
   const {
     workflowId,
     status,
@@ -56,85 +54,70 @@ export function useWorkflowList(
     limit: pageSize,
   });
 
-  const buildQueryString = useCallback(
-    (filterToUse: RunFilter, cursorToUse?: string): string => {
-      const params = new URLSearchParams();
+  const buildQueryString = useCallback((filterToUse: RunFilter, cursorToUse?: string): string => {
+    const params = new URLSearchParams();
 
-      if (filterToUse.workflowId) {
-        params.set("workflowId", filterToUse.workflowId);
-      }
+    if (filterToUse.workflowId) params.set("workflowId", filterToUse.workflowId);
 
-      if (filterToUse.status) {
-        const statuses = Array.isArray(filterToUse.status)
-          ? filterToUse.status
-          : [filterToUse.status];
-        for (const s of statuses) {
-          params.append("status", s);
-        }
-      }
+    if (filterToUse.status) {
+      const statuses = Array.isArray(filterToUse.status)
+        ? filterToUse.status
+        : [filterToUse.status];
+      for (const s of statuses) params.append("status", s);
+    }
 
-      if (filterToUse.createdAfter) {
-        params.set("createdAfter", filterToUse.createdAfter.toISOString());
-      }
+    if (filterToUse.createdAfter) {
+      params.set("createdAfter", filterToUse.createdAfter.toISOString());
+    }
+    if (filterToUse.createdBefore) {
+      params.set("createdBefore", filterToUse.createdBefore.toISOString());
+    }
+    if (filterToUse.limit) params.set("limit", String(filterToUse.limit));
+    if (cursorToUse) params.set("cursor", cursorToUse);
 
-      if (filterToUse.createdBefore) {
-        params.set("createdBefore", filterToUse.createdBefore.toISOString());
-      }
-
-      if (filterToUse.limit) {
-        params.set("limit", String(filterToUse.limit));
-      }
-
-      if (cursorToUse) {
-        params.set("cursor", cursorToUse);
-      }
-
-      return params.toString();
-    },
-    [],
-  );
+    return params.toString();
+  }, []);
 
   const fetchRuns = useCallback(
-    async (append: boolean = false) => {
+    async (append: boolean = false): Promise<void> => {
       try {
         const queryString = buildQueryString(filter, append ? cursor : undefined);
         const response = await fetch(`${apiBase}/runs?${queryString}`);
 
-        if (!response.ok) {
-          throw new Error(`Failed to fetch runs: ${response.status}`);
-        }
+        if (!response.ok) throw new Error(`Failed to fetch runs: ${response.status}`);
 
         const data = await response.json();
-        const fetchedRuns = (data.runs || data) as WorkflowRun[];
-        const { cursor: nextCursor, totalCount: total } = data;
+        const fetchedRuns = (data.runs ?? data) as WorkflowRun[];
+        const nextCursor = data.cursor as string | undefined;
+        const total = data.totalCount as number | undefined;
 
-        if (append) {
-          setRuns((prev) => [...prev, ...fetchedRuns]);
-        } else {
-          setRuns(fetchedRuns);
-        }
-
+        setRuns((prev) => (append ? [...prev, ...fetchedRuns] : fetchedRuns));
         setCursor(nextCursor);
-        setHasMore(!!nextCursor || fetchedRuns.length === filter.limit);
+        setHasMore(Boolean(nextCursor) || fetchedRuns.length === filter.limit);
         setTotalCount(total);
         setError(null);
       } catch (err) {
-        const fetchError = err instanceof Error ? err : new Error(String(err));
-        setError(fetchError);
+        setError(err instanceof Error ? err : new Error(String(err)));
       }
     },
-    [apiBase, filter, cursor, buildQueryString],
+    [apiBase, buildQueryString, cursor, filter],
   );
 
   useEffect(() => {
-    const doFetch = async () => {
+    let cancelled = false;
+
+    async function doFetch(): Promise<void> {
       setIsLoading(true);
       await fetchRuns(false);
-      setIsLoading(false);
-    };
+      if (!cancelled) setIsLoading(false);
+    }
 
     doFetch();
-  }, [filter]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchRuns, filter]);
 
   useEffect(() => {
     if (!autoRefresh) return;
@@ -144,36 +127,34 @@ export function useWorkflowList(
     }, refreshInterval);
 
     return () => clearInterval(intervalId);
-  }, [autoRefresh, refreshInterval, fetchRuns]);
+  }, [autoRefresh, fetchRuns, refreshInterval]);
 
-  const loadMore = useCallback(async () => {
+  const loadMore = useCallback(async (): Promise<void> => {
     if (!hasMore || isLoading) return;
+
     setIsLoading(true);
     await fetchRuns(true);
     setIsLoading(false);
-  }, [hasMore, isLoading, fetchRuns]);
+  }, [fetchRuns, hasMore, isLoading]);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (): Promise<void> => {
     setCursor(undefined);
     setIsLoading(true);
     await fetchRuns(false);
     setIsLoading(false);
   }, [fetchRuns]);
 
-  const setFilter = useCallback(
-    (newFilter: Partial<UseWorkflowListOptions>) => {
-      setCursor(undefined); // Reset pagination
-      setFilterState((prev) => ({
-        ...prev,
-        workflowId: newFilter.workflowId ?? prev.workflowId,
-        status: newFilter.status ?? prev.status,
-        createdAfter: newFilter.createdAfter ?? prev.createdAfter,
-        createdBefore: newFilter.createdBefore ?? prev.createdBefore,
-        limit: newFilter.pageSize ?? prev.limit,
-      }));
-    },
-    [],
-  );
+  const setFilter = useCallback((newFilter: Partial<UseWorkflowListOptions>): void => {
+    setCursor(undefined); // Reset pagination
+    setFilterState((prev) => ({
+      ...prev,
+      workflowId: newFilter.workflowId ?? prev.workflowId,
+      status: newFilter.status ?? prev.status,
+      createdAfter: newFilter.createdAfter ?? prev.createdAfter,
+      createdBefore: newFilter.createdBefore ?? prev.createdBefore,
+      limit: newFilter.pageSize ?? prev.limit,
+    }));
+  }, []);
 
   return {
     runs,

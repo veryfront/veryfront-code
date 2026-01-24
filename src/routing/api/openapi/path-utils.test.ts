@@ -1,7 +1,3 @@
-/**
- * Path utilities tests
- */
-
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { extractPathParams, generateOperationId, toOpenAPIPath } from "./path-utils.ts";
@@ -40,31 +36,32 @@ describe("toOpenAPIPath", () => {
 
 describe("extractPathParams", () => {
   it("should extract single required param", () => {
-    const params = extractPathParams("/api/users/[id]");
-    assertEquals(params, [{ name: "id", required: true, catchAll: false }]);
+    assertEquals(extractPathParams("/api/users/[id]"), [
+      { name: "id", required: true, catchAll: false },
+    ]);
   });
 
   it("should extract multiple params", () => {
-    const params = extractPathParams("/api/users/[userId]/posts/[postId]");
-    assertEquals(params, [
+    assertEquals(extractPathParams("/api/users/[userId]/posts/[postId]"), [
       { name: "userId", required: true, catchAll: false },
       { name: "postId", required: true, catchAll: false },
     ]);
   });
 
   it("should mark catch-all as required", () => {
-    const params = extractPathParams("/api/files/[...path]");
-    assertEquals(params, [{ name: "path", required: true, catchAll: true }]);
+    assertEquals(extractPathParams("/api/files/[...path]"), [
+      { name: "path", required: true, catchAll: true },
+    ]);
   });
 
   it("should mark optional catch-all as not required", () => {
-    const params = extractPathParams("/api/docs/[[...slug]]");
-    assertEquals(params, [{ name: "slug", required: false, catchAll: true }]);
+    assertEquals(extractPathParams("/api/docs/[[...slug]]"), [
+      { name: "slug", required: false, catchAll: true },
+    ]);
   });
 
   it("should return empty for static paths", () => {
-    const params = extractPathParams("/api/health");
-    assertEquals(params, []);
+    assertEquals(extractPathParams("/api/health"), []);
   });
 });
 
@@ -75,10 +72,7 @@ describe("generateOperationId", () => {
   });
 
   it("should handle path parameters", () => {
-    assertEquals(
-      generateOperationId("GET", "/api/users/{id}"),
-      "getUsersById",
-    );
+    assertEquals(generateOperationId("GET", "/api/users/{id}"), "getUsersById");
   });
 
   it("should handle POST method", () => {

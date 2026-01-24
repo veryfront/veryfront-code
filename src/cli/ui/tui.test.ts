@@ -39,9 +39,10 @@ describe("tui", () => {
         logsExpanded: false,
         logScroll: 0,
       };
+
       assertEquals(state.status, "test");
       assertEquals(state.steps.length, 1);
-      assertEquals(state.info["key"], "value");
+      assertEquals(state.info.key, "value");
     });
 
     it("supports all status types", () => {
@@ -50,6 +51,3 @@ describe("tui", () => {
     });
   });
 });
-
-// Note: Full interactive tests require TTY/stdin mocking
-// Run manual tests with: deno task cli dev --tui

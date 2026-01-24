@@ -14,23 +14,22 @@ import type { IssuePrefix } from "../../issues/schema.ts";
  */
 function formatIssue(issue: Issue, verbose = false): string {
   const { metadata } = issue;
-  const stateIcon = metadata.state === "open" ? "○" : "●";
-  const stateColor = metadata.state === "open" ? "\x1b[32m" : "\x1b[90m";
+  const isOpen = metadata.state === "open";
+  const stateIcon = isOpen ? "○" : "●";
+  const stateColor = isOpen ? "\x1b[32m" : "\x1b[90m";
   const reset = "\x1b[0m";
 
-  const labels = metadata.labels.length > 0 ? ` [${metadata.labels.join(", ")}]` : "";
-  const assignees = metadata.assignees.length > 0 ? ` → ${metadata.assignees.join(", ")}` : "";
+  const labels = metadata.labels.length ? ` [${metadata.labels.join(", ")}]` : "";
+  const assignees = metadata.assignees.length ? ` → ${metadata.assignees.join(", ")}` : "";
 
   let line =
     `${stateColor}${stateIcon}${reset} ${metadata.id}: ${metadata.title}${labels}${assignees}`;
 
-  if (verbose) {
-    line += `\n  Created: ${metadata.created_at}`;
-    line += `\n  Updated: ${metadata.updated_at}`;
-    if (metadata.milestone) {
-      line += `\n  Milestone: ${metadata.milestone}`;
-    }
-  }
+  if (!verbose) return line;
+
+  line += `\n  Created: ${metadata.created_at}`;
+  line += `\n  Updated: ${metadata.updated_at}`;
+  if (metadata.milestone) line += `\n  Milestone: ${metadata.milestone}`;
 
   return line;
 }
@@ -66,15 +65,28 @@ function formatIssueDetails(issue: Issue): string {
  */
 function parseLabels(arg: string | undefined): string[] | undefined {
   if (!arg) return undefined;
-  return arg
+
+  const values = arg
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
+
+  return values.length ? values : undefined;
 }
 
-/**
- * Issues command handler
- */
+function getJsonFlag(args: { json?: boolean; j?: boolean }): boolean {
+  return Boolean(args.json || args.j);
+}
+
+function getId(args: { _: (string | number)[] }, index: number): string | undefined {
+  const value = args._[index];
+  return typeof value === "string" ? value : undefined;
+}
+
+function printJson(value: unknown): void {
+  console.log(JSON.stringify(value, null, 2));
+}
+
 export async function issuesCommand(args: {
   _: (string | number)[];
   title?: string;
@@ -102,14 +114,13 @@ export async function issuesCommand(args: {
   // deno-lint-ignore no-explicit-any
   [key: string]: any;
 }): Promise<void> {
-  const subcommand = args._[1] as string | undefined;
-  const projectDir = cwd();
-  const manager = createIssuesManager(projectDir);
-  const json = args.json || args.j;
+  const subcommand = getId(args, 1);
+  const manager = createIssuesManager(cwd());
+  const json = getJsonFlag(args);
 
   switch (subcommand) {
     case "create": {
-      const title = args.title || args.t || (args._[2] as string);
+      const title = args.title || args.t || getId(args, 2);
       if (!title) {
         cliLogger.error("Title is required. Usage: veryfront issues create --title 'My issue'");
         return;
@@ -129,25 +140,25 @@ export async function issuesCommand(args: {
       });
 
       if (json) {
-        console.log(JSON.stringify(issue, null, 2));
-      } else {
-        cliLogger.info(`Created ${issue.metadata.id}: ${issue.metadata.title}`);
-        cliLogger.info(`  Path: ${issue.path}`);
+        printJson(issue);
+        return;
       }
-      break;
+
+      cliLogger.info(`Created ${issue.metadata.id}: ${issue.metadata.title}`);
+      cliLogger.info(`  Path: ${issue.path}`);
+      return;
     }
 
     case "list":
     case "ls": {
-      const stateArg = args.state;
-      const state = stateArg ? parseState(stateArg) : undefined;
+      const state = args.state ? parseState(args.state) ?? undefined : undefined;
       const labels = parseLabels(args.labels || args.l);
       const prefix = args.prefix?.toUpperCase() as IssuePrefix | undefined;
       const sortBy = (args.sort as "created_at" | "updated_at" | "id") || "created_at";
       const sortDirection = (args.dir as "asc" | "desc") || "desc";
 
       const result = await manager.list({
-        state: state ?? undefined,
+        state,
         labels,
         milestone: args.milestone || args.m,
         assignee: args.assignee,
@@ -158,26 +169,29 @@ export async function issuesCommand(args: {
       });
 
       if (json) {
-        console.log(JSON.stringify(result, null, 2));
-      } else {
-        if (result.issues.length === 0) {
-          cliLogger.info("No issues found.");
-        } else {
-          for (const issue of result.issues) {
-            console.log(formatIssue(issue, args.verbose));
-          }
-          if (result.total > result.issues.length) {
-            cliLogger.info(`\nShowing ${result.issues.length} of ${result.total} issues`);
-          }
-        }
+        printJson(result);
+        return;
       }
-      break;
+
+      if (!result.issues.length) {
+        cliLogger.info("No issues found.");
+        return;
+      }
+
+      for (const issue of result.issues) {
+        console.log(formatIssue(issue, Boolean(args.verbose)));
+      }
+
+      if (result.total > result.issues.length) {
+        cliLogger.info(`\nShowing ${result.issues.length} of ${result.total} issues`);
+      }
+      return;
     }
 
     case "view":
     case "show":
     case "get": {
-      const id = args._[2] as string;
+      const id = getId(args, 2);
       if (!id) {
         cliLogger.error("Issue ID is required. Usage: veryfront issues view ISSUE-001");
         return;
@@ -190,16 +204,17 @@ export async function issuesCommand(args: {
       }
 
       if (json) {
-        console.log(JSON.stringify(issue, null, 2));
-      } else {
-        console.log(formatIssueDetails(issue));
+        printJson(issue);
+        return;
       }
-      break;
+
+      console.log(formatIssueDetails(issue));
+      return;
     }
 
     case "edit":
     case "update": {
-      const id = args._[2] as string;
+      const id = getId(args, 2);
       if (!id) {
         cliLogger.error(
           "Issue ID is required. Usage: veryfront issues edit ISSUE-001 --state closed",
@@ -207,25 +222,23 @@ export async function issuesCommand(args: {
         return;
       }
 
-      // Handle delete flag
       if (args.delete || args.d) {
         const deleted = await manager.delete(id);
-        if (deleted) {
-          cliLogger.info(`Deleted ${id}`);
-        } else {
-          cliLogger.error(`Failed to delete ${id}`);
-        }
+        if (deleted) cliLogger.info(`Deleted ${id}`);
+        else cliLogger.error(`Failed to delete ${id}`);
         return;
       }
 
       const updates: Parameters<typeof manager.update>[1] = {};
 
-      if (args.title || args.t) updates.title = args.title || args.t;
-      if (args.body || args.b) updates.body = args.body || args.b;
+      const title = args.title || args.t;
+      if (title) updates.title = title;
 
-      const stateArg = args.state;
-      if (stateArg) {
-        const state = parseState(stateArg);
+      const body = args.body || args.b;
+      if (body) updates.body = body;
+
+      if (args.state) {
+        const state = parseState(args.state);
         if (state) updates.state = state;
       }
 
@@ -235,11 +248,10 @@ export async function issuesCommand(args: {
       const assignees = parseLabels(args.assignees || args.a);
       if (assignees) updates.assignees = assignees;
 
-      if (args.milestone || args.m) {
-        updates.milestone = args.milestone || args.m;
-      }
+      const milestone = args.milestone || args.m;
+      if (milestone) updates.milestone = milestone;
 
-      if (Object.keys(updates).length === 0) {
+      if (!Object.keys(updates).length) {
         cliLogger.error("No updates provided. Use --title, --state, --labels, etc.");
         return;
       }
@@ -251,16 +263,17 @@ export async function issuesCommand(args: {
       }
 
       if (json) {
-        console.log(JSON.stringify(issue, null, 2));
-      } else {
-        cliLogger.info(`Updated ${issue.metadata.id}`);
-        console.log(formatIssue(issue, true));
+        printJson(issue);
+        return;
       }
-      break;
+
+      cliLogger.info(`Updated ${issue.metadata.id}`);
+      console.log(formatIssue(issue, true));
+      return;
     }
 
     case "close": {
-      const id = args._[2] as string;
+      const id = getId(args, 2);
       if (!id) {
         cliLogger.error("Issue ID is required. Usage: veryfront issues close ISSUE-001");
         return;
@@ -273,15 +286,16 @@ export async function issuesCommand(args: {
       }
 
       if (json) {
-        console.log(JSON.stringify(issue, null, 2));
-      } else {
-        cliLogger.info(`Closed ${issue.metadata.id}: ${issue.metadata.title}`);
+        printJson(issue);
+        return;
       }
-      break;
+
+      cliLogger.info(`Closed ${issue.metadata.id}: ${issue.metadata.title}`);
+      return;
     }
 
     case "reopen": {
-      const id = args._[2] as string;
+      const id = getId(args, 2);
       if (!id) {
         cliLogger.error("Issue ID is required. Usage: veryfront issues reopen ISSUE-001");
         return;
@@ -294,32 +308,29 @@ export async function issuesCommand(args: {
       }
 
       if (json) {
-        console.log(JSON.stringify(issue, null, 2));
-      } else {
-        cliLogger.info(`Reopened ${issue.metadata.id}: ${issue.metadata.title}`);
+        printJson(issue);
+        return;
       }
-      break;
+
+      cliLogger.info(`Reopened ${issue.metadata.id}: ${issue.metadata.title}`);
+      return;
     }
 
     case "delete":
     case "rm": {
-      const id = args._[2] as string;
+      const id = getId(args, 2);
       if (!id) {
         cliLogger.error("Issue ID is required. Usage: veryfront issues delete ISSUE-001");
         return;
       }
 
       const deleted = await manager.delete(id);
-      if (deleted) {
-        cliLogger.info(`Deleted ${id}`);
-      } else {
-        cliLogger.error(`Issue not found: ${id}`);
-      }
-      break;
+      if (deleted) cliLogger.info(`Deleted ${id}`);
+      else cliLogger.error(`Issue not found: ${id}`);
+      return;
     }
 
     default: {
-      // Show help
       console.log(`
 Veryfront Issues - File-based issue tracking
 
@@ -370,6 +381,7 @@ Examples:
   veryfront issues edit ISSUE-001 --state closed
   veryfront issues close TASK-042
 `);
+      return;
     }
   }
 }

@@ -15,7 +15,7 @@ describe("build-errors", () => {
 
     it("should include context", () => {
       const error = new BuildError("Build failed", { file: "index.ts" });
-      assertEquals((error.context as Record<string, unknown>).file, "index.ts");
+      assertEquals(error.context?.file, "index.ts");
     });
   });
 
@@ -30,7 +30,7 @@ describe("build-errors", () => {
 
     it("should include context", () => {
       const error = new CompilationError("Syntax error", { line: 42 });
-      assertEquals((error.context as Record<string, unknown>).line, 42);
+      assertEquals(error.context?.line, 42);
     });
   });
 });

@@ -1,13 +1,3 @@
-/**
- * Memory Debug Handler
- *
- * Provides endpoints for memory profiling and debugging:
- * - /_debug/memory - Full memory snapshot
- * - /_debug/memory/heap - Heap stats only
- * - /_debug/memory/caches - Cache stats only
- * - /_debug/memory/gc - Trigger GC and report
- */
-
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { ResponseBuilder } from "#veryfront/security/index.ts";
@@ -29,9 +19,7 @@ export class MemoryDebugHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "MemoryDebugHandler",
     priority: PRIORITY_HIGH as HandlerPriority,
-    patterns: [
-      { pattern: "/_debug/memory", prefix: true },
-    ],
+    patterns: [{ pattern: "/_debug/memory", prefix: true }],
   };
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
@@ -57,8 +45,8 @@ export class MemoryDebugHandler extends BaseHandler {
         default:
           return this.continue();
       }
-    } catch (e) {
-      logger.error("[MemoryDebugHandler] Error", { error: e });
+    } catch (error) {
+      logger.error("[MemoryDebugHandler] Error", { error });
 
       const response = ResponseBuilder.error(
         HTTP_INTERNAL_SERVER_ERROR,
@@ -81,15 +69,12 @@ export class MemoryDebugHandler extends BaseHandler {
     };
   }
 
-  private jsonResponse(
-    data: unknown,
-    req: Request,
-    ctx: HandlerContext,
-  ): HandlerResult {
+  private jsonResponse(data: unknown, req: Request, ctx: HandlerContext): HandlerResult {
     const response = ResponseBuilder.json(data, req, {
       ...this.getSecurityOptions(ctx),
       status: HTTP_OK,
     });
+
     return this.respond(response);
   }
 
@@ -110,6 +95,7 @@ export class MemoryDebugHandler extends BaseHandler {
 
   private handleCacheStats(req: Request, ctx: HandlerContext): HandlerResult {
     const caches = getCacheStats();
+
     return this.jsonResponse(
       {
         timestamp: new Date().toISOString(),
@@ -145,6 +131,7 @@ export class MemoryDebugHandler extends BaseHandler {
 
   private handlePressureCheck(req: Request, ctx: HandlerContext): HandlerResult {
     const pressure = checkMemoryPressure();
+
     return this.jsonResponse(
       {
         timestamp: new Date().toISOString(),
@@ -158,20 +145,22 @@ export class MemoryDebugHandler extends BaseHandler {
   }
 
   private getRecommendations(pressure: { critical: boolean; warning: boolean }): string[] {
-    const recommendations: string[] = [];
-
     if (pressure.critical) {
-      recommendations.push("CRITICAL: Consider restarting the pod");
-      recommendations.push("Clear all caches immediately");
-      recommendations.push("Check for memory leaks in recent deployments");
-    } else if (pressure.warning) {
-      recommendations.push("Monitor memory usage closely");
-      recommendations.push("Consider clearing large caches");
-      recommendations.push("Review cache TTL settings");
-    } else {
-      recommendations.push("Memory usage is healthy");
+      return [
+        "CRITICAL: Consider restarting the pod",
+        "Clear all caches immediately",
+        "Check for memory leaks in recent deployments",
+      ];
     }
 
-    return recommendations;
+    if (pressure.warning) {
+      return [
+        "Monitor memory usage closely",
+        "Consider clearing large caches",
+        "Review cache TTL settings",
+      ];
+    }
+
+    return ["Memory usage is healthy"];
   }
 }

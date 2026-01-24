@@ -13,7 +13,7 @@ export interface VeryfrontConfig {
     precompileMDX?: boolean;
     rsc?: boolean;
   };
-  router?: "app" | "pages" | undefined;
+  router?: "app" | "pages";
   /** Path to the layout component (e.g., 'components/layout.tsx'), or false to disable */
   layout?: string | false;
   /** Path to the app wrapper component (e.g., 'components/app.tsx'), or false to disable */

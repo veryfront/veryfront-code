@@ -20,12 +20,12 @@ describe("merge command integration", () => {
   beforeAll(async () => {
     ctx = await initVCRTest("merge");
 
-    // Create test branch (VCR replays recorded response in playback mode)
     const branchName = isRecording() ? `test-merge-${Date.now()}` : "test-merge-vcr";
     const branch = await ctx.client.post<{ id: string }>(
       `/projects/${ctx.projectSlug}/branches`,
       { name: branchName },
     );
+
     testBranchId = branch.id;
   });
 
@@ -36,7 +36,6 @@ describe("merge command integration", () => {
   describe("getBranchByName", () => {
     it("should return null for nonexistent branch", async () => {
       const branch = await getBranchByName(ctx.client, ctx.projectSlug, "nonexistent-branch-12345");
-
       assertEquals(branch, null, "Nonexistent branch should return null");
     });
   });

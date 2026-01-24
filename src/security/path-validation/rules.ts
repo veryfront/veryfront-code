@@ -16,7 +16,6 @@ import { PathValidationError, type ValidationResult } from "./types.ts";
  * Validate path for security issues (basic checks)
  */
 export function validatePathBasics(path: string): ValidationResult {
-  // Check for null bytes
   // deno-lint-ignore no-control-regex
   if (path.includes("\0") || /\x00/.test(path)) {
     return {
@@ -26,7 +25,6 @@ export function validatePathBasics(path: string): ValidationResult {
     };
   }
 
-  // Check path length
   if (path.length > MAX_PATH_LENGTH) {
     return {
       valid: false,
@@ -35,18 +33,15 @@ export function validatePathBasics(path: string): ValidationResult {
     };
   }
 
-  // Check forbidden patterns
-  for (const pattern of FORBIDDEN_PATH_PATTERNS) {
-    if (pattern.test(path)) {
-      return {
-        valid: false,
-        error: `Path contains forbidden pattern: ${pattern}`,
-        code: PathValidationError.FORBIDDEN_PATTERN,
-      };
-    }
+  const forbiddenPattern = FORBIDDEN_PATH_PATTERNS.find((pattern) => pattern.test(path));
+  if (forbiddenPattern) {
+    return {
+      valid: false,
+      error: `Path contains forbidden pattern: ${forbiddenPattern}`,
+      code: PathValidationError.FORBIDDEN_PATTERN,
+    };
   }
 
-  // Check for excessive directory traversal
   const parts = normalizeSeparators(path).split("/");
   let depth = 0;
   let maxDepth = 0;
@@ -54,10 +49,11 @@ export function validatePathBasics(path: string): ValidationResult {
   for (const part of parts) {
     if (part === "..") {
       depth++;
-      maxDepth = Math.max(maxDepth, depth);
-    } else if (part !== "." && part !== "") {
-      depth = 0;
+      if (depth > maxDepth) maxDepth = depth;
+      continue;
     }
+
+    if (part !== "." && part !== "") depth = 0;
   }
 
   if (maxDepth > MAX_PATH_TRAVERSAL_DEPTH) {

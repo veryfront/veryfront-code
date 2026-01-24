@@ -3,9 +3,9 @@ import { serverLogger as logger } from "#veryfront/utils";
 import { RSCProductionOptimizer } from "#veryfront/rendering/rsc/production-optimizer.ts";
 import type { RSCRenderer } from "#veryfront/rendering/rsc/server-renderer/index.ts";
 import type { RSCPayload } from "#veryfront/rendering/rsc/types.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { extractParams, resolveComponentPath } from "./component-resolver.ts";
 import type { RenderProps } from "./types.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 export class RenderHandler {
   constructor(
@@ -23,36 +23,37 @@ export class RenderHandler {
       const component = await this.loadComponent(pathname);
       const props = this.buildProps(pathname, searchParams);
       const payload = await this.renderPayload(component, props);
-
       return this.createResponse(payload, request);
     } catch (error) {
       return this.createErrorResponse(error);
     }
   }
 
-  private async loadComponent(pathname: string): Promise<unknown> {
+  private async loadComponent(pathname: string): Promise<React.ComponentType<any>> {
     const componentPath = await resolveComponentPath(pathname, this.projectDir);
-
     if (!componentPath) {
-      throw toError(createError({
-        type: "render",
-        message: "Component not found",
-      }));
+      throw toError(
+        createError({
+          type: "render",
+          message: "Component not found",
+        }),
+      );
     }
 
     const module: unknown = await import(componentPath);
-
     const moduleObj = module as Record<string, unknown>;
-    const Component = moduleObj.default || moduleObj.Page || module;
+    const Component = (moduleObj.default || moduleObj.Page || module) as unknown;
 
-    if (!Component || typeof Component !== "function") {
-      throw toError(createError({
-        type: "config",
-        message: "Invalid component",
-      }));
+    if (typeof Component !== "function") {
+      throw toError(
+        createError({
+          type: "config",
+          message: "Invalid component",
+        }),
+      );
     }
 
-    return Component;
+    return Component as React.ComponentType<any>;
   }
 
   private buildProps(pathname: string, searchParams: URLSearchParams): RenderProps {
@@ -62,30 +63,31 @@ export class RenderHandler {
     };
   }
 
-  private async renderPayload(component: unknown, props: RenderProps): Promise<RSCPayload> {
+  private async renderPayload(
+    component: React.ComponentType<any>,
+    props: RenderProps,
+  ): Promise<RSCPayload> {
     const renderer = this.getRenderer();
     if (!renderer) {
-      throw toError(createError({
-        type: "render",
-        message: "Renderer not initialized",
-      }));
+      throw toError(
+        createError({
+          type: "render",
+          message: "Renderer not initialized",
+        }),
+      );
     }
 
-    // Type assertion: component is a React component (validated in loadComponent)
-    let payload = await renderer.renderToPayload(component as React.ComponentType<any>, props);
-
+    const payload = await renderer.renderToPayload(component, props);
     if (!payload) {
-      throw toError(createError({
-        type: "render",
-        message: "Failed to render RSC payload",
-      }));
+      throw toError(
+        createError({
+          type: "render",
+          message: "Failed to render RSC payload",
+        }),
+      );
     }
 
-    if (!this.isLocalDev) {
-      payload = RSCProductionOptimizer.optimizePayload(payload);
-    }
-
-    return payload;
+    return this.isLocalDev ? payload : RSCProductionOptimizer.optimizePayload(payload);
   }
 
   private createResponse(payload: RSCPayload, request?: Request): Response {
@@ -95,17 +97,18 @@ export class RenderHandler {
       return new Response(null, { status: 304 });
     }
 
-    const headers = this.buildHeaders(etag);
-    return new Response(JSON.stringify(payload), { headers });
+    return new Response(JSON.stringify(payload), {
+      headers: this.buildHeaders(etag),
+    });
   }
 
   private shouldReturn304(request: Request, etag: string): boolean {
-    const ifNoneMatch = request.headers.get("if-none-match");
-    return RSCProductionOptimizer.checkETag(ifNoneMatch, etag);
+    return RSCProductionOptimizer.checkETag(request.headers.get("if-none-match"), etag);
   }
 
   private buildHeaders(etag: string): Record<string, string> {
     const isProd = !this.isLocalDev;
+
     const headers: Record<string, string> = {
       "content-type": "application/json",
       etag,
@@ -125,15 +128,18 @@ export class RenderHandler {
   private createErrorResponse(error: unknown): Response {
     logger.error("[RSC] Render error:", error);
 
-    const errorData = {
-      error: "Render error",
-      message: (error as Error).message,
-      stack: this.isLocalDev ? (error as Error).stack : undefined,
-    };
+    const err = error instanceof Error ? error : new Error(String(error));
 
-    return new Response(JSON.stringify(errorData), {
-      status: error instanceof Error && error.message === "Component not found" ? 404 : 500,
-      headers: { "content-type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({
+        error: "Render error",
+        message: err.message,
+        stack: this.isLocalDev ? err.stack : undefined,
+      }),
+      {
+        status: err.message === "Component not found" ? 404 : 500,
+        headers: { "content-type": "application/json" },
+      },
+    );
   }
 }

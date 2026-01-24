@@ -1,5 +1,6 @@
 export function generateDevErrorLoggerScript(nonce?: string): string {
   const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
+
   return `
   <!-- Client-side error logger -->
   <script${nonceAttr}>
@@ -9,11 +10,14 @@ export function generateDevErrorLoggerScript(nonce?: string): string {
           fetch('/_veryfront/log', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ level, message, details, timestamp: new Date().toISOString() })
-          }).catch(() => {}); // Silently fail if server is unreachable
-        } catch (e) {
-          void e;
-        }
+            body: JSON.stringify({
+              level,
+              message,
+              details,
+              timestamp: new Date().toISOString()
+            })
+          }).catch(() => {});
+        } catch {}
       };
 
       window.addEventListener('error', (event) => {
@@ -22,7 +26,7 @@ export function generateDevErrorLoggerScript(nonce?: string): string {
           filename: event.filename,
           lineno: event.lineno,
           colno: event.colno,
-          error: event.error ? event.error.stack : null
+          error: event.error?.stack ?? null
         });
       });
 
@@ -35,13 +39,13 @@ export function generateDevErrorLoggerScript(nonce?: string): string {
 
       const origError = console.error;
       console.error = function(...args) {
-        logToServer('error', 'Console error', { args: args.map(a => String(a)) });
+        logToServer('error', 'Console error', { args: args.map(String) });
         origError.apply(console, args);
       };
 
       const origWarn = console.warn;
       console.warn = function(...args) {
-        logToServer('warn', 'Console warning', { args: args.map(a => String(a)) });
+        logToServer('warn', 'Console warning', { args: args.map(String) });
         origWarn.apply(console, args);
       };
 

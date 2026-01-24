@@ -8,13 +8,14 @@ describe("configSchema", () => {
       router: "app",
       security: { cors: true, remoteHosts: ["https://esm.sh"] },
     });
+
     assertEquals(cfg.router, "app");
     assertEquals(findUnknownTopLevelKeys({ foo: 1, router: "pages" }), ["foo"]);
   });
 
   it("gives helpful error for invalid cors", () => {
     assertThrows(
-      () => validateVeryfrontConfig({ security: { cors: { origin: 123 } as any } }),
+      () => validateVeryfrontConfig({ security: { cors: { origin: 123 } } }),
       Error,
       "Invalid veryfront.config at security.cors:",
     );

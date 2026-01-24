@@ -2,6 +2,23 @@ import { tool } from "veryfront/tool";
 import { z } from "zod";
 import { createGitHubClient } from "../../lib/github-client.ts";
 
+type PullRequest = {
+  number: number;
+  title: string;
+  state: string;
+  draft: boolean;
+  html_url: string;
+  user: { login: string };
+  created_at: string;
+  updated_at: string;
+  head: { ref: string };
+  base: { ref: string };
+  additions: number;
+  deletions: number;
+  changed_files: number;
+  labels: Array<{ name: string }>;
+};
+
 export default tool({
   id: "list-prs",
   description: "List pull requests for a GitHub repository",
@@ -21,14 +38,11 @@ export default tool({
       .describe("Maximum number of pull requests to return"),
   }),
   execute: async ({ repo, state, limit }, context) => {
-    // Default to "current-user" for development; in production, always pass userId from session
-    const userId = (context?.userId as string | undefined) || "current-user";
+    const userId = context?.userId ?? "current-user";
 
     const [owner, repoName] = repo.split("/");
     if (!owner || !repoName) {
-      return {
-        error: "Invalid repository format. Use 'owner/repo' format.",
-      };
+      return { error: "Invalid repository format. Use 'owner/repo' format." };
     }
 
     try {
@@ -39,24 +53,7 @@ export default tool({
       });
 
       return {
-        pullRequests: prs.map((
-          pr: {
-            number: number;
-            title: string;
-            state: string;
-            draft: boolean;
-            html_url: string;
-            user: { login: string };
-            created_at: string;
-            updated_at: string;
-            head: { ref: string };
-            base: { ref: string };
-            additions: number;
-            deletions: number;
-            changed_files: number;
-            labels: Array<{ name: string }>;
-          },
-        ) => ({
+        pullRequests: prs.map((pr: PullRequest) => ({
           number: pr.number,
           title: pr.title,
           state: pr.state,
@@ -70,7 +67,7 @@ export default tool({
           additions: pr.additions,
           deletions: pr.deletions,
           changedFiles: pr.changed_files,
-          labels: pr.labels.map((l: { name: string }) => l.name),
+          labels: pr.labels.map((l) => l.name),
         })),
         count: prs.length,
         repository: repo,

@@ -1,7 +1,3 @@
-/**
- * QuickBooks OAuth Init
- */
-
-import { quickbooksConfig, createOAuthInitHandler } from "veryfront/oauth";
+import { createOAuthInitHandler, quickbooksConfig } from "veryfront/oauth";
 
 export const GET = createOAuthInitHandler(quickbooksConfig);

@@ -2,8 +2,6 @@ import { tool } from "veryfront/tool";
 import { z } from "zod";
 import { createDriveClient } from "../../lib/drive-client.ts";
 
-// Default user ID for demo/dev purposes
-// In production, get from authenticated session
 const DEFAULT_USER_ID = "demo-user";
 
 export default tool({
@@ -45,13 +43,11 @@ export default tool({
   async execute({ query, pageSize, pageToken, orderBy }) {
     const client = createDriveClient(DEFAULT_USER_ID);
 
-    const orderByParam = orderBy ? `${orderBy} desc` : undefined;
-
     const result = await client.searchFiles({
       query,
       pageSize,
       pageToken,
-      orderBy: orderByParam,
+      orderBy: orderBy ? `${orderBy} desc` : undefined,
     });
 
     return {
@@ -59,8 +55,7 @@ export default tool({
         id: file.id,
         name: file.name,
         mimeType: file.mimeType,
-        isFolder:
-          file.mimeType === "application/vnd.google-apps.folder",
+        isFolder: file.mimeType === "application/vnd.google-apps.folder",
         size: file.size,
         createdTime: file.createdTime,
         modifiedTime: file.modifiedTime,
@@ -72,7 +67,7 @@ export default tool({
         parents: file.parents,
       })),
       nextPageToken: result.nextPageToken,
-      hasMore: !!result.nextPageToken,
+      hasMore: Boolean(result.nextPageToken),
       incompleteSearch: result.incompleteSearch,
     };
   },

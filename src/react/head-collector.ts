@@ -41,27 +41,20 @@ let collected: CollectedHead = createEmpty();
  * Called by Head component for each child element.
  */
 export function collectHead(data: Partial<CollectedHead>): void {
-  if (data.title !== undefined) {
-    collected.title = data.title;
-  }
-  if (data.description !== undefined) {
-    collected.description = data.description;
-  }
-  if (data.metas) {
+  if (data.title !== undefined) collected.title = data.title;
+  if (data.description !== undefined) collected.description = data.description;
+
+  if (data.metas?.length) {
     for (const meta of data.metas) {
-      // Extract description separately for shell reconciliation
       if (meta.name === "description" && meta.content) {
         collected.description = meta.content;
       }
       collected.metas.push(meta);
     }
   }
-  if (data.links) {
-    collected.links.push(...data.links);
-  }
-  if (data.styles) {
-    collected.styles.push(...data.styles);
-  }
+
+  if (data.links?.length) collected.links.push(...data.links);
+  if (data.styles?.length) collected.styles.push(...data.styles);
 }
 
 /**
@@ -86,11 +79,11 @@ export function resetHeadCollector(): void {
  * Check if any head data has been collected.
  */
 export function hasCollectedHead(): boolean {
-  return !!(
+  return Boolean(
     collected.title ||
-    collected.description ||
-    collected.metas.length ||
-    collected.links.length ||
-    collected.styles.length
+      collected.description ||
+      collected.metas.length ||
+      collected.links.length ||
+      collected.styles.length,
   );
 }

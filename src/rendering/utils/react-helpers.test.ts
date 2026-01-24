@@ -1,7 +1,3 @@
-/**
- * Tests for React Helper Utilities
- */
-
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import * as React from "react";
@@ -27,31 +23,23 @@ describe("normalizeChild", () => {
   it("unwraps object with only children property", () => {
     const child = React.createElement("span", null, "Content");
     const wrapped = { children: child };
-    // deno-lint-ignore no-explicit-any
-    const result = normalizeChild(wrapped as any);
+    const result = normalizeChild(wrapped);
     assertEquals(result, child);
     assert(React.isValidElement(result));
   });
 
   it("keeps objects with multiple properties", () => {
     const obj = { children: "test", other: "prop" };
-    // deno-lint-ignore no-explicit-any
-    const result = normalizeChild(obj as any);
-    // Objects with multiple properties are kept as-is
-    // deno-lint-ignore no-explicit-any
-    assertEquals(result as any, obj);
+    const result = normalizeChild(obj);
+    assertEquals(result, obj);
   });
 
   it("memoizes object normalization", () => {
     const child = React.createElement("span", null, "Content");
     const wrapped = { children: child };
 
-    // First call
-    // deno-lint-ignore no-explicit-any
-    const result1 = normalizeChild(wrapped as any);
-    // Second call should return cached result
-    // deno-lint-ignore no-explicit-any
-    const result2 = normalizeChild(wrapped as any);
+    const result1 = normalizeChild(wrapped);
+    const result2 = normalizeChild(wrapped);
 
     assertEquals(result1, result2);
     assertEquals(result1, child);
@@ -79,7 +67,6 @@ describe("createDefaultMDXComponents", () => {
     const components1 = createDefaultMDXComponents();
     const components2 = createDefaultMDXComponents();
 
-    // Should be different object instances even though both are empty
     assert(components1 !== components2);
     assertEquals(Object.keys(components1), Object.keys(components2));
   });

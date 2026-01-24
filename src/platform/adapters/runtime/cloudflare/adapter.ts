@@ -44,7 +44,7 @@ export class CloudflareAdapter implements RuntimeAdapter {
     return Promise.resolve(new CloudflareServer());
   }
 
-  async shutdown(): Promise<void> {
-    // Cloudflare Workers don't have explicit shutdown - lifecycle managed by platform
+  shutdown(): Promise<void> {
+    return Promise.resolve();
   }
 }

@@ -14,16 +14,12 @@ import { PRIORITY_VERY_HIGH } from "#veryfront/utils/constants/index.ts";
 export class CorsHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "CorsHandler",
-    priority: PRIORITY_VERY_HIGH as HandlerPriority, // Very high priority - handle CORS early
-    patterns: [
-      { pattern: /.*/, method: "OPTIONS" },
-    ],
+    priority: PRIORITY_VERY_HIGH as HandlerPriority,
+    patterns: [{ pattern: /.*/, method: "OPTIONS" }],
   };
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
-    if (req.method.toUpperCase() !== "OPTIONS") {
-      return this.continue();
-    }
+    if (req.method.toUpperCase() !== "OPTIONS") return this.continue();
 
     const pathname = new URL(req.url).pathname;
     const allowMethods = await this.resolveAllowedMethods(pathname, ctx);
@@ -31,14 +27,14 @@ export class CorsHandler extends BaseHandler {
     let corsConfig = ctx.securityConfig?.cors;
     try {
       const cfg = await getConfig(ctx.projectDir, ctx.adapter);
-      corsConfig = cfg?.security?.cors || corsConfig;
+      corsConfig = cfg?.security?.cors ?? corsConfig;
     } catch (err) {
       this.logDebug("Failed to load CORS config", { error: err }, ctx);
     }
 
     const response = ResponseBuilder.preflight(req, {
       allowMethods,
-      allowHeaders: req.headers.get("access-control-request-headers") ||
+      allowHeaders: req.headers.get("access-control-request-headers") ??
         "Content-Type,Authorization",
       securityConfig: ctx.securityConfig ?? undefined,
       corsConfig,
@@ -61,13 +57,11 @@ export class CorsHandler extends BaseHandler {
       const match = await this.resolveAppRouteFile(pathname, ctx);
       if (!match) return CorsHandler.DEFAULT_METHODS;
 
-      const mod = await import(`file://${match.file}`) as RouteHandlerModule;
+      const mod = (await import(`file://${match.file}`)) as RouteHandlerModule;
       const foundMethods = CorsHandler.HTTP_METHODS.filter((m) => typeof mod[m] === "function");
 
       const methods: string[] = [...foundMethods];
-      if (foundMethods.includes("GET")) {
-        methods.unshift("HEAD");
-      }
+      if (foundMethods.includes("GET")) methods.unshift("HEAD");
       methods.push("OPTIONS");
 
       return [...new Set(methods)].join(", ");
@@ -143,7 +137,7 @@ export class CorsHandler extends BaseHandler {
         const st = await ctx.adapter.fs.stat(filePath);
         if (st.isFile) return { file: filePath, params };
       } catch {
-        continue;
+        // ignore
       }
     }
 

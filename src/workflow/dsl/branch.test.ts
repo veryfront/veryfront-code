@@ -1,7 +1,3 @@
-/**
- * Branch DSL Tests
- */
-
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { branch, unless, when } from "./branch.ts";
@@ -44,10 +40,7 @@ describe("branch()", () => {
         step("step2", { agent: "b" }),
         step("step3", { agent: "c" }),
       ],
-      else: [
-        step("alt1", { agent: "x" }),
-        step("alt2", { agent: "y" }),
-      ],
+      else: [step("alt1", { agent: "x" }), step("alt2", { agent: "y" })],
     });
 
     const config = node.config as BranchNodeConfig;
@@ -103,24 +96,25 @@ describe("unless()", () => {
 
   it("should invert the condition", async () => {
     let originalConditionValue = false;
+
     const node = unless(
       "test",
       () => originalConditionValue,
       [step("a", { agent: "a" })],
     );
 
-    // The unless wrapper should invert the condition
-    // When original is false, inverted should be true
     const config = node.config as BranchNodeConfig;
     const result = await config.condition({} as never);
     assertEquals(result, true);
 
     originalConditionValue = true;
+
     const node2 = unless(
       "test2",
       () => originalConditionValue,
       [step("b", { agent: "b" })],
     );
+
     const config2 = node2.config as BranchNodeConfig;
     const result2 = await config2.condition({} as never);
     assertEquals(result2, false);

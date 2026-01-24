@@ -1,7 +1,7 @@
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
-import { processMetadata } from "./metadata-builder.ts";
 import type { RenderMetadata } from "#veryfront/types";
+import { processMetadata } from "./metadata-builder.ts";
 
 describe("html-generation/metadata-builder", () => {
   describe("processMetadata", () => {
@@ -9,9 +9,7 @@ describe("html-generation/metadata-builder", () => {
       const meta: RenderMetadata = {
         title: "Test Page",
         slug: "test",
-        frontmatter: {
-          description: "Test description",
-        },
+        frontmatter: { description: "Test description" },
       };
 
       const result = processMetadata(meta);
@@ -25,12 +23,8 @@ describe("html-generation/metadata-builder", () => {
       const meta: RenderMetadata = {
         title: "Test Page",
         slug: "test",
-        frontmatter: {
-          description: "Page description",
-        },
-        layoutFrontmatter: {
-          themeColor: "#000000",
-        },
+        frontmatter: { description: "Page description" },
+        layoutFrontmatter: { themeColor: "#000000" },
       };
 
       const result = processMetadata(meta);
@@ -43,12 +37,8 @@ describe("html-generation/metadata-builder", () => {
       const meta: RenderMetadata = {
         title: "Test Page",
         slug: "test",
-        frontmatter: {
-          description: "Page description",
-        },
-        layoutFrontmatter: {
-          description: "Layout description",
-        },
+        frontmatter: { description: "Page description" },
+        layoutFrontmatter: { description: "Layout description" },
       };
 
       const result = processMetadata(meta);
@@ -78,9 +68,7 @@ describe("html-generation/metadata-builder", () => {
       const meta: RenderMetadata = {
         title: "Test Page",
         slug: "test",
-        frontmatter: {
-          bodyClass: "custom-class",
-        },
+        frontmatter: { bodyClass: "custom-class" },
       };
 
       const result = processMetadata(meta);
@@ -104,9 +92,7 @@ describe("html-generation/metadata-builder", () => {
       const meta: RenderMetadata = {
         title: "Test Page",
         slug: "test",
-        frontmatter: {
-          lang: "ja",
-        },
+        frontmatter: { lang: "ja" },
       };
 
       const result = processMetadata(meta);

@@ -59,7 +59,9 @@ export class Semaphore {
         task.timeoutId = setTimeout(() => {
           const idx = this.waiting.indexOf(task);
           if (idx !== -1) this.waiting.splice(idx, 1);
-          reject(new SemaphoreTimeoutError(this.semaphoreName, this.acquireTimeoutMs));
+          reject(
+            new SemaphoreTimeoutError(this.semaphoreName, this.acquireTimeoutMs),
+          );
         }, this.acquireTimeoutMs);
       }
 
@@ -72,9 +74,9 @@ export class Semaphore {
     if (next) {
       if (next.timeoutId) clearTimeout(next.timeoutId);
       next.resolve();
-    } else {
-      this.permits++;
+      return;
     }
+    this.permits++;
   }
 
   get active(): number {
@@ -86,19 +88,17 @@ export class Semaphore {
   }
 }
 
-/** Named semaphores registry */
 const semaphores = new Map<string, Semaphore>();
 
-/** Get or create a named semaphore */
 export function getSemaphore(
   name: string,
   maxPermits: number,
   options?: { acquireTimeoutMs?: number },
 ): Semaphore {
-  let sem = semaphores.get(name);
-  if (!sem) {
-    sem = new Semaphore(maxPermits, { ...options, name });
-    semaphores.set(name, sem);
-  }
+  const existing = semaphores.get(name);
+  if (existing) return existing;
+
+  const sem = new Semaphore(maxPermits, { ...options, name });
+  semaphores.set(name, sem);
   return sem;
 }

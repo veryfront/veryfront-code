@@ -2,9 +2,6 @@ import { tool } from 'veryfront/tool';
 import { z } from 'zod';
 import { getAnthropicAdminClient } from '../../lib/anthropic-admin-client';
 
-/**
- * Tool for listing API keys in the Anthropic organization
- */
 export const listAPIKeys = tool({
   name: 'list_api_keys',
   description:
@@ -20,35 +17,29 @@ export const listAPIKeys = tool({
   execute: async ({ workspaceId }) => {
     try {
       const client = getAnthropicAdminClient();
-      const result = await client.listAPIKeys(workspaceId);
+      const { api_keys } = await client.listAPIKeys(workspaceId);
 
-      // Group keys by status and type for summary
-      const activeKeys = result.api_keys.filter(key => key.status === 'active');
-      const revokedKeys = result.api_keys.filter(
-        key => key.status === 'revoked'
-      );
+      const active = api_keys.filter(key => key.status === 'active').length;
+      const revoked = api_keys.filter(key => key.status === 'revoked').length;
 
-      const keysByType = result.api_keys.reduce(
-        (acc, key) => {
-          acc[key.key_type] = (acc[key.key_type] || 0) + 1;
-          return acc;
-        },
-        {} as Record<string, number>
-      );
+      const by_type = api_keys.reduce<Record<string, number>>((acc, key) => {
+        acc[key.key_type] = (acc[key.key_type] ?? 0) + 1;
+        return acc;
+      }, {});
 
       return {
         success: true,
-        api_keys: result.api_keys,
+        api_keys,
         summary: {
-          total: result.api_keys.length,
-          active: activeKeys.length,
-          revoked: revokedKeys.length,
-          by_type: keysByType,
+          total: api_keys.length,
+          active,
+          revoked,
+          by_type,
           workspace_id: workspaceId,
         },
         message: workspaceId
-          ? `Found ${result.api_keys.length} API key(s) for workspace ${workspaceId}`
-          : `Found ${result.api_keys.length} API key(s) in the organization`,
+          ? `Found ${api_keys.length} API key(s) for workspace ${workspaceId}`
+          : `Found ${api_keys.length} API key(s) in the organization`,
       };
     } catch (error) {
       return {

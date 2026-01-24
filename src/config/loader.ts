@@ -17,7 +17,7 @@ import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 
 export type { VeryfrontConfig } from "./types.ts";
 
-function getDefaultImportMapForConfig() {
+function getDefaultImportMapForConfig(): { imports: ReturnType<typeof getReactImportMap> } {
   return { imports: getReactImportMap(REACT_DEFAULT_VERSION) };
 }
 
@@ -72,19 +72,23 @@ const DEFAULT_CONFIG: Partial<VeryfrontConfig> = {
 const configCacheByProject = new Map<string, { revision: number; config: VeryfrontConfig }>();
 let cacheRevision = 0;
 
-function validateCorsConfig(userConfig: unknown): void {
-  if (!userConfig || typeof userConfig !== "object") {
-    return;
+class ConfigValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ConfigValidationError";
   }
-  const config = userConfig as Record<string, unknown>;
-  const security = config.security as Record<string, unknown> | undefined;
-  const cors = security?.cors;
-  if (!cors || typeof cors !== "object" || Array.isArray(cors)) {
-    return;
-  }
+}
 
-  const corsObj = cors as Record<string, unknown>;
-  const origin = corsObj.origin;
+function validateCorsConfig(userConfig: unknown): void {
+  if (!userConfig || typeof userConfig !== "object") return;
+
+  const security = (userConfig as Record<string, unknown>).security as
+    | Record<string, unknown>
+    | undefined;
+  const cors = security?.cors;
+  if (!cors || typeof cors !== "object" || Array.isArray(cors)) return;
+
+  const origin = (cors as Record<string, unknown>).origin;
   if (origin !== undefined && typeof origin !== "string") {
     throw new ConfigValidationError(
       "security.cors.origin must be a string. Expected boolean or { origin?: string }",
@@ -94,7 +98,7 @@ function validateCorsConfig(userConfig: unknown): void {
 
 function validateConfigShape(userConfig: unknown): void {
   validateVeryfrontConfig(userConfig);
-  if (typeof userConfig !== "object" || !userConfig) return;
+  if (!userConfig || typeof userConfig !== "object") return;
 
   const unknown = findUnknownTopLevelKeys(userConfig as Record<string, unknown>);
   if (unknown.length > 0) {
@@ -103,7 +107,7 @@ function validateConfigShape(userConfig: unknown): void {
 }
 
 function mergeConfigs(userConfig: Partial<VeryfrontConfig>): VeryfrontConfig {
-  const merged: VeryfrontConfig = {
+  const merged = {
     ...DEFAULT_CONFIG,
     ...userConfig,
     dev: {
@@ -136,32 +140,23 @@ function mergeConfigs(userConfig: Partial<VeryfrontConfig>): VeryfrontConfig {
     },
   } as VeryfrontConfig;
 
-  if (merged.resolve) {
-    const defaultMap = DEFAULT_CONFIG.resolve?.importMap;
-    const userMap = userConfig.resolve?.importMap;
+  const defaultMap = DEFAULT_CONFIG.resolve?.importMap;
+  const userMap = userConfig.resolve?.importMap;
 
-    if (defaultMap || userMap) {
-      merged.resolve.importMap = {
-        imports: {
-          ...(defaultMap?.imports ?? {}),
-          ...(userMap?.imports ?? {}),
-        },
-        scopes: {
-          ...(defaultMap?.scopes ?? {}),
-          ...(userMap?.scopes ?? {}),
-        },
-      };
-    }
+  if (merged.resolve && (defaultMap || userMap)) {
+    merged.resolve.importMap = {
+      imports: {
+        ...(defaultMap?.imports ?? {}),
+        ...(userMap?.imports ?? {}),
+      },
+      scopes: {
+        ...(defaultMap?.scopes ?? {}),
+        ...(userMap?.scopes ?? {}),
+      },
+    };
   }
 
   return merged;
-}
-
-class ConfigValidationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ConfigValidationError";
-  }
 }
 
 // Virtual filesystem adapters that require special config loading
@@ -177,33 +172,46 @@ const VIRTUAL_FS_ADAPTERS = new Set([
 function isVirtualFilesystem(adapter: RuntimeAdapter): boolean {
   const fs = adapter?.fs;
   if (!fs || typeof fs !== "object") return false;
+  if (!isExtendedFSAdapter(fs)) return false;
 
-  if (isExtendedFSAdapter(fs)) {
-    // Check for Veryfront adapter first (most common case)
-    if (fs.isVeryfrontAdapter()) {
-      return true;
-    }
-    // Check adapter type for other virtual filesystems (e.g., GitHub)
-    return VIRTUAL_FS_ADAPTERS.has(fs.getAdapterType());
+  if (fs.isVeryfrontAdapter()) return true;
+  return VIRTUAL_FS_ADAPTERS.has(fs.getAdapterType());
+}
+
+/**
+ * Validate config and cache it.
+ *
+ * @param userConfig - Raw config object to validate
+ * @param cacheKey - Cache key (projectDir for local, projectId:VERSION for API-backed)
+ */
+function validateAndCacheConfig(userConfig: unknown, cacheKey: string): VeryfrontConfig {
+  if (!userConfig || typeof userConfig !== "object" || Array.isArray(userConfig)) {
+    throw new ConfigValidationError(
+      `Expected object, received ${userConfig === null ? "null" : typeof userConfig}`,
+    );
   }
 
-  return false;
+  validateCorsConfig(userConfig);
+  validateConfigShape(userConfig);
+
+  const merged = mergeConfigs(userConfig as Partial<VeryfrontConfig>);
+  configCacheByProject.set(cacheKey, { revision: cacheRevision, config: merged });
+  return merged;
 }
 
 /**
  * Load config from virtual filesystem by transpiling TypeScript content
  */
-async function loadConfigFromVirtualFS(
+function loadConfigFromVirtualFS(
   configPath: string,
-  projectDir: string,
+  cacheKey: string,
   adapter: RuntimeAdapter,
-): Promise<VeryfrontConfig | null> {
-  return await withSpan(
+): Promise<VeryfrontConfig> {
+  return withSpan(
     SpanNames.CONFIG_LOAD_PROJECT,
     async () => {
       const fs = createFileSystem();
 
-      // Read config content via adapter
       const content = await adapter.fs.readFile(configPath);
       const source = typeof content === "string" ? content : new TextDecoder().decode(content);
 
@@ -211,13 +219,12 @@ async function loadConfigFromVirtualFS(
 
       const loader = getEsbuildLoader(configPath);
 
-      // Transpile TypeScript to JavaScript using esbuild
       const transpileResult = await withSpan(
         SpanNames.CONFIG_TRANSPILE,
         async () => {
           const { build } = await import("esbuild");
           return build({
-            bundle: false, // Config files shouldn't need bundling
+            bundle: false,
             write: false,
             format: "esm",
             platform: "neutral",
@@ -233,14 +240,13 @@ async function loadConfigFromVirtualFS(
         { "config.path": configPath, "config.loader": loader },
       );
 
-      if (transpileResult.errors && transpileResult.errors.length > 0) {
+      if (transpileResult.errors?.length) {
         const first = transpileResult.errors[0]?.text || "unknown error";
         throw new ConfigValidationError(`Failed to transpile config: ${first}`);
       }
 
       const js = transpileResult.outputFiles?.[0]?.text ?? "export default {}";
 
-      // Write to temp file and import
       const tempDir = await fs.makeTempDir({ prefix: "vf-config-" });
       const tempFile = join(tempDir, "config.mjs");
 
@@ -248,51 +254,22 @@ async function loadConfigFromVirtualFS(
         await fs.writeTextFile(tempFile, js);
         const configModule = await import(`file://${tempFile}?v=${Date.now()}`);
         const userConfig = configModule.default || configModule;
-
-        // projectDir here is actually the effectiveCacheKey (includes projectId/slug and VERSION)
-        // so caching is safe even for virtual filesystem
-        return validateAndCacheConfig(userConfig, projectDir);
+        return validateAndCacheConfig(userConfig, cacheKey);
       } finally {
         await fs.remove(tempDir, { recursive: true });
       }
     },
-    { "config.path": configPath, "config.project_dir": projectDir, "config.source": "virtual_fs" },
+    { "config.path": configPath, "config.project_dir": cacheKey, "config.source": "virtual_fs" },
   );
-}
-
-/**
- * Validate config and cache it.
- *
- * @param userConfig - Raw config object to validate
- * @param cacheKey - Cache key (projectDir for local, projectId:VERSION for API-backed)
- */
-function validateAndCacheConfig(
-  userConfig: unknown,
-  cacheKey: string,
-): VeryfrontConfig {
-  if (userConfig === null || typeof userConfig !== "object" || Array.isArray(userConfig)) {
-    throw new ConfigValidationError(
-      `Expected object, received ${userConfig === null ? "null" : typeof userConfig}`,
-    );
-  }
-
-  validateCorsConfig(userConfig);
-  validateConfigShape(userConfig);
-
-  const merged = mergeConfigs(userConfig as Partial<VeryfrontConfig>);
-  configCacheByProject.set(cacheKey, { revision: cacheRevision, config: merged });
-
-  return merged;
 }
 
 async function loadAndMergeConfig(
   configPath: string,
-  projectDir: string,
+  cacheKey: string,
   adapter: RuntimeAdapter,
-): Promise<VeryfrontConfig | null> {
-  // Check if using virtual filesystem
+): Promise<VeryfrontConfig> {
   if (isVirtualFilesystem(adapter)) {
-    return loadConfigFromVirtualFS(configPath, projectDir, adapter);
+    return loadConfigFromVirtualFS(configPath, cacheKey, adapter);
   }
 
   if (isBun) {
@@ -308,18 +285,17 @@ async function loadAndMergeConfig(
       await fs.writeTextFile(tempFile, source);
       const configModule = await import(`file://${tempFile}`);
       const userConfig = configModule.default || configModule;
-      return validateAndCacheConfig(userConfig, projectDir);
+      return validateAndCacheConfig(userConfig, cacheKey);
     } finally {
       await fs.remove(tempDir, { recursive: true });
     }
   }
 
-  // Local filesystem - use direct import
   const configUrl = `file://${configPath}?t=${Date.now()}-${crypto.randomUUID()}`;
   const configModule = await import(configUrl);
   const userConfig = configModule.default || configModule;
 
-  return validateAndCacheConfig(userConfig, projectDir);
+  return validateAndCacheConfig(userConfig, cacheKey);
 }
 
 function isConfigError(error: unknown): boolean {
@@ -339,7 +315,7 @@ export interface GetConfigOptions {
   cacheKey?: string;
 }
 
-export async function getConfig(
+export function getConfig(
   projectDir: string,
   adapter: RuntimeAdapter,
   options?: GetConfigOptions,
@@ -347,17 +323,11 @@ export async function getConfig(
   const getConfigStartTime = performance.now();
   const cacheKeyForLog = options?.cacheKey || "unknown";
 
-  serverLogger.debug("[CONFIG] getConfig START", {
-    projectDir,
-    cacheKey: cacheKeyForLog,
-  });
+  serverLogger.debug("[CONFIG] getConfig START", { projectDir, cacheKey: cacheKeyForLog });
 
-  return await withSpan(
+  return withSpan(
     SpanNames.CONFIG_LOAD,
     async () => {
-      // Build cache key using centralized builder
-      // For virtual filesystem: vf:{projectId}:{version}
-      // For local filesystem: {projectDir}:{version}
       const isVirtualFS = isVirtualFilesystem(adapter);
       const effectiveCacheKey = buildConfigCacheKey(
         isVirtualFS && options?.cacheKey ? options.cacheKey : projectDir,
@@ -371,7 +341,7 @@ export async function getConfig(
       });
 
       const cached = configCacheByProject.get(effectiveCacheKey);
-      if (cached && cached.revision === cacheRevision) {
+      if (cached?.revision === cacheRevision) {
         serverLogger.debug("[CONFIG] Cache HIT - using cached config", {
           cacheKey: effectiveCacheKey,
           isVirtualFS,
@@ -421,11 +391,10 @@ export async function getConfig(
             totalDuration: `${(performance.now() - getConfigStartTime).toFixed(2)}ms`,
             cacheKey: cacheKeyForLog,
           });
-          if (merged) return merged;
+          return merged;
         } catch (error) {
           if (isConfigError(error)) throw error;
 
-          // Expected when .ts exists but .js is tried first
           serverLogger.debug(`[CONFIG] Failed to load ${configFile}, trying next:`, {
             error: getErrorMessage(error),
           });
@@ -448,7 +417,7 @@ export async function getConfig(
   );
 }
 
-export function clearConfigCache() {
+export function clearConfigCache(): void {
   configCacheByProject.clear();
   cacheRevision++;
 }
@@ -463,8 +432,6 @@ export function clearConfigCache() {
  */
 export function getCachedConfigSync(projectDir: string): VeryfrontConfig | null {
   const cached = configCacheByProject.get(projectDir);
-  if (!cached || cached.revision !== cacheRevision) {
-    return null;
-  }
+  if (!cached || cached.revision !== cacheRevision) return null;
   return cached.config;
 }

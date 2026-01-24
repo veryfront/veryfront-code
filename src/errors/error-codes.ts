@@ -69,7 +69,7 @@ export const ErrorCode = {
   TIMEOUT_ERROR: "VF904",
 } as const;
 
-export type ErrorCodeType = typeof ErrorCode[keyof typeof ErrorCode];
+export type ErrorCodeType = (typeof ErrorCode)[keyof typeof ErrorCode];
 
 export function getErrorDocsUrl(code: ErrorCodeType): string {
   return `https://veryfront.com/docs/errors/${code}`;
@@ -78,43 +78,35 @@ export function getErrorDocsUrl(code: ErrorCodeType): string {
 export function inferErrorCode(error: Error): ErrorCodeType | null {
   const message = error.message.toLowerCase();
 
-  if (message.includes("config") && message.includes("not found")) {
-    return ErrorCode.CONFIG_NOT_FOUND;
-  }
-  if (message.includes("config") && message.includes("invalid")) return ErrorCode.CONFIG_INVALID;
-  if (message.includes("cors")) return ErrorCode.CORS_CONFIG_INVALID;
+  const has = (text: string): boolean => message.includes(text);
 
-  if (message.includes("route") && message.includes("conflict")) return ErrorCode.ROUTE_CONFLICT;
-  if (message.includes("route") && message.includes("invalid")) return ErrorCode.INVALID_ROUTE_FILE;
-
-  if (message.includes("client") && message.includes("boundary")) {
-    return ErrorCode.CLIENT_BOUNDARY_VIOLATION;
-  }
-  if (message.includes("server-only") && message.includes("client")) {
-    return ErrorCode.SERVER_ONLY_IN_CLIENT;
+  if (has("config")) {
+    if (has("not found")) return ErrorCode.CONFIG_NOT_FOUND;
+    if (has("invalid")) return ErrorCode.CONFIG_INVALID;
   }
 
-  if (message.includes("module not found") || message.includes("cannot find module")) {
-    return ErrorCode.MODULE_NOT_FOUND;
-  }
-  if (message.includes("import") || message.includes("resolve")) {
-    return ErrorCode.IMPORT_RESOLUTION_ERROR;
-  }
-  if (message.includes("react") && message.includes("not found")) {
-    return ErrorCode.DEPENDENCY_MISSING;
+  if (has("cors")) return ErrorCode.CORS_CONFIG_INVALID;
+
+  if (has("route")) {
+    if (has("conflict")) return ErrorCode.ROUTE_CONFLICT;
+    if (has("invalid")) return ErrorCode.INVALID_ROUTE_FILE;
   }
 
-  if (message.includes("port") && (message.includes("in use") || message.includes("eaddrinuse"))) {
-    return ErrorCode.PORT_IN_USE;
-  }
-  if (message.includes("capacity exceeded") || message.includes("service overloaded")) {
-    return ErrorCode.SERVICE_OVERLOADED;
-  }
-  if (message.includes("hydration")) return ErrorCode.HYDRATION_MISMATCH;
+  if (has("client") && has("boundary")) return ErrorCode.CLIENT_BOUNDARY_VIOLATION;
+  if (has("server-only") && has("client")) return ErrorCode.SERVER_ONLY_IN_CLIENT;
 
-  if (message.includes("build") && message.includes("fail")) return ErrorCode.BUILD_FAILED;
-  if (message.includes("mdx")) return ErrorCode.MDX_COMPILE_ERROR;
-  if (message.includes("typescript")) return ErrorCode.TYPESCRIPT_ERROR;
+  if (has("module not found") || has("cannot find module")) return ErrorCode.MODULE_NOT_FOUND;
+  if (has("import") || has("resolve")) return ErrorCode.IMPORT_RESOLUTION_ERROR;
+  if (has("react") && has("not found")) return ErrorCode.DEPENDENCY_MISSING;
+
+  if (has("port") && (has("in use") || has("eaddrinuse"))) return ErrorCode.PORT_IN_USE;
+  if (has("capacity exceeded") || has("service overloaded")) return ErrorCode.SERVICE_OVERLOADED;
+
+  if (has("hydration")) return ErrorCode.HYDRATION_MISMATCH;
+
+  if (has("build") && has("fail")) return ErrorCode.BUILD_FAILED;
+  if (has("mdx")) return ErrorCode.MDX_COMPILE_ERROR;
+  if (has("typescript")) return ErrorCode.TYPESCRIPT_ERROR;
 
   return null;
 }

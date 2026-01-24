@@ -25,29 +25,28 @@ export async function initializeBuildContext(options: BuildOptions): Promise<Bui
     adapter,
   });
 
-  const stats: BuildStats = {
-    pages: 0,
-    components: 0,
-    chunks: 0,
-    assets: 0,
-    totalSize: 0,
-    duration: 0,
-  };
-
   return {
     adapter,
     config,
     renderer,
     options,
-    stats,
+    stats: {
+      pages: 0,
+      components: 0,
+      chunks: 0,
+      assets: 0,
+      totalSize: 0,
+      duration: 0,
+    },
   };
 }
 
-export function normalizeBuildOptions(options: BuildOptions) {
-  const defaultOutputDir = join(options.projectDir, ".veryfront", "output");
+export function normalizeBuildOptions(options: BuildOptions): BuildOptions {
+  const outputDir = options.outputDir ?? join(options.projectDir, ".veryfront", "output");
+
   return {
     projectDir: options.projectDir,
-    outputDir: options.outputDir ?? defaultOutputDir,
+    outputDir,
     enableSplitting: options.enableSplitting ?? true,
     enableCompression: options.enableCompression ?? true,
     enablePrefetch: options.enablePrefetch ?? true,

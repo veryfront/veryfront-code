@@ -41,18 +41,18 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
-    const fetchApproval = async () => {
+    if (!runId || !approvalId) return;
+
+    async function fetchApproval(): Promise<void> {
       try {
-        const response = await fetch(
-          `${apiBase}/runs/${runId}/approvals/${approvalId}`,
-        );
+        const response = await fetch(`${apiBase}/runs/${runId}/approvals/${approvalId}`);
 
         if (!response.ok) {
           throw new Error(`Failed to fetch approval: ${response.status}`);
         }
 
-        const data = await response.json();
-        setApproval(data as PendingApproval);
+        const data: PendingApproval = await response.json();
+        setApproval(data);
         setError(null);
       } catch (err) {
         const fetchError = err instanceof Error ? err : new Error(String(err));
@@ -61,48 +61,40 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
       } finally {
         setIsLoading(false);
       }
-    };
-
-    if (runId && approvalId) {
-      fetchApproval();
     }
+
+    fetchApproval();
   }, [runId, approvalId, apiBase, onError]);
 
   const submitDecision = useCallback(
-    async (decision: ApprovalDecision) => {
+    async (decision: ApprovalDecision): Promise<void> => {
       if (!runId || !approvalId) return;
 
       setIsSubmitting(true);
       setError(null);
 
       try {
-        const response = await fetch(
-          `${apiBase}/runs/${runId}/approvals/${approvalId}`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(decision),
-          },
-        );
+        const response = await fetch(`${apiBase}/runs/${runId}/approvals/${approvalId}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(decision),
+        });
 
         if (!response.ok) {
           throw new Error(`Failed to submit decision: ${response.status}`);
         }
 
-        // Update local state
-        setApproval((prev) =>
-          prev
-            ? {
-              ...prev,
-              status: decision.approved ? "approved" : "rejected",
-              resolvedAt: new Date(),
-              resolvedBy: decision.approver,
-              comment: decision.comment,
-            }
-            : null
-        );
+        setApproval((prev) => {
+          if (!prev) return null;
+
+          return {
+            ...prev,
+            status: decision.approved ? "approved" : "rejected",
+            resolvedAt: new Date(),
+            resolvedBy: decision.approver,
+            comment: decision.comment,
+          };
+        });
 
         onDecision?.(decision);
       } catch (err) {
@@ -118,26 +110,20 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
   );
 
   const approve = useCallback(
-    async (comment?: string) => {
-      await submitDecision({
-        approved: true,
-        approver,
-        comment,
-      });
+    async (comment?: string): Promise<void> => {
+      await submitDecision({ approved: true, approver, comment });
     },
     [submitDecision, approver],
   );
 
   const reject = useCallback(
-    async (comment?: string) => {
-      await submitDecision({
-        approved: false,
-        approver,
-        comment,
-      });
+    async (comment?: string): Promise<void> => {
+      await submitDecision({ approved: false, approver, comment });
     },
     [submitDecision, approver],
   );
+
+  const status = approval?.status;
 
   return {
     approval,
@@ -147,7 +133,7 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
     isSubmitting,
     isLoading,
     error,
-    isPending: approval?.status === "pending",
-    isResolved: approval?.status !== "pending",
+    isPending: status === "pending",
+    isResolved: status !== "pending",
   };
 }

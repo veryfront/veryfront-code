@@ -1,7 +1,7 @@
-export function APITab() {
+export function APITab(): JSX.Element {
   return (
     <div className="h-[calc(100vh-89px)] overflow-y-auto">
-      <main className="p-5 bg-gray-50">
+      <main className="bg-gray-50 p-5">
         <div className="mb-6">
           <h1 className="text-lg font-semibold tracking-tight">API Documentation</h1>
           <p className="text-sm text-gray-500">
@@ -17,7 +17,7 @@ export function APITab() {
           </p>
         </div>
 
-        <div className="bg-white border border-gray-200 rounded-md shadow-sm overflow-hidden">
+        <div className="overflow-hidden rounded-md border border-gray-200 bg-white shadow-sm">
           <iframe
             src="/_docs"
             className="w-full border-0"

@@ -10,24 +10,22 @@ export interface EntryPointsResult {
   routeMap: Map<string, string>;
 }
 
-/** Creates esbuild entry points from route configurations */
 export function createEntryPoints(
   routes: SplitOptions["routes"],
 ): EntryPointsResult {
   const entryPoints: Record<string, string> = {};
   const routeMap = new Map<string, string>();
 
-  for (const route of routes) {
-    const name = route.name || convertPathToName(route.path);
-    entryPoints[name] = route.file;
-    routeMap.set(name, route.path);
+  for (const { name, path, file } of routes) {
+    const entryName = name ?? convertPathToName(path);
+    entryPoints[entryName] = file;
+    routeMap.set(entryName, path);
   }
 
   return { entryPoints, routeMap };
 }
 
-/** Converts a route path to a valid entry point name (e.g., "/" -> "index", "/blog/post" -> "blog-post") */
 export function convertPathToName(path: string): string {
   if (path === "/") return "index";
-  return path.replace(/^\//, "").replace(/\//g, "-");
+  return path.replace(/^\//, "").replaceAll("/", "-");
 }

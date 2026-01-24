@@ -46,26 +46,21 @@ export {
 } from "./feature-loader.ts";
 
 /**
- * AI template configuration including required environment variables
- */
-const aiTemplateConfig: TemplateConfig = {
-  envVars: [
-    {
-      name: "OPENAI_API_KEY",
-      description: "Your OpenAI API key",
-      required: true,
-      sensitive: true,
-      placeholder: "sk-...",
-      docsUrl: "https://platform.openai.com/api-keys",
-    },
-  ],
-};
-
-/**
  * Template configurations (env vars, etc.)
  */
 export const templateConfigs: Partial<Record<TemplateName, TemplateConfig>> = {
-  ai: aiTemplateConfig,
+  ai: {
+    envVars: [
+      {
+        name: "OPENAI_API_KEY",
+        description: "Your OpenAI API key",
+        required: true,
+        sensitive: true,
+        placeholder: "sk-...",
+        docsUrl: "https://platform.openai.com/api-keys",
+      },
+    ],
+  },
 };
 
 /**
@@ -75,43 +70,30 @@ export const templateConfigs: Partial<Record<TemplateName, TemplateConfig>> = {
 const DIRECTORY_BASED_TEMPLATES: TemplateName[] = ["minimal", "ai", "app", "blog", "docs"];
 
 /**
- * Legacy inline templates (for backward compatibility during migration).
- * All templates have been migrated to directory-based templates.
- */
-const legacyTemplates: Partial<Record<TemplateName, TemplateFile[]>> = {};
-
-/**
  * Get a template by name.
- * Prefers directory-based templates, falls back to inline templates.
+ * Prefers directory-based templates.
  *
  * @param name - Template name
  * @returns Array of template files, or null if template not found
  */
 export async function getTemplate(name: TemplateName): Promise<TemplateFile[] | null> {
-  // Try directory-based template first
-  if (DIRECTORY_BASED_TEMPLATES.includes(name)) {
-    const exists = await templateDirectoryExists(name);
-    if (exists) {
-      const templateDir = getTemplateDirectory(name);
-      const files = await loadTemplateFromDirectory(templateDir);
-      if (files.length > 0) {
-        return files;
-      }
-    }
-  }
-
-  // Fall back to legacy inline template
-  const legacyTemplate = legacyTemplates[name];
-  if (legacyTemplate) {
-    return legacyTemplate;
-  }
-
-  // Handle aliases
   if (name === "pages-router" || name === "app-router") {
     return getTemplate("minimal");
   }
 
-  return null;
+  if (!DIRECTORY_BASED_TEMPLATES.includes(name)) {
+    return null;
+  }
+
+  const exists = await templateDirectoryExists(name);
+  if (!exists) {
+    return null;
+  }
+
+  const templateDir = getTemplateDirectory(name);
+  const files = await loadTemplateFromDirectory(templateDir);
+
+  return files.length > 0 ? files : null;
 }
 
 /**
@@ -121,7 +103,7 @@ export async function getTemplate(name: TemplateName): Promise<TemplateFile[] | 
  * @returns Template configuration, or null if none defined
  */
 export function getTemplateConfig(name: TemplateName): TemplateConfig | null {
-  return templateConfigs[name] || null;
+  return templateConfigs[name] ?? null;
 }
 
 // Legacy exports for backward compatibility

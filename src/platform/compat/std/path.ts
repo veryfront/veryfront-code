@@ -9,7 +9,6 @@
 
 import { isDeno } from "../runtime.ts";
 
-// Re-export everything from compat/path
 export {
   basename,
   delimiter,
@@ -28,10 +27,6 @@ export {
   toFileUrl,
 } from "../path/index.ts";
 
-// ============================================================================
-// POSIX-specific exports
-// ============================================================================
-
 interface PosixPath {
   join(...paths: string[]): string;
   resolve(...paths: string[]): string;
@@ -45,14 +40,7 @@ interface PosixPath {
   delimiter: string;
 }
 
-export let posix: PosixPath;
+const { posix } = isDeno ? await import("#std/path.ts") : await import("node:path");
 
-if (isDeno) {
-  // Deno: Use @std/path
-  const stdPath = await import("#std/path.ts");
-  posix = stdPath.posix;
-} else {
-  // Node.js/Bun: Use node:path/posix
-  const nodePath = await import("node:path");
-  posix = nodePath.posix;
-}
+export { posix };
+export type { PosixPath };

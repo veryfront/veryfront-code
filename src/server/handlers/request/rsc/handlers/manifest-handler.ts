@@ -5,29 +5,28 @@ import type { ManifestCacheEntry, ManifestData } from "./types.ts";
 
 export class ManifestHandler {
   private cache: ManifestCacheEntry | null = null;
-  private readonly cacheTTL = RSC_MANIFEST_CACHE_TTL_MS;
 
   constructor(private projectDir: string) {}
 
   async handle(clientManifest: Map<string, ClientComponentMeta> | null): Promise<Response> {
     if (this.isCacheValid()) {
-      return this.createResponse(this.cache!.data);
+      return this.createResponse(this.cache?.data as ManifestData);
     }
 
-    const manifest = await this.buildManifest(clientManifest);
-    this.updateCache(manifest);
+    const data = await this.buildManifest(clientManifest);
+    this.cache = { data, timestamp: Date.now() };
 
-    return this.createResponse(manifest);
+    return this.createResponse(data);
   }
 
   private isCacheValid(): boolean {
-    return this.cache !== null && Date.now() - this.cache.timestamp < this.cacheTTL;
+    return this.cache !== null && Date.now() - this.cache.timestamp < RSC_MANIFEST_CACHE_TTL_MS;
   }
 
   private async buildManifest(
     clientManifest: Map<string, ClientComponentMeta> | null,
   ): Promise<ManifestData> {
-    const manifest = clientManifest || (await buildClientManifest(this.projectDir));
+    const manifest = clientManifest ?? (await buildClientManifest(this.projectDir));
     const components: Record<string, string> = {};
 
     for (const [id, meta] of manifest) {
@@ -35,10 +34,6 @@ export class ManifestHandler {
     }
 
     return { components };
-  }
-
-  private updateCache(data: ManifestData): void {
-    this.cache = { data, timestamp: Date.now() };
   }
 
   private createResponse(data: ManifestData): Response {

@@ -1,5 +1,4 @@
-import { FileSystemError } from "#veryfront/errors";
-import { createError, toError } from "#veryfront/errors";
+import { createError, FileSystemError, toError } from "#veryfront/errors";
 import type {
   DirEntry,
   FileChangeEvent,
@@ -9,7 +8,6 @@ import type {
   FileWatcher,
   WatchOptions,
 } from "../../base.ts";
-
 import {
   createFileWatcher,
   createWatcherIterator,
@@ -19,15 +17,13 @@ import type { BunFSWatcher, BunWatchEvent } from "./types.ts";
 import { serverLogger } from "#veryfront/utils";
 
 export class BunFileSystemAdapter implements FileSystemAdapter {
-  async readFile(path: string): Promise<string> {
-    const file = Bun.file(path);
-    return await file.text();
+  readFile(path: string): Promise<string> {
+    return Bun.file(path).text();
   }
 
   async readFileBytes(path: string): Promise<Uint8Array> {
     const file = Bun.file(path);
-    // deno-lint-ignore no-explicit-any
-    const buffer = await (file as any).arrayBuffer();
+    const buffer = await (file as unknown as Blob).arrayBuffer();
     return new Uint8Array(buffer);
   }
 
@@ -36,8 +32,6 @@ export class BunFileSystemAdapter implements FileSystemAdapter {
   }
 
   async exists(path: string): Promise<boolean> {
-    // Use node:fs stat to check existence for both files and directories
-    // Bun.file().exists() only works for files, not directories
     try {
       const { stat } = await import("node:fs/promises");
       await stat(path);
@@ -62,24 +56,20 @@ export class BunFileSystemAdapter implements FileSystemAdapter {
   }
 
   async stat(path: string): Promise<FileInfo> {
-    // Use node:fs stat directly for both files and directories
-    // Bun.file().exists() only works for files, not directories
     const { stat } = await import("node:fs/promises");
 
-    let stats;
     try {
-      stats = await stat(path);
+      const stats = await stat(path);
+      return {
+        size: stats.size,
+        isFile: stats.isFile(),
+        isDirectory: stats.isDirectory(),
+        isSymlink: stats.isSymbolicLink(),
+        mtime: stats.mtime,
+      };
     } catch {
       throw new FileSystemError(`File not found: ${path}`, { path });
     }
-
-    return {
-      size: stats.size,
-      isFile: stats.isFile(),
-      isDirectory: stats.isDirectory(),
-      isSymlink: stats.isSymbolicLink(),
-      mtime: stats.mtime,
-    };
   }
 
   async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
@@ -109,7 +99,7 @@ export class BunFileSystemAdapter implements FileSystemAdapter {
     const eventQueue: FileChangeEvent[] = [];
     let resolver: ((value: IteratorResult<FileChangeEvent>) => void) | null = null;
 
-    const mapBunEventKind = (type: string): FileChangeKind => {
+    function mapBunEventKind(type: string): FileChangeKind {
       switch (type) {
         case "create":
           return "create";
@@ -120,42 +110,43 @@ export class BunFileSystemAdapter implements FileSystemAdapter {
         default:
           return "any";
       }
-    };
+    }
 
-    const setupWatcher = (path: string) => {
+    function setupWatcher(path: string): void {
       try {
-        if (typeof Bun !== "undefined" && Bun.watch) {
-          const watcher = Bun.watch(path, {
-            recursive,
-            onChange: (event: BunWatchEvent) => {
-              if (closed || signal?.aborted) return;
-
-              enqueueWatchEvent(
-                { kind: mapBunEventKind(event.type), paths: [event.path] },
-                eventQueue,
-                () => resolver,
-                (r) => {
-                  resolver = r;
-                },
-              );
-            },
-          });
-          watchers.push(watcher);
-        } else {
-          throw toError(createError({
-            type: "not_supported",
-            message: "Bun.watch is not available in this environment",
-            feature: "Bun.watch",
-          }));
+        if (typeof Bun === "undefined" || !Bun.watch) {
+          throw toError(
+            createError({
+              type: "not_supported",
+              message: "Bun.watch is not available in this environment",
+              feature: "Bun.watch",
+            }),
+          );
         }
+
+        const watcher = Bun.watch(path, {
+          recursive,
+          onChange: (event: BunWatchEvent) => {
+            if (closed || signal?.aborted) return;
+
+            enqueueWatchEvent(
+              { kind: mapBunEventKind(event.type), paths: [event.path] },
+              eventQueue,
+              () => resolver,
+              (r) => {
+                resolver = r;
+              },
+            );
+          },
+        });
+
+        watchers.push(watcher);
       } catch (error) {
         serverLogger.error(`Failed to watch ${path}:`, error);
       }
-    };
+    }
 
-    Promise.all(pathArray.map(setupWatcher)).catch((error) => {
-      serverLogger.error("Failed to setup Bun file watchers:", error);
-    });
+    for (const path of pathArray) setupWatcher(path);
 
     const iterator = createWatcherIterator(
       eventQueue,
@@ -166,28 +157,28 @@ export class BunFileSystemAdapter implements FileSystemAdapter {
       () => signal?.aborted ?? false,
     );
 
-    const cleanup = () => {
+    function cleanup(): void {
       closed = true;
+
       for (const watcher of watchers) {
         try {
           if ("stop" in watcher && typeof watcher.stop === "function") {
             watcher.stop();
-          } else if ("close" in watcher && typeof watcher.close === "function") {
+            continue;
+          }
+          if ("close" in watcher && typeof watcher.close === "function") {
             watcher.close();
           }
         } catch (error) {
           serverLogger.debug("Error closing Bun file watcher during cleanup:", error);
         }
       }
-      if (resolver) {
-        resolver({ done: true, value: undefined });
-        resolver = null;
-      }
-    };
 
-    if (signal) {
-      signal.addEventListener("abort", cleanup);
+      resolver?.({ done: true, value: undefined });
+      resolver = null;
     }
+
+    if (signal) signal.addEventListener("abort", cleanup);
 
     return createFileWatcher(iterator, cleanup);
   }

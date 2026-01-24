@@ -19,14 +19,8 @@ import {
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 
-/**
- * Token provider function - can return static token or dynamic per-request token.
- */
 export type TokenProvider = () => string;
 
-/**
- * Options for listing files.
- */
 export interface ListFilesOptions {
   cursor?: string;
   limit?: number;
@@ -35,10 +29,6 @@ export interface ListFilesOptions {
   sortOrder?: "asc" | "desc";
 }
 
-/**
- * Result of listing files with pagination info.
- * Uses Zalando-compliant cursor-based pagination.
- */
 export interface FileListResult {
   files: ProjectFile[];
   page_info: PageInfo;
@@ -48,9 +38,6 @@ export interface FileListResult {
   environment_name?: string;
 }
 
-/**
- * File detail with content.
- */
 export interface FileDetail {
   path: string;
   content: string;
@@ -62,19 +49,18 @@ export interface FileDetail {
   release_version?: string | null;
 }
 
-// =============================================================================
-// Internal Helpers
-// =============================================================================
-
 function buildListParams(options: ListFilesOptions): URLSearchParams {
   const { cursor, limit = 100, pattern, sortBy = "updated_at", sortOrder = "desc" } = options;
+
   const params = new URLSearchParams({
     limit: String(limit),
     sort_by: sortBy,
     sort_order: sortOrder,
   });
+
   if (cursor) params.set("cursor", cursor);
   if (pattern) params.set("pattern", pattern);
+
   return params;
 }
 
@@ -105,17 +91,12 @@ export class VeryfrontAPIOperations {
   }
 
   getProjectId(): string {
-    if (!this.projectId) {
-      throw new VeryfrontAPIError(
-        "Veryfront API client not initialized. Call initialize() with a project ID first.",
-      );
-    }
-    return this.projectId;
-  }
+    if (this.projectId) return this.projectId;
 
-  // =============================================================================
-  // Project Operations
-  // =============================================================================
+    throw new VeryfrontAPIError(
+      "Veryfront API client not initialized. Call initialize() with a project ID first.",
+    );
+  }
 
   async listProjects(options?: {
     search?: string;
@@ -130,10 +111,8 @@ export class VeryfrontAPIOperations {
     if (options?.sortOrder) params.set("sort_order", options.sortOrder);
 
     const query = params.toString();
-    const path = query ? `/projects?${query}` : "/projects";
-    const raw = await this.request(path);
-    const response = ListProjectsResponseSchema.parse(raw);
-    return response.data;
+    const raw = await this.request(query ? `/projects?${query}` : "/projects");
+    return ListProjectsResponseSchema.parse(raw).data;
   }
 
   async getProject(projectRef: string): Promise<Project> {
@@ -141,14 +120,6 @@ export class VeryfrontAPIOperations {
     return ProjectSchema.parse(raw);
   }
 
-  // =============================================================================
-  // Branch Files (draft/working copy for Studio editing)
-  // Endpoint: /projects/{projectRef}/branches/{branchName}/files[/{pathOrId}]
-  // =============================================================================
-
-  /**
-   * List files from a branch (draft/working copy).
-   */
   async listBranchFiles(
     projectRef: string,
     branchName = "main",
@@ -176,9 +147,6 @@ export class VeryfrontAPIOperations {
     };
   }
 
-  /**
-   * List all files from a branch using pagination.
-   */
   async listAllBranchFiles(
     projectRef: string,
     branchName = "main",
@@ -200,15 +168,12 @@ export class VeryfrontAPIOperations {
     return allFiles;
   }
 
-  /**
-   * Get a file from a branch by path or UUID.
-   */
-  async getBranchFile(
+  getBranchFile(
     projectRef: string,
     branchName: string,
     pathOrId: string,
   ): Promise<FileDetail> {
-    return await withSpan(
+    return withSpan(
       SpanNames.API_GET_FILE,
       async () => {
         const url = `/projects/${encodeURIComponent(projectRef)}/branches/${
@@ -236,14 +201,6 @@ export class VeryfrontAPIOperations {
     );
   }
 
-  // =============================================================================
-  // Environment Files (deployed content - production, preview, staging)
-  // Endpoint: /projects/{projectRef}/environments/{environmentName}/files[/{pathOrId}]
-  // =============================================================================
-
-  /**
-   * List files from an environment (deployed release).
-   */
   async listEnvironmentFiles(
     projectRef: string,
     environmentName = "production",
@@ -280,9 +237,6 @@ export class VeryfrontAPIOperations {
     };
   }
 
-  /**
-   * List all files from an environment using pagination.
-   */
   async listAllEnvironmentFiles(
     projectRef: string,
     environmentName = "production",
@@ -310,15 +264,12 @@ export class VeryfrontAPIOperations {
     return allFiles;
   }
 
-  /**
-   * Get a file from an environment by path or UUID.
-   */
-  async getEnvironmentFile(
+  getEnvironmentFile(
     projectRef: string,
     environmentName: string,
     pathOrId: string,
   ): Promise<FileDetail> {
-    return await withSpan(
+    return withSpan(
       SpanNames.API_GET_FILE,
       async () => {
         const url = `/projects/${encodeURIComponent(projectRef)}/environments/${
@@ -347,14 +298,6 @@ export class VeryfrontAPIOperations {
     );
   }
 
-  // =============================================================================
-  // Release Files (specific version for rollbacks/comparisons)
-  // Endpoint: /projects/{projectRef}/releases/{version}/files[/{pathOrId}]
-  // =============================================================================
-
-  /**
-   * List files from a specific release.
-   */
   async listReleaseFiles(
     projectRef: string,
     version = "latest",
@@ -385,9 +328,6 @@ export class VeryfrontAPIOperations {
     };
   }
 
-  /**
-   * List all files from a release using pagination.
-   */
   async listAllReleaseFiles(
     projectRef: string,
     version = "latest",
@@ -409,15 +349,8 @@ export class VeryfrontAPIOperations {
     return allFiles;
   }
 
-  /**
-   * Get a file from a release by path or UUID.
-   */
-  async getReleaseFile(
-    projectRef: string,
-    version: string,
-    pathOrId: string,
-  ): Promise<FileDetail> {
-    return await withSpan(
+  getReleaseFile(projectRef: string, version: string, pathOrId: string): Promise<FileDetail> {
+    return withSpan(
       SpanNames.API_GET_FILE,
       async () => {
         const url = `/projects/${encodeURIComponent(projectRef)}/releases/${
@@ -446,17 +379,8 @@ export class VeryfrontAPIOperations {
     );
   }
 
-  // =============================================================================
-  // Domain Lookup
-  // =============================================================================
-
-  /**
-   * Look up project info by custom domain.
-   * Uses GET /projects/{domain} which resolves domains automatically.
-   * Returns project details and environment info for routing.
-   */
-  async lookupProjectByDomain(domain: string): Promise<LookupDomainResponse | null> {
-    return await withSpan(
+  lookupProjectByDomain(domain: string): Promise<LookupDomainResponse | null> {
+    return withSpan(
       SpanNames.API_DOMAIN_LOOKUP,
       async () => {
         const domainWithoutPort = domain.replace(/:\d+$/, "");
@@ -466,17 +390,20 @@ export class VeryfrontAPIOperations {
         try {
           const raw = await this.request(url);
           const project = ProjectSchema.extend({
-            environments: z.array(z.object({
-              id: z.string().uuid(),
-              name: z.string(),
-              domains: z.array(z.string()).optional(),
-              active_release_id: z.string().uuid().nullable().optional(),
-            })).optional(),
+            environments: z
+              .array(
+                z.object({
+                  id: z.string().uuid(),
+                  name: z.string(),
+                  domains: z.array(z.string()).optional(),
+                  active_release_id: z.string().uuid().nullable().optional(),
+                }),
+              )
+              .optional(),
           }).parse(raw);
 
-          // Find the environment that has this domain
-          const matchingEnv = project.environments?.find(
-            (env) => env.domains?.some((d) => d.toLowerCase() === domainWithoutPort.toLowerCase()),
+          const matchingEnv = project.environments?.find((env) =>
+            env.domains?.some((d) => d.toLowerCase() === domainWithoutPort.toLowerCase())
           );
 
           const response: LookupDomainResponse = {
@@ -506,22 +433,14 @@ export class VeryfrontAPIOperations {
     );
   }
 
-  // =============================================================================
-  // Internal
-  // =============================================================================
-
-  private async request(endpoint: string): Promise<unknown> {
-    return await withSpan(
+  private request(endpoint: string): Promise<unknown> {
+    return withSpan(
       SpanNames.API_REQUEST,
-      async () => {
+      () => {
         const url = `${this.apiBaseUrl}${endpoint}`;
-        const token = this.tokenProvider();
-        return await requestWithRetry(url, token, this.retryConfig);
+        return requestWithRetry(url, this.tokenProvider(), this.retryConfig);
       },
-      {
-        "api.endpoint": endpoint,
-        "api.base_url": this.apiBaseUrl,
-      },
+      { "api.endpoint": endpoint, "api.base_url": this.apiBaseUrl },
     );
   }
 }

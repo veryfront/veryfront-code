@@ -3,11 +3,8 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { cwd, exit, getArgs } from "#veryfront/platform/compat/process.ts";
 import { getVeryfrontVersion } from "#veryfront/config/env.ts";
 
-const VERSION = getVeryfrontVersion() || "0.0.0-dev";
+const VERSION = getVeryfrontVersion() ?? "0.0.0-dev";
 
-/**
- * Simple argument parser
- */
 function parseArgs(args: string[]): {
   command: string | undefined;
   flags: Record<string, boolean | string>;
@@ -21,37 +18,33 @@ function parseArgs(args: string[]): {
     const arg = args[i];
     if (!arg) continue;
 
-    if (arg.startsWith("--")) {
-      const key = arg.slice(2);
+    const isLongFlag = arg.startsWith("--");
+    const isShortFlag = arg.startsWith("-") && arg.length === 2;
+
+    if (isLongFlag || isShortFlag) {
+      const key = arg.slice(isLongFlag ? 2 : 1);
       const nextArg = args[i + 1];
+
       if (nextArg && !nextArg.startsWith("-")) {
         flags[key] = nextArg;
         i++;
       } else {
         flags[key] = true;
       }
-    } else if (arg.startsWith("-") && arg.length === 2) {
-      const key = arg.slice(1);
-      const nextArg = args[i + 1];
-      if (nextArg && !nextArg.startsWith("-")) {
-        flags[key] = nextArg;
-        i++;
-      } else {
-        flags[key] = true;
-      }
-    } else if (!command) {
-      command = arg;
-    } else {
-      positional.push(arg);
+      continue;
     }
+
+    if (!command) {
+      command = arg;
+      continue;
+    }
+
+    positional.push(arg);
   }
 
   return { command, flags, positional };
 }
 
-/**
- * Show help information
- */
 function showHelp(): void {
   console.log(`Veryfront CLI v${VERSION}`);
   console.log(`
@@ -68,9 +61,6 @@ Available commands:
 Use 'veryfront <command> --help' for command-specific help.`);
 }
 
-/**
- * Initialize a new Veryfront project
- */
 async function initCommand(name: string, template: string = "minimal"): Promise<void> {
   const fs = createFileSystem();
   const projectDir = join(cwd(), name);
@@ -78,14 +68,12 @@ async function initCommand(name: string, template: string = "minimal"): Promise<
   console.log(`\nCreating new Veryfront project: ${name}`);
   console.log(`Template: ${template}\n`);
 
-  // Create project structure
   await fs.mkdir(projectDir, { recursive: true });
   await fs.mkdir(join(projectDir, "pages"), { recursive: true });
   await fs.mkdir(join(projectDir, "public"), { recursive: true });
 
-  // Create deno.json
   const denoJson = {
-    name: name,
+    name,
     version: "0.1.0",
     tasks: {
       dev: `deno run -A npm:veryfront@^${VERSION} dev`,
@@ -93,9 +81,9 @@ async function initCommand(name: string, template: string = "minimal"): Promise<
       preview: `deno run -A npm:veryfront@^${VERSION} preview`,
     },
     imports: {
-      "veryfront": `npm:veryfront@^${VERSION}`,
+      veryfront: `npm:veryfront@^${VERSION}`,
       "veryfront/": `npm:veryfront@^${VERSION}/`,
-      "react": "https://esm.sh/react@18.3.1",
+      react: "https://esm.sh/react@18.3.1",
       "react-dom": "https://esm.sh/react-dom@18.3.1",
       "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
     },
@@ -104,12 +92,9 @@ async function initCommand(name: string, template: string = "minimal"): Promise<
       jsxImportSource: "react",
     },
   };
-  await fs.writeTextFile(
-    join(projectDir, "deno.json"),
-    JSON.stringify(denoJson, null, 2),
-  );
 
-  // Create veryfront.config.ts
+  await fs.writeTextFile(join(projectDir, "deno.json"), JSON.stringify(denoJson, null, 2));
+
   const config = `import { defineConfig } from "veryfront/config";
 
 export default defineConfig({
@@ -118,7 +103,6 @@ export default defineConfig({
 `;
   await fs.writeTextFile(join(projectDir, "veryfront.config.ts"), config);
 
-  // Create index page
   const indexPage = `export default function Home() {
   return (
     <div style={{ padding: "2rem", fontFamily: "system-ui" }}>
@@ -130,16 +114,15 @@ export default defineConfig({
 `;
   await fs.writeTextFile(join(projectDir, "pages", "index.tsx"), indexPage);
 
-  // Create package.json for Node.js/Bun compatibility
   const packageJson = {
-    name: name,
+    name,
     version: "0.1.0",
     private: true,
     type: "module",
     scripts: {
-      dev: `npx veryfront dev`,
-      build: `npx veryfront build`,
-      preview: `npx veryfront preview`,
+      dev: "npx veryfront dev",
+      build: "npx veryfront build",
+      preview: "npx veryfront preview",
     },
     dependencies: {
       veryfront: `^${VERSION}`,
@@ -147,10 +130,8 @@ export default defineConfig({
       "react-dom": "^18.3.1",
     },
   };
-  await fs.writeTextFile(
-    join(projectDir, "package.json"),
-    JSON.stringify(packageJson, null, 2),
-  );
+
+  await fs.writeTextFile(join(projectDir, "package.json"), JSON.stringify(packageJson, null, 2));
 
   console.log("Project created successfully!\n");
   console.log("Next steps:");
@@ -159,48 +140,47 @@ export default defineConfig({
   console.log("  npm run dev  # or: deno task dev\n");
 }
 
-/**
- * Main CLI function
- */
 async function main(): Promise<void> {
   const args = getArgs();
   const { command, flags, positional } = parseArgs(args);
 
-  // Handle version flag
   if (flags.version || flags.v) {
     console.log(`Veryfront CLI v${VERSION}`);
     exit(0);
   }
 
-  // Handle help flag or no command
   if (flags.help || flags.h || !command) {
     showHelp();
     exit(0);
   }
 
-  switch (command) {
-    case "init": {
-      const name = positional[0];
-      if (!name) {
-        console.error("Error: Project name required");
-        console.log("Usage: veryfront init <project-name> [-t <template>]");
-        exit(1);
-      }
-      const template = (flags.t || flags.template || "minimal") as string;
-      await initCommand(name, template);
-      break;
+  if (command === "init") {
+    const name = positional[0];
+    if (!name) {
+      console.error("Error: Project name required");
+      console.log("Usage: veryfront init <project-name> [-t <template>]");
+      exit(1);
     }
 
-    case "dev":
-    case "build":
-    case "preview":
-    case "doctor":
-    case "clean":
-    case "routes":
-    case "generate":
-    case "g":
-      // These commands require the full Veryfront runtime
-      console.log(`
+    const templateFlag = flags.t ?? flags.template;
+    const template = typeof templateFlag === "string" ? templateFlag : "minimal";
+    await initCommand(name, template);
+    return;
+  }
+
+  const runtimeCommands = new Set([
+    "dev",
+    "build",
+    "preview",
+    "doctor",
+    "clean",
+    "routes",
+    "generate",
+    "g",
+  ]);
+
+  if (runtimeCommands.has(command)) {
+    console.log(`
 The '${command}' command requires the Veryfront development server.
 
 For Deno (recommended):
@@ -212,17 +192,14 @@ For Node.js, install dependencies first:
 
 Note: dev/build/preview commands work best with Deno runtime.
 `);
-      exit(0);
-      break;
-
-    default:
-      console.error(`Unknown command: ${command}\n`);
-      showHelp();
-      exit(1);
+    exit(0);
   }
+
+  console.error(`Unknown command: ${command}\n`);
+  showHelp();
+  exit(1);
 }
 
-// Run
 main().catch((error) => {
   console.error("CLI Error:", error);
   exit(1);

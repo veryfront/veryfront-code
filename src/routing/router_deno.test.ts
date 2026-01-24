@@ -19,8 +19,7 @@ describe("DynamicRouter", () => {
       const router = new DynamicRouter();
       router.addRoute("/about", "pages/about.tsx");
 
-      const match = router.match("/not-found");
-      assertEquals(match, null);
+      assertEquals(router.match("/not-found"), null);
     });
 
     it("normalizes trailing slashes", () => {
@@ -113,11 +112,8 @@ describe("DynamicRouter", () => {
       const router = new DynamicRouter();
       router.addRoute("/docs/[...path]", "pages/docs/[...path].tsx");
 
-      const match = router.match("/docs");
-      assertEquals(match, null);
-
-      const match2 = router.match("/docs/");
-      assertEquals(match2, null);
+      assertEquals(router.match("/docs"), null);
+      assertEquals(router.match("/docs/"), null);
     });
   });
 
@@ -222,11 +218,8 @@ describe("DynamicRouter", () => {
       const router = new DynamicRouter();
       router.addRoute("/about", "pages/about.tsx");
 
-      const match1 = router.match("/not-found");
-      const match2 = router.match("/not-found");
-
-      assertEquals(match1, null);
-      assertEquals(match2, null);
+      assertEquals(router.match("/not-found"), null);
+      assertEquals(router.match("/not-found"), null);
     });
 
     it("clears cache correctly", () => {
@@ -282,6 +275,7 @@ describe("DynamicRouter", () => {
 
       const router2 = new DynamicRouter();
       router2.addRoute("/docs/[...path]", "docs.tsx");
+
       const match2 = router2.match("/docs/api/v1/users");
       assertExists(match2);
       assertEquals(match2.params, {
@@ -403,8 +397,7 @@ describe("DynamicRouter", () => {
       const router = new DynamicRouter();
       router.addRoute("/posts/[category]/[id]", "pages/posts.tsx");
 
-      const match = router.match("/posts/tech");
-      assertEquals(match, null);
+      assertEquals(router.match("/posts/tech"), null);
     });
 
     it("matches four dynamic segments in a row", () => {
@@ -461,11 +454,8 @@ describe("DynamicRouter", () => {
       const router = new DynamicRouter();
       router.addRoute("/docs/guide/[...sections]", "pages/docs.tsx");
 
-      const match = router.match("/docs");
-      assertEquals(match, null);
-
-      const match2 = router.match("/docs/other/path");
-      assertEquals(match2, null);
+      assertEquals(router.match("/docs"), null);
+      assertEquals(router.match("/docs/other/path"), null);
     });
 
     it("handles catch-all with URL-encoded segments", () => {
@@ -692,8 +682,7 @@ describe("DynamicRouter", () => {
       router.addRoute("/", "pages/home.tsx");
       router.addRoute("/about", "pages/about.tsx");
 
-      const match = router.match("");
-      assertEquals(match, null);
+      assertEquals(router.match(""), null);
     });
 
     it("handles special characters in static paths", () => {
@@ -701,11 +690,8 @@ describe("DynamicRouter", () => {
       router.addRoute("/api/v2.5/users", "pages/api.tsx");
       router.addRoute("/files/(archived)", "pages/files.tsx");
 
-      const match1 = router.match("/api/v2.5/users");
-      const match2 = router.match("/files/(archived)");
-
-      assertExists(match1);
-      assertExists(match2);
+      assertExists(router.match("/api/v2.5/users"));
+      assertExists(router.match("/files/(archived)"));
     });
 
     it("handles URL-encoded special characters", () => {
@@ -721,19 +707,15 @@ describe("DynamicRouter", () => {
       const router = new DynamicRouter();
       router.addRoute("/about", "pages/about.tsx");
 
-      const match = router.match("/about");
-      assertExists(match);
+      assertExists(router.match("/about"));
     });
 
     it("handles case-sensitive routes", () => {
       const router = new DynamicRouter();
       router.addRoute("/About", "pages/about.tsx");
 
-      const matchExact = router.match("/About");
-      const matchLower = router.match("/about");
-
-      assertExists(matchExact);
-      assertEquals(matchLower, null);
+      assertExists(router.match("/About"));
+      assertEquals(router.match("/about"), null);
     });
 
     it("handles very long paths efficiently", () => {
@@ -767,16 +749,14 @@ describe("DynamicRouter", () => {
       router.addRoute("/about", "pages/about.tsx");
       router.addRoute("/blog/[slug]", "pages/blog.tsx");
 
-      const match = router.match("/completely/unknown/path");
-      assertEquals(match, null);
+      assertEquals(router.match("/completely/unknown/path"), null);
     });
 
     it("handles paths with consecutive slashes after normalization", () => {
       const router = new DynamicRouter();
       router.addRoute("/api/users", "pages/users.tsx");
 
-      const match = router.match("/api/users");
-      assertExists(match);
+      assertExists(router.match("/api/users"));
     });
 
     it("handles dynamic segments with dashes and underscores in values", () => {
@@ -814,8 +794,7 @@ describe("DynamicRouter", () => {
       assertExists(match);
       assertEquals(match.params.id, "123");
 
-      const noMatch = router.match("/users");
-      assertEquals(noMatch, null);
+      assertEquals(router.match("/users"), null);
     });
   });
 });

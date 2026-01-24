@@ -48,178 +48,168 @@ describe("dynamic-route-matcher", () => {
   describe("extractParams", () => {
     describe("simple parameters", () => {
       it("should extract single parameter", () => {
-        const params = extractParams("blog/[slug]", "blog/my-post");
-        expect(params).toEqual({ slug: "my-post" });
+        expect(extractParams("blog/[slug]", "blog/my-post")).toEqual({ slug: "my-post" });
       });
 
       it("should extract parameter with id", () => {
-        const params = extractParams("users/[id]", "users/123");
-        expect(params).toEqual({ id: "123" });
+        expect(extractParams("users/[id]", "users/123")).toEqual({ id: "123" });
       });
 
       it("should extract multiple parameters", () => {
-        const params = extractParams("users/[id]/posts/[postId]", "users/123/posts/456");
-        expect(params).toEqual({ id: "123", postId: "456" });
+        expect(extractParams("users/[id]/posts/[postId]", "users/123/posts/456")).toEqual({
+          id: "123",
+          postId: "456",
+        });
       });
 
       it("should extract parameter from root level", () => {
-        const params = extractParams("[slug]", "my-post");
-        expect(params).toEqual({ slug: "my-post" });
+        expect(extractParams("[slug]", "my-post")).toEqual({ slug: "my-post" });
       });
 
       it("should return null if pattern does not match", () => {
-        const params = extractParams("blog/[slug]", "news/article");
-        expect(params).toBeNull();
+        expect(extractParams("blog/[slug]", "news/article")).toBeNull();
       });
 
       it("should return null if not enough segments", () => {
-        const params = extractParams("blog/[slug]/detail", "blog/my-post");
-        expect(params).toBeNull();
+        expect(extractParams("blog/[slug]/detail", "blog/my-post")).toBeNull();
       });
 
       it("should return null if too many segments", () => {
-        const params = extractParams("blog/[slug]", "blog/my-post/extra");
-        expect(params).toBeNull();
+        expect(extractParams("blog/[slug]", "blog/my-post/extra")).toBeNull();
       });
 
       it("should extract parameters with special characters", () => {
-        const params = extractParams("blog/[slug]", "blog/my-post-123");
-        expect(params).toEqual({ slug: "my-post-123" });
+        expect(extractParams("blog/[slug]", "blog/my-post-123")).toEqual({ slug: "my-post-123" });
       });
 
       it("should handle parameter with underscores", () => {
-        const params = extractParams("users/[user_id]", "users/john_doe");
-        expect(params).toEqual({ user_id: "john_doe" });
+        expect(extractParams("users/[user_id]", "users/john_doe")).toEqual({ user_id: "john_doe" });
       });
 
       it("should handle numeric slugs", () => {
-        const params = extractParams("year/[year]", "year/2024");
-        expect(params).toEqual({ year: "2024" });
+        expect(extractParams("year/[year]", "year/2024")).toEqual({ year: "2024" });
       });
     });
 
     describe("catch-all parameters", () => {
       it("should extract catch-all parameter as array", () => {
-        const params = extractParams("blog/[...slug]", "blog/a/b/c");
-        expect(params).toEqual({ slug: ["a", "b", "c"] });
+        expect(extractParams("blog/[...slug]", "blog/a/b/c")).toEqual({ slug: ["a", "b", "c"] });
       });
 
       it("should extract single segment as array", () => {
-        const params = extractParams("blog/[...slug]", "blog/post");
-        expect(params).toEqual({ slug: ["post"] });
+        expect(extractParams("blog/[...slug]", "blog/post")).toEqual({ slug: ["post"] });
       });
 
       it("should extract empty catch-all as empty array", () => {
-        const params = extractParams("blog/[...slug]", "blog");
-        expect(params).toEqual({ slug: [] });
+        expect(extractParams("blog/[...slug]", "blog")).toEqual({ slug: [] });
       });
 
       it("should handle catch-all at root level", () => {
-        const params = extractParams("[...path]", "a/b/c");
-        expect(params).toEqual({ path: ["a", "b", "c"] });
+        expect(extractParams("[...path]", "a/b/c")).toEqual({ path: ["a", "b", "c"] });
       });
 
       it("should handle catch-all with preceding static segment", () => {
-        const params = extractParams("api/[...path]", "api/v1/users/123");
-        expect(params).toEqual({ path: ["v1", "users", "123"] });
+        expect(extractParams("api/[...path]", "api/v1/users/123")).toEqual({
+          path: ["v1", "users", "123"],
+        });
       });
 
       it("should handle catch-all with different names", () => {
-        const params = extractParams("docs/[...segments]", "docs/guide/getting-started");
-        expect(params).toEqual({ segments: ["guide", "getting-started"] });
+        expect(extractParams("docs/[...segments]", "docs/guide/getting-started")).toEqual({
+          segments: ["guide", "getting-started"],
+        });
       });
 
       it("should return null if static part does not match", () => {
-        const params = extractParams("blog/[...slug]", "news/a/b/c");
-        expect(params).toBeNull();
+        expect(extractParams("blog/[...slug]", "news/a/b/c")).toBeNull();
       });
     });
 
     describe("mixed patterns", () => {
       it("should extract parameter before catch-all", () => {
-        const params = extractParams("[lang]/[...path]", "en/docs/guide");
-        expect(params).toEqual({ lang: "en", path: ["docs", "guide"] });
+        expect(extractParams("[lang]/[...path]", "en/docs/guide")).toEqual({
+          lang: "en",
+          path: ["docs", "guide"],
+        });
       });
 
       it("should handle static, dynamic, and catch-all", () => {
-        const params = extractParams("api/[version]/[...path]", "api/v1/users/123");
-        expect(params).toEqual({ version: "v1", path: ["users", "123"] });
+        expect(extractParams("api/[version]/[...path]", "api/v1/users/123")).toEqual({
+          version: "v1",
+          path: ["users", "123"],
+        });
       });
 
       it("should handle multiple dynamic before catch-all", () => {
-        const params = extractParams("[lang]/[region]/[...path]", "en/us/docs/guide");
-        expect(params).toEqual({ lang: "en", region: "us", path: ["docs", "guide"] });
+        expect(extractParams("[lang]/[region]/[...path]", "en/us/docs/guide")).toEqual({
+          lang: "en",
+          region: "us",
+          path: ["docs", "guide"],
+        });
       });
     });
 
     describe("edge cases", () => {
       it("should handle empty slug", () => {
-        const params = extractParams("blog/[slug]", "blog/");
-        expect(params).toBeNull();
+        expect(extractParams("blog/[slug]", "blog/")).toBeNull();
       });
 
       it("should handle slug with only slashes", () => {
-        const params = extractParams("blog/[slug]", "blog///");
-        expect(params).toBeNull();
+        expect(extractParams("blog/[slug]", "blog///")).toBeNull();
       });
 
       it("should handle pattern with empty segments", () => {
-        const params = extractParams("blog//[slug]", "blog/my-post");
-        expect(params).toEqual({ slug: "my-post" });
+        expect(extractParams("blog//[slug]", "blog/my-post")).toEqual({ slug: "my-post" });
       });
 
       it("should handle mixed empty segments", () => {
-        const params = extractParams("blog/[slug]/detail", "blog//my-post/detail");
-        expect(params).toEqual({ slug: "my-post" });
+        expect(extractParams("blog/[slug]/detail", "blog//my-post/detail")).toEqual({
+          slug: "my-post",
+        });
       });
 
       it("should return null for completely different paths", () => {
-        const params = extractParams("users/[id]", "posts/123");
-        expect(params).toBeNull();
+        expect(extractParams("users/[id]", "posts/123")).toBeNull();
       });
 
       it("should handle parameter with dots in name", () => {
-        const params = extractParams("api/[version.number]", "api/1.0");
-        expect(params).toEqual({ "version.number": "1.0" });
+        expect(extractParams("api/[version.number]", "api/1.0")).toEqual({
+          "version.number": "1.0",
+        });
       });
 
       it("should handle very long paths", () => {
-        const pattern = "a/[b]/c/[d]/e/[f]";
-        const slug = "a/B/c/D/e/F";
-        const params = extractParams(pattern, slug);
-        expect(params).toEqual({ b: "B", d: "D", f: "F" });
+        expect(extractParams("a/[b]/c/[d]/e/[f]", "a/B/c/D/e/F")).toEqual({
+          b: "B",
+          d: "D",
+          f: "F",
+        });
       });
 
       it("should return empty object for static route match", () => {
-        const params = extractParams("blog/post", "blog/post");
-        expect(params).toEqual({});
+        expect(extractParams("blog/post", "blog/post")).toEqual({});
       });
     });
 
     describe("no match scenarios", () => {
       it("should return null when static segment does not match", () => {
-        const params = extractParams("blog/[slug]", "news/article");
-        expect(params).toBeNull();
+        expect(extractParams("blog/[slug]", "news/article")).toBeNull();
       });
 
       it("should return null when pattern is longer than slug", () => {
-        const params = extractParams("blog/[category]/[slug]", "blog/post");
-        expect(params).toBeNull();
+        expect(extractParams("blog/[category]/[slug]", "blog/post")).toBeNull();
       });
 
       it("should return null when slug is longer than pattern (no catch-all)", () => {
-        const params = extractParams("blog/[slug]", "blog/category/post");
-        expect(params).toBeNull();
+        expect(extractParams("blog/[slug]", "blog/category/post")).toBeNull();
       });
 
       it("should return null for empty pattern", () => {
-        const params = extractParams("", "blog/post");
-        expect(params).toBeNull();
+        expect(extractParams("", "blog/post")).toBeNull();
       });
 
       it("should handle empty slug with non-empty pattern", () => {
-        const params = extractParams("blog/[slug]", "");
-        expect(params).toBeNull();
+        expect(extractParams("blog/[slug]", "")).toBeNull();
       });
     });
   });
@@ -285,9 +275,7 @@ describe("dynamic-route-matcher", () => {
 
       expect(isDynamicRoute(pattern)).toBe(true);
       expect(matchesPattern(pattern, slug)).toBe(true);
-
-      const params = extractParams(pattern, slug);
-      expect(params).toEqual({ slug: "my-first-post" });
+      expect(extractParams(pattern, slug)).toEqual({ slug: "my-first-post" });
     });
 
     it("should work end-to-end for user profile route", () => {
@@ -296,9 +284,7 @@ describe("dynamic-route-matcher", () => {
 
       expect(isDynamicRoute(pattern)).toBe(true);
       expect(matchesPattern(pattern, slug)).toBe(true);
-
-      const params = extractParams(pattern, slug);
-      expect(params).toEqual({ id: "123" });
+      expect(extractParams(pattern, slug)).toEqual({ id: "123" });
     });
 
     it("should work end-to-end for catch-all docs route", () => {
@@ -307,9 +293,7 @@ describe("dynamic-route-matcher", () => {
 
       expect(isDynamicRoute(pattern)).toBe(true);
       expect(matchesPattern(pattern, slug)).toBe(true);
-
-      const params = extractParams(pattern, slug);
-      expect(params).toEqual({ path: ["getting-started", "installation"] });
+      expect(extractParams(pattern, slug)).toEqual({ path: ["getting-started", "installation"] });
     });
 
     it("should work end-to-end for complex multi-param route", () => {
@@ -318,9 +302,7 @@ describe("dynamic-route-matcher", () => {
 
       expect(isDynamicRoute(pattern)).toBe(true);
       expect(matchesPattern(pattern, slug)).toBe(true);
-
-      const params = extractParams(pattern, slug);
-      expect(params).toEqual({ lang: "en", id: "123", postId: "456" });
+      expect(extractParams(pattern, slug)).toEqual({ lang: "en", id: "123", postId: "456" });
     });
 
     it("should reject non-matching route end-to-end", () => {
@@ -329,36 +311,39 @@ describe("dynamic-route-matcher", () => {
 
       expect(isDynamicRoute(pattern)).toBe(true);
       expect(matchesPattern(pattern, slug)).toBe(false);
-
-      const params = extractParams(pattern, slug);
-      expect(params).toBeNull();
+      expect(extractParams(pattern, slug)).toBeNull();
     });
   });
 
   describe("real-world examples", () => {
     it("should handle Next.js style blog route", () => {
-      const params = extractParams("blog/[slug]", "blog/nextjs-tutorial");
-      expect(params).toEqual({ slug: "nextjs-tutorial" });
+      expect(extractParams("blog/[slug]", "blog/nextjs-tutorial")).toEqual({
+        slug: "nextjs-tutorial",
+      });
     });
 
     it("should handle Next.js style API route", () => {
-      const params = extractParams("api/users/[id]", "api/users/42");
-      expect(params).toEqual({ id: "42" });
+      expect(extractParams("api/users/[id]", "api/users/42")).toEqual({ id: "42" });
     });
 
     it("should handle Next.js catch-all docs", () => {
-      const params = extractParams("docs/[...slug]", "docs/api/reference/hooks");
-      expect(params).toEqual({ slug: ["api", "reference", "hooks"] });
+      expect(extractParams("docs/[...slug]", "docs/api/reference/hooks")).toEqual({
+        slug: ["api", "reference", "hooks"],
+      });
     });
 
     it("should handle localized routes", () => {
-      const params = extractParams("[locale]/blog/[slug]", "en/blog/hello-world");
-      expect(params).toEqual({ locale: "en", slug: "hello-world" });
+      expect(extractParams("[locale]/blog/[slug]", "en/blog/hello-world")).toEqual({
+        locale: "en",
+        slug: "hello-world",
+      });
     });
 
     it("should handle shop product routes", () => {
-      const params = extractParams("shop/[category]/[productId]", "shop/electronics/laptop-123");
-      expect(params).toEqual({ category: "electronics", productId: "laptop-123" });
+      expect(extractParams("shop/[category]/[productId]", "shop/electronics/laptop-123")).toEqual({
+        category: "electronics",
+        productId: "laptop-123",
+      });
     });
   });
 });

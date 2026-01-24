@@ -1,4 +1,4 @@
-/**
+/****
  * Advanced MCP Tools for Coding Agents
  *
  * These tools give coding agents deep understanding of Veryfront projects
@@ -58,53 +58,35 @@ interface ScaffoldResult {
 let cachedFs: FileSystem | null = null;
 
 function getFs(): FileSystem {
-  if (!cachedFs) cachedFs = createFileSystem();
+  cachedFs ??= createFileSystem();
   return cachedFs;
 }
 
-/**
- * Get project directory, defaulting to current working directory
- */
 function getProjectDir(projectPath?: string): string {
-  return projectPath || cwd();
+  return projectPath ?? cwd();
 }
 
-/**
- * Ensure a directory exists, creating it if necessary
- */
 async function ensureDir(path: string): Promise<void> {
-  const fs = getFs();
   try {
-    await fs.mkdir(path, { recursive: true });
+    await getFs().mkdir(path, { recursive: true });
   } catch {
     // Directory already exists
   }
 }
 
-/**
- * Check if a path is a directory
- */
 async function directoryExists(path: string): Promise<boolean> {
-  const fs = getFs();
   try {
-    const stat = await fs.stat(path);
+    const stat = await getFs().stat(path);
     return stat.isDirectory;
   } catch {
     return false;
   }
 }
 
-/**
- * Check if a file exists
- */
 async function fileExists(path: string): Promise<boolean> {
-  const fs = getFs();
-  return await fs.exists(path);
+  return await getFs().exists(path);
 }
 
-/**
- * Convert a slug to a PascalCase component name
- */
 function toComponentName(slug: string): string {
   const base = slug.split("/").pop() || slug;
   return base
@@ -115,9 +97,6 @@ function toComponentName(slug: string): string {
     .join("");
 }
 
-/**
- * Convert a name to a URL-safe slug
- */
 function toSlug(name: string): string {
   return name
     .replace(/\s+/g, "-")
@@ -126,9 +105,6 @@ function toSlug(name: string): string {
     .toLowerCase();
 }
 
-/**
- * Format an error message from an unknown error
- */
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -137,7 +113,6 @@ function formatError(error: unknown): string {
 // Route Scanning
 // ============================================================================
 
-/** Map of file names to route types */
 const ROUTE_FILE_MAP: Record<string, RouteType> = {
   "page.tsx": "page",
   "page.jsx": "page",
@@ -154,42 +129,26 @@ const ROUTE_FILE_MAP: Record<string, RouteType> = {
   "not-found.jsx": "not-found",
 };
 
-/** HTTP methods to detect in API routes */
 const HTTP_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"] as const;
 
-/**
- * Convert a directory segment to a route segment
- */
 function toRouteSegment(dirName: string): string {
-  if (dirName.startsWith("[...") && dirName.endsWith("]")) {
-    return `*${dirName.slice(4, -1)}`;
-  }
-  if (dirName.startsWith("[") && dirName.endsWith("]")) {
-    return `:${dirName.slice(1, -1)}`;
-  }
+  if (dirName.startsWith("[...") && dirName.endsWith("]")) return `*${dirName.slice(4, -1)}`;
+  if (dirName.startsWith("[") && dirName.endsWith("]")) return `:${dirName.slice(1, -1)}`;
   return dirName;
 }
 
-/**
- * Detect HTTP methods exported from an API route file
- */
 async function detectHttpMethods(filePath: string, fs: FileSystem): Promise<string[]> {
   const content = await fs.readTextFile(filePath);
   const methods: string[] = [];
 
   for (const method of HTTP_METHODS) {
     const regex = new RegExp(`export\\s+(const|function|async\\s+function)\\s+${method}`, "i");
-    if (regex.test(content)) {
-      methods.push(method);
-    }
+    if (regex.test(content)) methods.push(method);
   }
 
-  return methods.length > 0 ? methods : ["GET"];
+  return methods.length ? methods : ["GET"];
 }
 
-/**
- * Recursively scan a directory for routes
- */
 async function scanDirectory(
   dir: string,
   baseRoute: string,
@@ -217,9 +176,7 @@ async function scanDirectory(
       const routePath = baseRoute || "/";
       const routeInfo: RouteInfo = { path: routePath, type: routeType, file: fullPath };
 
-      if (routeType === "api") {
-        routeInfo.methods = await detectHttpMethods(fullPath, fs);
-      }
+      if (routeType === "api") routeInfo.methods = await detectHttpMethods(fullPath, fs);
 
       routes.push(routeInfo);
     }
@@ -233,15 +190,16 @@ async function scanDirectory(
 // ============================================================================
 
 const listRoutesInput = z.object({
-  type: z.enum(["all", "pages", "api", "layouts"]).optional().default("all")
-    .describe("Filter routes by type"),
-  projectPath: z.string().optional()
-    .describe("Project directory (defaults to current working directory)"),
+  type: z.enum(["all", "pages", "api", "layouts"]).optional().default("all").describe(
+    "Filter routes by type",
+  ),
+  projectPath: z.string().optional().describe(
+    "Project directory (defaults to current working directory)",
+  ),
 });
 
 type ListRoutesInput = z.infer<typeof listRoutesInput>;
 
-/** Map filter types to route types */
 const ROUTE_FILTER_MAP: Record<string, RouteType[]> = {
   pages: ["page"],
   api: ["api"],
@@ -253,25 +211,23 @@ export const vfListRoutes: MCPTool<ListRoutesInput, RouteInfo[]> = {
   description:
     "Discover all routes in the project. Returns pages, API routes, layouts, and special routes. Use this to understand the project structure before making changes.",
   inputSchema: listRoutesInput,
-  execute: (input) => {
-    return withSpan("cli.mcp.tool.vf_list_routes", async () => {
-      const projectDir = getProjectDir(input.projectPath);
-      const appDir = join(projectDir, "app");
-      const fs = getFs();
-      const routes: RouteInfo[] = [];
+  execute: (input) =>
+    withSpan(
+      "cli.mcp.tool.vf_list_routes",
+      async () => {
+        const projectDir = getProjectDir(input.projectPath);
+        const appDir = join(projectDir, "app");
+        const fs = getFs();
+        const routes: RouteInfo[] = [];
 
-      if (await directoryExists(appDir)) {
-        await scanDirectory(appDir, "", routes, fs);
-      }
+        if (await directoryExists(appDir)) await scanDirectory(appDir, "", routes, fs);
+        if (input.type === "all") return routes;
 
-      if (input.type === "all") {
-        return routes;
-      }
-
-      const allowedTypes = ROUTE_FILTER_MAP[input.type] || [];
-      return routes.filter((route) => allowedTypes.includes(route.type));
-    }, { "tool.filter_type": input.type });
-  },
+        const allowedTypes = ROUTE_FILTER_MAP[input.type] ?? [];
+        return routes.filter((route) => allowedTypes.includes(route.type));
+      },
+      { "tool.filter_type": input.type },
+    ),
 };
 
 // ============================================================================
@@ -279,51 +235,36 @@ export const vfListRoutes: MCPTool<ListRoutesInput, RouteInfo[]> = {
 // ============================================================================
 
 const getProjectContextInput = z.object({
-  projectPath: z.string().optional()
-    .describe("Project directory (defaults to current working directory)"),
+  projectPath: z.string().optional().describe(
+    "Project directory (defaults to current working directory)",
+  ),
 });
 
 type GetProjectContextInput = z.infer<typeof getProjectContextInput>;
 
-/** Standard directories to detect in a project */
 const STANDARD_DIRS = ["app", "pages", "components", "lib", "ai"] as const;
 
-/** Built-in auth routes that are not integrations */
 const BUILTIN_AUTH_ROUTES = ["login", "logout", "me", "signup", "register"];
 
-/** Feature detection patterns: [filePath, featureName] */
 const FEATURE_PATTERNS: Array<[string, string]> = [
   ["lib/auth.ts", "auth"],
   ["lib/redis.ts", "redis"],
   ["workflows", "workflows"],
 ];
 
-/**
- * Detect project directories that exist
- */
-async function detectDirectories(
-  projectDir: string,
-): Promise<ProjectContext["directories"]> {
+async function detectDirectories(projectDir: string): Promise<ProjectContext["directories"]> {
   const directories: ProjectContext["directories"] = {};
   for (const dir of STANDARD_DIRS) {
-    if (await directoryExists(join(projectDir, dir))) {
-      directories[dir] = dir;
-    }
+    if (await directoryExists(join(projectDir, dir))) directories[dir] = dir;
   }
   return directories;
 }
 
-/**
- * Detect third-party integrations from auth routes
- */
 async function detectIntegrations(projectDir: string, fs: FileSystem): Promise<string[]> {
-  const integrations: string[] = [];
   const authDir = join(projectDir, "app/api/auth");
+  if (!await directoryExists(authDir)) return [];
 
-  if (!await directoryExists(authDir)) {
-    return integrations;
-  }
-
+  const integrations: string[] = [];
   try {
     for await (const entry of fs.readDir(authDir)) {
       if (entry.isDirectory && !BUILTIN_AUTH_ROUTES.includes(entry.name)) {
@@ -337,28 +278,17 @@ async function detectIntegrations(projectDir: string, fs: FileSystem): Promise<s
   return integrations;
 }
 
-/**
- * Detect project features based on file existence
- */
 async function detectFeatures(projectDir: string, hasAI: boolean): Promise<string[]> {
   const features: string[] = [];
-
-  if (hasAI) {
-    features.push("ai");
-  }
+  if (hasAI) features.push("ai");
 
   for (const [path, feature] of FEATURE_PATTERNS) {
-    if (await fileExists(join(projectDir, path))) {
-      features.push(feature);
-    }
+    if (await fileExists(join(projectDir, path))) features.push(feature);
   }
 
   return features;
 }
 
-/**
- * Get project name from package.json or directory name
- */
 async function getProjectName(projectDir: string, fs: FileSystem): Promise<string> {
   try {
     const content = await fs.readTextFile(join(projectDir, "package.json"));
@@ -375,30 +305,31 @@ export const vfGetProjectContext: MCPTool<GetProjectContextInput, ProjectContext
   description:
     "Get deep understanding of the project structure, conventions, and capabilities. Use this at the start of any coding session to understand the project before making changes.",
   inputSchema: getProjectContextInput,
-  execute: (input) => {
-    return withSpan("cli.mcp.tool.vf_get_project_context", async () => {
-      const projectDir = getProjectDir(input.projectPath);
-      const fs = getFs();
+  execute: (input) =>
+    withSpan(
+      "cli.mcp.tool.vf_get_project_context",
+      async () => {
+        const projectDir = getProjectDir(input.projectPath);
+        const fs = getFs();
 
-      const hasApp = await directoryExists(join(projectDir, "app"));
-      const hasPages = await directoryExists(join(projectDir, "pages"));
-      const router = hasApp ? "app" : hasPages ? "pages" : "app";
+        const hasApp = await directoryExists(join(projectDir, "app"));
+        const hasPages = await directoryExists(join(projectDir, "pages"));
+        const router = hasApp ? "app" : hasPages ? "pages" : "app";
 
-      const routes: RouteInfo[] = [];
-      if (hasApp) {
-        await scanDirectory(join(projectDir, "app"), "", routes, fs);
-      }
+        const routes: RouteInfo[] = [];
+        if (hasApp) await scanDirectory(join(projectDir, "app"), "", routes, fs);
 
-      const directories = await detectDirectories(projectDir);
-      const hasAI = await directoryExists(join(projectDir, "ai")) ||
-        await fileExists(join(projectDir, "app/api/chat/route.ts"));
-      const integrations = await detectIntegrations(projectDir, fs);
-      const features = await detectFeatures(projectDir, hasAI);
-      const name = await getProjectName(projectDir, fs);
+        const directories = await detectDirectories(projectDir);
+        const hasAI = await directoryExists(join(projectDir, "ai")) ||
+          await fileExists(join(projectDir, "app/api/chat/route.ts"));
+        const integrations = await detectIntegrations(projectDir, fs);
+        const features = await detectFeatures(projectDir, hasAI);
+        const name = await getProjectName(projectDir, fs);
 
-      return { name, router, routes, directories, hasAI, integrations, features };
-    }, { "tool.projectDir": input.projectPath || "cwd" });
-  },
+        return { name, router, routes, directories, hasAI, integrations, features };
+      },
+      { "tool.projectDir": input.projectPath ?? "cwd" },
+    ),
 };
 
 // ============================================================================
@@ -406,18 +337,22 @@ export const vfGetProjectContext: MCPTool<GetProjectContextInput, ProjectContext
 // ============================================================================
 
 const scaffoldInput = z.object({
-  type: z.enum(["page", "api", "layout", "component", "tool", "agent", "prompt"])
-    .describe("Type of entity to scaffold"),
-  name: z.string()
-    .describe("Name/path of the entity (e.g., 'users', 'api/users', 'dashboard/settings')"),
-  methods: z.array(z.enum(["GET", "POST", "PUT", "DELETE", "PATCH"])).optional()
-    .describe("HTTP methods for API routes (defaults to GET)"),
-  projectPath: z.string().optional()
-    .describe("Project directory (defaults to current working directory)"),
+  type: z.enum(["page", "api", "layout", "component", "tool", "agent", "prompt"]).describe(
+    "Type of entity to scaffold",
+  ),
+  name: z.string().describe(
+    "Name/path of the entity (e.g., 'users', 'api/users', 'dashboard/settings')",
+  ),
+  methods: z.array(z.enum(["GET", "POST", "PUT", "DELETE", "PATCH"])).optional().describe(
+    "HTTP methods for API routes (defaults to GET)",
+  ),
+  projectPath: z.string().optional().describe(
+    "Project directory (defaults to current working directory)",
+  ),
 });
 
 type ScaffoldInput = z.infer<typeof scaffoldInput>;
-type ScaffoldType = z.infer<typeof scaffoldInput>["type"];
+type ScaffoldType = ScaffoldInput["type"];
 
 // ============================================================================
 // Scaffold Templates
@@ -480,7 +415,7 @@ export function ${componentName}({ children }: ${componentName}Props) {
 `;
 }
 
-function generateToolTemplate(name: string, _toolName: string): string {
+function generateToolTemplate(name: string): string {
   return `import { tool } from "veryfront/tool";
 import { z } from "zod";
 
@@ -560,7 +495,7 @@ const SCAFFOLD_CONFIGS: Record<ScaffoldType, ScaffoldConfig> = {
   api: {
     getDirectory: (projectDir, slug) => join(projectDir, "app", slug),
     getFilename: () => "route.ts",
-    getContent: (_name, _slug, _componentName, methods) => generateApiTemplate(methods || ["GET"]),
+    getContent: (_name, _slug, _componentName, methods) => generateApiTemplate(methods ?? ["GET"]),
   },
   layout: {
     getDirectory: (projectDir, slug) => join(projectDir, "app", slug),
@@ -575,7 +510,7 @@ const SCAFFOLD_CONFIGS: Record<ScaffoldType, ScaffoldConfig> = {
   tool: {
     getDirectory: (projectDir) => join(projectDir, "ai", "tools"),
     getFilename: (slug) => `${slug}.ts`,
-    getContent: (name, slug) => generateToolTemplate(name, slug.replace(/-/g, "_")),
+    getContent: (name) => generateToolTemplate(name),
   },
   agent: {
     getDirectory: (projectDir) => join(projectDir, "ai", "agents"),
@@ -594,45 +529,48 @@ export const vfScaffold: MCPTool<ScaffoldInput, ScaffoldResult> = {
   description:
     "Generate new entities (pages, API routes, layouts, components, AI tools, agents, prompts) with proper conventions. This is the recommended way to create new files in a Veryfront project.",
   inputSchema: scaffoldInput,
-  execute: (input) => {
-    return withSpan("cli.mcp.tool.vf_scaffold", async () => {
-      const projectDir = getProjectDir(input.projectPath);
-      const fs = getFs();
-      const slug = toSlug(input.name);
-      const componentName = toComponentName(input.name);
+  execute: (input) =>
+    withSpan(
+      "cli.mcp.tool.vf_scaffold",
+      async () => {
+        const projectDir = getProjectDir(input.projectPath);
+        const fs = getFs();
+        const slug = toSlug(input.name);
+        const componentName = toComponentName(input.name);
 
-      const config = SCAFFOLD_CONFIGS[input.type];
-      const directory = config.getDirectory(projectDir, slug);
-      const filename = config.getFilename(slug, componentName);
-      const filePath = join(directory, filename);
+        const config = SCAFFOLD_CONFIGS[input.type];
+        const directory = config.getDirectory(projectDir, slug);
+        const filename = config.getFilename(slug, componentName);
+        const filePath = join(directory, filename);
 
-      try {
-        if (await fileExists(filePath)) {
+        try {
+          if (await fileExists(filePath)) {
+            return {
+              success: false,
+              files: [],
+              message: `${input.type} already exists at ${filePath}`,
+            };
+          }
+
+          await ensureDir(directory);
+          const content = config.getContent(input.name, slug, componentName, input.methods);
+          await fs.writeTextFile(filePath, content);
+
+          return {
+            success: true,
+            files: [{ path: filePath, created: true }],
+            message: `Created ${input.type} "${input.name}" successfully`,
+          };
+        } catch (error) {
           return {
             success: false,
             files: [],
-            message: `${input.type} already exists at ${filePath}`,
+            message: `Failed to create ${input.type}: ${formatError(error)}`,
           };
         }
-
-        await ensureDir(directory);
-        const content = config.getContent(input.name, slug, componentName, input.methods);
-        await fs.writeTextFile(filePath, content);
-
-        return {
-          success: true,
-          files: [{ path: filePath, created: true }],
-          message: `Created ${input.type} "${input.name}" successfully`,
-        };
-      } catch (error) {
-        return {
-          success: false,
-          files: [],
-          message: `Failed to create ${input.type}: ${formatError(error)}`,
-        };
-      }
-    }, { "tool.type": input.type, "tool.name": input.name });
-  },
+      },
+      { "tool.type": input.type, "tool.name": input.name },
+    ),
 };
 
 // ============================================================================
@@ -780,9 +718,7 @@ export const vfGetConventions: MCPTool<GetConventionsInput, Convention[]> = {
     "Get Veryfront coding conventions and best practices. Use this as guardrails when writing code to ensure consistency with the project standards.",
   inputSchema: getConventionsInput,
   execute: (input) => {
-    if (input.topic === "all") {
-      return Promise.resolve(Object.values(CONVENTIONS));
-    }
+    if (input.topic === "all") return Promise.resolve(Object.values(CONVENTIONS));
     const convention = CONVENTIONS[input.topic];
     return Promise.resolve(convention ? [convention] : []);
   },
@@ -793,8 +729,9 @@ export const vfGetConventions: MCPTool<GetConventionsInput, Convention[]> = {
 // ============================================================================
 
 const hotReloadInput = z.object({
-  file: z.string().optional()
-    .describe("Specific file to trigger reload for (optional - reloads all if not specified)"),
+  file: z.string().optional().describe(
+    "Specific file to trigger reload for (optional - reloads all if not specified)",
+  ),
 });
 
 type HotReloadInput = z.infer<typeof hotReloadInput>;
@@ -809,14 +746,11 @@ export const vfHotReload: MCPTool<HotReloadInput, HotReloadResult> = {
   description:
     "Trigger a hot reload of the dev server. Use after making changes to see them instantly.",
   inputSchema: hotReloadInput,
-  execute: (_input) => {
-    // This is a signal tool - the dev server watches for this
-    // In practice, HMR handles this automatically, but this is useful for manual triggers
-    return Promise.resolve({
+  execute: () =>
+    Promise.resolve({
       success: true,
       message: "Hot reload triggered. Changes should be visible in the browser.",
-    });
-  },
+    }),
 };
 
 // ============================================================================
@@ -824,10 +758,8 @@ export const vfHotReload: MCPTool<HotReloadInput, HotReloadResult> = {
 // ============================================================================
 
 const getDebugContextInput = z.object({
-  port: z.number().optional().default(8080)
-    .describe("Dev server port (defaults to 8080)"),
-  project: z.string().optional()
-    .describe("Project slug to check (for multi-project mode)"),
+  port: z.number().optional().default(8080).describe("Dev server port (defaults to 8080)"),
+  project: z.string().optional().describe("Project slug to check (for multi-project mode)"),
 });
 
 type GetDebugContextInput = z.infer<typeof getDebugContextInput>;
@@ -848,35 +780,38 @@ export const vfGetDebugContext: MCPTool<GetDebugContextInput, DebugContextResult
   description:
     "Get the current server context including project info, environment, and mode. Useful for debugging server configuration issues.",
   inputSchema: getDebugContextInput,
-  execute: (input) => {
-    return withSpan("cli.mcp.tool.vf_get_debug_context", async () => {
-      const host = input.project ? `${input.project}.lvh.me` : "lvh.me";
-      const url = `http://${host}:${input.port}/_vf_debug/context`;
+  execute: (input) =>
+    withSpan(
+      "cli.mcp.tool.vf_get_debug_context",
+      async () => {
+        const host = input.project ? `${input.project}.lvh.me` : "lvh.me";
+        const url = `http://${host}:${input.port}/_vf_debug/context`;
 
-      try {
-        const response = await fetch(url);
-        if (!response.ok) {
+        try {
+          const response = await fetch(url);
+          if (!response.ok) {
+            return {
+              success: false,
+              error: `Server returned ${response.status}: ${response.statusText}`,
+            };
+          }
+
+          const data = await response.json();
           return {
-            success: false,
-            error: `Server returned ${response.status}: ${response.statusText}`,
+            success: true,
+            context: {
+              projectSlug: data.context?.projectSlug || "",
+              projectDir: data.context?.projectDir || "",
+              requestContextMode: data.context?.requestContext?.mode || "unknown",
+              isMultiProjectMode: data.adapter?.isMultiProjectMode || false,
+            },
           };
+        } catch (error) {
+          return { success: false, error: formatError(error) };
         }
-
-        const data = await response.json();
-        return {
-          success: true,
-          context: {
-            projectSlug: data.context?.projectSlug || "",
-            projectDir: data.context?.projectDir || "",
-            requestContextMode: data.context?.requestContext?.mode || "unknown",
-            isMultiProjectMode: data.adapter?.isMultiProjectMode || false,
-          },
-        };
-      } catch (error) {
-        return { success: false, error: formatError(error) };
-      }
-    }, { "tool.port": input.port });
-  },
+      },
+      { "tool.port": input.port },
+    ),
 };
 
 // ============================================================================
@@ -884,10 +819,8 @@ export const vfGetDebugContext: MCPTool<GetDebugContextInput, DebugContextResult
 // ============================================================================
 
 const triggerHmrInput = z.object({
-  path: z.string()
-    .describe("File path that changed (e.g., 'app/page.tsx')"),
-  port: z.number().optional().default(8080)
-    .describe("Dev server port (defaults to 8080)"),
+  path: z.string().describe("File path that changed (e.g., 'app/page.tsx')"),
+  port: z.number().optional().default(8080).describe("Dev server port (defaults to 8080)"),
 });
 
 type TriggerHmrInput = z.infer<typeof triggerHmrInput>;
@@ -904,17 +837,13 @@ export const vfTriggerHmr: MCPTool<TriggerHmrInput, TriggerHmrResult> = {
   inputSchema: triggerHmrInput,
   execute: (input) => {
     const metrics = ReloadNotifier.getMetrics();
-    const hasListeners = metrics.activeReloadListeners > 0;
-
-    if (!hasListeners) {
+    if (metrics.activeReloadListeners <= 0) {
       return Promise.resolve({
         success: false,
         message: "No HMR listeners registered. Is the server running with HMR enabled?",
       });
     }
 
-    // Trigger reload via ReloadNotifier - this invalidates caches and
-    // sends reload messages to connected browsers
     ReloadNotifier.triggerReload([input.path]);
 
     return Promise.resolve({
@@ -929,12 +858,11 @@ export const vfTriggerHmr: MCPTool<TriggerHmrInput, TriggerHmrResult> = {
 // ============================================================================
 
 const previewRouteInput = z.object({
-  route: z.string()
-    .describe("Route path to preview (e.g., '/', '/dashboard', '/api/users')"),
-  port: z.number().optional().default(8080)
-    .describe("Dev server port (defaults to 8080)"),
-  format: z.enum(["html", "json", "status"]).optional().default("status")
-    .describe("Output format: html (full page), json (API response), status (just HTTP status)"),
+  route: z.string().describe("Route path to preview (e.g., '/', '/dashboard', '/api/users')"),
+  port: z.number().optional().default(8080).describe("Dev server port (defaults to 8080)"),
+  format: z.enum(["html", "json", "status"]).optional().default("status").describe(
+    "Output format: html (full page), json (API response), status (just HTTP status)",
+  ),
 });
 
 type PreviewRouteInput = z.infer<typeof previewRouteInput>;
@@ -954,56 +882,52 @@ export const vfPreviewRoute: MCPTool<PreviewRouteInput, PreviewRouteResult> = {
   description:
     "Preview a route by making a request to the dev server. Returns the rendered output, HTTP status, and render time. Perfect for testing changes instantly.",
   inputSchema: previewRouteInput,
-  execute: (input) => {
-    return withSpan("cli.mcp.tool.vf_preview_route", async () => {
-      const port = input.port;
-      const url = `http://localhost:${port}${input.route}`;
-      const startTime = Date.now();
+  execute: (input) =>
+    withSpan(
+      "cli.mcp.tool.vf_preview_route",
+      async () => {
+        const url = `http://localhost:${input.port}${input.route}`;
+        const startTime = Date.now();
 
-      try {
-        const response = await fetch(url, {
-          headers: {
-            "Accept": input.format === "json" ? "application/json" : "text/html",
-          },
-        });
+        try {
+          const response = await fetch(url, {
+            headers: {
+              Accept: input.format === "json" ? "application/json" : "text/html",
+            },
+          });
 
-        const renderTime = Date.now() - startTime;
-        const contentType = response.headers.get("content-type") || "";
+          const renderTime = Date.now() - startTime;
+          const contentType = response.headers.get("content-type") || "";
 
-        if (input.format === "status") {
+          if (input.format === "status") {
+            return { success: response.ok, status: response.status, contentType, renderTime };
+          }
+
+          const body = await response.text();
+          const headers: Record<string, string> = {};
+          response.headers.forEach((value, key) => {
+            headers[key] = value;
+          });
+
+          const maxLength = input.format === "html" ? 5000 : 10000;
+          const truncatedBody = body.length > maxLength
+            ? body.slice(0, maxLength) + `\n\n[... truncated ${body.length - maxLength} characters]`
+            : body;
+
           return {
             success: response.ok,
             status: response.status,
             contentType,
+            body: truncatedBody,
+            headers,
             renderTime,
           };
+        } catch (error) {
+          return { success: false, status: 0, error: formatError(error) };
         }
-
-        const body = await response.text();
-        const headers: Record<string, string> = {};
-        response.headers.forEach((value, key) => {
-          headers[key] = value;
-        });
-
-        // For HTML, truncate if too long
-        const maxLength = input.format === "html" ? 5000 : 10000;
-        const truncatedBody = body.length > maxLength
-          ? body.slice(0, maxLength) + `\n\n[... truncated ${body.length - maxLength} characters]`
-          : body;
-
-        return {
-          success: response.ok,
-          status: response.status,
-          contentType,
-          body: truncatedBody,
-          headers,
-          renderTime,
-        };
-      } catch (error) {
-        return { success: false, status: 0, error: formatError(error) };
-      }
-    }, { "tool.route": input.route, "tool.port": input.port });
-  },
+      },
+      { "tool.route": input.route, "tool.port": input.port },
+    ),
 };
 
 // ============================================================================
@@ -1011,10 +935,10 @@ export const vfPreviewRoute: MCPTool<PreviewRouteInput, PreviewRouteResult> = {
 // ============================================================================
 
 const getComponentTreeInput = z.object({
-  route: z.string()
-    .describe("Route path to analyze (e.g., '/', '/dashboard')"),
-  projectPath: z.string().optional()
-    .describe("Project directory (defaults to current working directory)"),
+  route: z.string().describe("Route path to analyze (e.g., '/', '/dashboard')"),
+  projectPath: z.string().optional().describe(
+    "Project directory (defaults to current working directory)",
+  ),
 });
 
 type GetComponentTreeInput = z.infer<typeof getComponentTreeInput>;
@@ -1034,21 +958,13 @@ interface ComponentTreeResult {
   providers: string[];
 }
 
-/**
- * Build an array of paths from root to the given route
- */
 function buildRoutePaths(route: string): string[] {
   const segments = route.split("/").filter(Boolean);
   const paths = [""];
-  for (const segment of segments) {
-    paths.push(paths[paths.length - 1] + "/" + segment);
-  }
+  for (const segment of segments) paths.push(paths[paths.length - 1] + "/" + segment);
   return paths;
 }
 
-/**
- * Convert an absolute path to a relative path from project directory
- */
 function toRelativePath(absolutePath: string, projectDir: string): string {
   return absolutePath.replace(projectDir + "/", "");
 }
@@ -1058,19 +974,20 @@ export const vfGetComponentTree: MCPTool<GetComponentTreeInput, ComponentTreeRes
   description:
     "Analyze the component hierarchy for a route. Shows layouts, providers, and components that render on this route. Helps understand the rendering structure.",
   inputSchema: getComponentTreeInput,
-  execute: (input) => {
-    return withSpan("cli.mcp.tool.vf_get_component_tree", async () => {
-      const projectDir = getProjectDir(input.projectPath);
-      const fs = getFs();
-      const tree: ComponentNode[] = [];
-      const layouts: string[] = [];
-      const providers: string[] = [];
+  execute: (input) =>
+    withSpan(
+      "cli.mcp.tool.vf_get_component_tree",
+      async () => {
+        const projectDir = getProjectDir(input.projectPath);
+        const fs = getFs();
+        const tree: ComponentNode[] = [];
+        const layouts: string[] = [];
+        const providers: string[] = [];
 
-      const routePaths = buildRoutePaths(input.route);
+        for (const routePath of buildRoutePaths(input.route)) {
+          const layoutPath = join(projectDir, "app", routePath, "layout.tsx");
+          if (!await fileExists(layoutPath)) continue;
 
-      for (const routePath of routePaths) {
-        const layoutPath = join(projectDir, "app", routePath, "layout.tsx");
-        if (await fileExists(layoutPath)) {
           const relativePath = toRelativePath(layoutPath, projectDir);
           layouts.push(relativePath);
           tree.push({
@@ -1079,33 +996,33 @@ export const vfGetComponentTree: MCPTool<GetComponentTreeInput, ComponentTreeRes
             file: relativePath,
           });
         }
-      }
 
-      const pagePath = join(projectDir, "app", input.route, "page.tsx");
-      if (await fileExists(pagePath)) {
-        tree.push({
-          name: toComponentName(input.route || "Home") + "Page",
-          type: "page",
-          file: toRelativePath(pagePath, projectDir),
-        });
-      }
-
-      const providersDir = join(projectDir, "providers");
-      if (await directoryExists(providersDir)) {
-        try {
-          for await (const entry of fs.readDir(providersDir)) {
-            if (entry.isFile && (entry.name.endsWith(".tsx") || entry.name.endsWith(".mdx"))) {
-              providers.push(`providers/${entry.name}`);
-            }
-          }
-        } catch {
-          // No providers
+        const pagePath = join(projectDir, "app", input.route, "page.tsx");
+        if (await fileExists(pagePath)) {
+          tree.push({
+            name: toComponentName(input.route || "Home") + "Page",
+            type: "page",
+            file: toRelativePath(pagePath, projectDir),
+          });
         }
-      }
 
-      return { route: input.route, tree, layouts, providers };
-    }, { "tool.route": input.route });
-  },
+        const providersDir = join(projectDir, "providers");
+        if (await directoryExists(providersDir)) {
+          try {
+            for await (const entry of fs.readDir(providersDir)) {
+              if (entry.isFile && (entry.name.endsWith(".tsx") || entry.name.endsWith(".mdx"))) {
+                providers.push(`providers/${entry.name}`);
+              }
+            }
+          } catch {
+            // No providers
+          }
+        }
+
+        return { route: input.route, tree, layouts, providers };
+      },
+      { "tool.route": input.route },
+    ),
 };
 
 // ============================================================================
@@ -1113,8 +1030,9 @@ export const vfGetComponentTree: MCPTool<GetComponentTreeInput, ComponentTreeRes
 // ============================================================================
 
 const getSkillsInput = z.object({
-  name: z.string().optional()
-    .describe("Specific skill name to get full content for (omit for list of all skills)"),
+  name: z.string().optional().describe(
+    "Specific skill name to get full content for (omit for list of all skills)",
+  ),
 });
 
 type GetSkillsInput = z.infer<typeof getSkillsInput>;
@@ -1138,29 +1056,22 @@ interface GetSkillsResult {
   error?: string;
 }
 
-/**
- * Parse YAML frontmatter from a SKILL.md file
- */
 function parseSkillFrontmatter(
   content: string,
 ): { metadata: Record<string, unknown>; body: string } {
   const match = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-  if (!match) {
-    return { metadata: {}, body: content };
-  }
+  if (!match) return { metadata: {}, body: content };
 
-  const [, yamlContent, body] = match;
+  const [, yamlContent = "", body = ""] = match;
   const metadata: Record<string, unknown> = {};
 
-  // Simple YAML parser for frontmatter
-  for (const line of yamlContent!.split("\n")) {
+  for (const line of yamlContent.split("\n")) {
     const colonIndex = line.indexOf(":");
     if (colonIndex === -1) continue;
 
     const key = line.slice(0, colonIndex).trim();
     let value: unknown = line.slice(colonIndex + 1).trim();
 
-    // Remove quotes
     if (typeof value === "string" && value.startsWith('"') && value.endsWith('"')) {
       value = value.slice(1, -1);
     }
@@ -1168,16 +1079,17 @@ function parseSkillFrontmatter(
     metadata[key] = value;
   }
 
-  return { metadata, body: body!.trim() };
+  return { metadata, body: body.trim() };
 }
 
-/**
- * Get the skills directory path
- */
 function getSkillsDir(): string {
-  // Skills are bundled with the MCP tools
-  const currentDir = cwd();
-  return join(currentDir, "src/cli/mcp/skills");
+  return join(cwd(), "src/cli/mcp/skills");
+}
+
+function parseToolsFromMetadata(metadata: Record<string, unknown>): string[] | undefined {
+  const metadataObj = metadata.metadata as Record<string, unknown> | undefined;
+  if (!metadataObj?.tools) return undefined;
+  return String(metadataObj.tools).split(",").map((t) => t.trim());
 }
 
 export const vfGetSkills: MCPTool<GetSkillsInput, GetSkillsResult> = {
@@ -1185,89 +1097,79 @@ export const vfGetSkills: MCPTool<GetSkillsInput, GetSkillsResult> = {
   description:
     "Discover available Agent Skills for Veryfront development. Skills provide procedural knowledge for using MCP tools effectively. Call without name param to list all skills, or with name to get full skill content.",
   inputSchema: getSkillsInput,
-  execute: (input) => {
-    return withSpan("cli.mcp.tool.vf_get_skills", async () => {
-      const fs = getFs();
-      const skillsDir = getSkillsDir();
+  execute: (input) =>
+    withSpan(
+      "cli.mcp.tool.vf_get_skills",
+      async () => {
+        const fs = getFs();
+        const skillsDir = getSkillsDir();
 
-      try {
-        if (input.name) {
-          // Return specific skill content
-          const skillPath = join(skillsDir, input.name, "SKILL.md");
-          const content = await fs.readTextFile(skillPath);
-          const { metadata, body } = parseSkillFrontmatter(content);
+        try {
+          if (input.name) {
+            const skillPath = join(skillsDir, input.name, "SKILL.md");
+            const content = await fs.readTextFile(skillPath);
+            const { metadata, body } = parseSkillFrontmatter(content);
 
-          // Check for reference files
-          const references: string[] = [];
-          const refsDir = join(skillsDir, input.name, "references");
-          if (await directoryExists(refsDir)) {
-            for await (const entry of fs.readDir(refsDir)) {
-              if (entry.isFile && entry.name.endsWith(".md")) {
-                references.push(`references/${entry.name}`);
+            const references: string[] = [];
+            const refsDir = join(skillsDir, input.name, "references");
+            if (await directoryExists(refsDir)) {
+              for await (const entry of fs.readDir(refsDir)) {
+                if (entry.isFile && entry.name.endsWith(".md")) {
+                  references.push(
+                    `references/${entry.name}`,
+                  );
+                }
               }
+            }
+
+            const tools = parseToolsFromMetadata(metadata);
+
+            return {
+              skill: {
+                name: String(metadata.name || input.name),
+                description: String(metadata.description || ""),
+                license: metadata.license ? String(metadata.license) : undefined,
+                compatibility: metadata.compatibility ? String(metadata.compatibility) : undefined,
+                tools,
+                content: body,
+                references: references.length ? references : undefined,
+              },
+            };
+          }
+
+          if (!await directoryExists(skillsDir)) return { skills: [] };
+
+          const skills: SkillMetadata[] = [];
+          for await (const entry of fs.readDir(skillsDir)) {
+            if (!entry.isDirectory) continue;
+
+            const skillPath = join(skillsDir, entry.name, "SKILL.md");
+            if (!await fileExists(skillPath)) continue;
+
+            try {
+              const content = await fs.readTextFile(skillPath);
+              const { metadata } = parseSkillFrontmatter(content);
+              const tools = parseToolsFromMetadata(metadata);
+
+              skills.push({
+                name: String(metadata.name || entry.name),
+                description: String(metadata.description || "No description"),
+                license: metadata.license ? String(metadata.license) : undefined,
+                compatibility: metadata.compatibility ? String(metadata.compatibility) : undefined,
+                tools,
+              });
+            } catch {
+              // Skip invalid skills
             }
           }
 
-          // Parse tools from metadata
-          const toolsStr = metadata.metadata as Record<string, unknown> | undefined;
-          const tools = toolsStr?.tools
-            ? String(toolsStr.tools).split(",").map((t) => t.trim())
-            : undefined;
-
-          return {
-            skill: {
-              name: String(metadata.name || input.name),
-              description: String(metadata.description || ""),
-              license: metadata.license ? String(metadata.license) : undefined,
-              compatibility: metadata.compatibility ? String(metadata.compatibility) : undefined,
-              tools,
-              content: body,
-              references: references.length > 0 ? references : undefined,
-            },
-          };
+          return { skills };
+        } catch (error) {
+          return { error: formatError(error) };
         }
-
-        // List all skills
-        const skills: SkillMetadata[] = [];
-
-        if (!await directoryExists(skillsDir)) {
-          return { skills: [] };
-        }
-
-        for await (const entry of fs.readDir(skillsDir)) {
-          if (!entry.isDirectory) continue;
-
-          const skillPath = join(skillsDir, entry.name, "SKILL.md");
-          if (!await fileExists(skillPath)) continue;
-
-          try {
-            const content = await fs.readTextFile(skillPath);
-            const { metadata } = parseSkillFrontmatter(content);
-
-            // Parse tools from metadata
-            const metadataObj = metadata.metadata as Record<string, unknown> | undefined;
-            const tools = metadataObj?.tools
-              ? String(metadataObj.tools).split(",").map((t) => t.trim())
-              : undefined;
-
-            skills.push({
-              name: String(metadata.name || entry.name),
-              description: String(metadata.description || "No description"),
-              license: metadata.license ? String(metadata.license) : undefined,
-              compatibility: metadata.compatibility ? String(metadata.compatibility) : undefined,
-              tools,
-            });
-          } catch {
-            // Skip invalid skills
-          }
-        }
-
-        return { skills };
-      } catch (error) {
-        return { error: formatError(error) };
-      }
-    }, { "tool.skill_name": input.name || "list_all" });
-  },
+      },
+      { "tool.skill_name": input.name ?? "list_all" },
+    ),
 };
 
 // ============================================================================
@@ -1275,10 +1177,8 @@ export const vfGetSkills: MCPTool<GetSkillsInput, GetSkillsResult> = {
 // ============================================================================
 
 const getSkillReferenceInput = z.object({
-  skill: z.string()
-    .describe("Skill name"),
-  reference: z.string()
-    .describe("Reference file path (e.g., 'references/ROUTES.md')"),
+  skill: z.string().describe("Skill name"),
+  reference: z.string().describe("Reference file path (e.g., 'references/ROUTES.md')"),
 });
 
 type GetSkillReferenceInput = z.infer<typeof getSkillReferenceInput>;
@@ -1295,8 +1195,7 @@ export const vfGetSkillReference: MCPTool<GetSkillReferenceInput, GetSkillRefere
   inputSchema: getSkillReferenceInput,
   execute: async (input) => {
     const fs = getFs();
-    const skillsDir = getSkillsDir();
-    const refPath = join(skillsDir, input.skill, input.reference);
+    const refPath = join(getSkillsDir(), input.skill, input.reference);
 
     try {
       const content = await fs.readTextFile(refPath);
@@ -1312,12 +1211,12 @@ export const vfGetSkillReference: MCPTool<GetSkillReferenceInput, GetSkillRefere
 // ============================================================================
 
 const listLocalProjectsInput = z.object({
-  directory: z.string().optional()
-    .describe(
-      "Directory to scan for projects (defaults to current directory and common locations)",
-    ),
-  depth: z.number().optional().default(2)
-    .describe("How deep to scan (1 = immediate children, 2 = grandchildren)"),
+  directory: z.string().optional().describe(
+    "Directory to scan for projects (defaults to current directory and common locations)",
+  ),
+  depth: z.number().optional().default(2).describe(
+    "How deep to scan (1 = immediate children, 2 = grandchildren)",
+  ),
 });
 
 type ListLocalProjectsInput = z.infer<typeof listLocalProjectsInput>;
@@ -1331,23 +1230,14 @@ interface LocalProjectInfo {
   lastModified?: string;
 }
 
-/**
- * Detect if a directory is a Veryfront project
- */
 async function detectVeryfrontProject(projectPath: string): Promise<LocalProjectInfo | null> {
   const fs = getFs();
 
-  // Check for veryfront.config.ts or veryfront.config.js
   const configExists = await fileExists(join(projectPath, "veryfront.config.ts")) ||
     await fileExists(join(projectPath, "veryfront.config.js"));
 
-  if (!configExists) {
-    // Also check for .veryfrontrc (pulled projects)
-    const rcExists = await fileExists(join(projectPath, ".veryfrontrc"));
-    if (!rcExists) return null;
-  }
+  if (!configExists && !await fileExists(join(projectPath, ".veryfrontrc"))) return null;
 
-  // Get project name from package.json or directory
   let name = projectPath.split("/").pop() || "unknown";
   try {
     const pkgContent = await fs.readTextFile(join(projectPath, "package.json"));
@@ -1357,8 +1247,6 @@ async function detectVeryfrontProject(projectPath: string): Promise<LocalProject
     // Use directory name
   }
 
-  // Detect template type
-  let template: string | undefined;
   const hasAppDir = await directoryExists(join(projectPath, "app"));
   const hasAIDir = await directoryExists(join(projectPath, "ai"));
   const hasChatRoute = await fileExists(join(projectPath, "app/api/chat/route.ts"));
@@ -1367,17 +1255,12 @@ async function detectVeryfrontProject(projectPath: string): Promise<LocalProject
   const hasDocsDir = await directoryExists(join(projectPath, "app/docs")) ||
     await directoryExists(join(projectPath, "docs"));
 
-  if (hasAIDir || hasChatRoute) {
-    template = "ai";
-  } else if (hasBlogDir) {
-    template = "blog";
-  } else if (hasDocsDir) {
-    template = "docs";
-  } else if (hasAppDir) {
-    template = "app";
-  }
+  let template: string | undefined;
+  if (hasAIDir || hasChatRoute) template = "ai";
+  else if (hasBlogDir) template = "blog";
+  else if (hasDocsDir) template = "docs";
+  else if (hasAppDir) template = "app";
 
-  // Detect integrations from auth routes
   const integrations: string[] = [];
   const authDir = join(projectPath, "app/api/auth");
   if (await directoryExists(authDir)) {
@@ -1404,9 +1287,6 @@ async function detectVeryfrontProject(projectPath: string): Promise<LocalProject
   };
 }
 
-/**
- * Scan a directory for Veryfront projects
- */
 async function scanForProjects(
   baseDir: string,
   depth: number,
@@ -1414,16 +1294,14 @@ async function scanForProjects(
 ): Promise<void> {
   const fs = getFs();
 
-  // Check if this directory is a project
   const project = await detectVeryfrontProject(baseDir);
   if (project) {
     projects.push(project);
-    return; // Don't scan inside a project
+    return;
   }
 
   if (depth <= 0) return;
 
-  // Scan children
   try {
     for await (const entry of fs.readDir(baseDir)) {
       if (!entry.isDirectory) continue;
@@ -1441,17 +1319,16 @@ export const vfListLocalProjects: MCPTool<ListLocalProjectsInput, LocalProjectIn
   description:
     "Discover Veryfront projects on the local filesystem. Scans for veryfront.config.ts files and returns project info including template type and integrations.",
   inputSchema: listLocalProjectsInput,
-  execute: (input) => {
-    return withSpan("cli.mcp.tool.vf_list_local_projects", async () => {
-      const projects: LocalProjectInfo[] = [];
-      const baseDir = input.directory || cwd();
-
-      await scanForProjects(baseDir, input.depth, projects);
-
-      // Sort by name
-      return projects.sort((a, b) => a.name.localeCompare(b.name));
-    }, { "tool.depth": input.depth });
-  },
+  execute: (input) =>
+    withSpan(
+      "cli.mcp.tool.vf_list_local_projects",
+      async () => {
+        const projects: LocalProjectInfo[] = [];
+        await scanForProjects(input.directory ?? cwd(), input.depth, projects);
+        return projects.sort((a, b) => a.name.localeCompare(b.name));
+      },
+      { "tool.depth": input.depth },
+    ),
 };
 
 // ============================================================================
@@ -1536,9 +1413,7 @@ export const vfListExamples: MCPTool<ListExamplesInput, ExampleInfo[]> = {
   description:
     "List example projects that demonstrate Veryfront features. Use these as references or starting points for new projects.",
   inputSchema: listExamplesInput,
-  execute: () => {
-    return Promise.resolve(EXAMPLES);
-  },
+  execute: () => Promise.resolve(EXAMPLES),
 };
 
 // ============================================================================
@@ -1590,9 +1465,7 @@ export const vfListTemplates: MCPTool<ListTemplatesInput, TemplateInfo[]> = {
   description:
     "List available project templates. Use this to help users choose the right starting point for their project.",
   inputSchema: listTemplatesInput,
-  execute: () => {
-    return Promise.resolve(TEMPLATES);
-  },
+  execute: () => Promise.resolve(TEMPLATES),
 };
 
 // ============================================================================
@@ -1616,7 +1489,6 @@ interface IntegrationInfo {
 }
 
 const INTEGRATIONS: IntegrationInfo[] = [
-  // Productivity
   {
     name: "gmail",
     displayName: "Gmail",
@@ -1666,7 +1538,6 @@ const INTEGRATIONS: IntegrationInfo[] = [
     description: "Read and edit documents",
     authType: "oauth2",
   },
-  // Development
   {
     name: "github",
     displayName: "GitHub",
@@ -1702,7 +1573,6 @@ const INTEGRATIONS: IntegrationInfo[] = [
     description: "Error tracking and monitoring",
     authType: "api-key",
   },
-  // Communication
   {
     name: "teams",
     displayName: "Microsoft Teams",
@@ -1731,7 +1601,6 @@ const INTEGRATIONS: IntegrationInfo[] = [
     description: "Video meetings",
     authType: "oauth2",
   },
-  // Data
   {
     name: "airtable",
     displayName: "Airtable",
@@ -1760,7 +1629,6 @@ const INTEGRATIONS: IntegrationInfo[] = [
     description: "Serverless Postgres",
     authType: "oauth2",
   },
-  // AI
   {
     name: "anthropic",
     displayName: "Anthropic",
@@ -1776,9 +1644,7 @@ export const vfListIntegrations: MCPTool<ListIntegrationsInput, IntegrationInfo[
     "List available service integrations (Gmail, Slack, GitHub, etc.). These can be added to AI projects to give agents access to external services.",
   inputSchema: listIntegrationsInput,
   execute: (input) => {
-    if (input.category === "all") {
-      return Promise.resolve(INTEGRATIONS);
-    }
+    if (input.category === "all") return Promise.resolve(INTEGRATIONS);
     return Promise.resolve(INTEGRATIONS.filter((i) => i.category === input.category));
   },
 };
@@ -1842,9 +1708,7 @@ export const vfListUsecases: MCPTool<ListUsecasesInput, UsecaseInfo[]> = {
   description:
     "List pre-configured use-case templates. Each includes recommended integrations and UI layout for common scenarios.",
   inputSchema: listUsecasesInput,
-  execute: () => {
-    return Promise.resolve(USECASES);
-  },
+  execute: () => Promise.resolve(USECASES),
 };
 
 // ============================================================================
@@ -1852,14 +1716,16 @@ export const vfListUsecases: MCPTool<ListUsecasesInput, UsecaseInfo[]> = {
 // ============================================================================
 
 const createProjectInput = z.object({
-  name: z.string()
-    .describe("Project name (will be converted to slug for directory)"),
-  template: z.enum(["ai", "app", "blog", "docs", "minimal"]).optional().default("ai")
-    .describe("Project template to use"),
-  integrations: z.array(z.string()).optional()
-    .describe("Service integrations to include (e.g., ['gmail', 'slack'])"),
-  directory: z.string().optional()
-    .describe("Parent directory to create project in (defaults to current directory)"),
+  name: z.string().describe("Project name (will be converted to slug for directory)"),
+  template: z.enum(["ai", "app", "blog", "docs", "minimal"]).optional().default("ai").describe(
+    "Project template to use",
+  ),
+  integrations: z.array(z.string()).optional().describe(
+    "Service integrations to include (e.g., ['gmail', 'slack'])",
+  ),
+  directory: z.string().optional().describe(
+    "Parent directory to create project in (defaults to current directory)",
+  ),
 });
 
 type CreateProjectInput = z.infer<typeof createProjectInput>;
@@ -1876,57 +1742,47 @@ export const vfCreateProject: MCPTool<CreateProjectInput, CreateProjectResult> =
   description:
     "Create a new Veryfront project from a template. This is the MCP equivalent of 'veryfront init'. Returns the project directory and next steps.",
   inputSchema: createProjectInput,
-  execute: (input) => {
-    return withSpan("cli.mcp.tool.vf_create_project", async () => {
-      // Import the init command dynamically to avoid circular deps
-      try {
-        const { initCommand } = await import("../commands/init/index.ts");
+  execute: (input) =>
+    withSpan(
+      "cli.mcp.tool.vf_create_project",
+      async () => {
+        try {
+          const { initCommand } = await import("../commands/init/index.ts");
 
-        const parentDir = input.directory || cwd();
-        const projectDir = join(parentDir, toSlug(input.name));
+          const parentDir = input.directory ?? cwd();
+          const projectDir = join(parentDir, toSlug(input.name));
 
-        // Check if directory already exists
-        if (await directoryExists(projectDir)) {
+          if (await directoryExists(projectDir)) {
+            return { success: false, message: `Directory already exists: ${projectDir}` };
+          }
+
+          await initCommand({
+            name: input.name,
+            template: input.template,
+            integrations: input.integrations as
+              | import("../templates/types.ts").IntegrationName[]
+              | undefined,
+            skipInstall: false,
+            skipEnvPrompt: true,
+          });
+
+          const nextSteps = [`cd ${toSlug(input.name)}`, "deno task dev"];
+          if (input.integrations?.length) {
+            nextSteps.push("Configure integration credentials in .env");
+          }
+
           return {
-            success: false,
-            message: `Directory already exists: ${projectDir}`,
+            success: true,
+            projectDir,
+            message: `Created project "${input.name}" with ${input.template} template`,
+            nextSteps,
           };
+        } catch (error) {
+          return { success: false, message: `Failed to create project: ${formatError(error)}` };
         }
-
-        // Create the project
-        await initCommand({
-          name: input.name,
-          template: input.template,
-          integrations: input.integrations as
-            | import("../templates/types.ts").IntegrationName[]
-            | undefined,
-          skipInstall: false,
-          skipEnvPrompt: true, // Skip prompts in MCP context
-        });
-
-        const nextSteps = [
-          `cd ${toSlug(input.name)}`,
-          "deno task dev",
-        ];
-
-        if (input.integrations && input.integrations.length > 0) {
-          nextSteps.push("Configure integration credentials in .env");
-        }
-
-        return {
-          success: true,
-          projectDir,
-          message: `Created project "${input.name}" with ${input.template} template`,
-          nextSteps,
-        };
-      } catch (error) {
-        return {
-          success: false,
-          message: `Failed to create project: ${formatError(error)}`,
-        };
-      }
-    }, { "tool.name": input.name, "tool.template": input.template });
-  },
+      },
+      { "tool.name": input.name, "tool.template": input.template },
+    ),
 };
 
 // ============================================================================
@@ -1934,12 +1790,13 @@ export const vfCreateProject: MCPTool<CreateProjectInput, CreateProjectResult> =
 // ============================================================================
 
 const waitForReadyInput = z.object({
-  port: z.number().optional().default(8080)
-    .describe("Server port to check (defaults to 8080)"),
-  timeout: z.number().optional().default(30000)
-    .describe("Maximum time to wait in milliseconds (defaults to 30000)"),
-  interval: z.number().optional().default(500)
-    .describe("Polling interval in milliseconds (defaults to 500)"),
+  port: z.number().optional().default(8080).describe("Server port to check (defaults to 8080)"),
+  timeout: z.number().optional().default(30000).describe(
+    "Maximum time to wait in milliseconds (defaults to 30000)",
+  ),
+  interval: z.number().optional().default(500).describe(
+    "Polling interval in milliseconds (defaults to 500)",
+  ),
 });
 
 type WaitForReadyInput = z.infer<typeof waitForReadyInput>;
@@ -1955,41 +1812,40 @@ export const vfWaitForReady: MCPTool<WaitForReadyInput, WaitForReadyResult> = {
   description:
     "Wait for the server to be ready by polling the health endpoint. Use this after starting the server to ensure it's accepting requests.",
   inputSchema: waitForReadyInput,
-  execute: (input) => {
-    return withSpan("cli.mcp.tool.vf_wait_for_ready", async () => {
-      const startTime = Date.now();
-      const deadline = startTime + input.timeout;
-      const url = `http://localhost:${input.port}/`;
+  execute: (input) =>
+    withSpan(
+      "cli.mcp.tool.vf_wait_for_ready",
+      async () => {
+        const startTime = Date.now();
+        const deadline = startTime + input.timeout;
+        const url = `http://localhost:${input.port}/`;
 
-      while (Date.now() < deadline) {
-        try {
-          const response = await fetch(url, {
-            method: "HEAD",
-            signal: AbortSignal.timeout(2000),
-          });
+        while (Date.now() < deadline) {
+          try {
+            const response = await fetch(url, {
+              method: "HEAD",
+              signal: AbortSignal.timeout(2000),
+            });
 
-          if (response.ok || response.status < 500) {
-            const elapsed = Date.now() - startTime;
-            return {
-              success: true,
-              message: `Server ready on port ${input.port}`,
-              elapsed,
-            };
+            if (response.ok || response.status < 500) {
+              const elapsed = Date.now() - startTime;
+              return { success: true, message: `Server ready on port ${input.port}`, elapsed };
+            }
+          } catch {
+            // Server not ready yet, continue polling
           }
-        } catch {
-          // Server not ready yet, continue polling
+
+          await new Promise((resolve) => setTimeout(resolve, input.interval));
         }
 
-        await new Promise((resolve) => setTimeout(resolve, input.interval));
-      }
-
-      return {
-        success: false,
-        message: `Timeout waiting for server on port ${input.port} after ${input.timeout}ms`,
-        elapsed: input.timeout,
-      };
-    }, { "tool.port": input.port, "tool.timeout": input.timeout });
-  },
+        return {
+          success: false,
+          message: `Timeout waiting for server on port ${input.port} after ${input.timeout}ms`,
+          elapsed: input.timeout,
+        };
+      },
+      { "tool.port": input.port, "tool.timeout": input.timeout },
+    ),
 };
 
 // ============================================================================
@@ -1997,8 +1853,7 @@ export const vfWaitForReady: MCPTool<WaitForReadyInput, WaitForReadyResult> = {
 // ============================================================================
 
 const getFlywheelStatusInput = z.object({
-  port: z.number().optional().default(8080)
-    .describe("Server port (defaults to 8080)"),
+  port: z.number().optional().default(8080).describe("Server port (defaults to 8080)"),
 });
 
 type GetFlywheelStatusInput = z.infer<typeof getFlywheelStatusInput>;
@@ -2043,78 +1898,75 @@ export const vfGetFlywheelStatus: MCPTool<GetFlywheelStatusInput, FlywheelStatus
   description:
     "Get aggregated status for the development flywheel. Shows server state, error counts, log summary, and HMR status in one view.",
   inputSchema: getFlywheelStatusInput,
-  execute: (input) => {
-    return withSpan("cli.mcp.tool.vf_get_flywheel_status", async () => {
-      const port = input.port;
-      const errorCollector = getErrorCollector();
-      const logBuffer = getLogBuffer();
-      const hmrMetrics = ReloadNotifier.getMetrics();
+  execute: (input) =>
+    withSpan(
+      "cli.mcp.tool.vf_get_flywheel_status",
+      async () => {
+        const port = input.port;
+        const errorCollector = getErrorCollector();
+        const logBuffer = getLogBuffer();
+        const hmrMetrics = ReloadNotifier.getMetrics();
 
-      // Check if server is running
-      let serverRunning = false;
-      let uptime: number | undefined;
-      try {
-        const response = await fetch(`http://localhost:${port}/`, {
-          method: "HEAD",
-          signal: AbortSignal.timeout(2000),
-        });
-        serverRunning = response.ok || response.status < 500;
-      } catch {
-        serverRunning = false;
-      }
+        let serverRunning = false;
+        try {
+          const response = await fetch(`http://localhost:${port}/`, {
+            method: "HEAD",
+            signal: AbortSignal.timeout(2000),
+          });
+          serverRunning = response.ok || response.status < 500;
+        } catch {
+          serverRunning = false;
+        }
 
-      // Get error counts
-      const errorCounts = errorCollector.countByType();
-      const allErrors = errorCollector.getAll();
-      const latestError = allErrors.length > 0 ? allErrors[allErrors.length - 1] : undefined;
+        const errorCounts = errorCollector.countByType();
+        const allErrors = errorCollector.getAll();
+        const latestError = allErrors.at(-1);
 
-      // Get log counts
-      const logCounts = logBuffer.countByLevel();
+        const logCounts = logBuffer.countByLevel();
 
-      // Calculate uptime if we have a start time in env
-      const env = getRuntimeEnv();
-      if (env.serverStartTime) {
-        uptime = Date.now() - parseInt(env.serverStartTime, 10);
-      }
+        let uptime: number | undefined;
+        const env = getRuntimeEnv();
+        if (env.serverStartTime) uptime = Date.now() - parseInt(env.serverStartTime, 10);
 
-      return {
-        server: {
-          running: serverRunning,
-          port,
-          url: `http://localhost:${port}`,
-          uptime,
-        },
-        errors: {
-          total: allErrors.length,
-          compile: errorCounts.compile,
-          runtime: errorCounts.runtime,
-          bundle: errorCounts.bundle,
-          hmr: errorCounts.hmr,
-          module: errorCounts.module,
-          latest: latestError
-            ? {
-              type: latestError.type,
-              message: latestError.message,
-              file: latestError.file,
-              timestamp: latestError.timestamp,
-            }
-            : undefined,
-        },
-        logs: {
-          total: logBuffer.count,
-          errors: logCounts.error,
-          warnings: logCounts.warn,
-        },
-        hmr: {
-          enabled: hmrMetrics.activeReloadListeners > 0,
-          reloadListeners: hmrMetrics.activeReloadListeners,
-          invalidateListeners: hmrMetrics.activeInvalidateListeners,
-          triggerCalls: hmrMetrics.triggerCalls,
-          broadcastsSent: hmrMetrics.broadcastsSent,
-        },
-      };
-    }, { "tool.port": input.port });
-  },
+        return {
+          server: {
+            running: serverRunning,
+            port,
+            url: `http://localhost:${port}`,
+            uptime,
+          },
+          errors: {
+            total: allErrors.length,
+            compile: errorCounts.compile,
+            runtime: errorCounts.runtime,
+            bundle: errorCounts.bundle,
+            hmr: errorCounts.hmr,
+            module: errorCounts.module,
+            latest: latestError
+              ? {
+                type: latestError.type,
+                message: latestError.message,
+                file: latestError.file,
+                timestamp: latestError.timestamp,
+              }
+              : undefined,
+          },
+          logs: {
+            total: logBuffer.count,
+            errors: logCounts.error,
+            warnings: logCounts.warn,
+          },
+          hmr: {
+            enabled: hmrMetrics.activeReloadListeners > 0,
+            reloadListeners: hmrMetrics.activeReloadListeners,
+            invalidateListeners: hmrMetrics.activeInvalidateListeners,
+            triggerCalls: hmrMetrics.triggerCalls,
+            broadcastsSent: hmrMetrics.broadcastsSent,
+          },
+        };
+      },
+      { "tool.port": input.port },
+    ),
 };
 
 // ============================================================================
@@ -2122,31 +1974,23 @@ export const vfGetFlywheelStatus: MCPTool<GetFlywheelStatusInput, FlywheelStatus
 // ============================================================================
 
 export const advancedTools: MCPTool[] = [
-  // Agent Skills
   vfGetSkills,
   vfGetSkillReference,
-  // Project discovery
   vfListLocalProjects,
   vfListExamples,
-  // Project creation & templates
   vfListTemplates,
   vfListIntegrations,
   vfListUsecases,
   vfCreateProject,
-  // Project understanding
   vfGetProjectContext,
   vfListRoutes,
   vfGetConventions,
-  // Scaffolding (generates correct boilerplate)
   vfScaffold,
-  // Renderer interface (what you can't do with Read/Write/Bash)
   vfPreviewRoute,
   vfGetDebugContext,
   vfGetComponentTree,
-  // Dev server control
   vfHotReload,
   vfTriggerHmr,
-  // Development flywheel
   vfWaitForReady,
   vfGetFlywheelStatus,
 ];

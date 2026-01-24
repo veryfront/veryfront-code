@@ -6,22 +6,36 @@ export default tool({
   id: "list-tables",
   description: "List all tables in your Supabase database with their schema information.",
   inputSchema: z.object({
-    includeColumns: z.boolean().default(false).describe(
-      "Include column information for each table",
-    ),
+    includeColumns: z
+      .boolean()
+      .default(false)
+      .describe("Include column information for each table"),
   }),
-  async execute({ includeColumns }) {
+  async execute({ includeColumns }): Promise<{
+    count: number;
+    tables: Array<{
+      name: string;
+      schema: string;
+      type: string;
+      columns?: Array<{
+        name: string;
+        type: string;
+        nullable: boolean;
+        default: unknown;
+      }>;
+      error?: string;
+    }>;
+  }> {
     const tables = await listTables();
 
+    const baseTables = tables.map((t) => ({
+      name: t.table_name,
+      schema: t.table_schema,
+      type: t.table_type,
+    }));
+
     if (!includeColumns) {
-      return {
-        count: tables.length,
-        tables: tables.map((t) => ({
-          name: t.table_name,
-          schema: t.table_schema,
-          type: t.table_type,
-        })),
-      };
+      return { count: baseTables.length, tables: baseTables };
     }
 
     // Fetch column information for each table
@@ -29,6 +43,7 @@ export default tool({
       tables.map(async (table) => {
         try {
           const columns = await getTableColumns(table.table_name);
+
           return {
             name: table.table_name,
             schema: table.table_schema,
@@ -52,9 +67,6 @@ export default tool({
       }),
     );
 
-    return {
-      count: tablesWithColumns.length,
-      tables: tablesWithColumns,
-    };
+    return { count: tablesWithColumns.length, tables: tablesWithColumns };
   },
 });

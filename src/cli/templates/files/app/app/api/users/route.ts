@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { requireAuth } from "../../../middleware/auth.ts";
-import { getUsers, createUser } from "../../../lib/users.ts";
+import { createUser, getUsers } from "../../../lib/users.ts";
 
 const userSchema = z.object({
   name: z.string().min(1),
@@ -8,7 +8,7 @@ const userSchema = z.object({
   role: z.enum(["user", "admin"]).default("user"),
 });
 
-export async function GET(request: Request) {
+export async function GET(request: Request): Promise<Response> {
   const auth = await requireAuth(request);
   if (!auth.ok) return auth.response;
 
@@ -16,15 +16,14 @@ export async function GET(request: Request) {
   return Response.json({ users });
 }
 
-export async function POST(request: Request) {
+export async function POST(request: Request): Promise<Response> {
   const auth = await requireAuth(request);
   if (!auth.ok) return auth.response;
 
   try {
-    const body = await request.json();
-    const data = userSchema.parse(body);
-
+    const data = userSchema.parse(await request.json());
     const user = await createUser(data);
+
     return Response.json({ user }, { status: 201 });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -34,9 +33,6 @@ export async function POST(request: Request) {
       );
     }
 
-    return Response.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    return Response.json({ error: "Internal server error" }, { status: 500 });
   }
 }

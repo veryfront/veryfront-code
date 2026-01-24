@@ -45,68 +45,56 @@ export interface SSGOptions {
   traceStep?: <T>(name: string, fn: () => Promise<T>) => Promise<T>;
 }
 
-/**
- * Get output path for a route slug
- */
 function getOutputPath(outputDir: string, slug: string): string {
-  return slug === "index" ? join(outputDir, "index.html") : join(outputDir, slug, "index.html");
+  if (slug === "index") return join(outputDir, "index.html");
+  return join(outputDir, slug, "index.html");
 }
 
-/**
- * Get output path for an app route path
- */
 function getAppRouteOutputPath(outputDir: string, routePath: string): string {
-  return routePath === "/"
-    ? join(outputDir, "index.html")
-    : join(outputDir, routePath.slice(1), "index.html");
+  if (routePath === "/") return join(outputDir, "index.html");
+  return join(outputDir, routePath.slice(1), "index.html");
 }
 
-/**
- * Build all pages from Pages Router
- */
+function defaultTraceStep<T>(_: string, fn: () => Promise<T>): Promise<T> {
+  return fn();
+}
+
+function getByteLength(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
 export async function buildPagesRoutes(
   routes: RouteInfo[],
   options: SSGOptions,
 ): Promise<SSGStats> {
   const {
     adapter,
-    projectDir: _projectDir,
     outputDir,
     renderer,
-    config: _config,
     enablePrefetch,
     chunkManifest,
     baseUrl = "",
     dryRun = false,
-    traceStep = async <T>(_: string, fn: () => Promise<T>) => await fn(),
+    traceStep = defaultTraceStep,
   } = options;
 
-  const stats: SSGStats = {
-    pages: 0,
-    totalSize: 0,
-    ssgPaths: [],
-  };
-
-  // Load client styles once (embedded, no I/O)
+  const stats: SSGStats = { pages: 0, totalSize: 0, ssgPaths: [] };
   const clientStyles = loadClientStyles();
 
   for (const route of routes) {
     try {
-      // Render page
-      const result = (await traceStep(`page:${route.slug}`, () =>
-        renderer.renderPage(route.slug))) as PageRenderResult;
+      const result = await traceStep(`page:${route.slug}`, () => renderer.renderPage(route.slug));
 
-      // Inject advanced features into HTML
       let enhancedHtml = result.html;
 
-      // Add preload hints
       if (enablePrefetch && chunkManifest) {
-        const { generatePreloadLinks } = await import("../../build/bundler/code-splitter/index.ts");
+        const { generatePreloadLinks } = await import(
+          "../../build/bundler/code-splitter/index.ts"
+        );
         const preloadLinks = generatePreloadLinks(chunkManifest, route.path, "/_veryfront/chunks");
         enhancedHtml = enhancedHtml.replace("</head>", `${preloadLinks}\n</head>`);
       }
 
-      // Add import map and styles
       const importMap = await generateImportMap();
       enhancedHtml = enhancedHtml.replace(
         "</head>",
@@ -120,46 +108,45 @@ ${clientStyles}
 </head>`,
       );
 
-      // Add client-side runtime
       enhancedHtml = enhancedHtml.replace("</body>", generateClientRuntime(route, result, baseUrl));
 
-      // Determine output path
       const outputPath = getOutputPath(outputDir, route.slug);
-
-      // Ensure directory exists
       await adapter.fs.mkdir(dirname(outputPath), { recursive: true });
 
-      // Write HTML
       if (!dryRun) {
-        await traceStep(`write:${route.slug}`, () =>
-          adapter.fs.writeFile(outputPath, enhancedHtml));
+        await traceStep(
+          `write:${route.slug}`,
+          () => adapter.fs.writeFile(outputPath, enhancedHtml),
+        );
       }
 
-      // Note: Pages Router paths are NOT added to ssgPaths (only App Router paths are)
-      // This is intentional per SSG design - ssgPaths only tracks App Router static paths
       stats.pages++;
-      stats.totalSize += new TextEncoder().encode(enhancedHtml).length;
+      stats.totalSize += getByteLength(enhancedHtml);
 
-      // Generate page data for client-side navigation
       const pageData = {
         slug: route.slug,
         path: route.path,
         frontmatter: result.frontmatter,
         headings: result.headings,
-        html: result.html, // Include rendered HTML for client navigation
+        html: result.html,
       };
 
       if (!dryRun) {
         const dataPath = join(outputDir, "_veryfront/data", `${route.slug}.json`);
         await adapter.fs.mkdir(dirname(dataPath), { recursive: true });
-        await traceStep(`data:${route.slug}`, () =>
-          adapter.fs.writeFile(dataPath, JSON.stringify(pageData)));
+        await traceStep(
+          `data:${route.slug}`,
+          () => adapter.fs.writeFile(dataPath, JSON.stringify(pageData)),
+        );
 
-        if (result.pageModule?.code) {
+        const moduleCode = result.pageModule?.code;
+        if (moduleCode) {
           const modulePath = join(outputDir, "_veryfront/pages", `${route.slug}.js`);
           await adapter.fs.mkdir(dirname(modulePath), { recursive: true });
-          await traceStep(`module:${route.slug}`, () =>
-            adapter.fs.writeFile(modulePath, result.pageModule!.code));
+          await traceStep(
+            `module:${route.slug}`,
+            () => adapter.fs.writeFile(modulePath, moduleCode),
+          );
         }
       }
 
@@ -172,30 +159,14 @@ ${clientStyles}
   return stats;
 }
 
-/**
- * Build App Router literal pages
- */
 export async function buildAppRoutes(
   appRoutes: AppRouteInfo[],
   options: SSGOptions,
 ): Promise<SSGStats> {
-  const {
-    adapter,
-    projectDir,
-    outputDir,
-    dryRun = false,
-    traceStep = async <T>(_: string, fn: () => Promise<T>) => await fn(),
-  } = options;
+  const { adapter, projectDir, outputDir, dryRun = false, traceStep = defaultTraceStep } = options;
 
-  const stats: SSGStats = {
-    pages: 0,
-    totalSize: 0,
-    ssgPaths: [],
-  };
-
-  if (appRoutes.length === 0) {
-    return stats;
-  }
+  const stats: SSGStats = { pages: 0, totalSize: 0, ssgPaths: [] };
+  if (appRoutes.length === 0) return stats;
 
   logger.info("Building App Router static pages...");
 
@@ -218,7 +189,7 @@ export async function buildAppRoutes(
 
       stats.ssgPaths.push(route.path);
       stats.pages++;
-      stats.totalSize += new TextEncoder().encode(html).length;
+      stats.totalSize += getByteLength(html);
     } catch (error) {
       logger.error(`Failed to build app route ${route.path}:`, error);
     }
@@ -244,7 +215,6 @@ function generateClientRuntime(
     slug: route.slug,
     frontmatter: result.frontmatter,
     headings: result.headings,
-    // Note: html field is intentionally omitted to prevent content duplication
   };
 
   return `

@@ -2,6 +2,19 @@ import { tool } from "veryfront/tool";
 import { z } from "zod";
 import { createBitbucketClient } from "../../lib/bitbucket-client.ts";
 
+type BitbucketRepo = {
+  name: string;
+  full_name: string;
+  description: string | null;
+  is_private: boolean;
+  mainbranch: { name: string } | null;
+  language: string;
+  updated_on: string;
+  created_on: string;
+  links: { html: { href: string } };
+  owner: { username: string; display_name: string };
+};
+
 export default tool({
   id: "list-repositories",
   description: "List Bitbucket repositories for the authenticated user",
@@ -18,41 +31,19 @@ export default tool({
       .describe("Maximum number of repositories to return"),
   }),
   execute: async ({ role, limit }, context) => {
-    // Default to "current-user" for development; in production, always pass userId from session
-    const userId = (context?.userId as string | undefined) || "current-user";
+    const userId = (context?.userId as string | undefined) ?? "current-user";
 
     try {
       const bitbucket = createBitbucketClient(userId);
-      const repos = await bitbucket.listRepositories({
-        role,
-        perPage: limit,
-      });
+      const repos = await bitbucket.listRepositories({ role, perPage: limit });
 
       return {
-        repositories: repos.map((
-          repo: {
-            name: string;
-            full_name: string;
-            description: string | null;
-            is_private: boolean;
-            mainbranch: { name: string } | null;
-            language: string;
-            updated_on: string;
-            created_on: string;
-            links: {
-              html: { href: string };
-            };
-            owner: {
-              username: string;
-              display_name: string;
-            };
-          },
-        ) => ({
+        repositories: repos.map((repo: BitbucketRepo) => ({
           name: repo.name,
           fullName: repo.full_name,
-          description: repo.description || null,
+          description: repo.description ?? null,
           isPrivate: repo.is_private,
-          mainBranch: repo.mainbranch?.name || null,
+          mainBranch: repo.mainbranch?.name ?? null,
           language: repo.language,
           url: repo.links.html.href,
           owner: {

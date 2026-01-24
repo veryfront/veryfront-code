@@ -17,6 +17,20 @@ export interface APIContext {
   fs: FileSystemAdapter;
 }
 
+function createResponse(
+  body: BodyInit,
+  contentType: string,
+  init?: ResponseInit,
+): Response {
+  return new Response(body, {
+    ...init,
+    headers: {
+      "Content-Type": contentType,
+      ...init?.headers,
+    },
+  });
+}
+
 export function createContext(
   request: Request,
   match: RouteMatch,
@@ -32,32 +46,21 @@ export function createContext(
     cookies: parseCookies(request.headers.get("cookie") ?? ""),
     headers: request.headers,
     url,
-    json: (data: unknown, init?: ResponseInit) => {
-      return new Response(JSON.stringify(data), {
-        ...init,
-        headers: {
-          "Content-Type": "application/json",
-          ...init?.headers,
-        },
-      });
-    },
-    text: (data: string, init?: ResponseInit) => {
-      return new Response(data, {
-        ...init,
-        headers: {
-          "Content-Type": "text/plain",
-          ...init?.headers,
-        },
-      });
-    },
+    json: (data: unknown, init?: ResponseInit) =>
+      createResponse(JSON.stringify(data), "application/json", init),
+    text: (data: string, init?: ResponseInit) => createResponse(data, "text/plain", init),
     fs,
   };
 }
 
-export function normalizeParams(params: Record<string, string | string[]>): Record<string, string> {
+export function normalizeParams(
+  params: Record<string, string | string[]>,
+): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(params)) {
-    out[k] = Array.isArray(v) ? v.join("/") : v;
+
+  for (const [key, value] of Object.entries(params)) {
+    out[key] = Array.isArray(value) ? value.join("/") : value;
   }
+
   return out;
 }

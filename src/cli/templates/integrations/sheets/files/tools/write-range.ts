@@ -2,8 +2,6 @@ import { tool } from "veryfront/tool";
 import { z } from "zod";
 import { createSheetsClient } from "../../lib/sheets-client.ts";
 
-// Default user ID for demo/dev purposes
-// In production, get from authenticated session
 const DEFAULT_USER_ID = "demo-user";
 
 export default tool({
@@ -11,9 +9,7 @@ export default tool({
   description:
     "Write data to a Google Sheets range. Overwrites existing content in the specified range. Provide data as a 2D array where each inner array is a row.",
   inputSchema: z.object({
-    spreadsheetId: z
-      .string()
-      .describe("The ID of the spreadsheet"),
+    spreadsheetId: z.string().describe("The ID of the spreadsheet"),
     range: z
       .string()
       .describe(
@@ -33,19 +29,14 @@ export default tool({
   }),
   async execute({ spreadsheetId, range, values, valueInputOption }) {
     const client = createSheetsClient(DEFAULT_USER_ID);
+    const { updatedRange, updatedRows, updatedColumns, updatedCells } =
+      await client.writeRange({
+        spreadsheetId,
+        range,
+        values,
+        valueInputOption,
+      });
 
-    const result = await client.writeRange({
-      spreadsheetId,
-      range,
-      values,
-      valueInputOption,
-    });
-
-    return {
-      updatedRange: result.updatedRange,
-      updatedRows: result.updatedRows,
-      updatedColumns: result.updatedColumns,
-      updatedCells: result.updatedCells,
-    };
+    return { updatedRange, updatedRows, updatedColumns, updatedCells };
   },
 });

@@ -2,6 +2,15 @@ import { tool } from "veryfront/tool";
 import { z } from "zod";
 import { createSlackClient } from "../../lib/slack-client.ts";
 
+type SlackChannel = {
+  id: string;
+  name: string;
+  is_private: boolean;
+  is_member: boolean;
+  topic?: { value: string };
+  purpose?: { value: string };
+};
+
 export default tool({
   id: "list-channels",
   description: "List Slack channels the user is a member of",
@@ -18,30 +27,20 @@ export default tool({
       .describe("Exclude archived channels"),
   }),
   execute: async ({ limit, excludeArchived }, context) => {
-    // Default to "current-user" for development; in production, always pass userId from session
-    const userId = (context?.userId as string | undefined) || "current-user";
+    const userId = context?.userId ?? "current-user";
 
     try {
       const slack = createSlackClient(userId);
       const channels = await slack.listChannels({ limit, excludeArchived });
 
       return {
-        channels: channels.map((
-          ch: {
-            id: string;
-            name: string;
-            is_private: boolean;
-            is_member: boolean;
-            topic?: { value: string };
-            purpose?: { value: string };
-          },
-        ) => ({
+        channels: channels.map((ch: SlackChannel) => ({
           id: ch.id,
           name: ch.name,
           isPrivate: ch.is_private,
           isMember: ch.is_member,
-          topic: ch.topic?.value || null,
-          purpose: ch.purpose?.value || null,
+          topic: ch.topic?.value ?? null,
+          purpose: ch.purpose?.value ?? null,
         })),
         count: channels.length,
         message: `Found ${channels.length} channel(s).`,

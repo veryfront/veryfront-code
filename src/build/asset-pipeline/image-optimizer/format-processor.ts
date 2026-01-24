@@ -1,8 +1,5 @@
 import type { ImageFormat, SharpInstance } from "./types.ts";
 
-/**
- * Process an image into the specified format with quality settings
- */
 export function processFormat(
   image: SharpInstance,
   format: ImageFormat,
@@ -17,5 +14,7 @@ export function processFormat(
       return image.jpeg({ quality, progressive: true });
     case "png":
       return image.png({ compressionLevel: 9, adaptiveFiltering: true });
+    default:
+      return image;
   }
 }

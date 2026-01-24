@@ -7,21 +7,35 @@ export default tool({
   description:
     "Get detailed information about a specific account in Salesforce CRM by their account ID.",
   inputSchema: z.object({
-    accountId: z.string().describe("The Salesforce account ID (e.g., 001XXXXXXXXXXXXXXX)"),
-    fields: z.array(z.string()).optional().describe(
-      "Additional fields to retrieve (e.g., Description, Owner.Name, ParentId)",
-    ),
+    accountId: z
+      .string()
+      .describe("The Salesforce account ID (e.g., 001XXXXXXXXXXXXXXX)"),
+    fields: z
+      .array(z.string())
+      .optional()
+      .describe(
+        "Additional fields to retrieve (e.g., Description, Owner.Name, ParentId)",
+      ),
   }),
   async execute({ accountId, fields }) {
     const account = await getAccount(accountId, fields);
 
-    const billingAddress = formatAddress(
-      account.BillingStreet,
-      account.BillingCity,
-      account.BillingState,
-      account.BillingPostalCode,
-      account.BillingCountry,
-    );
+    const billingAddress =
+      formatAddress(
+        account.BillingStreet,
+        account.BillingCity,
+        account.BillingState,
+        account.BillingPostalCode,
+        account.BillingCountry,
+      ) || undefined;
+
+    const additionalFields = fields
+      ? Object.fromEntries(
+          fields
+            .filter((field) => account[field] !== undefined)
+            .map((field) => [field, account[field]]),
+        )
+      : undefined;
 
     return {
       id: account.Id,
@@ -30,7 +44,7 @@ export default tool({
       industry: account.Industry,
       website: account.Website,
       phone: account.Phone,
-      billingAddress: billingAddress || undefined,
+      billingAddress,
       billingStreet: account.BillingStreet,
       billingCity: account.BillingCity,
       billingState: account.BillingState,
@@ -41,13 +55,7 @@ export default tool({
       description: account.Description,
       createdDate: account.CreatedDate,
       lastModifiedDate: account.LastModifiedDate,
-      additionalFields: fields
-        ? Object.fromEntries(
-          fields
-            .filter((field) => account[field] !== undefined)
-            .map((field) => [field, account[field]]),
-        )
-        : undefined,
+      additionalFields,
     };
   },
 });

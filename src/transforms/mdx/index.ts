@@ -1,12 +1,8 @@
 import { rendererLogger as logger } from "#veryfront/utils";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
-import React from "react";
 import { MDX_RENDERER_MAX_ENTRIES, MDX_RENDERER_TTL_MS } from "#veryfront/utils/constants/cache.ts";
+import React from "react";
 import { type ESMLoaderContext, loadModuleESM } from "./esm-module-loader/index.ts";
-import {
-  executeModule as _executeModule,
-  selectComponent as _selectComponent,
-} from "./module-executor.ts";
 import { type ParsedMDX, parseMDXCode } from "./parser.ts";
 import type { MDXComponents, MDXFrontmatter, MDXGlobals, MDXModule } from "./types.ts";
 
@@ -29,17 +25,14 @@ export class MDXRenderer {
     ttlMs: MDX_RENDERER_TTL_MS,
   });
 
-  constructor() {
-  }
-
-  clearCache() {
+  clearCache(): void {
     this.moduleCache.destroy();
     // Note: We don't track/cleanup esmCacheDir here anymore.
     // Each test context manages its own cache dir via AsyncLocalStorage.
     // The temp directories are cleaned up by the test context's cleanup().
   }
 
-  async loadModuleESM(
+  loadModuleESM(
     compiledProgramCode: string,
     adapter?: import("#veryfront/platform/adapters/base.ts").RuntimeAdapter,
     projectId?: string,
@@ -58,15 +51,11 @@ export class MDXRenderer {
       projectSlug,
       contentSourceId, // For cache isolation between preview/production
     };
-    const result = await loadModuleESM(compiledProgramCode, context);
-    // Don't cache context.esmCacheDir - it may be for a different AsyncLocalStorage context
-    return result;
+
+    return loadModuleESM(compiledProgramCode, context);
   }
 
-  render(
-    _compiledCode: string,
-    _options: MDXRenderOptions = {},
-  ): React.ReactElement {
+  render(_compiledCode: string, _options: MDXRenderOptions = {}): React.ReactElement {
     logger.error(
       "[MDX] Synchronous render() called but string-based factories are disabled for security. " +
         "Please use: await mdxRenderer.loadModuleESM(compiledCode) instead.",
@@ -96,23 +85,18 @@ export class MDXRenderer {
   }
 }
 
-let _mdxRendererInstance: MDXRenderer | undefined;
+let mdxRendererInstance: MDXRenderer | undefined;
 
 function getMDXRendererInstance(): MDXRenderer {
-  if (!_mdxRendererInstance) {
-    _mdxRendererInstance = new MDXRenderer();
-  }
-  return _mdxRendererInstance;
+  mdxRendererInstance ??= new MDXRenderer();
+  return mdxRendererInstance;
 }
 
 export const mdxRenderer = new Proxy({} as MDXRenderer, {
   get(_target, prop) {
     const instance = getMDXRendererInstance();
     const value = instance[prop as keyof MDXRenderer];
-    if (typeof value === "function") {
-      return value.bind(instance);
-    }
-    return value;
+    return typeof value === "function" ? value.bind(instance) : value;
   },
   set(_target, prop, value) {
     const instance = getMDXRendererInstance();
@@ -120,20 +104,17 @@ export const mdxRenderer = new Proxy({} as MDXRenderer, {
     return true;
   },
   has(_target, prop) {
-    const instance = getMDXRendererInstance();
-    return prop in instance;
+    return prop in getMDXRendererInstance();
   },
-  ownKeys(_target) {
-    const instance = getMDXRendererInstance();
-    return Reflect.ownKeys(instance);
+  ownKeys() {
+    return Reflect.ownKeys(getMDXRendererInstance());
   },
   getOwnPropertyDescriptor(_target, prop) {
-    const instance = getMDXRendererInstance();
-    return Reflect.getOwnPropertyDescriptor(instance, prop);
+    return Reflect.getOwnPropertyDescriptor(getMDXRendererInstance(), prop);
   },
 });
 
-export function clearMDXRendererCache() {
+export function clearMDXRendererCache(): void {
   getMDXRendererInstance().clearCache();
 }
 

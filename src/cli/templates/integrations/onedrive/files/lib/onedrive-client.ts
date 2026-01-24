@@ -59,16 +59,20 @@ export interface SearchResult {
   "@odata.nextLink"?: string;
 }
 
+async function getTokenOrThrow(): Promise<string> {
+  const token = await getAccessToken();
+  if (!token) {
+    throw new Error("Not authenticated with OneDrive. Please connect your account.");
+  }
+  return token;
+}
+
 // Helper function for OneDrive API calls
 async function onedriveFetch<T>(
   endpoint: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const token = await getAccessToken();
-  if (!token) {
-    throw new Error("Not authenticated with OneDrive. Please connect your account.");
-  }
-
+  const token = await getTokenOrThrow();
   const url = endpoint.startsWith("http") ? endpoint : `${GRAPH_API_URL}${endpoint}`;
 
   const response = await fetch(url, {
@@ -83,7 +87,7 @@ async function onedriveFetch<T>(
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
     throw new Error(
-      `OneDrive API error: ${response.status} ${error.error?.message || response.statusText}`,
+      `OneDrive API error: ${response.status} ${error.error?.message ?? response.statusText}`,
     );
   }
 
@@ -92,10 +96,6 @@ async function onedriveFetch<T>(
 
 // File and Folder Operations
 
-/**
- * List files in a folder
- * @param folderId Folder ID or path (use "root" for root folder)
- */
 export function listFiles(
   folderId: string = "root",
   options?: {
@@ -106,15 +106,9 @@ export function listFiles(
 ): Promise<ListFilesResult> {
   const params = new URLSearchParams();
 
-  if (options?.orderBy) {
-    params.set("$orderby", options.orderBy);
-  }
-  if (options?.top) {
-    params.set("$top", options.top.toString());
-  }
-  if (options?.select) {
-    params.set("$select", options.select.join(","));
-  }
+  if (options?.orderBy) params.set("$orderby", options.orderBy);
+  if (options?.top) params.set("$top", options.top.toString());
+  if (options?.select) params.set("$select", options.select.join(","));
 
   const queryString = params.toString();
   const endpoint = `/me/drive/items/${folderId}/children${queryString ? `?${queryString}` : ""}`;
@@ -122,66 +116,47 @@ export function listFiles(
   return onedriveFetch<ListFilesResult>(endpoint);
 }
 
-/**
- * Get file or folder metadata
- */
 export function getFile(itemId: string): Promise<DriveItem> {
   return onedriveFetch<DriveItem>(`/me/drive/items/${itemId}`);
 }
 
-/**
- * Download file content
- */
 export async function downloadFile(itemId: string): Promise<{
   content: string;
   metadata: FileMetadata;
 }> {
   const item = await getFile(itemId);
 
-  if (!item.file) {
-    throw new Error("Item is not a file");
-  }
+  if (!item.file) throw new Error("Item is not a file");
 
   const downloadUrl = item["@microsoft.graph.downloadUrl"];
-  if (!downloadUrl) {
-    throw new Error("Download URL not available");
-  }
+  if (!downloadUrl) throw new Error("Download URL not available");
 
   const response = await fetch(downloadUrl);
-  if (!response.ok) {
-    throw new Error(`Failed to download file: ${response.statusText}`);
-  }
+  if (!response.ok) throw new Error(`Failed to download file: ${response.statusText}`);
 
   const content = await response.text();
 
-  const metadata: FileMetadata = {
-    id: item.id,
-    name: item.name,
-    size: item.size || 0,
-    mimeType: item.file.mimeType,
-    createdDateTime: item.createdDateTime,
-    lastModifiedDateTime: item.lastModifiedDateTime,
-    webUrl: item.webUrl,
-    downloadUrl,
+  return {
+    content,
+    metadata: {
+      id: item.id,
+      name: item.name,
+      size: item.size ?? 0,
+      mimeType: item.file.mimeType,
+      createdDateTime: item.createdDateTime,
+      lastModifiedDateTime: item.lastModifiedDateTime,
+      webUrl: item.webUrl,
+      downloadUrl,
+    },
   };
-
-  return { content, metadata };
 }
 
-/**
- * Upload file
- * For files smaller than 4MB, use simple upload
- */
 export async function uploadFile(
   fileName: string,
   content: string,
   parentFolderId: string = "root",
 ): Promise<DriveItem> {
-  const token = await getAccessToken();
-  if (!token) {
-    throw new Error("Not authenticated with OneDrive. Please connect your account.");
-  }
-
+  const token = await getTokenOrThrow();
   const endpoint = `${GRAPH_API_URL}/me/drive/items/${parentFolderId}:/${fileName}:/content`;
 
   const response = await fetch(endpoint, {
@@ -195,17 +170,12 @@ export async function uploadFile(
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(
-      `Failed to upload file: ${error.error?.message || response.statusText}`,
-    );
+    throw new Error(`Failed to upload file: ${error.error?.message ?? response.statusText}`);
   }
 
   return response.json();
 }
 
-/**
- * Create folder
- */
 export function createFolder(
   folderName: string,
   parentFolderId: string = "root",
@@ -220,69 +190,44 @@ export function createFolder(
   });
 }
 
-/**
- * Search files
- */
 export function searchFiles(
   query: string,
   options?: {
     top?: number;
   },
 ): Promise<SearchResult> {
-  const params = new URLSearchParams({
-    q: query,
-  });
-
-  if (options?.top) {
-    params.set("$top", options.top.toString());
-  }
+  const params = new URLSearchParams({ q: query });
+  if (options?.top) params.set("$top", options.top.toString());
 
   return onedriveFetch<SearchResult>(
     `/me/drive/root/search(q='${encodeURIComponent(query)}')?${params.toString()}`,
   );
 }
 
-/**
- * Delete file or folder
- */
 export async function deleteFile(itemId: string): Promise<void> {
-  const token = await getAccessToken();
-  if (!token) {
-    throw new Error("Not authenticated with OneDrive. Please connect your account.");
-  }
+  const token = await getTokenOrThrow();
 
   const response = await fetch(`${GRAPH_API_URL}/me/drive/items/${itemId}`, {
     method: "DELETE",
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
+    headers: { Authorization: `Bearer ${token}` },
   });
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(
-      `Failed to delete item: ${error.error?.message || response.statusText}`,
-    );
+    throw new Error(`Failed to delete item: ${error.error?.message ?? response.statusText}`);
   }
 }
 
-/**
- * Move file or folder
- */
 export function moveFile(
   itemId: string,
   newParentId: string,
   newName?: string,
 ): Promise<DriveItem> {
   const body: Record<string, unknown> = {
-    parentReference: {
-      id: newParentId,
-    },
+    parentReference: { id: newParentId },
   };
 
-  if (newName) {
-    body.name = newName;
-  }
+  if (newName) body.name = newName;
 
   return onedriveFetch<DriveItem>(`/me/drive/items/${itemId}`, {
     method: "PATCH",

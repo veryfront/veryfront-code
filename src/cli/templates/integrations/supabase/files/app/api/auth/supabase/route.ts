@@ -1,15 +1,9 @@
-import { isConfigured, setSupabaseConfig } from "../../../../lib/token-store.ts";
+import { clearConfig, isConfigured, setSupabaseConfig } from "../../../../lib/token-store.ts";
 
-/**
- * POST /api/auth/supabase
- * Initialize Supabase configuration with API keys
- */
-export async function POST(request: Request) {
+export async function POST(request: Request): Promise<Response> {
   try {
-    const body = await request.json();
-    const { url, anonKey, serviceKey } = body;
+    const { url, anonKey, serviceKey } = await request.json();
 
-    // Validate required fields
     if (!url || !anonKey || !serviceKey) {
       return Response.json(
         { error: "Missing required fields: url, anonKey, serviceKey" },
@@ -17,22 +11,13 @@ export async function POST(request: Request) {
       );
     }
 
-    // Validate URL format
     try {
       new URL(url);
     } catch {
-      return Response.json(
-        { error: "Invalid Supabase URL format" },
-        { status: 400 },
-      );
+      return Response.json({ error: "Invalid Supabase URL format" }, { status: 400 });
     }
 
-    // Store configuration
-    setSupabaseConfig({
-      url,
-      anonKey,
-      serviceKey,
-    });
+    setSupabaseConfig({ url, anonKey, serviceKey });
 
     return Response.json({
       success: true,
@@ -40,18 +25,11 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     console.error("Supabase config error:", error);
-    return Response.json(
-      { error: "Failed to configure Supabase" },
-      { status: 500 },
-    );
+    return Response.json({ error: "Failed to configure Supabase" }, { status: 500 });
   }
 }
 
-/**
- * GET /api/auth/supabase
- * Check if Supabase is configured
- */
-export function GET() {
+export function GET(): Response {
   try {
     const configured = isConfigured();
 
@@ -61,20 +39,12 @@ export function GET() {
     });
   } catch (error) {
     console.error("Supabase status check error:", error);
-    return Response.json(
-      { error: "Failed to check Supabase status" },
-      { status: 500 },
-    );
+    return Response.json({ error: "Failed to check Supabase status" }, { status: 500 });
   }
 }
 
-/**
- * DELETE /api/auth/supabase
- * Clear Supabase configuration
- */
-export async function DELETE() {
+export async function DELETE(): Promise<Response> {
   try {
-    const { clearConfig } = await import("../../../../lib/token-store.ts");
     clearConfig();
 
     return Response.json({

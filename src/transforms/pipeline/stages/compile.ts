@@ -5,8 +5,8 @@
  */
 
 import * as esbuild from "esbuild";
-import { getLoaderFromPath } from "../../esm/transform-utils.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
+import { getLoaderFromPath } from "../../esm/transform-utils.ts";
 import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
 
 /**
@@ -34,39 +34,35 @@ export const compilePlugin: TransformPlugin = {
 
       let code = result.code;
 
-      // For MDX files, export MDXLayout so client can use it instead of MDXContent (default).
-      // MDXContent (default export) has a bug where it overwrites children prop, breaking layouts.
-      // By exporting MDXLayout, client-side can use the inner component that properly passes children.
-      // This matches what SSR does in esm-module-loader.ts
-      if (ctx.filePath.endsWith(".mdx")) {
-        // Check if MDXLayout is defined but not exported
-        if (/\bconst\s+MDXLayout\b/.test(code) && !/export\s+\{[^}]*MDXLayout/.test(code)) {
-          code += "\nexport { MDXLayout };\n";
-        }
+      if (
+        ctx.filePath.endsWith(".mdx") &&
+        /\bconst\s+MDXLayout\b/.test(code) &&
+        !/export\s+\{[^}]*MDXLayout/.test(code)
+      ) {
+        code += "\nexport { MDXLayout };\n";
       }
 
       return code;
     } catch (transformError) {
-      // Structured debugging for transform errors
       const sourcePreview = ctx.code
         .split("\n")
         .slice(0, 10)
         .map((line, i) => `${String(i + 1).padStart(3, " ")}| ${line}`)
         .join("\n");
 
+      const errorMsg = transformError instanceof Error
+        ? transformError.message
+        : String(transformError);
+
       logger.error("[ESM-TRANSFORM] Transform failed", {
         filePath: ctx.filePath,
         loader,
         sourceLength: ctx.code.length,
         isMdx: ctx.filePath.endsWith(".mdx"),
-        error: transformError instanceof Error ? transformError.message : String(transformError),
+        error: errorMsg,
       });
       logger.error("[ESM-TRANSFORM] Source preview (first 10 lines):\n" + sourcePreview);
 
-      // Re-throw with enhanced error message
-      const errorMsg = transformError instanceof Error
-        ? transformError.message
-        : String(transformError);
       throw new Error(`ESM transform failed for ${ctx.filePath} (loader: ${loader}): ${errorMsg}`);
     }
   },

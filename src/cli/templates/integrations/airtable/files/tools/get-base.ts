@@ -10,23 +10,23 @@ export default tool({
     baseId: z.string().describe('The ID of the Airtable base (starts with "app")'),
   }),
   async execute({ baseId }) {
-    const schema = await getBase(baseId);
+    const { tables } = await getBase(baseId);
 
     return {
-      tables: schema.tables.map((table) => ({
-        id: table.id,
-        name: table.name,
-        primaryFieldId: table.primaryFieldId,
-        fields: table.fields.map((field) => ({
-          id: field.id,
-          name: field.name,
-          type: field.type,
-          options: field.options,
+      tables: tables.map(({ id, name, primaryFieldId, fields, views }) => ({
+        id,
+        name,
+        primaryFieldId,
+        fields: fields.map(({ id, name, type, options }) => ({
+          id,
+          name,
+          type,
+          options,
         })),
-        views: table.views.map((view) => ({
-          id: view.id,
-          name: view.name,
-          type: view.type,
+        views: views.map(({ id, name, type }) => ({
+          id,
+          name,
+          type,
         })),
       })),
     };

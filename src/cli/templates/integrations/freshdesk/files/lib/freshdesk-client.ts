@@ -33,10 +33,7 @@ interface FreshdeskContact {
   custom_fields: Record<string, unknown>;
 }
 
-async function freshdeskFetch<T>(
-  endpoint: string,
-  options: RequestInit = {},
-): Promise<T> {
+async function freshdeskFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = await getAccessToken();
   if (!token) {
     throw new Error("Not authenticated with Freshdesk. Please connect your account.");
@@ -45,41 +42,45 @@ async function freshdeskFetch<T>(
   const response = await fetch(`${FRESHDESK_BASE_URL}${endpoint}`, {
     ...options,
     headers: {
-      "Authorization": `Bearer ${token}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
       ...options.headers,
     },
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
+    const error = (await response.json().catch(() => ({}))) as { description?: string };
     throw new Error(
-      `Freshdesk API error: ${response.status} ${error.description || response.statusText}`,
+      `Freshdesk API error: ${response.status} ${error.description ?? response.statusText}`,
     );
   }
 
-  return response.json();
+  return response.json() as Promise<T>;
 }
 
-export async function listTickets(options: {
-  status?: number;
-  priority?: number;
-  type?: string;
-  page?: number;
-  perPage?: number;
-} = {}): Promise<FreshdeskTicket[]> {
+function buildEndpoint(path: string, params: URLSearchParams): string {
+  const queryString = params.toString();
+  return queryString ? `${path}?${queryString}` : path;
+}
+
+export async function listTickets(
+  options: {
+    status?: number;
+    priority?: number;
+    type?: string;
+    page?: number;
+    perPage?: number;
+  } = {},
+): Promise<FreshdeskTicket[]> {
   const params = new URLSearchParams();
 
-  if (options.status !== undefined) params.set("status", options.status.toString());
-  if (options.priority !== undefined) params.set("priority", options.priority.toString());
+  if (options.status !== undefined) params.set("status", String(options.status));
+  if (options.priority !== undefined) params.set("priority", String(options.priority));
   if (options.type) params.set("type", options.type);
-  if (options.page) params.set("page", options.page.toString());
-  if (options.perPage) params.set("per_page", options.perPage.toString());
+  if (options.page) params.set("page", String(options.page));
+  if (options.perPage) params.set("per_page", String(options.perPage));
 
-  const queryString = params.toString();
-  const endpoint = queryString ? `/tickets?${queryString}` : "/tickets";
-
-  return freshdeskFetch<FreshdeskTicket[]>(endpoint);
+  return freshdeskFetch<FreshdeskTicket[]>(buildEndpoint("/tickets", params));
 }
 
 export async function getTicket(ticketId: number): Promise<FreshdeskTicket> {
@@ -101,10 +102,9 @@ export async function createTicket(options: {
     email: options.email,
     priority: options.priority ?? 1,
     status: options.status ?? 2,
+    ...(options.type ? { type: options.type } : {}),
+    ...(options.tags ? { tags: options.tags } : {}),
   };
-
-  if (options.type) body.type = options.type;
-  if (options.tags) body.tags = options.tags;
 
   return freshdeskFetch<FreshdeskTicket>("/tickets", {
     method: "POST",
@@ -123,14 +123,14 @@ export async function updateTicket(
     tags?: string[];
   },
 ): Promise<FreshdeskTicket> {
-  const body: Record<string, unknown> = {};
-
-  if (updates.subject !== undefined) body.subject = updates.subject;
-  if (updates.description !== undefined) body.description = updates.description;
-  if (updates.status !== undefined) body.status = updates.status;
-  if (updates.priority !== undefined) body.priority = updates.priority;
-  if (updates.type !== undefined) body.type = updates.type;
-  if (updates.tags !== undefined) body.tags = updates.tags;
+  const body: Record<string, unknown> = {
+    ...(updates.subject !== undefined ? { subject: updates.subject } : {}),
+    ...(updates.description !== undefined ? { description: updates.description } : {}),
+    ...(updates.status !== undefined ? { status: updates.status } : {}),
+    ...(updates.priority !== undefined ? { priority: updates.priority } : {}),
+    ...(updates.type !== undefined ? { type: updates.type } : {}),
+    ...(updates.tags !== undefined ? { tags: updates.tags } : {}),
+  };
 
   return freshdeskFetch<FreshdeskTicket>(`/tickets/${ticketId}`, {
     method: "PUT",
@@ -138,30 +138,28 @@ export async function updateTicket(
   });
 }
 
-export async function listContacts(options: {
-  email?: string;
-  mobile?: string;
-  phone?: string;
-  companyId?: number;
-  page?: number;
-  perPage?: number;
-} = {}): Promise<FreshdeskContact[]> {
+export async function listContacts(
+  options: {
+    email?: string;
+    mobile?: string;
+    phone?: string;
+    companyId?: number;
+    page?: number;
+    perPage?: number;
+  } = {},
+): Promise<FreshdeskContact[]> {
   const params = new URLSearchParams();
 
   if (options.email) params.set("email", options.email);
   if (options.mobile) params.set("mobile", options.mobile);
   if (options.phone) params.set("phone", options.phone);
-  if (options.companyId) params.set("company_id", options.companyId.toString());
-  if (options.page) params.set("page", options.page.toString());
-  if (options.perPage) params.set("per_page", options.perPage.toString());
+  if (options.companyId) params.set("company_id", String(options.companyId));
+  if (options.page) params.set("page", String(options.page));
+  if (options.perPage) params.set("per_page", String(options.perPage));
 
-  const queryString = params.toString();
-  const endpoint = queryString ? `/contacts?${queryString}` : "/contacts";
-
-  return freshdeskFetch<FreshdeskContact[]>(endpoint);
+  return freshdeskFetch<FreshdeskContact[]>(buildEndpoint("/contacts", params));
 }
 
-// Ticket status constants
 export const TicketStatus = {
   OPEN: 2,
   PENDING: 3,
@@ -169,7 +167,6 @@ export const TicketStatus = {
   CLOSED: 5,
 } as const;
 
-// Ticket priority constants
 export const TicketPriority = {
   LOW: 1,
   MEDIUM: 2,

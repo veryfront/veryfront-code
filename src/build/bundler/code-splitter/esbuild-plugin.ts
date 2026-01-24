@@ -1,44 +1,32 @@
-/**
- * ESBuild plugin for code splitting with React and MDX support
- * @module code-splitter/esbuild-plugin
- */
-
-import { bundlerLogger as logger } from "#veryfront/utils";
-import type { OnLoadArgs, OnResolveArgs, Plugin, PluginBuild } from "esbuild";
+import {
+  bundlerLogger as logger,
+  getReactImportMap,
+  REACT_DEFAULT_VERSION,
+} from "#veryfront/utils";
+import type { OnResolveArgs, Plugin, PluginBuild } from "esbuild";
 import { join } from "#veryfront/platform/compat/path/index.ts";
-import { getReactImportMap, REACT_DEFAULT_VERSION } from "#veryfront/utils";
 
-/** Creates an ESBuild plugin for veryfront code splitting */
 export function createSplitterPlugin(projectDir: string): Plugin {
   return {
     name: "veryfront-splitter",
-    setup: (build: PluginBuild) => {
-      // Handle React imports as external
+    setup(build: PluginBuild) {
       build.onResolve({ filter: /^react(-dom)?(\/.*)?$/ }, (args: OnResolveArgs) => {
         const reactMap = getReactImportMap(REACT_DEFAULT_VERSION);
-        if (reactMap[args.path]) {
-          return { path: args.path, external: true };
-        }
-        return undefined;
+        if (!reactMap[args.path]) return;
+
+        return { path: args.path, external: true };
       });
 
-      // Handle MDX file resolution
-      build.onResolve({ filter: /\.mdx$/ }, (args: OnResolveArgs) => {
-        return {
-          path: join(projectDir, args.path),
-          namespace: "mdx",
-        };
-      });
+      build.onResolve({ filter: /\.mdx$/ }, (args: OnResolveArgs) => ({
+        path: join(projectDir, args.path),
+        namespace: "mdx",
+      }));
 
-      // Handle MDX file loading with stub content
-      build.onLoad({ filter: /.*/, namespace: "mdx" }, (_args: OnLoadArgs) => {
-        return {
-          contents: `export default function MDXComponent() { return "MDX Component"; }`,
-          loader: "jsx",
-        };
-      });
+      build.onLoad({ filter: /.*/, namespace: "mdx" }, () => ({
+        contents: `export default function MDXComponent() { return "MDX Component"; }`,
+        loader: "jsx",
+      }));
 
-      // Clean up resources on dispose
       build.onDispose(() => {
         logger.debug("CodeSplitter build disposed, cleaning up resources");
       });

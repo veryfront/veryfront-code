@@ -7,14 +7,7 @@
  * @module
  */
 
-import {
-  createTokenStore,
-  decryptToken,
-  encryptToken,
-  tokenStore,
-  type OAuthToken,
-  type TokenStore,
-} from "./token-store.ts";
+import { createTokenStore, tokenStore, type TokenStore } from "./token-store.ts";
 
 // ============================================================================
 // Vercel KV Store
@@ -36,15 +29,12 @@ import {
  * ```
  */
 export function createVercelKVStore(): TokenStore {
-  // Dynamic import to avoid bundling @vercel/kv in non-Vercel environments
   let kvPromise: Promise<typeof import("@vercel/kv")> | null = null;
 
-  const getKV = async () => {
-    if (!kvPromise) {
-      kvPromise = import("@vercel/kv");
-    }
+  async function getKV() {
+    kvPromise ??= import("@vercel/kv");
     return (await kvPromise).kv;
-  };
+  }
 
   return createTokenStore({
     async get(key: string): Promise<string | null> {
@@ -83,17 +73,16 @@ export function createVercelKVStore(): TokenStore {
 export function createRedisStore(): TokenStore {
   let clientPromise: Promise<ReturnType<typeof import("redis").createClient>> | null = null;
 
-  const getClient = async () => {
-    if (!clientPromise) {
-      clientPromise = (async () => {
-        const { createClient } = await import("redis");
-        const client = createClient({ url: process.env.REDIS_URL });
-        await client.connect();
-        return client;
-      })();
-    }
+  async function getClient() {
+    clientPromise ??= (async () => {
+      const { createClient } = await import("redis");
+      const client = createClient({ url: process.env.REDIS_URL });
+      await client.connect();
+      return client;
+    })();
+
     return clientPromise;
-  };
+  }
 
   return createTokenStore({
     async get(key: string): Promise<string | null> {
@@ -143,23 +132,19 @@ export function createRedisStore(): TokenStore {
 export function createPostgresStore(): TokenStore {
   let poolPromise: Promise<import("pg").Pool> | null = null;
 
-  const getPool = async () => {
-    if (!poolPromise) {
-      poolPromise = (async () => {
-        const { Pool } = await import("pg");
-        return new Pool({ connectionString: process.env.DATABASE_URL });
-      })();
-    }
+  async function getPool() {
+    poolPromise ??= (async () => {
+      const { Pool } = await import("pg");
+      return new Pool({ connectionString: process.env.DATABASE_URL });
+    })();
+
     return poolPromise;
-  };
+  }
 
   return createTokenStore({
     async get(key: string): Promise<string | null> {
       const pool = await getPool();
-      const result = await pool.query(
-        "SELECT value FROM oauth_tokens WHERE key = $1",
-        [key]
-      );
+      const result = await pool.query("SELECT value FROM oauth_tokens WHERE key = $1", [key]);
       return result.rows[0]?.value ?? null;
     },
     async set(key: string, value: string): Promise<void> {
@@ -213,14 +198,13 @@ export function createPostgresStore(): TokenStore {
  * ```
  */
 export function createSQLiteStore(db: {
-  prepare(sql: string): { bind(...args: unknown[]): { first(): Promise<{ value?: string } | null>; run(): Promise<void> } };
+  prepare(sql: string): {
+    bind(...args: unknown[]): { first(): Promise<{ value?: string } | null>; run(): Promise<void> };
+  };
 }): TokenStore {
   return createTokenStore({
     async get(key: string): Promise<string | null> {
-      const result = await db
-        .prepare("SELECT value FROM oauth_tokens WHERE key = ?")
-        .bind(key)
-        .first();
+      const result = await db.prepare("SELECT value FROM oauth_tokens WHERE key = ?").bind(key).first();
       return result?.value ?? null;
     },
     async set(key: string, value: string): Promise<void> {
@@ -233,10 +217,7 @@ export function createSQLiteStore(db: {
         .run();
     },
     async delete(key: string): Promise<void> {
-      await db
-        .prepare("DELETE FROM oauth_tokens WHERE key = ?")
-        .bind(key)
-        .run();
+      await db.prepare("DELETE FROM oauth_tokens WHERE key = ?").bind(key).run();
     },
   });
 }
@@ -299,7 +280,11 @@ export function createWorkersKVStore(kv: {
 export function createPrismaStore(prisma: {
   oAuthToken: {
     findUnique(args: { where: { key: string } }): Promise<{ value: string } | null>;
-    upsert(args: { where: { key: string }; update: { value: string }; create: { key: string; value: string } }): Promise<unknown>;
+    upsert(args: {
+      where: { key: string };
+      update: { value: string };
+      create: { key: string; value: string };
+    }): Promise<unknown>;
     delete(args: { where: { key: string } }): Promise<unknown>;
   };
 }): TokenStore {
@@ -356,8 +341,14 @@ export function createPrismaStore(prisma: {
  */
 export function createDrizzleStore<T extends { key: unknown; value: unknown }>(
   db: {
-    select(): { from(table: T): { where(condition: unknown): { get(): Promise<{ value: string } | undefined> } } };
-    insert(table: T): { values(data: { key: string; value: string }): { onConflictDoUpdate(args: { target: unknown; set: { value: string } }): { execute(): Promise<void> } } };
+    select(): {
+      from(table: T): { where(condition: unknown): { get(): Promise<{ value: string } | undefined> } };
+    };
+    insert(table: T): {
+      values(data: { key: string; value: string }): {
+        onConflictDoUpdate(args: { target: unknown; set: { value: string } }): { execute(): Promise<void> };
+      };
+    };
     delete(table: T): { where(condition: unknown): { execute(): Promise<void> } };
   },
   table: T & { key: unknown; value: unknown },
@@ -365,11 +356,7 @@ export function createDrizzleStore<T extends { key: unknown; value: unknown }>(
 ): TokenStore {
   return createTokenStore({
     async get(key: string): Promise<string | null> {
-      const result = await db
-        .select()
-        .from(table)
-        .where(eq(table.key, key))
-        .get();
+      const result = await db.select().from(table).where(eq(table.key, key)).get();
       return result?.value ?? null;
     },
     async set(key: string, value: string): Promise<void> {
@@ -423,11 +410,10 @@ export function createAutoStore(): TokenStore {
     return createRedisStore();
   }
 
-  // Fallback to in-memory (imported from main module)
   console.warn(
     "[Token Store] No production storage configured. " +
-    "Using in-memory storage (tokens will be lost on restart). " +
-    "Set DATABASE_URL, KV_REST_API_URL, or REDIS_URL for production."
+      "Using in-memory storage (tokens will be lost on restart). " +
+      "Set DATABASE_URL, KV_REST_API_URL, or REDIS_URL for production."
   );
 
   return tokenStore;

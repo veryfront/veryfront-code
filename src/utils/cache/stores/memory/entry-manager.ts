@@ -3,9 +3,7 @@ import { LRUNode } from "./lru-node.ts";
 import type { LRUListManager } from "./lru-list-manager.ts";
 
 export class EntryManager {
-  constructor(
-    private readonly estimateSizeOf: (value: unknown) => number,
-  ) {}
+  constructor(private readonly estimateSizeOf: (value: unknown) => number) {}
 
   updateExistingEntry<T>(
     node: LRUNode<unknown>,
@@ -21,7 +19,7 @@ export class EntryManager {
     const newSize = this.estimateSizeOf(value);
     const expiry = this.calculateExpiry(ttlMs, defaultTtlMs);
 
-    if (node.entry.tags) {
+    if (node.entry.tags?.length) {
       this.cleanupTags(node.entry.tags, key, tagIndex);
     }
 
@@ -71,10 +69,12 @@ export class EntryManager {
     tagIndex: Map<string, Set<string>>,
   ): void {
     for (const tag of tags) {
-      if (!tagIndex.has(tag)) {
-        tagIndex.set(tag, new Set());
+      let set = tagIndex.get(tag);
+      if (!set) {
+        set = new Set<string>();
+        tagIndex.set(tag, set);
       }
-      tagIndex.get(tag)?.add(key);
+      set.add(key);
     }
   }
 
@@ -85,11 +85,11 @@ export class EntryManager {
   ): void {
     for (const tag of tags) {
       const set = tagIndex.get(tag);
-      if (set) {
-        set.delete(key);
-        if (set.size === 0) {
-          tagIndex.delete(tag);
-        }
+      if (!set) continue;
+
+      set.delete(key);
+      if (set.size === 0) {
+        tagIndex.delete(tag);
       }
     }
   }
@@ -98,12 +98,8 @@ export class EntryManager {
     ttlMs: number | undefined,
     defaultTtlMs: number | undefined,
   ): number | undefined {
-    if (typeof ttlMs === "number") {
-      return Date.now() + ttlMs;
-    }
-    if (defaultTtlMs) {
-      return Date.now() + defaultTtlMs;
-    }
+    if (typeof ttlMs === "number") return Date.now() + ttlMs;
+    if (defaultTtlMs) return Date.now() + defaultTtlMs;
     return undefined;
   }
 }

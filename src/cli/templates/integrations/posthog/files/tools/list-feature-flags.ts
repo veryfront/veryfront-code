@@ -7,16 +7,19 @@ export default tool({
   description:
     "List all feature flags in your PostHog project. View flag status, rollout percentages, and configuration.",
   inputSchema: z.object({
-    limit: z.number().min(1).max(100).default(20).describe(
-      "Maximum number of feature flags to retrieve",
-    ),
+    limit: z
+      .number()
+      .min(1)
+      .max(100)
+      .default(20)
+      .describe("Maximum number of feature flags to retrieve"),
   }),
   async execute({ limit }) {
-    const response = await getFeatureFlags({ limit });
+    const { results } = await getFeatureFlags({ limit });
 
     return {
-      count: response.results.length,
-      flags: response.results.map((flag) => ({
+      count: results.length,
+      flags: results.map((flag) => ({
         id: flag.id,
         name: flag.name,
         key: flag.key,
@@ -27,9 +30,9 @@ export default tool({
         createdAt: formatDate(flag.created_at),
         createdBy: flag.created_by
           ? {
-            name: flag.created_by.first_name,
-            email: flag.created_by.email,
-          }
+              name: flag.created_by.first_name,
+              email: flag.created_by.email,
+            }
           : null,
         filters: flag.filters,
       })),

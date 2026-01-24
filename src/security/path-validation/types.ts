@@ -5,18 +5,8 @@
 
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
-/**
- * Security validation level
- *
- * - strict: Maximum security, strict whitelist enforcement
- * - normal: Standard security for most operations
- * - permissive: More lenient, for build-time operations
- */
 export type ValidationLevel = "strict" | "normal" | "permissive";
 
-/**
- * Path validation result
- */
 export interface ValidationResult {
   valid: boolean;
   canonicalPath?: string;
@@ -24,35 +14,16 @@ export interface ValidationResult {
   code?: string;
 }
 
-/**
- * Path validation options
- */
 export interface ValidationOptions {
-  /** Security level */
   level?: ValidationLevel;
-
-  /** Base directory to restrict access to */
   baseDir: string;
-
-  /** Additional allowed directories (relative to baseDir) */
   allowedDirs?: string[];
-
-  /** Whether to follow symlinks */
   followSymlinks?: boolean;
-
-  /** Whether to check file existence */
   checkExists?: boolean;
-
-  /** Runtime adapter for filesystem operations */
   adapter?: RuntimeAdapter;
-
-  /** Whether to allow absolute paths outside baseDir */
   allowAbsolute?: boolean;
 }
 
-/**
- * Path validation error codes
- */
 export const PathValidationError = {
   NULL_BYTE: "NULL_BYTE",
   PATH_TOO_LONG: "PATH_TOO_LONG",

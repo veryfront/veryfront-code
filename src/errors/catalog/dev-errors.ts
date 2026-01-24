@@ -7,11 +7,7 @@ export const DEV_ERROR_CATALOG: PartialErrorCatalog = {
     ErrorCode.DEV_SERVER_ERROR,
     "Development server error",
     "Error in development server.",
-    [
-      "Check server logs for details",
-      "Try restarting dev server",
-      "Clear cache and restart",
-    ],
+    ["Check server logs for details", "Try restarting dev server", "Clear cache and restart"],
   ),
 
   [ErrorCode.FAST_REFRESH_ERROR]: createSimpleError(
@@ -29,11 +25,7 @@ export const DEV_ERROR_CATALOG: PartialErrorCatalog = {
     ErrorCode.ERROR_OVERLAY_ERROR,
     "Error overlay failed",
     "Could not display error overlay.",
-    [
-      "Check browser console for details",
-      "Try disabling browser extensions",
-      "Refresh the page",
-    ],
+    ["Check browser console for details", "Try disabling browser extensions", "Refresh the page"],
   ),
 
   [ErrorCode.SOURCE_MAP_ERROR]: createSimpleError(

@@ -8,22 +8,19 @@
 import { logger } from "#veryfront/utils";
 import type { TokenStorageAdapter } from "./types.ts";
 
-// Use globalThis to share across esbuild bundles
 const STORAGE_KEY = "__veryfront_token_storage__" as const;
 
-/** Global interface for shared token storage */
 interface GlobalWithTokenStorage {
   __veryfront_token_storage__?: Map<string, string>;
 }
 
-const globalStore = globalThis as unknown as GlobalWithTokenStorage;
+const globalStore = globalThis as GlobalWithTokenStorage;
 
 export class MemoryTokenAdapter implements TokenStorageAdapter {
   private storage: Map<string, string>;
 
   constructor() {
-    // Share storage across bundles
-    globalStore[STORAGE_KEY] ||= new Map<string, string>();
+    globalStore[STORAGE_KEY] ??= new Map<string, string>();
     this.storage = globalStore[STORAGE_KEY];
 
     logger.warn(
@@ -33,8 +30,8 @@ export class MemoryTokenAdapter implements TokenStorageAdapter {
     );
   }
 
-  async initialize(): Promise<void> {
-    // No initialization needed for memory adapter
+  initialize(): Promise<void> {
+    return Promise.resolve();
   }
 
   get(key: string): Promise<string | null> {
@@ -53,23 +50,17 @@ export class MemoryTokenAdapter implements TokenStorageAdapter {
 
   list(prefix?: string): Promise<string[]> {
     const keys = Array.from(this.storage.keys());
-    if (prefix) {
-      return Promise.resolve(keys.filter((k) => k.startsWith(prefix)));
-    }
-    return Promise.resolve(keys);
+    return Promise.resolve(prefix ? keys.filter((k) => k.startsWith(prefix)) : keys);
   }
 
   dispose(): void {
-    // Don't clear storage on dispose - it's shared across bundles
     logger.debug("[MemoryTokenAdapter] Disposed");
   }
 
-  /** Get the number of stored tokens (for testing/debugging) */
   get size(): number {
     return this.storage.size;
   }
 
-  /** Clear all tokens (for testing) */
   clear(): void {
     this.storage.clear();
   }

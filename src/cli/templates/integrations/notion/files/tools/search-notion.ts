@@ -8,20 +8,22 @@ export default tool({
     "Search for pages and databases in the connected Notion workspace. Returns matching pages with their titles and IDs.",
   inputSchema: z.object({
     query: z.string().describe("Search query to find pages or databases"),
-    type: z.enum(["page", "database", "all"]).default("all").describe(
-      "Type of objects to search for",
-    ),
-    limit: z.number().min(1).max(20).default(10).describe("Maximum number of results to return"),
+    type: z
+      .enum(["page", "database", "all"])
+      .default("all")
+      .describe("Type of objects to search for"),
+    limit: z
+      .number()
+      .min(1)
+      .max(20)
+      .default(10)
+      .describe("Maximum number of results to return"),
   }),
   async execute({ query, type, limit }) {
-    const filter = type === "all"
-      ? undefined
-      : { property: "object" as const, value: type as "page" | "database" };
+    const filter =
+      type === "all" ? undefined : { property: "object", value: type };
 
-    const results = await searchNotion(query, {
-      filter,
-      pageSize: limit,
-    });
+    const results = await searchNotion(query, { filter, pageSize: limit });
 
     return results.map((item) => {
       if (item.object === "page") {
@@ -32,20 +34,14 @@ export default tool({
           url: item.url,
           lastEdited: item.last_edited_time,
         };
-      } else {
-        const db = item as {
-          id: string;
-          object: string;
-          title: Array<{ plain_text: string }>;
-          url?: string;
-        };
-        return {
-          id: db.id,
-          type: "database",
-          title: db.title.map((t) => t.plain_text).join(""),
-          url: db.url,
-        };
       }
+
+      return {
+        id: item.id,
+        type: "database",
+        title: item.title?.map((t: { plain_text: string }) => t.plain_text).join("") ?? "",
+        url: item.url,
+      };
     });
   },
 });

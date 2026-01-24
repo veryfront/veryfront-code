@@ -105,10 +105,7 @@ interface DiscordGuildMember {
   communication_disabled_until?: string | null;
 }
 
-async function discordFetch<T>(
-  endpoint: string,
-  options: RequestInit = {},
-): Promise<T> {
+async function discordFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = await getAccessToken();
   if (!token) {
     throw new Error("Not authenticated with Discord. Please connect your account.");
@@ -117,40 +114,62 @@ async function discordFetch<T>(
   const response = await fetch(`${DISCORD_BASE_URL}${endpoint}`, {
     ...options,
     headers: {
-      "Authorization": `Bearer ${token}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
       ...options.headers,
     },
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
+    const error = await response.json().catch(() => ({} as { message?: string }));
     throw new Error(
-      `Discord API error: ${response.status} ${error.message || response.statusText}`,
+      `Discord API error: ${response.status} ${error.message ?? response.statusText}`,
     );
   }
 
   return response.json();
 }
 
+function buildQuery(
+  options: Record<string, string | number | undefined>,
+  limits?: Record<string, number>,
+): string {
+  const params = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(options)) {
+    if (value === undefined) continue;
+
+    if (typeof value === "number") {
+      const limit = limits?.[key];
+      params.set(key, Math.min(value, limit ?? value).toString());
+      continue;
+    }
+
+    params.set(key, value);
+  }
+
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
 export function getCurrentUser(): Promise<DiscordUser> {
-  return discordFetch<DiscordUser>("/users/@me");
+  return discordFetch("/users/@me");
 }
 
 export function listGuilds(): Promise<DiscordGuild[]> {
-  return discordFetch<DiscordGuild[]>("/users/@me/guilds");
+  return discordFetch("/users/@me/guilds");
 }
 
 export function getGuild(guildId: string): Promise<DiscordGuild> {
-  return discordFetch<DiscordGuild>(`/guilds/${guildId}`);
+  return discordFetch(`/guilds/${guildId}`);
 }
 
 export function listChannels(guildId: string): Promise<DiscordChannel[]> {
-  return discordFetch<DiscordChannel[]>(`/guilds/${guildId}/channels`);
+  return discordFetch(`/guilds/${guildId}/channels`);
 }
 
 export function getChannel(channelId: string): Promise<DiscordChannel> {
-  return discordFetch<DiscordChannel>(`/channels/${channelId}`);
+  return discordFetch(`/channels/${channelId}`);
 }
 
 export function getMessages(
@@ -162,25 +181,17 @@ export function getMessages(
     around?: string;
   },
 ): Promise<DiscordMessage[]> {
-  const params = new URLSearchParams();
+  const query = buildQuery(
+    {
+      limit: options?.limit,
+      before: options?.before,
+      after: options?.after,
+      around: options?.around,
+    },
+    { limit: 100 },
+  );
 
-  if (options?.limit) {
-    params.set("limit", Math.min(options.limit, 100).toString());
-  }
-  if (options?.before) {
-    params.set("before", options.before);
-  }
-  if (options?.after) {
-    params.set("after", options.after);
-  }
-  if (options?.around) {
-    params.set("around", options.around);
-  }
-
-  const query = params.toString();
-  const endpoint = `/channels/${channelId}/messages${query ? `?${query}` : ""}`;
-
-  return discordFetch<DiscordMessage[]>(endpoint);
+  return discordFetch(`/channels/${channelId}/messages${query}`);
 }
 
 export function sendMessage(
@@ -193,14 +204,10 @@ export function sendMessage(
 ): Promise<DiscordMessage> {
   const body: Record<string, unknown> = { content };
 
-  if (options?.tts !== undefined) {
-    body.tts = options.tts;
-  }
-  if (options?.embeds) {
-    body.embeds = options.embeds;
-  }
+  if (options?.tts !== undefined) body.tts = options.tts;
+  if (options?.embeds) body.embeds = options.embeds;
 
-  return discordFetch<DiscordMessage>(`/channels/${channelId}/messages`, {
+  return discordFetch(`/channels/${channelId}/messages`, {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -213,47 +220,38 @@ export function getGuildMembers(
     after?: string;
   },
 ): Promise<DiscordGuildMember[]> {
-  const params = new URLSearchParams();
+  const query = buildQuery(
+    { limit: options?.limit, after: options?.after },
+    { limit: 1000 },
+  );
 
-  if (options?.limit) {
-    params.set("limit", Math.min(options.limit, 1000).toString());
-  }
-  if (options?.after) {
-    params.set("after", options.after);
-  }
-
-  const query = params.toString();
-  const endpoint = `/guilds/${guildId}/members${query ? `?${query}` : ""}`;
-
-  return discordFetch<DiscordGuildMember[]>(endpoint);
+  return discordFetch(`/guilds/${guildId}/members${query}`);
 }
 
-// Helper to format username with discriminator
 export function formatUsername(user: DiscordUser): string {
-  if (user.discriminator === "0") {
-    // New username system without discriminator
-    return user.username;
-  }
+  if (user.discriminator === "0") return user.username;
   return `${user.username}#${user.discriminator}`;
 }
 
-// Helper to get user avatar URL
+function getCdnAssetUrl(
+  basePath: string,
+  id: string,
+  hash: string | null | undefined,
+  size: number,
+): string | null {
+  if (!hash) return null;
+  const extension = hash.startsWith("a_") ? "gif" : "png";
+  return `https://cdn.discordapp.com/${basePath}/${id}/${hash}.${extension}?size=${size}`;
+}
+
 export function getAvatarUrl(user: DiscordUser, size: number = 128): string | null {
-  if (!user.avatar) return null;
-
-  const extension = user.avatar.startsWith("a_") ? "gif" : "png";
-  return `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.${extension}?size=${size}`;
+  return getCdnAssetUrl("avatars", user.id, user.avatar, size);
 }
 
-// Helper to get guild icon URL
 export function getGuildIconUrl(guild: DiscordGuild, size: number = 128): string | null {
-  if (!guild.icon) return null;
-
-  const extension = guild.icon.startsWith("a_") ? "gif" : "png";
-  return `https://cdn.discordapp.com/icons/${guild.id}/${guild.icon}.${extension}?size=${size}`;
+  return getCdnAssetUrl("icons", guild.id, guild.icon, size);
 }
 
-// Helper to get channel type name
 export function getChannelTypeName(type: number): string {
   const types: Record<number, string> = {
     0: "Text",
@@ -269,5 +267,6 @@ export function getChannelTypeName(type: number): string {
     14: "Directory",
     15: "Forum",
   };
-  return types[type] || "Unknown";
+
+  return types[type] ?? "Unknown";
 }

@@ -1,4 +1,4 @@
-/** Google AI provider implementation */
+/**** Google AI provider implementation */
 
 import { z } from "zod";
 import { BaseProvider, mapFinishReason } from "./base.ts";
@@ -14,18 +14,24 @@ const GoogleToolCallSchema = z.object({
 });
 
 const GoogleResponseSchema = z.object({
-  choices: z.array(z.object({
-    message: z.object({
-      content: z.string().nullable().optional(),
-      tool_calls: z.array(GoogleToolCallSchema).optional(),
-    }),
-    finish_reason: z.string(),
-  })).min(1),
-  usage: z.object({
-    prompt_tokens: z.number().optional(),
-    completion_tokens: z.number().optional(),
-    total_tokens: z.number().optional(),
-  }).optional(),
+  choices: z
+    .array(
+      z.object({
+        message: z.object({
+          content: z.string().nullable().optional(),
+          tool_calls: z.array(GoogleToolCallSchema).optional(),
+        }),
+        finish_reason: z.string(),
+      }),
+    )
+    .min(1),
+  usage: z
+    .object({
+      prompt_tokens: z.number().optional(),
+      completion_tokens: z.number().optional(),
+      total_tokens: z.number().optional(),
+    })
+    .optional(),
 });
 
 export class GoogleProvider extends BaseProvider {
@@ -36,46 +42,30 @@ export class GoogleProvider extends BaseProvider {
   constructor(config: GoogleConfig) {
     super(config);
     this.apiKey = config.apiKey;
-    this.baseURL = config.baseURL || "https://generativelanguage.googleapis.com/v1beta";
+    this.baseURL = config.baseURL ?? "https://generativelanguage.googleapis.com/v1beta";
   }
 
   protected getHeaders(): Record<string, string> {
-    return {
-      "x-goog-api-key": this.apiKey,
-    };
+    return { "x-goog-api-key": this.apiKey };
   }
 
   protected getEndpoint(_path: string): string {
-    // Google uses OpenAI-compatible format
     return `${this.baseURL}/chat/completions`;
   }
 
-  protected transformRequest(
-    request: CompletionRequest,
-  ): Record<string, unknown> {
+  protected transformRequest(request: CompletionRequest): Record<string, unknown> {
     const body: Record<string, unknown> = {
       model: request.model,
       messages: request.messages,
-      stream: request.stream || false,
+      stream: request.stream ?? false,
     };
 
-    if (request.system) {
-      body.system = request.system;
-    }
+    if (request.system) body.system = request.system;
+    if (request.maxTokens) body.max_tokens = request.maxTokens;
+    if (request.temperature !== undefined) body.temperature = request.temperature;
+    if (request.topP !== undefined) body.top_p = request.topP;
 
-    if (request.maxTokens) {
-      body.max_tokens = request.maxTokens;
-    }
-
-    if (request.temperature !== undefined) {
-      body.temperature = request.temperature;
-    }
-
-    if (request.topP !== undefined) {
-      body.top_p = request.topP;
-    }
-
-    if (request.tools && request.tools.length > 0) {
+    if (request.tools?.length) {
       body.tools = request.tools.map((tool) => ({
         type: "function",
         function: {
@@ -93,26 +83,29 @@ export class GoogleProvider extends BaseProvider {
     const parsed = GoogleResponseSchema.safeParse(response);
 
     if (!parsed.success) {
-      throw toError(createError({
-        type: "agent",
-        message: `Google: Invalid response format: ${parsed.error.message}`,
-      }));
+      throw toError(
+        createError({
+          type: "agent",
+          message: `Google: Invalid response format: ${parsed.error.message}`,
+        }),
+      );
     }
 
-    const data = parsed.data;
-    const choice = data.choices[0];
-
+    const choice = parsed.data.choices[0];
     if (!choice) {
-      throw toError(createError({
-        type: "agent",
-        message: "Google: No choices in response (unexpected)",
-      }));
+      throw toError(
+        createError({
+          type: "agent",
+          message: "Google: No choices in response (unexpected)",
+        }),
+      );
     }
 
-    const message = choice.message;
+    const { message } = choice;
+    const usage = parsed.data.usage;
 
     return {
-      text: message.content || "",
+      text: message.content ?? "",
       toolCalls: message.tool_calls?.map((tc) => ({
         id: tc.id,
         name: tc.function.name,
@@ -121,9 +114,9 @@ export class GoogleProvider extends BaseProvider {
           : tc.function.arguments,
       })),
       usage: {
-        promptTokens: data.usage?.prompt_tokens || 0,
-        completionTokens: data.usage?.completion_tokens || 0,
-        totalTokens: data.usage?.total_tokens || 0,
+        promptTokens: usage?.prompt_tokens ?? 0,
+        completionTokens: usage?.completion_tokens ?? 0,
+        totalTokens: usage?.total_tokens ?? 0,
       },
       finishReason: mapFinishReason(choice.finish_reason),
     };

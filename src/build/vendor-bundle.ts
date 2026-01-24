@@ -45,9 +45,8 @@ export async function buildVendorBundle(
 ): Promise<VendorBundleResult> {
   const { reactVersion, dependencies, dev = true } = config;
 
-  // Build import map for React
-  const reactImports = {
-    "react": `https://esm.sh/react@${reactVersion}?pin=v135`,
+  const reactImports: Record<string, string> = {
+    react: `https://esm.sh/react@${reactVersion}?pin=v135`,
     "react-dom": `https://esm.sh/react-dom@${reactVersion}?pin=v135`,
     "react-dom/server": `https://esm.sh/react-dom@${reactVersion}/server?pin=v135`,
     "react-dom/client": `https://esm.sh/react-dom@${reactVersion}/client?pin=v135`,
@@ -55,25 +54,18 @@ export async function buildVendorBundle(
     "react/jsx-dev-runtime": `https://esm.sh/react@${reactVersion}/jsx-dev-runtime?pin=v135`,
   };
 
-  // Build import map for third-party dependencies
-  const thirdPartyImports: Record<string, string> = {};
-  for (const [pkg, version] of Object.entries(dependencies)) {
-    // Use ESM.sh with ?external=react to prevent bundling React inside third-party packages
-    thirdPartyImports[pkg] = `https://esm.sh/${pkg}@${version}?external=react&pin=v135`;
-  }
+  const thirdPartyImports = Object.fromEntries(
+    Object.entries(dependencies).map(([pkg, version]) => [
+      pkg,
+      `https://esm.sh/${pkg}@${version}?external=react&pin=v135`,
+    ]),
+  );
 
-  // Create virtual entry point
-  const entryPoint = createVirtualEntry({
-    ...reactImports,
-    ...thirdPartyImports,
-  });
+  const imports = { ...reactImports, ...thirdPartyImports };
+  const entryPoint = createVirtualEntry(imports);
 
-  // Bundle with esbuild
   const result = await esbuild.build({
-    stdin: {
-      contents: entryPoint,
-      loader: "js",
-    },
+    stdin: { contents: entryPoint, loader: "js" },
     bundle: true,
     format: "esm",
     platform: "browser",
@@ -84,23 +76,21 @@ export async function buildVendorBundle(
     write: false,
   });
 
-  if (result.outputFiles.length === 0) {
-    throw toError(createError({
-      type: "build",
-      message: "Vendor bundle build produced no output",
-    }));
+  const output = result.outputFiles[0];
+  if (!output) {
+    throw toError(
+      createError({
+        type: "build",
+        message: "Vendor bundle build produced no output",
+      }),
+    );
   }
 
-  const code = new TextDecoder().decode(result.outputFiles[0]!.contents);
-
-  // Compute content hash
+  const code = new TextDecoder().decode(output.contents);
   const hash = await computeHash(code);
 
-  // Build export map
   const exports = Object.fromEntries(
-    Object.keys({ ...reactImports, ...thirdPartyImports }).map((
-      key,
-    ) => [key, sanitizeExportName(key)]),
+    Object.keys(imports).map((key) => [key, sanitizeExportName(key)]),
   );
 
   return { code, hash, exports };
@@ -118,18 +108,15 @@ export async function buildVendorBundle(
  */
 function createVirtualEntry(imports: Record<string, string>): string {
   const lines: string[] = [];
+  const exportNames: string[] = [];
 
-  // Import statements
   for (const [specifier, url] of Object.entries(imports)) {
     const exportName = sanitizeExportName(specifier);
     lines.push(`import * as ${exportName} from '${url}';`);
+    exportNames.push(exportName);
   }
 
-  // Export statement
-  const exportNames = Object.keys(imports).map(sanitizeExportName);
-
   lines.push(`export { ${exportNames.join(", ")} };`);
-
   return lines.join("\n");
 }
 
@@ -146,7 +133,7 @@ function sanitizeExportName(specifier: string): string {
   return specifier
     .replace(/^@/, "") // Remove @ prefix
     .replace(/[\/\-]/g, "_") // Replace / and - with _
-    .replace(/_([a-z])/g, (_, letter) => letter.toUpperCase()) // camelCase
+    .replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase()) // camelCase
     .replace(/^_/, ""); // Remove leading underscore
 }
 
@@ -154,12 +141,10 @@ function sanitizeExportName(specifier: string): string {
  * Compute SHA-256 hash of content
  */
 async function computeHash(content: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(content);
+  const data = new TextEncoder().encode(content);
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray
+  return Array.from(new Uint8Array(hashBuffer))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("")
-    .substring(0, 16);
+    .slice(0, 16);
 }

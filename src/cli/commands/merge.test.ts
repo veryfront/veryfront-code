@@ -9,7 +9,6 @@ import { getBranchByName, MergeArgsSchema, mergeBranch, parseMergeArgs } from ".
 import type { ApiClient } from "../shared/config.ts";
 import type { ParsedArgs } from "../index/types.ts";
 
-// Mock client creator - returns ApiClient-compatible mock
 function createMockClient(overrides: {
   get?: (url: string, params?: unknown) => Promise<unknown>;
   post?: (url: string, body?: unknown) => Promise<unknown>;
@@ -23,7 +22,15 @@ function createMockClient(overrides: {
   } as unknown as ApiClient;
 }
 
-// Test exported schema
+async function captureError(fn: () => Promise<unknown>): Promise<Error | null> {
+  try {
+    await fn();
+    return null;
+  } catch (e) {
+    return e as Error;
+  }
+}
+
 describe("MergeArgsSchema", () => {
   it("should require branch name", () => {
     const result = MergeArgsSchema.safeParse({ branch: "" });
@@ -57,7 +64,6 @@ describe("MergeArgsSchema", () => {
   });
 });
 
-// Test exported parseArgs function
 describe("parseMergeArgs", () => {
   it("should parse positional branch argument", () => {
     const args = { _: ["merge", "feature-branch"] } as ParsedArgs;
@@ -111,7 +117,6 @@ describe("parseMergeArgs", () => {
   });
 });
 
-// Test getBranchByName
 describe("getBranchByName", () => {
   it("should find branch by exact name", async () => {
     const mockClient = createMockClient({
@@ -124,11 +129,7 @@ describe("getBranchByName", () => {
         }),
     });
 
-    const branch = await getBranchByName(
-      mockClient,
-      "my-project",
-      "feature-x",
-    );
+    const branch = await getBranchByName(mockClient, "my-project", "feature-x");
     assertEquals(branch, { id: "123", name: "feature-x", project_id: "proj" });
   });
 
@@ -137,28 +138,18 @@ describe("getBranchByName", () => {
       get: () => Promise.resolve({ data: [] }),
     });
 
-    const branch = await getBranchByName(
-      mockClient,
-      "my-project",
-      "nonexistent",
-    );
+    const branch = await getBranchByName(mockClient, "my-project", "nonexistent");
     assertEquals(branch, null);
   });
 });
 
-// Test getBranchByName - negative cases
 describe("getBranchByName - error handling", () => {
   it("should handle API error gracefully", async () => {
     const mockClient = createMockClient({
       get: () => Promise.reject(new Error("Network error")),
     });
 
-    let error: Error | null = null;
-    try {
-      await getBranchByName(mockClient, "my-project", "feature");
-    } catch (e) {
-      error = e as Error;
-    }
+    const error = await captureError(() => getBranchByName(mockClient, "my-project", "feature"));
     assertEquals(error?.message, "Network error");
   });
 
@@ -183,12 +174,10 @@ describe("getBranchByName - error handling", () => {
   });
 });
 
-// Test MergeArgsSchema - negative cases
 describe("MergeArgsSchema - invalid inputs", () => {
   it("should reject branch names with only whitespace", () => {
     const result = MergeArgsSchema.safeParse({ branch: "   " });
-    assertEquals(result.success, true); // Note: zod min(1) only checks length, not whitespace
-    // This is acceptable - API will reject invalid names
+    assertEquals(result.success, true);
   });
 
   it("should reject undefined branch", () => {
@@ -202,7 +191,6 @@ describe("MergeArgsSchema - invalid inputs", () => {
   });
 });
 
-// Test mergeBranch
 describe("mergeBranch", () => {
   it("should merge to main when targetBranchId is undefined", async () => {
     let capturedUrl = "";
@@ -221,11 +209,7 @@ describe("mergeBranch", () => {
       },
     });
 
-    const result = await mergeBranch(
-      mockClient,
-      "my-project",
-      "branch-123",
-    );
+    const result = await mergeBranch(mockClient, "my-project", "branch-123");
     assertEquals(capturedUrl, "/projects/my-project/branches/branch-123/merge");
     assertEquals(capturedBody, { target_branch_id: null });
     assertEquals(result.success, true);
@@ -243,33 +227,19 @@ describe("mergeBranch", () => {
       },
     });
 
-    await mergeBranch(
-      mockClient,
-      "my-project",
-      "branch-123",
-      "target-456",
-    );
+    await mergeBranch(mockClient, "my-project", "branch-123", "target-456");
     assertEquals(capturedUrl, "/projects/my-project/branches/branch-123/merge");
     assertEquals(capturedBody, { target_branch_id: "target-456" });
   });
 });
 
-// Test mergeBranch - error handling
 describe("mergeBranch - error handling", () => {
   it("should propagate API errors for merge conflicts", async () => {
     const mockClient = createMockClient({
-      post: () =>
-        Promise.reject(
-          new Error("Merge conflict: cannot automatically merge changes"),
-        ),
+      post: () => Promise.reject(new Error("Merge conflict: cannot automatically merge changes")),
     });
 
-    let error: Error | null = null;
-    try {
-      await mergeBranch(mockClient, "my-project", "branch-123");
-    } catch (e) {
-      error = e as Error;
-    }
+    const error = await captureError(() => mergeBranch(mockClient, "my-project", "branch-123"));
     assertEquals(error?.message, "Merge conflict: cannot automatically merge changes");
   });
 
@@ -278,12 +248,7 @@ describe("mergeBranch - error handling", () => {
       post: () => Promise.reject(new Error("Branch not found")),
     });
 
-    let error: Error | null = null;
-    try {
-      await mergeBranch(mockClient, "my-project", "invalid-id");
-    } catch (e) {
-      error = e as Error;
-    }
+    const error = await captureError(() => mergeBranch(mockClient, "my-project", "invalid-id"));
     assertEquals(error?.message, "Branch not found");
   });
 
@@ -292,12 +257,9 @@ describe("mergeBranch - error handling", () => {
       post: () => Promise.reject(new Error("Permission denied: cannot merge to protected branch")),
     });
 
-    let error: Error | null = null;
-    try {
-      await mergeBranch(mockClient, "my-project", "branch-123", "protected-main");
-    } catch (e) {
-      error = e as Error;
-    }
+    const error = await captureError(() =>
+      mergeBranch(mockClient, "my-project", "branch-123", "protected-main")
+    );
     assertEquals(error?.message, "Permission denied: cannot merge to protected branch");
   });
 });

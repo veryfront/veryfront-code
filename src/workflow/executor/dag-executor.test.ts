@@ -4,23 +4,19 @@
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { DAGExecutor } from "./dag-executor.ts";
-import { StepExecutor } from "./step-executor.ts";
+import { delay } from "#std/async.ts";
 import { step } from "../dsl/step.ts";
 import { dependsOn } from "../dsl/workflow.ts";
 import type { WorkflowContext, WorkflowNode, WorkflowRun } from "../types.ts";
-import { delay } from "#std/async.ts";
+import { DAGExecutor } from "./dag-executor.ts";
+import { StepExecutor } from "./step-executor.ts";
 
-/**
- * Creates a mock StepExecutor that tracks execution order
- */
 function createMockStepExecutor(
   executionOrder?: string[],
   failingNodes?: Set<string>,
 ): StepExecutor {
   const executor = new StepExecutor({});
 
-  // Override the execute method
   executor.execute = (node: WorkflowNode, _context: WorkflowContext) => {
     executionOrder?.push(node.id);
 
@@ -42,10 +38,8 @@ function createMockStepExecutor(
   return executor;
 }
 
-describe("DAGExecutor", () => {
-  let executor: DAGExecutor;
-
-  const createTestRun = (): WorkflowRun => ({
+function createTestRun(): WorkflowRun {
+  return {
     id: "run-1",
     workflowId: "test",
     status: "running",
@@ -56,7 +50,11 @@ describe("DAGExecutor", () => {
     checkpoints: [],
     pendingApprovals: [],
     createdAt: new Date(),
-  });
+  };
+}
+
+describe("DAGExecutor", () => {
+  let executor: DAGExecutor;
 
   beforeEach(() => {
     executor = new DAGExecutor({
@@ -73,17 +71,13 @@ describe("DAGExecutor", () => {
       });
 
       const nodes: WorkflowNode[] = [
-        step("c", { agent: "a" }),
+        dependsOn(step("c", { agent: "a" }), "b"),
         dependsOn(step("b", { agent: "a" }), "a"),
         step("a", { agent: "a" }),
       ];
-      // Dependencies: a -> b -> c (c depends on b, b depends on a)
-      nodes[0] = dependsOn(nodes[0]!, "b");
 
-      const run = createTestRun();
-      await executor.execute(nodes, run);
+      await executor.execute(nodes, createTestRun());
 
-      // a should come before b, b should come before c
       const aIndex = executionOrder.indexOf("a");
       const bIndex = executionOrder.indexOf("b");
       const cIndex = executionOrder.indexOf("c");
@@ -111,18 +105,14 @@ describe("DAGExecutor", () => {
         maxConcurrency: 10,
       });
 
-      // Three independent nodes - should run in parallel
-      // Use explicit empty dependsOn to indicate true independence (avoid implicit sequential deps)
       const nodes: WorkflowNode[] = [
         { ...step("parallel-1", { agent: "a" }), dependsOn: [] },
         { ...step("parallel-2", { agent: "a" }), dependsOn: [] },
         { ...step("parallel-3", { agent: "a" }), dependsOn: [] },
       ];
 
-      const run = createTestRun();
-      await executor.execute(nodes, run);
+      await executor.execute(nodes, createTestRun());
 
-      // All should start within ~10ms of each other (parallel)
       const times = Object.values(startTimes);
       const maxDiff = Math.max(...times) - Math.min(...times);
       assertEquals(maxDiff < 30, true, "Independent nodes should start nearly simultaneously");
@@ -131,17 +121,15 @@ describe("DAGExecutor", () => {
 
   describe("Cycle Detection", () => {
     it("should detect direct cycles", async () => {
-      const nodeA = step("a", { agent: "x" });
-      const nodeB = { ...step("b", { agent: "x" }), dependsOn: ["a"] };
-      const nodeAWithCycle = { ...nodeA, dependsOn: ["b"] };
-
-      const nodes: WorkflowNode[] = [nodeAWithCycle, nodeB];
+      const nodes: WorkflowNode[] = [
+        { ...step("a", { agent: "x" }), dependsOn: ["b"] },
+        { ...step("b", { agent: "x" }), dependsOn: ["a"] },
+      ];
 
       const result = await executor.execute(nodes, createTestRun());
 
-      // DAGExecutor returns error in result, doesn't throw
       assertEquals(result.completed, false);
-      assertEquals(result.error?.includes("cycle") || result.error?.includes("Cycle"), true);
+      assertEquals(result.error?.toLowerCase().includes("cycle"), true);
     });
 
     it("should detect indirect cycles", async () => {
@@ -164,10 +152,7 @@ describe("DAGExecutor", () => {
         stepExecutor: createMockStepExecutor([], new Set(["failing"])),
       });
 
-      const nodes: WorkflowNode[] = [
-        step("ok", { agent: "a" }),
-        step("failing", { agent: "a" }),
-      ];
+      const nodes: WorkflowNode[] = [step("ok", { agent: "a" }), step("failing", { agent: "a" })];
 
       const result = await executor.execute(nodes, createTestRun());
 
@@ -208,13 +193,12 @@ describe("DAGExecutor", () => {
         step("step3", { agent: "a" }),
       ];
 
-      // Run with step1 already completed
-      const run = {
+      const run: WorkflowRun = {
         ...createTestRun(),
         nodeStates: {
           step1: {
             nodeId: "step1",
-            status: "completed" as const,
+            status: "completed",
             output: { done: true },
             attempt: 1,
           },

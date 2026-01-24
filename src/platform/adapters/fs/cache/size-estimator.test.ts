@@ -10,18 +10,15 @@ describe("estimateSize", () => {
 
   describe("Uint8Array", () => {
     it("should return byte length for Uint8Array", () => {
-      const bytes = new Uint8Array([1, 2, 3, 4, 5]);
-      assertEquals(estimateSize(bytes), 5);
+      assertEquals(estimateSize(new Uint8Array([1, 2, 3, 4, 5])), 5);
     });
 
     it("should return 0 for empty Uint8Array", () => {
-      const bytes = new Uint8Array([]);
-      assertEquals(estimateSize(bytes), 0);
+      assertEquals(estimateSize(new Uint8Array()), 0);
     });
 
     it("should handle large Uint8Array", () => {
-      const bytes = new Uint8Array(1000);
-      assertEquals(estimateSize(bytes), 1000);
+      assertEquals(estimateSize(new Uint8Array(1000)), 1000);
     });
   });
 
@@ -40,22 +37,20 @@ describe("estimateSize", () => {
   });
 
   describe("object", () => {
+    function assertJsonSize(value: unknown): void {
+      assertEquals(estimateSize(value), JSON.stringify(value).length * 2);
+    }
+
     it("should return JSON length * 2 for objects", () => {
-      const obj = { foo: "bar" };
-      const expectedSize = JSON.stringify(obj).length * 2;
-      assertEquals(estimateSize(obj), expectedSize);
+      assertJsonSize({ foo: "bar" });
     });
 
     it("should handle arrays", () => {
-      const arr = [1, 2, 3];
-      const expectedSize = JSON.stringify(arr).length * 2;
-      assertEquals(estimateSize(arr), expectedSize);
+      assertJsonSize([1, 2, 3]);
     });
 
     it("should handle nested objects", () => {
-      const obj = { a: { b: { c: 1 } } };
-      const expectedSize = JSON.stringify(obj).length * 2;
-      assertEquals(estimateSize(obj), expectedSize);
+      assertJsonSize({ a: { b: { c: 1 } } });
     });
   });
 

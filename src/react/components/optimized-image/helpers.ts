@@ -6,7 +6,6 @@ export function getOptimizedPath(
 ): string {
   const basePath = src.replace(/\.[^.]+$/, "");
   const optimizedDir = ".veryfront/optimized-images";
-
   return `/${optimizedDir}${basePath}-${size}w.${format}`;
 }
 
@@ -17,15 +16,10 @@ export function generateSrcSet(
   quality: number,
 ): string {
   return sizes
-    .map((size) => {
-      const path = getOptimizedPath(src, format, size, quality);
-      return `${path} ${size}w`;
-    })
+    .map((size) => `${getOptimizedPath(src, format, size, quality)} ${size}w`)
     .join(", ");
 }
 
 export function getExtension(src: string): string {
-  const match = src.match(/\.([^.]+)$/);
-  const extension = match?.[1];
-  return extension ? extension.toLowerCase() : "jpeg";
+  return src.match(/\.([^.]+)$/)?.[1]?.toLowerCase() ?? "jpeg";
 }

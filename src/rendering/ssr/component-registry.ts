@@ -4,10 +4,9 @@
  */
 
 import { dirname, join } from "../../platform/compat/path-helper.ts";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { DEFAULT_DASHBOARD_PORT, rendererLogger as logger } from "#veryfront/utils";
 import * as React from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { DEFAULT_DASHBOARD_PORT } from "#veryfront/utils";
 import { VirtualModuleSystem } from "../virtual-module-system.ts";
 import { loadComponentFromSource } from "#veryfront/modules/react-loader/component-loader.ts";
 
@@ -32,19 +31,12 @@ function createErrorFallbackComponent(
   componentName: string,
   error: string,
 ): React.ComponentType<Record<string, unknown>> {
-  // Create a functional component that renders an error placeholder
   const ErrorFallback: React.FC<Record<string, unknown>> = () => {
-    // In production, render nothing (or a minimal placeholder)
-    // In development, show error details
     const isDev = typeof process !== "undefined" &&
       process.env?.NODE_ENV === "development";
 
-    if (!isDev) {
-      // Production: render an empty fragment to avoid breaking layout
-      return React.createElement(React.Fragment);
-    }
+    if (!isDev) return React.createElement(React.Fragment);
 
-    // Development: show error details
     return React.createElement(
       "div",
       {
@@ -85,7 +77,7 @@ function createErrorFallbackComponent(
   };
 
   ErrorFallback.displayName = `ErrorFallback(${componentName})`;
-  return ErrorFallback as React.ComponentType<Record<string, unknown>>;
+  return ErrorFallback;
 }
 
 /**
@@ -100,10 +92,10 @@ function createErrorFallbackComponent(
  * ```
  */
 export class ComponentRegistry {
-  private components: Map<string, React.ComponentType<Record<string, unknown>>> = new Map();
+  private components = new Map<string, React.ComponentType<Record<string, unknown>>>();
   private virtualModules: VirtualModuleSystem;
-  private componentSources: Map<string, DeferredComponentSource> = new Map();
-  private failedComponents: Map<string, FailedComponent> = new Map();
+  private componentSources = new Map<string, DeferredComponentSource>();
+  private failedComponents = new Map<string, FailedComponent>();
   private initialized = false;
   private projectDir = "";
   private serverPort: number;
@@ -131,7 +123,7 @@ export class ComponentRegistry {
     vendorBundleHash?: string,
     projectId?: string,
   ) {
-    this.virtualModules = virtualModules || new VirtualModuleSystem();
+    this.virtualModules = virtualModules ?? new VirtualModuleSystem();
     this.serverPort = serverPort;
     this.adapter = adapter;
     this.moduleServerUrl = moduleServerUrl;
@@ -155,9 +147,7 @@ export class ComponentRegistry {
       ? dirname(dir)
       : dir;
 
-    if (!this.projectDir) {
-      this.projectDir = actualProjectRoot;
-    }
+    this.projectDir ||= actualProjectRoot;
 
     try {
       const processed = await this.collectComponents(dir, actualProjectRoot, deferLoading);
@@ -178,9 +168,7 @@ export class ComponentRegistry {
    */
   get(name: string): React.ComponentType<Record<string, unknown>> | null {
     const component = this.components.get(name);
-    if (component) {
-      return component;
-    }
+    if (component) return component;
 
     if (this.componentSources.has(name) && !this.initialized) {
       logger.warn(`Component ${name} requested before initialization complete`);
@@ -249,7 +237,9 @@ export class ComponentRegistry {
    */
   async initializeComponents(): Promise<void> {
     if (this.initialized) return;
-    if (!this.adapter) {
+
+    const adapter = this.adapter;
+    if (!adapter) {
       logger.warn("Component registry adapter unavailable; skipping initialization");
       return;
     }
@@ -265,12 +255,11 @@ export class ComponentRegistry {
           info.source,
           info.filePath,
           info.projectRoot,
-          this.adapter!,
+          adapter,
           this.getLoaderOptions(info.projectRoot),
         );
 
         this.components.set(componentName, Component);
-        // Clear any previous failure record
         this.failedComponents.delete(componentName);
         successCount++;
         logger.debug(`Successfully loaded component: ${componentName}`);
@@ -278,7 +267,6 @@ export class ComponentRegistry {
         const errorMessage = error instanceof Error ? error.message : String(error);
         failCount++;
 
-        // Track the failure
         this.failedComponents.set(componentName, {
           name: componentName,
           error: errorMessage,
@@ -286,9 +274,10 @@ export class ComponentRegistry {
           timestamp: Date.now(),
         });
 
-        // Create and register a fallback component
-        const fallbackComponent = createErrorFallbackComponent(componentName, errorMessage);
-        this.components.set(componentName, fallbackComponent);
+        this.components.set(
+          componentName,
+          createErrorFallbackComponent(componentName, errorMessage),
+        );
 
         logger.debug(`Failed to load component ${componentName}, using fallback`, {
           error: errorMessage,
@@ -304,9 +293,10 @@ export class ComponentRegistry {
       logger.warn(
         `Component initialization complete: ${successCount} succeeded, ${failCount} failed (using fallbacks, set LOG_LEVEL=debug for details)`,
       );
-    } else {
-      logger.debug(`Component initialization complete: ${successCount} components loaded`);
+      return;
     }
+
+    logger.debug(`Component initialization complete: ${successCount} components loaded`);
   }
 
   /**
@@ -326,12 +316,17 @@ export class ComponentRegistry {
     return this.failedComponents.has(name);
   }
 
-  private getLoaderOptions(projectRoot: string) {
+  private getLoaderOptions(projectRoot: string): {
+    projectId: string;
+    dev: true;
+    moduleServerUrl?: string;
+    vendorBundleHash?: string;
+  } {
     return {
       // Use the actual project ID (UUID) for SSR cache isolation in multi-project mode
       // This ensures each project has its own SSR cache directory
       // Falls back to projectRoot for single-project/local dev mode
-      projectId: this.projectId || projectRoot,
+      projectId: this.projectId ?? projectRoot,
       dev: true,
       moduleServerUrl: this.moduleServerUrl,
       vendorBundleHash: this.vendorBundleHash,
@@ -343,15 +338,13 @@ export class ComponentRegistry {
     projectRoot: string,
     deferLoading: boolean,
   ): Promise<number> {
-    if (!this.adapter?.fs.readDir) {
-      return 0;
-    }
+    const readDir = this.adapter?.fs.readDir;
+    if (!readDir) return 0;
 
     let count = 0;
-
     let failureCount = 0;
 
-    for await (const entry of this.adapter.fs.readDir(dir)) {
+    for await (const entry of readDir(dir)) {
       const entryPath = join(dir, entry.name);
 
       // Skip node_modules and hidden dirs, but allow .veryfront (excluding system subdirs)
@@ -371,20 +364,15 @@ export class ComponentRegistry {
         continue;
       }
 
-      if (
-        !(entry.isFile || entry.isSymlink) ||
-        !/\.(tsx|jsx|ts|js)$/.test(entry.name)
-      ) {
+      if (!(entry.isFile || entry.isSymlink) || !/\.(tsx|jsx|ts|js)$/.test(entry.name)) {
         continue;
       }
 
       const componentName = entry.name.replace(/\.(tsx|jsx|ts|js)$/, "");
-      if (componentName === "index") {
-        continue;
-      }
+      if (componentName === "index") continue;
 
       try {
-        const fileContent = await this.adapter.fs.readFile(entryPath);
+        const fileContent = await this.adapter!.fs.readFile(entryPath);
 
         await this.virtualModules.registerModule(`component:${componentName}`, fileContent, dir);
 
@@ -419,7 +407,6 @@ export class ComponentRegistry {
     }
 
     if (failureCount > 0) {
-      // Show relative path for cleaner logs
       const relativeDir = dir.startsWith(projectRoot) ? dir.slice(projectRoot.length + 1) : dir;
       logger.warn(
         `Component scan: ${failureCount} failure${

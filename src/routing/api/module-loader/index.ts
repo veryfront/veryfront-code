@@ -1,4 +1,7 @@
 export { loadHandlerModule } from "./loader.ts";
+export { loadSecurityConfig } from "./security-config.ts";
+export { validateHTTPImports } from "./http-validator.ts";
+export { createHTTPPlugin } from "./esbuild-plugin.ts";
 
 export type {
   APIRoute,
@@ -8,7 +11,3 @@ export type {
   PagesRouteHandler,
   RouteHandler,
 } from "./types.ts";
-
-export { loadSecurityConfig } from "./security-config.ts";
-export { validateHTTPImports } from "./http-validator.ts";
-export { createHTTPPlugin } from "./esbuild-plugin.ts";

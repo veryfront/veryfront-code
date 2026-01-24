@@ -21,23 +21,15 @@ import {
 
 describe("compat/console/index.ts exports", () => {
   it("should export color functions", () => {
-    assertExists(red);
-    assertExists(green);
-    assertExists(yellow);
-    assertExists(blue);
-    assertExists(cyan);
-    assertExists(magenta);
-    assertExists(white);
-    assertExists(gray);
+    for (const fn of [red, green, yellow, blue, cyan, magenta, white, gray]) {
+      assertExists(fn);
+    }
   });
 
   it("should export style functions", () => {
-    assertExists(bold);
-    assertExists(dim);
-    assertExists(italic);
-    assertExists(underline);
-    assertExists(strikethrough);
-    assertExists(reset);
+    for (const fn of [bold, dim, italic, underline, strikethrough, reset]) {
+      assertExists(fn);
+    }
   });
 
   it("should export colors object", () => {
@@ -52,13 +44,14 @@ describe("compat/console/index.ts exports", () => {
   });
 
   it("color functions should return strings", () => {
-    assertEquals(typeof red("test"), "string");
-    assertEquals(typeof green("test"), "string");
-    assertEquals(typeof bold("test"), "string");
+    for (const fn of [red, green, bold]) {
+      assertEquals(typeof fn("test"), "string");
+    }
   });
 
   it("color functions should contain the input text", () => {
     const input = "test message";
-    assertEquals(red(input).includes(input) || red(input) === input, true);
+    const output = red(input);
+    assertEquals(output.includes(input) || output === input, true);
   });
 });

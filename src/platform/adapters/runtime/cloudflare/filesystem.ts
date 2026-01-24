@@ -11,14 +11,17 @@ import type { KVNamespace } from "./types.ts";
 export class CloudflareFileSystemAdapter implements FileSystemAdapter {
   constructor(private kvNamespace?: KVNamespace) {}
 
-  async readFile(path: string): Promise<string> {
+  private getKV(path: string): KVNamespace {
     if (!this.kvNamespace) {
       throw new ConfigError("KV namespace required for file operations in Workers", { path });
     }
-    const content = await this.kvNamespace.get(path);
-    if (content === null) {
-      throw new FileSystemError(`File not found: ${path}`, { path });
-    }
+    return this.kvNamespace;
+  }
+
+  async readFile(path: string): Promise<string> {
+    const kv = this.getKV(path);
+    const content = await kv.get(path);
+    if (content === null) throw new FileSystemError(`File not found: ${path}`, { path });
     return content;
   }
 
@@ -28,16 +31,13 @@ export class CloudflareFileSystemAdapter implements FileSystemAdapter {
   }
 
   async writeFile(path: string, content: string): Promise<void> {
-    if (!this.kvNamespace) {
-      throw new ConfigError("KV namespace required for file operations in Workers", { path });
-    }
-    await this.kvNamespace.put(path, content);
+    const kv = this.getKV(path);
+    await kv.put(path, content);
   }
 
   async exists(path: string): Promise<boolean> {
-    if (!this.kvNamespace) return false;
-    const value = await this.kvNamespace.get(path);
-    return value !== null;
+    const value = await this.kvNamespace?.get(path);
+    return value !== null && value !== undefined;
   }
 
   async *readDir(path: string): AsyncIterable<DirEntry> {
@@ -47,27 +47,25 @@ export class CloudflareFileSystemAdapter implements FileSystemAdapter {
     const list = await this.kvNamespace.list({ prefix });
 
     for (const key of list.keys) {
-      const name = prefix.length > 0 ? key.name.slice(prefix.length + 1) : key.name;
-      if (name && !name.includes("/")) {
-        yield {
-          name,
-          isFile: true,
-          isDirectory: false,
-          isSymlink: false,
-        };
-      }
+      const name = prefix ? key.name.slice(prefix.length + 1) : key.name;
+      if (!name || name.includes("/")) continue;
+
+      yield {
+        name,
+        isFile: true,
+        isDirectory: false,
+        isSymlink: false,
+      };
     }
   }
 
   async stat(path: string): Promise<FileInfo> {
-    if (!this.kvNamespace) {
-      throw new ConfigError("KV namespace required for file operations in Workers", { path });
-    }
+    const kv = this.getKV(path);
 
-    const metadata = await this.kvNamespace.getWithMetadata(path);
-    if (metadata.value) {
+    const { value } = await kv.getWithMetadata(path);
+    if (value) {
       return {
-        size: new TextEncoder().encode(metadata.value as string).length,
+        size: new TextEncoder().encode(value).length,
         isFile: true,
         isDirectory: false,
         isSymlink: false,
@@ -76,7 +74,7 @@ export class CloudflareFileSystemAdapter implements FileSystemAdapter {
     }
 
     const normalizedPath = path.replace(/\/$/, "") + "/";
-    const list = await this.kvNamespace.list({ prefix: normalizedPath });
+    const list = await kv.list({ prefix: normalizedPath });
     if (list.keys.length > 0) {
       return {
         size: 0,
@@ -87,8 +85,8 @@ export class CloudflareFileSystemAdapter implements FileSystemAdapter {
       };
     }
 
-    const listAlt = await this.kvNamespace.list({ prefix: path });
-    if (listAlt.keys.length > 0 && listAlt.keys.some((k) => k.name.startsWith(path + "/"))) {
+    const listAlt = await kv.list({ prefix: path });
+    if (listAlt.keys.some((k) => k.name.startsWith(path + "/"))) {
       return {
         size: 0,
         isFile: false,
@@ -106,21 +104,20 @@ export class CloudflareFileSystemAdapter implements FileSystemAdapter {
   }
 
   async remove(path: string, _options?: { recursive?: boolean }): Promise<void> {
-    if (!this.kvNamespace) return;
-    await this.kvNamespace.delete(path);
+    await this.kvNamespace?.delete(path);
   }
 
   makeTempDir(_prefix: string): Promise<string> {
-    throw new NotSupportedError(
-      "Temporary directories not supported in Cloudflare Workers",
-      { platform: "cloudflare", operation: "makeTempDir" },
-    );
+    throw new NotSupportedError("Temporary directories not supported in Cloudflare Workers", {
+      platform: "cloudflare",
+      operation: "makeTempDir",
+    });
   }
 
   watch(_paths: string | string[], _options?: WatchOptions): FileWatcher {
-    throw new NotSupportedError(
-      "File watching not supported in Cloudflare Workers",
-      { platform: "cloudflare", operation: "watch" },
-    );
+    throw new NotSupportedError("File watching not supported in Cloudflare Workers", {
+      platform: "cloudflare",
+      operation: "watch",
+    });
   }
 }

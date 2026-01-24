@@ -10,6 +10,7 @@ export function detectFeatures(
   isReact19Flag: boolean,
 ): ReactFeatures {
   const isReact18Plus = major >= 18;
+
   return {
     suspense: isReact18Plus,
     streaming: isReact18Plus,
@@ -34,7 +35,6 @@ export function detectFeatures(
 function buildVersionInfo(version: string): ReactVersionInfo {
   const { major, minor, patch } = parseVersion(version);
   const react19 = isReact19(major, version);
-  const features = detectFeatures(major, minor, react19);
 
   return {
     version,
@@ -44,7 +44,7 @@ function buildVersionInfo(version: string): ReactVersionInfo {
     isReact17: isReact17(major),
     isReact18: isReact18(major),
     isReact19: react19,
-    features,
+    features: detectFeatures(major, minor, react19),
   };
 }
 
@@ -54,26 +54,29 @@ export function detectReactVersion(): ReactVersionInfo {
   return info;
 }
 
-/**
- * Detect React version from a specific project directory.
- * This is used for multi-tenant rendering where each project
- * may have a different React version installed.
- */
-export async function detectReactVersionFromProject(projectDir: string): Promise<ReactVersionInfo> {
+export async function detectReactVersionFromProject(
+  projectDir: string,
+): Promise<ReactVersionInfo> {
   let version = React.version;
 
   try {
     const packageJsonPath = `${projectDir}/package.json`;
     const packageJson = JSON.parse(await readTextFile(packageJsonPath));
-    const reactDep = packageJson.dependencies?.react ||
-      packageJson.devDependencies?.react ||
+    const reactDep = packageJson.dependencies?.react ??
+      packageJson.devDependencies?.react ??
       packageJson.peerDependencies?.react;
 
-    if (reactDep) {
-      version = reactDep.replace(/^[\^~>=<]+/, "");
-      logger.debug("Detected React version from package.json", { projectDir, version });
+    if (!reactDep) {
+      logger.debug("No React in package.json, using bundled version", {
+        projectDir,
+        version,
+      });
     } else {
-      logger.debug("No React in package.json, using bundled version", { projectDir, version });
+      version = reactDep.replace(/^[\^~>=<]+/, "");
+      logger.debug("Detected React version from package.json", {
+        projectDir,
+        version,
+      });
     }
   } catch {
     logger.debug("Could not read package.json, using bundled React version", {

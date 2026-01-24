@@ -39,9 +39,7 @@ describe("types.ts", () => {
 
   describe("DataResult", () => {
     it("should support props result", () => {
-      const result: DataResult<{ title: string }> = {
-        props: { title: "Hello" },
-      };
+      const result: DataResult<{ title: string }> = { props: { title: "Hello" } };
 
       assertEquals(result.props?.title, "Hello");
       assertEquals(result.redirect, undefined);
@@ -50,10 +48,7 @@ describe("types.ts", () => {
 
     it("should support redirect result", () => {
       const result: DataResult = {
-        redirect: {
-          destination: "/login",
-          permanent: false,
-        },
+        redirect: { destination: "/login", permanent: false },
       };
 
       assertEquals(result.redirect?.destination, "/login");
@@ -62,37 +57,26 @@ describe("types.ts", () => {
 
     it("should support permanent redirect", () => {
       const result: DataResult = {
-        redirect: {
-          destination: "/new-page",
-          permanent: true,
-        },
+        redirect: { destination: "/new-page", permanent: true },
       };
 
       assertEquals(result.redirect?.permanent, true);
     });
 
     it("should support notFound result", () => {
-      const result: DataResult = {
-        notFound: true,
-      };
+      const result: DataResult = { notFound: true };
 
       assertEquals(result.notFound, true);
     });
 
     it("should support revalidate option", () => {
-      const result: DataResult = {
-        props: {},
-        revalidate: 60,
-      };
+      const result: DataResult = { props: {}, revalidate: 60 };
 
       assertEquals(result.revalidate, 60);
     });
 
     it("should support revalidate: false for no revalidation", () => {
-      const result: DataResult = {
-        props: {},
-        revalidate: false,
-      };
+      const result: DataResult = { props: {}, revalidate: false };
 
       assertEquals(result.revalidate, false);
     });
@@ -102,9 +86,7 @@ describe("types.ts", () => {
     it("should define page module structure", () => {
       const pageModule: PageWithData<{ name: string }> = {
         default: () => null,
-        getServerData: (_context) => ({
-          props: { name: "test" },
-        }),
+        getServerData: () => ({ props: { name: "test" } }),
       };
 
       assertExists(pageModule.default);
@@ -116,10 +98,7 @@ describe("types.ts", () => {
     it("should support getStaticData", () => {
       const pageModule: PageWithData = {
         default: () => null,
-        getStaticData: (_context) => ({
-          props: { data: "static" },
-          revalidate: 60,
-        }),
+        getStaticData: () => ({ props: { data: "static" }, revalidate: 60 }),
       };
 
       assertExists(pageModule.getStaticData);
@@ -141,10 +120,7 @@ describe("types.ts", () => {
   describe("StaticPathsResult", () => {
     it("should define paths with fallback: false", () => {
       const result: StaticPathsResult = {
-        paths: [
-          { params: { id: "1" } },
-          { params: { id: "2" } },
-        ],
+        paths: [{ params: { id: "1" } }, { params: { id: "2" } }],
         fallback: false,
       };
 
@@ -153,19 +129,13 @@ describe("types.ts", () => {
     });
 
     it("should support fallback: true", () => {
-      const result: StaticPathsResult = {
-        paths: [],
-        fallback: true,
-      };
+      const result: StaticPathsResult = { paths: [], fallback: true };
 
       assertEquals(result.fallback, true);
     });
 
     it("should support fallback: blocking", () => {
-      const result: StaticPathsResult = {
-        paths: [],
-        fallback: "blocking",
-      };
+      const result: StaticPathsResult = { paths: [], fallback: "blocking" };
 
       assertEquals(result.fallback, "blocking");
     });
@@ -212,7 +182,6 @@ describe("types.ts", () => {
       type TestPage = PageWithData<{ id: number; name: string }>;
       type InferredProps = InferGetServerDataProps<TestPage>;
 
-      // Type-level test - if this compiles, the type inference works
       const props: InferredProps = { id: 1, name: "test" };
       assertEquals(props.id, 1);
       assertEquals(props.name, "test");

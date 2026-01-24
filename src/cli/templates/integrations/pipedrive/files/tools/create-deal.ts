@@ -8,24 +8,26 @@ export default tool({
   inputSchema: z.object({
     title: z.string().describe("The title/name of the deal"),
     value: z.number().optional().describe("The monetary value of the deal"),
-    currency: z.string().default("USD").describe("Currency code (e.g., USD, EUR, GBP)"),
-    personId: z.number().optional().describe("ID of the person/contact associated with the deal"),
-    orgId: z.number().optional().describe("ID of the organization associated with the deal"),
+    currency: z
+      .string()
+      .default("USD")
+      .describe("Currency code (e.g., USD, EUR, GBP)"),
+    personId: z
+      .number()
+      .optional()
+      .describe("ID of the person/contact associated with the deal"),
+    orgId: z
+      .number()
+      .optional()
+      .describe("ID of the organization associated with the deal"),
     stageId: z.number().optional().describe("ID of the pipeline stage for the deal"),
-    expectedCloseDate: z.string().optional().describe(
-      "Expected close date in YYYY-MM-DD format",
-    ),
+    expectedCloseDate: z
+      .string()
+      .optional()
+      .describe("Expected close date in YYYY-MM-DD format"),
   }),
-  async execute({ title, value, currency, personId, orgId, stageId, expectedCloseDate }) {
-    const deal = await createDeal({
-      title,
-      value,
-      currency,
-      personId,
-      orgId,
-      stageId,
-      expectedCloseDate,
-    });
+  async execute(input) {
+    const deal = await createDeal(input);
 
     return {
       success: true,

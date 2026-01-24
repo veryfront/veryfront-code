@@ -13,31 +13,31 @@ import {
 describe("React Version Detector", () => {
   describe("Version Parsing", () => {
     it("parses React 19.x version", () => {
-      const parsed = parseVersion("19.1.2");
-      assertEquals(parsed.major, 19);
-      assertEquals(parsed.minor, 1);
-      assertEquals(parsed.patch, 2);
+      const { major, minor, patch } = parseVersion("19.1.2");
+      assertEquals(major, 19);
+      assertEquals(minor, 1);
+      assertEquals(patch, 2);
     });
 
     it("parses React 18.x version", () => {
-      const parsed = parseVersion("18.2.0");
-      assertEquals(parsed.major, 18);
-      assertEquals(parsed.minor, 2);
-      assertEquals(parsed.patch, 0);
+      const { major, minor, patch } = parseVersion("18.2.0");
+      assertEquals(major, 18);
+      assertEquals(minor, 2);
+      assertEquals(patch, 0);
     });
 
     it("parses React 17.x version", () => {
-      const parsed = parseVersion("17.0.2");
-      assertEquals(parsed.major, 17);
-      assertEquals(parsed.minor, 0);
-      assertEquals(parsed.patch, 2);
+      const { major, minor, patch } = parseVersion("17.0.2");
+      assertEquals(major, 17);
+      assertEquals(minor, 0);
+      assertEquals(patch, 2);
     });
 
     it("handles canary versions", () => {
-      const parsed = parseVersion("19.0.0-canary.123");
-      assertEquals(parsed.major, 19);
-      assertEquals(parsed.minor, 0);
-      assertEquals(parsed.patch, 0);
+      const { major, minor, patch } = parseVersion("19.0.0-canary.123");
+      assertEquals(major, 19);
+      assertEquals(minor, 0);
+      assertEquals(patch, 0);
     });
 
     it("throws on invalid version format", () => {
@@ -47,10 +47,10 @@ describe("React Version Detector", () => {
     });
 
     it("parses semver correctly with pre-release tags", () => {
-      const parsed = parseVersion("18.3.0-rc.1");
-      assertEquals(parsed.major, 18);
-      assertEquals(parsed.minor, 3);
-      assertEquals(parsed.patch, 0);
+      const { major, minor, patch } = parseVersion("18.3.0-rc.1");
+      assertEquals(major, 18);
+      assertEquals(minor, 3);
+      assertEquals(patch, 0);
     });
   });
 
@@ -65,25 +65,25 @@ describe("React Version Detector", () => {
 
     it("identifies React 18+ features", () => {
       const info = getReactVersionInfo();
-      if (info.major >= 18) {
-        assertEquals(info.features.suspense, true);
-        assertEquals(info.features.streaming, true);
-        assertEquals(info.features.automaticBatching, true);
-        assertEquals(info.features.transitions, true);
-        assertEquals(info.features.renderToPipeableStream, true);
-        assertEquals(info.features.renderToReadableStream, true);
-      }
+      if (info.major < 18) return;
+
+      assertEquals(info.features.suspense, true);
+      assertEquals(info.features.streaming, true);
+      assertEquals(info.features.automaticBatching, true);
+      assertEquals(info.features.transitions, true);
+      assertEquals(info.features.renderToPipeableStream, true);
+      assertEquals(info.features.renderToReadableStream, true);
     });
 
     it("identifies React 19 features", () => {
       const info = getReactVersionInfo();
-      if (info.isReact19) {
-        assertEquals(info.features.useFormStatus, true);
-        assertEquals(info.features.useOptimistic, true);
-        assertEquals(info.features.serverActions, true);
-        assertEquals(info.features.improvedSuspense, true);
-        assertEquals(info.features.enhancedStreaming, true);
-      }
+      if (!info.isReact19) return;
+
+      assertEquals(info.features.useFormStatus, true);
+      assertEquals(info.features.useOptimistic, true);
+      assertEquals(info.features.serverActions, true);
+      assertEquals(info.features.improvedSuspense, true);
+      assertEquals(info.features.enhancedStreaming, true);
     });
 
     it("all versions have basic SSR capabilities", () => {
@@ -95,40 +95,37 @@ describe("React Version Detector", () => {
 
     it("hasFeature checks individual features", () => {
       const info = getReactVersionInfo();
-      const hasRenderToString = hasFeature("renderToString");
-      assertEquals(hasRenderToString, true);
 
-      if (info.major >= 18) {
-        assertEquals(hasFeature("suspense"), true);
-        assertEquals(hasFeature("transitions"), true);
-      }
+      assertEquals(hasFeature("renderToString"), true);
+
+      if (info.major < 18) return;
+
+      assertEquals(hasFeature("suspense"), true);
+      assertEquals(hasFeature("transitions"), true);
     });
 
     it("server components detection based on version", () => {
       const info = getReactVersionInfo();
-      if (info.major >= 18 && info.minor >= 3) {
-        assertEquals(info.features.serverComponents, true);
-      } else if (info.major >= 18) {
-        assertEquals(info.features.serverComponents, false);
-      }
+
+      if (info.major < 18) return;
+
+      assertEquals(info.features.serverComponents, info.minor >= 3);
     });
   });
 
   describe("SSR Method Selection", () => {
     it("recommends readable-stream for React 19", () => {
       const info = getReactVersionInfo();
-      if (info.isReact19) {
-        const method = getRecommendedSSRMethod();
-        assertEquals(method, "readable-stream");
-      }
+      if (!info.isReact19) return;
+
+      assertEquals(getRecommendedSSRMethod(), "readable-stream");
     });
 
     it("recommends readable-stream for React 18 with streaming", () => {
       const info = getReactVersionInfo();
-      if (info.isReact18 && info.features.renderToReadableStream) {
-        const method = getRecommendedSSRMethod();
-        assertEquals(method, "readable-stream");
-      }
+      if (!info.isReact18 || !info.features.renderToReadableStream) return;
+
+      assertEquals(getRecommendedSSRMethod(), "readable-stream");
     });
 
     it("valid SSR method is always returned", () => {
@@ -143,7 +140,10 @@ describe("React Version Detector", () => {
 
       if (method === "readable-stream") {
         assertEquals(info.features.renderToReadableStream, true);
-      } else if (method === "stream") {
+        return;
+      }
+
+      if (method === "stream") {
         assertEquals(info.features.renderToPipeableStream, true);
       }
     });
@@ -158,7 +158,6 @@ describe("React Version Detector", () => {
     });
 
     it("marks compatible when all features available", () => {
-      const _info = getReactVersionInfo();
       const res = checkVersionCompatibility(["renderToString"]);
       assertEquals(res.compatible, true);
       assertEquals(res.errors.length, 0);
@@ -166,45 +165,40 @@ describe("React Version Detector", () => {
 
     it("generates warnings for React 19 features on older versions", () => {
       const info = getReactVersionInfo();
-      if (!info.isReact19) {
-        const res = checkVersionCompatibility(["useFormStatus"]);
-        const hasWarning = res.warnings.some((w) => w.includes("useFormStatus"));
-        assertEquals(hasWarning, true);
-      }
+      if (info.isReact19) return;
+
+      const res = checkVersionCompatibility(["useFormStatus"]);
+      assertEquals(res.warnings.some((w) => w.includes("useFormStatus")), true);
     });
 
     it("generates errors for React 18 features on React 17", () => {
       const info = getReactVersionInfo();
-      if (info.major < 18) {
-        const res = checkVersionCompatibility(["streaming"]);
-        assertEquals(res.compatible, false);
-        const hasError = res.errors.some((e) => e.includes("streaming"));
-        assertEquals(hasError, true);
-      }
+      if (info.major >= 18) return;
+
+      const res = checkVersionCompatibility(["streaming"]);
+      assertEquals(res.compatible, false);
+      assertEquals(res.errors.some((e) => e.includes("streaming")), true);
     });
 
     it("handles multiple incompatible features", () => {
       const info = getReactVersionInfo();
-      if (info.major < 18) {
-        const res = checkVersionCompatibility([
-          "transitions",
-          "suspense",
-          "renderToReadableStream",
-        ]);
-        assertEquals(res.compatible, false);
-        assert(res.errors.length >= 3);
-      }
+      if (info.major >= 18) return;
+
+      const res = checkVersionCompatibility([
+        "transitions",
+        "suspense",
+        "renderToReadableStream",
+      ]);
+      assertEquals(res.compatible, false);
+      assert(res.errors.length >= 3);
     });
 
     it("categorizes React 19 features as warnings not errors", () => {
       const info = getReactVersionInfo();
-      if (!info.isReact19) {
-        const res = checkVersionCompatibility([
-          "useOptimistic",
-          "serverActions",
-        ]);
-        assert(res.warnings.length >= 2);
-      }
+      if (info.isReact19) return;
+
+      const res = checkVersionCompatibility(["useOptimistic", "serverActions"]);
+      assert(res.warnings.length >= 2);
     });
   });
 
@@ -219,16 +213,16 @@ describe("React Version Detector", () => {
     it("cache reset function exists for testing", () => {
       assertEquals(typeof __resetReactVersionCacheForTests, "function");
       __resetReactVersionCacheForTests();
-      const info = getReactVersionInfo();
-      assert(info !== null);
+      assert(getReactVersionInfo() !== null);
     });
   });
 
   describe("Version Flags", () => {
     it("sets correct version flags for detected version", () => {
       const info = getReactVersionInfo();
-      const flags = [info.isReact17, info.isReact18, info.isReact19];
-      const trueCount = flags.filter(Boolean).length;
+      const trueCount = [info.isReact17, info.isReact18, info.isReact19].filter(
+        Boolean,
+      ).length;
 
       assert(trueCount >= 1);
     });
@@ -238,9 +232,15 @@ describe("React Version Detector", () => {
 
       if (info.major === 17) {
         assertEquals(info.isReact17, true);
-      } else if (info.major === 18) {
+        return;
+      }
+
+      if (info.major === 18) {
         assertEquals(info.isReact18, true);
-      } else if (info.major === 19) {
+        return;
+      }
+
+      if (info.major === 19) {
         assertEquals(info.isReact19, true);
       }
     });

@@ -16,7 +16,6 @@ import {
 } from "./pull.ts";
 import type { ApiClient } from "../shared/config.ts";
 
-// Mock client creator - returns ApiClient-compatible mock
 function createMockClient(overrides: {
   get?: (url: string, params?: unknown) => Promise<unknown>;
   post?: (url: string, body?: unknown) => Promise<unknown>;
@@ -27,157 +26,181 @@ function createMockClient(overrides: {
     put: () => Promise.resolve({}),
     patch: () => Promise.resolve({}),
     delete: () => Promise.resolve({}),
-  } as unknown as ApiClient;
+  } as ApiClient;
 }
 
-// Test resolvePullSource - priority order: env > release > branch > main
+function mockFilesResponse(paths: string[], next?: string): Promise<unknown> {
+  return Promise.resolve({
+    data: paths.map((path) => ({
+      path,
+      size: 100,
+      type: "file",
+      created_at: "",
+      updated_at: "",
+    })),
+    page_info: { next },
+  });
+}
+
+function mockFileContentResponse(content: string): Promise<unknown> {
+  return Promise.resolve({
+    path: "pages/index.tsx",
+    content,
+    size: content.length,
+  });
+}
+
 describe("resolvePullSource", () => {
   it("should return main source when no options", () => {
     const options: PullOptions = {};
-    const result = resolvePullSource(options);
-    assertEquals(result, { type: "main" });
+    assertEquals(resolvePullSource(options), { type: "main" });
   });
 
   it("should return branch source when branch is specified", () => {
     const options: PullOptions = { branch: "feature-x" };
-    const result = resolvePullSource(options);
-    assertEquals(result, { type: "branch", name: "feature-x" });
+    assertEquals(resolvePullSource(options), { type: "branch", name: "feature-x" });
   });
 
   it("should return main for branch='main'", () => {
     const options: PullOptions = { branch: "main" };
-    const result = resolvePullSource(options);
-    assertEquals(result, { type: "main" });
+    assertEquals(resolvePullSource(options), { type: "main" });
   });
 
   it("should return environment source when env is specified", () => {
     const options: PullOptions = { env: "production" };
-    const result = resolvePullSource(options);
-    assertEquals(result, { type: "environment", name: "production" });
+    assertEquals(resolvePullSource(options), { type: "environment", name: "production" });
   });
 
   it("should return release source when release is specified", () => {
     const options: PullOptions = { release: "v1.2.0" };
-    const result = resolvePullSource(options);
-    assertEquals(result, { type: "release", version: "v1.2.0" });
+    assertEquals(resolvePullSource(options), { type: "release", version: "v1.2.0" });
   });
 
   it("should prioritize env over release", () => {
     const options: PullOptions = { env: "production", release: "v1.2.0" };
-    const result = resolvePullSource(options);
-    assertEquals(result, { type: "environment", name: "production" });
+    assertEquals(resolvePullSource(options), { type: "environment", name: "production" });
   });
 
   it("should prioritize env over branch", () => {
     const options: PullOptions = { env: "production", branch: "feature-x" };
-    const result = resolvePullSource(options);
-    assertEquals(result, { type: "environment", name: "production" });
+    assertEquals(resolvePullSource(options), { type: "environment", name: "production" });
   });
 
   it("should prioritize release over branch", () => {
     const options: PullOptions = { release: "v1.2.0", branch: "feature-x" };
-    const result = resolvePullSource(options);
-    assertEquals(result, { type: "release", version: "v1.2.0" });
+    assertEquals(resolvePullSource(options), { type: "release", version: "v1.2.0" });
   });
 
   it("should prioritize env over release and branch", () => {
     const options: PullOptions = { env: "staging", release: "v1.2.0", branch: "feature-x" };
-    const result = resolvePullSource(options);
-    assertEquals(result, { type: "environment", name: "staging" });
+    assertEquals(resolvePullSource(options), { type: "environment", name: "staging" });
   });
 });
 
-// Test buildFilesListUrl
 describe("buildFilesListUrl", () => {
   it("should build main files URL", () => {
     const source: PullSource = { type: "main" };
-    const url = buildFilesListUrl("my-project", source);
-    assertEquals(url, "/projects/my-project/files");
+    assertEquals(buildFilesListUrl("my-project", source), "/projects/my-project/files");
   });
 
   it("should build branch files URL", () => {
     const source: PullSource = { type: "branch", name: "feature-x" };
-    const url = buildFilesListUrl("my-project", source);
-    assertEquals(url, "/projects/my-project/branches/feature-x/files");
+    assertEquals(
+      buildFilesListUrl("my-project", source),
+      "/projects/my-project/branches/feature-x/files",
+    );
   });
 
   it("should encode branch name in URL", () => {
     const source: PullSource = { type: "branch", name: "feature/new stuff" };
-    const url = buildFilesListUrl("my-project", source);
-    assertEquals(url, "/projects/my-project/branches/feature%2Fnew%20stuff/files");
+    assertEquals(
+      buildFilesListUrl("my-project", source),
+      "/projects/my-project/branches/feature%2Fnew%20stuff/files",
+    );
   });
 
   it("should build environment files URL", () => {
     const source: PullSource = { type: "environment", name: "production" };
-    const url = buildFilesListUrl("my-project", source);
-    assertEquals(url, "/projects/my-project/environments/production/files");
+    assertEquals(
+      buildFilesListUrl("my-project", source),
+      "/projects/my-project/environments/production/files",
+    );
   });
 
   it("should encode environment name in URL", () => {
     const source: PullSource = { type: "environment", name: "my env" };
-    const url = buildFilesListUrl("my-project", source);
-    assertEquals(url, "/projects/my-project/environments/my%20env/files");
+    assertEquals(
+      buildFilesListUrl("my-project", source),
+      "/projects/my-project/environments/my%20env/files",
+    );
   });
 
   it("should build release files URL", () => {
     const source: PullSource = { type: "release", version: "v1.2.0" };
-    const url = buildFilesListUrl("my-project", source);
-    assertEquals(url, "/projects/my-project/releases/v1.2.0/files");
+    assertEquals(
+      buildFilesListUrl("my-project", source),
+      "/projects/my-project/releases/v1.2.0/files",
+    );
   });
 
   it("should encode release version in URL", () => {
     const source: PullSource = { type: "release", version: "v1.2.0+build" };
-    const url = buildFilesListUrl("my-project", source);
-    assertEquals(url, "/projects/my-project/releases/v1.2.0%2Bbuild/files");
+    assertEquals(
+      buildFilesListUrl("my-project", source),
+      "/projects/my-project/releases/v1.2.0%2Bbuild/files",
+    );
   });
 });
 
-// Test buildFileContentUrl
 describe("buildFileContentUrl", () => {
   it("should build main file content URL", () => {
     const source: PullSource = { type: "main" };
-    const url = buildFileContentUrl("my-project", "pages/index.tsx", source);
-    assertEquals(url, "/projects/my-project/files/pages%2Findex.tsx");
+    assertEquals(
+      buildFileContentUrl("my-project", "pages/index.tsx", source),
+      "/projects/my-project/files/pages%2Findex.tsx",
+    );
   });
 
   it("should build branch file content URL", () => {
     const source: PullSource = { type: "branch", name: "feature-x" };
-    const url = buildFileContentUrl("my-project", "pages/index.tsx", source);
-    assertEquals(url, "/projects/my-project/branches/feature-x/files/pages%2Findex.tsx");
+    assertEquals(
+      buildFileContentUrl("my-project", "pages/index.tsx", source),
+      "/projects/my-project/branches/feature-x/files/pages%2Findex.tsx",
+    );
   });
 
   it("should build environment file content URL", () => {
     const source: PullSource = { type: "environment", name: "production" };
-    const url = buildFileContentUrl("my-project", "pages/index.tsx", source);
-    assertEquals(url, "/projects/my-project/environments/production/files/pages%2Findex.tsx");
+    assertEquals(
+      buildFileContentUrl("my-project", "pages/index.tsx", source),
+      "/projects/my-project/environments/production/files/pages%2Findex.tsx",
+    );
   });
 
   it("should build release file content URL", () => {
     const source: PullSource = { type: "release", version: "v1.2.0" };
-    const url = buildFileContentUrl("my-project", "pages/index.tsx", source);
-    assertEquals(url, "/projects/my-project/releases/v1.2.0/files/pages%2Findex.tsx");
+    assertEquals(
+      buildFileContentUrl("my-project", "pages/index.tsx", source),
+      "/projects/my-project/releases/v1.2.0/files/pages%2Findex.tsx",
+    );
   });
 
   it("should encode file path with special characters", () => {
     const source: PullSource = { type: "main" };
-    const url = buildFileContentUrl("my-project", "pages/[id]/index.tsx", source);
-    assertEquals(url, "/projects/my-project/files/pages%2F%5Bid%5D%2Findex.tsx");
+    assertEquals(
+      buildFileContentUrl("my-project", "pages/[id]/index.tsx", source),
+      "/projects/my-project/files/pages%2F%5Bid%5D%2Findex.tsx",
+    );
   });
 });
 
-// Test listAllFiles
 describe("listAllFiles", () => {
   it("should fetch files from main", async () => {
     let capturedUrl = "";
     const mockClient = createMockClient({
       get: (url: string) => {
         capturedUrl = url;
-        return Promise.resolve({
-          data: [
-            { path: "pages/index.tsx", size: 100, type: "file", created_at: "", updated_at: "" },
-          ],
-          page_info: { next: undefined },
-        });
+        return mockFilesResponse(["pages/index.tsx"]);
       },
     });
 
@@ -194,12 +217,7 @@ describe("listAllFiles", () => {
     const mockClient = createMockClient({
       get: (url: string) => {
         capturedUrl = url;
-        return Promise.resolve({
-          data: [
-            { path: "pages/index.tsx", size: 100, type: "file", created_at: "", updated_at: "" },
-          ],
-          page_info: { next: undefined },
-        });
+        return mockFilesResponse(["pages/index.tsx"]);
       },
     });
 
@@ -215,12 +233,7 @@ describe("listAllFiles", () => {
     const mockClient = createMockClient({
       get: (url: string) => {
         capturedUrl = url;
-        return Promise.resolve({
-          data: [
-            { path: "pages/index.tsx", size: 100, type: "file", created_at: "", updated_at: "" },
-          ],
-          page_info: { next: undefined },
-        });
+        return mockFilesResponse(["pages/index.tsx"]);
       },
     });
 
@@ -236,12 +249,7 @@ describe("listAllFiles", () => {
     const mockClient = createMockClient({
       get: (url: string) => {
         capturedUrl = url;
-        return Promise.resolve({
-          data: [
-            { path: "pages/index.tsx", size: 100, type: "file", created_at: "", updated_at: "" },
-          ],
-          page_info: { next: undefined },
-        });
+        return mockFilesResponse(["pages/index.tsx"]);
       },
     });
 
@@ -257,20 +265,8 @@ describe("listAllFiles", () => {
     const mockClient = createMockClient({
       get: () => {
         callCount++;
-        if (callCount === 1) {
-          return Promise.resolve({
-            data: [
-              { path: "pages/index.tsx", size: 100, type: "file", created_at: "", updated_at: "" },
-            ],
-            page_info: { next: "cursor1" },
-          });
-        }
-        return Promise.resolve({
-          data: [
-            { path: "pages/about.tsx", size: 50, type: "file", created_at: "", updated_at: "" },
-          ],
-          page_info: { next: undefined },
-        });
+        if (callCount === 1) return mockFilesResponse(["pages/index.tsx"], "cursor1");
+        return mockFilesResponse(["pages/about.tsx"]);
       },
     });
 
@@ -284,18 +280,13 @@ describe("listAllFiles", () => {
   });
 });
 
-// Test getFileContent
 describe("getFileContent", () => {
   it("should fetch file content from main", async () => {
     let capturedUrl = "";
     const mockClient = createMockClient({
       get: (url: string) => {
         capturedUrl = url;
-        return Promise.resolve({
-          path: "pages/index.tsx",
-          content: "export default function Home() {}",
-          size: 33,
-        });
+        return mockFileContentResponse("export default function Home() {}");
       },
     });
 
@@ -311,11 +302,7 @@ describe("getFileContent", () => {
     const mockClient = createMockClient({
       get: (url: string) => {
         capturedUrl = url;
-        return Promise.resolve({
-          path: "pages/index.tsx",
-          content: "export default function Home() {}",
-          size: 33,
-        });
+        return mockFileContentResponse("export default function Home() {}");
       },
     });
 
@@ -334,11 +321,7 @@ describe("getFileContent", () => {
     const mockClient = createMockClient({
       get: (url: string) => {
         capturedUrl = url;
-        return Promise.resolve({
-          path: "pages/index.tsx",
-          content: "export default function Home() {}",
-          size: 33,
-        });
+        return mockFileContentResponse("export default function Home() {}");
       },
     });
 
@@ -351,12 +334,7 @@ describe("getFileContent", () => {
 
   it("should add trailing newline if missing", async () => {
     const mockClient = createMockClient({
-      get: () =>
-        Promise.resolve({
-          path: "pages/index.tsx",
-          content: "export default function Home() {}",
-          size: 33,
-        }),
+      get: () => mockFileContentResponse("export default function Home() {}"),
     });
 
     const source: PullSource = { type: "main" };
@@ -367,12 +345,7 @@ describe("getFileContent", () => {
 
   it("should not add extra newline if already present", async () => {
     const mockClient = createMockClient({
-      get: () =>
-        Promise.resolve({
-          path: "pages/index.tsx",
-          content: "export default function Home() {}\n",
-          size: 34,
-        }),
+      get: () => mockFileContentResponse("export default function Home() {}\n"),
     });
 
     const source: PullSource = { type: "main" };

@@ -1,7 +1,3 @@
-/**
- * ResponseBuilder - Fluent API for constructing HTTP responses
- */
-
 import type { ResponseBuilderConfig, SecurityConfig } from "./types.ts";
 import * as fluentMethods from "./fluent-methods.ts";
 import type { FluentMethodsContext } from "./fluent-methods.ts";
@@ -10,7 +6,6 @@ import type { ResponseMethodsContext } from "./response-methods.ts";
 import * as staticHelpers from "./static-helpers.ts";
 import { generateNonce } from "./security-handler.ts";
 
-/** Fluent response builder combining fluent methods and response methods */
 export class ResponseBuilder implements FluentMethodsContext, ResponseMethodsContext {
   public headers: Headers;
   public status: number;
@@ -57,14 +52,8 @@ export class ResponseBuilder implements FluentMethodsContext, ResponseMethodsCon
   static stream = staticHelpers.stream;
 }
 
-// Initialize the ResponseBuilder class reference in static-helpers
-staticHelpers.setResponseBuilderClass(
-  ResponseBuilder as unknown as Parameters<typeof staticHelpers.setResponseBuilderClass>[0],
-);
+staticHelpers.setResponseBuilderClass(ResponseBuilder);
 
-/** Factory function for creating preconfigured builders */
-export function createResponseBuilder(
-  config?: ResponseBuilderConfig,
-): ResponseBuilder {
+export function createResponseBuilder(config?: ResponseBuilderConfig): ResponseBuilder {
   return new ResponseBuilder(config);
 }

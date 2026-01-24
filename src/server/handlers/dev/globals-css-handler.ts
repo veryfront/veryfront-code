@@ -15,9 +15,7 @@ export class GlobalsCSSHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "GlobalsCSSHandler",
     priority: PRIORITY_HIGH_DEV as HandlerPriority,
-    patterns: [
-      { pattern: "/_vf_styles/globals.css", exact: true, method: "GET" },
-    ],
+    patterns: [{ pattern: "/_vf_styles/globals.css", exact: true, method: "GET" }],
     // Enable in all modes for consistent styling
     enabled: () => true,
   };
@@ -32,31 +30,25 @@ export class GlobalsCSSHandler extends BaseHandler {
       // Load stylesheet from project root (configurable via tailwind.stylesheet)
       const stylesheetPath = ctx.config?.tailwind?.stylesheet || "globals.css";
       const filePath = joinPath(ctx.projectDir, stylesheetPath);
+      const responseBuilder = this.createResponseBuilder(ctx).withCache("no-cache"); // No caching for HMR to work
 
       try {
         const rawCss = await ctx.adapter.fs.readFile(filePath);
-
-        // Compile using Tailwind's API - properly handles @theme, @utility, @variant, etc.
         const css = await compileGlobalsCSS(rawCss);
 
-        const response = this.createResponseBuilder(ctx)
-          .withCache("no-cache") // No caching for HMR to work
-          .withContentType("text/css; charset=utf-8", css, HTTP_OK);
-
-        return this.respond(response);
+        return this.respond(
+          responseBuilder.withContentType("text/css; charset=utf-8", css, HTTP_OK),
+        );
       } catch (error) {
         this.logDebug(`${stylesheetPath} not found`, { error: this.getErrorMessage(error) }, ctx);
 
-        // Return empty CSS if file doesn't exist
-        const response = this.createResponseBuilder(ctx)
-          .withCache("no-cache")
-          .withContentType(
+        return this.respond(
+          responseBuilder.withContentType(
             "text/css; charset=utf-8",
             `/* ${stylesheetPath} not found */`,
             HTTP_NOT_FOUND,
-          );
-
-        return this.respond(response);
+          ),
+        );
       }
     });
   }

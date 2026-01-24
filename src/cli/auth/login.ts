@@ -29,12 +29,14 @@ export async function validateToken(token: string): Promise<UserInfo | null> {
     const response = await fetch(`${getApiUrl()}/me`, {
       headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
     });
+
     if (!response.ok) {
       // Consume response body to prevent resource leak
       await response.body?.cancel();
       return null;
     }
-    return await response.json() as UserInfo;
+
+    return (await response.json()) as UserInfo;
   } catch {
     return null;
   }
@@ -47,14 +49,12 @@ async function promptAuthMethod(): Promise<AuthMethod> {
 
   let selectedIndex = 0;
 
-  function drawOptions() {
+  function drawOptions(): void {
     for (let i = 0; i < AUTH_OPTIONS.length; i++) {
       const opt = AUTH_OPTIONS[i]!;
-      if (i === selectedIndex) {
-        console.log("  " + brand("❯") + " " + opt.label);
-      } else {
-        console.log("    " + muted(opt.label));
-      }
+      console.log(
+        i === selectedIndex ? "  " + brand("❯") + " " + opt.label : "    " + muted(opt.label),
+      );
     }
   }
 
@@ -76,19 +76,22 @@ async function promptAuthMethod(): Promise<AuthMethod> {
         // Ctrl+C - default to token (will prompt)
         result = "token";
         break;
-      } else if (key === "\r" || key === "\n") {
+      }
+
+      if (key === "\r" || key === "\n") {
         result = AUTH_OPTIONS[selectedIndex]?.id ?? "token";
         break;
-      } else if (key === "\x1b[A" || key === "k") {
+      }
+
+      if (key === "\x1b[A" || key === "k") {
         selectedIndex = Math.max(0, selectedIndex - 1);
       } else if (key === "\x1b[B" || key === "j") {
         selectedIndex = Math.min(AUTH_OPTIONS.length - 1, selectedIndex + 1);
       } else if (key >= "1" && key <= "4") {
-        result = AUTH_OPTIONS[parseInt(key) - 1]?.id ?? "token";
+        result = AUTH_OPTIONS[Number.parseInt(key, 10) - 1]?.id ?? "token";
         break;
       }
 
-      // Redraw options
       writeStdout(`\x1b[${AUTH_OPTIONS.length}A`);
       for (let i = 0; i < AUTH_OPTIONS.length; i++) {
         writeStdout("\x1b[2K\x1b[1B");
@@ -115,7 +118,7 @@ async function loginWithOAuth(provider: "google" | "github" | "microsoft"): Prom
 
   console.log("  " + dim("Starting authentication server..."));
 
-  let server;
+  let server: Awaited<ReturnType<typeof startCallbackServer>>;
   try {
     server = await startCallbackServer();
   } catch (err) {
@@ -171,13 +174,14 @@ async function loginWithToken(): Promise<string | null> {
   console.log("  " + dim("You can get a token from veryfront.com/settings/api-keys"));
   console.log();
 
-  const token = await promptUser("  API token: ");
-  if (!token.trim()) {
+  const token = (await promptUser("  API token: ")).trim();
+  if (!token) {
     console.log();
     console.log("  " + error("✗") + " No token entered");
     return null;
   }
-  return token.trim();
+
+  return token;
 }
 
 export async function login(method?: AuthMethod): Promise<UserInfo | null> {

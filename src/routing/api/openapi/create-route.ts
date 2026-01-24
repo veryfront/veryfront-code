@@ -1,28 +1,3 @@
-/**
- * OpenAPI Route Wrapper
- *
- * Creates route handlers with OpenAPI metadata for automatic documentation.
- *
- * @module routing/api/openapi/create-route
- *
- * @example
- * ```typescript
- * import { createRoute, z } from "veryfront/openapi";
- *
- * export const GET = createRoute({
- *   summary: "Get user by ID",
- *   params: z.object({ id: z.string().uuid() }),
- *   response: {
- *     200: z.object({ id: z.string(), name: z.string() }),
- *     404: { schema: z.object({ error: z.string() }), description: "Not found" },
- *   },
- *   handler: async (request, { params }) => {
- *     return Response.json({ id: params.id, name: "John" });
- *   },
- * });
- * ```
- */
-
 import type { z } from "zod";
 import { zodToJsonSchema } from "#veryfront/tool/schema";
 import {
@@ -32,15 +7,6 @@ import {
   type WrappedHandler,
 } from "./types.ts";
 
-/**
- * Create an OpenAPI-documented route handler.
- *
- * Wraps a route handler with OpenAPI metadata for automatic documentation generation.
- * The handler signature remains unchanged - this just attaches metadata via a Symbol.
- *
- * @param config - Route configuration with schemas and handler
- * @returns The handler function with OpenAPI metadata attached
- */
 export function createRoute<
   TParams extends z.ZodTypeAny = z.ZodTypeAny,
   TQuery extends z.ZodTypeAny = z.ZodTypeAny,
@@ -48,7 +14,6 @@ export function createRoute<
 >(config: OpenAPIRouteConfig<TParams, TQuery, TBody>): WrappedHandler {
   const { handler, ...openApiConfig } = config;
 
-  // Build OpenAPI metadata by converting Zod schemas to JSON Schema
   const metadata: OpenAPIRouteMetadata = {
     summary: openApiConfig.summary,
     description: openApiConfig.description,
@@ -56,7 +21,6 @@ export function createRoute<
     deprecated: openApiConfig.deprecated,
   };
 
-  // Convert params schema
   if (openApiConfig.params) {
     try {
       metadata.params = zodToJsonSchema(openApiConfig.params);
@@ -65,7 +29,6 @@ export function createRoute<
     }
   }
 
-  // Convert query schema
   if (openApiConfig.query) {
     try {
       metadata.query = zodToJsonSchema(openApiConfig.query);
@@ -74,7 +37,6 @@ export function createRoute<
     }
   }
 
-  // Convert body schema
   if (openApiConfig.body) {
     try {
       metadata.body = zodToJsonSchema(openApiConfig.body);
@@ -83,13 +45,13 @@ export function createRoute<
     }
   }
 
-  // Convert response schemas
   if (openApiConfig.response) {
     metadata.responses = {};
 
     for (const [statusCode, schemaOrConfig] of Object.entries(openApiConfig.response)) {
+      const status = Number(statusCode);
+
       try {
-        // Handle both z.ZodType and { schema, description } formats
         const isConfigObject = typeof schemaOrConfig === "object" &&
           schemaOrConfig !== null &&
           "schema" in schemaOrConfig;
@@ -103,7 +65,7 @@ export function createRoute<
           : undefined;
 
         metadata.responses[statusCode] = {
-          description: description || getDefaultStatusDescription(Number(statusCode)),
+          description: description ?? getDefaultStatusDescription(status),
           content: {
             "application/json": {
               schema: zodToJsonSchema(zodSchema),
@@ -111,24 +73,19 @@ export function createRoute<
           },
         };
       } catch {
-        // Silently skip invalid schemas
         metadata.responses[statusCode] = {
-          description: getDefaultStatusDescription(Number(statusCode)),
+          description: getDefaultStatusDescription(status),
         };
       }
     }
   }
 
-  // Attach metadata to handler using Symbol
   const wrappedHandler = handler as WrappedHandler;
   wrappedHandler[OPENAPI_METADATA] = metadata;
 
   return wrappedHandler;
 }
 
-/**
- * Get default description for common HTTP status codes.
- */
 function getDefaultStatusDescription(statusCode: number): string {
   const descriptions: Record<number, string> = {
     200: "Successful response",
@@ -146,9 +103,7 @@ function getDefaultStatusDescription(statusCode: number): string {
     503: "Service unavailable",
   };
 
-  return descriptions[statusCode] || `Response with status ${statusCode}`;
+  return descriptions[statusCode] ?? `Response with status ${statusCode}`;
 }
 
-// Re-export z from zod for convenience
-// Users can: import { createRoute, z } from "veryfront/openapi";
 export { z } from "zod";

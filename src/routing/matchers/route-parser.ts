@@ -1,21 +1,29 @@
 import type { Route } from "./types.ts";
 
 export function parseRoute(pattern: string, page: string): Route {
-  const orderedParamNames: string[] = [];
+  const paramNames: string[] = [];
   let isCatchAll = false;
   let isOptionalCatchAll = false;
 
   for (const match of pattern.matchAll(/\[\[\.\.\.(\w+)\]\]|\[\.\.\.(\w+)\]|\[(\w+)\]/g)) {
-    if (match[1]) {
-      orderedParamNames.push(match[1]);
+    const optionalCatchAll = match[1];
+    const catchAll = match[2];
+    const param = match[3];
+
+    if (optionalCatchAll) {
+      paramNames.push(optionalCatchAll);
       isOptionalCatchAll = true;
       isCatchAll = true;
-    } else if (match[2]) {
-      orderedParamNames.push(match[2]);
-      isCatchAll = true;
-    } else if (match[3]) {
-      orderedParamNames.push(match[3]);
+      continue;
     }
+
+    if (catchAll) {
+      paramNames.push(catchAll);
+      isCatchAll = true;
+      continue;
+    }
+
+    if (param) paramNames.push(param);
   }
 
   let regexPattern = pattern
@@ -35,7 +43,7 @@ export function parseRoute(pattern: string, page: string): Route {
     pattern,
     page,
     regex: new RegExp(`^${regexPattern}$`),
-    paramNames: orderedParamNames,
+    paramNames,
     isCatchAll,
     isOptionalCatchAll,
   };

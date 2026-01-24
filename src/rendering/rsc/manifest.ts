@@ -30,14 +30,17 @@ export async function buildRscModules(
 
   return Promise.all(
     allEntries.map(async (e) => {
-      let exportsList: string[] = ["default"];
-      try {
-        const text = await adapter.fs.readFile(e.path);
-        const names = extractExportNames(text);
-        if (names.length > 0) exportsList = ["default", ...names];
-      } catch {
-        // ignore read errors; use default only
-      }
+      const exportsList = await (async (): Promise<string[]> => {
+        try {
+          const text = await adapter.fs.readFile(e.path);
+          const names = extractExportNames(text);
+          return names.length > 0 ? ["default", ...names] : ["default"];
+        } catch {
+          // ignore read errors; use default only
+          return ["default"];
+        }
+      })();
+
       return {
         id: e.id,
         clientRef: `/app${e.rel}#default`,
@@ -52,11 +55,12 @@ export async function buildVersionedManifest(
   graphIds: GraphIds | undefined,
 ): Promise<Manifest> {
   const modules = await buildRscModules(projectDir, graphIds);
-  const enc = new TextEncoder();
-  const data = enc.encode(JSON.stringify(modules));
+  const data = new TextEncoder().encode(JSON.stringify(modules));
+
   // djb2 over bytes -> hex
   let h = HASH_SEED_DJB2;
-  for (let i = 0; i < data.length; i++) h = ((h << 5) + h) ^ data[i]!;
+  for (let i = 0; i < data.length; i++) h = ((h << 5) + h) ^ data[i];
   const hash = (h >>> 0).toString(16);
+
   return { version: 1, hash, modules };
 }

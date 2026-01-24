@@ -1,19 +1,13 @@
-/**
- * ServiceNow OAuth Callback Route
- *
- * Handles the OAuth callback and exchanges the code for tokens.
- */
-
 import { setServiceNowTokens } from "../../../../../lib/token-store.ts";
 
-const getEnv = (name: string): string | undefined => {
+function getEnv(name: string): string | undefined {
   if (typeof Deno !== "undefined") {
     // @ts-ignore: Deno global
     return Deno.env.get(name);
   }
   // @ts-ignore: Node process
   return globalThis.process?.env?.[name];
-};
+}
 
 export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url);
@@ -21,21 +15,18 @@ export async function GET(request: Request): Promise<Response> {
   const error = url.searchParams.get("error");
   const errorDescription = url.searchParams.get("error_description");
 
-  const baseUrl = getEnv("NEXT_PUBLIC_APP_URL") || `${url.protocol}//${url.host}`;
+  const baseUrl = getEnv("NEXT_PUBLIC_APP_URL") ?? `${url.protocol}//${url.host}`;
 
   if (error) {
     console.error("ServiceNow OAuth error:", error, errorDescription);
+    const description = encodeURIComponent(errorDescription ?? error);
     return Response.redirect(
-      `${baseUrl}/?error=servicenow_oauth_failed&description=${
-        encodeURIComponent(errorDescription || error)
-      }`,
+      `${baseUrl}/?error=servicenow_oauth_failed&description=${description}`,
       302,
     );
   }
 
-  if (!code) {
-    return Response.redirect(`${baseUrl}/?error=no_code`, 302);
-  }
+  if (!code) return Response.redirect(`${baseUrl}/?error=no_code`, 302);
 
   const instance = getEnv("SERVICENOW_INSTANCE");
   const clientId = getEnv("SERVICENOW_CLIENT_ID");
@@ -46,16 +37,12 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   const instanceUrl = instance.includes("://") ? instance : `https://${instance}`;
-
   const redirectUri = `${baseUrl}/api/auth/servicenow/callback`;
 
   try {
-    // Exchange code for tokens
     const tokenResponse = await fetch(`${instanceUrl}/oauth_token.do`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         grant_type: "authorization_code",
         code,
@@ -66,14 +53,12 @@ export async function GET(request: Request): Promise<Response> {
     });
 
     if (!tokenResponse.ok) {
-      const errorText = await tokenResponse.text();
-      console.error("ServiceNow token exchange failed:", errorText);
+      console.error("ServiceNow token exchange failed:", await tokenResponse.text());
       return Response.redirect(`${baseUrl}/?error=token_exchange_failed`, 302);
     }
 
     const tokens = await tokenResponse.json();
 
-    // Store tokens
     await setServiceNowTokens({
       accessToken: tokens.access_token,
       refreshToken: tokens.refresh_token,

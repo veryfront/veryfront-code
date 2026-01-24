@@ -1,13 +1,5 @@
-/**
- * CLI command definitions and documentation
- * @module
- */
-
 import type { CommandRegistry } from "./types.ts";
 
-/**
- * Complete registry of all available CLI commands with their help information
- */
 export const COMMANDS: CommandRegistry = {
   init: {
     name: "init",
@@ -468,11 +460,7 @@ export const COMMANDS: CommandRegistry = {
         description: "Preview without executing",
       },
     ],
-    examples: [
-      "veryfront up",
-      "veryfront up --dry-run",
-      "veryfront up --force",
-    ],
+    examples: ["veryfront up", "veryfront up --dry-run", "veryfront up --force"],
     notes: [
       "This is the default command when running 'veryfront' without arguments",
       "Automatically handles: authentication, project creation, push, and deploy",

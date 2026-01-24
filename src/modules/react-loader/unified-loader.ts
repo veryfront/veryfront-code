@@ -3,9 +3,11 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { transformToESM } from "#veryfront/transforms/esm/index.ts";
 import type { TransformOptions } from "#veryfront/transforms/esm/types.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getProjectTmpDir } from "./temp-directory.ts";
 import type { ComponentMap, ComponentSource, LoadComponentOptions } from "./types.ts";
-import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+
+type TransformedComponent = { name: string; code: string };
 
 export function loadComponentsUnified(
   components: ComponentSource[],
@@ -13,73 +15,66 @@ export function loadComponentsUnified(
   adapter: RuntimeAdapter,
   options?: LoadComponentOptions,
 ): Promise<ComponentMap> {
-  return withSpan("modules.loadComponentsUnified", async () => {
-    const projectId = options?.projectId || projectDir;
-    const dev = options?.dev ?? true;
-    const moduleServerUrl = options?.moduleServerUrl;
+  return withSpan(
+    "modules.loadComponentsUnified",
+    async () => {
+      const projectId = options?.projectId ?? projectDir;
+      const dev = options?.dev ?? true;
+      const moduleServerUrl = options?.moduleServerUrl;
 
-    const transformOpts: TransformOptions = { projectId, dev, moduleServerUrl };
-    const transformedComponents = await transformAllComponents(
-      components,
-      projectDir,
-      adapter,
-      transformOpts,
-    );
+      const transformOpts: TransformOptions = { projectId, dev, moduleServerUrl };
+      const transformedComponents = await transformAllComponents(
+        components,
+        projectDir,
+        adapter,
+        transformOpts,
+      );
 
-    const baseTmp = await getProjectTmpDir(projectId);
-    const uniqueTmp = `unified-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    const tmpDir = join(baseTmp, uniqueTmp);
-    await adapter.fs.mkdir(tmpDir, { recursive: true });
+      const baseTmp = await getProjectTmpDir(projectId);
+      const uniqueTmp = `unified-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const tmpDir = join(baseTmp, uniqueTmp);
+      await adapter.fs.mkdir(tmpDir, { recursive: true });
 
-    try {
-      await writeComponentFiles(tmpDir, transformedComponents, adapter);
+      try {
+        await writeComponentFiles(tmpDir, transformedComponents, adapter);
 
-      const entryCode = generateEntryPoint(transformedComponents);
-      await adapter.fs.writeFile(join(tmpDir, "entry.js"), entryCode);
+        const entryCode = generateEntryPoint(transformedComponents);
+        await adapter.fs.writeFile(join(tmpDir, "entry.js"), entryCode);
 
-      return importUnifiedComponents(tmpDir, transformedComponents);
-    } finally {
-      await cleanupTempDirectory(tmpDir, adapter);
-    }
-  }, { "modules.projectDir": projectDir, "modules.componentCount": components.length });
+        return await importUnifiedComponents(tmpDir, transformedComponents);
+      } finally {
+        await cleanupTempDirectory(tmpDir, adapter);
+      }
+    },
+    { "modules.projectDir": projectDir, "modules.componentCount": components.length },
+  );
 }
 
-async function transformAllComponents(
+function transformAllComponents(
   components: ComponentSource[],
   projectDir: string,
   adapter: RuntimeAdapter,
   transformOpts: TransformOptions,
-): Promise<Array<{ name: string; code: string }>> {
-  return await Promise.all(
+): Promise<TransformedComponent[]> {
+  return Promise.all(
     components.map(async (comp) => ({
       name: comp.name,
-      code: await transformToESM(
-        comp.source,
-        comp.filePath,
-        projectDir,
-        adapter,
-        transformOpts,
-      ),
+      code: await transformToESM(comp.source, comp.filePath, projectDir, adapter, transformOpts),
     })),
   );
 }
 
 async function writeComponentFiles(
   tmpDir: string,
-  components: Array<{ name: string; code: string }>,
+  components: TransformedComponent[],
   adapter: RuntimeAdapter,
 ): Promise<void> {
   await Promise.all(
-    components.map(async (comp) => {
-      const fileName = `${comp.name}.js`;
-      await adapter.fs.writeFile(join(tmpDir, fileName), comp.code);
-    }),
+    components.map((comp) => adapter.fs.writeFile(join(tmpDir, `${comp.name}.js`), comp.code)),
   );
 }
 
-function generateEntryPoint(
-  components: Array<{ name: string; code: string }>,
-): string {
+function generateEntryPoint(components: TransformedComponent[]): string {
   const imports = components
     .map((comp) => `import { default as ${comp.name} } from './${comp.name}.js'`)
     .join("\n");
@@ -96,14 +91,13 @@ function generateEntryPoint(
 
 async function importUnifiedComponents(
   tmpDir: string,
-  components: Array<{ name: string; code: string }>,
+  components: TransformedComponent[],
 ): Promise<ComponentMap> {
-  const cacheBuster = Date.now();
-  const mod = await import(`file://${join(tmpDir, "entry.js")}?t=${cacheBuster}`);
+  const mod = await import(`file://${join(tmpDir, "entry.js")}?t=${Date.now()}`);
 
   const result: ComponentMap = {};
-  for (const comp of components) {
-    result[comp.name] = mod[comp.name];
+  for (const { name } of components) {
+    result[name] = mod[name];
   }
 
   return result;

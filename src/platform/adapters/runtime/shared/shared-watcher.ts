@@ -21,7 +21,11 @@ export async function setupNodeFsWatcher(
     const fs = await import("node:fs");
     const fsPromises = await import("node:fs/promises");
 
-    const exists = await fsPromises.access(path).then(() => true).catch(() => false);
+    const exists = await fsPromises
+      .access(path)
+      .then(() => true)
+      .catch(() => false);
+
     if (!exists) return;
 
     const watcher = fs.watch(path, { recursive: options.recursive }, (eventType, filename) => {
@@ -39,9 +43,8 @@ export async function setupNodeFsWatcher(
     });
 
     watcher.on("error", (error: Error) => {
-      if (!options.closed() && !options.signal?.aborted) {
-        options.onError(error, path);
-      }
+      if (options.closed() || options.signal?.aborted) return;
+      options.onError(error, path);
     });
 
     options.watchers.push(watcher);

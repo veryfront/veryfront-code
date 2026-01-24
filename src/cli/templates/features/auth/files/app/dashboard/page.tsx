@@ -9,27 +9,29 @@ interface User {
   createdAt: number;
 }
 
-export default function DashboardPage() {
+export default function DashboardPage(): React.JSX.Element | null {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    checkAuth();
+    void checkAuth();
   }, []);
 
-  async function checkAuth() {
+  async function checkAuth(): Promise<void> {
     try {
       const response = await fetch("/api/auth/me");
-      if (response.ok) {
-        const data = await response.json();
-        if (data.user) {
-          setUser(data.user);
-        } else {
-          globalThis.location.href = "/login";
-        }
-      } else {
+      if (!response.ok) {
         globalThis.location.href = "/login";
+        return;
       }
+
+      const data: { user?: User } = await response.json();
+      if (!data.user) {
+        globalThis.location.href = "/login";
+        return;
+      }
+
+      setUser(data.user);
     } catch (error) {
       console.error("Auth check failed:", error);
       globalThis.location.href = "/login";
@@ -38,7 +40,7 @@ export default function DashboardPage() {
     }
   }
 
-  async function handleLogout() {
+  async function handleLogout(): Promise<void> {
     await fetch("/api/auth/logout", { method: "POST" });
     globalThis.location.href = "/";
   }
@@ -49,9 +51,7 @@ export default function DashboardPage() {
     );
   }
 
-  if (!user) {
-    return null;
-  }
+  if (!user) return null;
 
   return (
     <div className="max-w-2xl mx-auto">

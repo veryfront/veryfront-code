@@ -1,22 +1,26 @@
-export default function HomePage() {
+export default function HomePage(): JSX.Element {
   return (
     <div>
-      <h1 className="text-4xl font-bold text-neutral-900 dark:text-white mb-4">
+      <h1 className="mb-4 text-4xl font-bold text-neutral-900 dark:text-white">
         Welcome to Veryfront
       </h1>
-      <p className="text-neutral-600 dark:text-neutral-400 mb-8">
-        Edit <code className="bg-neutral-100 dark:bg-neutral-800 px-1.5 py-0.5 rounded text-sm">app/page.tsx</code> to get started.
+      <p className="mb-8 text-neutral-600 dark:text-neutral-400">
+        Edit{" "}
+        <code className="rounded bg-neutral-100 px-1.5 py-0.5 text-sm dark:bg-neutral-800">
+          app/page.tsx
+        </code>{" "}
+        to get started.
       </p>
       <div className="flex gap-3">
         <a
           href="/about"
-          className="px-4 py-2 bg-blue-500 text-white rounded-full text-sm font-medium hover:bg-blue-600 transition-colors"
+          className="rounded-full bg-blue-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-600"
         >
           About
         </a>
         <a
           href="https://veryfront.com/docs"
-          className="px-4 py-2 bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-white rounded-full text-sm font-medium hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-colors"
+          className="rounded-full bg-neutral-100 px-4 py-2 text-sm font-medium text-neutral-900 transition-colors hover:bg-neutral-200 dark:bg-neutral-800 dark:text-white dark:hover:bg-neutral-700"
         >
           Documentation
         </a>

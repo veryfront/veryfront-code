@@ -1,19 +1,13 @@
-/**
- * Zendesk API Client
- *
- * Handles authentication and API calls to Zendesk REST API.
- */
-
 import { getZendeskTokens } from "./token-store.ts";
 
-const getEnv = (name: string): string | undefined => {
+function getEnv(name: string): string | undefined {
   if (typeof Deno !== "undefined") {
     // @ts-ignore: Deno global
     return Deno.env.get(name);
   }
   // @ts-ignore: Node process
   return globalThis.process?.env?.[name];
-};
+}
 
 export interface ZendeskTicket {
   id: number;
@@ -71,9 +65,7 @@ export class ZendeskClient {
 
   constructor() {
     const subdomain = getEnv("ZENDESK_SUBDOMAIN");
-    if (!subdomain) {
-      throw new Error("ZENDESK_SUBDOMAIN not configured");
-    }
+    if (!subdomain) throw new Error("ZENDESK_SUBDOMAIN not configured");
     this.subdomain = subdomain;
   }
 
@@ -97,8 +89,7 @@ export class ZendeskClient {
   ): Promise<T> {
     await this.ensureAuthenticated();
 
-    const url = `${this.baseUrl}${endpoint}`;
-    const response = await fetch(url, {
+    const response = await fetch(`${this.baseUrl}${endpoint}`, {
       ...options,
       headers: {
         Authorization: `Bearer ${this.accessToken}`,
@@ -116,40 +107,35 @@ export class ZendeskClient {
     return response.json();
   }
 
-  /**
-   * List tickets with optional filters
-   */
   async listTickets(options: {
     limit?: number;
     status?: string;
     priority?: string;
     assigneeId?: number;
   } = {}): Promise<ZendeskTicket[]> {
-    const params = new URLSearchParams();
-    if (options.limit) params.set("per_page", String(options.limit));
+    const { limit, status, priority, assigneeId } = options;
+
+    const queryParts: string[] = [];
+    if (status) queryParts.push(`status:${status}`);
+    if (priority) queryParts.push(`priority:${priority}`);
+    if (assigneeId) queryParts.push(`assignee:${assigneeId}`);
 
     let endpoint = "/tickets.json";
 
-    // Build query if filters are provided
-    const queryParts: string[] = [];
-    if (options.status) queryParts.push(`status:${options.status}`);
-    if (options.priority) queryParts.push(`priority:${options.priority}`);
-    if (options.assigneeId) queryParts.push(`assignee:${options.assigneeId}`);
-
     if (queryParts.length > 0) {
       endpoint = `/search.json?query=type:ticket ${queryParts.join(" ")}`;
-      if (options.limit) endpoint += `&per_page=${options.limit}`;
-    } else if (params.toString()) {
-      endpoint += `?${params}`;
+      if (limit) endpoint += `&per_page=${limit}`;
+    } else if (limit) {
+      endpoint += `?per_page=${limit}`;
     }
 
-    const response = await this.request<ZendeskListResponse<ZendeskTicket>>(endpoint);
+    const response = await this.request<ZendeskListResponse<ZendeskTicket>>(
+      endpoint,
+    );
+
     return response.tickets || response.results || [];
   }
 
-  /**
-   * Get a specific ticket by ID
-   */
   async getTicket(ticketId: number): Promise<ZendeskTicket> {
     const response = await this.request<ZendeskResponse<ZendeskTicket>>(
       `/tickets/${ticketId}.json`,
@@ -157,9 +143,6 @@ export class ZendeskClient {
     return response.ticket;
   }
 
-  /**
-   * Create a new ticket
-   */
   async createTicket(data: {
     subject: string;
     comment: { body: string };
@@ -179,9 +162,6 @@ export class ZendeskClient {
     return response.ticket;
   }
 
-  /**
-   * Update an existing ticket
-   */
   async updateTicket(
     ticketId: number,
     data: Partial<{
@@ -203,22 +183,23 @@ export class ZendeskClient {
     return response.ticket;
   }
 
-  /**
-   * List users
-   */
-  async listUsers(options: { limit?: number; role?: string } = {}): Promise<ZendeskUser[]> {
+  async listUsers(options: {
+    limit?: number;
+    role?: string;
+  } = {}): Promise<ZendeskUser[]> {
     const params = new URLSearchParams();
     if (options.limit) params.set("per_page", String(options.limit));
     if (options.role) params.set("role", options.role);
 
-    const endpoint = `/users.json${params.toString() ? `?${params}` : ""}`;
-    const response = await this.request<ZendeskListResponse<ZendeskUser>>(endpoint);
+    const query = params.toString();
+    const endpoint = `/users.json${query ? `?${query}` : ""}`;
+
+    const response = await this.request<ZendeskListResponse<ZendeskUser>>(
+      endpoint,
+    );
     return response.users || [];
   }
 
-  /**
-   * Get a specific user by ID
-   */
   async getUser(userId: number): Promise<ZendeskUser> {
     const response = await this.request<ZendeskResponse<ZendeskUser>>(
       `/users/${userId}.json`,
@@ -226,13 +207,11 @@ export class ZendeskClient {
     return response.user;
   }
 
-  /**
-   * Search tickets using Zendesk query syntax
-   */
   async searchTickets(query: string, limit = 20): Promise<ZendeskTicket[]> {
-    const params = new URLSearchParams();
-    params.set("query", `type:ticket ${query}`);
-    params.set("per_page", String(limit));
+    const params = new URLSearchParams({
+      query: `type:ticket ${query}`,
+      per_page: String(limit),
+    });
 
     const response = await this.request<ZendeskListResponse<ZendeskTicket>>(
       `/search.json?${params}`,
@@ -240,26 +219,18 @@ export class ZendeskClient {
     return response.results || [];
   }
 
-  /**
-   * Add a comment to a ticket
-   */
   addComment(
     ticketId: number,
     body: string,
     isPublic = true,
   ): Promise<ZendeskTicket> {
-    return this.updateTicket(ticketId, {
-      comment: { body, public: isPublic },
-    });
+    return this.updateTicket(ticketId, { comment: { body, public: isPublic } });
   }
 }
 
-// Singleton instance
 let client: ZendeskClient | null = null;
 
 export function getZendeskClient(): ZendeskClient {
-  if (!client) {
-    client = new ZendeskClient();
-  }
+  if (!client) client = new ZendeskClient();
   return client;
 }

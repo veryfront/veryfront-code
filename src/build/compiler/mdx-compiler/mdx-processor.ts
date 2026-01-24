@@ -1,6 +1,8 @@
-import { compile as compileMdx } from "@mdx-js/mdx";
+import { compile as compileMdx, type CompileOptions as MDXCompileOptions } from "@mdx-js/mdx";
 import { getRehypePlugins, getRemarkPlugins } from "#veryfront/transforms/plugins/plugin-loader.ts";
-import type { CompileOptions, PluginList } from "./types.ts";
+import type { CompileOptions } from "./types.ts";
+
+type MDXPluggable = NonNullable<MDXCompileOptions["remarkPlugins"]>[number];
 
 export interface ProcessedMDX {
   code: string;
@@ -11,8 +13,8 @@ export async function compileMDX(
   content: string,
   options: CompileOptions,
 ): Promise<ProcessedMDX> {
-  const remarkPlugins = (await getRemarkPlugins()) as PluginList;
-  const rehypePlugins = (await getRehypePlugins()) as PluginList;
+  const remarkPlugins = (await getRemarkPlugins()) as MDXPluggable[];
+  const rehypePlugins = (await getRehypePlugins()) as MDXPluggable[];
 
   const compiled = await compileMdx(content, {
     outputFormat: "program",
@@ -24,7 +26,7 @@ export async function compileMDX(
     rehypePlugins,
   });
 
-  const code = compiled.value as string;
+  const code = String(compiled.value);
   const imports = extractImports(code);
 
   return { code, imports };
@@ -33,10 +35,10 @@ export async function compileMDX(
 function extractImports(code: string): string[] {
   const imports: string[] = [];
   const importRegex = /import\s+(?:(?:\{[^}]*\}|\*\s+as\s+\w+|\w+)\s+from\s+)?['"]([^'"]+)['"]/g;
-  let match: RegExpExecArray | null;
 
-  while ((match = importRegex.exec(code)) !== null) {
-    if (match[1]) imports.push(match[1]);
+  for (const match of code.matchAll(importRegex)) {
+    const specifier = match[1];
+    if (specifier) imports.push(specifier);
   }
 
   return imports;

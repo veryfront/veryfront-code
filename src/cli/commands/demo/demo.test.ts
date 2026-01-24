@@ -20,15 +20,12 @@ describe("DemoOptions interface", () => {
   });
 
   it("should accept loginMethod option", () => {
-    const googleLogin: DemoOptions = { loginMethod: "google" };
-    const githubLogin: DemoOptions = { loginMethod: "github" };
-    const microsoftLogin: DemoOptions = { loginMethod: "microsoft" };
-    const tokenLogin: DemoOptions = { loginMethod: "token" };
+    const methods = ["google", "github", "microsoft", "token"] as const;
 
-    assertEquals(googleLogin.loginMethod, "google");
-    assertEquals(githubLogin.loginMethod, "github");
-    assertEquals(microsoftLogin.loginMethod, "microsoft");
-    assertEquals(tokenLogin.loginMethod, "token");
+    for (const method of methods) {
+      const options: DemoOptions = { loginMethod: method };
+      assertEquals(options.loginMethod, method);
+    }
   });
 
   it("should accept all options together", () => {
@@ -44,15 +41,12 @@ describe("DemoOptions interface", () => {
 
   it("should use a dynamic default when no projectName is provided", () => {
     const options: DemoOptions = {};
-    // When no projectName is provided, demoCommand generates a dynamic name like "demo-abc123"
-    // Here we just verify the interface allows undefined
     assertEquals(options.projectName, undefined);
   });
 
   it("should default to false when auto is not provided", () => {
     const options: DemoOptions = {};
-    const auto = options.auto ?? false;
-    assertEquals(auto, false);
+    assertEquals(options.auto ?? false, false);
   });
 });
 
@@ -61,7 +55,6 @@ describe("Demo steps for auto mode", () => {
     const devStep = DEMO_STEPS.find((s) => s.id === "dev");
     assertExists(devStep);
     assertEquals(devStep.hasAction, true);
-    // Dev step has skipPostWait because it handles its own flow
     assertEquals(devStep.skipPostWait, true);
   });
 
@@ -69,7 +62,6 @@ describe("Demo steps for auto mode", () => {
     const deployStep = DEMO_STEPS.find((s) => s.id === "deploy");
     assertExists(deployStep);
     assertEquals(deployStep.hasAction, true);
-    // Deploy step should NOT have skipPostWait (waits after completion)
     assertEquals(deployStep.skipPostWait, undefined);
   });
 
@@ -80,22 +72,25 @@ describe("Demo steps for auto mode", () => {
   });
 
   it("should have done step as final step without action", () => {
-    const doneStep = DEMO_STEPS[DEMO_STEPS.length - 1];
+    const doneStep = DEMO_STEPS.at(-1);
     assertExists(doneStep);
     assertEquals(doneStep.id, "done");
     assertEquals(doneStep.hasAction, undefined);
   });
 
   it("should have correct step order for auto mode flow", () => {
-    const stepIds = DEMO_STEPS.map((s) => s.id);
-    assertEquals(stepIds, ["intro", "login", "create", "dev", "deploy", "done"]);
+    assertEquals(
+      DEMO_STEPS.map((s) => s.id),
+      ["intro", "login", "create", "dev", "deploy", "done"],
+    );
   });
 });
 
 describe("Demo auto mode configuration", () => {
   it("should support all login methods for auto mode", () => {
-    const validMethods = ["google", "github", "microsoft", "token"] as const;
-    for (const method of validMethods) {
+    const methods = ["google", "github", "microsoft", "token"] as const;
+
+    for (const method of methods) {
       const options: DemoOptions = { auto: true, loginMethod: method };
       assertEquals(options.loginMethod, method);
     }

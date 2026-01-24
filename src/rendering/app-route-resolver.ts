@@ -22,7 +22,7 @@ export async function getAppRouteEntity(
   const exactMatch = await tryExactMatch(projectDir, slug, adapter, appDirName);
   if (exactMatch) return exactMatch;
 
-  return await tryDynamicMatch(projectDir, slug, adapter, appDirName);
+  return tryDynamicMatch(projectDir, slug, adapter, appDirName);
 }
 
 async function tryExactMatch(
@@ -33,20 +33,17 @@ async function tryExactMatch(
 ): Promise<EntityInfo | null> {
   const base = slug ? join(projectDir, appDirName, slug) : join(projectDir, appDirName);
 
-  // If adapter has resolveFile, use pattern-based resolution
   if (adapter.fs.resolveFile) {
-    const basePaths = [`${base}/page`, base];
-    for (const basePath of basePaths) {
+    for (const basePath of [`${base}/page`, base]) {
       const resolvedPath = await adapter.fs.resolveFile(basePath);
-      if (resolvedPath) {
-        const entity = await tryLoadPageFile(resolvedPath, slug, adapter);
-        if (entity) return entity;
-      }
+      if (!resolvedPath) continue;
+
+      const entity = await tryLoadPageFile(resolvedPath, slug, adapter);
+      if (entity) return entity;
     }
     return null;
   }
 
-  // Fallback for adapters without resolveFile
   const candidates = [
     `${base}/page.mdx`,
     `${base}/page.md`,
@@ -54,7 +51,6 @@ async function tryExactMatch(
     `${base}/page.jsx`,
     `${base}/page.ts`,
     `${base}/page.js`,
-    // index-like shorthand
     `${base}.mdx`,
     `${base}.md`,
     `${base}.tsx`,
@@ -80,9 +76,7 @@ async function tryDynamicMatch(
   const segments = slug ? slug.split("/").filter(Boolean) : [];
   let currentDir = join(projectDir, appDirName);
 
-  for (let i = 0; i < segments.length; i++) {
-    const segment = segments[i];
-    if (!segment) continue;
+  for (const segment of segments) {
     const exactPath = join(currentDir, segment);
 
     try {
@@ -95,35 +89,29 @@ async function tryDynamicMatch(
       // Exact match failed, try dynamic segments
     }
 
-    let foundDynamic = false;
+    let dynamicDirName: string | null = null;
     let isCatchAll = false;
+
     try {
       const entries = await adapter.fs.readDir(currentDir);
       for await (const entry of entries) {
-        if (entry.isDirectory && isDynamicSegment(entry.name)) {
-          currentDir = join(currentDir, entry.name);
-          foundDynamic = true;
-          if (entry.name.startsWith("[...")) {
-            isCatchAll = true;
-          }
-          break;
-        }
+        if (!entry.isDirectory || !isDynamicSegment(entry.name)) continue;
+
+        dynamicDirName = entry.name;
+        isCatchAll = entry.name.startsWith("[...");
+        break;
       }
     } catch {
       // adapter.fs.readDir failed - no fallback to Deno for npm compatibility
     }
 
-    if (!foundDynamic) {
-      return null;
-    }
+    if (!dynamicDirName) return null;
 
-    if (isCatchAll) {
-      break;
-    }
+    currentDir = join(currentDir, dynamicDirName);
+    if (isCatchAll) break;
   }
 
-  const pageExtensions = [".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"];
-  for (const ext of pageExtensions) {
+  for (const ext of [".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"]) {
     const pageFile = join(currentDir, `page${ext}`);
     const entity = await tryLoadPageFile(pageFile, slug, adapter);
     if (entity) return entity;
@@ -137,13 +125,12 @@ async function tryLoadPageFile(
   slug: string,
   adapter: RuntimeAdapter,
 ): Promise<EntityInfo | null> {
-  let info: { isFile: boolean };
   try {
-    info = await adapter.fs.stat(file);
+    const info = await adapter.fs.stat(file);
+    if (!info.isFile) return null;
   } catch {
     return null;
   }
-  if (!info.isFile) return null;
 
   let raw: string;
   try {
@@ -159,7 +146,7 @@ async function tryLoadPageFile(
     try {
       const ex = extract(raw);
       content = ex.body;
-      fm = (ex.attrs as Record<string, unknown>) || {};
+      fm = (ex.attrs as Record<string, unknown>) ?? {};
     } catch {
       // Malformed frontmatter - use raw content as-is
       // This allows pages with invalid YAML to still render
@@ -167,9 +154,9 @@ async function tryLoadPageFile(
     }
   }
 
-  const coercedFm: Record<string, unknown> = { ...fm };
-  if (typeof coercedFm.layout === "boolean") {
-    coercedFm.layout = coercedFm.layout ? "default" : "false";
+  const frontmatter: Record<string, unknown> = { ...fm };
+  if (typeof frontmatter.layout === "boolean") {
+    frontmatter.layout = frontmatter.layout ? "default" : "false";
   }
 
   return {
@@ -182,7 +169,7 @@ async function tryLoadPageFile(
       isLayout: false,
       isComponent: false,
       content,
-      frontmatter: coercedFm as Frontmatter,
+      frontmatter: frontmatter as Frontmatter,
     },
   };
 }

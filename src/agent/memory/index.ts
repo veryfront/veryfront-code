@@ -1,4 +1,3 @@
-// Memory interface (no circular dependencies)
 export {
   estimateTokens,
   type Memory,
@@ -8,10 +7,8 @@ export {
   type MinimalMessage,
 } from "./memory-interface.ts";
 
-// Memory implementations
 export { BufferMemory, ConversationMemory, createMemory, SummaryMemory } from "./memory.ts";
 
-// Redis memory
 export {
   createRedisMemory,
   type RedisClient,

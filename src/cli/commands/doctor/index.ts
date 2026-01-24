@@ -11,10 +11,9 @@ import { checkAIConfig } from "./ai-checks.ts";
 import { checkList } from "../../ui/components/table.ts";
 import { bold, error, success, warning } from "../../ui/colors.ts";
 
-/**
- * Summarize diagnostic results
- */
-function summarizeResults(results: DiagnosticResult[]): { warnCount: number; failCount: number } {
+function summarizeResults(
+  results: DiagnosticResult[],
+): { warnCount: number; failCount: number } {
   return results.reduce(
     (acc, result) => {
       if (result.status === "warn") acc.warnCount++;
@@ -25,32 +24,28 @@ function summarizeResults(results: DiagnosticResult[]): { warnCount: number; fai
   );
 }
 
-/**
- * Main doctor command orchestrator
- * Runs all diagnostic checks and reports results
- */
-export async function doctorCommand(projectDir: string, opts: { strict?: boolean } = {}) {
-  const results: DiagnosticResult[] = [];
+export async function doctorCommand(
+  projectDir: string,
+  opts: { strict?: boolean } = {},
+): Promise<void> {
+  const results: DiagnosticResult[] = [
+    await checkDenoVersion(),
+    ...(await checkProjectStructure(projectDir)),
+    await checkConfiguration(projectDir),
+    await checkCacheSystem(),
+    await checkReactCompatibility(),
+    await checkRSCFlag(),
+    ...(await checkRSCEndpoints()),
+    await checkRSCCounters(),
+    ...(await checkAIConfig(projectDir)),
+  ];
 
-  // Run all diagnostic checks
-  results.push(await checkDenoVersion());
-  results.push(...(await checkProjectStructure(projectDir)));
-  results.push(await checkConfiguration(projectDir));
-  results.push(await checkCacheSystem());
-  results.push(await checkReactCompatibility());
-  results.push(await checkRSCFlag());
-  results.push(...(await checkRSCEndpoints()));
-  results.push(await checkRSCCounters());
-  results.push(...(await checkAIConfig(projectDir)));
-
-  // Convert results to checkList format
   const checkItems = results.map((r) => ({
     label: r.name,
-    status: r.status as "pass" | "fail" | "warn",
+    status: r.status,
     detail: r.message,
   }));
 
-  // Print styled checklist
   console.log();
   console.log(`  ${bold("System Diagnostics")}`);
   console.log();
@@ -60,25 +55,31 @@ export async function doctorCommand(projectDir: string, opts: { strict?: boolean
   const { warnCount, failCount } = summarizeResults(results);
   const passCount = results.length - warnCount - failCount;
 
-  // Summary line
   if (failCount > 0) {
     console.log(`  ${error("✗")} ${failCount} failed, ${warnCount} warnings, ${passCount} passed`);
     console.log();
-    throw toError(createError({
-      type: "config",
-      message: `Doctor checks failed: ${failCount} failed, ${warnCount} warnings`,
-    }));
-  } else if (warnCount > 0) {
+    throw toError(
+      createError({
+        type: "config",
+        message: `Doctor checks failed: ${failCount} failed, ${warnCount} warnings`,
+      }),
+    );
+  }
+
+  if (warnCount > 0) {
     console.log(`  ${warning("!")} ${warnCount} warnings, ${passCount} passed`);
     console.log();
     if (opts.strict) {
-      throw toError(createError({
-        type: "config",
-        message: `Doctor strict mode: ${warnCount} warning(s) present`,
-      }));
+      throw toError(
+        createError({
+          type: "config",
+          message: `Doctor strict mode: ${warnCount} warning(s) present`,
+        }),
+      );
     }
-  } else {
-    console.log(`  ${success("✓")} All ${passCount} checks passed`);
-    console.log();
+    return;
   }
+
+  console.log(`  ${success("✓")} All ${passCount} checks passed`);
+  console.log();
 }

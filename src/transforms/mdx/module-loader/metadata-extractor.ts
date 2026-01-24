@@ -31,7 +31,7 @@ export function extractFrontmatter(moduleCode: string): FrontmatterMetadata | un
 
 interface MetadataPattern {
   regex: RegExp;
-  key: string;
+  key: keyof MDXModule;
 }
 
 const METADATA_PATTERNS: MetadataPattern[] = [
@@ -48,7 +48,7 @@ const METADATA_PATTERNS: MetadataPattern[] = [
 function parseLayoutValue(value: string): boolean | string {
   if (value === "true") return true;
   if (value === "false") return false;
-  return String(value).replace(/^"|"$/g, "");
+  return value.replace(/^"|"$/g, "");
 }
 
 export function extractMetadata(moduleCode: string): Partial<MDXModule> {
@@ -58,38 +58,34 @@ export function extractMetadata(moduleCode: string): Partial<MDXModule> {
     const match = moduleCode.match(regex);
     if (!match) continue;
 
-    const value = match[1] as string;
+    const value = match[1];
 
-    // String fields: assign directly
-    if (key === "title" || key === "description" || key === "date") {
-      exports[key] = value;
-      continue;
-    }
-
-    // Boolean field: parse as boolean
-    if (key === "draft") {
-      exports[key] = value === "true";
-      continue;
-    }
-
-    // Layout field: parse as boolean or string
-    if (key === "layout") {
-      exports[key] = parseLayoutValue(value);
-      continue;
-    }
-
-    // JSON-like fields: parse with jsonish parser
-    try {
-      exports[key] = parseJsonish(value) as never;
-    } catch (e) {
-      logger.warn(`Failed to parse ${key}`, e);
+    switch (key) {
+      case "title":
+      case "description":
+      case "date":
+        exports[key] = value;
+        break;
+      case "draft":
+        exports[key] = value === "true";
+        break;
+      case "layout":
+        if (value !== undefined) exports[key] = parseLayoutValue(value);
+        break;
+      default:
+        try {
+          if (value !== undefined) exports[key] = parseJsonish(value) as never;
+        } catch (e) {
+          logger.warn(`Failed to parse ${String(key)}`, e);
+        }
+        break;
     }
   }
 
   return exports;
 }
 
-const FRONTMATTER_KEYS = [
+const FRONTMATTER_KEYS: (keyof MDXModule)[] = [
   "title",
   "description",
   "layout",
@@ -101,7 +97,7 @@ const FRONTMATTER_KEYS = [
 ];
 
 export function mergeFrontmatter(result: MDXModule): void {
-  result.frontmatter = result.frontmatter ?? {};
+  result.frontmatter ??= {};
 
   for (const key of FRONTMATTER_KEYS) {
     const value = result[key];

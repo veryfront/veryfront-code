@@ -23,41 +23,39 @@ describe("shared-watcher", () => {
 
     it("should create an async iterator", () => {
       const eventQueue: any[] = [];
-      let _resolver: any = null;
       const iterator = createWatcherIterator(
         eventQueue,
-        (r) => (_resolver = r),
+        () => {},
         () => false,
         () => false,
       );
+
       assertExists(iterator);
       assertExists(iterator.next);
       assertEquals(typeof iterator.next, "function");
     });
 
     it("should return done when closed", async () => {
-      const eventQueue: any[] = [];
-      let _resolver: any = null;
       const iterator = createWatcherIterator(
-        eventQueue,
-        (r) => (_resolver = r),
+        [],
+        () => {},
         () => true,
         () => false,
       );
+
       const result = await iterator.next();
       assertEquals(result.done, true);
     });
 
     it("should return events from queue", async () => {
       const event = { kind: "modify" as const, paths: ["/test/file.ts"] };
-      const eventQueue: any[] = [event];
-      let _resolver: any = null;
       const iterator = createWatcherIterator(
-        eventQueue,
-        (r) => (_resolver = r),
+        [event],
+        () => {},
         () => false,
         () => false,
       );
+
       const result = await iterator.next();
       assertEquals(result.done, false);
       assertEquals(result.value, event);
@@ -73,12 +71,9 @@ describe("shared-watcher", () => {
     it("should add event to queue when no resolver", () => {
       const eventQueue: any[] = [];
       const event = { kind: "modify" as const, paths: ["/test/file.ts"] };
-      enqueueWatchEvent(
-        event,
-        eventQueue,
-        () => null,
-        () => {},
-      );
+
+      enqueueWatchEvent(event, eventQueue, () => null, () => {});
+
       assertEquals(eventQueue.length, 1);
       assertEquals(eventQueue[0], event);
     });

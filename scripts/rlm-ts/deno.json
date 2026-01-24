@@ -7,7 +7,9 @@
     "test": "deno test --allow-env --allow-net",
     "lint": "deno lint",
     "fmt": "deno fmt",
-    "example": "deno run --allow-env --allow-net examples/basic.ts"
+    "example": "deno run --allow-env --allow-net examples/basic.ts",
+    "optimize": "deno run --allow-read --allow-write --allow-env --allow-net apps/optimize.ts",
+    "code-optimize": "deno run --allow-read --allow-write --allow-env --allow-net apps/code-optimize.ts"
   },
   "compilerOptions": {
     "strict": true,

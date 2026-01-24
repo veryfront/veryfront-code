@@ -80,5 +80,4 @@ export interface MDXExecutionContext {
   parsed: ParsedMDX;
 }
 
-export interface HTMLMetadata extends MDXFrontmatter {
-}
+export type HTMLMetadata = MDXFrontmatter;

@@ -1,5 +1,4 @@
 import type { RenderMetadata } from "#veryfront/types";
-// Import directly from source files to avoid circular dependency through barrel
 import { extractHTMLMetadata } from "./metadata-extraction.ts";
 import {
   generateLinkTags,
@@ -22,25 +21,20 @@ export interface ProcessedMetadata {
 
 export function processMetadata(meta: RenderMetadata): ProcessedMetadata {
   const metadata = extractHTMLMetadata(
-    meta.frontmatter || {},
-    meta.layoutFrontmatter || {},
+    meta.frontmatter ?? {},
+    meta.layoutFrontmatter ?? {},
   );
 
-  const effectiveTitle = meta.frontmatter?.title || meta.title || metadata.title;
-
-  const metaTags = generateMetaTags(metadata);
-  const linkTags = generateLinkTags(metadata);
-  const scriptTags = generateScriptTags(metadata);
-  const styleTags = generateStyleTags(metadata);
+  const effectiveTitle = meta.frontmatter?.title ?? meta.title ?? metadata.title ?? "Veryfront App";
 
   return {
     metadata,
-    effectiveTitle: effectiveTitle || "Veryfront App",
-    metaTags,
-    linkTags,
-    scriptTags,
-    styleTags,
-    lang: (typeof metadata.lang === "string" ? metadata.lang : "en"),
-    bodyClass: (typeof metadata.bodyClass === "string" ? metadata.bodyClass : ""),
+    effectiveTitle,
+    metaTags: generateMetaTags(metadata),
+    linkTags: generateLinkTags(metadata),
+    scriptTags: generateScriptTags(metadata),
+    styleTags: generateStyleTags(metadata),
+    lang: typeof metadata.lang === "string" ? metadata.lang : "en",
+    bodyClass: typeof metadata.bodyClass === "string" ? metadata.bodyClass : "",
   };
 }

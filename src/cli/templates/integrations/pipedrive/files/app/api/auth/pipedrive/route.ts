@@ -1,7 +1,3 @@
-/**
- * Pipedrive OAuth Init
- */
-
-import { pipedriveConfig, createOAuthInitHandler } from "veryfront/oauth";
+import { createOAuthInitHandler, pipedriveConfig } from "veryfront/oauth";
 
 export const GET = createOAuthInitHandler(pipedriveConfig);

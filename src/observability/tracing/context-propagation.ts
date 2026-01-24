@@ -9,11 +9,7 @@ export class ContextPropagation {
 
   extractContext(headers: Headers): Context | undefined {
     try {
-      const carrier: Record<string, string> = {};
-      for (const [key, value] of headers) {
-        carrier[key] = value;
-      }
-
+      const carrier: Record<string, string> = Object.fromEntries(headers);
       return this.api.propagation.extract(this.api.context.active(), carrier);
     } catch (error) {
       logger.debug("[tracing] Failed to extract context from headers", error);
@@ -43,10 +39,10 @@ export class ContextPropagation {
     }
   }
 
-  async withActiveSpan<T>(span: Span | null, fn: () => Promise<T>): Promise<T> {
-    if (!span) return await fn();
+  withActiveSpan<T>(span: Span | null, fn: () => Promise<T>): Promise<T> {
+    if (!span) return fn();
 
-    return await this.api.context.with(
+    return this.api.context.with(
       this.api.trace.setSpan(this.api.context.active(), span),
       fn,
     );

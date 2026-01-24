@@ -1,9 +1,3 @@
-/**
- * Google Docs OAuth Initiation
- */
+import { createOAuthInitHandler, docsGoogleConfig, memoryTokenStore } from "veryfront/oauth";
 
-import { createOAuthInitHandler, memoryTokenStore, docsGoogleConfig } from "veryfront/oauth";
-
-export const GET = createOAuthInitHandler(docsGoogleConfig, {
-  tokenStore: memoryTokenStore,
-});
+export const GET = createOAuthInitHandler(docsGoogleConfig, { tokenStore: memoryTokenStore });

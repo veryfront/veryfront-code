@@ -2,9 +2,6 @@ import { tool } from 'veryfront/tool';
 import { z } from 'zod';
 import { getAnthropicAdminClient } from '../../lib/anthropic-admin-client';
 
-/**
- * Tool for listing all workspaces in the Anthropic organization
- */
 export const listWorkspaces = tool({
   name: 'list_workspaces',
   description:
@@ -13,19 +10,19 @@ export const listWorkspaces = tool({
   execute: async () => {
     try {
       const client = getAnthropicAdminClient();
-      const result = await client.listWorkspaces();
+      const { workspaces } = await client.listWorkspaces();
+      const count = workspaces.length;
 
       return {
         success: true,
-        workspaces: result.workspaces,
-        count: result.workspaces.length,
-        message: `Found ${result.workspaces.length} workspace(s)`,
+        workspaces,
+        count,
+        message: `Found ${count} workspace(s)`,
       };
     } catch (error) {
       return {
         success: false,
-        error:
-          error instanceof Error ? error.message : 'Failed to list workspaces',
+        error: error instanceof Error ? error.message : 'Failed to list workspaces',
         workspaces: [],
       };
     }

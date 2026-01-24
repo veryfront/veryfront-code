@@ -28,10 +28,7 @@ export async function runCodeSplitting(
   dryRun: boolean,
 ): Promise<SplitResult> {
   if (!enableSplitting || dryRun || routes.length === 0) {
-    return {
-      manifest: null,
-      chunks: 0,
-    };
+    return { manifest: null, chunks: 0 };
   }
 
   logger.info("Running code splitter...");
@@ -40,22 +37,19 @@ export async function runCodeSplitting(
     projectDir,
     outDir: join(outputDir, "_veryfront/chunks"),
     mode: "production",
-    routes: routes.map((r) => ({
-      path: r.path,
-      file: r.file,
-      name: r.slug.replace(/\//g, "-"),
+    routes: routes.map(({ path, file, slug }) => ({
+      path,
+      file,
+      name: slug.replace(/\//g, "-"),
     })),
     shared: ["react", "react-dom"],
     external: [],
   });
 
-  const splitResult = await splitter.split();
-  const chunks = splitResult.entries.size + splitResult.shared.size;
+  const { entries, shared, manifest } = await splitter.split();
+  const chunks = entries.size + shared.size;
 
   logger.info(`Created ${chunks} chunks`);
 
-  return {
-    manifest: splitResult.manifest,
-    chunks,
-  };
+  return { manifest, chunks };
 }

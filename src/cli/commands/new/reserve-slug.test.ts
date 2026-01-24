@@ -1,20 +1,11 @@
-/**
- * Unit tests for reserve-slug module
- * @module cli/commands/new/reserve-slug.test
- */
-
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
-// Test the slug auto-increment logic
 describe("reserve-slug", () => {
   describe("slug generation", () => {
     it("should increment slug when taken", () => {
       const baseSlug = "my-app";
-      let attempt = 1;
-
-      // Simulate first slug being taken
-      attempt++;
+      const attempt = 2;
       const newSlug = `${baseSlug}-${attempt}`;
 
       assertEquals(newSlug, "my-app-2");
@@ -24,19 +15,16 @@ describe("reserve-slug", () => {
       const baseSlug = "my-app";
       const attempts = [2, 3, 4, 5];
 
-      const slugs = attempts.map((n) => `${baseSlug}-${n}`);
-
-      assertEquals(slugs, ["my-app-2", "my-app-3", "my-app-4", "my-app-5"]);
+      assertEquals(
+        attempts.map((n) => `${baseSlug}-${n}`),
+        ["my-app-2", "my-app-3", "my-app-4", "my-app-5"],
+      );
     });
   });
 
   describe("ReserveResult type", () => {
     it("should have required properties", () => {
-      const result = {
-        slug: "my-app",
-        projectId: "123",
-        created: true,
-      };
+      const result = { slug: "my-app", projectId: "123", created: true };
 
       assertEquals(result.slug, "my-app");
       assertEquals(result.projectId, "123");

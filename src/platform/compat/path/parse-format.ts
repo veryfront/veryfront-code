@@ -1,7 +1,6 @@
 import { hasNodePath, isDeno, nodePath } from "./runtime.ts";
-import { basename, dirname, extname } from "./basic-operations.ts";
+import { basename, dirname, extname, join } from "./basic-operations.ts";
 import { isAbsolute } from "./resolution.ts";
-import { join } from "./basic-operations.ts";
 import type { PathObject } from "./types.ts";
 
 export function parse(path: string): PathObject {
@@ -12,14 +11,13 @@ export function parse(path: string): PathObject {
   const dir = dirname(path);
   const base = basename(path);
   const ext = extname(path);
-  const name = base.slice(0, base.length - ext.length);
 
   return {
     root: isAbsolute(path) ? "/" : "",
     dir,
     base,
     ext,
-    name,
+    name: base.slice(0, base.length - ext.length),
   };
 }
 

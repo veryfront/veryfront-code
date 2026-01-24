@@ -42,7 +42,7 @@ describe("error-context", () => {
 
     it("should use fallback for complex types on error", async () => {
       const result = await withErrorContext(
-        (): Promise<{ data: number[] }> => Promise.reject(new Error("test")),
+        () => Promise.reject(new Error("test")) as Promise<{ data: number[] }>,
         { operation: "test" },
         { fallback: { data: [] } },
       );
@@ -97,11 +97,7 @@ describe("error-context", () => {
   describe("createErrorScope", () => {
     it("should create a scoped error handler", async () => {
       const scope = createErrorScope("TestScope");
-      const result = await scope.run(
-        () => Promise.resolve("success"),
-        {},
-        "fallback",
-      );
+      const result = await scope.run(() => Promise.resolve("success"), {}, "fallback");
       assertEquals(result, "success");
     });
 
@@ -146,7 +142,6 @@ describe("error-context", () => {
     it("should handle different log levels", async () => {
       const scope = createErrorScope("TestScope");
 
-      // Test with error log level
       const result1 = await scope.run(
         () => Promise.reject(new Error("error level")),
         {},
@@ -155,7 +150,6 @@ describe("error-context", () => {
       );
       assertEquals(result1, "fallback");
 
-      // Test with warn log level
       const result2 = await scope.run(
         () => Promise.reject(new Error("warn level")),
         {},

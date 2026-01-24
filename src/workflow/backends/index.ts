@@ -2,18 +2,14 @@
  * Workflow Backend Exports
  */
 
-// Types and interfaces
 export type { BackendConfig, Lock, WorkflowBackend } from "./types.ts";
 export { hasEventSupport, hasLockSupport, hasQueueSupport } from "./types.ts";
 
-// Backend implementations
 export { MemoryBackend } from "./memory.ts";
 
-// Redis backend (production)
 export { RedisBackend } from "./redis.ts";
 export type { RedisBackendConfig } from "./redis.ts";
 
-// Adapter backends (for external workflow engines)
 export { TemporalAdapter } from "./temporal.ts";
 export type { TemporalAdapterConfig } from "./temporal.ts";
 

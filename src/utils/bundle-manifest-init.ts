@@ -22,64 +22,13 @@ export async function initializeBundleManifest(
     return;
   }
 
-  const envType = adapter?.env.get("VERYFRONT_BUNDLE_MANIFEST_TYPE");
-  const storeType = manifestConfig?.type || envType || "memory";
+  const storeType = manifestConfig?.type ?? adapter?.env.get("VERYFRONT_BUNDLE_MANIFEST_TYPE") ??
+    "memory";
 
-  logger.info("[bundle-manifest] Initializing bundle manifest", {
-    type: storeType,
-    mode,
-  });
+  logger.info("[bundle-manifest] Initializing bundle manifest", { type: storeType, mode });
 
   try {
-    let store: BundleManifestStore;
-
-    switch (storeType) {
-      case "redis": {
-        const { RedisBundleManifestStore } = await import("./bundle-manifest-redis.ts");
-        const redisUrl = manifestConfig?.redisUrl ||
-          adapter?.env.get("VERYFRONT_BUNDLE_MANIFEST_REDIS_URL");
-        store = new RedisBundleManifestStore(
-          {
-            url: redisUrl,
-            keyPrefix: manifestConfig?.keyPrefix,
-          },
-          adapter,
-        );
-
-        const available = await store.isAvailable();
-        if (!available) {
-          logger.warn("[bundle-manifest] Redis not available, falling back to in-memory");
-          store = new InMemoryBundleManifestStore();
-        } else {
-          logger.info("[bundle-manifest] Redis store initialized");
-        }
-        break;
-      }
-
-      case "kv": {
-        const { KVBundleManifestStore } = await import("./bundle-manifest-kv.ts");
-        store = new KVBundleManifestStore({
-          keyPrefix: manifestConfig?.keyPrefix,
-        });
-
-        const available = await store.isAvailable();
-        if (!available) {
-          logger.warn("[bundle-manifest] KV not available, falling back to in-memory");
-          store = new InMemoryBundleManifestStore();
-        } else {
-          logger.info("[bundle-manifest] KV store initialized");
-        }
-        break;
-      }
-
-      case "memory":
-      default: {
-        store = new InMemoryBundleManifestStore();
-        logger.info("[bundle-manifest] In-memory store initialized");
-        break;
-      }
-    }
-
+    const store = await createStore(storeType, config.cache, adapter);
     setBundleManifestStore(store);
 
     try {
@@ -96,14 +45,61 @@ export async function initializeBundleManifest(
   }
 }
 
+async function createStore(
+  storeType: string,
+  manifestConfig: VeryfrontConfig["cache"],
+  adapter?: RuntimeAdapter,
+): Promise<BundleManifestStore> {
+  if (storeType === "redis") {
+    const { RedisBundleManifestStore } = await import("./bundle-manifest-redis.ts");
+    const bundleManifest = manifestConfig?.bundleManifest;
+    const redisUrl = bundleManifest?.redisUrl ??
+      adapter?.env.get("VERYFRONT_BUNDLE_MANIFEST_REDIS_URL");
+
+    const store: BundleManifestStore = new RedisBundleManifestStore(
+      {
+        url: redisUrl,
+        keyPrefix: bundleManifest?.keyPrefix,
+      },
+      adapter,
+    );
+
+    const available = await store.isAvailable();
+    if (!available) {
+      logger.warn("[bundle-manifest] Redis not available, falling back to in-memory");
+      return new InMemoryBundleManifestStore();
+    }
+
+    logger.info("[bundle-manifest] Redis store initialized");
+    return store;
+  }
+
+  if (storeType === "kv") {
+    const { KVBundleManifestStore } = await import("./bundle-manifest-kv.ts");
+    const store: BundleManifestStore = new KVBundleManifestStore({
+      keyPrefix: manifestConfig?.bundleManifest?.keyPrefix,
+    });
+
+    const available = await store.isAvailable();
+    if (!available) {
+      logger.warn("[bundle-manifest] KV not available, falling back to in-memory");
+      return new InMemoryBundleManifestStore();
+    }
+
+    logger.info("[bundle-manifest] KV store initialized");
+    return store;
+  }
+
+  logger.info("[bundle-manifest] In-memory store initialized");
+  return new InMemoryBundleManifestStore();
+}
+
 export function getBundleManifestTTL(
   config: VeryfrontConfig,
   mode: "development" | "production",
 ): number | undefined {
-  const manifestConfig = config.cache?.bundleManifest;
-  if (manifestConfig?.ttl) {
-    return manifestConfig.ttl;
-  }
+  const ttl = config.cache?.bundleManifest?.ttl;
+  if (ttl) return ttl;
 
   return mode === "production" ? BUNDLE_MANIFEST_PROD_TTL_MS : BUNDLE_MANIFEST_DEV_TTL_MS;
 }
@@ -120,10 +116,10 @@ export async function warmupBundleManifest(
   for (const key of keys) {
     try {
       const metadata = await store.getBundleMetadata(key);
-      if (metadata) {
-        await store.getBundleCode(metadata.codeHash);
-        loaded++;
-      }
+      if (!metadata) continue;
+
+      await store.getBundleCode(metadata.codeHash);
+      loaded++;
     } catch (error) {
       logger.debug("[bundle-manifest] Failed to warm up key", { key, error });
       failed++;

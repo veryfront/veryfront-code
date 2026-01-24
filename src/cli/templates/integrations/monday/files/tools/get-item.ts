@@ -17,12 +17,12 @@ export default tool({
       state: item.state,
       board: item.board,
       group: item.group,
-      columnValues: item.column_values?.map((col) => ({
-        id: col.id,
-        title: col.title,
-        text: col.text,
-        type: col.type,
-        value: col.value,
+      columnValues: item.column_values?.map(({ id, title, text, type, value }) => ({
+        id,
+        title,
+        text,
+        type,
+        value,
       })),
       createdAt: item.created_at,
       updatedAt: item.updated_at,

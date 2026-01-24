@@ -1,9 +1,4 @@
-/**
- * Update ServiceNow Incident Tool
- */
-
 import { z } from "zod";
-import { tool } from "veryfront/tool";
 import { getServiceNowClient } from "../../lib/servicenow-client.ts";
 import { isServiceNowConnected } from "../../lib/token-store.ts";
 
@@ -12,20 +7,25 @@ export default defineTool({
   description: "Update an existing incident in ServiceNow",
   inputSchema: z.object({
     sys_id: z.string().describe("The sys_id of the incident to update"),
-    state: z.enum(["1", "2", "3", "6", "7"]).optional()
+    state: z
+      .enum(["1", "2", "3", "6", "7"])
+      .optional()
       .describe("New state (1=New, 2=In Progress, 3=On Hold, 6=Resolved, 7=Closed)"),
     short_description: z.string().optional().describe("Updated short description"),
     description: z.string().optional().describe("Updated description"),
-    urgency: z.enum(["1", "2", "3"]).optional()
+    urgency: z
+      .enum(["1", "2", "3"])
+      .optional()
       .describe("Updated urgency (1=High, 2=Medium, 3=Low)"),
-    impact: z.enum(["1", "2", "3"]).optional()
+    impact: z
+      .enum(["1", "2", "3"])
+      .optional()
       .describe("Updated impact (1=High, 2=Medium, 3=Low)"),
     work_notes: z.string().optional().describe("Add work notes to the incident"),
     close_notes: z.string().optional().describe("Close notes (required when closing)"),
   }),
   async execute(input) {
-    const connected = await isServiceNowConnected();
-    if (!connected) {
+    if (!(await isServiceNowConnected())) {
       return {
         error: "ServiceNow not connected",
         action: "Please connect ServiceNow via /api/auth/servicenow",
@@ -36,9 +36,8 @@ export default defineTool({
       const client = getServiceNowClient();
       const { sys_id, ...updateData } = input;
 
-      // Filter out undefined values
       const cleanData = Object.fromEntries(
-        Object.entries(updateData).filter(([_, v]) => v !== undefined),
+        Object.entries(updateData).filter(([, value]) => value !== undefined),
       );
 
       const incident = await client.updateIncident(sys_id, cleanData);

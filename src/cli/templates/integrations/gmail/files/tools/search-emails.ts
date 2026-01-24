@@ -21,18 +21,14 @@ export default tool({
       .describe("Maximum number of results to return"),
   }),
   execute: async ({ query, maxResults }, context) => {
-    // Default to "current-user" for development; in production, always pass userId from session
-    const userId = (context?.userId as string | undefined) || "current-user";
+    const userId = context?.userId ?? "current-user";
 
     try {
       const gmail = createGmailClient(userId);
 
-      const list = await gmail.listMessages({
-        query,
-        maxResults,
-      });
+      const list = await gmail.listMessages({ query, maxResults });
 
-      if (!list.messages || list.messages.length === 0) {
+      if (!list.messages?.length) {
         return {
           emails: [],
           query,
@@ -49,11 +45,10 @@ export default tool({
         };
       }
 
-      // Fetch metadata for each email
       const emails = await Promise.all(
-        list.messages.map(async (m: { id: string }) => {
-          const message = await gmail.getMessage(m.id, "metadata");
-          const headers = parseEmailHeaders(message.payload?.headers || []);
+        list.messages.map(async ({ id }: { id: string }) => {
+          const message = await gmail.getMessage(id, "metadata");
+          const headers = parseEmailHeaders(message.payload?.headers ?? []);
 
           return {
             id: message.id,
@@ -63,7 +58,7 @@ export default tool({
             subject: headers.subject,
             date: headers.date,
             snippet: message.snippet,
-            isUnread: message.labelIds?.includes("UNREAD") || false,
+            isUnread: message.labelIds?.includes("UNREAD") ?? false,
             labels: message.labelIds,
           };
         }),

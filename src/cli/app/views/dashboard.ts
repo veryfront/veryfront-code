@@ -7,8 +7,8 @@
 import { box } from "../../ui/box.ts";
 import { brand, dim, error, muted, success } from "../../ui/colors.ts";
 import { getTerminalWidth } from "../../ui/layout.ts";
-import { renderList } from "../components/list-select.ts";
 import { getAgentFaceWithText } from "../../ui/dot-matrix.ts";
+import { renderList } from "../components/list-select.ts";
 import type { AppState } from "../state.ts";
 
 /**
@@ -16,44 +16,43 @@ import type { AppState } from "../state.ts";
  */
 export function renderDashboard(state: AppState): string {
   const termWidth = Math.min(getTerminalWidth() - 4, 80);
+  const maxListWidth = termWidth - 4;
   const lines: string[] = [];
 
-  // Banner with agent face and server info
-  lines.push(renderBanner(state));
-  lines.push("");
+  lines.push(renderBanner(state), "");
 
-  // Projects section
-  if (state.projects.items.length > 0) {
+  const hasProjects = state.projects.items.length > 0;
+  const hasExamples = state.examples.items.length > 0;
+
+  if (hasProjects) {
     const isActive = state.activeList === "projects";
     lines.push(renderSection("Your Projects", state.projects.items.length, isActive));
     lines.push(
       renderList(state.projects, {
-        maxWidth: termWidth - 4,
+        maxWidth: maxListWidth,
         visibleCount: 5,
         showNumbers: true,
         showSelection: isActive,
       }),
+      "",
     );
-    lines.push("");
   }
 
-  // Examples section
-  if (state.examples.items.length > 0) {
+  if (hasExamples) {
     const isActive = state.activeList === "examples";
     lines.push(renderSection("Examples", state.examples.items.length, isActive));
     lines.push(
       renderList(state.examples, {
-        maxWidth: termWidth - 4,
+        maxWidth: maxListWidth,
         visibleCount: 5,
         showNumbers: true,
-        numberOffset: state.projects.items.length, // Continue numbering from projects
+        numberOffset: state.projects.items.length,
         showSelection: isActive,
       }),
+      "",
     );
-    lines.push("");
   }
 
-  // Help bar
   lines.push(renderHelpBar(state));
 
   return lines.join("\n");
@@ -68,24 +67,23 @@ function renderBanner(state: AppState): string {
 
   const textLines: string[] = [];
 
-  // Server status line
   textLines.push(`${serverDot} ${dim("Server running")}`);
   textLines.push(`  ${brand(state.server.url)}`);
 
-  // MCP status line
   if (state.mcp.enabled) {
-    const mcpInfo = state.mcp.transport === "http"
-      ? `port ${brand(String(state.mcp.httpPort || 9999))}`
-      : "stdio";
+    let mcpInfo = "stdio";
+    if (state.mcp.transport === "http") {
+      mcpInfo = `port ${brand(String(state.mcp.httpPort ?? 9999))}`;
+    }
     textLines.push(`${mcpDot} ${dim("MCP")} ${mcpInfo}`);
   }
 
-  // Error/warning counts
-  if (state.server.errors > 0 || state.server.warnings > 0) {
-    const errText = state.server.errors > 0 ? error(`${state.server.errors} errors`) : "";
-    const warnText = state.server.warnings > 0 ? muted(`${state.server.warnings} warnings`) : "";
-    const separator = errText && warnText ? "  " : "";
-    textLines.push(`${errText}${separator}${warnText}`);
+  const { errors, warnings } = state.server;
+  if (errors > 0 || warnings > 0) {
+    const parts: string[] = [];
+    if (errors > 0) parts.push(error(`${errors} errors`));
+    if (warnings > 0) parts.push(muted(`${warnings} warnings`));
+    textLines.push(parts.join("  "));
   }
 
   return getAgentFaceWithText(textLines, {
@@ -108,25 +106,20 @@ function renderSection(title: string, count: number, isActive = true): string {
 function renderHelpBar(state: AppState): string {
   const parts: string[] = [];
 
-  // Navigation
   parts.push(`${dim("↑↓")} nav`);
 
-  // Tab to switch sections (only if both exist)
-  if (state.projects.items.length > 0 && state.examples.items.length > 0) {
+  const hasProjects = state.projects.items.length > 0;
+  const hasExamples = state.examples.items.length > 0;
+
+  if (hasProjects && hasExamples) {
     parts.push(`${dim("tab")} switch`);
   }
 
-  // Quick actions based on context
-  if (state.projects.items.length > 0 || state.examples.items.length > 0) {
-    parts.push(`${dim("o")} open`);
-    parts.push(`${dim("s")} studio`);
-    parts.push(`${dim("i")} ide`);
+  if (hasProjects || hasExamples) {
+    parts.push(`${dim("o")} open`, `${dim("s")} studio`, `${dim("i")} ide`);
   }
 
-  // Other
-  parts.push(`${dim("n")} new`);
-  parts.push(`${dim("?")} help`);
-  parts.push(`${dim("q")} quit`);
+  parts.push(`${dim("n")} new`, `${dim("?")} help`, `${dim("q")} quit`);
 
   return `  ${parts.join("  ")}`;
 }
@@ -136,7 +129,6 @@ function renderHelpBar(state: AppState): string {
  */
 export function renderDashboardBoxed(state: AppState): string {
   const termWidth = Math.min(getTerminalWidth() - 4, 80);
-
   const content = renderDashboard(state);
 
   return box(content, {
@@ -153,7 +145,7 @@ export function renderDashboardBoxed(state: AppState): string {
  * Render empty state when no projects found
  */
 export function renderEmptyState(): string {
-  const lines = [
+  return [
     "",
     `  ${dim("No projects found.")}`,
     "",
@@ -164,6 +156,5 @@ export function renderEmptyState(): string {
     `  ${dim("Or run with a project directory:")}`,
     `    ${muted("deno task start --project ./my-project")}`,
     "",
-  ];
-  return lines.join("\n");
+  ].join("\n");
 }

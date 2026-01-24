@@ -1,8 +1,8 @@
-import * as esbuild from "esbuild"; // Native esbuild
+import * as esbuild from "esbuild";
 import type { CompileOptions } from "./types.ts";
 
 export async function transpileCode(code: string, options: CompileOptions): Promise<string> {
-  const result = await esbuild.transform(code, {
+  const { code: transformedCode } = await esbuild.transform(code, {
     loader: "jsx",
     jsx: "automatic",
     jsxImportSource: "react",
@@ -11,5 +11,5 @@ export async function transpileCode(code: string, options: CompileOptions): Prom
     minify: options.mode === "production",
   });
 
-  return result.code;
+  return transformedCode;
 }

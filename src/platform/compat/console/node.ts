@@ -1,10 +1,5 @@
-/**
- * Node.js console styling implementation using picocolors
- */
-
 import type { ConsoleStyler } from "./types.ts";
 
-// Lazy-loaded picocolors instance
 type PicoColors = {
   red: (s: string) => string;
   green: (s: string) => string;
@@ -26,16 +21,17 @@ let pc: PicoColors | null = null;
 
 async function ensurePc(): Promise<PicoColors> {
   if (pc) return pc;
-  // Construct module name dynamically to prevent Deno static analyzer
-  // from trying to resolve this npm package during lint/check
+
   const picocolorsModule = ["npm:", "picocolors"].join("");
   const mod = await import(picocolorsModule);
   pc = mod.default as PicoColors;
+
   return pc;
 }
 
-// Lazy wrapper that falls back to identity if not loaded
-const lazyColor = (fn: keyof PicoColors) => (s: string) => pc?.[fn]?.(s) ?? s;
+function lazyColor(fn: keyof PicoColors): (s: string) => string {
+  return (s: string) => pc?.[fn]?.(s) ?? s;
+}
 
 export const colors: ConsoleStyler = {
   red: lazyColor("red"),
@@ -54,22 +50,21 @@ export const colors: ConsoleStyler = {
   reset: lazyColor("reset"),
 };
 
-export const red = lazyColor("red");
-export const green = lazyColor("green");
-export const yellow = lazyColor("yellow");
-export const blue = lazyColor("blue");
-export const cyan = lazyColor("cyan");
-export const magenta = lazyColor("magenta");
-export const white = lazyColor("white");
-export const gray = lazyColor("gray");
-export const bold = lazyColor("bold");
-export const dim = lazyColor("dim");
-export const italic = lazyColor("italic");
-export const underline = lazyColor("underline");
-export const strikethrough = lazyColor("strikethrough");
-export const reset = lazyColor("reset");
+export const red = colors.red;
+export const green = colors.green;
+export const yellow = colors.yellow;
+export const blue = colors.blue;
+export const cyan = colors.cyan;
+export const magenta = colors.magenta;
+export const white = colors.white;
+export const gray = colors.gray;
+export const bold = colors.bold;
+export const dim = colors.dim;
+export const italic = colors.italic;
+export const underline = colors.underline;
+export const strikethrough = colors.strikethrough;
+export const reset = colors.reset;
 
-// Initialize picocolors on first use
 export async function initColors(): Promise<void> {
   await ensurePc();
 }

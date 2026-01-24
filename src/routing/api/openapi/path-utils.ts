@@ -37,15 +37,10 @@ export interface PathParam {
  * ```
  */
 export function toOpenAPIPath(pattern: string): string {
-  return (
-    pattern
-      // Optional catch-all [[...param]] → {param}
-      .replace(/\[\[\.\.\.([^\]]+)\]\]/g, "{$1}")
-      // Required catch-all [...param] → {param}
-      .replace(/\[\.\.\.([^\]]+)\]/g, "{$1}")
-      // Single param [param] → {param}
-      .replace(/\[([^\]]+)\]/g, "{$1}")
-  );
+  return pattern
+    .replace(/\[\[\.\.\.([^\]]+)\]\]/g, "{$1}")
+    .replace(/\[\.\.\.([^\]]+)\]/g, "{$1}")
+    .replace(/\[([^\]]+)\]/g, "{$1}");
 }
 
 /**
@@ -72,31 +67,24 @@ export function extractPathParams(pattern: string): PathParam[] {
   const params: PathParam[] = [];
   const seen = new Set<string>();
 
-  // Optional catch-all [[...param]] - not required
+  const addParam = (name: string | undefined, required: boolean, catchAll: boolean): void => {
+    if (!name || seen.has(name)) return;
+    seen.add(name);
+    params.push({ name, required, catchAll });
+  };
+
   for (const match of pattern.matchAll(/\[\[\.\.\.([^\]]+)\]\]/g)) {
-    const name = match[1];
-    if (name && !seen.has(name)) {
-      seen.add(name);
-      params.push({ name, required: false, catchAll: true });
-    }
+    addParam(match[1], false, true);
   }
 
-  // Required catch-all [...param]
   for (const match of pattern.matchAll(/\[\.\.\.([^\]]+)\]/g)) {
-    const name = match[1];
-    if (name && !seen.has(name)) {
-      seen.add(name);
-      params.push({ name, required: true, catchAll: true });
-    }
+    addParam(match[1], true, true);
   }
 
-  // Single param [param] - must not start with ... or contain [
   for (const match of pattern.matchAll(/\[([^\[\]]+)\]/g)) {
     const name = match[1];
-    if (name && !name.startsWith("...") && !seen.has(name)) {
-      seen.add(name);
-      params.push({ name, required: true, catchAll: false });
-    }
+    if (name?.startsWith("...")) continue;
+    addParam(name, true, false);
   }
 
   return params;
@@ -121,29 +109,19 @@ export function extractPathParams(pattern: string): PathParam[] {
  * ```
  */
 export function filePathToPattern(filePath: string, routePrefix: string = ""): string {
-  // Remove file extension
-  let pattern = filePath.replace(/\.(ts|tsx|js|jsx)$/, "");
+  let pattern = filePath
+    .replace(/\.(ts|tsx|js|jsx)$/, "")
+    .replace(/\/route$/, "")
+    .replace(/\/index$/, "");
 
-  // Remove "route" suffix for App Router style
-  pattern = pattern.replace(/\/route$/, "");
+  if (!pattern.startsWith("/")) pattern = `/${pattern}`;
 
-  // Remove index suffix
-  pattern = pattern.replace(/\/index$/, "");
-
-  // Ensure leading slash
-  if (!pattern.startsWith("/")) {
-    pattern = "/" + pattern;
-  }
-
-  // Add prefix
   if (routePrefix && !pattern.startsWith(routePrefix)) {
-    pattern = routePrefix + pattern;
+    pattern = `${routePrefix}${pattern}`;
   }
 
-  // Clean up double slashes
   pattern = pattern.replace(/\/+/g, "/");
 
-  // Remove trailing slash unless it's just "/"
   if (pattern.length > 1 && pattern.endsWith("/")) {
     pattern = pattern.slice(0, -1);
   }
@@ -168,19 +146,14 @@ export function filePathToPattern(filePath: string, routePrefix: string = ""): s
  * ```
  */
 export function generateOperationId(method: string, path: string): string {
-  // Remove /api prefix if present
   let cleanPath = path.replace(/^\/api/, "");
 
-  // Replace path parameters with "By{Param}"
-  cleanPath = cleanPath.replace(/\{([^}]+)\}/g, (_, param) => {
-    return "By" + capitalize(param);
-  });
+  cleanPath = cleanPath.replace(/\{([^}]+)\}/g, (_, param: string) => `By${capitalize(param)}`);
 
-  // Split path into segments and capitalize
   const segments = cleanPath
     .split("/")
     .filter(Boolean)
-    .map((s, i) => (i === 0 ? s : capitalize(s)))
+    .map((segment, index) => (index === 0 ? segment : capitalize(segment)))
     .join("");
 
   return method.toLowerCase() + capitalize(segments || "root");

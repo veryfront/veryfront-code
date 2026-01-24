@@ -9,9 +9,6 @@ import { brand } from "./colors.ts";
 import { cursor } from "./ansi.ts";
 import { TYPEWRITER_CHAR_DELAY_MS, TYPEWRITER_WORD_DELAY_MS } from "./constants.ts";
 
-/** Write to stdout (alias for consistency with existing code) */
-const write = writeStdout;
-
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -41,23 +38,24 @@ export async function typeText(
     hideCursor = true,
   } = options;
 
-  if (hideCursor) write(cursor.hide);
+  if (hideCursor) writeStdout(cursor.hide);
 
   try {
     if (mode === "word") {
       const words = text.split(" ");
       for (let i = 0; i < words.length; i++) {
-        write(words[i] + (i < words.length - 1 ? " " : ""));
+        writeStdout(words[i] + (i < words.length - 1 ? " " : ""));
         await delay(wordDelay);
       }
-    } else {
-      for (const char of text) {
-        write(char);
-        await delay(charDelay);
-      }
+      return;
+    }
+
+    for (const char of text) {
+      writeStdout(char);
+      await delay(charDelay);
     }
   } finally {
-    if (hideCursor) write(cursor.show);
+    if (hideCursor) writeStdout(cursor.show);
   }
 }
 
@@ -69,7 +67,7 @@ export async function typeLine(
   options?: TypewriterOptions,
 ): Promise<void> {
   await typeText(text, options);
-  write("\n");
+  writeStdout("\n");
 }
 
 /**
@@ -79,9 +77,9 @@ export async function typeCommand(
   command: string,
   options?: TypewriterOptions,
 ): Promise<void> {
-  write("  " + brand("$") + " ");
+  writeStdout(`  ${brand("$")} `);
   await typeText(command, { ...options, charDelay: options?.charDelay ?? 50 });
-  write("\n");
+  writeStdout("\n");
 }
 
 // Re-export cursor controls for backwards compatibility

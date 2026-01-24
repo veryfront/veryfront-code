@@ -21,19 +21,21 @@ export class DataFetcher {
     this.pathsFetcher = new StaticPathsFetcher();
   }
 
-  async fetchData(
+  fetchData(
     pageModule: PageWithData,
     context: DataContext,
     mode: "development" | "production" = "development",
   ): Promise<DataResult> {
     const preferServerData = mode === "development" || !pageModule.getStaticData;
-    const fetchType = preferServerData && pageModule.getServerData
-      ? "server"
-      : pageModule.getStaticData
-      ? "static"
-      : "none";
 
-    return await withSpan(
+    let fetchType: "server" | "static" | "none" = "none";
+    if (preferServerData && pageModule.getServerData) {
+      fetchType = "server";
+    } else if (pageModule.getStaticData) {
+      fetchType = "static";
+    }
+
+    return withSpan(
       SpanNames.DATA_FETCH,
       async () => {
         if (preferServerData && pageModule.getServerData) {
@@ -49,7 +51,7 @@ export class DataFetcher {
       {
         "data.fetch_type": fetchType,
         "data.mode": mode,
-        "data.pathname": context.url?.pathname || "unknown",
+        "data.pathname": context.url?.pathname ?? "unknown",
       },
     );
   }
@@ -59,10 +61,11 @@ export class DataFetcher {
   }
 
   clearCache(pattern?: string): void {
-    if (pattern) {
-      this.cacheManager.clearPattern(pattern);
-    } else {
+    if (!pattern) {
       this.cacheManager.clear();
+      return;
     }
+
+    this.cacheManager.clearPattern(pattern);
   }
 }

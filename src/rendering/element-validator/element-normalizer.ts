@@ -21,13 +21,12 @@ export function ensureValidReactElement(
   }
 
   const finalChild = normalizeChild(pageElement);
-  const finalIsElement = isReactElement(finalChild);
 
   if (options.debugMode) {
-    logFinalElementCheck(finalChild, finalIsElement);
+    logFinalElementCheck(finalChild);
   }
 
-  if (finalIsElement) {
+  if (isReactElement(finalChild)) {
     return finalChild as React.ReactElement;
   }
 
@@ -38,9 +37,7 @@ function performDeepInspection(
   element: React.ReactNode,
   inspectionOptions: InspectionOptions,
 ): void {
-  logger.debug(
-    "[VALIDATOR] Starting deep React element tree inspection before SSR",
-  );
+  logger.debug("[VALIDATOR] Starting deep React element tree inspection before SSR");
 
   try {
     deepInspectElement(element, "root", 0, inspectionOptions);
@@ -57,18 +54,14 @@ function performDeepInspection(
   }
 }
 
-function logFinalElementCheck(
-  finalChild: unknown,
-  finalIsElement: boolean,
-): void {
-  const hasChildrenKey = !!(
-    finalChild &&
-    typeof finalChild === "object" &&
-    "children" in finalChild
-  );
+function logFinalElementCheck(finalChild: unknown): void {
+  const finalIsElement = isReactElement(finalChild);
+  const hasChildrenKey = finalChild != null && typeof finalChild === "object" &&
+    "children" in finalChild;
 
-  const isElement = isReactElement(finalChild);
-  const type = isElement ? getElementTypeName(finalChild as React.ReactElement) : typeof finalChild;
+  const type = finalIsElement
+    ? getElementTypeName(finalChild as React.ReactElement)
+    : typeof finalChild;
 
   logger.debug("Final element check before SSR", {
     finalIsElement,

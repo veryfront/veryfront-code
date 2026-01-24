@@ -15,20 +15,40 @@ export default tool({
     issueKey: z.string().describe('The issue key (e.g., "PROJ-123") to update'),
     summary: z.string().optional().describe("New summary/title for the issue"),
     description: z.string().optional().describe("New description for the issue"),
-    priority: z.string().optional().describe(
-      'New priority: "Highest", "High", "Medium", "Low", "Lowest"',
-    ),
-    assigneeId: z.string().optional().describe("Atlassian account ID of the new assignee"),
-    labels: z.array(z.string()).optional().describe(
-      "New array of labels (replaces existing labels)",
-    ),
-    status: z.string().optional().describe(
-      'New status to transition to (e.g., "In Progress", "Done", "To Do")',
-    ),
+    priority: z
+      .string()
+      .optional()
+      .describe('New priority: "Highest", "High", "Medium", "Low", "Lowest"'),
+    assigneeId: z
+      .string()
+      .optional()
+      .describe("Atlassian account ID of the new assignee"),
+    labels: z
+      .array(z.string())
+      .optional()
+      .describe("New array of labels (replaces existing labels)"),
+    status: z
+      .string()
+      .optional()
+      .describe('New status to transition to (e.g., "In Progress", "Done", "To Do")'),
   }),
-  async execute({ issueKey, summary, description, priority, assigneeId, labels, status }) {
-    // Update fields if provided
-    if (summary || description || priority || assigneeId || labels) {
+  async execute({
+    issueKey,
+    summary,
+    description,
+    priority,
+    assigneeId,
+    labels,
+    status,
+  }) {
+    const shouldUpdateFields =
+      summary !== undefined ||
+      description !== undefined ||
+      priority !== undefined ||
+      assigneeId !== undefined ||
+      labels !== undefined;
+
+    if (shouldUpdateFields) {
       await updateIssue(issueKey, {
         summary,
         description,
@@ -38,27 +58,27 @@ export default tool({
       });
     }
 
-    // Transition status if provided
     if (status) {
       const transitions = await getIssueTransitions(issueKey);
+      const normalizedStatus = status.toLowerCase();
+
       const targetTransition = transitions.find(
         (t) =>
-          t.name.toLowerCase() === status.toLowerCase() ||
-          t.to.name.toLowerCase() === status.toLowerCase(),
+          t.name.toLowerCase() === normalizedStatus ||
+          t.to.name.toLowerCase() === normalizedStatus,
       );
 
       if (!targetTransition) {
         throw new Error(
-          `Status "${status}" not found. Available transitions: ${
-            transitions.map((t) => t.to.name).join(", ")
-          }`,
+          `Status "${status}" not found. Available transitions: ${transitions
+            .map((t) => t.to.name)
+            .join(", ")}`,
         );
       }
 
       await transitionIssue(issueKey, targetTransition.id);
     }
 
-    // Fetch and return updated issue
     const updatedIssue = await getIssue(issueKey);
 
     return {
@@ -74,7 +94,7 @@ export default tool({
         name: updatedIssue.fields.project.name,
       },
       updated: updatedIssue.fields.updated,
-      labels: updatedIssue.fields.labels || [],
+      labels: updatedIssue.fields.labels ?? [],
       message: `Issue ${issueKey} updated successfully`,
     };
   },

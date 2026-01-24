@@ -1,4 +1,4 @@
-import { initialize, transform } from "esbuild"; // Native esbuild
+import { initialize, transform } from "esbuild";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createError, toError } from "../errors/veryfront-error.ts";
 import { loadImportMap, transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
@@ -11,18 +11,22 @@ interface VirtualModule {
 }
 
 export class VirtualModuleSystem {
-  private modules: Map<string, VirtualModule> = new Map();
+  private modules = new Map<string, VirtualModule>();
   private baseUrl: string;
   private adapter: RuntimeAdapter;
 
   constructor(baseUrl: string = "/_veryfront/modules", adapter?: RuntimeAdapter) {
     this.baseUrl = baseUrl;
+
     if (!adapter) {
-      throw toError(createError({
-        type: "render",
-        message: "VirtualModuleSystem requires a RuntimeAdapter to be provided",
-      }));
+      throw toError(
+        createError({
+          type: "render",
+          message: "VirtualModuleSystem requires a RuntimeAdapter to be provided",
+        }),
+      );
     }
+
     this.adapter = adapter;
   }
 
@@ -64,9 +68,7 @@ export class VirtualModuleSystem {
       .replace(
         /from\s+"https?:\/\/[^"']+react@[^"']+\/jsx-dev-runtime"/g,
         'from "react/jsx-dev-runtime"',
-      );
-
-    transformedCode = transformedCode
+      )
       .replace(/from\s+["']\.\/(\w+)\.tsx["']/g, 'from "/_veryfront/modules/component:$1"')
       .replace(/from\s+["']\.\/(\w+)\.jsx["']/g, 'from "/_veryfront/modules/component:$1"')
       .replace(/from\s+["']\.\/(\w+)["']/g, 'from "/_veryfront/modules/component:$1"')
@@ -74,14 +76,13 @@ export class VirtualModuleSystem {
       .replace(/import\(["']\.\/(\w+)\.jsx["']\)/g, 'import("/_veryfront/modules/component:$1")')
       .replace(/import\(["']\.\/(\w+)["']\)/g, 'import("/_veryfront/modules/component:$1")');
 
-    const virtualModule: VirtualModule = {
+    this.modules.set(id, {
       id,
       source,
       transformed: transformedCode,
       contentType: "application/javascript",
-    };
+    });
 
-    this.modules.set(id, virtualModule);
     return `${this.baseUrl}/${encodeURIComponent(id)}`;
   }
 
@@ -91,19 +92,16 @@ export class VirtualModuleSystem {
 
   handleRequest(request: Request): Response | null {
     const url = new URL(request.url);
-
-    if (!url.pathname.startsWith(this.baseUrl)) {
-      return null;
-    }
+    if (!url.pathname.startsWith(this.baseUrl)) return null;
 
     const moduleId = decodeURIComponent(url.pathname.slice(this.baseUrl.length + 1));
-
     const module = this.modules.get(moduleId);
+
     if (!module) {
       return new Response("Module not found", { status: 404 });
     }
 
-    return new Response(module.transformed || module.source, {
+    return new Response(module.transformed ?? module.source, {
       headers: {
         "Content-Type": module.contentType,
         "Cache-Control": "no-cache",
@@ -113,7 +111,7 @@ export class VirtualModuleSystem {
     });
   }
 
-  clear() {
+  clear(): void {
     this.modules.clear();
   }
 }

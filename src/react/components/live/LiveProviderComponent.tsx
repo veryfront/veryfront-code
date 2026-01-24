@@ -11,11 +11,14 @@ export interface LiveProviderComponentProps {
  * Wraps children with explicitly provided provider components.
  * Provider auto-discovery was removed - users should add providers in app.tsx.
  */
-export function LiveProviderComponent({ children, providers = [] }: LiveProviderComponentProps) {
+export function LiveProviderComponent({
+  children,
+  providers = [],
+}: LiveProviderComponentProps): React.ReactElement {
   let content = children;
 
-  for (const provider of [...providers].reverse()) {
-    content = <ProviderComponent mdxBundle={provider}>{content}</ProviderComponent>;
+  for (let i = providers.length - 1; i >= 0; i--) {
+    content = <ProviderComponent mdxBundle={providers[i]}>{content}</ProviderComponent>;
   }
 
   return <>{content}</>;

@@ -1,62 +1,41 @@
-/**
- * In-Memory Rate Limit Store
- *
- * Simple memory-based implementation for rate limiting.
- * Suitable for single-server deployments or development.
- * For distributed systems, use Redis or similar.
- */
-
 import type { RateLimitState, RateLimitStore } from "./types.ts";
 
-/** Maximum timestamps to keep per key to prevent memory exhaustion under attack */
 const MAX_TIMESTAMPS_PER_KEY = 1000;
+const WINDOW_MS = 60000;
 
 export class MemoryRateLimitStore implements RateLimitStore {
-  private store: Map<string, RateLimitState> = new Map();
+  private store = new Map<string, RateLimitState>();
   private cleanupInterval: ReturnType<typeof setInterval> | null = null;
 
-  constructor(
-    /** How often to clean up expired entries (ms) */
-    private cleanupIntervalMs = 60000, // 1 minute
-  ) {
-    // Start cleanup interval
-    if (typeof setInterval !== "undefined") {
-      this.cleanupInterval = setInterval(
-        () => this.cleanup(),
-        cleanupIntervalMs,
-      );
-    }
+  constructor(private cleanupIntervalMs = WINDOW_MS) {
+    if (typeof setInterval === "undefined") return;
+
+    this.cleanupInterval = setInterval(() => this.cleanup(), cleanupIntervalMs);
   }
 
   increment(key: string): Promise<number> {
-    const state = this.store.get(key);
     const now = Date.now();
+    const state = this.store.get(key);
 
     if (!state || now > state.resetTime) {
-      // Create new state or reset expired state
       this.store.set(key, {
         count: 1,
-        resetTime: now + 60000, // Default 1 minute window
+        resetTime: now + WINDOW_MS,
         requestTimestamps: [now],
       });
       return Promise.resolve(1);
     }
 
-    // Increment existing count
     state.count++;
-    if (state.requestTimestamps) {
-      state.requestTimestamps.push(now);
-      // Prevent unbounded memory growth - keep only recent timestamps
-      // Use sliding window: remove timestamps older than window + keep max limit
-      if (state.requestTimestamps.length > MAX_TIMESTAMPS_PER_KEY) {
-        // Keep only the most recent timestamps within the window
-        const windowStart = state.resetTime - 60000; // 1 minute window
-        state.requestTimestamps = state.requestTimestamps.filter((t) => t >= windowStart);
-        // If still over limit, keep only the most recent MAX_TIMESTAMPS_PER_KEY
-        if (state.requestTimestamps.length > MAX_TIMESTAMPS_PER_KEY) {
-          state.requestTimestamps = state.requestTimestamps.slice(-MAX_TIMESTAMPS_PER_KEY);
-        }
-      }
+    state.requestTimestamps?.push(now);
+
+    const timestamps = state.requestTimestamps;
+    if (timestamps && timestamps.length > MAX_TIMESTAMPS_PER_KEY) {
+      const windowStart = state.resetTime - WINDOW_MS;
+      const filtered = timestamps.filter((t) => t >= windowStart);
+      state.requestTimestamps = filtered.length > MAX_TIMESTAMPS_PER_KEY
+        ? filtered.slice(-MAX_TIMESTAMPS_PER_KEY)
+        : filtered;
     }
 
     return Promise.resolve(state.count);
@@ -64,9 +43,7 @@ export class MemoryRateLimitStore implements RateLimitStore {
 
   get(key: string): Promise<number> {
     const state = this.store.get(key);
-    if (!state || Date.now() > state.resetTime) {
-      return Promise.resolve(0);
-    }
+    if (!state || Date.now() > state.resetTime) return Promise.resolve(0);
     return Promise.resolve(state.count);
   }
 
@@ -80,45 +57,27 @@ export class MemoryRateLimitStore implements RateLimitStore {
     return Promise.resolve();
   }
 
-  /**
-   * Get state for a key (used by sliding window strategy)
-   */
   getState(key: string): RateLimitState | undefined {
     return this.store.get(key);
   }
 
-  /**
-   * Set state for a key
-   */
   setState(key: string, state: RateLimitState): void {
     this.store.set(key, state);
   }
 
-  /**
-   * Clean up expired entries
-   */
   private cleanup(): void {
     const now = Date.now();
-    for (const [key, state] of this.store.entries()) {
-      if (now > state.resetTime) {
-        this.store.delete(key);
-      }
+    for (const [key, state] of this.store) {
+      if (now > state.resetTime) this.store.delete(key);
     }
   }
 
-  /**
-   * Stop the cleanup interval
-   */
   destroy(): void {
-    if (this.cleanupInterval !== null) {
-      clearInterval(this.cleanupInterval);
-      this.cleanupInterval = null;
-    }
+    if (this.cleanupInterval === null) return;
+    clearInterval(this.cleanupInterval);
+    this.cleanupInterval = null;
   }
 
-  /**
-   * Get current store size (for debugging/monitoring)
-   */
   size(): number {
     return this.store.size;
   }

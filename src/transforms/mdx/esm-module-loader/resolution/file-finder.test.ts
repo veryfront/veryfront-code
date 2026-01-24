@@ -7,105 +7,71 @@
  */
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { resolveModuleFile } from "./file-finder.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { resolveModuleFile } from "./file-finder.ts";
 
 const mockAdapter = createMockAdapter();
 
+async function assertResolvedModuleFile(
+  modulePath: string,
+  expectedSuffix: string,
+  sourceIncludes?: string,
+): Promise<void> {
+  const result = await resolveModuleFile(modulePath, mockAdapter, undefined);
+
+  assertExists(result, `Should resolve ${modulePath}`);
+  assertEquals(
+    result.actualFilePath.endsWith(expectedSuffix),
+    true,
+    `Expected path to end with ${expectedSuffix}, got: ${result.actualFilePath}`,
+  );
+  assertExists(result.sourceCode, "Should have source code");
+
+  if (sourceIncludes) {
+    assertEquals(
+      result.sourceCode.includes(sourceIncludes),
+      true,
+      `Should contain ${sourceIncludes} export`,
+    );
+  }
+}
+
 describe("resolveModuleFile", () => {
   it("resolves framework react/* files", async () => {
-    // react/router/index.js should resolve to src/react/router/index.ts
-    const result = await resolveModuleFile(
+    await assertResolvedModuleFile(
       "_vf_modules/react/router/index.js",
-      mockAdapter,
-      undefined,
-    );
-
-    assertExists(result, "Should resolve framework react/router/index file");
-    assertEquals(
-      result.actualFilePath.endsWith("src/react/router/index.ts"),
-      true,
-      `Expected path to end with src/react/router/index.ts, got: ${result.actualFilePath}`,
-    );
-    assertExists(result.sourceCode, "Should have source code");
-    assertEquals(
-      result.sourceCode.includes("useRouter"),
-      true,
-      "Should contain useRouter export",
+      "src/react/router/index.ts",
+      "useRouter",
     );
   });
 
   it("resolves framework react/context files", async () => {
-    const result = await resolveModuleFile(
+    await assertResolvedModuleFile(
       "_vf_modules/react/context/index.js",
-      mockAdapter,
-      undefined,
-    );
-
-    assertExists(result, "Should resolve framework react/context/index file");
-    assertEquals(
-      result.actualFilePath.endsWith("src/react/context/index.ts"),
-      true,
-      `Expected path to end with src/react/context/index.ts, got: ${result.actualFilePath}`,
-    );
-    assertExists(result.sourceCode, "Should have source code");
-    assertEquals(
-      result.sourceCode.includes("usePageContext"),
-      true,
-      "Should contain usePageContext export",
+      "src/react/context/index.ts",
+      "usePageContext",
     );
   });
 
   it("resolves framework react/components/Head files", async () => {
-    const result = await resolveModuleFile(
+    await assertResolvedModuleFile(
       "_vf_modules/react/components/Head.js",
-      mockAdapter,
-      undefined,
-    );
-
-    assertExists(result, "Should resolve framework react/components/Head file");
-    assertEquals(
-      result.actualFilePath.endsWith("src/react/components/Head.tsx"),
-      true,
-      `Expected path to end with src/react/components/Head.tsx, got: ${result.actualFilePath}`,
-    );
-    assertExists(result.sourceCode, "Should have source code");
-    assertEquals(
-      result.sourceCode.includes("Head"),
-      true,
-      "Should contain Head export",
+      "src/react/components/Head.tsx",
+      "Head",
     );
   });
 
   it("resolves framework lib/* files", async () => {
-    const result = await resolveModuleFile(
+    await assertResolvedModuleFile(
       "_vf_modules/lib/Router.js",
-      mockAdapter,
-      undefined,
+      "src/lib/Router.tsx",
     );
-
-    assertExists(result, "Should resolve framework lib/Router file");
-    assertEquals(
-      result.actualFilePath.endsWith("src/lib/Router.tsx"),
-      true,
-      `Expected path to end with src/lib/Router.tsx, got: ${result.actualFilePath}`,
-    );
-    assertExists(result.sourceCode, "Should have source code");
   });
 
   it("resolves framework react/fonts files", async () => {
-    const result = await resolveModuleFile(
+    await assertResolvedModuleFile(
       "_vf_modules/react/fonts/index.js",
-      mockAdapter,
-      undefined,
+      "src/react/fonts/index.ts",
     );
-
-    assertExists(result, "Should resolve framework react/fonts/index file");
-    assertEquals(
-      result.actualFilePath.endsWith("src/react/fonts/index.ts"),
-      true,
-      `Expected path to end with src/react/fonts/index.ts, got: ${result.actualFilePath}`,
-    );
-    assertExists(result.sourceCode, "Should have source code");
   });
 });

@@ -3,15 +3,17 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { DataFetcher } from "./data-fetcher.ts";
 import type { DataContext, PageWithData } from "./types.ts";
 
-describe("DataFetcher", () => {
-  const createContext = (overrides: Partial<DataContext> = {}): DataContext => ({
+function createContext(overrides: Partial<DataContext> = {}): DataContext {
+  return {
     params: {},
     query: new URLSearchParams(),
     request: new Request("http://localhost/test"),
     url: new URL("http://localhost/test"),
     ...overrides,
-  });
+  };
+}
 
+describe("DataFetcher", () => {
   describe("constructor", () => {
     it("should create instance without adapter", () => {
       const fetcher = new DataFetcher();
@@ -19,9 +21,7 @@ describe("DataFetcher", () => {
     });
 
     it("should create instance with adapter", () => {
-      const mockAdapter = {
-        env: { get: () => undefined },
-      } as any;
+      const mockAdapter = { env: { get: () => undefined } } as any;
       const fetcher = new DataFetcher(mockAdapter);
       assertExists(fetcher);
     });
@@ -30,9 +30,7 @@ describe("DataFetcher", () => {
   describe("fetchData", () => {
     it("should return empty props when no data functions defined", async () => {
       const fetcher = new DataFetcher();
-      const pageModule: PageWithData = {
-        default: () => null,
-      };
+      const pageModule: PageWithData = { default: () => null };
 
       const result = await fetcher.fetchData(pageModule, createContext());
 
@@ -54,7 +52,7 @@ describe("DataFetcher", () => {
           "development",
         );
 
-        assertEquals((result.props as { source: string })?.source, "server");
+        assertEquals(result.props.source, "server");
       });
 
       it("should fallback to getStaticData if getServerData not defined", async () => {
@@ -70,7 +68,7 @@ describe("DataFetcher", () => {
           "development",
         );
 
-        assertEquals((result.props as { source: string })?.source, "static");
+        assertEquals(result.props.source, "static");
       });
     });
 
@@ -89,7 +87,7 @@ describe("DataFetcher", () => {
           "production",
         );
 
-        assertEquals((result.props as { source: string })?.source, "static");
+        assertEquals(result.props.source, "static");
       });
 
       it("should use getServerData if getStaticData not defined in production", async () => {
@@ -105,7 +103,7 @@ describe("DataFetcher", () => {
           "production",
         );
 
-        assertEquals((result.props as { source: string })?.source, "server");
+        assertEquals(result.props.source, "server");
       });
     });
 
@@ -119,7 +117,7 @@ describe("DataFetcher", () => {
 
       const result = await fetcher.fetchData(pageModule, createContext());
 
-      assertEquals((result.props as { source: string })?.source, "server");
+      assertEquals(result.props.source, "server");
     });
 
     it("should handle redirect from data function", async () => {
@@ -140,9 +138,7 @@ describe("DataFetcher", () => {
       const fetcher = new DataFetcher();
       const pageModule: PageWithData = {
         default: () => null,
-        getServerData: () => ({
-          notFound: true,
-        }),
+        getServerData: () => ({ notFound: true }),
       };
 
       const result = await fetcher.fetchData(pageModule, createContext());
@@ -154,9 +150,7 @@ describe("DataFetcher", () => {
   describe("getStaticPaths", () => {
     it("should return null when getStaticPaths not defined", async () => {
       const fetcher = new DataFetcher();
-      const pageModule: PageWithData = {
-        default: () => null,
-      };
+      const pageModule: PageWithData = { default: () => null };
 
       const result = await fetcher.getStaticPaths(pageModule);
 
@@ -176,8 +170,8 @@ describe("DataFetcher", () => {
       const result = await fetcher.getStaticPaths(pageModule);
 
       assertExists(result);
-      assertEquals(result!.paths.length, 2);
-      assertEquals(result!.fallback, false);
+      assertEquals(result.paths.length, 2);
+      assertEquals(result.fallback, false);
     });
 
     it("should support fallback: blocking", async () => {
@@ -192,7 +186,7 @@ describe("DataFetcher", () => {
 
       const result = await fetcher.getStaticPaths(pageModule);
 
-      assertEquals(result!.fallback, "blocking");
+      assertEquals(result?.fallback, "blocking");
     });
   });
 
@@ -207,24 +201,17 @@ describe("DataFetcher", () => {
         }),
       };
 
-      // Populate cache
       await fetcher.fetchData(pageModule, createContext(), "production");
-
-      // Clear cache - verify method doesn't throw
       fetcher.clearCache();
     });
 
     it("should clear cache matching pattern", () => {
       const fetcher = new DataFetcher();
-
-      // Clear with pattern - verify method doesn't throw
       fetcher.clearCache("/blog");
     });
 
     it("should not throw with empty pattern", () => {
       const fetcher = new DataFetcher();
-
-      // Should not throw
       fetcher.clearCache("");
     });
   });
@@ -234,9 +221,7 @@ describe("DataFetcher", () => {
       const fetcher = new DataFetcher();
       const pageModule: PageWithData<{ title: string }> = {
         default: () => null,
-        getServerData: (ctx) => ({
-          props: { title: `Server: ${ctx.params.id}` },
-        }),
+        getServerData: (ctx) => ({ props: { title: `Server: ${ctx.params.id}` } }),
         getStaticData: (ctx) => ({
           props: { title: `Static: ${ctx.params.id}` },
           revalidate: 60,
@@ -252,17 +237,14 @@ describe("DataFetcher", () => {
         url: new URL("http://localhost/posts/1"),
       });
 
-      // In development, uses getServerData
       const devResult = await fetcher.fetchData(pageModule, context, "development");
-      assertEquals((devResult.props as { title: string })?.title, "Server: 1");
+      assertEquals(devResult.props.title, "Server: 1");
 
-      // In production, uses getStaticData
       const prodResult = await fetcher.fetchData(pageModule, context, "production");
-      assertEquals((prodResult.props as { title: string })?.title, "Static: 1");
+      assertEquals(prodResult.props.title, "Static: 1");
 
-      // getStaticPaths works independently
       const paths = await fetcher.getStaticPaths(pageModule);
-      assertEquals(paths!.paths.length, 2);
+      assertEquals(paths?.paths.length, 2);
     });
 
     it("should pass full context to getServerData", async () => {

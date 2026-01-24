@@ -7,8 +7,8 @@ export function createErrorSolution(
   config: Omit<ErrorSolution, "code" | "docs"> & { docs?: string },
 ): ErrorSolution {
   return {
-    code,
     ...config,
+    code,
     docs: config.docs ?? getErrorDocsUrl(code),
   };
 }

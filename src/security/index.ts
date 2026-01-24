@@ -1,21 +1,6 @@
-/**
- * Security Module - Comprehensive HTTP Security & Response System
- *
- * Provides security features including:
- * - Input validation and sanitization
- * - HTTP security headers (CSP, CORS, etc.)
- * - Authentication handlers
- * - Security middleware
- * - Response building with security best practices
- *
- * @module security
- */
-
-// Base Handler
 export { BaseHandler } from "./http/base-handler.ts";
 export type { HandlerHelpers } from "./http/base-handler.ts";
 
-// Input Validation (from input-validation/)
 export type {
   ParseFormOptions,
   ParseJsonOptions,
@@ -24,7 +9,6 @@ export type {
   ValidatedHandlerConfig,
   ValidatedHandlerFunction,
 } from "./input-validation/index.ts";
-
 export {
   CommonSchemas,
   createValidatedHandler,
@@ -38,9 +22,7 @@ export {
   ValidationError,
 } from "./input-validation/index.ts";
 
-// HTTP Security (from http/)
 export type { CORSConfig, CSPDirectives, SecurityConfig } from "./http/handlers-index.ts";
-
 export {
   AuthHandler,
   loadSecurityConfig,
@@ -48,10 +30,8 @@ export {
   setCors,
 } from "./http/handlers-index.ts";
 
-// Additional HTTP Security Utilities (from http/middleware/)
 export { computeEtag, CONTENT_TYPES, isValidSecurityConfig } from "./http/middleware/index.ts";
 
-// CORS (from http/cors/ - merged from cors package)
 export type {
   CORSConfig as CORSOptions,
   CORSHeaderOptions,
@@ -75,7 +55,6 @@ export {
   validateOriginSync,
 } from "./http/cors/index.ts";
 
-// Response Builder (from http/response/ - merged from response-builder package)
 export type { CacheStrategy, ResponseBuilderConfig } from "./http/response/index.ts";
 export {
   applySecurityHeaders,
@@ -87,7 +66,6 @@ export {
   ResponseBuilder,
 } from "./http/response/index.ts";
 
-// Path validation and traversal protection
 export {
   createValidator,
   PathValidationError,
@@ -98,6 +76,5 @@ export {
 } from "./path-validation.ts";
 export type { ValidationLevel, ValidationOptions, ValidationResult } from "./path-validation.ts";
 
-// Secure filesystem wrapper
 export { createSecureFs, SecureFs, SecurityError, wrapAdapterWithSecurity } from "./secure-fs.ts";
 export type { SecureFsConfig, SecurityContext, SecurityEvent } from "./secure-fs.ts";

@@ -1,19 +1,16 @@
+import { buildGitHubBytesCacheKey, buildGitHubContentCacheKey } from "#veryfront/cache";
 import { createError, toError } from "#veryfront/errors";
 import { logger } from "#veryfront/utils";
 import type { FileCache } from "../cache/file-cache.ts";
 import type { GitHubAPIClient } from "./github-api-client.ts";
 import type { GitHubStatOperations } from "./stat-operations.ts";
 import type { GitHubContentItem, ResolvedGitHubConfig } from "./types.ts";
-import { buildGitHubBytesCacheKey, buildGitHubContentCacheKey } from "#veryfront/cache";
 
 const LOG_PREFIX = "[GitHubReadOperations]";
 
 /** Max file size for Contents API (1MB) */
 const MAX_CONTENTS_SIZE = 1024 * 1024;
 
-/**
- * Handles file read operations for GitHub adapter
- */
 export class GitHubReadOperations {
   private readonly config: ResolvedGitHubConfig;
   private readonly client: GitHubAPIClient;
@@ -35,13 +32,8 @@ export class GitHubReadOperations {
     this.projectDir = projectDir;
   }
 
-  /**
-   * Read file content as text
-   */
   async readTextFile(path: string): Promise<string> {
     const normalizedPath = this.normalizePath(path);
-
-    // Check cache
     const cacheKey = buildGitHubContentCacheKey(this.config.ref, normalizedPath);
     const cached = this.cache.get<string>(cacheKey);
     if (cached !== undefined) {
@@ -50,32 +42,17 @@ export class GitHubReadOperations {
 
     logger.debug(`${LOG_PREFIX} Reading file`, { path: normalizedPath });
 
-    // Get file entry from index for size check
     const fileEntry = this.statOps.getFileEntry(normalizedPath);
+    const content = fileEntry?.size && fileEntry.size > MAX_CONTENTS_SIZE
+      ? await this.readLargeFile(fileEntry.sha)
+      : await this.readContentsFile(normalizedPath);
 
-    let content: string;
-
-    if (fileEntry && fileEntry.size > MAX_CONTENTS_SIZE) {
-      // Large file: use Blob API
-      content = await this.readLargeFile(fileEntry.sha);
-    } else {
-      // Normal file: use Contents API
-      content = await this.readContentsFile(normalizedPath);
-    }
-
-    // Cache the content
     this.cache.set(cacheKey, content);
-
     return content;
   }
 
-  /**
-   * Read file content as bytes
-   */
   async readFile(path: string): Promise<Uint8Array> {
     const normalizedPath = this.normalizePath(path);
-
-    // Check cache for bytes
     const cacheKey = buildGitHubBytesCacheKey(this.config.ref, normalizedPath);
     const cached = this.cache.get<Uint8Array>(cacheKey);
     if (cached !== undefined) {
@@ -84,113 +61,28 @@ export class GitHubReadOperations {
 
     logger.debug(`${LOG_PREFIX} Reading file as bytes`, { path: normalizedPath });
 
-    // Get file entry from index for size check
     const fileEntry = this.statOps.getFileEntry(normalizedPath);
+    const bytes = fileEntry?.size && fileEntry.size > MAX_CONTENTS_SIZE
+      ? await this.readLargeFileBytes(fileEntry.sha)
+      : await this.readContentsFileBytes(normalizedPath);
 
-    let bytes: Uint8Array;
-
-    if (fileEntry && fileEntry.size > MAX_CONTENTS_SIZE) {
-      // Large file: use Blob API
-      bytes = await this.readLargeFileBytes(fileEntry.sha);
-    } else {
-      // Normal file: use Contents API
-      bytes = await this.readContentsFileBytes(normalizedPath);
-    }
-
-    // Cache the bytes
     this.cache.set(cacheKey, bytes);
-
     return bytes;
   }
 
-  /**
-   * Read file using Contents API
-   */
   private async readContentsFile(path: string): Promise<string> {
-    try {
-      const response = await this.client.getContents(path);
-
-      // Handle array response (directory)
-      if (Array.isArray(response)) {
-        throw toError(
-          createError({
-            type: "file",
-            message: `Path is a directory: ${path}`,
-          }),
-        );
-      }
-
-      const item = response as GitHubContentItem;
-
-      // Check type
-      if (item.type !== "file") {
-        throw toError(
-          createError({
-            type: "file",
-            message: `Not a file: ${path} (type: ${item.type})`,
-          }),
-        );
-      }
-
-      // Decode content
-      if (!item.content) {
-        throw toError(
-          createError({
-            type: "file",
-            message: `File has no content: ${path}`,
-          }),
-        );
-      }
-
-      return this.decodeBase64(item.content);
-    } catch (error) {
-      // Re-throw with more context if needed
-      if (
-        error instanceof Error &&
-        (error as Error & { statusCode?: number }).statusCode === 404
-      ) {
-        throw toError(
-          createError({
-            type: "file",
-            message: `File not found: ${path}`,
-            context: {
-              path,
-              operation: "read",
-            },
-          }),
-        );
-      }
-      throw error;
-    }
+    const item = await this.getFileItemFromContents(path);
+    return this.decodeBase64(item.content);
   }
 
-  /**
-   * Read large file using Blob API
-   */
-  private async readLargeFile(sha: string): Promise<string> {
-    // Check blob cache (blobs are immutable, cache forever)
-    const blobCacheKey = `github:blob:${sha}`;
-    const cachedBlob = this.cache.get<string>(blobCacheKey);
-    if (cachedBlob !== undefined) {
-      return cachedBlob;
-    }
-
-    logger.debug(`${LOG_PREFIX} Reading large file via Blob API`, { sha });
-
-    const blob = await this.client.getBlob(sha);
-
-    const content = blob.encoding === "base64" ? this.decodeBase64(blob.content) : blob.content;
-
-    // Cache blob (immutable content, uses default TTL)
-    this.cache.set(blobCacheKey, content);
-
-    return content;
-  }
-
-  /**
-   * Read file as bytes using Contents API
-   */
   private async readContentsFileBytes(path: string): Promise<Uint8Array> {
+    const item = await this.getFileItemFromContents(path);
+    return this.decodeBase64ToBytes(item.content);
+  }
+
+  private async getFileItemFromContents(
+    path: string,
+  ): Promise<GitHubContentItem & { content: string }> {
     try {
       const response = await this.client.getContents(path);
 
@@ -203,7 +95,7 @@ export class GitHubReadOperations {
         );
       }
 
-      const item = response as GitHubContentItem;
+      const item = response;
 
       if (item.type !== "file") {
         throw toError(
@@ -223,12 +115,9 @@ export class GitHubReadOperations {
         );
       }
 
-      return this.decodeBase64ToBytes(item.content);
+      return item as GitHubContentItem & { content: string };
     } catch (error) {
-      if (
-        error instanceof Error &&
-        (error as Error & { statusCode?: number }).statusCode === 404
-      ) {
+      if (error instanceof Error && (error as Error & { statusCode?: number }).statusCode === 404) {
         throw toError(
           createError({
             type: "file",
@@ -241,9 +130,22 @@ export class GitHubReadOperations {
     }
   }
 
-  /**
-   * Read large file as bytes using Blob API
-   */
+  private async readLargeFile(sha: string): Promise<string> {
+    const blobCacheKey = `github:blob:${sha}`;
+    const cachedBlob = this.cache.get<string>(blobCacheKey);
+    if (cachedBlob !== undefined) {
+      return cachedBlob;
+    }
+
+    logger.debug(`${LOG_PREFIX} Reading large file via Blob API`, { sha });
+
+    const blob = await this.client.getBlob(sha);
+    const content = blob.encoding === "base64" ? this.decodeBase64(blob.content) : blob.content;
+
+    this.cache.set(blobCacheKey, content);
+    return content;
+  }
+
   private async readLargeFileBytes(sha: string): Promise<Uint8Array> {
     const blobCacheKey = `github:blob:bytes:${sha}`;
     const cachedBlob = this.cache.get<Uint8Array>(blobCacheKey);

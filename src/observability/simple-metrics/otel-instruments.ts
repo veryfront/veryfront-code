@@ -4,18 +4,12 @@
  */
 
 import { serverLogger as logger } from "#veryfront/utils";
-import type { OtelInstruments } from "./types.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import type { OtelInstruments } from "./types.ts";
 
 let otelInitialized = false;
 const otel: OtelInstruments = {};
 
-/**
- * Safe logging wrapper that won't throw if logger unavailable
- *
- * @param message - Log message
- * @param error - Optional error object
- */
 export function safeLogWarn(message: string, error?: unknown): void {
   try {
     logger.warn(message, error);
@@ -24,28 +18,16 @@ export function safeLogWarn(message: string, error?: unknown): void {
   }
 }
 
-/**
- * Ensure OpenTelemetry instruments are initialized
- *
- * @returns Promise that resolves when initialization is complete
- *
- * @example
- * ```ts
- * await ensureOtelInstruments()
- * otel.requestCounter?.add(1)
- * ```
- */
 export async function ensureOtelInstruments(): Promise<void> {
   if (otelInitialized) return;
   otelInitialized = true;
 
-  // Skip OpenTelemetry in non-Deno runtimes (Node.js, Bun)
-  // The npm: protocol is Deno-specific and will fail in other runtimes
   if (!isDeno) return;
 
   try {
-    const mod = await import("@opentelemetry/api");
-    const meter = mod.metrics.getMeter("veryfront", "0.1.0");
+    const { metrics } = await import("@opentelemetry/api");
+    const meter = metrics.getMeter("veryfront", "0.1.0");
+
     otel.meter = meter;
     otel.ssrHistogram = meter.createHistogram("veryfront.ssr.duration", {
       description: "SSR render duration (ms)",
@@ -80,17 +62,6 @@ export async function ensureOtelInstruments(): Promise<void> {
   }
 }
 
-/**
- * Execute OpenTelemetry operation with error handling
- *
- * @param operation - Operation to execute
- * @param errorContext - Error context for logging
- *
- * @example
- * ```ts
- * await safeOtelOperation(() => otel.requestCounter?.add(1), 'request counter failed')
- * ```
- */
 export async function safeOtelOperation(
   operation: () => void | Promise<void>,
   errorContext: string,
@@ -103,21 +74,14 @@ export async function safeOtelOperation(
   }
 }
 
-/**
- * Get OpenTelemetry instruments
- *
- * @returns OpenTelemetry instruments
- */
 export function getOtelInstruments(): OtelInstruments {
   return otel;
 }
 
-/**
- * Reset OpenTelemetry initialization state (useful for testing)
- */
 export function resetOtelInstruments(): void {
   otelInitialized = false;
-  for (const key of Object.keys(otel)) {
-    delete otel[key as keyof OtelInstruments];
+
+  for (const key of Object.keys(otel) as (keyof OtelInstruments)[]) {
+    delete otel[key];
   }
 }

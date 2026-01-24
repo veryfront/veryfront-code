@@ -17,11 +17,11 @@ export interface DataResult<T = unknown> {
 
 export interface PageWithData<T = unknown> {
   default: unknown;
-  getServerData?: (context: DataContext) => Promise<DataResult<T>> | DataResult<T>;
+  getServerData?: (context: DataContext) => DataResult<T> | Promise<DataResult<T>>;
   getStaticData?: (
     context: Omit<DataContext, "request" | "query">,
-  ) => Promise<DataResult<T>> | DataResult<T>;
-  getStaticPaths?: () => Promise<StaticPathsResult> | StaticPathsResult;
+  ) => DataResult<T> | Promise<DataResult<T>>;
+  getStaticPaths?: () => StaticPathsResult | Promise<StaticPathsResult>;
 }
 
 export interface StaticPathsResult {

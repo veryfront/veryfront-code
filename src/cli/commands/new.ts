@@ -64,6 +64,14 @@ function randomSuffix(len = 6): string {
   );
 }
 
+function parseIntegrations(integrationsStr?: string): IntegrationName[] {
+  if (!integrationsStr) return [];
+  return integrationsStr
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean) as IntegrationName[];
+}
+
 // ============================================================================
 // Main Command
 // ============================================================================
@@ -82,17 +90,13 @@ export async function newCommand(
     force = false,
   } = options;
 
-  let integrations: IntegrationName[] = integrationsStr
-    ? integrationsStr.split(",").map((s) => s.trim()).filter(Boolean) as IntegrationName[]
-    : [];
+  let integrations = parseIntegrations(integrationsStr);
 
   const fs = createFileSystem();
 
-  // Auth
-  const token = env.apiToken || await readToken();
+  const token = env.apiToken || (await readToken());
   const userInfo = token ? await validateToken(token) : null;
 
-  // Wizard (if no template)
   if (!template && isTTY()) {
     const result = await runNewTui(name, userInfo?.email);
     if (result.cancelled) {
@@ -102,12 +106,12 @@ export async function newCommand(
     template = result.template;
     integrations = result.integrations;
   }
-  if (!template) template = "ai";
+
+  template ??= "ai";
 
   const projectDir = join(cwd(), name);
   const slug = `${name}-${randomSuffix()}`;
 
-  // Validate
   if (!/^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/.test(name)) {
     console.error(error("Invalid project name. Use lowercase letters, numbers, and hyphens."));
     exitProcess(1);
@@ -121,9 +125,10 @@ export async function newCommand(
       exitProcess(1);
       return;
     }
-  } catch { /* ok */ }
+  } catch {
+    // ok
+  }
 
-  // Skip deploy mode - simple output (no auth required)
   if (skipDeploy) {
     console.log();
     console.log(`  Creating ${brand(slug)}...`);
@@ -141,16 +146,11 @@ export async function newCommand(
     return;
   }
 
-  // Full deploy mode requires authentication
   if (!token) {
     console.log("\n" + error("  Please log in: ") + dim("deno task cli login") + "\n");
     exitProcess(1);
     return;
   }
-
-  // =========================================================================
-  // Full TUI mode - Minimal design
-  // =========================================================================
 
   const tui = createTui({ title: "Veryfront", showLogs: true });
   const restore = interceptConsole(tui);
@@ -159,8 +159,8 @@ export async function newCommand(
   const prodUrl = `https://${slug}.veryfront.com`;
 
   tui.setInfo({
-    "Local": dim("○") + " " + brand(localUrl),
-    "Production": dim("○") + " " + brand(prodUrl),
+    Local: dim("○") + " " + brand(localUrl),
+    Production: dim("○") + " " + brand(prodUrl),
   });
 
   tui.setStatus("Creating...", "loading");
@@ -169,33 +169,27 @@ export async function newCommand(
   let actualSlug = slug;
 
   try {
-    // Scaffold
     await fs.mkdir(projectDir, { recursive: true });
     await scaffoldProjectFast(projectDir, template as InitTemplate, slug, integrations);
 
-    // Reserve slug
     const reserveResult = await reserveProjectSlug(slug, token);
     actualSlug = reserveResult.slug;
 
-    // Start server
     chdir(projectDir);
     const { devCommand } = await import("./dev.ts");
     const { ready } = await devCommand({ port, projectDir: cwd(), hmr: true });
     await ready;
 
-    // Open browser
     if (open && canOpenBrowser()) {
       await openBrowser(localUrl);
     }
 
-    // Update with green dot to show local is ready
     tui.setInfo({
-      "Local": success("●") + " " + brand(localUrl),
-      "Production": dim("○") + " " + brand(prodUrl),
+      Local: success("●") + " " + brand(localUrl),
+      Production: dim("○") + " " + brand(prodUrl),
     });
     tui.setStatus("Ready", "success");
 
-    // Wait for input
     await handleInput(tui, {
       onEnter: () => {
         // Continue to deploy
@@ -207,12 +201,10 @@ export async function newCommand(
 
     if (shouldExit) {
       tui.cleanup();
-      // Don't restore console - exit immediately to avoid showing shutdown logs
       exitProcess(0);
       return;
     }
 
-    // Deploy - single status indicator
     tui.setStatus("Deploying...", "loading");
 
     const { pushCommand } = await import("./push.ts");
@@ -227,20 +219,17 @@ export async function newCommand(
     const { deployCommand: deploy } = await import("./deploy.ts");
     await deploy({ branch: "main", env: "production", force: true, dryRun: false, quiet: true });
 
-    // Update both URLs with green dots
     tui.setInfo({
-      "Local": success("●") + " " + brand(localUrl),
-      "Production": success("●") + " " + brand(`https://${actualSlug}.veryfront.com`),
+      Local: success("●") + " " + brand(localUrl),
+      Production: success("●") + " " + brand(`https://${actualSlug}.veryfront.com`),
     });
     tui.setStatus("Deployed", "success");
 
-    // Stay in TUI - wait for user to exit
     await handleInput(tui, {
       onEnter: () => {},
       onExit: () => {},
     });
 
-    // Clean exit - don't restore console to avoid showing shutdown logs
     tui.cleanup();
     exitProcess(0);
   } catch (err) {

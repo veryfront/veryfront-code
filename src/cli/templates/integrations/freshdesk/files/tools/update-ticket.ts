@@ -1,6 +1,24 @@
 import { tool } from "veryfront/tool";
 import { z } from "zod";
-import { updateTicket, TicketStatus, TicketPriority } from "../../lib/freshdesk-client.ts";
+import { updateTicket, TicketPriority, TicketStatus } from "../../lib/freshdesk-client.ts";
+
+const priorityMap = {
+  low: TicketPriority.LOW,
+  medium: TicketPriority.MEDIUM,
+  high: TicketPriority.HIGH,
+  urgent: TicketPriority.URGENT,
+} as const;
+
+const statusMap = {
+  open: TicketStatus.OPEN,
+  pending: TicketStatus.PENDING,
+  resolved: TicketStatus.RESOLVED,
+  closed: TicketStatus.CLOSED,
+} as const;
+
+function getKeyByValue<T extends Record<string, unknown>>(map: T, value: T[keyof T]): string {
+  return Object.keys(map).find((key) => map[key as keyof T] === value) ?? "unknown";
+}
 
 export default tool({
   id: "update-ticket",
@@ -9,14 +27,8 @@ export default tool({
     ticketId: z.number().describe("The ID of the ticket to update"),
     subject: z.string().optional().describe("New subject/title for the ticket"),
     description: z.string().optional().describe("New description or details"),
-    status: z
-      .enum(["open", "pending", "resolved", "closed"])
-      .optional()
-      .describe("New status for the ticket"),
-    priority: z
-      .enum(["low", "medium", "high", "urgent"])
-      .optional()
-      .describe("New priority level"),
+    status: z.enum(["open", "pending", "resolved", "closed"]).optional().describe("New status for the ticket"),
+    priority: z.enum(["low", "medium", "high", "urgent"]).optional().describe("New priority level"),
     type: z
       .string()
       .optional()
@@ -24,20 +36,6 @@ export default tool({
     tags: z.array(z.string()).optional().describe("New tags for the ticket (replaces existing tags)"),
   }),
   async execute({ ticketId, subject, description, status, priority, type, tags }) {
-    const priorityMap = {
-      low: TicketPriority.LOW,
-      medium: TicketPriority.MEDIUM,
-      high: TicketPriority.HIGH,
-      urgent: TicketPriority.URGENT,
-    };
-
-    const statusMap = {
-      open: TicketStatus.OPEN,
-      pending: TicketStatus.PENDING,
-      resolved: TicketStatus.RESOLVED,
-      closed: TicketStatus.CLOSED,
-    };
-
     const ticket = await updateTicket(ticketId, {
       subject,
       description,
@@ -52,8 +50,8 @@ export default tool({
       ticket: {
         id: ticket.id,
         subject: ticket.subject,
-        status: Object.keys(statusMap).find((key) => statusMap[key as keyof typeof statusMap] === ticket.status) || "unknown",
-        priority: Object.keys(priorityMap).find((key) => priorityMap[key as keyof typeof priorityMap] === ticket.priority) || "unknown",
+        status: getKeyByValue(statusMap, ticket.status),
+        priority: getKeyByValue(priorityMap, ticket.priority),
         updatedAt: ticket.updated_at,
       },
     };

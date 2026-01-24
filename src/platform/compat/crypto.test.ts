@@ -2,6 +2,16 @@ import { assert, assertEquals, assertExists, assertNotEquals } from "#veryfront/
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createCrypto } from "./crypto.ts";
 
+function toHex(bytes: Uint8Array): string {
+  return Array.from(bytes)
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function assertHasNonZeroBytes(array: Uint8Array, message: string): void {
+  assert(array.some((byte) => byte !== 0), message);
+}
+
 describe("Crypto Compat", () => {
   describe("createCrypto", () => {
     it("returns crypto instance", () => {
@@ -17,20 +27,16 @@ describe("Crypto Compat", () => {
     it("fills Uint8Array", () => {
       const crypto = createCrypto();
       const array = new Uint8Array(16);
-
       array.fill(0);
 
       const result = crypto.getRandomValues(array);
 
       assertEquals(result, array);
-
-      const hasNonZero = array.some((byte) => byte !== 0);
-      assert(hasNonZero, "Array should contain non-zero values");
+      assertHasNonZeroBytes(array, "Array should contain non-zero values");
     });
 
     it("works with different array sizes", () => {
       const crypto = createCrypto();
-
       const sizes = [8, 16, 32, 64, 128, 256];
 
       for (const size of sizes) {
@@ -38,8 +44,7 @@ describe("Crypto Compat", () => {
         crypto.getRandomValues(array);
 
         assertEquals(array.length, size);
-        const hasNonZero = array.some((byte) => byte !== 0);
-        assert(hasNonZero, `Array of size ${size} should contain non-zero values`);
+        assertHasNonZeroBytes(array, `Array of size ${size} should contain non-zero values`);
       }
     });
 
@@ -88,8 +93,7 @@ describe("Crypto Compat", () => {
       const count = 1000;
 
       for (let i = 0; i < count; i++) {
-        const uuid = crypto.randomUUID();
-        uuids.add(uuid);
+        uuids.add(crypto.randomUUID());
       }
 
       assertEquals(uuids.size, count, "All generated UUIDs should be unique");
@@ -125,12 +129,8 @@ describe("Crypto Compat", () => {
 
       assertEquals(hashArray.length, 32);
 
-      const hashHex = Array.from(hashArray)
-        .map((byte) => byte.toString(16).padStart(2, "0"))
-        .join("");
-
       const expectedHash = "a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e";
-      assertEquals(hashHex, expectedHash);
+      assertEquals(toHex(hashArray), expectedHash);
     });
 
     it("digest with SHA-1", async () => {
@@ -138,9 +138,7 @@ describe("Crypto Compat", () => {
       const data = new TextEncoder().encode("test");
 
       const hashBuffer = await crypto.subtle.digest("SHA-1", data);
-      const hashArray = new Uint8Array(hashBuffer);
-
-      assertEquals(hashArray.length, 20);
+      assertEquals(new Uint8Array(hashBuffer).length, 20);
     });
 
     it("digest with SHA-384", async () => {
@@ -148,9 +146,7 @@ describe("Crypto Compat", () => {
       const data = new TextEncoder().encode("test");
 
       const hashBuffer = await crypto.subtle.digest("SHA-384", data);
-      const hashArray = new Uint8Array(hashBuffer);
-
-      assertEquals(hashArray.length, 48);
+      assertEquals(new Uint8Array(hashBuffer).length, 48);
     });
 
     it("digest with SHA-512", async () => {
@@ -158,9 +154,7 @@ describe("Crypto Compat", () => {
       const data = new TextEncoder().encode("test");
 
       const hashBuffer = await crypto.subtle.digest("SHA-512", data);
-      const hashArray = new Uint8Array(hashBuffer);
-
-      assertEquals(hashArray.length, 64);
+      assertEquals(new Uint8Array(hashBuffer).length, 64);
     });
 
     it("digest with empty data", async () => {
@@ -172,35 +166,29 @@ describe("Crypto Compat", () => {
 
       assertEquals(hashArray.length, 32);
 
-      const hashHex = Array.from(hashArray)
-        .map((byte) => byte.toString(16).padStart(2, "0"))
-        .join("");
       const expectedHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
-      assertEquals(hashHex, expectedHash);
+      assertEquals(toHex(hashArray), expectedHash);
     });
 
     it("generateKey for AES", async () => {
       const crypto = createCrypto();
 
       const key = await crypto.subtle.generateKey(
-        {
-          name: "AES-GCM",
-          length: 256,
-        },
+        { name: "AES-GCM", length: 256 },
         true,
         ["encrypt", "decrypt"],
       );
 
       assertExists(key);
       assertEquals(key.type, "secret");
-      assertEquals((key.algorithm as any).name, "AES-GCM");
-      assertEquals((key.algorithm as any).length, 256);
+      assertEquals(key.algorithm.name, "AES-GCM");
+      assertEquals((key.algorithm as AesKeyAlgorithm).length, 256);
     });
 
     it("generateKey for RSA", async () => {
       const crypto = createCrypto();
 
-      const keyPair = (await crypto.subtle.generateKey(
+      const keyPair = await crypto.subtle.generateKey(
         {
           name: "RSA-OAEP",
           modulusLength: 2048,
@@ -209,40 +197,35 @@ describe("Crypto Compat", () => {
         },
         true,
         ["encrypt", "decrypt"],
-      )) as CryptoKeyPair;
+      );
 
       assertExists(keyPair);
-      assertExists(keyPair.publicKey);
-      assertExists(keyPair.privateKey);
-      assertEquals(keyPair.publicKey.type, "public");
-      assertEquals(keyPair.privateKey.type, "private");
+      assertExists((keyPair as CryptoKeyPair).publicKey);
+      assertExists((keyPair as CryptoKeyPair).privateKey);
+
+      const { publicKey, privateKey } = keyPair as CryptoKeyPair;
+      assertEquals(publicKey.type, "public");
+      assertEquals(privateKey.type, "private");
     });
 
     it("generateKey for HMAC", async () => {
       const crypto = createCrypto();
 
-      const key = await crypto.subtle.generateKey(
-        {
-          name: "HMAC",
-          hash: "SHA-256",
-        },
-        true,
-        ["sign", "verify"],
-      );
+      const key = await crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256" }, true, [
+        "sign",
+        "verify",
+      ]);
 
       assertExists(key);
       assertEquals(key.type, "secret");
-      assertEquals((key.algorithm as any).name, "HMAC");
+      assertEquals(key.algorithm.name, "HMAC");
     });
 
     it("encrypt/decrypt with AES-GCM", async () => {
       const crypto = createCrypto();
 
       const key = await crypto.subtle.generateKey(
-        {
-          name: "AES-GCM",
-          length: 256,
-        },
+        { name: "AES-GCM", length: 256 },
         true,
         ["encrypt", "decrypt"],
       );
@@ -250,70 +233,42 @@ describe("Crypto Compat", () => {
       const iv = crypto.getRandomValues(new Uint8Array(12));
       const data = new TextEncoder().encode("Secret message");
 
-      const encrypted = await crypto.subtle.encrypt(
-        {
-          name: "AES-GCM",
-          iv: new Uint8Array(iv),
-        },
-        key as CryptoKey,
-        new Uint8Array(data),
-      );
-
+      const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, data);
       assertExists(encrypted);
 
-      const decrypted = await crypto.subtle.decrypt(
-        {
-          name: "AES-GCM",
-          iv: new Uint8Array(iv),
-        },
-        key as CryptoKey,
-        new Uint8Array(encrypted),
-      );
-
-      const decryptedText = new TextDecoder().decode(decrypted);
-      assertEquals(decryptedText, "Secret message");
+      const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, encrypted);
+      assertEquals(new TextDecoder().decode(decrypted), "Secret message");
     });
 
     it("sign/verify with HMAC", async () => {
       const crypto = createCrypto();
 
-      const key = await crypto.subtle.generateKey(
-        {
-          name: "HMAC",
-          hash: "SHA-256",
-        },
-        true,
-        ["sign", "verify"],
-      );
+      const key = await crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256" }, true, [
+        "sign",
+        "verify",
+      ]);
 
       const data = new TextEncoder().encode("Message to sign");
 
-      const signature = await crypto.subtle.sign("HMAC", key as CryptoKey, data);
-
+      const signature = await crypto.subtle.sign("HMAC", key, data);
       assertExists(signature);
 
-      const isValid = await crypto.subtle.verify("HMAC", key as CryptoKey, signature, data);
-
+      const isValid = await crypto.subtle.verify("HMAC", key, signature, data);
       assert(isValid, "Signature should be valid");
 
       const wrongData = new TextEncoder().encode("Wrong message");
-      const isInvalid = await crypto.subtle.verify("HMAC", key as CryptoKey, signature, wrongData);
-
+      const isInvalid = await crypto.subtle.verify("HMAC", key, signature, wrongData);
       assert(!isInvalid, "Signature should be invalid for wrong data");
     });
 
     it("importKey/exportKey", async () => {
       const crypto = createCrypto();
-
       const keyData = crypto.getRandomValues(new Uint8Array(32));
 
       const key = await crypto.subtle.importKey(
         "raw",
-        new Uint8Array(keyData),
-        {
-          name: "AES-GCM",
-          length: 256,
-        },
+        keyData,
+        { name: "AES-GCM", length: 256 },
         true,
         ["encrypt", "decrypt"],
       );
@@ -321,10 +276,11 @@ describe("Crypto Compat", () => {
       assertExists(key);
 
       const exportedKey = await crypto.subtle.exportKey("raw", key);
-
       assertExists(exportedKey);
-      const exportedArray = new Uint8Array(exportedKey as ArrayBuffer);
+
+      const exportedArray = new Uint8Array(exportedKey);
       assertEquals(exportedArray.length, 32);
+
       // Compare byte by byte to handle Buffer vs Uint8Array
       for (let i = 0; i < keyData.length; i++) {
         assertEquals(exportedArray[i], keyData[i]);
@@ -342,12 +298,7 @@ describe("Crypto Compat", () => {
       ]);
 
       const derivedBits = await crypto.subtle.deriveBits(
-        {
-          name: "PBKDF2",
-          salt: new Uint8Array(salt),
-          iterations: 1000,
-          hash: "SHA-256",
-        },
+        { name: "PBKDF2", salt, iterations: 1000, hash: "SHA-256" },
         baseKey,
         256,
       );

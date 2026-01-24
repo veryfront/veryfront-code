@@ -5,16 +5,18 @@ export function getEnvironmentVariable(name: string): string | undefined {
   try {
     if (hasDenoRuntime(globalThis)) {
       const value = (globalThis as GlobalWithDeno).Deno?.env.get(name);
-      return value === "" ? undefined : value;
+      return value || undefined;
     }
+
     if (hasNodeProcess(globalThis)) {
       const value = (globalThis as GlobalWithProcess).process?.env[name];
-      return value === "" ? undefined : value;
+      return value || undefined;
     }
+
+    return undefined;
   } catch {
     return undefined;
   }
-  return undefined;
 }
 
 export function isTestEnvironment(): boolean {

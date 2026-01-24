@@ -14,9 +14,7 @@ export type LogFormat = "combined" | "common" | "dev" | "short" | "tiny" | "json
 
 export interface LoggerOptions {
   format?: LogFormat;
-
   skip?: (req: Request) => boolean;
-
   log?: (message: string) => void;
 }
 
@@ -55,12 +53,11 @@ function formatDuration(ms: number): string {
 }
 
 function getTimestamp(): string {
-  const now = new Date();
-  return now.toISOString().replace("T", " ").replace("Z", "");
+  return new Date().toISOString().replace("T", " ").replace("Z", "");
 }
 
 function getRemoteAddr(req: Request): string {
-  return req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip") || "-";
+  return req.headers.get("x-forwarded-for") ?? req.headers.get("x-real-ip") ?? "-";
 }
 
 interface HttpLogEntry {
@@ -88,12 +85,8 @@ function getLogLevel(status: number): HttpLogEntry["level"] {
   return "info";
 }
 
-function formatJsonLog(
-  req: Request,
-  status: number,
-  duration: number,
-): string {
-  const url = new URL(req.url);
+function formatJsonLog(req: Request, status: number, duration: number): string {
+  const { pathname } = new URL(req.url);
   const userAgent = req.headers.get("user-agent");
   const referer = req.headers.get("referer");
   const requestId = req.headers.get("x-request-id");
@@ -104,88 +97,83 @@ function formatJsonLog(
     timestamp: new Date().toISOString(),
     level: getLogLevel(status),
     service: "server",
-    message: `${req.method} ${url.pathname} ${status}`,
+    message: `${req.method} ${pathname} ${status}`,
     http: {
       method: req.method,
-      path: url.pathname,
+      path: pathname,
       status,
       durationMs: Math.round(duration),
       remoteAddr: getRemoteAddr(req),
-      ...(userAgent && userAgent !== "-" && { userAgent }),
-      ...(referer && referer !== "-" && { referer }),
+      ...(userAgent && userAgent !== "-" ? { userAgent } : {}),
+      ...(referer && referer !== "-" ? { referer } : {}),
     },
-    ...(requestId && { requestId }),
-    ...(traceId && { traceId }),
-    ...(projectSlug && { projectSlug }),
+    ...(requestId ? { requestId } : {}),
+    ...(traceId ? { traceId } : {}),
+    ...(projectSlug ? { projectSlug } : {}),
   };
 
   return JSON.stringify(entry);
 }
 
-function formatLog(
-  format: LogFormat,
-  req: Request,
-  status: number,
-  duration: number,
-): string {
+function formatLog(format: LogFormat, req: Request, status: number, duration: number): string {
+  if (format === "json") return formatJsonLog(req, status, duration);
+
   const { pathname } = new URL(req.url);
   const { method } = req;
   const remoteAddr = getRemoteAddr(req);
   const timestamp = getTimestamp();
-  const userAgent = req.headers.get("user-agent") || "-";
-  const referer = req.headers.get("referer") || "-";
+  const userAgent = req.headers.get("user-agent") ?? "-";
+  const referer = req.headers.get("referer") ?? "-";
 
-  switch (format) {
-    case "json":
-      return formatJsonLog(req, status, duration);
-
-    case "combined":
-      return `${remoteAddr} - - [${timestamp}] "${method} ${pathname} HTTP/1.1" ${status} - "${referer}" "${userAgent}" ${
-        formatDuration(duration)
-      }`;
-
-    case "common":
-      return `${remoteAddr} - - [${timestamp}] "${method} ${pathname} HTTP/1.1" ${status} - ${
-        formatDuration(duration)
-      }`;
-
-    case "dev": {
-      const statusColor = getStatusColor(status);
-      const methodColor = getMethodColor(method);
-      return `${methodColor}${method}${colors.reset} ${pathname} ${statusColor}${status}${colors.reset} ${colors.gray}${
-        formatDuration(duration)
-      }${colors.reset}`;
-    }
-
-    case "short":
-      return `${method} ${pathname} ${status} ${formatDuration(duration)} - ${remoteAddr}`;
-
-    case "tiny":
-      return `${method} ${pathname} ${status} ${formatDuration(duration)}`;
-
-    default:
-      return formatLog("dev", req, status, duration);
+  if (format === "combined") {
+    return `${remoteAddr} - - [${timestamp}] "${method} ${pathname} HTTP/1.1" ${status} - "${referer}" "${userAgent}" ${
+      formatDuration(
+        duration,
+      )
+    }`;
   }
+
+  if (format === "common") {
+    return `${remoteAddr} - - [${timestamp}] "${method} ${pathname} HTTP/1.1" ${status} - ${
+      formatDuration(duration)
+    }`;
+  }
+
+  if (format === "dev") {
+    const statusColor = getStatusColor(status);
+    const methodColor = getMethodColor(method);
+    return `${methodColor}${method}${colors.reset} ${pathname} ${statusColor}${status}${colors.reset} ${colors.gray}${
+      formatDuration(
+        duration,
+      )
+    }${colors.reset}`;
+  }
+
+  if (format === "short") {
+    return `${method} ${pathname} ${status} ${formatDuration(duration)} - ${remoteAddr}`;
+  }
+
+  if (format === "tiny") {
+    return `${method} ${pathname} ${status} ${formatDuration(duration)}`;
+  }
+
+  return formatLog("dev", req, status, duration);
 }
 
 export function logger(options?: LoggerOptions): Middleware {
   const format = options?.format ?? "dev";
   const skip = options?.skip;
-  // For JSON format, output directly to console to preserve structure
   const isJson = format === "json";
   const log = options?.log ??
     (isJson ? (msg: string) => console.log(msg) : (msg: string) => serverLogger.info(msg));
 
-  const logError = (message: string): void => {
+  function logError(message: string): void {
     log(isJson ? message : `${message} ${colors.red}[ERROR]${colors.reset}`);
-  };
+  }
 
   return async (ctx, next) => {
     const req = getRequest(ctx);
-
-    if (skip?.(req)) {
-      return next();
-    }
+    if (skip?.(req)) return next();
 
     const start = performance.now();
 

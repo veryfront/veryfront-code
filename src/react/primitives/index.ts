@@ -55,13 +55,8 @@
  * ```
  */
 
-// Chat primitives
 export * from "./chat-container.tsx";
 export * from "./message-list.tsx";
 export * from "./input-box.tsx";
-
-// Agent primitives
 export * from "./agent-primitives.tsx";
-
-// Tool primitives
 export * from "./tool-primitives.tsx";

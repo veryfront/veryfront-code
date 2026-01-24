@@ -42,10 +42,6 @@ import {
 } from "./state.ts";
 import { handleInputKey, renderInput, renderLogs } from "./components/inline-input.ts";
 
-// ============================================================================
-// Types
-// ============================================================================
-
 export interface AppConfig {
   port: number;
   projects: Map<string, string>;
@@ -77,10 +73,6 @@ export interface App {
   log(level: "info" | "warn" | "error" | "debug", message: string): void;
 }
 
-// ============================================================================
-// App Implementation
-// ============================================================================
-
 /**
  * Create the CLI app
  */
@@ -90,29 +82,19 @@ export function createApp(config: AppConfig): App {
   let spinnerFrame = 0;
   let spinnerInterval: number | null = null;
 
-  // Check if running in interactive TTY mode (must be defined early for closures)
   // Force non-interactive if headless flag is set (for coding agents)
   const isInteractiveMode = !config.headless && isInteractive() && isStdoutTTY();
 
-  // Initialize state with config
   state = setProjects(
-    Array.from(config.projects.entries()).map(([slug, path]) => ({
-      slug,
-      path,
-    })),
+    Array.from(config.projects.entries()).map(([slug, path]) => ({ slug, path })),
   )(state);
 
-  // Initialize examples
   if (config.examples) {
     state = setExamples(
-      Array.from(config.examples.entries()).map(([slug, path]) => ({
-        slug,
-        path,
-      })),
+      Array.from(config.examples.entries()).map(([slug, path]) => ({ slug, path })),
     )(state);
   }
 
-  // Initialize templates
   state = setTemplates([
     { id: "minimal", name: "Minimal", description: "Bare-bones starter with just the essentials" },
     { id: "app", name: "App", description: "Full-featured app with routing and layouts" },
@@ -132,10 +114,8 @@ export function createApp(config: AppConfig): App {
     httpPort: config.mcpPort,
   })(state);
 
-  // Write to stdout
-  const write = (text: string) => writeStdout(text);
+  const write = (text: string): void => writeStdout(text);
 
-  // Render templates view
   function renderTemplatesView(): string {
     const lines = [
       "",
@@ -163,7 +143,6 @@ export function createApp(config: AppConfig): App {
     return lines.join("\n");
   }
 
-  // Render help view
   function renderHelpView(): string {
     const lines = [
       "",
@@ -189,7 +168,6 @@ export function createApp(config: AppConfig): App {
       "",
     ];
 
-    // Add MCP info if enabled
     if (state.mcp.enabled) {
       lines.push(`  ${brand("MCP Server")}`);
       lines.push("");
@@ -214,9 +192,8 @@ export function createApp(config: AppConfig): App {
     return lines.join("\n");
   }
 
-  // Render new project view
   function renderNewProjectView(): string {
-    const lines = [
+    return [
       "",
       `  ${brand("New Project")}`,
       "",
@@ -231,13 +208,10 @@ export function createApp(config: AppConfig): App {
       "",
       `  ${dim("Press")} ${brand("Esc")} ${dim("to go back")}`,
       "",
-    ];
-
-    return lines.join("\n");
+    ].join("\n");
   }
 
-  // Render the current view
-  function render() {
+  function render(): void {
     let content: string;
 
     switch (state.view) {
@@ -259,10 +233,8 @@ export function createApp(config: AppConfig): App {
         content = renderDashboard(state);
     }
 
-    // Build the full screen layout
     const parts: string[] = [content];
 
-    // Add logs area if there are logs
     if (state.logs.length > 0) {
       const logsHeight = Math.min(5, state.logs.length);
       parts.push("");
@@ -270,53 +242,41 @@ export function createApp(config: AppConfig): App {
       parts.push(renderLogs(state.logs, logsHeight));
     }
 
-    // Add input prompt if active (at the very bottom)
     if (state.input.active) {
       parts.push("");
       parts.push(`  ${dim("─".repeat(60))}`);
       parts.push(renderInput(state.input));
     }
 
-    // Clear and render (only in interactive mode)
-    if (isInteractiveMode) {
-      write(cursor.moveTo(1, 1) + screen.clearDown);
-      write(parts.join("\n"));
-      // Cursor is rendered visually as inverse video in the input component,
-      // so we keep the terminal cursor hidden
-    }
+    if (!isInteractiveMode) return;
+
+    write(cursor.moveTo(1, 1) + screen.clearDown);
+    write(parts.join("\n"));
   }
 
-  // Update state and re-render
-  function update(updater: StateUpdater) {
+  function update(updater: StateUpdater): void {
     state = updater(state);
-    if (isInteractiveMode) {
-      render();
-    }
+    if (isInteractiveMode) render();
   }
 
-  // Start spinner for loading state
-  function startSpinner() {
+  function startSpinner(): void {
     if (spinnerInterval) return;
+
     spinnerInterval = setInterval(() => {
       spinnerFrame = (spinnerFrame + 1) % SPINNER_FRAMES.length;
       render();
     }, 80) as unknown as number;
   }
 
-  // Stop spinner
-  function stopSpinner() {
-    if (spinnerInterval) {
-      clearInterval(spinnerInterval);
-      spinnerInterval = null;
-    }
+  function stopSpinner(): void {
+    if (!spinnerInterval) return;
+    clearInterval(spinnerInterval);
+    spinnerInterval = null;
   }
 
-  // Handle keyboard input
-  async function handleInput() {
+  async function handleInput(): Promise<void> {
     // Skip interactive input if not a TTY (e.g., running in background or CI)
-    if (!isInteractive()) {
-      return;
-    }
+    if (!isInteractive()) return;
 
     setRawMode(true);
     const reader = getStdinReader();
@@ -327,8 +287,7 @@ export function createApp(config: AppConfig): App {
         const { value, done } = await reader.read();
         if (done) break;
 
-        const key = decoder.decode(value);
-        await handleKey(key);
+        await handleKey(decoder.decode(value));
       }
     } finally {
       reader.releaseLock();
@@ -340,9 +299,7 @@ export function createApp(config: AppConfig): App {
     }
   }
 
-  // Handle a single key press
-  async function handleKey(key: string) {
-    // Handle input mode first - it captures all keys
+  async function handleKey(key: string): Promise<void> {
     if (state.input.active) {
       const result = handleInputKey(key, state.input.value, state.input.cursorPos);
 
@@ -352,77 +309,70 @@ export function createApp(config: AppConfig): App {
           const onSubmit = state.input.onSubmit;
           state = endInput()(state);
           render();
-          // Call onSubmit after ending input mode
           await onSubmit(value);
-        } else if (result.action === "cancel") {
+          return;
+        }
+
+        if (result.action === "cancel") {
           const onCancel = state.input.onCancel;
           state = endInput()(state);
           render();
-          if (onCancel) onCancel();
+          onCancel?.();
+          return;
         }
-      } else {
-        state = updateInputValue(result.value, result.cursorPos)(state);
-        render();
+
+        return;
       }
+
+      state = updateInputValue(result.value, result.cursorPos)(state);
+      render();
       return;
     }
 
-    // Ctrl+C or q to quit (q only on dashboard and not in input mode)
     if (key === "\x03" || (key === "q" && state.view === "dashboard")) {
       stop();
       exit(0);
     }
 
-    // Escape - Go back from any view
     if (key === "\x1b") {
-      if (state.view !== "dashboard") {
-        update(goBack());
-      }
+      if (state.view !== "dashboard") update(goBack());
       return;
     }
 
-    // View-specific key handling
     if (state.view === "templates") {
-      await handleTemplatesKey(key);
+      handleTemplatesKey(key);
       return;
     }
 
     if (state.view === "new-project") {
-      await handleNewProjectKey(key);
+      handleNewProjectKey(key);
       return;
     }
 
     if (state.view === "help") {
-      // Any key goes back from help
       update(goBack());
       return;
     }
 
-    // Dashboard navigation
     if (key === "\x1b[A" || key === "k") {
-      // Up arrow or k
       update(updateActiveList((list) => moveUp(list)));
       return;
     }
 
     if (key === "\x1b[B" || key === "j") {
-      // Down arrow or j
       update(updateActiveList((list) => moveDown(list, 5)));
       return;
     }
 
-    // Tab to switch between projects and examples sections
     if (key === "\t") {
       const hasProjects = state.projects.items.length > 0;
       const hasExamples = state.examples.items.length > 0;
       if (hasProjects && hasExamples) {
-        const newList = state.activeList === "projects" ? "examples" : "projects";
-        update(setActiveList(newList));
+        update(setActiveList(state.activeList === "projects" ? "examples" : "projects"));
       }
       return;
     }
 
-    // Number keys (1-9) and letter keys (a-z for 10+) for quick select
     const projectCount = state.projects.items.length;
     const totalCount = projectCount + state.examples.items.length;
     let itemNum = 0;
@@ -430,107 +380,75 @@ export function createApp(config: AppConfig): App {
     if (key >= "1" && key <= "9") {
       itemNum = parseInt(key, 10);
     } else if (key >= "a" && key <= "z") {
-      // a=10, b=11, etc. - but skip letters used for actions
       const letterNum = key.charCodeAt(0) - 96 + 9; // a=10, b=11, ...
-      // Only use as item shortcut if it's a valid index
-      if (letterNum <= totalCount) {
-        itemNum = letterNum;
-      }
+      if (letterNum <= totalCount) itemNum = letterNum;
     }
 
     if (itemNum > 0 && itemNum <= totalCount) {
       if (itemNum <= projectCount) {
-        // Select from projects
         state = setActiveList("projects")(state);
-        state = {
-          ...state,
-          projects: selectByNumber(state.projects, itemNum),
-        };
+        state = { ...state, projects: selectByNumber(state.projects, itemNum) };
         render();
         const selected = state.projects.items[itemNum - 1];
-        if (selected?.data) {
-          await openInBrowser(selected.data, state.server.port);
-        }
-      } else {
-        // Select from examples
-        state = setActiveList("examples")(state);
-        const exampleNum = itemNum - projectCount;
-        state = {
-          ...state,
-          examples: selectByNumber(state.examples, exampleNum),
-        };
-        render();
-        const selected = state.examples.items[exampleNum - 1];
-        if (selected?.data) {
-          await openInBrowser(selected.data, state.server.port);
-        }
+        if (selected?.data) await openInBrowser(selected.data, state.server.port);
+        return;
       }
+
+      state = setActiveList("examples")(state);
+      const exampleNum = itemNum - projectCount;
+      state = { ...state, examples: selectByNumber(state.examples, exampleNum) };
+      render();
+      const selected = state.examples.items[exampleNum - 1];
+      if (selected?.data) await openInBrowser(selected.data, state.server.port);
       return;
     }
 
-    // Enter to select
     if (key === "\r" || key === "\n") {
       const selected = getActiveSelection(state);
-      if (selected?.data) {
-        await openInBrowser(selected.data, state.server.port);
-      }
+      if (selected?.data) await openInBrowser(selected.data, state.server.port);
       return;
     }
 
-    // o - Open in browser
     if (key === "o") {
       const selected = getActiveSelection(state);
-      if (selected?.data) {
-        await openInBrowser(selected.data, state.server.port);
-      }
+      if (selected?.data) await openInBrowser(selected.data, state.server.port);
       return;
     }
 
-    // s - Open in Studio
     if (key === "s") {
       const selected = getActiveSelection(state);
-      if (selected?.data) {
-        await openInStudio(selected.data);
-      }
+      if (selected?.data) await openInStudio(selected.data);
       return;
     }
 
-    // i - Open in IDE
     if (key === "i") {
       const selected = getActiveSelection(state);
-      if (selected?.data) {
-        await openInIDE(selected.data);
-      }
+      if (selected?.data) await openInIDE(selected.data);
       return;
     }
 
-    // n - New project
     if (key === "n") {
       update(navigateTo("new-project"));
       return;
     }
 
-    // ? - Help
     if (key === "?") {
       update(navigateTo("help"));
       return;
     }
 
-    // m - Open MCP settings
     if (key === "m" && state.mcp.enabled) {
       const result = await openMCPSettings();
-      if (result.success) {
-        update(addLog("info", result.message || "Opened MCP settings"));
-      } else {
-        update(addLog("error", result.message || "Failed to open MCP settings"));
-      }
-      return;
+      update(
+        addLog(
+          result.success ? "info" : "error",
+          result.message ||
+            (result.success ? "Opened MCP settings" : "Failed to open MCP settings"),
+        ),
+      );
     }
   }
 
-  /**
-   * Create a new project from a template
-   */
   async function createProject(projectName: string, template: InitTemplate): Promise<void> {
     const projectPath = `${cwd()}/projects/${projectName}`;
 
@@ -551,23 +469,19 @@ export function createApp(config: AppConfig): App {
         path: item.data!.path,
       }));
       currentProjects.push({ slug: projectName, path: projectPath });
-      state = setProjects(currentProjects.map((p) => ({ slug: p.slug, path: p.path })))(state);
+
+      state = setProjects(currentProjects.map(({ slug, path }) => ({ slug, path })))(state);
       state = addLog("info", `Project "${projectName}" created`)(state);
     } catch (error) {
       state = addLog("error", `Failed to create project: ${error}`)(state);
     }
   }
 
-  /**
-   * Start project name input prompt
-   */
   function promptForProjectName(template: InitTemplate, onCancel: () => void): void {
     state = startInput(
       "Project name",
       async (name: string) => {
-        if (name.trim()) {
-          await createProject(name.trim(), template);
-        }
+        if (name.trim()) await createProject(name.trim(), template);
         state = navigateTo("dashboard")(state);
         render();
       },
@@ -576,7 +490,6 @@ export function createApp(config: AppConfig): App {
     render();
   }
 
-  // Handle templates view keys
   function handleTemplatesKey(key: string): void {
     if (key === "\x1b[A" || key === "k") {
       state = { ...state, templates: moveUp(state.templates) };
@@ -592,13 +505,10 @@ export function createApp(config: AppConfig): App {
 
     if (key === "\r" || key === "\n") {
       const selected = state.templates.items[state.templates.selectedIndex];
-      if (selected) {
-        promptForProjectName(selected.id as InitTemplate, () => render());
-      }
+      if (selected) promptForProjectName(selected.id as InitTemplate, () => render());
     }
   }
 
-  // Handle new-project view keys
   function handleNewProjectKey(key: string): void {
     if (key === "1") {
       update(navigateTo("templates"));
@@ -616,75 +526,56 @@ export function createApp(config: AppConfig): App {
     }
   }
 
-  // Start the app
-  function start() {
+  function start(): void {
     running = true;
 
-    if (isInteractiveMode) {
-      // Enter alternate screen and hide cursor
-      write(screen.altOn + cursor.hide);
-
-      // Initial render
-      render();
-
-      // Start keyboard input handler
-      handleInput();
-
-      // Start spinner if not ready
-      if (!state.server.running) {
-        startSpinner();
-      }
-    } else {
-      // Non-interactive mode: just log that server is running
+    if (!isInteractiveMode) {
       console.log(`Server running on http://lvh.me:${config.port}`);
-      if (config.mcpPort) {
-        console.log(`MCP available at http://localhost:${config.mcpPort}/mcp`);
-      }
+      if (config.mcpPort) console.log(`MCP available at http://localhost:${config.mcpPort}/mcp`);
+      return;
     }
+
+    write(screen.altOn + cursor.hide);
+    render();
+    handleInput();
+
+    if (!state.server.running) startSpinner();
   }
 
-  // Stop the app
-  function stop() {
+  function stop(): void {
     running = false;
     stopSpinner();
 
-    if (isInteractiveMode) {
-      // Restore terminal
-      write(cursor.show + screen.altOff);
-    }
+    if (isInteractiveMode) write(cursor.show + screen.altOff);
   }
 
   return {
     start,
     stop,
     update,
-    getState: () => state,
+    getState: (): AppState => state,
     render,
-    setServerReady: () => {
+    setServerReady: (): void => {
       stopSpinner();
       update(updateServer({ running: true }));
     },
-    addError: () => {
+    addError: (): void => {
       update(updateServer({ errors: state.server.errors + 1 }));
     },
-    clearErrors: () => {
+    clearErrors: (): void => {
       update(updateServer({ errors: 0, warnings: 0 }));
     },
-    log: (level: "info" | "warn" | "error" | "debug", message: string) => {
+    log: (level: "info" | "warn" | "error" | "debug", message: string): void => {
       update(addLog(level, message));
     },
   };
 }
 
-// ============================================================================
-// Startup Animation
-// ============================================================================
-
 /**
  * Show startup animation
  */
 export async function showStartup(steps: string[]): Promise<void> {
-  const write = (text: string) => writeStdout(text);
+  const write = (text: string): void => writeStdout(text);
 
   write(screen.altOn + cursor.hide);
 
@@ -708,7 +599,6 @@ export async function showStartup(steps: string[]): Promise<void> {
     await new Promise((r) => setTimeout(r, 200));
   }
 
-  // Final state - all complete
   const allComplete = steps.map((s) => `  ${success("✓")} ${dim(s)}`);
   const finalContent = [
     "",
@@ -724,10 +614,6 @@ export async function showStartup(steps: string[]): Promise<void> {
   // Don't exit alternate screen - let app.start() continue in it
   // This prevents a flash when transitioning to the dashboard
 }
-
-// ============================================================================
-// Re-exports
-// ============================================================================
 
 export type { AppState } from "./state.ts";
 export * from "./state.ts";

@@ -6,37 +6,23 @@ export interface CryptoCompat {
   subtle: SubtleCrypto;
 }
 
-class DenoCrypto implements CryptoCompat {
+class WebCryptoCompat implements CryptoCompat {
+  constructor(private readonly cryptoImpl: Crypto) {}
+
   getRandomValues(array: Uint8Array): Uint8Array {
-    return crypto.getRandomValues(array);
+    return this.cryptoImpl.getRandomValues(array);
   }
 
   randomUUID(): string {
-    return crypto.randomUUID();
+    return this.cryptoImpl.randomUUID();
   }
 
   get subtle(): SubtleCrypto {
-    return crypto.subtle;
-  }
-}
-
-class NodeCrypto implements CryptoCompat {
-  getRandomValues(array: Uint8Array): Uint8Array {
-    return globalThis.crypto.getRandomValues(array);
-  }
-
-  randomUUID(): string {
-    return globalThis.crypto.randomUUID();
-  }
-
-  get subtle(): SubtleCrypto {
-    return globalThis.crypto.subtle;
+    return this.cryptoImpl.subtle;
   }
 }
 
 export function createCrypto(): CryptoCompat {
-  if (isDeno) {
-    return new DenoCrypto();
-  }
-  return new NodeCrypto();
+  const cryptoImpl = isDeno ? crypto : globalThis.crypto;
+  return new WebCryptoCompat(cryptoImpl);
 }

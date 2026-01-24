@@ -31,7 +31,7 @@ interface CleanOptions {
   force?: boolean; // Skip confirmation prompts
 }
 
-export async function cleanCommand(options: CleanOptions) {
+export async function cleanCommand(options: CleanOptions): Promise<void> {
   const {
     projectDir,
     cache: cleanCache = false,
@@ -40,7 +40,6 @@ export async function cleanCommand(options: CleanOptions) {
     force = false,
   } = options;
 
-  // Require confirmation for destructive --all operation unless --force is used
   if (all && !force) {
     logWarning("This will remove node_modules, .deno, and .veryfront directories.");
     const confirmed = await confirmPrompt(
@@ -88,7 +87,6 @@ async function cleanDirectory(path: string): Promise<void> {
   try {
     await fs.remove(path, { recursive: true });
   } catch (error) {
-    // Log the error but don't throw - cleanup should be best effort
     cliLogger.error(`Failed to clean directory ${path}:`, error);
   }
 }
@@ -98,7 +96,7 @@ async function cleanCacheStore(projectDir: string): Promise<void> {
     const adapter = await runtime.get();
     const config = await getConfig(projectDir, adapter);
     const cacheDir = config.cache?.dir ?? DEFAULT_CACHE_DIR;
-    const renderConfig = (config.cache?.render ?? {}) as RenderCacheConfig;
+    const renderConfig: RenderCacheConfig = config.cache?.render ?? {};
 
     const store = createRenderCacheStore(renderConfig.type, {
       projectDir,
@@ -108,17 +106,13 @@ async function cleanCacheStore(projectDir: string): Promise<void> {
     });
 
     if (store) {
-      const coordinator = new CacheCoordinator({
-        store,
-        ttlMs: renderConfig.ttl,
-      });
+      const coordinator = new CacheCoordinator({ store, ttlMs: renderConfig.ttl });
       await coordinator.clearAll();
       await coordinator.destroy();
     }
 
     await cleanDirectory(join(projectDir, cacheDir));
   } catch (error) {
-    // Fail fast with clear error - no silent fallbacks
     cliLogger.error("Failed to clean cache store:", error);
     throw error;
   }
@@ -134,23 +128,25 @@ function createRenderCacheStore(
   },
 ): CacheStore | null {
   const { projectDir, cacheDir, renderConfig } = context;
+
   switch (type) {
     case "filesystem":
       return new FilesystemCacheStore({
         baseDir: join(projectDir, cacheDir, "render"),
       });
+
     case "kv":
       return new KVCacheStore({
         path: renderConfig.kvPath,
       });
+
     case "redis":
-      if (!renderConfig.redisUrl) {
-        return null;
-      }
+      if (!renderConfig.redisUrl) return null;
       return new RedisCacheStore({
         url: renderConfig.redisUrl,
         keyPrefix: renderConfig.redisKeyPrefix ?? "veryfront:render:",
       });
+
     case "memory":
     default:
       return new MemoryCacheStore({

@@ -124,10 +124,10 @@ describe("Path Validation - OWASP Attack Vectors", () => {
       { name: "Traversal in middle", path: "app/../../../etc/passwd" },
     ];
 
-    for (const testCase of testCases) {
-      it(`should block: ${testCase.name}`, () => {
-        const result = validatePathSync(testCase.path, { baseDir });
-        assertEquals(result.valid, false, `Should block: ${testCase.path}`);
+    for (const { name, path } of testCases) {
+      it(`should block: ${name}`, () => {
+        const result = validatePathSync(path, { baseDir });
+        assertEquals(result.valid, false, `Should block: ${path}`);
       });
     }
   });
@@ -139,10 +139,10 @@ describe("Path Validation - OWASP Attack Vectors", () => {
       { name: "Complex relative", path: "./app/../../../etc/shadow" },
     ];
 
-    for (const testCase of testCases) {
-      it(`should block: ${testCase.name}`, () => {
-        const result = validatePathSync(testCase.path, { baseDir });
-        assertEquals(result.valid, false, `Should block: ${testCase.path}`);
+    for (const { name, path } of testCases) {
+      it(`should block: ${name}`, () => {
+        const result = validatePathSync(path, { baseDir });
+        assertEquals(result.valid, false, `Should block: ${path}`);
       });
     }
   });
@@ -155,10 +155,11 @@ describe("Path Validation - OWASP Attack Vectors", () => {
       { name: "Unicode", path: "\u2024\u2024/etc/passwd" },
     ];
 
-    for (const testCase of testCases) {
-      it(`should handle: ${testCase.name}`, () => {
+    for (const { name, path } of testCases) {
+      it(`should handle: ${name}`, () => {
         // Note: These may pass basic validation but fail at filesystem level
-        const result = validatePathSync(testCase.path, { baseDir });
+        const result = validatePathSync(path, { baseDir });
+
         // Accept either rejection or canonicalization
         if (result.valid) {
           assertExists(result.canonicalPath);
@@ -175,9 +176,9 @@ describe("Path Validation - OWASP Attack Vectors", () => {
       { name: "Hex null byte", path: "app/page.tsx\x00" },
     ];
 
-    for (const testCase of testCases) {
-      it(`should block: ${testCase.name}`, () => {
-        const result = validatePathSync(testCase.path, { baseDir });
+    for (const { name, path } of testCases) {
+      it(`should block: ${name}`, () => {
+        const result = validatePathSync(path, { baseDir });
         assertEquals(result.valid, false);
         assertEquals(result.code, PathValidationError.NULL_BYTE);
       });
@@ -192,16 +193,18 @@ describe("Path Validation - OWASP Attack Vectors", () => {
       { name: "Drive letter", path: "C:\\windows\\system32\\config" },
     ];
 
-    for (const testCase of testCases) {
-      it(`should handle: ${testCase.name}`, () => {
-        const result = validatePathSync(testCase.path, { baseDir });
+    for (const { name, path } of testCases) {
+      it(`should handle: ${name}`, () => {
+        const result = validatePathSync(path, { baseDir });
+
         // These should either be normalized or rejected
         if (result.valid) {
           // Should not escape base directory after normalization
           assertExists(result.canonicalPath);
-        } else {
-          assertExists(result.code);
+          return;
         }
+
+        assertExists(result.code);
       });
     }
   });
@@ -323,26 +326,17 @@ describe("Path Validation - Helper Functions", () => {
 
   describe("sanitizePathForDisplay()", () => {
     it("should hide base directory from display", () => {
-      const sanitized = sanitizePathForDisplay(
-        "/project/app/page.tsx",
-        "/project",
-      );
+      const sanitized = sanitizePathForDisplay("/project/app/page.tsx", "/project");
       assertEquals(sanitized, "app/page.tsx");
     });
 
     it("should show only filename for paths outside base", () => {
-      const sanitized = sanitizePathForDisplay(
-        "/etc/passwd",
-        "/project",
-      );
+      const sanitized = sanitizePathForDisplay("/etc/passwd", "/project");
       assertEquals(sanitized, "passwd");
     });
 
     it("should handle relative paths", () => {
-      const sanitized = sanitizePathForDisplay(
-        "app/page.tsx",
-        "/project",
-      );
+      const sanitized = sanitizePathForDisplay("app/page.tsx", "/project");
       // If path doesn't start with base, return filename
       assertEquals(sanitized, "page.tsx");
     });
@@ -458,11 +452,12 @@ describe("Path Validation - Security Levels", () => {
 describe("Path Validation - Real-world scenarios", () => {
   describe("Static file serving", () => {
     const baseDir = "/var/www/site";
+    const allowedDirs = ["public", "dist"];
 
     it("should allow public assets", () => {
       const result = validatePathSync("public/images/logo.png", {
         baseDir,
-        allowedDirs: ["public", "dist"],
+        allowedDirs,
       });
       assertEquals(result.valid, true);
     });
@@ -470,7 +465,7 @@ describe("Path Validation - Real-world scenarios", () => {
     it("should allow dist assets", () => {
       const result = validatePathSync("dist/_veryfront/chunk.js", {
         baseDir,
-        allowedDirs: ["public", "dist"],
+        allowedDirs,
       });
       assertEquals(result.valid, true);
     });
@@ -478,7 +473,7 @@ describe("Path Validation - Real-world scenarios", () => {
     it("should block access to source files", () => {
       const result = validatePathSync("src/secret.ts", {
         baseDir,
-        allowedDirs: ["public", "dist"],
+        allowedDirs,
       });
       assertEquals(result.valid, false);
     });
@@ -486,7 +481,7 @@ describe("Path Validation - Real-world scenarios", () => {
     it("should block traversal to parent", () => {
       const result = validatePathSync("public/../../etc/passwd", {
         baseDir,
-        allowedDirs: ["public", "dist"],
+        allowedDirs,
       });
       assertEquals(result.valid, false);
     });
@@ -494,11 +489,12 @@ describe("Path Validation - Real-world scenarios", () => {
 
   describe("API route loading", () => {
     const baseDir = "/app";
+    const allowedDirs = ["app", "pages"];
 
     it("should allow app routes", () => {
       const result = validatePathSync("app/api/users/route.ts", {
         baseDir,
-        allowedDirs: ["app", "pages"],
+        allowedDirs,
       });
       assertEquals(result.valid, true);
     });
@@ -506,7 +502,7 @@ describe("Path Validation - Real-world scenarios", () => {
     it("should allow pages routes", () => {
       const result = validatePathSync("pages/api/data.ts", {
         baseDir,
-        allowedDirs: ["app", "pages"],
+        allowedDirs,
       });
       assertEquals(result.valid, true);
     });
@@ -514,7 +510,7 @@ describe("Path Validation - Real-world scenarios", () => {
     it("should block system files", () => {
       const result = validatePathSync("../node_modules/evil/index.js", {
         baseDir,
-        allowedDirs: ["app", "pages"],
+        allowedDirs,
       });
       assertEquals(result.valid, false);
     });
@@ -556,11 +552,13 @@ describe("Path Validation - Module Loading Context", () => {
   const baseDir = "/project";
 
   describe("without allowedImportDirs (default - max flexibility)", () => {
+    const allowedDirs: string[] = [];
+
     it("should allow imports from any directory in project", () => {
       // No allowedDirs = empty array = no restrictions
       const result = validatePathSync("custom-folder/utils.ts", {
         baseDir,
-        allowedDirs: [], // Simulates module-loading context default
+        allowedDirs, // Simulates module-loading context default
       });
       assertEquals(result.valid, true);
     });
@@ -568,7 +566,7 @@ describe("Path Validation - Module Loading Context", () => {
     it("should allow imports from src directory", () => {
       const result = validatePathSync("src/components/Button.tsx", {
         baseDir,
-        allowedDirs: [],
+        allowedDirs,
       });
       assertEquals(result.valid, true);
     });
@@ -576,7 +574,7 @@ describe("Path Validation - Module Loading Context", () => {
     it("should allow imports from deeply nested paths", () => {
       const result = validatePathSync("src/features/auth/hooks/useAuth.ts", {
         baseDir,
-        allowedDirs: [],
+        allowedDirs,
       });
       assertEquals(result.valid, true);
     });
@@ -584,7 +582,7 @@ describe("Path Validation - Module Loading Context", () => {
     it("should still block path traversal attacks", () => {
       const result = validatePathSync("../../../etc/passwd", {
         baseDir,
-        allowedDirs: [],
+        allowedDirs,
       });
       assertEquals(result.valid, false);
     });
@@ -639,20 +637,24 @@ describe("Path Validation - Module Loading Context", () => {
   describe("userInput preset should have expanded allowlist", () => {
     it("should include common user directories", () => {
       const options = ValidationPresets.userInput(baseDir);
+      const allowedDirs = options.allowedDirs;
+
       // Verify expanded preset includes common directories
-      assertEquals(options.allowedDirs?.includes("src"), true);
-      assertEquals(options.allowedDirs?.includes("utils"), true);
-      assertEquals(options.allowedDirs?.includes("hooks"), true);
-      assertEquals(options.allowedDirs?.includes("services"), true);
-      assertEquals(options.allowedDirs?.includes("styles"), true);
+      assertEquals(allowedDirs?.includes("src"), true);
+      assertEquals(allowedDirs?.includes("utils"), true);
+      assertEquals(allowedDirs?.includes("hooks"), true);
+      assertEquals(allowedDirs?.includes("services"), true);
+      assertEquals(allowedDirs?.includes("styles"), true);
     });
 
     it("should still include framework directories", () => {
       const options = ValidationPresets.userInput(baseDir);
-      assertEquals(options.allowedDirs?.includes("app"), true);
-      assertEquals(options.allowedDirs?.includes("pages"), true);
-      assertEquals(options.allowedDirs?.includes("components"), true);
-      assertEquals(options.allowedDirs?.includes("lib"), true);
+      const allowedDirs = options.allowedDirs;
+
+      assertEquals(allowedDirs?.includes("app"), true);
+      assertEquals(allowedDirs?.includes("pages"), true);
+      assertEquals(allowedDirs?.includes("components"), true);
+      assertEquals(allowedDirs?.includes("lib"), true);
     });
   });
 });

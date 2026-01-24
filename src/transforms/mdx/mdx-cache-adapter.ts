@@ -1,5 +1,4 @@
 import { rendererLogger as logger } from "#veryfront/utils";
-import { wrapError as _wrapError } from "#veryfront/errors";
 import {
   type BundleCode,
   type BundleMetadata,
@@ -43,8 +42,8 @@ export class MDXCacheAdapter {
     return getBundleManifestTTL(this.config, this.mode);
   }
 
-  async computeHash(content: string): Promise<string> {
-    return await computeContentHash(content);
+  computeHash(content: string): Promise<string> {
+    return computeContentHash(content);
   }
 
   async getCachedBundle(
@@ -57,9 +56,7 @@ export class MDXCacheAdapter {
       const cacheKey = this.getCacheKey(contentHash);
 
       const metadata = await this.manifestStore.getBundleMetadata(cacheKey);
-      if (!metadata) {
-        return undefined;
-      }
+      if (!metadata) return undefined;
 
       const bundleCode = await this.manifestStore.getBundleCode(metadata.codeHash);
       if (!bundleCode) {
@@ -78,16 +75,13 @@ export class MDXCacheAdapter {
 
       return {
         compiledCode: bundleCode.code,
-        frontmatter: (frontmatter || {}) as Record<string, string | number | boolean | string[]>,
-        headings: (metadata.meta?.headings as Array<{ id: string; text: string; level: number }>) ||
+        frontmatter: (frontmatter ?? {}) as Record<string, string | number | boolean | string[]>,
+        headings: (metadata.meta?.headings as Array<{ id: string; text: string; level: number }>) ??
           [],
         nodeMap: new Map(),
       };
     } catch (error) {
-      logger.debug("[mdx-cache] Failed to retrieve cached bundle", {
-        error,
-        filePath,
-      });
+      logger.debug("[mdx-cache] Failed to retrieve cached bundle", { error, filePath });
       return undefined;
     }
   }
@@ -106,26 +100,21 @@ export class MDXCacheAdapter {
       const contentHash = await this.computeHash(content);
       const cacheKey = this.getCacheKey(contentHash);
 
-      const bundleCode: BundleCode = {
-        code: bundle.compiledCode,
-      };
-
+      const bundleCode: BundleCode = { code: bundle.compiledCode };
       const codeHash = await computeCodeHash(bundleCode);
-
-      const encoder = new TextEncoder();
-      const size = encoder.encode(bundle.compiledCode).length;
+      const size = new TextEncoder().encode(bundle.compiledCode).length;
 
       const metadata: BundleMetadata = {
         hash: contentHash,
         codeHash,
         size,
         compiledAt: Date.now(),
-        source: filePath || "unknown",
+        source: filePath ?? "unknown",
         mode: this.mode,
         meta: {
           type: "mdx",
           reactVersion: (await import("react")).version,
-          headings: bundle.headings || [],
+          headings: bundle.headings ?? [],
         },
       };
 
@@ -142,10 +131,7 @@ export class MDXCacheAdapter {
         ttl,
       });
     } catch (error) {
-      logger.debug("[mdx-cache] Failed to cache bundle", {
-        error,
-        filePath,
-      });
+      logger.debug("[mdx-cache] Failed to cache bundle", { error, filePath });
     }
   }
 
@@ -163,16 +149,10 @@ export class MDXCacheAdapter {
   async invalidateSource(source: string): Promise<number> {
     try {
       const count = await this.manifestStore.invalidateSource(source);
-      logger.debug("[mdx-cache] Invalidated bundles for source", {
-        source,
-        count,
-      });
+      logger.debug("[mdx-cache] Invalidated bundles for source", { source, count });
       return count;
     } catch (error) {
-      logger.debug("[mdx-cache] Failed to invalidate source", {
-        error,
-        source,
-      });
+      logger.debug("[mdx-cache] Failed to invalidate source", { error, source });
       return 0;
     }
   }
@@ -196,10 +176,7 @@ export class MDXCacheAdapter {
       return await this.manifestStore.getStats();
     } catch (error) {
       logger.debug("[mdx-cache] Failed to get stats", { error });
-      return {
-        totalBundles: 0,
-        totalSize: 0,
-      };
+      return { totalBundles: 0, totalSize: 0 };
     }
   }
 }

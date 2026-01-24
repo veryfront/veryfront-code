@@ -27,12 +27,17 @@ export function shutdownTracing(): void {
   tracingManager.shutdown();
 }
 
-export function getTracingState() {
+export function getTracingState(): ReturnType<typeof tracingManager.getState> {
   return tracingManager.getState();
 }
 
-const getSpanOps = () => tracingManager.getSpanOperations();
-const getContextProp = () => tracingManager.getContextPropagation();
+function getSpanOps(): ReturnType<typeof tracingManager.getSpanOperations> {
+  return tracingManager.getSpanOperations();
+}
+
+function getContextProp(): ReturnType<typeof tracingManager.getContextPropagation> {
+  return tracingManager.getContextPropagation();
+}
 
 export function startSpan(name: string, options: SpanOptions = {}): Span | null {
   return getSpanOps()?.startSpan(name, options) ?? null;
@@ -119,8 +124,5 @@ export function withSpanSync<T>(
   );
 }
 
-// Export singleton for production use
 export { tracingManager } from "./manager.ts";
-
-// Export class for testing - tests can create isolated instances
 export { TracingManager } from "./manager.ts";

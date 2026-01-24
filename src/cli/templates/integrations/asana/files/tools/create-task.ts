@@ -13,7 +13,7 @@ export default tool({
     assigneeGid: z.string().optional().describe("GID of the user to assign the task to"),
   }),
   async execute({ projectGid, name, notes, dueOn, assigneeGid }) {
-    const task = await createTask({
+    const { gid, name: taskName, due_on, assignee } = await createTask({
       projectGid,
       name,
       notes,
@@ -24,10 +24,10 @@ export default tool({
     return {
       success: true,
       task: {
-        gid: task.gid,
-        name: task.name,
-        dueOn: task.due_on,
-        assignee: task.assignee?.name,
+        gid,
+        name: taskName,
+        dueOn: due_on,
+        assignee: assignee?.name,
       },
     };
   },

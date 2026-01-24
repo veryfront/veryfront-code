@@ -1,9 +1,3 @@
-/**
- * Memory Management Module
- *
- * Exports memory profiling and monitoring utilities
- */
-
 export {
   type CacheStats,
   checkMemoryPressure,

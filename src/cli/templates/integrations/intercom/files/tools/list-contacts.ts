@@ -4,11 +4,22 @@ import { listContacts } from "../../lib/intercom-client.ts";
 
 export default tool({
   id: "list-contacts",
-  description: "List contacts from Intercom workspace. Returns contact information including email, name, and metadata.",
+  description:
+    "List contacts from Intercom workspace. Returns contact information including email, name, and metadata.",
   inputSchema: z.object({
     page: z.number().min(1).default(1).describe("Page number for pagination"),
-    perPage: z.number().min(1).max(150).default(50).describe("Number of contacts per page (max 150)"),
-    limit: z.number().min(1).max(100).default(20).describe("Maximum number of contacts to return"),
+    perPage: z
+      .number()
+      .min(1)
+      .max(150)
+      .default(50)
+      .describe("Number of contacts per page (max 150)"),
+    limit: z
+      .number()
+      .min(1)
+      .max(100)
+      .default(20)
+      .describe("Maximum number of contacts to return"),
   }),
   async execute({ page, perPage, limit }) {
     const { contacts, hasMore } = await listContacts({ page, perPage });

@@ -1,9 +1,3 @@
-/**
- * Parallel Node Handler
- *
- * Handles execution of parallel nodes - executing multiple child nodes concurrently.
- */
-
 import type {
   NodeState,
   NodeStatus,
@@ -24,19 +18,10 @@ function deriveNodeStatus(completed: boolean, waiting: boolean): NodeStatus {
   return "failed";
 }
 
-/**
- * Callbacks for parallel node events
- */
 export interface ParallelNodeCallbacks {
   onNodeComplete?: (nodeId: string, state: NodeState) => void;
 }
 
-/**
- * Handler for parallel nodes.
- *
- * Parallel nodes execute multiple child nodes concurrently,
- * collecting their results into the context.
- */
 export class ParallelNodeHandler extends BaseNodeHandler<ParallelNodeConfig> {
   readonly nodeType = "parallel" as const;
 
@@ -57,9 +42,8 @@ export class ParallelNodeHandler extends BaseNodeHandler<ParallelNodeConfig> {
   ): Promise<NodeExecutionResult> {
     const { context, nodeStates } = handlerContext;
     const config = node.config as ParallelNodeConfig;
-    const startTime = Date.now();
+    const startedAt = new Date();
 
-    // Execute child nodes using sub-executor
     const result = await this.subExecutor.executeSubDAG(config.nodes, {
       id: `${node.id}_parallel`,
       workflowId: "",
@@ -73,7 +57,6 @@ export class ParallelNodeHandler extends BaseNodeHandler<ParallelNodeConfig> {
       createdAt: new Date(),
     });
 
-    // Merge child node states
     Object.assign(nodeStates, result.nodeStates);
 
     const state: NodeState = {
@@ -82,23 +65,16 @@ export class ParallelNodeHandler extends BaseNodeHandler<ParallelNodeConfig> {
       output: result.context,
       error: result.error,
       attempt: 1,
-      startedAt: new Date(startTime),
+      startedAt,
       completedAt: result.completed ? new Date() : undefined,
     };
 
     this.callbacks?.onNodeComplete?.(node.id, state);
 
-    return {
-      state,
-      contextUpdates: result.context,
-      waiting: result.waiting,
-    };
+    return { state, contextUpdates: result.context, waiting: result.waiting };
   }
 }
 
-/**
- * Create a parallel node handler.
- */
 export function createParallelNodeHandler(
   subExecutor: IDAGSubExecutor,
   callbacks?: ParallelNodeCallbacks,

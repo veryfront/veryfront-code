@@ -29,14 +29,16 @@ export interface SecurityConfig {
       token: string;
     };
   };
-  cors?: boolean | {
-    origin?: string | string[] | ((origin: string) => boolean);
-    credentials?: boolean;
-    methods?: string[];
-    allowedHeaders?: string[];
-    exposedHeaders?: string[];
-    maxAge?: number;
-  };
+  cors?:
+    | boolean
+    | {
+      origin?: string | string[] | ((origin: string) => boolean);
+      credentials?: boolean;
+      methods?: string[];
+      allowedHeaders?: string[];
+      exposedHeaders?: string[];
+      maxAge?: number;
+    };
   csp?: Partial<Record<string, string | string[]>>;
   headers?: Record<string, string>;
   [key: string]: unknown;
@@ -131,35 +133,19 @@ export interface RouteRegistryConfig {
   enableMetrics?: boolean;
 }
 
+export type RouteHandler = (
+  req: Request,
+  ctx: { params: Record<string, string | string[]> },
+) => Promise<Response> | Response;
+
 export interface RouteHandlerModule {
-  GET?: (
-    req: Request,
-    ctx: { params: Record<string, string | string[]> },
-  ) => Promise<Response> | Response;
-  POST?: (
-    req: Request,
-    ctx: { params: Record<string, string | string[]> },
-  ) => Promise<Response> | Response;
-  PUT?: (
-    req: Request,
-    ctx: { params: Record<string, string | string[]> },
-  ) => Promise<Response> | Response;
-  PATCH?: (
-    req: Request,
-    ctx: { params: Record<string, string | string[]> },
-  ) => Promise<Response> | Response;
-  DELETE?: (
-    req: Request,
-    ctx: { params: Record<string, string | string[]> },
-  ) => Promise<Response> | Response;
-  HEAD?: (
-    req: Request,
-    ctx: { params: Record<string, string | string[]> },
-  ) => Promise<Response> | Response;
-  OPTIONS?: (
-    req: Request,
-    ctx: { params: Record<string, string | string[]> },
-  ) => Promise<Response> | Response;
+  GET?: RouteHandler;
+  POST?: RouteHandler;
+  PUT?: RouteHandler;
+  PATCH?: RouteHandler;
+  DELETE?: RouteHandler;
+  HEAD?: RouteHandler;
+  OPTIONS?: RouteHandler;
   [key: string]: unknown;
 }
 

@@ -2,8 +2,6 @@ import { tool } from "veryfront/tool";
 import { z } from "zod";
 import { createSheetsClient } from "../../lib/sheets-client.ts";
 
-// Default user ID for demo/dev purposes
-// In production, get from authenticated session
 const DEFAULT_USER_ID = "demo-user";
 
 export default tool({
@@ -24,18 +22,14 @@ export default tool({
   }),
   async execute({ maxResults, orderBy }) {
     const client = createSheetsClient(DEFAULT_USER_ID);
+    const spreadsheets = await client.listSpreadsheets({ maxResults, orderBy });
 
-    const spreadsheets = await client.listSpreadsheets({
-      maxResults,
-      orderBy,
-    });
-
-    return spreadsheets.map((sheet) => ({
-      id: sheet.id,
-      name: sheet.name,
-      url: sheet.webViewLink,
-      createdTime: sheet.createdTime,
-      modifiedTime: sheet.modifiedTime,
+    return spreadsheets.map(({ id, name, webViewLink, createdTime, modifiedTime }) => ({
+      id,
+      name,
+      url: webViewLink,
+      createdTime,
+      modifiedTime,
     }));
   },
 });

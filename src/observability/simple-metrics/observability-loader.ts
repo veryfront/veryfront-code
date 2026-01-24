@@ -21,9 +21,7 @@ let observabilityLoadAttempted = false;
  * ```
  */
 export async function getObservabilityMetrics(): Promise<ObservabilityMetrics | null> {
-  if (observabilityLoadAttempted) {
-    return observabilityMetrics;
-  }
+  if (observabilityLoadAttempted) return observabilityMetrics;
 
   observabilityLoadAttempted = true;
 

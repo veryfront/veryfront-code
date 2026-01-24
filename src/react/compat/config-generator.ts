@@ -55,35 +55,40 @@ export const REACT_CONFIGS: Record<ReactVersion, ReactVersionConfig> = {
   },
 };
 
+function getReactConfig(version: ReactVersion): ReactVersionConfig {
+  const config = REACT_CONFIGS[version];
+  if (config) return config;
+
+  throw toError(
+    createError({
+      type: "config",
+      message: `Unsupported React version: ${version}`,
+    }),
+  );
+}
+
 export async function generateReactVersionConfig(
   projectDir: string,
   targetVersion: ReactVersion,
   options: { extends?: string; additional?: Record<string, unknown> } = {},
 ): Promise<void> {
-  const config = REACT_CONFIGS[targetVersion];
-  if (!config) {
-    throw toError(createError({
-      type: "config",
-      message: `Unsupported React version: ${targetVersion}`,
-    }));
-  }
+  const config = getReactConfig(targetVersion);
 
   const fs = createFileSystem();
-  const baseConfigPath = join(projectDir, options.extends || "deno.json");
+  const baseConfigPath = join(projectDir, options.extends ?? "deno.json");
   let baseConfig: Record<string, unknown> = {};
 
   try {
-    const baseConfigText = await fs.readTextFile(baseConfigPath);
-    baseConfig = JSON.parse(baseConfigText);
-  } catch (_error) {
-    logger.warn(`Could not read base config from ${baseConfigPath}`, _error);
+    baseConfig = JSON.parse(await fs.readTextFile(baseConfigPath));
+  } catch (error) {
+    logger.warn(`Could not read base config from ${baseConfigPath}`, error);
   }
 
   const versionConfig = {
     ...baseConfig,
     imports: {
       ...(baseConfig.imports ?? {}),
-      ...(config.imports ?? {}),
+      ...config.imports,
       ...(options.additional?.imports ?? {}),
     },
   };
@@ -102,15 +107,8 @@ export async function generateAllReactConfigs(projectDir: string): Promise<void>
   );
 }
 
-export function getReactImports(version: ReactVersion) {
-  const config = REACT_CONFIGS[version];
-  if (!config) {
-    throw toError(createError({
-      type: "config",
-      message: `Unsupported React version: ${version}`,
-    }));
-  }
-  return config.imports;
+export function getReactImports(version: ReactVersion): Record<string, string> {
+  return getReactConfig(version).imports;
 }
 
 export async function detectReactVersionFromConfig(
@@ -119,19 +117,13 @@ export async function detectReactVersionFromConfig(
   try {
     const fs = createFileSystem();
     const configPath = join(projectDir, "deno.json");
-    const configText = await fs.readTextFile(configPath);
-    const config = JSON.parse(configText);
+    const config = JSON.parse(await fs.readTextFile(configPath));
 
-    const reactImport = config.imports?.react;
-
-    if (!reactImport) {
-      return null;
-    }
+    const reactImport: string | undefined = config.imports?.react;
+    if (!reactImport) return null;
 
     for (const [version, versionConfig] of Object.entries(REACT_CONFIGS)) {
-      if (reactImport.includes(`@${versionConfig.exact}`)) {
-        return version as ReactVersion;
-      }
+      if (reactImport.includes(`@${versionConfig.exact}`)) return version as ReactVersion;
     }
 
     if (reactImport.includes("@17")) return "17";
@@ -139,8 +131,8 @@ export async function detectReactVersionFromConfig(
     if (reactImport.includes("@19")) return "19";
 
     return null;
-  } catch (_error) {
-    logger.error("Failed to detect React version from config", _error);
+  } catch (error) {
+    logger.error("Failed to detect React version from config", error);
     return null;
   }
 }
@@ -150,8 +142,8 @@ export function createReactVersionSwitcher(projectDir: string): ReactVersionSwit
     async switchTo(version: ReactVersion): Promise<void> {
       const fs = createFileSystem();
       const configPath = join(projectDir, `deno.react${version}.json`);
-      const exists = await fs.exists(configPath);
-      if (!exists) {
+
+      if (!(await fs.exists(configPath))) {
         await generateReactVersionConfig(projectDir, version);
       }
 

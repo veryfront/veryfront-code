@@ -1,10 +1,11 @@
 import { tool } from "veryfront/tool";
 import { z } from "zod";
-import { listMessages, formatPhoneNumber, formatDate } from "../../lib/twilio-client.ts";
+import { formatPhoneNumber, listMessages } from "../../lib/twilio-client.ts";
 
 export default tool({
   id: "list-messages",
-  description: "List recent SMS and WhatsApp messages from your Twilio account. Supports filtering by recipient, sender, and date.",
+  description:
+    "List recent SMS and WhatsApp messages from your Twilio account. Supports filtering by recipient, sender, and date.",
   inputSchema: z.object({
     to: z
       .string()
@@ -27,28 +28,12 @@ export default tool({
   }),
   execute: async ({ to, from, dateSent, limit }) => {
     try {
-      const options: {
-        to?: string;
-        from?: string;
-        dateSent?: string;
-        limit?: number;
-      } = {};
-
-      if (to) {
-        options.to = formatPhoneNumber(to);
-      }
-
-      if (from) {
-        options.from = formatPhoneNumber(from);
-      }
-
-      if (dateSent) {
-        options.dateSent = dateSent;
-      }
-
-      if (limit) {
-        options.limit = limit;
-      }
+      const options: { to?: string; from?: string; dateSent?: string; limit?: number } = {
+        to: to ? formatPhoneNumber(to) : undefined,
+        from: from ? formatPhoneNumber(from) : undefined,
+        dateSent,
+        limit,
+      };
 
       const messages = await listMessages(options);
 
@@ -61,7 +46,6 @@ export default tool({
         };
       }
 
-      // Format messages for better readability
       const formattedMessages = messages.map((msg) => ({
         sid: msg.sid,
         direction: msg.direction,
@@ -87,7 +71,8 @@ export default tool({
     } catch (error) {
       if (error instanceof Error && error.message.includes("not configured")) {
         return {
-          error: "Twilio not configured. Please set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER.",
+          error:
+            "Twilio not configured. Please set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER.",
           setupUrl: "https://console.twilio.com/",
         };
       }

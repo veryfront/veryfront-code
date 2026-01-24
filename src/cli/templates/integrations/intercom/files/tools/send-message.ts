@@ -8,18 +8,14 @@ export default tool({
   inputSchema: z.object({
     conversationId: z.string().describe("The ID of the conversation to reply to"),
     body: z.string().describe("The message content to send"),
-    messageType: z.enum(["comment", "note"]).default("comment").describe(
-      "Type of message: 'comment' (visible to user) or 'note' (internal only)",
-    ),
+    messageType: z
+      .enum(["comment", "note"])
+      .default("comment")
+      .describe("Type of message: 'comment' (visible to user) or 'note' (internal only)"),
     adminId: z.string().optional().describe("The ID of the admin sending the message"),
   }),
   async execute({ conversationId, body, messageType, adminId }) {
-    const conversation = await sendMessage({
-      conversationId,
-      body,
-      messageType,
-      adminId,
-    });
+    const conversation = await sendMessage({ conversationId, body, messageType, adminId });
 
     return {
       success: true,

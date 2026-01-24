@@ -2,16 +2,35 @@ import { tool } from "veryfront/tool";
 import { z } from "zod";
 import { createBitbucketClient } from "../../lib/bitbucket-client.ts";
 
+type PullRequest = {
+  id: number;
+  title: string;
+  state: string;
+  author: {
+    username: string;
+    display_name: string;
+  };
+  created_on: string;
+  updated_on: string;
+  source: {
+    branch: { name: string };
+  };
+  destination: {
+    branch: { name: string };
+  };
+  links: {
+    html: { href: string };
+  };
+  comment_count: number;
+  task_count: number;
+};
+
 export default tool({
   id: "list-pull-requests",
   description: "List pull requests for a Bitbucket repository",
   inputSchema: z.object({
-    workspace: z
-      .string()
-      .describe("Workspace name or UUID"),
-    repoSlug: z
-      .string()
-      .describe("Repository slug (e.g., 'my-repo')"),
+    workspace: z.string().describe("Workspace name or UUID"),
+    repoSlug: z.string().describe("Repository slug (e.g., 'my-repo')"),
     state: z
       .enum(["OPEN", "MERGED", "DECLINED", "SUPERSEDED"])
       .default("OPEN")
@@ -25,7 +44,7 @@ export default tool({
   }),
   execute: async ({ workspace, repoSlug, state, limit }, context) => {
     // Default to "current-user" for development; in production, always pass userId from session
-    const userId = (context?.userId as string | undefined) || "current-user";
+    const userId = context?.userId ?? "current-user";
 
     try {
       const bitbucket = createBitbucketClient(userId);
@@ -35,30 +54,7 @@ export default tool({
       });
 
       return {
-        pullRequests: prs.map((
-          pr: {
-            id: number;
-            title: string;
-            state: string;
-            author: {
-              username: string;
-              display_name: string;
-            };
-            created_on: string;
-            updated_on: string;
-            source: {
-              branch: { name: string };
-            };
-            destination: {
-              branch: { name: string };
-            };
-            links: {
-              html: { href: string };
-            };
-            comment_count: number;
-            task_count: number;
-          },
-        ) => ({
+        pullRequests: prs.map((pr: PullRequest) => ({
           id: pr.id,
           title: pr.title,
           state: pr.state,

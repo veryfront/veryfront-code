@@ -58,113 +58,113 @@ export class RedisMemory<M extends MinimalMessage = MinimalMessage> implements M
   constructor(agentId: string, config: RedisMemoryConfig) {
     this.client = config.client;
     this.agentId = agentId;
-    this.keyPrefix = config.keyPrefix || DEFAULT_KEY_PREFIX;
-    this.ttl = config.ttl || DEFAULT_TTL;
+    this.keyPrefix = config.keyPrefix ?? DEFAULT_KEY_PREFIX;
+    this.ttl = config.ttl ?? DEFAULT_TTL;
     this.config = config;
   }
 
-  /**
-   * Get the Redis key for this agent's messages
-   */
   private getKey(): string {
     return `${this.keyPrefix}${this.agentId}`;
   }
 
-  /**
-   * Add a message to memory
-   */
   add(message: M): Promise<void> {
-    return withSpan("agent.memory.redis.add", async () => {
-      const key = this.getKey();
-      const existingData = await this.client.get(key);
+    return withSpan(
+      "agent.memory.redis.add",
+      async () => {
+        const key = this.getKey();
+        const existingData = await this.client.get(key);
 
-      let messages: M[] = [];
-      if (existingData) {
-        try {
-          messages = JSON.parse(existingData);
-        } catch {
-          messages = [];
+        let messages: M[] = [];
+        if (existingData) {
+          try {
+            messages = JSON.parse(existingData);
+          } catch {
+            messages = [];
+          }
         }
-      }
 
-      messages.push(message);
+        messages.push(message);
 
-      // Apply limits
-      if (this.config.maxMessages && messages.length > this.config.maxMessages) {
-        messages = messages.slice(-this.config.maxMessages);
-      }
+        const { maxMessages, maxTokens } = this.config;
 
-      if (this.config.maxTokens) {
-        messages = this.trimToTokenLimit(messages);
-      }
+        if (maxMessages && messages.length > maxMessages) {
+          messages = messages.slice(-maxMessages);
+        }
 
-      await this.client.set(key, JSON.stringify(messages), { EX: this.ttl });
-    }, { "memory.type": "redis", "memory.agent_id": this.agentId, "memory.ttl": this.ttl });
+        if (maxTokens) {
+          messages = this.trimToTokenLimit(messages);
+        }
+
+        // TTL <= 0 means no expiration
+        const options = this.ttl > 0 ? { EX: this.ttl } : undefined;
+        await this.client.set(key, JSON.stringify(messages), options);
+      },
+      { "memory.type": "redis", "memory.agent_id": this.agentId, "memory.ttl": this.ttl },
+    );
   }
 
-  /**
-   * Get all messages
-   */
   getMessages(): Promise<M[]> {
-    return withSpan("agent.memory.redis.getMessages", async () => {
-      const key = this.getKey();
-      const data = await this.client.get(key);
+    return withSpan(
+      "agent.memory.redis.getMessages",
+      async () => {
+        const data = await this.client.get(this.getKey());
+        if (!data) return [];
 
-      if (!data) {
-        return [];
-      }
-
-      try {
-        return JSON.parse(data);
-      } catch {
-        return [];
-      }
-    }, { "memory.type": "redis", "memory.agent_id": this.agentId });
+        try {
+          return JSON.parse(data);
+        } catch {
+          return [];
+        }
+      },
+      { "memory.type": "redis", "memory.agent_id": this.agentId },
+    );
   }
 
-  /**
-   * Clear all messages
-   */
   clear(): Promise<void> {
-    return withSpan("agent.memory.redis.clear", async () => {
-      const key = this.getKey();
-      await this.client.del(key);
-    }, { "memory.type": "redis", "memory.agent_id": this.agentId });
+    return withSpan(
+      "agent.memory.redis.clear",
+      async () => {
+        await this.client.del(this.getKey());
+      },
+      { "memory.type": "redis", "memory.agent_id": this.agentId },
+    );
   }
 
-  /**
-   * Get memory statistics
-   */
   getStats(): Promise<MemoryStats> {
-    return withSpan("agent.memory.redis.getStats", async () => {
-      const messages = await this.getMessages();
-      return {
-        totalMessages: messages.length,
-        estimatedTokens: estimateTokens(messages),
-        type: "redis",
-      };
-    }, { "memory.type": "redis", "memory.agent_id": this.agentId });
+    return withSpan(
+      "agent.memory.redis.getStats",
+      async () => {
+        const messages = await this.getMessages();
+        return {
+          totalMessages: messages.length,
+          estimatedTokens: estimateTokens(messages),
+          type: "redis",
+        };
+      },
+      { "memory.type": "redis", "memory.agent_id": this.agentId },
+    );
   }
 
-  /**
-   * Refresh TTL (extend expiration)
-   */
   touch(): Promise<void> {
-    return withSpan("agent.memory.redis.touch", async () => {
-      const key = this.getKey();
-      await this.client.expire(key, this.ttl);
-    }, { "memory.type": "redis", "memory.agent_id": this.agentId, "memory.ttl": this.ttl });
+    return withSpan(
+      "agent.memory.redis.touch",
+      async () => {
+        // TTL <= 0 means no expiration, so touch is a no-op
+        if (this.ttl > 0) {
+          await this.client.expire(this.getKey(), this.ttl);
+        }
+      },
+      { "memory.type": "redis", "memory.agent_id": this.agentId, "memory.ttl": this.ttl },
+    );
   }
 
-  /**
-   * Trim messages to token limit
-   */
   private trimToTokenLimit(messages: M[]): M[] {
-    if (!this.config.maxTokens) return messages;
+    const maxTokens = this.config.maxTokens;
+    if (!maxTokens) return messages;
 
     let tokenCount = estimateTokens(messages);
 
-    while (tokenCount > this.config.maxTokens && messages.length > 1) {
+    while (tokenCount > maxTokens && messages.length > 1) {
       messages.shift();
       tokenCount = estimateTokens(messages);
     }

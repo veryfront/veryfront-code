@@ -24,11 +24,14 @@ function getPostsDir(): string {
 function extractFrontmatter(content: string): { attrs: PostMeta; body: string } {
   const match = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
   if (!match) {
-    return { attrs: { title: "Untitled", date: new Date().toISOString() }, body: content };
+    return {
+      attrs: { title: "Untitled", date: new Date().toISOString() },
+      body: content,
+    };
   }
+
   const attrs = parseYaml(match[1]) as PostMeta;
-  const body = match[2].trim();
-  return { attrs, body };
+  return { attrs, body: match[2].trim() };
 }
 
 export async function getPosts(): Promise<Post[]> {
@@ -37,39 +40,28 @@ export async function getPosts(): Promise<Post[]> {
 
   try {
     for await (const entry of fs.readDir(postsDir)) {
-      if (entry.isFile && entry.name.endsWith(".mdx")) {
-        const slug = entry.name.replace(/\.mdx$/, "");
-        const content = await fs.readTextFile(join(postsDir, entry.name));
-        const { attrs, body } = extractFrontmatter(content);
+      if (!entry.isFile || !entry.name.endsWith(".mdx")) continue;
 
-        posts.push({
-          slug,
-          content: body,
-          ...attrs,
-        });
-      }
+      const slug = entry.name.replace(/\.mdx$/, "");
+      const content = await fs.readTextFile(join(postsDir, entry.name));
+      const { attrs, body } = extractFrontmatter(content);
+
+      posts.push({ slug, content: body, ...attrs });
     }
   } catch (error) {
     console.error("Error reading posts:", error);
   }
 
-  // Sort by date, newest first
-  return posts.sort((a, b) =>
-    new Date(b.date).getTime() - new Date(a.date).getTime()
-  );
+  return posts.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 }
 
 export async function getPost(slug: string): Promise<Post | null> {
   const postsDir = getPostsDir();
+
   try {
     const content = await fs.readTextFile(join(postsDir, `${slug}.mdx`));
     const { attrs, body } = extractFrontmatter(content);
-
-    return {
-      slug,
-      content: body,
-      ...attrs,
-    };
+    return { slug, content: body, ...attrs };
   } catch {
     return null;
   }

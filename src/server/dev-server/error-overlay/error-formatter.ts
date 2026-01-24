@@ -9,7 +9,6 @@ export interface ErrorInfo {
   suggestion?: string;
 }
 
-/** Error pattern to suggestion mapping */
 const ERROR_SUGGESTIONS: Array<{ patterns: string[]; suggestion: string }> = [
   {
     patterns: ["unexpected token", "parse error"],
@@ -42,20 +41,16 @@ const ERROR_SUGGESTIONS: Array<{ patterns: string[]; suggestion: string }> = [
   },
 ];
 
-/** Get helpful suggestion based on error message */
 export function getSuggestion(error: Error): string | undefined {
   const message = error.message.toLowerCase();
 
   for (const { patterns, suggestion } of ERROR_SUGGESTIONS) {
-    if (patterns.some((pattern) => message.includes(pattern))) {
-      return suggestion;
-    }
+    if (patterns.some((pattern) => message.includes(pattern))) return suggestion;
   }
 
   return undefined;
 }
 
-/** Format error type for display */
 export function formatErrorType(type: ErrorType): string {
-  return type.charAt(0).toUpperCase() + type.slice(1);
+  return `${type[0]!.toUpperCase()}${type.slice(1)}`;
 }

@@ -9,23 +9,28 @@ export default tool({
   inputSchema: z.object({
     baseId: z.string().describe('The ID of the Airtable base (starts with "app")'),
     tableIdOrName: z.string().describe("The ID or name of the table"),
-    fields: z.array(z.string()).optional().describe(
-      "Specific field names to return (returns all fields if not specified)",
-    ),
-    filterByFormula: z.string().optional().describe(
-      "Airtable formula to filter records (e.g., \"{Status} = 'Done'\")",
-    ),
-    maxRecords: z.number().min(1).max(100).optional().describe(
-      "Maximum number of records to return",
-    ),
-    sort: z.array(z.object({
-      field: z.string().describe("Field name to sort by"),
-      direction: z.enum(["asc", "desc"]).describe("Sort direction"),
-    })).optional().describe("Array of sort specifications"),
+    fields: z
+      .array(z.string())
+      .optional()
+      .describe("Specific field names to return (returns all fields if not specified)"),
+    filterByFormula: z
+      .string()
+      .optional()
+      .describe('Airtable formula to filter records (e.g., "{Status} = \'Done\'")'),
+    maxRecords: z.number().min(1).max(100).optional().describe("Maximum number of records to return"),
+    sort: z
+      .array(
+        z.object({
+          field: z.string().describe("Field name to sort by"),
+          direction: z.enum(["asc", "desc"]).describe("Sort direction"),
+        }),
+      )
+      .optional()
+      .describe("Array of sort specifications"),
     view: z.string().optional().describe("Name of a view to use for filtering and sorting"),
   }),
   async execute({ baseId, tableIdOrName, fields, filterByFormula, maxRecords, sort, view }) {
-    const result = await listRecords(baseId, tableIdOrName, {
+    const { records, offset } = await listRecords(baseId, tableIdOrName, {
       fields,
       filterByFormula,
       maxRecords,
@@ -35,13 +40,9 @@ export default tool({
     });
 
     return {
-      records: result.records.map((record) => ({
-        id: record.id,
-        createdTime: record.createdTime,
-        fields: record.fields,
-      })),
-      count: result.records.length,
-      hasMore: !!result.offset,
+      records: records.map(({ id, createdTime, fields }) => ({ id, createdTime, fields })),
+      count: records.length,
+      hasMore: Boolean(offset),
     };
   },
 });

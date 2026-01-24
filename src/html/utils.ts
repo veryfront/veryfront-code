@@ -3,15 +3,11 @@ import type { VeryfrontConfig } from "#veryfront/config/types.ts";
 import { REACT_DEFAULT_VERSION, VERYFRONT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { getTailwindImportMap } from "#veryfront/transforms/esm/package-registry.ts";
 
-function joinAttributes(attrs: (string | false | undefined | null | "")[]): string {
+function joinAttributes(attrs: Array<string | false | undefined | null | "">): string {
   return attrs.filter(Boolean).join(" ");
 }
 
-export function buildRootAttributes(
-  slug: string,
-  mode: string,
-  noLayout: boolean,
-): string {
+export function buildRootAttributes(slug: string, mode: string, noLayout: boolean): string {
   return joinAttributes([
     'id="root"',
     !noLayout && 'class="vf-tailwind"',
@@ -47,8 +43,7 @@ export async function detectVersions(projectDir: string): Promise<DetectedVersio
   try {
     const { createFileSystem } = await import("../platform/compat/fs.ts");
     const fs = createFileSystem();
-    const packageJsonPath = `${projectDir}/package.json`;
-    const content = await fs.readTextFile(packageJsonPath);
+    const content = await fs.readTextFile(`${projectDir}/package.json`);
     const pkg = JSON.parse(content) as {
       dependencies?: Record<string, string>;
       devDependencies?: Record<string, string>;
@@ -57,8 +52,8 @@ export async function detectVersions(projectDir: string): Promise<DetectedVersio
     const deps = { ...pkg.dependencies, ...pkg.devDependencies };
 
     return {
-      react: deps?.react?.replace(/[\^~]/, "") || DEFAULT_VERSIONS.react,
-      veryfront: deps?.veryfront?.replace(/[\^~]/, "") || DEFAULT_VERSIONS.veryfront,
+      react: deps.react?.replace(/[\^~]/, "") ?? DEFAULT_VERSIONS.react,
+      veryfront: deps.veryfront?.replace(/[\^~]/, "") ?? DEFAULT_VERSIONS.veryfront,
     };
   } catch {
     return DEFAULT_VERSIONS;
@@ -78,22 +73,17 @@ const PLATFORM_UTILITY_PATHS = {
   fonts: "/_vf_modules/react/fonts/index.js",
 } as const;
 
-// Full platform utilities including react-prefixed aliases
 const PLATFORM_UTILITIES: Record<string, string> = {
   "veryfront/head": PLATFORM_UTILITY_PATHS.head,
   "veryfront/router": PLATFORM_UTILITY_PATHS.router,
   "veryfront/context": PLATFORM_UTILITY_PATHS.context,
   "veryfront/fonts": PLATFORM_UTILITY_PATHS.fonts,
-  // React-prefixed aliases (veryfront/react/*) - same modules, alternative import paths
   "veryfront/react/head": PLATFORM_UTILITY_PATHS.head,
   "veryfront/react/router": PLATFORM_UTILITY_PATHS.router,
   "veryfront/react/context": PLATFORM_UTILITY_PATHS.context,
   "veryfront/react/fonts": PLATFORM_UTILITY_PATHS.fonts,
 };
 
-// URL templates for each CDN provider
-// Use ?target=es2022 on esm.sh to ensure identical builds between SSR (Deno) and browser.
-// Without this, esm.sh auto-detects target and may serve different builds.
 interface CdnUrlTemplates {
   react: (version: string) => string;
   reactDom: (version: string) => string;
@@ -149,8 +139,9 @@ function buildCdnImportMapFromTemplates(
   includePlatformUtilities: boolean,
 ): Record<string, string> {
   const { react, veryfront } = versions;
+
   return {
-    "react": templates.react(react),
+    react: templates.react(react),
     "react-dom": templates.reactDom(react),
     "react-dom/client": templates.reactDomClient(react),
     "react/jsx-runtime": templates.jsxRuntime(react),
@@ -178,18 +169,16 @@ function getJsdelivrImportMap(versions: DetectedVersions): Record<string, string
 function getSelfHostedImportMap(versions: DetectedVersions): Record<string, string> {
   const { react } = versions;
   const esmShTemplates = CDN_URL_TEMPLATES["esm.sh"];
+
   return {
-    // React still from CDN (or can be bundled separately)
-    "react": esmShTemplates.react(react),
+    react: esmShTemplates.react(react),
     "react-dom": esmShTemplates.reactDom(react),
     "react-dom/client": esmShTemplates.reactDomClient(react),
     "react/jsx-runtime": esmShTemplates.jsxRuntime(react),
     "react/jsx-dev-runtime": esmShTemplates.jsxDevRuntime(react),
-    // Veryfront modules served from local endpoint
     "veryfront/agent/react": "/_veryfront/lib/agent/react.js",
     "veryfront/components/ai": "/_veryfront/lib/components/ai.js",
     "veryfront/primitives": "/_veryfront/lib/primitives.js",
-    // Platform utilities (subset without react-prefixed aliases)
     "veryfront/head": PLATFORM_UTILITY_PATHS.head,
     "veryfront/router": PLATFORM_UTILITY_PATHS.router,
     "veryfront/context": PLATFORM_UTILITY_PATHS.context,
@@ -205,14 +194,13 @@ const CDN_IMPORT_MAP_FACTORIES: Record<
   unpkg: getUnpkgImportMap,
   jsdelivr: getJsdelivrImportMap,
   "esm.sh": getEsmShImportMap,
-} as const;
+};
 
 function getCdnImportMap(
   versions: DetectedVersions,
   provider: CdnProvider = "esm.sh",
 ): Record<string, string> {
-  const factory = CDN_IMPORT_MAP_FACTORIES[provider] ?? getEsmShImportMap;
-  return factory(versions);
+  return (CDN_IMPORT_MAP_FACTORIES[provider] ?? getEsmShImportMap)(versions);
 }
 
 function getDefaultHTMLImportMap(): Record<string, string> {
@@ -229,8 +217,8 @@ async function resolveVersions(
     return detectVersions(projectDir);
   }
 
-  // Explicit versions from config
   const detected = await detectVersions(projectDir);
+
   return {
     react: versionsConfig.react || detected.react,
     veryfront: versionsConfig.veryfront || detected.veryfront,
@@ -246,60 +234,39 @@ export interface BuildImportMapOptions {
 export async function buildImportMapJson(
   options?: BuildImportMapOptions | Record<string, string>,
 ): Promise<string> {
-  // Legacy: if passed a plain record, use as import map directly
   if (
     options && !("projectDir" in options) && !("config" in options) && !("customImports" in options)
   ) {
-    const imports = options as Record<string, string>;
+    const imports = options;
     if (Object.keys(imports).length > 0) {
       return JSON.stringify({ imports }, null, 2);
     }
   }
 
-  const opts = (options || {}) as BuildImportMapOptions;
-  const { projectDir, config, customImports } = opts;
-
-  // Determine mode
+  const { projectDir, config, customImports } = (options ?? {}) as BuildImportMapOptions;
   const mode = config?.client?.moduleResolution ?? "cdn";
+  const versions = projectDir ? await resolveVersions(projectDir, config) : DEFAULT_VERSIONS;
 
-  // For bundled mode, we might not need veryfront imports in the map
-  // as they'll be bundled into the client JS
   if (mode === "bundled") {
-    const versions = projectDir ? await resolveVersions(projectDir, config) : DEFAULT_VERSIONS;
-
-    // Only include React in import map for bundled mode
-    // Use ?target=es2022 to match SSR build
+    const reactTemplates = CDN_URL_TEMPLATES["esm.sh"];
     const imports: Record<string, string> = {
-      "react": `https://esm.sh/react@${versions.react}?target=es2022`,
-      "react-dom": `https://esm.sh/react-dom@${versions.react}?target=es2022`,
-      "react-dom/client": `https://esm.sh/react-dom@${versions.react}/client?target=es2022`,
-      "react/jsx-runtime": `https://esm.sh/react@${versions.react}/jsx-runtime?target=es2022`,
-      "react/jsx-dev-runtime":
-        `https://esm.sh/react@${versions.react}/jsx-dev-runtime?target=es2022`,
+      react: reactTemplates.react(versions.react),
+      "react-dom": reactTemplates.reactDom(versions.react),
+      "react-dom/client": reactTemplates.reactDomClient(versions.react),
+      "react/jsx-runtime": reactTemplates.jsxRuntime(versions.react),
+      "react/jsx-dev-runtime": reactTemplates.jsxDevRuntime(versions.react),
       ...customImports,
     };
 
     return JSON.stringify({ imports }, null, 2);
   }
 
-  // Resolve versions
-  const versions = projectDir ? await resolveVersions(projectDir, config) : DEFAULT_VERSIONS;
+  let imports = mode === "self-hosted"
+    ? getSelfHostedImportMap(versions)
+    : getCdnImportMap(versions, config?.client?.cdn?.provider ?? "esm.sh");
 
-  // Get base import map based on mode
-  let imports: Record<string, string>;
-
-  if (mode === "self-hosted") {
-    imports = getSelfHostedImportMap(versions);
-  } else {
-    // CDN mode
-    const provider = config?.client?.cdn?.provider ?? "esm.sh";
-    imports = getCdnImportMap(versions, provider);
-  }
-
-  // Add @/ alias for project-relative imports (maps to module server)
   imports["@/"] = "/_vf_modules/";
 
-  // Merge with custom imports
   if (customImports) {
     imports = { ...imports, ...customImports };
   }
@@ -308,7 +275,7 @@ export async function buildImportMapJson(
 }
 
 export function buildImportMapJsonSync(importMap?: Record<string, string>): string {
-  const imports = importMap || getDefaultHTMLImportMap();
+  const imports = importMap ?? getDefaultHTMLImportMap();
   return JSON.stringify({ imports }, null, 2);
 }
 

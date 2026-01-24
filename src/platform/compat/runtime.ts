@@ -1,11 +1,3 @@
-/**
- * Runtime detection utilities
- *
- * Provides both constants (for static detection at module load time) and
- * functions (for dynamic detection at call time, useful with bundlers).
- */
-
-// deno-lint-ignore no-explicit-any
 type GlobalWithRuntime = typeof globalThis & {
   process?: { versions?: { node?: string } };
   Bun?: unknown;
@@ -17,11 +9,11 @@ function hasDenoVersion(): boolean {
 
 function hasNodeProcess(): boolean {
   const global = globalThis as GlobalWithRuntime;
-  return typeof global.process !== "undefined" && !!global.process?.versions?.node;
+  return global.process?.versions?.node != null;
 }
 
 function hasBunGlobal(): boolean {
-  return typeof (globalThis as GlobalWithRuntime).Bun !== "undefined";
+  return (globalThis as GlobalWithRuntime).Bun != null;
 }
 
 function hasCloudflareGlobals(): boolean {
@@ -29,16 +21,16 @@ function hasCloudflareGlobals(): boolean {
 }
 
 /** True if running in Deno runtime */
-export const isDeno = hasDenoVersion();
+export const isDeno: boolean = hasDenoVersion();
 
 /** True if running in Bun runtime (must check before Node since Bun has process.versions.node) */
-export const isBun = !isDeno && hasBunGlobal();
+export const isBun: boolean = !isDeno && hasBunGlobal();
 
 /** True if running in Node.js runtime (exclude Bun which also has process.versions.node) */
-export const isNode = !isDeno && !isBun && hasNodeProcess();
+export const isNode: boolean = !isDeno && !isBun && hasNodeProcess();
 
 /** True if running in Cloudflare Workers runtime */
-export const isCloudflare = hasCloudflareGlobals();
+export const isCloudflare: boolean = hasCloudflareGlobals();
 
 /**
  * Detect if running in Node.js (vs Deno) at call time.

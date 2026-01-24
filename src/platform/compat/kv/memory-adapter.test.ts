@@ -2,6 +2,12 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MemoryKv } from "./memory-adapter.ts";
 
+async function collectEntries<T>(iterable: AsyncIterable<T>): Promise<T[]> {
+  const entries: T[] = [];
+  for await (const entry of iterable) entries.push(entry);
+  return entries;
+}
+
 describe("MemoryKv", () => {
   describe("class", () => {
     it("should export MemoryKv class", () => {
@@ -10,8 +16,7 @@ describe("MemoryKv", () => {
     });
 
     it("should be instantiable", () => {
-      const kv = new MemoryKv();
-      assertExists(kv);
+      assertExists(new MemoryKv());
     });
 
     it("should have all required methods", () => {
@@ -28,6 +33,7 @@ describe("MemoryKv", () => {
     it("should store and retrieve values", async () => {
       const kv = new MemoryKv();
       await kv.set(["test", "key"], "value");
+
       const result = await kv.get(["test", "key"]);
       assertEquals(result.value, "value");
       assertExists(result.versionstamp);
@@ -45,6 +51,7 @@ describe("MemoryKv", () => {
       const kv = new MemoryKv();
       await kv.set(["test", "key"], "value");
       await kv.delete(["test", "key"]);
+
       const result = await kv.get(["test", "key"]);
       assertEquals(result.value, undefined);
     });
@@ -57,11 +64,7 @@ describe("MemoryKv", () => {
       await kv.set(["b"], 2);
       await kv.set(["c"], 3);
 
-      const entries = [];
-      for await (const entry of kv.list()) {
-        entries.push(entry);
-      }
-
+      const entries = await collectEntries(kv.list());
       assertEquals(entries.length, 3);
     });
 
@@ -71,11 +74,7 @@ describe("MemoryKv", () => {
       await kv.set(["b"], 2);
       await kv.set(["c"], 3);
 
-      const entries = [];
-      for await (const entry of kv.list({ limit: 2 })) {
-        entries.push(entry);
-      }
-
+      const entries = await collectEntries(kv.list({ limit: 2 }));
       assertEquals(entries.length, 2);
     });
   });
@@ -85,6 +84,7 @@ describe("MemoryKv", () => {
       const kv = new MemoryKv();
       await kv.set(["test"], "value");
       kv.close();
+
       const result = await kv.get(["test"]);
       assertEquals(result.value, undefined);
     });

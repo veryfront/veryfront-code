@@ -29,13 +29,14 @@ describe("pull command integration", () => {
       const source: PullSource = { type: "main" };
       const files = await listAllFiles(ctx.client, ctx.projectSlug, source);
 
-      assertExists(files);
       assertEquals(Array.isArray(files), true);
-      if (files.length > 0) {
-        assertExists(files[0]?.path);
-        assertExists(files[0]?.size);
-        assertExists(files[0]?.type);
-      }
+
+      const first = files[0];
+      if (!first) return;
+
+      assertExists(first.path);
+      assertExists(first.size);
+      assertExists(first.type);
     });
 
     it("should handle empty project gracefully", async () => {
@@ -51,9 +52,10 @@ describe("pull command integration", () => {
       const source: PullSource = { type: "main" };
       const files = await listAllFiles(ctx.client, ctx.projectSlug, source);
 
-      if (files.length === 0) return;
+      const first = files[0];
+      if (!first) return;
 
-      const content = await getFileContent(ctx.client, ctx.projectSlug, files[0]!.path, source);
+      const content = await getFileContent(ctx.client, ctx.projectSlug, first.path, source);
 
       assertExists(content);
       assertEquals(typeof content, "string");

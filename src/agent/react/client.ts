@@ -7,9 +7,5 @@
  * @module veryfront/agent/react/client
  */
 
-// Re-export AI SDK React hooks (battle-tested, proven in production)
-// These are client-only and require browser environment
 export { useChat, useCompletion } from "ai/react";
-
-// Re-export core types that are useful on the client
 export type { UseChatOptions, UseCompletionOptions } from "ai/react";

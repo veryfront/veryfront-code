@@ -20,58 +20,58 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 export class RSCHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "RSCHandler",
-    priority: PRIORITY_MEDIUM as HandlerPriority, // MEDIUM priority
-    patterns: [
-      { pattern: "/_veryfront/rsc/", prefix: true },
-    ],
+    priority: PRIORITY_MEDIUM as HandlerPriority,
+    patterns: [{ pattern: "/_veryfront/rsc/", prefix: true }],
   };
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
-    const url = new URL(req.url);
-    const pathname = url.pathname;
+    const { pathname } = new URL(req.url);
 
     if (!pathname.startsWith("/_veryfront/rsc/")) {
       return Promise.resolve(this.continue());
     }
 
-    return withSpan("rsc.handle", async () => {
-      // Always allow client.js, dom.js (needed for basic hydration even without full RSC)
-      // and flight_page (deprecated endpoint that always returns 410 Gone)
-      const sub = pathname.replace("/_veryfront/rsc/", "");
-      const isHydrationScript = sub === "client.js" || sub === "dom.js";
-      const isDeprecatedEndpoint = sub === "flight_page";
+    const endpoint = pathname.replace("/_veryfront/rsc/", "");
 
-      if (!isRSCEnabled(ctx.config) && !isHydrationScript && !isDeprecatedEndpoint) {
-        return this.respond(new Response("Not Found", { status: HTTP_NOT_FOUND }));
-      }
+    return withSpan(
+      "rsc.handle",
+      async () => {
+        const isHydrationScript = endpoint === "client.js" || endpoint === "dom.js";
+        const isDeprecatedEndpoint = endpoint === "flight_page";
 
-      const res = await handleRSCEndpoint({
-        req,
-        pathname,
-        projectDir: ctx.projectDir,
-        adapter: ctx.adapter,
-        config: ctx.config,
-      });
+        if (!isRSCEnabled(ctx.config) && !isHydrationScript && !isDeprecatedEndpoint) {
+          return this.respond(new Response("Not Found", { status: HTTP_NOT_FOUND }));
+        }
 
-      if (res) {
-        // Wrap response with security and CORS headers
+        const res = await handleRSCEndpoint({
+          req,
+          pathname,
+          projectDir: ctx.projectDir,
+          adapter: ctx.adapter,
+          config: ctx.config,
+        });
+
+        if (!res) {
+          return this.continue();
+        }
+
         const headers = new Headers(res.headers);
         await applyCORSHeaders({
           request: req,
-          headers: headers,
+          headers,
           config: ctx.securityConfig?.cors,
         });
         applySecurityHeaders(headers, ctx);
 
-        const wrappedRes = new Response(res.body, {
-          status: res.status,
-          statusText: res.statusText,
-          headers,
-        });
-        return this.respond(wrappedRes);
-      }
-
-      return this.continue();
-    }, { "rsc.pathname": pathname, "rsc.endpoint": pathname.replace("/_veryfront/rsc/", "") });
+        return this.respond(
+          new Response(res.body, {
+            status: res.status,
+            statusText: res.statusText,
+            headers,
+          }),
+        );
+      },
+      { "rsc.pathname": pathname, "rsc.endpoint": endpoint },
+    );
   }
 }

@@ -6,18 +6,31 @@
 
 import { isDeno } from "./runtime.ts";
 
+// Node.js process global type declaration
+declare const process: {
+  stdin: {
+    setRawMode?(enabled: boolean): void;
+    resume(): void;
+    pause(): void;
+    on(event: string, listener: (data: Uint8Array) => void): void;
+    once(event: string, listener: (data: Uint8Array) => void): void;
+    off(event: string, listener: (data: Uint8Array) => void): void;
+  };
+} | undefined;
+
 /**
  * Set raw mode on stdin (enables character-by-character input)
  */
 export function setRawMode(enabled: boolean): void {
   if (isDeno) {
     Deno.stdin.setRaw(enabled);
-  } else if (typeof process !== "undefined" && process.stdin?.setRawMode) {
-    process.stdin.setRawMode(enabled);
-    if (enabled) {
-      process.stdin.resume();
-    }
+    return;
   }
+
+  if (typeof process === "undefined" || !process.stdin?.setRawMode) return;
+
+  process.stdin.setRawMode(enabled);
+  if (enabled) process.stdin.resume();
 }
 
 /**
@@ -36,64 +49,59 @@ export function getStdinReader(): StdinReader {
   if (isDeno) {
     const reader = Deno.stdin.readable.getReader();
     return {
-      async read() {
+      read: async () => {
         const result = await reader.read();
         return { value: result.value, done: result.done };
       },
-      releaseLock() {
-        reader.releaseLock();
-      },
+      releaseLock: () => reader.releaseLock(),
     };
   }
 
-  // Node.js implementation
-  if (typeof process !== "undefined" && process.stdin) {
-    let buffer: Uint8Array[] = [];
-    let resolveRead: ((result: { value: Uint8Array | undefined; done: boolean }) => void) | null =
-      null;
-
-    const onData = (data: Uint8Array) => {
-      const chunk = new Uint8Array(data);
-      if (resolveRead) {
-        resolveRead({ value: chunk, done: false });
-        resolveRead = null;
-      } else {
-        buffer.push(chunk);
-      }
-    };
-
-    const onEnd = () => {
-      if (resolveRead) {
-        resolveRead({ value: undefined, done: true });
-        resolveRead = null;
-      }
-    };
-
-    process.stdin.on("data", onData);
-    process.stdin.on("end", onEnd);
-
+  if (typeof process === "undefined" || !process.stdin) {
     return {
-      read(): Promise<{ value: Uint8Array | undefined; done: boolean }> {
-        if (buffer.length > 0) {
-          return Promise.resolve({ value: buffer.shift()!, done: false });
-        }
-        return new Promise((resolve) => {
-          resolveRead = resolve;
-        });
-      },
-      releaseLock(): void {
-        process.stdin.off("data", onData);
-        process.stdin.off("end", onEnd);
-        buffer = [];
-        resolveRead = null;
-      },
+      read: () => Promise.resolve({ value: undefined, done: true }),
+      releaseLock: () => {},
     };
   }
 
-  // Fallback: return a no-op reader
+  let buffer: Uint8Array[] = [];
+  let resolveRead: ((result: { value: Uint8Array | undefined; done: boolean }) => void) | null =
+    null;
+
+  const onData = (data: Uint8Array) => {
+    const chunk = new Uint8Array(data);
+    if (resolveRead) {
+      resolveRead({ value: chunk, done: false });
+      resolveRead = null;
+      return;
+    }
+    buffer.push(chunk);
+  };
+
+  const onEnd = () => {
+    if (!resolveRead) return;
+    resolveRead({ value: undefined, done: true });
+    resolveRead = null;
+  };
+
+  process.stdin.on("data", onData);
+  process.stdin.on("end", onEnd);
+
   return {
-    read: () => Promise.resolve({ value: undefined, done: true }),
-    releaseLock: () => {},
+    read(): Promise<{ value: Uint8Array | undefined; done: boolean }> {
+      const value = buffer.shift();
+      if (value) return Promise.resolve({ value, done: false });
+
+      return new Promise((resolve) => {
+        resolveRead = resolve;
+      });
+    },
+    releaseLock(): void {
+      process.stdin.off("data", onData);
+      process.stdin.off("end", onEnd);
+      buffer = [];
+      resolveRead = null;
+    },
   };
 }
 
@@ -103,7 +111,6 @@ export function getStdinReader(): StdinReader {
  */
 export function waitForKeypress(): Promise<void> {
   return new Promise((resolve) => {
-    // Deno
     if (typeof Deno !== "undefined" && Deno.stdin) {
       Deno.stdin.setRaw(true);
       const reader = Deno.stdin.readable.getReader();
@@ -116,7 +123,11 @@ export function waitForKeypress(): Promise<void> {
       return;
     }
 
-    // Node.js
+    if (!process?.stdin) {
+      resolve();
+      return;
+    }
+
     process.stdin.setRawMode?.(true);
     process.stdin.resume();
     process.stdin.once("data", () => {
@@ -139,58 +150,65 @@ const ENTER_LF = 0x0a;
  */
 export function waitForEnterOrExit(): Promise<boolean> {
   return new Promise((resolve) => {
-    // Deno
     if (typeof Deno !== "undefined" && Deno.stdin) {
       Deno.stdin.setRaw(true);
       const reader = Deno.stdin.readable.getReader();
 
+      const cleanup = (result: boolean) => {
+        Deno.stdin.setRaw(false);
+        reader.releaseLock();
+        resolve(result);
+      };
+
       const readKey = async () => {
         const { value } = await reader.read();
-        if (value && value.length > 0) {
-          const key = value[0];
-          if (key === CTRL_C) {
-            Deno.stdin.setRaw(false);
-            reader.releaseLock();
-            resolve(false);
-            return;
-          }
-          if (key === ENTER_CR || key === ENTER_LF) {
-            Deno.stdin.setRaw(false);
-            reader.releaseLock();
-            resolve(true);
-            return;
-          }
-          // Other key - keep waiting
-          readKey();
+        const key = value?.[0];
+        if (key === undefined) return;
+
+        if (key === CTRL_C) {
+          cleanup(false);
+          return;
         }
+
+        if (key === ENTER_CR || key === ENTER_LF) {
+          cleanup(true);
+          return;
+        }
+
+        readKey();
       };
+
       readKey();
       return;
     }
 
-    // Node.js
-    process.stdin.setRawMode?.(true);
-    process.stdin.resume();
+    if (!process?.stdin) {
+      resolve(false);
+      return;
+    }
+
+    const stdin = process.stdin;
+    stdin.setRawMode?.(true);
+    stdin.resume();
+
+    const cleanup = (result: boolean) => {
+      stdin.setRawMode?.(false);
+      stdin.pause();
+      stdin.off("data", onData);
+      resolve(result);
+    };
 
     const onData = (data: Uint8Array) => {
       const key = data[0];
       if (key === CTRL_C) {
-        process.stdin.setRawMode?.(false);
-        process.stdin.pause();
-        process.stdin.off("data", onData);
-        resolve(false);
+        cleanup(false);
         return;
       }
       if (key === ENTER_CR || key === ENTER_LF) {
-        process.stdin.setRawMode?.(false);
-        process.stdin.pause();
-        process.stdin.off("data", onData);
-        resolve(true);
-        return;
+        cleanup(true);
       }
-      // Other key - keep listening
     };
 
-    process.stdin.on("data", onData);
+    stdin.on("data", onData);
   });
 }

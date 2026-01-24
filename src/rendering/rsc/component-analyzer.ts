@@ -19,14 +19,11 @@ export async function analyzeComponent(
   // Determine component type: directive takes precedence over file naming convention
   const type: ComponentType = hasUseClient || filePath.includes(".client.") ? "client" : "server";
 
-  const exports = extractExportNames(content);
-  const id = generateComponentId(filePath);
-
   return {
     type,
     filePath,
-    exports,
-    id,
+    exports: extractExportNames(content),
+    id: generateComponentId(filePath),
     hasUseClient,
     hasUseServer,
   };
@@ -35,23 +32,19 @@ export async function analyzeComponent(
 function detectDirective(content: string, directive: string): boolean {
   // Match directives like 'use client' or "use client" at the start of a line
   const directivePattern = new RegExp(`^\\s*['"]${directive}['"];?\\s*$`, "m");
-
   return directivePattern.test(content);
 }
 
 function generateComponentId(filePath: string): string {
-  let id = filePath.replace(/\.(tsx?|jsx?)$/, "").replace(/\.(client|server)$/, "");
-
-  const parts = id.split("/");
-  const fileName = parts[parts.length - 1];
+  const normalized = filePath.replace(/\.(tsx?|jsx?)$/, "").replace(/\.(client|server)$/, "");
+  const parts = normalized.split("/");
+  const fileName = parts.at(-1);
 
   if (fileName === "index") {
-    id = parts[parts.length - 2] || "Unknown";
-  } else {
-    id = fileName || "Unknown";
+    return toPascalCase(parts.at(-2) ?? "Unknown");
   }
 
-  return toPascalCase(id);
+  return toPascalCase(fileName ?? "Unknown");
 }
 
 function toPascalCase(str: string): string {
@@ -69,25 +62,19 @@ export async function buildClientManifest(
   const manifest = new Map<string, import("./types.ts").ClientComponentMeta>();
   const appPath = join(projectDir, appDir);
 
-  // Get adapter if not provided
-  let fsAdapter = fs;
-  if (!fsAdapter) {
-    try {
-      const adapter = await runtime.get();
-      fsAdapter = adapter.fs;
-    } catch (error) {
-      serverLogger.warn(`Failed to get file system adapter:`, error);
-      return manifest;
-    }
-  }
+  const fsAdapter = fs ?? (await getFsAdapter(manifest));
+  if (!fsAdapter) return manifest;
 
   try {
-    await walkDirectory(appPath, async (filePath) => {
-      if (!/\.(tsx?|jsx?)$/.test(filePath)) return;
+    await walkDirectory(
+      appPath,
+      async (filePath) => {
+        if (!/\.(tsx?|jsx?)$/.test(filePath)) return;
 
-      const analysis = await analyzeComponent(filePath, fsAdapter!);
+        const analysis = await analyzeComponent(filePath, fsAdapter);
 
-      if (analysis.type === "client") {
+        if (analysis.type !== "client") return;
+
         const relativePath = relative(projectDir, filePath);
 
         manifest.set(analysis.id, {
@@ -97,13 +84,26 @@ export async function buildClientManifest(
         });
 
         serverLogger.debug(`Found client component: ${analysis.id} at ${relativePath}`);
-      }
-    }, fsAdapter);
+      },
+      fsAdapter,
+    );
   } catch (error) {
     serverLogger.warn(`Failed to build client manifest:`, error);
   }
 
   return manifest;
+}
+
+async function getFsAdapter(
+  _manifest: Map<string, import("./types.ts").ClientComponentMeta>,
+): Promise<FileSystemAdapter | undefined> {
+  try {
+    const adapter = await runtime.get();
+    return adapter.fs;
+  } catch (error) {
+    serverLogger.warn(`Failed to get file system adapter:`, error);
+    return undefined;
+  }
 }
 
 async function walkDirectory(
@@ -113,40 +113,48 @@ async function walkDirectory(
 ): Promise<void> {
   try {
     if (!fs) {
-      throw toError(createError({
-        type: "config",
-        message: "FileSystemAdapter is required for walkDirectory",
-      }));
+      throw toError(
+        createError({
+          type: "config",
+          message: "FileSystemAdapter is required for walkDirectory",
+        }),
+      );
     }
+
     const entries = fs.readDir(dir);
+
     for await (const entry of entries) {
       const path = join(dir, entry.name);
 
       if (entry.isDirectory) {
-        // Skip node_modules and hidden dirs, but allow .veryfront (excluding system subdirs)
-        if (entry.name === "node_modules") continue;
-        if (entry.name.startsWith(".") && entry.name !== ".veryfront") continue;
-        if (
-          dir.includes(".veryfront") &&
-          ["cache", "compiled", "tmp", "temp", "output", "optimized-images", "css"].includes(
-            entry.name,
-          )
-        ) {
-          continue;
-        }
+        if (shouldSkipDirectory(dir, entry.name)) continue;
         await walkDirectory(path, callback, fs);
-      } else if (entry.isFile) {
+        continue;
+      }
+
+      if (entry.isFile) {
         await callback(path);
       }
     }
   } catch (error) {
-    if ((error as { code?: string })?.code === "ENOENT") {
-      return;
-    }
-    const message = String((error as Error)?.message || "").toLowerCase();
-    if (message.includes("not found") || message.includes("no such file")) {
-      return;
-    }
+    if (isNotFoundError(error)) return;
     throw error;
   }
+}
+
+function shouldSkipDirectory(parentDir: string, name: string): boolean {
+  // Skip node_modules and hidden dirs, but allow .veryfront (excluding system subdirs)
+  if (name === "node_modules") return true;
+  if (name.startsWith(".") && name !== ".veryfront") return true;
+
+  if (!parentDir.includes(".veryfront")) return false;
+
+  return ["cache", "compiled", "tmp", "temp", "output", "optimized-images", "css"].includes(name);
+}
+
+function isNotFoundError(error: unknown): boolean {
+  if ((error as { code?: string } | undefined)?.code === "ENOENT") return true;
+
+  const message = String((error as Error | undefined)?.message ?? "").toLowerCase();
+  return message.includes("not found") || message.includes("no such file");
 }

@@ -13,8 +13,6 @@
 import { assert, assertEquals } from "#std/assert.ts";
 import { describe, it } from "#std/testing/bdd.ts";
 
-// Use relative imports for cross-runtime compatibility
-// Note: Skip security.ts as it has external deps (@veryfront/utils)
 import {
   basename,
   dirname,
@@ -43,10 +41,8 @@ import {
 } from "./process.ts";
 
 import { createFileSystem } from "./fs.ts";
-
 import { isBun, isDeno, isNode } from "./runtime.ts";
 
-// Detect runtime
 function getCurrentRuntime(): string {
   if (isDeno) return "Deno";
   if (isBun) return "Bun";
@@ -58,9 +54,6 @@ console.log(`\n\x1b[1m=== Cross-Runtime Compatibility Test ===\x1b[0m`);
 console.log(`Runtime: \x1b[36m${getCurrentRuntime()}\x1b[0m`);
 console.log(`Version: \x1b[36m${getRuntimeVersion()}\x1b[0m\n`);
 
-// ============================================================================
-// Path Tests
-// ============================================================================
 describe("Path Operations", () => {
   it("join combines paths", () => {
     const result = join("foo", "bar", "baz.txt");
@@ -108,9 +101,6 @@ describe("Path Operations", () => {
   });
 });
 
-// ============================================================================
-// Process Tests
-// ============================================================================
 describe("Process Operations", () => {
   it("cwd returns directory", () => {
     const dir = cwd();
@@ -134,7 +124,8 @@ describe("Process Operations", () => {
   });
 
   it("pid returns number", () => {
-    assert(typeof pid() === "number" && pid() > 0, "should be positive number");
+    const p = pid();
+    assert(typeof p === "number" && p > 0, "should be positive number");
   });
 
   it("memoryUsage returns stats", () => {
@@ -149,14 +140,11 @@ describe("Process Operations", () => {
 
   it("unrefTimer works", () => {
     const t = setInterval(() => {}, 10000);
-    unrefTimer(t); // Should not throw
+    unrefTimer(t);
     clearInterval(t);
   });
 });
 
-// ============================================================================
-// Filesystem Tests
-// ============================================================================
 describe("Filesystem Operations", () => {
   it("createFileSystem returns interface", () => {
     const fs = createFileSystem();
@@ -166,24 +154,27 @@ describe("Filesystem Operations", () => {
 
   it("fs.exists works", async () => {
     const fs = createFileSystem();
-    const exists = await fs.exists("/this/does/not/exist/xyz");
-    assertEquals(exists, false);
+    assertEquals(await fs.exists("/this/does/not/exist/xyz"), false);
   });
 });
 
-// ============================================================================
-// Runtime Detection
-// ============================================================================
 describe("Runtime Detection", () => {
   it("exactly one runtime detected", () => {
-    const count = [isDeno, isBun, isNode].filter(Boolean).length;
-    assertEquals(count, 1, "should detect exactly one runtime");
+    assertEquals(
+      [isDeno, isBun, isNode].filter(Boolean).length,
+      1,
+      "should detect exactly one runtime",
+    );
   });
 
   it("version matches runtime", () => {
     const v = getRuntimeVersion();
-    if (isDeno) assert(v.startsWith("Deno"), "should be Deno");
-    if (isBun) assert(v.startsWith("Bun"), "should be Bun");
-    if (isNode) assert(v.startsWith("Node"), "should be Node");
+    if (isDeno) {
+      assert(v.startsWith("Deno"), "should be Deno");
+    } else if (isBun) {
+      assert(v.startsWith("Bun"), "should be Bun");
+    } else if (isNode) {
+      assert(v.startsWith("Node"), "should be Node");
+    }
   });
 });

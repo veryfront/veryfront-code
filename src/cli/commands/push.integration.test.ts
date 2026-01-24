@@ -25,22 +25,22 @@ describe("push command integration", () => {
   });
 
   describe("createBranch", () => {
-    it("should create a new branch", async () => {
-      const branchName = isRecording() ? `test-push-${Date.now()}` : "test-push-vcr";
+    async function assertBranchCreated(branchName: string): Promise<void> {
       const branch = await createBranch(ctx.client, ctx.projectSlug, branchName);
 
       assertExists(branch);
       assertExists(branch.id);
       assertExists(branch.name);
+    }
+
+    it("should create a new branch", async () => {
+      const branchName = isRecording() ? `test-push-${Date.now()}` : "test-push-vcr";
+      await assertBranchCreated(branchName);
     });
 
     it("should create branch with special characters in name", async () => {
       const branchName = isRecording() ? `test/feature-${Date.now()}` : "test/feature-vcr";
-      const branch = await createBranch(ctx.client, ctx.projectSlug, branchName);
-
-      assertExists(branch);
-      assertExists(branch.id);
-      assertExists(branch.name);
+      await assertBranchCreated(branchName);
     });
   });
 });

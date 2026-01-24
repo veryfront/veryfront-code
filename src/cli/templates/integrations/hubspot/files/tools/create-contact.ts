@@ -15,27 +15,29 @@ export default tool({
     website: z.string().optional().describe("Website URL"),
   }),
   async execute({ email, firstname, lastname, phone, company, jobtitle, website }) {
-    const properties: Record<string, string> = { email };
-
-    if (firstname) properties.firstname = firstname;
-    if (lastname) properties.lastname = lastname;
-    if (phone) properties.phone = phone;
-    if (company) properties.company = company;
-    if (jobtitle) properties.jobtitle = jobtitle;
-    if (website) properties.website = website;
+    const properties: Record<string, string> = {
+      email,
+      ...(firstname ? { firstname } : {}),
+      ...(lastname ? { lastname } : {}),
+      ...(phone ? { phone } : {}),
+      ...(company ? { company } : {}),
+      ...(jobtitle ? { jobtitle } : {}),
+      ...(website ? { website } : {}),
+    };
 
     const contact = await createContact(properties);
+    const name = formatContactName(contact);
 
     return {
       id: contact.id,
-      name: formatContactName(contact),
+      name,
       email: contact.properties.email,
       phone: contact.properties.phone,
       company: contact.properties.company,
       jobTitle: contact.properties.jobtitle,
       website: contact.properties.website,
       createdAt: contact.createdAt,
-      message: `Successfully created contact: ${formatContactName(contact)}`,
+      message: `Successfully created contact: ${name}`,
     };
   },
 });

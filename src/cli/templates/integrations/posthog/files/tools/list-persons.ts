@@ -7,19 +7,23 @@ export default tool({
   description:
     "List persons/users tracked in PostHog. View user properties, distinct IDs, and activity.",
   inputSchema: z.object({
-    limit: z.number().min(1).max(100).default(20).describe(
-      "Maximum number of persons to retrieve",
-    ),
-    search: z.string().optional().describe(
-      "Search query to filter persons by properties or distinct ID",
-    ),
+    limit: z
+      .number()
+      .min(1)
+      .max(100)
+      .default(20)
+      .describe("Maximum number of persons to retrieve"),
+    search: z
+      .string()
+      .optional()
+      .describe("Search query to filter persons by properties or distinct ID"),
   }),
   async execute({ limit, search }) {
-    const response = await listPersons({ limit, search });
+    const { results } = await listPersons({ limit, search });
 
     return {
-      count: response.results.length,
-      persons: response.results.map((person) => ({
+      count: results.length,
+      persons: results.map((person) => ({
         id: person.id,
         uuid: person.uuid,
         name: person.name,

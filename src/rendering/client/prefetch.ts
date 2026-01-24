@@ -18,7 +18,6 @@ declare global {
   }
 }
 
-/** Global interface for prefetch manager */
 interface GlobalWithPrefetch {
   veryFrontPrefetch?: PrefetchManager;
   __VERYFRONT_PREFETCH__?: PrefetchAutoInitSetting;
@@ -55,12 +54,12 @@ export class PrefetchManager {
 
   constructor(options: PrefetchOptions = {}) {
     this.options = {
-      rootMargin: options.rootMargin || "50px",
-      delay: options.delay || PREFETCH_DEFAULT_DELAY_MS,
-      maxConcurrent: options.maxConcurrent || 2,
-      allowedNetworks: options.allowedNetworks || ["4g", "wifi", "ethernet"],
-      maxSize: options.maxSize || PREFETCH_MAX_SIZE_BYTES,
-      timeout: options.timeout || PREFETCH_DEFAULT_TIMEOUT_MS,
+      rootMargin: options.rootMargin ?? "50px",
+      delay: options.delay ?? PREFETCH_DEFAULT_DELAY_MS,
+      maxConcurrent: options.maxConcurrent ?? 2,
+      allowedNetworks: options.allowedNetworks ?? ["4g", "wifi", "ethernet"],
+      maxSize: options.maxSize ?? PREFETCH_MAX_SIZE_BYTES,
+      timeout: options.timeout ?? PREFETCH_DEFAULT_TIMEOUT_MS,
     };
 
     this.networkUtils = new NetworkUtils(this.options.allowedNetworks);
@@ -99,9 +98,7 @@ export class PrefetchManager {
     this.linkObserver.init();
 
     this.networkUtils.onNetworkChange(() => {
-      if (!this.networkUtils.shouldPrefetch()) {
-        this.prefetchQueue.stopAll();
-      }
+      if (!this.networkUtils.shouldPrefetch()) this.prefetchQueue.stopAll();
     });
   }
 
@@ -139,12 +136,12 @@ export function initPrefetch(options?: PrefetchOptions): PrefetchManager {
     prefetchManager.init();
   }
 
-  (globalThis as unknown as GlobalWithPrefetch).veryFrontPrefetch = prefetchManager;
+  (globalThis as GlobalWithPrefetch).veryFrontPrefetch = prefetchManager;
   return prefetchManager;
 }
 
 function resolveAutoInitOptions(): PrefetchOptions | null {
-  const setting = (globalThis as unknown as GlobalWithPrefetch).__VERYFRONT_PREFETCH__;
+  const setting = (globalThis as GlobalWithPrefetch).__VERYFRONT_PREFETCH__;
   if (!setting) return null;
   if (setting === true) return {};
   if (typeof setting === "object") return setting;
@@ -154,15 +151,16 @@ function resolveAutoInitOptions(): PrefetchOptions | null {
 function shouldAutoInitPrefetch(options: PrefetchOptions | null): options is PrefetchOptions {
   if (!options) return false;
   if (typeof window === "undefined" || typeof document === "undefined") return false;
+
   const win = window as unknown as { __veryfrontSSRStub?: boolean };
   const doc = document as unknown as { __veryfrontSSRStub?: boolean };
   if (win.__veryfrontSSRStub || doc.__veryfrontSSRStub) return false;
+
   if (typeof IntersectionObserver === "undefined") return false;
   if (typeof MutationObserver === "undefined") return false;
+
   return true;
 }
 
 const autoInitOptions = resolveAutoInitOptions();
-if (shouldAutoInitPrefetch(autoInitOptions)) {
-  initPrefetch(autoInitOptions);
-}
+if (shouldAutoInitPrefetch(autoInitOptions)) initPrefetch(autoInitOptions);

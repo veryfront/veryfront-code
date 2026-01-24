@@ -15,22 +15,17 @@ export type AnyMiddlewareContext =
   | { request: Request };
 
 export function getRequest(ctx: AnyMiddlewareContext): Request {
-  return ("req" in ctx ? ctx.req : ctx.request) as Request;
+  return "req" in ctx ? ctx.req : ctx.request;
 }
 
 export type OriginValidator = (origin: string) => boolean | Promise<boolean>;
 
 export interface CorsOptions {
   origin?: string | string[] | OriginValidator;
-
   methods?: string[];
-
   allowedHeaders?: string[];
-
   exposedHeaders?: string[];
-
   credentials?: boolean;
-
   maxAge?: number;
 }
 

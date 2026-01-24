@@ -7,12 +7,14 @@ export default tool({
   description:
     "Get detailed information about a specific GitLab issue including full description, comments, time tracking, and metadata.",
   inputSchema: z.object({
-    projectId: z.union([z.number(), z.string()]).describe(
-      'Project ID or path (e.g., "gitlab-org/gitlab" or 278964)',
-    ),
-    issueIid: z.number().describe(
-      "Issue IID (internal ID, the number shown in the issue URL like #123)",
-    ),
+    projectId: z
+      .union([z.number(), z.string()])
+      .describe('Project ID or path (e.g., "gitlab-org/gitlab" or 278964)'),
+    issueIid: z
+      .number()
+      .describe(
+        "Issue IID (internal ID, the number shown in the issue URL like #123)",
+      ),
   }),
   async execute({ projectId, issueIid }) {
     const issue = await getIssue(projectId, issueIid);
@@ -22,14 +24,11 @@ export default tool({
       iid: issue.iid,
       projectId: issue.project_id,
       title: issue.title,
-      description: issue.description || "No description provided",
+      description: issue.description ?? "No description provided",
       state: issue.state,
       labels: issue.labels,
       milestone: issue.milestone
-        ? {
-          id: issue.milestone.id,
-          title: issue.milestone.title,
-        }
+        ? { id: issue.milestone.id, title: issue.milestone.title }
         : null,
       assignees: issue.assignees.map((a) => ({
         id: a.id,

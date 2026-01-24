@@ -50,13 +50,13 @@ export class ApprovalManager {
 
   constructor(config: ApprovalManagerConfig) {
     this.config = {
-      expirationCheckInterval: 60000, // Check every minute
+      expirationCheckInterval: 60000,
       debug: false,
       ...config,
     };
 
-    // Start expiration checker if interval is set
-    if (this.config.expirationCheckInterval && this.config.expirationCheckInterval > 0) {
+    const interval = this.config.expirationCheckInterval ?? 0;
+    if (interval > 0) {
       this.startExpirationChecker();
     }
   }
@@ -68,12 +68,10 @@ export class ApprovalManager {
     waitConfig: WaitNodeConfig,
     context: WorkflowContext,
   ): Promise<ApprovalRequest> {
-    // Resolve payload if it's a function
     const payload = typeof waitConfig.payload === "function"
       ? await waitConfig.payload(context)
       : waitConfig.payload;
 
-    // Calculate expiration
     const expiresAt = waitConfig.timeout
       ? new Date(Date.now() + parseDuration(waitConfig.timeout))
       : undefined;
@@ -90,19 +88,17 @@ export class ApprovalManager {
     };
 
     if (this.config.debug) {
-      console.log(`[ApprovalManager] Creating approval ${approval.id} for run ${run.id}`);
+      console.log(
+        `[ApprovalManager] Creating approval ${approval.id} for run ${run.id}`,
+      );
     }
 
-    // Save to backend
     await this.config.backend.savePendingApproval(run.id, approval);
 
-    // Notify approvers
-    if (this.config.notifier) {
-      try {
-        await this.config.notifier(approval, run);
-      } catch (error) {
-        console.error(`[ApprovalManager] Failed to notify approvers:`, error);
-      }
+    try {
+      await this.config.notifier?.(approval, run);
+    } catch (error) {
+      console.error(`[ApprovalManager] Failed to notify approvers:`, error);
     }
 
     return {
@@ -120,13 +116,13 @@ export class ApprovalManager {
     runId: string,
     approvalId: string,
   ): Promise<PendingApproval | null> {
+    // Call method on the backend directly to preserve 'this' binding
     if (this.config.backend.getPendingApproval) {
       return this.config.backend.getPendingApproval(runId, approvalId);
     }
 
-    // Fallback: get all and find
     const all = await this.config.backend.getPendingApprovals(runId);
-    return all.find((a) => a.id === approvalId) || null;
+    return all.find((a) => a.id === approvalId) ?? null;
   }
 
   /** Get all pending approvals for a run */
@@ -148,52 +144,42 @@ export class ApprovalManager {
       );
     }
 
-    // Get the approval
     const approval = await this.getApproval(runId, approvalId);
     if (!approval) {
       throw new Error(`Approval not found: ${approvalId}`);
     }
 
-    // Check if already decided
     if (approval.status !== "pending") {
       throw new Error(`Approval already processed: ${approval.status}`);
     }
 
-    // Check if expired
     if (approval.expiresAt && new Date() > approval.expiresAt) {
       throw new Error("Approval has expired");
     }
 
-    // Check if approver is authorized
-    if (
-      approval.approvers &&
-      approval.approvers.length > 0 &&
-      !approval.approvers.includes(decision.approver)
-    ) {
+    const approvers = approval.approvers;
+    if (approvers?.length && !approvers.includes(decision.approver)) {
       throw new Error("Not authorized to approve this request");
     }
 
-    // Update the approval
     await this.config.backend.updateApproval(runId, approvalId, decision);
 
-    // Get the run
     const run = await this.config.backend.getRun(runId);
     if (!run) {
       throw new Error(`Run not found: ${runId}`);
     }
 
-    // Update run context with approval result
+    const decidedAt = new Date();
     const updatedContext = {
       ...run.context,
       [approval.nodeId]: {
         approved: decision.approved,
         approver: decision.approver,
         comment: decision.comment,
-        decidedAt: new Date().toISOString(),
+        decidedAt: decidedAt.toISOString(),
       },
     };
 
-    // Update node state
     const updatedNodeStates = {
       ...run.nodeStates,
       [approval.nodeId]: {
@@ -205,7 +191,7 @@ export class ApprovalManager {
           comment: decision.comment,
         },
         attempt: 1,
-        completedAt: new Date(),
+        completedAt: decidedAt,
       },
     };
 
@@ -214,36 +200,39 @@ export class ApprovalManager {
       nodeStates: updatedNodeStates,
     });
 
-    // Resume workflow if approved and executor is available
-    if (decision.approved && this.config.executor) {
+    if (decision.approved) {
+      if (!this.config.executor) {
+        return;
+      }
+
       try {
         await this.config.executor.resume(runId);
       } catch (error) {
         console.error(`[ApprovalManager] Failed to resume workflow:`, error);
         throw error;
       }
-    } else if (!decision.approved) {
-      // If rejected, fail the workflow
-      await this.config.backend.updateRun(runId, {
-        status: "failed",
-        error: {
-          message: `Approval "${approvalId}" was rejected${
-            decision.comment ? `: ${decision.comment}` : ""
-          }`,
-        },
-        completedAt: new Date(),
-      });
+      return;
     }
+
+    await this.config.backend.updateRun(runId, {
+      status: "failed",
+      error: {
+        message: `Approval "${approvalId}" was rejected${
+          decision.comment ? `: ${decision.comment}` : ""
+        }`,
+      },
+      completedAt: new Date(),
+    });
   }
 
   /** Approve an approval request */
-  async approve(
+  approve(
     runId: string,
     approvalId: string,
     approver: string,
     comment?: string,
   ): Promise<void> {
-    await this.processDecision(runId, approvalId, {
+    return this.processDecision(runId, approvalId, {
       approved: true,
       approver,
       comment,
@@ -251,13 +240,13 @@ export class ApprovalManager {
   }
 
   /** Reject an approval request */
-  async reject(
+  reject(
     runId: string,
     approvalId: string,
     approver: string,
     comment?: string,
   ): Promise<void> {
-    await this.processDecision(runId, approvalId, {
+    return this.processDecision(runId, approvalId, {
       approved: false,
       approver,
       comment,
@@ -269,59 +258,51 @@ export class ApprovalManager {
     workflowId?: string;
     approver?: string;
   }): Promise<Array<{ runId: string; approval: PendingApproval }>> {
-    if (this.config.backend.listPendingApprovals) {
-      return this.config.backend.listPendingApprovals({
-        ...filter,
-        status: "pending",
-      });
+    const list = this.config.backend.listPendingApprovals;
+    if (!list) {
+      console.warn(
+        "[ApprovalManager] listPendingApprovals not supported by backend",
+      );
+      return Promise.resolve([]);
     }
 
-    // Fallback: not supported by backend
-    console.warn(
-      "[ApprovalManager] listPendingApprovals not supported by backend",
-    );
-    return Promise.resolve([]);
+    return list({ ...filter, status: "pending" });
   }
 
   /** Check and expire stale approvals */
   async checkExpiredApprovals(): Promise<void> {
-    // Guard against post-stop execution
     if (this.destroyed) {
       return;
     }
 
-    if (!this.config.backend.listPendingApprovals) {
+    const list = this.config.backend.listPendingApprovals;
+    if (!list) {
       return;
     }
 
-    const pending = await this.config.backend.listPendingApprovals({
-      status: "pending",
-    });
-
+    const pending = await list({ status: "pending" });
     const now = new Date();
 
     for (const { runId, approval } of pending) {
-      if (approval.expiresAt && now > approval.expiresAt) {
-        if (this.config.debug) {
-          console.log(`[ApprovalManager] Expiring approval ${approval.id}`);
-        }
-
-        // Mark as expired
-        await this.config.backend.updateApproval(runId, approval.id, {
-          approved: false,
-          approver: "system",
-          comment: "Approval expired",
-        });
-
-        // Fail the workflow
-        await this.config.backend.updateRun(runId, {
-          status: "failed",
-          error: {
-            message: `Approval "${approval.id}" expired`,
-          },
-          completedAt: new Date(),
-        });
+      if (!approval.expiresAt || now <= approval.expiresAt) {
+        continue;
       }
+
+      if (this.config.debug) {
+        console.log(`[ApprovalManager] Expiring approval ${approval.id}`);
+      }
+
+      await this.config.backend.updateApproval(runId, approval.id, {
+        approved: false,
+        approver: "system",
+        comment: "Approval expired",
+      });
+
+      await this.config.backend.updateRun(runId, {
+        status: "failed",
+        error: { message: `Approval "${approval.id}" expired` },
+        completedAt: new Date(),
+      });
     }
   }
 
@@ -336,9 +317,12 @@ export class ApprovalManager {
   /** Stop the approval manager */
   stop(): void {
     this.destroyed = true;
-    if (this.expirationTimer) {
-      clearInterval(this.expirationTimer);
-      this.expirationTimer = undefined;
+
+    if (!this.expirationTimer) {
+      return;
     }
+
+    clearInterval(this.expirationTimer);
+    this.expirationTimer = undefined;
   }
 }

@@ -43,6 +43,7 @@ export function parseDeployArgs(args: ParsedArgs): z.SafeParseReturnType<unknown
     dryRun: Boolean(args["dry-run"]),
     force: Boolean(args.force) || Boolean(args.f),
   };
+
   return DeployArgsSchema.safeParse(rawArgs);
 }
 
@@ -97,8 +98,7 @@ export async function getEnvironmentByName(
   let cursor: string | undefined;
 
   do {
-    const params: Record<string, string> = { limit: "100" };
-    if (cursor) params.cursor = cursor;
+    const params: Record<string, string> = { limit: "100", ...(cursor ? { cursor } : {}) };
 
     const response = await client.get<ListEnvironmentsResponse>(
       `/projects/${projectSlug}/environments`,
@@ -117,33 +117,40 @@ export async function getEnvironmentByName(
 /**
  * Create a new release
  */
-export async function createRelease(
+export function createRelease(
   client: ApiClient,
   projectSlug: string,
   options?: { name?: string; branch?: string },
 ): Promise<Release> {
-  const body: Record<string, string> = {};
-  if (options?.name) body.name = options.name;
-  if (options?.branch) body.branch = options.branch;
-  return await client.post<Release>(
-    `/projects/${projectSlug}/releases`,
-    body,
-  );
+  const body: Record<string, string> = {
+    ...(options?.name ? { name: options.name } : {}),
+    ...(options?.branch ? { branch: options.branch } : {}),
+  };
+
+  return client.post<Release>(`/projects/${projectSlug}/releases`, body);
 }
 
 /**
  * Create a new deployment
  */
-export async function createDeployment(
+export function createDeployment(
   client: ApiClient,
   projectSlug: string,
   releaseId: string,
   environmentId: string,
 ): Promise<Deployment> {
-  return await client.post<Deployment>(
-    `/projects/${projectSlug}/deployments`,
-    { release_id: releaseId, environment_id: environmentId },
-  );
+  return client.post<Deployment>(`/projects/${projectSlug}/deployments`, {
+    release_id: releaseId,
+    environment_id: environmentId,
+  });
+}
+
+function createNoopSpinner(): {
+  start: () => void;
+  stop: () => void;
+  update: (_msg: string) => void;
+} {
+  return { start: () => {}, stop: () => {}, update: (_msg: string) => {} };
 }
 
 /**
@@ -159,10 +166,7 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
     quiet = false,
   } = options;
 
-  // Create a no-op spinner for quiet mode
-  const spinner = quiet
-    ? { start: () => {}, stop: () => {}, update: (_msg: string) => {} }
-    : createSpinner("Resolving configuration...");
+  const spinner = quiet ? createNoopSpinner() : createSpinner("Resolving configuration...");
   spinner.start();
 
   const config = await resolveConfig(cwd());
@@ -170,7 +174,6 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
 
   spinner.update(`Looking up environment "${env}"...`);
 
-  // Look up environment
   const environment = await getEnvironmentByName(client, config.projectSlug, env);
   if (!environment) {
     spinner.stop();
@@ -179,13 +182,11 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
 
   spinner.stop();
 
-  // Dry run
   if (dryRun) {
     if (!quiet) logInfo(`Would create release from "${branch}" and deploy to "${env}"`);
     return;
   }
 
-  // Confirm
   if (!force) {
     const confirmed = await confirmPrompt(
       `Create release from "${branch}" and deploy to "${env}"?`,
@@ -197,30 +198,20 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
     }
   }
 
-  // Step 1: Create release
   spinner.start();
   spinner.update(`Creating release from "${branch}"...`);
 
-  const release = await createRelease(client, config.projectSlug, {
-    name: releaseName,
-    branch,
-  });
+  const release = await createRelease(client, config.projectSlug, { name: releaseName, branch });
 
   spinner.update(`Deploying ${release.version} to ${env}...`);
 
-  // Step 2: Create deployment
-  await createDeployment(
-    client,
-    config.projectSlug,
-    release.id,
-    environment.id,
-  );
+  await createDeployment(client, config.projectSlug, release.id, environment.id);
 
   spinner.stop();
 
-  if (!quiet) {
-    logSuccess(`Deployed ${release.version} to ${env}`);
-    logInfo(`  Release: ${release.name} (${release.version})`);
-    logInfo(`  Environment: ${env}`);
-  }
+  if (quiet) return;
+
+  logSuccess(`Deployed ${release.version} to ${env}`);
+  logInfo(`  Release: ${release.name} (${release.version})`);
+  logInfo(`  Environment: ${env}`);
 }

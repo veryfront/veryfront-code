@@ -3,7 +3,7 @@
  * Provides console-based logging for client-side bundles
  */
 
-const noop = () => {};
+function noop(): void {}
 
 export const rendererLogger = {
   debug: noop,

@@ -16,33 +16,20 @@ import {
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 export type SecurityContext =
-  | "user-input" // User-provided paths (strict)
-  | "static-serving" // Static file serving
-  | "build" // Build-time operations (permissive)
-  | "internal" // Internal framework operations
-  | "route-discovery" // Route discovery operations
-  | "module-loading"; // Module loading operations
+  | "user-input"
+  | "static-serving"
+  | "build"
+  | "internal"
+  | "route-discovery"
+  | "module-loading";
 
 export interface SecureFsConfig {
-  /** Base directory to restrict operations to */
   baseDir: string;
-
-  /** Runtime adapter to wrap */
   adapter: RuntimeAdapter;
-
-  /** Security context (determines validation strictness) */
   context?: SecurityContext;
-
-  /** Context-specific options (e.g., allowedImportDirs for module-loading) */
   contextOptions?: ContextOptions;
-
-  /** Custom validation options (overrides context preset) */
   validationOptions?: Partial<ValidationOptions>;
-
-  /** Whether to throw on validation errors (default: true) */
   throwOnError?: boolean;
-
-  /** Callback for security events */
   onSecurityEvent?: (event: SecurityEvent) => void;
 }
 
@@ -56,11 +43,6 @@ export interface SecurityEvent {
 }
 
 export interface ContextOptions {
-  /**
-   * Restrict module imports to specific directories (opt-in security).
-   * Only applies to "module-loading" context.
-   * When not set, users can import from any directory in the project.
-   */
   allowedImportDirs?: string[];
 }
 
@@ -88,11 +70,9 @@ function getContextValidationOptions(
       return {
         baseDir,
         level: "normal",
-        // When allowedImportDirs is set, restrict to those directories
-        // Otherwise allow all files within project directory (max flexibility)
         allowedDirs: options?.allowedImportDirs ?? [],
         followSymlinks: false,
-        allowAbsolute: true, // Allow node_modules, etc.
+        allowAbsolute: true,
       };
     case "internal":
     default:
@@ -100,7 +80,6 @@ function getContextValidationOptions(
   }
 }
 
-/** Secure filesystem wrapper with automatic path validation */
 export class SecureFs {
   private config: Required<SecureFsConfig>;
   private validationOptions: ValidationOptions;
@@ -129,132 +108,125 @@ export class SecureFs {
     };
   }
 
+  private emitValidationEvent(
+    result: ValidationResult,
+    operation: string,
+    path: string,
+  ): void {
+    this.config.onSecurityEvent({
+      type: result.valid ? "validation-passed" : "validation-failed",
+      operation,
+      path: sanitizePathForDisplay(path, this.config.baseDir),
+      error: result.error,
+      code: result.code,
+      timestamp: new Date(),
+    });
+  }
+
+  private throwIfInvalid(
+    result: ValidationResult,
+    operation: string,
+    path: string,
+  ): void {
+    if (result.valid || !this.config.throwOnError) return;
+
+    throw new SecurityError(
+      `Path validation failed for ${operation}: ${result.error}`,
+      result.code,
+      path,
+    );
+  }
+
   private async validatePathForOperation(
     path: string,
     operation: string,
   ): Promise<ValidationResult> {
     const result = await validatePath(path, this.validationOptions);
-
-    // Emit security event
-    this.config.onSecurityEvent({
-      type: result.valid ? "validation-passed" : "validation-failed",
-      operation,
-      path: sanitizePathForDisplay(path, this.config.baseDir),
-      error: result.error,
-      code: result.code,
-      timestamp: new Date(),
-    });
-
-    // Throw if validation failed and throwOnError is true
-    if (!result.valid && this.config.throwOnError) {
-      throw new SecurityError(
-        `Path validation failed for ${operation}: ${result.error}`,
-        result.code,
-        path,
-      );
-    }
-
+    this.emitValidationEvent(result, operation, path);
+    this.throwIfInvalid(result, operation, path);
     return result;
   }
 
   private validatePathSync(path: string, operation: string): ValidationResult {
     const result = validatePathSync(path, this.validationOptions);
-
-    // Emit security event
-    this.config.onSecurityEvent({
-      type: result.valid ? "validation-passed" : "validation-failed",
-      operation,
-      path: sanitizePathForDisplay(path, this.config.baseDir),
-      error: result.error,
-      code: result.code,
-      timestamp: new Date(),
-    });
-
-    // Throw if validation failed and throwOnError is true
-    if (!result.valid && this.config.throwOnError) {
-      throw new SecurityError(
-        `Path validation failed for ${operation}: ${result.error}`,
-        result.code,
-        path,
-      );
-    }
-
+    this.emitValidationEvent(result, operation, path);
+    this.throwIfInvalid(result, operation, path);
     return result;
   }
 
+  private getCanonicalPathOrThrow(
+    validation: ValidationResult,
+    path: string,
+  ): string {
+    if (validation.valid && validation.canonicalPath) return validation.canonicalPath;
+    throw new SecurityError("Invalid path", validation.code, path);
+  }
+
   readFile(path: string): Promise<string> {
-    return withSpan("security.secureFs.readFile", async () => {
-      const validation = await this.validatePathForOperation(path, "readFile");
-      if (!validation.valid || !validation.canonicalPath) {
-        throw new SecurityError("Invalid path", validation.code, path);
-      }
-      return await this.config.adapter.fs.readFile(validation.canonicalPath);
-    }, { "fs.path": path, "security.context": this.config.context });
+    return withSpan(
+      "security.secureFs.readFile",
+      async () => {
+        const validation = await this.validatePathForOperation(path, "readFile");
+        const canonicalPath = this.getCanonicalPathOrThrow(validation, path);
+        return await this.config.adapter.fs.readFile(canonicalPath);
+      },
+      { "fs.path": path, "security.context": this.config.context },
+    );
   }
 
   async readFileBytes(path: string): Promise<Uint8Array> {
     const validation = await this.validatePathForOperation(path, "readFileBytes");
-    if (!validation.valid || !validation.canonicalPath) {
-      throw new SecurityError("Invalid path", validation.code, path);
-    }
+    const canonicalPath = this.getCanonicalPathOrThrow(validation, path);
 
     const reader = this.config.adapter.fs.readFileBytes;
     if (reader) {
-      return await reader.call(this.config.adapter.fs, validation.canonicalPath);
+      return await reader.call(this.config.adapter.fs, canonicalPath);
     }
 
-    const content = await this.config.adapter.fs.readFile(validation.canonicalPath);
+    const content = await this.config.adapter.fs.readFile(canonicalPath);
     return new TextEncoder().encode(content);
   }
 
   async writeFile(path: string, content: string): Promise<void> {
     const validation = await this.validatePathForOperation(path, "writeFile");
-    if (!validation.valid || !validation.canonicalPath) {
-      throw new SecurityError("Invalid path", validation.code, path);
-    }
-    await this.config.adapter.fs.writeFile(validation.canonicalPath, content);
+    const canonicalPath = this.getCanonicalPathOrThrow(validation, path);
+    await this.config.adapter.fs.writeFile(canonicalPath, content);
   }
 
   stat(path: string): Promise<FileInfo> {
-    return withSpan("security.secureFs.stat", async () => {
-      const validation = await this.validatePathForOperation(path, "stat");
-      if (!validation.valid || !validation.canonicalPath) {
-        throw new SecurityError("Invalid path", validation.code, path);
-      }
-      return await this.config.adapter.fs.stat(validation.canonicalPath);
-    }, { "fs.path": path, "security.context": this.config.context });
+    return withSpan(
+      "security.secureFs.stat",
+      async () => {
+        const validation = await this.validatePathForOperation(path, "stat");
+        const canonicalPath = this.getCanonicalPathOrThrow(validation, path);
+        return await this.config.adapter.fs.stat(canonicalPath);
+      },
+      { "fs.path": path, "security.context": this.config.context },
+    );
   }
 
   async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
     const validation = await this.validatePathForOperation(path, "mkdir");
-    if (!validation.valid || !validation.canonicalPath) {
-      throw new SecurityError("Invalid path", validation.code, path);
-    }
-    await this.config.adapter.fs.mkdir(validation.canonicalPath, options);
+    const canonicalPath = this.getCanonicalPathOrThrow(validation, path);
+    await this.config.adapter.fs.mkdir(canonicalPath, options);
   }
 
   async remove(path: string, options?: { recursive?: boolean }): Promise<void> {
     const validation = await this.validatePathForOperation(path, "remove");
-    if (!validation.valid || !validation.canonicalPath) {
-      throw new SecurityError("Invalid path", validation.code, path);
-    }
-    await this.config.adapter.fs.remove(validation.canonicalPath, options);
+    const canonicalPath = this.getCanonicalPathOrThrow(validation, path);
+    await this.config.adapter.fs.remove(canonicalPath, options);
   }
 
   async exists(path: string): Promise<boolean> {
     const validation = await this.validatePathForOperation(path, "exists");
-    if (!validation.valid || !validation.canonicalPath) {
-      return false;
-    }
+    if (!validation.valid || !validation.canonicalPath) return false;
     return await this.config.adapter.fs.exists(validation.canonicalPath);
   }
 
   readDir(path: string): AsyncIterable<DirEntry> {
     const validation = this.validatePathSync(path, "readDir");
-    if (!validation.valid || !validation.canonicalPath) {
-      throw new SecurityError("Invalid path", validation.code, path);
-    }
-    return this.config.adapter.fs.readDir(validation.canonicalPath);
+    const canonicalPath = this.getCanonicalPathOrThrow(validation, path);
+    return this.config.adapter.fs.readDir(canonicalPath);
   }
 
   async makeTempDir(prefix: string): Promise<string> {
@@ -270,9 +242,13 @@ export class SecureFs {
 
     for (const path of pathArray) {
       const validation = this.validatePathSync(path, "watch");
+
       if (validation.valid && validation.canonicalPath) {
         validatedPaths.push(validation.canonicalPath);
-      } else if (this.config.throwOnError) {
+        continue;
+      }
+
+      if (this.config.throwOnError) {
         throw new SecurityError("Invalid path", validation.code, path);
       }
     }
@@ -285,37 +261,31 @@ export class SecureFs {
       );
     }
 
-    return this.config.adapter.fs.watch(
-      validatedPaths.length === 1 ? validatedPaths[0]! : validatedPaths,
-      options,
-    );
+    const pathArg: string | string[] = validatedPaths.length === 1
+      ? validatedPaths[0]!
+      : validatedPaths;
+
+    return this.config.adapter.fs.watch(pathArg, options);
   }
 
-  /** Get underlying adapter (bypasses security checks - use with caution) */
   getUnsafeAdapter(): RuntimeAdapter {
-    logger.warn(
-      "[SecureFs] Using unsafe adapter - security checks bypassed!",
-    );
+    logger.warn("[SecureFs] Using unsafe adapter - security checks bypassed!");
     return this.config.adapter;
   }
 
   updateValidationOptions(options: Partial<ValidationOptions>): void {
-    this.validationOptions = {
-      ...this.validationOptions,
-      ...options,
-    };
+    this.validationOptions = { ...this.validationOptions, ...options };
   }
 
   setContext(context: SecurityContext): void {
-    const contextOptions = getContextValidationOptions(
-      context,
-      this.config.baseDir,
-    );
+    const contextOptions = getContextValidationOptions(context, this.config.baseDir);
+
     this.validationOptions = {
       ...contextOptions,
       ...this.config.validationOptions,
       adapter: this.config.adapter,
     };
+
     this.config.context = context;
   }
 }
@@ -335,20 +305,15 @@ export function createSecureFs(config: SecureFsConfig): SecureFs {
   return new SecureFs(config);
 }
 
-/** Wrap an existing adapter with security validation */
 export function wrapAdapterWithSecurity(
   adapter: RuntimeAdapter,
   options: Omit<SecureFsConfig, "adapter">,
 ): RuntimeAdapter & { secureFs: SecureFs } {
-  const secureFs = createSecureFs({
-    ...options,
-    adapter,
-  });
+  const secureFs = createSecureFs({ ...options, adapter });
 
-  // Create a new adapter with secure fs
   return {
     ...adapter,
     fs: secureFs,
-    secureFs, // Keep reference to SecureFs for advanced usage
+    secureFs,
   };
 }

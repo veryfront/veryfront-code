@@ -1,5 +1,6 @@
 import type {
   DirEntry,
+  FileChangeEvent,
   FileInfo,
   FileSystemAdapter,
   FileWatcher,
@@ -11,7 +12,6 @@ import {
   setupNodeFsWatcher,
 } from "../shared/shared-watcher.ts";
 import { serverLogger } from "#veryfront/utils";
-import type { FileChangeEvent } from "../../base.ts";
 
 export class NodeFileSystemAdapter implements FileSystemAdapter {
   async readFile(path: string): Promise<string> {
@@ -123,8 +123,9 @@ export class NodeFileSystemAdapter implements FileSystemAdapter {
       () => signal?.aborted ?? false,
     );
 
-    const cleanup = () => {
+    const cleanup = (): void => {
       closed = true;
+
       for (const watcher of watchers) {
         try {
           watcher.close();
@@ -132,15 +133,12 @@ export class NodeFileSystemAdapter implements FileSystemAdapter {
           serverLogger.debug("Error closing file watcher during cleanup:", error);
         }
       }
-      if (resolver) {
-        resolver({ done: true, value: undefined });
-        resolver = null;
-      }
+
+      resolver?.({ done: true, value: undefined });
+      resolver = null;
     };
 
-    if (signal) {
-      signal.addEventListener("abort", cleanup);
-    }
+    signal?.addEventListener("abort", cleanup);
 
     return createFileWatcher(iterator, cleanup);
   }

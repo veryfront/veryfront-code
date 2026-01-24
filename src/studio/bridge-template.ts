@@ -1,15 +1,3 @@
-/**
- * Studio Bridge Client Template
- *
- * This JavaScript runs in the browser when the renderer is embedded in Studio iframe.
- * It handles:
- * - postMessage communication with Studio
- * - Console log capture
- * - DOM tree tracking for Navigator
- * - Error reporting
- * - Navigation events
- */
-
 export interface StudioBridgeOptions {
   projectId: string;
   pageId: string;
@@ -20,46 +8,39 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
   return `(function() {
   'use strict';
 
-  // Configuration from server
   const PROJECT_ID = ${JSON.stringify(options.projectId)};
   const PAGE_ID = ${JSON.stringify(options.pageId)};
-  const PAGE_PATH = ${JSON.stringify(options.pagePath || options.pageId)};
+  const PAGE_PATH = ${JSON.stringify(options.pagePath ?? options.pageId)};
 
-  // Data attributes
   const DATA_VF_ID = 'data-vf-id';
   const DATA_VF_SELECTOR = 'data-vf-selector';
   const DATA_VF_TEXT = 'data-vf-text';
   const DATA_VF_IGNORE = 'data-vf-ignore';
   const DATA_VF_SELECTION = 'data-vf-selection';
 
-  // Position data attributes (from remark-node-id plugin)
   const DATA_NODE_ID = 'data-node-id';
   const DATA_NODE_LINE = 'data-node-line';
   const DATA_NODE_COLUMN = 'data-node-column';
   const DATA_NODE_END_LINE = 'data-node-end-line';
   const DATA_NODE_END_COLUMN = 'data-node-end-column';
 
-  // State
   let inspectMode = false;
   let selectedNodeId = null;
   let hoveredNodeId = null;
   let lastTreeSignature = '';
 
-  // Overlay elements
   let hoverOverlay = null;
   let selectionOverlay = null;
-
-  // ============ Utilities ============
 
   function debounce(fn, ms) {
     let timer;
     return function(...args) {
       clearTimeout(timer);
-      timer = setTimeout(function() { fn.apply(this, args); }, ms);
+      timer = setTimeout(function() {
+        fn.apply(this, args);
+      }, ms);
     };
   }
-
-  // ============ Visual Overlay System ============
 
   function injectOverlayStyles() {
     if (document.getElementById('vf-overlay-styles')) return;
@@ -118,9 +99,14 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     return overlay;
   }
 
+  function hideOverlay(overlay) {
+    if (overlay) overlay.style.display = 'none';
+  }
+
   function positionOverlay(overlay, element, nodeName) {
-    if (!element || !overlay) {
-      if (overlay) overlay.style.display = 'none';
+    if (!overlay) return;
+    if (!element) {
+      hideOverlay(overlay);
       return;
     }
 
@@ -133,58 +119,41 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     overlay.style.height = rect.height + 'px';
 
     const label = overlay.querySelector('.vf-overlay-label');
-    if (label) {
-      label.textContent = nodeName || element.tagName.toLowerCase();
-      // Position label below if element is near top of viewport
-      if (rect.top < 24) {
-        label.classList.add('vf-overlay-label-bottom');
-      } else {
-        label.classList.remove('vf-overlay-label-bottom');
-      }
-    }
-  }
+    if (!label) return;
 
-  function hideOverlay(overlay) {
-    if (overlay) {
-      overlay.style.display = 'none';
+    label.textContent = nodeName || element.tagName.toLowerCase();
+    if (rect.top < 24) {
+      label.classList.add('vf-overlay-label-bottom');
+    } else {
+      label.classList.remove('vf-overlay-label-bottom');
     }
   }
 
   function getNodeName(element) {
     const vfId = element.getAttribute(DATA_VF_ID);
-    if (vfId) {
-      return vfId.split('_')[0];
-    }
-    // For MDX elements with data-node-id, use the tag name (Button, Card, etc.)
-    const nodeId = element.getAttribute(DATA_NODE_ID);
-    if (nodeId) {
-      // Check for custom component by looking at surrounding context or just use tag
-      return element.tagName.toLowerCase();
-    }
+    if (vfId) return vfId.split('_')[0];
     return element.tagName.toLowerCase();
   }
 
   function findElementById(nodeId) {
     if (!nodeId) return null;
-    return document.querySelector('[' + DATA_VF_ID + '="' + nodeId + '"]') ||
-           document.querySelector('[' + DATA_VF_SELECTOR + '="' + nodeId + '"]') ||
-           document.querySelector('[' + DATA_NODE_ID + '="' + nodeId + '"]');
+    return (
+      document.querySelector('[' + DATA_VF_ID + '="' + nodeId + '"]') ||
+      document.querySelector('[' + DATA_VF_SELECTOR + '="' + nodeId + '"]') ||
+      document.querySelector('[' + DATA_NODE_ID + '="' + nodeId + '"]')
+    );
   }
 
-  // ============ PostMessage Utilities ============
-
   function postToStudio(message) {
-    if (window.parent && window.parent !== window) {
-      try {
-        window.parent.postMessage(message, '*');
-      } catch (e) {
-        console.debug('[StudioBridge] postMessage failed:', e);
-      }
+    if (!window.parent || window.parent === window) return;
+    try {
+      window.parent.postMessage(message, '*');
+    } catch (e) {
+      console.debug('[StudioBridge] postMessage failed:', e);
     }
   }
 
   function isFromStudio(event) {
-    // Accept messages from Studio domains
     const origin = event.origin || '';
     return (
       origin.includes('veryfront.org') ||
@@ -194,53 +163,34 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     );
   }
 
-  // ============ Console Capture ============
-
   const originalConsole = {};
   const consoleMethods = ['log', 'debug', 'info', 'warn', 'error', 'table', 'clear', 'dir'];
-
   let logCounter = 0;
 
   function setupConsoleCapture() {
     consoleMethods.forEach(method => {
       originalConsole[method] = console[method];
       console[method] = function(...args) {
-        // Call original
         originalConsole[method].apply(console, args);
 
-        // Generate unique ID for log entry
-        const logId = 'vf-' + Date.now() + '-' + (++logCounter);
+        const logId = 'vf-' + Date.now() + '-' + ++logCounter;
 
-        // Format data - console-feed expects specific encoded format
-        // We send a pre-decoded log with id since we can't use console-feed Encode
         const formattedData = args.map(arg => {
           try {
             if (arg instanceof Error) {
               return { __isError: true, message: arg.message, stack: arg.stack, name: arg.name };
             }
-            if (arg === undefined) {
-              return { __isUndefined: true };
-            }
-            if (arg === null) {
-              return null;
-            }
-            if (typeof arg === 'function') {
-              return { __isFunction: true, name: arg.name || 'anonymous' };
-            }
-            if (typeof arg === 'symbol') {
-              return { __isSymbol: true, description: arg.description };
-            }
-            if (typeof arg === 'object') {
-              // Deep clone to avoid circular refs
-              return JSON.parse(JSON.stringify(arg));
-            }
+            if (arg === undefined) return { __isUndefined: true };
+            if (arg === null) return null;
+            if (typeof arg === 'function') return { __isFunction: true, name: arg.name || 'anonymous' };
+            if (typeof arg === 'symbol') return { __isSymbol: true, description: arg.description };
+            if (typeof arg === 'object') return JSON.parse(JSON.stringify(arg));
             return arg;
           } catch (e) {
             return String(arg);
           }
         });
 
-        // Send to Studio - include id for Log interface compatibility
         postToStudio({
           action: 'logEvent',
           value: {
@@ -254,54 +204,45 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     });
   }
 
-  function restoreConsole() {
-    consoleMethods.forEach(method => {
-      if (originalConsole[method]) {
-        console[method] = originalConsole[method];
-      }
-    });
-  }
-
-  // ============ Error Handling ============
-
   function setupErrorHandling() {
-    window.addEventListener('error', function(event) {
-      // Hide overlays on error - prevents confusing UX with overlay over error screen
+    function hideOverlays() {
       hideOverlay(hoverOverlay);
       hideOverlay(selectionOverlay);
+    }
 
+    window.addEventListener('error', function(event) {
+      hideOverlays();
       postToStudio({
         action: 'runtimeError',
         url: window.location.href,
-        errors: [{
-          type: 'error',
-          message: event.message,
-          file: event.filename,
-          line: event.lineno,
-          column: event.colno
-        }]
+        errors: [
+          {
+            type: 'error',
+            message: event.message,
+            file: event.filename,
+            line: event.lineno,
+            column: event.colno
+          }
+        ]
       });
     });
 
     window.addEventListener('unhandledrejection', function(event) {
-      // Hide overlays on error
-      hideOverlay(hoverOverlay);
-      hideOverlay(selectionOverlay);
-
+      hideOverlays();
       const reason = event.reason;
       postToStudio({
         action: 'runtimeError',
         url: window.location.href,
-        errors: [{
-          type: 'error',
-          message: reason instanceof Error ? reason.message : String(reason),
-          file: reason instanceof Error ? reason.stack : undefined
-        }]
+        errors: [
+          {
+            type: 'error',
+            message: reason instanceof Error ? reason.message : String(reason),
+            file: reason instanceof Error ? reason.stack : undefined
+          }
+        ]
       });
     });
   }
-
-  // ============ DOM Tree Building ============
 
   const DOM_IGNORE_TAGS = ['SCRIPT', 'STYLE', 'LINK', 'META', 'NOSCRIPT'];
 
@@ -318,18 +259,10 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
   function getNodeType(el) {
     const tagName = el.tagName.toLowerCase();
 
-    // Check if it's a component (uppercase first letter in data-vf-id suggests component)
     const vfId = el.getAttribute(DATA_VF_ID) || '';
-    if (vfId && /^[A-Z]/.test(vfId)) {
-      return 'component';
-    }
+    if (vfId && /^[A-Z]/.test(vfId)) return 'component';
+    if (el.hasAttribute(DATA_VF_TEXT)) return 'text';
 
-    // Text nodes
-    if (el.hasAttribute(DATA_VF_TEXT)) {
-      return 'text';
-    }
-
-    // Markdown elements
     if (['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'blockquote', 'ul', 'ol', 'li', 'pre', 'code'].includes(tagName)) {
       return 'markdown';
     }
@@ -342,51 +275,37 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
 
     function processElement(el, parentId) {
       if (!isValidElement(el)) {
-        // Process children even if element is skipped
         const children = [];
         Array.from(el.children || []).forEach(child => {
-          const childNodes = processElement(child, parentId);
-          children.push(...childNodes);
+          children.push(...processElement(child, parentId));
         });
         return children;
       }
 
-      // Get existing ID or generate and inject one
-      // Priority: data-vf-id > data-node-id > data-vf-selector > generate new
       let id = el.getAttribute(DATA_VF_ID) || el.getAttribute(DATA_NODE_ID) || el.getAttribute(DATA_VF_SELECTOR);
       if (!id) {
-        // Generate a selector ID and inject it into the DOM for later selection/highlighting
-        id = 'vf-' + el.tagName.toLowerCase() + '-' + (++nodeIndex);
+        id = 'vf-' + el.tagName.toLowerCase() + '-' + ++nodeIndex;
         el.setAttribute(DATA_VF_SELECTOR, id);
       }
-      const type = getNodeType(el);
-      const name = el.getAttribute(DATA_VF_ID)
-        ? el.getAttribute(DATA_VF_ID).split('_')[0]
-        : el.tagName.toLowerCase();
 
-      // Read position data from remark-node-id plugin attributes
-      const startLine = parseInt(el.getAttribute(DATA_NODE_LINE) || '0', 10);
-      const startColumn = parseInt(el.getAttribute(DATA_NODE_COLUMN) || '0', 10);
-      const endLine = parseInt(el.getAttribute(DATA_NODE_END_LINE) || '0', 10);
-      const endColumn = parseInt(el.getAttribute(DATA_NODE_END_COLUMN) || '0', 10);
+      const vfId = el.getAttribute(DATA_VF_ID);
+      const name = vfId ? vfId.split('_')[0] : el.tagName.toLowerCase();
 
       const node = {
         id: id,
         name: name,
-        type: type,
-        path: PAGE_PATH, // Use relative file path for Studio entity resolution
+        type: getNodeType(el),
+        path: PAGE_PATH,
         parentId: parentId,
-        start: { line: startLine, column: startColumn },
-        end: { line: endLine, column: endColumn },
+        start: { line: parseInt(el.getAttribute(DATA_NODE_LINE) || '0', 10), column: parseInt(el.getAttribute(DATA_NODE_COLUMN) || '0', 10) },
+        end: { line: parseInt(el.getAttribute(DATA_NODE_END_LINE) || '0', 10), column: parseInt(el.getAttribute(DATA_NODE_END_COLUMN) || '0', 10) },
         children: [],
         text: el.hasAttribute(DATA_VF_TEXT) ? el.textContent?.trim() : undefined,
         isRemote: false
       };
 
-      // Process children
       Array.from(el.children || []).forEach(child => {
-        const childNodes = processElement(child, id);
-        node.children.push(...childNodes);
+        node.children.push(...processElement(child, id));
       });
 
       return [node];
@@ -404,22 +323,17 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     };
 
     Array.from(root.children || []).forEach(child => {
-      const nodes = processElement(child, 'root');
-      rootNode.children.push(...nodes);
+      rootNode.children.push(...processElement(child, 'root'));
     });
 
     return rootNode;
   }
 
   function createTreeSignature(root) {
-    // Count all valid elements (not just those with data-vf-* attributes)
-    // This ensures tree updates are detected even before attributes are injected
     const allElements = root.querySelectorAll('*');
     const validElements = Array.from(allElements).filter(el => isValidElement(el));
     return validElements.length + '-' + validElements.map(el => el.tagName).join('');
   }
-
-  // ============ MutationObserver for Tree Updates ============
 
   let treeUpdateTimer = null;
   let mutationObserver = null;
@@ -432,12 +346,11 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     if (signature === lastTreeSignature) return;
     lastTreeSignature = signature;
 
-    const tree = buildNavigatorTree(root);
     postToStudio({
       action: 'treeUpdated',
       id: PAGE_ID,
       url: window.location.href,
-      tree: tree,
+      tree: buildNavigatorTree(root),
       sourceHash: window.__VERYFRONT_SOURCE_HASH__ || null
     });
   }
@@ -452,25 +365,13 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     if (!root) return;
 
     mutationObserver = new MutationObserver(function(mutations) {
-      const hasRelevantChanges = mutations.some(m =>
-        m.type === 'childList' || m.type === 'characterData'
-      );
-      if (hasRelevantChanges) {
-        debouncedTreeUpdate();
-      }
+      const hasRelevantChanges = mutations.some(m => m.type === 'childList' || m.type === 'characterData');
+      if (hasRelevantChanges) debouncedTreeUpdate();
     });
 
-    mutationObserver.observe(root, {
-      childList: true,
-      characterData: true,
-      subtree: true
-    });
-
-    // Initial tree update
+    mutationObserver.observe(root, { childList: true, characterData: true, subtree: true });
     sendTreeUpdate();
   }
-
-  // ============ Element Selection & Highlighting ============
 
   function showHoverOverlay(nodeId) {
     if (!nodeId) {
@@ -479,11 +380,12 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     }
 
     const el = findElementById(nodeId);
-    if (el && hoverOverlay) {
-      positionOverlay(hoverOverlay, el, getNodeName(el));
-    } else {
+    if (!el) {
       hideOverlay(hoverOverlay);
+      return;
     }
+
+    positionOverlay(hoverOverlay, el, getNodeName(el));
   }
 
   function showSelectionOverlay(nodeId) {
@@ -493,130 +395,94 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     }
 
     const el = findElementById(nodeId);
-    if (el && selectionOverlay) {
-      positionOverlay(selectionOverlay, el, getNodeName(el));
-    } else {
+    if (!el) {
       hideOverlay(selectionOverlay);
-    }
-  }
-
-  function highlightElement(nodeId) {
-    // Remove previous highlights (data attribute based)
-    document.querySelectorAll('[' + DATA_VF_SELECTION + ']').forEach(el => {
-      el.removeAttribute(DATA_VF_SELECTION);
-    });
-
-    if (!nodeId) {
-      hideOverlay(hoverOverlay);
       return;
     }
 
-    // Find and highlight element with data attribute (uses findElementById which checks all ID types)
-    const el = findElementById(nodeId);
-    if (el) {
-      el.setAttribute(DATA_VF_SELECTION, 'true');
-      // Show visual overlay for hover state
-      if (inspectMode && hoverOverlay) {
-        positionOverlay(hoverOverlay, el, getNodeName(el));
-      }
-    }
+    positionOverlay(selectionOverlay, el, getNodeName(el));
   }
 
   function scrollToElement(nodeId) {
-    const el = document.querySelector('[' + DATA_VF_ID + '="' + nodeId + '"]') ||
-               document.querySelector('[' + DATA_NODE_ID + '="' + nodeId + '"]') ||
-               document.querySelector('[' + DATA_VF_SELECTOR + '*="' + nodeId + '"]');
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
+    const el =
+      document.querySelector('[' + DATA_VF_ID + '="' + nodeId + '"]') ||
+      document.querySelector('[' + DATA_NODE_ID + '="' + nodeId + '"]') ||
+      document.querySelector('[' + DATA_VF_SELECTOR + '*="' + nodeId + '"]');
+
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
   function setupInspectMode() {
-    // Selector for any element that can be inspected
     const INSPECTABLE_SELECTOR = '[' + DATA_VF_ID + '], [' + DATA_VF_SELECTOR + '], [' + DATA_NODE_ID + ']';
 
     function getElementId(el) {
       return el.getAttribute(DATA_VF_ID) || el.getAttribute(DATA_NODE_ID) || el.getAttribute(DATA_VF_SELECTOR);
     }
 
-    document.addEventListener('click', function(event) {
-      if (!inspectMode) return;
+    document.addEventListener(
+      'click',
+      function(event) {
+        if (!inspectMode) return;
 
-      event.preventDefault();
-      event.stopPropagation();
+        event.preventDefault();
+        event.stopPropagation();
 
-      const target = event.target.closest(INSPECTABLE_SELECTOR);
-      if (target) {
-        // Select clicked element
+        const target = event.target.closest(INSPECTABLE_SELECTOR);
+        if (!target) {
+          selectedNodeId = null;
+          hideOverlay(selectionOverlay);
+          postToStudio({ action: 'setSelectedNode', id: null });
+          return;
+        }
+
         const id = getElementId(target);
         selectedNodeId = id;
         showSelectionOverlay(id);
         postToStudio({ action: 'setSelectedNode', id: id });
-      } else {
-        // Clicked empty space - deselect
-        selectedNodeId = null;
-        hideOverlay(selectionOverlay);
-        postToStudio({ action: 'setSelectedNode', id: null });
-      }
-    }, true);
+      },
+      true
+    );
 
     document.addEventListener('pointerover', function(event) {
-      if (!inspectMode) return;
-
-      // Skip hover for touch devices - only mouse/pen should trigger hover
-      if (event.pointerType === 'touch') return;
+      if (!inspectMode || event.pointerType === 'touch') return;
 
       const target = event.target.closest(INSPECTABLE_SELECTOR);
-      if (target) {
-        const id = getElementId(target);
-        if (id !== hoveredNodeId) {
-          hoveredNodeId = id;
-          showHoverOverlay(id);
-        }
-      }
+      if (!target) return;
+
+      const id = getElementId(target);
+      if (id === hoveredNodeId) return;
+
+      hoveredNodeId = id;
+      showHoverOverlay(id);
     });
 
     document.addEventListener('pointerout', function(event) {
-      if (!inspectMode) return;
-
-      // Skip for touch devices
-      if (event.pointerType === 'touch') return;
+      if (!inspectMode || event.pointerType === 'touch') return;
 
       const target = event.target.closest(INSPECTABLE_SELECTOR);
-      if (target) {
-        // Check if we're moving to a child element (still within the same target)
-        const relatedTarget = event.relatedTarget;
-        if (relatedTarget && target.contains(relatedTarget)) {
-          return;
-        }
-        hoveredNodeId = null;
-        hideOverlay(hoverOverlay);
-      }
+      if (!target) return;
+
+      const relatedTarget = event.relatedTarget;
+      if (relatedTarget && target.contains(relatedTarget)) return;
+
+      hoveredNodeId = null;
+      hideOverlay(hoverOverlay);
     });
 
-    // Update overlays on scroll/resize (debounced for performance)
-    var updateOverlays = debounce(function() {
-      if (inspectMode && hoveredNodeId) {
-        showHoverOverlay(hoveredNodeId);
-      }
-      if (selectedNodeId) {
-        showSelectionOverlay(selectedNodeId);
-      }
-    }, 16); // ~60fps
+    const updateOverlays = debounce(function() {
+      if (inspectMode && hoveredNodeId) showHoverOverlay(hoveredNodeId);
+      if (selectedNodeId) showSelectionOverlay(selectedNodeId);
+    }, 16);
 
     window.addEventListener('scroll', updateOverlays, true);
     window.addEventListener('resize', updateOverlays);
   }
-
-  // ============ Color Mode ============
 
   function setColorMode(mode) {
     document.documentElement.setAttribute('data-theme', mode);
     document.documentElement.classList.remove('light', 'dark');
     document.documentElement.classList.add(mode);
   }
-
-  // ============ Screenshot Capture ============
 
   let html2canvasLoaded = false;
   let html2canvasPromise = null;
@@ -641,26 +507,20 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
 
   async function captureScreenshot(options) {
     const { scrollTo, fullPage, quality = 0.8 } = options || {};
-
-    // Save original scroll position to restore later
     const originalScrollY = window.scrollY;
 
     try {
       await loadHtml2Canvas();
 
-      // Scroll if requested
       if (typeof scrollTo === 'number') {
         window.scrollTo(0, scrollTo);
-        await new Promise(r => setTimeout(r, 150)); // Wait for render
+        await new Promise(r => setTimeout(r, 150));
       }
 
-      const target = document.body;
       const canvasOptions = {
         useCORS: true,
-        // Don't use allowTaint - it causes SecurityError on cross-origin images
-        // With useCORS only, we get partial screenshots instead of hard failures
         logging: false,
-        scale: window.devicePixelRatio || 1,
+        scale: window.devicePixelRatio || 1
       };
 
       if (fullPage) {
@@ -671,10 +531,9 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
         await new Promise(r => setTimeout(r, 100));
       }
 
-      const canvas = await window.html2canvas(target, canvasOptions);
+      const canvas = await window.html2canvas(document.body, canvasOptions);
       const dataUrl = canvas.toDataURL('image/png', quality);
 
-      // Restore original scroll position
       window.scrollTo(0, originalScrollY);
 
       return {
@@ -688,7 +547,6 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
         url: window.location.href
       };
     } catch (error) {
-      // Restore scroll position even on error
       window.scrollTo(0, originalScrollY);
       return {
         success: false,
@@ -698,7 +556,6 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
   }
 
   async function captureMultipleSections(sectionCount) {
-    // Save original scroll position to restore after all captures
     const originalScrollY = window.scrollY;
     const results = [];
     const totalHeight = document.documentElement.scrollHeight;
@@ -710,22 +567,15 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
         const scrollY = Math.min(i * viewportHeight, totalHeight - viewportHeight);
         const result = await captureScreenshot({ scrollTo: scrollY });
         if (result.success) {
-          results.push({
-            ...result,
-            section: i + 1,
-            totalSections: sections
-          });
+          results.push({ ...result, section: i + 1, totalSections: sections });
         }
       }
     } finally {
-      // Restore original scroll position
       window.scrollTo(0, originalScrollY);
     }
 
     return results;
   }
-
-  // ============ Studio Message Handler ============
 
   function handleStudioMessage(event) {
     if (!isFromStudio(event)) return;
@@ -736,30 +586,26 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     switch (message.action) {
       case 'routeChange':
         if (message.url) {
-          postToStudio({
-            action: 'onPageTransitionStart',
-            url: message.url,
-            projectId: PROJECT_ID
-          });
+          postToStudio({ action: 'onPageTransitionStart', url: message.url, projectId: PROJECT_ID });
           window.location.href = message.url;
         }
-        break;
+        return;
 
       case 'reload':
         window.location.reload();
-        break;
+        return;
 
       case 'goBack':
         window.history.back();
-        break;
+        return;
 
       case 'goForward':
         window.history.forward();
-        break;
+        return;
 
       case 'colorMode':
         setColorMode(message.value);
-        break;
+        return;
 
       case 'toggleInspectMode':
         inspectMode = message.value;
@@ -771,61 +617,52 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
             selectedNodeId = null;
           }
         }
-        break;
+        return;
 
       case 'setSelectedNode':
         selectedNodeId = message.id;
         showSelectionOverlay(message.id);
-        if (message.scroll) {
-          scrollToElement(message.id);
-        }
-        break;
+        if (message.scroll) scrollToElement(message.id);
+        return;
 
       case 'setHoveredNode':
-        if (!inspectMode) {
-          showHoverOverlay(message.id);
-        }
-        break;
+        if (!inspectMode) showHoverOverlay(message.id);
+        return;
 
       case 'toggleLayout':
-        // Layout toggling handled by the renderer
-        break;
+        return;
 
       case 'screenshot':
         (async function() {
-          let result;
           if (message.multipleSections) {
-            result = await captureMultipleSections(message.sectionCount);
+            const results = await captureMultipleSections(message.sectionCount);
             postToStudio({
               action: 'screenshotResult',
               requestId: message.requestId,
               multiple: true,
-              results: result
+              results: results
             });
-          } else {
-            result = await captureScreenshot(message.options);
-            postToStudio({
-              action: 'screenshotResult',
-              requestId: message.requestId,
-              multiple: false,
-              ...result
-            });
+            return;
           }
+
+          const result = await captureScreenshot(message.options);
+          postToStudio({
+            action: 'screenshotResult',
+            requestId: message.requestId,
+            multiple: false,
+            ...result
+          });
         })();
-        break;
+        return;
 
       default:
         console.debug('[StudioBridge] Unknown action:', message.action);
+        return;
     }
   }
 
-  // ============ Lifecycle Events ============
-
   function notifyAppLoaded() {
-    postToStudio({
-      action: 'appLoaded',
-      url: window.location.href
-    });
+    postToStudio({ action: 'appLoaded', url: window.location.href });
 
     postToStudio({
       action: 'appUpdated',
@@ -846,16 +683,10 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
   }
 
   function notifyAppUnloaded() {
-    postToStudio({
-      action: 'appUnloaded',
-      url: window.location.href
-    });
+    postToStudio({ action: 'appUnloaded', url: window.location.href });
   }
 
-  // ============ Initialization ============
-
   function init() {
-    // Check if we're in Studio iframe or studio_embed mode for testing
     const params = new URLSearchParams(window.location.search);
     const studioEmbed = params.get('studio_embed') === 'true';
 
@@ -866,20 +697,16 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
 
     console.debug('[StudioBridge] Initializing...');
 
-    // Inject overlay styles and create overlay elements
     injectOverlayStyles();
     hoverOverlay = createOverlay('hover');
     selectionOverlay = createOverlay('selection');
 
-    // Setup all handlers
     setupConsoleCapture();
     setupErrorHandling();
     setupInspectMode();
 
-    // Listen for Studio messages
     window.addEventListener('message', handleStudioMessage);
 
-    // Notify Studio when page loads
     // IMPORTANT: notifyAppLoaded() must be called BEFORE setupMutationObserver()
     // because notifyAppLoaded sends onPageTransitionEnd which sets previewId,
     // and treeUpdated (from setupMutationObserver) requires previewId to be set
@@ -893,16 +720,11 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
       setupMutationObserver();
     }
 
-    // Notify Studio when page unloads
     window.addEventListener('beforeunload', notifyAppUnloaded);
 
-    // Handle query params (reuse params from above)
     const colorMode = params.get('color_mode');
-    if (colorMode) {
-      setColorMode(colorMode);
-    }
+    if (colorMode) setColorMode(colorMode);
 
-    // Initialize inspect mode from query params
     const inspectModeParam = params.get('inspect_mode');
     if (inspectModeParam === 'true') {
       inspectMode = true;
@@ -912,7 +734,6 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     console.debug('[StudioBridge] Initialized successfully');
   }
 
-  // Start initialization
   init();
 })();`;
 }

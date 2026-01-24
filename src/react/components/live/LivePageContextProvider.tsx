@@ -15,8 +15,8 @@ export function LivePageContextProvider({
 }: {
   children: React.ReactNode;
   pageContext?: TypedPageContext;
-}) {
-  const context = pageContext || {
+}): React.ReactElement {
+  const context: PageContext = pageContext ?? {
     slug: "",
     path: typeof window !== "undefined" ? globalThis.location.pathname : "/",
     params: {},
@@ -29,13 +29,17 @@ export function LivePageContextProvider({
   return <PageContext.Provider value={context}>{children}</PageContext.Provider>;
 }
 
-export function usePageContext() {
+export function usePageContext(): PageContext {
   const context = useContext(PageContext);
+
   if (!context) {
-    throw toError(createError({
-      type: "config",
-      message: "usePageContext must be used within LivePageContextProvider",
-    }));
+    throw toError(
+      createError({
+        type: "config",
+        message: "usePageContext must be used within LivePageContextProvider",
+      }),
+    );
   }
+
   return context;
 }

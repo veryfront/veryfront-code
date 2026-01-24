@@ -2,8 +2,6 @@ import { tool } from "veryfront/tool";
 import { z } from "zod";
 import { createDocsClient } from "../../lib/docs-client.ts";
 
-// Default user ID for demo/dev purposes
-// In production, get from authenticated session
 const DEFAULT_USER_ID = "demo-user";
 
 export default tool({
@@ -24,19 +22,24 @@ export default tool({
   }),
   async execute({ maxResults, orderBy }) {
     const client = createDocsClient(DEFAULT_USER_ID);
+    const documents = await client.listDocuments({ maxResults, orderBy });
 
-    const documents = await client.listDocuments({
-      maxResults,
-      orderBy,
-    });
-
-    return documents.map((doc) => ({
-      id: doc.id,
-      name: doc.name,
-      url: doc.webViewLink,
-      createdTime: doc.createdTime,
-      modifiedTime: doc.modifiedTime,
-      thumbnail: doc.thumbnailLink,
-    }));
+    return documents.map(
+      ({
+        id,
+        name,
+        webViewLink: url,
+        createdTime,
+        modifiedTime,
+        thumbnailLink: thumbnail,
+      }) => ({
+        id,
+        name,
+        url,
+        createdTime,
+        modifiedTime,
+        thumbnail,
+      }),
+    );
   },
 });

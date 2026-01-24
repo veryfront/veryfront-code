@@ -1,8 +1,6 @@
 export class PageHandler {
   handle(pathname: string, searchParams: URLSearchParams): Response {
-    const html = this.buildHtml(pathname, searchParams);
-
-    return new Response(html, {
+    return new Response(this.buildHtml(pathname, searchParams), {
       headers: { "content-type": "text/html; charset=utf-8" },
     });
   }
@@ -27,23 +25,25 @@ export class PageHandler {
     async function fetchPayload(url) {
       try {
         const res = await fetch(url);
-        if (res.ok) return await res.json();
-      } catch {}
-      return null;
+        if (!res.ok) return null;
+        return await res.json();
+      } catch {
+        return null;
+      }
     }
 
     (async () => {
       const renderUrl = '${renderUrl}';
-      const payload = await fetchPayload(renderUrl) ||
-        await fetchPayload('/_veryfront/rsc/payload') ||
+      const payload =
+        (await fetchPayload(renderUrl)) ??
+        (await fetchPayload('/_veryfront/rsc/payload')) ??
         { html: '<p>RSC unavailable</p>', clientRefs: [] };
 
       document.getElementById('rsc-root').innerHTML = payload.html;
       window.__RSC_CLIENT_REFS__ = payload.clientRefs;
 
-      if (window.VeryfrontHydrate?.run) {
-        return window.VeryfrontHydrate.run();
-      }
+      if (!window.VeryfrontHydrate?.run) return;
+      return window.VeryfrontHydrate.run();
     })().catch(error => {
       console.error('[RSC] Failed to load:', error);
       document.getElementById('rsc-root').innerHTML = '<p>Failed to load RSC component</p>';

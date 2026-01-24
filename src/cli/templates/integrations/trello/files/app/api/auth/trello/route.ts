@@ -1,7 +1,3 @@
-/**
- * Trello OAuth Init
- */
-
-import { trelloConfig, createOAuthInitHandler } from "veryfront/oauth";
+import { createOAuthInitHandler, trelloConfig } from "veryfront/oauth";
 
 export const GET = createOAuthInitHandler(trelloConfig);

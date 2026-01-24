@@ -10,7 +10,6 @@
 
 import { serverLogger as logger } from "#veryfront/utils";
 import { buildAppRoutes, buildPagesRoutes } from "../static-generation.ts";
-// Direct import from base.ts to avoid circular dependency through barrel
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { VeryfrontRenderer } from "#veryfront/rendering/index.ts";
@@ -46,8 +45,8 @@ export async function executeBuild(
   logger.info(
     `[BUILD] executeBuild: ${pagesRoutes.length} pages routes, ${appRoutes.length} app routes`,
   );
-  logger.info("Building pages...");
 
+  logger.info("Building pages...");
   const pagesStats = await buildPagesRoutes(pagesRoutes, options);
   logger.info(`[BUILD] pagesStats: ${pagesStats.pages} pages built`);
 
@@ -57,6 +56,6 @@ export async function executeBuild(
   return {
     pages: pagesStats.pages + appStats.pages,
     totalSize: pagesStats.totalSize + appStats.totalSize,
-    ssgPaths: [...pagesStats.ssgPaths, ...appStats.ssgPaths],
+    ssgPaths: pagesStats.ssgPaths.concat(appStats.ssgPaths),
   };
 }

@@ -1,24 +1,24 @@
 import { join } from "#veryfront/platform/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { logger } from "#veryfront/utils";
-import { BYTES_PER_KB } from "#veryfront/utils";
+import { BYTES_PER_KB, logger } from "#veryfront/utils";
 import type { CSSBundle } from "#veryfront/types";
 
 const fs = createFileSystem();
 
+type CacheStats = {
+  totalFiles: number;
+  originalSize: number;
+  minifiedSize: number;
+  totalSavings: number;
+  averageSavings: number;
+};
+
 export class CacheManager {
-  private bundles: Map<string, CSSBundle> = new Map();
-  private cachedStats: {
-    totalFiles: number;
-    originalSize: number;
-    minifiedSize: number;
-    totalSavings: number;
-    averageSavings: number;
-  } | null = null;
+  private bundles = new Map<string, CSSBundle>();
+  private cachedStats: CacheStats | null = null;
 
   addBundle(key: string, bundle: CSSBundle): void {
     this.bundles.set(key, bundle);
-    // Invalidate cache when bundles change
     this.cachedStats = null;
   }
 
@@ -50,12 +50,9 @@ export class CacheManager {
       JSON.stringify(
         manifest,
         (_key, value) => {
-          // Don't include full content in manifest to reduce file size
-          if (typeof value === "object" && value !== null && "content" in value) {
-            const { content: _content, sourceMap: _sourceMap, ...rest } = value;
-            return rest;
-          }
-          return value;
+          if (typeof value !== "object" || value === null || !("content" in value)) return value;
+          const { content: _content, sourceMap: _sourceMap, ...rest } = value as CSSBundle;
+          return rest;
         },
         2,
       ),
@@ -65,41 +62,30 @@ export class CacheManager {
   }
 
   getTotalSavings(): string {
-    const stats = this.getStats();
-    const savings = stats.originalSize > 0
-      ? ((stats.originalSize - stats.minifiedSize) / stats.originalSize) * 100
-      : 0;
+    const { originalSize, minifiedSize } = this.getStats();
+    const savings = originalSize > 0 ? ((originalSize - minifiedSize) / originalSize) * 100 : 0;
 
-    return `${(stats.originalSize / BYTES_PER_KB).toFixed(1)}KB → ${
-      (stats.minifiedSize / BYTES_PER_KB).toFixed(1)
+    return `${(originalSize / BYTES_PER_KB).toFixed(1)}KB → ${
+      (minifiedSize / BYTES_PER_KB).toFixed(
+        1,
+      )
     }KB (${savings.toFixed(1)}%)`;
   }
 
-  getStats(): {
-    totalFiles: number;
-    originalSize: number;
-    minifiedSize: number;
-    totalSavings: number;
-    averageSavings: number;
-  } {
-    // Return cached stats if available
-    if (this.cachedStats !== null) {
-      return this.cachedStats;
-    }
+  getStats(): CacheStats {
+    if (this.cachedStats) return this.cachedStats;
 
-    // Calculate stats once
     let originalSize = 0;
     let minifiedSize = 0;
 
-    for (const bundle of this.bundles.values()) {
-      originalSize += bundle.size;
-      minifiedSize += bundle.minifiedSize;
+    for (const { size, minifiedSize: bundleMinifiedSize } of this.bundles.values()) {
+      originalSize += size;
+      minifiedSize += bundleMinifiedSize;
     }
 
     const totalSavings = originalSize - minifiedSize;
     const averageSavings = originalSize > 0 ? (totalSavings / originalSize) * 100 : 0;
 
-    // Cache the result
     this.cachedStats = {
       totalFiles: this.bundles.size,
       originalSize,
@@ -119,7 +105,7 @@ export async function loadCSSManifest(
 
   try {
     const content = await fs.readTextFile(manifestPath);
-    const data = JSON.parse(content);
+    const data = JSON.parse(content) as Record<string, CSSBundle>;
     return new Map(Object.entries(data));
   } catch (error) {
     logger.warn("Failed to load CSS manifest", {

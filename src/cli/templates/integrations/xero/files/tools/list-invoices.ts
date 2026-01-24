@@ -4,8 +4,7 @@ import { listInvoices } from "../../lib/xero-client.ts";
 
 export default tool({
   id: "list-invoices",
-  description:
-    "List invoices from Xero. Can filter by status, type, or contact.",
+  description: "List invoices from Xero. Can filter by status, type, or contact.",
   inputSchema: z.object({
     status: z
       .enum(["DRAFT", "SUBMITTED", "AUTHORISED", "PAID", "VOIDED"])
@@ -15,10 +14,7 @@ export default tool({
       .enum(["ACCREC", "ACCPAY"])
       .optional()
       .describe("Filter by invoice type (ACCREC = sales invoice, ACCPAY = bill)"),
-    contactId: z
-      .string()
-      .optional()
-      .describe("Filter by contact ID"),
+    contactId: z.string().optional().describe("Filter by contact ID"),
     limit: z
       .number()
       .min(1)
@@ -27,12 +23,7 @@ export default tool({
       .describe("Maximum number of invoices to return"),
   }),
   async execute({ status, type, contactId, limit }) {
-    const invoices = await listInvoices({
-      status,
-      type,
-      contactId,
-      limit,
-    });
+    const invoices = await listInvoices({ status, type, contactId, limit });
 
     return invoices.map((invoice) => ({
       invoiceId: invoice.InvoiceID,

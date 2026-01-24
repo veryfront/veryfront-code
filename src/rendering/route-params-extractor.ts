@@ -20,8 +20,7 @@ export async function extractAppRouteParams(
   let currentDir = join(projectDir, "app");
   const patternParts: string[] = [];
 
-  for (let i = 0; i < segments.length; i++) {
-    const segment = segments[i];
+  for (const segment of segments) {
     if (!segment) continue;
     const exactPath = join(currentDir, segment);
 
@@ -39,19 +38,17 @@ export async function extractAppRouteParams(
 
     let foundDynamic = false;
     let isCatchAll = false;
+
     try {
       fsReadDirCount++;
-      const entries = await adapter.fs.readDir(currentDir);
-      for await (const entry of entries) {
-        if (entry.isDirectory && isDynamicSegment(entry.name)) {
-          currentDir = join(currentDir, entry.name);
-          patternParts.push(entry.name);
-          foundDynamic = true;
-          if (entry.name.startsWith("[...")) {
-            isCatchAll = true;
-          }
-          break;
-        }
+      for await (const entry of await adapter.fs.readDir(currentDir)) {
+        if (!entry.isDirectory || !isDynamicSegment(entry.name)) continue;
+
+        currentDir = join(currentDir, entry.name);
+        patternParts.push(entry.name);
+        foundDynamic = true;
+        isCatchAll = entry.name.startsWith("[...");
+        break;
       }
     } catch {
       // Directory not readable
@@ -66,9 +63,7 @@ export async function extractAppRouteParams(
       return null;
     }
 
-    if (isCatchAll) {
-      break;
-    }
+    if (isCatchAll) break;
   }
 
   stopTotal();
@@ -76,8 +71,8 @@ export async function extractAppRouteParams(
     stat: fsStatCount,
     readDir: fsReadDirCount,
   });
-  const pattern = patternParts.join("/");
-  return extractParams(pattern, slug);
+
+  return extractParams(patternParts.join("/"), slug);
 }
 
 export async function extractPagesRouteParams(
@@ -90,18 +85,15 @@ export async function extractPagesRouteParams(
   const stopTotal = startTimer("extractPagesRouteParams-total");
 
   const segments = slug ? slug.split("/").filter(Boolean) : [];
-  const pagesDir = join(projectDir, "pages");
   const routeExtensions = [".tsx", ".jsx", ".ts", ".js", ".mdx", ".md"];
   const patternParts: string[] = [];
-  let currentDir = pagesDir;
+  let currentDir = join(projectDir, "pages");
 
   for (let i = 0; i < segments.length; i++) {
     const segment = segments[i];
     if (!segment) continue;
-
     const exactPath = join(currentDir, segment);
 
-    // Try exact match first
     try {
       pagesStatCount++;
       const stat = await adapter.fs.stat(exactPath);
@@ -114,39 +106,31 @@ export async function extractPagesRouteParams(
       // Not an exact directory match
     }
 
-    // Try to find a dynamic segment file or directory
     let foundDynamic = false;
+
     try {
       pagesReadDirCount++;
-      const entries: Array<{ name: string; isDirectory: boolean; isFile: boolean }> = [];
-      for await (const entry of adapter.fs.readDir(currentDir)) {
-        entries.push({ name: entry.name, isDirectory: entry.isDirectory, isFile: entry.isFile });
-      }
-
-      for (const entry of entries) {
+      for await (const entry of await adapter.fs.readDir(currentDir)) {
         const entryName = entry.name;
+        if (!isDynamicSegment(entryName)) continue;
 
-        if (isDynamicSegment(entryName)) {
-          const isCatchAll = entryName.startsWith("[...");
-          const isFile = routeExtensions.some((ext) => entryName.endsWith(ext));
+        const isCatchAll = entryName.startsWith("[...");
+        const isFile = routeExtensions.some((ext) => entryName.endsWith(ext));
 
-          if (isFile && i === segments.length - 1) {
-            // This is the page file
-            patternParts.push(entryName.replace(EXTENSION_REGEX, ""));
-            foundDynamic = true;
-            break;
-          } else if (entry.isDirectory) {
-            currentDir = join(currentDir, entryName);
-            patternParts.push(entryName);
-            foundDynamic = true;
-
-            if (isCatchAll) {
-              // Catch-all captures remaining segments
-              break;
-            }
-            break;
-          }
+        if (isFile && i === segments.length - 1) {
+          patternParts.push(entryName.replace(EXTENSION_REGEX, ""));
+          foundDynamic = true;
+          break;
         }
+
+        if (entry.isDirectory) {
+          currentDir = join(currentDir, entryName);
+          patternParts.push(entryName);
+          foundDynamic = true;
+          break;
+        }
+
+        if (isCatchAll) break;
       }
     } catch {
       // Directory not readable
@@ -167,6 +151,6 @@ export async function extractPagesRouteParams(
     stat: pagesStatCount,
     readDir: pagesReadDirCount,
   });
-  const pattern = patternParts.join("/");
-  return extractParams(pattern, slug);
+
+  return extractParams(patternParts.join("/"), slug);
 }

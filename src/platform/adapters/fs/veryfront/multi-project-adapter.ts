@@ -25,19 +25,6 @@ interface RequestContext {
   fileCache?: Map<string, string>;
 }
 
-interface RunWithContextOptions {
-  projectSlug: string;
-  token: string;
-  projectId?: string;
-  productionMode?: boolean;
-  /** Release ID for production mode (mutually exclusive with branch) */
-  releaseId?: string | null;
-  /** Branch name for preview mode (mutually exclusive with releaseId) */
-  branch?: string | null;
-  /** Actual environment name from API (e.g., "Development", "Production") */
-  environmentName?: string | null;
-}
-
 const asyncLocalStorage = new AsyncLocalStorage<RequestContext>();
 
 export class MultiProjectFSAdapter implements FSAdapter {
@@ -69,7 +56,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
       environmentName?: string | null;
     },
   ): Promise<T> {
-    const runWithContextStartTime = performance.now();
+    const startTime = performance.now();
     const productionMode = options?.productionMode ?? false;
     const releaseId = options?.releaseId ?? null;
     const branch = options?.branch ?? null;
@@ -80,14 +67,10 @@ export class MultiProjectFSAdapter implements FSAdapter {
       hasToken: !!token,
       productionMode,
       releaseId: productionMode ? releaseId : undefined,
-      branch: !productionMode ? branch : undefined,
+      branch: productionMode ? undefined : branch,
       environmentName,
     });
 
-    // Store context for this request
-    // Note: releaseId and branch are mutually exclusive
-    // - productionMode=true → use releaseId
-    // - productionMode=false → use branch
     const context: RequestContext = {
       projectSlug,
       projectId,
@@ -96,42 +79,42 @@ export class MultiProjectFSAdapter implements FSAdapter {
       releaseId: productionMode ? releaseId : null,
       branch: productionMode ? null : branch,
       environmentName,
-      // Request-scoped file cache to dedupe fetches within this request
       fileCache: new Map<string, string>(),
     };
 
     logger.debug("[MultiProjectFSAdapter] asyncLocalStorage.run START", { projectSlug });
+
     return asyncLocalStorage.run(context, async () => {
       logger.debug("[MultiProjectFSAdapter] Inside asyncLocalStorage.run callback", {
         projectSlug,
-        duration: `${(performance.now() - runWithContextStartTime).toFixed(2)}ms`,
+        duration: `${(performance.now() - startTime).toFixed(2)}ms`,
       });
-      // Wrap with cache batching to dedupe and batch cache requests within this request
+
       const result = await runWithCacheBatching(fn);
+
       logger.debug("[MultiProjectFSAdapter] runWithContext callback complete", {
         projectSlug,
-        totalDuration: `${(performance.now() - runWithContextStartTime).toFixed(2)}ms`,
+        totalDuration: `${(performance.now() - startTime).toFixed(2)}ms`,
       });
+
       return result;
     });
   }
 
   setRequestContext(projectSlug: string, token: string): void {
     const store = asyncLocalStorage.getStore();
-    if (store) {
-      store.projectSlug = projectSlug;
-      store.token = token;
-    }
+    if (!store) return;
+
+    store.projectSlug = projectSlug;
+    store.token = token;
   }
 
   setProductionMode(_enabled: boolean, _releaseId?: string | null): void {
     // No-op: In proxy mode, productionMode/releaseId are passed via runWithContext().
-    // This method exists for interface compatibility but is never called in practice
-    // because ssr-handler returns early after runWithContext().
   }
 
   private async getAdapter(): Promise<VeryfrontFSAdapter> {
-    const getAdapterStartTime = performance.now();
+    const startTime = performance.now();
     const context = asyncLocalStorage.getStore();
 
     if (!context) {
@@ -139,18 +122,14 @@ export class MultiProjectFSAdapter implements FSAdapter {
         hasDefaultAdapter: !!this.defaultAdapter,
       });
 
-      if (this.defaultAdapter) {
-        return Promise.resolve(this.defaultAdapter);
-      }
-      return Promise.reject(
-        new Error(
-          "[MultiProjectFSAdapter] No request context available. " +
-            "Use runWithContext() to set project context before accessing files.",
-        ),
+      if (this.defaultAdapter) return this.defaultAdapter;
+
+      throw new Error(
+        "[MultiProjectFSAdapter] No request context available. " +
+          "Use runWithContext() to set project context before accessing files.",
       );
     }
 
-    // Production mode is set by runWithContext() - always present in context
     const productionMode = context.productionMode ?? false;
     const releaseId = context.releaseId ?? null;
     const environmentName = context.environmentName ?? null;
@@ -175,7 +154,7 @@ export class MultiProjectFSAdapter implements FSAdapter {
 
     logger.debug("[MultiProjectFSAdapter] getAdapter DONE", {
       projectSlug: context.projectSlug,
-      duration: `${(performance.now() - getAdapterStartTime).toFixed(2)}ms`,
+      duration: `${(performance.now() - startTime).toFixed(2)}ms`,
     });
 
     return adapter;
@@ -191,33 +170,27 @@ export class MultiProjectFSAdapter implements FSAdapter {
   }
 
   async readFile(path: string): Promise<string> {
-    const adapter = await this.getAdapter();
-    return adapter.readFile(path);
+    return (await this.getAdapter()).readFile(path);
   }
 
   async readTextFile(path: string): Promise<string> {
-    const adapter = await this.getAdapter();
-    return adapter.readTextFile(path);
+    return (await this.getAdapter()).readTextFile(path);
   }
 
   async exists(path: string): Promise<boolean> {
-    const adapter = await this.getAdapter();
-    return adapter.exists(path);
+    return (await this.getAdapter()).exists(path);
   }
 
   async stat(path: string): Promise<FileInfo> {
-    const adapter = await this.getAdapter();
-    return adapter.stat(path);
+    return (await this.getAdapter()).stat(path);
   }
 
   async readdir(path: string): Promise<DirectoryEntry[]> {
-    const adapter = await this.getAdapter();
-    return adapter.readdir(path);
+    return (await this.getAdapter()).readdir(path);
   }
 
   async resolveFile(basePath: string): Promise<string | null> {
-    const adapter = await this.getAdapter();
-    return adapter.resolveFile(basePath);
+    return (await this.getAdapter()).resolveFile(basePath);
   }
 
   dispose(): void {
@@ -231,10 +204,6 @@ export class MultiProjectFSAdapter implements FSAdapter {
     return this.manager.getStats();
   }
 
-  /**
-   * Get project data from the current request's adapter.
-   * Required for ProviderManager to access API project settings (provider, layout).
-   */
   async getProjectData(): Promise<ReturnType<VeryfrontFSAdapter["getProjectData"]> | undefined> {
     try {
       const adapter = await this.getAdapter();
@@ -244,9 +213,6 @@ export class MultiProjectFSAdapter implements FSAdapter {
     }
   }
 
-  /**
-   * Get file path by entity ID from the current request's adapter.
-   */
   async getFilePathByEntityId(entityId: string): Promise<string | undefined> {
     try {
       const adapter = await this.getAdapter();
@@ -256,24 +222,20 @@ export class MultiProjectFSAdapter implements FSAdapter {
     }
   }
 
-  /**
-   * Get all source files with content for class extraction.
-   * Returns files from the current request's adapter.
-   */
   async getAllSourceFiles(): Promise<Array<{ path: string; content?: string }>> {
     try {
       const adapter = await this.getAdapter();
-      // getAllSourceFiles is now async - await the result
-      const files = (await adapter.getAllSourceFiles?.()) || [];
+      const files = (await adapter.getAllSourceFiles?.()) ?? [];
+
       if (files.length === 0) {
         logger.debug("[MultiProjectFSAdapter] getAllSourceFiles returned empty", {
           hasAdapter: !!adapter,
           hasMethod: typeof adapter.getAllSourceFiles === "function",
         });
       }
+
       return files;
     } catch (error) {
-      // Log the error instead of silently swallowing it
       logger.warn("[MultiProjectFSAdapter] getAllSourceFiles failed", {
         error: error instanceof Error ? error.message : String(error),
       });
@@ -286,35 +248,18 @@ export function isMultiProjectAdapter(adapter: unknown): adapter is MultiProject
   return adapter instanceof MultiProjectFSAdapter;
 }
 
-/**
- * Get the current request context from AsyncLocalStorage.
- * Returns null if not in a multi-project request context.
- */
 export function getCurrentRequestContext(): RequestContext | null {
   return asyncLocalStorage.getStore() ?? null;
 }
 
-/**
- * Get a file from the request-scoped cache.
- * Returns undefined if not in a request context or file not cached.
- */
 export function getRequestScopedFile(cacheKey: string): string | undefined {
-  const context = asyncLocalStorage.getStore();
-  return context?.fileCache?.get(cacheKey);
+  return asyncLocalStorage.getStore()?.fileCache?.get(cacheKey);
 }
 
-/**
- * Set a file in the request-scoped cache.
- * No-op if not in a request context.
- */
 export function setRequestScopedFile(cacheKey: string, content: string): void {
-  const context = asyncLocalStorage.getStore();
-  context?.fileCache?.set(cacheKey, content);
+  asyncLocalStorage.getStore()?.fileCache?.set(cacheKey, content);
 }
 
-/**
- * Re-export RequestContext type for use in cache-key-builder.
- */
 export type { RequestContext };
 
 // Register globally for lazy access from cache-key-builder to avoid circular dependency

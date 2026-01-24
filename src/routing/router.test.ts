@@ -19,8 +19,7 @@ describe("DynamicRouter", () => {
       const router = new DynamicRouter();
       router.addRoute("/about", "pages/about.tsx");
 
-      const match = router.match("/not-found");
-      assertEquals(match, null);
+      assertEquals(router.match("/not-found"), null);
     });
 
     it("normalizes trailing slashes", () => {
@@ -88,7 +87,10 @@ describe("DynamicRouter", () => {
   describe("Dynamic segments - multiple parameters", () => {
     it("matches two dynamic segments", () => {
       const router = new DynamicRouter();
-      router.addRoute("/shop/[category]/[product]", "pages/shop/[category]/[product].tsx");
+      router.addRoute(
+        "/shop/[category]/[product]",
+        "pages/shop/[category]/[product].tsx",
+      );
 
       const match = router.match("/shop/electronics/laptop");
       assertExists(match);
@@ -113,7 +115,10 @@ describe("DynamicRouter", () => {
 
     it("handles mix of static and dynamic segments", () => {
       const router = new DynamicRouter();
-      router.addRoute("/api/v1/users/[userId]/posts/[postId]", "api/user-posts.tsx");
+      router.addRoute(
+        "/api/v1/users/[userId]/posts/[postId]",
+        "api/user-posts.tsx",
+      );
 
       const match = router.match("/api/v1/users/123/posts/456");
       assertExists(match);
@@ -140,8 +145,7 @@ describe("DynamicRouter", () => {
       const router = new DynamicRouter();
       router.addRoute("/posts/[category]/[id]", "pages/posts.tsx");
 
-      const match = router.match("/posts/tech");
-      assertEquals(match, null);
+      assertEquals(router.match("/posts/tech"), null);
     });
   });
 
@@ -172,11 +176,8 @@ describe("DynamicRouter", () => {
       const router = new DynamicRouter();
       router.addRoute("/docs/[...path]", "pages/docs/[...path].tsx");
 
-      const match = router.match("/docs");
-      assertEquals(match, null);
-
-      const match2 = router.match("/docs/");
-      assertEquals(match2, null);
+      assertEquals(router.match("/docs"), null);
+      assertEquals(router.match("/docs/"), null);
     });
 
     it("extracts catch-all parameter as array", () => {
@@ -291,7 +292,10 @@ describe("DynamicRouter", () => {
       assertEquals(router.match("/products/new")?.route.page, "static.tsx");
       assertEquals(router.match("/products/123/edit")?.route.page, "dynamic-edit.tsx");
       assertEquals(router.match("/products/123")?.route.page, "dynamic.tsx");
-      assertEquals(router.match("/products/category/subcategory")?.route.page, "catch-all.tsx");
+      assertEquals(
+        router.match("/products/category/subcategory")?.route.page,
+        "catch-all.tsx",
+      );
       assertEquals(router.match("/products")?.route.page, "optional-catch-all.tsx");
     });
 
@@ -319,11 +323,8 @@ describe("DynamicRouter", () => {
       const router = new DynamicRouter();
       router.addRoute("/about", "pages/about.tsx");
 
-      const match1 = router.match("/not-found");
-      const match2 = router.match("/not-found");
-
-      assertEquals(match1, null);
-      assertEquals(match2, null);
+      assertEquals(router.match("/not-found"), null);
+      assertEquals(router.match("/not-found"), null);
     });
 
     it("clears cache correctly", () => {
@@ -439,8 +440,7 @@ describe("DynamicRouter", () => {
       const router = new DynamicRouter();
       router.addRoute("/about", "pages/about.tsx");
 
-      const match = router.match("");
-      assertEquals(match, null);
+      assertEquals(router.match(""), null);
     });
 
     it("handles empty segments correctly in optional catch-all", () => {
@@ -481,8 +481,7 @@ describe("DynamicRouter", () => {
 
     it("returns empty array for router with no routes", () => {
       const router = new DynamicRouter();
-      const routes = router.getRoutes();
-      assertEquals(routes.length, 0);
+      assertEquals(router.getRoutes().length, 0);
     });
   });
 });

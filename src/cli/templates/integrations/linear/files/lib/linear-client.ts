@@ -2,7 +2,6 @@ import { getAccessToken } from "./token-store.ts";
 
 const LINEAR_API_URL = "https://api.linear.app/graphql";
 
-// Type definitions for Linear API responses
 export interface LinearIssue {
   id: string;
   identifier: string;
@@ -85,35 +84,27 @@ interface GraphQLResponse<T> {
 
 async function linearFetch<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
   const token = await getAccessToken();
-  if (!token) {
-    throw new Error("Not authenticated with Linear. Please connect your account.");
-  }
+  if (!token) throw new Error("Not authenticated with Linear. Please connect your account.");
 
   const response = await fetch(LINEAR_API_URL, {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${token}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      query,
-      variables,
-    }),
+    body: JSON.stringify({ query, variables }),
   });
 
   if (!response.ok) {
     throw new Error(`Linear API error: ${response.status} ${response.statusText}`);
   }
 
-  const json = await response.json() as GraphQLResponse<T>;
+  const json: GraphQLResponse<T> = await response.json();
 
-  if (json.errors && json.errors.length > 0) {
-    throw new Error(`Linear GraphQL error: ${json.errors[0].message}`);
-  }
+  const errorMessage = json.errors?.[0]?.message;
+  if (errorMessage) throw new Error(`Linear GraphQL error: ${errorMessage}`);
 
-  if (!json.data) {
-    throw new Error("Linear API returned no data");
-  }
+  if (!json.data) throw new Error("Linear API returned no data");
 
   return json.data;
 }
@@ -169,18 +160,16 @@ export async function searchIssues(
     }
   `;
 
-  const data = await linearFetch<{
-    issueSearch: { nodes: LinearIssue[] };
-  }>(gqlQuery, {
+  const data = await linearFetch<{ issueSearch: { nodes: LinearIssue[] } }>(gqlQuery, {
     query,
-    first: options?.limit || 10,
-    includeArchived: options?.includeArchived || false,
+    first: options?.limit ?? 10,
+    includeArchived: options?.includeArchived ?? false,
   });
 
   return data.issueSearch.nodes;
 }
 
-export function getIssue(issueId: string): Promise<LinearIssue> {
+export async function getIssue(issueId: string): Promise<LinearIssue> {
   const query = `
     query GetIssue($id: String!) {
       issue(id: $id) {
@@ -223,10 +212,11 @@ export function getIssue(issueId: string): Promise<LinearIssue> {
     }
   `;
 
-  return linearFetch<{ issue: LinearIssue }>(query, { id: issueId }).then((data) => data.issue);
+  const data = await linearFetch<{ issue: LinearIssue }>(query, { id: issueId });
+  return data.issue;
 }
 
-export function createIssue(options: {
+export async function createIssue(options: {
   teamId: string;
   title: string;
   description?: string;
@@ -291,16 +281,14 @@ export function createIssue(options: {
   if (options.stateId) input.stateId = options.stateId;
   if (options.assigneeId) input.assigneeId = options.assigneeId;
   if (options.projectId) input.projectId = options.projectId;
-  if (options.labelIds && options.labelIds.length > 0) input.labelIds = options.labelIds;
+  if (options.labelIds?.length) input.labelIds = options.labelIds;
 
-  return linearFetch<{
-    issueCreate: { success: boolean; issue: LinearIssue };
-  }>(mutation, { input }).then((data) => {
-    if (!data.issueCreate.success) {
-      throw new Error("Failed to create issue");
-    }
-    return data.issueCreate.issue;
+  const data = await linearFetch<{ issueCreate: { success: boolean; issue: LinearIssue } }>(mutation, {
+    input,
   });
+
+  if (!data.issueCreate.success) throw new Error("Failed to create issue");
+  return data.issueCreate.issue;
 }
 
 export async function updateIssue(
@@ -370,14 +358,12 @@ export async function updateIssue(
   if (options.projectId) input.projectId = options.projectId;
   if (options.labelIds) input.labelIds = options.labelIds;
 
-  const data = await linearFetch<{
-    issueUpdate: { success: boolean; issue: LinearIssue };
-  }>(mutation, { id: issueId, input });
+  const data = await linearFetch<{ issueUpdate: { success: boolean; issue: LinearIssue } }>(mutation, {
+    id: issueId,
+    input,
+  });
 
-  if (!data.issueUpdate.success) {
-    throw new Error("Failed to update issue");
-  }
-
+  if (!data.issueUpdate.success) throw new Error("Failed to update issue");
   return data.issueUpdate.issue;
 }
 
@@ -413,17 +399,15 @@ export async function listProjects(options?: {
     }
   `;
 
-  const data = await linearFetch<{
-    projects: { nodes: LinearProject[] };
-  }>(query, {
-    first: options?.limit || 20,
-    includeArchived: options?.includeArchived || false,
+  const data = await linearFetch<{ projects: { nodes: LinearProject[] } }>(query, {
+    first: options?.limit ?? 20,
+    includeArchived: options?.includeArchived ?? false,
   });
 
   return data.projects.nodes;
 }
 
-export function getTeams(): Promise<LinearTeam[]> {
+export async function getTeams(): Promise<LinearTeam[]> {
   const query = `
     query GetTeams {
       teams {
@@ -436,9 +420,8 @@ export function getTeams(): Promise<LinearTeam[]> {
     }
   `;
 
-  return linearFetch<{
-    teams: { nodes: LinearTeam[] };
-  }>(query).then((data) => data.teams.nodes);
+  const data = await linearFetch<{ teams: { nodes: LinearTeam[] } }>(query);
+  return data.teams.nodes;
 }
 
 export async function getWorkflowStates(teamId: string): Promise<LinearWorkflowState[]> {
@@ -456,9 +439,9 @@ export async function getWorkflowStates(teamId: string): Promise<LinearWorkflowS
     }
   `;
 
-  const data = await linearFetch<{
-    team: { states: { nodes: LinearWorkflowState[] } };
-  }>(query, { teamId });
+  const data = await linearFetch<{ team: { states: { nodes: LinearWorkflowState[] } } }>(query, {
+    teamId,
+  });
 
   return data.team.states.nodes;
 }

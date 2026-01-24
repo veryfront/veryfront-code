@@ -4,17 +4,18 @@ import { listInvoices } from "../../lib/quickbooks-client.ts";
 
 export default tool({
   id: "list-invoices",
-  description:
-    "List invoices from QuickBooks. Can optionally filter by customer ID.",
+  description: "List invoices from QuickBooks. Can optionally filter by customer ID.",
   inputSchema: z.object({
     customerId: z.string().optional().describe("Customer ID to filter invoices by"),
-    maxResults: z.number().min(1).max(100).default(20).describe("Maximum number of invoices to return"),
+    maxResults: z
+      .number()
+      .min(1)
+      .max(100)
+      .default(20)
+      .describe("Maximum number of invoices to return"),
   }),
   async execute({ customerId, maxResults }) {
-    const invoices = await listInvoices({
-      customerId,
-      maxResults,
-    });
+    const invoices = await listInvoices({ customerId, maxResults });
 
     return invoices.map((invoice) => ({
       id: invoice.Id,

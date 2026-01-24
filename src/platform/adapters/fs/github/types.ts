@@ -6,10 +6,8 @@
 
 import { createError, toError } from "#veryfront/errors";
 
-// Import and re-export from shared types to avoid circular dependencies
 export type { DirectoryEntry } from "../shared-types.ts";
 
-// Re-export API response types from schemas
 export type {
   GitHubBlobResponse,
   GitHubContentItem,
@@ -18,29 +16,17 @@ export type {
   GitHubTreeResponse,
 } from "./schemas.ts";
 
-/**
- * GitHub repository configuration
- */
 export interface GitHubConfig {
-  /** Personal Access Token for GitHub API authentication */
   token: string;
-  /** Repository owner (user or organization) */
   owner: string;
-  /** Repository name */
   repo: string;
-  /** Branch, tag, or commit SHA (default: "main") */
   ref?: string;
-  /** Cache configuration */
   cache?: {
     enabled?: boolean;
-    /** TTL in milliseconds (default: 60000) */
     ttl?: number;
-    /** Max entries (default: 1000) */
     maxSize?: number;
-    /** Max memory in bytes (default: 100MB) */
     maxMemory?: number;
   };
-  /** Retry configuration */
   retry?: {
     maxRetries?: number;
     initialDelay?: number;
@@ -48,9 +34,6 @@ export interface GitHubConfig {
   };
 }
 
-/**
- * Resolved GitHub configuration with defaults applied
- */
 export interface ResolvedGitHubConfig {
   token: string;
   owner: string;
@@ -69,9 +52,6 @@ export interface ResolvedGitHubConfig {
   };
 }
 
-/**
- * File info structure matching FSAdapter.stat return type
- */
 export interface FileInfo {
   isFile: boolean;
   isDirectory: boolean;
@@ -80,9 +60,6 @@ export interface FileInfo {
   mtime: Date | null;
 }
 
-/**
- * Internal file index entry
- */
 export interface FileIndexEntry {
   path: string;
   sha: string;
@@ -90,9 +67,6 @@ export interface FileIndexEntry {
   type: "blob" | "tree";
 }
 
-/**
- * Create resolved config with defaults from raw GitHubConfig
- */
 export function createGitHubConfig(config: GitHubConfig): ResolvedGitHubConfig {
   if (!config.token) {
     throw toError(
@@ -114,21 +88,24 @@ export function createGitHubConfig(config: GitHubConfig): ResolvedGitHubConfig {
     );
   }
 
+  const cache = config.cache;
+  const retry = config.retry;
+
   return {
     token: config.token,
     owner: config.owner,
     repo: config.repo,
-    ref: config.ref || "main",
+    ref: config.ref ?? "main",
     cache: {
-      enabled: config.cache?.enabled ?? true,
-      ttl: config.cache?.ttl ?? 60_000,
-      maxSize: config.cache?.maxSize ?? 1000,
-      maxMemory: config.cache?.maxMemory ?? 100 * 1024 * 1024,
+      enabled: cache?.enabled ?? true,
+      ttl: cache?.ttl ?? 60_000,
+      maxSize: cache?.maxSize ?? 1000,
+      maxMemory: cache?.maxMemory ?? 100 * 1024 * 1024,
     },
     retry: {
-      maxRetries: config.retry?.maxRetries ?? 3,
-      initialDelay: config.retry?.initialDelay ?? 1000,
-      maxDelay: config.retry?.maxDelay ?? 10000,
+      maxRetries: retry?.maxRetries ?? 3,
+      initialDelay: retry?.initialDelay ?? 1000,
+      maxDelay: retry?.maxDelay ?? 10_000,
     },
   };
 }

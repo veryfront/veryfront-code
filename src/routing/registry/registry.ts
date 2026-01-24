@@ -35,76 +35,84 @@ export class RouteRegistry {
   }
 
   execute(req: Request, ctx: HandlerContext): Promise<Response | null> {
-    return withSpan("routing.registry.execute", async () => {
-      const startTime = Date.now();
-      const url = new URL(req.url);
+    const url = new URL(req.url);
 
-      if (this.config.debug) {
-        serverLogger.debug(`[RouteRegistry] Processing ${req.method} ${url.pathname}`);
-      }
+    return withSpan(
+      "routing.registry.execute",
+      async () => {
+        const startTime = Date.now();
 
-      for (const handler of this.handlers) {
-        try {
-          if (handler.metadata.enabled && !handler.metadata.enabled(ctx)) {
-            if (this.config.debug) {
-              serverLogger.debug(
-                `[RouteRegistry] Skipping disabled handler: ${handler.metadata.name}`,
-              );
-            }
-            continue;
-          }
-
-          const handlerStart = Date.now();
-          // Note: Individual handler spans removed to reduce trace noise.
-          // Most handlers are very fast (< 1ms) and just check if they should handle.
-          // The outer routing.registry.execute span captures total routing time.
-          const result = await handler.handle(req, ctx);
-          const handlerTime = Date.now() - handlerStart;
-
-          if (this.config.debug && this.config.enableMetrics) {
-            serverLogger.debug(
-              `[RouteRegistry] Handler ${handler.metadata.name} took ${handlerTime}ms`,
-            );
-          }
-
-          if (result.response) {
-            const totalTime = Date.now() - startTime;
-            if (this.config.debug) {
-              serverLogger.debug(
-                `[RouteRegistry] Response from ${handler.metadata.name} (total: ${totalTime}ms)`,
-              );
-            }
-            return result.response;
-          }
-
-          if (!result.continue) {
-            if (this.config.debug) {
-              serverLogger.debug(
-                `[RouteRegistry] Chain stopped by ${handler.metadata.name} without response`,
-              );
-            }
-            break;
-          }
-        } catch (error) {
-          // Always log handler errors - they should never be silently swallowed
-          serverLogger.error(`[RouteRegistry] Handler ${handler.metadata.name} threw an error`, {
-            handler: handler.metadata.name,
-            path: url.pathname,
-            method: req.method,
-            error: error instanceof Error ? error.message : String(error),
-            stack: error instanceof Error ? error.stack : undefined,
-          });
-          // Continue to next handler - a single handler failure shouldn't break the chain
+        if (this.config.debug) {
+          serverLogger.debug(`[RouteRegistry] Processing ${req.method} ${url.pathname}`);
         }
-      }
 
-      const totalTime = Date.now() - startTime;
-      if (this.config.debug) {
-        serverLogger.debug(`[RouteRegistry] No handler matched (total: ${totalTime}ms)`);
-      }
+        for (const handler of this.handlers) {
+          try {
+            if (handler.metadata.enabled && !handler.metadata.enabled(ctx)) {
+              if (this.config.debug) {
+                serverLogger.debug(
+                  `[RouteRegistry] Skipping disabled handler: ${handler.metadata.name}`,
+                );
+              }
+              continue;
+            }
 
-      return null;
-    }, { "http.method": req.method, "http.path": new URL(req.url).pathname });
+            const handlerStart = Date.now();
+            // Note: Individual handler spans removed to reduce trace noise.
+            // Most handlers are very fast (< 1ms) and just check if they should handle.
+            // The outer routing.registry.execute span captures total routing time.
+            const result = await handler.handle(req, ctx);
+            const handlerTime = Date.now() - handlerStart;
+
+            if (this.config.debug && this.config.enableMetrics) {
+              serverLogger.debug(
+                `[RouteRegistry] Handler ${handler.metadata.name} took ${handlerTime}ms`,
+              );
+            }
+
+            if (result.response) {
+              const totalTime = Date.now() - startTime;
+              if (this.config.debug) {
+                serverLogger.debug(
+                  `[RouteRegistry] Response from ${handler.metadata.name} (total: ${totalTime}ms)`,
+                );
+              }
+              return result.response;
+            }
+
+            if (!result.continue) {
+              if (this.config.debug) {
+                serverLogger.debug(
+                  `[RouteRegistry] Chain stopped by ${handler.metadata.name} without response`,
+                );
+              }
+              break;
+            }
+          } catch (error) {
+            // Always log handler errors - they should never be silently swallowed
+            serverLogger.error(
+              `[RouteRegistry] Handler ${handler.metadata.name} threw an error`,
+              {
+                handler: handler.metadata.name,
+                path: url.pathname,
+                method: req.method,
+                error: error instanceof Error ? error.message : String(error),
+                stack: error instanceof Error ? error.stack : undefined,
+              },
+            );
+            // Continue to next handler - a single handler failure shouldn't break the chain
+          }
+        }
+
+        const totalTime = Date.now() - startTime;
+        if (this.config.debug) {
+          serverLogger.debug(`[RouteRegistry] No handler matched (total: ${totalTime}ms)`);
+        }
+
+        return null;
+      },
+      { "http.method": req.method, "http.path": url.pathname },
+    );
   }
 
   getHandlers(): ReadonlyArray<Handler> {
@@ -130,17 +138,18 @@ export class RouteRegistry {
     handlersByPriority: Record<string, number>;
     handlerNames: string[];
   } {
-    const stats = {
-      totalHandlers: this.handlers.length,
-      handlersByPriority: {} as Record<string, number>,
-      handlerNames: this.handlers.map((h) => h.metadata.name),
-    };
+    const handlersByPriority: Record<string, number> = {};
+    const handlerNames = this.handlers.map((h) => h.metadata.name);
 
     for (const handler of this.handlers) {
-      const priority = handler.metadata.priority.toString();
-      stats.handlersByPriority[priority] = (stats.handlersByPriority[priority] || 0) + 1;
+      const priority = String(handler.metadata.priority);
+      handlersByPriority[priority] = (handlersByPriority[priority] ?? 0) + 1;
     }
 
-    return stats;
+    return {
+      totalHandlers: this.handlers.length,
+      handlersByPriority,
+      handlerNames,
+    };
   }
 }

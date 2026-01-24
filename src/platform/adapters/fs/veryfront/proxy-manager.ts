@@ -1,4 +1,6 @@
 import { logger } from "#veryfront/utils";
+import { buildProxyManagerCacheKey } from "#veryfront/cache";
+import { z } from "zod";
 import { VeryfrontFSAdapter } from "./index.ts";
 import type { CacheStats, FSAdapterConfig, ResolvedContentContext } from "./types.ts";
 import { ReloadNotifier } from "../../../../server/reload-notifier.ts";
@@ -22,8 +24,6 @@ import {
   clearRendererCacheForProject,
   clearRendererCaches,
 } from "../../../../rendering/renderer.ts";
-import { buildProxyManagerCacheKey } from "#veryfront/cache";
-import { z } from "zod";
 
 interface ProjectAdapter {
   adapter: VeryfrontFSAdapter;
@@ -38,8 +38,6 @@ interface ProxyFSAdapterManagerConfig {
   maxIdleMs?: number;
 }
 
-// Input validation schema for getAdapter parameters
-// Note: branch and environmentName can be null - they have defaults ("main" and "production")
 const GetAdapterParamsSchema = z.object({
   projectSlug: z.string().min(1, "projectSlug must be non-empty"),
   token: z.string().min(1, "token must be non-empty"),
@@ -49,8 +47,6 @@ const GetAdapterParamsSchema = z.object({
   environmentName: z.string().nullable().optional(),
   branch: z.string().nullable().optional(),
 });
-
-// Use centralized buildProxyManagerCacheKey from core/cache/keys.ts
 
 export class ProxyFSAdapterManager {
   private adapters = new Map<string, ProjectAdapter>();
@@ -63,10 +59,10 @@ export class ProxyFSAdapterManager {
   constructor(config: ProxyFSAdapterManagerConfig) {
     this.baseConfig = config.baseConfig;
     this.maxAdapters = config.maxAdapters ?? 100;
-    this.maxIdleMs = config.maxIdleMs ?? 30 * 60 * 1000; // 30 minutes
+    this.maxIdleMs = config.maxIdleMs ?? 30 * 60 * 1000;
 
     if (config.cleanupIntervalMs) {
-      this.cleanupTimer = setInterval(() => {
+      this.cleanupTimer = setInterval((): void => {
         this.cleanupIdleAdapters();
       }, config.cleanupIntervalMs);
     }
@@ -87,23 +83,21 @@ export class ProxyFSAdapterManager {
     branch?: string | null,
   ): Promise<VeryfrontFSAdapter> {
     const getAdapterStartTime = performance.now();
-    logger.debug("[ProxyFSAdapterManager] getAdapter START", {
-      projectSlug,
-      productionMode,
-      releaseId,
-      environmentName,
-      branch,
-    });
 
-    // Normalize productionMode - must be explicitly set
     const effectiveProductionMode = productionMode ?? false;
     const effectiveReleaseId = releaseId ?? null;
-    // Apply defaults early so cache key and context verification use the same values
     const effectiveEnvironmentName = environmentName ??
       (effectiveProductionMode ? "production" : null);
     const effectiveBranch = branch ?? (effectiveProductionMode ? null : "main");
 
-    // Validate input parameters
+    logger.debug("[ProxyFSAdapterManager] getAdapter START", {
+      projectSlug,
+      productionMode: effectiveProductionMode,
+      releaseId: effectiveReleaseId,
+      environmentName: effectiveEnvironmentName,
+      branch: effectiveBranch,
+    });
+
     const validationResult = GetAdapterParamsSchema.safeParse({
       projectSlug,
       token,
@@ -115,9 +109,6 @@ export class ProxyFSAdapterManager {
     });
 
     if (!validationResult.success) {
-      const error = new Error(
-        `[ProxyFSAdapterManager] Invalid getAdapter parameters: ${validationResult.error.message}`,
-      );
       logger.error("[ProxyFSAdapterManager] Validation failed", {
         errors: validationResult.error.errors,
         params: {
@@ -128,12 +119,11 @@ export class ProxyFSAdapterManager {
           branch: effectiveBranch,
         },
       });
-      throw error;
+      throw new Error(
+        `[ProxyFSAdapterManager] Invalid getAdapter parameters: ${validationResult.error.message}`,
+      );
     }
 
-    // No fallback for token - validation ensures it's non-empty
-
-    // Cache key includes productionMode, releaseId, and branch to prevent race conditions
     const cacheKey = buildProxyManagerCacheKey(
       projectSlug,
       effectiveProductionMode,
@@ -153,94 +143,16 @@ export class ProxyFSAdapterManager {
     });
 
     const existing = this.adapters.get(cacheKey);
-
     if (existing) {
       existing.lastAccessed = Date.now();
       existing.adapter.setRequestToken(token);
 
-      // Verify content context matches expected parameters
-      // If there's a mismatch, this is a critical bug - fail fast
-      const currentContext = existing.adapter.getContentContext();
-
-      // Context must exist
-      if (!currentContext) {
-        const error = new Error(
-          `[ProxyFSAdapterManager] FATAL: Cached adapter has null context. ` +
-            `This indicates a critical bug in adapter initialization. ` +
-            `CacheKey: ${cacheKey}`,
-        );
-        logger.error("[ProxyFSAdapterManager] Null context detected", {
-          cacheKey,
-        });
-        throw error;
-      }
-
-      // Check if context matches expectations
-      let contextMismatch = false;
-      let mismatchReason = "";
-
-      if (effectiveProductionMode) {
-        // Production mode: sourceType must be "release" or "environment"
-        if (
-          currentContext.sourceType !== "release" && currentContext.sourceType !== "environment"
-        ) {
-          contextMismatch = true;
-          mismatchReason =
-            `Expected sourceType "release" or "environment", got "${currentContext.sourceType}"`;
-        } else if (
-          currentContext.sourceType === "release" && currentContext.releaseId !== effectiveReleaseId
-        ) {
-          contextMismatch = true;
-          mismatchReason =
-            `Expected releaseId "${effectiveReleaseId}", got "${currentContext.releaseId}"`;
-        } else if (
-          currentContext.sourceType === "environment" &&
-          currentContext.environmentName !== effectiveEnvironmentName
-        ) {
-          contextMismatch = true;
-          mismatchReason =
-            `Expected environmentName "${effectiveEnvironmentName}", got "${currentContext.environmentName}"`;
-        }
-      } else {
-        // Preview mode: sourceType must be "branch"
-        if (currentContext.sourceType !== "branch") {
-          contextMismatch = true;
-          mismatchReason = `Expected sourceType "branch", got "${currentContext.sourceType}"`;
-        } else if (currentContext.branch !== effectiveBranch) {
-          contextMismatch = true;
-          mismatchReason = `Expected branch "${effectiveBranch}", got "${currentContext.branch}"`;
-        }
-      }
-
-      if (contextMismatch) {
-        const error = new Error(
-          `[ProxyFSAdapterManager] FATAL: Context mismatch for cached adapter. ` +
-            `This indicates a critical bug in adapter caching. ` +
-            `Reason: ${mismatchReason}. ` +
-            `Expected: ${
-              JSON.stringify({
-                productionMode: effectiveProductionMode,
-                branch: effectiveBranch,
-                releaseId: effectiveReleaseId,
-                environmentName: effectiveEnvironmentName,
-              })
-            } ` +
-            `Got: ${JSON.stringify(currentContext)} ` +
-            `CacheKey: ${cacheKey}`,
-        );
-        logger.error("[ProxyFSAdapterManager] Context mismatch detected", {
-          cacheKey,
-          currentContext,
-          expected: {
-            productionMode: effectiveProductionMode,
-            branch: effectiveBranch,
-            releaseId: effectiveReleaseId,
-            environmentName: effectiveEnvironmentName,
-          },
-          mismatchReason,
-        });
-        throw error;
-      }
+      this.assertContextMatches(cacheKey, existing.adapter.getContentContext(), {
+        productionMode: effectiveProductionMode,
+        releaseId: effectiveReleaseId,
+        environmentName: effectiveEnvironmentName,
+        branch: effectiveBranch,
+      });
 
       logger.debug("[ProxyFSAdapterManager] Reusing cached adapter", {
         cacheKey,
@@ -250,20 +162,22 @@ export class ProxyFSAdapterManager {
       return existing.adapter;
     }
 
-    // Check for pending adapter creation to prevent concurrent creation
     const pending = this.pendingAdapters.get(cacheKey);
     if (pending) {
       logger.debug("[ProxyFSAdapterManager] Waiting for pending adapter creation", {
         cacheKey,
         projectSlug,
       });
+
       const waitStartTime = performance.now();
       const adapter = await pending;
+
       logger.debug("[ProxyFSAdapterManager] Pending adapter ready", {
         cacheKey,
         waitDuration: `${(performance.now() - waitStartTime).toFixed(2)}ms`,
         totalDuration: `${(performance.now() - getAdapterStartTime).toFixed(2)}ms`,
       });
+
       adapter.setRequestToken(token);
       return adapter;
     }
@@ -288,6 +202,86 @@ export class ProxyFSAdapterManager {
       effectiveEnvironmentName,
       effectiveBranch,
     );
+  }
+
+  private assertContextMatches(
+    cacheKey: string,
+    currentContext: ResolvedContentContext | null | undefined,
+    expected: {
+      productionMode: boolean;
+      releaseId: string | null;
+      environmentName: string | null;
+      branch: string | null;
+    },
+  ): void {
+    if (!currentContext) {
+      logger.error("[ProxyFSAdapterManager] Null context detected", { cacheKey });
+      throw new Error(
+        `[ProxyFSAdapterManager] FATAL: Cached adapter has null context. ` +
+          `This indicates a critical bug in adapter initialization. ` +
+          `CacheKey: ${cacheKey}`,
+      );
+    }
+
+    const mismatchReason = this.getContextMismatchReason(currentContext, expected);
+    if (!mismatchReason) return;
+
+    logger.error("[ProxyFSAdapterManager] Context mismatch detected", {
+      cacheKey,
+      currentContext,
+      expected,
+      mismatchReason,
+    });
+
+    throw new Error(
+      `[ProxyFSAdapterManager] FATAL: Context mismatch for cached adapter. ` +
+        `This indicates a critical bug in adapter caching. ` +
+        `Reason: ${mismatchReason}. ` +
+        `Expected: ${JSON.stringify(expected)} ` +
+        `Got: ${JSON.stringify(currentContext)} ` +
+        `CacheKey: ${cacheKey}`,
+    );
+  }
+
+  private getContextMismatchReason(
+    currentContext: ResolvedContentContext,
+    expected: {
+      productionMode: boolean;
+      releaseId: string | null;
+      environmentName: string | null;
+      branch: string | null;
+    },
+  ): string | null {
+    if (expected.productionMode) {
+      if (currentContext.sourceType !== "release" && currentContext.sourceType !== "environment") {
+        return `Expected sourceType "release" or "environment", got "${currentContext.sourceType}"`;
+      }
+
+      if (
+        currentContext.sourceType === "release" && currentContext.releaseId !== expected.releaseId
+      ) {
+        return `Expected releaseId "${expected.releaseId}", got "${currentContext.releaseId}"`;
+      }
+
+      if (
+        currentContext.sourceType === "environment" &&
+        currentContext.environmentName !== expected.environmentName
+      ) {
+        return `Expected environmentName "${expected.environmentName}", got "${currentContext.environmentName}"`;
+      }
+
+      return null;
+    }
+
+    if (currentContext.sourceType !== "branch") {
+      return `Expected sourceType "branch", got "${currentContext.sourceType}"`;
+    }
+
+    if (currentContext.branch !== expected.branch) {
+      return `Expected branch "${expected.branch}", got "${currentContext.branch}"`;
+    }
+
+    return null;
   }
 
   private createAdapter(
@@ -320,19 +314,13 @@ export class ProxyFSAdapterManager {
         projectId,
         apiToken: effectiveToken,
       },
-      // Inject invalidationCallbacks to wire up cache clearing and HMR notifications
-      // When FSAdapter receives poke from API:
-      // 1. Clear all server-side caches (SSR modules, router detection, renderer cache, etc.)
-      // 2. Trigger browser reload via ReloadNotifier → HMRHandler → WebSocket
       invalidationCallbacks: {
-        // Global clear functions (deprecated - kept for compatibility)
         clearSSRModuleCache,
         clearRouterDetectionCache,
         clearModulePathCache,
         invalidateModulePaths,
         clearSnippetCache,
         clearRendererCache: clearRendererCaches,
-        // Per-project clear functions (preferred for multi-tenant)
         clearSSRModuleCacheForProject,
         clearRouterDetectionCacheForProject,
         clearSnippetCacheForProject,
@@ -344,13 +332,16 @@ export class ProxyFSAdapterManager {
 
     const adapter = new VeryfrontFSAdapter(config);
 
-    // Set content context based on production mode before initialization
-    // Note: environmentName and branch already have defaults applied by getAdapter()
-    const context: ResolvedContentContext = productionMode
-      ? releaseId
-        ? { sourceType: "release", projectSlug, releaseId }
-        : { sourceType: "environment", projectSlug, environmentName: environmentName! }
-      : { sourceType: "branch", projectSlug, branch: branch! };
+    let context: ResolvedContentContext;
+    if (productionMode) {
+      if (releaseId) {
+        context = { sourceType: "release", projectSlug, releaseId };
+      } else {
+        context = { sourceType: "environment", projectSlug, environmentName: environmentName! };
+      }
+    } else {
+      context = { sourceType: "branch", projectSlug, branch: branch! };
+    }
 
     logger.debug("[ProxyFSAdapterManager] Setting content context for new adapter", {
       cacheKey,
@@ -369,22 +360,27 @@ export class ProxyFSAdapterManager {
       lastAccessed: Date.now(),
     };
 
-    // Store in pending map to prevent concurrent creation
-    const initPromise = (async () => {
+    const initPromise = (async (): Promise<VeryfrontFSAdapter> => {
       const initStartTime = performance.now();
+
       logger.debug("[ProxyFSAdapterManager] Adapter initialization START", {
         cacheKey,
         projectSlug,
       });
+
       projectAdapter.initializing = adapter.initialize();
+
       try {
         await projectAdapter.initializing;
+
         logger.debug("[ProxyFSAdapterManager] Adapter initialization DONE", {
           cacheKey,
           projectSlug,
           duration: `${(performance.now() - initStartTime).toFixed(2)}ms`,
         });
+
         this.adapters.set(cacheKey, projectAdapter);
+        return adapter;
       } catch (error) {
         logger.error("[ProxyFSAdapterManager] Adapter initialization failed", {
           cacheKey,
@@ -397,11 +393,9 @@ export class ProxyFSAdapterManager {
         projectAdapter.initializing = undefined;
         this.pendingAdapters.delete(cacheKey);
       }
-      return adapter;
     })();
 
     this.pendingAdapters.set(cacheKey, initPromise);
-
     return initPromise;
   }
 
@@ -414,14 +408,15 @@ export class ProxyFSAdapterManager {
       }
     }
 
-    if (oldest) {
-      logger.debug("[ProxyFSAdapterManager] Evicting LRU adapter", { cacheKey: oldest.cacheKey });
-      const adapter = this.adapters.get(oldest.cacheKey);
-      if (adapter) {
-        adapter.adapter.dispose();
-        this.adapters.delete(oldest.cacheKey);
-      }
-    }
+    if (!oldest) return;
+
+    logger.debug("[ProxyFSAdapterManager] Evicting LRU adapter", { cacheKey: oldest.cacheKey });
+
+    const adapter = this.adapters.get(oldest.cacheKey);
+    if (!adapter) return;
+
+    adapter.adapter.dispose();
+    this.adapters.delete(oldest.cacheKey);
   }
 
   private cleanupIdleAdapters(): void {
@@ -437,13 +432,13 @@ export class ProxyFSAdapterManager {
     for (const cacheKey of toRemove) {
       logger.debug("[ProxyFSAdapterManager] Removing idle adapter", { cacheKey });
       const adapter = this.adapters.get(cacheKey);
-      if (adapter) {
-        adapter.adapter.dispose();
-        this.adapters.delete(cacheKey);
-      }
+      if (!adapter) continue;
+
+      adapter.adapter.dispose();
+      this.adapters.delete(cacheKey);
     }
 
-    if (toRemove.length > 0) {
+    if (toRemove.length) {
       logger.debug("[ProxyFSAdapterManager] Cleanup complete", {
         removed: toRemove.length,
         remaining: this.adapters.size,
@@ -473,10 +468,7 @@ export class ProxyFSAdapterManager {
       stats[cacheKey] = adapter.adapter.getCacheStats();
     }
 
-    return {
-      adapters: this.adapters.size,
-      stats,
-    };
+    return { adapters: this.adapters.size, stats };
   }
 
   dispose(): void {

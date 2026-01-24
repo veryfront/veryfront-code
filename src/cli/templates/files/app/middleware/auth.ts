@@ -1,9 +1,15 @@
 import { verifySession } from "../lib/auth.ts";
 
-export async function requireAuth(request: Request) {
+export async function requireAuth(
+  request: Request
+): Promise<
+  | { ok: true; session: Awaited<ReturnType<typeof verifySession>> }
+  | { ok: false; response: Response }
+> {
   const cookie = request.headers.get("cookie");
-  const token = cookie?.split("; ")
-    .find(row => row.startsWith("session="))
+  const token = cookie
+    ?.split("; ")
+    .find((row) => row.startsWith("session="))
     ?.split("=")[1];
 
   if (!token) {
@@ -20,15 +26,9 @@ export async function requireAuth(request: Request) {
   if (!session) {
     return {
       ok: false,
-      response: Response.json(
-        { error: "Invalid session" },
-        { status: 401 }
-      ),
+      response: Response.json({ error: "Invalid session" }, { status: 401 }),
     };
   }
 
-  return {
-    ok: true,
-    session,
-  };
+  return { ok: true, session };
 }

@@ -2,11 +2,6 @@ import { getAccessToken } from "./token-store.ts";
 
 const GITLAB_BASE_URL = "https://gitlab.com/api/v4";
 
-interface GitLabResponse<T> {
-  data?: T;
-  headers?: Record<string, string>;
-}
-
 export interface GitLabProject {
   id: number;
   name: string;
@@ -105,10 +100,16 @@ export interface GitLabUser {
   web_url: string;
 }
 
-async function gitlabFetch<T>(
-  endpoint: string,
-  options: RequestInit = {},
-): Promise<T> {
+function encodeProjectId(projectId: number | string): number | string {
+  return typeof projectId === "string" ? encodeURIComponent(projectId) : projectId;
+}
+
+function buildQuery(params: URLSearchParams): string {
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+async function gitlabFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = await getAccessToken();
   if (!token) {
     throw new Error("Not authenticated with GitLab. Please connect your account.");
@@ -117,20 +118,23 @@ async function gitlabFetch<T>(
   const response = await fetch(`${GITLAB_BASE_URL}${endpoint}`, {
     ...options,
     headers: {
-      "Authorization": `Bearer ${token}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
       ...options.headers,
     },
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(
-      `GitLab API error: ${response.status} ${error.message || error.error || response.statusText}`,
-    );
+    const error = await response.json().catch(() => ({} as Record<string, unknown>));
+    const message =
+      (error as { message?: string; error?: string }).message ??
+      (error as { message?: string; error?: string }).error ??
+      response.statusText;
+
+    throw new Error(`GitLab API error: ${response.status} ${message}`);
   }
 
-  return response.json();
+  return response.json() as Promise<T>;
 }
 
 export function getCurrentUser(): Promise<GitLabUser> {
@@ -146,29 +150,17 @@ export function listProjects(options?: {
 }): Promise<GitLabProject[]> {
   const params = new URLSearchParams();
 
-  if (options?.membership !== false) {
-    params.set("membership", "true");
-  }
-  if (options?.search) {
-    params.set("search", options.search);
-  }
-  if (options?.orderBy) {
-    params.set("order_by", options.orderBy);
-  }
-  if (options?.sort) {
-    params.set("sort", options.sort);
-  }
-  if (options?.perPage) {
-    params.set("per_page", options.perPage.toString());
-  }
+  if (options?.membership !== false) params.set("membership", "true");
+  if (options?.search) params.set("search", options.search);
+  if (options?.orderBy) params.set("order_by", options.orderBy);
+  if (options?.sort) params.set("sort", options.sort);
+  if (options?.perPage) params.set("per_page", options.perPage.toString());
 
-  const query = params.toString();
-  return gitlabFetch<GitLabProject[]>(`/projects${query ? `?${query}` : ""}`);
+  return gitlabFetch<GitLabProject[]>(`/projects${buildQuery(params)}`);
 }
 
 export function getProject(projectId: number | string): Promise<GitLabProject> {
-  const encodedId = typeof projectId === "string" ? encodeURIComponent(projectId) : projectId;
-  return gitlabFetch<GitLabProject>(`/projects/${encodedId}`);
+  return gitlabFetch<GitLabProject>(`/projects/${encodeProjectId(projectId)}`);
 }
 
 export function searchIssues(options: {
@@ -181,40 +173,21 @@ export function searchIssues(options: {
 }): Promise<GitLabIssue[]> {
   const params = new URLSearchParams();
 
-  if (options.scope) {
-    params.set("scope", options.scope);
-  }
-  if (options.state) {
-    params.set("state", options.state);
-  }
-  if (options.labels && options.labels.length > 0) {
-    params.set("labels", options.labels.join(","));
-  }
-  if (options.search) {
-    params.set("search", options.search);
-  }
-  if (options.perPage) {
-    params.set("per_page", options.perPage.toString());
-  }
+  if (options.scope) params.set("scope", options.scope);
+  if (options.state) params.set("state", options.state);
+  if (options.labels?.length) params.set("labels", options.labels.join(","));
+  if (options.search) params.set("search", options.search);
+  if (options.perPage) params.set("per_page", options.perPage.toString());
 
-  const query = params.toString();
+  const base = options.projectId
+    ? `/projects/${encodeProjectId(options.projectId)}/issues`
+    : "/issues";
 
-  if (options.projectId) {
-    const encodedId = typeof options.projectId === "string"
-      ? encodeURIComponent(options.projectId)
-      : options.projectId;
-    return gitlabFetch<GitLabIssue[]>(`/projects/${encodedId}/issues${query ? `?${query}` : ""}`);
-  }
-
-  return gitlabFetch<GitLabIssue[]>(`/issues${query ? `?${query}` : ""}`);
+  return gitlabFetch<GitLabIssue[]>(`${base}${buildQuery(params)}`);
 }
 
-export function getIssue(
-  projectId: number | string,
-  issueIid: number,
-): Promise<GitLabIssue> {
-  const encodedId = typeof projectId === "string" ? encodeURIComponent(projectId) : projectId;
-  return gitlabFetch<GitLabIssue>(`/projects/${encodedId}/issues/${issueIid}`);
+export function getIssue(projectId: number | string, issueIid: number): Promise<GitLabIssue> {
+  return gitlabFetch<GitLabIssue>(`/projects/${encodeProjectId(projectId)}/issues/${issueIid}`);
 }
 
 export function createIssue(
@@ -228,29 +201,15 @@ export function createIssue(
     dueDate?: string;
   },
 ): Promise<GitLabIssue> {
-  const encodedId = typeof projectId === "string" ? encodeURIComponent(projectId) : projectId;
+  const body: Record<string, unknown> = { title: options.title };
 
-  const body: Record<string, unknown> = {
-    title: options.title,
-  };
+  if (options.description) body.description = options.description;
+  if (options.labels?.length) body.labels = options.labels.join(",");
+  if (options.assigneeIds?.length) body.assignee_ids = options.assigneeIds;
+  if (options.milestoneId) body.milestone_id = options.milestoneId;
+  if (options.dueDate) body.due_date = options.dueDate;
 
-  if (options.description) {
-    body.description = options.description;
-  }
-  if (options.labels && options.labels.length > 0) {
-    body.labels = options.labels.join(",");
-  }
-  if (options.assigneeIds && options.assigneeIds.length > 0) {
-    body.assignee_ids = options.assigneeIds;
-  }
-  if (options.milestoneId) {
-    body.milestone_id = options.milestoneId;
-  }
-  if (options.dueDate) {
-    body.due_date = options.dueDate;
-  }
-
-  return gitlabFetch<GitLabIssue>(`/projects/${encodedId}/issues`, {
+  return gitlabFetch<GitLabIssue>(`/projects/${encodeProjectId(projectId)}/issues`, {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -267,27 +226,15 @@ export function updateIssue(
     assigneeIds?: number[];
   },
 ): Promise<GitLabIssue> {
-  const encodedId = typeof projectId === "string" ? encodeURIComponent(projectId) : projectId;
-
   const body: Record<string, unknown> = {};
 
-  if (options.title) {
-    body.title = options.title;
-  }
-  if (options.description !== undefined) {
-    body.description = options.description;
-  }
-  if (options.state) {
-    body.state_event = options.state === "closed" ? "close" : "reopen";
-  }
-  if (options.labels) {
-    body.labels = options.labels.join(",");
-  }
-  if (options.assigneeIds) {
-    body.assignee_ids = options.assigneeIds;
-  }
+  if (options.title) body.title = options.title;
+  if (options.description !== undefined) body.description = options.description;
+  if (options.state) body.state_event = options.state === "closed" ? "close" : "reopen";
+  if (options.labels) body.labels = options.labels.join(",");
+  if (options.assigneeIds) body.assignee_ids = options.assigneeIds;
 
-  return gitlabFetch<GitLabIssue>(`/projects/${encodedId}/issues/${issueIid}`, {
+  return gitlabFetch<GitLabIssue>(`/projects/${encodeProjectId(projectId)}/issues/${issueIid}`, {
     method: "PUT",
     body: JSON.stringify(body),
   });
@@ -302,45 +249,30 @@ export function listMergeRequests(options?: {
 }): Promise<GitLabMergeRequest[]> {
   const params = new URLSearchParams();
 
-  if (options?.scope) {
-    params.set("scope", options.scope);
-  }
-  if (options?.state) {
-    params.set("state", options.state);
-  }
-  if (options?.labels && options.labels.length > 0) {
-    params.set("labels", options.labels.join(","));
-  }
-  if (options?.perPage) {
-    params.set("per_page", options.perPage.toString());
-  }
+  if (options?.scope) params.set("scope", options.scope);
+  if (options?.state) params.set("state", options.state);
+  if (options?.labels?.length) params.set("labels", options.labels.join(","));
+  if (options?.perPage) params.set("per_page", options.perPage.toString());
 
-  const query = params.toString();
+  const base = options?.projectId
+    ? `/projects/${encodeProjectId(options.projectId)}/merge_requests`
+    : "/merge_requests";
 
-  if (options?.projectId) {
-    const encodedId = typeof options.projectId === "string"
-      ? encodeURIComponent(options.projectId)
-      : options.projectId;
-    return gitlabFetch<GitLabMergeRequest[]>(
-      `/projects/${encodedId}/merge_requests${query ? `?${query}` : ""}`,
-    );
-  }
-
-  return gitlabFetch<GitLabMergeRequest[]>(`/merge_requests${query ? `?${query}` : ""}`);
+  return gitlabFetch<GitLabMergeRequest[]>(`${base}${buildQuery(params)}`);
 }
 
 export function getMergeRequest(
   projectId: number | string,
   mrIid: number,
 ): Promise<GitLabMergeRequest> {
-  const encodedId = typeof projectId === "string" ? encodeURIComponent(projectId) : projectId;
-  return gitlabFetch<GitLabMergeRequest>(`/projects/${encodedId}/merge_requests/${mrIid}`);
+  return gitlabFetch<GitLabMergeRequest>(
+    `/projects/${encodeProjectId(projectId)}/merge_requests/${mrIid}`,
+  );
 }
 
-// Helper function to format issue for display
 export function formatIssueForDisplay(issue: GitLabIssue): string {
   const assignees = issue.assignees.map((a) => `@${a.username}`).join(", ");
-  const labels = issue.labels.length > 0 ? `[${issue.labels.join(", ")}]` : "";
+  const labels = issue.labels.length ? `[${issue.labels.join(", ")}]` : "";
 
   return `#${issue.iid}: ${issue.title} ${labels}
 State: ${issue.state}
@@ -349,11 +281,10 @@ Created: ${new Date(issue.created_at).toLocaleDateString()}
 URL: ${issue.web_url}`;
 }
 
-// Helper function to format merge request for display
 export function formatMergeRequestForDisplay(mr: GitLabMergeRequest): string {
   const assignees = mr.assignees.map((a) => `@${a.username}`).join(", ");
   const reviewers = mr.reviewers.map((r) => `@${r.username}`).join(", ");
-  const labels = mr.labels.length > 0 ? `[${mr.labels.join(", ")}]` : "";
+  const labels = mr.labels.length ? `[${mr.labels.join(", ")}]` : "";
 
   return `!${mr.iid}: ${mr.title} ${labels}
 State: ${mr.state}${mr.draft ? " (Draft)" : ""}

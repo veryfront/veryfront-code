@@ -8,26 +8,19 @@ const loginSchema = z.object({
   password: z.string().min(8),
 });
 
-export async function POST(request: Request) {
+export async function POST(request: Request): Promise<Response> {
   try {
     const body = await request.json();
     const { email, password } = loginSchema.parse(body);
 
-    // Validate credentials (replace with real DB lookup)
     const user = await validatePassword(email, password);
     if (!user) {
-      return Response.json(
-        { error: "Invalid credentials" },
-        { status: 401 }
-      );
+      return Response.json({ error: "Invalid credentials" }, { status: 401 });
     }
 
-    // Create session
     const session = await createSession(user);
 
-    // In production, ensure Secure flag is set for HTTPS-only transmission
-    const isProduction = getEnv("NODE_ENV") === "production";
-    const secureFlag = isProduction ? "; Secure" : "";
+    const secureFlag = getEnv("NODE_ENV") === "production" ? "; Secure" : "";
 
     return Response.json(
       { user, token: session.token },
@@ -45,9 +38,6 @@ export async function POST(request: Request) {
       );
     }
 
-    return Response.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    return Response.json({ error: "Internal server error" }, { status: 500 });
   }
 }

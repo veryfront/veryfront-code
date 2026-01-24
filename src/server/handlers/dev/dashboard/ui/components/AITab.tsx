@@ -46,38 +46,38 @@ interface AITabProps {
   agents: Agent[];
 }
 
-export function AITab({ tools, resources, prompts, agents }: AITabProps) {
+export function AITab({ tools, resources, prompts, agents }: AITabProps): React.ReactElement {
   const [subTab, setSubTab] = useState<SubTab>("mcp");
+
   const [providers, setProviders] = useState<Provider[]>([]);
   const [providersLoading, setProvidersLoading] = useState(true);
   const [providersError, setProvidersError] = useState<string | null>(null);
+
   const [workflows, setWorkflows] = useState<WorkflowMetadata[]>([]);
   const [workflowsLoading, setWorkflowsLoading] = useState(true);
   const [workflowsError, setWorkflowsError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Fetch providers
     fetch("/_dev/api/infrastructure")
       .then((res) => res.json())
       .then((d) => {
-        setProviders(d.providers || []);
+        setProviders(d.providers ?? []);
         setProvidersError(null);
       })
-      .catch((e) => setProvidersError((e as Error).message))
+      .catch((e: unknown) => setProvidersError((e as Error).message))
       .finally(() => setProvidersLoading(false));
 
-    // Fetch workflows
     fetch("/_dev/api/workflows")
       .then((res) => res.json())
       .then((d) => {
-        setWorkflows(d.workflows || []);
+        setWorkflows(d.workflows ?? []);
         setWorkflowsError(null);
       })
-      .catch((e) => setWorkflowsError((e as Error).message))
+      .catch((e: unknown) => setWorkflowsError((e as Error).message))
       .finally(() => setWorkflowsLoading(false));
   }, []);
 
-  function navigateToMCP(mcpSubTab: "tools" | "resources" | "prompts", itemId: string) {
+  function navigateToMCP(mcpSubTab: "tools" | "resources" | "prompts", itemId: string): void {
     setSubTab("mcp");
     globalThis.dispatchEvent(
       new CustomEvent("mcp-navigate", { detail: { subTab: mcpSubTab, itemId } }),
@@ -85,6 +85,7 @@ export function AITab({ tools, resources, prompts, agents }: AITabProps) {
   }
 
   const mcpCount = tools.length + resources.length + prompts.length;
+  const configuredProvidersCount = providers.filter((p) => p.configured).length;
 
   return (
     <div className="min-h-screen">
@@ -113,53 +114,33 @@ export function AITab({ tools, resources, prompts, agents }: AITabProps) {
             <TabButton
               active={subTab === "providers"}
               onClick={() => setSubTab("providers")}
-              label={`Providers (${providers.filter((p) => p.configured).length})`}
+              label={`Providers (${configuredProvidersCount})`}
             />
           </div>
         </div>
       </div>
 
       {subTab === "mcp" && <MCPTab tools={tools} resources={resources} prompts={prompts} />}
+
       {subTab === "agents" && (
-        <AgentsTab
+        <AgentsTab agents={agents} tools={tools} onNavigateToMCP={navigateToMCP} />
+      )}
+
+      {subTab === "workflows" && (
+        <WorkflowsSection
+          loading={workflowsLoading}
+          error={workflowsError}
+          workflows={workflows}
           agents={agents}
           tools={tools}
-          onNavigateToMCP={navigateToMCP}
+          onNavigateToTool={(toolId) => navigateToMCP("tools", toolId)}
+          onNavigateToAgent={() => {
+            setSubTab("agents");
+            // AgentsTab will need to handle this
+          }}
         />
       )}
-      {subTab === "workflows" && (
-        workflowsLoading
-          ? (
-            <PageLayout title="" description="">
-              <Card>
-                <LoadingState message="Loading workflows..." />
-              </Card>
-            </PageLayout>
-          )
-          : workflowsError
-          ? (
-            <PageLayout title="" description="">
-              <Card>
-                <ErrorState error={workflowsError} />
-              </Card>
-            </PageLayout>
-          )
-          : (
-            <WorkflowsTab
-              workflows={workflows}
-              agents={agents}
-              tools={tools}
-              onNavigateToAgent={(_agentId) => {
-                setSubTab("agents");
-                // AgentsTab will need to handle this
-              }}
-              onNavigateToTool={(toolId) => {
-                setSubTab("mcp");
-                navigateToMCP("tools", toolId);
-              }}
-            />
-          )
-      )}
+
       {subTab === "providers" && (
         <ProvidersSection providers={providers} loading={providersLoading} error={providersError} />
       )}
@@ -175,7 +156,7 @@ function TabButton({
   active: boolean;
   onClick: () => void;
   label: string;
-}) {
+}): React.ReactElement {
   return (
     <button
       type="button"
@@ -189,6 +170,54 @@ function TabButton({
   );
 }
 
+function WorkflowsSection({
+  loading,
+  error,
+  workflows,
+  agents,
+  tools,
+  onNavigateToAgent,
+  onNavigateToTool,
+}: {
+  loading: boolean;
+  error: string | null;
+  workflows: WorkflowMetadata[];
+  agents: Agent[];
+  tools: Tool[];
+  onNavigateToAgent: (agentId: string) => void;
+  onNavigateToTool: (toolId: string) => void;
+}): React.ReactElement {
+  if (loading) {
+    return (
+      <PageLayout title="" description="">
+        <Card>
+          <LoadingState message="Loading workflows..." />
+        </Card>
+      </PageLayout>
+    );
+  }
+
+  if (error) {
+    return (
+      <PageLayout title="" description="">
+        <Card>
+          <ErrorState error={error} />
+        </Card>
+      </PageLayout>
+    );
+  }
+
+  return (
+    <WorkflowsTab
+      workflows={workflows}
+      agents={agents}
+      tools={tools}
+      onNavigateToAgent={onNavigateToAgent}
+      onNavigateToTool={onNavigateToTool}
+    />
+  );
+}
+
 function ProvidersSection({
   providers,
   loading,
@@ -197,7 +226,7 @@ function ProvidersSection({
   providers: Provider[];
   loading: boolean;
   error: string | null;
-}) {
+}): React.ReactElement {
   if (loading) {
     return (
       <PageLayout title="" description="">

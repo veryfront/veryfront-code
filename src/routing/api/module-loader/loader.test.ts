@@ -7,10 +7,6 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { env, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 
-/**
- * Minimal adapter stub that reads files from the real fs via compat,
- * and fails other operations (we don't exercise server/kv here).
- */
 const fs = createFileSystem();
 
 const adapter: RuntimeAdapter = {
@@ -33,12 +29,11 @@ const adapter: RuntimeAdapter = {
     exists: fs.exists.bind(fs),
     async *readDir(path: string) {
       for await (const entry of fs.readDir(path)) {
-        // Normalize to DirEntry shape
         yield {
           name: entry.name,
           isFile: entry.isFile,
           isDirectory: entry.isDirectory,
-          isSymlink: "isSymlink" in entry ? (entry as any).isSymlink : false,
+          isSymlink: "isSymlink" in entry ? (entry as { isSymlink: boolean }).isSymlink : false,
         };
       }
     },
@@ -47,7 +42,6 @@ const adapter: RuntimeAdapter = {
     remove: fs.remove.bind(fs),
     makeTempDir: (prefix: string) => fs.makeTempDir({ prefix }),
     watch() {
-      // Minimal watcher stub for tests
       return {
         async *[Symbol.asyncIterator]() {},
         close() {},
@@ -70,8 +64,7 @@ const adapter: RuntimeAdapter = {
       throw new Error("not implemented");
     },
   },
-  // deno-lint-ignore require-await
-  async serve() {
+  serve() {
     throw new Error("not implemented");
   },
 };
@@ -81,10 +74,7 @@ describe("loadHandlerModule", () => {
     const tmpDir = await makeTempDir();
     const modulePath = join(tmpDir, "handler.ts");
 
-    await fs.writeTextFile(
-      modulePath,
-      `export const GET = () => new Response("ok");`,
-    );
+    await fs.writeTextFile(modulePath, `export const GET = () => new Response("ok");`);
 
     const route = await loadHandlerModule({
       projectDir: tmpDir,

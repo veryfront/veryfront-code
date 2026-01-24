@@ -18,42 +18,45 @@ import {
 } from "./colors.ts";
 
 describe("colors", () => {
-  // Force TrueColor mode for testing
   let originalForceColor: string | undefined;
   let originalNoColor: string | undefined;
+
   beforeAll(() => {
     originalForceColor = getEnv("FORCE_COLOR");
     originalNoColor = getEnv("NO_COLOR");
-    if (originalNoColor !== undefined) {
-      deleteEnv("NO_COLOR");
-    }
+
+    if (originalNoColor !== undefined) deleteEnv("NO_COLOR");
+
     setEnv("FORCE_COLOR", "3");
-    resetColorCache(); // Clear cache so new setting takes effect
+    resetColorCache();
   });
+
   afterAll(() => {
     if (originalForceColor !== undefined) {
       setEnv("FORCE_COLOR", originalForceColor);
     } else {
       deleteEnv("FORCE_COLOR");
     }
+
     if (originalNoColor !== undefined) {
       setEnv("NO_COLOR", originalNoColor);
     } else {
       deleteEnv("NO_COLOR");
     }
-    resetColorCache(); // Clear cache after tests
+
+    resetColorCache();
   });
+
   describe("brand color", () => {
     it("wraps text with ANSI escape codes", () => {
       const result = brand("test");
       assertStringIncludes(result, "test");
-      assertStringIncludes(result, "\x1b[38;2;0;163;244m"); // RGB(0,163,244) = #00A3F4
-      assertStringIncludes(result, "\x1b[0m"); // Reset
+      assertStringIncludes(result, "\x1b[38;2;0;163;244m");
+      assertStringIncludes(result, "\x1b[0m");
     });
 
     it("returns empty string for empty input", () => {
-      const result = brand("");
-      assertEquals(result, "\x1b[38;2;0;163;244m\x1b[0m");
+      assertEquals(brand(""), "\x1b[38;2;0;163;244m\x1b[0m");
     });
   });
 
@@ -61,37 +64,35 @@ describe("colors", () => {
     it("success applies green color", () => {
       const result = success("ok");
       assertStringIncludes(result, "ok");
-      assertStringIncludes(result, "\x1b[38;2;34;197;94m"); // Green
+      assertStringIncludes(result, "\x1b[38;2;34;197;94m");
     });
 
     it("error applies red color", () => {
       const result = error("fail");
       assertStringIncludes(result, "fail");
-      assertStringIncludes(result, "\x1b[38;2;239;68;68m"); // Red
+      assertStringIncludes(result, "\x1b[38;2;239;68;68m");
     });
 
     it("warning applies yellow color", () => {
       const result = warning("warn");
       assertStringIncludes(result, "warn");
-      assertStringIncludes(result, "\x1b[38;2;234;179;8m"); // Yellow
+      assertStringIncludes(result, "\x1b[38;2;234;179;8m");
     });
 
     it("muted applies gray color", () => {
       const result = muted("dim");
       assertStringIncludes(result, "dim");
-      assertStringIncludes(result, "\x1b[38;2;113;113;122m"); // Gray
+      assertStringIncludes(result, "\x1b[38;2;113;113;122m");
     });
   });
 
   describe("text styles", () => {
     it("bold wraps with bold codes", () => {
-      const result = bold("strong");
-      assertEquals(result, "\x1b[1mstrong\x1b[0m");
+      assertEquals(bold("strong"), "\x1b[1mstrong\x1b[0m");
     });
 
     it("dim wraps with dim codes", () => {
-      const result = dim("faint");
-      assertEquals(result, "\x1b[2mfaint\x1b[0m");
+      assertEquals(dim("faint"), "\x1b[2mfaint\x1b[0m");
     });
   });
 

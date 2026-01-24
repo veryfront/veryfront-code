@@ -1,6 +1,22 @@
 import { tool } from "veryfront/tool";
 import { z } from "zod";
-import { createTicket, TicketStatus, TicketPriority } from "../../lib/freshdesk-client.ts";
+import { createTicket, TicketPriority, TicketStatus } from "../../lib/freshdesk-client.ts";
+
+const priorityMap = {
+  low: TicketPriority.LOW,
+  medium: TicketPriority.MEDIUM,
+  high: TicketPriority.HIGH,
+  urgent: TicketPriority.URGENT,
+} as const;
+
+const statusMap = {
+  open: TicketStatus.OPEN,
+  pending: TicketStatus.PENDING,
+} as const;
+
+function getKeyByValue<T extends Record<string, unknown>>(map: T, value: T[keyof T]): string {
+  return Object.keys(map).find((key) => map[key as keyof T] === value) ?? "unknown";
+}
 
 export default tool({
   id: "create-ticket",
@@ -13,10 +29,7 @@ export default tool({
       .enum(["low", "medium", "high", "urgent"])
       .default("medium")
       .describe("Priority level of the ticket"),
-    status: z
-      .enum(["open", "pending"])
-      .default("open")
-      .describe("Initial status of the ticket"),
+    status: z.enum(["open", "pending"]).default("open").describe("Initial status of the ticket"),
     type: z
       .string()
       .optional()
@@ -24,18 +37,6 @@ export default tool({
     tags: z.array(z.string()).optional().describe("Tags to add to the ticket"),
   }),
   async execute({ subject, description, email, priority, status, type, tags }) {
-    const priorityMap = {
-      low: TicketPriority.LOW,
-      medium: TicketPriority.MEDIUM,
-      high: TicketPriority.HIGH,
-      urgent: TicketPriority.URGENT,
-    };
-
-    const statusMap = {
-      open: TicketStatus.OPEN,
-      pending: TicketStatus.PENDING,
-    };
-
     const ticket = await createTicket({
       subject,
       description,
@@ -51,8 +52,8 @@ export default tool({
       ticket: {
         id: ticket.id,
         subject: ticket.subject,
-        status: Object.keys(statusMap).find((key) => statusMap[key as keyof typeof statusMap] === ticket.status) || "unknown",
-        priority: Object.keys(priorityMap).find((key) => priorityMap[key as keyof typeof priorityMap] === ticket.priority) || "unknown",
+        status: getKeyByValue(statusMap, ticket.status),
+        priority: getKeyByValue(priorityMap, ticket.priority),
         createdAt: ticket.created_at,
       },
     };

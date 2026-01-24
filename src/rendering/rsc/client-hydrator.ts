@@ -5,36 +5,35 @@ import { CompilationError, FileSystemError, NetworkError } from "#veryfront/erro
 import { createErrorDisplay } from "#veryfront/security/client/html-sanitizer.ts";
 import type { RSCHydratorOptions } from "./types.ts";
 
+interface WindowWithVeryfront extends Window {
+  __VERYFRONT_DEV__?: boolean;
+  __RSC_AUTO_HYDRATE__?: boolean;
+}
+
 export class RSCHydrator {
-  private componentCache: Map<string, React.ComponentType<any>> = new Map();
+  private componentCache = new Map<string, React.ComponentType<any>>();
   private manifestUrl: string;
   private manifest: Record<string, string> | null = null;
   private onError?: (error: Error) => void;
 
   constructor(options: RSCHydratorOptions = {}) {
-    this.manifestUrl = options.manifestUrl || "/_veryfront/rsc/manifest";
+    this.manifestUrl = options.manifestUrl ?? "/_veryfront/rsc/manifest";
     this.onError = options.onError;
   }
 
   async hydrate(): Promise<void> {
     try {
-      // Load manifest first
       await this.loadManifest();
 
-      // Find all RSC placeholders
       const placeholders = document.querySelectorAll("[data-rsc-component]");
-
       rscLogger.info(`Found ${placeholders.length} components to hydrate`);
 
-      // Hydrate each placeholder
-      const hydrationPromises: Promise<void>[] = [];
-
-      for (const placeholder of placeholders) {
-        hydrationPromises.push(this.hydratePlaceholder(placeholder as HTMLElement));
-      }
-
-      // Wait for all hydrations to complete
-      await Promise.all(hydrationPromises);
+      await Promise.all(
+        Array.from(
+          placeholders,
+          (placeholder) => this.hydratePlaceholder(placeholder as HTMLElement),
+        ),
+      );
 
       rscLogger.info("Hydration complete");
     } catch (error) {
@@ -55,58 +54,43 @@ export class RSCHydrator {
     }
 
     try {
-      // Parse props
       const props = propsJson ? JSON.parse(propsJson) : {};
-
-      // Load the client component
       const Component = await this.loadClientComponent(componentName);
-
-      // Create React element
       const reactElement = React.createElement(Component, props);
 
-      // Check if element has children (for hydration)
       if (element.innerHTML.trim()) {
-        // Hydrate existing content - hydrateRoot accepts Element, not just HTMLElement
-        // identifierPrefix must match SSR to prevent useId() mismatch
-        // Suppress recoverable hydration errors - common with animation libraries
         rscLogger.debug(`Hydrating ${componentName} #${instanceId}`);
         hydrateRoot(element, reactElement, {
           identifierPrefix: "vf",
-          onRecoverableError: () => {}, // Silently ignore hydration mismatches
+          onRecoverableError: () => {},
         });
-      } else {
-        // Render into empty container
-        rscLogger.debug(`Rendering ${componentName} #${instanceId}`);
-        const root = createRoot(element);
-        root.render(reactElement);
+        return;
       }
+
+      rscLogger.debug(`Rendering ${componentName} #${instanceId}`);
+      createRoot(element).render(reactElement);
     } catch (error) {
       rscLogger.error(`Failed to hydrate component ${componentName}:`, error);
       this.onError?.(error as Error);
 
-      // Show error in development (using safe DOM APIs to prevent XSS)
-      if (this.isDevelopment()) {
-        element.textContent = ""; // Clear safely
-        element.appendChild(
-          createErrorDisplay({
-            title: "RSC Hydration Error",
-            message: `Component: ${componentName}`,
-            details: (error as Error).message,
-          }),
-        );
-      }
+      if (!this.isDevelopment()) return;
+
+      element.textContent = "";
+      element.appendChild(
+        createErrorDisplay({
+          title: "RSC Hydration Error",
+          message: `Component: ${componentName}`,
+          details: (error as Error).message,
+        }),
+      );
     }
   }
 
   private async loadClientComponent(name: string): Promise<React.ComponentType<any>> {
-    // Check cache first
-    if (this.componentCache.has(name)) {
-      return this.componentCache.get(name)!;
-    }
+    const cached = this.componentCache.get(name);
+    if (cached) return cached;
 
-    // Get component path from manifest
     const componentPath = await this.getComponentPath(name);
-
     if (!componentPath) {
       throw new FileSystemError(`Client component not found in manifest`, {
         name,
@@ -115,11 +99,8 @@ export class RSCHydrator {
     }
 
     try {
-      // Dynamic import
       rscLogger.debug(`Loading component ${name} from ${componentPath}`);
       const module = await import(componentPath);
-
-      // Get the component (support both default and named exports)
       const Component = module.default || module[name];
 
       if (!Component) {
@@ -129,7 +110,6 @@ export class RSCHydrator {
         });
       }
 
-      // Validate it's a valid React component
       if (typeof Component !== "function" && typeof Component !== "object") {
         throw new CompilationError(`Invalid component type for ${name}`, {
           type: typeof Component,
@@ -137,25 +117,18 @@ export class RSCHydrator {
         });
       }
 
-      // Cache for future use
       this.componentCache.set(name, Component);
-
       return Component;
     } catch (error) {
       rscLogger.error(`Failed to load component ${name}:`, error);
-      if (error instanceof CompilationError || error instanceof FileSystemError) {
-        throw error;
-      }
+      if (error instanceof CompilationError || error instanceof FileSystemError) throw error;
       throw new CompilationError(`Failed to load client component ${name}`, { cause: error, name });
     }
   }
 
   private async getComponentPath(name: string): Promise<string | null> {
-    if (!this.manifest) {
-      await this.loadManifest();
-    }
-
-    return this.manifest?.[name] || null;
+    if (!this.manifest) await this.loadManifest();
+    return this.manifest?.[name] ?? null;
   }
 
   private async loadManifest(): Promise<void> {
@@ -172,57 +145,46 @@ export class RSCHydrator {
       }
 
       const data = await response.json();
-
-      // The manifest should be a map of component names to paths
       this.manifest = data.components || data;
 
       rscLogger.debug("Loaded manifest:", this.manifest);
     } catch (error) {
       rscLogger.error("Failed to load manifest:", error);
 
-      // In development, try to continue without manifest
-      if (this.isDevelopment()) {
-        rscLogger.warn("Continuing without manifest - will try direct imports");
-        this.manifest = {};
-      } else {
-        throw error;
-      }
+      if (!this.isDevelopment()) throw error;
+
+      rscLogger.warn("Continuing without manifest - will try direct imports");
+      this.manifest = {};
     }
   }
 
   private isDevelopment(): boolean {
-    // Type-safe access to window globals
-    interface WindowWithVeryfront extends Window {
-      __VERYFRONT_DEV__?: boolean;
-    }
     return !!(window as WindowWithVeryfront).__VERYFRONT_DEV__;
   }
 }
 
 export function hydrateRSC(options?: RSCHydratorOptions): Promise<void> {
-  const hydrator = new RSCHydrator(options);
-  return hydrator.hydrate();
+  return new RSCHydrator(options).hydrate();
+}
+
+function autoHydrate(): void {
+  const shouldAutoHydrate = (window as WindowWithVeryfront).__RSC_AUTO_HYDRATE__ !== false;
+  if (!shouldAutoHydrate) return;
+
+  const run = (): void => {
+    hydrateRSC().catch((error) => {
+      rscLogger.error("Auto-hydration failed:", error);
+    });
+  };
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", run);
+    return;
+  }
+
+  run();
 }
 
 if (typeof window !== "undefined") {
-  // Type-safe access to window globals for auto-hydrate flag
-  interface WindowWithAutoHydrate extends Window {
-    __RSC_AUTO_HYDRATE__?: boolean;
-  }
-  const shouldAutoHydrate = (window as WindowWithAutoHydrate).__RSC_AUTO_HYDRATE__ !== false;
-
-  if (shouldAutoHydrate) {
-    if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", () => {
-        hydrateRSC().catch((error) => {
-          rscLogger.error("Auto-hydration failed:", error);
-        });
-      });
-    } else {
-      // DOM already loaded
-      hydrateRSC().catch((error) => {
-        rscLogger.error("Auto-hydration failed:", error);
-      });
-    }
-  }
+  autoHydrate();
 }

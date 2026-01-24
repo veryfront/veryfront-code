@@ -1,7 +1,7 @@
-import { verifySession, getSession } from "../../../../lib/auth.ts";
+import { verifySession } from "../../../../lib/auth.ts";
 import { getUser } from "../../../../lib/users.ts";
 
-export async function GET(request: Request) {
+export async function GET(request: Request): Promise<Response> {
   try {
     const cookieHeader = request.headers.get("cookie");
     if (!cookieHeader) {
@@ -10,7 +10,8 @@ export async function GET(request: Request) {
 
     const sessionToken = cookieHeader
       .split(";")
-      .find((c) => c.trim().startsWith("session="))
+      .map((c) => c.trim())
+      .find((c) => c.startsWith("session="))
       ?.split("=")[1];
 
     if (!sessionToken) {

@@ -14,11 +14,10 @@ export function createWorker(
   setup: (
     env: CloudflareEnv,
   ) => import("#veryfront/middleware/core/pipeline/index.ts").MiddlewarePipeline,
-) {
-  return {
-    fetch(request: Request, env: CloudflareEnv, ctx: ExecutionContext) {
-      const pipeline = setup(env);
-      return pipeline.execute(request, env, ctx);
-    },
-  };
+): { fetch(request: Request, env: CloudflareEnv, ctx: ExecutionContext): unknown } {
+  function fetch(request: Request, env: CloudflareEnv, ctx: ExecutionContext): unknown {
+    return setup(env).execute(request, env, ctx);
+  }
+
+  return { fetch };
 }

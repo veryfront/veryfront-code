@@ -5,5 +5,3 @@
  *
  * @module rendering/shared/constants
  */
-
-// Cache constants were removed during refactoring

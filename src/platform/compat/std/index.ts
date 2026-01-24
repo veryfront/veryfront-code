@@ -7,7 +7,6 @@
  * @module
  */
 
-// Re-export all modules
 export * as expect from "./expect.ts";
 export * as fs from "./fs.ts";
 export * as path from "./path.ts";

@@ -46,30 +46,28 @@ export class EvictionManager<TEntry extends EvictableEntry> {
       this.evictLRU(cache, lruTracker);
     }
 
-    let memoryUsed = Array.from(cache.values()).reduce((sum, entry) => sum + entry.size, 0);
+    let memoryUsed = 0;
+    for (const entry of cache.values()) {
+      memoryUsed += entry.size;
+    }
 
     while (memoryUsed + newEntrySize > maxMemory && cache.size > 0) {
-      const evictedSize = this.evictLRU(cache, lruTracker);
-      memoryUsed -= evictedSize;
+      memoryUsed -= this.evictLRU(cache, lruTracker);
     }
   }
 
   evictLRU(cache: Map<string, TEntry>, lruTracker: LRUTrackerInterface): number {
     const keyToEvict = lruTracker.getLRU();
-
-    if (!keyToEvict) {
-      return 0;
-    }
+    if (!keyToEvict) return 0;
 
     const entry = cache.get(keyToEvict);
-    const size = entry?.size || 0;
-    const value = entry?.value;
+    const size = entry?.size ?? 0;
 
     cache.delete(keyToEvict);
     lruTracker.remove(keyToEvict);
 
-    if (this.onEvict && entry) {
-      this.onEvict(keyToEvict, value);
+    if (entry) {
+      this.onEvict?.(keyToEvict, entry.value);
     }
 
     return size;
@@ -81,23 +79,19 @@ export class EvictionManager<TEntry extends EvictableEntry> {
     tagIndex: Map<string, Set<string>>,
     currentSize: number,
   ): number {
-    const tail = listManager.getTail();
-    if (!tail) return currentSize;
+    const node = listManager.getTail();
+    if (!node) return currentSize;
 
-    const node = tail;
     listManager.removeNode(node);
     store.delete(node.key);
-    const newSize = currentSize - node.entry.size;
 
     if (node.entry.tags) {
       this.cleanupTags(node.entry.tags, node.key, tagIndex);
     }
 
-    if (this.onEvict) {
-      this.onEvict(node.key, node.entry.value);
-    }
+    this.onEvict?.(node.key, node.entry.value);
 
-    return newSize;
+    return currentSize - node.entry.size;
   }
 
   enforceMemoryLimits<T extends TEntry>(
@@ -109,20 +103,23 @@ export class EvictionManager<TEntry extends EvictableEntry> {
     maxSizeBytes: number,
   ): number {
     let size = currentSize;
-    while ((store.size > maxEntries || size > maxSizeBytes) && listManager.getTail()) {
+
+    while (store.size > maxEntries || size > maxSizeBytes) {
+      if (!listManager.getTail()) break;
       size = this.evictLRUFromList(listManager, store, tagIndex, size);
     }
+
     return size;
   }
 
   private cleanupTags(tags: string[], key: string, tagIndex: Map<string, Set<string>>): void {
     for (const tag of tags) {
       const set = tagIndex.get(tag);
-      if (set) {
-        set.delete(key);
-        if (set.size === 0) {
-          tagIndex.delete(tag);
-        }
+      if (!set) continue;
+
+      set.delete(key);
+      if (set.size === 0) {
+        tagIndex.delete(tag);
       }
     }
   }
@@ -132,11 +129,11 @@ export class EvictionManager<TEntry extends EvictableEntry> {
     let evicted = 0;
 
     for (const [key, entry] of cache.entries()) {
-      if (this.isExpired(entry, ttl, now)) {
-        cache.delete(key);
-        lruTracker.remove(key);
-        evicted++;
-      }
+      if (!this.isExpired(entry, ttl, now)) continue;
+
+      cache.delete(key);
+      lruTracker.remove(key);
+      evicted++;
     }
 
     return evicted;
@@ -148,8 +145,7 @@ export class EvictionManager<TEntry extends EvictableEntry> {
     }
 
     if (typeof entry.timestamp === "number" && typeof ttl === "number") {
-      const age = now - entry.timestamp;
-      return age > ttl;
+      return now - entry.timestamp > ttl;
     }
 
     return false;

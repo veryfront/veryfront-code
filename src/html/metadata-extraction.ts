@@ -15,7 +15,7 @@ export function extractHTMLMetadata(
   pageFrontmatter: MDXFrontmatter,
   layoutFrontmatter?: MDXFrontmatter,
 ): HTMLMetadata {
-  const merged = { ...(layoutFrontmatter || {}), ...pageFrontmatter };
+  const merged = { ...(layoutFrontmatter ?? {}), ...pageFrontmatter };
 
   if (merged.metadata && typeof merged.metadata === "object") {
     Object.assign(merged, merged.metadata);
@@ -33,15 +33,15 @@ export function extractHTMLMetadata(
     styles: Array.isArray(merged.styles) ? merged.styles : [],
   };
 
-  if (merged.og) {
+  if (merged.og && metadata.meta) {
     for (const [key, value] of Object.entries(merged.og)) {
-      metadata.meta?.push({ property: `og:${key}`, content: String(value) });
+      metadata.meta.push({ property: `og:${key}`, content: String(value) });
     }
   }
 
-  if (merged.twitter) {
+  if (merged.twitter && metadata.meta) {
     for (const [key, value] of Object.entries(merged.twitter)) {
-      metadata.meta?.push({ name: `twitter:${key}`, content: String(value) });
+      metadata.meta.push({ name: `twitter:${key}`, content: String(value) });
     }
   }
 

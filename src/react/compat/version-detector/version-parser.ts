@@ -2,18 +2,25 @@ import type { ParsedVersion } from "./types.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 export function parseVersion(versionString: string): ParsedVersion {
-  const match = versionString.match(/^(\d+)\.(\d+)\.(\d+)/);
+  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(versionString);
+
   if (!match) {
-    throw toError(createError({
-      type: "config",
-      message: `Invalid React version format: ${versionString}`,
-    }));
+    throw toError(
+      createError({
+        type: "config",
+        message: `Invalid React version format: ${versionString}`,
+      }),
+    );
   }
 
+  const major = match[1]!;
+  const minor = match[2]!;
+  const patch = match[3]!;
+
   return {
-    major: parseInt(match[1]!, 10),
-    minor: parseInt(match[2]!, 10),
-    patch: parseInt(match[3]!, 10),
+    major: parseInt(major, 10),
+    minor: parseInt(minor, 10),
+    patch: parseInt(patch, 10),
   };
 }
 

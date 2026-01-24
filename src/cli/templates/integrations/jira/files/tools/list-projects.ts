@@ -19,9 +19,9 @@ export default tool({
         projectType: project.projectTypeKey,
         lead: project.lead
           ? {
-            displayName: project.lead.displayName,
-            accountId: project.lead.accountId,
-          }
+              displayName: project.lead.displayName,
+              accountId: project.lead.accountId,
+            }
           : null,
         avatarUrl: project.avatarUrls?.["48x48"],
       })),

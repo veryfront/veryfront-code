@@ -9,30 +9,23 @@ export default tool({
   inputSchema: z.object({
     fileKey: z.string().describe("The file key (from the Figma URL)"),
     message: z.string().min(1).describe("The comment message to post"),
-    parentId: z.string().optional().describe(
-      "ID of parent comment to reply to (for threaded replies)",
-    ),
+    parentId: z
+      .string()
+      .optional()
+      .describe("ID of parent comment to reply to (for threaded replies)"),
     nodeId: z.string().optional().describe("ID of the Figma node to attach the comment to"),
-    x: z.number().optional().describe(
-      "X coordinate for comment placement (0-1, relative to canvas)",
-    ),
-    y: z.number().optional().describe(
-      "Y coordinate for comment placement (0-1, relative to canvas)",
-    ),
+    x: z.number().optional().describe("X coordinate for comment placement (0-1, relative to canvas)"),
+    y: z.number().optional().describe("Y coordinate for comment placement (0-1, relative to canvas)"),
   }),
   async execute({ fileKey, message, parentId, nodeId, x, y }) {
-    const clientMeta: {
-      x?: number;
-      y?: number;
-      node_id?: string[];
-    } = {};
-
-    if (x !== undefined) clientMeta.x = x;
-    if (y !== undefined) clientMeta.y = y;
-    if (nodeId) clientMeta.node_id = [nodeId];
+    const clientMeta: { x?: number; y?: number; node_id?: string[] } = {
+      ...(x !== undefined ? { x } : {}),
+      ...(y !== undefined ? { y } : {}),
+      ...(nodeId ? { node_id: [nodeId] } : {}),
+    };
 
     const comment = await postComment(fileKey, message, {
-      client_meta: Object.keys(clientMeta).length > 0 ? clientMeta : undefined,
+      client_meta: Object.keys(clientMeta).length ? clientMeta : undefined,
       parent_id: parentId,
     });
 
@@ -46,7 +39,7 @@ export default tool({
           avatar: comment.user.img_url,
         },
         createdAt: comment.created_at,
-        isReply: !!comment.parent_id,
+        isReply: Boolean(comment.parent_id),
         fileUrl: `https://www.figma.com/file/${fileKey}`,
       },
     };

@@ -1,7 +1,6 @@
 import { serverLogger as logger } from "#veryfront/utils";
 import { join } from "#veryfront/platform/compat/path/index.ts";
 import { handleErrorWithFallback } from "#veryfront/errors/index.ts";
-// Direct import from base.ts to avoid circular dependency through barrel
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 
@@ -12,38 +11,36 @@ export async function setupBuildDirectories(
 ): Promise<void> {
   logger.info("Setting up build directories...");
 
-  // Clean existing output directory
   await handleErrorWithFallback(
-    async () => await adapter.fs.remove(outputDir, { recursive: true }),
+    () => adapter.fs.remove(outputDir, { recursive: true }),
     undefined,
     logger,
   );
 
-  // Create directory structure if not a dry run
-  if (!dryRun) {
-    const fs = createFileSystem();
-    const dirs = [
-      outputDir,
-      join(outputDir, "_veryfront"),
-      join(outputDir, "_veryfront/chunks"),
-      join(outputDir, "_veryfront/data"),
-      join(outputDir, "assets"),
-    ];
+  if (dryRun) {
+    logger.info("Build directories ready");
+    return;
+  }
 
-    for (const dir of dirs) {
-      try {
-        await fs.mkdir(dir, { recursive: true });
-      } catch (error) {
-        if (
-          error &&
-          typeof error === "object" &&
-          "code" in error &&
-          (error as { code?: string }).code === "EEXIST"
-        ) {
-          continue;
-        }
-        throw error;
-      }
+  const fs = createFileSystem();
+  const dirs = [
+    outputDir,
+    join(outputDir, "_veryfront"),
+    join(outputDir, "_veryfront/chunks"),
+    join(outputDir, "_veryfront/data"),
+    join(outputDir, "assets"),
+  ];
+
+  for (const dir of dirs) {
+    try {
+      await fs.mkdir(dir, { recursive: true });
+    } catch (error) {
+      const code = error && typeof error === "object" && "code" in error
+        ? (error as { code?: string }).code
+        : undefined;
+
+      if (code === "EEXIST") continue;
+      throw error;
     }
   }
 

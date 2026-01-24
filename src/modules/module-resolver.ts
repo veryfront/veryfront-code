@@ -44,81 +44,90 @@ export class ModuleResolver {
   }
 
   resolve(specifier: string, referrer?: string): Promise<ResolvedModule | null> {
-    return withSpan("modules.resolver.resolve", async () => {
-      const cacheKey = buildModuleResolveCacheKey(specifier, referrer);
-      const cached = this.cache.get(cacheKey);
-      if (cached) {
-        return cached;
-      }
+    return withSpan(
+      "modules.resolver.resolve",
+      async () => {
+        const cacheKey = buildModuleResolveCacheKey(specifier, referrer);
+        const cached = this.cache.get(cacheKey);
+        if (cached) return cached;
 
-      logger.debug(`Resolving module: ${specifier} from ${referrer || "root"}`);
+        logger.debug(`Resolving module: ${specifier} from ${referrer ?? "root"}`);
 
-      if (this.virtualModules.has(specifier)) {
-        return this.cacheAndReturn(cacheKey, {
-          path: specifier,
-          type: "virtual",
-          content: this.virtualModules.get(specifier),
-          transformed: true,
-        });
-      }
-
-      const mapped = this.importMap[specifier];
-      if (mapped) {
-        if (mapped.startsWith("http://") || mapped.startsWith("https://")) {
-          return this.cacheAndReturn(cacheKey, { path: mapped, type: "external" });
+        const virtualContent = this.virtualModules.get(specifier);
+        if (virtualContent !== undefined) {
+          return this.cacheAndReturn(cacheKey, {
+            path: specifier,
+            type: "virtual",
+            content: virtualContent,
+            transformed: true,
+          });
         }
-        specifier = mapped;
-      }
 
-      if (specifier.startsWith("./") || specifier.startsWith("../")) {
-        const refPath = referrer
-          ? (isAbsolute(referrer) ? referrer : join(this.options.projectDir, referrer))
-          : null;
-        const basePath = refPath ? dirname(refPath) : this.options.projectDir;
-        const fullPath = normalize(join(basePath, specifier));
-
-        for (const ext of MODULE_EXTENSIONS) {
-          const pathWithExt = fullPath + ext;
-          if (await this.adapter.fs.exists(pathWithExt)) {
-            return this.cacheAndReturn(cacheKey, { path: pathWithExt, type: "file" });
+        const mapped = this.importMap[specifier];
+        if (mapped) {
+          if (mapped.startsWith("http://") || mapped.startsWith("https://")) {
+            return this.cacheAndReturn(cacheKey, { path: mapped, type: "external" });
           }
+          specifier = mapped;
         }
-      }
 
-      if (specifier.startsWith("/")) {
-        const fullPath = join(this.options.projectDir, specifier);
-        const relativePath = relative(this.options.projectDir, fullPath);
+        if (specifier.startsWith("./") || specifier.startsWith("../")) {
+          const refPath = referrer
+            ? isAbsolute(referrer) ? referrer : join(this.options.projectDir, referrer)
+            : undefined;
 
-        if (relativePath.startsWith("..") || isAbsolute(relativePath)) {
-          logger.warn(`Path traversal attempt blocked: ${specifier}`);
+          const basePath = refPath ? dirname(refPath) : this.options.projectDir;
+          const fullPath = normalize(join(basePath, specifier));
+
+          for (const ext of MODULE_EXTENSIONS) {
+            const pathWithExt = fullPath + ext;
+            if (await this.adapter.fs.exists(pathWithExt)) {
+              return this.cacheAndReturn(cacheKey, { path: pathWithExt, type: "file" });
+            }
+          }
+
           return null;
         }
 
-        if (await this.adapter.fs.exists(fullPath)) {
-          return this.cacheAndReturn(cacheKey, { path: fullPath, type: "file" });
+        if (specifier.startsWith("/")) {
+          const fullPath = join(this.options.projectDir, specifier);
+          const relativePath = relative(this.options.projectDir, fullPath);
+
+          if (relativePath.startsWith("..") || isAbsolute(relativePath)) {
+            logger.warn(`Path traversal attempt blocked: ${specifier}`);
+            return null;
+          }
+
+          if (await this.adapter.fs.exists(fullPath)) {
+            return this.cacheAndReturn(cacheKey, { path: fullPath, type: "file" });
+          }
+
+          return null;
         }
-      }
 
-      if (!specifier.startsWith(".") && !specifier.startsWith("/")) {
-        return this.cacheAndReturn(cacheKey, {
-          path: `https://esm.sh/${specifier}`,
-          type: "npm",
-        });
-      }
+        if (!specifier.startsWith(".")) {
+          return this.cacheAndReturn(cacheKey, {
+            path: `https://esm.sh/${specifier}`,
+            type: "npm",
+          });
+        }
 
-      return null;
-    }, { "resolver.specifier": specifier, "resolver.referrer": referrer || "root" });
+        return null;
+      },
+      { "resolver.specifier": specifier, "resolver.referrer": referrer ?? "root" },
+    );
   }
 
   clearCache(pattern?: string): void {
-    if (pattern) {
-      for (const key of this.cache.keys()) {
-        if (key.includes(pattern)) {
-          this.cache.delete(key);
-        }
-      }
-    } else {
+    if (!pattern) {
       this.cache.clear();
+      return;
+    }
+
+    for (const key of this.cache.keys()) {
+      if (key.includes(pattern)) {
+        this.cache.delete(key);
+      }
     }
   }
 

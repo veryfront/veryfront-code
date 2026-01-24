@@ -7,22 +7,25 @@ export default tool({
   description:
     "List all databases in your Snowflake account. Returns database names, creation dates, owners, and comments.",
   inputSchema: z.object({
-    includeDetails: z.boolean().default(true).describe(
-      "Include detailed information like creation date, owner, and comments",
-    ),
+    includeDetails: z
+      .boolean()
+      .default(true)
+      .describe("Include detailed information like creation date, owner, and comments"),
   }),
   async execute({ includeDetails }) {
     const databases = await listDatabases();
 
+    const count = databases.length;
+
     if (!includeDetails) {
       return {
-        count: databases.length,
+        count,
         databases: databases.map((db) => db.name),
       };
     }
 
     return {
-      count: databases.length,
+      count,
       databases: databases.map((db) => ({
         name: db.name,
         createdOn: db.created_on,

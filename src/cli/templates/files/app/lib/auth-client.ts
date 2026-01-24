@@ -1,4 +1,4 @@
-export async function login(email: string, password: string) {
+export async function login(email: string, password: string): Promise<any> {
   const response = await fetch("/api/auth/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -7,13 +7,13 @@ export async function login(email: string, password: string) {
 
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(error.error || "Login failed");
+    throw new Error(error?.error ?? "Login failed");
   }
 
   return response.json();
 }
 
-export async function logout() {
+export async function logout(): Promise<void> {
   await fetch("/api/auth/logout", { method: "POST" });
   window.location.href = "/";
 }
@@ -22,7 +22,7 @@ export async function register(data: {
   email: string;
   password: string;
   name: string;
-}) {
+}): Promise<any> {
   const response = await fetch("/api/auth/register", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -31,7 +31,7 @@ export async function register(data: {
 
   if (!response.ok) {
     const error = await response.json();
-    throw new Error(error.error || "Registration failed");
+    throw new Error(error?.error ?? "Registration failed");
   }
 
   return response.json();

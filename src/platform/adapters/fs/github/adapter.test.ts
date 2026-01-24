@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { GitHubFSAdapter } from "./adapter.ts";
 import { createGitHubConfig } from "./types.ts";
 
-// Mock tree response
 const mockTreeResponse = {
   sha: "abc123",
   tree: [
@@ -16,7 +15,6 @@ const mockTreeResponse = {
   truncated: false,
 };
 
-// Mock file content (base64 encoded "hello world")
 const mockFileContent = {
   type: "file",
   name: "README.md",
@@ -26,6 +24,24 @@ const mockFileContent = {
   content: btoa("hello world"),
   encoding: "base64",
 };
+
+function createAdapter(): GitHubFSAdapter {
+  return new GitHubFSAdapter({
+    type: "github",
+    github: { token: "test", owner: "owner", repo: "repo" },
+  });
+}
+
+function createTreeFetch(tree: unknown): typeof fetch {
+  return (url) => {
+    if (String(url).includes("/git/trees/")) {
+      return Promise.resolve(
+        new Response(JSON.stringify(tree), { status: 200 }),
+      );
+    }
+    return Promise.resolve(new Response("Not found", { status: 404 }));
+  };
+}
 
 describe("GitHubFSAdapter", () => {
   let originalFetch: typeof fetch;
@@ -44,7 +60,7 @@ describe("GitHubFSAdapter", () => {
         createGitHubConfig({ token: "", owner: "test", repo: "test" });
         throw new Error("Should have thrown");
       } catch (error) {
-        assertEquals((error as Error).message.includes("token"), true);
+        assertEquals(error instanceof Error && error.message.includes("token"), true);
       }
     });
 
@@ -53,7 +69,7 @@ describe("GitHubFSAdapter", () => {
         createGitHubConfig({ token: "token", owner: "", repo: "test" });
         throw new Error("Should have thrown");
       } catch (error) {
-        assertEquals((error as Error).message.includes("owner"), true);
+        assertEquals(error instanceof Error && error.message.includes("owner"), true);
       }
     });
 
@@ -84,12 +100,9 @@ describe("GitHubFSAdapter", () => {
         return Promise.resolve(new Response("Not found", { status: 404 }));
       };
 
-      const adapter = new GitHubFSAdapter({
-        type: "github",
-        github: { token: "test", owner: "owner", repo: "repo" },
-      });
-
+      const adapter = createAdapter();
       await adapter.initialize();
+
       assertEquals(treeRequested, true);
     });
   });
@@ -100,23 +113,23 @@ describe("GitHubFSAdapter", () => {
     beforeEach(async () => {
       globalThis.fetch = (url) => {
         const urlStr = String(url);
+
         if (urlStr.includes("/git/trees/")) {
           return Promise.resolve(
             new Response(JSON.stringify(mockTreeResponse), { status: 200 }),
           );
         }
+
         if (urlStr.includes("/contents/README.md")) {
           return Promise.resolve(
             new Response(JSON.stringify(mockFileContent), { status: 200 }),
           );
         }
+
         return Promise.resolve(new Response("Not found", { status: 404 }));
       };
 
-      adapter = new GitHubFSAdapter({
-        type: "github",
-        github: { token: "test", owner: "owner", repo: "repo" },
-      });
+      adapter = createAdapter();
       await adapter.initialize();
     });
 
@@ -163,19 +176,9 @@ describe("GitHubFSAdapter", () => {
     let adapter: GitHubFSAdapter;
 
     beforeEach(async () => {
-      globalThis.fetch = (url) => {
-        if (String(url).includes("/git/trees/")) {
-          return Promise.resolve(
-            new Response(JSON.stringify(mockTreeResponse), { status: 200 }),
-          );
-        }
-        return Promise.resolve(new Response("Not found", { status: 404 }));
-      };
+      globalThis.fetch = createTreeFetch(mockTreeResponse);
 
-      adapter = new GitHubFSAdapter({
-        type: "github",
-        github: { token: "test", owner: "owner", repo: "repo" },
-      });
+      adapter = createAdapter();
       await adapter.initialize();
     });
 
@@ -209,19 +212,9 @@ describe("GitHubFSAdapter", () => {
         ],
       };
 
-      globalThis.fetch = (url) => {
-        if (String(url).includes("/git/trees/")) {
-          return Promise.resolve(
-            new Response(JSON.stringify(treeWithExtensions), { status: 200 }),
-          );
-        }
-        return Promise.resolve(new Response("Not found", { status: 404 }));
-      };
+      globalThis.fetch = createTreeFetch(treeWithExtensions);
 
-      adapter = new GitHubFSAdapter({
-        type: "github",
-        github: { token: "test", owner: "owner", repo: "repo" },
-      });
+      adapter = createAdapter();
       await adapter.initialize();
     });
 
@@ -243,26 +236,18 @@ describe("GitHubFSAdapter", () => {
 
   describe("error handling", () => {
     it("should handle 401 authentication error", async () => {
-      globalThis.fetch = () => {
-        return Promise.resolve(new Response("Unauthorized", { status: 401 }));
-      };
+      globalThis.fetch = () => Promise.resolve(new Response("Unauthorized", { status: 401 }));
 
       const adapter = new GitHubFSAdapter({
         type: "github",
         github: { token: "bad-token", owner: "owner", repo: "repo" },
       });
 
-      await assertRejects(
-        () => adapter.initialize(),
-        Error,
-        "authentication",
-      );
+      await assertRejects(() => adapter.initialize(), Error, "authentication");
     });
 
     it("should handle 404 repo not found", async () => {
-      globalThis.fetch = () => {
-        return Promise.resolve(new Response("Not found", { status: 404 }));
-      };
+      globalThis.fetch = () => Promise.resolve(new Response("Not found", { status: 404 }));
 
       const adapter = new GitHubFSAdapter({
         type: "github",

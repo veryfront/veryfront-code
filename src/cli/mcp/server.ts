@@ -7,16 +7,14 @@
  */
 
 import { readTextFile } from "#veryfront/platform/compat/fs.ts";
-import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { createHttpServer, type HttpServer } from "#veryfront/platform/compat/http/index.ts";
-import { writeStdoutAsync } from "#veryfront/platform/compat/process.ts";
-import { getStdinReader } from "#veryfront/platform/compat/stdin.ts";
-import type { StdinReader } from "#veryfront/platform/compat/stdin.ts";
-import { allTools, getTool, setServerStartTime } from "./tools.ts";
+import { cwd, writeStdoutAsync } from "#veryfront/platform/compat/process.ts";
+import { getStdinReader, type StdinReader } from "#veryfront/platform/compat/stdin.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { createIssuesManager } from "../../issues/core.ts";
 import { getErrorCollector } from "./error-collector.ts";
 import { getLogBuffer } from "./log-buffer.ts";
-import { createIssuesManager } from "../../issues/core.ts";
-import { cwd } from "#veryfront/platform/compat/process.ts";
+import { allTools, getTool, setServerStartTime } from "./tools.ts";
 
 // ============================================================================
 // Types
@@ -72,32 +70,19 @@ export class MCPDevServer {
     setServerStartTime(Date.now());
   }
 
-  /**
-   * Start the MCP server
-   */
   start(): void {
     if (this.running) return;
     this.running = true;
 
-    if (this.config.stdio) {
-      this.startStdio();
-    }
-
-    if (this.config.httpPort) {
-      this.startHTTP(this.config.httpPort);
-    }
+    if (this.config.stdio) this.startStdio();
+    if (this.config.httpPort) this.startHTTP(this.config.httpPort);
   }
 
-  /**
-   * Stop the MCP server
-   */
   async stop(): Promise<void> {
     this.running = false;
 
-    if (this.stdinReader) {
-      this.stdinReader.releaseLock();
-      this.stdinReader = null;
-    }
+    this.stdinReader?.releaseLock();
+    this.stdinReader = null;
 
     if (this.httpServer) {
       await this.httpServer.close();
@@ -105,17 +90,12 @@ export class MCPDevServer {
     }
   }
 
-  /**
-   * Start stdio transport
-   */
   private startStdio(): void {
     const decoder = new TextDecoder();
     const encoder = new TextEncoder();
-
-    // Read from stdin using platform abstraction
     this.stdinReader = getStdinReader();
 
-    const readLoop = async () => {
+    const readLoop = async (): Promise<void> => {
       let buffer = "";
 
       while (this.running) {
@@ -126,44 +106,39 @@ export class MCPDevServer {
 
           buffer += decoder.decode(value, { stream: true });
 
-          // Process complete JSON-RPC messages (newline-delimited)
-          let newlineIndex;
-          while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
+          let newlineIndex = buffer.indexOf("\n");
+          while (newlineIndex !== -1) {
             const line = buffer.slice(0, newlineIndex).trim();
             buffer = buffer.slice(newlineIndex + 1);
+            newlineIndex = buffer.indexOf("\n");
 
-            if (line) {
-              try {
-                const request = JSON.parse(line) as JSONRPCRequest;
-                const response = await this.handleRequest(request);
-                const output = JSON.stringify(response) + "\n";
-                await writeStdoutAsync(encoder.encode(output));
-              } catch (e) {
-                const errorResponse: JSONRPCResponse = {
-                  jsonrpc: "2.0",
-                  error: {
-                    code: -32700,
-                    message: "Parse error",
-                    data: e instanceof Error ? e.message : String(e),
-                  },
-                };
-                await writeStdoutAsync(encoder.encode(JSON.stringify(errorResponse) + "\n"));
-              }
+            if (!line) continue;
+
+            try {
+              const request = JSON.parse(line) as JSONRPCRequest;
+              const response = await this.handleRequest(request);
+              await writeStdoutAsync(encoder.encode(`${JSON.stringify(response)}\n`));
+            } catch (e) {
+              const errorResponse: JSONRPCResponse = {
+                jsonrpc: "2.0",
+                error: {
+                  code: -32700,
+                  message: "Parse error",
+                  data: e instanceof Error ? e.message : String(e),
+                },
+              };
+              await writeStdoutAsync(encoder.encode(`${JSON.stringify(errorResponse)}\n`));
             }
           }
         } catch {
-          // stdin closed or error
           break;
         }
       }
     };
 
-    readLoop();
+    void readLoop();
   }
 
-  /**
-   * Start HTTP transport
-   */
   private startHTTP(port: number): void {
     this.httpServer = createHttpServer();
 
@@ -171,7 +146,7 @@ export class MCPDevServer {
       const url = new URL(req.url);
 
       // CORS headers - restrict to localhost origins for security
-      const origin = req.headers.get("Origin") || "";
+      const origin = req.headers.get("Origin") ?? "";
       const isLocalhost = origin === "" ||
         origin.startsWith("http://localhost") ||
         origin.startsWith("http://127.0.0.1") ||
@@ -183,33 +158,26 @@ export class MCPDevServer {
         "Access-Control-Allow-Headers": "Content-Type",
       };
 
-      // Only set CORS header for localhost origins
-      if (isLocalhost && origin) {
-        headers["Access-Control-Allow-Origin"] = origin;
-      }
+      if (isLocalhost && origin) headers["Access-Control-Allow-Origin"] = origin;
 
-      // Handle OPTIONS (CORS preflight)
-      if (req.method === "OPTIONS") {
-        return new Response(null, { status: 204, headers });
-      }
+      if (req.method === "OPTIONS") return new Response(null, { status: 204, headers });
 
-      // Only accept POST requests to /mcp endpoint
       if (url.pathname !== "/mcp") {
-        return new Response(
-          JSON.stringify({ error: "Not found. MCP endpoint is at /mcp" }),
-          { status: 404, headers },
-        );
+        return new Response(JSON.stringify({ error: "Not found. MCP endpoint is at /mcp" }), {
+          status: 404,
+          headers,
+        });
       }
 
       if (req.method !== "POST") {
-        return new Response(
-          JSON.stringify({ error: "Method not allowed" }),
-          { status: 405, headers },
-        );
+        return new Response(JSON.stringify({ error: "Method not allowed" }), {
+          status: 405,
+          headers,
+        });
       }
 
       try {
-        const body = await req.json() as JSONRPCRequest;
+        const body = (await req.json()) as JSONRPCRequest;
         const response = await this.handleRequest(body);
         return new Response(JSON.stringify(response), { headers });
       } catch (e) {
@@ -228,34 +196,31 @@ export class MCPDevServer {
     this.httpServer.serve(handler, { port, onListen: () => {} });
   }
 
-  /**
-   * Handle a JSON-RPC request
-   */
   private handleRequest(request: JSONRPCRequest): Promise<JSONRPCResponse> {
     const { id, method, params } = request;
 
-    return withSpan("cli.mcp.handleRequest", async () => {
-      try {
-        const result = await this.dispatchMethod(method, params);
-        return { jsonrpc: "2.0", id, result };
-      } catch (e) {
-        return {
-          jsonrpc: "2.0",
-          id,
-          error: {
-            code: -32603,
-            message: e instanceof Error ? e.message : String(e),
-          },
-        };
-      }
-    }, { "mcp.method": method });
+    return withSpan(
+      "cli.mcp.handleRequest",
+      async () => {
+        try {
+          const result = await this.dispatchMethod(method, params);
+          return { jsonrpc: "2.0", id, result };
+        } catch (e) {
+          return {
+            jsonrpc: "2.0",
+            id,
+            error: {
+              code: -32603,
+              message: e instanceof Error ? e.message : String(e),
+            },
+          };
+        }
+      },
+      { "mcp.method": method },
+    );
   }
 
-  /**
-   * Dispatch a method call
-   */
   private dispatchMethod(method: string, params: unknown): Promise<unknown> {
-    // MCP protocol methods
     switch (method) {
       case "initialize":
         return Promise.resolve(this.handleInitialize(params));
@@ -276,10 +241,6 @@ export class MCPDevServer {
     }
   }
 
-  /**
-   * Handle initialize request
-   * Returns capabilities (tools, resources, prompts)
-   */
   private handleInitialize(_params: unknown): unknown {
     return {
       protocolVersion: "2024-11-05",
@@ -295,9 +256,6 @@ export class MCPDevServer {
     };
   }
 
-  /**
-   * Handle tools/list request
-   */
   private handleToolsList(): unknown {
     return {
       tools: allTools.map((tool) => ({
@@ -308,41 +266,34 @@ export class MCPDevServer {
     };
   }
 
-  /**
-   * Handle tools/call request
-   */
   private handleToolsCall(params: unknown): Promise<unknown> {
     const { name, arguments: args } = params as {
       name: string;
       arguments?: Record<string, unknown>;
     };
 
-    return withSpan("cli.mcp.handleToolsCall", async () => {
-      const tool = getTool(name);
-      if (!tool) {
-        throw new Error(`Unknown tool: ${name}`);
-      }
+    return withSpan(
+      "cli.mcp.handleToolsCall",
+      async () => {
+        const tool = getTool(name);
+        if (!tool) throw new Error(`Unknown tool: ${name}`);
 
-      // Validate and parse input
-      const input = tool.inputSchema.parse(args ?? {});
+        const input = tool.inputSchema.parse(args ?? {});
+        const result = await tool.execute(input);
 
-      // Execute tool
-      const result = await tool.execute(input);
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
-    }, { "mcp.tool.name": name });
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      },
+      { "mcp.tool.name": name },
+    );
   }
 
-  /**
-   * Handle resources/list request
-   */
   private handleResourcesList(): unknown {
     return {
       resources: [
@@ -374,98 +325,93 @@ export class MCPDevServer {
     };
   }
 
-  /**
-   * Handle resources/read request
-   */
   private handleResourcesRead(params: unknown): Promise<unknown> {
     const { uri } = params as { uri: string };
 
-    return withSpan("cli.mcp.handleResourcesRead", async () => {
-      if (uri === "veryfront://skill") {
-        try {
-          const skillPath = new URL("./skills/veryfront/SKILL.md", import.meta.url).pathname;
-          const content = await readTextFile(skillPath);
+    return withSpan(
+      "cli.mcp.handleResourcesRead",
+      async () => {
+        if (uri === "veryfront://skill") {
+          try {
+            const skillPath = new URL("./skills/veryfront/SKILL.md", import.meta.url).pathname;
+            const content = await readTextFile(skillPath);
+            return {
+              contents: [
+                {
+                  uri,
+                  mimeType: "text/markdown",
+                  text: content,
+                },
+              ],
+            };
+          } catch {
+            throw new Error("Skill file not found");
+          }
+        }
+
+        if (uri === "veryfront://errors") {
+          const errors = getErrorCollector().getAll();
           return {
             contents: [
               {
                 uri,
-                mimeType: "text/markdown",
-                text: content,
+                mimeType: "application/json",
+                text: JSON.stringify(errors, null, 2),
               },
             ],
           };
-        } catch {
-          throw new Error("Skill file not found");
         }
-      }
 
-      if (uri === "veryfront://errors") {
-        const errors = getErrorCollector().getAll();
-        return {
-          contents: [
-            {
-              uri,
-              mimeType: "application/json",
-              text: JSON.stringify(errors, null, 2),
-            },
-          ],
-        };
-      }
-
-      if (uri === "veryfront://logs") {
-        const logs = getLogBuffer().tail(100);
-        return {
-          contents: [
-            {
-              uri,
-              mimeType: "application/json",
-              text: JSON.stringify(logs, null, 2),
-            },
-          ],
-        };
-      }
-
-      // Handle issues:// and issues://{id} URIs
-      if (uri === "issues://") {
-        const manager = createIssuesManager(cwd());
-        const result = await manager.list({ state: "open" });
-        return {
-          contents: [
-            {
-              uri,
-              mimeType: "application/json",
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        };
-      }
-
-      if (uri.startsWith("issues://")) {
-        const id = uri.replace("issues://", "");
-        const manager = createIssuesManager(cwd());
-        const issue = await manager.get(id);
-        if (!issue) {
-          throw new Error(`Issue not found: ${id}`);
+        if (uri === "veryfront://logs") {
+          const logs = getLogBuffer().tail(100);
+          return {
+            contents: [
+              {
+                uri,
+                mimeType: "application/json",
+                text: JSON.stringify(logs, null, 2),
+              },
+            ],
+          };
         }
-        return {
-          contents: [
-            {
-              uri,
-              mimeType: "application/json",
-              text: JSON.stringify(issue, null, 2),
-            },
-          ],
-        };
-      }
 
-      throw new Error(`Unknown resource: ${uri}`);
-    }, { "mcp.resource.uri": uri });
+        if (uri.startsWith("issues://")) {
+          const manager = createIssuesManager(cwd());
+
+          if (uri === "issues://") {
+            const result = await manager.list({ state: "open" });
+            return {
+              contents: [
+                {
+                  uri,
+                  mimeType: "application/json",
+                  text: JSON.stringify(result, null, 2),
+                },
+              ],
+            };
+          }
+
+          const id = uri.slice("issues://".length);
+          const issue = await manager.get(id);
+          if (!issue) throw new Error(`Issue not found: ${id}`);
+
+          return {
+            contents: [
+              {
+                uri,
+                mimeType: "application/json",
+                text: JSON.stringify(issue, null, 2),
+              },
+            ],
+          };
+        }
+
+        throw new Error(`Unknown resource: ${uri}`);
+      },
+      { "mcp.resource.uri": uri },
+    );
   }
 
-  /**
-   * Handle prompts/list request
-   * Returns available prompts (skills) that agents can use
-   */
   private handlePromptsList(): unknown {
     return {
       prompts: [
@@ -499,67 +445,57 @@ export class MCPDevServer {
     };
   }
 
-  /**
-   * Handle prompts/get request
-   * Returns the content of a specific prompt (skill)
-   */
   private handlePromptsGet(params: unknown): Promise<unknown> {
     const { name } = params as { name: string };
 
-    return withSpan("cli.mcp.handlePromptsGet", async () => {
-      const promptFiles: Record<string, string> = {
-        "veryfront": "./skills/veryfront/SKILL.md",
-        "veryfront-routing": "./skills/veryfront/references/ROUTES.md",
-        "veryfront-ai-tools": "./skills/veryfront/references/AI-TOOLS.md",
-        "veryfront-components": "./skills/veryfront/references/COMPONENTS.md",
-        "flywheel": "./skills/flywheel/SKILL.md",
-      };
-
-      const filePath = promptFiles[name];
-      if (!filePath) {
-        throw new Error(`Unknown prompt: ${name}`);
-      }
-
-      try {
-        const fullPath = new URL(filePath, import.meta.url).pathname;
-        const content = await readTextFile(fullPath);
-
-        return {
-          description: `Veryfront skill: ${name}`,
-          messages: [
-            {
-              role: "user",
-              content: {
-                type: "text",
-                text: content,
-              },
-            },
-          ],
+    return withSpan(
+      "cli.mcp.handlePromptsGet",
+      async () => {
+        const promptFiles: Record<string, string> = {
+          veryfront: "./skills/veryfront/SKILL.md",
+          "veryfront-routing": "./skills/veryfront/references/ROUTES.md",
+          "veryfront-ai-tools": "./skills/veryfront/references/AI-TOOLS.md",
+          "veryfront-components": "./skills/veryfront/references/COMPONENTS.md",
+          flywheel: "./skills/flywheel/SKILL.md",
         };
-      } catch {
-        throw new Error(`Failed to read prompt: ${name}`);
-      }
-    }, { "mcp.prompt.name": name });
+
+        const filePath = promptFiles[name];
+        if (!filePath) throw new Error(`Unknown prompt: ${name}`);
+
+        try {
+          const fullPath = new URL(filePath, import.meta.url).pathname;
+          const content = await readTextFile(fullPath);
+
+          return {
+            description: `Veryfront skill: ${name}`,
+            messages: [
+              {
+                role: "user",
+                content: {
+                  type: "text",
+                  text: content,
+                },
+              },
+            ],
+          };
+        } catch {
+          throw new Error(`Failed to read prompt: ${name}`);
+        }
+      },
+      { "mcp.prompt.name": name },
+    );
   }
 
-  /**
-   * Convert Zod schema to JSON Schema
-   */
   private zodToJsonSchema(schema: unknown): unknown {
     // deno-lint-ignore no-explicit-any
     const zodSchema = schema as any;
-
-    // Check if it has a _def (Zod internal structure)
-    if (!zodSchema?._def) {
-      return { type: "object", properties: {} };
-    }
+    if (!zodSchema?._def) return { type: "object", properties: {} };
 
     const def = zodSchema._def;
     const typeName = def.typeName;
 
-    // Handle ZodObject
     if (typeName === "ZodObject") {
-      const shape = def.shape?.() || {};
+      const shape = def.shape?.() ?? {};
       const properties: Record<string, unknown> = {};
       const required: string[] = [];
 
@@ -568,7 +504,6 @@ export class MCPDevServer {
         const fieldDef = (value as any)?._def;
         const fieldSchema = this.zodToJsonSchema(value);
 
-        // Get description from field
         if (fieldDef?.description) {
           // deno-lint-ignore no-explicit-any
           (fieldSchema as any).description = fieldDef.description;
@@ -576,7 +511,6 @@ export class MCPDevServer {
 
         properties[key] = fieldSchema;
 
-        // Check if required (not optional, not nullable with default)
         if (fieldDef?.typeName !== "ZodOptional" && fieldDef?.typeName !== "ZodDefault") {
           required.push(key);
         }
@@ -585,26 +519,22 @@ export class MCPDevServer {
       return {
         type: "object",
         properties,
-        ...(required.length > 0 ? { required } : {}),
+        ...(required.length ? { required } : {}),
       };
     }
 
-    // Handle ZodString
     if (typeName === "ZodString") {
       return { type: "string", ...(def.description ? { description: def.description } : {}) };
     }
 
-    // Handle ZodNumber
     if (typeName === "ZodNumber") {
       return { type: "number", ...(def.description ? { description: def.description } : {}) };
     }
 
-    // Handle ZodBoolean
     if (typeName === "ZodBoolean") {
       return { type: "boolean", ...(def.description ? { description: def.description } : {}) };
     }
 
-    // Handle ZodArray
     if (typeName === "ZodArray") {
       return {
         type: "array",
@@ -613,7 +543,6 @@ export class MCPDevServer {
       };
     }
 
-    // Handle ZodEnum
     if (typeName === "ZodEnum") {
       return {
         type: "string",
@@ -622,12 +551,8 @@ export class MCPDevServer {
       };
     }
 
-    // Handle ZodOptional
-    if (typeName === "ZodOptional") {
-      return this.zodToJsonSchema(def.innerType);
-    }
+    if (typeName === "ZodOptional") return this.zodToJsonSchema(def.innerType);
 
-    // Handle ZodDefault
     if (typeName === "ZodDefault") {
       const innerSchema = this.zodToJsonSchema(def.innerType);
       // deno-lint-ignore no-explicit-any
@@ -635,7 +560,6 @@ export class MCPDevServer {
       return innerSchema;
     }
 
-    // Fallback
     return { type: "object" };
   }
 }
@@ -644,9 +568,6 @@ export class MCPDevServer {
 // Factory
 // ============================================================================
 
-/**
- * Create and start an MCP dev server
- */
 export function createMCPServer(config: MCPServerConfig): MCPDevServer {
   const server = new MCPDevServer(config);
   server.start();

@@ -2,46 +2,29 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
 describe("token/index.ts exports", () => {
-  it("should export MemoryTokenAdapter", async () => {
-    const { MemoryTokenAdapter } = await import("./index.ts");
-    assertExists(MemoryTokenAdapter);
-    assertEquals(typeof MemoryTokenAdapter, "function");
-  });
+  async function assertExportedFunction(name: string): Promise<void> {
+    const mod = await import("./index.ts");
+    const value = mod[name as keyof typeof mod];
+    assertExists(value);
+    assertEquals(typeof value, "function");
+  }
 
-  it("should export VeryfrontTokenAdapter", async () => {
-    const { VeryfrontTokenAdapter } = await import("./index.ts");
-    assertExists(VeryfrontTokenAdapter);
-    assertEquals(typeof VeryfrontTokenAdapter, "function");
-  });
+  it("should export MemoryTokenAdapter", () => assertExportedFunction("MemoryTokenAdapter"));
 
-  it("should export TokenStorageAPIClient", async () => {
-    const { TokenStorageAPIClient } = await import("./index.ts");
-    assertExists(TokenStorageAPIClient);
-    assertEquals(typeof TokenStorageAPIClient, "function");
-  });
+  it("should export VeryfrontTokenAdapter", () => assertExportedFunction("VeryfrontTokenAdapter"));
 
-  it("should export TokenStorageError", async () => {
-    const { TokenStorageError } = await import("./index.ts");
-    assertExists(TokenStorageError);
-    assertEquals(typeof TokenStorageError, "function");
-  });
+  it("should export TokenStorageAPIClient", () => assertExportedFunction("TokenStorageAPIClient"));
 
-  it("should export createTokenStorageAdapter", async () => {
-    const { createTokenStorageAdapter } = await import("./index.ts");
-    assertExists(createTokenStorageAdapter);
-    assertEquals(typeof createTokenStorageAdapter, "function");
-  });
+  it("should export TokenStorageError", () => assertExportedFunction("TokenStorageError"));
+
+  it("should export createTokenStorageAdapter", () =>
+    assertExportedFunction("createTokenStorageAdapter"));
 
   it("should export integration functions", async () => {
-    const {
-      getTokenStorageAdapter,
-      getTokenStorageType,
-      isTokenStorageConfigured,
-      resetTokenStorageAdapter,
-    } = await import("./index.ts");
-    assertExists(getTokenStorageAdapter);
-    assertExists(getTokenStorageType);
-    assertExists(isTokenStorageConfigured);
-    assertExists(resetTokenStorageAdapter);
+    const mod = await import("./index.ts");
+    assertExists(mod.getTokenStorageAdapter);
+    assertExists(mod.getTokenStorageType);
+    assertExists(mod.isTokenStorageConfigured);
+    assertExists(mod.resetTokenStorageAdapter);
   });
 });

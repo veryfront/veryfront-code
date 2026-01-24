@@ -12,29 +12,15 @@ import {
 
 describe("branded.ts", () => {
   describe("brandValue", () => {
-    it("should create a branded UserId", () => {
-      const userId = brandValue<UserId>("user-123");
-      assertEquals(userId, "user-123");
-    });
-
-    it("should create a branded EntityId", () => {
-      const entityId = brandValue<EntityId>("entity-456");
-      assertEquals(entityId, "entity-456");
-    });
-
-    it("should create a branded Slug", () => {
-      const slug = brandValue<Slug>("/blog/my-post");
-      assertEquals(slug, "/blog/my-post");
-    });
-
-    it("should create a branded AuthToken", () => {
-      const token = brandValue<AuthToken>("secret-token-abc");
-      assertEquals(token, "secret-token-abc");
+    it("should create branded values", () => {
+      assertEquals(brandValue<UserId>("user-123"), "user-123");
+      assertEquals(brandValue<EntityId>("entity-456"), "entity-456");
+      assertEquals(brandValue<Slug>("/blog/my-post"), "/blog/my-post");
+      assertEquals(brandValue<AuthToken>("secret-token-abc"), "secret-token-abc");
     });
 
     it("should preserve empty strings", () => {
-      const empty = brandValue<Slug>("");
-      assertEquals(empty, "");
+      assertEquals(brandValue<Slug>(""), "");
     });
   });
 
@@ -46,47 +32,39 @@ describe("branded.ts", () => {
     });
 
     it("should return true for branded values", () => {
-      const userId = brandValue<UserId>("user-123");
-      assertEquals(isBrandedString(userId), true);
+      assertEquals(isBrandedString(brandValue<UserId>("user-123")), true);
     });
 
     it("should return false for non-string values", () => {
-      assertEquals(isBrandedString(123), false);
-      assertEquals(isBrandedString(null), false);
-      assertEquals(isBrandedString(undefined), false);
-      assertEquals(isBrandedString({}), false);
-      assertEquals(isBrandedString([]), false);
-      assertEquals(isBrandedString(true), false);
+      const nonStrings = [123, null, undefined, {}, [], true] as const;
+
+      for (const value of nonStrings) {
+        assertEquals(isBrandedString(value), false);
+      }
     });
   });
 
   describe("unbrandValue", () => {
-    it("should unwrap branded UserId to string", () => {
+    it("should unwrap branded values to string", () => {
       const userId = brandValue<UserId>("user-123");
-      const unwrapped = unbrandValue(userId);
-      assertEquals(unwrapped, "user-123");
-      assertEquals(typeof unwrapped, "string");
-    });
-
-    it("should unwrap branded Slug to string", () => {
       const slug = brandValue<Slug>("/docs/intro");
-      const unwrapped = unbrandValue(slug);
-      assertEquals(unwrapped, "/docs/intro");
-    });
-
-    it("should handle empty branded strings", () => {
       const empty = brandValue<EntityId>("");
-      const unwrapped = unbrandValue(empty);
-      assertEquals(unwrapped, "");
+
+      const unwrappedUserId = unbrandValue(userId);
+      assertEquals(unwrappedUserId, "user-123");
+      assertEquals(typeof unwrappedUserId, "string");
+
+      assertEquals(unbrandValue(slug), "/docs/intro");
+      assertEquals(unbrandValue(empty), "");
     });
   });
 
   describe("type safety (compile-time tests)", () => {
     it("should allow branded values to be used as strings", () => {
       const userId = brandValue<UserId>("user-123");
-      // These operations should compile because branded types extend string
       const upper = userId.toUpperCase();
       const length = userId.length;
+
       assertEquals(upper, "USER-123");
       assertEquals(length, 8);
     });

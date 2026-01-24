@@ -3,6 +3,15 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateHydrationData } from "./hydration-data-generator.ts";
 import type { HTMLGenerationOptions } from "../types.ts";
 
+function parseHydrationData(
+  slug: string,
+  params: Record<string, unknown>,
+  props: Record<string, unknown>,
+  options: HTMLGenerationOptions,
+): any {
+  return JSON.parse(generateHydrationData(slug, params, props, options));
+}
+
 describe("hydration-data-generator", () => {
   const baseOptions: HTMLGenerationOptions = {
     mode: "development",
@@ -11,34 +20,29 @@ describe("hydration-data-generator", () => {
 
   describe("generateHydrationData", () => {
     it("should return valid JSON string", () => {
-      const result = generateHydrationData("test-slug", {}, {}, baseOptions);
-      const parsed = JSON.parse(result);
+      const parsed = parseHydrationData("test-slug", {}, {}, baseOptions);
       assertEquals(typeof parsed, "object");
     });
 
     it("should include slug in output", () => {
-      const result = generateHydrationData("my-page", {}, {}, baseOptions);
-      const parsed = JSON.parse(result);
+      const parsed = parseHydrationData("my-page", {}, {}, baseOptions);
       assertEquals(parsed.slug, "my-page");
     });
 
     it("should include params in output", () => {
       const params = { id: "123", category: "news" };
-      const result = generateHydrationData("page", params, {}, baseOptions);
-      const parsed = JSON.parse(result);
+      const parsed = parseHydrationData("page", params, {}, baseOptions);
       assertEquals(parsed.params, params);
     });
 
     it("should include props in output", () => {
       const props = { title: "Hello", count: 42 };
-      const result = generateHydrationData("page", {}, props, baseOptions);
-      const parsed = JSON.parse(result);
+      const parsed = parseHydrationData("page", {}, props, baseOptions);
       assertEquals(parsed.props, props);
     });
 
     it("should handle empty slug", () => {
-      const result = generateHydrationData("", {}, {}, baseOptions);
-      const parsed = JSON.parse(result);
+      const parsed = parseHydrationData("", {}, {}, baseOptions);
       assertEquals(parsed.slug, "");
     });
 
@@ -51,8 +55,7 @@ describe("hydration-data-generator", () => {
         ],
         projectDir: "/project",
       };
-      const result = generateHydrationData("page", {}, {}, options);
-      const parsed = JSON.parse(result);
+      const parsed = parseHydrationData("page", {}, {}, options);
       assertEquals(parsed.layouts.length, 2);
     });
 
@@ -61,12 +64,11 @@ describe("hydration-data-generator", () => {
         ...baseOptions,
         nestedLayouts: [
           { kind: "tsx", path: "/project/layouts/main.tsx" },
-          { kind: "tsx" }, // No path
+          { kind: "tsx" },
         ],
         projectDir: "/project",
       };
-      const result = generateHydrationData("page", {}, {}, options);
-      const parsed = JSON.parse(result);
+      const parsed = parseHydrationData("page", {}, {}, options);
       assertEquals(parsed.layouts.length, 1);
     });
 
@@ -76,8 +78,7 @@ describe("hydration-data-generator", () => {
         appPath: "/project/app.tsx",
         projectDir: "/project",
       };
-      const result = generateHydrationData("page", {}, {}, options);
-      const parsed = JSON.parse(result);
+      const parsed = parseHydrationData("page", {}, {}, options);
       assertEquals(typeof parsed.appPath, "string");
     });
 
@@ -87,8 +88,7 @@ describe("hydration-data-generator", () => {
         pagePath: "/project/pages/index.tsx",
         projectDir: "/project",
       };
-      const result = generateHydrationData("page", {}, {}, options);
-      const parsed = JSON.parse(result);
+      const parsed = parseHydrationData("page", {}, {}, options);
       assertEquals(typeof parsed.pagePath, "string");
     });
 
@@ -97,8 +97,7 @@ describe("hydration-data-generator", () => {
         ...baseOptions,
         pageType: "mdx",
       };
-      const result = generateHydrationData("page", {}, {}, options);
-      const parsed = JSON.parse(result);
+      const parsed = parseHydrationData("page", {}, {}, options);
       assertEquals(parsed.pageType, "mdx");
     });
 
@@ -107,8 +106,7 @@ describe("hydration-data-generator", () => {
         ...baseOptions,
         pagePath: "/project/pages/index.tsx",
       };
-      const result = generateHydrationData("page", {}, {}, options);
-      const parsed = JSON.parse(result);
+      const parsed = parseHydrationData("page", {}, {}, options);
       assertEquals(parsed.pageType, "tsx");
     });
 
@@ -117,8 +115,7 @@ describe("hydration-data-generator", () => {
         ...baseOptions,
         frontmatter: { title: "My Page", draft: true },
       };
-      const result = generateHydrationData("page", {}, {}, options);
-      const parsed = JSON.parse(result);
+      const parsed = parseHydrationData("page", {}, {}, options);
       assertEquals(parsed.frontmatter, { title: "My Page", draft: true });
     });
 
@@ -129,8 +126,7 @@ describe("hydration-data-generator", () => {
           "layouts/main.tsx": { theme: "dark" },
         },
       };
-      const result = generateHydrationData("page", {}, {}, options);
-      const parsed = JSON.parse(result);
+      const parsed = parseHydrationData("page", {}, {}, options);
       assertEquals(parsed.layoutProps, { "layouts/main.tsx": { theme: "dark" } });
     });
 
@@ -139,8 +135,7 @@ describe("hydration-data-generator", () => {
         ...baseOptions,
         mode: "development",
       };
-      const result = generateHydrationData("page", {}, {}, options);
-      const parsed = JSON.parse(result);
+      const parsed = parseHydrationData("page", {}, {}, options);
       assertEquals(parsed.dev, true);
     });
 
@@ -149,8 +144,7 @@ describe("hydration-data-generator", () => {
         ...baseOptions,
         mode: "production",
       };
-      const result = generateHydrationData("page", {}, {}, options);
-      const parsed = JSON.parse(result);
+      const parsed = parseHydrationData("page", {}, {}, options);
       assertEquals(parsed.dev, false);
     });
 

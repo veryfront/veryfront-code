@@ -19,6 +19,9 @@ import { getRedisClient, isRedisConfigured, type RedisClient } from "../utils/re
 import { runtime } from "../platform/adapters/registry.ts";
 import { tryGetCacheKeyContext } from "./cache-key-builder.ts";
 import { getRuntimeEnv, isRuntimeEnvInitialized, type RuntimeEnv } from "../config/runtime-env.ts";
+import { CircuitBreakerOpen, getCircuitBreaker } from "../utils/circuit-breaker.ts";
+import { MEMORY_CACHE_MAX_ENTRIES } from "../utils/constants/cache.ts";
+
 // Lazy-loaded via global to avoid circular dependency
 // (multi-project-adapter → proxy-manager → veryfront/index → adapter → file-cache → backend)
 // The multi-project-adapter registers itself at __vf_multi_project_adapter when loaded
@@ -27,8 +30,6 @@ function getCurrentRequestContext(): { token?: string } | null {
   const mod = (globalThis as any).__vf_multi_project_adapter;
   return mod?.getCurrentRequestContext?.() ?? null;
 }
-import { CircuitBreakerOpen, getCircuitBreaker } from "../utils/circuit-breaker.ts";
-import { MEMORY_CACHE_MAX_ENTRIES } from "../utils/constants/cache.ts";
 
 const ENV_KEY_MAP: Record<string, keyof RuntimeEnv | undefined> = {
   VERYFRONT_API_BASE_URL: "apiBaseUrl",
@@ -38,16 +39,14 @@ const ENV_KEY_MAP: Record<string, keyof RuntimeEnv | undefined> = {
 /** Runtime-agnostic environment variable getter with RuntimeEnv support. */
 function getEnvValue(key: string, env?: RuntimeEnv): string | undefined {
   const runtimeEnv = env ?? (isRuntimeEnvInitialized() ? getRuntimeEnv() : null);
-
   if (runtimeEnv) {
     const prop = ENV_KEY_MAP[key];
     return prop ? (runtimeEnv[prop] as string | undefined) : undefined;
   }
 
   // Fallback for bootstrap scenarios before RuntimeEnv is initialized
-  if (runtime.isInitialized()) {
-    return runtime.getSync().env.get(key);
-  }
+  if (runtime.isInitialized()) return runtime.getSync().env.get(key);
+
   // deno-lint-ignore no-explicit-any
   const g = globalThis as any;
   return g.Deno?.env?.get(key) ?? g.process?.env?.[key];
@@ -84,9 +83,8 @@ export interface CacheBackend {
 export class MemoryCacheBackend implements CacheBackend {
   readonly type = "memory" as const;
   private store = new Map<string, { value: string; expiresAt: number }>();
-  private maxEntries: number;
-  // Cache compiled regexes for pattern matching (avoids recompilation per call)
   private regexCache = new Map<string, RegExp>();
+  private maxEntries: number;
 
   constructor(maxEntries = MEMORY_CACHE_MAX_ENTRIES) {
     this.maxEntries = maxEntries;
@@ -95,57 +93,63 @@ export class MemoryCacheBackend implements CacheBackend {
   get(key: string): Promise<string | null> {
     const entry = this.store.get(key);
     if (!entry) return Promise.resolve(null);
+
     if (Date.now() > entry.expiresAt) {
       this.store.delete(key);
       return Promise.resolve(null);
     }
+
     return Promise.resolve(entry.value);
   }
 
   getBatch(keys: string[]): Promise<Map<string, string | null>> {
     const results = new Map<string, string | null>();
     const now = Date.now();
+
     for (const key of keys) {
       const entry = this.store.get(key);
       if (!entry) {
         results.set(key, null);
-      } else if (now > entry.expiresAt) {
+        continue;
+      }
+
+      if (now > entry.expiresAt) {
         this.store.delete(key);
         results.set(key, null);
-      } else {
-        results.set(key, entry.value);
+        continue;
       }
+
+      results.set(key, entry.value);
     }
+
     return Promise.resolve(results);
   }
 
   set(key: string, value: string, ttlSeconds = 300): Promise<void> {
-    // Evict oldest if at capacity
     if (this.store.size >= this.maxEntries && !this.store.has(key)) {
-      const oldest = this.store.keys().next().value;
+      const oldest = this.store.keys().next().value as string | undefined;
       if (oldest) this.store.delete(oldest);
     }
-    this.store.set(key, {
-      value,
-      expiresAt: Date.now() + ttlSeconds * 1000,
-    });
+
+    this.store.set(key, { value, expiresAt: Date.now() + ttlSeconds * 1000 });
     return Promise.resolve();
   }
 
   setBatch(entries: Array<{ key: string; value: string; ttl?: number }>): Promise<void> {
     const now = Date.now();
-    for (const entry of entries) {
-      const ttlSeconds = entry.ttl ?? 300;
-      // Evict oldest if at capacity
-      if (this.store.size >= this.maxEntries && !this.store.has(entry.key)) {
-        const oldest = this.store.keys().next().value;
+
+    for (const { key, value, ttl } of entries) {
+      if (this.store.size >= this.maxEntries && !this.store.has(key)) {
+        const oldest = this.store.keys().next().value as string | undefined;
         if (oldest) this.store.delete(oldest);
       }
-      this.store.set(entry.key, {
-        value: entry.value,
-        expiresAt: now + ttlSeconds * 1000,
+
+      this.store.set(key, {
+        value,
+        expiresAt: now + (ttl ?? 300) * 1000,
       });
     }
+
     return Promise.resolve();
   }
 
@@ -155,27 +159,25 @@ export class MemoryCacheBackend implements CacheBackend {
   }
 
   delByPattern(pattern: string): Promise<number> {
-    // Use cached regex to avoid recompilation per call
     let regex = this.regexCache.get(pattern);
     if (!regex) {
-      regex = new RegExp(
-        "^" + pattern.replace(/\*/g, ".*").replace(/\?/g, ".") + "$",
-      );
-      // Limit regex cache size to prevent memory leak
+      regex = new RegExp(`^${pattern.replace(/\*/g, ".*").replace(/\?/g, ".")}$`);
+
       if (this.regexCache.size >= 100) {
-        const firstKey = this.regexCache.keys().next().value;
+        const firstKey = this.regexCache.keys().next().value as string | undefined;
         if (firstKey) this.regexCache.delete(firstKey);
       }
+
       this.regexCache.set(pattern, regex);
     }
 
     let deleted = 0;
     for (const key of this.store.keys()) {
-      if (regex.test(key)) {
-        this.store.delete(key);
-        deleted++;
-      }
+      if (!regex.test(key)) continue;
+      this.store.delete(key);
+      deleted++;
     }
+
     return Promise.resolve(deleted);
   }
 
@@ -204,9 +206,8 @@ export class RedisCacheBackend implements CacheBackend {
   }
 
   initialize(): Promise<boolean> {
-    if (!isRedisConfigured()) {
-      return Promise.resolve(false);
-    }
+    if (!isRedisConfigured()) return Promise.resolve(false);
+
     return withSpan(
       SpanNames.CACHE_REDIS_INIT,
       async (span?: Span) => {
@@ -226,6 +227,7 @@ export class RedisCacheBackend implements CacheBackend {
 
   async get(key: string): Promise<string | null> {
     if (!this.client) return null;
+
     try {
       return await this.client.get(this.prefixKey(key));
     } catch (error) {
@@ -236,21 +238,17 @@ export class RedisCacheBackend implements CacheBackend {
 
   async getBatch(keys: string[]): Promise<Map<string, string | null>> {
     const results = new Map<string, string | null>();
-    if (!this.client || keys.length === 0) {
+    if (!this.client) {
       for (const key of keys) results.set(key, null);
       return results;
     }
+    if (keys.length === 0) return results;
+
     try {
-      // Redis client doesn't have mGet, use parallel individual gets
-      // This is still fast since Redis is local
-      const promises = keys.map(async (key) => {
-        const value = await this.get(key);
-        return { key, value };
-      });
-      const fetchedResults = await Promise.all(promises);
-      for (const { key, value } of fetchedResults) {
-        results.set(key, value);
-      }
+      const fetched = await Promise.all(
+        keys.map(async (key) => [key, await this.get(key)] as const),
+      );
+      for (const [key, value] of fetched) results.set(key, value);
       return results;
     } catch (error) {
       logger.debug("[RedisCacheBackend] GetBatch failed", { keyCount: keys.length, error });
@@ -261,6 +259,7 @@ export class RedisCacheBackend implements CacheBackend {
 
   async set(key: string, value: string, ttlSeconds = 300): Promise<void> {
     if (!this.client) return;
+
     try {
       await this.client.set(this.prefixKey(key), value, { EX: ttlSeconds });
     } catch (error) {
@@ -270,14 +269,9 @@ export class RedisCacheBackend implements CacheBackend {
 
   async setBatch(entries: Array<{ key: string; value: string; ttl?: number }>): Promise<void> {
     if (!this.client || entries.length === 0) return;
+
     try {
-      // Redis client doesn't have multi/pipeline, use parallel individual sets
-      // This is still fast since Redis is local
-      const promises = entries.map((entry) => {
-        const ttl = entry.ttl ?? 300;
-        return this.set(entry.key, entry.value, ttl);
-      });
-      await Promise.all(promises);
+      await Promise.all(entries.map(({ key, value, ttl }) => this.set(key, value, ttl ?? 300)));
     } catch (error) {
       logger.debug("[RedisCacheBackend] SetBatch failed", { entryCount: entries.length, error });
     }
@@ -285,6 +279,7 @@ export class RedisCacheBackend implements CacheBackend {
 
   async del(key: string): Promise<void> {
     if (!this.client) return;
+
     try {
       await this.client.del(this.prefixKey(key));
     } catch (error) {
@@ -294,27 +289,20 @@ export class RedisCacheBackend implements CacheBackend {
 
   async delByPattern(pattern: string): Promise<number> {
     if (!this.client) return 0;
+
     try {
       const fullPattern = this.prefixKey(pattern);
       let cursor = 0;
-      let deleted = 0;
       const keysToDelete: string[] = [];
 
       do {
-        const result = await this.client.scan(cursor, {
-          MATCH: fullPattern,
-          COUNT: 100,
-        });
+        const result = await this.client.scan(cursor, { MATCH: fullPattern, COUNT: 100 });
         cursor = result.cursor;
-        if (result.keys.length > 0) {
-          keysToDelete.push(...result.keys);
-        }
+        if (result.keys.length) keysToDelete.push(...result.keys);
       } while (cursor !== 0);
 
-      if (keysToDelete.length > 0) {
-        deleted = await this.client.del(keysToDelete);
-      }
-      return deleted;
+      if (!keysToDelete.length) return 0;
+      return await this.client.del(keysToDelete);
     } catch (error) {
       logger.debug("[RedisCacheBackend] DelByPattern failed", { pattern, error });
       return 0;
@@ -334,9 +322,9 @@ export class ApiCacheBackend implements CacheBackend {
   private timeoutMs: number;
   private env?: RuntimeEnv;
   private circuitBreaker = getCircuitBreaker("api-cache", {
-    failureThreshold: 10, // Open after 10 failures (increased from 5 for slow cache ops)
-    resetTimeoutMs: 15000, // Try again after 15s (reduced from 30s for faster recovery)
-    successThreshold: 2, // Need 2 successes to close (reduced from 3)
+    failureThreshold: 10,
+    resetTimeoutMs: 15000,
+    successThreshold: 2,
   });
 
   constructor(options: {
@@ -347,13 +335,11 @@ export class ApiCacheBackend implements CacheBackend {
     env?: RuntimeEnv;
   } = {}) {
     this.env = options.env;
-    this.apiBaseUrl = options.apiBaseUrl ||
-      getEnvValue("VERYFRONT_API_BASE_URL", this.env) ||
+    this.apiBaseUrl = options.apiBaseUrl ??
+      getEnvValue("VERYFRONT_API_BASE_URL", this.env) ??
       "https://api.veryfront.com";
-    this.keyPrefix = options.keyPrefix || "";
-    // Increased from 5000ms to 10000ms to handle slow API cache responses
-    // (observed 1000ms+ latency for large cache entries like file lists)
-    this.timeoutMs = options.timeoutMs || 10000;
+    this.keyPrefix = options.keyPrefix ?? "";
+    this.timeoutMs = options.timeoutMs ?? 10000;
   }
 
   private prefixKey(key: string): string {
@@ -361,12 +347,10 @@ export class ApiCacheBackend implements CacheBackend {
   }
 
   private getAuthToken(): string | null {
-    // Static token from env (non-proxy mode) or request context token (proxy mode)
     const envToken = getEnvValue("VERYFRONT_API_TOKEN", this.env);
     if (envToken) return envToken;
 
-    const ctx = getCurrentRequestContext();
-    return ctx?.token ?? null;
+    return getCurrentRequestContext()?.token ?? null;
   }
 
   private getProjectSlug(): string | null {
@@ -386,7 +370,6 @@ export class ApiCacheBackend implements CacheBackend {
       return null;
     }
 
-    // Use circuit breaker to prevent cascade failures when API is degraded
     try {
       return await this.circuitBreaker.execute(async () => {
         const url = `${this.apiBaseUrl}/projects/${projectSlug}/cache${path}`;
@@ -415,11 +398,7 @@ export class ApiCacheBackend implements CacheBackend {
             },
           );
 
-          if (!response.ok) {
-            // Non-2xx responses count as failures for circuit breaker
-            throw new Error(`HTTP ${response.status}`);
-          }
-
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
           return (await response.json()) as T;
         } finally {
           clearTimeout(timeoutId);
@@ -431,15 +410,16 @@ export class ApiCacheBackend implements CacheBackend {
           path,
           nextAttemptMs: error.nextAttemptMs,
         });
-      } else {
-        const isTimeout = error instanceof Error && error.name === "AbortError";
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        logger.info(`[ApiCacheBackend] Request ${isTimeout ? "timeout" : "error"}`, {
-          path,
-          error: errorMsg,
-          isTimeout,
-        });
+        return null;
       }
+
+      const isTimeout = error instanceof Error && error.name === "AbortError";
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      logger.info(`[ApiCacheBackend] Request ${isTimeout ? "timeout" : "error"}`, {
+        path,
+        error: errorMsg,
+        isTimeout,
+      });
       return null;
     }
   }
@@ -463,11 +443,10 @@ export class ApiCacheBackend implements CacheBackend {
       { keys: prefixedKeys },
     );
 
-    // Batch succeeded - map results back to original keys
     if (response?.values) {
       for (let i = 0; i < keys.length; i++) {
-        const originalKey = keys[i]!;
-        const prefixedKey = prefixedKeys[i]!;
+        const originalKey = keys[i] as string;
+        const prefixedKey = prefixedKeys[i] as string;
         results.set(originalKey, response.values[prefixedKey] ?? null);
       }
       return results;
@@ -483,10 +462,8 @@ export class ApiCacheBackend implements CacheBackend {
 
   /** Helper to fetch keys individually (used as fallback when batch fails). */
   private async getIndividually(keys: string[]): Promise<Map<string, string | null>> {
-    const results = await Promise.all(
-      keys.map(async (key) => ({ key, value: await this.get(key) })),
-    );
-    return new Map(results.map(({ key, value }) => [key, value]));
+    const results = await Promise.all(keys.map(async (key) => [key, await this.get(key)] as const));
+    return new Map(results);
   }
 
   async set(key: string, value: string, ttlSeconds = 300): Promise<void> {
@@ -500,19 +477,17 @@ export class ApiCacheBackend implements CacheBackend {
   async setBatch(entries: Array<{ key: string; value: string; ttl?: number }>): Promise<void> {
     if (entries.length === 0) return;
 
-    const prefixedEntries = entries.map((e) => ({
-      key: this.prefixKey(e.key),
-      value: e.value,
-      ttl: e.ttl,
+    const prefixedEntries = entries.map(({ key, value, ttl }) => ({
+      key: this.prefixKey(key),
+      value,
+      ttl,
     }));
 
     await this.request("POST", "/set-batch", { entries: prefixedEntries });
   }
 
   async del(key: string): Promise<void> {
-    await this.request("POST", "/del", {
-      key: this.prefixKey(key),
-    });
+    await this.request("POST", "/del", { key: this.prefixKey(key) });
   }
 
   async delByPattern(pattern: string): Promise<number> {
@@ -539,7 +514,6 @@ export interface CacheBackendConfig {
 
 /** Check if API cache backend is available (production environment with API URL). */
 export function isApiCacheAvailable(env?: RuntimeEnv): boolean {
-  // Detect production: PROXY_MODE=1 (K8s), NODE_ENV=production, or non-localhost API URL
   // deno-lint-ignore no-explicit-any
   const g = globalThis as any;
   const getEnvDirect = (key: string) => g.Deno?.env?.get(key) ?? g.process?.env?.[key];
@@ -548,7 +522,6 @@ export function isApiCacheAvailable(env?: RuntimeEnv): boolean {
   const nodeEnv = getEnvDirect("NODE_ENV");
   const apiUrl = getEnvValue("VERYFRONT_API_BASE_URL", env);
 
-  // Production if: proxy mode enabled, NODE_ENV=production, or API URL is non-local
   const isProduction = proxyMode === "1" ||
     nodeEnv === "production" ||
     !!(apiUrl && !apiUrl.includes("localhost") && !apiUrl.includes("lvh.me"));
@@ -560,22 +533,23 @@ export function isApiCacheAvailable(env?: RuntimeEnv): boolean {
  * Create cache backend based on environment.
  * Preference: API (production) > Redis (local/OSS) > Memory (fallback)
  */
-export function createCacheBackend(
-  config: CacheBackendConfig = {},
-): Promise<CacheBackend> {
+export function createCacheBackend(config: CacheBackendConfig = {}): Promise<CacheBackend> {
   const { keyPrefix = "", memoryMaxEntries = 500, preferredBackend, apiBaseUrl, env } = config;
 
   return withSpan(
     SpanNames.CACHE_BACKEND_CREATE,
     async (span?: Span) => {
-      // If preferred backend is specified, try that first
-      if (preferredBackend === "api" || (!preferredBackend && isApiCacheAvailable(env))) {
+      const shouldUseApi = preferredBackend === "api" ||
+        (!preferredBackend && isApiCacheAvailable(env));
+      if (shouldUseApi) {
         logger.debug("[CacheBackend] Using API backend (centralized cache)");
         span?.setAttribute("cache.backend.type", "api");
         return new ApiCacheBackend({ keyPrefix, apiBaseUrl, env });
       }
 
-      if (preferredBackend === "redis" || (!preferredBackend && isRedisConfigured())) {
+      const shouldUseRedis = preferredBackend === "redis" ||
+        (!preferredBackend && isRedisConfigured());
+      if (shouldUseRedis) {
         const redisBackend = new RedisCacheBackend(keyPrefix ? `vf:${keyPrefix}:` : "vf:cache:");
         if (await redisBackend.initialize()) {
           logger.debug("[CacheBackend] Using Redis backend");
@@ -584,7 +558,6 @@ export function createCacheBackend(
         }
       }
 
-      // Fall back to memory
       logger.debug("[CacheBackend] Using memory backend");
       span?.setAttribute("cache.backend.type", "memory");
       return new MemoryCacheBackend(memoryMaxEntries);

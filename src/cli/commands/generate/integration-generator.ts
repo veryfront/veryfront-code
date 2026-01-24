@@ -56,8 +56,7 @@ interface IntegrationConfig {
  * Check if we're in an interactive terminal
  */
 function canRunPrompts(): boolean {
-  const disablePrompt = isCiEnv() || isDenoTestingEnv();
-  return !disablePrompt && checkIsInteractive();
+  return !(isCiEnv() || isDenoTestingEnv()) && checkIsInteractive();
 }
 
 /**
@@ -70,6 +69,16 @@ function promptText(question: string, defaultValue?: string): Promise<string> {
   return Promise.resolve(input?.trim() || defaultValue || "");
 }
 
+function parseScopes(scopes?: string): string[] {
+  return scopes?.split(",").map((s) => s.trim()) || [];
+}
+
+function validateIntegrationName(name: string): void {
+  if (!name || !/^[a-z][a-z0-9-]*$/.test(name)) {
+    throw new Error("Integration name must be lowercase letters, numbers, and hyphens");
+  }
+}
+
 /**
  * Run the integration generator
  */
@@ -79,103 +88,13 @@ export async function generateIntegration(
 ): Promise<void> {
   fs = createFileSystem();
 
-  let config: IntegrationConfig;
+  const shouldPrompt = !options.skipPrompts && canRunPrompts();
+  const config = shouldPrompt
+    ? await getInteractiveConfig(options)
+    : getNonInteractiveConfig(options);
 
-  if (options.skipPrompts || !canRunPrompts()) {
-    // Non-interactive mode - require all options
-    if (!options.name || !options.displayName || !options.authType) {
-      throw new Error(
-        "Non-interactive mode requires --name, --display-name, and --auth-type options",
-      );
-    }
-
-    config = {
-      name: options.name.toLowerCase(),
-      displayName: options.displayName,
-      authType: options.authType,
-      apiBaseUrl: options.apiBaseUrl || `https://api.${options.name}.com`,
-      authorizationUrl: options.authorizationUrl,
-      tokenUrl: options.tokenUrl,
-      scopes: options.scopes?.split(",").map((s) => s.trim()) || [],
-      envVarPrefix: options.name.toUpperCase(),
-    };
-  } else {
-    // Interactive mode
-    console.log("");
-    console.log(green("Integration Generator"));
-    console.log("Let's create a new service integration.\n");
-
-    // Step 1: Integration name
-    const name = options.name || await promptText(
-      "Integration name (lowercase, e.g., twilio, zendesk):",
-    );
-
-    if (!name || !/^[a-z][a-z0-9-]*$/.test(name)) {
-      throw new Error("Integration name must be lowercase letters, numbers, and hyphens");
-    }
-
-    // Step 2: Display name
-    const displayName = options.displayName || await promptText(
-      "Display name:",
-      name.charAt(0).toUpperCase() + name.slice(1),
-    );
-
-    // Step 3: Auth type
-    const authTypeChoice = options.authType || await select(
-      "Authentication type:",
-      [
-        { value: "oauth2", label: "OAuth 2.0", description: "For services with OAuth flow" },
-        { value: "api-key", label: "API Key", description: "For services with API key auth" },
-      ],
-      0,
-    );
-
-    const authType = (authTypeChoice as "oauth2" | "api-key") || "oauth2";
-
-    // Step 4: API base URL
-    const apiBaseUrl = options.apiBaseUrl || await promptText(
-      "API base URL:",
-      `https://api.${name}.com`,
-    );
-
-    let authorizationUrl: string | undefined;
-    let tokenUrl: string | undefined;
-    let scopes: string[] = [];
-
-    if (authType === "oauth2") {
-      // Step 5: OAuth URLs (only for OAuth2)
-      authorizationUrl = options.authorizationUrl || await promptText(
-        "OAuth authorization URL:",
-        `https://${name}.com/oauth/authorize`,
-      );
-
-      tokenUrl = options.tokenUrl || await promptText(
-        "OAuth token URL:",
-        `https://${name}.com/oauth/token`,
-      );
-
-      const scopesInput = options.scopes || await promptText(
-        "OAuth scopes (comma-separated, or leave empty):",
-      );
-      scopes = scopesInput ? scopesInput.split(",").map((s) => s.trim()) : [];
-    }
-
-    config = {
-      name,
-      displayName,
-      authType,
-      apiBaseUrl,
-      authorizationUrl,
-      tokenUrl,
-      scopes,
-      envVarPrefix: name.toUpperCase().replace(/-/g, "_"),
-    };
-  }
-
-  // Generate the integration files
   await createIntegrationFiles(projectDir, config);
 
-  // Show summary
   console.log("");
   console.log(green("Integration created successfully!"));
   console.log("");
@@ -192,6 +111,89 @@ export async function generateIntegration(
   console.log("");
 }
 
+function getNonInteractiveConfig(options: IntegrationGeneratorOptions): IntegrationConfig {
+  if (!options.name || !options.displayName || !options.authType) {
+    throw new Error(
+      "Non-interactive mode requires --name, --display-name, and --auth-type options",
+    );
+  }
+
+  return {
+    name: options.name.toLowerCase(),
+    displayName: options.displayName,
+    authType: options.authType,
+    apiBaseUrl: options.apiBaseUrl || `https://api.${options.name}.com`,
+    authorizationUrl: options.authorizationUrl,
+    tokenUrl: options.tokenUrl,
+    scopes: parseScopes(options.scopes),
+    envVarPrefix: options.name.toUpperCase(),
+  };
+}
+
+async function getInteractiveConfig(
+  options: IntegrationGeneratorOptions,
+): Promise<IntegrationConfig> {
+  console.log("");
+  console.log(green("Integration Generator"));
+  console.log("Let's create a new service integration.\n");
+
+  const name = options.name || await promptText(
+    "Integration name (lowercase, e.g., twilio, zendesk):",
+  );
+  validateIntegrationName(name);
+
+  const displayName = options.displayName || await promptText(
+    "Display name:",
+    name.charAt(0).toUpperCase() + name.slice(1),
+  );
+
+  const authType = options.authType || (await select(
+    "Authentication type:",
+    [
+      { value: "oauth2", label: "OAuth 2.0", description: "For services with OAuth flow" },
+      { value: "api-key", label: "API Key", description: "For services with API key auth" },
+    ],
+    0,
+  ) as "oauth2" | "api-key" | null) || "oauth2";
+
+  const apiBaseUrl = options.apiBaseUrl || await promptText(
+    "API base URL:",
+    `https://api.${name}.com`,
+  );
+
+  let authorizationUrl: string | undefined;
+  let tokenUrl: string | undefined;
+  let scopes: string[] = [];
+
+  if (authType === "oauth2") {
+    authorizationUrl = options.authorizationUrl || await promptText(
+      "OAuth authorization URL:",
+      `https://${name}.com/oauth/authorize`,
+    );
+
+    tokenUrl = options.tokenUrl || await promptText(
+      "OAuth token URL:",
+      `https://${name}.com/oauth/token`,
+    );
+
+    const scopesInput = options.scopes || await promptText(
+      "OAuth scopes (comma-separated, or leave empty):",
+    );
+    scopes = scopesInput ? scopesInput.split(",").map((s) => s.trim()) : [];
+  }
+
+  return {
+    name,
+    displayName,
+    authType,
+    apiBaseUrl,
+    authorizationUrl,
+    tokenUrl,
+    scopes,
+    envVarPrefix: name.toUpperCase().replace(/-/g, "_"),
+  };
+}
+
 /**
  * Create all integration files
  */
@@ -201,7 +203,6 @@ async function createIntegrationFiles(
 ): Promise<void> {
   const baseDir = join(projectDir, "ai", "integrations", config.name);
 
-  // Create directories
   await ensureDir(baseDir);
   await ensureDir(join(baseDir, "lib"));
   await ensureDir(join(baseDir, "tools"));
@@ -209,16 +210,11 @@ async function createIntegrationFiles(
   if (config.authType === "oauth2") {
     await ensureDir(join(projectDir, "app", "api", "auth", config.name));
     await ensureDir(join(projectDir, "app", "api", "auth", config.name, "callback"));
-  }
-
-  // Generate files based on auth type
-  if (config.authType === "oauth2") {
     await createOAuth2Files(projectDir, baseDir, config);
   } else {
-    await createApiKeyFiles(projectDir, baseDir, config);
+    await createApiKeyFiles(baseDir, config);
   }
 
-  // Create common files
   await createClientFile(baseDir, config);
   await createToolSkeletons(baseDir, config);
   await createEnvExample(projectDir, config);
@@ -232,7 +228,6 @@ async function createOAuth2Files(
   baseDir: string,
   config: IntegrationConfig,
 ): Promise<void> {
-  // Token store
   const tokenStore = `/**
  * Token storage for ${config.displayName} OAuth
  */
@@ -272,7 +267,6 @@ export function clearTokens(): void {
   await fs.writeTextFile(join(baseDir, "lib", "token-store.ts"), tokenStore);
   cliLogger.debug(`Created ${join(baseDir, "lib", "token-store.ts")}`);
 
-  // OAuth route
   const oauthRoute = `/**
  * ${config.displayName} OAuth initialization route
  */
@@ -307,9 +301,8 @@ export function GET(): Response {
     join(projectDir, "app", "api", "auth", config.name, "route.ts"),
     oauthRoute,
   );
-  cliLogger.debug(`Created OAuth init route`);
+  cliLogger.debug("Created OAuth init route");
 
-  // OAuth callback route
   const callbackRoute = `/**
  * ${config.displayName} OAuth callback route
  */
@@ -370,18 +363,13 @@ export async function GET(request: Request): Promise<Response> {
     join(projectDir, "app", "api", "auth", config.name, "callback", "route.ts"),
     callbackRoute,
   );
-  cliLogger.debug(`Created OAuth callback route`);
+  cliLogger.debug("Created OAuth callback route");
 }
 
 /**
  * Create API key-specific files
  */
-async function createApiKeyFiles(
-  _projectDir: string,
-  baseDir: string,
-  config: IntegrationConfig,
-): Promise<void> {
-  // Simple token store for API key
+async function createApiKeyFiles(baseDir: string, config: IntegrationConfig): Promise<void> {
   const tokenStore = `/**
  * API key accessor for ${config.displayName}
  */
@@ -406,10 +394,6 @@ export function requireApiKey(): string {
  * Create the API client file
  */
 async function createClientFile(baseDir: string, config: IntegrationConfig): Promise<void> {
-  const authHeader = config.authType === "oauth2"
-    ? `"Authorization": \`Bearer \${token}\``
-    : `"Authorization": \`Bearer \${apiKey}\``;
-
   const tokenImport = config.authType === "oauth2"
     ? `import { getAccessToken } from "./token-store.ts";`
     : `import { requireApiKey } from "./token-store.ts";`;
@@ -420,6 +404,10 @@ async function createClientFile(baseDir: string, config: IntegrationConfig): Pro
     throw new Error("Not authenticated with ${config.displayName}. Please connect your account.");
   }`
     : `const apiKey = requireApiKey();`;
+
+  const authHeader = config.authType === "oauth2"
+    ? `"Authorization": \`Bearer \${token}\``
+    : `"Authorization": \`Bearer \${apiKey}\``;
 
   const client = `/**
  * ${config.displayName} API Client
@@ -504,7 +492,51 @@ export async function searchItems(query: string): Promise<unknown[]> {
 }
 `;
   await fs.writeTextFile(join(baseDir, "lib", `${config.name}-client.ts`), client);
-  cliLogger.debug(`Created API client`);
+  cliLogger.debug("Created API client");
+}
+
+function getToolInputSchema(toolFile: string): string {
+  if (toolFile === "list-items.ts") {
+    return `limit: z.number().optional().describe("Maximum number of items to return"),
+    offset: z.number().optional().describe("Number of items to skip"),`;
+  }
+  if (toolFile === "get-item.ts") {
+    return `id: z.string().describe("The ID of the item to retrieve"),`;
+  }
+  if (toolFile === "search.ts") {
+    return `query: z.string().describe("Search query"),`;
+  }
+  return "";
+}
+
+function getToolExecuteBody(toolFile: string): string {
+  if (toolFile === "list-items.ts") {
+    return `const items = await listItems({
+        limit: input.limit,
+        offset: input.offset,
+      });
+      return {
+        success: true,
+        items,
+        count: items.length,
+      };`;
+  }
+  if (toolFile === "get-item.ts") {
+    return `const item = await getItem(input.id);
+      return {
+        success: true,
+        item,
+      };`;
+  }
+  if (toolFile === "search.ts") {
+    return `const results = await searchItems(input.query);
+      return {
+        success: true,
+        results,
+        count: results.length,
+      };`;
+  }
+  return "";
 }
 
 /**
@@ -533,6 +565,9 @@ async function createToolSkeletons(baseDir: string, config: IntegrationConfig): 
   ];
 
   for (const tool of tools) {
+    const inputSchema = getToolInputSchema(tool.file);
+    const executeBody = getToolExecuteBody(tool.file);
+
     const toolContent = `/**
  * ${tool.name}
  */
@@ -545,53 +580,11 @@ export default tool({
   id: "${tool.id}",
   description: "${tool.description}",
   inputSchema: z.object({
-    ${
-      tool.file === "list-items.ts"
-        ? `limit: z.number().optional().describe("Maximum number of items to return"),
-    offset: z.number().optional().describe("Number of items to skip"),`
-        : ""
-    }
-    ${
-      tool.file === "get-item.ts"
-        ? `id: z.string().describe("The ID of the item to retrieve"),`
-        : ""
-    }
-    ${tool.file === "search.ts" ? `query: z.string().describe("Search query"),` : ""}
+    ${inputSchema}
   }),
   execute: async (input) => {
     try {
-      ${
-      tool.file === "list-items.ts"
-        ? `const items = await listItems({
-        limit: input.limit,
-        offset: input.offset,
-      });
-      return {
-        success: true,
-        items,
-        count: items.length,
-      };`
-        : ""
-    }
-      ${
-      tool.file === "get-item.ts"
-        ? `const item = await getItem(input.id);
-      return {
-        success: true,
-        item,
-      };`
-        : ""
-    }
-      ${
-      tool.file === "search.ts"
-        ? `const results = await searchItems(input.query);
-      return {
-        success: true,
-        results,
-        count: results.length,
-      };`
-        : ""
-    }
+      ${executeBody}
     } catch (error) {
       return {
         success: false,
@@ -612,31 +605,26 @@ export default tool({
 async function createEnvExample(projectDir: string, config: IntegrationConfig): Promise<void> {
   const envExamplePath = join(projectDir, ".env.example");
 
-  let envContent: string;
-  if (config.authType === "oauth2") {
-    envContent = `
+  const envContent = config.authType === "oauth2"
+    ? `
 # ${config.displayName} OAuth
 ${config.envVarPrefix}_CLIENT_ID=your_client_id
 ${config.envVarPrefix}_CLIENT_SECRET=your_client_secret
-`;
-  } else {
-    envContent = `
+`
+    : `
 # ${config.displayName} API
 ${config.envVarPrefix}_API_KEY=your_api_key
 `;
-  }
 
-  // Try to append to existing .env.example, or create new
   try {
     const existing = await fs.readTextFile(envExamplePath);
-    if (!existing.includes(config.envVarPrefix)) {
-      await fs.writeTextFile(envExamplePath, existing + envContent);
-      cliLogger.debug(`Updated .env.example`);
-    }
+    if (existing.includes(config.envVarPrefix)) return;
+
+    await fs.writeTextFile(envExamplePath, existing + envContent);
+    cliLogger.debug("Updated .env.example");
   } catch {
-    // File doesn't exist, create it
     await fs.writeTextFile(envExamplePath, `# Environment Variables${envContent}`);
-    cliLogger.debug(`Created .env.example`);
+    cliLogger.debug("Created .env.example");
   }
 }
 
@@ -647,9 +635,6 @@ async function ensureDir(path: string): Promise<void> {
   try {
     await fs.mkdir(path, { recursive: true });
   } catch (error) {
-    // Directory might already exist, which is fine
-    if (!isAlreadyExistsError(error)) {
-      throw error;
-    }
+    if (!isAlreadyExistsError(error)) throw error;
   }
 }

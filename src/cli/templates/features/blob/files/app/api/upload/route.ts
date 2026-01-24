@@ -1,20 +1,19 @@
 import { listBlobs, uploadBlob } from "../../../lib/storage.ts";
 
-export async function GET() {
+export async function GET(): Promise<Response> {
   const blobs = await listBlobs();
   return Response.json({ files: blobs });
 }
 
-export async function POST(req: Request) {
+export async function POST(req: Request): Promise<Response> {
   try {
-    const contentType = req.headers.get("content-type") || "";
+    const contentType = req.headers.get("content-type") ?? "";
 
-    // Handle multipart form data
     if (contentType.includes("multipart/form-data")) {
       const formData = await req.formData();
-      const file = formData.get("file") as File | null;
+      const file = formData.get("file");
 
-      if (!file) {
+      if (!(file instanceof File)) {
         return Response.json({ error: "No file provided" }, { status: 400 });
       }
 
@@ -24,23 +23,16 @@ export async function POST(req: Request) {
         mimeType: file.type,
       });
 
-      return Response.json({
-        success: true,
-        file: ref,
-      });
+      return Response.json({ success: true, file: ref });
     }
 
-    // Handle raw binary upload
     const buffer = await req.arrayBuffer();
-    const filename = req.headers.get("x-filename") || undefined;
+    const filename = req.headers.get("x-filename") ?? undefined;
     const mimeType = contentType || undefined;
 
     const ref = await uploadBlob(buffer, { filename, mimeType });
 
-    return Response.json({
-      success: true,
-      file: ref,
-    });
+    return Response.json({ success: true, file: ref });
   } catch (error) {
     console.error("Upload error:", error);
     return Response.json({ error: "Failed to upload file" }, { status: 500 });

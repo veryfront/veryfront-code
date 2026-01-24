@@ -10,6 +10,7 @@ import { discoverFiles } from "#veryfront/utils/file-discovery.ts";
 import { isDynamicSegment } from "#veryfront/utils/route-path-utils.ts";
 
 const PAGE_EXTENSIONS = [".mdx", ".md", ".tsx", ".jsx", ".ts"];
+const PAGE_CANDIDATES = ["page.mdx", "page.md", "page.tsx", "page.jsx", "page.ts", "page.js"];
 
 function convertToSlug(relativePath: string): string {
   return (
@@ -43,19 +44,14 @@ export async function collectPagesRoutes(
     await adapter.fs.stat(pagesDir);
 
     for await (
-      const file of discoverFiles({
-        baseDir: pagesDir,
-        extensions: PAGE_EXTENSIONS,
-        adapter,
-      })
+      const file of discoverFiles({ baseDir: pagesDir, extensions: PAGE_EXTENSIONS, adapter })
     ) {
       const relativePath = relative(pagesDir, file.path);
       const slug = convertToSlug(relativePath);
       const pathForRoute = `/${slug === "index" ? "" : slug}`;
 
-      if (shouldIncludeRoute(pathForRoute, include, exclude)) {
-        routes.push({ path: pathForRoute, file: file.path, slug });
-      }
+      if (!shouldIncludeRoute(pathForRoute, include, exclude)) continue;
+      routes.push({ path: pathForRoute, file: file.path, slug });
     }
   } catch (e) {
     logger.debug("No pages directory found, continuing with empty routes", e);
@@ -73,28 +69,21 @@ export async function collectAppRoutes(
   include?: string[],
   exclude?: string[],
 ): Promise<AppRouteInfo[]> {
-  const collected: AppRouteInfo[] = [];
-
   try {
+    const collected: AppRouteInfo[] = [];
     const appRoot = join(projectDir, "app");
+
     await adapter.fs.stat(appRoot);
     await walkAppSSG(adapter, appRoot, [], [appRoot], collected);
 
-    const filtered = collected.filter((r: AppRouteInfo) => {
-      if (include?.length && !include.some((p) => r.path.startsWith(p))) return false;
-      if (exclude?.length && exclude.some((p) => r.path.startsWith(p))) return false;
-      return true;
-    });
-
     logger.debug(`Found ${collected.length} App Router static routes`);
-    return filtered;
+
+    return collected.filter((r) => shouldIncludeRoute(r.path, include, exclude));
   } catch (e) {
     logger.debug("No app directory found for SSG", e);
     return [];
   }
 }
-
-const PAGE_CANDIDATES = ["page.mdx", "page.md", "page.tsx", "page.jsx", "page.ts", "page.js"];
 
 function isForceDynamic(source: string): boolean {
   return /export\s+const\s+dynamic\s*=\s*["']force-dynamic["']/.test(source);
@@ -107,39 +96,39 @@ async function walkAppSSG(
   segDirs: string[],
   collected: AppRouteInfo[],
 ): Promise<void> {
-  const baseName = dir.split("/").pop() || "";
+  const baseName = dir.split("/").pop() ?? "";
+  if (isDynamicSegment(baseName)) return;
 
-  if (isDynamicSegment(baseName)) {
-    return;
-  }
-  const candidates = PAGE_CANDIDATES.map((n) => join(dir, n));
-  for (const f of candidates) {
+  for (const filePath of PAGE_CANDIDATES.map((n) => join(dir, n))) {
     try {
-      const st = await adapter.fs.stat(f);
-      if (st.isFile) {
-        const src = await adapter.fs.readFile(f).catch(() => "");
-        if (!isForceDynamic(src)) {
-          const path = `/${segs.join("/")}`;
-          collected.push({
-            path: path === "/" ? "/" : path,
-            pageFile: f,
-            segments: [...segs],
-            segmentDirs: [...segDirs],
-          });
-        }
-        break;
+      const st = await adapter.fs.stat(filePath);
+      if (!st.isFile) continue;
+
+      const src = await adapter.fs.readFile(filePath).catch(() => "");
+      if (!isForceDynamic(src)) {
+        const path = `/${segs.join("/")}`;
+        collected.push({
+          path: path === "/" ? "/" : path,
+          pageFile: filePath,
+          segments: [...segs],
+          segmentDirs: [...segDirs],
+        });
       }
+      break;
     } catch {
-      /* continue */
+      // continue
     }
   }
-  for await (const e of adapter.fs.readDir(dir)) {
-    if (!e.isDirectory) continue;
+
+  for await (const entry of adapter.fs.readDir(dir)) {
+    if (!entry.isDirectory) continue;
+
+    const nextDir = join(dir, entry.name);
     await walkAppSSG(
       adapter,
-      join(dir, e.name),
-      e.name === "app" ? [] : [...segs, e.name],
-      [...segDirs, join(dir, e.name)],
+      nextDir,
+      entry.name === "app" ? [] : [...segs, entry.name],
+      [...segDirs, nextDir],
       collected,
     );
   }

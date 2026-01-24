@@ -1,14 +1,14 @@
-/**
+/****
  * ESBuild context creation and configuration
  * @module code-splitter/build-context
  */
 
 import { type BuildContext, context } from "esbuild";
 import { join } from "#veryfront/platform/compat/path/index.ts";
-import { getReactImportMap, REACT_DEFAULT_VERSION } from "#veryfront/utils";
-import type { SplitOptions } from "./types.ts";
-import { createSplitterPlugin } from "./esbuild-plugin.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { getReactImportMap, REACT_DEFAULT_VERSION } from "#veryfront/utils";
+import { createSplitterPlugin } from "./esbuild-plugin.ts";
+import type { SplitOptions } from "./types.ts";
 
 /** Veryfront client modules that may be externalized based on moduleResolution setting */
 const VERYFRONT_CLIENT_MODULES = [
@@ -30,8 +30,6 @@ export function getExternalDependencies(
     "react/jsx-dev-runtime",
   ];
 
-  // In 'bundled' mode, veryfront client modules are NOT external (bundled into client JS)
-  // In 'cdn' or 'self-hosted' mode, they ARE external (resolved via import map)
   if (moduleResolution !== "bundled") {
     baseExternal.push(...VERYFRONT_CLIENT_MODULES);
   }
@@ -56,8 +54,7 @@ if (typeof window !== 'undefined' && !window.__veryfront_react_imports) {
 }
 `;
 
-  const fs = createFileSystem();
-  await fs.writeTextFile(shimPath, shimContent);
+  await createFileSystem().writeTextFile(shimPath, shimContent);
   return shimPath;
 }
 
@@ -66,13 +63,14 @@ export async function createBuildContext(
   options: SplitOptions,
   entryPoints: Record<string, string>,
 ): Promise<BuildContext> {
+  const moduleResolution = options.moduleResolution ?? "cdn";
   const externalDependencies = getExternalDependencies(
     options.external,
-    options.moduleResolution ?? "cdn",
+    moduleResolution,
   );
   const shimFile = await createShimFile(options.outDir);
 
-  return await context({
+  return context({
     entryPoints,
     bundle: true,
     splitting: true,

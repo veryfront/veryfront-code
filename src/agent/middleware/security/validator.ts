@@ -1,11 +1,3 @@
-/**
- * Input Validation and Output Filtering
- *
- * Security features to prevent prompt injection, data leakage, and harmful content.
- *
- * @module veryfront/agent/middleware/security
- */
-
 import type { AgentContext, AgentResponse } from "../../types.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
@@ -110,7 +102,7 @@ export class InputValidator {
   private config: SecurityConfig["input"];
 
   constructor(config?: SecurityConfig["input"]) {
-    this.config = config || {};
+    this.config = config ?? {};
   }
 
   /**
@@ -123,32 +115,31 @@ export class InputValidator {
   }> {
     const violations: SecurityViolation[] = [];
 
-    // Check length
-    if (this.config?.maxLength && input.length > this.config.maxLength) {
+    const maxLength = this.config.maxLength;
+    if (maxLength && input.length > maxLength) {
       violations.push({
         type: "input",
-        reason: `Input exceeds maximum length of ${this.config.maxLength}`,
+        reason: `Input exceeds maximum length of ${maxLength}`,
         content: input.substring(0, 100) + "...",
       });
     }
 
-    // Check blocked patterns
-    if (this.config?.blockedPatterns) {
-      for (const pattern of this.config.blockedPatterns) {
-        if (pattern.test(input)) {
-          violations.push({
-            type: "input",
-            reason: "Input matches blocked pattern",
-            content: input,
-            pattern,
-          });
-        }
+    const blockedPatterns = this.config.blockedPatterns;
+    if (blockedPatterns) {
+      for (const pattern of blockedPatterns) {
+        if (!pattern.test(input)) continue;
+        violations.push({
+          type: "input",
+          reason: "Input matches blocked pattern",
+          content: input,
+          pattern,
+        });
       }
     }
 
-    // Custom validation
-    if (this.config?.validate) {
-      const customValid = await this.config.validate(input);
+    const validate = this.config.validate;
+    if (validate) {
+      const customValid = await validate(input);
       if (!customValid) {
         violations.push({
           type: "input",
@@ -158,15 +149,11 @@ export class InputValidator {
       }
     }
 
-    // Sanitize if requested
-    let sanitized = input;
-    if (this.config?.sanitize) {
-      sanitized = this.sanitizeInput(input);
-    }
+    const sanitized = this.config.sanitize ? this.sanitizeInput(input) : undefined;
 
     return {
       valid: violations.length === 0,
-      sanitized: this.config?.sanitize ? sanitized : undefined,
+      sanitized,
       violations,
     };
   }
@@ -196,7 +183,7 @@ export class OutputFilter {
   private config: SecurityConfig["output"];
 
   constructor(config?: SecurityConfig["output"]) {
-    this.config = config || {};
+    this.config = config ?? {};
   }
 
   /**
@@ -209,31 +196,29 @@ export class OutputFilter {
     const violations: SecurityViolation[] = [];
     let filtered = output;
 
-    // Check blocked patterns
-    if (this.config?.blockedPatterns) {
-      for (const pattern of this.config.blockedPatterns) {
-        if (pattern.test(filtered)) {
-          violations.push({
-            type: "output",
-            reason: "Output contains blocked pattern",
-            content: filtered,
-            pattern,
-          });
+    const blockedPatterns = this.config.blockedPatterns;
+    if (blockedPatterns) {
+      for (const pattern of blockedPatterns) {
+        if (!pattern.test(filtered)) continue;
 
-          // Redact matched content
-          filtered = filtered.replace(pattern, "[REDACTED]");
-        }
+        violations.push({
+          type: "output",
+          reason: "Output contains blocked pattern",
+          content: filtered,
+          pattern,
+        });
+
+        filtered = filtered.replace(pattern, "[REDACTED]");
       }
     }
 
-    // Filter PII
-    if (this.config?.filterPII) {
+    if (this.config.filterPII) {
       filtered = this.filterPII(filtered);
     }
 
-    // Custom filter
-    if (this.config?.filter) {
-      filtered = await this.config.filter(filtered);
+    const customFilter = this.config.filter;
+    if (customFilter) {
+      filtered = await customFilter(filtered);
     }
 
     return { filtered, violations };
@@ -258,15 +243,16 @@ function reportViolations(
   onViolation?: (violation: SecurityViolation) => void,
 ): void {
   if (!onViolation) return;
-  for (const violation of violations) {
-    onViolation(violation);
-  }
+  for (const violation of violations) onViolation(violation);
 }
 
 /**
  * Create security middleware for agents
  */
-export function securityMiddleware(config: SecurityConfig) {
+export function securityMiddleware(config: SecurityConfig): (
+  context: AgentContext,
+  next: () => Promise<AgentResponse>,
+) => Promise<AgentResponse> {
   const inputValidator = new InputValidator(config.input);
   const outputFilter = new OutputFilter(config.output);
 
@@ -274,37 +260,32 @@ export function securityMiddleware(config: SecurityConfig) {
     context: AgentContext,
     next: () => Promise<AgentResponse>,
   ): Promise<AgentResponse> => {
-    // Validate input
     const inputString = typeof context.input === "string"
       ? context.input
       : JSON.stringify(context.input);
-
     const inputValidation = await inputValidator.validate(inputString);
 
     if (!inputValidation.valid) {
       reportViolations(inputValidation.violations, config.onViolation);
 
       const firstViolation = inputValidation.violations[0];
-      throw toError(createError({
-        type: "agent",
-        message: `Input validation failed: ${firstViolation?.reason || "Unknown reason"}`,
-      }));
+      throw toError(
+        createError({
+          type: "agent",
+          message: `Input validation failed: ${firstViolation?.reason ?? "Unknown reason"}`,
+        }),
+      );
     }
 
-    // Execute with sanitized input if applicable
     if (inputValidation.sanitized) {
       context.input = inputValidation.sanitized;
     }
 
     const result = await next();
 
-    // Filter output
     const outputFiltering = await outputFilter.filter(result.text);
     reportViolations(outputFiltering.violations, config.onViolation);
 
-    return {
-      ...result,
-      text: outputFiltering.filtered,
-    };
+    return { ...result, text: outputFiltering.filtered };
   };
 }

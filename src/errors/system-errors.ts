@@ -1,36 +1,38 @@
 import { ErrorCode, VeryfrontError } from "./types.ts";
 
-export class FileSystemError extends VeryfrontError {
-  constructor(message: string, context?: unknown) {
-    super(message, ErrorCode.FILE_NOT_FOUND, context);
-    this.name = "FileSystemError";
+class SystemError extends VeryfrontError {
+  constructor(name: string, message: string, code: ErrorCode, context?: unknown) {
+    super(message, code, context);
+    this.name = name;
   }
 }
 
-export class ConfigError extends VeryfrontError {
+export class FileSystemError extends SystemError {
   constructor(message: string, context?: unknown) {
-    super(message, ErrorCode.CONFIG_ERROR, context);
-    this.name = "ConfigError";
+    super("FileSystemError", message, ErrorCode.FILE_NOT_FOUND, context);
   }
 }
 
-export class NetworkError extends VeryfrontError {
+export class ConfigError extends SystemError {
   constructor(message: string, context?: unknown) {
-    super(message, ErrorCode.NETWORK_ERROR, context);
-    this.name = "NetworkError";
+    super("ConfigError", message, ErrorCode.CONFIG_ERROR, context);
   }
 }
 
-export class PermissionError extends VeryfrontError {
+export class NetworkError extends SystemError {
   constructor(message: string, context?: unknown) {
-    super(message, ErrorCode.PERMISSION_ERROR, context);
-    this.name = "PermissionError";
+    super("NetworkError", message, ErrorCode.NETWORK_ERROR, context);
   }
 }
 
-export class NotSupportedError extends VeryfrontError {
+export class PermissionError extends SystemError {
   constructor(message: string, context?: unknown) {
-    super(message, ErrorCode.NOT_SUPPORTED, context);
-    this.name = "NotSupportedError";
+    super("PermissionError", message, ErrorCode.PERMISSION_ERROR, context);
+  }
+}
+
+export class NotSupportedError extends SystemError {
+  constructor(message: string, context?: unknown) {
+    super("NotSupportedError", message, ErrorCode.NOT_SUPPORTED, context);
   }
 }

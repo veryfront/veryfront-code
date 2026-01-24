@@ -1,9 +1,3 @@
-/**
- * useAgent Hook - Layer 1 (Headless)
- *
- * Agent orchestration with tool execution visualization.
- */
-
 import { useCallback, useRef, useState } from "react";
 import type { AgentStatus, Message, ToolCall } from "#veryfront/agent/types.ts";
 import { createError, ensureError, toError } from "#veryfront/errors/veryfront-error.ts";
@@ -48,9 +42,6 @@ export interface UseAgentResult {
   error: Error | null;
 }
 
-/**
- * useAgent hook for agent orchestration
- */
 export function useAgent(options: UseAgentOptions): UseAgentResult {
   const [messages, setMessages] = useState<Message[]>([]);
   const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
@@ -60,11 +51,8 @@ export function useAgent(options: UseAgentOptions): UseAgentResult {
   const [error, setError] = useState<Error | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  /**
-   * Invoke the agent
-   */
   const invoke = useCallback(
-    async (input: string) => {
+    async (input: string): Promise<void> => {
       setIsLoading(true);
       setError(null);
       setStatus("thinking");
@@ -74,54 +62,45 @@ export function useAgent(options: UseAgentOptions): UseAgentResult {
       abortControllerRef.current = abortController;
 
       try {
-        // Call agent API
         const response = await fetch(`/api/agents/${options.agent}`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            input,
-            messages,
-          }),
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ input, messages }),
           signal: abortController.signal,
         });
 
         if (!response.ok) {
-          throw toError(createError({
-            type: "agent",
-            message: `Agent error: ${response.status}`,
-          }));
+          throw toError(
+            createError({
+              type: "agent",
+              message: `Agent error: ${response.status}`,
+            }),
+          );
         }
 
-        // Parse response
-        const data = await response.json();
+        const data: {
+          messages?: Message[];
+          toolCalls?: ToolCall[];
+          status?: AgentStatus;
+          thinking?: string;
+        } = await response.json();
 
-        // Update state
-        setMessages(data.messages || []);
-        setToolCalls(data.toolCalls || []);
-        setStatus(data.status || "completed");
+        setMessages(data.messages ?? []);
+        setToolCalls(data.toolCalls ?? []);
+        setStatus(data.status ?? "completed");
         setThinking(data.thinking);
 
-        // Call callbacks for tool calls
-        if (data.toolCalls) {
-          for (const tc of data.toolCalls as ToolCall[]) {
-            options.onToolCall?.(tc);
-
-            if (tc.result) {
-              options.onToolResult?.(tc, tc.result);
-            }
-          }
+        for (const tc of data.toolCalls ?? []) {
+          options.onToolCall?.(tc);
+          if (tc.result) options.onToolResult?.(tc, tc.result);
         }
       } catch (err) {
-        if (err instanceof Error && err.name === "AbortError") {
-          return;
-        }
+        if (err instanceof Error && err.name === "AbortError") return;
 
-        const error = ensureError(err);
-        setError(error);
+        const nextError = ensureError(err);
+        setError(nextError);
         setStatus("error");
-        options.onError?.(error);
+        options.onError?.(nextError);
       } finally {
         setIsLoading(false);
         abortControllerRef.current = null;
@@ -130,14 +109,9 @@ export function useAgent(options: UseAgentOptions): UseAgentResult {
     [messages, options],
   );
 
-  /**
-   * Stop agent execution
-   */
-  const stop = useCallback(() => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-    }
+  const stop = useCallback((): void => {
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
     setIsLoading(false);
     setStatus("idle");
   }, []);

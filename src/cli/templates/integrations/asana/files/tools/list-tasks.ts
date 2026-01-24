@@ -8,34 +8,43 @@ export default tool({
     "List tasks from Asana. Can filter by project or get tasks assigned to the current user.",
   inputSchema: z.object({
     projectGid: z.string().optional().describe("Project GID to list tasks from"),
-    assignedToMe: z.boolean().default(false).describe("List tasks assigned to the current user"),
+    assignedToMe: z
+      .boolean()
+      .default(false)
+      .describe("List tasks assigned to the current user"),
     includeCompleted: z.boolean().default(false).describe("Include completed tasks"),
     limit: z.number().min(1).max(50).default(20).describe("Maximum number of tasks to return"),
   }),
   async execute({ projectGid, assignedToMe, includeCompleted, limit }) {
+    const completedSince = includeCompleted ? undefined : "now";
+
+    if (!assignedToMe && !projectGid) {
+      return {
+        tasks: [],
+        message: "Please specify either a projectGid or set assignedToMe to true",
+      };
+    }
+
     let tasks;
 
     if (assignedToMe) {
       const me = await getMe();
       const workspaces = await listWorkspaces();
+
       if (workspaces.length === 0) {
         return { tasks: [], message: "No workspaces found" };
       }
+
       tasks = await listTasks({
         assigneeGid: me.gid,
         workspaceGid: workspaces[0].gid,
-        completedSince: includeCompleted ? undefined : "now",
-      });
-    } else if (projectGid) {
-      tasks = await listTasks({
-        projectGid,
-        completedSince: includeCompleted ? undefined : "now",
+        completedSince,
       });
     } else {
-      return {
-        tasks: [],
-        message: "Please specify either a projectGid or set assignedToMe to true",
-      };
+      tasks = await listTasks({
+        projectGid,
+        completedSince,
+      });
     }
 
     return tasks.slice(0, limit).map((task) => ({

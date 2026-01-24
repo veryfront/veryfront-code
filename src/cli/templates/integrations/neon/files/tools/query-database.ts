@@ -8,19 +8,18 @@ export default tool({
     "Execute SQL queries against the connected Neon database. Supports parameterized queries for safety. Use this to retrieve, analyze, or search data.",
   inputSchema: z.object({
     sql: z.string().describe("SQL query to execute. Use $1, $2, etc. for parameters"),
-    params: z.array(z.union([z.string(), z.number(), z.boolean(), z.null()])).optional().describe(
-      "Optional array of parameter values for the query",
-    ),
+    params: z
+      .array(z.union([z.string(), z.number(), z.boolean(), z.null()]))
+      .optional()
+      .describe("Optional array of parameter values for the query"),
     limit: z.number().min(1).max(1000).default(100).describe("Maximum number of rows to return"),
   }),
   async execute({ sql, params, limit }) {
-    // Add LIMIT clause if not present and it's a SELECT query
-    let finalSql = sql.trim();
-    const isSelectQuery = /^SELECT/i.test(finalSql);
+    const trimmedSql = sql.trim();
+    const isSelectQuery = /^SELECT/i.test(trimmedSql);
 
-    if (isSelectQuery && !/LIMIT\s+\d+/i.test(finalSql)) {
-      finalSql = `${finalSql} LIMIT ${limit}`;
-    }
+    const finalSql =
+      isSelectQuery && !/LIMIT\s+\d+/i.test(trimmedSql) ? `${trimmedSql} LIMIT ${limit}` : trimmedSql;
 
     const result = await query(finalSql, params);
 

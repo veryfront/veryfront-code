@@ -10,43 +10,38 @@ import { shouldRunWizard } from "./interactive-wizard.ts";
 describe("interactive-wizard", () => {
   describe("shouldRunWizard", () => {
     it("should return true when no template or integrations specified", () => {
-      const result = shouldRunWizard({});
-      assertEquals(result, true);
+      assertEquals(shouldRunWizard({}), true);
     });
 
     it("should return true when only empty integrations array specified", () => {
-      const result = shouldRunWizard({ integrations: [] });
-      assertEquals(result, true);
+      assertEquals(shouldRunWizard({ integrations: [] }), true);
     });
 
     it("should return false when template is specified", () => {
-      const result = shouldRunWizard({ template: "ai" });
-      assertEquals(result, false);
+      assertEquals(shouldRunWizard({ template: "ai" }), false);
     });
 
     it("should return false when template is minimal", () => {
-      const result = shouldRunWizard({ template: "minimal" });
-      assertEquals(result, false);
+      assertEquals(shouldRunWizard({ template: "minimal" }), false);
     });
 
     it("should return false when integrations are specified", () => {
-      const result = shouldRunWizard({ integrations: ["github"] });
-      assertEquals(result, false);
+      assertEquals(shouldRunWizard({ integrations: ["github"] }), false);
     });
 
     it("should return false when both template and integrations specified", () => {
-      const result = shouldRunWizard({ template: "ai", integrations: ["github", "slack"] });
-      assertEquals(result, false);
+      assertEquals(
+        shouldRunWizard({ template: "ai", integrations: ["github", "slack"] }),
+        false,
+      );
     });
 
     it("should return true when template is undefined and integrations is empty", () => {
-      const result = shouldRunWizard({ template: undefined, integrations: [] });
-      assertEquals(result, true);
+      assertEquals(shouldRunWizard({ template: undefined, integrations: [] }), true);
     });
 
     it("should return false when template is undefined but integrations exist", () => {
-      const result = shouldRunWizard({ template: undefined, integrations: ["slack"] });
-      assertEquals(result, false);
+      assertEquals(shouldRunWizard({ template: undefined, integrations: ["slack"] }), false);
     });
   });
 });

@@ -1,11 +1,16 @@
-/**
- * Create Zendesk Ticket Tool
- */
-
 import { z } from "zod";
-import { tool } from "veryfront/tool";
 import { getZendeskClient } from "../../lib/zendesk-client.ts";
 import { isZendeskConnected } from "../../lib/token-store.ts";
+
+type TicketData = {
+  subject: string;
+  comment: { body: string };
+  requester?: { name: string; email: string };
+  priority?: "urgent" | "high" | "normal" | "low";
+  type?: "problem" | "incident" | "question" | "task";
+  tags?: string[];
+  assignee_id?: number;
+};
 
 export default defineTool({
   id: "zendesk-create-ticket",
@@ -13,20 +18,27 @@ export default defineTool({
   inputSchema: z.object({
     subject: z.string().describe("Subject/title of the ticket"),
     body: z.string().describe("Description/body content of the ticket"),
-    priority: z.enum(["urgent", "high", "normal", "low"]).optional()
+    priority: z
+      .enum(["urgent", "high", "normal", "low"])
+      .optional()
       .describe("Priority level of the ticket"),
-    type: z.enum(["problem", "incident", "question", "task"]).optional()
+    type: z
+      .enum(["problem", "incident", "question", "task"])
+      .optional()
       .describe("Type of ticket"),
     tags: z.array(z.string()).optional().describe("Tags to add to the ticket"),
     assigneeId: z.number().optional().describe("User ID to assign the ticket to"),
-    requesterName: z.string().optional().describe("Name of the requester (if creating on behalf)"),
-    requesterEmail: z.string().optional().describe(
-      "Email of the requester (if creating on behalf)",
-    ),
+    requesterName: z
+      .string()
+      .optional()
+      .describe("Name of the requester (if creating on behalf)"),
+    requesterEmail: z
+      .string()
+      .optional()
+      .describe("Email of the requester (if creating on behalf)"),
   }),
   async execute(input) {
-    const connected = await isZendeskConnected();
-    if (!connected) {
+    if (!(await isZendeskConnected())) {
       return {
         error: "Zendesk not connected",
         action: "Please connect Zendesk via /api/auth/zendesk",
@@ -36,30 +48,18 @@ export default defineTool({
     try {
       const client = getZendeskClient();
 
-      const ticketData: {
-        subject: string;
-        comment: { body: string };
-        requester?: { name: string; email: string };
-        priority?: "urgent" | "high" | "normal" | "low";
-        type?: "problem" | "incident" | "question" | "task";
-        tags?: string[];
-        assignee_id?: number;
-      } = {
+      const ticketData: TicketData = {
         subject: input.subject,
         comment: { body: input.body },
+        priority: input.priority,
+        type: input.type,
+        tags: input.tags,
+        assignee_id: input.assigneeId,
+        requester:
+          input.requesterName && input.requesterEmail
+            ? { name: input.requesterName, email: input.requesterEmail }
+            : undefined,
       };
-
-      if (input.priority) ticketData.priority = input.priority;
-      if (input.type) ticketData.type = input.type;
-      if (input.tags) ticketData.tags = input.tags;
-      if (input.assigneeId) ticketData.assignee_id = input.assigneeId;
-
-      if (input.requesterName && input.requesterEmail) {
-        ticketData.requester = {
-          name: input.requesterName,
-          email: input.requesterEmail,
-        };
-      }
 
       const ticket = await client.createTicket(ticketData);
 

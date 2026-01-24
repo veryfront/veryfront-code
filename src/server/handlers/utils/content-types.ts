@@ -75,21 +75,19 @@ export const CONTENT_TYPES: Record<string, string> = {
   ".wasm": "application/wasm",
 };
 
+const DEFAULT_CONTENT_TYPE = "application/octet-stream";
+const COMPRESSIBLE_PATTERNS = ["javascript", "json", "xml", "svg"];
+const COMPRESSED_PATTERNS = ["gzip", "zip", "compressed", "jpeg", "jpg", "png", "webp", "avif"];
+
 export function getContentType(extension: string): string {
-  return CONTENT_TYPES[extension.toLowerCase()] || "application/octet-stream";
+  return CONTENT_TYPES[extension.toLowerCase()] ?? DEFAULT_CONTENT_TYPE;
 }
 
 export function getContentTypeForPath(path: string): string {
   const lastDot = path.lastIndexOf(".");
-  if (lastDot === -1) {
-    return "application/octet-stream";
-  }
-  const ext = path.slice(lastDot);
-  return getContentType(ext);
+  if (lastDot === -1) return DEFAULT_CONTENT_TYPE;
+  return getContentType(path.slice(lastDot));
 }
-
-const COMPRESSIBLE_PATTERNS = ["javascript", "json", "xml", "svg"];
-const COMPRESSED_PATTERNS = ["gzip", "zip", "compressed", "jpeg", "jpg", "png", "webp", "avif"];
 
 export function isCompressible(contentType: string): boolean {
   if (contentType.startsWith("text/")) return true;

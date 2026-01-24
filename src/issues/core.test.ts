@@ -180,13 +180,14 @@ Deno.test("parseIssue - returns null for invalid content", () => {
 // IssuesManager Tests (using temp directory)
 // ============================================================================
 
-async function withTempDir(fn: (dir: string) => Promise<void>): Promise<void> {
-  const dir = await Deno.makeTempDir({ prefix: "issues-test-" });
-  try {
-    await fn(dir);
-  } finally {
-    await Deno.remove(dir, { recursive: true });
-  }
+function withTempDir(fn: (dir: string) => Promise<void>): Promise<void> {
+  return Deno.makeTempDir({ prefix: "issues-test-" }).then(async (dir) => {
+    try {
+      await fn(dir);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
 }
 
 Deno.test("IssuesManager.create - creates new issue", async () => {
@@ -204,9 +205,7 @@ Deno.test("IssuesManager.create - creates new issue", async () => {
     assertEquals(issue.metadata.labels, ["bug"]);
     assertEquals(issue.path, "issues/ISSUE-001.md");
 
-    // Verify file was created
-    const filePath = join(dir, issue.path);
-    const stat = await Deno.stat(filePath);
+    const stat = await Deno.stat(join(dir, issue.path));
     assertEquals(stat.isFile, true);
   });
 });
@@ -254,8 +253,7 @@ Deno.test("IssuesManager.get - retrieves existing issue", async () => {
 Deno.test("IssuesManager.get - returns null for non-existent issue", async () => {
   await withTempDir(async (dir) => {
     const manager = createIssuesManager(dir);
-    const result = await manager.get("ISSUE-999");
-    assertEquals(result, null);
+    assertEquals(await manager.get("ISSUE-999"), null);
   });
 });
 
@@ -278,8 +276,7 @@ Deno.test("IssuesManager.update - updates issue fields", async () => {
 Deno.test("IssuesManager.update - returns null for non-existent issue", async () => {
   await withTempDir(async (dir) => {
     const manager = createIssuesManager(dir);
-    const result = await manager.update("ISSUE-999", { title: "Test" });
-    assertEquals(result, null);
+    assertEquals(await manager.update("ISSUE-999", { title: "Test" }), null);
   });
 });
 
@@ -288,19 +285,15 @@ Deno.test("IssuesManager.delete - removes issue file", async () => {
     const manager = createIssuesManager(dir);
     const created = await manager.create({ title: "To delete" });
 
-    const deleted = await manager.delete(created.metadata.id);
-    assertEquals(deleted, true);
-
-    const retrieved = await manager.get(created.metadata.id);
-    assertEquals(retrieved, null);
+    assertEquals(await manager.delete(created.metadata.id), true);
+    assertEquals(await manager.get(created.metadata.id), null);
   });
 });
 
 Deno.test("IssuesManager.delete - returns false for non-existent issue", async () => {
   await withTempDir(async (dir) => {
     const manager = createIssuesManager(dir);
-    const result = await manager.delete("ISSUE-999");
-    assertEquals(result, false);
+    assertEquals(await manager.delete("ISSUE-999"), false);
   });
 });
 
@@ -343,11 +336,8 @@ Deno.test("IssuesManager.list - filters by labels", async () => {
     await manager.create({ title: "Feature", labels: ["feature"] });
     await manager.create({ title: "Bug + High", labels: ["bug", "priority:high"] });
 
-    const bugs = await manager.list({ labels: ["bug"] });
-    assertEquals(bugs.total, 2);
-
-    const highPriorityBugs = await manager.list({ labels: ["bug", "priority:high"] });
-    assertEquals(highPriorityBugs.total, 1);
+    assertEquals((await manager.list({ labels: ["bug"] })).total, 2);
+    assertEquals((await manager.list({ labels: ["bug", "priority:high"] })).total, 1);
   });
 });
 
@@ -358,11 +348,8 @@ Deno.test("IssuesManager.list - filters by prefix", async () => {
     await manager.create({ title: "Task 1", prefix: "TASK" });
     await manager.create({ title: "Task 2", prefix: "TASK" });
 
-    const issues = await manager.list({ prefix: "ISSUE" });
-    assertEquals(issues.total, 1);
-
-    const tasks = await manager.list({ prefix: "TASK" });
-    assertEquals(tasks.total, 2);
+    assertEquals((await manager.list({ prefix: "ISSUE" })).total, 1);
+    assertEquals((await manager.list({ prefix: "TASK" })).total, 2);
   });
 });
 
@@ -451,7 +438,10 @@ Deno.test("IssuesManager.addLabels - deduplicates labels", async () => {
 Deno.test("IssuesManager.removeLabels - removes labels from issue", async () => {
   await withTempDir(async (dir) => {
     const manager = createIssuesManager(dir);
-    const created = await manager.create({ title: "Test", labels: ["bug", "feature", "wontfix"] });
+    const created = await manager.create({
+      title: "Test",
+      labels: ["bug", "feature", "wontfix"],
+    });
 
     const updated = await manager.removeLabels(created.metadata.id, ["wontfix"]);
     assertExists(updated);

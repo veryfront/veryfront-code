@@ -13,6 +13,10 @@ import { createIssuesManager } from "./core.ts";
 import type { Issue } from "./types.ts";
 import { ISSUE_PREFIXES, parseState } from "./schema.ts";
 
+function getManager(projectDir?: string) {
+  return createIssuesManager(projectDir ?? cwd());
+}
+
 // ============================================================================
 // Tool: issues_create
 // ============================================================================
@@ -37,8 +41,7 @@ const issuesCreate: MCPTool<IssuesCreateInput, Issue> = {
     "Use prefix 'TASK' for small work items, 'PLAN' for proposals/RFCs, 'ISSUE' for bugs/features.",
   inputSchema: issuesCreateInput,
   execute: async (input) => {
-    const projectDir = input.projectDir || cwd();
-    const manager = createIssuesManager(projectDir);
+    const manager = getManager(input.projectDir);
     return await manager.create({
       title: input.title,
       body: input.body,
@@ -66,8 +69,7 @@ const issuesGet: MCPTool<IssuesGetInput, Issue | null> = {
   description: "Get a specific issue by ID. Returns null if not found.",
   inputSchema: issuesGetInput,
   execute: async (input) => {
-    const projectDir = input.projectDir || cwd();
-    const manager = createIssuesManager(projectDir);
+    const manager = getManager(input.projectDir);
     return await manager.get(input.id);
   },
 };
@@ -95,17 +97,16 @@ const issuesUpdate: MCPTool<IssuesUpdateInput, Issue | null> = {
     "Returns the updated issue or null if not found.",
   inputSchema: issuesUpdateInput,
   execute: async (input) => {
-    const projectDir = input.projectDir || cwd();
-    const manager = createIssuesManager(projectDir);
+    const manager = getManager(input.projectDir);
 
-    const updates: Parameters<typeof manager.update>[1] = {};
-    if (input.title !== undefined) updates.title = input.title;
-    if (input.body !== undefined) updates.body = input.body;
-    if (input.labels !== undefined) updates.labels = input.labels;
-    if (input.milestone !== undefined) updates.milestone = input.milestone;
-    if (input.assignees !== undefined) updates.assignees = input.assignees;
+    const updates: Parameters<typeof manager.update>[1] = {
+      ...(input.title !== undefined ? { title: input.title } : {}),
+      ...(input.body !== undefined ? { body: input.body } : {}),
+      ...(input.labels !== undefined ? { labels: input.labels } : {}),
+      ...(input.milestone !== undefined ? { milestone: input.milestone } : {}),
+      ...(input.assignees !== undefined ? { assignees: input.assignees } : {}),
+    };
 
-    // Parse state with aliases
     if (input.state !== undefined) {
       const state = parseState(input.state);
       if (state) updates.state = state;
@@ -144,8 +145,7 @@ const issuesList: MCPTool<IssuesListInput, IssuesListOutput> = {
     "Returns matching issues and total count.",
   inputSchema: issuesListInput,
   execute: async (input) => {
-    const projectDir = input.projectDir || cwd();
-    const manager = createIssuesManager(projectDir);
+    const manager = getManager(input.projectDir);
     return await manager.list({
       state: input.state,
       labels: input.labels,
@@ -175,8 +175,7 @@ const issuesClose: MCPTool<IssuesCloseInput, Issue | null> = {
   description: "Close an issue. Returns the updated issue or null if not found.",
   inputSchema: issuesCloseInput,
   execute: async (input) => {
-    const projectDir = input.projectDir || cwd();
-    const manager = createIssuesManager(projectDir);
+    const manager = getManager(input.projectDir);
     return await manager.close(input.id);
   },
 };
@@ -202,10 +201,8 @@ const issuesDelete: MCPTool<IssuesDeleteInput, IssuesDeleteOutput> = {
     "Use with caution - this cannot be undone.",
   inputSchema: issuesDeleteInput,
   execute: async (input) => {
-    const projectDir = input.projectDir || cwd();
-    const manager = createIssuesManager(projectDir);
-    const deleted = await manager.delete(input.id);
-    return { deleted };
+    const manager = getManager(input.projectDir);
+    return { deleted: await manager.delete(input.id) };
   },
 };
 

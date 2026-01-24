@@ -33,10 +33,7 @@ interface AsanaWorkspace {
   name: string;
 }
 
-async function asanaFetch<T>(
-  endpoint: string,
-  options: RequestInit = {},
-): Promise<T> {
+async function asanaFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = await getAccessToken();
   if (!token) {
     throw new Error("Not authenticated with Asana. Please connect your account.");
@@ -45,32 +42,31 @@ async function asanaFetch<T>(
   const response = await fetch(`${ASANA_BASE_URL}${endpoint}`, {
     ...options,
     headers: {
-      "Authorization": `Bearer ${token}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
       ...options.headers,
     },
   });
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(
-      `Asana API error: ${response.status} ${error.errors?.[0]?.message || response.statusText}`,
-    );
+  if (response.ok) {
+    return response.json();
   }
 
-  return response.json();
+  const error = await response.json().catch(() => ({} as any));
+  const message = error?.errors?.[0]?.message ?? response.statusText;
+  throw new Error(`Asana API error: ${response.status} ${message}`);
 }
 
 export async function listWorkspaces(): Promise<AsanaWorkspace[]> {
-  const response = await asanaFetch<AsanaResponse<AsanaWorkspace[]>>("/workspaces");
-  return response.data;
+  const { data } = await asanaFetch<AsanaResponse<AsanaWorkspace[]>>("/workspaces");
+  return data;
 }
 
 export async function listProjects(workspaceGid: string): Promise<AsanaProject[]> {
-  const response = await asanaFetch<AsanaResponse<AsanaProject[]>>(
+  const { data } = await asanaFetch<AsanaResponse<AsanaProject[]>>(
     `/workspaces/${workspaceGid}/projects?opt_fields=name,notes,created_at,modified_at`,
   );
-  return response.data;
+  return data;
 }
 
 export async function listTasks(options: {
@@ -95,15 +91,15 @@ export async function listTasks(options: {
     params.set("workspace", options.workspaceGid);
   }
 
-  const response = await asanaFetch<AsanaResponse<AsanaTask[]>>(`${endpoint}?${params}`);
-  return response.data;
+  const { data } = await asanaFetch<AsanaResponse<AsanaTask[]>>(`${endpoint}?${params}`);
+  return data;
 }
 
 export async function getTask(taskGid: string): Promise<AsanaTask> {
-  const response = await asanaFetch<AsanaResponse<AsanaTask>>(
+  const { data } = await asanaFetch<AsanaResponse<AsanaTask>>(
     `/tasks/${taskGid}?opt_fields=name,notes,completed,due_on,assignee.name,projects.name,created_at,modified_at`,
   );
-  return response.data;
+  return data;
 }
 
 export async function createTask(options: {
@@ -116,17 +112,16 @@ export async function createTask(options: {
   const body: Record<string, unknown> = {
     name: options.name,
     projects: [options.projectGid],
+    ...(options.notes ? { notes: options.notes } : {}),
+    ...(options.dueOn ? { due_on: options.dueOn } : {}),
+    ...(options.assigneeGid ? { assignee: options.assigneeGid } : {}),
   };
 
-  if (options.notes) body.notes = options.notes;
-  if (options.dueOn) body.due_on = options.dueOn;
-  if (options.assigneeGid) body.assignee = options.assigneeGid;
-
-  const response = await asanaFetch<AsanaResponse<AsanaTask>>("/tasks", {
+  const { data } = await asanaFetch<AsanaResponse<AsanaTask>>("/tasks", {
     method: "POST",
     body: JSON.stringify({ data: body }),
   });
-  return response.data;
+  return data;
 }
 
 export async function updateTask(
@@ -147,16 +142,16 @@ export async function updateTask(
   if (updates.dueOn !== undefined) body.due_on = updates.dueOn;
   if (updates.assigneeGid !== undefined) body.assignee = updates.assigneeGid;
 
-  const response = await asanaFetch<AsanaResponse<AsanaTask>>(`/tasks/${taskGid}`, {
+  const { data } = await asanaFetch<AsanaResponse<AsanaTask>>(`/tasks/${taskGid}`, {
     method: "PUT",
     body: JSON.stringify({ data: body }),
   });
-  return response.data;
+  return data;
 }
 
 export async function getMe(): Promise<{ gid: string; name: string; email: string }> {
-  const response = await asanaFetch<AsanaResponse<{ gid: string; name: string; email: string }>>(
+  const { data } = await asanaFetch<AsanaResponse<{ gid: string; name: string; email: string }>>(
     "/users/me",
   );
-  return response.data;
+  return data;
 }

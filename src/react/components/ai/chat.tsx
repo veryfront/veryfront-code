@@ -1,12 +1,3 @@
-/**
- * Chat Component - Re-export from modular implementation
- *
- * This file maintains backward compatibility by re-exporting
- * from the new modular chat/ directory.
- *
- * @module ai/react/components/chat
- */
-
 export {
   Chat,
   ChatComponents,

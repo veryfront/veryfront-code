@@ -4,24 +4,24 @@ import { formatAmount, formatDate, listPaymentIntents } from "../../lib/stripe-c
 
 export default tool({
   id: "list-payments",
-  description:
-    "List Stripe payment intents. Supports filtering by customer and creation date range.",
+  description: "List Stripe payment intents. Supports filtering by customer and creation date range.",
   inputSchema: z.object({
-    limit: z.number().min(1).max(100).default(10).describe(
-      "Maximum number of payment intents to retrieve",
-    ),
+    limit: z
+      .number()
+      .min(1)
+      .max(100)
+      .default(10)
+      .describe("Maximum number of payment intents to retrieve"),
     customerId: z.string().optional().describe("Filter by customer ID (starts with cus_)"),
-    createdAfter: z.number().optional().describe(
-      "Filter payments created after this Unix timestamp",
-    ),
-    createdBefore: z.number().optional().describe(
-      "Filter payments created before this Unix timestamp",
-    ),
+    createdAfter: z.number().optional().describe("Filter payments created after this Unix timestamp"),
+    createdBefore: z
+      .number()
+      .optional()
+      .describe("Filter payments created before this Unix timestamp"),
   }),
   async execute({ limit, customerId, createdAfter, createdBefore }) {
-    const created: { gte?: number; lte?: number } | undefined = createdAfter || createdBefore
-      ? { gte: createdAfter, lte: createdBefore }
-      : undefined;
+    const created =
+      createdAfter || createdBefore ? { gte: createdAfter, lte: createdBefore } : undefined;
 
     const payments = await listPaymentIntents({
       limit,

@@ -1,6 +1,6 @@
+import { getDisableLruIntervalEnv } from "#veryfront/config/env.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import type { CachePayload, CacheStore } from "../types.ts";
-import { getDisableLruIntervalEnv } from "#veryfront/config/env.ts";
 
 /**
  * Default max entries for render cache.
@@ -45,17 +45,13 @@ export class MemoryCacheStore implements CacheStore {
    */
   deleteByPrefix(prefix: string): Promise<number> {
     let deleted = 0;
-    // Collect keys to delete (can't delete while iterating)
-    const keysToDelete: string[] = [];
+
     for (const key of this.cache.keys()) {
-      if (key.startsWith(prefix)) {
-        keysToDelete.push(key);
-      }
-    }
-    for (const key of keysToDelete) {
+      if (!key.startsWith(prefix)) continue;
       this.cache.delete(key);
       deleted++;
     }
+
     return Promise.resolve(deleted);
   }
 
@@ -71,6 +67,6 @@ export class MemoryCacheStore implements CacheStore {
 }
 
 function isLruIntervalDisabled(): boolean {
-  return (globalThis as Record<string, unknown>).__vfDisableLruInterval === true ||
-    getDisableLruIntervalEnv();
+  const globalFlag = (globalThis as Record<string, unknown>).__vfDisableLruInterval === true;
+  return globalFlag || getDisableLruIntervalEnv();
 }

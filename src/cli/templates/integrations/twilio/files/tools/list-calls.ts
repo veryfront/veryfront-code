@@ -1,10 +1,29 @@
 import { tool } from "veryfront/tool";
 import { z } from "zod";
-import { listCalls, formatPhoneNumber } from "../../lib/twilio-client.ts";
+import { formatPhoneNumber, listCalls } from "../../lib/twilio-client.ts";
+
+type CallStatus =
+  | "queued"
+  | "ringing"
+  | "in-progress"
+  | "completed"
+  | "busy"
+  | "failed"
+  | "no-answer"
+  | "canceled";
+
+type ListCallsOptions = {
+  to?: string;
+  from?: string;
+  status?: CallStatus;
+  startTime?: string;
+  limit?: number;
+};
 
 export default tool({
   id: "list-calls",
-  description: "List recent phone calls from your Twilio account. Supports filtering by recipient, sender, status, and date.",
+  description:
+    "List recent phone calls from your Twilio account. Supports filtering by recipient, sender, status, and date.",
   inputSchema: z.object({
     to: z
       .string()
@@ -40,33 +59,13 @@ export default tool({
   }),
   execute: async ({ to, from, status, startTime, limit }) => {
     try {
-      const options: {
-        to?: string;
-        from?: string;
-        status?: "queued" | "ringing" | "in-progress" | "completed" | "busy" | "failed" | "no-answer" | "canceled";
-        startTime?: string;
-        limit?: number;
-      } = {};
-
-      if (to) {
-        options.to = formatPhoneNumber(to);
-      }
-
-      if (from) {
-        options.from = formatPhoneNumber(from);
-      }
-
-      if (status) {
-        options.status = status;
-      }
-
-      if (startTime) {
-        options.startTime = startTime;
-      }
-
-      if (limit) {
-        options.limit = limit;
-      }
+      const options: ListCallsOptions = {
+        ...(to ? { to: formatPhoneNumber(to) } : {}),
+        ...(from ? { from: formatPhoneNumber(from) } : {}),
+        ...(status ? { status } : {}),
+        ...(startTime ? { startTime } : {}),
+        ...(limit ? { limit } : {}),
+      };
 
       const calls = await listCalls(options);
 
@@ -79,7 +78,6 @@ export default tool({
         };
       }
 
-      // Format calls for better readability
       const formattedCalls = calls.map((call) => ({
         sid: call.sid,
         direction: call.direction,
@@ -95,15 +93,15 @@ export default tool({
         answeredBy: call.answered_by,
       }));
 
-      // Calculate statistics
-      const totalDuration = calls.reduce((sum, call) => {
-        return sum + (call.duration ? parseInt(call.duration, 10) : 0);
-      }, 0);
+      const totalDuration = calls.reduce(
+        (sum, call) => sum + (call.duration ? parseInt(call.duration, 10) : 0),
+        0,
+      );
 
-      const statusCounts = calls.reduce((acc, call) => {
-        acc[call.status] = (acc[call.status] || 0) + 1;
+      const statusCounts = calls.reduce<Record<string, number>>((acc, call) => {
+        acc[call.status] = (acc[call.status] ?? 0) + 1;
         return acc;
-      }, {} as Record<string, number>);
+      }, {});
 
       return {
         success: true,

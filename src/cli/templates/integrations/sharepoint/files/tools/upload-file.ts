@@ -11,22 +11,32 @@ export default tool({
     driveId: z.string().describe("The ID of the document library (drive) to upload to"),
     fileName: z.string().describe("The name of the file to create (including extension)"),
     content: z.string().describe("The content of the file to upload"),
-    folderId: z.string().optional().describe(
-      "Optional folder ID to upload into. If not provided, uploads to root.",
-    ),
-    createFolderIfNeeded: z.boolean().default(false).describe(
-      "If true and folderPath is provided, creates the folder if it does not exist",
-    ),
-    folderPath: z.string().optional().describe(
-      'Optional folder path (e.g., "Documents/Projects") to create if createFolderIfNeeded is true',
-    ),
+    folderId: z
+      .string()
+      .optional()
+      .describe("Optional folder ID to upload into. If not provided, uploads to root."),
+    createFolderIfNeeded: z
+      .boolean()
+      .default(false)
+      .describe("If true and folderPath is provided, creates the folder if it does not exist"),
+    folderPath: z
+      .string()
+      .optional()
+      .describe(
+        'Optional folder path (e.g., "Documents/Projects") to create if createFolderIfNeeded is true',
+      ),
   }),
-  async execute(
-    { siteId, driveId, fileName, content, folderId, createFolderIfNeeded, folderPath },
-  ) {
+  async execute({
+    siteId,
+    driveId,
+    fileName,
+    content,
+    folderId,
+    createFolderIfNeeded,
+    folderPath,
+  }) {
     let targetFolderId = folderId;
 
-    // Create folder if needed
     if (createFolderIfNeeded && folderPath && !folderId) {
       const folders = folderPath.split("/").filter(Boolean);
       let currentFolderId: string | undefined;
@@ -36,7 +46,6 @@ export default tool({
           const folder = await createFolder(siteId, driveId, folderName, currentFolderId);
           currentFolderId = folder.id;
         } catch (error) {
-          // Folder might already exist, try to continue
           console.warn(`Note: Could not create folder "${folderName}":`, error);
         }
       }
@@ -68,5 +77,5 @@ function formatBytes(bytes: number): string {
   const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
 
-  return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + " " + sizes[i];
+  return `${Math.round((bytes / Math.pow(k, i)) * 100) / 100} ${sizes[i]}`;
 }

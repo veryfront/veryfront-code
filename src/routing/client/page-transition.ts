@@ -5,31 +5,26 @@ import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.t
 import type { RouteData } from "./page-loader.ts";
 
 export class PageTransition {
-  private setupViewportPrefetch: (root: Document | HTMLElement) => void;
   private pendingTransitionTimeout?: number;
 
-  constructor(setupViewportPrefetch: (root: Document | HTMLElement) => void) {
-    this.setupViewportPrefetch = setupViewportPrefetch;
-  }
+  constructor(private setupViewportPrefetch: (root: Document | HTMLElement) => void) {}
 
   destroy(): void {
-    if (this.pendingTransitionTimeout !== undefined) {
-      clearTimeout(this.pendingTransitionTimeout);
-      this.pendingTransitionTimeout = undefined;
-    }
+    if (this.pendingTransitionTimeout === undefined) return;
+    clearTimeout(this.pendingTransitionTimeout);
+    this.pendingTransitionTimeout = undefined;
   }
 
   updatePage(data: RouteData, isPopState: boolean, scrollY: number): void {
-    if (data.frontmatter?.title) {
-      document.title = data.frontmatter.title;
-    }
+    const title = data.frontmatter?.title;
+    if (title) document.title = title;
 
     updateMetaTags(data.frontmatter ?? {});
 
     const rootElement = document.getElementById("root");
-    if (rootElement && (data.html ?? "") !== "") {
-      this.performTransition(rootElement, data, isPopState, scrollY);
-    }
+    if (!rootElement || !data.html) return;
+
+    this.performTransition(rootElement, data, isPopState, scrollY);
   }
 
   private performTransition(
@@ -46,6 +41,7 @@ export class PageTransition {
 
     this.pendingTransitionTimeout = setTimeout(() => {
       this.pendingTransitionTimeout = undefined;
+
       // Server-rendered RSC HTML is trusted; validateTrustedHtml provides defense-in-depth
       rootElement.innerHTML = validateTrustedHtml(String(data.html ?? ""));
       rootElement.style.opacity = "1";
@@ -84,9 +80,7 @@ export class PageTransition {
     button.textContent = "Reload Page";
     button.onclick = () => globalThis.location.reload();
 
-    errorDiv.appendChild(heading);
-    errorDiv.appendChild(message);
-    errorDiv.appendChild(button);
+    errorDiv.append(heading, message, button);
 
     rootElement.innerHTML = "";
     rootElement.appendChild(errorDiv);
@@ -94,9 +88,7 @@ export class PageTransition {
 
   setLoadingState(loading: boolean): void {
     const indicator = document.getElementById("veryfront-loading");
-    if (indicator) {
-      indicator.style.display = loading ? "block" : "none";
-    }
+    if (indicator) indicator.style.display = loading ? "block" : "none";
 
     document.body.classList.toggle("veryfront-loading", loading);
   }

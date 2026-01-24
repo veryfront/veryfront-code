@@ -18,36 +18,31 @@ export async function renderTree(
   clientManifest: Map<string, ClientComponentMeta>,
   clientRefs: Map<string, string>,
 ): Promise<RSCNode> {
-  if (!Component || typeof Component === "string" || typeof Component === "number") {
-    return { type: "html", html: Component ? String(Component) : "" };
-  }
-
-  if (
-    typeof Component === "function" && isClientComponent(Component as RSCComponent, clientManifest)
-  ) {
-    const componentId = getComponentId(Component as RSCComponent);
-    registerClientRef(componentId, Component as RSCComponent, clientManifest, clientRefs);
-
-    return {
-      type: "client",
-      component: componentId,
-      props: serializeProps(props),
-    };
+  if (Component == null || typeof Component === "string" || typeof Component === "number") {
+    return { type: "html", html: Component == null ? "" : String(Component) };
   }
 
   if (typeof Component === "function") {
+    const rscComponent = Component as RSCComponent;
+
+    if (isClientComponent(rscComponent, clientManifest)) {
+      const componentId = getComponentId(rscComponent);
+      registerClientRef(componentId, rscComponent, clientManifest, clientRefs);
+
+      return {
+        type: "client",
+        component: componentId,
+        props: serializeProps(props),
+      };
+    }
+
     try {
-      const element = typeof Component === "function" && Component.prototype?.render
+      const element = Component.prototype?.render
         ? React.createElement(Component as React.ComponentClass, props)
         : await (Component as React.FC)(props);
 
-      if (!element) {
-        return { type: "html", html: "" };
-      }
-
-      if (React.isValidElement(element)) {
-        return processElement(element, clientManifest, clientRefs);
-      }
+      if (!element) return { type: "html", html: "" };
+      if (React.isValidElement(element)) return processElement(element, clientManifest, clientRefs);
 
       return { type: "html", html: String(element) };
     } catch (error) {
@@ -71,22 +66,23 @@ export async function processElement(
 ): Promise<RSCNode> {
   const { type, props } = element;
 
+  if (type === React.Fragment) {
+    const children = await renderChildren(props.children, clientManifest, clientRefs);
+    return { type: "fragment", children };
+  }
+
   if (typeof type === "string") {
     const processedChildren = await renderChildren(props.children, clientManifest, clientRefs);
-    const hasClientComponents = processedChildren.some((child) => child.type === "client");
 
-    if (!hasClientComponents && processedChildren.every((child) => child.type === "html")) {
-      const html = await renderToStringAdapter(element as React.ReactElement);
+    if (processedChildren.every((child) => child.type === "html")) {
+      const html = await renderToStringAdapter(element);
       return { type: "html", html };
     }
 
-    const tagName = type;
     const attrs = renderAttributes(props);
-    const childrenHtml = await Promise.all(
-      processedChildren.map((child) => treeToHTML(child)),
-    );
+    const childrenHtml = await Promise.all(processedChildren.map(treeToHTML));
+    const html = `<${type}${attrs}>${childrenHtml.join("")}</${type}>`;
 
-    const html = `<${tagName}${attrs}>${childrenHtml.join("")}</${tagName}>`;
     return { type: "html", html };
   }
 
@@ -94,12 +90,7 @@ export async function processElement(
     return renderTree(type, props as Record<string, unknown>, clientManifest, clientRefs);
   }
 
-  if (type === React.Fragment) {
-    const children = await renderChildren(props.children, clientManifest, clientRefs);
-    return { type: "fragment", children };
-  }
-
-  const html = await renderToStringAdapter(element as React.ReactElement);
+  const html = await renderToStringAdapter(element);
   return { type: "html", html };
 }
 
@@ -110,13 +101,13 @@ export function renderChildren(
 ): Promise<RSCNode[]> {
   if (!children) return Promise.resolve([]);
 
-  const childArray = React.Children.toArray(children);
-
   return Promise.all(
-    childArray.map((child) =>
-      React.isValidElement(child)
-        ? processElement(child, clientManifest, clientRefs)
-        : Promise.resolve({ type: "html", html: String(child) } as RSCNode)
-    ),
+    React.Children.toArray(children).map((child) => {
+      if (React.isValidElement(child)) {
+        return processElement(child, clientManifest, clientRefs);
+      }
+
+      return Promise.resolve({ type: "html", html: String(child) } as RSCNode);
+    }),
   );
 }

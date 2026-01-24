@@ -1,36 +1,38 @@
+import { join } from "#veryfront/compat/path";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { join } from "#veryfront/compat/path";
+import { makeTempDir, readTextFile } from "#veryfront/testing/deno-compat.ts";
 import { loadManifest, writeManifest } from "./manifest-manager.ts";
 import type { OptimizedImageMetadata } from "./types.ts";
-import { makeTempDir, readTextFile } from "#veryfront/testing/deno-compat.ts";
 
 describe("manifest-manager", () => {
   it("writes and loads manifests via compat fs", async () => {
     const tmpDir = await makeTempDir();
-    const manifest = new Map<string, OptimizedImageMetadata>();
-
-    manifest.set("logo.png", {
-      original: "logo.png",
-      variants: [
+    const manifest = new Map<string, OptimizedImageMetadata>([
+      [
+        "logo.png",
         {
-          format: "webp",
-          size: 400,
-          width: 400,
-          height: 200,
-          path: "logo-400.webp",
-          fileSize: 1234,
+          original: "logo.png",
+          variants: [
+            {
+              format: "webp",
+              size: 400,
+              width: 400,
+              height: 200,
+              path: "logo-400.webp",
+              fileSize: 1234,
+            },
+          ],
+          defaultFormat: "webp",
+          aspectRatio: 2,
         },
       ],
-      defaultFormat: "webp",
-      aspectRatio: 2,
-    });
+    ]);
 
     await writeManifest(manifest, tmpDir);
 
     const manifestPath = join(tmpDir, "image-manifest.json");
-    const manifestContent = await readTextFile(manifestPath);
-    const parsed = JSON.parse(manifestContent);
+    const parsed = JSON.parse(await readTextFile(manifestPath));
 
     assertEquals(parsed.logo, undefined);
     assertEquals(parsed["logo.png"].defaultFormat, "webp");

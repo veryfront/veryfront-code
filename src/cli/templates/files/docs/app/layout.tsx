@@ -1,4 +1,3 @@
-import * as React from "react";
 import { Sidebar } from "../components/Sidebar.tsx";
 import { Header } from "../components/Header.tsx";
 
@@ -8,10 +7,10 @@ export const metadata = {
 };
 
 export default function RootLayout({
-  children
+  children,
 }: {
-  children: React.ReactNode
-}) {
+  children: React.ReactNode;
+}): React.JSX.Element {
   return (
     <div className="min-h-screen bg-white dark:bg-neutral-900">
       <Header />

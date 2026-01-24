@@ -1,16 +1,3 @@
-/**
- * HMR Runtime Templates
- * Client-side JavaScript template strings for Hot Module Replacement
- */
-
-/**
- * Generate the complete HMR client runtime template
- *
- * @param port - WebSocket server port
- * @param hostname - Default hostname constant
- * @param reloadDelay - Client reload delay in milliseconds
- * @returns JavaScript code for complete HMR runtime
- */
 export function generateHMRClientTemplate(
   port: number,
   hostname: string,
@@ -40,47 +27,67 @@ export function generateHMRClientTemplate(
 
   ws.onopen = () => {
     wasConnected = true;
-    if (reconnectTimeoutId !== null) {
-      clearTimeout(reconnectTimeoutId);
-      reconnectTimeoutId = null;
-    }
+    if (reconnectTimeoutId === null) return;
+    clearTimeout(reconnectTimeoutId);
+    reconnectTimeoutId = null;
   };
 
   ws.onmessage = (event) => {
     try {
       const message = JSON.parse(event.data);
       switch (message.type) {
-        case 'connected':
+        case 'connected': {
           reactRefreshEnabled = message.reactRefresh || false;
-          if (reactRefreshEnabled) { setupReactRefresh(); }
+          if (reactRefreshEnabled) setupReactRefresh();
           break;
-        case 'update': handleUpdate(message); break;
-        case 'reload': window.location.reload(); break;
-        default: console.warn('[HMR] Unknown message type:', message);
+        }
+        case 'update':
+          handleUpdate(message);
+          break;
+        case 'reload':
+          window.location.reload();
+          break;
+        default:
+          console.warn('[HMR] Unknown message type:', message);
       }
-    } catch (error) { console.error('[HMR] Failed to process message:', error); }
+    } catch (error) {
+      console.error('[HMR] Failed to process message:', error);
+    }
   };
 
   ws.onclose = () => {
     // Only schedule reload if connection was previously established
     // This prevents reload loops when HMR server is not running
-    if (wasConnected) {
-      reconnectTimeoutId = setTimeout(() => { window.location.reload(); }, HMR_RELOAD_DELAY_MS);
-    } else {
+    if (!wasConnected) {
       console.warn('[HMR] Connection failed - HMR server may not be running');
+      return;
     }
+    reconnectTimeoutId = setTimeout(() => {
+      window.location.reload();
+    }, HMR_RELOAD_DELAY_MS);
   };
 
-  ws.onerror = (error) => { console.error('[HMR] WebSocket error:', error); };
+  ws.onerror = (error) => {
+    console.error('[HMR] WebSocket error:', error);
+  };
 
   window.addEventListener('beforeunload', () => {
-    if (reconnectTimeoutId !== null) { clearTimeout(reconnectTimeoutId); reconnectTimeoutId = null; }
+    if (reconnectTimeoutId !== null) {
+      clearTimeout(reconnectTimeoutId);
+      reconnectTimeoutId = null;
+    }
     ws.close();
   });
 
   function handleUpdate(update) {
-    if (!update.path) { console.warn('[HMR] Update message missing path'); return; }
-    if (update.path.endsWith('.css')) { updateCSS(update.path); return; }
+    if (!update.path) {
+      console.warn('[HMR] Update message missing path');
+      return;
+    }
+    if (update.path.endsWith('.css')) {
+      updateCSS(update.path);
+      return;
+    }
     updateJS(update.path);
   }
 
@@ -89,19 +96,22 @@ export function generateHMRClientTemplate(
     document.querySelectorAll('link[rel="stylesheet"]').forEach((link) => {
       try {
         const url = new URL(link.href);
-        if (url.pathname === path) {
-          const newUrl = new URL(link.href);
-          newUrl.searchParams.set('t', Date.now().toString());
-          link.href = newUrl.toString();
-          updated = true;
-        }
-      } catch (error) { console.error('[HMR] Failed to update CSS link:', error); }
+        if (url.pathname !== path) return;
+
+        const newUrl = new URL(link.href);
+        newUrl.searchParams.set('t', Date.now().toString());
+        link.href = newUrl.toString();
+        updated = true;
+      } catch (error) {
+        console.error('[HMR] Failed to update CSS link:', error);
+      }
     });
+
     // Fallback: if CSS is inlined (no matching link found), do full reload
-    if (!updated) {
-      console.warn('[HMR] No matching stylesheet link for ' + path + ', reloading page');
-      window.location.reload();
-    }
+    if (updated) return;
+
+    console.warn('[HMR] No matching stylesheet link for ' + path + ', reloading page');
+    window.location.reload();
   }
 
   function updateJS(path) {
@@ -112,27 +122,33 @@ export function generateHMRClientTemplate(
       script.crossOrigin = 'anonymous';
       script.onload = () => {
         // Clear component cache to ensure fresh components are loaded
-        if (window.__veryfrontClearComponentCache) {
-          window.__veryfrontClearComponentCache();
-        }
+        window.__veryfrontClearComponentCache?.();
+
         // Re-render the page with fresh components
         // This is more reliable than React Refresh for our architecture
         // where layouts and pages are dynamically loaded
         if (window.__veryfrontRenderPage) {
           window.__veryfrontRenderPage(window.location.pathname);
+
           // Notify Studio that update completed
           if (window.parent !== window) {
             try {
               window.parent.postMessage({ action: 'appUpdated', url: window.location.href }, '*');
             } catch (e) { /* ignore */ }
           }
-        } else if (reactRefreshEnabled && window.$RefreshRuntime$?.performReactRefresh) {
-          window.$RefreshRuntime$.performReactRefresh();
-        } else {
-          window.location.reload();
+          return;
         }
+
+        if (reactRefreshEnabled && window.$RefreshRuntime$?.performReactRefresh) {
+          window.$RefreshRuntime$.performReactRefresh();
+          return;
+        }
+
+        window.location.reload();
       };
-      script.onerror = () => { window.location.reload(); };
+      script.onerror = () => {
+        window.location.reload();
+      };
       script.src = cacheBusted;
       document.head.appendChild(script);
     } catch (error) {
@@ -142,14 +158,9 @@ export function generateHMRClientTemplate(
   }
 
   function setupReactRefresh() {
-    if (typeof window.$RefreshRuntime$ !== 'undefined') {
-      window.$RefreshRuntime$.injectIntoGlobalHook(window);
-      window.$RefreshReg$ = () => {};
-      window.$RefreshSig$ = () => (type) => type;
-    }
-  }
-
-  if (reactRefreshEnabled) {
-    setupReactRefresh();
+    if (typeof window.$RefreshRuntime$ === 'undefined') return;
+    window.$RefreshRuntime$.injectIntoGlobalHook(window);
+    window.$RefreshReg$ = () => {};
+    window.$RefreshSig$ = () => (type) => type;
   }`;
 }

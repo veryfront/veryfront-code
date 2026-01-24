@@ -2,9 +2,6 @@ import { tool } from 'veryfront/tool';
 import { z } from 'zod';
 import { getAnthropicAdminClient } from '../../lib/anthropic-admin-client';
 
-/**
- * Tool for listing members in the Anthropic organization
- */
 export const listMembers = tool({
   name: 'list_members',
   description:
@@ -13,49 +10,48 @@ export const listMembers = tool({
   execute: async () => {
     try {
       const client = getAnthropicAdminClient();
-      const result = await client.listMembers();
+      const { members } = await client.listMembers();
 
-      // Group members by role and status for summary
-      const membersByRole = result.members.reduce(
+      const membersByRole = members.reduce<Record<string, number>>(
         (acc, member) => {
-          acc[member.role] = (acc[member.role] || 0) + 1;
+          acc[member.role] = (acc[member.role] ?? 0) + 1;
           return acc;
         },
-        {} as Record<string, number>
+        {}
       );
 
-      const membersByStatus = result.members.reduce(
+      const membersByStatus = members.reduce<Record<string, number>>(
         (acc, member) => {
-          acc[member.status] = (acc[member.status] || 0) + 1;
+          acc[member.status] = (acc[member.status] ?? 0) + 1;
           return acc;
         },
-        {} as Record<string, number>
+        {}
       );
 
-      const activeMembers = result.members.filter(
-        member => member.status === 'active'
-      );
-      const pendingMembers = result.members.filter(
-        member => member.status === 'pending'
-      );
+      let active = 0;
+      let pending = 0;
+
+      for (const member of members) {
+        if (member.status === 'active') active += 1;
+        if (member.status === 'pending') pending += 1;
+      }
 
       return {
         success: true,
-        members: result.members,
+        members,
         summary: {
-          total: result.members.length,
-          active: activeMembers.length,
-          pending: pendingMembers.length,
+          total: members.length,
+          active,
+          pending,
           by_role: membersByRole,
           by_status: membersByStatus,
         },
-        message: `Found ${result.members.length} member(s) in the organization`,
+        message: `Found ${members.length} member(s) in the organization`,
       };
     } catch (error) {
       return {
         success: false,
-        error:
-          error instanceof Error ? error.message : 'Failed to list members',
+        error: error instanceof Error ? error.message : 'Failed to list members',
         members: [],
       };
     }

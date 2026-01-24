@@ -1,5 +1,4 @@
-import { rendererLogger as logger } from "#veryfront/utils";
-import { DEFAULT_DASHBOARD_PORT } from "#veryfront/utils";
+import { DEFAULT_DASHBOARD_PORT, rendererLogger as logger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { ConfigurationManager } from "./config.ts";
@@ -37,57 +36,66 @@ export class VeryfrontRenderer {
     this.projectDir = options.projectDir;
     this.mode = options.mode;
     this.adapter = options.adapter;
-    this.port = options.port || DEFAULT_DASHBOARD_PORT;
+    this.port = options.port ?? DEFAULT_DASHBOARD_PORT;
     this.moduleServerUrl = options.moduleServerUrl;
     this.preloadedConfig = options.config;
     this.projectId = options.projectId;
   }
 
   initialize(): Promise<void> {
-    return withSpan("renderer.initialize", async () => {
-      logger.debug("Initializing VeryfrontRenderer");
+    return withSpan(
+      "renderer.initialize",
+      async () => {
+        logger.debug("Initializing VeryfrontRenderer");
 
-      if (!this.adapter) {
-        const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
-        this.adapter = await runtime.get();
-      }
+        if (!this.adapter) {
+          const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
+          this.adapter = await runtime.get();
+        }
 
-      this.configManager = new ConfigurationManager({
-        projectDir: this.projectDir,
-        mode: this.mode,
-        adapter: this.adapter,
-        config: this.preloadedConfig,
-      });
-      await this.configManager.initialize();
+        this.configManager = new ConfigurationManager({
+          projectDir: this.projectDir,
+          mode: this.mode,
+          adapter: this.adapter,
+          config: this.preloadedConfig,
+        });
+        await this.configManager.initialize();
 
-      this.lifecycle = new RendererLifecycle({
-        configManager: this.configManager,
-        port: this.port,
-        moduleServerUrl: this.moduleServerUrl,
-        projectId: this.projectId,
-      });
-      this.services = await this.lifecycle.initialize();
+        this.lifecycle = new RendererLifecycle({
+          configManager: this.configManager,
+          port: this.port,
+          moduleServerUrl: this.moduleServerUrl,
+          projectId: this.projectId,
+        });
+        this.services = await this.lifecycle.initialize();
 
-      this.initializeModules();
-      this.lifecycle.updateCompileMDX(this.mdxCompiler.compileMDX.bind(this.mdxCompiler));
+        this.initializeModules();
+        this.lifecycle.updateCompileMDX(this.mdxCompiler.compileMDX.bind(this.mdxCompiler));
 
-      logger.debug("VeryfrontRenderer initialized successfully");
-    }, { "renderer.projectDir": this.projectDir, "renderer.mode": this.mode });
+        logger.debug("VeryfrontRenderer initialized successfully");
+      },
+      { "renderer.projectDir": this.projectDir, "renderer.mode": this.mode },
+    );
   }
 
   private initializeModules(): void {
+    const projectDir = this.configManager.getProjectDir();
+    const mode = this.configManager.getMode();
+    const adapter = this.configManager.getAdapter();
+    const config = this.configManager.getConfig();
+
     this.mdxCompiler = new MDXCompiler({
-      projectDir: this.configManager.getProjectDir(),
-      mode: this.configManager.getMode(),
+      projectDir,
+      mode,
       mdxCacheAdapter: this.services.mdxCacheAdapter,
     });
 
     this.layoutOrchestrator = new LayoutOrchestrator({
-      projectDir: this.configManager.getProjectDir(),
+      projectDir,
       projectId: this.projectId,
-      adapter: this.configManager.getAdapter(),
-      config: this.configManager.getConfig(),
-      mode: this.configManager.getMode(),
+      adapter,
+      config,
+      mode,
       moduleServerUrl: this.moduleServerUrl,
       layoutCollector: this.services.layoutCollector,
       layoutCompiler: this.services.layoutCompiler,
@@ -96,14 +104,14 @@ export class VeryfrontRenderer {
     });
 
     this.htmlGenerator = new HTMLGenerator({
-      projectDir: this.configManager.getProjectDir(),
-      adapter: this.configManager.getAdapter(),
-      config: this.configManager.getConfig(),
-      mode: this.configManager.getMode(),
+      projectDir,
+      adapter,
+      config,
+      mode,
     });
 
     this.ssrOrchestrator = new SSROrchestrator({
-      mode: this.configManager.getMode(),
+      mode,
       debugMode: this.configManager.isDebugMode(),
       elementValidator: this.services.elementValidator,
       ssrRenderer: this.services.ssrRenderer,
@@ -116,37 +124,38 @@ export class VeryfrontRenderer {
       pageRenderer: this.services.pageRenderer,
       layoutOrchestrator: this.layoutOrchestrator,
       ssrOrchestrator: this.ssrOrchestrator,
-      adapter: this.configManager.getAdapter(),
-      mode: this.configManager.getMode(),
-      projectDir: this.configManager.getProjectDir(),
+      adapter,
+      mode,
+      projectDir,
     });
   }
 
   renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
-    return withSpan("renderer.renderPage", () => {
-      return this.renderPipeline.renderPage(slug, options);
-    }, { "renderer.slug": slug });
+    return withSpan("renderer.renderPage", () => this.renderPipeline.renderPage(slug, options), {
+      "renderer.slug": slug,
+    });
   }
 
   resolvePageData(slug: string, options?: RenderOptions): Promise<PageDataResponse> {
-    return withSpan("renderer.resolvePageData", () => {
-      return this.renderPipeline.resolvePageData(slug, options);
-    }, { "renderer.slug": slug });
+    return withSpan(
+      "renderer.resolvePageData",
+      () => this.renderPipeline.resolvePageData(slug, options),
+      { "renderer.slug": slug },
+    );
   }
 
   getAllPages(): Promise<string[]> {
-    return withSpan("renderer.getAllPages", () => {
-      return this.services.pageResolver.getAllPages();
-    }, {});
+    return withSpan("renderer.getAllPages", () => this.services.pageResolver.getAllPages(), {});
   }
 
   clearCache(slug?: string): void {
     if (slug) {
       this.lifecycle.clearSlugCache(slug);
-    } else {
-      this.lifecycle.clearAllCaches();
-      this.layoutOrchestrator.clearCache();
+      return;
     }
+
+    this.lifecycle.clearAllCaches();
+    this.layoutOrchestrator.clearCache();
   }
 
   clearAllState(): void {

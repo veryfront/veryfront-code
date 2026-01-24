@@ -1,7 +1,7 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { ComponentRegistry } from "./index.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { ComponentRegistry } from "./index.ts";
 
 describe("ComponentRegistry - Edge Cases and Error Handling", () => {
   describe("Missing directories", () => {
@@ -47,10 +47,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       adapter.fs.directories.add(`${projectDir}/components`);
       adapter.fs.directories.add(`${projectDir}/islands`);
 
-      const registry = new ComponentRegistry({
-        projectDir,
-        adapter,
-      });
+      const registry = new ComponentRegistry({ projectDir, adapter });
 
       await registry.discover();
 
@@ -66,10 +63,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
         "export default function PrimaryButton() {}",
       );
 
-      const registry = new ComponentRegistry({
-        projectDir,
-        adapter,
-      });
+      const registry = new ComponentRegistry({ projectDir, adapter });
 
       await registry.discover();
 
@@ -91,10 +85,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
         "export default function Component() {}",
       );
 
-      const registry = new ComponentRegistry({
-        projectDir,
-        adapter,
-      });
+      const registry = new ComponentRegistry({ projectDir, adapter });
 
       await registry.discover();
 
@@ -119,16 +110,12 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
         'describe("Button", () => {})',
       );
 
-      const registry = new ComponentRegistry({
-        projectDir,
-        adapter,
-      });
+      const registry = new ComponentRegistry({ projectDir, adapter });
 
       await registry.discover();
 
       assertEquals(registry.has("Button"), true);
-      const all = registry.getAll();
-      assertEquals(all.size, 1);
+      assertEquals(registry.getAll().size, 1);
     });
 
     it("should skip index files", async () => {
@@ -141,10 +128,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       );
       adapter.fs.files.set(`${projectDir}/components/index.tsx`, "export { Button }");
 
-      const registry = new ComponentRegistry({
-        projectDir,
-        adapter,
-      });
+      const registry = new ComponentRegistry({ projectDir, adapter });
 
       await registry.discover();
 
@@ -180,7 +164,10 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/extensions";
 
-      adapter.fs.files.set(`${projectDir}/components/Valid.tsx`, "export default function() {}");
+      adapter.fs.files.set(
+        `${projectDir}/components/Valid.tsx`,
+        "export default function() {}",
+      );
       adapter.fs.files.set(
         `${projectDir}/components/AlsoValid.jsx`,
         "export default function() {}",
@@ -189,10 +176,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       adapter.fs.files.set(`${projectDir}/components/AlsoInvalid.js`, "export default {}");
       adapter.fs.files.set(`${projectDir}/components/NotCode.txt`, "text file");
 
-      const registry = new ComponentRegistry({
-        projectDir,
-        adapter,
-      });
+      const registry = new ComponentRegistry({ projectDir, adapter });
 
       await registry.discover();
 
@@ -209,10 +193,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/nonexistent";
 
-      const registry = new ComponentRegistry({
-        projectDir,
-        adapter,
-      });
+      const registry = new ComponentRegistry({ projectDir, adapter });
 
       await registry.discover();
 
@@ -228,16 +209,11 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
 
       const originalReadFile = adapter.fs.readFile.bind(adapter.fs);
       adapter.fs.readFile = async (path: string) => {
-        if (path.includes("Error.tsx")) {
-          throw new Error("Permission denied");
-        }
+        if (path.includes("Error.tsx")) throw new Error("Permission denied");
         return await originalReadFile(path);
       };
 
-      const registry = new ComponentRegistry({
-        projectDir,
-        adapter,
-      });
+      const registry = new ComponentRegistry({ projectDir, adapter });
 
       await registry.discover();
 
@@ -254,10 +230,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
         "export default function Button() {}",
       );
 
-      const registry = new ComponentRegistry({
-        projectDir,
-        adapter,
-      });
+      const registry = new ComponentRegistry({ projectDir, adapter });
 
       await registry.discover();
 
@@ -277,10 +250,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       adapter.fs.files.set(`${projectDir}/components/Card.tsx`, "card");
       adapter.fs.files.set(`${projectDir}/components/Input.tsx`, "input");
 
-      const registry = new ComponentRegistry({
-        projectDir,
-        adapter,
-      });
+      const registry = new ComponentRegistry({ projectDir, adapter });
 
       await registry.discover();
       await registry.loadAll();
@@ -301,19 +271,13 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
         );
       }
 
-      const registry = new ComponentRegistry({
-        projectDir,
-        adapter,
-      });
+      const registry = new ComponentRegistry({ projectDir, adapter });
 
       await registry.discover();
 
-      const loadPromises = [];
-      for (let i = 0; i < 10; i++) {
-        loadPromises.push(registry.loadComponent(`Component${i}`));
-      }
-
-      const results = await Promise.all(loadPromises);
+      const results = await Promise.all(
+        Array.from({ length: 10 }, (_, i) => registry.loadComponent(`Component${i}`)),
+      );
 
       assertEquals(results.every((r) => r !== null), true);
       assertEquals(results.every((r) => r?.isLoaded), true);
@@ -325,10 +289,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/virtual";
 
-      const registry = new ComponentRegistry({
-        projectDir,
-        adapter,
-      });
+      const registry = new ComponentRegistry({ projectDir, adapter });
 
       await registry.discover();
 
@@ -349,10 +310,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
 
       adapter.fs.files.set(`${projectDir}/components/Button.tsx`, "button");
 
-      const registry = new ComponentRegistry({
-        projectDir,
-        adapter,
-      });
+      const registry = new ComponentRegistry({ projectDir, adapter });
 
       await registry.discover();
       assertEquals(registry.has("Button"), true);
@@ -368,10 +326,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       adapter.fs.files.set(`${projectDir}/components/Button.tsx`, "button");
       adapter.fs.files.set(`${projectDir}/components/Card.tsx`, "card");
 
-      const registry = new ComponentRegistry({
-        projectDir,
-        adapter,
-      });
+      const registry = new ComponentRegistry({ projectDir, adapter });
 
       await registry.discover();
       assertEquals(registry.getAll().size, 2);
@@ -386,10 +341,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
 
       adapter.fs.files.set(`${projectDir}/components/Button.tsx`, "button");
 
-      const registry = new ComponentRegistry({
-        projectDir,
-        adapter,
-      });
+      const registry = new ComponentRegistry({ projectDir, adapter });
 
       await registry.discover();
       assertEquals(registry.getAll().size, 1);
@@ -409,10 +361,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
 
       adapter.fs.files.set(`${projectDir}/components/Button.tsx`, "button content");
 
-      const registry = new ComponentRegistry({
-        projectDir,
-        adapter,
-      });
+      const registry = new ComponentRegistry({ projectDir, adapter });
 
       await registry.discover();
 
@@ -432,16 +381,11 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
 
       const originalStat = adapter.fs.stat.bind(adapter.fs);
       adapter.fs.stat = async (path: string) => {
-        if (path.includes("Button.tsx")) {
-          throw new Error("Stat failed");
-        }
+        if (path.includes("Button.tsx")) throw new Error("Stat failed");
         return await originalStat(path);
       };
 
-      const registry = new ComponentRegistry({
-        projectDir,
-        adapter,
-      });
+      const registry = new ComponentRegistry({ projectDir, adapter });
 
       await registry.discover();
 
@@ -458,10 +402,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       adapter.fs.files.set(`${projectDir}/components/Button.tsx`, "button");
       adapter.fs.files.set(`${projectDir}/components/Card.tsx`, "card");
 
-      const registry = new ComponentRegistry({
-        projectDir,
-        adapter,
-      });
+      const registry = new ComponentRegistry({ projectDir, adapter });
 
       await registry.discover();
 
@@ -487,10 +428,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
         "export default function() {}",
       );
 
-      const registry = new ComponentRegistry({
-        projectDir,
-        adapter,
-      });
+      const registry = new ComponentRegistry({ projectDir, adapter });
 
       await registry.discover();
 
@@ -502,13 +440,16 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
       const adapter = createMockAdapter();
       const projectDir = "/test/numbers";
 
-      adapter.fs.files.set(`${projectDir}/components/Button2.tsx`, "export default function() {}");
-      adapter.fs.files.set(`${projectDir}/components/Card3D.tsx`, "export default function() {}");
+      adapter.fs.files.set(
+        `${projectDir}/components/Button2.tsx`,
+        "export default function() {}",
+      );
+      adapter.fs.files.set(
+        `${projectDir}/components/Card3D.tsx`,
+        "export default function() {}",
+      );
 
-      const registry = new ComponentRegistry({
-        projectDir,
-        adapter,
-      });
+      const registry = new ComponentRegistry({ projectDir, adapter });
 
       await registry.discover();
 
@@ -526,10 +467,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
         "export default function() {}",
       );
 
-      const registry = new ComponentRegistry({
-        projectDir,
-        adapter,
-      });
+      const registry = new ComponentRegistry({ projectDir, adapter });
 
       await registry.discover();
 
@@ -544,13 +482,9 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
 
       adapter.fs.files.set(`${projectDir}/components/Button.tsx`, "button");
 
-      const registry = new ComponentRegistry({
-        projectDir,
-        adapter,
-      });
+      const registry = new ComponentRegistry({ projectDir, adapter });
 
       const discoverPromise = registry.discover();
-
       const component = registry.get("Button");
 
       await discoverPromise;
@@ -564,10 +498,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
 
       adapter.fs.files.set(`${projectDir}/components/Button.tsx`, "button");
 
-      const registry = new ComponentRegistry({
-        projectDir,
-        adapter,
-      });
+      const registry = new ComponentRegistry({ projectDir, adapter });
 
       const componentBefore = await registry.loadComponent("Button");
 
@@ -585,10 +516,7 @@ describe("ComponentRegistry - Edge Cases and Error Handling", () => {
 
       adapter.fs.files.set(`${projectDir}/components/Button.tsx`, "button");
 
-      const registry = new ComponentRegistry({
-        projectDir,
-        adapter,
-      });
+      const registry = new ComponentRegistry({ projectDir, adapter });
 
       await Promise.all([registry.discover(), registry.discover(), registry.discover()]);
 

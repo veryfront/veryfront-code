@@ -9,57 +9,44 @@
 
 import { isBun, isDeno, isNode } from "../platform/compat/runtime.ts";
 import { cacheModuleToLocal } from "../transforms/esm/http-cache.ts";
-import { getHttpBundleCacheDir } from "../utils/cache-dir.ts";
 import { getReactUrls } from "../transforms/esm/package-registry.ts";
+import { getHttpBundleCacheDir } from "../utils/cache-dir.ts";
 
 type ReactDOMServerType = typeof import("react-dom/server");
 
-// Internal cache to ensure single instance
 let reactDOMServerCache: ReactDOMServerType | null = null;
 
-/**
- * Load ReactDOM server, caching from esm.sh if needed.
- */
 async function loadReactDOMServer(): Promise<ReactDOMServerType> {
-  if (reactDOMServerCache) {
+  if (reactDOMServerCache) return reactDOMServerCache;
+
+  const urls = getReactUrls();
+  const url = urls["react-dom/server"]!;
+
+  if (isDeno) {
+    reactDOMServerCache = (await import(url)) as ReactDOMServerType;
     return reactDOMServerCache;
   }
 
-  // Node/Bun with node_modules: try native resolution first
-  if ((isNode || isBun) && !isDeno) {
+  if (isNode || isBun) {
     try {
-      const nativeReactDOMServer = await import("react-dom/server");
-      reactDOMServerCache = nativeReactDOMServer as ReactDOMServerType;
+      reactDOMServerCache = (await import("react-dom/server")) as ReactDOMServerType;
       return reactDOMServerCache;
     } catch {
       // Fall through to esm.sh caching
     }
   }
 
-  const urls = getReactUrls();
-
-  // Deno: use HTTP imports directly (Deno supports them natively)
-  if (isDeno) {
-    const httpReactDOMServer = await import(urls["react-dom/server"]);
-    reactDOMServerCache = httpReactDOMServer as ReactDOMServerType;
-    return reactDOMServerCache;
-  }
-
-  // Node/Bun without node_modules: cache from esm.sh to local file://
   const cacheDir = getHttpBundleCacheDir();
-  const cachedPath = await cacheModuleToLocal(urls["react-dom/server"], cacheDir);
-  const cachedReactDOMServer = await import(cachedPath);
-  reactDOMServerCache = cachedReactDOMServer as ReactDOMServerType;
+  const cachedPath = await cacheModuleToLocal(url, cacheDir);
+  reactDOMServerCache = (await import(cachedPath)) as ReactDOMServerType;
   return reactDOMServerCache;
 }
 
-// Top-level await - caches at module load
 const reactDOMServer = await loadReactDOMServer();
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
 
-// Named exports with explicit type annotations to avoid circular type inference
 export const renderToString = reactDOMServer.renderToString as Any;
 export const renderToStaticMarkup = reactDOMServer.renderToStaticMarkup as Any;
 export const renderToPipeableStream = reactDOMServer.renderToPipeableStream as Any;

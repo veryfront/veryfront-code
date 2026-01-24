@@ -11,15 +11,17 @@ export function executeModule(
   const { components, globals } = context;
 
   if (typeof factory === "string") {
-    throw toError(createError({
-      type: "build",
-      message: "[SECURITY] String-based module execution is disabled. " +
-        "Use async ESM loader: await loadCompiledMDXModule(code, cacheKey) instead. " +
-        "This prevents code injection vulnerabilities.",
-    }));
+    throw toError(
+      createError({
+        type: "build",
+        message: "[SECURITY] String-based module execution is disabled. " +
+          "Use async ESM loader: await loadCompiledMDXModule(code, cacheKey) instead. " +
+          "This prevents code injection vulnerabilities.",
+      }),
+    );
   }
 
-  const module = factory(
+  return factory(
     React,
     Fragment,
     jsxRuntimeJsx as (...args: unknown[]) => unknown,
@@ -28,16 +30,14 @@ export function executeModule(
     components,
     globals,
   );
-
-  return module;
 }
 
 export function selectComponent(
   module: MDXModule,
   extractLayout: boolean,
 ): React.ComponentType<{ components?: MDXComponents; children?: React.ReactNode }> | null {
-  if (typeof (module as unknown) === "function") {
-    return module as unknown as React.ComponentType<
+  if (typeof module === "function") {
+    return module as React.ComponentType<
       { components?: MDXComponents; children?: React.ReactNode }
     >;
   }
@@ -52,6 +52,7 @@ export function selectComponent(
       null
     );
   }
+
   return (
     module.MDXContent ||
     module._createMdxContent ||

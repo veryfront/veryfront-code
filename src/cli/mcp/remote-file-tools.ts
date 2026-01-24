@@ -34,50 +34,45 @@ function getApiToken(): string | undefined {
 async function apiRequest<T>(
   method: string,
   path: string,
-  options: {
-    body?: unknown;
-    token?: string;
-  } = {},
+  options: { body?: unknown; token?: string } = {},
 ): Promise<{ ok: boolean; data?: T; error?: string; status: number }> {
-  const baseUrl = getApiBaseUrl();
-  const token = options.token || getApiToken();
+  const token = options.token ?? getApiToken();
 
   if (!token) {
     return { ok: false, error: "No API token available. Set VERYFRONT_API_TOKEN.", status: 401 };
   }
 
-  const url = `${baseUrl}/api${path}`;
+  const url = `${getApiBaseUrl()}/api${path}`;
 
   try {
-    const headers: Record<string, string> = {
-      "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/json",
-    };
-
     const response = await fetch(url, {
       method,
-      headers,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
       body: options.body ? JSON.stringify(options.body) : undefined,
     });
 
     if (!response.ok) {
       const errorText = await response.text();
       let errorMessage: string;
+
       try {
         const errorJson = JSON.parse(errorText);
         errorMessage = errorJson.message || errorJson.error || errorText;
       } catch {
         errorMessage = errorText || `HTTP ${response.status}`;
       }
+
       return { ok: false, error: errorMessage, status: response.status };
     }
 
-    // Handle 204 No Content
     if (response.status === 204) {
       return { ok: true, status: 204 };
     }
 
-    const data = await response.json() as T;
+    const data = (await response.json()) as T;
     return { ok: true, data, status: response.status };
   } catch (error) {
     return {
@@ -92,7 +87,7 @@ async function apiRequest<T>(
  * URL-encode a file path for use in API URLs
  */
 function encodeFilePath(path: string): string {
-  return path.split("/").map((segment) => encodeURIComponent(segment)).join("/");
+  return path.split("/").map(encodeURIComponent).join("/");
 }
 
 // ============================================================================
@@ -128,19 +123,37 @@ interface SearchResponse {
   total_files: number;
 }
 
+interface Branch {
+  id: string;
+  name: string;
+  project_id: string;
+  base_branch_id?: string | null;
+  created_at?: string | null;
+  created_by?: string | null;
+  merged_at?: string | null;
+  merged_by?: string | null;
+}
+
+interface Project {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string;
+  is_public?: boolean;
+  created_at?: string;
+}
+
 // ============================================================================
 // Tool: vf_remote_list_files
 // ============================================================================
 
 const remoteListFilesInput = z.object({
-  project: z.string()
-    .describe("Project slug or ID"),
-  branch: z.string().optional()
-    .describe("Branch name (omit for main branch)"),
-  pattern: z.string().optional()
-    .describe("File pattern filter (e.g., *.tsx, pages/*)"),
-  limit: z.number().optional().default(50)
-    .describe("Maximum number of files to return (default: 50)"),
+  project: z.string().describe("Project slug or ID"),
+  branch: z.string().optional().describe("Branch name (omit for main branch)"),
+  pattern: z.string().optional().describe("File pattern filter (e.g., *.tsx, pages/*)"),
+  limit: z.number().optional().default(50).describe(
+    "Maximum number of files to return (default: 50)",
+  ),
 });
 
 type RemoteListFilesInput = z.infer<typeof remoteListFilesInput>;
@@ -157,30 +170,30 @@ export const vfRemoteListFiles: MCPTool<RemoteListFilesInput, RemoteListFilesOut
   description:
     "List files in a remote Veryfront project. Returns file paths, types, and sizes. Use this to explore a project's structure.",
   inputSchema: remoteListFilesInput,
-  execute: (input) => {
-    return withSpan("cli.mcp.tool.vf_remote_list_files", async () => {
-      const params = new URLSearchParams();
-      if (input.pattern) params.set("pattern", input.pattern);
-      params.set("limit", String(input.limit));
-      params.set("fields", "(path,type,size)"); // Only fetch necessary fields
+  execute: (input) =>
+    withSpan(
+      "cli.mcp.tool.vf_remote_list_files",
+      async () => {
+        const params = new URLSearchParams();
+        if (input.pattern) params.set("pattern", input.pattern);
+        params.set("limit", String(input.limit));
+        params.set("fields", "(path,type,size)"); // Only fetch necessary fields
 
-      const branchPath = input.branch ? `/branches/${input.branch}` : "";
-      const path = `/${input.project}${branchPath}/files?${params.toString()}`;
+        const branchPath = input.branch ? `/branches/${input.branch}` : "";
+        const path = `/${input.project}${branchPath}/files?${params.toString()}`;
 
-      const result = await apiRequest<FileListResponse>("GET", path);
+        const result = await apiRequest<FileListResponse>("GET", path);
+        if (!result.ok) return { success: false, error: result.error };
 
-      if (!result.ok) {
-        return { success: false, error: result.error };
-      }
-
-      const files = result.data?.data || [];
-      return {
-        success: true,
-        files: files.map((f) => ({ path: f.path, type: f.type, size: f.size })),
-        total: files.length,
-      };
-    }, { "tool.project": input.project });
-  },
+        const files = result.data?.data ?? [];
+        return {
+          success: true,
+          files: files.map((f) => ({ path: f.path, type: f.type, size: f.size })),
+          total: files.length,
+        };
+      },
+      { "tool.project": input.project },
+    ),
 };
 
 // ============================================================================
@@ -188,24 +201,16 @@ export const vfRemoteListFiles: MCPTool<RemoteListFilesInput, RemoteListFilesOut
 // ============================================================================
 
 const remoteGetFileInput = z.object({
-  project: z.string()
-    .describe("Project slug or ID"),
-  path: z.string()
-    .describe("File path (e.g., pages/index.mdx, app/page.tsx)"),
-  branch: z.string().optional()
-    .describe("Branch name (omit for main branch)"),
+  project: z.string().describe("Project slug or ID"),
+  path: z.string().describe("File path (e.g., pages/index.mdx, app/page.tsx)"),
+  branch: z.string().optional().describe("Branch name (omit for main branch)"),
 });
 
 type RemoteGetFileInput = z.infer<typeof remoteGetFileInput>;
 
 interface RemoteGetFileOutput {
   success: boolean;
-  file?: {
-    path: string;
-    content: string;
-    size: number;
-    type: string;
-  };
+  file?: { path: string; content: string; size: number; type: string };
   error?: string;
 }
 
@@ -214,34 +219,27 @@ export const vfRemoteGetFile: MCPTool<RemoteGetFileInput, RemoteGetFileOutput> =
   description:
     "Read the content of a file from a remote Veryfront project. Always use this before modifying a file.",
   inputSchema: remoteGetFileInput,
-  execute: (input) => {
-    return withSpan("cli.mcp.tool.vf_remote_get_file", async () => {
-      const encodedPath = encodeFilePath(input.path);
-      const branchPath = input.branch ? `/branches/${input.branch}` : "";
-      const apiPath = `/${input.project}${branchPath}/files/${encodedPath}`;
+  execute: (input) =>
+    withSpan(
+      "cli.mcp.tool.vf_remote_get_file",
+      async () => {
+        const encodedPath = encodeFilePath(input.path);
+        const branchPath = input.branch ? `/branches/${input.branch}` : "";
+        const apiPath = `/${input.project}${branchPath}/files/${encodedPath}`;
 
-      const result = await apiRequest<RemoteFile>("GET", apiPath);
+        const result = await apiRequest<RemoteFile>("GET", apiPath);
+        if (!result.ok) return { success: false, error: result.error };
 
-      if (!result.ok) {
-        return { success: false, error: result.error };
-      }
+        const file = result.data;
+        if (!file) return { success: false, error: "File not found" };
 
-      const file = result.data;
-      if (!file) {
-        return { success: false, error: "File not found" };
-      }
-
-      return {
-        success: true,
-        file: {
-          path: file.path,
-          content: file.content,
-          size: file.size,
-          type: file.type,
-        },
-      };
-    }, { "tool.project": input.project, "tool.path": input.path });
-  },
+        return {
+          success: true,
+          file: { path: file.path, content: file.content, size: file.size, type: file.type },
+        };
+      },
+      { "tool.project": input.project, "tool.path": input.path },
+    ),
 };
 
 // ============================================================================
@@ -249,14 +247,10 @@ export const vfRemoteGetFile: MCPTool<RemoteGetFileInput, RemoteGetFileOutput> =
 // ============================================================================
 
 const remoteUpdateFileInput = z.object({
-  project: z.string()
-    .describe("Project slug or ID"),
-  path: z.string()
-    .describe("File path (e.g., pages/index.mdx)"),
-  content: z.string()
-    .describe("New file content"),
-  branch: z.string().optional()
-    .describe("Branch name (omit for main branch)"),
+  project: z.string().describe("Project slug or ID"),
+  path: z.string().describe("File path (e.g., pages/index.mdx)"),
+  content: z.string().describe("New file content"),
+  branch: z.string().optional().describe("Branch name (omit for main branch)"),
 });
 
 type RemoteUpdateFileInput = z.infer<typeof remoteUpdateFileInput>;
@@ -273,27 +267,28 @@ export const vfRemoteUpdateFile: MCPTool<RemoteUpdateFileInput, RemoteUpdateFile
   description:
     "Create or update a file in a remote Veryfront project. Always read the file first before updating to understand its current state.",
   inputSchema: remoteUpdateFileInput,
-  execute: (input) => {
-    return withSpan("cli.mcp.tool.vf_remote_update_file", async () => {
-      const encodedPath = encodeFilePath(input.path);
-      const branchParam = input.branch ? `?branch_id=${input.branch}` : "";
-      const apiPath = `/${input.project}/files/${encodedPath}${branchParam}`;
+  execute: (input) =>
+    withSpan(
+      "cli.mcp.tool.vf_remote_update_file",
+      async () => {
+        const encodedPath = encodeFilePath(input.path);
+        const branchParam = input.branch ? `?branch_id=${input.branch}` : "";
+        const apiPath = `/${input.project}/files/${encodedPath}${branchParam}`;
 
-      const result = await apiRequest<{ id: string; path: string }>("PUT", apiPath, {
-        body: { content: input.content },
-      });
+        const result = await apiRequest<{ id: string; path: string }>("PUT", apiPath, {
+          body: { content: input.content },
+        });
 
-      if (!result.ok) {
-        return { success: false, error: result.error };
-      }
+        if (!result.ok) return { success: false, error: result.error };
 
-      return {
-        success: true,
-        path: result.data?.path || input.path,
-        created: result.status === 201,
-      };
-    }, { "tool.project": input.project, "tool.path": input.path });
-  },
+        return {
+          success: true,
+          path: result.data?.path ?? input.path,
+          created: result.status === 201,
+        };
+      },
+      { "tool.project": input.project, "tool.path": input.path },
+    ),
 };
 
 // ============================================================================
@@ -301,12 +296,9 @@ export const vfRemoteUpdateFile: MCPTool<RemoteUpdateFileInput, RemoteUpdateFile
 // ============================================================================
 
 const remoteDeleteFileInput = z.object({
-  project: z.string()
-    .describe("Project slug or ID"),
-  path: z.string()
-    .describe("File path to delete"),
-  branch: z.string().optional()
-    .describe("Branch name (omit for main branch)"),
+  project: z.string().describe("Project slug or ID"),
+  path: z.string().describe("File path to delete"),
+  branch: z.string().optional().describe("Branch name (omit for main branch)"),
 });
 
 type RemoteDeleteFileInput = z.infer<typeof remoteDeleteFileInput>;
@@ -326,10 +318,7 @@ export const vfRemoteDeleteFile: MCPTool<RemoteDeleteFileInput, RemoteDeleteFile
     const apiPath = `/${input.project}/files/${encodedPath}${branchParam}`;
 
     const result = await apiRequest<void>("DELETE", apiPath);
-
-    if (!result.ok) {
-      return { success: false, error: result.error };
-    }
+    if (!result.ok) return { success: false, error: result.error };
 
     return { success: true };
   },
@@ -340,20 +329,13 @@ export const vfRemoteDeleteFile: MCPTool<RemoteDeleteFileInput, RemoteDeleteFile
 // ============================================================================
 
 const remoteSearchFilesInput = z.object({
-  project: z.string()
-    .describe("Project slug or ID"),
-  query: z.string()
-    .describe("Search query (text or regex pattern)"),
-  pattern: z.string().optional()
-    .describe("File pattern filter (e.g., *.tsx)"),
-  is_regex: z.boolean().optional()
-    .describe("Treat query as regex (default: false)"),
-  case_sensitive: z.boolean().optional()
-    .describe("Case sensitive search (default: false)"),
-  max_results: z.number().optional().default(50)
-    .describe("Maximum results (default: 50)"),
-  branch: z.string().optional()
-    .describe("Branch name (omit for main branch)"),
+  project: z.string().describe("Project slug or ID"),
+  query: z.string().describe("Search query (text or regex pattern)"),
+  pattern: z.string().optional().describe("File pattern filter (e.g., *.tsx)"),
+  is_regex: z.boolean().optional().describe("Treat query as regex (default: false)"),
+  case_sensitive: z.boolean().optional().describe("Case sensitive search (default: false)"),
+  max_results: z.number().optional().default(50).describe("Maximum results (default: 50)"),
+  branch: z.string().optional().describe("Branch name (omit for main branch)"),
 });
 
 type RemoteSearchFilesInput = z.infer<typeof remoteSearchFilesInput>;
@@ -370,32 +352,33 @@ export const vfRemoteSearchFiles: MCPTool<RemoteSearchFilesInput, RemoteSearchFi
   description:
     "Search for text patterns within file contents in a remote Veryfront project. Supports regex and glob patterns.",
   inputSchema: remoteSearchFilesInput,
-  execute: (input) => {
-    return withSpan("cli.mcp.tool.vf_remote_search_files", async () => {
-      const branchPath = input.branch ? `/branches/${input.branch}` : "";
-      const apiPath = `/${input.project}${branchPath}/files/search`;
+  execute: (input) =>
+    withSpan(
+      "cli.mcp.tool.vf_remote_search_files",
+      async () => {
+        const branchPath = input.branch ? `/branches/${input.branch}` : "";
+        const apiPath = `/${input.project}${branchPath}/files/search`;
 
-      const result = await apiRequest<SearchResponse>("POST", apiPath, {
-        body: {
-          query: input.query,
-          pattern: input.pattern,
-          is_regex: input.is_regex,
-          case_sensitive: input.case_sensitive,
-          max_results: input.max_results,
-        },
-      });
+        const result = await apiRequest<SearchResponse>("POST", apiPath, {
+          body: {
+            query: input.query,
+            pattern: input.pattern,
+            is_regex: input.is_regex,
+            case_sensitive: input.case_sensitive,
+            max_results: input.max_results,
+          },
+        });
 
-      if (!result.ok) {
-        return { success: false, error: result.error };
-      }
+        if (!result.ok) return { success: false, error: result.error };
 
-      return {
-        success: true,
-        results: result.data?.results || [],
-        total_files: result.data?.total_files || 0,
-      };
-    }, { "tool.project": input.project, "tool.query": input.query });
-  },
+        return {
+          success: true,
+          results: result.data?.results ?? [],
+          total_files: result.data?.total_files ?? 0,
+        };
+      },
+      { "tool.project": input.project, "tool.query": input.query },
+    ),
 };
 
 // ============================================================================
@@ -403,14 +386,10 @@ export const vfRemoteSearchFiles: MCPTool<RemoteSearchFilesInput, RemoteSearchFi
 // ============================================================================
 
 const remoteMoveFileInput = z.object({
-  project: z.string()
-    .describe("Project slug or ID"),
-  source_path: z.string()
-    .describe("Current file path"),
-  destination_path: z.string()
-    .describe("New file path"),
-  branch: z.string().optional()
-    .describe("Branch name (omit for main branch)"),
+  project: z.string().describe("Project slug or ID"),
+  source_path: z.string().describe("Current file path"),
+  destination_path: z.string().describe("New file path"),
+  branch: z.string().optional().describe("Branch name (omit for main branch)"),
 });
 
 type RemoteMoveFileInput = z.infer<typeof remoteMoveFileInput>;
@@ -441,14 +420,12 @@ export const vfRemoteMoveFile: MCPTool<RemoteMoveFileInput, RemoteMoveFileOutput
       },
     );
 
-    if (!result.ok) {
-      return { success: false, error: result.error };
-    }
+    if (!result.ok) return { success: false, error: result.error };
 
     return {
       success: true,
-      source_path: result.data?.source_path || input.source_path,
-      destination_path: result.data?.destination_path || input.destination_path,
+      source_path: result.data?.source_path ?? input.source_path,
+      destination_path: result.data?.destination_path ?? input.destination_path,
     };
   },
 };
@@ -458,26 +435,14 @@ export const vfRemoteMoveFile: MCPTool<RemoteMoveFileInput, RemoteMoveFileOutput
 // ============================================================================
 
 const remoteListBranchesInput = z.object({
-  project: z.string()
-    .describe("Project slug or ID"),
-  search: z.string().optional()
-    .describe("Search filter for branch name"),
-  status: z.enum(["active", "merged", "all"]).optional().default("all")
-    .describe("Filter by branch status (default: all)"),
+  project: z.string().describe("Project slug or ID"),
+  search: z.string().optional().describe("Search filter for branch name"),
+  status: z.enum(["active", "merged", "all"]).optional().default("all").describe(
+    "Filter by branch status (default: all)",
+  ),
 });
 
 type RemoteListBranchesInput = z.infer<typeof remoteListBranchesInput>;
-
-interface Branch {
-  id: string;
-  name: string;
-  project_id: string;
-  base_branch_id?: string | null;
-  created_at?: string | null;
-  created_by?: string | null;
-  merged_at?: string | null;
-  merged_by?: string | null;
-}
 
 interface RemoteListBranchesOutput {
   success: boolean;
@@ -497,14 +462,9 @@ export const vfRemoteListBranches: MCPTool<RemoteListBranchesInput, RemoteListBr
     const path = `/${input.project}/branches?${params.toString()}`;
     const result = await apiRequest<{ data: Branch[] }>("GET", path);
 
-    if (!result.ok) {
-      return { success: false, error: result.error };
-    }
+    if (!result.ok) return { success: false, error: result.error };
 
-    return {
-      success: true,
-      branches: result.data?.data || [],
-    };
+    return { success: true, branches: result.data?.data ?? [] };
   },
 };
 
@@ -513,12 +473,11 @@ export const vfRemoteListBranches: MCPTool<RemoteListBranchesInput, RemoteListBr
 // ============================================================================
 
 const remoteCreateBranchInput = z.object({
-  project: z.string()
-    .describe("Project slug or ID"),
-  name: z.string()
-    .describe("Branch name"),
-  base_branch_id: z.string().optional()
-    .describe("Base branch ID to create from (omit for main branch)"),
+  project: z.string().describe("Project slug or ID"),
+  name: z.string().describe("Branch name"),
+  base_branch_id: z.string().optional().describe(
+    "Base branch ID to create from (omit for main branch)",
+  ),
 });
 
 type RemoteCreateBranchInput = z.infer<typeof remoteCreateBranchInput>;
@@ -537,20 +496,12 @@ export const vfRemoteCreateBranch: MCPTool<RemoteCreateBranchInput, RemoteCreate
   execute: async (input) => {
     const path = `/${input.project}/branches`;
     const result = await apiRequest<Branch>("POST", path, {
-      body: {
-        name: input.name,
-        base_branch_id: input.base_branch_id || null,
-      },
+      body: { name: input.name, base_branch_id: input.base_branch_id || null },
     });
 
-    if (!result.ok) {
-      return { success: false, error: result.error };
-    }
+    if (!result.ok) return { success: false, error: result.error };
 
-    return {
-      success: true,
-      branch: result.data,
-    };
+    return { success: true, branch: result.data };
   },
 };
 
@@ -559,12 +510,11 @@ export const vfRemoteCreateBranch: MCPTool<RemoteCreateBranchInput, RemoteCreate
 // ============================================================================
 
 const remoteMergeBranchInput = z.object({
-  project: z.string()
-    .describe("Project slug or ID"),
-  branch_id: z.string()
-    .describe("Branch ID to merge"),
-  target_branch_id: z.string().optional()
-    .describe("Target branch ID to merge into (omit to merge into main)"),
+  project: z.string().describe("Project slug or ID"),
+  branch_id: z.string().describe("Branch ID to merge"),
+  target_branch_id: z.string().optional().describe(
+    "Target branch ID to merge into (omit to merge into main)",
+  ),
 });
 
 type RemoteMergeBranchInput = z.infer<typeof remoteMergeBranchInput>;
@@ -591,14 +541,10 @@ export const vfRemoteMergeBranch: MCPTool<RemoteMergeBranchInput, RemoteMergeBra
       added_documents: number;
       deleted_documents: number;
     }>("POST", path, {
-      body: {
-        target_branch_id: input.target_branch_id || null,
-      },
+      body: { target_branch_id: input.target_branch_id || null },
     });
 
-    if (!result.ok) {
-      return { success: false, error: result.error };
-    }
+    if (!result.ok) return { success: false, error: result.error };
 
     return {
       success: true,
@@ -615,10 +561,8 @@ export const vfRemoteMergeBranch: MCPTool<RemoteMergeBranchInput, RemoteMergeBra
 // ============================================================================
 
 const remoteDeleteBranchInput = z.object({
-  project: z.string()
-    .describe("Project slug or ID"),
-  branch_id: z.string()
-    .describe("Branch ID to delete"),
+  project: z.string().describe("Project slug or ID"),
+  branch_id: z.string().describe("Branch ID to delete"),
 });
 
 type RemoteDeleteBranchInput = z.infer<typeof remoteDeleteBranchInput>;
@@ -636,9 +580,7 @@ export const vfRemoteDeleteBranch: MCPTool<RemoteDeleteBranchInput, RemoteDelete
     const path = `/${input.project}/branches/${input.branch_id}`;
     const result = await apiRequest<{ success: boolean }>("DELETE", path);
 
-    if (!result.ok) {
-      return { success: false, error: result.error };
-    }
+    if (!result.ok) return { success: false, error: result.error };
 
     return { success: true };
   },
@@ -649,26 +591,13 @@ export const vfRemoteDeleteBranch: MCPTool<RemoteDeleteBranchInput, RemoteDelete
 // ============================================================================
 
 const remoteCreateProjectInput = z.object({
-  name: z.string()
-    .describe("Project name"),
-  slug: z.string()
-    .describe("Project slug (lowercase letters, numbers, hyphens only)"),
-  template: z.string().optional()
-    .describe("Template to use (e.g., 'blank', 'blog', 'docs')"),
-  is_public: z.boolean().optional()
-    .describe("Whether the project is public (default: false)"),
+  name: z.string().describe("Project name"),
+  slug: z.string().describe("Project slug (lowercase letters, numbers, hyphens only)"),
+  template: z.string().optional().describe("Template to use (e.g., 'blank', 'blog', 'docs')"),
+  is_public: z.boolean().optional().describe("Whether the project is public (default: false)"),
 });
 
 type RemoteCreateProjectInput = z.infer<typeof remoteCreateProjectInput>;
-
-interface Project {
-  id: string;
-  slug: string;
-  name: string;
-  description?: string;
-  is_public?: boolean;
-  created_at?: string;
-}
 
 interface RemoteCreateProjectOutput {
   success: boolean;
@@ -690,14 +619,9 @@ export const vfRemoteCreateProject: MCPTool<RemoteCreateProjectInput, RemoteCrea
       },
     });
 
-    if (!result.ok) {
-      return { success: false, error: result.error };
-    }
+    if (!result.ok) return { success: false, error: result.error };
 
-    return {
-      success: true,
-      project: result.data,
-    };
+    return { success: true, project: result.data };
   },
 };
 
@@ -706,14 +630,14 @@ export const vfRemoteCreateProject: MCPTool<RemoteCreateProjectInput, RemoteCrea
 // ============================================================================
 
 const remoteCloneProjectInput = z.object({
-  source_project: z.string()
-    .describe("Source project slug or ID to clone from"),
-  target_name: z.string()
-    .describe("Name for the new project"),
-  target_slug: z.string()
-    .describe("Slug for the new project (lowercase letters, numbers, hyphens only)"),
-  file_pattern: z.string().optional()
-    .describe("Optional file pattern to filter which files to clone (e.g., '*.tsx')"),
+  source_project: z.string().describe("Source project slug or ID to clone from"),
+  target_name: z.string().describe("Name for the new project"),
+  target_slug: z.string().describe(
+    "Slug for the new project (lowercase letters, numbers, hyphens only)",
+  ),
+  file_pattern: z.string().optional().describe(
+    "Optional file pattern to filter which files to clone (e.g., '*.tsx')",
+  ),
 });
 
 type RemoteCloneProjectInput = z.infer<typeof remoteCloneProjectInput>;
@@ -730,83 +654,77 @@ export const vfRemoteCloneProject: MCPTool<RemoteCloneProjectInput, RemoteCloneP
   description:
     "Clone a Veryfront project by creating a new project and copying all files from the source.",
   inputSchema: remoteCloneProjectInput,
-  execute: (input) => {
-    return withSpan("cli.mcp.tool.vf_remote_clone_project", async () => {
-      // Step 1: Create the new project
-      const createResult = await apiRequest<Project>("POST", "/projects", {
-        body: {
-          name: input.target_name,
-          slug: input.target_slug,
-        },
-      });
+  execute: (input) =>
+    withSpan(
+      "cli.mcp.tool.vf_remote_clone_project",
+      async () => {
+        const createResult = await apiRequest<Project>("POST", "/projects", {
+          body: { name: input.target_name, slug: input.target_slug },
+        });
 
-      if (!createResult.ok) {
-        return { success: false, error: `Failed to create project: ${createResult.error}` };
-      }
+        if (!createResult.ok) {
+          return { success: false, error: `Failed to create project: ${createResult.error}` };
+        }
 
-      const newProject = createResult.data;
-      if (!newProject) {
-        return { success: false, error: "Project created but no data returned" };
-      }
+        const newProject = createResult.data;
+        if (!newProject) {
+          return { success: false, error: "Project created but no data returned" };
+        }
 
-      // Step 2: List all files from source project
-      const params = new URLSearchParams();
-      params.set("limit", "1000");
-      if (input.file_pattern) params.set("pattern", input.file_pattern);
+        const params = new URLSearchParams();
+        params.set("limit", "1000");
+        if (input.file_pattern) params.set("pattern", input.file_pattern);
 
-      const listResult = await apiRequest<FileListResponse>(
-        "GET",
-        `/${input.source_project}/files?${params.toString()}`,
-      );
-
-      if (!listResult.ok) {
-        return {
-          success: false,
-          error: `Project created but failed to list source files: ${listResult.error}`,
-          project: newProject,
-        };
-      }
-
-      const sourceFiles = listResult.data?.data || [];
-
-      // Step 3: Copy each file to the new project
-      let filesCopied = 0;
-      const errors: string[] = [];
-
-      for (const file of sourceFiles) {
-        // Get full file content
-        const getResult = await apiRequest<RemoteFile>(
+        const listResult = await apiRequest<FileListResponse>(
           "GET",
-          `/${input.source_project}/files/${encodeFilePath(file.path)}`,
+          `/${input.source_project}/files?${params.toString()}`,
         );
 
-        if (!getResult.ok || !getResult.data) {
-          errors.push(`Failed to read ${file.path}`);
-          continue;
+        if (!listResult.ok) {
+          return {
+            success: false,
+            error: `Project created but failed to list source files: ${listResult.error}`,
+            project: newProject,
+          };
         }
 
-        // Create file in new project
-        const createFileResult = await apiRequest<{ id: string; path: string }>(
-          "PUT",
-          `/${input.target_slug}/files/${encodeFilePath(file.path)}`,
-          { body: { content: getResult.data.content } },
-        );
+        const sourceFiles = listResult.data?.data ?? [];
+        let filesCopied = 0;
+        const errors: string[] = [];
 
-        if (createFileResult.ok) {
-          filesCopied++;
-        } else {
-          errors.push(`Failed to create ${file.path}: ${createFileResult.error}`);
+        for (const file of sourceFiles) {
+          const getResult = await apiRequest<RemoteFile>(
+            "GET",
+            `/${input.source_project}/files/${encodeFilePath(file.path)}`,
+          );
+
+          if (!getResult.ok || !getResult.data) {
+            errors.push(`Failed to read ${file.path}`);
+            continue;
+          }
+
+          const createFileResult = await apiRequest<{ id: string; path: string }>(
+            "PUT",
+            `/${input.target_slug}/files/${encodeFilePath(file.path)}`,
+            { body: { content: getResult.data.content } },
+          );
+
+          if (createFileResult.ok) {
+            filesCopied++;
+          } else {
+            errors.push(`Failed to create ${file.path}: ${createFileResult.error}`);
+          }
         }
-      }
 
-      return {
-        success: errors.length === 0,
-        project: newProject,
-        files_copied: filesCopied,
-        error: errors.length > 0 ? errors.join("; ") : undefined,
-      };
-    }, { "tool.source_project": input.source_project, "tool.target_slug": input.target_slug });
-  },
+        return {
+          success: errors.length === 0,
+          project: newProject,
+          files_copied: filesCopied,
+          error: errors.length ? errors.join("; ") : undefined,
+        };
+      },
+      { "tool.source_project": input.source_project, "tool.target_slug": input.target_slug },
+    ),
 };
 
 // ============================================================================
@@ -814,17 +732,14 @@ export const vfRemoteCloneProject: MCPTool<RemoteCloneProjectInput, RemoteCloneP
 // ============================================================================
 
 export const remoteFileTools: MCPTool[] = [
-  // Project operations
   vfRemoteCreateProject,
   vfRemoteCloneProject,
-  // File operations
   vfRemoteListFiles,
   vfRemoteGetFile,
   vfRemoteUpdateFile,
   vfRemoteDeleteFile,
   vfRemoteSearchFiles,
   vfRemoteMoveFile,
-  // Branch operations
   vfRemoteListBranches,
   vfRemoteCreateBranch,
   vfRemoteMergeBranch,

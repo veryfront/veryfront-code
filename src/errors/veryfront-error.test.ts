@@ -23,6 +23,7 @@ describe("veryfront-error", () => {
         message: "Build failed",
         context: { file: "test.ts", phase: "transform" },
       });
+
       assertEquals(error.type, "build");
       assertEquals(error.message, "Build failed");
     });
@@ -33,6 +34,7 @@ describe("veryfront-error", () => {
         message: "API request failed",
         context: { endpoint: "/users", statusCode: 500 },
       });
+
       assertEquals(error.type, "api");
       assertEquals(error.message, "API request failed");
     });
@@ -43,6 +45,7 @@ describe("veryfront-error", () => {
         message: "Render failed",
         context: { component: "App", phase: "server" },
       });
+
       assertEquals(error.type, "render");
     });
 
@@ -52,6 +55,7 @@ describe("veryfront-error", () => {
         message: "Invalid config",
         context: { field: "port", expected: "number" },
       });
+
       assertEquals(error.type, "config");
     });
   });
@@ -112,7 +116,7 @@ describe("veryfront-error", () => {
       const error = toError(veryfrontError);
 
       // Context is attached but not enumerable
-      assertEquals((error as unknown as { context: VeryfrontError }).context, veryfrontError);
+      assertEquals((error as { context: VeryfrontError }).context, veryfrontError);
     });
   });
 
@@ -129,9 +133,7 @@ describe("veryfront-error", () => {
     });
 
     it("should return null for regular errors", () => {
-      const error = new Error("Regular error");
-      const extracted = fromError(error);
-      assertEquals(extracted, null);
+      assertEquals(fromError(new Error("Regular error")), null);
     });
 
     it("should return null for non-error values", () => {
@@ -149,8 +151,7 @@ describe("veryfront-error", () => {
 
   describe("getErrorMessage", () => {
     it("should extract message from Error", () => {
-      const error = new Error("Test error message");
-      assertEquals(getErrorMessage(error), "Test error message");
+      assertEquals(getErrorMessage(new Error("Test error message")), "Test error message");
     });
 
     it("should convert non-Error to string", () => {
@@ -169,8 +170,7 @@ describe("veryfront-error", () => {
   describe("ensureError", () => {
     it("should return Error instances unchanged", () => {
       const error = new Error("Original error");
-      const result = ensureError(error);
-      assertEquals(result, error);
+      assertEquals(ensureError(error), error);
     });
 
     it("should wrap strings in Error", () => {
@@ -193,6 +193,7 @@ describe("veryfront-error", () => {
     it("should create new Error instance for non-Error values", () => {
       const result1 = ensureError("test");
       const result2 = ensureError("test");
+
       // Use reference comparison - each call should create a new Error instance
       assert(result1 !== result2, "Expected different Error instances");
     });

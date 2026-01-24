@@ -16,7 +16,6 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
 
-// Import the module once (no cache-busting needed!)
 import {
   __resetAutoInstrumentForTests,
   initAutoInstrumentation,
@@ -30,90 +29,16 @@ import {
   isAutoInstrumentEnabled,
 } from "./auto-instrument/index.ts";
 
-// Mock modules for tracing and metrics
-const mockSpans: any[] = [];
-const mockMetricsRecorded: any[] = [];
-let tracingInitialized = false;
-let metricsInitialized = false;
-
-const _mockTracing = {
-  initTracing: (_config: any) => {
-    tracingInitialized = true;
-    return Promise.resolve();
-  },
-  startSpan: (name: string, options?: any) => {
-    const span = {
-      id: `span-${mockSpans.length}`,
-      name,
-      options,
-      attributes: {},
-      ended: false,
-      error: null as Error | null,
-    };
-    mockSpans.push(span);
-    return span;
-  },
-  endSpan: (span: any, error?: Error) => {
-    span.ended = true;
-    if (error) {
-      span.error = error;
-    }
-  },
-  setSpanAttributes: (span: any, attrs: Record<string, any>) => {
-    Object.assign(span.attributes, attrs);
-  },
-  extractContext: (headers: Headers) => {
-    const traceId = headers.get("x-trace-id");
-    return traceId ? { traceId } : null;
-  },
-  withActiveSpan: (_span: any, fn: () => any) => {
-    return fn();
-  },
-  SpanNames: {
-    HTTP_REQUEST: "http.server.request",
-    RENDER_COMPONENT: "react.render.component",
-  },
-};
-
-const _mockMetricsService = {
-  initMetrics: (_config: any) => {
-    metricsInitialized = true;
-    return Promise.resolve();
-  },
-  recordHttpRequest: (attrs: any) => {
-    mockMetricsRecorded.push({ type: "http.request", attrs });
-  },
-  recordHttpRequestComplete: (duration: number, attrs: any) => {
-    mockMetricsRecorded.push({ type: "http.request.complete", duration, attrs });
-  },
-  recordRenderError: (attrs: any) => {
-    mockMetricsRecorded.push({ type: "render.error", attrs });
-  },
-};
-
-// Reset mocks before each test
-function resetMocks() {
-  mockSpans.length = 0;
-  mockMetricsRecorded.length = 0;
-  tracingInitialized = false;
-  metricsInitialized = false;
-  // Reset the auto-instrument module state
+beforeEach((): void => {
   __resetAutoInstrumentForTests();
-}
+});
 
 describe("Auto-Instrumentation", () => {
-  // Reset before each test for proper isolation
-  beforeEach(() => {
-    resetMocks();
-  });
-
   describe("initAutoInstrumentation", () => {
     it("should initialize with default configuration", async () => {
       await initAutoInstrumentation();
 
-      // Should not initialize tracing/metrics without explicit config
-      assertEquals(tracingInitialized, false, "Tracing should not be initialized by default");
-      assertEquals(metricsInitialized, false, "Metrics should not be initialized by default");
+      assertEquals(isAutoInstrumentEnabled(), true);
     });
 
     it("should initialize tracing when enabled", async () => {
@@ -124,8 +49,6 @@ describe("Auto-Instrumentation", () => {
         },
       });
 
-      // Note: In real test, this would verify actual tracing init
-      // For now, we verify the config was passed
       assertExists(initAutoInstrumentation);
     });
 
@@ -157,7 +80,6 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should handle initialization errors gracefully", async () => {
-      // Should not throw even if tracing/metrics init fails
       await initAutoInstrumentation({
         tracing: { enabled: true, exporter: "console" },
         metrics: { enabled: true, exporter: "console" },
@@ -202,7 +124,7 @@ describe("Auto-Instrumentation", () => {
 
   describe("instrumentHttpHandler", () => {
     it("should create span for HTTP request", async () => {
-      const handler = (_req: Request) => new Response("OK", { status: 200 });
+      const handler = (_req: Request): Response => new Response("OK", { status: 200 });
       const instrumented = instrumentHttpHandler(handler);
 
       const request = new Request("http://localhost:3000/test", { method: "GET" });
@@ -212,19 +134,17 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should record HTTP method and URL attributes", async () => {
-      const handler = () => new Response("OK");
+      const handler = (): Response => new Response("OK");
       const instrumented = instrumentHttpHandler(handler);
 
-      const request = new Request("http://localhost:3000/api/users", {
-        method: "POST",
-      });
+      const request = new Request("http://localhost:3000/api/users", { method: "POST" });
       await instrumented(request);
 
       assertExists(instrumented);
     });
 
     it("should record response status code", async () => {
-      const handler = () => new Response("Created", { status: 201 });
+      const handler = (): Response => new Response("Created", { status: 201 });
       const instrumented = instrumentHttpHandler(handler);
 
       const request = new Request("http://localhost:3000/api/resource");
@@ -234,7 +154,7 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should record response content length", async () => {
-      const handler = () =>
+      const handler = (): Response =>
         new Response('{"data": "test"}', {
           headers: { "content-length": "16" },
         });
@@ -247,7 +167,7 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should extract distributed trace context from headers", async () => {
-      const handler = () => new Response("OK");
+      const handler = (): Response => new Response("OK");
       const instrumented = instrumentHttpHandler(handler);
 
       const request = new Request("http://localhost:3000/api/test", {
@@ -259,7 +179,7 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should handle errors and record error attributes", async () => {
-      const handler = () => {
+      const handler = (): Response => {
         throw new Error("Handler error");
       };
       const instrumented = instrumentHttpHandler(handler);
@@ -283,7 +203,7 @@ describe("Auto-Instrumentation", () => {
         }
       }
 
-      const handler = () => {
+      const handler = (): Response => {
         throw new CustomError("Custom error message");
       };
       const instrumented = instrumentHttpHandler(handler);
@@ -298,7 +218,7 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should record 500 status for errors", async () => {
-      const handler = () => {
+      const handler = (): Response => {
         throw new Error("Internal error");
       };
       const instrumented = instrumentHttpHandler(handler);
@@ -315,7 +235,7 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should measure request duration", async () => {
-      const handler = async () => {
+      const handler = async (): Promise<Response> => {
         await delay(10);
         return new Response("OK");
       };
@@ -330,7 +250,7 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should handle different HTTP methods", async () => {
-      const handler = (req: Request) => new Response(req.method, { status: 200 });
+      const handler = (req: Request): Response => new Response(req.method, { status: 200 });
       const instrumented = instrumentHttpHandler(handler);
 
       const methods = ["GET", "POST", "PUT", "DELETE", "PATCH"];
@@ -344,7 +264,7 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should handle different paths", async () => {
-      const handler = (req: Request) => {
+      const handler = (req: Request): Response => {
         const url = new URL(req.url);
         return new Response(url.pathname);
       };
@@ -361,7 +281,7 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should record host and scheme attributes", async () => {
-      const handler = () => new Response("OK");
+      const handler = (): Response => new Response("OK");
       const instrumented = instrumentHttpHandler(handler);
 
       const request = new Request("https://example.com:8080/api/test");
@@ -371,7 +291,7 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should work with synchronous handlers", async () => {
-      const handler = () => new Response("Sync response");
+      const handler = (): Response => new Response("Sync response");
       const instrumented = instrumentHttpHandler(handler);
 
       const request = new Request("http://localhost:3000/sync");
@@ -382,7 +302,7 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should preserve response headers", async () => {
-      const handler = () =>
+      const handler = (): Response =>
         new Response("OK", {
           headers: {
             "x-custom": "header-value",
@@ -399,7 +319,7 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should handle missing content-length gracefully", async () => {
-      const handler = () => new Response("No length header");
+      const handler = (): Response => new Response("No length header");
       const instrumented = instrumentHttpHandler(handler);
 
       const request = new Request("http://localhost:3000/no-length");
@@ -410,151 +330,129 @@ describe("Auto-Instrumentation", () => {
   });
 
   describe("instrumentFetch", () => {
-    it("should instrument global fetch", () => {
+    function withMockFetch<T>(mock: typeof fetch | undefined, fn: () => T): T {
       const originalFetch = globalThis.fetch;
+      // @ts-ignore - allow setting undefined for tests
+      globalThis.fetch = mock;
+      try {
+        return fn();
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    }
 
-      instrumentFetch();
-
-      assertEquals(typeof globalThis.fetch, "function");
-
-      globalThis.fetch = originalFetch;
+    it("should instrument global fetch", () => {
+      withMockFetch(globalThis.fetch, () => {
+        instrumentFetch();
+        assertEquals(typeof globalThis.fetch, "function");
+      });
     });
 
     it("should handle fetch not available", () => {
-      const originalFetch = globalThis.fetch;
-      // @ts-ignore - testing missing fetch
-      globalThis.fetch = undefined;
-
-      // Should not throw
-      instrumentFetch();
-
-      globalThis.fetch = originalFetch;
+      withMockFetch(undefined, () => {
+        instrumentFetch();
+      });
     });
 
     it("should create span for fetch calls with string URL", () => {
-      const originalFetch = globalThis.fetch;
-
-      globalThis.fetch = () => Promise.resolve(new Response("OK"));
-      instrumentFetch();
-
-      // Note: In real implementation, this would create a span
-      assertExists(globalThis.fetch);
-
-      globalThis.fetch = originalFetch;
+      withMockFetch((() => Promise.resolve(new Response("OK"))) as typeof fetch, () => {
+        instrumentFetch();
+        assertExists(globalThis.fetch);
+      });
     });
 
     it("should create span for fetch calls with URL object", () => {
-      const originalFetch = globalThis.fetch;
-
-      globalThis.fetch = () => Promise.resolve(new Response("OK"));
-      instrumentFetch();
-
-      assertExists(globalThis.fetch);
-
-      globalThis.fetch = originalFetch;
+      withMockFetch((() => Promise.resolve(new Response("OK"))) as typeof fetch, () => {
+        instrumentFetch();
+        assertExists(globalThis.fetch);
+      });
     });
 
     it("should create span for fetch calls with Request object", () => {
-      const originalFetch = globalThis.fetch;
-
-      globalThis.fetch = () => Promise.resolve(new Response("OK"));
-      instrumentFetch();
-
-      assertExists(globalThis.fetch);
-
-      globalThis.fetch = originalFetch;
+      withMockFetch((() => Promise.resolve(new Response("OK"))) as typeof fetch, () => {
+        instrumentFetch();
+        assertExists(globalThis.fetch);
+      });
     });
 
     it("should record HTTP method from init options", () => {
-      const originalFetch = globalThis.fetch;
-
-      globalThis.fetch = () => Promise.resolve(new Response("OK"));
-      instrumentFetch();
-
-      assertExists(globalThis.fetch);
-
-      globalThis.fetch = originalFetch;
+      withMockFetch((() => Promise.resolve(new Response("OK"))) as typeof fetch, () => {
+        instrumentFetch();
+        assertExists(globalThis.fetch);
+      });
     });
 
     it("should default to GET method when not specified", () => {
-      const originalFetch = globalThis.fetch;
-
-      globalThis.fetch = () => Promise.resolve(new Response("OK"));
-      instrumentFetch();
-
-      assertExists(globalThis.fetch);
-
-      globalThis.fetch = originalFetch;
+      withMockFetch((() => Promise.resolve(new Response("OK"))) as typeof fetch, () => {
+        instrumentFetch();
+        assertExists(globalThis.fetch);
+      });
     });
 
     it("should record response status and content length", () => {
-      const originalFetch = globalThis.fetch;
-
-      globalThis.fetch = () =>
-        Promise.resolve(
-          new Response("test", {
-            status: 200,
-            headers: { "content-length": "4" },
-          }),
-        );
-      instrumentFetch();
-
-      assertExists(globalThis.fetch);
-
-      globalThis.fetch = originalFetch;
+      withMockFetch(
+        (() =>
+          Promise.resolve(
+            new Response("test", {
+              status: 200,
+              headers: { "content-length": "4" },
+            }),
+          )) as typeof fetch,
+        () => {
+          instrumentFetch();
+          assertExists(globalThis.fetch);
+        },
+      );
     });
 
     it("should measure fetch duration", () => {
-      const originalFetch = globalThis.fetch;
-
-      globalThis.fetch = async () => {
-        await delay(10);
-        return new Response("OK");
-      };
-      instrumentFetch();
-
-      assertExists(globalThis.fetch);
-
-      globalThis.fetch = originalFetch;
+      withMockFetch(
+        (async () => {
+          await delay(10);
+          return new Response("OK");
+        }) as typeof fetch,
+        () => {
+          instrumentFetch();
+          assertExists(globalThis.fetch);
+        },
+      );
     });
 
     it("should handle fetch errors", () => {
-      const originalFetch = globalThis.fetch;
-
-      globalThis.fetch = () => {
-        throw new Error("Network error");
-      };
-      instrumentFetch();
-
-      assertExists(globalThis.fetch);
-
-      globalThis.fetch = originalFetch;
+      withMockFetch(
+        (() => {
+          throw new Error("Network error");
+        }) as unknown as typeof fetch,
+        () => {
+          instrumentFetch();
+          assertExists(globalThis.fetch);
+        },
+      );
     });
 
     it("should record error type on fetch failure", () => {
-      const originalFetch = globalThis.fetch;
-
-      globalThis.fetch = () => {
-        throw new TypeError("Failed to fetch");
-      };
-      instrumentFetch();
-
-      assertExists(globalThis.fetch);
-
-      globalThis.fetch = originalFetch;
+      withMockFetch(
+        (() => {
+          throw new TypeError("Failed to fetch");
+        }) as unknown as typeof fetch,
+        () => {
+          instrumentFetch();
+          assertExists(globalThis.fetch);
+        },
+      );
     });
   });
 
   describe("instrumentReactRender", () => {
     it("should instrument synchronous render function", async () => {
-      const renderFn = () => "<div>Hello</div>";
+      const renderFn = (): string => "<div>Hello</div>";
       const result = await instrumentReactRender(renderFn, "TestComponent");
 
       assertEquals(result, "<div>Hello</div>");
     });
 
     it("should instrument async render function", async () => {
-      const renderFn = async () => {
+      const renderFn = async (): Promise<string> => {
         await delay(10);
         return "<div>Async</div>";
       };
@@ -564,14 +462,14 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should record component name", async () => {
-      const renderFn = () => "output";
+      const renderFn = (): string => "output";
       await instrumentReactRender(renderFn, "MyComponent");
 
       assertExists(instrumentReactRender);
     });
 
     it("should measure render duration", async () => {
-      const renderFn = async () => {
+      const renderFn = async (): Promise<string> => {
         await delay(10);
         return "rendered";
       };
@@ -584,7 +482,7 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should handle render errors", async () => {
-      const renderFn = () => {
+      const renderFn = (): string => {
         throw new Error("Render error");
       };
 
@@ -596,7 +494,7 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should handle async render errors", async () => {
-      const renderFn = () => Promise.reject(new Error("Async render error"));
+      const renderFn = (): Promise<never> => Promise.reject(new Error("Async render error"));
 
       try {
         await instrumentReactRender(renderFn, "AsyncErrorComponent");
@@ -606,7 +504,7 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should record render errors in metrics", async () => {
-      const renderFn = () => {
+      const renderFn = (): string => {
         throw new Error("Render failed");
       };
 
@@ -622,7 +520,7 @@ describe("Auto-Instrumentation", () => {
 
   describe("instrumentErrorHandler", () => {
     it("should instrument error handler with span capture", async () => {
-      const handler = (error: Error) => new Response(error.message, { status: 500 });
+      const handler = (error: Error): Response => new Response(error.message, { status: 500 });
       const instrumented = instrumentErrorHandler(handler, true);
 
       const error = new Error("Test error");
@@ -633,7 +531,7 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should instrument error handler without span capture", async () => {
-      const handler = (error: Error) => new Response(error.message, { status: 500 });
+      const handler = (error: Error): Response => new Response(error.message, { status: 500 });
       const instrumented = instrumentErrorHandler(handler, false);
 
       const error = new Error("Test error");
@@ -643,7 +541,7 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should record error type and message", async () => {
-      const handler = (_error: Error) => new Response("Error handled", { status: 500 });
+      const handler = (_error: Error): Response => new Response("Error handled", { status: 500 });
       const instrumented = instrumentErrorHandler(handler);
 
       const error = new Error("Custom error");
@@ -653,7 +551,7 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should record error stack trace", async () => {
-      const handler = () => new Response("OK", { status: 500 });
+      const handler = (): Response => new Response("OK", { status: 500 });
       const instrumented = instrumentErrorHandler(handler);
 
       const error = new Error("Error with stack");
@@ -663,7 +561,7 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should include request context when provided", async () => {
-      const handler = () => new Response("Error", { status: 500 });
+      const handler = (): Response => new Response("Error", { status: 500 });
       const instrumented = instrumentErrorHandler(handler);
 
       const error = new Error("Request error");
@@ -674,7 +572,7 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should record HTTP method and URL from request", async () => {
-      const handler = () => new Response("Error", { status: 500 });
+      const handler = (): Response => new Response("Error", { status: 500 });
       const instrumented = instrumentErrorHandler(handler);
 
       const error = new Error("Error");
@@ -687,28 +585,23 @@ describe("Auto-Instrumentation", () => {
 
   describe("instrument (async wrapper)", () => {
     it("should instrument async function", async () => {
-      const fn = (x: number) => Promise.resolve(x * 2);
-      const instrumented = instrument(
-        fn as (...args: unknown[]) => Promise<unknown>,
-        "test.operation",
-      ) as (x: number) => Promise<number>;
+      const fn = (x: number): Promise<number> => Promise.resolve(x * 2);
+      const instrumented = instrument(fn, "test.operation") as (x: number) => Promise<number>;
 
       const result = await instrumented(5);
       assertEquals(result, 10);
     });
 
     it("should record custom attributes from function args", async () => {
-      const fn = (userId: string, action: string) => Promise.resolve({ userId, action });
-      const instrumented = instrument(
-        fn as (...args: unknown[]) => Promise<unknown>,
-        "user.action",
-        {
-          attributes: (args: unknown[]) => {
-            const [userId, action] = args as [string, string];
-            return { userId, action };
-          },
+      const fn = (userId: string, action: string): Promise<{ userId: string; action: string }> =>
+        Promise.resolve({ userId, action });
+
+      const instrumented = instrument(fn, "user.action", {
+        attributes: (args: unknown[]) => {
+          const [userId, action] = args as [string, string];
+          return { userId, action };
         },
-      ) as (userId: string, action: string) => Promise<{ userId: string; action: string }>;
+      }) as (userId: string, action: string) => Promise<{ userId: string; action: string }>;
 
       const result = await instrumented("user-123", "login");
       assertEquals(result.userId, "user-123");
@@ -716,7 +609,7 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should measure operation duration", async () => {
-      const fn = async () => {
+      const fn = async (): Promise<string> => {
         await delay(10);
         return "done";
       };
@@ -730,7 +623,7 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should handle errors and rethrow", async () => {
-      const fn = () => Promise.reject(new Error("Operation failed"));
+      const fn = (): Promise<never> => Promise.reject(new Error("Operation failed"));
       const instrumented = instrument(fn, "failing.operation");
 
       try {
@@ -744,7 +637,7 @@ describe("Auto-Instrumentation", () => {
       const kinds = ["internal", "server", "client", "producer", "consumer"] as const;
 
       for (const kind of kinds) {
-        const fn = () => Promise.resolve("result");
+        const fn = (): Promise<string> => Promise.resolve("result");
         const instrumented = instrument(fn, `operation.${kind}`, { kind });
         await instrumented();
       }
@@ -755,19 +648,16 @@ describe("Auto-Instrumentation", () => {
 
   describe("instrumentSync (sync wrapper)", () => {
     it("should instrument synchronous function", () => {
-      const fn = (x: number) => x * 3;
-      const instrumented = instrumentSync(
-        fn as (...args: unknown[]) => unknown,
-        "sync.operation",
-      ) as (x: number) => number;
+      const fn = (x: number): number => x * 3;
+      const instrumented = instrumentSync(fn, "sync.operation") as (x: number) => number;
 
       const result = instrumented(5);
       assertEquals(result, 15);
     });
 
     it("should record custom attributes", () => {
-      const fn = (name: string) => `Hello, ${name}`;
-      const instrumented = instrumentSync(fn as (...args: unknown[]) => unknown, "greet", {
+      const fn = (name: string): string => `Hello, ${name}`;
+      const instrumented = instrumentSync(fn, "greet", {
         attributes: (args: unknown[]) => {
           const [name] = args as [string];
           return { name };
@@ -779,12 +669,9 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should measure sync operation duration", () => {
-      const fn = () => {
-        // Simulate work
+      const fn = (): number => {
         let sum = 0;
-        for (let i = 0; i < 1000; i++) {
-          sum += i;
-        }
+        for (let i = 0; i < 1000; i++) sum += i;
         return sum;
       };
       const instrumented = instrumentSync(fn, "compute");
@@ -794,7 +681,7 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should handle sync errors", () => {
-      const fn = () => {
+      const fn = (): never => {
         throw new Error("Sync error");
       };
       const instrumented = instrumentSync(fn, "sync.error");
@@ -825,18 +712,20 @@ describe("Auto-Instrumentation", () => {
       const batches: number[][] = [];
       let currentBatch: number[] = [];
 
-      // deno-lint-ignore require-await
-      await instrumentBatch("sized.batch", items, async (item: number) => {
-        currentBatch.push(item);
-        if (currentBatch.length === 10) {
-          batches.push([...currentBatch]);
-          currentBatch = [];
-        }
-      }, { batchSize: 10 });
+      await instrumentBatch(
+        "sized.batch",
+        items,
+        (item: number) => {
+          currentBatch.push(item);
+          if (currentBatch.length === 10) {
+            batches.push([...currentBatch]);
+            currentBatch = [];
+          }
+        },
+        { batchSize: 10 },
+      );
 
-      if (currentBatch.length > 0) {
-        batches.push(currentBatch);
-      }
+      if (currentBatch.length) batches.push(currentBatch);
 
       assertExists(instrumentBatch);
     });
@@ -858,9 +747,7 @@ describe("Auto-Instrumentation", () => {
       try {
         // deno-lint-ignore require-await
         await instrumentBatch("error.batch", items, async (item: number) => {
-          if (item === 3) {
-            throw new Error("Batch item error");
-          }
+          if (item === 3) throw new Error("Batch item error");
         });
       } catch (error) {
         assertEquals((error as Error).message, "Batch item error");
@@ -881,46 +768,33 @@ describe("Auto-Instrumentation", () => {
 
     it("should handle empty batch", async () => {
       await instrumentBatch("empty.batch", [], async () => {});
-
       assertExists(instrumentBatch);
     });
 
     it("should calculate correct batch count", async () => {
       const items = Array.from({ length: 23 }, (_, i) => i);
 
-      await instrumentBatch("counted.batch", items, async () => {}, {
-        batchSize: 7,
-      });
+      await instrumentBatch("counted.batch", items, async () => {}, { batchSize: 7 });
 
-      // Should create 4 batches (7 + 7 + 7 + 2)
       assertExists(instrumentBatch);
     });
   });
 
   describe("isAutoInstrumentEnabled", () => {
-    it("should return false before initialization", async () => {
-      const { isAutoInstrumentEnabled, __resetAutoInstrumentForTests } = await import(
-        `./auto-instrument/index.ts?t=${Date.now()}`
-      );
-
-      // Reset state in case previous tests have initialized it
+    it("should return false before initialization", () => {
       __resetAutoInstrumentForTests();
-
-      const enabled = isAutoInstrumentEnabled();
-      assertEquals(enabled, false);
+      assertEquals(isAutoInstrumentEnabled(), false);
     });
 
     it("should return true after initialization", async () => {
       await initAutoInstrumentation();
-      const enabled = isAutoInstrumentEnabled();
-
-      assertEquals(enabled, true);
+      assertEquals(isAutoInstrumentEnabled(), true);
     });
   });
 
   describe("Edge Cases", () => {
     it("should handle null/undefined response headers", async () => {
-      const handler = () => new Response(null);
+      const handler = (): Response => new Response(null);
       const instrumented = instrumentHttpHandler(handler);
 
       const request = new Request("http://localhost:3000/null");
@@ -930,7 +804,7 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should handle very long URLs", async () => {
-      const handler = () => new Response("OK");
+      const handler = (): Response => new Response("OK");
       const instrumented = instrumentHttpHandler(handler);
 
       const longPath = "/api/" + "a".repeat(1000);
@@ -941,7 +815,7 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should handle special characters in URLs", async () => {
-      const handler = () => new Response("OK");
+      const handler = (): Response => new Response("OK");
       const instrumented = instrumentHttpHandler(handler);
 
       const request = new Request("http://localhost:3000/api/users/%E2%9C%93");
@@ -951,7 +825,7 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should handle concurrent requests", async () => {
-      const handler = async () => {
+      const handler = async (): Promise<Response> => {
         await delay(10);
         return new Response("OK");
       };
@@ -969,7 +843,7 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should handle non-Error throws", async () => {
-      const handler = () => {
+      const handler = (): Response => {
         throw "string error";
       };
       const instrumented = instrumentHttpHandler(handler);

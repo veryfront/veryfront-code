@@ -53,6 +53,13 @@ RULES:
 3. KEEP unchanged if code is already clean
 4. Use ES modules, function keyword for top-level, explicit return types
 
+CRITICAL - IMPORTS:
+- ALWAYS keep file extensions in relative imports
+- Explicit extensions are REQUIRED (.ts, .tsx, .js, .jsx, .mdx, .md, .json, .css)
+- Example: import { foo } from "./bar.ts"  ✓
+- WRONG:  import { foo } from "./bar"      ✗
+- NEVER remove or change file extensions in import paths
+
 OUTPUT: Return ONLY the complete simplified code. No explanations, no markdown fences.
 If no changes needed, return the exact input unchanged.`;
 

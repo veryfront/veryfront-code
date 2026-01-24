@@ -1,5 +1,7 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
+export type AttributeValue = string | number | boolean;
+
 export interface TracingConfig {
   enabled: boolean;
   exporter?: "jaeger" | "zipkin" | "otlp" | "console";
@@ -29,9 +31,7 @@ export interface InstrumentationContext {
   initialized: boolean;
 }
 
-export interface SpanAttributes {
-  [key: string]: string | number | boolean;
-}
+export type SpanAttributes = Record<string, AttributeValue>;
 
 export interface InstrumentOptions {
   attributes?: (args: unknown[]) => SpanAttributes;
@@ -43,6 +43,6 @@ export interface BatchOptions {
   attributes?: SpanAttributes;
 }
 
-export type ErrorAttributes = Record<string, string | number | boolean>;
+export type ErrorAttributes = Record<string, AttributeValue>;
 
-export type HttpAttributes = Record<string, string | number | boolean>;
+export type HttpAttributes = Record<string, AttributeValue>;

@@ -18,13 +18,7 @@ export interface MapOptions extends Omit<BaseNodeConfig, "checkpoint"> {
   skip?: (context: WorkflowContext) => boolean | Promise<boolean>;
 }
 
-/**
- * Create a map node for dynamic fan-out execution.
- */
-export function map(
-  id: string,
-  options: MapOptions,
-): WorkflowNode {
+export function map(id: string, options: MapOptions): WorkflowNode {
   validateNodeId(id);
 
   if (!options.items) {
@@ -46,8 +40,5 @@ export function map(
     skip: options.skip,
   };
 
-  return {
-    id,
-    config,
-  };
+  return { id, config };
 }

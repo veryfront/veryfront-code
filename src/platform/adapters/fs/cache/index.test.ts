@@ -3,31 +3,19 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createFileCache, estimateSize, FileCache, LRUTracker } from "./index.ts";
 
 describe("fs/cache/index.ts exports", () => {
-  describe("FileCache", () => {
-    it("should export FileCache class", () => {
-      assertExists(FileCache);
-      assertEquals(typeof FileCache, "function");
-    });
-  });
+  const cases: Array<{ name: string; value: unknown }> = [
+    { name: "FileCache", value: FileCache },
+    { name: "createFileCache", value: createFileCache },
+    { name: "estimateSize", value: estimateSize },
+    { name: "LRUTracker", value: LRUTracker },
+  ];
 
-  describe("createFileCache", () => {
-    it("should export createFileCache function", () => {
-      assertExists(createFileCache);
-      assertEquals(typeof createFileCache, "function");
+  for (const { name, value } of cases) {
+    describe(name, () => {
+      it(`should export ${name}`, () => {
+        assertExists(value);
+        assertEquals(typeof value, "function");
+      });
     });
-  });
-
-  describe("estimateSize", () => {
-    it("should export estimateSize function", () => {
-      assertExists(estimateSize);
-      assertEquals(typeof estimateSize, "function");
-    });
-  });
-
-  describe("LRUTracker", () => {
-    it("should export LRUTracker class", () => {
-      assertExists(LRUTracker);
-      assertEquals(typeof LRUTracker, "function");
-    });
-  });
+  }
 });

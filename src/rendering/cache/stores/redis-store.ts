@@ -42,18 +42,16 @@ export class RedisCacheStore implements CacheStore {
   }
 
   private getFallbackStore(): MemoryCacheStore {
-    if (!this.fallbackStore) {
-      // Small fallback cache (100 entries) for when Redis is unavailable
-      this.fallbackStore = new MemoryCacheStore({ maxEntries: 100 });
-      logger.warn("[redis] Redis unavailable, using memory cache fallback");
-    }
+    if (this.fallbackStore) return this.fallbackStore;
+
+    // Small fallback cache (100 entries) for when Redis is unavailable
+    this.fallbackStore = new MemoryCacheStore({ maxEntries: 100 });
+    logger.warn("[redis] Redis unavailable, using memory cache fallback");
     return this.fallbackStore;
   }
 
   private async ensureClient(): Promise<RedisClient> {
-    if (this.client) {
-      return this.client;
-    }
+    if (this.client) return this.client;
 
     let createClient: ((options: { url?: string }) => RedisClient) | undefined;
     try {
@@ -61,7 +59,7 @@ export class RedisCacheStore implements CacheStore {
       // from trying to resolve this npm package during lint/check
       const redisClientModule = ["npm:@redis/client", "@1.5.8"].join("");
       const mod = await import(redisClientModule);
-      createClient = mod.createClient as unknown as (options: { url?: string }) => RedisClient;
+      createClient = mod.createClient as (options: { url?: string }) => RedisClient;
     } catch {
       throw toError(
         createError({
@@ -73,16 +71,14 @@ export class RedisCacheStore implements CacheStore {
     }
 
     const client = createClient({ url: this.url });
-    if (typeof client?.on === "function") {
-      client.on("error", (err: unknown) => {
-        // Only log the first error to avoid flooding logs during reconnection attempts
-        if (!this.errorLogged) {
-          logger.error("[redis] client error", err);
-          this.errorLogged = true;
-        }
-        this.redisUnavailable = true;
-      });
-    }
+    client.on?.("error", (err: unknown) => {
+      // Only log the first error to avoid flooding logs during reconnection attempts
+      if (!this.errorLogged) {
+        logger.error("[redis] client error", err);
+        this.errorLogged = true;
+      }
+      this.redisUnavailable = true;
+    });
 
     await client.connect();
     this.client = client;
@@ -104,18 +100,18 @@ export class RedisCacheStore implements CacheStore {
       const client = await this.ensureClient();
       const raw = await client.get(this.storageKey(key));
       if (!raw) return undefined;
+
       try {
         return JSON.parse(raw) as CachePayload;
       } catch {
         return undefined;
       }
     } catch (error) {
-      if (this.enableFallback) {
-        logger.warn("[redis] get failed, using fallback", { key, error });
-        this.redisUnavailable = true;
-        return this.getFallbackStore().get(key);
-      }
-      throw error;
+      if (!this.enableFallback) throw error;
+
+      logger.warn("[redis] get failed, using fallback", { key, error });
+      this.redisUnavailable = true;
+      return this.getFallbackStore().get(key);
     }
   }
 
@@ -129,12 +125,11 @@ export class RedisCacheStore implements CacheStore {
       // Apply TTL to prevent unbounded Redis growth
       await client.set(this.storageKey(key), JSON.stringify(value), { EX: this.ttlSeconds });
     } catch (error) {
-      if (this.enableFallback) {
-        logger.warn("[redis] set failed, using fallback", { key, error });
-        this.redisUnavailable = true;
-        return this.getFallbackStore().set(key, value);
-      }
-      throw error;
+      if (!this.enableFallback) throw error;
+
+      logger.warn("[redis] set failed, using fallback", { key, error });
+      this.redisUnavailable = true;
+      return this.getFallbackStore().set(key, value);
     }
   }
 
@@ -147,46 +142,39 @@ export class RedisCacheStore implements CacheStore {
       const client = await this.ensureClient();
       await client.del(this.storageKey(key));
     } catch (error) {
-      if (this.enableFallback) {
-        logger.warn("[redis] delete failed, using fallback", { key, error });
-        this.redisUnavailable = true;
-        return this.getFallbackStore().delete(key);
-      }
-      throw error;
+      if (!this.enableFallback) throw error;
+
+      logger.warn("[redis] delete failed, using fallback", { key, error });
+      this.redisUnavailable = true;
+      return this.getFallbackStore().delete(key);
     }
   }
 
   async clear(): Promise<void> {
-    if (this.fallbackStore) {
-      await this.fallbackStore.clear();
-    }
+    await this.fallbackStore?.clear();
 
-    if (this.redisUnavailable && this.enableFallback) {
-      return;
-    }
+    if (this.redisUnavailable && this.enableFallback) return;
 
     try {
       const client = await this.ensureClient();
       let cursor = 0;
+
       do {
         const [nextCursor, keys] = await client.scan(cursor, {
           MATCH: `${this.keyPrefix}*`,
           COUNT: 50,
         });
         cursor = nextCursor;
-        if (keys.length > 0) {
-          for (const key of keys) {
-            await client.del(key);
-          }
+
+        for (const key of keys) {
+          await client.del(key);
         }
       } while (cursor !== 0);
     } catch (error) {
-      if (this.enableFallback) {
-        logger.warn("[redis] clear failed", { error });
-        this.redisUnavailable = true;
-        return;
-      }
-      throw error;
+      if (!this.enableFallback) throw error;
+
+      logger.warn("[redis] clear failed", { error });
+      this.redisUnavailable = true;
     }
   }
 
@@ -197,6 +185,7 @@ export class RedisCacheStore implements CacheStore {
     }
 
     if (!this.client) return;
+
     await this.client.disconnect();
     this.client = null;
   }

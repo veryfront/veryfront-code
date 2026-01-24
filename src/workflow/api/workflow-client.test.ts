@@ -9,7 +9,6 @@ import { MemoryBackend } from "../backends/memory.ts";
 import { workflow } from "../dsl/workflow.ts";
 import { step } from "../dsl/step.ts";
 import { waitForApproval } from "../dsl/wait.ts";
-import type { Workflow } from "../dsl/workflow.ts";
 
 describe("WorkflowClient", () => {
   let client: WorkflowClient;
@@ -36,8 +35,8 @@ describe("WorkflowClient", () => {
   beforeEach(() => {
     backend = new MemoryBackend();
     client = createWorkflowClient({ backend });
-    client.register(testWorkflow as Workflow);
-    client.register(approvalWorkflow as Workflow);
+    client.register(testWorkflow);
+    client.register(approvalWorkflow);
   });
 
   afterEach(async () => {
@@ -47,15 +46,13 @@ describe("WorkflowClient", () => {
   describe("register()", () => {
     it("should register a workflow", async () => {
       const newClient = createWorkflowClient({ backend: new MemoryBackend() });
-      newClient.register(testWorkflow as Workflow);
-      // Should not throw
+      newClient.register(testWorkflow);
       await newClient.destroy();
     });
 
     it("should register workflow definition directly", async () => {
       const newClient = createWorkflowClient({ backend: new MemoryBackend() });
       newClient.register(testWorkflow.definition);
-      // Should not throw
       await newClient.destroy();
     });
   });
@@ -134,9 +131,7 @@ describe("WorkflowClient", () => {
   });
 
   describe("approve() and reject()", () => {
-    it("should approve a pending approval", async () => {
-      // Create run directly in waiting state (avoid async execution race)
-      const runId = "test-run-approval";
+    async function createWaitingApprovalRun(runId: string, approvalId: string): Promise<void> {
       await backend.createRun({
         id: runId,
         workflowId: "approval-workflow",
@@ -151,13 +146,19 @@ describe("WorkflowClient", () => {
       });
 
       await backend.savePendingApproval(runId, {
-        id: "approval-1",
+        id: approvalId,
         nodeId: "review",
         status: "pending",
         message: "Please review",
         payload: {},
         requestedAt: new Date(),
       });
+    }
+
+    it("should approve a pending approval", async () => {
+      // Create run directly in waiting state (avoid async execution race)
+      const runId = "test-run-approval";
+      await createWaitingApprovalRun(runId, "approval-1");
 
       await client.approve(runId, "approval-1", "admin@test.com", "Looks good!");
 
@@ -170,27 +171,7 @@ describe("WorkflowClient", () => {
     it("should reject a pending approval", async () => {
       // Create run directly in waiting state (avoid async execution race)
       const runId = "test-run-rejection";
-      await backend.createRun({
-        id: runId,
-        workflowId: "approval-workflow",
-        status: "waiting",
-        input: {},
-        nodeStates: {},
-        currentNodes: ["review"],
-        context: { input: {} },
-        checkpoints: [],
-        pendingApprovals: [],
-        createdAt: new Date(),
-      });
-
-      await backend.savePendingApproval(runId, {
-        id: "approval-2",
-        nodeId: "review",
-        status: "pending",
-        message: "Please review",
-        payload: {},
-        requestedAt: new Date(),
-      });
+      await createWaitingApprovalRun(runId, "approval-2");
 
       await client.reject(runId, "approval-2", "reviewer@test.com", "Needs changes");
 

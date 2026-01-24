@@ -12,10 +12,9 @@ export function buildCandidatePaths(
   fileName: string,
   extensions: string[],
 ): string[] {
-  return [
-    ...extensions.map((ext) => `${baseDir}/${fileName}${ext}`),
-    ...extensions.map((ext) => `${baseDir}/${fileName}/index${ext}`),
-  ];
+  const direct = extensions.map((ext) => `${baseDir}/${fileName}${ext}`);
+  const index = extensions.map((ext) => `${baseDir}/${fileName}/index${ext}`);
+  return [...direct, ...index];
 }
 
 /** Find the first existing path from candidates using the provided stat function */
@@ -23,15 +22,13 @@ export async function findFirstExisting(
   candidates: string[],
   statFn: (path: string) => Promise<unknown>,
 ): Promise<string | null> {
-  const results = await Promise.all(
-    candidates.map(async (fullPath) => {
-      try {
-        await statFn(fullPath);
-        return fullPath;
-      } catch {
-        return null;
-      }
-    }),
-  );
-  return results.find((r) => r !== null) ?? null;
+  for (const fullPath of candidates) {
+    try {
+      await statFn(fullPath);
+      return fullPath;
+    } catch {
+      // ignore
+    }
+  }
+  return null;
 }

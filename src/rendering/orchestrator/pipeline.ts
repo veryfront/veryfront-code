@@ -34,13 +34,15 @@ import type { LayoutOrchestrator } from "./layout.ts";
 import type { SSROrchestrator } from "./ssr-orchestrator.ts";
 import type { PageDataResponse, RenderOptions, RenderResult } from "./types.ts";
 import { DataFetcher } from "#veryfront/data/index.ts";
-import type { DataContext } from "#veryfront/data/types.ts";
+import type { DataContext, PageWithData } from "#veryfront/data/types.ts";
 import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/index.ts";
 import { setupSSRGlobals } from "../ssr-globals.ts";
 import { LAYOUT_EXTENSIONS } from "../layouts/types.ts";
 import type { LayoutItem } from "#veryfront/types";
 import { withTimeout, withTimeoutThrow } from "../utils/stream-utils.ts";
 import { generateTailwind4CSS } from "#veryfront/html/styles-builder/index.ts";
+import { createEsmCache, createModuleCache, loadModule } from "./module-loader/index.ts";
+import type { ModuleLoaderConfig } from "./module-loader/index.ts";
 
 /** Timeout for CSS generation SSR (shorter than full SSR since it's optional) */
 const CSS_SSR_TIMEOUT_MS = 5000;
@@ -72,12 +74,9 @@ function getCachedPageCss(cacheKey: string): string | undefined {
 
 /** Cache CSS for a page */
 function cachePageCss(cacheKey: string, css: string): void {
-  // LRU eviction
   if (pageCssCache.size >= PAGE_CSS_CACHE_MAX_SIZE && !pageCssCache.has(cacheKey)) {
-    const firstKey = pageCssCache.keys().next().value;
-    if (firstKey) {
-      pageCssCache.delete(firstKey);
-    }
+    const firstKey = pageCssCache.keys().next().value as string | undefined;
+    if (firstKey) pageCssCache.delete(firstKey);
   }
   pageCssCache.set(cacheKey, css);
 }
@@ -119,10 +118,6 @@ interface LoadedModule {
 
 /** Empty layout result for dot-prefixed paths */
 const EMPTY_LAYOUT_RESULT = { layoutBundle: undefined, nestedLayouts: [] };
-
-// Import extracted modules
-import { createEsmCache, createModuleCache, loadModule } from "./module-loader/index.ts";
-import type { ModuleLoaderConfig } from "./module-loader/index.ts";
 
 export interface RenderPipelineConfig {
   pageResolver: PageResolver;
@@ -212,7 +207,10 @@ export class RenderPipeline {
     for (const result of results) {
       if (result.mod && !result.error) {
         loaded.push({ type: result.type, id: result.id, mod: result.mod });
-      } else if (result.error) {
+        continue;
+      }
+
+      if (result.error) {
         logger.warn("[renderPage] Failed to load module", {
           path: result.path,
           error: result.error.message,
@@ -238,40 +236,31 @@ export class RenderPipeline {
     const projectSlug = options?.projectSlug || options?.projectId || "unknown";
     const projectId = options?.projectId ?? this.config.projectDir;
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // FAST PATH: Check cache FIRST before any expensive operations
-    // Skip if caller already checked cache (e.g., Renderer.renderPage())
-    // ─────────────────────────────────────────────────────────────────────────
     let cacheResult: Awaited<ReturnType<typeof this.config.cacheCoordinator.checkCache>> | null =
       null;
+
     if (!options?.skipCacheCheck) {
       const cacheCheckStart = performance.now();
       cacheResult = await this.config.cacheCoordinator.checkCache(slug);
       timing.cacheCheck = Math.round(performance.now() - cacheCheckStart);
+
       if (cacheResult?.cachedResult) {
         logger.info("[RenderPipeline] Cache HIT", { slug, projectSlug, timing });
         return cacheResult.cachedResult;
       }
     }
 
-    // Set up browser globals before any module loading to prevent crashes
-    // when third-party libraries check for browser features during SSR
     setupSSRGlobals();
 
     this.moduleLoaderConfig.projectId = projectId;
 
-    // In development mode, clear SSR module cache to pick up file changes
     if (this.config.mode === "development") {
       clearSSRModuleCacheForProject(projectId);
     }
 
-    // Wrap entire render in a span for distributed tracing
     return await withSpan(
       "render.page",
       async () => {
-        // ─────────────────────────────────────────────────────────────────────────
-        // Stage 1: Page Resolution
-        // ─────────────────────────────────────────────────────────────────────────
         const pageResolveStart = performance.now();
         const pageInfo = await withSpan(
           "render.resolve_page",
@@ -280,10 +269,6 @@ export class RenderPipeline {
         );
         timing.pageResolve = Math.round(performance.now() - pageResolveStart);
 
-        // ─────────────────────────────────────────────────────────────────────────
-        // Stage 2: Layout Collection
-        // Skip for dot-prefixed paths (e.g., .veryfront) - they don't use project layouts
-        // ─────────────────────────────────────────────────────────────────────────
         const skipLayouts = isDotPath(slug, pageInfo.entity.path);
         const layoutCollectStart = performance.now();
         const layoutResult = skipLayouts ? EMPTY_LAYOUT_RESULT : await withSpan(
@@ -293,11 +278,6 @@ export class RenderPipeline {
         );
         timing.layoutCollect = Math.round(performance.now() - layoutCollectStart);
 
-        // ─────────────────────────────────────────────────────────────────────────
-        // Start layout module preloading in background (parallel with Stage 4)
-        // Layout paths are known after collectLayouts, so we can start loading modules
-        // now while page bundle preparation runs. This avoids sequential loading.
-        // ─────────────────────────────────────────────────────────────────────────
         const layoutPreloadPromise = !skipLayouts && layoutResult.nestedLayouts.length > 0
           ? this.config.layoutOrchestrator.preloadLayoutModules(layoutResult.nestedLayouts)
           : Promise.resolve();
@@ -310,9 +290,6 @@ export class RenderPipeline {
         const isInPagesDir = pageInfo.entity.path.includes("/pages/");
         const isInAppDir = pageInfo.entity.path.includes("/app/");
 
-        // ─────────────────────────────────────────────────────────────────────────
-        // Stage 3: Route Params + Data Fetching (parallel module loads, then parallel data fetches)
-        // ─────────────────────────────────────────────────────────────────────────
         const dataFetchStart = performance.now();
         if (options?.request && options?.url) {
           await withSpan(
@@ -342,7 +319,6 @@ export class RenderPipeline {
                   url: options.url!,
                 };
 
-                // Phase 1: Collect and load all modules in parallel
                 const modulesToLoad = this.collectModulesToLoad(
                   pageInfo.entity.path,
                   isComponentPage,
@@ -352,7 +328,6 @@ export class RenderPipeline {
 
                 if (modulesToLoad.length === 0) return;
 
-                // Phase 1: Load all modules in parallel (with timeout to prevent hanging)
                 const loadedModules = await withSpan(
                   SpanNames.RENDER_LOAD_MODULES,
                   () =>
@@ -364,7 +339,6 @@ export class RenderPipeline {
                   { "render.module_count": modulesToLoad.length },
                 );
 
-                // Phase 2: Fetch data for modules with data fetching functions
                 const dataJobs = loadedModules.filter((m) => this.hasDataFetchingFunction(m.mod));
                 if (dataJobs.length === 0) return;
 
@@ -386,14 +360,8 @@ export class RenderPipeline {
                   { "render.data_job_count": dataJobs.length },
                 );
 
-                // Process results - propagate errors from getServerData/getStaticData
                 for (const { type, id, result, error } of dataResults) {
-                  if (error) {
-                    // Re-throw errors from data fetching functions
-                    // These are application errors that should result in error pages
-                    throw error;
-                  }
-
+                  if (error) throw error;
                   if (!result) continue;
 
                   if (result.notFound) {
@@ -412,18 +380,16 @@ export class RenderPipeline {
                     );
                   }
 
-                  if (result.props) {
-                    if (type === "page") {
-                      dataFetchingProps = result.props as Record<string, unknown>;
-                    } else {
-                      layoutDataMap.set(id, result.props as Record<string, unknown>);
-                    }
+                  if (!result.props) continue;
+
+                  if (type === "page") {
+                    dataFetchingProps = result.props as Record<string, unknown>;
+                  } else {
+                    layoutDataMap.set(id, result.props as Record<string, unknown>);
                   }
                 }
               } catch (error) {
-                if (error instanceof VeryfrontError) {
-                  throw error;
-                }
+                if (error instanceof VeryfrontError) throw error;
 
                 logger.error("[renderPage] Data fetching error", {
                   slug,
@@ -437,14 +403,10 @@ export class RenderPipeline {
         }
         timing.dataFetch = Math.round(performance.now() - dataFetchStart);
 
-        // Merge data fetching props with options
         const mergedOptions = dataFetchingProps
           ? { ...options, props: { ...options?.props, ...dataFetchingProps } }
           : options;
 
-        // ─────────────────────────────────────────────────────────────────────────
-        // Stage 4: Page Bundle Preparation
-        // ─────────────────────────────────────────────────────────────────────────
         const bundlePrepStart = performance.now();
         const pageBundleResult = await withSpan(
           "render.prepare_bundles",
@@ -459,9 +421,7 @@ export class RenderPipeline {
         );
         timing.bundlePrep = Math.round(performance.now() - bundlePrepStart);
 
-        if (pageBundleResult.scriptResult) {
-          return pageBundleResult.scriptResult;
-        }
+        if (pageBundleResult.scriptResult) return pageBundleResult.scriptResult;
 
         if (!pageBundleResult.pageElement || !pageBundleResult.pageBundle) {
           throw new VeryfrontError("Failed to prepare page bundle", ErrorCode.RENDER_ERROR, {
@@ -471,20 +431,13 @@ export class RenderPipeline {
 
         const { pageElement, pageBundle } = pageBundleResult;
 
-        // Merge frontmatter from entity (API) and pageBundle (MDX compilation)
-        // This ensures SSR PageContext has full frontmatter including MDX-parsed fields
         const mergedFrontmatter = {
           ...pageInfo.entity.frontmatter,
           ...(pageBundle as MdxBundle).frontmatter,
         };
 
-        // Extract headings from page bundle for sidebar/TOC navigation
         const headings = (pageBundle as PageBundle).headings || [];
 
-        // ─────────────────────────────────────────────────────────────────────────
-        // Stage 5: Layout Application
-        // Await layout preload (ran in parallel with Stage 3 & 4) before applying
-        // ─────────────────────────────────────────────────────────────────────────
         await layoutPreloadPromise;
         const layoutApplyStart = performance.now();
         const wrappedElement = await withSpan(
@@ -505,9 +458,6 @@ export class RenderPipeline {
         );
         timing.layoutApply = Math.round(performance.now() - layoutApplyStart);
 
-        // ─────────────────────────────────────────────────────────────────────────
-        // Stage 6: SSR Rendering (with timeout protection)
-        // ─────────────────────────────────────────────────────────────────────────
         const ssrStart = performance.now();
         const ssrResult = await withSpan(
           "render.ssr",
@@ -532,9 +482,6 @@ export class RenderPipeline {
         );
         timing.ssr = Math.round(performance.now() - ssrStart);
 
-        // ─────────────────────────────────────────────────────────────────────────
-        // Stage 7: Result Assembly + Cache Persist
-        // ─────────────────────────────────────────────────────────────────────────
         const pageModule = pageBundleResult.clientModuleCode && pageBundleResult.pageModuleType
           ? {
             slug,
@@ -553,7 +500,6 @@ export class RenderPipeline {
           ...(pageModule ? { pageModule } : {}),
         };
 
-        // Persist to cache (fire-and-forget for performance)
         this.config.cacheCoordinator.persistResult(result, slug).catch((err) => {
           logger.warn("[RenderPipeline] Cache persist failed", { slug, error: String(err) });
         });
@@ -573,28 +519,22 @@ export class RenderPipeline {
 
   /** Resolve page data for SPA client-side navigation without rendering HTML. */
   async resolvePageData(slug: string, options?: RenderOptions): Promise<PageDataResponse> {
-    // Set up browser globals for any SSR-related checks
     setupSSRGlobals();
 
     const projectId = options?.projectId ?? this.config.projectDir;
     this.moduleLoaderConfig.projectId = projectId;
 
-    // In development mode, clear SSR module cache
     if (this.config.mode === "development") {
       clearSSRModuleCacheForProject(projectId);
     }
 
-    // 1. Resolve page info
     const pageInfo = await this.config.pageResolver.resolvePage(slug);
 
-    // 2. Collect layouts
-    // Skip for dot-prefixed paths (e.g., .veryfront) - they don't use project layouts
     const skipLayouts = isDotPath(slug, pageInfo.entity.path);
     const layoutResult = skipLayouts
       ? EMPTY_LAYOUT_RESULT
       : await this.config.layoutOrchestrator.collectLayouts(pageInfo);
 
-    // 3. Extract page path and type
     const pagePath = extractRelativePathShared(pageInfo.entity.path, this.config.projectDir);
     const fileExtension = pageInfo.entity.path.split(".").pop()!.toLowerCase();
     const pageType = fileExtension as PageDataResponse["pageType"];
@@ -602,20 +542,15 @@ export class RenderPipeline {
     const isInPagesDir = pageInfo.entity.path.includes("/pages/");
     const isInAppDir = pageInfo.entity.path.includes("/app/");
 
-    // 4. Initialize data structures
     let pageProps: Record<string, unknown> = {};
     const layoutProps: Record<string, Record<string, unknown>> = {};
     let params: Record<string, string | string[]> = options?.params || {};
 
-    // 5. Extract route params if not provided
     if (options?.request && options?.url && Object.keys(params).length === 0) {
       const extracted = extractRouteParamsShared(pageInfo.entity.path, slug);
-      if (extracted.matched) {
-        params = extracted.params;
-      }
+      if (extracted.matched) params = extracted.params;
     }
 
-    // 6. Two-phase data fetching if request context is available
     if (options?.request && options?.url) {
       const dataContext: DataContext = {
         params,
@@ -624,7 +559,6 @@ export class RenderPipeline {
         url: options.url,
       };
 
-      // Phase 1: Collect and load all modules in parallel
       const modulesToLoad = this.collectModulesToLoad(
         pageInfo.entity.path,
         isComponentPage,
@@ -633,13 +567,11 @@ export class RenderPipeline {
       );
 
       if (modulesToLoad.length > 0) {
-        // Load modules with timeout to prevent hanging on slow transforms
         const loadedModules = await withTimeoutThrow(
           Promise.all(
             modulesToLoad.map((m) =>
               this.loadModule(m.path)
-                // deno-lint-ignore no-explicit-any
-                .then((mod) => ({ ...m, mod: mod as any }))
+                .then((mod) => ({ ...m, mod }))
                 .catch(() => ({ ...m, mod: null }))
             ),
           ),
@@ -647,13 +579,16 @@ export class RenderPipeline {
           `Module loading for ${slug}`,
         );
 
-        // Phase 2: Fetch data for modules with data fetching functions
         const dataJobs = loadedModules
           .filter((r) => r.mod && this.hasDataFetchingFunction(r.mod))
           .map((r) => ({
             type: r.type,
             id: r.id,
-            promise: this.dataFetcher.fetchData(r.mod, dataContext, this.config.mode),
+            promise: this.dataFetcher.fetchData(
+              r.mod as PageWithData<unknown>,
+              dataContext,
+              this.config.mode,
+            ),
           }));
 
         const dataResults = await Promise.all(
@@ -661,22 +596,20 @@ export class RenderPipeline {
         );
 
         for (const { type, id, result } of dataResults) {
-          if (result?.props) {
-            if (type === "page") {
-              pageProps = result.props as Record<string, unknown>;
-            } else {
-              layoutProps[id] = result.props as Record<string, unknown>;
-            }
+          if (!result?.props) continue;
+
+          if (type === "page") {
+            pageProps = result.props as Record<string, unknown>;
+          } else {
+            layoutProps[id] = result.props as Record<string, unknown>;
           }
         }
       }
     }
 
-    // 7. Extract frontmatter and headings
     let frontmatter: Record<string, unknown> = {};
     let headings: Array<{ id: string; text: string; level: number }> = [];
-    if (pageType === "mdx" && pageInfo.entity) {
-      // For MDX pages, try to get frontmatter and headings from the bundle
+    if (pageType === "mdx") {
       try {
         const bundleResult = await this.config.pageRenderer.preparePageBundles(
           pageInfo,
@@ -684,23 +617,23 @@ export class RenderPipeline {
           undefined,
           options,
         );
+
         if (bundleResult.pageBundle && "frontmatter" in bundleResult.pageBundle) {
           frontmatter =
             (bundleResult.pageBundle as { frontmatter?: Record<string, unknown> }).frontmatter ||
             {};
         }
+
         if (bundleResult.pageBundle && "headings" in bundleResult.pageBundle) {
           headings = (bundleResult.pageBundle as {
             headings?: Array<{ id: string; text: string; level: number }>;
-          }).headings ||
-            [];
+          }).headings || [];
         }
       } catch {
         // Frontmatter/headings extraction failed, use empty defaults
       }
     }
 
-    // 8. Build layout info array
     const layouts = layoutResult.nestedLayouts
       .filter((l: LayoutItem) => l.componentPath || l.path)
       .map((l: LayoutItem) => ({
@@ -708,10 +641,8 @@ export class RenderPipeline {
         path: extractRelativePathShared(l.componentPath || l.path || "", this.config.projectDir),
       }));
 
-    // 9. Provider paths - no auto-discovery, users add providers in app.tsx
     const providers: string[] = [];
 
-    // 10. Get project updatedAt if available from Veryfront API adapter
     let projectUpdatedAt: string | undefined;
     const fs = this.config.adapter?.fs;
     if (fs && isExtendedFSAdapter(fs) && fs.isVeryfrontAdapter()) {
@@ -721,21 +652,15 @@ export class RenderPipeline {
       projectUpdatedAt = wrappedAdapter.getProjectData?.()?.updated_at;
     }
 
-    // 11. Resolve app component path (contains QueryClientProvider, etc.)
     let appPath: string | undefined;
-    // Uses LAYOUT_EXTENSIONS for consistency with html.ts resolveAppComponentPath()
     for (const ext of LAYOUT_EXTENSIONS) {
       const candidatePath = join(this.config.projectDir, `components/app.${ext}`);
-      const exists = await this.config.adapter.fs.exists(candidatePath);
-      if (exists) {
+      if (await this.config.adapter.fs.exists(candidatePath)) {
         appPath = extractRelativePathShared(candidatePath, this.config.projectDir);
         break;
       }
     }
 
-    // 12. Generate CSS for SPA navigation
-    // Uses per-page CSS cache to avoid redundant SSR renders.
-    // Only does SSR if cache miss.
     let css: string | undefined;
     const cssCacheKey = getPageCssCacheKey(
       options?.projectId,
@@ -744,19 +669,17 @@ export class RenderPipeline {
       projectUpdatedAt,
     );
 
-    // Check CSS cache first
     const cachedCss = getCachedPageCss(cssCacheKey);
     if (cachedCss) {
       css = cachedCss;
       logger.debug("[resolvePageData] CSS cache hit", { slug, cssLength: css.length });
     } else {
-      // Cache miss - need to do SSR to generate CSS
       try {
         const renderResult = await withTimeout(
           this.renderPage(slug, {
             ...options,
             delivery: "string",
-            skipCacheCheck: true, // Pipeline cache already checked
+            skipCacheCheck: true,
           }),
           CSS_SSR_TIMEOUT_MS,
           `CSS SSR for ${slug}`,
@@ -764,11 +687,7 @@ export class RenderPipeline {
 
         if (renderResult?.html) {
           css = await generateTailwind4CSS(renderResult.html);
-
-          // Cache the CSS for future requests
-          if (css) {
-            cachePageCss(cssCacheKey, css);
-          }
+          if (css) cachePageCss(cssCacheKey, css);
 
           logger.debug("[resolvePageData] Generated and cached CSS", {
             slug,

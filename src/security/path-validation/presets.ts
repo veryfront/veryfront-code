@@ -1,76 +1,61 @@
-/**
- * Validation Presets
- * @module security/path-validation/presets
- */
-
 import type { ValidationOptions } from "./types.ts";
 
-/**
- * Common validation presets for different contexts
- */
 export const ValidationPresets = {
-  /**
-   * Strict validation for user-provided paths.
-   * Includes common directory patterns used in React projects.
-   */
-  userInput: (baseDir: string): ValidationOptions => ({
-    baseDir,
-    level: "strict",
-    allowedDirs: [
-      // Framework directories
-      "app",
-      "pages",
-      "public",
-      "components",
-      "lib",
-      // Common user directories
-      "src",
-      "utils",
-      "helpers",
-      "hooks",
-      "services",
-      "styles",
-      "assets",
-      "constants",
-      "types",
-      "api",
-    ],
-    followSymlinks: false,
-    checkExists: true,
-    allowAbsolute: false,
-  }),
+  userInput(baseDir: string): ValidationOptions {
+    return {
+      baseDir,
+      level: "strict",
+      allowedDirs: [
+        "app",
+        "pages",
+        "public",
+        "components",
+        "lib",
+        "src",
+        "utils",
+        "helpers",
+        "hooks",
+        "services",
+        "styles",
+        "assets",
+        "constants",
+        "types",
+        "api",
+      ],
+      followSymlinks: false,
+      checkExists: true,
+      allowAbsolute: false,
+    };
+  },
 
-  /**
-   * Normal validation for internal operations
-   */
-  internal: (baseDir: string): ValidationOptions => ({
-    baseDir,
-    level: "normal",
-    followSymlinks: false,
-    checkExists: false,
-    allowAbsolute: false,
-  }),
+  internal(baseDir: string): ValidationOptions {
+    return {
+      baseDir,
+      level: "normal",
+      followSymlinks: false,
+      checkExists: false,
+      allowAbsolute: false,
+    };
+  },
 
-  /**
-   * Permissive validation for build operations
-   */
-  build: (baseDir: string): ValidationOptions => ({
-    baseDir,
-    level: "permissive",
-    followSymlinks: true,
-    checkExists: false,
-    allowAbsolute: true,
-  }),
+  build(baseDir: string): ValidationOptions {
+    return {
+      baseDir,
+      level: "permissive",
+      followSymlinks: true,
+      checkExists: false,
+      allowAbsolute: true,
+    };
+  },
 
-  /**
-   * Static file serving validation
-   */
-  static: (baseDir: string): ValidationOptions => ({
-    baseDir,
-    level: "normal",
-    allowedDirs: ["dist", "public"],
-    followSymlinks: false,
-    checkExists: true,
-    allowAbsolute: false,
-  }),
+  static(baseDir: string): ValidationOptions {
+    return {
+      baseDir,
+      level: "normal",
+      allowedDirs: ["dist", "public"],
+      followSymlinks: false,
+      checkExists: true,
+      allowAbsolute: false,
+    };
+  },
 };

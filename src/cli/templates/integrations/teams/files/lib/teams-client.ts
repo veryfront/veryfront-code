@@ -94,10 +94,12 @@ export interface Channel {
   createdDateTime?: string;
 }
 
-async function graphFetch<T>(
-  endpoint: string,
-  options: RequestInit = {},
-): Promise<T> {
+function buildEndpoint(path: string, params?: URLSearchParams): string {
+  const queryString = params?.toString();
+  return `${path}${queryString ? `?${queryString}` : ""}`;
+}
+
+async function graphFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = await getAccessToken();
   if (!token) {
     throw new Error("Not authenticated with Microsoft Teams. Please connect your account.");
@@ -108,136 +110,79 @@ async function graphFetch<T>(
   const response = await fetch(url, {
     ...options,
     headers: {
-      "Authorization": `Bearer ${token}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
       ...options.headers,
     },
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
+    const error = await response.json().catch(() => ({} as any));
     throw new Error(
-      `Microsoft Graph API error: ${response.status} ${
-        error.error?.message || response.statusText
-      }`,
+      `Microsoft Graph API error: ${response.status} ${error?.error?.message ?? response.statusText}`,
     );
   }
 
   return response.json();
 }
 
-/**
- * List recent chats for the authenticated user
- */
-export async function listChats(options?: {
-  limit?: number;
-  expand?: string[];
-}): Promise<TeamsChat[]> {
+export async function listChats(options?: { limit?: number; expand?: string[] }): Promise<TeamsChat[]> {
   const params = new URLSearchParams();
-  if (options?.limit) {
-    params.set("$top", options.limit.toString());
-  }
-  if (options?.expand) {
-    params.set("$expand", options.expand.join(","));
-  }
+  if (options?.limit) params.set("$top", options.limit.toString());
+  if (options?.expand?.length) params.set("$expand", options.expand.join(","));
 
-  const queryString = params.toString();
-  const endpoint = `/me/chats${queryString ? `?${queryString}` : ""}`;
-
-  const response = await graphFetch<GraphResponse<TeamsChat>>(endpoint);
-  return response.value || [];
+  const response = await graphFetch<GraphResponse<TeamsChat>>(buildEndpoint("/me/chats", params));
+  return response.value ?? [];
 }
 
-/**
- * Get messages from a specific chat
- */
 export async function getChatMessages(
   chatId: string,
-  options?: {
-    limit?: number;
-    orderBy?: string;
-  },
+  options?: { limit?: number; orderBy?: string },
 ): Promise<ChatMessage[]> {
   const params = new URLSearchParams();
-  if (options?.limit) {
-    params.set("$top", options.limit.toString());
-  }
-  if (options?.orderBy) {
-    params.set("$orderby", options.orderBy);
-  } else {
-    params.set("$orderby", "createdDateTime desc");
-  }
+  if (options?.limit) params.set("$top", options.limit.toString());
+  params.set("$orderby", options?.orderBy ?? "createdDateTime desc");
 
-  const queryString = params.toString();
-  const endpoint = `/me/chats/${chatId}/messages${queryString ? `?${queryString}` : ""}`;
-
-  const response = await graphFetch<GraphResponse<ChatMessage>>(endpoint);
-  return response.value || [];
+  const response = await graphFetch<GraphResponse<ChatMessage>>(
+    buildEndpoint(`/me/chats/${chatId}/messages`, params),
+  );
+  return response.value ?? [];
 }
 
-/**
- * Send a message to a chat
- */
 export function sendChatMessage(
   chatId: string,
   content: string,
   contentType: "text" | "html" = "text",
 ): Promise<ChatMessage> {
-  const endpoint = `/me/chats/${chatId}/messages`;
-
-  return graphFetch<ChatMessage>(endpoint, {
+  return graphFetch<ChatMessage>(`/me/chats/${chatId}/messages`, {
     method: "POST",
     body: JSON.stringify({
-      body: {
-        contentType,
-        content,
-      },
+      body: { contentType, content },
     }),
   });
 }
 
-/**
- * List all teams the user is a member of
- */
-export async function listTeams(options?: {
-  limit?: number;
-}): Promise<Team[]> {
+export async function listTeams(options?: { limit?: number }): Promise<Team[]> {
   const params = new URLSearchParams();
-  if (options?.limit) {
-    params.set("$top", options.limit.toString());
-  }
+  if (options?.limit) params.set("$top", options.limit.toString());
 
-  const queryString = params.toString();
-  const endpoint = `/me/joinedTeams${queryString ? `?${queryString}` : ""}`;
-
-  const response = await graphFetch<GraphResponse<Team>>(endpoint);
-  return response.value || [];
+  const response = await graphFetch<GraphResponse<Team>>(buildEndpoint("/me/joinedTeams", params));
+  return response.value ?? [];
 }
 
-/**
- * List channels in a team
- */
 export async function listChannels(
   teamId: string,
-  options?: {
-    limit?: number;
-  },
+  options?: { limit?: number },
 ): Promise<Channel[]> {
   const params = new URLSearchParams();
-  if (options?.limit) {
-    params.set("$top", options.limit.toString());
-  }
+  if (options?.limit) params.set("$top", options.limit.toString());
 
-  const queryString = params.toString();
-  const endpoint = `/teams/${teamId}/channels${queryString ? `?${queryString}` : ""}`;
-
-  const response = await graphFetch<GraphResponse<Channel>>(endpoint);
-  return response.value || [];
+  const response = await graphFetch<GraphResponse<Channel>>(
+    buildEndpoint(`/teams/${teamId}/channels`, params),
+  );
+  return response.value ?? [];
 }
 
-/**
- * Send a message to a team channel
- */
 export function sendChannelMessage(
   teamId: string,
   channelId: string,
@@ -245,58 +190,32 @@ export function sendChannelMessage(
   contentType: "text" | "html" = "text",
   subject?: string,
 ): Promise<ChatMessage> {
-  const endpoint = `/teams/${teamId}/channels/${channelId}/messages`;
-
   const body: Record<string, unknown> = {
-    body: {
-      contentType,
-      content,
-    },
+    body: { contentType, content },
+    ...(subject ? { subject } : {}),
   };
 
-  if (subject) {
-    body.subject = subject;
-  }
-
-  return graphFetch<ChatMessage>(endpoint, {
+  return graphFetch<ChatMessage>(`/teams/${teamId}/channels/${channelId}/messages`, {
     method: "POST",
     body: JSON.stringify(body),
   });
 }
 
-/**
- * Get channel messages
- */
 export async function getChannelMessages(
   teamId: string,
   channelId: string,
-  options?: {
-    limit?: number;
-    orderBy?: string;
-  },
+  options?: { limit?: number; orderBy?: string },
 ): Promise<ChatMessage[]> {
   const params = new URLSearchParams();
-  if (options?.limit) {
-    params.set("$top", options.limit.toString());
-  }
-  if (options?.orderBy) {
-    params.set("$orderby", options.orderBy);
-  } else {
-    params.set("$orderby", "createdDateTime desc");
-  }
+  if (options?.limit) params.set("$top", options.limit.toString());
+  params.set("$orderby", options?.orderBy ?? "createdDateTime desc");
 
-  const queryString = params.toString();
-  const endpoint = `/teams/${teamId}/channels/${channelId}/messages${
-    queryString ? `?${queryString}` : ""
-  }`;
-
-  const response = await graphFetch<GraphResponse<ChatMessage>>(endpoint);
-  return response.value || [];
+  const response = await graphFetch<GraphResponse<ChatMessage>>(
+    buildEndpoint(`/teams/${teamId}/channels/${channelId}/messages`, params),
+  );
+  return response.value ?? [];
 }
 
-/**
- * Get current user's profile
- */
 export function getCurrentUser(): Promise<{
   id: string;
   displayName: string;
@@ -306,34 +225,22 @@ export function getCurrentUser(): Promise<{
   return graphFetch("/me");
 }
 
-/**
- * Helper to format chat display name
- */
 export function getChatDisplayName(chat: TeamsChat): string {
-  if (chat.topic) {
-    return chat.topic;
-  }
+  if (chat.topic) return chat.topic;
 
-  if (chat.members && chat.members.length > 0) {
-    const memberNames = chat.members
-      .map((m) => m.displayName)
-      .filter(Boolean)
-      .join(", ");
-    return memberNames || "Unnamed Chat";
-  }
+  const memberNames = chat.members
+    ?.map((m) => m.displayName)
+    .filter(Boolean)
+    .join(", ");
+
+  if (memberNames) return memberNames;
 
   return chat.chatType === "oneOnOne" ? "Direct Chat" : "Group Chat";
 }
 
-/**
- * Helper to extract plain text from message body
- */
 export function getPlainTextContent(message: ChatMessage): string {
-  if (message.body.contentType === "text") {
-    return message.body.content;
-  }
+  if (message.body.contentType === "text") return message.body.content;
 
-  // Basic HTML stripping for html content
   return message.body.content
     .replace(/<[^>]*>/g, "")
     .replace(/&nbsp;/g, " ")

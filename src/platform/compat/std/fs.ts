@@ -10,10 +10,6 @@
 import { statSync } from "node:fs";
 import { isDeno } from "../runtime.ts";
 
-// ============================================================================
-// Types
-// ============================================================================
-
 export interface WalkEntry {
   path: string;
   name: string;
@@ -33,19 +29,12 @@ export interface WalkOptions {
   skip?: RegExp[];
 }
 
-// ============================================================================
-// Node.js/Bun implementation
-// ============================================================================
-
 async function nodeEnsureDir(dir: string): Promise<void> {
   const { mkdir } = await import("node:fs/promises");
   try {
     await mkdir(dir, { recursive: true });
   } catch (err) {
-    // Ignore if already exists
-    if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
-      throw err;
-    }
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
   }
 }
 
@@ -59,8 +48,8 @@ function nodeExistsSync(path: string): boolean {
 }
 
 async function nodeExists(path: string): Promise<boolean> {
+  const { stat } = await import("node:fs/promises");
   try {
-    const { stat } = await import("node:fs/promises");
     await stat(path);
     return true;
   } catch {
@@ -86,95 +75,94 @@ async function* nodeWalk(
     skip,
   } = options;
 
-  async function* walkDir(dir: string, depth: number): AsyncIterableIterator<WalkEntry> {
+  async function* walkDir(
+    dir: string,
+    depth: number,
+  ): AsyncIterableIterator<WalkEntry> {
     if (depth > maxDepth) return;
 
-    let entries;
+    let rawEntries: Array<
+      {
+        name: string;
+        isFile: () => boolean;
+        isDirectory: () => boolean;
+        isSymbolicLink: () => boolean;
+      }
+    >;
     try {
-      entries = await readdir(dir, { withFileTypes: true });
+      const entries = await readdir(dir, { withFileTypes: true });
+      rawEntries = entries.map((e) => ({
+        name: String(e.name),
+        isFile: () => e.isFile(),
+        isDirectory: () => e.isDirectory(),
+        isSymbolicLink: () => e.isSymbolicLink(),
+      }));
     } catch {
       return;
     }
 
-    for (const entry of entries) {
-      const path = join(dir, entry.name);
+    for (const entry of rawEntries) {
+      const entryName = entry.name;
+      const path = join(dir, entryName);
 
-      // Check skip patterns
-      if (skip?.some((pattern) => pattern.test(path))) {
-        continue;
-      }
+      if (skip?.some((pattern) => pattern.test(path))) continue;
 
       const isSymlink = entry.isSymbolicLink();
       let isFile = entry.isFile();
       let isDirectory = entry.isDirectory();
 
-      // Follow symlinks if requested
       if (isSymlink && followSymlinks) {
         try {
           const stats = await stat(path);
           isFile = stats.isFile();
           isDirectory = stats.isDirectory();
         } catch {
-          continue; // Skip broken symlinks
+          continue;
         }
       }
 
-      // Check extension filter - exts includes the leading dot (e.g., [".css"])
-      if (exts && isFile) {
-        const ext = extname(entry.name); // extname returns ".css" including the dot
-        if (!exts.includes(ext)) continue;
-      }
+      if (exts && isFile && !exts.includes(extname(entryName))) continue;
 
-      // Check match patterns
-      if (match && !match.some((pattern) => pattern.test(path))) {
-        continue;
-      }
+      if (match && !match.some((pattern) => pattern.test(path))) continue;
 
       const walkEntry: WalkEntry = {
         path,
-        name: entry.name,
+        name: entryName,
         isFile,
         isDirectory,
         isSymlink,
       };
 
-      // Yield based on type
-      if (isFile && includeFiles) {
-        yield walkEntry;
-      } else if (isDirectory && includeDirs) {
-        yield walkEntry;
+      if (isFile) {
+        if (includeFiles) yield walkEntry;
+      } else if (isDirectory) {
+        if (includeDirs) yield walkEntry;
       } else if (isSymlink && includeSymlinks && !followSymlinks) {
         yield walkEntry;
       }
 
-      // Recurse into directories
-      if (isDirectory) {
-        yield* walkDir(path, depth + 1);
-      }
+      if (isDirectory) yield* walkDir(path, depth + 1);
     }
   }
 
   yield* walkDir(root, 0);
 }
 
-// ============================================================================
-// Exports
-// ============================================================================
-
 export let ensureDir: (dir: string) => Promise<void>;
 export let exists: (path: string) => Promise<boolean>;
 export let existsSync: (path: string) => boolean;
-export let walk: (root: string, options?: WalkOptions) => AsyncIterableIterator<WalkEntry>;
+export let walk: (
+  root: string,
+  options?: WalkOptions,
+) => AsyncIterableIterator<WalkEntry>;
 
 if (isDeno) {
-  // Deno: Use @std/fs
   const stdFs = await import("#std/fs.ts");
   ensureDir = stdFs.ensureDir;
   exists = stdFs.exists;
   existsSync = stdFs.existsSync;
   walk = stdFs.walk;
 } else {
-  // Node.js/Bun: Use our implementations
   ensureDir = nodeEnsureDir;
   exists = nodeExists;
   existsSync = nodeExistsSync;

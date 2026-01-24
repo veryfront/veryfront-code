@@ -4,13 +4,15 @@ import { ServerDataFetcher } from "./server-data-fetcher.ts";
 import type { DataContext, PageWithData } from "./types.ts";
 
 describe("ServerDataFetcher", () => {
-  const createContext = (overrides: Partial<DataContext> = {}): DataContext => ({
-    params: {},
-    query: new URLSearchParams(),
-    request: new Request("http://localhost/test"),
-    url: new URL("http://localhost/test"),
-    ...overrides,
-  });
+  function createContext(overrides: Partial<DataContext> = {}): DataContext {
+    return {
+      params: {},
+      query: new URLSearchParams(),
+      request: new Request("http://localhost/test"),
+      url: new URL("http://localhost/test"),
+      ...overrides,
+    };
+  }
 
   describe("constructor", () => {
     it("should create instance without adapter", () => {
@@ -19,9 +21,7 @@ describe("ServerDataFetcher", () => {
     });
 
     it("should create instance with adapter", () => {
-      const mockAdapter = {
-        env: { get: () => undefined },
-      } as any;
+      const mockAdapter = { env: { get: () => undefined } } as any;
       const fetcher = new ServerDataFetcher(mockAdapter);
       assertExists(fetcher);
     });
@@ -30,9 +30,7 @@ describe("ServerDataFetcher", () => {
   describe("fetch", () => {
     it("should return empty props when getServerData is not defined", async () => {
       const fetcher = new ServerDataFetcher();
-      const pageModule: PageWithData = {
-        default: () => null,
-      };
+      const pageModule: PageWithData = { default: () => null };
 
       const result = await fetcher.fetch(pageModule, createContext());
 
@@ -64,16 +62,14 @@ describe("ServerDataFetcher", () => {
       const fetcher = new ServerDataFetcher();
       const pageModule: PageWithData<{ title: string; count: number }> = {
         default: () => null,
-        getServerData: () => ({
-          props: { title: "Hello", count: 42 },
-        }),
+        getServerData: () => ({ props: { title: "Hello", count: 42 } }),
       };
 
       const result = await fetcher.fetch(pageModule, createContext());
       const props = result.props as { title: string; count: number };
 
-      assertEquals(props?.title, "Hello");
-      assertEquals(props?.count, 42);
+      assertEquals(props.title, "Hello");
+      assertEquals(props.count, 42);
     });
 
     it("should handle redirect result", async () => {
@@ -110,9 +106,7 @@ describe("ServerDataFetcher", () => {
       const fetcher = new ServerDataFetcher();
       const pageModule: PageWithData = {
         default: () => null,
-        getServerData: () => ({
-          notFound: true,
-        }),
+        getServerData: () => ({ notFound: true }),
       };
 
       const result = await fetcher.fetch(pageModule, createContext());
@@ -184,14 +178,12 @@ describe("ServerDataFetcher", () => {
       const fetcher = new ServerDataFetcher();
       const pageModule: PageWithData<{ sync: boolean }> = {
         default: () => null,
-        getServerData: () => ({
-          props: { sync: true },
-        }),
+        getServerData: () => ({ props: { sync: true } }),
       };
 
       const result = await fetcher.fetch(pageModule, createContext());
 
-      assertEquals((result.props as { sync: boolean })?.sync, true);
+      assertEquals((result.props as { sync: boolean }).sync, true);
     });
 
     it("should pass request object in context", async () => {

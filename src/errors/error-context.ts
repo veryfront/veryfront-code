@@ -22,10 +22,7 @@ export interface ErrorHandlingOptions<T> {
 }
 
 function getErrorStack(error: unknown): string | undefined {
-  if (error instanceof Error) {
-    return error.stack;
-  }
-  return undefined;
+  return error instanceof Error ? error.stack : undefined;
 }
 
 function logError(
@@ -44,19 +41,20 @@ function logError(
 
   if (includeStack) {
     const stack = getErrorStack(error);
-    if (stack) {
-      logData.stack = stack;
-    }
+    if (stack) logData.stack = stack;
   }
 
   const logMessage = `[${context.operation}] Silent failure: ${message}`;
 
-  if (logLevel === "error") {
-    serverLogger.error(logMessage, logData);
-  } else if (logLevel === "warn") {
-    serverLogger.warn(logMessage, logData);
-  } else {
-    serverLogger.debug(logMessage, logData);
+  switch (logLevel) {
+    case "error":
+      serverLogger.error(logMessage, logData);
+      return;
+    case "warn":
+      serverLogger.warn(logMessage, logData);
+      return;
+    default:
+      serverLogger.debug(logMessage, logData);
   }
 }
 
@@ -122,9 +120,7 @@ export async function safeReadDir<T>(
 ): Promise<T[]> {
   try {
     const results: T[] = [];
-    for await (const entry of adapter.fs.readDir(path)) {
-      results.push(entry);
-    }
+    for await (const entry of adapter.fs.readDir(path)) results.push(entry);
     return results;
   } catch (error) {
     logError(error, { operation, path }, "debug");
@@ -133,7 +129,24 @@ export async function safeReadDir<T>(
 }
 
 /** Create a scoped error context helper for multiple related operations */
-export function createErrorScope(operationPrefix: string) {
+export function createErrorScope(operationPrefix: string): {
+  run<T>(
+    operation: () => Promise<T>,
+    details: Omit<ErrorContext, "operation">,
+    fallback: T,
+    logLevel?: LogLevel,
+  ): Promise<T>;
+  runSync<T>(
+    operation: () => T,
+    details: Omit<ErrorContext, "operation">,
+    fallback: T,
+    logLevel?: LogLevel,
+  ): T;
+} {
+  function buildContext(details: Omit<ErrorContext, "operation">): ErrorContext {
+    return { operation: operationPrefix, ...details };
+  }
+
   return {
     run<T>(
       operation: () => Promise<T>,
@@ -141,11 +154,7 @@ export function createErrorScope(operationPrefix: string) {
       fallback: T,
       logLevel: LogLevel = "debug",
     ): Promise<T> {
-      return withErrorContext(
-        operation,
-        { operation: operationPrefix, ...details },
-        { fallback, logLevel },
-      );
+      return withErrorContext(operation, buildContext(details), { fallback, logLevel });
     },
 
     runSync<T>(
@@ -154,11 +163,7 @@ export function createErrorScope(operationPrefix: string) {
       fallback: T,
       logLevel: LogLevel = "debug",
     ): T {
-      return withErrorContextSync(
-        operation,
-        { operation: operationPrefix, ...details },
-        { fallback, logLevel },
-      );
+      return withErrorContextSync(operation, buildContext(details), { fallback, logLevel });
     },
   };
 }

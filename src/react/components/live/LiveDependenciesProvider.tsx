@@ -7,61 +7,66 @@ interface DependencyState {
   errors: Map<string, Error>;
 }
 
-export function LiveDependenciesProvider({ children }: { children: React.ReactNode }) {
-  const [_deps, setDeps] = useState<DependencyState>({
+export function LiveDependenciesProvider({
+  children,
+}: {
+  children: React.ReactNode;
+}): React.ReactNode {
+  const [, setDeps] = useState<DependencyState>({
     loading: false,
     loaded: new Set(),
     errors: new Map(),
   });
 
   useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === "studio:load-dependency") {
-        const { url } = event.data;
+    function handleMessage(event: MessageEvent): void {
+      if (event.data?.type !== "studio:load-dependency") return;
 
-        setDeps((prev) => ({ ...prev, loading: true }));
+      const { url } = event.data;
 
-        const script = document.createElement("script");
-        script.src = url;
-        script.type = "module";
+      setDeps((prev) => ({ ...prev, loading: true }));
 
-        script.onload = () => {
-          setDeps((prev) => ({
-            ...prev,
-            loading: false,
-            loaded: new Set(prev.loaded).add(url),
-          }));
+      const script = document.createElement("script");
+      script.src = url;
+      script.type = "module";
 
-          globalThis.parent.postMessage(
-            {
-              type: "app:dependency-loaded",
-              url,
-            },
-            "*",
-          );
-        };
+      script.onload = () => {
+        setDeps((prev) => ({
+          ...prev,
+          loading: false,
+          loaded: new Set(prev.loaded).add(url),
+        }));
 
-        script.onerror = () => {
-          const error = new Error(`Failed to load dependency: ${url}`);
-          setDeps((prev) => ({
-            ...prev,
-            loading: false,
-            errors: new Map(prev.errors).set(url, error),
-          }));
+        globalThis.parent.postMessage(
+          {
+            type: "app:dependency-loaded",
+            url,
+          },
+          "*",
+        );
+      };
 
-          globalThis.parent.postMessage(
-            {
-              type: "app:dependency-error",
-              url,
-              error: error.message,
-            },
-            "*",
-          );
-        };
+      script.onerror = () => {
+        const error = new Error(`Failed to load dependency: ${url}`);
 
-        document.head.appendChild(script);
-      }
-    };
+        setDeps((prev) => ({
+          ...prev,
+          loading: false,
+          errors: new Map(prev.errors).set(url, error),
+        }));
+
+        globalThis.parent.postMessage(
+          {
+            type: "app:dependency-error",
+            url,
+            error: error.message,
+          },
+          "*",
+        );
+      };
+
+      document.head.appendChild(script);
+    }
 
     globalThis.addEventListener("message", handleMessage);
     return () => globalThis.removeEventListener("message", handleMessage);

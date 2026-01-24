@@ -7,18 +7,18 @@ export default tool({
   description: "Download file content from OneDrive. Returns the file content and metadata.",
   inputSchema: z.object({
     itemId: z.string().describe("The ID of the file to download"),
-    preview: z.boolean().default(false).describe(
-      "If true, return only first 1000 characters as preview",
-    ),
+    preview: z
+      .boolean()
+      .default(false)
+      .describe("If true, return only first 1000 characters as preview"),
   }),
   async execute({ itemId, preview }) {
     const { content, metadata } = await downloadFile(itemId);
 
-    const displayContent = preview ? content.substring(0, 1000) : content;
     const isTruncated = preview && content.length > 1000;
 
     return {
-      content: displayContent,
+      content: preview ? content.substring(0, 1000) : content,
       isTruncated,
       metadata: {
         id: metadata.id,

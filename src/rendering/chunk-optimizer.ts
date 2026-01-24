@@ -15,14 +15,9 @@ const VERYFRONT_EXCLUDED_DIRS = new Set([
 
 /** Check if a directory should be skipped during scanning */
 function shouldSkipDir(name: string, parentPath?: string): boolean {
-  // Allow .veryfront directory itself
-  if (name === ".veryfront") return false;
-  // Skip other hidden directories
-  if (name.startsWith(".")) return true;
-  // If inside .veryfront, check against excluded subdirectories
-  if (parentPath?.includes(".veryfront")) {
-    if (VERYFRONT_EXCLUDED_DIRS.has(name)) return true;
-  }
+  if (name === ".veryfront") return false; // Allow .veryfront directory itself
+  if (name.startsWith(".")) return true; // Skip other hidden directories
+  if (parentPath?.includes(".veryfront") && VERYFRONT_EXCLUDED_DIRS.has(name)) return true;
   return false;
 }
 
@@ -32,22 +27,34 @@ const SIZE_LIMITS = {
   REACT_SIZE_ESTIMATE: 200_000,
 };
 
-function analyzeImports(content: string) {
+function analyzeImports(content: string): {
+  local: { path: string }[];
+  remote: { url: string }[];
+  shared: { pkg: string }[];
+} {
   const importRegex = /import\s+[^'"\n]+from\s+['"]([^'"]+)['"];?/g;
   const local: { path: string }[] = [];
   const remote: { url: string }[] = [];
   const shared: { pkg: string }[] = [];
-  let m: RegExpExecArray | null;
-  while ((m = importRegex.exec(content)) !== null) {
-    const spec = m[1] ?? "";
+
+  let match: RegExpExecArray | null;
+  while ((match = importRegex.exec(content)) !== null) {
+    const spec = match[1] ?? "";
+    if (!spec) continue;
+
     if (spec.startsWith(".") || spec.startsWith("/")) {
       local.push({ path: spec });
-    } else if (spec.startsWith("http://") || spec.startsWith("https://")) {
-      remote.push({ url: spec });
-    } else if (spec.length > 0) {
-      shared.push({ pkg: spec });
+      continue;
     }
+
+    if (spec.startsWith("http://") || spec.startsWith("https://")) {
+      remote.push({ url: spec });
+      continue;
+    }
+
+    shared.push({ pkg: spec });
   }
+
   return { local, remote, shared };
 }
 
@@ -73,18 +80,24 @@ export interface ChunkSuggestion {
 
 export interface ChunkManifest {
   version: string;
-  chunks: Record<string, {
-    deps: string[];
-    size: number;
-  }>;
-  pages: Record<string, {
-    chunks: string[];
-    deps: {
-      local: string[];
-      remote: string[];
-      shared: string[];
-    };
-  }>;
+  chunks: Record<
+    string,
+    {
+      deps: string[];
+      size: number;
+    }
+  >;
+  pages: Record<
+    string,
+    {
+      chunks: string[];
+      deps: {
+        local: string[];
+        remote: string[];
+        shared: string[];
+      };
+    }
+  >;
 }
 
 type FSLike = {
@@ -101,14 +114,17 @@ export async function analyzeProjectChunks(
   const sharedDeps = new Map<string, number>();
   const mdxFiles: string[] = [];
 
-  async function findMDX(dir: string) {
+  async function findMDX(dir: string): Promise<void> {
     try {
-      const entries = fsAdapter.readDir(dir);
-      for await (const entry of entries) {
+      for await (const entry of fsAdapter.readDir(dir)) {
         const path = join(dir, entry.name);
+
         if (entry.isFile && (entry.name.endsWith(".mdx") || entry.name.endsWith(".md"))) {
           mdxFiles.push(path);
-        } else if (entry.isDirectory && !shouldSkipDir(entry.name, dir)) {
+          continue;
+        }
+
+        if (entry.isDirectory && !shouldSkipDir(entry.name, dir)) {
           await findMDX(path);
         }
       }
@@ -117,7 +133,6 @@ export async function analyzeProjectChunks(
     }
   }
 
-  // Scan pages directory and .veryfront directory
   await findMDX(join(projectDir, "pages"));
   await findMDX(join(projectDir, ".veryfront"));
 
@@ -128,27 +143,25 @@ export async function analyzeProjectChunks(
 
       const pageImports: PageImports = {
         path: mdxPath,
-        local: imports.local.map((i: { path: string }) => i.path),
-        remote: imports.remote.map((i: { url: string }) => i.url),
-        shared: imports.shared.map((i: { pkg: string }) => i.pkg),
+        local: imports.local.map((i) => i.path),
+        remote: imports.remote.map((i) => i.url),
+        shared: imports.shared.map((i) => i.pkg),
       };
 
       pages.set(mdxPath, pageImports);
 
       for (const dep of getExternalDeps(pageImports)) {
-        sharedDeps.set(dep, (sharedDeps.get(dep) || 0) + 1);
+        sharedDeps.set(dep, (sharedDeps.get(dep) ?? 0) + 1);
       }
     } catch (error) {
       logger.error(`Failed to analyze ${mdxPath}:`, error);
     }
   }
 
-  const suggestedChunks = generateChunkSuggestions(pages, sharedDeps);
-
   return {
     pages,
     sharedDeps,
-    suggestedChunks,
+    suggestedChunks: generateChunkSuggestions(pages, sharedDeps),
   };
 }
 
@@ -159,11 +172,13 @@ function getExternalDeps(imports: PageImports): string[] {
 
 /** Find all pages that use any of the given dependencies */
 function findPagesUsingDeps(pages: Map<string, PageImports>, deps: string[]): string[] {
+  const depSet = new Set(deps);
   const result: string[] = [];
+
   for (const [path, imports] of pages) {
-    const usesAny = getExternalDeps(imports).some((dep) => deps.includes(dep));
-    if (usesAny) result.push(path);
+    if (getExternalDeps(imports).some((dep) => depSet.has(dep))) result.push(path);
   }
+
   return result;
 }
 
@@ -178,7 +193,7 @@ const CHUNK_CONFIGS: ChunkConfig[] = [
     name: "common",
     getDeps: (sharedDeps) =>
       Array.from(sharedDeps.entries())
-        .filter(([_, count]) => count >= 2)
+        .filter(([, count]) => count >= 2)
         .map(([dep]) => dep),
     calculateBenefit: (deps, pages) => deps.length * pages.length * SIZE_LIMITS.DEP_SIZE_ESTIMATE,
   },
@@ -209,7 +224,7 @@ function generateChunkSuggestions(
 
   for (const config of CHUNK_CONFIGS) {
     const deps = config.getDeps(sharedDeps);
-    if (deps.length === 0) continue;
+    if (!deps.length) continue;
 
     const pagesUsingDeps = findPagesUsingDeps(pages, deps);
     suggestions.push({
@@ -238,14 +253,12 @@ export function generateChunkManifest(analysis: ChunkAnalysis): ChunkManifest {
   }
 
   for (const [pagePath, imports] of analysis.pages) {
-    const pageChunks: string[] = [];
-
     const pageDeps = getExternalDeps(imports);
+    const pageDepSet = new Set(pageDeps);
+
+    const pageChunks: string[] = [];
     for (const chunk of analysis.suggestedChunks) {
-      const usesChunk = chunk.deps.some((dep) => pageDeps.includes(dep));
-      if (usesChunk) {
-        pageChunks.push(chunk.name);
-      }
+      if (chunk.deps.some((dep) => pageDepSet.has(dep))) pageChunks.push(chunk.name);
     }
 
     manifest.pages[pagePath] = {

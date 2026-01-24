@@ -25,37 +25,47 @@ export function LiveApp({
   pageContext,
   mode = "development",
   studioEnabled = false,
-}: LiveAppProps) {
+}: LiveAppProps): React.ReactElement {
   const [isStudioConnected, setIsStudioConnected] = useState(false);
 
   useEffect(() => {
-    if (studioEnabled && mode === "development") {
-      const studioOrigin = globalThis.location.ancestorOrigins?.[0] || globalThis.location.origin;
+    if (!studioEnabled || mode !== "development") {
+      return;
+    }
 
-      const handleMessage = (event: MessageEvent) => {
-        if (event.origin !== studioOrigin) {
-          return;
-        }
+    const studioOrigin = globalThis.location.ancestorOrigins?.[0] ?? globalThis.location.origin;
 
-        if (event.data?.type === "studio:connected") {
-          setIsStudioConnected(true);
-        } else if (event.data?.type === "studio:disconnected") {
-          setIsStudioConnected(false);
-        }
-      };
+    function handleMessage(event: MessageEvent): void {
+      if (event.origin !== studioOrigin) {
+        return;
+      }
 
-      globalThis.addEventListener("message", handleMessage);
+      const type = event.data?.type;
 
-      globalThis.parent.postMessage({
+      if (type === "studio:connected") {
+        setIsStudioConnected(true);
+        return;
+      }
+
+      if (type === "studio:disconnected") {
+        setIsStudioConnected(false);
+      }
+    }
+
+    globalThis.addEventListener("message", handleMessage);
+
+    globalThis.parent.postMessage(
+      {
         action: "appUpdated",
         isInitialLoad: true,
         url: globalThis.location.href,
-      }, studioOrigin);
+      },
+      studioOrigin,
+    );
 
-      return () => {
-        globalThis.removeEventListener("message", handleMessage);
-      };
-    }
+    return () => {
+      globalThis.removeEventListener("message", handleMessage);
+    };
   }, [studioEnabled, mode]);
 
   return (
@@ -67,11 +77,13 @@ export function LiveApp({
               <LiveLayoutComponent layout={layout}>{children}</LiveLayoutComponent>
             </LiveProviderComponent>
 
-            {isStudioConnected && (
-              <div className="fixed bottom-4 left-4 bg-green-500 text-white px-3 py-1 rounded-full text-sm z-50">
-                Studio Connected
-              </div>
-            )}
+            {isStudioConnected
+              ? (
+                <div className="fixed bottom-4 left-4 bg-green-500 text-white px-3 py-1 rounded-full text-sm z-50">
+                  Studio Connected
+                </div>
+              )
+              : null}
           </LivePageContextProvider>
         </LiveDependenciesProvider>
       </LiveStylesheetProvider>

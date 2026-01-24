@@ -1,6 +1,6 @@
 import { compile as compileMdx } from "@mdx-js/mdx";
 import { bundlerLogger as logger } from "#veryfront/utils";
-import * as esbuild from "esbuild"; // Native esbuild
+import * as esbuild from "esbuild";
 import { extract } from "#std/front-matter/yaml.ts";
 import { dirname, join } from "#veryfront/platform/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -18,14 +18,56 @@ export interface MDXFrontmatter {
 export interface CompileToJSOptions {
   projectDir: string;
   mode: "development" | "production";
-  components?: string[]; // List of available component names
-  adapter: RuntimeAdapter; // Required for secure filesystem access
+  components?: string[];
+  adapter: RuntimeAdapter;
 }
 
 const fs = createFileSystem();
 
-// Note: Native esbuild (esbuild/mod.js) doesn't need initialization - it auto-spawns a child process.
-// Only WASM esbuild requires initialize() with wasmURL, which only works in browsers.
+function getComponentName(imp: { name: string; path: string }): string {
+  return imp.path.split("/").pop()?.replace(/\.(jsx?|tsx?)$/, "") ?? imp.name;
+}
+
+async function extractFrontmatter(
+  mdxContent: string,
+): Promise<{ frontmatter: MDXFrontmatter; content: string }> {
+  try {
+    const result = extract(mdxContent);
+    return {
+      frontmatter: (result.attrs ?? {}) as MDXFrontmatter,
+      content: result.body,
+    };
+  } catch (error) {
+    logger.warn("Failed to extract frontmatter with gray-matter:", error);
+  }
+
+  if (!mdxContent.startsWith("---")) {
+    return { frontmatter: {}, content: mdxContent };
+  }
+
+  const match = mdxContent.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+  if (!match?.[1]) return { frontmatter: {}, content: mdxContent };
+
+  try {
+    const { parse } = await import("std/yaml/parse.ts");
+    const parsed = parse(match[1]);
+    const frontmatter = (parsed && typeof parsed === "object" ? parsed : {}) as MDXFrontmatter;
+
+    if (!match[2]) {
+      throw toError(
+        createError({
+          type: "build",
+          message: "MDX content missing after frontmatter",
+        }),
+      );
+    }
+
+    return { frontmatter, content: String(match[2]) };
+  } catch (yamlError) {
+    logger.error("Failed to parse YAML frontmatter:", yamlError);
+    return { frontmatter: {}, content: mdxContent };
+  }
+}
 
 /**
  * Compile MDX to a standalone JS module
@@ -35,35 +77,7 @@ export async function compileMDXToJS(
   mdxContent: string,
   options: CompileToJSOptions,
 ): Promise<{ code: string; frontmatter: MDXFrontmatter }> {
-  let frontmatter: MDXFrontmatter = {};
-  let content = mdxContent;
-
-  try {
-    const result = extract(mdxContent);
-    frontmatter = result.attrs ? result.attrs as MDXFrontmatter : {};
-    content = result.body;
-  } catch (error) {
-    logger.warn("Failed to extract frontmatter with gray-matter:", error);
-    if (mdxContent.startsWith("---")) {
-      const _match = mdxContent.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-      if (_match && _match[1]) {
-        try {
-          const { parse } = await import("std/yaml/parse.ts");
-          const parsed = parse(_match[1]);
-          frontmatter = (parsed && typeof parsed === "object" ? parsed : {}) as MDXFrontmatter;
-          if (!_match[2]) {
-            throw toError(createError({
-              type: "build",
-              message: "MDX content missing after frontmatter",
-            }));
-          }
-          content = String(_match[2]);
-        } catch (yamlError) {
-          logger.error("Failed to parse YAML frontmatter:", yamlError);
-        }
-      }
-    }
-  }
+  const { frontmatter, content } = await extractFrontmatter(mdxContent);
 
   const importRegex = /import\s+(\w+)\s+from\s+['"]([^'"]+)['"]/g;
   const imports: Array<{ name: string; path: string }> = [];
@@ -84,46 +98,40 @@ export async function compileMDXToJS(
     development: options.mode === "development",
   });
 
+  const componentStubs = imports
+    .map((imp) => {
+      const componentName = getComponentName(imp);
+      if (options.components?.includes(componentName)) {
+        return `// ${imp.name} will be provided at runtime`;
+      }
+      return `const ${imp.name} = () => React.createElement('div', { className: 'missing-component' }, 'Component: ${imp.name}');`;
+    })
+    .join("\n");
+
+  const compiledBody = String(compiled.value)
+    .replace(/export\s+{\s*\w+\s+as\s+default\s*}/g, "")
+    .replace(/export\s+default\s+/g, "");
+
+  const runtimeComponentBindings = imports
+    .map((imp) => {
+      const componentName = getComponentName(imp);
+      return `const ${imp.name} = components["${componentName}"] || components["${imp.name}"] || (() => React.createElement('div', { className: 'missing-component' }, 'Component: ${imp.name}'));`;
+    })
+    .join("\n  ");
+
+  const componentList = imports.length > 0 ? `${imports.map((imp) => imp.name).join(", ")}, ` : "";
+
   const moduleCode = `
 // Generated from ${mdxPath}
 import * as React from "react";
 
 export const frontmatter = ${JSON.stringify(frontmatter, null, 2)};
-${
-    imports
-      .map((imp) => {
-        const componentName = imp.path
-          .split("/")
-          .pop()
-          ?.replace(/\.(jsx?|tsx?)$/, "") || imp.name;
-        if (options.components?.includes(componentName)) {
-          return `// ${imp.name} will be provided at runtime`;
-        }
-        return `const ${imp.name} = () => React.createElement('div', { className: 'missing-component' }, 'Component: ${imp.name}');`;
-      })
-      .join("\n")
-  }
-${
-    String(compiled.value)
-      .replace(/export\s+{\s*\w+\s+as\s+default\s*}/g, "")
-      .replace(/export\s+default\s+/g, "")
-  }
+${componentStubs}
+${compiledBody}
 export default function MDXPage({ components = {} }) {
-  ${
-    imports
-      .map((imp) => {
-        const componentName = imp.path
-          .split("/")
-          .pop()
-          ?.replace(/\.(jsx?|tsx?)$/, "") || imp.name;
-        return `const ${imp.name} = components["${componentName}"] || components["${imp.name}"] || (() => React.createElement('div', { className: 'missing-component' }, 'Component: ${imp.name}'));`;
-      })
-      .join("\n  ")
-  }
+  ${runtimeComponentBindings}
   
-  return React.createElement(MDXContent, { components: { ${
-    imports.length > 0 ? `${imports.map((imp) => imp.name).join(", ")}, ` : ""
-  }...components } });
+  return React.createElement(MDXContent, { components: { ${componentList}...components } });
 
 }
 `;
@@ -136,10 +144,7 @@ export default function MDXPage({ components = {} }) {
     target: options.mode === "development" ? "es2020" : "es2018",
   });
 
-  return {
-    code: result.code,
-    frontmatter,
-  };
+  return { code: result.code, frontmatter };
 }
 
 export async function compileMDXFile(
@@ -150,19 +155,18 @@ export async function compileMDXFile(
   const secureFs = createSecureFs({
     baseDir: options.projectDir,
     adapter: options.adapter,
-    context: "build", // Build context allows more flexibility
+    context: "build",
     throwOnError: true,
   });
 
   try {
     const content = await secureFs.readFile(mdxPath);
-    const { code, frontmatter: _frontmatter } = await compileMDXToJS(mdxPath, content, options);
+    const { code } = await compileMDXToJS(mdxPath, content, options);
 
     const relativePath = mdxPath.replace(options.projectDir, "").replace(/^\//, "");
     const outputPath = join(outputDir, relativePath.replace(".mdx", ".mdx.js"));
 
-    const dirPath = dirname(outputPath);
-    await secureFs.mkdir(dirPath, { recursive: true });
+    await secureFs.mkdir(dirname(outputPath), { recursive: true });
     await secureFs.writeFile(outputPath, code);
 
     logger.info(`Compiled MDX: ${mdxPath} -> ${outputPath}`);
@@ -177,10 +181,7 @@ export async function compileProjectMDX(
   outputDir: string,
   options: Omit<CompileToJSOptions, "projectDir">,
 ): Promise<void> {
-  const compileOptions: CompileToJSOptions = {
-    ...options,
-    projectDir,
-  };
+  const compileOptions: CompileToJSOptions = { ...options, projectDir };
 
   const componentsDir = join(projectDir, "components");
   const components: string[] = [];
@@ -196,8 +197,8 @@ export async function compileProjectMDX(
   }
 
   compileOptions.components = components;
-  const mdxFiles: string[] = [];
 
+  const mdxFiles: string[] = [];
   const VERYFRONT_EXCLUDED_DIRS = new Set([
     "cache",
     "compiled",
@@ -208,18 +209,22 @@ export async function compileProjectMDX(
     "css",
   ]);
 
-  async function findMDXFiles(dir: string) {
+  async function findMDXFiles(dir: string): Promise<void> {
     try {
       for await (const entry of fs.readDir(dir)) {
         const path = join(dir, entry.name);
+
         if (entry.isFile && (entry.name.endsWith(".mdx") || entry.name.endsWith(".md"))) {
           mdxFiles.push(path);
-        } else if (entry.isDirectory && entry.name !== "node_modules") {
-          // Skip hidden dirs except .veryfront, and skip system subdirs within .veryfront
-          if (entry.name.startsWith(".") && entry.name !== ".veryfront") continue;
-          if (dir.includes(".veryfront") && VERYFRONT_EXCLUDED_DIRS.has(entry.name)) continue;
-          await findMDXFiles(path);
+          continue;
         }
+
+        if (!entry.isDirectory || entry.name === "node_modules") continue;
+
+        if (entry.name.startsWith(".") && entry.name !== ".veryfront") continue;
+        if (dir.includes(".veryfront") && VERYFRONT_EXCLUDED_DIRS.has(entry.name)) continue;
+
+        await findMDXFiles(path);
       }
     } catch {
       // Directory might not exist

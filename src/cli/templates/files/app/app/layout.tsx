@@ -8,10 +8,10 @@ export const metadata = {
 };
 
 export default function RootLayout({
-  children
+  children,
 }: {
-  children: React.ReactNode
-}) {
+  children: React.ReactNode;
+}): React.JSX.Element {
   return (
     <AuthProvider>
       <div className="min-h-screen bg-white dark:bg-neutral-900 text-neutral-900 dark:text-neutral-100 antialiased">

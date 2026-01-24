@@ -17,10 +17,8 @@
  * ```
  */
 
-// Theme system
 export * from "./theme.ts";
 
-// Styled components
 export { Chat, ChatComponents } from "./chat.tsx";
 export type { ChatProps } from "./chat.tsx";
 
@@ -33,6 +31,5 @@ export type { MessageProps, StreamingMessageProps } from "./message.tsx";
 export { Markdown } from "./markdown.tsx";
 export type { CodeBlockProps, MarkdownProps } from "./markdown.tsx";
 
-// Error boundary
 export { AIErrorBoundary, useAIErrorHandler } from "./error-boundary.tsx";
 export type { AIErrorBoundaryProps } from "./error-boundary.tsx";

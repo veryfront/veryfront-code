@@ -1,8 +1,8 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { APIRouteHandler } from "./handler.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { HTTP_OK } from "#veryfront/utils";
+import { APIRouteHandler } from "./handler.ts";
 
 const handlers: APIRouteHandler[] = [];
 
@@ -15,10 +15,9 @@ function createHandler(
   return handler;
 }
 
-afterEach(() => {
-  while (handlers.length > 0) {
-    const handler = handlers.pop();
-    handler?.destroy();
+afterEach((): void => {
+  while (handlers.length) {
+    handlers.pop()?.destroy();
   }
 });
 
@@ -79,8 +78,8 @@ describe("APIRouteHandler", () => {
       const response = await handler.handle(request);
 
       assertExists(response, "Should return a response for /api paths");
-      assertEquals(response?.status, 404, "Should return 404 for unmatched API routes");
-      assertEquals(await response?.text(), "Not Found");
+      assertEquals(response.status, 404, "Should return 404 for unmatched API routes");
+      assertEquals(await response.text(), "Not Found");
     });
 
     it("should return 404 for exact /api path when no route matches", async () => {
@@ -119,9 +118,9 @@ describe("APIRouteHandler", () => {
       const response = await handler.handle(request);
 
       assertExists(response, "Should return response for OPTIONS");
-      assertEquals(response?.status, 204, "OPTIONS should return 204");
+      assertEquals(response.status, 204, "OPTIONS should return 204");
       assertEquals(
-        response?.headers.get("Access-Control-Allow-Origin"),
+        response.headers.get("Access-Control-Allow-Origin"),
         null,
         "Should not include CORS headers without config",
       );
@@ -132,9 +131,7 @@ describe("APIRouteHandler", () => {
       const handler = createHandler("/test/project", adapter);
       await handler.initialize();
 
-      const request = new Request("http://localhost/api/test", {
-        method: "OPTIONS",
-      });
+      const request = new Request("http://localhost/api/test", { method: "OPTIONS" });
       const response = await handler.handle(request);
 
       assertEquals(response?.status, 204);
@@ -261,7 +258,6 @@ describe("APIRouteHandler", () => {
   describe("error scenarios", () => {
     it("should handle file system errors during initialization gracefully", async () => {
       const adapter = createMockAdapter();
-      const _originalReadDir = adapter.fs.readDir;
       adapter.fs.readDir = async function* () {
         yield* [];
         throw new Error("File system error");
@@ -280,6 +276,7 @@ describe("APIRouteHandler", () => {
       const adapter = createMockAdapter();
       const originalReadDir = adapter.fs.readDir;
       let callCount = 0;
+
       adapter.fs.readDir = async function* (path: string) {
         callCount++;
         if (callCount === 1) {
@@ -292,8 +289,8 @@ describe("APIRouteHandler", () => {
 
       try {
         await handler.initialize();
-      } catch (_error) {
-        void _error;
+      } catch {
+        // ignore
       }
 
       const request = new Request("http://localhost/api/test");
@@ -422,7 +419,7 @@ describe("APIRouteHandler", () => {
     });
 
     it("should use HTTP_OK for default status in HEAD shim logic", () => {
-      const mockResponse = { status: undefined, headers: {} };
+      const mockResponse = { status: undefined as number | undefined, headers: {} };
       const defaultStatus = mockResponse.status ?? HTTP_OK;
 
       assertEquals(defaultStatus, HTTP_OK, "Should default to HTTP_OK when status is undefined");
@@ -437,7 +434,7 @@ describe("APIRouteHandler", () => {
     });
 
     it("should use HTTP_OK when status is null or undefined", () => {
-      const cases = [
+      const cases: Array<{ status: number | null | undefined; expected: number }> = [
         { status: undefined, expected: HTTP_OK },
         { status: null, expected: HTTP_OK },
         { status: 0, expected: 0 },
@@ -447,11 +444,7 @@ describe("APIRouteHandler", () => {
 
       cases.forEach(({ status, expected }) => {
         const finalStatus = status ?? HTTP_OK;
-        assertEquals(
-          finalStatus,
-          expected,
-          `Status ${status} should result in ${expected}`,
-        );
+        assertEquals(finalStatus, expected, `Status ${status} should result in ${expected}`);
       });
     });
   });

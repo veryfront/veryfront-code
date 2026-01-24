@@ -1,7 +1,6 @@
 import { join } from "#veryfront/platform/compat/path-helper.ts";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { isCompiledBinary, rendererLogger as logger } from "#veryfront/utils";
 import { MDXCacheAdapter } from "#veryfront/transforms/mdx/index.ts";
-import { isCompiledBinary } from "#veryfront/utils";
 import { DEFAULT_CACHE_DIR } from "#veryfront/utils/constants/server.ts";
 import { ComponentRegistry } from "../ssr/component-registry.ts";
 import { VirtualModuleSystem } from "../virtual-module-system.ts";
@@ -67,27 +66,27 @@ export class RendererLifecycle {
       mode: this.configManager.getMode(),
     });
 
-    // Get or detect adapter
     this.adapter = this.configManager.getAdapter();
     if (!this.adapter) {
       const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
       this.adapter = await runtime.get();
     }
 
+    const projectDir = this.configManager.getProjectDir();
+    const mode = this.configManager.getMode();
+    const debugMode = this.configManager.isDebugMode();
     const config = this.configManager.getConfig();
 
-    // Initialize core services
     const virtualModules = new VirtualModuleSystem("/_veryfront/modules", this.adapter);
     const componentRegistry = new ComponentRegistry(
       virtualModules,
       this.port,
       this.adapter,
       this.moduleServerUrl,
-      undefined, // vendorBundleHash
-      this.projectId, // Project ID (UUID) for SSR cache isolation
+      undefined,
+      this.projectId,
     );
 
-    // Initialize cache system (pluggable)
     const renderCacheConfig = config.cache?.render ?? {};
     const cacheBaseDir = config.cache?.dir ?? DEFAULT_CACHE_DIR;
 
@@ -95,13 +94,11 @@ export class RendererLifecycle {
     switch (renderCacheConfig.type) {
       case "filesystem":
         cacheStore = new FilesystemCacheStore({
-          baseDir: join(this.configManager.getProjectDir(), cacheBaseDir, "render"),
+          baseDir: join(projectDir, cacheBaseDir, "render"),
         });
         break;
       case "kv":
-        cacheStore = new KVCacheStore({
-          path: renderCacheConfig.kvPath,
-        });
+        cacheStore = new KVCacheStore({ path: renderCacheConfig.kvPath });
         break;
       case "redis":
         cacheStore = new RedisCacheStore({
@@ -112,7 +109,7 @@ export class RendererLifecycle {
       case "memory":
       default:
         cacheStore = new MemoryCacheStore({
-          maxEntries: renderCacheConfig.maxEntries ?? (this.configManager.isDebugMode() ? 50 : 500),
+          maxEntries: renderCacheConfig.maxEntries ?? (debugMode ? 50 : 500),
           ttlMs: renderCacheConfig.ttl,
         });
         break;
@@ -123,19 +120,13 @@ export class RendererLifecycle {
       ttlMs: renderCacheConfig.ttl,
     });
 
-    // Initialize MDX cache adapter
-    const mdxCacheAdapter = new MDXCacheAdapter({
-      config,
-      mode: this.configManager.getMode(),
-    });
+    const mdxCacheAdapter = new MDXCacheAdapter({ config, mode });
 
-    // Initialize compiler service to handle late binding
     const compilerService = new CompilerService();
     const compileMDXProxy = compilerService.getCompileFunction();
 
-    // Initialize layout system components
     const layoutCollector = new LayoutCollector({
-      projectDir: this.configManager.getProjectDir(),
+      projectDir,
       adapter: this.adapter,
       config,
       compileMDX: compileMDXProxy,
@@ -146,33 +137,25 @@ export class RendererLifecycle {
       compileMDX: compileMDXProxy,
     });
 
-    // Initialize rendering pipeline components
-    const debugMode = this.configManager.isDebugMode();
-
     const elementValidator = new ElementValidator({
       maxDepth: 20,
       debugMode,
     });
 
-    const ssrRenderer = new SSRRenderer(
-      this.configManager.getMode(),
-      this.adapter,
-      this.configManager.getProjectDir(),
-    );
+    const ssrRenderer = new SSRRenderer(mode, this.adapter, projectDir);
 
     const pageRenderer = new PageRenderer({
-      projectDir: this.configManager.getProjectDir(),
-      mode: this.configManager.getMode(),
+      projectDir,
+      mode,
       config,
       adapter: this.adapter,
-      componentRegistry: componentRegistry,
+      componentRegistry,
       compileMDX: compileMDXProxy,
       moduleServerUrl: this.moduleServerUrl,
     });
 
-    // Initialize page resolver
     const pageResolver = new PageResolver({
-      projectDir: this.configManager.getProjectDir(),
+      projectDir,
       config,
       adapter: this.adapter,
     });
@@ -191,31 +174,26 @@ export class RendererLifecycle {
       compilerService,
     };
 
-    // Skip eager component loading in:
-    // 1. Compiled binaries - to avoid @mdx-js/mdx Worker issues
-    // 2. veryfront-api mode - local components don't exist, they come from the API
-    // Components will be loaded lazily on-demand instead
     const isVeryFrontAPI = config.fs?.type === "veryfront-api";
-    if (!isCompiledBinary() && !isVeryFrontAPI) {
-      logger.debug("Loading components eagerly for MDX import mapping");
+    const compiledBinary = isCompiledBinary();
 
-      const componentDirs = config.directories?.components || ["components"];
+    if (compiledBinary || isVeryFrontAPI) {
+      logger.debug("Skipping eager component loading (will load lazily on-demand)", {
+        isCompiledBinary: compiledBinary,
+        isVeryFrontAPI,
+      });
+      logger.debug("Renderer services initialized successfully");
+      return this.services;
+    }
 
-      for (const dir of componentDirs) {
-        await componentRegistry.loadFromDirectory(
-          join(this.configManager.getProjectDir(), dir),
-          false,
-        );
-      }
-    } else {
-      logger.debug(
-        "Skipping eager component loading (will load lazily on-demand)",
-        { isCompiledBinary: isCompiledBinary(), isVeryFrontAPI },
-      );
+    logger.debug("Loading components eagerly for MDX import mapping");
+
+    const componentDirs = config.directories?.components ?? ["components"];
+    for (const dir of componentDirs) {
+      await componentRegistry.loadFromDirectory(join(projectDir, dir), false);
     }
 
     logger.debug("Renderer services initialized successfully");
-
     return this.services;
   }
 
@@ -226,52 +204,61 @@ export class RendererLifecycle {
       filePath?: string,
     ) => Promise<MdxBundle>,
   ): void {
-    if (!this.services) {
-      throw toError(createError({
-        type: "render",
-        message: "Services not initialized",
-      }));
+    const services = this.services;
+    if (!services) {
+      throw toError(
+        createError({
+          type: "render",
+          message: "Services not initialized",
+        }),
+      );
     }
 
-    // Update the compiler service, which updates the proxy function used by all services
-    this.services.compilerService.setCompileMDX(compileMDX);
+    services.compilerService.setCompileMDX(compileMDX);
   }
 
   getServices(): RendererServices {
     if (!this.services) {
-      throw toError(createError({
-        type: "render",
-        message: "Services not initialized. Call initialize() first.",
-      }));
+      throw toError(
+        createError({
+          type: "render",
+          message: "Services not initialized. Call initialize() first.",
+        }),
+      );
     }
     return this.services;
   }
 
   async initializeComponents(): Promise<void> {
-    if (!this.services) {
-      throw toError(createError({
-        type: "render",
-        message: "Services not initialized",
-      }));
+    const services = this.services;
+    if (!services) {
+      throw toError(
+        createError({
+          type: "render",
+          message: "Services not initialized",
+        }),
+      );
     }
-    await this.services.componentRegistry.initializeComponents();
+
+    await services.componentRegistry.initializeComponents();
   }
 
   clearAllCaches(): void {
-    if (!this.services) return;
+    const services = this.services;
+    if (!services) return;
 
-    this.services.cacheCoordinator.clearAll().catch((err) => {
+    services.cacheCoordinator.clearAll().catch((err) => {
       logger.warn("[Lifecycle] Failed to clear all caches", { error: String(err) });
     });
-    this.services.virtualModules.clear();
-
-    // Clear component registry state
-    this.services.componentRegistry.clear();
+    services.virtualModules.clear();
+    services.componentRegistry.clear();
   }
 
   clearSlugCache(slug: string): void {
-    if (!this.services) return;
-    this.services.cacheCoordinator.clearSlug(slug).catch((err) => {
+    const services = this.services;
+    if (!services) return;
+
+    services.cacheCoordinator.clearSlug(slug).catch((err) => {
       logger.warn("[Lifecycle] Failed to clear slug cache", { slug, error: String(err) });
     });
   }

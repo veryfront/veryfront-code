@@ -71,32 +71,26 @@ export async function inspectAgent(
 ): Promise<InspectionReport> {
   const startTime = Date.now();
 
-  // Get memory stats before execution
-  const _memoryStatsBefore = await agent.getMemoryStats();
+  await agent.getMemoryStats(); // memory stats before execution (intentionally unused)
 
-  // Execute agent
   const response = await agent.generate({ input });
-
   const executionTime = Date.now() - startTime;
 
-  // Get memory stats after execution
   const memoryStatsAfter = await agent.getMemoryStats();
-
-  // Get available tools
-  const availableTools = agent.config.tools ? Object.keys(agent.config.tools) : [];
+  const availableTools = Object.keys(agent.config.tools ?? {});
 
   return {
     agent: {
       id: agent.id,
       model: agent.config.model,
-      maxSteps: agent.config.maxSteps || 20,
-      memoryType: agent.config.memory?.type || "conversation",
+      maxSteps: agent.config.maxSteps ?? 20,
+      memoryType: agent.config.memory?.type ?? "conversation",
     },
     execution: {
       input,
       output: response.text,
       status: response.status,
-      steps: response.toolCalls.length + 1, // Tool calls + final response
+      steps: response.toolCalls.length + 1,
       executionTime,
     },
     tools: {
@@ -130,13 +124,10 @@ export function printInspectionReport(report: InspectionReport): void {
   agentLogger.info(`  Memory: ${report.agent.memoryType}\n`);
 
   agentLogger.info("Execution:");
-  agentLogger.info(
-    `  Input: ${
-      typeof report.execution.input === "string"
-        ? report.execution.input
-        : `${(report.execution.input as Message[]).length} messages`
-    }`,
-  );
+  const inputSummary = typeof report.execution.input === "string"
+    ? report.execution.input
+    : `${report.execution.input.length} messages`;
+  agentLogger.info(`  Input: ${inputSummary}`);
   agentLogger.info(`  Output: ${report.execution.output.substring(0, 100)}...`);
   agentLogger.info(`  Status: ${report.execution.status}`);
   agentLogger.info(`  Steps: ${report.execution.steps}`);
@@ -160,12 +151,12 @@ export function printInspectionReport(report: InspectionReport): void {
   agentLogger.info(`  Messages: ${report.memory.messagesCount}`);
   agentLogger.info(`  Estimated Tokens: ${report.memory.estimatedTokens}\n`);
 
-  if (report.usage) {
-    agentLogger.info("Token Usage:");
-    agentLogger.info(`  Prompt: ${report.usage.promptTokens}`);
-    agentLogger.info(`  Completion: ${report.usage.completionTokens}`);
-    agentLogger.info(`  Total: ${report.usage.totalTokens}\n`);
-  }
+  if (!report.usage) return;
+
+  agentLogger.info("Token Usage:");
+  agentLogger.info(`  Prompt: ${report.usage.promptTokens}`);
+  agentLogger.info(`  Completion: ${report.usage.completionTokens}`);
+  agentLogger.info(`  Total: ${report.usage.totalTokens}\n`);
 }
 
 /**
@@ -178,23 +169,24 @@ export function getRegistryOverview(): {
   stats: ReturnType<typeof getMCPStats>;
 } {
   const registry = getMCPRegistry();
-  const stats = getMCPStats();
 
   return {
-    tools: Array.from(registry.tools.values()).map((t) => ({
-      id: t.id,
-      description: t.description,
+    tools: Array.from(registry.tools.values()).map(({ id, description }) => ({
+      id,
+      description,
     })),
-    resources: Array.from(registry.resources.values()).map((r) => ({
-      id: r.id,
-      pattern: r.pattern,
-      description: r.description,
+    resources: Array.from(registry.resources.values()).map(
+      ({ id, pattern, description }) => ({
+        id,
+        pattern,
+        description,
+      }),
+    ),
+    prompts: Array.from(registry.prompts.values()).map(({ id, description }) => ({
+      id,
+      description,
     })),
-    prompts: Array.from(registry.prompts.values()).map((p) => ({
-      id: p.id,
-      description: p.description,
-    })),
-    stats,
+    stats: getMCPStats(),
   };
 }
 

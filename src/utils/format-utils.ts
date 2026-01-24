@@ -13,7 +13,8 @@ export function formatBytes(bytes: number): string {
     BYTE_SIZES.length - 1,
   );
 
-  return `${parseFloat((absBytes / Math.pow(1024, i)).toFixed(2))} ${BYTE_SIZES[i]}`;
+  const value = parseFloat((absBytes / 1024 ** i).toFixed(2));
+  return `${value} ${BYTE_SIZES[i]}`;
 }
 
 export function estimateSize(value: unknown): number {
@@ -36,26 +37,26 @@ export function estimateSize(value: unknown): number {
 }
 
 export function estimateSizeWithCircularHandling(value: unknown): number {
-  const seen = new WeakSet();
+  const seen = new WeakSet<object>();
   const encoder = new TextEncoder();
 
   const json = JSON.stringify(value, (_key, val) => {
-    if (typeof val === "object" && val !== null) {
-      if (seen.has(val as object)) return undefined;
-      seen.add(val as object);
-
-      if (val instanceof Map) {
-        return { __type: "Map", entries: Array.from(val.entries()) };
-      }
-      if (val instanceof Set) {
-        return { __type: "Set", values: Array.from(val.values()) };
-      }
-    }
-
     if (typeof val === "function") return undefined;
 
     if (val instanceof Uint8Array) {
       return { __type: "Uint8Array", length: val.length };
+    }
+
+    if (typeof val !== "object" || val === null) return val;
+
+    if (seen.has(val)) return undefined;
+    seen.add(val);
+
+    if (val instanceof Map) {
+      return { __type: "Map", entries: Array.from(val.entries()) };
+    }
+    if (val instanceof Set) {
+      return { __type: "Set", values: Array.from(val.values()) };
     }
 
     return val;
@@ -67,13 +68,7 @@ export function estimateSizeWithCircularHandling(value: unknown): number {
 function estimateObjectSize(value: object): number {
   if (value instanceof ArrayBuffer) return value.byteLength;
 
-  if (
-    value instanceof Uint8Array || value instanceof Uint16Array ||
-    value instanceof Uint32Array || value instanceof Int8Array ||
-    value instanceof Int16Array || value instanceof Int32Array
-  ) {
-    return value.byteLength;
-  }
+  if (ArrayBuffer.isView(value)) return value.byteLength;
 
   try {
     return JSON.stringify(value).length * 2;
@@ -86,7 +81,9 @@ function estimateObjectSize(value: object): number {
 export function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
   if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-  if (ms < 3600000) return `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`;
+  if (ms < 3600000) {
+    return `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`;
+  }
   return `${Math.floor(ms / 3600000)}h ${Math.floor((ms % 3600000) / 60000)}m`;
 }
 

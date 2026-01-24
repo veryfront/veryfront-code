@@ -16,7 +16,6 @@ export function ensureValidChild(
   child: BundledReact.ReactNode,
   _React: typeof BundledReact,
 ): BundledReact.ReactNode {
-  // Use cross-instance check that handles elements from different React versions
   if (isReactElement(child)) {
     logger.debug("[ensureValidChild] Valid React element", {
       type: getElementTypeName(child as BundledReact.ReactElement),
@@ -26,8 +25,7 @@ export function ensureValidChild(
   }
 
   if (
-    child === null ||
-    child === undefined ||
+    child == null ||
     typeof child === "string" ||
     typeof child === "number" ||
     Array.isArray(child)
@@ -36,7 +34,7 @@ export function ensureValidChild(
     return child;
   }
 
-  if (child && typeof child === "object") {
+  if (typeof child === "object") {
     const debugInfo = getElementDebugInfo(child);
     logger.error("[ensureValidChild] Invalid child: object is not a React element", {
       keys: Object.keys(child).slice(0, 10),

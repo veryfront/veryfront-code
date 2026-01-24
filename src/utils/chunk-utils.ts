@@ -3,9 +3,8 @@ export function normalizeChunkPath(
   value: string | null | undefined,
   base: string,
 ): string | null {
-  if (!value || value.startsWith("http://") || value.startsWith("https://")) {
-    return null;
-  }
+  if (!value) return null;
+  if (value.startsWith("http://") || value.startsWith("https://")) return null;
 
   const candidate = value.replace(/^\.\//, "");
 

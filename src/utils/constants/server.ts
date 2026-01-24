@@ -5,7 +5,6 @@
  * This prevents hardcoding URLs across the codebase and makes refactoring easier.
  */
 
-// Re-export DEFAULT_PORT from config/defaults.ts (the single source of truth)
 export { DEFAULT_PORT } from "#veryfront/config/defaults.ts";
 
 /** Default port for development dashboard (matches veryfront.config.ts default) */
@@ -111,7 +110,7 @@ export const DEFAULT_CACHE_DIR = PROJECT_DIRS.CACHE;
  * Helper to check if a pathname is an internal veryfront endpoint
  */
 export function isInternalEndpoint(pathname: string): boolean {
-  return pathname.startsWith(INTERNAL_PREFIX + "/");
+  return pathname.startsWith(`${INTERNAL_PREFIX}/`);
 }
 
 /**
@@ -131,6 +130,7 @@ export function normalizeChunkPath(
   if (filename.startsWith("/")) {
     return filename;
   }
+
   return `${basePath.replace(/\/$/, "")}/${filename}`;
 }
 

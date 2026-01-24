@@ -13,28 +13,22 @@ type MiddlewareFunction = (
   next: () => Promise<Response | undefined> | Response,
 ) => Promise<Response | undefined> | Response | undefined;
 
-export function createRequestLoggerMiddleware() {
-  return async (
-    c: { req: Request; var: Record<string, unknown> },
-    next: () => Promise<Response | undefined> | Response,
-  ) => {
+export function createRequestLoggerMiddleware(): MiddlewareFunction {
+  return async (c, next) => {
     const start = performance.now();
-    const url = new URL(c.req.url);
+    const { pathname } = new URL(c.req.url);
     const method = c.req.method;
-    const pathname = url.pathname;
-    const incomingId = c.req.headers.get("x-request-id") || "";
+    const incomingId = c.req.headers.get("x-request-id") ?? "";
     const requestId = generateRequestId(incomingId);
 
-    // Extract standard fields from headers
-    const host = c.req.headers.get("host") || "";
+    const host = c.req.headers.get("host") ?? "";
     const domain = host.replace(/:\d+$/, "");
-    const projectSlug = c.req.headers.get("x-project-slug") || undefined;
-    const projectId = c.req.headers.get("x-project-id") || undefined;
-    const releaseId = c.req.headers.get("x-release-id") || undefined;
-    const branchId = c.req.headers.get("x-branch-id") || undefined;
-    const branchName = c.req.headers.get("x-branch-name") || undefined;
+    const projectSlug = c.req.headers.get("x-project-slug") ?? undefined;
+    const projectId = c.req.headers.get("x-project-id") ?? undefined;
+    const releaseId = c.req.headers.get("x-release-id") ?? undefined;
+    const branchId = c.req.headers.get("x-branch-id") ?? undefined;
+    const branchName = c.req.headers.get("x-branch-name") ?? undefined;
 
-    // Create request-scoped logger with bound context
     const reqLogger = logger.child({
       requestId,
       request_url: c.req.url,
@@ -46,6 +40,7 @@ export function createRequestLoggerMiddleware() {
       branch_name: branchName,
       pathname,
     });
+
     c.var.requestId = requestId;
     c.var.logger = reqLogger;
 
@@ -58,7 +53,7 @@ export function createRequestLoggerMiddleware() {
 
     let response: Response | undefined;
     try {
-      response = (await next()) as Response | undefined;
+      response = await next();
     } catch (error) {
       const durationMs = Math.round(performance.now() - start);
       reqLogger.error(`${method} ${pathname} failed`, { durationMs }, error);
@@ -66,7 +61,7 @@ export function createRequestLoggerMiddleware() {
     }
 
     const durationMs = Math.round(performance.now() - start);
-    // Don't modify headers for WebSocket upgrade responses (status 101) - they're immutable
+
     if (response && response.status !== 101) {
       response.headers.set("x-request-id", requestId);
     }
@@ -87,7 +82,6 @@ export function createRequestLoggerMiddleware() {
 function isVirtualFilesystem(adapter: RuntimeAdapter): boolean {
   const fs = adapter?.fs;
   if (!fs || typeof fs !== "object") return false;
-
   return isExtendedFSAdapter(fs) && fs.isVeryfrontAdapter();
 }
 
@@ -99,23 +93,21 @@ async function loadMiddlewareFile(
 
   for (const middlewareFile of middlewareFiles) {
     const middlewarePath = join(projectDir, middlewareFile);
-    const exists = await adapter.fs.exists(middlewarePath);
-    if (!exists) continue;
+    if (!(await adapter.fs.exists(middlewarePath))) continue;
 
     try {
       logger.debug(`[MIDDLEWARE] Loading ${middlewareFile}`);
 
       if (isVirtualFilesystem(adapter)) {
         return await loadMiddlewareFromVirtualFS(middlewarePath, adapter);
-      } else {
-        const middlewareUrl = `file://${middlewarePath}?t=${Date.now()}-${crypto.randomUUID()}`;
-        const middlewareModule = await import(middlewareUrl);
-        return normalizeMiddlewareExport(middlewareModule);
       }
+
+      const middlewareUrl = `file://${middlewarePath}?t=${Date.now()}-${crypto.randomUUID()}`;
+      const middlewareModule = await import(middlewareUrl);
+      return normalizeMiddlewareExport(middlewareModule);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.warn(`[MIDDLEWARE] Failed to load ${middlewareFile}: ${errorMessage}`);
-      continue;
     }
   }
 
@@ -130,11 +122,9 @@ async function loadMiddlewareFromVirtualFS(
 
   const content = await adapter.fs.readFile(middlewarePath);
   const source = typeof content === "string" ? content : new TextDecoder().decode(content);
-
   const loader = getEsbuildLoader(middlewarePath);
 
   const { build } = await import("esbuild");
-
   const result = await build({
     bundle: false,
     write: false,
@@ -149,10 +139,8 @@ async function loadMiddlewareFromVirtualFS(
     },
   });
 
-  if (result.errors && result.errors.length > 0) {
-    const first = result.errors[0]?.text || "unknown error";
-    throw new Error(`Failed to transpile middleware: ${first}`);
-  }
+  const firstError = result.errors?.[0]?.text;
+  if (firstError) throw new Error(`Failed to transpile middleware: ${firstError}`);
 
   const js = result.outputFiles?.[0]?.text ?? "export default []";
 
@@ -169,7 +157,8 @@ async function loadMiddlewareFromVirtualFS(
 }
 
 function normalizeMiddlewareExport(middlewareModule: unknown): MiddlewareFunction[] {
-  const exported = (middlewareModule as { default?: unknown })?.default || middlewareModule;
+  const mod = middlewareModule as { default?: unknown };
+  const exported = mod?.default ?? middlewareModule;
 
   if (Array.isArray(exported)) {
     return exported.filter((m): m is MiddlewareFunction => typeof m === "function");
@@ -187,45 +176,38 @@ export async function setupMiddleware(
 ): Promise<void> {
   pipeline.use(createRequestLoggerMiddleware());
 
-  if (config.security?.cors) {
-    pipeline.use(
-      cors(
-        config.security.cors === true ? {} : config.security.cors,
-      ),
-    );
+  const corsConfig = config.security?.cors;
+  if (corsConfig) {
+    pipeline.use(cors(corsConfig === true ? {} : corsConfig));
   }
 
-  // Skip loading middleware file in proxy mode - no request context at startup
   const isProxyMode = config.fs?.veryfront?.proxyMode === true;
-  if (projectDir && adapter && !isProxyMode) {
+  if (isProxyMode) {
+    logger.debug("[MIDDLEWARE] Skipping file middleware in proxy mode");
+  } else if (projectDir && adapter) {
     const fileMiddlewares = await loadMiddlewareFile(projectDir, adapter);
     for (const middleware of fileMiddlewares) {
       logger.debug("[MIDDLEWARE] Registered middleware from file");
       pipeline.use(middleware);
     }
-  } else if (isProxyMode) {
-    logger.debug("[MIDDLEWARE] Skipping file middleware in proxy mode");
   }
 
-  if (config.middleware?.custom) {
-    for (const middleware of config.middleware.custom) {
+  const custom = config.middleware?.custom;
+  if (custom) {
+    for (const middleware of custom) {
       pipeline.use(middleware);
     }
   }
 
-  pipeline.use((
-    c: { req: Request; var: Record<string, unknown> },
-    _next: () => Promise<Response | undefined> | Response,
-  ) => requestHandler(c.req));
+  pipeline.use((c) => requestHandler(c.req));
 }
 
 function generateRequestId(incomingId: string): string {
-  return (
-    incomingId ||
-    crypto
-      .getRandomValues(new Uint32Array(2))
-      .reduce((acc, n) => acc + n.toString(16).padStart(8, "0"), "")
-  );
+  if (incomingId) return incomingId;
+
+  return crypto
+    .getRandomValues(new Uint32Array(2))
+    .reduce((acc, n) => acc + n.toString(16).padStart(8, "0"), "");
 }
 
 async function enrichSpanWithRequestInfo(
@@ -236,11 +218,11 @@ async function enrichSpanWithRequestInfo(
   try {
     const { trace } = await import("@opentelemetry/api");
     const span = trace.getActiveSpan();
-    if (span) {
-      span.setAttribute("http.route", pathname);
-      span.setAttribute("veryfront.request_id", requestId);
-      span.updateName(`${method} ${pathname}`);
-    }
+    if (!span) return;
+
+    span.setAttribute("http.route", pathname);
+    span.setAttribute("veryfront.request_id", requestId);
+    span.updateName(`${method} ${pathname}`);
   } catch {
     /* otel optional */
   }

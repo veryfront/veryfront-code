@@ -23,23 +23,6 @@ export { AzureOpenAIClient } from "./clients/azure.ts";
 // Environments
 export { LocalEnvironment } from "./environments/local.ts";
 
-// Workflow Integration
-export {
-  type RLMJob,
-  type RLMWorkflowState,
-  type IterationResult,
-  type BatchJob,
-  type RLMWorkflowOptions,
-  type RLMHandlerConfig,
-  initializeState,
-  executeIteration,
-  buildResult,
-  prepareBatchJobs,
-  batchJobsToJsonl,
-  createRLMWorkflowConfig,
-  createRLMHandlers,
-} from "./workflow/index.ts";
-
 // Types
 export type {
   // Core types

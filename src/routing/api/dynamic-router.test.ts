@@ -11,10 +11,7 @@ function createRouter(): DynamicRouter {
 }
 
 afterEach(() => {
-  while (routers.length > 0) {
-    const router = routers.pop();
-    router?.destroy();
-  }
+  for (const router of routers.splice(0)) router.destroy();
 });
 
 describe("DynamicRouter - Basic Route Matching", () => {
@@ -34,8 +31,7 @@ describe("DynamicRouter - Basic Route Matching", () => {
       const router = createRouter();
       router.addRoute("/api/users", "/pages/api/users.ts");
 
-      const match = router.match("/api/posts");
-      assertEquals(match, null);
+      assertEquals(router.match("/api/posts"), null);
     });
 
     it("should handle root route /", () => {
@@ -122,16 +118,14 @@ describe("DynamicRouter - Dynamic Parameters", () => {
       const router = createRouter();
       router.addRoute("/api/users/[id]", "/pages/api/users/[id].ts");
 
-      const match = router.match("/api/users");
-      assertEquals(match, null);
+      assertEquals(router.match("/api/users"), null);
     });
 
     it("should not match parameter across path segments", () => {
       const router = createRouter();
       router.addRoute("/api/users/[id]", "/pages/api/users/[id].ts");
 
-      const match = router.match("/api/users/123/extra");
-      assertEquals(match, null);
+      assertEquals(router.match("/api/users/123/extra"), null);
     });
   });
 
@@ -167,8 +161,7 @@ describe("DynamicRouter - Dynamic Parameters", () => {
       const router = createRouter();
       router.addRoute("/docs/[...slug]", "/pages/docs/[...slug].ts");
 
-      const match = router.match("/docs");
-      assertEquals(match, null);
+      assertEquals(router.match("/docs"), null);
     });
   });
 
@@ -290,11 +283,8 @@ describe("DynamicRouter - Cache Management", () => {
       const router = createRouter();
       router.addRoute("/api/users", "/pages/api/users.ts");
 
-      const match1 = router.match("/api/posts");
-      const match2 = router.match("/api/posts");
-
-      assertEquals(match1, null);
-      assertEquals(match2, null);
+      assertEquals(router.match("/api/posts"), null);
+      assertEquals(router.match("/api/posts"), null);
     });
 
     it("should clear cache on clearCache()", () => {
@@ -304,8 +294,7 @@ describe("DynamicRouter - Cache Management", () => {
       router.match("/api/users");
       router.clearCache();
 
-      const match = router.match("/api/users");
-      assertExists(match);
+      assertExists(router.match("/api/users"));
     });
 
     it("should clear cache on clear()", () => {
@@ -315,8 +304,7 @@ describe("DynamicRouter - Cache Management", () => {
       router.match("/api/users");
       router.clear();
 
-      const match = router.match("/api/users");
-      assertEquals(match, null);
+      assertEquals(router.match("/api/users"), null);
     });
   });
 });
@@ -330,14 +318,13 @@ describe("DynamicRouter - Utility Methods", () => {
 
       const routes = router.listRoutes();
       assertEquals(routes.length, 2);
-      assertEquals(routes[0]!.pattern, "/api/users");
-      assertEquals(routes[1]!.pattern, "/api/posts");
+      assertEquals(routes[0]?.pattern, "/api/users");
+      assertEquals(routes[1]?.pattern, "/api/posts");
     });
 
     it("should return empty array when no routes", () => {
       const router = createRouter();
-      const routes = router.listRoutes();
-      assertEquals(routes.length, 0);
+      assertEquals(router.listRoutes().length, 0);
     });
   });
 
@@ -349,8 +336,7 @@ describe("DynamicRouter - Utility Methods", () => {
 
       router.clear();
 
-      const routes = router.listRoutes();
-      assertEquals(routes.length, 0);
+      assertEquals(router.listRoutes().length, 0);
     });
 
     it("should clear route cache", () => {
@@ -360,8 +346,7 @@ describe("DynamicRouter - Utility Methods", () => {
 
       router.clear();
 
-      const match = router.match("/api/users");
-      assertEquals(match, null);
+      assertEquals(router.match("/api/users"), null);
     });
   });
 });

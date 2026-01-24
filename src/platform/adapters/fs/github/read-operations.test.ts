@@ -3,11 +3,9 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { GitHubReadOperations } from "./read-operations.ts";
 
 describe("GitHubReadOperations", () => {
-  describe("class", () => {
-    it("should export GitHubReadOperations class", () => {
-      assertExists(GitHubReadOperations);
-      assertEquals(typeof GitHubReadOperations, "function");
-    });
+  it("should export GitHubReadOperations class", () => {
+    assertExists(GitHubReadOperations);
+    assertEquals(typeof GitHubReadOperations, "function");
   });
 
   describe("methods", () => {
@@ -25,45 +23,38 @@ describe("GitHubReadOperations", () => {
       getContents: () => Promise.resolve({ type: "file", content: "dGVzdA==" }),
       getBlob: () => Promise.resolve({ content: "dGVzdA==", encoding: "base64" }),
       repoId: "test-owner/test-repo",
-    } as any;
+    };
 
     const mockCache = {
       get: () => undefined,
       set: () => {},
-    } as any;
+    };
 
     const mockStatOps = {
       getFileEntry: () => undefined,
-    } as any;
+    };
+
+    function createOps(): GitHubReadOperations {
+      return new GitHubReadOperations(
+        mockConfig,
+        mockClient as any,
+        mockCache as any,
+        mockStatOps as any,
+      );
+    }
 
     it("should be instantiable", () => {
-      const ops = new GitHubReadOperations(
-        mockConfig,
-        mockClient,
-        mockCache,
-        mockStatOps,
-      );
-      assertExists(ops);
+      assertExists(createOps());
     });
 
     it("should have readTextFile method", () => {
-      const ops = new GitHubReadOperations(
-        mockConfig,
-        mockClient,
-        mockCache,
-        mockStatOps,
-      );
+      const ops = createOps();
       assertExists(ops.readTextFile);
       assertEquals(typeof ops.readTextFile, "function");
     });
 
     it("should have readFile method", () => {
-      const ops = new GitHubReadOperations(
-        mockConfig,
-        mockClient,
-        mockCache,
-        mockStatOps,
-      );
+      const ops = createOps();
       assertExists(ops.readFile);
       assertEquals(typeof ops.readFile, "function");
     });

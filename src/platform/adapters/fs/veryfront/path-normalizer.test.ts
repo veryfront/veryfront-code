@@ -10,13 +10,11 @@ describe("PathNormalizer", () => {
     });
 
     it("should be instantiable without projectDir", () => {
-      const normalizer = new PathNormalizer();
-      assertExists(normalizer);
+      assertExists(new PathNormalizer());
     });
 
     it("should be instantiable with projectDir", () => {
-      const normalizer = new PathNormalizer("/project");
-      assertExists(normalizer);
+      assertExists(new PathNormalizer("/project"));
     });
   });
 

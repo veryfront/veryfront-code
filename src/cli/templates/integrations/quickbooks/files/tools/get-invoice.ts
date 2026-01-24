@@ -25,18 +25,24 @@ export default tool({
       status: invoice.TxnStatus,
       emailStatus: invoice.EmailStatus,
       billEmail: invoice.BillEmail?.Address,
-      lineItems: invoice.Line.map((line) => ({
-        id: line.Id,
-        lineNum: line.LineNum,
-        description: line.Description,
-        amount: line.Amount,
-        detailType: line.DetailType,
-        salesItemLineDetail: line.SalesItemLineDetail ? {
-          itemName: line.SalesItemLineDetail.ItemRef.name,
-          quantity: line.SalesItemLineDetail.Qty,
-          unitPrice: line.SalesItemLineDetail.UnitPrice,
-        } : undefined,
-      })),
+      lineItems: invoice.Line.map((line) => {
+        const salesItemLineDetail = line.SalesItemLineDetail;
+
+        return {
+          id: line.Id,
+          lineNum: line.LineNum,
+          description: line.Description,
+          amount: line.Amount,
+          detailType: line.DetailType,
+          salesItemLineDetail: salesItemLineDetail
+            ? {
+                itemName: salesItemLineDetail.ItemRef.name,
+                quantity: salesItemLineDetail.Qty,
+                unitPrice: salesItemLineDetail.UnitPrice,
+              }
+            : undefined,
+        };
+      }),
       metadata: {
         createTime: invoice.MetaData?.CreateTime,
         lastUpdatedTime: invoice.MetaData?.LastUpdatedTime,

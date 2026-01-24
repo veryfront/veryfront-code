@@ -39,7 +39,7 @@ export class ComponentRegistry {
 
   constructor(private options: ComponentRegistryOptions) {
     this.adapter = options.adapter;
-    this.componentDirs = options.componentDirs || [
+    this.componentDirs = options.componentDirs ?? [
       "components",
       "islands",
       "src/components",
@@ -48,14 +48,17 @@ export class ComponentRegistry {
   }
 
   discover(): Promise<void> {
-    return withSpan("modules.componentRegistry.discover", async () => {
-      this.initialized = false;
-      this.initializedPromise = (async () => {
-        await this._discoverInternal();
-        this.initialized = true;
-      })();
-      await this.initializedPromise;
-    }, { "registry.projectDir": this.options.projectDir });
+    return withSpan(
+      "modules.componentRegistry.discover",
+      async () => {
+        this.initialized = false;
+        this.initializedPromise = this._discoverInternal().then(() => {
+          this.initialized = true;
+        });
+        await this.initializedPromise;
+      },
+      { "registry.projectDir": this.options.projectDir },
+    );
   }
 
   private async _discoverInternal(): Promise<void> {
@@ -68,7 +71,8 @@ export class ComponentRegistry {
         await this.walkDirectory(fullPath);
       } catch (error) {
         // Silently skip missing directories - they're optional
-        const isNotFound = (error as NodeJS.ErrnoException)?.code === "ENOENT" ||
+        const code = (error as NodeJS.ErrnoException | undefined)?.code;
+        const isNotFound = code === "ENOENT" ||
           (error instanceof Error && error.name === "NotFound");
         if (!isNotFound) {
           logger.warn(`Failed to discover components in ${fullPath}:`, error);
@@ -83,8 +87,6 @@ export class ComponentRegistry {
     const entries = this.adapter.fs.readDir(dir);
 
     for await (const entry of entries) {
-      const fullPath = join(dir, entry.name);
-
       if (
         entry.name === "node_modules" ||
         entry.name.includes(".test.") ||
@@ -93,64 +95,65 @@ export class ComponentRegistry {
         continue;
       }
 
+      const fullPath = join(dir, entry.name);
+
       if (entry.isDirectory) {
         await this.walkDirectory(fullPath);
-      } else if (entry.isFile && /\.(tsx|jsx)$/.test(entry.name)) {
-        const componentName = basename(
-          entry.name,
-          entry.name.substring(entry.name.lastIndexOf(".")),
-        );
-
-        if (componentName === "index") continue;
-
-        const component: ComponentInfo = {
-          name: componentName,
-          path: fullPath,
-          isLoaded: false,
-        };
-
-        this.components.set(componentName, component);
-        logger.debug(`Discovered component: ${componentName} at ${fullPath}`);
+        continue;
       }
+
+      if (!entry.isFile || !/\.(tsx|jsx)$/.test(entry.name)) continue;
+
+      const ext = entry.name.substring(entry.name.lastIndexOf("."));
+      const componentName = basename(entry.name, ext);
+      if (componentName === "index") continue;
+
+      this.components.set(componentName, {
+        name: componentName,
+        path: fullPath,
+        isLoaded: false,
+      });
+
+      logger.debug(`Discovered component: ${componentName} at ${fullPath}`);
     }
   }
 
   loadComponent(name: string): Promise<ComponentInfo | null> {
-    return withSpan("modules.componentRegistry.loadComponent", async () => {
-      if (this.initializedPromise) {
+    return withSpan(
+      "modules.componentRegistry.loadComponent",
+      async () => {
         await this.initializedPromise;
-      }
-      const component = this.components.get(name);
-      if (!component) {
-        logger.warn(`Component not found: ${name}`);
-        return null;
-      }
 
-      if (component.isLoaded) {
-        return component;
-      }
+        const component = this.components.get(name);
+        if (!component) {
+          logger.warn(`Component not found: ${name}`);
+          return null;
+        }
 
-      try {
-        component.content = await this.adapter.fs.readFile(component.path);
-        component.isLoaded = true;
+        if (component.isLoaded) return component;
 
-        logger.debug(`Loaded component: ${name}`);
-        return component;
-      } catch (error) {
-        logger.error(`Failed to load component ${name}:`, error);
-        return null;
-      }
-    }, { "registry.componentName": name });
+        try {
+          component.content = await this.adapter.fs.readFile(component.path);
+          component.isLoaded = true;
+          logger.debug(`Loaded component: ${name}`);
+          return component;
+        } catch (error) {
+          logger.error(`Failed to load component ${name}:`, error);
+          return null;
+        }
+      },
+      { "registry.componentName": name },
+    );
   }
 
   loadAll(): Promise<void> {
-    return withSpan("modules.componentRegistry.loadAll", async () => {
-      const loadPromises = Array.from(this.components.keys()).map((name) =>
-        this.loadComponent(name)
-      );
-
-      await Promise.all(loadPromises);
-    }, { "registry.componentCount": this.components.size });
+    return withSpan(
+      "modules.componentRegistry.loadAll",
+      async () => {
+        await Promise.all(Array.from(this.components.keys(), (name) => this.loadComponent(name)));
+      },
+      { "registry.componentCount": this.components.size },
+    );
   }
 
   get(name: string): ComponentInfo | undefined {
@@ -173,11 +176,12 @@ export class ComponentRegistry {
    */
   getAllAsComponents(): Record<string, React.ComponentType<unknown>> {
     const components: Record<string, React.ComponentType<unknown>> = {};
-    for (const [name, info] of this.components.entries()) {
-      if (info.exports?.default) {
-        components[name] = info.exports.default as React.ComponentType<unknown>;
-      }
+
+    for (const [name, info] of this.components) {
+      const component = info.exports?.default;
+      if (component) components[name] = component as React.ComponentType<unknown>;
     }
+
     return components;
   }
 
@@ -188,7 +192,7 @@ export class ComponentRegistry {
   add(name: string, info: Partial<ComponentInfo>): void {
     this.components.set(name, {
       name,
-      path: info.path || `virtual:${name}`,
+      path: info.path ?? `virtual:${name}`,
       content: info.content,
       isLoaded: true,
       exports: info.exports,
@@ -218,7 +222,13 @@ export class ComponentRegistry {
       type: string;
     }>
   > {
-    const components = [];
+    const components: Array<{
+      name: string;
+      path: string;
+      size?: number;
+      lastModified?: string;
+      type: string;
+    }> = [];
 
     for (const [name, info] of this.components) {
       try {

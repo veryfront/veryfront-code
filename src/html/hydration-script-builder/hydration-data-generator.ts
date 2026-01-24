@@ -1,23 +1,26 @@
 import type { ComponentProps } from "#veryfront/types";
+import { resolveRelativePath } from "#veryfront/modules/react-loader/path-resolver.ts";
 import type { HTMLGenerationOptions } from "../types.ts";
 import type { HydrationDataStructure } from "./types.ts";
-import { resolveRelativePath } from "#veryfront/modules/react-loader/path-resolver.ts";
 
 function toProjectRelativePath(absolutePath: string, projectDir?: string): string {
   if (!absolutePath) return "";
-  if (!projectDir) {
-    return absolutePath.replace(/\\/g, "/").replace(/^\//, "");
-  }
-  return resolveRelativePath(absolutePath.replace(/\\/g, "/"), projectDir);
+
+  const normalizedPath = absolutePath.replace(/\\/g, "/");
+
+  if (!projectDir) return normalizedPath.replace(/^\//, "");
+
+  return resolveRelativePath(normalizedPath, projectDir);
 }
 
 const PAGE_TYPE_EXTENSIONS = new Set(["mdx", "tsx", "jsx", "ts", "js"] as const);
 type PageType = "mdx" | "tsx" | "jsx" | "ts" | "js";
 
 function inferPageType(pagePath?: string): PageType | undefined {
-  if (!pagePath) return undefined;
-  const ext = pagePath.split(".").pop()?.toLowerCase();
-  return ext && PAGE_TYPE_EXTENSIONS.has(ext as PageType) ? (ext as PageType) : undefined;
+  const ext = pagePath?.split(".").pop()?.toLowerCase();
+  if (!ext) return undefined;
+
+  return PAGE_TYPE_EXTENSIONS.has(ext as PageType) ? (ext as PageType) : undefined;
 }
 
 export function generateHydrationData(
@@ -26,12 +29,12 @@ export function generateHydrationData(
   props: ComponentProps,
   options: HTMLGenerationOptions,
 ): string {
-  const layouts = (options.nestedLayouts || [])
-    .map((l) => ({
-      kind: l.kind as "mdx" | "tsx",
-      path: toProjectRelativePath(l.path || l.componentPath || "", options.projectDir),
+  const layouts = (options.nestedLayouts ?? [])
+    .map((layout) => ({
+      kind: layout.kind as "mdx" | "tsx",
+      path: toProjectRelativePath(layout.path ?? layout.componentPath ?? "", options.projectDir),
     }))
-    .filter((l) => l.path !== "");
+    .filter((layout) => layout.path);
 
   const data: HydrationDataStructure = {
     slug: slug || "",

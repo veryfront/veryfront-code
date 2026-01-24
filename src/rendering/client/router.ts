@@ -2,12 +2,14 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import ReactDOM from "react-dom/client";
 import type { Root } from "react-dom/client";
 import type { GlobalWithReactDOM } from "#veryfront/types/global-guards.ts";
-import { extractPageDataFromScript } from "#veryfront/routing";
-import { NavigationHandlers } from "#veryfront/routing";
+import {
+  extractPageDataFromScript,
+  NavigationHandlers,
+  PageLoader,
+  PageTransition,
+  ViewportPrefetch,
+} from "#veryfront/routing";
 import type { RouteData, SpaPageData } from "#veryfront/routing";
-import { PageLoader } from "#veryfront/routing";
-import { PageTransition } from "#veryfront/routing";
-import { ViewportPrefetch } from "#veryfront/routing";
 
 export type SpaNavigationHandler = (data: SpaPageData) => Promise<void>;
 
@@ -18,7 +20,9 @@ declare global {
     veryFrontRouter?: VeryfrontRouter;
   }
 
+  // eslint-disable-next-line no-var
   var __VERYFRONT_ROUTER_OPTS__: Partial<RouterOptions> | undefined;
+  // eslint-disable-next-line no-var
   var __VERYFRONT_SPA_MODE__: boolean | undefined;
 }
 
@@ -63,9 +67,10 @@ export class VeryfrontRouter {
   constructor(options: RouterOptions = {}) {
     const globalOptions = this.loadGlobalOptions();
     this.options = { ...globalOptions, ...options };
-    this.baseUrl = options.baseUrl || globalThis.location.origin;
+
+    this.baseUrl = this.options.baseUrl || globalThis.location.origin;
     this.currentPath = globalThis.location.pathname;
-    this.spaMode = options.spaMode ?? globalThis.__VERYFRONT_SPA_MODE__ ?? false;
+    this.spaMode = this.options.spaMode ?? globalThis.__VERYFRONT_SPA_MODE__ ?? false;
 
     this.pageLoader = new PageLoader();
     this.navigationHandlers = new NavigationHandlers(
@@ -112,7 +117,7 @@ export class VeryfrontRouter {
     }
   }
 
-  init() {
+  init(): void {
     logger.debug("Initializing client-side router");
 
     const rootElement = document.getElementById("root");
@@ -134,9 +139,7 @@ export class VeryfrontRouter {
 
   private cacheCurrentPage(): void {
     const pageData = extractPageDataFromScript();
-    if (pageData) {
-      this.pageLoader.setCache(this.currentPath, pageData);
-    }
+    if (pageData) this.pageLoader.setCache(this.currentPath, pageData);
   }
 
   async navigate(url: string, pushState = true): Promise<void> {
@@ -145,9 +148,7 @@ export class VeryfrontRouter {
     this.navigationHandlers.saveScrollPosition(this.currentPath);
     this.options.onStart?.(url);
 
-    if (pushState) {
-      globalThis.history.pushState({}, "", url);
-    }
+    if (pushState) globalThis.history.pushState({}, "", url);
 
     if (this.spaMode && this.spaNavigationHandler) {
       await this.loadSpaPage(url);
@@ -163,21 +164,16 @@ export class VeryfrontRouter {
 
     try {
       const spaData = await this.pageLoader.loadSpaPageData(path);
-
-      if (this.spaNavigationHandler) {
-        await this.spaNavigationHandler(spaData);
-      }
+      await this.spaNavigationHandler?.(spaData);
 
       this.currentPath = path;
       this.handleScrollAfterNavigation();
       this.options.onComplete?.(path);
     } catch (error) {
-      logger.error(
-        `[Veryfront] Failed to load SPA page ${path}`,
-        error instanceof Error ? error : new Error(String(error)),
-      );
-      this.options.onError?.(error as Error);
-      this.pageTransition.showError(error as Error);
+      const err = error instanceof Error ? error : new Error(String(error));
+      logger.error(`[Veryfront] Failed to load SPA page ${path}`, err);
+      this.options.onError?.(err);
+      this.pageTransition.showError(err);
     }
   }
 
@@ -198,17 +194,13 @@ export class VeryfrontRouter {
     if (this.pageLoader.isCached(path)) {
       logger.debug(`Loading ${path} from cache`);
       const data = this.pageLoader.getCached(path);
-      if (!data) {
-        logger.warn(
-          `[Veryfront] Cache entry for ${path} was unexpectedly null, fetching fresh data`,
-        );
-        // Fall through to fetch fresh data
-      } else {
-        if (updateUI) {
-          this.updatePage(data);
-        }
+
+      if (data) {
+        if (updateUI) this.updatePage(data);
         return;
       }
+
+      logger.warn(`[Veryfront] Cache entry for ${path} was unexpectedly null, fetching fresh data`);
     }
 
     this.pageTransition.setLoadingState(true);
@@ -216,16 +208,15 @@ export class VeryfrontRouter {
     try {
       const data = await this.pageLoader.loadPage(path);
 
-      if (updateUI) {
-        this.updatePage(data);
-      }
+      if (updateUI) this.updatePage(data);
 
       this.currentPath = path;
       this.options.onComplete?.(path);
     } catch (error) {
-      logger.error(`Failed to load ${path}`, error as Error);
-      this.options.onError?.(error as Error);
-      this.pageTransition.showError(error as Error);
+      const err = error as Error;
+      logger.error(`Failed to load ${path}`, err);
+      this.options.onError?.(err);
+      this.pageTransition.showError(err);
     } finally {
       this.pageTransition.setLoadingState(false);
     }
@@ -234,9 +225,9 @@ export class VeryfrontRouter {
   async prefetch(path: string): Promise<void> {
     if (this.spaMode) {
       await this.pageLoader.prefetchSpaPageData(path);
-    } else {
-      await this.pageLoader.prefetch(path);
+      return;
     }
+    await this.pageLoader.prefetch(path);
   }
 
   private updatePage(data: RouteData): void {

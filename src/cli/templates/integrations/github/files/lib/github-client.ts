@@ -4,20 +4,16 @@
  * Provides a type-safe interface to GitHub API operations.
  */
 
-import { tokenStore as _tokenStore } from "./token-store.ts";
 import { getValidToken } from "./oauth.ts";
 
 // Helper for Cross-Platform environment access
 function getEnv(key: string): string | undefined {
   // @ts-ignore - Deno global
-  if (typeof Deno !== "undefined") {
-    // @ts-ignore - Deno global
-    return Deno.env.get(key);
-  } // @ts-ignore - process global
-  else if (typeof process !== "undefined" && process.env) {
-    // @ts-ignore - process global
-    return process.env[key];
-  }
+  if (typeof Deno !== "undefined") return Deno.env.get(key);
+
+  // @ts-ignore - process global
+  if (typeof process !== "undefined" && process.env) return process.env[key];
+
   return undefined;
 }
 
@@ -95,22 +91,43 @@ export const githubOAuthProvider = {
   callbackPath: "/api/auth/github/callback",
 };
 
-/**
- * Create a GitHub client for a specific user
- */
-export function createGitHubClient(userId: string) {
+export function createGitHubClient(userId: string): {
+  listRepos(options?: {
+    sort?: "created" | "updated" | "pushed" | "full_name";
+    perPage?: number;
+    type?: "all" | "owner" | "public" | "private" | "member";
+  }): Promise<GitHubRepo[]>;
+  listPullRequests(
+    owner: string,
+    repo: string,
+    options?: { state?: "open" | "closed" | "all"; perPage?: number },
+  ): Promise<GitHubPullRequest[]>;
+  getPullRequest(owner: string, repo: string, pullNumber: number): Promise<GitHubPullRequest>;
+  getPullRequestDiff(owner: string, repo: string, pullNumber: number): Promise<string>;
+  createIssue(
+    owner: string,
+    repo: string,
+    options: { title: string; body?: string; labels?: string[]; assignees?: string[] },
+  ): Promise<GitHubIssue>;
+  listIssues(
+    owner: string,
+    repo: string,
+    options?: { state?: "open" | "closed" | "all"; perPage?: number },
+  ): Promise<GitHubIssue[]>;
+  listCommits(
+    owner: string,
+    repo: string,
+    options?: { sha?: string; perPage?: number },
+  ): Promise<GitHubCommit[]>;
+  getUser(): Promise<{ login: string; name: string; email: string }>;
+} {
   async function getAccessToken(): Promise<string> {
     const token = await getValidToken(githubOAuthProvider, userId, "github");
-    if (!token) {
-      throw new Error("GitHub not connected. Please connect your GitHub account first.");
-    }
+    if (!token) throw new Error("GitHub not connected. Please connect your GitHub account first.");
     return token;
   }
 
-  async function apiRequest<T>(
-    endpoint: string,
-    options: RequestInit = {},
-  ): Promise<T> {
+  async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const accessToken = await getAccessToken();
 
     const response = await fetch(`${GITHUB_API_BASE}${endpoint}`, {
@@ -132,14 +149,7 @@ export function createGitHubClient(userId: string) {
   }
 
   return {
-    /**
-     * List user's repositories
-     */
-    listRepos(options: {
-      sort?: "created" | "updated" | "pushed" | "full_name";
-      perPage?: number;
-      type?: "all" | "owner" | "public" | "private" | "member";
-    } = {}): Promise<GitHubRepo[]> {
+    listRepos(options = {}): Promise<GitHubRepo[]> {
       const params = new URLSearchParams();
       if (options.sort) params.set("sort", options.sort);
       if (options.perPage) params.set("per_page", String(options.perPage));
@@ -149,17 +159,7 @@ export function createGitHubClient(userId: string) {
       return apiRequest<GitHubRepo[]>(`/user/repos${query ? `?${query}` : ""}`);
     },
 
-    /**
-     * List pull requests for a repository
-     */
-    listPullRequests(
-      owner: string,
-      repo: string,
-      options: {
-        state?: "open" | "closed" | "all";
-        perPage?: number;
-      } = {},
-    ): Promise<GitHubPullRequest[]> {
+    listPullRequests(owner, repo, options = {}): Promise<GitHubPullRequest[]> {
       const params = new URLSearchParams();
       params.set("state", options.state || "open");
       if (options.perPage) params.set("per_page", String(options.perPage));
@@ -169,110 +169,50 @@ export function createGitHubClient(userId: string) {
       );
     },
 
-    /**
-     * Get a single pull request
-     */
-    getPullRequest(
-      owner: string,
-      repo: string,
-      pullNumber: number,
-    ): Promise<GitHubPullRequest> {
-      return apiRequest<GitHubPullRequest>(
-        `/repos/${owner}/${repo}/pulls/${pullNumber}`,
-      );
+    getPullRequest(owner, repo, pullNumber): Promise<GitHubPullRequest> {
+      return apiRequest<GitHubPullRequest>(`/repos/${owner}/${repo}/pulls/${pullNumber}`);
     },
 
-    /**
-     * Get pull request diff
-     */
-    async getPullRequestDiff(
-      owner: string,
-      repo: string,
-      pullNumber: number,
-    ): Promise<string> {
+    async getPullRequestDiff(owner, repo, pullNumber): Promise<string> {
       const accessToken = await getAccessToken();
 
-      const response = await fetch(
-        `${GITHUB_API_BASE}/repos/${owner}/${repo}/pulls/${pullNumber}`,
-        {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            Accept: "application/vnd.github.diff",
-            "X-GitHub-Api-Version": "2022-11-28",
-          },
+      const response = await fetch(`${GITHUB_API_BASE}/repos/${owner}/${repo}/pulls/${pullNumber}`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: "application/vnd.github.diff",
+          "X-GitHub-Api-Version": "2022-11-28",
         },
-      );
+      });
 
-      if (!response.ok) {
-        throw new Error(`GitHub API error: ${response.status}`);
-      }
+      if (!response.ok) throw new Error(`GitHub API error: ${response.status}`);
 
       return response.text();
     },
 
-    /**
-     * Create an issue
-     */
-    createIssue(
-      owner: string,
-      repo: string,
-      options: {
-        title: string;
-        body?: string;
-        labels?: string[];
-        assignees?: string[];
-      },
-    ): Promise<GitHubIssue> {
+    createIssue(owner, repo, options): Promise<GitHubIssue> {
       return apiRequest<GitHubIssue>(`/repos/${owner}/${repo}/issues`, {
         method: "POST",
         body: JSON.stringify(options),
       });
     },
 
-    /**
-     * List issues for a repository
-     */
-    listIssues(
-      owner: string,
-      repo: string,
-      options: {
-        state?: "open" | "closed" | "all";
-        perPage?: number;
-      } = {},
-    ): Promise<GitHubIssue[]> {
+    listIssues(owner, repo, options = {}): Promise<GitHubIssue[]> {
       const params = new URLSearchParams();
       params.set("state", options.state || "open");
       if (options.perPage) params.set("per_page", String(options.perPage));
 
-      return apiRequest<GitHubIssue[]>(
-        `/repos/${owner}/${repo}/issues?${params.toString()}`,
-      );
+      return apiRequest<GitHubIssue[]>(`/repos/${owner}/${repo}/issues?${params.toString()}`);
     },
 
-    /**
-     * List commits for a repository
-     */
-    listCommits(
-      owner: string,
-      repo: string,
-      options: {
-        sha?: string;
-        perPage?: number;
-      } = {},
-    ): Promise<GitHubCommit[]> {
+    listCommits(owner, repo, options = {}): Promise<GitHubCommit[]> {
       const params = new URLSearchParams();
       if (options.sha) params.set("sha", options.sha);
       if (options.perPage) params.set("per_page", String(options.perPage));
 
       const query = params.toString();
-      return apiRequest<GitHubCommit[]>(
-        `/repos/${owner}/${repo}/commits${query ? `?${query}` : ""}`,
-      );
+      return apiRequest<GitHubCommit[]>(`/repos/${owner}/${repo}/commits${query ? `?${query}` : ""}`);
     },
 
-    /**
-     * Get authenticated user
-     */
     getUser(): Promise<{ login: string; name: string; email: string }> {
       return apiRequest("/user");
     },

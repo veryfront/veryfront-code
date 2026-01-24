@@ -1,8 +1,8 @@
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { Heading, Root } from "mdast";
 import { VFile } from "vfile";
 import { remarkMdxHeadings } from "./remark-headings.ts";
-import type { Heading, Root } from "mdast";
 
 interface HeadingEntry {
   text: string;
@@ -13,6 +13,7 @@ interface HeadingEntry {
 function isHeadingEntry(value: unknown): value is HeadingEntry {
   if (typeof value !== "object" || value === null) return false;
   if (!("text" in value) || !("id" in value) || !("level" in value)) return false;
+
   return (
     typeof value.text === "string" &&
     typeof value.id === "string" &&
@@ -27,6 +28,10 @@ function expectHeadings(file: VFile): HeadingEntry[] {
   return headings;
 }
 
+function runPlugin(tree: Root, file: VFile): void {
+  remarkMdxHeadings()(tree, file);
+}
+
 function createHeading(depth: number, text: string): Heading {
   return {
     type: "heading",
@@ -36,10 +41,7 @@ function createHeading(depth: number, text: string): Heading {
 }
 
 function createTree(...headings: Heading[]): Root {
-  return {
-    type: "root",
-    children: headings,
-  };
+  return { type: "root", children: headings };
 }
 
 describe("remark-headings", () => {
@@ -47,11 +49,11 @@ describe("remark-headings", () => {
     const tree = createTree(createHeading(1, "Hello World"));
     const file = new VFile();
 
-    const plugin = remarkMdxHeadings();
-    plugin(tree, file);
+    runPlugin(tree, file);
 
     const headings = expectHeadings(file);
     assertEquals(headings.length, 1);
+
     const first = headings[0];
     assertExists(first);
     assertEquals(first.text, "Hello World");
@@ -67,14 +69,12 @@ describe("remark-headings", () => {
     );
     const file = new VFile();
 
-    const plugin = remarkMdxHeadings();
-    plugin(tree, file);
+    runPlugin(tree, file);
 
     const headings = expectHeadings(file);
     assertEquals(headings.length, 3);
-    const first = headings[0];
-    const second = headings[1];
-    const third = headings[2];
+
+    const [first, second, third] = headings;
     assertExists(first);
     assertExists(second);
     assertExists(third);
@@ -91,13 +91,10 @@ describe("remark-headings", () => {
     );
     const file = new VFile();
 
-    const plugin = remarkMdxHeadings();
-    plugin(tree, file);
+    runPlugin(tree, file);
 
     const headings = expectHeadings(file);
-    const first = headings[0];
-    const second = headings[1];
-    const third = headings[2];
+    const [first, second, third] = headings;
     assertExists(first);
     assertExists(second);
     assertExists(third);
@@ -114,13 +111,10 @@ describe("remark-headings", () => {
     );
     const file = new VFile();
 
-    const plugin = remarkMdxHeadings();
-    plugin(tree, file);
+    runPlugin(tree, file);
 
     const headings = expectHeadings(file);
-    const first = headings[0];
-    const second = headings[1];
-    const third = headings[2];
+    const [first, second, third] = headings;
     assertExists(first);
     assertExists(second);
     assertExists(third);
@@ -130,14 +124,10 @@ describe("remark-headings", () => {
   });
 
   it("handles empty content", () => {
-    const tree: Root = {
-      type: "root",
-      children: [],
-    };
+    const tree: Root = { type: "root", children: [] };
     const file = new VFile();
 
-    const plugin = remarkMdxHeadings();
-    plugin(tree, file);
+    runPlugin(tree, file);
 
     const headings = expectHeadings(file);
     assertEquals(headings.length, 0);
@@ -145,16 +135,17 @@ describe("remark-headings", () => {
 
   it("adds ID to heading data", () => {
     type HeadingData = { hProperties?: { id?: string } };
+
     const heading = createHeading(1, "Test Heading");
     const tree = createTree(heading);
     const file = new VFile();
 
-    const plugin = remarkMdxHeadings();
-    plugin(tree, file);
+    runPlugin(tree, file);
 
     assertExists(heading.data);
-    assertExists((heading.data as HeadingData).hProperties);
-    assertEquals((heading.data as HeadingData).hProperties?.id, "test-heading");
+    const data = heading.data as HeadingData;
+    assertExists(data.hProperties);
+    assertEquals(data.hProperties?.id, "test-heading");
   });
 
   it("preserves heading levels", () => {
@@ -168,8 +159,7 @@ describe("remark-headings", () => {
     );
     const file = new VFile();
 
-    const plugin = remarkMdxHeadings();
-    plugin(tree, file);
+    runPlugin(tree, file);
 
     const headings = expectHeadings(file);
     for (let i = 0; i < headings.length; i++) {
@@ -181,13 +171,13 @@ describe("remark-headings", () => {
 
   it("exports headings as MDX variable", () => {
     type MdxNode = { type: string };
+
     const tree = createTree(createHeading(1, "Export Test"));
     const file = new VFile();
 
-    const plugin = remarkMdxHeadings();
-    plugin(tree, file);
+    runPlugin(tree, file);
 
-    assertEquals(tree.children.length, 2); // original heading + export
+    assertEquals(tree.children.length, 2);
     assertEquals((tree.children[0] as MdxNode).type, "mdxjsEsm");
   });
 
@@ -200,18 +190,20 @@ describe("remark-headings", () => {
         };
       };
     };
+
     const tree = createTree(createHeading(1, "Estree Test"));
     const file = new VFile();
 
-    const plugin = remarkMdxHeadings();
-    plugin(tree, file);
+    runPlugin(tree, file);
 
     const exportNode = tree.children[0] as MdxExportNode;
     assertExists(exportNode.data);
     assertExists(exportNode.data.estree);
     assertEquals(exportNode.data.estree?.type, "Program");
+
     const body = exportNode.data.estree?.body;
     assertExists(body);
+
     const firstStatement = body[0];
     assertExists(firstStatement);
     assertEquals(firstStatement.type, "ExportNamedDeclaration");
@@ -230,8 +222,7 @@ describe("remark-headings", () => {
     const tree = createTree(heading);
     const file = new VFile();
 
-    const plugin = remarkMdxHeadings();
-    plugin(tree, file);
+    runPlugin(tree, file);
 
     const headings = expectHeadings(file);
     const first = headings[0];
@@ -244,12 +235,10 @@ describe("remark-headings", () => {
     const tree = createTree(createHeading(1, "Data Init Test"));
     const file = new VFile();
 
-    const plugin = remarkMdxHeadings();
-    plugin(tree, file);
+    runPlugin(tree, file);
 
     assertExists(file.data);
-    const headings = file.data.headings;
-    assert(Array.isArray(headings));
+    assert(Array.isArray(file.data.headings));
   });
 
   it("handles nested content in headings", () => {
@@ -266,8 +255,7 @@ describe("remark-headings", () => {
     const tree = createTree(heading);
     const file = new VFile();
 
-    const plugin = remarkMdxHeadings();
-    plugin(tree, file);
+    runPlugin(tree, file);
 
     const headings = expectHeadings(file);
     const first = headings[0];
@@ -279,18 +267,15 @@ describe("remark-headings", () => {
   it("resets slugger between runs", () => {
     const tree1 = createTree(createHeading(1, "Same"));
     const file1 = new VFile();
-
-    const plugin1 = remarkMdxHeadings();
-    plugin1(tree1, file1);
+    runPlugin(tree1, file1);
 
     const tree2 = createTree(createHeading(1, "Same"));
     const file2 = new VFile();
-
-    const plugin2 = remarkMdxHeadings();
-    plugin2(tree2, file2);
+    runPlugin(tree2, file2);
 
     const headings1 = expectHeadings(file1);
     const headings2 = expectHeadings(file2);
+
     const first1 = headings1[0];
     const first2 = headings2[0];
     assertExists(first1);
@@ -307,13 +292,10 @@ describe("remark-headings", () => {
     );
     const file = new VFile();
 
-    const plugin = remarkMdxHeadings();
-    plugin(tree, file);
+    runPlugin(tree, file);
 
     const headings = expectHeadings(file);
-    const first = headings[0];
-    const second = headings[1];
-    const third = headings[2];
+    const [first, second, third] = headings;
     assertExists(first);
     assertExists(second);
     assertExists(third);
@@ -324,17 +306,17 @@ describe("remark-headings", () => {
 
   it("preserves existing heading data", () => {
     type CustomHeadingData = { customProp?: string; hProperties?: { id?: string } };
+
     const heading = createHeading(1, "Existing Data");
-    (heading as unknown as { data: CustomHeadingData }).data = {
-      customProp: "value",
-    };
+    (heading as { data: CustomHeadingData }).data = { customProp: "value" };
+
     const tree = createTree(heading);
     const file = new VFile();
 
-    const plugin = remarkMdxHeadings();
-    plugin(tree, file);
+    runPlugin(tree, file);
 
-    assertEquals((heading.data as CustomHeadingData).customProp, "value");
-    assertExists((heading.data as CustomHeadingData).hProperties);
+    const data = heading.data as CustomHeadingData;
+    assertEquals(data.customProp, "value");
+    assertExists(data.hProperties);
   });
 });

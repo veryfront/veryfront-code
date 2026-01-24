@@ -7,6 +7,10 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { agentStep, step, toolStep } from "./step.ts";
 import type { StepNodeConfig } from "../types.ts";
 
+function getConfig(node: { config: unknown }): StepNodeConfig {
+  return node.config as StepNodeConfig;
+}
+
 describe("step()", () => {
   it("should create an agent step", () => {
     const node = step("research", {
@@ -17,7 +21,7 @@ describe("step()", () => {
     assertEquals(node.id, "research");
     assertEquals(node.config.type, "step");
 
-    const config = node.config as StepNodeConfig;
+    const config = getConfig(node);
     assertEquals(config.agent, "researcher");
     assertEquals(config.input, "Research AI safety");
   });
@@ -31,7 +35,7 @@ describe("step()", () => {
     assertEquals(node.id, "fetch-data");
     assertEquals(node.config.type, "step");
 
-    const config = node.config as StepNodeConfig;
+    const config = getConfig(node);
     assertEquals(config.tool, "dataFetcher");
     assertEquals(config.input, { url: "https://api.example.com" });
   });
@@ -76,8 +80,7 @@ describe("step()", () => {
       input: (ctx) => ctx["previous"],
     });
 
-    const config = node.config as StepNodeConfig;
-    assertEquals(typeof config.input, "function");
+    assertEquals(typeof getConfig(node).input, "function");
   });
 });
 
@@ -89,7 +92,8 @@ describe("agentStep()", () => {
     });
 
     assertEquals(node.id, "research");
-    const config = node.config as StepNodeConfig;
+
+    const config = getConfig(node);
     assertEquals(config.agent, "researcher");
     assertEquals(config.input, "Research topic");
     assertEquals(config.timeout, "10m");
@@ -99,8 +103,7 @@ describe("agentStep()", () => {
     const node = agentStep("simple", "my-agent");
 
     assertEquals(node.id, "simple");
-    const config = node.config as StepNodeConfig;
-    assertEquals(config.agent, "my-agent");
+    assertEquals(getConfig(node).agent, "my-agent");
   });
 });
 
@@ -111,7 +114,8 @@ describe("toolStep()", () => {
     });
 
     assertEquals(node.id, "fetch");
-    const config = node.config as StepNodeConfig;
+
+    const config = getConfig(node);
     assertEquals(config.tool, "dataFetcher");
     assertEquals(config.input, { url: "https://example.com" });
   });

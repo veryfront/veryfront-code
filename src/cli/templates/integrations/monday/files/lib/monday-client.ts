@@ -52,7 +52,7 @@ interface MondayUser {
   };
 }
 
-async function mondayFetch<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
+async function mondayFetch<T>(query: string, variables: Record<string, unknown> = {}): Promise<T> {
   const token = await getAccessToken();
   if (!token) {
     throw new Error("Not authenticated with Monday.com. Please connect your account.");
@@ -61,14 +61,11 @@ async function mondayFetch<T>(query: string, variables?: Record<string, unknown>
   const response = await fetch(MONDAY_API_URL, {
     method: "POST",
     headers: {
-      "Authorization": token,
+      Authorization: token,
       "Content-Type": "application/json",
       "API-Version": "2024-10",
     },
-    body: JSON.stringify({
-      query,
-      variables: variables || {},
-    }),
+    body: JSON.stringify({ query, variables }),
   });
 
   if (!response.ok) {
@@ -76,9 +73,9 @@ async function mondayFetch<T>(query: string, variables?: Record<string, unknown>
   }
 
   const result: MondayResponse<T> = await response.json();
-
-  if (result.errors && result.errors.length > 0) {
-    throw new Error(`Monday.com GraphQL error: ${result.errors[0].message}`);
+  const errorMessage = result.errors?.[0]?.message;
+  if (errorMessage) {
+    throw new Error(`Monday.com GraphQL error: ${errorMessage}`);
   }
 
   return result.data;
@@ -108,14 +105,14 @@ export async function listBoards(options?: {
   page?: number;
   workspaceIds?: string[];
 }): Promise<MondayBoard[]> {
-  const limit = options?.limit || 50;
-  const page = options?.page || 1;
+  const limit = options?.limit ?? 50;
+  const page = options?.page ?? 1;
 
-  let workspaceFilter = "";
-  if (options?.workspaceIds && options.workspaceIds.length > 0) {
-    const ids = options.workspaceIds.map((id) => parseInt(id, 10));
-    workspaceFilter = `, workspace_ids: [${ids.join(",")}]`;
-  }
+  const workspaceIds = options?.workspaceIds?.length
+    ? options.workspaceIds.map((id) => parseInt(id, 10))
+    : null;
+
+  const workspaceFilter = workspaceIds ? `, workspace_ids: [${workspaceIds.join(",")}]` : "";
 
   const query = `
     query {
@@ -149,10 +146,11 @@ export async function getBoard(boardId: string): Promise<MondayBoard> {
   `;
 
   const data = await mondayFetch<{ boards: MondayBoard[] }>(query);
-  if (!data.boards || data.boards.length === 0) {
+  const board = data.boards?.[0];
+  if (!board) {
     throw new Error(`Board with ID ${boardId} not found`);
   }
-  return data.boards[0];
+  return board;
 }
 
 export async function listItems(options: {
@@ -160,8 +158,8 @@ export async function listItems(options: {
   limit?: number;
   page?: number;
 }): Promise<MondayItem[]> {
-  const limit = options.limit || 50;
-  const page = options.page || 1;
+  const limit = options.limit ?? 50;
+  const page = options.page ?? 1;
 
   const query = `
     query {
@@ -195,10 +193,7 @@ export async function listItems(options: {
   `;
 
   const data = await mondayFetch<{ boards: Array<{ items_page: { items: MondayItem[] } }> }>(query);
-  if (!data.boards || data.boards.length === 0) {
-    return [];
-  }
-  return data.boards[0].items_page.items;
+  return data.boards?.[0]?.items_page.items ?? [];
 }
 
 export async function getItem(itemId: string): Promise<MondayItem> {
@@ -230,10 +225,11 @@ export async function getItem(itemId: string): Promise<MondayItem> {
   `;
 
   const data = await mondayFetch<{ items: MondayItem[] }>(query);
-  if (!data.items || data.items.length === 0) {
+  const item = data.items?.[0];
+  if (!item) {
     throw new Error(`Item with ID ${itemId} not found`);
   }
-  return data.items[0];
+  return item;
 }
 
 export async function createItem(options: {
@@ -282,8 +278,6 @@ export async function updateItem(
     name?: string;
   },
 ): Promise<MondayItem> {
-  let mutation = "";
-
   if (updates.name) {
     const nameQuery = `
       mutation {
@@ -302,7 +296,7 @@ export async function updateItem(
 
   if (updates.columnValues) {
     const columnValuesStr = JSON.stringify(JSON.stringify(updates.columnValues));
-    mutation = `
+    const query = `
       mutation {
         change_multiple_column_values(
           item_id: ${itemId},
@@ -321,9 +315,9 @@ export async function updateItem(
         }
       }
     `;
-    const data = await mondayFetch<{ change_multiple_column_values: MondayItem }>(mutation);
+    const data = await mondayFetch<{ change_multiple_column_values: MondayItem }>(query);
     return data.change_multiple_column_values;
   }
 
-  return await getItem(itemId);
+  return getItem(itemId);
 }

@@ -97,28 +97,23 @@ export function toError(veryfrontError: VeryfrontError): Error {
 }
 
 export function fromError(error: unknown): VeryfrontError | null {
-  if (error && typeof error === "object" && "context" in error) {
-    // Safe access after 'in' check
-    const context = (error as Record<string, unknown>).context;
-    if (
-      context &&
-      typeof context === "object" &&
-      "type" in context &&
-      "message" in context
-    ) {
-      return context as VeryfrontError;
-    }
-  }
-  return null;
+  if (!error || typeof error !== "object" || !("context" in error)) return null;
+
+  const context = (error as { context?: unknown }).context;
+  if (!context || typeof context !== "object") return null;
+
+  if (!("type" in context) || !("message" in context)) return null;
+
+  return context as VeryfrontError;
 }
 
 export function logError(
   error: VeryfrontError,
   logger?: { error: (msg: string, ...args: unknown[]) => void },
 ): void {
-  const log = logger || console;
-  const context = "context" in error ? error.context || {} : {};
-  log.error(`[${error.type}] ${error.message}`, context);
+  const log = logger ?? console;
+  const context = "context" in error ? error.context : {};
+  log.error(`[${error.type}] ${error.message}`, context ?? {});
 }
 
 /**

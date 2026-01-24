@@ -22,45 +22,48 @@ export function generateVariant(
   quality: number,
   outputDir: string,
 ): Promise<ImageVariant | null> {
-  return withSpan("build.asset.generateVariant", async () => {
-    const fs = createFileSystem();
-    try {
-      const outputPath = getVariantPath(outputDir, relPath, format, width);
-      await fs.mkdir(dirname(outputPath), { recursive: true });
+  return withSpan(
+    "build.asset.generateVariant",
+    async () => {
+      const fs = createFileSystem();
 
-      const processor = image.clone().resize(width, null, {
-        fit: "inside",
-        withoutEnlargement: true,
-      });
+      try {
+        const outputPath = getVariantPath(outputDir, relPath, format, width);
+        await fs.mkdir(dirname(outputPath), { recursive: true });
 
-      const formattedProcessor = processFormat(processor, format, quality);
-      const buffer = await formattedProcessor.toBuffer();
-      await fs.writeFile(outputPath, buffer);
+        const processor = image.clone().resize(width, null, {
+          fit: "inside",
+          withoutEnlargement: true,
+        });
 
-      const processedMetadata = await sharp(buffer).metadata();
+        const buffer = await processFormat(processor, format, quality).toBuffer();
+        await fs.writeFile(outputPath, buffer);
 
-      return {
-        format,
-        size: width,
-        width: processedMetadata.width || width,
-        height: processedMetadata.height || Math.round(
-          width / calculateAspectRatio(metadata.width, metadata.height),
-        ),
-        path: relative(outputDir, outputPath),
-        fileSize: buffer.length,
-      };
-    } catch (error) {
-      logger.error(`Failed to generate ${format} variant at ${width}px`, {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return null;
-    }
-  }, {
-    "image.path": relPath,
-    "image.format": format,
-    "image.width": width,
-    "image.quality": quality,
-  });
+        const processedMetadata = await sharp(buffer).metadata();
+        const aspectRatio = calculateAspectRatio(metadata.width, metadata.height);
+
+        return {
+          format,
+          size: width,
+          width: processedMetadata.width || width,
+          height: processedMetadata.height || Math.round(width / aspectRatio),
+          path: relative(outputDir, outputPath),
+          fileSize: buffer.length,
+        };
+      } catch (error) {
+        logger.error(`Failed to generate ${format} variant at ${width}px`, {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return null;
+      }
+    },
+    {
+      "image.path": relPath,
+      "image.format": format,
+      "image.width": width,
+      "image.quality": quality,
+    },
+  );
 }
 
 export function generateImageVariants(
@@ -73,36 +76,38 @@ export function generateImageVariants(
   quality: number,
   outputDir: string,
 ): Promise<ImageVariant[]> {
-  return withSpan("build.asset.generateImageVariants", async () => {
-    const variants: ImageVariant[] = [];
-    const originalWidth = metadata.width || 1920;
+  return withSpan(
+    "build.asset.generateImageVariants",
+    async () => {
+      const variants: ImageVariant[] = [];
+      const originalWidth = metadata.width || 1920;
 
-    // Filter sizes smaller than original, then add original width
-    const validSizes = sizes.filter((size) => !metadata.width || metadata.width >= size);
-    const allSizes = [...validSizes, originalWidth];
+      const validSizes = sizes.filter((size) => !metadata.width || metadata.width >= size);
+      const allSizes = [...validSizes, originalWidth];
 
-    for (const size of allSizes) {
-      for (const format of formats) {
-        const variant = await generateVariant(
-          sharp,
-          image,
-          relPath,
-          format,
-          size,
-          metadata,
-          quality,
-          outputDir,
-        );
-        if (variant) {
-          variants.push(variant);
+      for (const size of allSizes) {
+        for (const format of formats) {
+          const variant = await generateVariant(
+            sharp,
+            image,
+            relPath,
+            format,
+            size,
+            metadata,
+            quality,
+            outputDir,
+          );
+
+          if (variant) variants.push(variant);
         }
       }
-    }
 
-    return variants;
-  }, {
-    "image.path": relPath,
-    "image.formats": formats.join(","),
-    "image.sizesCount": sizes.length,
-  });
+      return variants;
+    },
+    {
+      "image.path": relPath,
+      "image.formats": formats.join(","),
+      "image.sizesCount": sizes.length,
+    },
+  );
 }

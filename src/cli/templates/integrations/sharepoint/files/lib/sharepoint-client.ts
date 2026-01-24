@@ -2,7 +2,6 @@ import { getAccessToken } from "./token-store.ts";
 
 const GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0";
 
-// Type definitions for SharePoint responses
 export interface SharePointSite {
   id: string;
   name: string;
@@ -72,98 +71,67 @@ interface GraphResponse<T> {
   "@odata.nextLink"?: string;
 }
 
-async function graphFetch<T>(
-  endpoint: string,
-  options: RequestInit = {},
-): Promise<T> {
+async function requireAccessToken(): Promise<string> {
   const token = await getAccessToken();
   if (!token) {
     throw new Error("Not authenticated with Microsoft. Please connect your account.");
   }
+  return token;
+}
+
+async function graphFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  const token = await requireAccessToken();
 
   const response = await fetch(`${GRAPH_BASE_URL}${endpoint}`, {
     ...options,
     headers: {
-      "Authorization": `Bearer ${token}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
-      ...options.headers,
+      ...(options.headers ?? {}),
     },
   });
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
     throw new Error(
-      `Microsoft Graph API error: ${response.status} ${
-        error.error?.message || response.statusText
-      }`,
+      `Microsoft Graph API error: ${response.status} ${error.error?.message || response.statusText}`,
     );
   }
 
   return response.json();
 }
 
-/**
- * List all SharePoint sites the user has access to
- */
 export async function listSites(options?: {
   search?: string;
   limit?: number;
 }): Promise<SharePointSite[]> {
-  let endpoint = "/sites?search=*";
-
-  if (options?.search) {
-    endpoint = `/sites?search=${encodeURIComponent(options.search)}`;
-  }
+  const endpoint = options?.search
+    ? `/sites?search=${encodeURIComponent(options.search)}`
+    : "/sites?search=*";
 
   const response = await graphFetch<GraphResponse<SharePointSite>>(endpoint);
-  const sites = response.value || [];
+  const sites = response.value ?? [];
 
-  if (options?.limit) {
-    return sites.slice(0, options.limit);
-  }
-
-  return sites;
+  return options?.limit ? sites.slice(0, options.limit) : sites;
 }
 
-/**
- * Get details about a specific SharePoint site
- */
 export function getSite(siteId: string): Promise<SharePointSite> {
   return graphFetch<SharePointSite>(`/sites/${siteId}`);
 }
 
-/**
- * Get a site by hostname and path
- */
-export function getSiteByPath(
-  hostname: string,
-  sitePath: string,
-): Promise<SharePointSite> {
-  return graphFetch<SharePointSite>(
-    `/sites/${hostname}:${sitePath}`,
-  );
+export function getSiteByPath(hostname: string, sitePath: string): Promise<SharePointSite> {
+  return graphFetch<SharePointSite>(`/sites/${hostname}:${sitePath}`);
 }
 
-/**
- * List all document libraries (drives) in a site
- */
 export async function listDrives(siteId: string): Promise<SharePointDrive[]> {
-  const response = await graphFetch<GraphResponse<SharePointDrive>>(
-    `/sites/${siteId}/drives`,
-  );
-  return response.value || [];
+  const response = await graphFetch<GraphResponse<SharePointDrive>>(`/sites/${siteId}/drives`);
+  return response.value ?? [];
 }
 
-/**
- * Get the default document library for a site
- */
 export function getDefaultDrive(siteId: string): Promise<SharePointDrive> {
   return graphFetch<SharePointDrive>(`/sites/${siteId}/drive`);
 }
 
-/**
- * List files and folders in a drive or folder
- */
 export async function listFiles(
   siteId: string,
   driveId: string,
@@ -173,71 +141,41 @@ export async function listFiles(
     orderBy?: string;
   },
 ): Promise<SharePointFile[]> {
-  let endpoint = folderId
+  const baseEndpoint = folderId
     ? `/sites/${siteId}/drives/${driveId}/items/${folderId}/children`
     : `/sites/${siteId}/drives/${driveId}/root/children`;
 
-  if (options?.orderBy) {
-    endpoint += `?$orderby=${options.orderBy}`;
-  }
+  const params = new URLSearchParams();
+  if (options?.orderBy) params.set("$orderby", options.orderBy);
+  if (options?.limit) params.set("$top", String(options.limit));
 
-  if (options?.limit) {
-    endpoint += `${options.orderBy ? "&" : "?"}$top=${options.limit}`;
-  }
+  const endpoint = params.toString() ? `${baseEndpoint}?${params.toString()}` : baseEndpoint;
 
   const response = await graphFetch<GraphResponse<SharePointFile>>(endpoint);
-  return response.value || [];
+  return response.value ?? [];
 }
 
-/**
- * Get file metadata
- */
-export function getFile(
-  siteId: string,
-  driveId: string,
-  itemId: string,
-): Promise<SharePointFile> {
-  return graphFetch<SharePointFile>(
-    `/sites/${siteId}/drives/${driveId}/items/${itemId}`,
-  );
+export function getFile(siteId: string, driveId: string, itemId: string): Promise<SharePointFile> {
+  return graphFetch<SharePointFile>(`/sites/${siteId}/drives/${driveId}/items/${itemId}`);
 }
 
-/**
- * Get file by path
- */
-export function getFileByPath(
-  siteId: string,
-  driveId: string,
-  path: string,
-): Promise<SharePointFile> {
+export function getFileByPath(siteId: string, driveId: string, path: string): Promise<SharePointFile> {
   const encodedPath = encodeURIComponent(path);
-  return graphFetch<SharePointFile>(
-    `/sites/${siteId}/drives/${driveId}/root:/${encodedPath}`,
-  );
+  return graphFetch<SharePointFile>(`/sites/${siteId}/drives/${driveId}/root:/${encodedPath}`);
 }
 
-/**
- * Download file content
- */
 export async function downloadFile(
   siteId: string,
   driveId: string,
   itemId: string,
 ): Promise<ArrayBuffer> {
-  const token = await getAccessToken();
-  if (!token) {
-    throw new Error("Not authenticated with Microsoft. Please connect your account.");
-  }
+  const token = await requireAccessToken();
 
-  const _metadata = await getFile(siteId, driveId, itemId);
+  await getFile(siteId, driveId, itemId);
 
-  // Get download URL
   const downloadUrl = `${GRAPH_BASE_URL}/sites/${siteId}/drives/${driveId}/items/${itemId}/content`;
-
   const response = await fetch(downloadUrl, {
-    headers: {
-      "Authorization": `Bearer ${token}`,
-    },
+    headers: { Authorization: `Bearer ${token}` },
   });
 
   if (!response.ok) {
@@ -247,9 +185,6 @@ export async function downloadFile(
   return response.arrayBuffer();
 }
 
-/**
- * Download file content as text
- */
 export async function downloadFileAsText(
   siteId: string,
   driveId: string,
@@ -259,9 +194,6 @@ export async function downloadFileAsText(
   return new TextDecoder().decode(buffer);
 }
 
-/**
- * Upload a file to a folder
- */
 export async function uploadFile(
   siteId: string,
   driveId: string,
@@ -269,10 +201,7 @@ export async function uploadFile(
   content: string | ArrayBuffer | Blob,
   folderId?: string,
 ): Promise<SharePointFile> {
-  const token = await getAccessToken();
-  if (!token) {
-    throw new Error("Not authenticated with Microsoft. Please connect your account.");
-  }
+  const token = await requireAccessToken();
 
   const encodedFileName = encodeURIComponent(fileName);
   const endpoint = folderId
@@ -291,7 +220,7 @@ export async function uploadFile(
   const response = await fetch(`${GRAPH_BASE_URL}${endpoint}`, {
     method: "PUT",
     headers: {
-      "Authorization": `Bearer ${token}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/octet-stream",
     },
     body,
@@ -299,17 +228,12 @@ export async function uploadFile(
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(
-      `Failed to upload file: ${error.error?.message || response.statusText}`,
-    );
+    throw new Error(`Failed to upload file: ${error.error?.message || response.statusText}`);
   }
 
   return response.json();
 }
 
-/**
- * Create a folder
- */
 export function createFolder(
   siteId: string,
   driveId: string,
@@ -330,9 +254,6 @@ export function createFolder(
   });
 }
 
-/**
- * Search for files in a site
- */
 export async function searchFiles(
   siteId: string,
   query: string,
@@ -340,33 +261,17 @@ export async function searchFiles(
     limit?: number;
   },
 ): Promise<SharePointFile[]> {
-  let endpoint = `/sites/${siteId}/drive/root/search(q='${encodeURIComponent(query)}')`;
-
-  if (options?.limit) {
-    endpoint += `?$top=${options.limit}`;
-  }
+  const baseEndpoint = `/sites/${siteId}/drive/root/search(q='${encodeURIComponent(query)}')`;
+  const endpoint = options?.limit ? `${baseEndpoint}?$top=${options.limit}` : baseEndpoint;
 
   const response = await graphFetch<GraphResponse<SharePointFile>>(endpoint);
-  return response.value || [];
+  return response.value ?? [];
 }
 
-/**
- * Delete a file or folder
- */
-export async function deleteItem(
-  siteId: string,
-  driveId: string,
-  itemId: string,
-): Promise<void> {
-  await graphFetch<void>(
-    `/sites/${siteId}/drives/${driveId}/items/${itemId}`,
-    { method: "DELETE" },
-  );
+export async function deleteItem(siteId: string, driveId: string, itemId: string): Promise<void> {
+  await graphFetch<void>(`/sites/${siteId}/drives/${driveId}/items/${itemId}`, { method: "DELETE" });
 }
 
-/**
- * Move or rename a file or folder
- */
 export function moveItem(
   siteId: string,
   driveId: string,
@@ -376,24 +281,15 @@ export function moveItem(
 ): Promise<SharePointFile> {
   const body: { parentReference: { id: string }; name?: string } = {
     parentReference: { id: newParentId },
+    ...(newName ? { name: newName } : {}),
   };
 
-  if (newName) {
-    body.name = newName;
-  }
-
-  return graphFetch<SharePointFile>(
-    `/sites/${siteId}/drives/${driveId}/items/${itemId}`,
-    {
-      method: "PATCH",
-      body: JSON.stringify(body),
-    },
-  );
+  return graphFetch<SharePointFile>(`/sites/${siteId}/drives/${driveId}/items/${itemId}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
 }
 
-/**
- * Copy a file or folder
- */
 export async function copyItem(
   siteId: string,
   driveId: string,
@@ -403,18 +299,11 @@ export async function copyItem(
 ): Promise<void> {
   const body: { parentReference: { driveId: string; id: string }; name?: string } = {
     parentReference: { driveId, id: newParentId },
+    ...(newName ? { name: newName } : {}),
   };
 
-  if (newName) {
-    body.name = newName;
-  }
-
-  // Copy is async, returns 202 Accepted with a Location header
-  await graphFetch<void>(
-    `/sites/${siteId}/drives/${driveId}/items/${itemId}/copy`,
-    {
-      method: "POST",
-      body: JSON.stringify(body),
-    },
-  );
+  await graphFetch<void>(`/sites/${siteId}/drives/${driveId}/items/${itemId}/copy`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }

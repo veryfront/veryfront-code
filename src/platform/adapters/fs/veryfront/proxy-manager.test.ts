@@ -2,6 +2,24 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ProxyFSAdapterManager } from "./proxy-manager.ts";
 
+const baseConfig = {
+  veryfront: {
+    baseUrl: "https://api.example.com",
+    apiToken: "test-token",
+    projectSlug: "test-project",
+    cache: { enabled: false },
+  },
+};
+
+function createManager(
+  options: Partial<ConstructorParameters<typeof ProxyFSAdapterManager>[0]> = {},
+): ProxyFSAdapterManager {
+  return new ProxyFSAdapterManager({
+    baseConfig,
+    ...options,
+  });
+}
+
 describe("ProxyFSAdapterManager", () => {
   describe("class", () => {
     it("should export ProxyFSAdapterManager class", () => {
@@ -12,48 +30,19 @@ describe("ProxyFSAdapterManager", () => {
 
   describe("instance", () => {
     it("should be instantiable with minimal config", () => {
-      const manager = new ProxyFSAdapterManager({
-        baseConfig: {
-          veryfront: {
-            baseUrl: "https://api.example.com",
-            apiToken: "test-token",
-            projectSlug: "test-project",
-            cache: { enabled: false },
-          },
-        },
-      });
+      const manager = createManager();
       assertExists(manager);
       manager.dispose();
     });
 
     it("should accept maxAdapters option", () => {
-      const manager = new ProxyFSAdapterManager({
-        baseConfig: {
-          veryfront: {
-            baseUrl: "https://api.example.com",
-            apiToken: "test-token",
-            projectSlug: "test-project",
-            cache: { enabled: false },
-          },
-        },
-        maxAdapters: 50,
-      });
+      const manager = createManager({ maxAdapters: 50 });
       assertExists(manager);
       manager.dispose();
     });
 
     it("should accept maxIdleMs option", () => {
-      const manager = new ProxyFSAdapterManager({
-        baseConfig: {
-          veryfront: {
-            baseUrl: "https://api.example.com",
-            apiToken: "test-token",
-            projectSlug: "test-project",
-            cache: { enabled: false },
-          },
-        },
-        maxIdleMs: 60000,
-      });
+      const manager = createManager({ maxIdleMs: 60000 });
       assertExists(manager);
       manager.dispose();
     });
@@ -61,64 +50,28 @@ describe("ProxyFSAdapterManager", () => {
 
   describe("methods", () => {
     it("should have getAdapter method", () => {
-      const manager = new ProxyFSAdapterManager({
-        baseConfig: {
-          veryfront: {
-            baseUrl: "https://api.example.com",
-            apiToken: "test-token",
-            projectSlug: "test-project",
-            cache: { enabled: false },
-          },
-        },
-      });
+      const manager = createManager();
       assertExists(manager.getAdapter);
       assertEquals(typeof manager.getAdapter, "function");
       manager.dispose();
     });
 
     it("should have hasAdapter method", () => {
-      const manager = new ProxyFSAdapterManager({
-        baseConfig: {
-          veryfront: {
-            baseUrl: "https://api.example.com",
-            apiToken: "test-token",
-            projectSlug: "test-project",
-            cache: { enabled: false },
-          },
-        },
-      });
+      const manager = createManager();
       assertExists(manager.hasAdapter);
       assertEquals(typeof manager.hasAdapter, "function");
       manager.dispose();
     });
 
     it("should have getStats method", () => {
-      const manager = new ProxyFSAdapterManager({
-        baseConfig: {
-          veryfront: {
-            baseUrl: "https://api.example.com",
-            apiToken: "test-token",
-            projectSlug: "test-project",
-            cache: { enabled: false },
-          },
-        },
-      });
+      const manager = createManager();
       assertExists(manager.getStats);
       assertEquals(typeof manager.getStats, "function");
       manager.dispose();
     });
 
     it("should have dispose method", () => {
-      const manager = new ProxyFSAdapterManager({
-        baseConfig: {
-          veryfront: {
-            baseUrl: "https://api.example.com",
-            apiToken: "test-token",
-            projectSlug: "test-project",
-            cache: { enabled: false },
-          },
-        },
-      });
+      const manager = createManager();
       assertExists(manager.dispose);
       assertEquals(typeof manager.dispose, "function");
       manager.dispose();
@@ -127,32 +80,13 @@ describe("ProxyFSAdapterManager", () => {
 
   describe("hasAdapter", () => {
     it("should return false for non-existent adapter", () => {
-      const manager = new ProxyFSAdapterManager({
-        baseConfig: {
-          veryfront: {
-            baseUrl: "https://api.example.com",
-            apiToken: "test-token",
-            projectSlug: "test-project",
-            cache: { enabled: false },
-          },
-        },
-      });
+      const manager = createManager();
       assertEquals(manager.hasAdapter("non-existent-project"), false);
       manager.dispose();
     });
 
     it("should differentiate adapters by branch in preview mode", () => {
-      const manager = new ProxyFSAdapterManager({
-        baseConfig: {
-          veryfront: {
-            baseUrl: "https://api.example.com",
-            apiToken: "test-token",
-            projectSlug: "test-project",
-            cache: { enabled: false },
-          },
-        },
-      });
-      // Different branches should be treated as different adapters
+      const manager = createManager();
       assertEquals(manager.hasAdapter("project", false, null, "main"), false);
       assertEquals(manager.hasAdapter("project", false, null, "feature-x"), false);
       assertEquals(manager.hasAdapter("project", false, null, null), false);
@@ -160,19 +94,7 @@ describe("ProxyFSAdapterManager", () => {
     });
 
     it("should treat null branch as main branch", () => {
-      const manager = new ProxyFSAdapterManager({
-        baseConfig: {
-          veryfront: {
-            baseUrl: "https://api.example.com",
-            apiToken: "test-token",
-            projectSlug: "test-project",
-            cache: { enabled: false },
-          },
-        },
-      });
-      // Both null and "main" should produce the same cache key for preview mode
-      // hasAdapter("project", false, null, null) checks for "project:preview:main"
-      // hasAdapter("project", false, null, "main") also checks for "project:preview:main"
+      const manager = createManager();
       assertEquals(
         manager.hasAdapter("project", false, null, null),
         manager.hasAdapter("project", false, null, "main"),
@@ -181,18 +103,7 @@ describe("ProxyFSAdapterManager", () => {
     });
 
     it("should ignore branch for production mode", () => {
-      const manager = new ProxyFSAdapterManager({
-        baseConfig: {
-          veryfront: {
-            baseUrl: "https://api.example.com",
-            apiToken: "test-token",
-            projectSlug: "test-project",
-            cache: { enabled: false },
-          },
-        },
-      });
-      // In production mode, branch should not affect cache key
-      // Both should use "project:production:latest"
+      const manager = createManager();
       assertEquals(
         manager.hasAdapter("project", true, null, "main"),
         manager.hasAdapter("project", true, null, "feature-x"),
@@ -203,16 +114,7 @@ describe("ProxyFSAdapterManager", () => {
 
   describe("getStats", () => {
     it("should return stats object", () => {
-      const manager = new ProxyFSAdapterManager({
-        baseConfig: {
-          veryfront: {
-            baseUrl: "https://api.example.com",
-            apiToken: "test-token",
-            projectSlug: "test-project",
-            cache: { enabled: false },
-          },
-        },
-      });
+      const manager = createManager();
       const stats = manager.getStats();
       assertExists(stats);
       assertEquals(stats.adapters, 0);

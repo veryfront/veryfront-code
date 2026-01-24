@@ -35,25 +35,16 @@ export async function resolveComponentPath(
 ): Promise<string | null> {
   const cleanPath = cleanPathname(pathname);
 
-  // Check root patterns first if this is the root/index
-  if (cleanPath === "index" || cleanPath === "") {
-    for (const pattern of ROOT_PATTERNS) {
-      const fullPath = pathHelper.join(projectDir, pattern);
-      if (await fileExists(fullPath, fsAdapter)) {
-        return fullPath;
-      }
-    }
+  if (cleanPath === "index") {
+    const rootMatch = await findFirstExistingPath(projectDir, ROOT_PATTERNS, fsAdapter);
+    if (rootMatch) return rootMatch;
   }
 
-  // Then check regular patterns
-  for (const pattern of FILE_PATTERNS) {
-    const fullPath = pathHelper.join(projectDir, pattern.replace("{path}", cleanPath));
-    if (await fileExists(fullPath, fsAdapter)) {
-      return fullPath;
-    }
-  }
-
-  return null;
+  return findFirstExistingPath(
+    projectDir,
+    FILE_PATTERNS.map((pattern) => pattern.replace("{path}", cleanPath)),
+    fsAdapter,
+  );
 }
 
 function cleanPathname(pathname: string): string {
@@ -61,13 +52,21 @@ function cleanPathname(pathname: string): string {
   return cleaned || "index";
 }
 
+async function findFirstExistingPath(
+  projectDir: string,
+  patterns: string[],
+  fsAdapter?: FileSystemAdapter,
+): Promise<string | null> {
+  for (const pattern of patterns) {
+    const fullPath = pathHelper.join(projectDir, pattern);
+    if (await fileExists(fullPath, fsAdapter)) return fullPath;
+  }
+  return null;
+}
+
 async function fileExists(path: string, fsAdapter?: FileSystemAdapter): Promise<boolean> {
   try {
-    if (fsAdapter) {
-      const stat = await fsAdapter.stat(path);
-      return stat.isFile;
-    }
-    const stat = await fs.stat(path);
+    const stat = fsAdapter ? await fsAdapter.stat(path) : await fs.stat(path);
     return stat.isFile;
   } catch {
     return false;

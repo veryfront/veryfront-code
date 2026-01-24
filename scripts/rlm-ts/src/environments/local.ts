@@ -105,18 +105,20 @@ export class LocalEnvironment implements RLMEnvironment {
     this.persistent = config.persistent ?? false;
   }
 
-  async setup(): Promise<void> {
+  setup(): Promise<void> {
     this.locals = {};
     this.pendingRLMCalls = [];
+    return Promise.resolve();
   }
 
-  async teardown(): Promise<void> {
+  teardown(): Promise<void> {
     this.locals = {};
     this.llmHandler = null;
     this.pendingRLMCalls = [];
+    return Promise.resolve();
   }
 
-  async loadContext(context: RLMContext): Promise<LoadedContext> {
+  loadContext(context: RLMContext): Promise<LoadedContext> {
     const metadata = this.analyzeContext(context);
     const variables: Record<string, unknown> = {};
 
@@ -137,7 +139,7 @@ export class LocalEnvironment implements RLMEnvironment {
     // Merge into locals
     Object.assign(this.locals, variables);
 
-    return { variables, metadata };
+    return Promise.resolve({ variables, metadata });
   }
 
   async execute(code: string): Promise<REPLResult> {

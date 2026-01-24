@@ -4,15 +4,13 @@
  */
 
 import * as React from "react";
-import { MessageList } from "../../../../primitives/index.ts";
-import { InputBox } from "../../../../primitives/index.ts";
+import { InputBox, MessageList } from "../../../../primitives/index.ts";
 import { cn, defaultChatTheme } from "../../theme.ts";
 
-// Composition API (for advanced usage)
 export const ChatHeader = React.forwardRef<
   HTMLDivElement,
   React.HTMLAttributes<HTMLDivElement>
->(({ className, children, ...props }, ref) => {
+>(function ChatHeader({ className, children, ...props }, ref) {
   return (
     <div
       ref={ref}
@@ -34,7 +32,7 @@ ChatMessages.displayName = "ChatMessages";
 export const ChatInput = React.forwardRef<
   HTMLInputElement | HTMLTextAreaElement,
   React.ComponentProps<typeof InputBox>
->(({ className, ...props }, ref) => {
+>(function ChatInput({ className, ...props }, ref) {
   return (
     <div className="border-t border-gray-200 dark:border-gray-800 p-4">
       <div className="flex gap-2">
@@ -52,7 +50,7 @@ ChatInput.displayName = "ChatInput";
 export const ChatFooter = React.forwardRef<
   HTMLDivElement,
   React.HTMLAttributes<HTMLDivElement>
->(({ className, children, ...props }, ref) => {
+>(function ChatFooter({ className, children, ...props }, ref) {
   return (
     <div
       ref={ref}

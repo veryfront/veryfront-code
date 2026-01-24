@@ -1,51 +1,56 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
-import { getRehypePlugins, getRemarkPlugins } from "./plugin-loader.ts";
-import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { remove, writeTextFile } from "#veryfront/compat/fs.ts";
+import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
+import { getRehypePlugins, getRemarkPlugins } from "./plugin-loader.ts";
+
+function assertPluginArray(plugins: unknown): asserts plugins is unknown[] {
+  assertExists(plugins);
+  assertEquals(Array.isArray(plugins), true);
+}
 
 describe("plugin-loader", () => {
   describe("getRemarkPlugins", () => {
     it("returns array of plugins", async () => {
       const plugins = await getRemarkPlugins();
 
-      assertExists(plugins);
-      assertEquals(Array.isArray(plugins), true);
+      assertPluginArray(plugins);
       assertEquals(plugins.length > 0, true);
     });
 
     it("includes remark-gfm", async () => {
       const plugins = await getRemarkPlugins();
 
+      assertPluginArray(plugins);
       assertExists(plugins[0]);
     });
 
     it("includes remark-frontmatter", async () => {
       const plugins = await getRemarkPlugins();
 
+      assertPluginArray(plugins);
       assertExists(plugins[1]);
     });
 
     it("includes custom plugins", async () => {
       const plugins = await getRemarkPlugins();
 
+      assertPluginArray(plugins);
       assertEquals(plugins.length >= 6, true);
     });
 
     it("handles missing config gracefully", async () => {
       const plugins = await getRemarkPlugins();
 
-      assertExists(plugins);
-      assertEquals(Array.isArray(plugins), true);
+      assertPluginArray(plugins);
       assertEquals(plugins.length >= 6, true);
     });
 
     it("handles invalid config path", async () => {
       const plugins = await getRemarkPlugins();
 
-      assertExists(plugins);
-      assertEquals(Array.isArray(plugins), true);
+      assertPluginArray(plugins);
     });
 
     it("with valid config directory", async () => {
@@ -53,8 +58,7 @@ describe("plugin-loader", () => {
 
       try {
         const plugins = await getRemarkPlugins();
-        assertExists(plugins);
-        assertEquals(Array.isArray(plugins), true);
+        assertPluginArray(plugins);
       } finally {
         await remove(tempDir, { recursive: true });
       }
@@ -76,8 +80,7 @@ describe("plugin-loader", () => {
         );
 
         const plugins = await getRemarkPlugins();
-        assertExists(plugins);
-        assertEquals(Array.isArray(plugins), true);
+        assertPluginArray(plugins);
       } finally {
         await remove(tempDir, { recursive: true });
       }
@@ -89,7 +92,7 @@ describe("plugin-loader", () => {
       try {
         const plugins = await getRemarkPlugins();
 
-        assertExists(plugins);
+        assertPluginArray(plugins);
         assertEquals(plugins.length >= 6, true);
       } finally {
         await remove(tempDir, { recursive: true });
@@ -101,42 +104,42 @@ describe("plugin-loader", () => {
     it("returns array of plugins", async () => {
       const plugins = await getRehypePlugins();
 
-      assertExists(plugins);
-      assertEquals(Array.isArray(plugins), true);
+      assertPluginArray(plugins);
       assertEquals(plugins.length > 0, true);
     });
 
     it("includes rehype-highlight", async () => {
       const plugins = await getRehypePlugins();
 
+      assertPluginArray(plugins);
       assertExists(plugins[0]);
     });
 
     it("includes rehype-slug", async () => {
       const plugins = await getRehypePlugins();
 
+      assertPluginArray(plugins);
       assertExists(plugins[1]);
     });
 
     it("includes custom plugins", async () => {
       const plugins = await getRehypePlugins();
 
+      assertPluginArray(plugins);
       assertEquals(plugins.length >= 5, true);
     });
 
     it("handles missing config gracefully", async () => {
       const plugins = await getRehypePlugins();
 
-      assertExists(plugins);
-      assertEquals(Array.isArray(plugins), true);
+      assertPluginArray(plugins);
       assertEquals(plugins.length >= 5, true);
     });
 
     it("handles invalid config path", async () => {
       const plugins = await getRehypePlugins();
 
-      assertExists(plugins);
-      assertEquals(Array.isArray(plugins), true);
+      assertPluginArray(plugins);
     });
 
     it("with valid config directory", async () => {
@@ -144,8 +147,7 @@ describe("plugin-loader", () => {
 
       try {
         const plugins = await getRehypePlugins();
-        assertExists(plugins);
-        assertEquals(Array.isArray(plugins), true);
+        assertPluginArray(plugins);
       } finally {
         await remove(tempDir, { recursive: true });
       }

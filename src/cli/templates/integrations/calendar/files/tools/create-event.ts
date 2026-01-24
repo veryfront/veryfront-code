@@ -6,24 +6,15 @@ export default tool({
   id: "create-event",
   description: "Create a new event in Google Calendar",
   inputSchema: z.object({
-    title: z
-      .string()
-      .min(1)
-      .describe("Event title"),
+    title: z.string().min(1).describe("Event title"),
     startTime: z
       .string()
       .describe("Start time in ISO 8601 format (e.g., '2024-01-15T09:00:00')"),
     endTime: z
       .string()
       .describe("End time in ISO 8601 format (e.g., '2024-01-15T10:00:00')"),
-    description: z
-      .string()
-      .optional()
-      .describe("Event description"),
-    location: z
-      .string()
-      .optional()
-      .describe("Event location"),
+    description: z.string().optional().describe("Event description"),
+    location: z.string().optional().describe("Event location"),
     attendees: z
       .array(z.string().email())
       .optional()
@@ -37,8 +28,7 @@ export default tool({
     { title, startTime, endTime, description, location, attendees, timeZone },
     context,
   ) => {
-    // Default to "current-user" for development; in production, always pass userId from session
-    const userId = (context?.userId as string | undefined) || "current-user";
+    const userId = context?.userId ?? "current-user";
 
     try {
       const calendar = createCalendarClient(userId);
@@ -62,7 +52,7 @@ export default tool({
           end: event.end.dateTime || event.end.date,
           url: event.htmlLink,
           location: event.location,
-          attendees: event.attendees?.map((a: { email: string }) => a.email) || [],
+          attendees: event.attendees?.map((a: { email: string }) => a.email) ?? [],
         },
         message: `Event "${title}" created successfully.`,
       };

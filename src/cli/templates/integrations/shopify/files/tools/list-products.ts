@@ -7,8 +7,16 @@ export default tool({
   description:
     "List products from your Shopify store. Can filter by status and product type.",
   inputSchema: z.object({
-    limit: z.number().min(1).max(250).default(20).describe("Maximum number of products to return"),
-    status: z.enum(["active", "archived", "draft"]).optional().describe("Filter by product status"),
+    limit: z
+      .number()
+      .min(1)
+      .max(250)
+      .default(20)
+      .describe("Maximum number of products to return"),
+    status: z
+      .enum(["active", "archived", "draft"])
+      .optional()
+      .describe("Filter by product status"),
     productType: z.string().optional().describe("Filter by product type"),
   }),
   async execute({ limit, status, productType }) {
@@ -22,17 +30,17 @@ export default tool({
       status: product.status,
       tags: product.tags,
       createdAt: product.created_at,
-      variants: product.variants.map((v) => ({
-        id: v.id,
-        title: v.title,
-        price: v.price,
-        sku: v.sku,
-        inventoryQuantity: v.inventory_quantity,
+      variants: product.variants.map((variant) => ({
+        id: variant.id,
+        title: variant.title,
+        price: variant.price,
+        sku: variant.sku,
+        inventoryQuantity: variant.inventory_quantity,
       })),
-      images: product.images.map((img) => ({
-        id: img.id,
-        src: img.src,
-        alt: img.alt,
+      images: product.images.map((image) => ({
+        id: image.id,
+        src: image.src,
+        alt: image.alt,
       })),
     }));
   },

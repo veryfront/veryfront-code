@@ -13,8 +13,7 @@ export function isCompiledBinary(): boolean {
   if (!isDeno) return false;
 
   try {
-    const path = execPath();
-    return path.includes("veryfront");
+    return execPath().includes("veryfront");
   } catch {
     return false;
   }

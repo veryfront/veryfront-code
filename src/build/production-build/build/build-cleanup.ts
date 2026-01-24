@@ -3,16 +3,12 @@ import type { VeryfrontRenderer } from "#veryfront/rendering/index.ts";
 import type { BuildStats } from "#veryfront/server/build-types.ts";
 
 export async function cleanupRenderer(renderer: VeryfrontRenderer): Promise<void> {
-  if (typeof renderer.destroy === "function") {
-    await renderer.destroy();
-  }
+  await renderer.destroy?.();
 }
 
 export async function cleanupCaches(): Promise<void> {
   try {
-    const { destroyTransformCache } = await import(
-      "@veryfront/transforms/esm/transform-cache.ts"
-    );
+    const { destroyTransformCache } = await import("@veryfront/transforms/esm/transform-cache.ts");
     destroyTransformCache();
   } catch {
     // Ignore if not available

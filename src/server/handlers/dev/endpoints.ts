@@ -1,4 +1,4 @@
-/**
+/****
  * Development Endpoints Handler
  * Handles HMR runtime, error overlay, and other dev-specific endpoints
  */
@@ -70,7 +70,7 @@ function getUpdateJSFunction(logPrefix: string): string {
 export class DevEndpointsHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "DevEndpointsHandler",
-    priority: PRIORITY_HIGH_DEV as HandlerPriority, // HIGH priority in dev mode
+    priority: PRIORITY_HIGH_DEV as HandlerPriority,
     patterns: [
       { pattern: "/_veryfront/hmr-runtime.js", exact: true },
       { pattern: "/_veryfront/error-overlay.js", exact: true },
@@ -79,9 +79,6 @@ export class DevEndpointsHandler extends BaseHandler {
       { pattern: "/_veryfront/hydrate.js", exact: true },
       { pattern: "/_veryfront/preview-hmr.js", exact: true },
     ],
-    // Enable in local dev (for dev HMR/error overlay) OR preview mode (for live updates)
-    // - ctx.requestContext?.isLocalDev: env !== "production" (enables local dev scripts)
-    // - ctx.requestContext?.mode === "preview": hostname has .preview. (enables preview HMR)
     enabled: (ctx) => ctx.requestContext?.isLocalDev || ctx.requestContext?.mode === "preview",
   };
 
@@ -91,31 +88,27 @@ export class DevEndpointsHandler extends BaseHandler {
     }
 
     const url = new URL(req.url);
-    const pathname = url.pathname;
-    const script = this.getScriptForPath(pathname, url);
+    const script = this.getScriptForPath(url.pathname, url);
 
     if (!script) {
       return Promise.resolve(this.continue());
     }
 
-    const response = this.createResponseBuilder(ctx)
-      .withCache("no-cache")
-      .javascript(script, HTTP_OK);
+    const response = this.createResponseBuilder(ctx).withCache("no-cache").javascript(
+      script,
+      HTTP_OK,
+    );
     return Promise.resolve(this.respond(response));
   }
 
-  /**
-   * Get the script content for a given pathname.
-   * Returns null if pathname is not a known dev endpoint.
-   */
   private getScriptForPath(pathname: string, url: URL): string | null {
     switch (pathname) {
       case "/_veryfront/hmr.js": {
-        const port = url.searchParams.get("port") || "3000";
+        const port = url.searchParams.get("port") ?? "3000";
         return this.getHMRScript(parseInt(port, 10));
       }
       case "/_veryfront/hydrate.js": {
-        const slug = url.searchParams.get("slug") || "";
+        const slug = url.searchParams.get("slug") ?? "";
         return this.getHydrateScript(slug);
       }
       case "/_veryfront/hmr-runtime.js":
@@ -132,8 +125,6 @@ export class DevEndpointsHandler extends BaseHandler {
   }
 
   private getHMRScript(_port: number): string {
-    // HMR port is detected at runtime: dev server port + 1
-    // This ensures correct port regardless of project config differences
     return `
 // Veryfront HMR WebSocket Client
 
@@ -224,7 +215,6 @@ async function handleUpdate(update) {
 
 async function updateCSS(path) {
   console.log('[HMR] Updating CSS:', path);
-  let updated = false;
 
   // Try to update linked stylesheets
   document.querySelectorAll('link[rel="stylesheet"]').forEach((link) => {
@@ -235,7 +225,6 @@ async function updateCSS(path) {
         newUrl.searchParams.set('t', Date.now().toString());
         link.href = newUrl.toString();
         console.log('[HMR] CSS link updated:', path);
-        updated = true;
       }
     } catch (error) {
       console.error('[HMR] Failed to update CSS link:', error);
@@ -252,7 +241,6 @@ async function updateCSS(path) {
         const newCSS = await response.text();
         tailwindStyle.textContent = newCSS;
         console.log('[HMR] Inline Tailwind CSS updated');
-        updated = true;
       }
     } catch (error) {
       console.error('[HMR] Failed to fetch fresh CSS:', error);
@@ -468,12 +456,6 @@ document.head.appendChild(errorScript);
     `.trim();
   }
 
-  /**
-   * Preview HMR script for cloud preview mode.
-   * Implements true HMR with module cache clearing and re-rendering,
-   * matching the local dev server behavior. Falls back to full reload
-   * when HMR functions aren't available.
-   */
   private getPreviewHMRScript(): string {
     return `
 // Veryfront Preview HMR Client
@@ -552,7 +534,7 @@ document.head.appendChild(errorScript);
       }
     };
 
-    ws.onerror = (event) => {
+    ws.onerror = () => {
       // Log more details about the error
       console.error('[Preview HMR] WebSocket error:', {
         url: wsUrl,

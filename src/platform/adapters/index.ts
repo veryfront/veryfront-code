@@ -1,22 +1,15 @@
-// Base types
 export * from "./base.ts";
-
-// Runtime detection
 export * from "./detect.ts";
 export { getLocalAdapter, runtime } from "./registry.ts";
 
-// Mock adapter
 export * from "./mock.ts";
 
-// Runtime adapters (re-export for backwards compatibility)
 export * from "./bun.ts";
 export * from "./node.ts";
 export * from "./deno.ts";
 
-// Security
 export * as security from "./security/index.ts";
 
-// FS Adapters
 export {
   createFSAdapter,
   createFSAdapterFromConfig,
@@ -40,7 +33,6 @@ export type {
   VeryfrontFSState,
 } from "./fs/index.ts";
 
-// Veryfront API Client
 export {
   type FileContext,
   type FileDetail,
@@ -54,7 +46,6 @@ export {
   VeryfrontAPIError,
 } from "./veryfront-api-client/index.ts";
 
-// Token Storage
 export {
   createTokenStorageAdapter,
   getTokenStorageAdapter,
@@ -70,7 +61,6 @@ export {
   type VeryfrontTokenConfig,
 } from "./token/index.ts";
 
-// Fallback utilities
 export {
   type AsyncAdapterFallback,
   createAdapterFallback,
@@ -82,7 +72,6 @@ export {
   withFallbackSync,
 } from "./fallback-wrapper.ts";
 
-// Redis Adapters
 export {
   arrayToObject,
   clearModuleCache,

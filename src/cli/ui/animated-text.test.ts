@@ -16,8 +16,7 @@ describe("ANSI cursor codes", () => {
   });
 
   it("should have different values for hide and show cursor", () => {
-    // Compare string values (TypeScript knows these are different const types)
-    assertEquals(String(HIDE_CURSOR) !== String(SHOW_CURSOR), true);
+    assertEquals(HIDE_CURSOR !== SHOW_CURSOR, true);
   });
 });
 

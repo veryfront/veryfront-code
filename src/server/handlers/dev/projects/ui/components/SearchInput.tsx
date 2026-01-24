@@ -5,10 +5,17 @@ interface SearchInputProps {
   loading?: boolean;
 }
 
-export function SearchInput({ value, onChange, placeholder, loading }: SearchInputProps) {
+export function SearchInput({
+  value,
+  onChange,
+  placeholder,
+  loading,
+}: SearchInputProps): JSX.Element {
+  const showClear = value.length > 0;
+  const showLoading = Boolean(loading) && !showClear;
+
   return (
     <div className="relative group">
-      {/* Search icon */}
       <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
         <svg
           className="w-4 h-4 text-gray-400"
@@ -34,8 +41,7 @@ export function SearchInput({ value, onChange, placeholder, loading }: SearchInp
         className="w-full sm:w-80 pl-9 pr-9 py-2.5 text-sm bg-white border border-gray-200 rounded-lg outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 placeholder:text-gray-400"
       />
 
-      {/* Clear button - appears on hover when there's text */}
-      {value && (
+      {showClear && (
         <button
           type="button"
           onClick={() => onChange("")}
@@ -54,8 +60,7 @@ export function SearchInput({ value, onChange, placeholder, loading }: SearchInp
         </button>
       )}
 
-      {/* Loading spinner */}
-      {loading && !value && (
+      {showLoading && (
         <div className="absolute right-3 top-1/2 -translate-y-1/2">
           <svg
             className="w-4 h-4 text-gray-400 animate-spin"

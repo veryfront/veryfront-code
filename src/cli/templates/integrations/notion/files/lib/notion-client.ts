@@ -52,7 +52,7 @@ async function notionFetch<T>(
   const response = await fetch(`${NOTION_BASE_URL}${endpoint}`, {
     ...options,
     headers: {
-      "Authorization": `Bearer ${token}`,
+      Authorization: `Bearer ${token}`,
       "Notion-Version": NOTION_API_VERSION,
       "Content-Type": "application/json",
       ...options.headers,
@@ -60,9 +60,9 @@ async function notionFetch<T>(
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
+    const error = await response.json().catch(() => ({} as { message?: string }));
     throw new Error(
-      `Notion API error: ${response.status} ${error.message || response.statusText}`,
+      `Notion API error: ${response.status} ${error.message ?? response.statusText}`,
     );
   }
 
@@ -78,19 +78,15 @@ export async function searchNotion(
 ): Promise<Array<NotionPage | NotionDatabase>> {
   const body: Record<string, unknown> = { query };
 
-  if (options?.filter) {
-    body.filter = options.filter;
-  }
-  if (options?.pageSize) {
-    body.page_size = options.pageSize;
-  }
+  if (options?.filter) body.filter = options.filter;
+  if (options?.pageSize) body.page_size = options.pageSize;
 
   const response = await notionFetch<NotionResponse<NotionPage | NotionDatabase>>(
     "/search",
     { method: "POST", body: JSON.stringify(body) },
   );
 
-  return response.results || [];
+  return response.results ?? [];
 }
 
 export function getPage(pageId: string): Promise<NotionPage> {
@@ -101,10 +97,10 @@ export async function getPageContent(pageId: string): Promise<NotionBlock[]> {
   const response = await notionFetch<NotionResponse<NotionBlock>>(
     `/blocks/${pageId}/children`,
   );
-  return response.results || [];
+  return response.results ?? [];
 }
 
-export function queryDatabase(
+export async function queryDatabase(
   databaseId: string,
   options?: {
     filter?: Record<string, unknown>;
@@ -114,20 +110,16 @@ export function queryDatabase(
 ): Promise<NotionPage[]> {
   const body: Record<string, unknown> = {};
 
-  if (options?.filter) {
-    body.filter = options.filter;
-  }
-  if (options?.sorts) {
-    body.sorts = options.sorts;
-  }
-  if (options?.pageSize) {
-    body.page_size = options.pageSize;
-  }
+  if (options?.filter) body.filter = options.filter;
+  if (options?.sorts) body.sorts = options.sorts;
+  if (options?.pageSize) body.page_size = options.pageSize;
 
-  return notionFetch<NotionResponse<NotionPage>>(
+  const response = await notionFetch<NotionResponse<NotionPage>>(
     `/databases/${databaseId}/query`,
     { method: "POST", body: JSON.stringify(body) },
-  ).then((response) => response.results || []);
+  );
+
+  return response.results ?? [];
 }
 
 export function createPage(options: {
@@ -141,19 +133,14 @@ export function createPage(options: {
     ? { database_id: options.parentId }
     : { page_id: options.parentId };
 
-  const properties: Record<string, unknown> = options.properties || {};
+  const properties: Record<string, unknown> = options.properties ?? {};
 
-  // Set title based on parent type
   if (options.parentType === "database") {
-    // For database pages, title goes in the title property
-    properties.title = properties.title || {
-      title: [{ text: { content: options.title } }],
-    };
+    properties.title ??= { title: [{ text: { content: options.title } }] };
   }
 
   const children: Array<Record<string, unknown>> = [];
 
-  // Add title as heading for page children
   if (options.parentType === "page") {
     children.push({
       object: "block",
@@ -164,19 +151,18 @@ export function createPage(options: {
     });
   }
 
-  // Add content as paragraph blocks
   if (options.content) {
-    const paragraphs = options.content.split("\n\n");
-    for (const paragraph of paragraphs) {
-      if (paragraph.trim()) {
-        children.push({
-          object: "block",
-          type: "paragraph",
-          paragraph: {
-            rich_text: [{ type: "text", text: { content: paragraph.trim() } }],
-          },
-        });
-      }
+    for (const paragraph of options.content.split("\n\n")) {
+      const trimmed = paragraph.trim();
+      if (!trimmed) continue;
+
+      children.push({
+        object: "block",
+        type: "paragraph",
+        paragraph: {
+          rich_text: [{ type: "text", text: { content: trimmed } }],
+        },
+      });
     }
   }
 
@@ -185,29 +171,23 @@ export function createPage(options: {
     body: JSON.stringify({
       parent,
       properties,
-      children: children.length > 0 ? children : undefined,
+      children: children.length ? children : undefined,
     }),
   });
 }
 
-// Helper to extract plain text from Notion rich text
 export function extractPlainText(blocks: NotionBlock[]): string {
   const texts: string[] = [];
 
   for (const block of blocks) {
-    const blockType = block.type;
-    const blockContent = block[blockType] as { rich_text?: Array<{ plain_text: string }> };
-
-    if (blockContent?.rich_text) {
-      const text = blockContent.rich_text.map((t) => t.plain_text).join("");
-      if (text) texts.push(text);
-    }
+    const content = block[block.type] as { rich_text?: Array<{ plain_text: string }> } | undefined;
+    const text = content?.rich_text?.map((t) => t.plain_text).join("");
+    if (text) texts.push(text);
   }
 
   return texts.join("\n\n");
 }
 
-// Helper to get page title
 export function getPageTitle(page: NotionPage): string {
   for (const prop of Object.values(page.properties)) {
     if (prop.type === "title" && prop.title) {

@@ -1,9 +1,3 @@
-/**
- * Agent Debugging Utilities
- *
- * @module veryfront/agent/debug
- */
-
 export {
   getRegistryOverview,
   inspectAgent,

@@ -22,19 +22,19 @@ describe("React version detection", () => {
   });
 
   it("should detect React features", () => {
-    const info = getReactVersionInfo();
+    const { features } = getReactVersionInfo();
 
-    assertExists(info.features);
-    assertEquals(typeof info.features.suspense, "boolean");
-    assertEquals(typeof info.features.streaming, "boolean");
-    assertEquals(typeof info.features.renderToString, "boolean");
+    assertExists(features);
+    assertEquals(typeof features.suspense, "boolean");
+    assertEquals(typeof features.streaming, "boolean");
+    assertEquals(typeof features.renderToString, "boolean");
   });
 
   it("should cache version info", () => {
     const info1 = getReactVersionInfo();
     const info2 = getReactVersionInfo();
 
-    assertEquals(info1, info2); // Should be the same reference
+    assertEquals(info1, info2);
   });
 });
 
@@ -44,6 +44,7 @@ describe("Feature detection", () => {
     assertEquals(hasFeature("renderToStaticMarkup"), true);
 
     const info = getReactVersionInfo();
+
     if (info.isReact18 || info.isReact19) {
       assertEquals(hasFeature("streaming"), true);
       assertEquals(hasFeature("suspense"), true);
@@ -63,11 +64,15 @@ describe("SSR method recommendation", () => {
 
     if (info.isReact19) {
       assertEquals(method, "readable-stream");
-    } else if (info.isReact18) {
-      assertEquals(method === "stream" || method === "readable-stream", true);
-    } else {
-      assertEquals(method, "string");
+      return;
     }
+
+    if (info.isReact18) {
+      assertEquals(method === "stream" || method === "readable-stream", true);
+      return;
+    }
+
+    assertEquals(method, "string");
   });
 });
 
@@ -79,12 +84,11 @@ describe("Version compatibility check", () => {
     assertEquals(basicCheck.compatible, true);
     assertEquals(basicCheck.errors.length, 0);
 
+    const react18Check = checkVersionCompatibility(["streaming", "suspense"]);
     if (info.isReact17) {
-      const react18Check = checkVersionCompatibility(["streaming", "suspense"]);
       assertEquals(react18Check.compatible, false);
       assertEquals(react18Check.errors.length > 0, true);
     } else {
-      const react18Check = checkVersionCompatibility(["streaming", "suspense"]);
       assertEquals(react18Check.compatible, true);
       assertEquals(react18Check.errors.length, 0);
     }

@@ -4,7 +4,6 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { DynamicRouter } from "#veryfront/routing/api/index.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { RouteDirectory } from "./types.ts";
-// Direct import to avoid circular dependency through barrel
 import { withFallback } from "#veryfront/platform/adapters/fallback-wrapper.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 
@@ -21,21 +20,12 @@ const VERYFRONT_EXCLUDED_DIRS = new Set([
 
 /** Check if a directory entry should be skipped during route discovery */
 function shouldSkipEntry(name: string, parentPath?: string): boolean {
-  // Always skip underscore-prefixed entries
   if (name.startsWith("_")) return true;
-
-  // Allow .veryfront directory itself
   if (name === ".veryfront") return false;
-
-  // Skip other hidden directories/files
   if (name.startsWith(".")) return true;
 
-  // If we're inside .veryfront, check against excluded subdirectories
-  if (parentPath?.includes(".veryfront") || parentPath?.includes("/.veryfront")) {
-    if (VERYFRONT_EXCLUDED_DIRS.has(name)) return true;
-  }
-
-  return false;
+  const inVeryfront = parentPath?.includes(".veryfront") || parentPath?.includes("/.veryfront");
+  return Boolean(inVeryfront && VERYFRONT_EXCLUDED_DIRS.has(name));
 }
 
 export class RouteDiscovery {
@@ -47,7 +37,6 @@ export class RouteDiscovery {
     private router: DynamicRouter,
     private config?: VeryfrontConfig,
   ) {
-    // For remote FS adapters (github, veryfront-api), use relative paths
     const fsType = config?.fs?.type;
     this.useRelativePaths = fsType === "github" || fsType === "veryfront-api";
   }
@@ -66,6 +55,7 @@ export class RouteDiscovery {
       count: routeDirs.length,
       dirs: routeDirs,
     });
+
     if (routeDirs.length === 0) {
       logger.warn("[SERVER] No route directories found; skipping discovery");
       return;
@@ -75,13 +65,14 @@ export class RouteDiscovery {
       if (routeDir.type === "app") {
         logger.debug(`[SERVER] Discovering app routes in: ${routeDir.path}`);
         await this.discoverAppRoutes(routeDir.path);
-      } else {
-        logger.debug(`[SERVER] Discovering pages routes in: ${routeDir.path}`);
-        await this.discoverPagesRoutes(routeDir.path, "");
+        continue;
       }
+
+      logger.debug(`[SERVER] Discovering pages routes in: ${routeDir.path}`);
+      await this.discoverPagesRoutes(routeDir.path, "");
     }
 
-    logger.debug(`[SERVER] Route discovery complete`, {
+    logger.debug("[SERVER] Route discovery complete", {
       routes: this.router.listRoutes().length,
     });
   }
@@ -90,23 +81,17 @@ export class RouteDiscovery {
     const preferredRouter = this.config?.router;
     const results: RouteDirectory[] = [];
 
-    const candidates: Array<{ type: "app" | "pages"; dir: string }> = preferredRouter === "app"
-      ? [{ type: "app", dir: "app" }]
-      : preferredRouter === "pages"
-      ? [{ type: "pages", dir: "pages" }]
-      : [
-        { type: "app", dir: "app" },
-        { type: "pages", dir: "pages" },
-      ];
+    const candidates: Array<{ type: "app" | "pages"; dir: string }> = [];
+    if (preferredRouter === "app") candidates.push({ type: "app", dir: "app" });
+    else if (preferredRouter === "pages") candidates.push({ type: "pages", dir: "pages" });
+    else candidates.push({ type: "app", dir: "app" }, { type: "pages", dir: "pages" });
 
-    // Always check .veryfront directory for user-defined pages (agents, commands, etc.)
     const veryfrontDir = this.useRelativePaths ? ".veryfront" : join(this.projectDir, ".veryfront");
     if (await this.directoryExists(veryfrontDir)) {
       results.push({ type: "pages", path: veryfrontDir });
     }
 
     for (const candidate of candidates) {
-      // For remote FS adapters, use relative paths; for local, use absolute
       const pathToCheck = this.useRelativePaths
         ? candidate.dir
         : join(this.projectDir, candidate.dir);
@@ -132,20 +117,13 @@ export class RouteDiscovery {
     }
 
     if (results.length === 0 && preferredRouter === undefined) {
-      const fallbackDirs = [
-        {
-          type: "app" as const,
-          path: this.useRelativePaths ? "app" : join(this.projectDir, "app"),
-        },
-        {
-          type: "pages" as const,
-          path: this.useRelativePaths ? "pages" : join(this.projectDir, "pages"),
-        },
+      const fallbackDirs: RouteDirectory[] = [
+        { type: "app", path: this.useRelativePaths ? "app" : join(this.projectDir, "app") },
+        { type: "pages", path: this.useRelativePaths ? "pages" : join(this.projectDir, "pages") },
       ];
+
       for (const fallback of fallbackDirs) {
-        if (await this.directoryExists(fallback.path)) {
-          results.push(fallback);
-        }
+        if (await this.directoryExists(fallback.path)) results.push(fallback);
       }
     }
 
@@ -158,18 +136,19 @@ export class RouteDiscovery {
         path,
         useRelativePaths: this.useRelativePaths,
       });
-      // For remote FS adapters, don't fall back to local filesystem
+
       if (this.useRelativePaths) {
         const stat = await this.adapter.fs.stat(path);
         logger.debug("[SERVER] Directory stat result", { path, isDirectory: stat.isDirectory });
         return stat.isDirectory;
       }
-      // For local filesystem, use fallback
+
       const stat = await withFallback(
         () => this.adapter.fs.stat(path),
         () => createFileSystem().stat(path),
         { operationName: "stat:routeDiscovery:directoryExists", logError: false },
       );
+
       return stat.isDirectory;
     } catch (error) {
       logger.debug("[SERVER] Directory check failed", { path, error: String(error) });
@@ -180,15 +159,16 @@ export class RouteDiscovery {
   private async discoverPagesRoutes(dir: string, prefix: string): Promise<void> {
     try {
       logger.debug(`[SERVER] Reading directory: ${dir}`);
+
       for await (const entry of this.adapter.fs.readDir(dir)) {
         if (shouldSkipEntry(entry.name, dir)) continue;
 
         const fullPath = join(dir, entry.name);
-        // Normalize route path: remove extension and collapse multiple slashes
-        let routePath = `${prefix}/${entry.name.replace(/\.(tsx?|jsx?|mdx)$/, "")}`;
-        routePath = routePath.replace(/\/+/g, "/"); // Collapse multiple slashes to single
+        const routePath = `${prefix}/${entry.name.replace(/\.(tsx?|jsx?|mdx)$/, "")}`.replace(
+          /\/+/g,
+          "/",
+        );
 
-        // Sanity check: if pattern is too long, something is wrong
         if (routePath.length > 500) {
           logger.warn(`[SERVER] Route path too long, skipping: ${routePath.slice(0, 100)}...`);
           continue;
@@ -196,16 +176,18 @@ export class RouteDiscovery {
 
         if (entry.isDirectory) {
           await this.discoverPagesRoutes(fullPath, routePath);
-        } else if (entry.isFile && /\.(tsx?|jsx?|mdx|ts)$/.test(entry.name)) {
-          if (routePath.startsWith("/api")) continue;
-
-          let pattern = routePath.replace(/\/index$/, "") || "/";
-          pattern = pattern.replace(/\/+/g, "/"); // Collapse multiple slashes
-          const relativePath = this.toProjectRelativePath(fullPath);
-
-          this.router.addRoute(pattern, relativePath);
-          logger.debug(`[SERVER] Discovered route: ${pattern} -> ${relativePath}`);
+          continue;
         }
+
+        if (!entry.isFile || !/\.(tsx?|jsx?|mdx|ts)$/.test(entry.name)) continue;
+        if (routePath.startsWith("/api")) continue;
+
+        let pattern = routePath.replace(/\/index$/, "") || "/";
+        pattern = pattern.replace(/\/+/g, "/");
+
+        const relativePath = this.toProjectRelativePath(fullPath);
+        this.router.addRoute(pattern, relativePath);
+        logger.debug(`[SERVER] Discovered route: ${pattern} -> ${relativePath}`);
       }
     } catch (error) {
       logger.error(`[SERVER] Failed to discover routes in ${dir}:`, error);
@@ -219,6 +201,7 @@ export class RouteDiscovery {
   private async discoverAppRoutesRecursive(dir: string, segments: string[]): Promise<void> {
     try {
       logger.debug(`[SERVER] Reading app directory: ${dir}`);
+
       for await (const entry of this.adapter.fs.readDir(dir)) {
         if (shouldSkipEntry(entry.name, dir)) continue;
 
@@ -231,12 +214,12 @@ export class RouteDiscovery {
           continue;
         }
 
-        if (entry.isFile && /^page\.(tsx?|ts|jsx?|js|mdx)$/.test(entry.name)) {
-          const pattern = this.buildAppRoutePattern(segments);
-          const relativePath = this.toProjectRelativePath(fullPath);
-          this.router.addRoute(pattern, relativePath);
-          logger.debug(`[SERVER] Discovered app route: ${pattern} -> ${relativePath}`);
-        }
+        if (!entry.isFile || !/^page\.(tsx?|ts|jsx?|js|mdx)$/.test(entry.name)) continue;
+
+        const pattern = this.buildAppRoutePattern(segments);
+        const relativePath = this.toProjectRelativePath(fullPath);
+        this.router.addRoute(pattern, relativePath);
+        logger.debug(`[SERVER] Discovered app route: ${pattern} -> ${relativePath}`);
       }
     } catch (error) {
       logger.error(`[SERVER] Failed to discover app routes in ${dir}:`, error);
@@ -245,23 +228,17 @@ export class RouteDiscovery {
 
   private normalizeAppPathSegment(dirName: string): string | null {
     if (!dirName) return null;
-    if ((dirName.startsWith("(") && dirName.endsWith(")")) || dirName.startsWith("@")) {
-      return null;
-    }
+    if ((dirName.startsWith("(") && dirName.endsWith(")")) || dirName.startsWith("@")) return null;
     return dirName;
   }
 
   private buildAppRoutePattern(segments: string[]): string {
     if (segments.length === 0) return "/";
-    const joined = segments.filter(Boolean).join("/");
-    return `/${joined}`;
+    return `/${segments.filter(Boolean).join("/")}`;
   }
 
   private toProjectRelativePath(fullPath: string): string {
-    // For remote FS adapters, paths are already relative
-    if (this.useRelativePaths) {
-      return fullPath;
-    }
+    if (this.useRelativePaths) return fullPath;
     return fullPath.startsWith(this.projectDir)
       ? fullPath.slice(this.projectDir.length + 1)
       : fullPath;

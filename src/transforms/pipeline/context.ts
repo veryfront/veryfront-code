@@ -7,26 +7,16 @@ import type {
   TransformTarget,
 } from "./types.ts";
 
-/**
- * Detect React version from project's package.json.
- * Falls back to default REACT_VERSION if not found.
- */
 async function detectProjectReactVersion(projectDir: string): Promise<string> {
   try {
-    const packageJsonPath = `${projectDir}/package.json`;
-    const content = await Deno.readTextFile(packageJsonPath);
+    const content = await Deno.readTextFile(`${projectDir}/package.json`);
     const pkg = JSON.parse(content) as {
       dependencies?: Record<string, string>;
       devDependencies?: Record<string, string>;
     };
 
-    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-    const reactVersion = deps?.react;
-
-    if (reactVersion) {
-      // Strip ^ or ~ prefix to get the base version
-      return reactVersion.replace(/^[\^~]/, "");
-    }
+    const reactVersion = { ...pkg.dependencies, ...pkg.devDependencies }?.react;
+    if (reactVersion) return reactVersion.replace(/^[\^~]/, "");
   } catch {
     // Project doesn't have package.json or no React dependency
   }
@@ -34,7 +24,6 @@ async function detectProjectReactVersion(projectDir: string): Promise<string> {
   return REACT_VERSION;
 }
 
-/** Build a TransformContext from source, paths, hash, and options */
 function buildContext(
   source: string,
   filePath: string,
@@ -72,9 +61,13 @@ export async function createTransformContext(
   projectDir: string,
   options: TransformOptions,
 ): Promise<TransformContext> {
-  const contentHash = await computeShortContentHash(source);
-  // Use provided reactVersion or detect from project's package.json
-  const reactVersion = options.reactVersion ?? await detectProjectReactVersion(projectDir);
+  const [contentHash, reactVersion] = await Promise.all([
+    computeShortContentHash(source),
+    options.reactVersion
+      ? Promise.resolve(options.reactVersion)
+      : detectProjectReactVersion(projectDir),
+  ]);
+
   return buildContext(source, filePath, projectDir, contentHash, options, reactVersion);
 }
 
@@ -85,9 +78,14 @@ export function createTransformContextSync(
   contentHash: string,
   options: TransformOptions,
 ): TransformContext {
-  // Sync version can't detect from package.json, use provided version or default
-  const reactVersion = options.reactVersion ?? REACT_VERSION;
-  return buildContext(source, filePath, projectDir, contentHash, options, reactVersion);
+  return buildContext(
+    source,
+    filePath,
+    projectDir,
+    contentHash,
+    options,
+    options.reactVersion ?? REACT_VERSION,
+  );
 }
 
 export function recordStageTiming(
@@ -137,8 +135,6 @@ export function isBrowser(ctx: TransformContext): boolean {
 }
 
 export function isMDX(ctx: TransformContext): boolean {
-  // MDX is a superset of Markdown - treat both .mdx and .md files as MDX
-  // This allows .md files to use frontmatter (layout, etc.) and component imports
   return ctx.filePath.endsWith(".mdx") || ctx.filePath.endsWith(".md");
 }
 

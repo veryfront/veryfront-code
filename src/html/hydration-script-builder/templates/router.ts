@@ -79,8 +79,11 @@ export const getRouterScript = () => `
       }
 
       // Check for project content update (if available)
-      if (newVersion.projectUpdated && clientBuildVersion.projectUpdated &&
-          newVersion.projectUpdated !== clientBuildVersion.projectUpdated) {
+      if (
+        newVersion.projectUpdated &&
+        clientBuildVersion.projectUpdated &&
+        newVersion.projectUpdated !== clientBuildVersion.projectUpdated
+      ) {
         log('Project content updated, reloading...', {
           old: clientBuildVersion.projectUpdated,
           new: newVersion.projectUpdated
@@ -95,20 +98,26 @@ export const getRouterScript = () => `
     // Performance timing (DEBUG only)
     // ============================================
     const perfTimers = new Map();
-    const perfStart = DEBUG ? (label) => {
-      perfTimers.set(label, performance.now());
-    } : () => {};
-    const perfEnd = DEBUG ? (label) => {
-      const start = perfTimers.get(label);
-      if (start) {
-        const duration = performance.now() - start;
-        perfTimers.delete(label);
-        console.log('[Veryfront Perf] %c' + label + ': %c' + duration.toFixed(2) + 'ms',
-          'color: #888', duration > 100 ? 'color: #f00; font-weight: bold' : 'color: #0a0');
-        return duration;
-      }
-      return 0;
-    } : () => 0;
+    const perfStart = DEBUG
+      ? (label) => {
+          perfTimers.set(label, performance.now());
+        }
+      : () => {};
+    const perfEnd = DEBUG
+      ? (label) => {
+          const start = perfTimers.get(label);
+          if (!start) return 0;
+
+          const duration = performance.now() - start;
+          perfTimers.delete(label);
+          console.log(
+            '[Veryfront Perf] %c' + label + ': %c' + duration.toFixed(2) + 'ms',
+            'color: #888',
+            duration > 100 ? 'color: #f00; font-weight: bold' : 'color: #0a0'
+          );
+          return duration;
+        }
+      : () => 0;
 
     // ============================================
     // LRU Cache with TTL (single Map to prevent sync issues)
@@ -119,9 +128,7 @@ export const getRouterScript = () => `
       const entry = pageDataCache.get(path);
       if (!entry) return null;
 
-      if (Date.now() - entry.timestamp < CACHE_TTL_MS) {
-        return entry.data;
-      }
+      if (Date.now() - entry.timestamp < CACHE_TTL_MS) return entry.data;
 
       // Expired - remove from cache
       pageDataCache.delete(path);
@@ -155,11 +162,10 @@ export const getRouterScript = () => `
 
     function restoreScrollPosition(path) {
       const savedY = scrollPositions.get(path);
-      if (savedY !== undefined) {
-        requestAnimationFrame(() => window.scrollTo(0, savedY));
-        return true;
-      }
-      return false;
+      if (savedY === undefined) return false;
+
+      requestAnimationFrame(() => window.scrollTo(0, savedY));
+      return true;
     }
 
     // ============================================
@@ -172,9 +178,11 @@ export const getRouterScript = () => `
       if (!progressBar) {
         progressBar = document.createElement('div');
         progressBar.id = 'vf-nav-progress';
-        progressBar.style.cssText = 'position:fixed;top:0;left:0;height:3px;width:0;background:linear-gradient(90deg,#0066ff,#00aaff);z-index:99999;transition:width 0.3s ease-out,opacity 0.2s;opacity:1;';
+        progressBar.style.cssText =
+          'position:fixed;top:0;left:0;height:3px;width:0;background:linear-gradient(90deg,#0066ff,#00aaff);z-index:99999;transition:width 0.3s ease-out,opacity 0.2s;opacity:1;';
         document.body.prepend(progressBar);
       }
+
       progressBar.style.opacity = '1';
       progressBar.style.width = '30%';
 
@@ -186,22 +194,24 @@ export const getRouterScript = () => `
       document.body.setAttribute('aria-busy', 'true');
     }
 
-    function hideNavigationProgress(success = true) {
+    function hideNavigationProgress() {
       if (progressTimeout) {
         clearTimeout(progressTimeout);
         progressTimeout = null;
       }
+
       if (progressBar) {
         progressBar.style.width = '100%';
         setTimeout(() => {
-          if (progressBar) {
-            progressBar.style.opacity = '0';
-            setTimeout(() => {
-              if (progressBar) progressBar.style.width = '0';
-            }, 200);
-          }
+          if (!progressBar) return;
+
+          progressBar.style.opacity = '0';
+          setTimeout(() => {
+            if (progressBar) progressBar.style.width = '0';
+          }, 200);
         }, 150);
       }
+
       document.body.removeAttribute('aria-busy');
     }
 
@@ -211,7 +221,7 @@ export const getRouterScript = () => `
     let currentAbortController = null;
 
     function sleep(ms) {
-      return new Promise(resolve => setTimeout(resolve, ms));
+      return new Promise((resolve) => setTimeout(resolve, ms));
     }
 
     async function fetchWithRetry(url, options, maxRetries = MAX_RETRIES) {
@@ -220,11 +230,7 @@ export const getRouterScript = () => `
         const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
         try {
-          const response = await fetch(url, {
-            ...options,
-            signal: controller.signal
-          });
-
+          const response = await fetch(url, { ...options, signal: controller.signal });
           clearTimeout(timeout);
 
           if (response.ok) return response;
@@ -246,9 +252,7 @@ export const getRouterScript = () => `
             throw error;
           }
 
-          if (attempt === maxRetries) {
-            throw error;
-          }
+          if (attempt === maxRetries) throw error;
 
           log('Fetch failed, retrying...', error.message);
           await sleep(Math.pow(2, attempt) * 500);
@@ -298,7 +302,6 @@ export const getRouterScript = () => `
 
     // Fetch for navigation (triggers reload on version mismatch)
     async function fetchPageDataForNavigation(path, signal) {
-      // Check cache first
       const cached = getCachedPageData(path);
       if (cached) {
         log('Using cached page data:', path);
@@ -312,7 +315,7 @@ export const getRouterScript = () => `
 
     // Fetch for prefetch (no reload trigger - just cache the data)
     async function fetchPageDataForPrefetch(path) {
-      if (getCachedPageData(path)) return; // Already cached
+      if (getCachedPageData(path)) return;
       return fetchPageDataFresh(path, null).catch(() => {});
     }
 
@@ -327,9 +330,7 @@ export const getRouterScript = () => `
     // ============================================
     async function navigateSPA(href, pushState = true, restoreScroll = false) {
       // Cancel any pending navigation
-      if (currentAbortController) {
-        currentAbortController.abort();
-      }
+      currentAbortController?.abort();
 
       // Prevent concurrent navigations
       if (isNavigating) return;
@@ -358,9 +359,7 @@ export const getRouterScript = () => `
         perfEnd('nav:fetchData:' + href);
 
         // Check if navigation was aborted
-        if (signal.aborted) {
-          return;
-        }
+        if (signal.aborted) return;
 
         // Update history
         if (pushState) {
@@ -369,7 +368,7 @@ export const getRouterScript = () => `
 
         // Load and render the new page
         perfStart('nav:render:' + href);
-        await renderPageFromData(pageData);
+        await renderPageFromData(pageData, targetPath);
         perfEnd('nav:render:' + href);
 
         currentPath = targetPath;
@@ -393,11 +392,11 @@ export const getRouterScript = () => `
           window.scrollTo(0, 0);
         }
 
-        hideNavigationProgress(true);
+        hideNavigationProgress();
         perfEnd('nav:total:' + href);
         log('SPA navigation complete');
       } catch (error) {
-        hideNavigationProgress(false);
+        hideNavigationProgress();
 
         // Ignore abort errors from user-initiated navigation cancellation
         if (error.name === 'AbortError') {
@@ -424,19 +423,16 @@ export const getRouterScript = () => `
     // ============================================
     // Render page from page data
     // ============================================
-    async function renderPageFromData(pageData) {
+    async function renderPageFromData(pageData, targetPath) {
       // Load page, layouts, and app components in PARALLEL for faster cold start
       perfStart('render:loadAll');
-      const layoutPaths = (pageData.layouts || []).map(l => l.path);
+      const layoutPaths = (pageData.layouts || []).map((l) => l.path);
       const allPaths = [pageData.pagePath, ...layoutPaths];
 
       // Also load App component if available (contains QueryClientProvider, ThemeProvider, etc.)
-      if (pageData.appPath) {
-        allPaths.push(pageData.appPath);
-      }
+      if (pageData.appPath) allPaths.push(pageData.appPath);
 
-      const loadPromises = allPaths.map(path => loadComponent(path));
-      const components = await Promise.all(loadPromises);
+      const components = await Promise.all(allPaths.map((path) => loadComponent(path)));
       perfEnd('render:loadAll');
 
       const [PageComponent, ...rest] = components;
@@ -455,10 +451,8 @@ export const getRouterScript = () => `
 
       // Update meta description if present
       if (pageData.frontmatter?.description) {
-        let metaDesc = document.querySelector('meta[name="description"]');
-        if (metaDesc) {
-          metaDesc.setAttribute('content', pageData.frontmatter.description);
-        }
+        const metaDesc = document.querySelector('meta[name="description"]');
+        metaDesc?.setAttribute('content', pageData.frontmatter.description);
       }
 
       // Inject CSS for the new page (ensures styles work without Tailwind CDN)
@@ -484,14 +478,14 @@ export const getRouterScript = () => `
       });
 
       // Wrap with layouts (innermost to outermost) - components already loaded
-      if (pageData.layouts && pageData.layouts.length > 0) {
+      if (pageData.layouts?.length) {
         for (let i = pageData.layouts.length - 1; i >= 0; i--) {
           const layout = pageData.layouts[i];
           const LayoutComponent = LayoutComponents[i];
-          if (LayoutComponent) {
-            const layoutProps = pageData.layoutProps?.[layout.path] || {};
-            tree = React.createElement(LayoutComponent, { ...layoutProps, children: tree });
-          }
+          if (!LayoutComponent) continue;
+
+          const layoutProps = pageData.layoutProps?.[layout.path] || {};
+          tree = React.createElement(LayoutComponent, { ...layoutProps, children: tree });
         }
       }
 
@@ -510,14 +504,14 @@ export const getRouterScript = () => `
         query: Object.fromEntries(new URLSearchParams(window.location.search)),
         frontmatter: pageData.frontmatter || {},
         headings: headingsArray,
-        mdxHeadings: headingsArray, // Alias for backwards compatibility
+        mdxHeadings: headingsArray // Alias for backwards compatibility
       };
 
       // Wrap with PageContextProvider so layout components can access frontmatter
       tree = React.createElement(PageContextProvider, { pageContext, children: tree });
 
       // Wrap with providers - use imported RouterProvider with client router
-      tree = React.createElement(RouterProvider, { router: router, children: tree });
+      tree = React.createElement(RouterProvider, { router, children: tree });
 
       // Get the container and render
       const container = document.getElementById('veryfront-content');
@@ -537,18 +531,20 @@ export const getRouterScript = () => `
         }
       }
 
-      if (container && container.__reactRoot) {
+      if (container?.__reactRoot) {
         perfStart('render:reactRender');
         container.__reactRoot.render(tree);
         perfEnd('render:reactRender');
         log('Page re-rendered via SPA');
+        return;
+      }
 
-      } else if (hydrationFailed) {
+      if (hydrationFailed) {
         // Hydration failed, fall back to full page navigation
         throw new Error('React root not found - hydration failed, falling back to full page navigation');
-      } else {
-        throw new Error('React root not found');
       }
+
+      throw new Error('React root not found');
     }
 
     // ============================================
@@ -560,9 +556,7 @@ export const getRouterScript = () => `
 
     function prefetchPage(href) {
       // Skip if already prefetched, cached, or currently fetching
-      if (prefetchedPaths.has(href) || getCachedPageData(href) || inFlightPrefetches.has(href)) {
-        return;
-      }
+      if (prefetchedPaths.has(href) || getCachedPageData(href) || inFlightPrefetches.has(href)) return;
 
       // LRU eviction if at capacity - clear oldest entries
       if (prefetchedPaths.size >= MAX_PREFETCH_PATHS) {
@@ -611,7 +605,7 @@ export const getRouterScript = () => `
       isPreview: false,
       isMounted: true,
       navigate: (path) => navigateSPA(path, true),
-      reload: () => window.location.reload(),
+      reload: () => window.location.reload()
     };
 
     window.__veryfrontRouter = router;
@@ -628,26 +622,27 @@ export const getRouterScript = () => `
       // Save scroll position of page we're leaving
       saveScrollPosition(currentPath);
 
-      if (e.state?.pageData) {
-        // Use cached page data from history state
-        showNavigationProgress();
-        try {
-          await renderPageFromData(e.state.pageData);
-          currentPath = path;
-          window.__veryfrontRouter.pathname = path;
-          window.__veryfrontRouter.query = Object.fromEntries(new URLSearchParams(window.location.search));
-
-          // Restore scroll position
-          restoreScrollPosition(path);
-          hideNavigationProgress(true);
-        } catch (error) {
-          hideNavigationProgress(false);
-          logError('Popstate render failed:', error.message);
-          window.location.reload();
-        }
-      } else {
+      if (!e.state?.pageData) {
         // Fetch fresh data with scroll restoration
         await navigateSPA(path, false, true);
+        return;
+      }
+
+      // Use cached page data from history state
+      showNavigationProgress();
+      try {
+        await renderPageFromData(e.state.pageData, path);
+        currentPath = path;
+        window.__veryfrontRouter.pathname = path;
+        window.__veryfrontRouter.query = Object.fromEntries(new URLSearchParams(window.location.search));
+
+        // Restore scroll position
+        restoreScrollPosition(path);
+        hideNavigationProgress();
+      } catch (error) {
+        hideNavigationProgress();
+        logError('Popstate render failed:', error.message);
+        window.location.reload();
       }
     });
 
@@ -662,20 +657,25 @@ export const getRouterScript = () => `
       // Handle hash-only links (scroll to element on same page)
       if (href.startsWith('#')) {
         const target = document.getElementById(href.slice(1));
-        if (target) {
-          e.preventDefault();
-          target.scrollIntoView({ behavior: 'smooth' });
-          window.history.pushState(null, '', href);
-        }
+        if (!target) return;
+
+        e.preventDefault();
+        target.scrollIntoView({ behavior: 'smooth' });
+        window.history.pushState(null, '', href);
         return;
       }
 
       // Skip: external links, new tab, download, modifier keys, non-path links
-      if (link.target === '_blank' ||
-          link.hasAttribute('download') ||
-          e.metaKey || e.ctrlKey || e.shiftKey || e.altKey ||
-          !href.startsWith('/') ||
-          href.startsWith('//')) {
+      if (
+        link.target === '_blank' ||
+        link.hasAttribute('download') ||
+        e.metaKey ||
+        e.ctrlKey ||
+        e.shiftKey ||
+        e.altKey ||
+        !href.startsWith('/') ||
+        href.startsWith('//')
+      ) {
         return;
       }
 
@@ -687,48 +687,53 @@ export const getRouterScript = () => `
     // Track which link we're currently hovering to avoid duplicate work
     let currentHoverLink = null;
 
-    document.addEventListener('mouseenter', (e) => {
-      if (!e.target || typeof e.target.closest !== 'function') return;
-      const link = e.target.closest('a[href]');
-      if (!link) return;
+    document.addEventListener(
+      'mouseenter',
+      (e) => {
+        if (!e.target || typeof e.target.closest !== 'function') return;
+        const link = e.target.closest('a[href]');
+        if (!link) return;
 
-      const href = link.getAttribute('href');
-      if (!href?.startsWith('/') || href.startsWith('//')) return;
+        const href = link.getAttribute('href');
+        if (!href?.startsWith('/') || href.startsWith('//')) return;
 
-      // If we're already tracking this link, don't restart the timeout
-      if (currentHoverLink === link) return;
+        // If we're already tracking this link, don't restart the timeout
+        if (currentHoverLink === link) return;
 
-      // Clear any existing timeout before setting a new one
-      if (prefetchTimeout) {
-        clearTimeout(prefetchTimeout);
-        prefetchTimeout = null;
-      }
+        // Clear any existing timeout before setting a new one
+        if (prefetchTimeout) {
+          clearTimeout(prefetchTimeout);
+          prefetchTimeout = null;
+        }
 
-      currentHoverLink = link;
-      prefetchTimeout = setTimeout(() => {
-        prefetchPage(href);
-        prefetchTimeout = null;
-      }, PREFETCH_DELAY_MS);
-    }, true);
+        currentHoverLink = link;
+        prefetchTimeout = setTimeout(() => {
+          prefetchPage(href);
+          prefetchTimeout = null;
+        }, PREFETCH_DELAY_MS);
+      },
+      true
+    );
 
-    document.addEventListener('mouseleave', (e) => {
-      if (!e.target || typeof e.target.closest !== 'function') return;
+    document.addEventListener(
+      'mouseleave',
+      (e) => {
+        if (!e.target || typeof e.target.closest !== 'function') return;
 
-      // Only clear timeout if we're actually leaving the link entirely
-      // Check if the mouse is moving to an element outside the current hover link
-      const relatedTarget = e.relatedTarget;
-      if (currentHoverLink && relatedTarget) {
-        // If moving to an element inside the same link, don't cancel
-        if (currentHoverLink.contains(relatedTarget)) return;
-      }
+        // Only clear timeout if we're actually leaving the link entirely
+        // Check if the mouse is moving to an element outside the current hover link
+        const relatedTarget = e.relatedTarget;
+        if (currentHoverLink && relatedTarget && currentHoverLink.contains(relatedTarget)) return;
 
-      // Actually leaving the link
-      if (prefetchTimeout) {
-        clearTimeout(prefetchTimeout);
-        prefetchTimeout = null;
-      }
-      currentHoverLink = null;
-    }, true);
+        // Actually leaving the link
+        if (prefetchTimeout) {
+          clearTimeout(prefetchTimeout);
+          prefetchTimeout = null;
+        }
+        currentHoverLink = null;
+      },
+      true
+    );
 
     // ============================================
     // Router hooks - use imported RouterProvider from veryfront/router

@@ -6,8 +6,8 @@
  * @module platform/adapters/redis/node
  */
 
-import type { NodeRedisClient } from "./types.ts";
 import type { RedisAdapter } from "./interface.ts";
+import type { NodeRedisClient } from "./types.ts";
 
 /**
  * Adapter for Node.js 'redis' package
@@ -15,60 +15,60 @@ import type { RedisAdapter } from "./interface.ts";
 export class NodeRedisAdapter implements RedisAdapter {
   constructor(private client: NodeRedisClient) {}
 
-  async hset(key: string, fields: Record<string, string>): Promise<number | string> {
-    return await this.client.hSet(key, fields);
+  hset(key: string, fields: Record<string, string>): Promise<number | string> {
+    return this.client.hSet(key, fields);
   }
 
-  async hgetall(key: string): Promise<Record<string, string>> {
-    return await this.client.hGetAll(key);
+  hgetall(key: string): Promise<Record<string, string>> {
+    return this.client.hGetAll(key);
   }
 
-  async hdel(key: string, ...fields: string[]): Promise<number> {
-    return await this.client.hDel(key, fields);
+  hdel(key: string, ...fields: string[]): Promise<number> {
+    return this.client.hDel(key, fields);
   }
 
-  async del(...keys: string[]): Promise<number> {
-    return await this.client.del(keys);
+  del(...keys: string[]): Promise<number> {
+    return this.client.del(keys);
   }
 
-  async sadd(key: string, ...members: string[]): Promise<number> {
-    return await this.client.sAdd(key, members);
+  sadd(key: string, ...members: string[]): Promise<number> {
+    return this.client.sAdd(key, members);
   }
 
-  async srem(key: string, ...members: string[]): Promise<number> {
-    return await this.client.sRem(key, members);
+  srem(key: string, ...members: string[]): Promise<number> {
+    return this.client.sRem(key, members);
   }
 
-  async smembers(key: string): Promise<string[]> {
-    return await this.client.sMembers(key);
+  smembers(key: string): Promise<string[]> {
+    return this.client.sMembers(key);
   }
 
-  async rpush(key: string, ...values: string[]): Promise<number> {
-    return await this.client.rPush(key, values);
+  rpush(key: string, ...values: string[]): Promise<number> {
+    return this.client.rPush(key, values);
   }
 
-  async lrange(key: string, start: number, stop: number): Promise<string[]> {
-    return await this.client.lRange(key, start, stop);
+  lrange(key: string, start: number, stop: number): Promise<string[]> {
+    return this.client.lRange(key, start, stop);
   }
 
-  async lindex(key: string, index: number): Promise<string | null> {
-    return await this.client.lIndex(key, index);
+  lindex(key: string, index: number): Promise<string | null> {
+    return this.client.lIndex(key, index);
   }
 
-  async lset(key: string, index: number, value: string): Promise<string | "OK"> {
-    return await this.client.lSet(key, index, value);
+  lset(key: string, index: number, value: string): Promise<string | "OK"> {
+    return this.client.lSet(key, index, value);
   }
 
-  async llen(key: string): Promise<number> {
-    return await this.client.lLen(key);
+  llen(key: string): Promise<number> {
+    return this.client.lLen(key);
   }
 
-  async xadd(key: string, id: string, fields: Record<string, string>): Promise<string> {
-    return await this.client.xAdd(key, id, fields);
+  xadd(key: string, id: string, fields: Record<string, string>): Promise<string> {
+    return this.client.xAdd(key, id, fields);
   }
 
-  async xgroupCreate(key: string, group: string, id: string, mkstream?: boolean): Promise<string> {
-    return await this.client.xGroupCreate(key, group, id, { MKSTREAM: mkstream });
+  xgroupCreate(key: string, group: string, id: string, mkstream?: boolean): Promise<string> {
+    return this.client.xGroupCreate(key, group, id, { MKSTREAM: mkstream });
   }
 
   async xreadgroup(
@@ -81,10 +81,7 @@ export class NodeRedisAdapter implements RedisAdapter {
       options.group,
       options.consumer,
       streams.map((s) => ({ key: s.key, id: s.xid })),
-      {
-        BLOCK: options.block,
-        COUNT: options.count,
-      },
+      { BLOCK: options.block, COUNT: options.count },
     );
 
     if (!result) return [];
@@ -93,43 +90,42 @@ export class NodeRedisAdapter implements RedisAdapter {
     // node-redis v4 returns: Array<{ name: string, messages: Array<{ id: string, message: Record<string, string> }> }>
     return result.map((stream) => ({
       key: stream.name,
-      messages: stream.messages.map((msg) => ({
-        id: msg.id,
-        data: msg.message,
-      })),
+      messages: stream.messages.map((msg) => ({ id: msg.id, data: msg.message })),
     }));
   }
 
-  async xack(key: string, group: string, ...ids: string[]): Promise<number> {
-    return await this.client.xAck(key, group, ids);
+  xack(key: string, group: string, ...ids: string[]): Promise<number> {
+    return this.client.xAck(key, group, ids);
   }
 
-  async keys(pattern: string): Promise<string[]> {
-    return await this.client.keys(pattern);
+  keys(pattern: string): Promise<string[]> {
+    return this.client.keys(pattern);
   }
 
-  async exists(...keys: string[]): Promise<number> {
-    return await this.client.exists(keys);
+  exists(...keys: string[]): Promise<number> {
+    return this.client.exists(keys);
   }
 
-  async expire(key: string, seconds: number): Promise<number> {
-    return await this.client.expire(key, seconds);
+  expire(key: string, seconds: number): Promise<number> {
+    return this.client.expire(key, seconds);
   }
 
-  async set(
+  set(
     key: string,
     value: string,
     options?: { nx?: boolean; px?: number; ex?: number },
   ): Promise<string | null> {
-    const opts: { NX?: boolean; PX?: number; EX?: number } = {};
+    const opts: { NX?: true; PX?: number; EX?: number } = {};
+
     if (options?.nx) opts.NX = true;
     if (options?.px) opts.PX = options.px;
     if (options?.ex) opts.EX = options.ex;
-    return await this.client.set(key, value, opts);
+
+    return this.client.set(key, value, opts);
   }
 
-  async get(key: string): Promise<string | null> {
-    return await this.client.get(key);
+  get(key: string): Promise<string | null> {
+    return this.client.get(key);
   }
 
   async quit(): Promise<void> {

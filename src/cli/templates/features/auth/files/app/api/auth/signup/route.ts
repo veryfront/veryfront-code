@@ -2,7 +2,7 @@ import { db } from "../../../../lib/db.ts";
 import { hashPassword } from "../../../../lib/auth.ts";
 import { sign } from "../../../../lib/jwt.ts";
 
-export async function POST(req: Request) {
+export async function POST(req: Request): Promise<Response> {
   try {
     const { email, password, name } = await req.json();
 
@@ -20,19 +20,24 @@ export async function POST(req: Request) {
       data: { email, passwordHash, name },
     });
 
-    const token = await sign({ userId: newUser.id, email: newUser.email, name: newUser.name });
+    const token = await sign({
+      userId: newUser.id,
+      email: newUser.email,
+      name: newUser.name,
+    });
 
-    const headers = new Headers();
-    headers.set(
-      "Set-Cookie",
-      `session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${7 * 24 * 60 * 60}`,
+    const headers = new Headers({
+      "Set-Cookie": `session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${7 * 24 * 60 * 60}`,
+    });
+
+    return Response.json(
+      {
+        success: true,
+        user: { id: newUser.id, email: newUser.email, name: newUser.name },
+      },
+      { headers },
     );
-
-    return Response.json({
-      success: true,
-      user: { id: newUser.id, email: newUser.email, name: newUser.name },
-    }, { headers });
-  } catch (_error) {
+  } catch {
     return Response.json({ error: "Internal server error" }, { status: 500 });
   }
 }

@@ -4,77 +4,87 @@ import { isFullHTMLDocument } from "./html-detection.ts";
 
 describe("html-detection", () => {
   describe("isFullHTMLDocument", () => {
-    it("should detect full HTML5 document", () => {
-      const html = `<!DOCTYPE html>
+    const cases: Array<{ name: string; html: string; expected: boolean }> = [
+      {
+        name: "should detect full HTML5 document",
+        html: `<!DOCTYPE html>
 <html>
 <head><title>Test</title></head>
 <body>Content</body>
-</html>`;
-      assertEquals(isFullHTMLDocument(html), true);
-    });
-
-    it("should detect HTML document with lang attribute", () => {
-      const html = `<!doctype html>
+</html>`,
+        expected: true,
+      },
+      {
+        name: "should detect HTML document with lang attribute",
+        html: `<!doctype html>
 <html lang="en">
 <head></head>
 <body></body>
-</html>`;
-      assertEquals(isFullHTMLDocument(html), true);
-    });
-
-    it("should be case-insensitive for doctype", () => {
-      const html = `<!DOCTYPE HTML>
+</html>`,
+        expected: true,
+      },
+      {
+        name: "should be case-insensitive for doctype",
+        html: `<!DOCTYPE HTML>
 <HTML>
 <HEAD></HEAD>
 <BODY></BODY>
-</HTML>`;
-      assertEquals(isFullHTMLDocument(html), true);
-    });
-
-    it("should handle lowercase doctype", () => {
-      const html = `<!doctype html><html><head></head><body></body></html>`;
-      assertEquals(isFullHTMLDocument(html), true);
-    });
-
-    it("should return false for fragment without doctype", () => {
-      const html = `<html><head></head><body></body></html>`;
-      assertEquals(isFullHTMLDocument(html), false);
-    });
-
-    it("should return false for simple div", () => {
-      const html = `<div>Hello World</div>`;
-      assertEquals(isFullHTMLDocument(html), false);
-    });
-
-    it("should return false for React component output", () => {
-      const html = `<div id="root"><h1>Welcome</h1><p>Content here</p></div>`;
-      assertEquals(isFullHTMLDocument(html), false);
-    });
-
-    it("should return false for empty string", () => {
-      assertEquals(isFullHTMLDocument(""), false);
-    });
-
-    it("should return false for doctype without html tags", () => {
-      const html = `<!DOCTYPE html><div>No html tags</div>`;
-      assertEquals(isFullHTMLDocument(html), false);
-    });
-
-    it("should return false for doctype without closing html tag", () => {
-      const html = `<!DOCTYPE html><html><body>Missing closing</body>`;
-      assertEquals(isFullHTMLDocument(html), false);
-    });
-
-    it("should handle whitespace before doctype", () => {
-      const html = `
+</HTML>`,
+        expected: true,
+      },
+      {
+        name: "should handle lowercase doctype",
+        html: `<!doctype html><html><head></head><body></body></html>`,
+        expected: true,
+      },
+      {
+        name: "should return false for fragment without doctype",
+        html: `<html><head></head><body></body></html>`,
+        expected: false,
+      },
+      {
+        name: "should return false for simple div",
+        html: `<div>Hello World</div>`,
+        expected: false,
+      },
+      {
+        name: "should return false for React component output",
+        html: `<div id="root"><h1>Welcome</h1><p>Content here</p></div>`,
+        expected: false,
+      },
+      {
+        name: "should return false for empty string",
+        html: "",
+        expected: false,
+      },
+      {
+        name: "should return false for doctype without html tags",
+        html: `<!DOCTYPE html><div>No html tags</div>`,
+        expected: false,
+      },
+      {
+        name: "should return false for doctype without closing html tag",
+        html: `<!DOCTYPE html><html><body>Missing closing</body>`,
+        expected: false,
+      },
+      {
+        name: "should handle whitespace before doctype",
+        html: `
   <!DOCTYPE html>
-<html><head></head><body></body></html>`;
-      assertEquals(isFullHTMLDocument(html), true);
-    });
+<html><head></head><body></body></html>`,
+        expected: true,
+      },
+      {
+        name: "should return false for content containing html tags as text",
+        html: `<p>Learn about <html></html> tags</p>`,
+        expected: false,
+      },
+    ];
 
-    it("should return false for content containing html tags as text", () => {
-      const html = `<p>Learn about <html></html> tags</p>`;
-      assertEquals(isFullHTMLDocument(html), false);
-    });
+    for (const { name, html, expected } of cases) {
+      it(name, () => {
+        assertEquals(isFullHTMLDocument(html), expected);
+      });
+    }
   });
 });

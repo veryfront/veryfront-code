@@ -8,7 +8,7 @@ export class SqliteKv implements Kv {
     this.initialize();
   }
 
-  private initialize() {
+  private initialize(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY,
         value TEXT,
@@ -30,23 +30,21 @@ export class SqliteKv implements Kv {
     const keyStr = this.keyToString(key);
     const row = this.db
       .prepare("SELECT value, versionstamp FROM kv_store WHERE key = ?")
-      .get(keyStr);
+      .get(keyStr) as { value: string; versionstamp?: string } | undefined;
 
-    if (!row) {
-      return Promise.resolve({ value: undefined as T | undefined });
-    }
+    if (!row) return Promise.resolve({ value: undefined });
 
     return Promise.resolve({
-      value: JSON.parse((row as { value: string; versionstamp?: string }).value) as T,
-      versionstamp: (row as { value: string; versionstamp?: string }).versionstamp,
+      value: JSON.parse(row.value) as T,
+      versionstamp: row.versionstamp,
     });
   }
 
   set<T = unknown>(key: string[], value: T): Promise<void> {
     const keyStr = this.keyToString(key);
     const valueStr = JSON.stringify(value);
-    const versionstamp = Date.now().toString();
     const now = Date.now();
+    const versionstamp = now.toString();
 
     this.db
       .prepare(`
@@ -76,35 +74,32 @@ export class SqliteKv implements Kv {
     }
 
     if (options?.start) {
-      const startStr = this.keyToString(options.start);
       conditions.push("key >= ?");
-      params.push(startStr);
+      params.push(this.keyToString(options.start));
     }
 
     if (options?.end) {
-      const endStr = this.keyToString(options.end);
       conditions.push("key < ?");
-      params.push(endStr);
+      params.push(this.keyToString(options.end));
     }
 
-    if (conditions.length > 0) {
-      query += ` WHERE ${conditions.join(" AND ")}`;
-    }
+    if (conditions.length) query += ` WHERE ${conditions.join(" AND ")}`;
 
     query += " ORDER BY key";
-    if (options?.reverse) {
-      query += " DESC";
-    }
+    if (options?.reverse) query += " DESC";
 
     if (options?.limit) {
       query += " LIMIT ?";
       params.push(options.limit);
     }
 
-    const stmt = this.db.prepare(query);
-    const rows = stmt.all(...params);
+    const rows = this.db.prepare(query).all(...params) as Array<{
+      key: string;
+      value: string;
+      versionstamp?: string;
+    }>;
 
-    for (const row of rows as Array<{ key: string; value: string; versionstamp?: string }>) {
+    for (const row of rows) {
       yield {
         key: this.stringToKey(row.key),
         value: JSON.parse(row.value) as T,

@@ -8,37 +8,29 @@ export async function watchMDX(options: CompileOptions): Promise<void> {
   logger.info("Watching for MDX file changes...");
 
   const dirsToWatch = await getWatchableDirectories(options.projectDir);
-
   if (dirsToWatch.length === 0) {
     logger.warn("No MDX directories found to watch");
     return;
   }
 
-  const adapter = await runtime.get();
-  const watcher = adapter.fs.watch(dirsToWatch, { recursive: true });
+  const { fs } = await runtime.get();
+  const watcher = fs.watch(dirsToWatch, { recursive: true });
 
   for await (const event of watcher) {
-    if (event.kind === "modify" || event.kind === "create") {
-      await handleFileChange(event.paths, options);
-    }
+    if (event.kind !== "modify" && event.kind !== "create") continue;
+    await handleFileChange(event.paths, options);
   }
 }
 
 async function getWatchableDirectories(projectDir: string): Promise<string[]> {
-  const adapter = await runtime.get();
+  const { fs } = await runtime.get();
+  const potentialDirs = ["pages", "layouts", "providers"].map((dir) => join(projectDir, dir));
   const dirsToWatch: string[] = [];
-  const potentialDirs = [
-    join(projectDir, "pages"),
-    join(projectDir, "layouts"),
-    join(projectDir, "providers"),
-  ];
 
   for (const dir of potentialDirs) {
     try {
-      const stat = await adapter.fs.stat(dir);
-      if (stat.isDirectory) {
-        dirsToWatch.push(dir);
-      }
+      const stat = await fs.stat(dir);
+      if (stat.isDirectory) dirsToWatch.push(dir);
     } catch {
       // Directory doesn't exist, skip it
     }
@@ -48,16 +40,17 @@ async function getWatchableDirectories(projectDir: string): Promise<string[]> {
 }
 
 async function handleFileChange(paths: string[], options: CompileOptions): Promise<void> {
-  const adapter = await runtime.get();
+  const { fs } = await runtime.get();
+
   for (const path of paths) {
-    if (path.endsWith(".mdx")) {
-      try {
-        const content = await adapter.fs.readFile(path);
-        await compileMDXFile(path, content, options);
-        logger.info(`Recompiled: ${path}`);
-      } catch (error) {
-        logger.error(`Failed to recompile ${path}:`, error);
-      }
+    if (!path.endsWith(".mdx")) continue;
+
+    try {
+      const content = await fs.readFile(path);
+      await compileMDXFile(path, content, options);
+      logger.info(`Recompiled: ${path}`);
+    } catch (error) {
+      logger.error(`Failed to recompile ${path}:`, error);
     }
   }
 }

@@ -50,57 +50,39 @@ describe("parseDuration", () => {
 
 describe("generateId", () => {
   it("should generate unique IDs", () => {
-    const id1 = generateId();
-    const id2 = generateId();
-    const id3 = generateId();
+    const ids = [generateId(), generateId(), generateId()];
 
-    assertEquals(typeof id1, "string");
-    assertEquals(id1.length > 0, true);
+    for (const id of ids) {
+      assertEquals(typeof id, "string");
+      assertEquals(id.length > 0, true);
+    }
 
-    // IDs should be unique
-    assertEquals(id1 !== id2, true);
-    assertEquals(id2 !== id3, true);
-    assertEquals(id1 !== id3, true);
+    assertEquals(new Set(ids).size, ids.length);
   });
 
   it("should use provided prefix", () => {
-    const id = generateId("wf");
-    assertEquals(id.startsWith("wf_"), true);
-
-    const runId = generateId("run");
-    assertEquals(runId.startsWith("run_"), true);
+    assertEquals(generateId("wf").startsWith("wf_"), true);
+    assertEquals(generateId("run").startsWith("run_"), true);
   });
 
   it("should use default 'wf' prefix when no prefix provided", () => {
-    const id = generateId();
-    assertEquals(id.startsWith("wf_"), true);
+    assertEquals(generateId().startsWith("wf_"), true);
   });
 });
 
 describe("validateRetryConfig", () => {
   it("should accept valid config", () => {
-    // Should not throw
     validateRetryConfig({});
     validateRetryConfig({ maxAttempts: 3 });
     validateRetryConfig({ backoff: "exponential", initialDelay: 100, maxDelay: 5000 });
   });
 
   it("should reject invalid maxAttempts", () => {
-    assertThrows(
-      () => validateRetryConfig({ maxAttempts: 0 }),
-      Error,
-      "maxAttempts must be a positive integer",
-    );
-    assertThrows(
-      () => validateRetryConfig({ maxAttempts: -1 }),
-      Error,
-      "maxAttempts must be a positive integer",
-    );
-    assertThrows(
-      () => validateRetryConfig({ maxAttempts: 1.5 }),
-      Error,
-      "maxAttempts must be a positive integer",
-    );
+    const message = "maxAttempts must be a positive integer";
+
+    assertThrows(() => validateRetryConfig({ maxAttempts: 0 }), Error, message);
+    assertThrows(() => validateRetryConfig({ maxAttempts: -1 }), Error, message);
+    assertThrows(() => validateRetryConfig({ maxAttempts: 1.5 }), Error, message);
   });
 
   it("should reject negative delays", () => {

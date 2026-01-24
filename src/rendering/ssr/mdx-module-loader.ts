@@ -1,22 +1,19 @@
 import { getCacheNamespace } from "#veryfront/utils/cache/keys/namespace.ts";
 import { CompilationError, wrapError } from "#veryfront/errors/index.ts";
 // Direct import from registry.ts to avoid circular dependency through barrel
-import { runtime } from "#veryfront/platform/adapters/registry.ts";
-import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
+import { getLocalAdapter, runtime } from "#veryfront/platform/adapters/registry.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
-import type { MDXModule } from "./types.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { MDX_RENDERER_MAX_ENTRIES, MDX_RENDERER_TTL_MS } from "#veryfront/utils/constants/cache.ts";
+import type { MDXModule } from "./types.ts";
 
-// Use LRU cache with proper limits to prevent unbounded memory growth
 const mdxModuleCache = new LRUCache<string, MDXModule>({
   maxEntries: MDX_RENDERER_MAX_ENTRIES,
   ttlMs: MDX_RENDERER_TTL_MS,
   cleanupIntervalMs: 60000,
 });
 
-// Register with memory profiler
 registerCache("mdx-module-cache", () => ({
   name: "mdx-module-cache",
   entries: mdxModuleCache.size,
@@ -29,23 +26,22 @@ export function clearMDXModuleCache(): void {
 
 function validateMDXModule(module: MDXModule, context: Record<string, unknown>): void {
   const MDXContent = module.default || module.MDXContent;
-  if (!MDXContent) {
-    throw new CompilationError("No default export found in MDX module", context);
-  }
+  if (MDXContent) return;
+  throw new CompilationError("No default export found in MDX module", context);
 }
 
-export async function loadMDXModule(
-  modulePath: string,
-): Promise<MDXModule> {
-  try {
-    const ns = getCacheNamespace() || "default";
-    const key = `${ns}:${modulePath}`;
-    const cached = mdxModuleCache.get(key);
-    if (cached) {
-      return cached;
-    }
+function getNamespacedKey(suffix: string): string {
+  const ns = getCacheNamespace() ?? "default";
+  return `${ns}:${suffix}`;
+}
 
-    const module = await import(modulePath) as MDXModule;
+export async function loadMDXModule(modulePath: string): Promise<MDXModule> {
+  try {
+    const key = getNamespacedKey(modulePath);
+    const cached = mdxModuleCache.get(key);
+    if (cached) return cached;
+
+    const module = (await import(modulePath)) as MDXModule;
     validateMDXModule(module, { modulePath });
     mdxModuleCache.set(key, module);
 
@@ -60,21 +56,16 @@ export async function loadCompiledMDXModule(
   cacheKey: string,
 ): Promise<MDXModule> {
   try {
-    const ns = getCacheNamespace() || "default";
-    const key = `${ns}:compiled:${cacheKey}`;
+    const key = getNamespacedKey(`compiled:${cacheKey}`);
     const cached = mdxModuleCache.get(key);
-    if (cached) {
-      return cached;
-    }
+    if (cached) return cached;
 
     const isBrowser = typeof window !== "undefined" && typeof document !== "undefined";
+    if (isBrowser) return await loadViaBlobURL(compiledCode, cacheKey, key);
 
-    if (isBrowser) {
-      return await loadViaBlobURL(compiledCode, cacheKey, key);
-    }
     return await loadViaTempFile(compiledCode, cacheKey, key);
   } catch (error) {
-    throw wrapError(error, `Failed to load compiled MDX module`, { cacheKey });
+    throw wrapError(error, "Failed to load compiled MDX module", { cacheKey });
   }
 }
 
@@ -86,7 +77,7 @@ async function loadViaTempFile(
   const tempModulePath = await writeTempMDXModule(compiledCode, cacheKey);
 
   try {
-    const module = await import(tempModulePath) as MDXModule;
+    const module = (await import(tempModulePath)) as MDXModule;
     validateMDXModule(module, { cacheKey, codePreview: compiledCode.substring(0, 200) });
     mdxModuleCache.set(key, module);
     return module;
@@ -107,7 +98,7 @@ async function loadViaBlobURL(
   const blobURL = URL.createObjectURL(blob);
 
   try {
-    const module = await import(blobURL) as MDXModule;
+    const module = (await import(blobURL)) as MDXModule;
     validateMDXModule(module, { cacheKey, codePreview: compiledCode.substring(0, 200) });
     mdxModuleCache.set(key, module);
     return module;
@@ -116,10 +107,7 @@ async function loadViaBlobURL(
   }
 }
 
-async function writeTempMDXModule(
-  compiledCode: string,
-  cacheKey: string,
-): Promise<string> {
+async function writeTempMDXModule(compiledCode: string, cacheKey: string): Promise<string> {
   const tempDir = await ensureTempDir();
 
   const safeKey = cacheKey.replace(/[^a-zA-Z0-9-_]/g, "_").substring(0, 50);
@@ -128,7 +116,6 @@ async function writeTempMDXModule(
   const modulePath = `${tempDir}/${filename}`;
   const moduleCode = wrapAsESMModule(compiledCode);
 
-  // Use local adapter for temp files - always local regardless of FSAdapter
   const localAdapter = await getLocalAdapter();
   await localAdapter.fs.writeFile(modulePath, moduleCode);
 
@@ -151,12 +138,11 @@ const _Fragment = Fragment;
 
 async function ensureTempDir(): Promise<string> {
   const adapter = await runtime.get();
-  const { cwd } = await import("../../platform/compat/process.ts"); // Import cwd helper
+  const { cwd } = await import("../../platform/compat/process.ts");
   const tempDir = `${cwd()}/.veryfront/temp/mdx-modules`;
 
   try {
-    const exists = await adapter.fs.exists(tempDir);
-    if (!exists) {
+    if (!(await adapter.fs.exists(tempDir))) {
       await adapter.fs.mkdir(tempDir, { recursive: true });
     }
     return tempDir;

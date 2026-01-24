@@ -9,30 +9,18 @@ import {
 } from "./network-defaults.ts";
 
 describe("network-defaults", () => {
-  describe("LOCALHOST constants", () => {
-    it("should have correct IPv4 address", () => {
-      assertEquals(LOCALHOST.IPV4, "127.0.0.1");
-    });
-
-    it("should have correct IPv6 address", () => {
-      assertEquals(LOCALHOST.IPV6, "::1");
-    });
-
-    it("should have correct hostname", () => {
-      assertEquals(LOCALHOST.HOSTNAME, "localhost");
-    });
+  it("LOCALHOST should have correct values", () => {
+    assertEquals(LOCALHOST.IPV4, "127.0.0.1");
+    assertEquals(LOCALHOST.IPV6, "::1");
+    assertEquals(LOCALHOST.HOSTNAME, "localhost");
   });
 
-  describe("HTTP_DEFAULTS constants", () => {
-    it("should have correct default port", () => {
-      assertEquals(HTTP_DEFAULTS.PORT, 3000);
-    });
+  it("HTTP_DEFAULTS should have correct default port", () => {
+    assertEquals(HTTP_DEFAULTS.PORT, 3000);
   });
 
-  describe("REDIS_DEFAULTS constants", () => {
-    it("should have correct default URL", () => {
-      assertEquals(REDIS_DEFAULTS.URL, "redis://127.0.0.1:6379");
-    });
+  it("REDIS_DEFAULTS should have correct default URL", () => {
+    assertEquals(REDIS_DEFAULTS.URL, "redis://127.0.0.1:6379");
   });
 
   describe("buildLocalhostUrl", () => {

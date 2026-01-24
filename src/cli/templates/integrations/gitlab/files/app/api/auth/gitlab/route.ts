@@ -1,9 +1,3 @@
-/**
- * GitLab OAuth Initiation
- */
-
 import { createOAuthInitHandler, gitlabConfig, memoryTokenStore } from "veryfront/oauth";
 
-export const GET = createOAuthInitHandler(gitlabConfig, {
-  tokenStore: memoryTokenStore,
-});
+export const GET = createOAuthInitHandler(gitlabConfig, { tokenStore: memoryTokenStore });

@@ -2,159 +2,147 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
 import { identifyError } from "./error-identifier.ts";
 
+function testIdentifyError(name: string, message: string, expected: string): void {
+  it(name, () => {
+    expect(identifyError(new Error(message))).toBe(expected);
+  });
+}
+
 describe("error-identifier", () => {
   describe("identifyError", () => {
     describe("config errors", () => {
-      it("should identify missing config", () => {
-        const error = new Error("veryfront.config not found");
-        expect(identifyError(error)).toBe("missing-config");
-      });
-
-      it("should identify missing config with different casing", () => {
-        const error = new Error("Veryfront.Config NOT FOUND");
-        expect(identifyError(error)).toBe("missing-config");
-      });
-
-      it("should identify invalid config with parse error", () => {
-        const error = new Error("Config parse error");
-        expect(identifyError(error)).toBe("invalid-config");
-      });
-
-      it("should identify invalid config", () => {
-        const error = new Error("Invalid config format");
-        expect(identifyError(error)).toBe("invalid-config");
-      });
+      testIdentifyError(
+        "should identify missing config",
+        "veryfront.config not found",
+        "missing-config",
+      );
+      testIdentifyError(
+        "should identify missing config with different casing",
+        "Veryfront.Config NOT FOUND",
+        "missing-config",
+      );
+      testIdentifyError(
+        "should identify invalid config with parse error",
+        "Config parse error",
+        "invalid-config",
+      );
+      testIdentifyError(
+        "should identify invalid config",
+        "Invalid config format",
+        "invalid-config",
+      );
     });
 
     describe("route errors", () => {
-      it("should identify invalid route", () => {
-        const error = new Error("Invalid route definition");
-        expect(identifyError(error)).toBe("invalid-route");
-      });
-
-      it("should identify route export error", () => {
-        const error = new Error("Route export is invalid");
-        expect(identifyError(error)).toBe("invalid-route");
-      });
+      testIdentifyError(
+        "should identify invalid route",
+        "Invalid route definition",
+        "invalid-route",
+      );
+      testIdentifyError(
+        "should identify route export error",
+        "Route export is invalid",
+        "invalid-route",
+      );
     });
 
     describe("RSC errors", () => {
-      it("should identify client boundary error", () => {
-        const error = new Error("Client boundary violation");
-        expect(identifyError(error)).toBe("client-boundary");
-      });
-
-      it("should identify client-server boundary error", () => {
-        const error = new Error("Client component used in server context");
-        expect(identifyError(error)).toBe("client-boundary");
-      });
+      testIdentifyError(
+        "should identify client boundary error",
+        "Client boundary violation",
+        "client-boundary",
+      );
+      testIdentifyError(
+        "should identify client-server boundary error",
+        "Client component used in server context",
+        "client-boundary",
+      );
     });
 
     describe("import errors", () => {
-      it("should identify import not found", () => {
-        const error = new Error("Cannot import module");
-        expect(identifyError(error)).toBe("import-not-found");
-      });
-
-      it("should identify module not found", () => {
-        const error = new Error("Module not found: ./component.ts");
-        expect(identifyError(error)).toBe("import-not-found");
-      });
-
-      it("should identify resolve error", () => {
-        const error = new Error("Failed to resolve module");
-        expect(identifyError(error)).toBe("import-not-found");
-      });
+      testIdentifyError(
+        "should identify import not found",
+        "Cannot import module",
+        "import-not-found",
+      );
+      testIdentifyError(
+        "should identify module not found",
+        "Module not found: ./component.ts",
+        "import-not-found",
+      );
+      testIdentifyError(
+        "should identify resolve error",
+        "Failed to resolve module",
+        "import-not-found",
+      );
     });
 
     describe("port errors", () => {
-      it("should identify port in use", () => {
-        const error = new Error("Port 3000 is already in use");
-        expect(identifyError(error)).toBe("port-in-use");
-      });
-
-      it("should identify EADDRINUSE error", () => {
-        const error = new Error("EADDRINUSE: port 3000");
-        expect(identifyError(error)).toBe("port-in-use");
-      });
-
-      it("should handle case variations", () => {
-        const error = new Error("Port IN USE");
-        expect(identifyError(error)).toBe("port-in-use");
-      });
+      testIdentifyError(
+        "should identify port in use",
+        "Port 3000 is already in use",
+        "port-in-use",
+      );
+      testIdentifyError("should identify EADDRINUSE error", "EADDRINUSE: port 3000", "port-in-use");
+      testIdentifyError("should handle case variations", "Port IN USE", "port-in-use");
     });
 
     describe("build errors", () => {
-      it("should identify build failed", () => {
-        const error = new Error("Build failed with errors");
-        expect(identifyError(error)).toBe("build-failed");
-      });
-
-      it("should identify build fail", () => {
-        const error = new Error("The build will fail");
-        expect(identifyError(error)).toBe("build-failed");
-      });
+      testIdentifyError("should identify build failed", "Build failed with errors", "build-failed");
+      testIdentifyError("should identify build fail", "The build will fail", "build-failed");
     });
 
     describe("dependency errors", () => {
-      it("should identify missing React dependency", () => {
-        const error = new Error("React not found");
-        expect(identifyError(error)).toBe("missing-deps");
-      });
-
-      it("should handle case variations", () => {
-        const error = new Error("REACT NOT FOUND");
-        expect(identifyError(error)).toBe("missing-deps");
-      });
+      testIdentifyError(
+        "should identify missing React dependency",
+        "React not found",
+        "missing-deps",
+      );
+      testIdentifyError("should handle case variations", "REACT NOT FOUND", "missing-deps");
     });
 
     describe("unknown errors", () => {
-      it("should return unknown for unrecognized errors", () => {
-        const error = new Error("Something went wrong");
-        expect(identifyError(error)).toBe("unknown");
-      });
-
-      it("should return unknown for empty error message", () => {
-        const error = new Error("");
-        expect(identifyError(error)).toBe("unknown");
-      });
-
-      it("should return unknown for generic errors", () => {
-        const error = new Error("An unexpected error occurred");
-        expect(identifyError(error)).toBe("unknown");
-      });
+      testIdentifyError(
+        "should return unknown for unrecognized errors",
+        "Something went wrong",
+        "unknown",
+      );
+      testIdentifyError("should return unknown for empty error message", "", "unknown");
+      testIdentifyError(
+        "should return unknown for generic errors",
+        "An unexpected error occurred",
+        "unknown",
+      );
     });
 
     describe("edge cases", () => {
-      it("should handle errors with mixed keywords", () => {
-        const error = new Error("Config invalid route");
-        expect(identifyError(error)).toBe("invalid-config");
-      });
-
-      it("should handle complex error messages", () => {
-        const error = new Error("Failed to import module: ./component.tsx not found");
-        expect(identifyError(error)).toBe("import-not-found");
-      });
+      testIdentifyError(
+        "should handle errors with mixed keywords",
+        "Config invalid route",
+        "invalid-config",
+      );
+      testIdentifyError(
+        "should handle complex error messages",
+        "Failed to import module: ./component.tsx not found",
+        "import-not-found",
+      );
 
       it("should be case-insensitive", () => {
-        const error1 = new Error("BUILD FAIL");
-        const error2 = new Error("build fail");
-        const error3 = new Error("Build Fail");
-
-        expect(identifyError(error1)).toBe("build-failed");
-        expect(identifyError(error2)).toBe("build-failed");
-        expect(identifyError(error3)).toBe("build-failed");
+        expect(identifyError(new Error("BUILD FAIL"))).toBe("build-failed");
+        expect(identifyError(new Error("build fail"))).toBe("build-failed");
+        expect(identifyError(new Error("Build Fail"))).toBe("build-failed");
       });
 
-      it("should handle errors with special characters", () => {
-        const error = new Error("Port 3000 is in use!!!");
-        expect(identifyError(error)).toBe("port-in-use");
-      });
-
-      it("should handle multiline error messages", () => {
-        const error = new Error("Build failed\nDetails: syntax error in file.ts");
-        expect(identifyError(error)).toBe("build-failed");
-      });
+      testIdentifyError(
+        "should handle errors with special characters",
+        "Port 3000 is in use!!!",
+        "port-in-use",
+      );
+      testIdentifyError(
+        "should handle multiline error messages",
+        "Build failed\nDetails: syntax error in file.ts",
+        "build-failed",
+      );
     });
   });
 });

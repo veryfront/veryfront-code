@@ -4,7 +4,7 @@ export { GitHubStatOperations } from "./stat-operations.ts";
 export { GitHubReadOperations } from "./read-operations.ts";
 export { GitHubDirectoryOperations } from "./directory-operations.ts";
 
-// Types (re-exported from schemas via types.ts)
+export { createGitHubConfig } from "./types.ts";
 export type {
   DirectoryEntry,
   FileIndexEntry,
@@ -18,9 +18,6 @@ export type {
   ResolvedGitHubConfig,
 } from "./types.ts";
 
-export { createGitHubConfig } from "./types.ts";
-
-// Schemas for validation and documentation
 export {
   GITHUB_API_ENDPOINTS,
   GitHubBlobResponseSchema,

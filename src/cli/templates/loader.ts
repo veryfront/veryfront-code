@@ -24,20 +24,14 @@ import type { TemplateFile } from "./types.ts";
  * npm strips dotfiles during publish, so we use underscore prefixes.
  */
 const FILE_NAME_MAPPINGS: Record<string, string> = {
-  "_gitignore": ".gitignore",
-  "_env": ".env",
+  _gitignore: ".gitignore",
+  _env: ".env",
   "_env.example": ".env.example",
-  "_npmrc": ".npmrc",
+  _npmrc: ".npmrc",
   "_eslintrc.json": ".eslintrc.json",
-  "_prettierrc": ".prettierrc",
+  _prettierrc: ".prettierrc",
 };
 
-/**
- * Load template files from a directory.
- *
- * @param templateDir - Absolute path to the template directory
- * @returns Array of template files with paths and contents
- */
 export async function loadTemplateFromDirectory(
   templateDir: string,
 ): Promise<TemplateFile[]> {
@@ -47,21 +41,13 @@ export async function loadTemplateFromDirectory(
   try {
     await walkDirectory(templateDir, templateDir, files, fs);
   } catch (error) {
-    // If directory doesn't exist, return empty array
-    if (isNotFoundError(error)) {
-      return [];
-    }
+    if (isNotFoundError(error)) return [];
     throw error;
   }
 
-  // Sort files for consistent ordering
   return files.sort((a, b) => a.path.localeCompare(b.path));
 }
 
-/**
- * Recursively walk a directory and collect files.
- * Uses cross-runtime filesystem abstraction.
- */
 async function walkDirectory(
   baseDir: string,
   currentDir: string,
@@ -73,72 +59,52 @@ async function walkDirectory(
 
     if (entry.isDirectory) {
       await walkDirectory(baseDir, entryPath, files, fs);
-    } else if (entry.isFile) {
-      let relativePath = pathHelper.relative(baseDir, entryPath);
-
-      // Apply file name mappings (e.g., _gitignore -> .gitignore)
-      const fileName = relativePath.split("/").pop() || "";
-      if (FILE_NAME_MAPPINGS[fileName]) {
-        relativePath = relativePath.replace(fileName, FILE_NAME_MAPPINGS[fileName]);
-      }
-
-      const content = await fs.readTextFile(entryPath);
-      files.push({ path: relativePath, content });
+      continue;
     }
+
+    if (!entry.isFile) continue;
+
+    let relativePath = pathHelper.relative(baseDir, entryPath);
+
+    const parts = relativePath.split("/");
+    const fileName = parts[parts.length - 1] ?? "";
+    const mapped = FILE_NAME_MAPPINGS[fileName];
+    if (mapped) {
+      parts[parts.length - 1] = mapped;
+      relativePath = parts.join("/");
+    }
+
+    const content = await fs.readTextFile(entryPath);
+    files.push({ path: relativePath, content });
   }
 }
 
-/**
- * Get the absolute path to a template directory.
- * Templates are stored in:
- * - Deno source: src/cli/templates/files/<template-name>/
- * - npm package: dist/templates/<template-name>/
- *
- * @param templateName - Name of the template (e.g., "minimal", "ai")
- * @returns Absolute path to the template directory
- */
 export function getTemplateDirectory(templateName: string): string {
-  // Use import.meta.url to resolve relative to this file
   const moduleUrl = new URL(".", import.meta.url);
-  // Handle both file:// URLs and regular paths
-  let moduleDir: string;
-  if (moduleUrl.protocol === "file:") {
-    // Remove leading slash on Windows for proper path resolution
-    moduleDir = moduleUrl.pathname;
-    if (
-      typeof process !== "undefined" && process.platform === "win32" && moduleDir.startsWith("/")
-    ) {
-      moduleDir = moduleDir.slice(1);
-    }
-  } else {
-    moduleDir = moduleUrl.href;
+
+  if (moduleUrl.protocol !== "file:") {
+    const base = moduleUrl.href;
+    return pathHelper.join(base, isDeno ? "files" : "templates", templateName);
   }
 
-  // In Deno, templates are at ./files/<name>
-  // In Node.js (npm package), templates are at ./templates/<name>
-  // The bundled CLI ends up at dist/cli.js, with templates at dist/templates/
-  if (isDeno) {
-    return pathHelper.join(moduleDir, "files", templateName);
+  let moduleDir = moduleUrl.pathname;
+  if (
+    typeof process !== "undefined" &&
+    process.platform === "win32" &&
+    moduleDir.startsWith("/")
+  ) {
+    moduleDir = moduleDir.slice(1);
   }
 
-  // In Node.js, the bundled code runs from dist/cli.js
-  // Templates are at dist/templates/<name>
-  return pathHelper.join(moduleDir, "templates", templateName);
+  return pathHelper.join(moduleDir, isDeno ? "files" : "templates", templateName);
 }
 
-/**
- * Check if a directory-based template exists.
- *
- * @param templateName - Name of the template
- * @returns True if template directory exists
- */
 export async function templateDirectoryExists(templateName: string): Promise<boolean> {
   const templateDir = getTemplateDirectory(templateName);
   const fs = createFileSystem();
 
   try {
-    const stat = await fs.stat(templateDir);
-    return stat.isDirectory;
+    return (await fs.stat(templateDir)).isDirectory;
   } catch {
     return false;
   }

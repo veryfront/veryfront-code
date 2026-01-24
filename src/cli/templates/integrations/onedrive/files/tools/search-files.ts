@@ -8,14 +8,15 @@ export default tool({
     "Search for files and folders in OneDrive by name or content. Returns matching items with their paths and metadata.",
   inputSchema: z.object({
     query: z.string().describe("Search query to find files or folders"),
-    maxResults: z.number().min(1).max(100).default(20).describe(
-      "Maximum number of results to return",
-    ),
+    maxResults: z
+      .number()
+      .min(1)
+      .max(100)
+      .default(20)
+      .describe("Maximum number of results to return"),
   }),
   async execute({ query, maxResults }) {
-    const result = await searchFiles(query, {
-      top: maxResults,
-    });
+    const result = await searchFiles(query, { top: maxResults });
 
     const matches = result.value.map((item) => {
       const baseInfo = {
@@ -28,18 +29,22 @@ export default tool({
       };
 
       if (isFile(item)) {
+        const size = item.size ?? 0;
+
         return {
           ...baseInfo,
           type: "file" as const,
-          size: item.size || 0,
-          sizeFormatted: formatFileSize(item.size || 0),
+          size,
+          sizeFormatted: formatFileSize(size),
           mimeType: item.file?.mimeType,
         };
-      } else if (isFolder(item)) {
+      }
+
+      if (isFolder(item)) {
         return {
           ...baseInfo,
           type: "folder" as const,
-          childCount: item.folder?.childCount || 0,
+          childCount: item.folder?.childCount ?? 0,
         };
       }
 
@@ -52,7 +57,7 @@ export default tool({
     return {
       matches,
       count: matches.length,
-      hasMore: !!result["@odata.nextLink"],
+      hasMore: Boolean(result["@odata.nextLink"]),
       query,
     };
   },

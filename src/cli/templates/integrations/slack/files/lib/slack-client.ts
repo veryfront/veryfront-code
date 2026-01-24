@@ -4,7 +4,6 @@
  * Provides a type-safe interface to Slack API operations.
  */
 
-import { tokenStore as _tokenStore } from "./token-store.ts";
 import { getValidToken } from "./oauth.ts";
 
 // Helper for Cross-Platform environment access
@@ -13,11 +12,14 @@ function getEnv(key: string): string | undefined {
   if (typeof Deno !== "undefined") {
     // @ts-ignore - Deno global
     return Deno.env.get(key);
-  } // @ts-ignore - process global
-  else if (typeof process !== "undefined" && process.env) {
+  }
+
+  // @ts-ignore - process global
+  if (typeof process !== "undefined" && process.env) {
     // @ts-ignore - process global
     return process.env[key];
   }
+
   return undefined;
 }
 
@@ -61,8 +63,8 @@ export const slackOAuthProvider = {
   name: "slack",
   authorizationUrl: "https://slack.com/oauth/v2/authorize",
   tokenUrl: "https://slack.com/api/oauth.v2.access",
-  clientId: getEnv("SLACK_CLIENT_ID") || "",
-  clientSecret: getEnv("SLACK_CLIENT_SECRET") || "",
+  clientId: getEnv("SLACK_CLIENT_ID") ?? "",
+  clientSecret: getEnv("SLACK_CLIENT_SECRET") ?? "",
   scopes: [
     "channels:history",
     "channels:read",
@@ -77,11 +79,33 @@ export const slackOAuthProvider = {
 /**
  * Create a Slack client for a specific user
  */
-export function createSlackClient(userId: string) {
+export function createSlackClient(userId: string): {
+  listChannels(options?: {
+    limit?: number;
+    excludeArchived?: boolean;
+  }): Promise<SlackChannel[]>;
+  getMessages(
+    channelId: string,
+    options?: { limit?: number; oldest?: string },
+  ): Promise<SlackMessage[]>;
+  sendMessage(
+    channelId: string,
+    text: string,
+    options?: { threadTs?: string; unfurlLinks?: boolean },
+  ): Promise<{ ts: string; channel: string }>;
+  getUser(userId: string): Promise<SlackUser>;
+  getThread(channelId: string, threadTs: string): Promise<SlackMessage[]>;
+  searchMessages(
+    query: string,
+    options?: { count?: number },
+  ): Promise<SlackMessage[]>;
+} {
   async function getAccessToken(): Promise<string> {
     const token = await getValidToken(slackOAuthProvider, userId, "slack");
     if (!token) {
-      throw new Error("Slack not connected. Please connect your Slack account first.");
+      throw new Error(
+        "Slack not connected. Please connect your Slack account first.",
+      );
     }
     return token;
   }
@@ -114,14 +138,11 @@ export function createSlackClient(userId: string) {
     /**
      * List channels the user is a member of
      */
-    async listChannels(options: {
-      limit?: number;
-      excludeArchived?: boolean;
-    } = {}): Promise<SlackChannel[]> {
+    async listChannels(options = {}): Promise<SlackChannel[]> {
       const result = await apiRequest<{ channels: SlackChannel[] }>(
         "conversations.list",
         {
-          limit: options.limit || 100,
+          limit: options.limit ?? 100,
           exclude_archived: options.excludeArchived ?? true,
           types: "public_channel,private_channel",
         },
@@ -134,13 +155,13 @@ export function createSlackClient(userId: string) {
      */
     async getMessages(
       channelId: string,
-      options: { limit?: number; oldest?: string } = {},
+      options = {},
     ): Promise<SlackMessage[]> {
       const result = await apiRequest<{ messages: SlackMessage[] }>(
         "conversations.history",
         {
           channel: channelId,
-          limit: options.limit || 20,
+          limit: options.limit ?? 20,
           oldest: options.oldest,
         },
       );
@@ -153,9 +174,9 @@ export function createSlackClient(userId: string) {
     async sendMessage(
       channelId: string,
       text: string,
-      options: { threadTs?: string; unfurlLinks?: boolean } = {},
+      options = {},
     ): Promise<{ ts: string; channel: string }> {
-      const result = await apiRequest<{ ts: string; channel: string }>(
+      return await apiRequest<{ ts: string; channel: string }>(
         "chat.postMessage",
         {
           channel: channelId,
@@ -164,7 +185,6 @@ export function createSlackClient(userId: string) {
           unfurl_links: options.unfurlLinks ?? true,
         },
       );
-      return result;
     },
 
     /**
@@ -199,13 +219,13 @@ export function createSlackClient(userId: string) {
      */
     async searchMessages(
       query: string,
-      options: { count?: number } = {},
+      options = {},
     ): Promise<SlackMessage[]> {
       const result = await apiRequest<{
         messages: { matches: SlackMessage[] };
       }>("search.messages", {
         query,
-        count: options.count || 20,
+        count: options.count ?? 20,
       });
       return result.messages.matches;
     },

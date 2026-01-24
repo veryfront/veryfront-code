@@ -26,7 +26,7 @@ describe("file-discovery", () => {
 
   it("discovers files recursively", async () => {
     const files = await collectFiles({
-      baseDir: join(cwd(), "src/utils"),
+      baseDir: TEST_DIR,
       extensions: [".ts"],
       recursive: true,
     });
@@ -62,7 +62,7 @@ describe("file-discovery", () => {
 
   it("ignores patterns", async () => {
     const files = await collectFiles({
-      baseDir: join(cwd(), "src/utils"),
+      baseDir: TEST_DIR,
       extensions: [".ts"],
       ignorePatterns: ["test"],
       recursive: true,
@@ -74,7 +74,7 @@ describe("file-discovery", () => {
 
   it("includes directories when requested", async () => {
     const results = await collectFiles({
-      baseDir: join(cwd(), "src/utils"),
+      baseDir: TEST_DIR,
       includeDirs: true,
       recursive: false,
     });
@@ -85,6 +85,7 @@ describe("file-discovery", () => {
 
   it("async generator iteration", async () => {
     let count = 0;
+
     for await (
       const _file of discoverFiles({
         baseDir: TEST_DIR,
@@ -94,6 +95,7 @@ describe("file-discovery", () => {
     ) {
       count++;
     }
+
     assertEquals(count > 0, true);
   });
 
@@ -143,10 +145,7 @@ describe("file-discovery", () => {
 
     assertExists(files);
     assertEquals(files.length > 0, true);
-    assertEquals(
-      files.every((f) => f.name.endsWith(".ts") || f.name.endsWith(".tsx")),
-      true,
-    );
+    assertEquals(files.every((f) => f.name.endsWith(".ts") || f.name.endsWith(".tsx")), true);
   });
 
   it("combines extension and pattern filters", async () => {
@@ -158,9 +157,7 @@ describe("file-discovery", () => {
     });
 
     assertExists(files);
-    if (files.length > 0) {
-      assertEquals(files.every((f) => f.name.endsWith(".ts")), true);
-      assertEquals(files.every((f) => f.name.includes("route")), true);
-    }
+    assertEquals(files.every((f) => f.name.endsWith(".ts")), true);
+    assertEquals(files.every((f) => f.name.includes("route")), true);
   });
 });

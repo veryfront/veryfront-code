@@ -1,7 +1,3 @@
-/**
- * Router exports for veryfront/router
- * Provides client-side routing context and hooks
- */
 import React from "react";
 
 export interface RouterValue {
@@ -18,8 +14,6 @@ export interface RouterValue {
   reload: () => Promise<void>;
 }
 
-// SSR-safe default router - used when no provider is present
-// This ensures useContext(RouterContext) never returns null, even during SSR
 const defaultRouter: RouterValue = {
   domain: "",
   path: "/",
@@ -34,9 +28,6 @@ const defaultRouter: RouterValue = {
   reload: async () => {},
 };
 
-// Initialize context with defaultRouter instead of null
-// This prevents "Cannot read properties of null" errors when user code
-// accesses the context directly (without using useRouter hook) during SSR
 const RouterContext = React.createContext<RouterValue>(defaultRouter);
 
 export interface RouterProviderProps {
@@ -44,15 +35,18 @@ export interface RouterProviderProps {
   router?: RouterValue;
 }
 
-export function RouterProvider({ children, router }: RouterProviderProps) {
-  return React.createElement(RouterContext.Provider, {
-    value: router || defaultRouter,
+export function RouterProvider({
+  children,
+  router,
+}: RouterProviderProps): React.ReactElement {
+  return React.createElement(
+    RouterContext.Provider,
+    { value: router ?? defaultRouter },
     children,
-  });
+  );
 }
 
 export function useRouter(): RouterValue {
-  // Context is initialized with defaultRouter, so this never returns null
   return React.useContext(RouterContext);
 }
 

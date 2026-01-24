@@ -1,41 +1,37 @@
 import { hasNodePath, isDeno, nodePath } from "./runtime.ts";
 
+function useNodePath(): boolean {
+  return !isDeno && hasNodePath;
+}
+
 export function resolve(...paths: string[]): string {
-  if (!isDeno && hasNodePath) {
+  if (useNodePath()) {
     return nodePath!.resolve(...paths);
   }
 
-  // Start with cwd
-  let resolvedPath = globalThis.Deno?.cwd() || "/";
+  let resolvedPath = globalThis.Deno?.cwd() ?? "/";
 
-  // Process each path segment - absolute paths reset the resolved path
   for (const path of paths) {
     if (!path) continue;
-    if (path.startsWith("/")) {
-      // Absolute path resets
-      resolvedPath = path;
-    } else {
-      // Relative path appends
-      resolvedPath = resolvedPath + "/" + path;
-    }
+    resolvedPath = path.startsWith("/") ? path : `${resolvedPath}/${path}`;
   }
 
-  // Normalize the result
-  const parts = resolvedPath.split("/").filter((p) => p.length > 0);
+  const parts = resolvedPath.split("/").filter(Boolean);
   const resolved: string[] = [];
+
   for (const part of parts) {
     if (part === "..") {
       resolved.pop();
-    } else if (part !== ".") {
-      resolved.push(part);
+      continue;
     }
+    if (part !== ".") resolved.push(part);
   }
 
   return `/${resolved.join("/")}`;
 }
 
 export function isAbsolute(path: string): boolean {
-  if (!isDeno && hasNodePath) {
+  if (useNodePath()) {
     return nodePath!.isAbsolute(path);
   }
 
@@ -43,16 +39,12 @@ export function isAbsolute(path: string): boolean {
 }
 
 export function relative(from: string, to: string): string {
-  if (!isDeno && hasNodePath) {
+  if (useNodePath()) {
     return nodePath!.relative(from, to);
   }
 
-  const fromParts = resolve(from)
-    .split("/")
-    .filter((p: string) => p);
-  const toParts = resolve(to)
-    .split("/")
-    .filter((p: string) => p);
+  const fromParts = resolve(from).split("/").filter(Boolean);
+  const toParts = resolve(to).split("/").filter(Boolean);
 
   let common = 0;
   for (let i = 0; i < Math.min(fromParts.length, toParts.length); i++) {
@@ -67,7 +59,7 @@ export function relative(from: string, to: string): string {
 }
 
 export function normalize(path: string): string {
-  if (!isDeno && hasNodePath) {
+  if (useNodePath()) {
     return nodePath!.normalize(path);
   }
 
@@ -79,21 +71,20 @@ export function normalize(path: string): string {
   const normalized: string[] = [];
   for (const part of parts) {
     if (part === "..") {
-      if (normalized.length > 0 && normalized[normalized.length - 1] !== "..") {
+      const last = normalized[normalized.length - 1];
+      if (normalized.length > 0 && last !== "..") {
         normalized.pop();
       } else if (!isAbs) {
         normalized.push("..");
       }
-    } else {
-      normalized.push(part);
+      continue;
     }
+    normalized.push(part);
   }
 
   const result = normalized.join("/");
 
-  if (isAbs) {
-    return result ? `/${result}` : "/";
-  }
+  if (isAbs) return result ? `/${result}` : "/";
 
   return result || ".";
 }

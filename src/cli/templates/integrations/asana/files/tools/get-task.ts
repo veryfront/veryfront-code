@@ -18,7 +18,10 @@ export default tool({
       completed: task.completed,
       dueOn: task.due_on,
       assignee: task.assignee?.name,
-      projects: task.projects.map((p) => ({ gid: p.gid, name: p.name })),
+      projects: task.projects.map((project) => ({
+        gid: project.gid,
+        name: project.name,
+      })),
       createdAt: task.created_at,
       modifiedAt: task.modified_at,
     };

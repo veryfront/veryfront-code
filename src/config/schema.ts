@@ -25,20 +25,20 @@ export const veryfrontConfigSchema = z
     projectSlug: z.string().optional(),
     title: z.string().optional(),
     description: z.string().optional(),
-    experimental: z.object({
-      esmLayouts: z.boolean().optional(),
-      precompileMDX: z.boolean().optional(),
-      rsc: z.boolean().optional(),
-    }).partial().optional(),
+    experimental: z
+      .object({
+        esmLayouts: z.boolean().optional(),
+        precompileMDX: z.boolean().optional(),
+        rsc: z.boolean().optional(),
+      })
+      .partial()
+      .optional(),
     router: z.enum(["app", "pages"]).optional(),
     /** Path to the layout component (e.g., 'components/layout.tsx'), or false to disable */
     layout: z.union([z.string(), z.literal(false)]).optional(),
     /** Path to the app wrapper component (e.g., 'components/app.tsx'), or false to disable */
     app: z.union([z.string(), z.literal(false)]).optional(),
-    theme: z
-      .object({ colors: z.record(z.string()).optional() })
-      .partial()
-      .optional(),
+    theme: z.object({ colors: z.record(z.string()).optional() }).partial().optional(),
     build: z
       .object({
         outDir: z.string().optional(),
@@ -208,12 +208,7 @@ export const veryfrontConfigSchema = z
     fs: z
       .object({
         type: z.enum(["local", "veryfront-api", "memory", "github"]).optional(),
-        local: z
-          .object({
-            baseDir: z.string().optional(),
-          })
-          .partial()
-          .optional(),
+        local: z.object({ baseDir: z.string().optional() }).partial().optional(),
         veryfront: z
           .object({
             apiBaseUrl: z.string().url(),
@@ -319,30 +314,28 @@ export type VeryfrontConfigInput = z.input<typeof veryfrontConfigSchema>;
 
 export function validateVeryfrontConfig(input: unknown): VeryfrontConfig {
   const parsed = veryfrontConfigSchema.safeParse(input);
-  if (!parsed.success) {
-    const first = parsed.error.issues[0];
-    const path = first?.path?.length ? first.path.join(".") : "<root>";
-    const expected = first?.message || String(first);
-    let hint = "";
-    if (String(path).includes("security.cors")) {
-      hint = " Expected boolean or { origin?: string }.";
-    }
+  if (parsed.success) return parsed.data as VeryfrontConfig;
 
-    const context: ConfigContext = {
-      field: path,
-      expected: expected + hint,
-      value: input,
-    };
+  const first = parsed.error.issues[0];
+  const path = first?.path?.length ? first.path.join(".") : "<root>";
+  const expected = first?.message ?? String(first);
+  const hint = String(path).includes("security.cors")
+    ? " Expected boolean or { origin?: string }."
+    : "";
 
-    throw toError(
-      createError({
-        type: "config",
-        message: `Invalid veryfront.config at ${path}: ${expected}.${hint}`,
-        context,
-      }),
-    );
-  }
-  return parsed.data as VeryfrontConfig;
+  const context: ConfigContext = {
+    field: path,
+    expected: expected + hint,
+    value: input,
+  };
+
+  throw toError(
+    createError({
+      type: "config",
+      message: `Invalid veryfront.config at ${path}: ${expected}.${hint}`,
+      context,
+    }),
+  );
 }
 
 /**
@@ -352,5 +345,5 @@ export function validateVeryfrontConfig(input: unknown): VeryfrontConfig {
 const knownConfigKeys = new Set(Object.keys(veryfrontConfigSchema.shape));
 
 export function findUnknownTopLevelKeys(input: Record<string, unknown>): string[] {
-  return Object.keys(input).filter((k) => !knownConfigKeys.has(k));
+  return Object.keys(input).filter((key) => !knownConfigKeys.has(key));
 }

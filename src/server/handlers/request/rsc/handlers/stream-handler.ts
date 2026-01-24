@@ -4,6 +4,7 @@ import type { RenderHandler } from "./render-handler.ts";
 import type { StreamSlot } from "./types.ts";
 
 const STREAM_DELAY_MS = 30;
+const FALLBACK_HTML = "<div>OK</div>";
 
 export class StreamHandler {
   constructor(private renderHandler: RenderHandler) {}
@@ -21,19 +22,17 @@ export class StreamHandler {
   }
 
   private async getFinalHtml(pathname: string, searchParams: URLSearchParams): Promise<string> {
-    const pageParam = searchParams.get("page") || pathname || "/";
+    const pageParam = searchParams.get("page") ?? pathname ?? "/";
     const response = await this.renderHandler.handle(pageParam, searchParams);
 
-    if (!response.ok) {
-      return "<div>OK</div>";
-    }
+    if (!response.ok) return FALLBACK_HTML;
 
     try {
-      const payload = (await response.json()) as RSCPayload;
-      return payload.html || "<div>OK</div>";
-    } catch (e) {
-      logger.warn("[RSC][dev] failed to parse final HTML payload", e);
-      return "<div>OK</div>";
+      const payload: RSCPayload = await response.json();
+      return payload.html ?? FALLBACK_HTML;
+    } catch (error) {
+      logger.warn("[RSC][dev] failed to parse final HTML payload", error);
+      return FALLBACK_HTML;
     }
   }
 
@@ -44,6 +43,7 @@ export class StreamHandler {
     return new ReadableStream<Uint8Array>({
       async start(controller) {
         const encoder = new TextEncoder();
+
         try {
           enqueueSlot(controller, encoder, {
             type: "slot",
@@ -76,17 +76,11 @@ export class StreamHandler {
             id: "root",
             html: finalHtml,
           });
+
+          controller.close();
         } catch (error) {
           logger.warn("[RSC][dev] stream handler error", error);
-          // Use controller.error() to properly signal stream failure instead of throwing
           controller.error(error instanceof Error ? error : new Error(String(error)));
-          return;
-        }
-
-        try {
-          controller.close();
-        } catch (closeError) {
-          logger.debug("[RSC][dev] controller.close failed", closeError);
         }
       },
     });
@@ -102,5 +96,5 @@ function enqueueSlot(
   encoder: TextEncoder,
   slot: StreamSlot,
 ): void {
-  controller.enqueue(encoder.encode(JSON.stringify(slot) + "\n"));
+  controller.enqueue(encoder.encode(`${JSON.stringify(slot)}\n`));
 }

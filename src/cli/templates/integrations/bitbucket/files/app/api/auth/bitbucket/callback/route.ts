@@ -7,25 +7,30 @@
 import { bitbucketConfig, createOAuthCallbackHandler, memoryTokenStore } from "veryfront/oauth";
 import { tokenStore } from "../../../../../lib/token-store.ts";
 
-// Hybrid adapter: uses framework's memoryTokenStore for state (PKCE),
-// but user's tokenStore for actual token storage
+const USER_ID = "current-user";
+
 const hybridTokenStore = {
-  // Token methods - delegate to user's tokenStore
-  async getTokens(serviceId: string) {
-    return tokenStore.getToken("current-user", serviceId);
+  async getTokens(serviceId: string): Promise<unknown> {
+    return tokenStore.getToken(USER_ID, serviceId);
   },
-  async setTokens(serviceId: string, tokens: { accessToken: string; refreshToken?: string; expiresAt?: number }) {
-    await tokenStore.setToken("current-user", serviceId, tokens);
+  async setTokens(
+    serviceId: string,
+    tokens: { accessToken: string; refreshToken?: string; expiresAt?: number },
+  ): Promise<void> {
+    await tokenStore.setToken(USER_ID, serviceId, tokens);
   },
-  async clearTokens(serviceId: string) {
-    await tokenStore.revokeToken("current-user", serviceId);
+  async clearTokens(serviceId: string): Promise<void> {
+    await tokenStore.revokeToken(USER_ID, serviceId);
   },
-  // State methods - delegate to framework's memoryTokenStore (shared with init route)
-  getState: (state: string) => memoryTokenStore.getState(state),
-  setState: (state: { state: string; codeVerifier?: string; createdAt: number }) => memoryTokenStore.setState(state),
-  clearState: (state: string) => memoryTokenStore.clearState(state),
+  getState(state: string): unknown {
+    return memoryTokenStore.getState(state);
+  },
+  setState(state: { state: string; codeVerifier?: string; createdAt: number }): unknown {
+    return memoryTokenStore.setState(state);
+  },
+  clearState(state: string): unknown {
+    return memoryTokenStore.clearState(state);
+  },
 };
 
-export const GET = createOAuthCallbackHandler(bitbucketConfig, {
-  tokenStore: hybridTokenStore,
-});
+export const GET = createOAuthCallbackHandler(bitbucketConfig, { tokenStore: hybridTokenStore });

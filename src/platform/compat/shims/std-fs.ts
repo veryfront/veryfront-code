@@ -20,7 +20,7 @@ export async function exists(path: string): Promise<boolean> {
 }
 
 /**
- * Synchronous version of exists (uses require for sync access)
+ * Synchronous version of exists
  */
 export function existsSync(path: string): boolean {
   try {
@@ -79,11 +79,11 @@ export async function* walk(
     if (depth > maxDepth) return;
 
     const entries = await fs.readdir(dir, { withFileTypes: true });
+
     for (const entry of entries) {
       const path = nodePath.join(dir, entry.name);
 
-      // Check skip patterns
-      if (skip && skip.some((pattern: RegExp) => pattern.test(path))) continue;
+      if (skip?.some((pattern) => pattern.test(path))) continue;
 
       if (entry.isDirectory()) {
         if (includeDirs) {
@@ -96,20 +96,23 @@ export async function* walk(
           };
         }
         yield* walkDir(path, depth + 1);
-      } else if (entry.isFile() && includeFiles) {
-        // Check extension filter
-        if (exts) {
-          const ext = path.split(".").pop();
-          if (!ext || !exts.includes(ext)) continue;
-        }
-        yield {
-          path,
-          name: entry.name,
-          isFile: true,
-          isDirectory: false,
-          isSymlink: false,
-        };
+        continue;
       }
+
+      if (!entry.isFile() || !includeFiles) continue;
+
+      if (exts) {
+        const ext = path.split(".").pop();
+        if (!ext || !exts.includes(ext)) continue;
+      }
+
+      yield {
+        path,
+        name: entry.name,
+        isFile: true,
+        isDirectory: false,
+        isSymlink: false,
+      };
     }
   }
 

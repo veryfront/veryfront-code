@@ -12,6 +12,11 @@ export interface MDXCompilerConfig {
   studioEmbed?: boolean;
 }
 
+type MDXCompileResult = MdxBundle & {
+  headings?: Array<{ id: string; text: string; level: number }>;
+  nodeMap?: Map<number, unknown>;
+};
+
 export class MDXCompiler {
   private config: MDXCompilerConfig;
 
@@ -19,33 +24,26 @@ export class MDXCompiler {
     this.config = config;
   }
 
-  async compileMDX(
+  compileMDX(
     content: string,
     frontmatter?: Record<string, unknown>,
     filePath?: string,
-  ): Promise<
-    MdxBundle & {
-      headings?: Array<{ id: string; text: string; level: number }>;
-      nodeMap?: Map<number, unknown>;
-    }
-  > {
-    return await withSpan(
+  ): Promise<MDXCompileResult> {
+    return withSpan(
       SpanNames.MDX_COMPILE,
       async () => {
         const cachedBundle = await withSpan(
           SpanNames.MDX_CACHE_GET,
           () => this.config.mdxCacheAdapter.getCachedBundle(content, frontmatter, filePath),
-          { "mdx.file_path": filePath || "inline", "mdx.content_length": content.length },
+          { "mdx.file_path": filePath ?? "inline", "mdx.content_length": content.length },
         );
 
-        if (cachedBundle) {
-          return cachedBundle;
-        }
+        if (cachedBundle) return cachedBundle;
 
         return this.compileAndCache(content, frontmatter, filePath);
       },
       {
-        "mdx.file_path": filePath || "inline",
+        "mdx.file_path": filePath ?? "inline",
         "mdx.content_length": content.length,
         "mdx.mode": this.config.mode,
       },
@@ -56,18 +54,13 @@ export class MDXCompiler {
     content: string,
     frontmatter?: Record<string, unknown>,
     filePath?: string,
-  ): Promise<
-    MdxBundle & {
-      headings?: Array<{ id: string; text: string; level: number }>;
-      nodeMap?: Map<number, unknown>;
-    }
-  > {
+  ): Promise<MDXCompileResult> {
     const { compileMDXRuntime } = await import("#veryfront/transforms/mdx/compiler/index.ts");
 
     try {
       // Node positions for Studio Navigator are injected via rehype plugin
       // inside compileMDXRuntime when studioEmbed is true
-      const bundle = await compileMDXRuntime(
+      const bundle = (await compileMDXRuntime(
         this.config.mode,
         this.config.projectDir,
         content,
@@ -76,18 +69,15 @@ export class MDXCompiler {
         "server", // SSR target
         undefined, // baseUrl
         { studioEmbed: this.config.studioEmbed },
-      );
+      )) as MDXCompileResult;
 
       await withSpan(
         SpanNames.MDX_CACHE_SET,
-        () => this.config.mdxCacheAdapter.setCachedBundle(content, bundle as MdxBundle, filePath),
-        { "mdx.file_path": filePath || "inline" },
+        () => this.config.mdxCacheAdapter.setCachedBundle(content, bundle, filePath),
+        { "mdx.file_path": filePath ?? "inline" },
       );
 
-      return bundle as MdxBundle & {
-        headings?: Array<{ id: string; text: string; level: number }>;
-        nodeMap?: Map<number, unknown>;
-      };
+      return bundle;
     } catch (error) {
       throw wrapError(error, "MDX compilation failed", { filePath });
     }

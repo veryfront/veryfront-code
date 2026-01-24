@@ -1,9 +1,9 @@
 export class ValidationError extends Error {
-  constructor(
-    message: string,
-    public readonly details?: unknown,
-  ) {
+  public readonly details?: unknown;
+
+  constructor(message: string, details?: unknown) {
     super(message);
     this.name = "ValidationError";
+    this.details = details;
   }
 }

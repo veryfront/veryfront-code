@@ -1,7 +1,3 @@
-/**
- * Intercom OAuth Init
- */
-
-import { intercomConfig, createOAuthInitHandler } from "veryfront/oauth";
+import { createOAuthInitHandler, intercomConfig } from "veryfront/oauth";
 
 export const GET = createOAuthInitHandler(intercomConfig);

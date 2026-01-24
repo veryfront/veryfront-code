@@ -2,60 +2,39 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
 describe("fs/github/index.ts exports", () => {
-  it("should export GitHubFSAdapter", async () => {
-    const { GitHubFSAdapter } = await import("./index.ts");
-    assertExists(GitHubFSAdapter);
-    assertEquals(typeof GitHubFSAdapter, "function");
-  });
+  async function assertExport(
+    name: string,
+    expectedType?: "function" | "object",
+  ): Promise<void> {
+    const mod = await import("./index.ts");
+    const value = (mod as Record<string, unknown>)[name];
+    assertExists(value);
+    if (expectedType) assertEquals(typeof value, expectedType);
+  }
 
-  it("should export GitHubAPIClient", async () => {
-    const { GitHubAPIClient } = await import("./index.ts");
-    assertExists(GitHubAPIClient);
-    assertEquals(typeof GitHubAPIClient, "function");
-  });
-
-  it("should export GitHubStatOperations", async () => {
-    const { GitHubStatOperations } = await import("./index.ts");
-    assertExists(GitHubStatOperations);
-    assertEquals(typeof GitHubStatOperations, "function");
-  });
-
-  it("should export GitHubReadOperations", async () => {
-    const { GitHubReadOperations } = await import("./index.ts");
-    assertExists(GitHubReadOperations);
-    assertEquals(typeof GitHubReadOperations, "function");
-  });
-
-  it("should export GitHubDirectoryOperations", async () => {
-    const { GitHubDirectoryOperations } = await import("./index.ts");
-    assertExists(GitHubDirectoryOperations);
-    assertEquals(typeof GitHubDirectoryOperations, "function");
-  });
-
-  it("should export createGitHubConfig", async () => {
-    const { createGitHubConfig } = await import("./index.ts");
-    assertExists(createGitHubConfig);
-    assertEquals(typeof createGitHubConfig, "function");
-  });
-
-  it("should export GITHUB_API_ENDPOINTS", async () => {
-    const { GITHUB_API_ENDPOINTS } = await import("./index.ts");
-    assertExists(GITHUB_API_ENDPOINTS);
-    assertEquals(typeof GITHUB_API_ENDPOINTS, "object");
-  });
+  it("should export GitHubFSAdapter", () => assertExport("GitHubFSAdapter", "function"));
+  it("should export GitHubAPIClient", () => assertExport("GitHubAPIClient", "function"));
+  it("should export GitHubStatOperations", () => assertExport("GitHubStatOperations", "function"));
+  it("should export GitHubReadOperations", () => assertExport("GitHubReadOperations", "function"));
+  it(
+    "should export GitHubDirectoryOperations",
+    () => assertExport("GitHubDirectoryOperations", "function"),
+  );
+  it("should export createGitHubConfig", () => assertExport("createGitHubConfig", "function"));
+  it("should export GITHUB_API_ENDPOINTS", () => assertExport("GITHUB_API_ENDPOINTS", "object"));
 
   it("should export schema validators", async () => {
-    const {
-      GitHubBlobResponseSchema,
-      GitHubContentItemSchema,
-      GitHubContentsResponseSchema,
-      GitHubTreeEntrySchema,
-      GitHubTreeResponseSchema,
-    } = await import("./index.ts");
-    assertExists(GitHubBlobResponseSchema);
-    assertExists(GitHubContentItemSchema);
-    assertExists(GitHubContentsResponseSchema);
-    assertExists(GitHubTreeEntrySchema);
-    assertExists(GitHubTreeResponseSchema);
+    const mod = await import("./index.ts");
+    const schemaNames = [
+      "GitHubBlobResponseSchema",
+      "GitHubContentItemSchema",
+      "GitHubContentsResponseSchema",
+      "GitHubTreeEntrySchema",
+      "GitHubTreeResponseSchema",
+    ] as const;
+
+    for (const name of schemaNames) {
+      assertExists((mod as Record<string, unknown>)[name]);
+    }
   });
 });

@@ -22,8 +22,6 @@ interface ModuleResult {
   exports?: string[];
 }
 
-const results: ModuleResult[] = [];
-
 // Modules that were refactored to use platform compat
 const MODULES_TO_TEST = [
   // Platform compat layer itself
@@ -110,12 +108,7 @@ function getCurrentRuntime(): string {
 async function testModule(modulePath: string): Promise<ModuleResult> {
   try {
     const module = await import(modulePath);
-    const exports = Object.keys(module);
-    return {
-      path: modulePath,
-      success: true,
-      exports,
-    };
+    return { path: modulePath, success: true, exports: Object.keys(module) };
   } catch (error) {
     return {
       path: modulePath,
@@ -125,12 +118,18 @@ async function testModule(modulePath: string): Promise<ModuleResult> {
   }
 }
 
+function exitWithError(): void {
+  if (typeof Deno !== "undefined") Deno.exit(1);
+  if (typeof process !== "undefined") process.exit(1);
+}
+
 async function runSmokeTests(): Promise<void> {
   console.log(`\n\x1b[1m=== Platform Compatibility Smoke Test ===\x1b[0m`);
   console.log(`Runtime: \x1b[36m${getCurrentRuntime()}\x1b[0m`);
   console.log(`Version: \x1b[36m${getRuntimeVersion()}\x1b[0m`);
   console.log(`Testing ${MODULES_TO_TEST.length} modules...\n`);
 
+  const results: ModuleResult[] = [];
   let passed = 0;
   let failed = 0;
 
@@ -138,55 +137,50 @@ async function runSmokeTests(): Promise<void> {
     const result = await testModule(modulePath);
     results.push(result);
 
-    if (result.success) {
-      passed++;
-      console.log(`\x1b[32m✓\x1b[0m ${modulePath}`);
-      if (result.exports && result.exports.length > 0) {
-        console.log(
-          `  \x1b[90mExports: ${result.exports.slice(0, 5).join(", ")}${
-            result.exports.length > 5 ? "..." : ""
-          }\x1b[0m`,
-        );
-      }
-    } else {
+    if (!result.success) {
       failed++;
       console.log(`\x1b[31m✗\x1b[0m ${modulePath}`);
       console.log(`  \x1b[31mError: ${result.error}\x1b[0m`);
+      continue;
     }
+
+    passed++;
+    console.log(`\x1b[32m✓\x1b[0m ${modulePath}`);
+
+    const exportsList = result.exports ?? [];
+    if (exportsList.length === 0) continue;
+
+    console.log(
+      `  \x1b[90mExports: ${exportsList.slice(0, 5).join(", ")}${
+        exportsList.length > 5 ? "..." : ""
+      }\x1b[0m`,
+    );
   }
 
   console.log(`\n\x1b[1m=== Summary ===\x1b[0m`);
   console.log(`Total:  ${MODULES_TO_TEST.length}`);
   console.log(`\x1b[32mPassed: ${passed}\x1b[0m`);
 
-  if (failed > 0) {
-    console.log(`\x1b[31mFailed: ${failed}\x1b[0m`);
-    console.log(`\n\x1b[31mFailed modules:\x1b[0m`);
-    for (const result of results.filter((r) => !r.success)) {
-      console.log(`  - ${result.path}`);
-      console.log(`    ${result.error}`);
-    }
-
-    // Exit with error
-    if (typeof Deno !== "undefined") {
-      Deno.exit(1);
-    } else if (typeof process !== "undefined") {
-      process.exit(1);
-    }
-  } else {
+  if (failed === 0) {
     console.log(`\n\x1b[32mAll modules loaded successfully!\x1b[0m`);
     console.log(
       `\x1b[32mPlatform compat layer is working correctly on ${getCurrentRuntime()}.\x1b[0m\n`,
     );
+    return;
   }
+
+  console.log(`\x1b[31mFailed: ${failed}\x1b[0m`);
+  console.log(`\n\x1b[31mFailed modules:\x1b[0m`);
+  for (const result of results) {
+    if (result.success) continue;
+    console.log(`  - ${result.path}`);
+    console.log(`    ${result.error}`);
+  }
+
+  exitWithError();
 }
 
-// Run tests
 runSmokeTests().catch((error) => {
   console.error("Smoke test runner failed:", error);
-  if (typeof Deno !== "undefined") {
-    Deno.exit(1);
-  } else if (typeof process !== "undefined") {
-    process.exit(1);
-  }
+  exitWithError();
 });

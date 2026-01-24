@@ -90,65 +90,52 @@ export function box(content: string, options: BoxOptions = {}): string {
     titleAlign = "left",
     borderColor = "",
     titleColor = "",
+    width,
   } = options;
 
   const border = BORDER_STYLES[style];
   const contentLines = lines(content);
-
-  // Calculate content width
   const contentWidth = maxLineWidth(contentLines);
 
-  // Calculate box inner width (content + horizontal padding)
   const innerWidth = Math.max(
     contentWidth + paddingX * 2,
     title ? visibleLength(title) + 4 : 0, // Ensure title fits
   );
 
-  // Use specified width or auto-fit
-  const boxWidth = options.width ? Math.max(options.width, innerWidth + 2) : innerWidth + 2;
-  const actualInnerWidth = boxWidth - 2; // Account for borders
+  const boxWidth = width ? Math.max(width, innerWidth + 2) : innerWidth + 2;
+  const actualInnerWidth = boxWidth - 2;
 
-  // Color helpers
-  const bc = (text: string) => borderColor ? `${borderColor}${text}${RESET}` : text;
-  const tc = (text: string) => titleColor ? `${titleColor}${text}${RESET}` : text;
+  const bc = (text: string): string => (borderColor ? `${borderColor}${text}${RESET}` : text);
+  const tc = (text: string): string => (titleColor ? `${titleColor}${text}${RESET}` : text);
 
   const result: string[] = [];
 
-  // Top border with optional title
   if (title) {
     const titleText = ` ${tc(title)} `;
     const titleLen = visibleLength(titleText);
     const remainingWidth = actualInnerWidth - titleLen;
 
-    let topLine: string;
-    switch (titleAlign) {
-      case "center": {
-        const left = Math.floor(remainingWidth / 2);
-        const right = remainingWidth - left;
-        topLine = bc(border.topLeft) +
-          bc(repeat(border.horizontal, left)) +
-          titleText +
-          bc(repeat(border.horizontal, right)) +
-          bc(border.topRight);
-        break;
-      }
-      case "right": {
-        topLine = bc(border.topLeft) +
-          bc(repeat(border.horizontal, remainingWidth)) +
-          titleText +
-          bc(border.topRight);
-        break;
-      }
-      case "left":
-      default: {
-        topLine = bc(border.topLeft) +
-          titleText +
-          bc(repeat(border.horizontal, remainingWidth)) +
-          bc(border.topRight);
-        break;
-      }
+    let left = 0;
+    let right = 0;
+
+    if (titleAlign === "center") {
+      left = Math.floor(remainingWidth / 2);
+      right = remainingWidth - left;
+    } else if (titleAlign === "right") {
+      left = remainingWidth;
+      right = 0;
+    } else {
+      left = 0;
+      right = remainingWidth;
     }
-    result.push(topLine);
+
+    result.push(
+      bc(border.topLeft) +
+        bc(repeat(border.horizontal, left)) +
+        titleText +
+        bc(repeat(border.horizontal, right)) +
+        bc(border.topRight),
+    );
   } else {
     result.push(
       bc(border.topLeft) +
@@ -157,37 +144,20 @@ export function box(content: string, options: BoxOptions = {}): string {
     );
   }
 
-  // Vertical padding (top)
-  for (let i = 0; i < paddingY; i++) {
-    result.push(
-      bc(border.vertical) +
-        repeat(" ", actualInnerWidth) +
-        bc(border.vertical),
-    );
-  }
+  const emptyLine = bc(border.vertical) + repeat(" ", actualInnerWidth) + bc(border.vertical);
 
-  // Content lines
+  for (let i = 0; i < paddingY; i++) result.push(emptyLine);
+
   for (const line of contentLines) {
     const paddedLine = repeat(" ", paddingX) +
       pad(line, actualInnerWidth - paddingX * 2, "left") +
       repeat(" ", paddingX);
-    result.push(
-      bc(border.vertical) +
-        paddedLine +
-        bc(border.vertical),
-    );
+
+    result.push(bc(border.vertical) + paddedLine + bc(border.vertical));
   }
 
-  // Vertical padding (bottom)
-  for (let i = 0; i < paddingY; i++) {
-    result.push(
-      bc(border.vertical) +
-        repeat(" ", actualInnerWidth) +
-        bc(border.vertical),
-    );
-  }
+  for (let i = 0; i < paddingY; i++) result.push(emptyLine);
 
-  // Bottom border
   result.push(
     bc(border.bottomLeft) +
       bc(repeat(border.horizontal, actualInnerWidth)) +
@@ -206,44 +176,45 @@ export function joinHorizontal(
   ...items: string[]
 ): string {
   if (items.length === 0) return "";
-  if (items.length === 1) return items[0]!;
+  if (items.length === 1) return items[0] ?? "";
 
-  // Split each item into lines
   const itemLines = items.map(lines);
   const maxHeight = Math.max(...itemLines.map((l) => l.length));
   const itemWidths = itemLines.map(maxLineWidth);
 
-  // Pad items to same height
   const paddedItems = itemLines.map((itemLns, idx) => {
     const width = itemWidths[idx] ?? 0;
     const padCount = maxHeight - itemLns.length;
+    const blank = repeat(" ", width);
 
-    switch (align) {
-      case "bottom":
-        return [...Array(padCount).fill(repeat(" ", width)), ...itemLns];
-      case "center": {
-        const top = Math.floor(padCount / 2);
-        const bottom = padCount - top;
-        return [
-          ...Array(top).fill(repeat(" ", width)),
-          ...itemLns,
-          ...Array(bottom).fill(repeat(" ", width)),
-        ];
-      }
-      case "top":
-      default:
-        return [...itemLns, ...Array(padCount).fill(repeat(" ", width))];
+    if (padCount <= 0) return itemLns;
+
+    if (align === "bottom") {
+      return [...Array(padCount).fill(blank), ...itemLns];
     }
+
+    if (align === "center") {
+      const top = Math.floor(padCount / 2);
+      const bottom = padCount - top;
+      return [
+        ...Array(top).fill(blank),
+        ...itemLns,
+        ...Array(bottom).fill(blank),
+      ];
+    }
+
+    return [...itemLns, ...Array(padCount).fill(blank)];
   });
 
-  // Join lines
+  const gapStr = repeat(" ", gap);
   const result: string[] = [];
+
   for (let i = 0; i < maxHeight; i++) {
     const lineParts = paddedItems.map((item, idx) => {
-      const line = item[i] || "";
+      const line = item[i] ?? "";
       return pad(line, itemWidths[idx] ?? 0, "left");
     });
-    result.push(lineParts.join(repeat(" ", gap)));
+    result.push(lineParts.join(gapStr));
   }
 
   return result.join("\n");
@@ -258,19 +229,15 @@ export function joinVertical(
   ...items: string[]
 ): string {
   if (items.length === 0) return "";
-  if (items.length === 1) return items[0]!;
+  if (items.length === 1) return items[0] ?? "";
 
   const allLines = items.flatMap((item, idx) => {
     const itemLns = lines(item);
-    // Add gap lines between items (not after last)
-    if (idx < items.length - 1 && gap > 0) {
-      return [...itemLns, ...Array(gap).fill("")];
-    }
-    return itemLns;
+    if (idx >= items.length - 1 || gap <= 0) return itemLns;
+    return [...itemLns, ...Array(gap).fill("")];
   });
 
   const maxWidth = maxLineWidth(allLines);
-
   return allLines.map((line) => pad(line, maxWidth, align)).join("\n");
 }
 
@@ -278,8 +245,7 @@ export function joinVertical(
  * Create a horizontal divider
  */
 export function divider(width: number, style: BorderStyle = "rounded"): string {
-  const border = BORDER_STYLES[style];
-  return repeat(border.horizontal, width);
+  return repeat(BORDER_STYLES[style].horizontal, width);
 }
 
 /**
@@ -291,12 +257,10 @@ export function dividerWithText(
   style: BorderStyle = "rounded",
 ): string {
   const border = BORDER_STYLES[style];
-  const textLen = visibleLength(text) + 2; // Add spaces around text
+  const textLen = visibleLength(text) + 2;
   const remaining = width - textLen;
   const left = Math.floor(remaining / 2);
   const right = remaining - left;
 
-  return repeat(border.horizontal, left) +
-    ` ${text} ` +
-    repeat(border.horizontal, right);
+  return repeat(border.horizontal, left) + ` ${text} ` + repeat(border.horizontal, right);
 }

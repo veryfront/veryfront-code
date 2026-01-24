@@ -14,10 +14,7 @@ export interface SubWorkflowOptions extends BaseNodeConfig {
 }
 
 /** Create a sub-workflow node for nested execution. */
-export function subWorkflow(
-  id: string,
-  options: SubWorkflowOptions,
-): WorkflowNode {
+export function subWorkflow(id: string, options: SubWorkflowOptions): WorkflowNode {
   validateNodeId(id);
 
   if (!options.workflow) {
@@ -27,16 +24,13 @@ export function subWorkflow(
   const config: SubWorkflowNodeConfig = {
     type: "subWorkflow",
     workflow: options.workflow,
-    input: options.input,
-    output: options.output,
     checkpoint: options.checkpoint,
     retry: options.retry,
     timeout: options.timeout,
     skip: options.skip,
+    input: options.input,
+    output: options.output,
   };
 
-  return {
-    id,
-    config,
-  };
+  return { id, config };
 }

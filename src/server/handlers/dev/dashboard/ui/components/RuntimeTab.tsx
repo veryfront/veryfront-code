@@ -24,21 +24,22 @@ interface Pressure {
   heapUsedPercent: number;
 }
 
-export function RuntimeTab() {
+interface MemoryData {
+  heap: HeapStats;
+  caches: CacheStats[];
+  pressure: Pressure;
+}
+
+export function RuntimeTab(): React.JSX.Element {
   const [subTab, setSubTab] = useState<SubTab>("metrics");
   const [metrics, setMetrics] = useState<Record<string, number | unknown>>({});
-  const [memory, setMemory] = useState<
-    {
-      heap: HeapStats;
-      caches: CacheStats[];
-      pressure: Pressure;
-    } | null
-  >(null);
-  const [loading, setLoading] = useState(true);
+  const [memory, setMemory] = useState<MemoryData | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  function loadData() {
+  function loadData(): void {
     setLoading(true);
+
     Promise.all([
       fetch("/_dev/api/metrics").then((r) => r.json()),
       fetch("/_dev/api/memory").then((r) => r.json()),
@@ -58,24 +59,26 @@ export function RuntimeTab() {
     return () => clearInterval(interval);
   }, []);
 
-  if (loading && !memory) {
-    return (
-      <PageLayout title="Runtime" description="Metrics, memory, and caches">
-        <Card>
-          <LoadingState message="Loading runtime info..." />
-        </Card>
-      </PageLayout>
-    );
-  }
+  if (!memory) {
+    if (loading) {
+      return (
+        <PageLayout title="Runtime" description="Metrics, memory, and caches">
+          <Card>
+            <LoadingState message="Loading runtime info..." />
+          </Card>
+        </PageLayout>
+      );
+    }
 
-  if (error && !memory) {
-    return (
-      <PageLayout title="Runtime" description="Metrics, memory, and caches">
-        <Card>
-          <ErrorState error={error} />
-        </Card>
-      </PageLayout>
-    );
+    if (error) {
+      return (
+        <PageLayout title="Runtime" description="Metrics, memory, and caches">
+          <Card>
+            <ErrorState error={error} />
+          </Card>
+        </PageLayout>
+      );
+    }
   }
 
   const metricsCount = Object.keys(metrics).length;
@@ -92,7 +95,7 @@ export function RuntimeTab() {
           <TabButton
             active={subTab === "memory"}
             onClick={() => setSubTab("memory")}
-            label={`Memory (${memory?.caches.length || 0} caches)`}
+            label={`Memory (${memory?.caches.length ?? 0} caches)`}
           />
         </div>
         <div className="flex items-center gap-3">
@@ -122,27 +125,31 @@ function TabButton({
   active: boolean;
   onClick: () => void;
   label: string;
-}) {
+}): React.JSX.Element {
+  const className = active
+    ? "bg-white text-sky-600 border border-gray-200 border-b-white -mb-[1px]"
+    : "text-gray-500 hover:text-gray-700";
+
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`px-3 py-1.5 text-sm font-medium rounded-t transition-colors ${
-        active
-          ? "bg-white text-sky-600 border border-gray-200 border-b-white -mb-[1px]"
-          : "text-gray-500 hover:text-gray-700"
-      }`}
+      className={`px-3 py-1.5 text-sm font-medium rounded-t transition-colors ${className}`}
     >
       {label}
     </button>
   );
 }
 
-function MetricsSection({ metrics }: { metrics: Record<string, number | unknown> }) {
+function MetricsSection({
+  metrics,
+}: {
+  metrics: Record<string, number | unknown>;
+}): React.JSX.Element {
   const groups: Record<string, Array<{ key: string; val: unknown }>> = {};
+
   for (const [key, val] of Object.entries(metrics)) {
-    const parts = key.split(".");
-    const group = parts.length > 1 ? parts[0] : "general";
+    const [group = "general"] = key.split(".");
     (groups[group] ??= []).push({ key, val });
   }
 
@@ -165,7 +172,9 @@ function MetricsSection({ metrics }: { metrics: Record<string, number | unknown>
                 {items.map(({ key, val }) => (
                   <tr key={key} className="border-b last:border-0">
                     <td className="px-3 py-2">
-                      <code className="text-xs text-sky-600">{key.replace(`${group}.`, "")}</code>
+                      <code className="text-xs text-sky-600">
+                        {key.replace(`${group}.`, "")}
+                      </code>
                     </td>
                     <td className="px-3 py-2 text-right font-medium">
                       {typeof val === "number" ? val.toLocaleString() : JSON.stringify(val)}
@@ -180,23 +189,20 @@ function MetricsSection({ metrics }: { metrics: Record<string, number | unknown>
   );
 }
 
-function MemorySection({
-  memory,
-}: {
-  memory: { heap: HeapStats; caches: CacheStats[]; pressure: Pressure };
-}) {
+function MemorySection({ memory }: { memory: MemoryData }): React.JSX.Element {
   const progressPercent = memory.heap.heapUsedPercent;
-  const progressColor = memory.pressure.critical
-    ? "bg-red-500"
-    : memory.pressure.warning
-    ? "bg-amber-500"
-    : "bg-green-500";
 
-  const pressureColor = memory.pressure.critical
-    ? "text-red-600"
-    : memory.pressure.warning
-    ? "text-amber-600"
-    : "text-green-600";
+  let progressColor = "bg-green-500";
+  if (memory.pressure.critical) progressColor = "bg-red-500";
+  else if (memory.pressure.warning) progressColor = "bg-amber-500";
+
+  let pressureColor = "text-green-600";
+  if (memory.pressure.critical) pressureColor = "text-red-600";
+  else if (memory.pressure.warning) pressureColor = "text-amber-600";
+
+  let pressureLabel = "OK";
+  if (memory.pressure.critical) pressureLabel = "CRITICAL";
+  else if (memory.pressure.warning) pressureLabel = "WARNING";
 
   return (
     <>
@@ -204,9 +210,7 @@ function MemorySection({
         <div className="p-4">
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm font-medium text-gray-700">Heap Usage</span>
-            <span className={`text-sm font-semibold ${pressureColor}`}>
-              {memory.pressure.critical ? "CRITICAL" : memory.pressure.warning ? "WARNING" : "OK"}
-            </span>
+            <span className={`text-sm font-semibold ${pressureColor}`}>{pressureLabel}</span>
           </div>
           <div className="flex items-center gap-4">
             <div className="flex-1 h-3 bg-gray-100 rounded-full overflow-hidden">
@@ -220,7 +224,7 @@ function MemorySection({
             </span>
           </div>
           <div className="flex gap-6 mt-3 text-xs text-gray-500">
-            <span>RSS: {memory.heap.rss?.toFixed(0) || "—"} MB</span>
+            <span>RSS: {memory.heap.rss?.toFixed(0) ?? "—"} MB</span>
             <span>Total: {memory.heap.totalHeapSizeMB.toFixed(0)} MB</span>
           </div>
         </div>
@@ -249,7 +253,7 @@ function MemorySection({
                 </td>
                 <td className="px-3 py-2 text-right font-medium">{cache.entries}</td>
                 <td className="px-3 py-2 text-right text-gray-500">
-                  {cache.maxEntries || "—"}
+                  {cache.maxEntries ?? "—"}
                 </td>
               </tr>
             ))}

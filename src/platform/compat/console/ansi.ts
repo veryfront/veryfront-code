@@ -7,8 +7,9 @@
 
 import type { ColorFunction, ConsoleStyler } from "./types.ts";
 
-const ansi = (open: number, close: number): ColorFunction => (text: string) =>
-  `\x1b[${open}m${text}\x1b[${close}m`;
+function ansi(open: number, close: number): ColorFunction {
+  return (text: string) => `\x1b[${open}m${text}\x1b[${close}m`;
+}
 
 export const red: ColorFunction = ansi(31, 39);
 export const green: ColorFunction = ansi(32, 39);

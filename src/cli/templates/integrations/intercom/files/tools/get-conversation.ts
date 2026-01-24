@@ -2,9 +2,18 @@ import { tool } from "veryfront/tool";
 import { z } from "zod";
 import { getConversation } from "../../lib/intercom-client.ts";
 
+function toIsoFromSeconds(seconds: number): string {
+  return new Date(seconds * 1000).toISOString();
+}
+
+function toIsoFromSecondsOrNull(seconds?: number | null): string | null {
+  return seconds ? toIsoFromSeconds(seconds) : null;
+}
+
 export default tool({
   id: "get-conversation",
-  description: "Get details of a specific conversation from Intercom, including all conversation parts/messages.",
+  description:
+    "Get details of a specific conversation from Intercom, including all conversation parts/messages.",
   inputSchema: z.object({
     conversationId: z.string().describe("The ID of the conversation to retrieve"),
   }),
@@ -17,14 +26,10 @@ export default tool({
       state: conversation.state,
       read: conversation.read,
       priority: conversation.priority,
-      createdAt: new Date(conversation.created_at * 1000).toISOString(),
-      updatedAt: new Date(conversation.updated_at * 1000).toISOString(),
-      waitingSince: conversation.waiting_since
-        ? new Date(conversation.waiting_since * 1000).toISOString()
-        : null,
-      snoozedUntil: conversation.snoozed_until
-        ? new Date(conversation.snoozed_until * 1000).toISOString()
-        : null,
+      createdAt: toIsoFromSeconds(conversation.created_at),
+      updatedAt: toIsoFromSeconds(conversation.updated_at),
+      waitingSince: toIsoFromSecondsOrNull(conversation.waiting_since),
+      snoozedUntil: toIsoFromSecondsOrNull(conversation.snoozed_until),
       source: {
         type: conversation.source.type,
         subject: conversation.source.subject,
@@ -36,18 +41,19 @@ export default tool({
           email: conversation.source.author.email,
         },
       },
-      conversationParts: conversation.conversation_parts?.conversation_parts.map((part) => ({
-        id: part.id,
-        partType: part.part_type,
-        body: part.body,
-        createdAt: new Date(part.created_at * 1000).toISOString(),
-        author: {
-          type: part.author.type,
-          id: part.author.id,
-          name: part.author.name,
-          email: part.author.email,
-        },
-      })) || [],
+      conversationParts:
+        conversation.conversation_parts?.conversation_parts.map((part) => ({
+          id: part.id,
+          partType: part.part_type,
+          body: part.body,
+          createdAt: toIsoFromSeconds(part.created_at),
+          author: {
+            type: part.author.type,
+            id: part.author.id,
+            name: part.author.name,
+            email: part.author.email,
+          },
+        })) ?? [],
       contactIds: conversation.contacts?.map((c) => c.id),
       teammateIds: conversation.teammates?.map((t) => t.id),
     };

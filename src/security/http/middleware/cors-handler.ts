@@ -1,24 +1,19 @@
-/**
- * CORS header handler
- */
-
 import type { SecurityConfig } from "./types.ts";
 import { validateOriginSync } from "../cors/validators.ts";
 
-/** Set CORS headers on response using consolidated origin validation */
-export function setCors(headers: Headers, req: Request, securityConfig: SecurityConfig | null) {
-  const conf = securityConfig?.cors;
+export function setCors(
+  headers: Headers,
+  req: Request,
+  securityConfig: SecurityConfig | null,
+): void {
+  const validation = validateOriginSync(req.headers.get("origin"), securityConfig?.cors);
+  const allowedOrigin = validation.allowedOrigin;
 
-  // Use consolidated validator for origin determination
-  const validation = validateOriginSync(req.headers.get("origin"), conf);
+  if (!allowedOrigin) return;
 
-  // Set the allowed origin if validation succeeded
-  if (validation.allowedOrigin) {
-    headers.set("Access-Control-Allow-Origin", validation.allowedOrigin);
-  }
+  headers.set("Access-Control-Allow-Origin", allowedOrigin);
 
-  // Always add Vary header for proper caching when origin is not wildcard
-  if (validation.allowedOrigin && validation.allowedOrigin !== "*") {
+  if (allowedOrigin !== "*") {
     headers.set("Vary", "Origin");
   }
 }

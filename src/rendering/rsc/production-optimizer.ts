@@ -7,21 +7,15 @@ export class RSCProductionOptimizer {
       html: RSCProductionOptimizer.minifyHTML(payload.html),
       clientRefs: payload.clientRefs,
       assets: payload.assets,
-      // Remove debug tree in production
       tree: undefined,
     };
   }
 
   private static minifyHTML(html: string): string {
-    return (
-      html
-        // Remove comments
-        .replace(/<!--[\s\S]*?-->/g, "")
-        // Remove unnecessary whitespace between tags
-        .replace(/>\s+</g, "><")
-        // Remove leading/trailing whitespace
-        .trim()
-    );
+    return html
+      .replace(/<!--[\s\S]*?-->/g, "")
+      .replace(/>\s+</g, "><")
+      .trim();
   }
 
   static getCacheHeaders(
@@ -29,30 +23,28 @@ export class RSCProductionOptimizer {
   ): Record<string, string> {
     const { isStatic = false, maxAge = 0 } = options;
 
-    if (isStatic && maxAge > 0) {
+    if (!isStatic || maxAge <= 0) {
       return {
-        "Cache-Control": `public, max-age=${maxAge}, stale-while-revalidate=${maxAge * 2}`,
-        "CDN-Cache-Control": `max-age=${maxAge * 4}`,
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        Pragma: "no-cache",
+        Expires: "0",
       };
     }
 
     return {
-      "Cache-Control": "no-cache, no-store, must-revalidate",
-      Pragma: "no-cache",
-      Expires: "0",
+      "Cache-Control": `public, max-age=${maxAge}, stale-while-revalidate=${maxAge * 2}`,
+      "CDN-Cache-Control": `max-age=${maxAge * 4}`,
     };
   }
 
   static generateETag(payload: RSCPayload): string {
     let hash = HASH_SEED_FNV1A;
 
-    // Hash the HTML content directly
     for (let i = 0; i < payload.html.length; i++) {
       hash ^= payload.html.charCodeAt(i);
       hash = Math.imul(hash, 16777619);
     }
 
-    // Hash sorted client ref keys
     const clientRefKeys = Object.keys(payload.clientRefs).sort();
     for (const key of clientRefKeys) {
       for (let i = 0; i < key.length; i++) {
@@ -67,7 +59,6 @@ export class RSCProductionOptimizer {
   static checkETag(requestETag: string | null, payloadETag: string): boolean {
     if (!requestETag) return false;
 
-    // Handle weak ETags
     const normalizeETag = (etag: string) => etag.replace(/^W\//, "").replace(/"/g, "");
 
     return normalizeETag(requestETag) === normalizeETag(payloadETag);
@@ -80,9 +71,7 @@ export class RSCProductionOptimizer {
     if (!cdnPrefix) return clientRefs;
 
     const optimized: Record<string, string> = {};
-
     for (const [id, path] of Object.entries(clientRefs)) {
-      // Add CDN prefix and version hash
       optimized[id] = `${cdnPrefix}${path}`;
     }
 
@@ -99,8 +88,6 @@ export class RSCProductionOptimizer {
     for (const [route, payload] of payloads) {
       const bundleId = RSCProductionOptimizer.generateBundleId(route);
       bundles[bundleId] = RSCProductionOptimizer.optimizePayload(payload);
-
-      // Track which client components are used by each route
       manifest[route] = Object.keys(payload.clientRefs);
     }
 
@@ -112,13 +99,9 @@ export class RSCProductionOptimizer {
   }
 
   static generatePreloadLinks(clientRefs: Record<string, string>): string[] {
-    const links: string[] = [];
-
-    for (const [_id, path] of Object.entries(clientRefs)) {
-      links.push(`<link rel="modulepreload" href="${path}" as="script" crossorigin>`);
-    }
-
-    return links;
+    return Object.values(clientRefs).map(
+      (path) => `<link rel="modulepreload" href="${path}" as="script" crossorigin>`,
+    );
   }
 
   /**
@@ -146,10 +129,7 @@ export class RSCProductionOptimizer {
     const directives = RSCProductionOptimizer.getCSPDirectives();
 
     return Object.entries(directives)
-      .map(([key, values]) => {
-        if (values.length === 0) return key;
-        return `${key} ${values.join(" ")}`;
-      })
+      .map(([key, values]) => (values.length === 0 ? key : `${key} ${values.join(" ")}`))
       .join("; ");
   }
 }

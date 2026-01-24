@@ -27,10 +27,9 @@ export const issueStateSchema = z.enum(["open", "closed"]);
 /**
  * Schema for issue ID validation
  */
-export const issueIdSchema = z.string().regex(
-  ISSUE_ID_PATTERN,
-  "Issue ID must be in format PREFIX-NNN (e.g., ISSUE-001, TASK-042)",
-);
+export const issueIdSchema = z
+  .string()
+  .regex(ISSUE_ID_PATTERN, "Issue ID must be in format PREFIX-NNN (e.g., ISSUE-001, TASK-042)");
 
 /**
  * Schema for labels (colon syntax supported)
@@ -40,10 +39,9 @@ export const labelSchema = z.string().min(1).max(50);
 /**
  * Schema for ISO 8601 date strings
  */
-export const isoDateSchema = z.string().refine(
-  (val) => !isNaN(Date.parse(val)),
-  "Must be a valid ISO 8601 date string",
-);
+export const isoDateSchema = z
+  .string()
+  .refine((val) => !Number.isNaN(Date.parse(val)), "Must be a valid ISO 8601 date string");
 
 /**
  * Schema for issue metadata (YAML frontmatter)
@@ -115,11 +113,12 @@ export function isValidIssueId(id: string): boolean {
  * Parse issue ID into prefix and number
  */
 export function parseIssueId(id: string): { prefix: IssuePrefix; number: number } | null {
-  const match = id.match(ISSUE_ID_PATTERN);
+  const match = ISSUE_ID_PATTERN.exec(id);
   if (!match || !match[1] || !match[2]) return null;
+
   return {
     prefix: match[1] as IssuePrefix,
-    number: parseInt(match[2], 10),
+    number: Number.parseInt(match[2], 10),
   };
 }
 
@@ -127,14 +126,12 @@ export function parseIssueId(id: string): { prefix: IssuePrefix; number: number 
  * Generate next issue ID for a given prefix
  */
 export function generateIssueId(prefix: IssuePrefix, existingIds: string[]): string {
-  const relevantIds = existingIds.filter((id) => id.startsWith(`${prefix}-`));
-  const numbers = relevantIds
-    .map((id) => parseIssueId(id)?.number ?? 0)
-    .filter((n) => n > 0);
+  const numbers = existingIds
+    .filter((id) => id.startsWith(`${prefix}-`))
+    .map((id) => parseIssueId(id)?.number)
+    .filter((n): n is number => typeof n === "number" && n > 0);
 
-  const maxNumber = numbers.length > 0 ? Math.max(...numbers) : 0;
-  const nextNumber = maxNumber + 1;
-
+  const nextNumber = (numbers.length ? Math.max(...numbers) : 0) + 1;
   return `${prefix}-${nextNumber.toString().padStart(3, "0")}`;
 }
 
@@ -143,6 +140,7 @@ export function generateIssueId(prefix: IssuePrefix, existingIds: string[]): str
  */
 export function parseState(value: string): IssueState | null {
   const normalized = value.toLowerCase().trim();
+
   const aliases: Record<string, IssueState> = {
     open: "open",
     opened: "open",
@@ -153,5 +151,6 @@ export function parseState(value: string): IssueState | null {
     resolved: "closed",
     completed: "closed",
   };
+
   return aliases[normalized] ?? null;
 }

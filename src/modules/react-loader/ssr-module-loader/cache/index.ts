@@ -1,12 +1,3 @@
-/**
- * Cache Module
- *
- * Exports for SSR module caching.
- *
- * @module module-system/react-loader/ssr-module-loader/cache
- */
-
-// Memory caches
 export {
   clearSSRModuleCache,
   clearSSRModuleCacheForProject,
@@ -18,7 +9,6 @@ export {
   transformSemaphore,
 } from "./memory.ts";
 
-// Distributed caching (Redis backend)
 export {
   getFromRedis,
   getRedisClientInstance,

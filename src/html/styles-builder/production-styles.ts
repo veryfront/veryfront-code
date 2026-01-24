@@ -8,16 +8,15 @@ import {
 
 export function getProductionStyles(nonce?: string): string {
   const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
+
   return `
   <style${nonceAttr}>
-    /* Basic reset and typography */
     body {
       margin: 0;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
       line-height: 1.5;
     }
 
-    /* Prose styles for content */
     .prose {
       max-width: 65ch;
       margin: 0 auto;
@@ -54,7 +53,6 @@ export function getProductionStyles(nonce?: string): string {
       color: inherit;
     }
 
-    /* Tailwind-like utility classes */
     .vf-tailwind {
       width: 100%;
     }
@@ -67,21 +65,10 @@ export function getProductionStyles(nonce?: string): string {
       padding-left: 1rem;
     }
 
-    @media (min-width: ${BREAKPOINT_SM}px) {
-      .container { max-width: ${BREAKPOINT_SM}px; }
-    }
-
-    @media (min-width: ${BREAKPOINT_MD}px) {
-      .container { max-width: ${BREAKPOINT_MD}px; }
-    }
-
-    @media (min-width: ${BREAKPOINT_LG}px) {
-      .container { max-width: ${BREAKPOINT_LG}px; }
-    }
-
-    @media (min-width: ${BREAKPOINT_XL}px) {
-      .container { max-width: ${BREAKPOINT_XL}px; }
-    }
+    @media (min-width: ${BREAKPOINT_SM}px) { .container { max-width: ${BREAKPOINT_SM}px; } }
+    @media (min-width: ${BREAKPOINT_MD}px) { .container { max-width: ${BREAKPOINT_MD}px; } }
+    @media (min-width: ${BREAKPOINT_LG}px) { .container { max-width: ${BREAKPOINT_LG}px; } }
+    @media (min-width: ${BREAKPOINT_XL}px) { .container { max-width: ${BREAKPOINT_XL}px; } }
 
     .mx-auto {
       margin-left: auto;

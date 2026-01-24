@@ -12,27 +12,28 @@ export interface StateStore {
 interface ReactHooksSubset {
   useState: <S>(initialState: S | (() => S)) => [S, Dispatch<SetStateAction<S>>];
   useEffect: (effect: EffectCallback, deps?: DependencyList) => void;
-  useCallback: <T extends (...args: any[]) => any>(callback: T, deps: DependencyList) => T;
+  // deno-lint-ignore ban-types
+  useCallback: <T extends Function>(callback: T, deps: DependencyList) => T;
 }
 
 class StateBridge implements StateStore {
-  private state: Map<string, unknown> = new Map();
-  private listeners: Map<string, Set<(value: unknown) => void>> = new Map();
-  private persistKeys: Set<string> = new Set();
+  private state = new Map<string, unknown>();
+  private listeners = new Map<string, Set<(value: unknown) => void>>();
+  private persistKeys = new Set<string>();
   private boundSaveState: (() => void) | null = null;
 
   constructor() {
     this.restoreState();
 
-    if (typeof window !== "undefined") {
-      this.boundSaveState = () => this.saveState();
-      globalThis.addEventListener("beforeunload", this.boundSaveState);
-    }
+    if (typeof window === "undefined") return;
+
+    this.boundSaveState = () => this.saveState();
+    (globalThis as unknown as Window).addEventListener("beforeunload", this.boundSaveState);
   }
 
   destroy(): void {
     if (this.boundSaveState && typeof window !== "undefined") {
-      globalThis.removeEventListener("beforeunload", this.boundSaveState);
+      (globalThis as unknown as Window).removeEventListener("beforeunload", this.boundSaveState);
       this.boundSaveState = null;
     }
     this.clear();
@@ -46,50 +47,42 @@ class StateBridge implements StateStore {
     this.state.set(key, value);
     this.notifyListeners(key, value);
 
-    if (this.persistKeys.has(key)) {
-      this.saveKey(key, value);
-    }
+    if (this.persistKeys.has(key)) this.saveKey(key, value);
   }
 
   private notifyListeners(key: string, value: unknown): void {
     const callbacks = this.listeners.get(key);
-    if (callbacks) {
-      for (const callback of callbacks) {
-        callback(value);
-      }
-    }
+    if (!callbacks) return;
+
+    for (const callback of callbacks) callback(value);
   }
 
   subscribe<T>(key: string, callback: (value: T) => void): () => void {
-    if (!this.listeners.has(key)) {
-      this.listeners.set(key, new Set());
+    let callbacks = this.listeners.get(key);
+    if (!callbacks) {
+      callbacks = new Set();
+      this.listeners.set(key, callbacks);
     }
 
     const typedCallback = callback as unknown as (value: unknown) => void;
-    this.listeners.get(key)?.add(typedCallback);
+    callbacks.add(typedCallback);
 
     return () => {
-      const callbacks = this.listeners.get(key);
-      if (callbacks) {
-        callbacks.delete(typedCallback);
-      }
+      this.listeners.get(key)?.delete(typedCallback);
     };
   }
 
   persist(key: string): void {
     this.persistKeys.add(key);
+
     const value = this.state.get(key);
-    if (value !== undefined) {
-      this.saveKey(key, value);
-    }
+    if (value !== undefined) this.saveKey(key, value);
   }
 
   clear(): void {
     this.state.clear();
     this.listeners.clear();
-    if (typeof sessionStorage !== "undefined") {
-      sessionStorage.removeItem("veryfront-state");
-    }
+    sessionStorage?.removeItem("veryfront-state");
   }
 
   private saveState(): void {
@@ -98,9 +91,7 @@ class StateBridge implements StateStore {
     const persistedState: Record<string, unknown> = {};
     for (const key of this.persistKeys) {
       const value = this.state.get(key);
-      if (value !== undefined) {
-        persistedState[key] = value;
-      }
+      if (value !== undefined) persistedState[key] = value;
     }
 
     sessionStorage.setItem("veryfront-state", JSON.stringify(persistedState));
@@ -133,7 +124,7 @@ class StateBridge implements StateStore {
     if (!stored) return null;
 
     try {
-      const state = JSON.parse(stored);
+      const state: unknown = JSON.parse(stored);
       if (state && typeof state === "object" && !Array.isArray(state)) {
         return state as Record<string, unknown>;
       }
@@ -153,16 +144,12 @@ class StateBridge implements StateStore {
 let bridgeInstance: StateBridge | null = null;
 
 export function getStateBridge(): StateBridge {
-  if (!bridgeInstance) {
-    bridgeInstance = new StateBridge();
-  }
+  bridgeInstance ??= new StateBridge();
   return bridgeInstance;
 }
 
 export function __resetBridgeForTesting(): void {
-  if (bridgeInstance) {
-    bridgeInstance.destroy();
-  }
+  bridgeInstance?.destroy();
   bridgeInstance = null;
 }
 
@@ -170,38 +157,28 @@ export function useBridgedState<T>(
   key: string,
   initialValue: T,
   options?: { persist?: boolean },
-  testReact?: ReactHooksSubset, // Use the new subset type
+  testReact?: ReactHooksSubset,
 ): [T, (value: T) => void] {
-  const reactHooks = testReact || React;
-  const { useState, useEffect } = reactHooks;
-  // Type assertion needed due to subtle differences between ReactHooksSubset and React's useCallback signature
-  // deno-lint-ignore no-explicit-any
-  const useCallback = reactHooks.useCallback as <T extends (...args: any[]) => any>(
-    callback: T,
-    deps: DependencyList,
-  ) => T;
+  const reactHooks = testReact ?? React;
+  const { useState, useEffect, useCallback } = reactHooks;
   const bridge = getStateBridge();
 
-  const initialState = bridge.get(key) ?? initialValue;
-
-  const [value, setValue] = useState<T>(initialState as T);
+  const [value, setValue] = useState<T>((bridge.get(key) ?? initialValue) as T);
 
   useEffect(() => {
     const unsubscribe = bridge.subscribe(key, setValue);
 
-    if (options?.persist) {
-      bridge.persist(key);
-    }
+    if (options?.persist) bridge.persist(key);
 
     return unsubscribe;
-  }, [key, options?.persist]);
+  }, [bridge, key, options?.persist]);
 
   const setBridgedValue = useCallback(
     (newValue: T) => {
       bridge.set(key, newValue);
       setValue(newValue);
     },
-    [key],
+    [bridge, key],
   );
 
   return [value, setBridgedValue];

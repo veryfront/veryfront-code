@@ -3,7 +3,6 @@ import { getAccessToken } from "./token-store.ts";
 const DROPBOX_API_URL = "https://api.dropboxapi.com/2";
 const DROPBOX_CONTENT_URL = "https://content.dropboxapi.com/2";
 
-// Dropbox API Types
 export interface DropboxMetadata {
   ".tag": "file" | "folder" | "deleted";
   name: string;
@@ -85,60 +84,62 @@ export interface SharedLinkMetadata {
   };
 }
 
-// Helper function for Dropbox RPC API calls
-async function dropboxRPC<T>(
-  endpoint: string,
-  body: Record<string, unknown> = {},
-): Promise<T> {
+async function requireAccessToken(): Promise<string> {
   const token = await getAccessToken();
   if (!token) {
     throw new Error("Not authenticated with Dropbox. Please connect your account.");
   }
+  return token;
+}
+
+async function parseDropboxError(response: Response): Promise<unknown> {
+  return response.json().catch(() => ({}));
+}
+
+function throwDropboxError(response: Response, error: any): never {
+  throw new Error(
+    `Dropbox API error: ${response.status} ${error?.error_summary || response.statusText}`,
+  );
+}
+
+async function dropboxRPC<T>(
+  endpoint: string,
+  body: Record<string, unknown> = {},
+): Promise<T> {
+  const token = await requireAccessToken();
 
   const response = await fetch(`${DROPBOX_API_URL}${endpoint}`, {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${token}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(
-      `Dropbox API error: ${response.status} ${error.error_summary || response.statusText}`,
-    );
+    const error = await parseDropboxError(response);
+    throwDropboxError(response, error);
   }
 
   return response.json();
 }
 
-// Helper function for Dropbox Content API calls
 async function dropboxContent<T>(
   endpoint: string,
   args: Record<string, unknown>,
   content?: string | Uint8Array,
 ): Promise<T> {
-  const token = await getAccessToken();
-  if (!token) {
-    throw new Error("Not authenticated with Dropbox. Please connect your account.");
-  }
+  const token = await requireAccessToken();
 
   const headers: Record<string, string> = {
-    "Authorization": `Bearer ${token}`,
+    Authorization: `Bearer ${token}`,
     "Dropbox-API-Arg": JSON.stringify(args),
   };
 
-  let body: string | Uint8Array | undefined;
-  if (content) {
-    if (typeof content === "string") {
-      headers["Content-Type"] = "application/octet-stream";
-      body = content;
-    } else {
-      headers["Content-Type"] = "application/octet-stream";
-      body = content;
-    }
+  const body = content;
+  if (body != null) {
+    headers["Content-Type"] = "application/octet-stream";
   }
 
   const response = await fetch(`${DROPBOX_CONTENT_URL}${endpoint}`, {
@@ -148,16 +149,13 @@ async function dropboxContent<T>(
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(
-      `Dropbox API error: ${response.status} ${error.error_summary || response.statusText}`,
-    );
+    const error = await parseDropboxError(response);
+    throwDropboxError(response, error);
   }
 
   return response.json();
 }
 
-// Account Operations
 export function getCurrentAccount(): Promise<AccountInfo> {
   return dropboxRPC<AccountInfo>("/users/get_current_account");
 }
@@ -166,7 +164,6 @@ export function getSpaceUsage(): Promise<SpaceUsage> {
   return dropboxRPC<SpaceUsage>("/users/get_space_usage");
 }
 
-// File and Folder Operations
 export function listFolder(
   path: string = "",
   options?: {
@@ -178,10 +175,10 @@ export function listFolder(
 ): Promise<ListFolderResult> {
   return dropboxRPC<ListFolderResult>("/files/list_folder", {
     path: path || "",
-    recursive: options?.recursive || false,
-    include_deleted: options?.includeDeleted || false,
-    include_has_explicit_shared_members: options?.includeHasExplicitSharedMembers || false,
-    limit: options?.limit || 100,
+    recursive: options?.recursive ?? false,
+    include_deleted: options?.includeDeleted ?? false,
+    include_has_explicit_shared_members: options?.includeHasExplicitSharedMembers ?? false,
+    limit: options?.limit ?? 100,
   });
 }
 
@@ -198,8 +195,8 @@ export function getMetadata(
 ): Promise<DropboxFileMetadata | DropboxFolderMetadata> {
   return dropboxRPC<DropboxFileMetadata | DropboxFolderMetadata>("/files/get_metadata", {
     path,
-    include_media_info: options?.includeMediaInfo || false,
-    include_deleted: options?.includeDeleted || false,
+    include_media_info: options?.includeMediaInfo ?? false,
+    include_deleted: options?.includeDeleted ?? false,
   });
 }
 
@@ -207,24 +204,19 @@ export async function downloadFile(path: string): Promise<{
   content: string;
   metadata: DropboxFileMetadata;
 }> {
-  const token = await getAccessToken();
-  if (!token) {
-    throw new Error("Not authenticated with Dropbox. Please connect your account.");
-  }
+  const token = await requireAccessToken();
 
   const response = await fetch(`${DROPBOX_CONTENT_URL}/files/download`, {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${token}`,
+      Authorization: `Bearer ${token}`,
       "Dropbox-API-Arg": JSON.stringify({ path }),
     },
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(
-      `Dropbox API error: ${response.status} ${error.error_summary || response.statusText}`,
-    );
+    const error = await parseDropboxError(response);
+    throwDropboxError(response, error);
   }
 
   const content = await response.text();
@@ -247,9 +239,9 @@ export function uploadFile(
     "/files/upload",
     {
       path,
-      mode: options?.mode || "add",
-      autorename: options?.autorename || false,
-      mute: options?.mute || false,
+      mode: options?.mode ?? "add",
+      autorename: options?.autorename ?? false,
+      mute: options?.mute ?? false,
     },
     content,
   );
@@ -258,9 +250,10 @@ export function uploadFile(
 export function deleteFile(
   path: string,
 ): Promise<DropboxFileMetadata | DropboxFolderMetadata> {
-  return dropboxRPC<DropboxFileMetadata | DropboxFolderMetadata>("/files/delete_v2", {
-    path,
-  }).then((result: any) => result.metadata);
+  return dropboxRPC<{ metadata: DropboxFileMetadata | DropboxFolderMetadata }>(
+    "/files/delete_v2",
+    { path },
+  ).then((result) => result.metadata);
 }
 
 export function moveFile(
@@ -272,13 +265,16 @@ export function moveFile(
     allowOwnershipTransfer?: boolean;
   },
 ): Promise<DropboxFileMetadata | DropboxFolderMetadata> {
-  return dropboxRPC<{ metadata: DropboxFileMetadata | DropboxFolderMetadata }>("/files/move_v2", {
-    from_path: fromPath,
-    to_path: toPath,
-    allow_shared_folder: options?.allowSharedFolder || false,
-    autorename: options?.autorename || false,
-    allow_ownership_transfer: options?.allowOwnershipTransfer || false,
-  }).then((result) => result.metadata);
+  return dropboxRPC<{ metadata: DropboxFileMetadata | DropboxFolderMetadata }>(
+    "/files/move_v2",
+    {
+      from_path: fromPath,
+      to_path: toPath,
+      allow_shared_folder: options?.allowSharedFolder ?? false,
+      autorename: options?.autorename ?? false,
+      allow_ownership_transfer: options?.allowOwnershipTransfer ?? false,
+    },
+  ).then((result) => result.metadata);
 }
 
 export function copyFile(
@@ -290,13 +286,16 @@ export function copyFile(
     allowOwnershipTransfer?: boolean;
   },
 ): Promise<DropboxFileMetadata | DropboxFolderMetadata> {
-  return dropboxRPC<{ metadata: DropboxFileMetadata | DropboxFolderMetadata }>("/files/copy_v2", {
-    from_path: fromPath,
-    to_path: toPath,
-    allow_shared_folder: options?.allowSharedFolder || false,
-    autorename: options?.autorename || false,
-    allow_ownership_transfer: options?.allowOwnershipTransfer || false,
-  }).then((result) => result.metadata);
+  return dropboxRPC<{ metadata: DropboxFileMetadata | DropboxFolderMetadata }>(
+    "/files/copy_v2",
+    {
+      from_path: fromPath,
+      to_path: toPath,
+      allow_shared_folder: options?.allowSharedFolder ?? false,
+      autorename: options?.autorename ?? false,
+      allow_ownership_transfer: options?.allowOwnershipTransfer ?? false,
+    },
+  ).then((result) => result.metadata);
 }
 
 export function createFolder(
@@ -305,11 +304,10 @@ export function createFolder(
 ): Promise<DropboxFolderMetadata> {
   return dropboxRPC<{ metadata: DropboxFolderMetadata }>("/files/create_folder_v2", {
     path,
-    autorename: autorename || false,
+    autorename: autorename ?? false,
   }).then((result) => result.metadata);
 }
 
-// Search Operations
 export function searchFiles(
   query: string,
   options?: {
@@ -333,15 +331,14 @@ export function searchFiles(
   return dropboxRPC<SearchResult>("/files/search_v2", {
     query,
     options: {
-      path: options?.path || "",
-      max_results: options?.maxResults || 20,
+      path: options?.path ?? "",
+      max_results: options?.maxResults ?? 20,
       file_categories: options?.fileCategories,
       filename_only: false,
     },
   });
 }
 
-// Sharing Operations
 export async function createSharedLink(
   path: string,
   settings?: {
@@ -353,15 +350,12 @@ export async function createSharedLink(
   try {
     return await dropboxRPC<SharedLinkMetadata>("/sharing/create_shared_link_with_settings", {
       path,
-      settings: settings || {},
+      settings: settings ?? {},
     });
   } catch (error) {
-    // If link already exists, get the existing link
     if (error instanceof Error && error.message.includes("shared_link_already_exists")) {
       const links = await listSharedLinks(path);
-      if (links.length > 0) {
-        return links[0];
-      }
+      if (links.length > 0) return links[0];
     }
     throw error;
   }
@@ -369,12 +363,11 @@ export async function createSharedLink(
 
 export async function listSharedLinks(path?: string): Promise<SharedLinkMetadata[]> {
   const result = await dropboxRPC<{ links: SharedLinkMetadata[] }>("/sharing/list_shared_links", {
-    path: path || "",
+    path: path ?? "",
   });
   return result.links;
 }
 
-// Helper Functions
 export function formatFileSize(bytes: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"];
   let size = bytes;

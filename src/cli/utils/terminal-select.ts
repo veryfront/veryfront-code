@@ -30,57 +30,60 @@ export async function select(
 ): Promise<string | null> {
   let selectedIndex = defaultIndex;
 
-  // Print question
   console.log("");
   console.log(cyan("?") + " " + question);
   console.log(dim("  Use arrow keys to navigate, Enter to select"));
   console.log("");
 
-  const renderOptions = () => {
+  function renderOptions(): void {
     for (let i = 0; i < options.length; i++) {
       const opt = options[i];
       if (!opt) continue;
-      const prefix = i === selectedIndex ? green("❯") : " ";
-      const label = i === selectedIndex ? green(opt.label) : opt.label;
+
+      const isSelected = i === selectedIndex;
+      const prefix = isSelected ? green("❯") : " ";
+      const label = isSelected ? green(opt.label) : opt.label;
       const desc = opt.description ? dim(` - ${opt.description}`) : "";
       console.log(`  ${prefix} ${label}${desc}`);
     }
-  };
+  }
 
-  const clearOptions = () => {
+  function clearOptions(): void {
     for (let i = 0; i < options.length; i++) {
       writeStdout(MOVE_UP + CLEAR_LINE);
     }
-  };
+  }
 
-  // Initial render
   writeStdout(HIDE_CURSOR);
   renderOptions();
 
   try {
     const result = await readKeypress((key) => {
-      if (key === "up" && selectedIndex > 0) {
+      if (key === "up") {
+        if (selectedIndex <= 0) return undefined;
         selectedIndex--;
         clearOptions();
         renderOptions();
-      } else if (key === "down" && selectedIndex < options.length - 1) {
+        return undefined;
+      }
+
+      if (key === "down") {
+        if (selectedIndex >= options.length - 1) return undefined;
         selectedIndex++;
         clearOptions();
         renderOptions();
-      } else if (key === "enter") {
-        return options[selectedIndex]?.value ?? null;
-      } else if (key === "escape") {
-        return null;
+        return undefined;
       }
-      return undefined; // Continue reading
+
+      if (key === "enter") return options[selectedIndex]?.value ?? null;
+      if (key === "escape") return null;
+
+      return undefined;
     });
 
-    // Show final selection
     clearOptions();
     const selected = options[selectedIndex];
-    if (selected) {
-      console.log(`  ${green("✓")} ${selected.label}`);
-    }
+    if (selected) console.log(`  ${green("✓")} ${selected.label}`);
 
     return result;
   } finally {
@@ -99,69 +102,75 @@ export async function multiSelect(
   let cursorIndex = 0;
   const selected = new Set(preselected);
 
-  // Print question
   console.log("");
   console.log(cyan("?") + " " + question);
   console.log(dim("  Use arrow keys, Space to toggle, Enter to confirm"));
   console.log("");
 
-  const renderOptions = () => {
+  function renderOptions(): void {
     for (let i = 0; i < options.length; i++) {
       const opt = options[i];
       if (!opt) continue;
-      const cursor = i === cursorIndex ? green("❯") : " ";
+
+      const isCursor = i === cursorIndex;
+      const cursor = isCursor ? green("❯") : " ";
       const checkbox = selected.has(opt.value) ? green("◉") : "○";
-      const label = i === cursorIndex ? green(opt.label) : opt.label;
+      const label = isCursor ? green(opt.label) : opt.label;
       const desc = opt.description ? dim(` - ${opt.description}`) : "";
       console.log(`  ${cursor} ${checkbox} ${label}${desc}`);
     }
-  };
+  }
 
-  const clearOptions = () => {
+  function clearOptions(): void {
     for (let i = 0; i < options.length; i++) {
       writeStdout(MOVE_UP + CLEAR_LINE);
     }
-  };
+  }
 
-  // Initial render
   writeStdout(HIDE_CURSOR);
   renderOptions();
 
   try {
     await readKeypress((key) => {
-      if (key === "up" && cursorIndex > 0) {
+      if (key === "up") {
+        if (cursorIndex <= 0) return undefined;
         cursorIndex--;
         clearOptions();
         renderOptions();
-      } else if (key === "down" && cursorIndex < options.length - 1) {
+        return undefined;
+      }
+
+      if (key === "down") {
+        if (cursorIndex >= options.length - 1) return undefined;
         cursorIndex++;
         clearOptions();
         renderOptions();
-      } else if (key === "space") {
-        const opt = options[cursorIndex];
-        if (opt) {
-          selected.has(opt.value) ? selected.delete(opt.value) : selected.add(opt.value);
-          clearOptions();
-          renderOptions();
-        }
-      } else if (key === "enter") {
-        return Array.from(selected);
-      } else if (key === "escape") {
-        return [];
+        return undefined;
       }
-      return undefined; // Continue reading
+
+      if (key === "space") {
+        const opt = options[cursorIndex];
+        if (!opt) return undefined;
+
+        if (selected.has(opt.value)) selected.delete(opt.value);
+        else selected.add(opt.value);
+
+        clearOptions();
+        renderOptions();
+        return undefined;
+      }
+
+      if (key === "enter") return Array.from(selected);
+      if (key === "escape") return [];
+
+      return undefined;
     });
 
-    // Show final selection
     clearOptions();
     for (const opt of options) {
-      if (selected.has(opt.value)) {
-        console.log(`  ${green("✓")} ${opt.label}`);
-      }
+      if (selected.has(opt.value)) console.log(`  ${green("✓")} ${opt.label}`);
     }
-    if (selected.size === 0) {
-      console.log(dim("  No items selected"));
-    }
+    if (selected.size === 0) console.log(dim("  No items selected"));
 
     return Array.from(selected);
   } finally {
@@ -175,10 +184,7 @@ type KeyHandler<T> = (key: string) => T | undefined;
  * Read keypresses in raw mode (cross-platform)
  */
 function readKeypress<T>(handler: KeyHandler<T>): Promise<T> {
-  if (isDeno) {
-    return readKeypressDeno(handler);
-  }
-  return readKeypressNode(handler);
+  return isDeno ? readKeypressDeno(handler) : readKeypressNode(handler);
 }
 
 /**
@@ -193,11 +199,8 @@ async function readKeypressDeno<T>(handler: KeyHandler<T>): Promise<T> {
       const { value, done } = await reader.read();
       if (done || !value) break;
 
-      const key = parseKeySequence(value);
-      const result = handler(key);
-      if (result !== undefined) {
-        return result;
-      }
+      const result = handler(parseKeySequence(value));
+      if (result !== undefined) return result;
     }
     throw new Error("stdin closed");
   } finally {
@@ -213,36 +216,28 @@ function readKeypressNode<T>(handler: KeyHandler<T>): Promise<T> {
   const stdin = process.stdin;
 
   return new Promise((resolve, reject) => {
-    // Save original settings
     const wasRaw = stdin.isRaw;
 
-    // Set raw mode
-    if (stdin.setRawMode) {
-      stdin.setRawMode(true);
-    }
+    stdin.setRawMode?.(true);
     stdin.resume();
 
-    const onData = (data: Uint8Array) => {
-      const key = parseKeySequence(data);
-      const result = handler(key);
-      if (result !== undefined) {
-        cleanup();
-        resolve(result);
-      }
-    };
-
-    const onEnd = () => {
-      cleanup();
-      reject(new Error("stdin closed"));
-    };
-
-    const cleanup = () => {
+    const cleanup = (): void => {
       stdin.removeListener("data", onData);
       stdin.removeListener("end", onEnd);
-      if (stdin.setRawMode) {
-        stdin.setRawMode(wasRaw ?? false);
-      }
+      stdin.setRawMode?.(wasRaw ?? false);
       stdin.pause();
+    };
+
+    const onData = (data: Uint8Array): void => {
+      const result = handler(parseKeySequence(data));
+      if (result === undefined) return;
+      cleanup();
+      resolve(result);
+    };
+
+    const onEnd = (): void => {
+      cleanup();
+      reject(new Error("stdin closed"));
     };
 
     stdin.on("data", onData);
@@ -254,10 +249,8 @@ function readKeypressNode<T>(handler: KeyHandler<T>): Promise<T> {
  * Parse raw key sequence into key name
  */
 function parseKeySequence(buf: Uint8Array): string {
-  // Handle escape sequences
   if (buf[0] === 0x1b) {
     if (buf[1] === 0x5b) {
-      // CSI sequences
       switch (buf[2]) {
         case 0x41:
           return "up";
@@ -272,18 +265,17 @@ function parseKeySequence(buf: Uint8Array): string {
     return "escape";
   }
 
-  // Handle single characters
   switch (buf[0]) {
-    case 0x0d: // Enter
-    case 0x0a: // Line feed
+    case 0x0d:
+    case 0x0a:
       return "enter";
-    case 0x20: // Space
+    case 0x20:
       return "space";
-    case 0x03: // Ctrl+C
+    case 0x03:
       return "ctrl-c";
-    case 0x71: // q
+    case 0x71:
       return "q";
+    default:
+      return "unknown";
   }
-
-  return "unknown";
 }

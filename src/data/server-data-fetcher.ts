@@ -9,14 +9,14 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 export class ServerDataFetcher {
   constructor(private adapter?: RuntimeAdapter) {}
 
-  async fetch(pageModule: PageWithData, context: DataContext): Promise<DataResult> {
-    if (!pageModule.getServerData || typeof pageModule.getServerData !== "function") {
-      return { props: {} };
+  fetch(pageModule: PageWithData, context: DataContext): Promise<DataResult> {
+    if (typeof pageModule.getServerData !== "function") {
+      return Promise.resolve({ props: {} });
     }
 
-    const pathname = context.url?.pathname || "unknown";
+    const pathname = context.url?.pathname ?? "unknown";
 
-    return await withSpan(
+    return withSpan(
       "data.fetch_server",
       async () => {
         const start = performance.now();
@@ -28,13 +28,8 @@ export class ServerDataFetcher {
             `getServerData for ${pathname}`,
           );
 
-          if (result.redirect) {
-            return { redirect: result.redirect };
-          }
-
-          if (result.notFound) {
-            return { notFound: true };
-          }
+          if (result.redirect) return { redirect: result.redirect };
+          if (result.notFound) return { notFound: true };
 
           return {
             props: result.props ?? {},
@@ -42,6 +37,7 @@ export class ServerDataFetcher {
           };
         } catch (error) {
           const durationMs = Math.round(performance.now() - start);
+
           if (error instanceof TimeoutError) {
             serverLogger.error("DATA_FETCH_TIMEOUT getServerData timed out", {
               pathname,
@@ -51,6 +47,7 @@ export class ServerDataFetcher {
           } else {
             this.logError("DATA_FETCH_ERROR getServerData failed", error, { pathname, durationMs });
           }
+
           throw error;
         }
       },
@@ -63,9 +60,7 @@ export class ServerDataFetcher {
   }
 
   private logError(message: string, error: unknown, context?: Record<string, unknown>): void {
-    const debugEnabled = this.adapter?.env.get("VERYFRONT_DEBUG");
-    if (debugEnabled) {
-      serverLogger.error(message, context ?? {}, error);
-    }
+    if (!this.adapter?.env.get("VERYFRONT_DEBUG")) return;
+    serverLogger.error(message, context ?? {}, error);
   }
 }

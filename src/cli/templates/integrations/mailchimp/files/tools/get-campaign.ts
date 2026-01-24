@@ -10,6 +10,7 @@ export default tool({
   }),
   async execute({ campaignId }) {
     const campaign = await getCampaign(campaignId);
+    const reportSummary = campaign.report_summary;
 
     return {
       id: campaign.id,
@@ -30,14 +31,14 @@ export default tool({
       archiveUrl: campaign.archive_url,
       longArchiveUrl: campaign.long_archive_url,
       tracking: campaign.tracking,
-      reportSummary: campaign.report_summary
+      reportSummary: reportSummary
         ? {
-            opens: campaign.report_summary.opens,
-            uniqueOpens: campaign.report_summary.unique_opens,
-            openRate: campaign.report_summary.open_rate,
-            clicks: campaign.report_summary.clicks,
-            subscriberClicks: campaign.report_summary.subscriber_clicks,
-            clickRate: campaign.report_summary.click_rate,
+            opens: reportSummary.opens,
+            uniqueOpens: reportSummary.unique_opens,
+            openRate: reportSummary.open_rate,
+            clicks: reportSummary.clicks,
+            subscriberClicks: reportSummary.subscriber_clicks,
+            clickRate: reportSummary.click_rate,
           }
         : undefined,
     };

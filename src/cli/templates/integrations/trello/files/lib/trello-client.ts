@@ -49,10 +49,7 @@ interface TrelloMember {
   avatarUrl: string;
 }
 
-async function trelloFetch<T>(
-  endpoint: string,
-  options: RequestInit = {},
-): Promise<T> {
+async function trelloFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = await getAccessToken();
   if (!token) {
     throw new Error("Not authenticated with Trello. Please connect your account.");
@@ -70,7 +67,7 @@ async function trelloFetch<T>(
   const response = await fetch(url.toString(), {
     ...options,
     headers: {
-      "Accept": "application/json",
+      Accept: "application/json",
       "Content-Type": "application/json",
       ...options.headers,
     },
@@ -78,33 +75,28 @@ async function trelloFetch<T>(
 
   if (!response.ok) {
     const error = await response.text().catch(() => "");
-    throw new Error(
-      `Trello API error: ${response.status} ${error || response.statusText}`,
-    );
+    throw new Error(`Trello API error: ${response.status} ${error || response.statusText}`);
   }
 
   return response.json();
 }
 
 export async function listBoards(): Promise<TrelloBoard[]> {
-  const boards = await trelloFetch<TrelloBoard[]>(
+  return trelloFetch<TrelloBoard[]>(
     "/members/me/boards?fields=name,desc,closed,url,prefs,dateLastActivity",
   );
-  return boards;
 }
 
 export async function getBoard(boardId: string): Promise<TrelloBoard> {
-  const board = await trelloFetch<TrelloBoard>(
+  return trelloFetch<TrelloBoard>(
     `/boards/${boardId}?fields=name,desc,closed,url,prefs,dateLastActivity`,
   );
-  return board;
 }
 
 export async function listLists(boardId: string): Promise<TrelloList[]> {
-  const lists = await trelloFetch<TrelloList[]>(
+  return trelloFetch<TrelloList[]>(
     `/boards/${boardId}/lists?fields=name,closed,idBoard,pos`,
   );
-  return lists;
 }
 
 export async function listCards(options: {
@@ -114,26 +106,25 @@ export async function listCards(options: {
 }): Promise<TrelloCard[]> {
   const { boardId, listId, limit = 50 } = options;
 
-  let endpoint: string;
   if (listId) {
-    endpoint = `/lists/${listId}/cards`;
-  } else if (boardId) {
-    endpoint = `/boards/${boardId}/cards`;
-  } else {
-    throw new Error("Either boardId or listId must be provided");
+    return trelloFetch<TrelloCard[]>(
+      `/lists/${listId}/cards?fields=name,desc,closed,idBoard,idList,idMembers,labels,due,dueComplete,url,dateLastActivity&limit=${limit}`,
+    );
   }
 
-  const cards = await trelloFetch<TrelloCard[]>(
-    `${endpoint}?fields=name,desc,closed,idBoard,idList,idMembers,labels,due,dueComplete,url,dateLastActivity&limit=${limit}`,
-  );
-  return cards;
+  if (boardId) {
+    return trelloFetch<TrelloCard[]>(
+      `/boards/${boardId}/cards?fields=name,desc,closed,idBoard,idList,idMembers,labels,due,dueComplete,url,dateLastActivity&limit=${limit}`,
+    );
+  }
+
+  throw new Error("Either boardId or listId must be provided");
 }
 
 export async function getCard(cardId: string): Promise<TrelloCard> {
-  const card = await trelloFetch<TrelloCard>(
+  return trelloFetch<TrelloCard>(
     `/cards/${cardId}?fields=name,desc,closed,idBoard,idList,idMembers,labels,due,dueComplete,url,dateLastActivity`,
   );
-  return card;
 }
 
 export async function createCard(options: {
@@ -156,10 +147,7 @@ export async function createCard(options: {
   if (options.idMembers) params.set("idMembers", options.idMembers.join(","));
   if (options.idLabels) params.set("idLabels", options.idLabels.join(","));
 
-  const card = await trelloFetch<TrelloCard>(`/cards?${params}`, {
-    method: "POST",
-  });
-  return card;
+  return trelloFetch<TrelloCard>(`/cards?${params}`, { method: "POST" });
 }
 
 export async function updateCard(
@@ -182,21 +170,17 @@ export async function updateCard(
   if (updates.desc !== undefined) params.set("desc", updates.desc);
   if (updates.closed !== undefined) params.set("closed", String(updates.closed));
   if (updates.idList !== undefined) params.set("idList", updates.idList);
-  if (updates.due !== undefined) params.set("due", updates.due === null ? "" : updates.due);
-  if (updates.dueComplete !== undefined) params.set("dueComplete", String(updates.dueComplete));
+  if (updates.due !== undefined) params.set("due", updates.due ?? "");
+  if (updates.dueComplete !== undefined) {
+    params.set("dueComplete", String(updates.dueComplete));
+  }
   if (updates.idMembers !== undefined) params.set("idMembers", updates.idMembers.join(","));
   if (updates.idLabels !== undefined) params.set("idLabels", updates.idLabels.join(","));
   if (updates.pos !== undefined) params.set("pos", String(updates.pos));
 
-  const card = await trelloFetch<TrelloCard>(`/cards/${cardId}?${params}`, {
-    method: "PUT",
-  });
-  return card;
+  return trelloFetch<TrelloCard>(`/cards/${cardId}?${params}`, { method: "PUT" });
 }
 
 export async function getMe(): Promise<TrelloMember> {
-  const member = await trelloFetch<TrelloMember>(
-    "/members/me?fields=fullName,username,avatarUrl",
-  );
-  return member;
+  return trelloFetch<TrelloMember>("/members/me?fields=fullName,username,avatarUrl");
 }

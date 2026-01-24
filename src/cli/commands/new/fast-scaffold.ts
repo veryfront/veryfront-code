@@ -19,20 +19,12 @@ import {
 import type { InitTemplate } from "../init/types.ts";
 import type { IntegrationName, TemplateFile } from "../../templates/types.ts";
 
-// ============================================================================
-// Types
-// ============================================================================
-
 export interface ScaffoldResult {
   filesWritten: number;
   template: InitTemplate;
   integrations: IntegrationName[];
   slug: string;
 }
-
-// ============================================================================
-// Main Function
-// ============================================================================
 
 /**
  * Scaffold a project without any prompts.
@@ -46,40 +38,30 @@ export async function scaffoldProjectFast(
 ): Promise<ScaffoldResult> {
   const fs = createFileSystem();
 
-  // Load template files
   const templateFiles = await getTemplate(template);
-  if (!templateFiles || templateFiles.length === 0) {
+  if (!templateFiles?.length) {
     throw new Error(`Template "${template}" not found`);
   }
 
-  // Load integration files if any
   const integrationFiles: TemplateFile[] = [];
   const integrationEnvVars: Array<{ name: string; placeholder: string }> = [];
 
-  if (integrations.length > 0) {
-    // Load base integration files (shared OAuth utilities)
-    const baseFiles = await loadIntegrationBaseFilesFromDirectory();
-    integrationFiles.push(...baseFiles);
+  if (integrations.length) {
+    integrationFiles.push(...(await loadIntegrationBaseFilesFromDirectory()));
 
-    // Load selected integration files
     const { files, integrations: loadedIntegrations } = await loadIntegrations(integrations);
     integrationFiles.push(...files);
 
-    // Collect env vars from integrations
     for (const integration of loadedIntegrations) {
-      if (integration.config.envVars) {
-        for (const envVar of integration.config.envVars) {
-          integrationEnvVars.push({
-            name: envVar.name,
-            placeholder: envVar.description ||
-              `your-${envVar.name.toLowerCase().replace(/_/g, "-")}`,
-          });
-        }
+      for (const envVar of integration.config.envVars ?? []) {
+        integrationEnvVars.push({
+          name: envVar.name,
+          placeholder: envVar.description ?? `your-${envVar.name.toLowerCase().replace(/_/g, "-")}`,
+        });
       }
     }
   }
 
-  // Add additional files
   const allFiles: TemplateFile[] = [
     ...templateFiles,
     ...integrationFiles,
@@ -88,26 +70,17 @@ export async function scaffoldProjectFast(
     createEnvExampleFile(template, integrationEnvVars),
   ];
 
-  // Filter out any duplicate paths (prefer later files)
   const fileMap = new Map<string, TemplateFile>();
-  for (const file of allFiles) {
-    fileMap.set(file.path, file);
-  }
-  const uniqueFiles = Array.from(fileMap.values());
+  for (const file of allFiles) fileMap.set(file.path, file);
+  const uniqueFiles = [...fileMap.values()];
 
-  // Write all files in parallel
-  const writePromises = uniqueFiles.map(async (file) => {
-    const filePath = join(projectDir, file.path);
-    const fileDir = dirname(filePath);
-
-    // Ensure directory exists
-    await fs.mkdir(fileDir, { recursive: true });
-
-    // Write file
-    await fs.writeTextFile(filePath, file.content);
-  });
-
-  await Promise.all(writePromises);
+  await Promise.all(
+    uniqueFiles.map(async (file) => {
+      const filePath = join(projectDir, file.path);
+      await fs.mkdir(dirname(filePath), { recursive: true });
+      await fs.writeTextFile(filePath, file.content);
+    }),
+  );
 
   return {
     filesWritten: uniqueFiles.length,
@@ -117,19 +90,12 @@ export async function scaffoldProjectFast(
   };
 }
 
-// ============================================================================
-// File Generators
-// ============================================================================
-
 /**
  * Create veryfront.config.ts with projectSlug
  */
 function createVeryfrontConfig(slug: string, template: InitTemplate): TemplateFile {
-  // Templates that use app router
-  const appRouterTemplates = ["ai", "minimal", "app", "blog", "docs"];
-  const usesAppRouter = appRouterTemplates.includes(template);
+  const usesAppRouter = ["ai", "minimal", "app", "blog", "docs"].includes(template);
 
-  // Template-specific config additions
   let extras = "";
   if (template === "app") {
     extras = `
@@ -147,7 +113,9 @@ function createVeryfrontConfig(slug: string, template: InitTemplate): TemplateFi
 
   const routerConfig = usesAppRouter ? `\n  router: "app",` : "";
 
-  const content = `import type { VeryfrontConfig } from "veryfront";
+  return {
+    path: "veryfront.config.ts",
+    content: `import type { VeryfrontConfig } from "veryfront";
 
 const config: VeryfrontConfig = {
   projectSlug: "${slug}",${routerConfig}
@@ -159,11 +127,7 @@ ${extras}
 };
 
 export default config;
-`;
-
-  return {
-    path: "veryfront.config.ts",
-    content,
+`,
   };
 }
 
@@ -176,24 +140,19 @@ function createEnvFile(
 ): TemplateFile {
   const envVars: Record<string, string> = {};
 
-  // Add template-specific env vars
   if (template === "ai") {
-    envVars["OPENAI_API_KEY"] = "sk-your-openai-api-key";
+    envVars.OPENAI_API_KEY = "sk-your-openai-api-key";
   }
 
-  // Add integration env vars
   for (const { name, placeholder } of integrationEnvVars) {
     envVars[name] = placeholder;
   }
 
   const content = Object.entries(envVars)
     .map(([key, value]) => `${key}=${value}`)
-    .join("\n");
+    .join("\n") + "\n";
 
-  return {
-    path: ".env",
-    content: content + "\n",
-  };
+  return { path: ".env", content };
 }
 
 /**
@@ -215,8 +174,7 @@ function createEnvExampleFile(
     lines.push("");
   }
 
-  // Add integration env vars
-  if (integrationEnvVars.length > 0) {
+  if (integrationEnvVars.length) {
     lines.push("# Integration credentials");
     for (const { name, placeholder } of integrationEnvVars) {
       lines.push(`${name}=${placeholder}`);
@@ -225,6 +183,6 @@ function createEnvExampleFile(
 
   return {
     path: ".env.example",
-    content: lines.join("\n") + "\n",
+    content: `${lines.join("\n")}\n`,
   };
 }

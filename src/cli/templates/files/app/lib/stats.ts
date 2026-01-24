@@ -5,8 +5,14 @@ interface Stats {
   growth: number;
 }
 
+interface RecentActivityItem {
+  id: string;
+  type: string;
+  description: string;
+  timestamp: Date;
+}
+
 export async function getStats(userId: string): Promise<Stats> {
-  // Mock data - replace with real database queries
   return {
     totalUsers: 1234,
     activeToday: 89,
@@ -15,8 +21,7 @@ export async function getStats(userId: string): Promise<Stats> {
   };
 }
 
-export async function getRecentActivity(userId: string) {
-  // Mock data
+export async function getRecentActivity(userId: string): Promise<RecentActivityItem[]> {
   return [
     {
       id: "1",

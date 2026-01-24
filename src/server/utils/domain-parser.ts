@@ -1,21 +1,3 @@
-/**
- * Domain Parser Utility
- *
- * Extracts project slug and branch from preview/development URLs.
- * Supports patterns:
- * - {slug}.veryfront.me:{port} (local development - recommended, HTTP works)
- * - {slug}.lvh.me:{port} (local development alternative)
- * - {slug}.preview.veryfront.me:{port}
- * - {slug}.preview.veryfront.dev:{port}
- * - {slug}--{branch}.preview.veryfront.dev:{port}
- * - {slug}.veryfront.dev:{port}
- * - {slug}.preview.veryfront.com
- * - {slug}--{branch}.preview.veryfront.com
- * - {slug}.veryfront.com
- *
- * Note: veryfront.me is preferred for local dev because .dev TLD forces HTTPS in browsers.
- */
-
 export interface ParsedDomain {
   slug: string | null;
   branch: string | null;
@@ -63,7 +45,6 @@ function createParsedDomain(
     environment,
     isVeryfrontDomain,
     isDraft,
-    // Default to isVeryfrontDomain if not explicitly set
     allowIframeEmbed: allowIframeEmbed ?? isVeryfrontDomain,
   };
 }
@@ -71,17 +52,23 @@ function createParsedDomain(
 // Domains that allow iframe embedding but aren't veryfront domains
 const IFRAME_EMBED_DOMAINS = /^(localhost|.*\.xip\.io|.*\.zip\.io)$/i;
 
+function stripPort(host: string): string {
+  return host.replace(/:\d+$/, "");
+}
+
 /**
  * Extract project slug and branch from domain/host header
  */
 export function parseProjectDomain(host: string): ParsedDomain {
-  // Remove port if present
-  const domain = host.replace(/:\d+$/, "");
+  const domain = stripPort(host);
 
-  // Check for localhost and wildcard DNS services (xip.io, zip.io)
-  // These allow iframe embedding but aren't veryfront domains
   if (IFRAME_EMBED_DOMAINS.test(domain)) {
     return createParsedDomain(null, null, "development", false, true, true);
+  }
+
+  // Plain local dev domains without slug
+  if (domain === "veryfront.me" || domain === "veryfront.dev" || domain === "lvh.me") {
+    return createParsedDomain(null, null, "development", true, true);
   }
 
   // Local development preview: {slug}.preview.{lvh.me|veryfront.dev}
@@ -109,11 +96,6 @@ export function parseProjectDomain(host: string): ParsedDomain {
   if (localBaseMatch?.[1]) {
     const { slug, branch } = parseSlugAndBranch(localBaseMatch[1]);
     return createParsedDomain(slug, branch, "production", true, false);
-  }
-
-  // Plain local dev domains without slug
-  if (domain === "veryfront.me" || domain === "veryfront.dev" || domain === "lvh.me") {
-    return createParsedDomain(null, null, "development", true, true);
   }
 
   // Production preview: {slug}.preview.veryfront.{com|org}
@@ -156,7 +138,6 @@ export function parseProjectDomain(host: string): ParsedDomain {
     return createParsedDomain(prodBaseMatch[1], null, "production", true, false);
   }
 
-  // Not a recognized domain pattern
   return createParsedDomain(null, null, null, false, false);
 }
 
@@ -167,10 +148,11 @@ const ALL_DOMAINS = `${LOCAL_DEV_DOMAINS}|${PROD_DOMAINS}`;
  * Check if a domain is a valid veryfront domain (includes veryfront.me and lvh.me for local dev)
  */
 export function isVeryfrontDomain(host: string): boolean {
-  const domain = host.replace(/:\d+$/, "");
+  const domain = stripPort(host);
+  if (domain === "veryfront.me" || domain === "veryfront.dev" || domain === "lvh.me") return true;
+
   const pattern = new RegExp(`^[a-zA-Z0-9-]+(\\.[a-zA-Z0-9-]+)*\\.(${ALL_DOMAINS})$`);
-  return pattern.test(domain) || domain === "veryfront.me" || domain === "veryfront.dev" ||
-    domain === "lvh.me";
+  return pattern.test(domain);
 }
 
 /**
@@ -181,5 +163,6 @@ export function getEffectiveProjectSlug(
   configuredSlug: string,
 ): { slug: string; fromHost: boolean } {
   const { slug } = parseProjectDomain(host);
-  return slug ? { slug, fromHost: true } : { slug: configuredSlug, fromHost: false };
+  if (slug) return { slug, fromHost: true };
+  return { slug: configuredSlug, fromHost: false };
 }

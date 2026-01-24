@@ -2,9 +2,6 @@ import { tool } from 'veryfront/tool';
 import { z } from 'zod';
 import { getAWSClient } from '../../lib/aws-client';
 
-/**
- * Tool for listing objects in an S3 bucket
- */
 export const listS3ObjectsTool = tool({
   name: 'list-s3-objects',
   description: 'List objects in a specific S3 bucket. Optionally filter by prefix and limit the number of results.',
@@ -17,9 +14,9 @@ export const listS3ObjectsTool = tool({
     try {
       const client = getAWSClient();
       const objects = await client.listS3Objects(bucket, prefix, maxKeys);
+      const prefixMessage = prefix ? ` with prefix "${prefix}"` : '';
 
       if (objects.length === 0) {
-        const prefixMessage = prefix ? ` with prefix "${prefix}"` : '';
         return {
           success: true,
           message: `No objects found in bucket "${bucket}"${prefixMessage}.`,
@@ -29,17 +26,19 @@ export const listS3ObjectsTool = tool({
         };
       }
 
+      const count = objects.length;
+
       return {
         success: true,
-        message: `Found ${objects.length} object${objects.length === 1 ? '' : 's'} in bucket "${bucket}"${prefix ? ` with prefix "${prefix}"` : ''}.`,
-        objects: objects.map(obj => ({
+        message: `Found ${count} object${count === 1 ? '' : 's'} in bucket "${bucket}"${prefixMessage}.`,
+        objects: objects.map((obj) => ({
           key: obj.key,
           size: obj.size,
           lastModified: obj.lastModified?.toISOString(),
           etag: obj.etag,
           storageClass: obj.storageClass,
         })),
-        count: objects.length,
+        count,
         bucket,
         prefix,
       };

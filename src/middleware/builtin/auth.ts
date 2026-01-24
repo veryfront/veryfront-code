@@ -6,23 +6,20 @@ function unauthorizedResponse(realm?: string): Response {
   return new Response("Unauthorized", { status: HTTP_UNAUTHORIZED, headers });
 }
 
-export function basicAuth(
-  options: { username: string; password: string; realm?: string },
-): MiddlewareHandler {
+export function basicAuth(options: {
+  username: string;
+  password: string;
+  realm?: string;
+}): MiddlewareHandler {
   const { username, password, realm = "Secure Area" } = options;
   const expected = btoa(`${username}:${password}`);
 
   return (c: Context, next: Next) => {
     const authorization = c.req.headers.get("authorization");
-
-    if (!authorization?.startsWith("Basic ")) {
-      return unauthorizedResponse(realm);
-    }
+    if (!authorization?.startsWith("Basic ")) return unauthorizedResponse(realm);
 
     const credentials = authorization.slice(6);
-    if (credentials !== expected) {
-      return unauthorizedResponse(realm);
-    }
+    if (credentials !== expected) return unauthorizedResponse(realm);
 
     return next();
   };
@@ -36,23 +33,14 @@ export function bearerAuth(options: {
 
   return async (c: Context, next: Next) => {
     const authorization = c.req.headers.get("authorization");
-
-    if (!authorization?.startsWith("Bearer ")) {
-      return unauthorizedResponse();
-    }
+    if (!authorization?.startsWith("Bearer ")) return unauthorizedResponse();
 
     const bearerToken = authorization.slice(7);
 
-    if (token && bearerToken !== token) {
-      return unauthorizedResponse();
-    }
-
-    if (verifyToken && !(await verifyToken(bearerToken))) {
-      return unauthorizedResponse();
-    }
+    if (token && bearerToken !== token) return unauthorizedResponse();
+    if (verifyToken && !(await verifyToken(bearerToken))) return unauthorizedResponse();
 
     c.var.token = bearerToken;
-
     return next();
   };
 }

@@ -1,7 +1,7 @@
 import denoConfig from "../../deno.json" with { type: "json" };
 import { getVeryfrontVersion } from "#veryfront/config/env.ts";
 
-export const VERSION: string = getVeryfrontVersion() ||
+export const VERSION: string = getVeryfrontVersion() ??
   (typeof denoConfig.version === "string" ? denoConfig.version : "0.0.0");
 
 export const SERVER_START_TIME: number = Date.now();

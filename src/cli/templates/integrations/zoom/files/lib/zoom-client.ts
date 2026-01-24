@@ -50,10 +50,31 @@ interface ZoomMeetingList {
   total_records: number;
 }
 
-async function zoomFetch<T>(
-  endpoint: string,
-  options: RequestInit = {},
-): Promise<T> {
+interface MeetingSettingsInput {
+  hostVideo?: boolean;
+  participantVideo?: boolean;
+  joinBeforeHost?: boolean;
+  muteUponEntry?: boolean;
+  watermark?: boolean;
+  audio?: "both" | "telephony" | "voip";
+  autoRecording?: "local" | "cloud" | "none";
+}
+
+function toZoomSettings(settings?: MeetingSettingsInput): Record<string, unknown> | undefined {
+  if (!settings) return undefined;
+
+  return {
+    host_video: settings.hostVideo,
+    participant_video: settings.participantVideo,
+    join_before_host: settings.joinBeforeHost,
+    mute_upon_entry: settings.muteUponEntry,
+    watermark: settings.watermark,
+    audio: settings.audio,
+    auto_recording: settings.autoRecording,
+  };
+}
+
+async function zoomFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = await getAccessToken();
   if (!token) {
     throw new Error("Not authenticated with Zoom. Please connect your account.");
@@ -62,14 +83,14 @@ async function zoomFetch<T>(
   const response = await fetch(`${ZOOM_BASE_URL}${endpoint}`, {
     ...options,
     headers: {
-      "Authorization": `Bearer ${token}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
       ...options.headers,
     },
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
+    const error = await response.json().catch(() => ({} as { message?: string }));
     throw new Error(
       `Zoom API error: ${response.status} ${error.message || response.statusText}`,
     );
@@ -79,32 +100,30 @@ async function zoomFetch<T>(
 }
 
 export async function getUser(): Promise<ZoomUser> {
-  const user = await zoomFetch<ZoomUser>("/users/me");
-  return user;
+  return zoomFetch<ZoomUser>("/users/me");
 }
 
-export async function listMeetings(options: {
-  userId?: string;
-  type?: "scheduled" | "live" | "upcoming" | "upcoming_meetings" | "previous_meetings";
-  pageSize?: number;
-  pageNumber?: number;
-} = {}): Promise<ZoomMeeting[]> {
-  const userId = options.userId || "me";
+export async function listMeetings(
+  options: {
+    userId?: string;
+    type?: "scheduled" | "live" | "upcoming" | "upcoming_meetings" | "previous_meetings";
+    pageSize?: number;
+    pageNumber?: number;
+  } = {},
+): Promise<ZoomMeeting[]> {
+  const userId = options.userId ?? "me";
   const params = new URLSearchParams({
-    type: options.type || "scheduled",
-    page_size: String(options.pageSize || 30),
-    page_number: String(options.pageNumber || 1),
+    type: options.type ?? "scheduled",
+    page_size: String(options.pageSize ?? 30),
+    page_number: String(options.pageNumber ?? 1),
   });
 
-  const response = await zoomFetch<ZoomMeetingList>(
-    `/users/${userId}/meetings?${params}`,
-  );
+  const response = await zoomFetch<ZoomMeetingList>(`/users/${userId}/meetings?${params}`);
   return response.meetings;
 }
 
 export async function getMeeting(meetingId: string | number): Promise<ZoomMeeting> {
-  const meeting = await zoomFetch<ZoomMeeting>(`/meetings/${meetingId}`);
-  return meeting;
+  return zoomFetch<ZoomMeeting>(`/meetings/${meetingId}`);
 }
 
 export async function createMeeting(options: {
@@ -116,20 +135,12 @@ export async function createMeeting(options: {
   timezone?: string;
   password?: string;
   agenda?: string;
-  settings?: {
-    hostVideo?: boolean;
-    participantVideo?: boolean;
-    joinBeforeHost?: boolean;
-    muteUponEntry?: boolean;
-    watermark?: boolean;
-    audio?: "both" | "telephony" | "voip";
-    autoRecording?: "local" | "cloud" | "none";
-  };
+  settings?: MeetingSettingsInput;
 }): Promise<ZoomMeeting> {
-  const userId = options.userId || "me";
+  const userId = options.userId ?? "me";
   const body: Record<string, unknown> = {
     topic: options.topic,
-    type: options.type || 2,
+    type: options.type ?? 2,
   };
 
   if (options.startTime) body.start_time = options.startTime;
@@ -138,23 +149,13 @@ export async function createMeeting(options: {
   if (options.password) body.password = options.password;
   if (options.agenda) body.agenda = options.agenda;
 
-  if (options.settings) {
-    body.settings = {
-      host_video: options.settings.hostVideo,
-      participant_video: options.settings.participantVideo,
-      join_before_host: options.settings.joinBeforeHost,
-      mute_upon_entry: options.settings.muteUponEntry,
-      watermark: options.settings.watermark,
-      audio: options.settings.audio,
-      auto_recording: options.settings.autoRecording,
-    };
-  }
+  const settings = toZoomSettings(options.settings);
+  if (settings) body.settings = settings;
 
-  const meeting = await zoomFetch<ZoomMeeting>(`/users/${userId}/meetings`, {
+  return zoomFetch<ZoomMeeting>(`/users/${userId}/meetings`, {
     method: "POST",
     body: JSON.stringify(body),
   });
-  return meeting;
 }
 
 export async function updateMeeting(
@@ -167,15 +168,7 @@ export async function updateMeeting(
     timezone?: string;
     password?: string;
     agenda?: string;
-    settings?: {
-      hostVideo?: boolean;
-      participantVideo?: boolean;
-      joinBeforeHost?: boolean;
-      muteUponEntry?: boolean;
-      watermark?: boolean;
-      audio?: "both" | "telephony" | "voip";
-      autoRecording?: "local" | "cloud" | "none";
-    };
+    settings?: MeetingSettingsInput;
   },
 ): Promise<void> {
   const body: Record<string, unknown> = {};
@@ -188,17 +181,8 @@ export async function updateMeeting(
   if (updates.password !== undefined) body.password = updates.password;
   if (updates.agenda !== undefined) body.agenda = updates.agenda;
 
-  if (updates.settings) {
-    body.settings = {
-      host_video: updates.settings.hostVideo,
-      participant_video: updates.settings.participantVideo,
-      join_before_host: updates.settings.joinBeforeHost,
-      mute_upon_entry: updates.settings.muteUponEntry,
-      watermark: updates.settings.watermark,
-      audio: updates.settings.audio,
-      auto_recording: updates.settings.autoRecording,
-    };
-  }
+  const settings = toZoomSettings(updates.settings);
+  if (settings) body.settings = settings;
 
   await zoomFetch<void>(`/meetings/${meetingId}`, {
     method: "PATCH",
@@ -220,9 +204,7 @@ export async function deleteMeeting(
   }
 
   const queryString = params.toString();
-  const endpoint = `/meetings/${meetingId}${queryString ? `?${queryString}` : ""}`;
-
-  await zoomFetch<void>(endpoint, {
+  await zoomFetch<void>(`/meetings/${meetingId}${queryString ? `?${queryString}` : ""}`, {
     method: "DELETE",
   });
 }

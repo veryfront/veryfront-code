@@ -1,4 +1,4 @@
-/**
+/****
  * Module Loader
  *
  * Loads and transforms modules for SSR, handling @/ imports and cached HTTP dependencies.
@@ -13,7 +13,6 @@ import type { CacheBackend } from "#veryfront/cache/backend.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import { generateHash } from "./cache.ts";
 import { findLocalLibFile, findSourceFile } from "../file-resolver/index.ts";
-// Hoisted imports - avoid dynamic import overhead on every module load
 import { transformToESM } from "#veryfront/transforms/esm-transform.ts";
 import { getProjectTmpDir } from "#veryfront/modules/react-loader/index.ts";
 import { TRANSFORM_CACHE_VERSION } from "#veryfront/transforms/esm/package-registry.ts";
@@ -44,12 +43,14 @@ function getDistributedTransformCache(): Promise<CacheBackend | null> {
     try {
       const { CacheBackends } = await import("#veryfront/cache/backend.ts");
       const backend = await CacheBackends.transform();
+
       // Only use distributed cache if API or Redis (not memory - that's per-process)
       if (backend.type === "memory") {
         distributedTransformCache = null;
         logger.debug("[ModuleLoader] No distributed transform cache (memory only)");
         return null;
       }
+
       distributedTransformCache = backend;
       logger.debug("[ModuleLoader] Distributed transform cache initialized", {
         type: backend.type,
@@ -67,11 +68,7 @@ function getDistributedTransformCache(): Promise<CacheBackend | null> {
  * Build cache key for transformed module.
  * Includes content hash so cache invalidates when source changes.
  */
-function getTransformCacheKey(
-  projectId: string,
-  filePath: string,
-  contentHash: string,
-): string {
+function getTransformCacheKey(projectId: string, filePath: string, contentHash: string): string {
   return `v${TRANSFORM_CACHE_VERSION}:${projectId}:${filePath}:${contentHash}`;
 }
 
@@ -79,9 +76,8 @@ function getTransformCacheKey(
 function hashString(str: string): string {
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash;
+    hash = ((hash << 5) - hash) + str.charCodeAt(i);
+    hash &= hash;
   }
   return Math.abs(hash).toString(36);
 }
@@ -96,8 +92,54 @@ export interface ModuleLoaderConfig {
 }
 
 function getModuleCacheKey(filePath: string, projectId?: string, projectDir?: string): string {
-  const prefix = projectId ?? projectDir ?? "default";
-  return `${prefix}:${filePath}`;
+  return `${projectId ?? projectDir ?? "default"}:${filePath}`;
+}
+
+function decodeFileContent(fileContent: string | Uint8Array): string {
+  if (typeof fileContent === "string") return fileContent;
+  return new TextDecoder().decode(fileContent);
+}
+
+async function ensureDir(adapter: RuntimeAdapter, dir: string): Promise<void> {
+  if (createdDirs.has(dir)) return;
+
+  try {
+    await adapter.fs.mkdir(dir, { recursive: true });
+  } catch {
+    // Directory might already exist, ignore errors
+  } finally {
+    createdDirs.add(dir);
+  }
+}
+
+type AliasImport = { full: string; path: string };
+type ResolvedDep = {
+  full: string;
+  path: string;
+  relativePath: string;
+  depFilePath: string | null;
+  isLocalLib: boolean;
+};
+
+async function resolveAliasImport(
+  imp: AliasImport,
+  projectDir: string,
+  adapter: RuntimeAdapter,
+  localAdapter: RuntimeAdapter,
+): Promise<ResolvedDep> {
+  const relativePath = imp.path.substring(2); // Remove @/ prefix
+
+  if (relativePath.startsWith("lib/")) {
+    const depFilePath = await findLocalLibFile(relativePath, localAdapter);
+    return { ...imp, relativePath, depFilePath, isLocalLib: true };
+  }
+
+  let depFilePath = await findSourceFile(relativePath, projectDir, adapter);
+  if (!depFilePath) {
+    depFilePath = await findSourceFile(`components/${relativePath}`, projectDir, adapter);
+  }
+
+  return { ...imp, relativePath, depFilePath, isLocalLib: false };
 }
 
 /**
@@ -120,23 +162,15 @@ export async function transformModuleWithDeps(
   const { moduleCache, projectDir, projectId, adapter, mode } = config;
   const cacheKey = getModuleCacheKey(filePath, projectId, projectDir);
 
-  // Check if already transformed
-  if (moduleCache.has(cacheKey)) {
-    return moduleCache.get(cacheKey)!;
-  }
+  const cachedPath = moduleCache.get(cacheKey);
+  if (cachedPath) return cachedPath;
 
-  // Use local adapter for local lib files, project adapter for user project files
   const readAdapter = useLocalAdapter ? localAdapter : adapter;
-  let fileContent = await readAdapter.fs.readFile(filePath);
-  // Ensure fileContent is a string (not Uint8Array)
-  if (typeof fileContent !== "string") {
-    fileContent = new TextDecoder().decode(fileContent as Uint8Array);
-  }
+  let fileContent = decodeFileContent(await readAdapter.fs.readFile(filePath));
 
-  // Find all @/ imports BEFORE transforming (transformToESM converts them to relative paths)
-  // We need to resolve these first and replace them with file:// paths
-  const aliasImports = [...fileContent.matchAll(/from\s+["'](@\/[^"']+)["']/g)]
-    .map((m) => ({ full: m[0], path: m[1]! }));
+  const aliasImports: AliasImport[] = [...fileContent.matchAll(/from\s+["'](@\/[^"']+)["']/g)].map(
+    (m) => ({ full: m[0], path: m[1]! }),
+  );
 
   logger.debug("[ModuleLoader] Processing file:", {
     filePath,
@@ -144,42 +178,20 @@ export async function transformModuleWithDeps(
     aliasImports: aliasImports.map((i) => i.path),
   });
 
-  // Transform each @/ dependency in PARALLEL and replace in original code
-  // This way transformToESM won't convert them to broken relative paths
+  const resolvedDeps = await parallelMap(
+    aliasImports,
+    (imp) => resolveAliasImport(imp, projectDir, adapter, localAdapter),
+  );
 
-  // Step 1: Resolve all dependency paths in parallel
-  const resolvedDeps = await parallelMap(aliasImports, async ({ full, path }) => {
-    const relativePath = path.substring(2); // Remove @/ prefix
-
-    let depFilePath: string | null = null;
-    let isLocalLib = false;
-
-    // Check if this is a @/lib/... import (framework utilities)
-    // These are LOCAL to veryfront-renderer, not in the user's project
-    if (relativePath.startsWith("lib/")) {
-      depFilePath = await findLocalLibFile(relativePath, localAdapter);
-      isLocalLib = true;
-    } else {
-      // For other @/ imports (shared/, features/, components/, etc.), look in user's project
-      // Try multiple prefixes since the file could be in various locations
-      depFilePath = await findSourceFile(relativePath, projectDir, adapter);
-      if (!depFilePath) {
-        depFilePath = await findSourceFile(`components/${relativePath}`, projectDir, adapter);
-      }
-    }
-
-    return { full, path, relativePath, depFilePath, isLocalLib };
-  });
-
-  // Step 2: Transform all found dependencies in parallel
   const transformedDeps = await parallelMap(
-    resolvedDeps.filter((d) => d.depFilePath !== null),
+    resolvedDeps.filter((d) => d.depFilePath),
     async (dep) => {
       logger.debug("[ModuleLoader] Found dependency:", {
         path: dep.path,
         depFilePath: dep.depFilePath,
         isLocalLib: dep.isLocalLib,
       });
+
       const depTempPath = await transformModuleWithDeps(
         dep.depFilePath!,
         tmpDir,
@@ -187,11 +199,11 @@ export async function transformModuleWithDeps(
         config,
         dep.isLocalLib,
       );
+
       return { ...dep, depTempPath };
     },
   );
 
-  // Step 3: Apply all replacements to original code
   for (const dep of transformedDeps) {
     fileContent = fileContent.replace(dep.full, `from "file://${dep.depTempPath}"`);
     logger.debug("[ModuleLoader] Replaced import:", {
@@ -200,8 +212,8 @@ export async function transformModuleWithDeps(
     });
   }
 
-  // Log warnings for unresolved dependencies
-  for (const dep of resolvedDeps.filter((d) => d.depFilePath === null)) {
+  for (const dep of resolvedDeps) {
+    if (dep.depFilePath) continue;
     logger.warn("[ModuleLoader] Could not find dependency:", {
       path: dep.path,
       relativePath: dep.relativePath,
@@ -209,13 +221,13 @@ export async function transformModuleWithDeps(
     });
   }
 
-  // Check distributed transform cache first (cross-pod sharing)
   const contentHash = hashString(fileContent);
   const effectiveProjectId = projectId ?? projectDir;
   const transformCacheKey = getTransformCacheKey(effectiveProjectId, filePath, contentHash);
-  let transformedCode: string | null = null;
 
+  let transformedCode: string | null = null;
   const distributedCache = await getDistributedTransformCache();
+
   if (distributedCache) {
     try {
       const cached = await distributedCache.get(transformCacheKey);
@@ -231,59 +243,36 @@ export async function transformModuleWithDeps(
     }
   }
 
-  // If not in distributed cache, transform the code
   if (!transformedCode) {
-    transformedCode = await transformToESM(
-      fileContent,
-      filePath,
-      projectDir,
-      adapter,
-      {
-        projectId: effectiveProjectId,
-        dev: mode === "development",
-        ssr: true,
-      },
-    );
+    transformedCode = await transformToESM(fileContent, filePath, projectDir, adapter, {
+      projectId: effectiveProjectId,
+      dev: mode === "development",
+      ssr: true,
+    });
 
-    // Store in distributed cache (fire-and-forget for performance)
     if (distributedCache) {
-      distributedCache.set(transformCacheKey, transformedCode, TRANSFORM_CACHE_TTL_SECONDS).catch(
-        (error) => {
+      distributedCache
+        .set(transformCacheKey, transformedCode, TRANSFORM_CACHE_TTL_SECONDS)
+        .catch((error) => {
           logger.debug("[ModuleLoader] Distributed cache set failed", { filePath, error });
-        },
-      );
+        });
     }
   }
 
-  // Note: esm.sh URLs (like https://esm.sh/react@18.3.1/...) are kept as-is.
-  // Deno natively supports HTTP imports and will fetch/cache them automatically.
-  // Previous code tried to fetch and cache esm.sh locally, but this broke because
-  // esm.sh modules have relative paths that only work when loaded from esm.sh.
-
-  // Write transformed code to temp file
   const hash = await generateHash(filePath);
   const tempFilePath = `${tmpDir}/mod-${hash}.js`;
 
-  // Ensure directory exists before writing (cached to avoid repeated syscalls)
-  if (!createdDirs.has(tmpDir)) {
-    try {
-      await localAdapter.fs.mkdir(tmpDir, { recursive: true });
-      createdDirs.add(tmpDir);
-    } catch {
-      // Directory might already exist, ignore errors
-      createdDirs.add(tmpDir);
-    }
-  }
+  await ensureDir(localAdapter, tmpDir);
 
   try {
     await localAdapter.fs.writeFile(tempFilePath, transformedCode);
-  } catch (writeError) {
+  } catch (error) {
     logger.error("[ModuleLoader] Failed to write module:", {
       filePath,
       tempFilePath,
-      error: writeError instanceof Error ? writeError.message : String(writeError),
+      error: error instanceof Error ? error.message : String(error),
     });
-    throw writeError;
+    throw error;
   }
 
   moduleCache.set(cacheKey, tempFilePath);
@@ -297,29 +286,21 @@ export async function transformModuleWithDeps(
  * @param config - Module loader configuration
  * @returns The loaded module
  */
-export async function loadModule(
-  filePath: string,
-  config: ModuleLoaderConfig,
-): Promise<any> {
+export async function loadModule(filePath: string, config: ModuleLoaderConfig): Promise<any> {
   const tmpDir = await getProjectTmpDir(config.projectId ?? config.projectDir);
   const localAdapter = await getLocalAdapter();
 
-  // Transform the module and all its @/ dependencies
   const tempFilePath = await transformModuleWithDeps(filePath, tmpDir, localAdapter, config);
-
-  // Import using the original temp file path
-  // Use dynamic import with proper base URL resolution
   const moduleUrl = `file://${tempFilePath}?t=${Date.now()}`;
 
   try {
     return await import(moduleUrl);
-  } catch (importError) {
-    // If file:// import fails, log the error for debugging
+  } catch (error) {
     logger.error("[ModuleLoader] Failed to import module:", {
       filePath,
       tempFilePath,
-      error: importError instanceof Error ? importError.message : String(importError),
+      error: error instanceof Error ? error.message : String(error),
     });
-    throw importError;
+    throw error;
   }
 }

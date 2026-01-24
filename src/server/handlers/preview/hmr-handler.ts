@@ -1,20 +1,12 @@
-/**
- * HMR Handler for Preview Mode
- *
- * Provides Hot Module Replacement WebSocket support for cloud preview environments.
- * Listens to ReloadNotifier events (triggered by API poke) and broadcasts to browsers.
- *
- * Enabled when:
- * - ctx.requestContext?.isLocalDev is true (local development)
- * - ctx.requestContext?.mode === "preview" (cloud preview via .preview. hostname)
- */
-
-import { serverLogger as logger } from "#veryfront/utils";
+import {
+  HMR_MAX_MESSAGE_SIZE_BYTES,
+  HMR_MAX_MESSAGES_PER_MINUTE,
+  serverLogger as logger,
+} from "#veryfront/utils";
+import { RateLimiter, setupWebSocketHandlers } from "#veryfront/modules/server/index.ts";
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { ReloadNotifier } from "../../reload-notifier.ts";
-import { RateLimiter, setupWebSocketHandlers } from "#veryfront/modules/server/index.ts";
-import { HMR_MAX_MESSAGE_SIZE_BYTES, HMR_MAX_MESSAGES_PER_MINUTE } from "#veryfront/utils";
 import { invalidateProjectCaches } from "../../context/cache-invalidation.ts";
 
 // Priority between auth (0) and cors (50)
@@ -46,61 +38,35 @@ export class HMRHandler extends BaseHandler {
     name: "HMRHandler",
     priority: PRIORITY_HMR,
     patterns: [{ pattern: "/_ws", exact: true }],
-    // Always enabled for /_ws path - we check environment in handle() because:
-    // 1. Standard WebSocket API doesn't support custom headers
-    // 2. Proxy forwards environment via query params (x-environment=preview)
-    // 3. The enabled() function only receives ctx, not the request
     enabled: () => true,
   };
 
-  /**
-   * Initialize HMR subscriptions (called once)
-   */
   private static initialize(): void {
     if (HMRHandler.initialized) return;
     HMRHandler.initialized = true;
 
-    // Subscribe to ReloadNotifier to broadcast HMR messages
-    // When changedPaths are provided, send update messages for smart HMR
-    // Otherwise, send reload message for full page refresh
-    // Note: ReloadNotifier now provides projectSlug for per-project invalidation
     HMRHandler.reloadUnsubscribe = ReloadNotifier.subscribe((changedPaths, projectSlug) => {
-      // Invalidate server-side caches first (Phase 8: Preview HMR cache invalidation)
-      // This ensures next request gets fresh content
-      // Use projectSlug for targeted invalidation when available
       invalidateProjectCaches(projectSlug || "preview", changedPaths);
-      // Then notify browser clients to refresh
       HMRHandler.broadcastUpdate(changedPaths);
     });
 
     logger.debug("[HMRHandler] Initialized - listening for reload events");
   }
 
-  /**
-   * Check if a file requires full page reload (server-rendered content)
-   */
   private static requiresFullReload(path: string): boolean {
-    // MDX/MD files need full reload because content is server-rendered
-    // Config files need full reload because they affect layout/routing
     const ext = path.split(".").pop()?.toLowerCase();
     return ext === "mdx" || ext === "md" || path.includes("veryfront.config");
   }
 
-  /**
-   * Broadcast HMR update to all connected clients
-   * Sends reload for server-rendered content (MDX), update for client-only files (CSS/JS)
-   */
   private static broadcastUpdate(changedPaths?: string[]): void {
     const timestamp = Date.now();
     HMRHandler.metrics.broadcastsSent++;
     HMRHandler.metrics.lastBroadcastTime = timestamp;
 
-    // Check if any changed file requires full reload
     const needsFullReload = !changedPaths?.length ||
       changedPaths.some((path) => HMRHandler.requiresFullReload(path));
 
     if (needsFullReload) {
-      // MDX, config, or unknown changes - full reload
       HMRHandler.broadcastMessage(JSON.stringify({ type: "reload", timestamp }));
       HMRHandler.metrics.messagesForwarded++;
       logger.debug("[HMRHandler] Broadcast reload", {
@@ -108,48 +74,41 @@ export class HMRHandler extends BaseHandler {
         totalClients: HMRHandler.clientsMap.size,
         reason: changedPaths?.length ? "server-rendered content" : "no paths",
       });
-    } else {
-      // CSS/JS only - smart HMR update
-      for (const path of changedPaths) {
-        HMRHandler.broadcastMessage(JSON.stringify({ type: "update", path, timestamp }));
-        HMRHandler.metrics.messagesForwarded++;
-      }
-      logger.debug("[HMRHandler] Broadcast update", {
-        changedPaths: changedPaths.length,
-        totalClients: HMRHandler.clientsMap.size,
-      });
+      return;
     }
+
+    for (const path of changedPaths) {
+      HMRHandler.broadcastMessage(JSON.stringify({ type: "update", path, timestamp }));
+      HMRHandler.metrics.messagesForwarded++;
+    }
+
+    logger.debug("[HMRHandler] Broadcast update", {
+      changedPaths: changedPaths.length,
+      totalClients: HMRHandler.clientsMap.size,
+    });
   }
 
-  /**
-   * Send a message to all connected WebSocket clients
-   */
   private static broadcastMessage(message: string): void {
     for (const client of HMRHandler.clients) {
-      if (client.readyState === WebSocket.OPEN) {
-        try {
-          client.send(message);
-        } catch (error) {
-          logger.debug("[HMRHandler] Failed to send to client", { error });
-        }
+      if (client.readyState !== WebSocket.OPEN) continue;
+
+      try {
+        client.send(message);
+      } catch (error) {
+        logger.debug("[HMRHandler] Failed to send to client", { error });
       }
     }
   }
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
-    if (!this.shouldHandle(req, ctx)) {
-      return Promise.resolve(this.continue());
-    }
+    if (!this.shouldHandle(req, ctx)) return Promise.resolve(this.continue());
 
-    // Check if HMR should be enabled for this request
-    // Environment can come from: context mode, local dev flag, or query params (proxy WebSocket)
     const url = new URL(req.url);
     const queryEnv = url.searchParams.get("x-environment");
     const isPreviewMode = ctx.requestContext?.mode === "preview" || queryEnv === "preview";
     const isLocalDev = ctx.requestContext?.isLocalDev === true;
 
     if (!isPreviewMode && !isLocalDev) {
-      // Not a preview/dev request - skip HMR handler
       logger.debug("[HMRHandler] Skipping - not preview or local dev", {
         mode: ctx.requestContext?.mode,
         queryEnv,
@@ -158,62 +117,57 @@ export class HMRHandler extends BaseHandler {
       return Promise.resolve(this.continue());
     }
 
-    // Initialize on first request
     HMRHandler.initialize();
 
-    // Check for WebSocket upgrade
     if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") {
-      // Not a WebSocket request to /_ws - return debug info
+      const now = Date.now();
       const clientDetails = Array.from(HMRHandler.clientsMap.values()).map((client) => ({
         id: client.id,
         connectedAt: client.connectedAt,
         projectSlug: client.projectSlug,
         lastActivity: client.lastActivity,
-        connectionDurationMs: Date.now() - client.connectedAt,
+        connectionDurationMs: now - client.connectedAt,
       }));
 
-      const response = new Response(
-        JSON.stringify({
-          status: "ok",
-          clients: HMRHandler.clientsMap.size,
-          clientDetails,
-          metrics: {
-            ...HMRHandler.metrics,
-            reloadNotifierMetrics: ReloadNotifier.getMetrics(),
-          },
-          message: "HMR WebSocket endpoint - connect via WebSocket",
-        }),
-        {
-          headers: { "content-type": "application/json" },
-        },
+      return Promise.resolve(
+        this.respond(
+          new Response(
+            JSON.stringify({
+              status: "ok",
+              clients: HMRHandler.clientsMap.size,
+              clientDetails,
+              metrics: {
+                ...HMRHandler.metrics,
+                reloadNotifierMetrics: ReloadNotifier.getMetrics(),
+              },
+              message: "HMR WebSocket endpoint - connect via WebSocket",
+            }),
+            { headers: { "content-type": "application/json" } },
+          ),
+        ),
       );
-      return Promise.resolve(this.respond(response));
     }
 
-    // Upgrade to WebSocket
     if (!ctx.adapter?.server) {
-      const response = new Response("WebSocket not supported", { status: 501 });
-      return Promise.resolve(this.respond(response));
+      return Promise.resolve(
+        this.respond(new Response("WebSocket not supported", { status: 501 })),
+      );
     }
 
     try {
       const { socket, response } = ctx.adapter.server.upgradeWebSocket(req);
 
-      // Generate client ID for tracking
+      const now = Date.now();
       const clientId = crypto.randomUUID().slice(0, 8);
-      const clientInfo: HMRClientInfo = {
+      HMRHandler.clientsMap.set(clientId, {
         id: clientId,
         socket,
-        connectedAt: Date.now(),
+        connectedAt: now,
         projectSlug: ctx.projectSlug,
         userAgent: req.headers.get("user-agent") ?? undefined,
-        lastActivity: Date.now(),
-      };
+        lastActivity: now,
+      });
 
-      // Track client in our map
-      HMRHandler.clientsMap.set(clientId, clientInfo);
-
-      // Setup WebSocket handlers using shared module
       setupWebSocketHandlers(socket, {
         clients: HMRHandler.clients,
         rateLimiter: HMRHandler.rateLimiter,
@@ -221,27 +175,23 @@ export class HMRHandler extends BaseHandler {
         reactRefresh: false,
       });
 
-      // Track when client disconnects
       socket.addEventListener("close", () => {
         const client = HMRHandler.clientsMap.get(clientId);
-        if (client) {
-          const connectionDurationMs = Date.now() - client.connectedAt;
-          logger.debug("[HMRHandler] Client disconnected", {
-            clientId,
-            projectSlug: client.projectSlug,
-            connectionDurationMs,
-            totalClients: HMRHandler.clientsMap.size - 1,
-          });
-          HMRHandler.clientsMap.delete(clientId);
-        }
+        if (!client) return;
+
+        logger.debug("[HMRHandler] Client disconnected", {
+          clientId,
+          projectSlug: client.projectSlug,
+          connectionDurationMs: Date.now() - client.connectedAt,
+          totalClients: HMRHandler.clientsMap.size - 1,
+        });
+
+        HMRHandler.clientsMap.delete(clientId);
       });
 
-      // Update lastActivity on message
       socket.addEventListener("message", () => {
         const client = HMRHandler.clientsMap.get(clientId);
-        if (client) {
-          client.lastActivity = Date.now();
-        }
+        if (client) client.lastActivity = Date.now();
       });
 
       logger.debug("[HMRHandler] Client connected", {
@@ -253,49 +203,37 @@ export class HMRHandler extends BaseHandler {
       return Promise.resolve(this.respond(response));
     } catch (error) {
       logger.error("[HMRHandler] WebSocket upgrade failed", { error });
-      const response = new Response("WebSocket upgrade failed", { status: 500 });
-      return Promise.resolve(this.respond(response));
+      return Promise.resolve(
+        this.respond(new Response("WebSocket upgrade failed", { status: 500 })),
+      );
     }
   }
 
-  /**
-   * Get the number of connected clients (for monitoring)
-   */
   static getClientCount(): number {
     return HMRHandler.clientsMap.size;
   }
 
-  /**
-   * Get metrics for monitoring
-   */
   static getMetrics(): {
     clients: number;
     broadcastsSent: number;
     messagesForwarded: number;
     lastBroadcastTime: number;
   } {
-    return {
-      clients: HMRHandler.clientsMap.size,
-      ...HMRHandler.metrics,
-    };
+    return { clients: HMRHandler.clientsMap.size, ...HMRHandler.metrics };
   }
 
-  /**
-   * Cleanup resources on shutdown
-   */
   static shutdown(): void {
-    if (HMRHandler.reloadUnsubscribe) {
-      HMRHandler.reloadUnsubscribe();
-      HMRHandler.reloadUnsubscribe = null;
-    }
+    HMRHandler.reloadUnsubscribe?.();
+    HMRHandler.reloadUnsubscribe = null;
 
-    for (const [_id, client] of HMRHandler.clientsMap) {
+    for (const client of HMRHandler.clientsMap.values()) {
       try {
         client.socket.close();
       } catch {
         // Ignore close errors
       }
     }
+
     HMRHandler.clientsMap.clear();
     HMRHandler.clients.clear();
     HMRHandler.initialized = false;

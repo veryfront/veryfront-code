@@ -19,33 +19,33 @@ export class NodeHttpServer implements HttpServer {
     try {
       this.http = (await import("node:http")) as NodeHttpModule;
       this.url = (await import("node:url")) as NodeUrlModule;
-    } catch (_error) {
-      throw toError(createError({
-        type: "not_supported",
-        message: "Node.js http modules not available",
-        feature: "Node.js",
-      }));
+    } catch {
+      throw toError(
+        createError({
+          type: "not_supported",
+          message: "Node.js http modules not available",
+          feature: "Node.js",
+        }),
+      );
     }
   }
 
-  async serve(
-    handler: Handler,
-    options: ServeOptions = {},
-  ): Promise<void> {
-    if (!this.http) await this.initNodeModules();
+  async serve(handler: Handler, options: ServeOptions = {}): Promise<void> {
+    if (!this.http || !this.url) await this.initNodeModules();
 
     const { port = 8000, hostname = LOCALHOST.IPV4 } = options;
+    const http = this.http!;
+    const urlModule = this.url!;
 
-    this.server = this.http!.createServer(
+    this.server = http.createServer(
       async (req: NodeIncomingMessage, res: NodeServerResponse) => {
         try {
-          const url = new this.url!.URL(
-            req.url || "/",
+          const url = new urlModule.URL(
+            req.url ?? "/",
             `http://${hostname}:${port}`,
           );
 
           const request = convertNodeRequestToWebRequest(req, url.toString());
-
           const response = await handler(request);
 
           res.statusCode = response.status;
@@ -56,7 +56,7 @@ export class NodeHttpServer implements HttpServer {
 
           if (response.body) {
             const reader = response.body.getReader();
-            while (true) {
+            for (;;) {
               const { done, value } = await reader.read();
               if (done) break;
               res.write(value);
@@ -64,37 +64,34 @@ export class NodeHttpServer implements HttpServer {
           }
 
           res.end();
-        } catch (_error) {
+        } catch {
           res.statusCode = 500;
           res.end("Internal Server Error");
         }
       },
     );
 
+    const server = this.server;
+
     return new Promise((resolve, reject) => {
-      this.server!.listen(port, hostname, () => {
+      server.listen(port, hostname, () => {
         options.onListen?.({ hostname, port });
         resolve();
       });
 
-      this.server!.on("error", reject);
+      server.on("error", reject);
 
-      if (options.signal) {
-        options.signal.addEventListener("abort", () => {
-          this.server!.close();
-        });
-      }
+      options.signal?.addEventListener("abort", () => {
+        server.close();
+      });
     });
   }
 
   close(): Promise<void> {
-    if (this.server) {
-      return new Promise((resolve) => {
-        this.server!.close(() => {
-          resolve();
-        });
-      });
-    }
-    return Promise.resolve();
+    if (!this.server) return Promise.resolve();
+
+    return new Promise((resolve) => {
+      this.server?.close(() => resolve());
+    });
   }
 }

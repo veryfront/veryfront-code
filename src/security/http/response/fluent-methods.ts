@@ -3,8 +3,8 @@
  */
 
 import { applyCORSHeaders, applyCORSHeadersSync } from "../cors/index.ts";
-import { applySecurityHeaders } from "./security-handler.ts";
 import { buildCacheControl } from "./cache-handler.ts";
+import { applySecurityHeaders } from "./security-handler.ts";
 import type { CacheStrategy, CORSConfig, SecurityConfig } from "./types.ts";
 
 export interface FluentMethodsContext {
@@ -24,11 +24,10 @@ export function withCORS<T extends FluentMethodsContext>(
   req: Request,
   corsConfig?: boolean | CORSConfig,
 ): T {
-  const config = corsConfig ?? this.securityConfig?.cors;
   applyCORSHeadersSync({
     request: req,
     headers: this.headers,
-    config,
+    config: corsConfig ?? this.securityConfig?.cors,
   });
   return this;
 }
@@ -42,7 +41,7 @@ export function withCORSAsync<T extends FluentMethodsContext>(
     request: req,
     headers: this.headers,
     config: this.securityConfig?.cors,
-  }).then(() => this);
+  }).then((): T => this);
 }
 
 /** Apply security headers (CSP, COOP, CORP, COEP) */
@@ -50,13 +49,12 @@ export function withSecurity<T extends FluentMethodsContext>(
   this: T,
   config?: SecurityConfig,
 ): T {
-  const cfg = config ?? this.securityConfig;
   applySecurityHeaders(
     this.headers,
     this.isDev,
     this.nonce,
     this.cspUserHeader,
-    cfg,
+    config ?? this.securityConfig,
     this.adapter,
     this.isVeryfrontDomain,
   );
@@ -68,16 +66,12 @@ export function withCache<T extends FluentMethodsContext>(
   this: T,
   strategy: CacheStrategy,
 ): T {
-  const cacheControl = buildCacheControl(strategy);
-  this.headers.set("cache-control", cacheControl);
+  this.headers.set("cache-control", buildCacheControl(strategy));
   return this;
 }
 
 /** Set ETag header */
-export function withETag<T extends FluentMethodsContext>(
-  this: T,
-  etag: string,
-): T {
+export function withETag<T extends FluentMethodsContext>(this: T, etag: string): T {
   this.headers.set("ETag", etag);
   return this;
 }
@@ -87,43 +81,35 @@ export function withHeaders<T extends FluentMethodsContext>(
   this: T,
   headers: HeadersInit | Record<string, string>,
 ): T {
-  if (headers instanceof Headers) {
-    for (const [key, value] of headers) {
-      this.headers.set(key, value);
-    }
-  } else if (Array.isArray(headers)) {
-    for (const [key, value] of headers) {
-      this.headers.set(key, value);
-    }
-  } else {
-    for (const [key, value] of Object.entries(headers)) {
-      this.headers.set(key, value);
-    }
+  const entries = headers instanceof Headers || Array.isArray(headers)
+    ? headers
+    : Object.entries(headers);
+
+  for (const [key, value] of entries) {
+    this.headers.set(key, value);
   }
+
   return this;
 }
 
 /** Set response status */
-export function withStatus<T extends FluentMethodsContext>(
-  this: T,
-  status: number,
-): T {
+export function withStatus<T extends FluentMethodsContext>(this: T, status: number): T {
   this.status = status;
   return this;
 }
 
 /** Apply Client Hints headers for theme detection */
-export function withClientHints<T extends FluentMethodsContext>(
-  this: T,
-): T {
+export function withClientHints<T extends FluentMethodsContext>(this: T): T {
   // Tell browser we accept color scheme hints
   this.headers.set("Accept-CH", "Sec-CH-Prefers-Color-Scheme");
+
   // Vary response by color scheme for correct caching
   const existingVary = this.headers.get("Vary");
-  const varyValue = existingVary
-    ? `${existingVary}, Sec-CH-Prefers-Color-Scheme`
-    : "Sec-CH-Prefers-Color-Scheme";
-  this.headers.set("Vary", varyValue);
+  this.headers.set(
+    "Vary",
+    existingVary ? `${existingVary}, Sec-CH-Prefers-Color-Scheme` : "Sec-CH-Prefers-Color-Scheme",
+  );
+
   return this;
 }
 

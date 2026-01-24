@@ -27,161 +27,27 @@ export async function buildEmbeddedPreset(
   const embeddedDir = join(outDir, "embedded");
   const fs = createFileSystem();
   const adapter = await runtime.get();
+
   await fs.mkdir(embeddedDir, { recursive: true });
   await fs.mkdir(join(embeddedDir, "rsc"), { recursive: true });
 
-  const candidates = [
-    join(projectDir, "app", "page.mdx"),
-    join(projectDir, "app", "page.md"),
-    join(projectDir, "pages", "index.mdx"),
-    join(projectDir, "pages", "index.md"),
-  ];
-  let entryPath = "";
-  for (const c of candidates) {
-    try {
-      const st = await fs.stat(c);
-      if (st.isFile) {
-        entryPath = c;
-        break;
-      }
-    } catch (error) {
-      // File not found, continue checking other paths
-      logger.debug(`Entry path not found: ${c}`, error);
-    }
-  }
-
-  if (!entryPath) {
-    entryPath = join(projectDir, ".veryfront", "__embedded_fallback__.tsx");
-    await fs.mkdir(join(projectDir, ".veryfront"), { recursive: true });
-    await fs.writeTextFile(
-      entryPath,
-      `export default function Page(){ return '<div>Veryfront</div>'; }`,
-    );
-  }
-
+  const entryPath = await findOrCreateEntryPath(fs, projectDir);
   const appOut = join(embeddedDir, "app.js");
-  let bundledAppCode = "";
-  try {
-    // Compile MDX/MD files first, then bundle
-    let sourceCode = await fs.readTextFile(entryPath);
-    const isMdx = entryPath.endsWith(".mdx") || entryPath.endsWith(".md");
-    if (isMdx) {
-      const compiled = await compileMDXToJS(entryPath, sourceCode, {
-        projectDir,
-        mode: "production",
-        adapter,
-      });
-      sourceCode = compiled.code;
-    }
 
-    const appBuild = await esbuild.build({
-      stdin: {
-        contents: sourceCode,
-        sourcefile: entryPath,
-        resolveDir: projectDir,
-        loader: "tsx",
-      },
-      bundle: true,
-      format: "esm",
-      platform: "neutral",
-      target: ["es2020"],
-      write: false,
-      logLevel: "silent",
-      external: ["react", "react-dom", "react/jsx-runtime", "react/jsx-dev-runtime"],
-    });
-    if (!appBuild.outputFiles?.[0]?.text) {
-      throw toError(createError({
-        type: "build",
-        message: "Failed to generate embedded app bundle: no output files",
-      }));
-    }
-    bundledAppCode = appBuild.outputFiles[0].text;
-  } catch (error) {
-    logger.error("Failed to bundle embedded app:", error);
-    throw toError(createError({
-      type: "build",
-      message: `Failed to bundle embedded app: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    }));
-  }
-  if (!bundledAppCode) {
-    throw toError(createError({
-      type: "build",
-      message: "Failed to generate embedded app bundle",
-    }));
-  }
+  const bundledAppCode = await bundleEmbeddedApp({
+    fs,
+    entryPath,
+    projectDir,
+    adapter: adapter as import("#veryfront/platform/adapters/base.ts").RuntimeAdapter,
+  });
+
   await fs.writeTextFile(appOut, bundledAppCode);
 
   const routes: Array<{ path: string; file: string; type: "page" | "api" }> = [];
-
-  async function discoverAppRoutes(): Promise<
-    Array<{ routePath: string; filePath: string; sourcePath: string }>
-  > {
-    const results: Array<{ routePath: string; filePath: string; sourcePath: string }> = [];
-    const base = join(projectDir, "app");
-
-    async function walk(dir: string, rel = ""): Promise<void> {
-      for await (const ent of fs.readDir(dir)) {
-        const abs = join(dir, ent.name);
-        const relNext = rel ? `${rel}/${ent.name}` : ent.name;
-        if (ent.isDirectory) {
-          await walk(abs, relNext);
-        } else if (ent.isFile && (ent.name === "page.mdx" || ent.name === "page.md")) {
-          const routePath = rel.replace(/\/page\.(mdx|md)$/, "").replace(/(^$)/, "/");
-          const norm = routePath === ""
-            ? "/"
-            : routePath.startsWith("/")
-            ? routePath
-            : `/${routePath}`;
-          const filePath = join(embeddedDir, routePath === "" ? "app.js" : `app${norm}.js`);
-          results.push({ routePath: norm, filePath, sourcePath: abs });
-        }
-      }
-    }
-
-    try {
-      await walk(base);
-    } catch {
-      // no app directory
-    }
-    return results;
-  }
-
-  async function discoverPagesRoutes(): Promise<
-    Array<{ routePath: string; filePath: string; sourcePath: string }>
-  > {
-    const results: Array<{ routePath: string; filePath: string; sourcePath: string }> = [];
-    const base = join(projectDir, "pages");
-
-    async function walk(dir: string, rel = ""): Promise<void> {
-      for await (const ent of fs.readDir(dir)) {
-        const abs = join(dir, ent.name);
-        const relNext = rel ? `${rel}/${ent.name}` : ent.name;
-        if (ent.isDirectory) {
-          await walk(abs, relNext);
-        } else if (
-          ent.isFile && (ent.name.endsWith(".mdx") || ent.name.endsWith(".md")) &&
-          !ent.name.startsWith("_")
-        ) {
-          const withoutExt = relNext.replace(/\.(mdx|md)$/, "");
-          const norm = `/${withoutExt}`;
-          const routePath = norm.replace(/\/+/g, "/") ? norm.replace(/\/+/g, "/") : "/";
-          const filePath = join(embeddedDir, `pages${routePath}.js`.replace(/\/+/g, "/"));
-          results.push({ routePath, filePath, sourcePath: abs });
-        }
-      }
-    }
-
-    try {
-      await walk(base);
-    } catch {
-      // no pages directory
-    }
-    return results;
-  }
-
-  const discovered = [...(await discoverAppRoutes()), ...(await discoverPagesRoutes())];
+  const discovered = [
+    ...(await discoverAppRoutes(fs, projectDir, embeddedDir)),
+    ...(await discoverPagesRoutes(fs, projectDir, embeddedDir)),
+  ];
 
   for (const r of discovered) {
     try {
@@ -191,8 +57,10 @@ export async function buildEmbeddedPreset(
         mode: "production",
         adapter,
       });
-      await fs.mkdir(r.filePath.slice(0, r.filePath.lastIndexOf("/")), { recursive: true });
+
+      await fs.mkdir(dirname(r.filePath), { recursive: true });
       await fs.writeTextFile(r.filePath, compiled.code);
+
       const fileRel = r.filePath.slice(embeddedDir.length + 1).replace(/\\/g, "/");
       routes.push({
         path: r.routePath,
@@ -224,7 +92,7 @@ export async function buildEmbeddedPreset(
         target: "es2020",
         format: "esm",
       });
-      const name = srcPath.substring(srcPath.lastIndexOf("/") + 1).replace(/\.tsx?$/, ".js");
+      const name = basename(srcPath).replace(/\.tsx?$/, ".js");
       await fs.writeTextFile(join(embeddedDir, "rsc", name), res.code);
     } catch (e) {
       logger.warn("embedded: failed to process RSC file", { error: String(e) } as unknown);
@@ -252,7 +120,11 @@ export async function buildEmbeddedPreset(
       },
     ],
   };
-  await fs.writeTextFile(join(embeddedDir, "manifest.json"), JSON.stringify(manifest, null, 2));
+
+  await fs.writeTextFile(
+    join(embeddedDir, "manifest.json"),
+    JSON.stringify(manifest, null, 2),
+  );
 
   logger.info("Embedded preset built", { outDir: embeddedDir } as unknown);
 
@@ -264,5 +136,182 @@ export async function buildEmbeddedPreset(
       // ignore
     }
   }
+
   return { manifest };
+}
+
+function dirname(path: string): string {
+  const idx = path.lastIndexOf("/");
+  return idx === -1 ? "" : path.slice(0, idx);
+}
+
+function basename(path: string): string {
+  const idx = path.lastIndexOf("/");
+  return idx === -1 ? path : path.slice(idx + 1);
+}
+
+async function findOrCreateEntryPath(
+  fs: ReturnType<typeof createFileSystem>,
+  projectDir: string,
+): Promise<string> {
+  const candidates = [
+    join(projectDir, "app", "page.mdx"),
+    join(projectDir, "app", "page.md"),
+    join(projectDir, "pages", "index.mdx"),
+    join(projectDir, "pages", "index.md"),
+  ];
+
+  for (const c of candidates) {
+    try {
+      const st = await fs.stat(c);
+      if (st.isFile) return c;
+    } catch (error) {
+      logger.debug(`Entry path not found: ${c}`, error);
+    }
+  }
+
+  const entryPath = join(projectDir, ".veryfront", "__embedded_fallback__.tsx");
+  await fs.mkdir(join(projectDir, ".veryfront"), { recursive: true });
+  await fs.writeTextFile(
+    entryPath,
+    `export default function Page(){ return '<div>Veryfront</div>'; }`,
+  );
+  return entryPath;
+}
+
+async function bundleEmbeddedApp(params: {
+  fs: ReturnType<typeof createFileSystem>;
+  entryPath: string;
+  projectDir: string;
+  adapter: import("#veryfront/platform/adapters/base.ts").RuntimeAdapter;
+}): Promise<string> {
+  const { fs, entryPath, projectDir, adapter } = params;
+
+  try {
+    let sourceCode = await fs.readTextFile(entryPath);
+    const isMdx = entryPath.endsWith(".mdx") || entryPath.endsWith(".md");
+
+    if (isMdx) {
+      const compiled = await compileMDXToJS(entryPath, sourceCode, {
+        projectDir,
+        mode: "production",
+        adapter,
+      });
+      sourceCode = compiled.code;
+    }
+
+    const appBuild = await esbuild.build({
+      stdin: {
+        contents: sourceCode,
+        sourcefile: entryPath,
+        resolveDir: projectDir,
+        loader: "tsx",
+      },
+      bundle: true,
+      format: "esm",
+      platform: "neutral",
+      target: ["es2020"],
+      write: false,
+      logLevel: "silent",
+      external: ["react", "react-dom", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    });
+
+    const code = appBuild.outputFiles?.[0]?.text;
+    if (!code) {
+      throw toError(
+        createError({
+          type: "build",
+          message: "Failed to generate embedded app bundle: no output files",
+        }),
+      );
+    }
+
+    return code;
+  } catch (error) {
+    logger.error("Failed to bundle embedded app:", error);
+    throw toError(
+      createError({
+        type: "build",
+        message: `Failed to bundle embedded app: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      }),
+    );
+  }
+}
+
+async function discoverAppRoutes(
+  fs: ReturnType<typeof createFileSystem>,
+  projectDir: string,
+  embeddedDir: string,
+): Promise<Array<{ routePath: string; filePath: string; sourcePath: string }>> {
+  const results: Array<{ routePath: string; filePath: string; sourcePath: string }> = [];
+  const base = join(projectDir, "app");
+
+  async function walk(dir: string, rel = ""): Promise<void> {
+    for await (const ent of fs.readDir(dir)) {
+      const abs = join(dir, ent.name);
+      const relNext = rel ? `${rel}/${ent.name}` : ent.name;
+
+      if (ent.isDirectory) {
+        await walk(abs, relNext);
+        continue;
+      }
+
+      if (!ent.isFile || (ent.name !== "page.mdx" && ent.name !== "page.md")) continue;
+
+      const routePath = rel.replace(/\/page\.(mdx|md)$/, "").replace(/(^$)/, "/");
+      const norm = routePath === "" ? "/" : routePath.startsWith("/") ? routePath : `/${routePath}`;
+
+      const filePath = join(embeddedDir, routePath === "" ? "app.js" : `app${norm}.js`);
+      results.push({ routePath: norm, filePath, sourcePath: abs });
+    }
+  }
+
+  try {
+    await walk(base);
+  } catch {
+    // no app directory
+  }
+
+  return results;
+}
+
+async function discoverPagesRoutes(
+  fs: ReturnType<typeof createFileSystem>,
+  projectDir: string,
+  embeddedDir: string,
+): Promise<Array<{ routePath: string; filePath: string; sourcePath: string }>> {
+  const results: Array<{ routePath: string; filePath: string; sourcePath: string }> = [];
+  const base = join(projectDir, "pages");
+
+  async function walk(dir: string, rel = ""): Promise<void> {
+    for await (const ent of fs.readDir(dir)) {
+      const abs = join(dir, ent.name);
+      const relNext = rel ? `${rel}/${ent.name}` : ent.name;
+
+      if (ent.isDirectory) {
+        await walk(abs, relNext);
+        continue;
+      }
+
+      if (!ent.isFile) continue;
+      if (!ent.name.endsWith(".mdx") && !ent.name.endsWith(".md")) continue;
+      if (ent.name.startsWith("_")) continue;
+
+      const withoutExt = relNext.replace(/\.(mdx|md)$/, "");
+      const norm = `/${withoutExt}`;
+      const routePath = norm.replace(/\/+/g, "/") ? norm.replace(/\/+/g, "/") : "/";
+      const filePath = join(embeddedDir, `pages${routePath}.js`.replace(/\/+/g, "/"));
+      results.push({ routePath, filePath, sourcePath: abs });
+    }
+  }
+
+  try {
+    await walk(base);
+  } catch {
+    // no pages directory
+  }
+
+  return results;
 }

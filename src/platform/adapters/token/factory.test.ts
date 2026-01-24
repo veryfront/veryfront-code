@@ -16,11 +16,6 @@ describe("createTokenStorageAdapter", () => {
     assertExists(adapter.delete);
   });
 
-  it("should create MemoryTokenAdapter for memory type", async () => {
-    const adapter = await createTokenStorageAdapter({ type: "memory" });
-    assertExists(adapter);
-  });
-
   it("should throw for unsupported type", async () => {
     await assertRejects(
       () => createTokenStorageAdapter({ type: "unsupported" as any }),

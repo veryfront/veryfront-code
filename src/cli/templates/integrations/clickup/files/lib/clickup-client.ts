@@ -2,10 +2,6 @@ import { getAccessToken } from "./token-store.ts";
 
 const CLICKUP_BASE_URL = "https://api.clickup.com/api/v2";
 
-interface ClickUpResponse<T> {
-  data?: T;
-}
-
 interface ClickUpTask {
   id: string;
   name: string;
@@ -148,10 +144,26 @@ interface ClickUpSpace {
   };
 }
 
-async function clickupFetch<T>(
-  endpoint: string,
-  options: RequestInit = {},
-): Promise<T> {
+function buildCustomTaskParams(options?: {
+  customTaskIds?: boolean;
+  teamId?: string;
+}): URLSearchParams {
+  const params = new URLSearchParams();
+
+  if (options?.customTaskIds) {
+    params.set("custom_task_ids", "true");
+    if (options.teamId) params.set("team_id", options.teamId);
+  }
+
+  return params;
+}
+
+function withQuery(endpoint: string, params: URLSearchParams): string {
+  const queryString = params.toString();
+  return queryString ? `${endpoint}?${queryString}` : endpoint;
+}
+
+async function clickupFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = await getAccessToken();
   if (!token) {
     throw new Error("Not authenticated with ClickUp. Please connect your account.");
@@ -160,17 +172,20 @@ async function clickupFetch<T>(
   const response = await fetch(`${CLICKUP_BASE_URL}${endpoint}`, {
     ...options,
     headers: {
-      "Authorization": token,
+      Authorization: token,
       "Content-Type": "application/json",
       ...options.headers,
     },
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(
-      `ClickUp API error: ${response.status} ${error.err || error.error || response.statusText}`,
-    );
+    const error = await response.json().catch(() => ({} as Record<string, unknown>));
+    const message =
+      (error as { err?: string; error?: string }).err ??
+      (error as { err?: string; error?: string }).error ??
+      response.statusText;
+
+    throw new Error(`ClickUp API error: ${response.status} ${message}`);
   }
 
   return response.json();
@@ -208,64 +223,35 @@ export async function listTasks(options: {
 }): Promise<ClickUpTask[]> {
   const params = new URLSearchParams();
 
-  if (options.assignees && options.assignees.length > 0) {
-    options.assignees.forEach(assignee => params.append("assignees[]", assignee.toString()));
-  }
+  options.assignees?.forEach((assignee) => params.append("assignees[]", assignee.toString()));
+  options.statuses?.forEach((status) => params.append("statuses[]", status));
 
-  if (options.statuses && options.statuses.length > 0) {
-    options.statuses.forEach(status => params.append("statuses[]", status));
-  }
-
-  if (options.includeClosed !== undefined) {
-    params.set("include_closed", options.includeClosed.toString());
-  }
-
-  if (options.orderBy) {
-    params.set("order_by", options.orderBy);
-  }
-
-  if (options.subtasks !== undefined) {
-    params.set("subtasks", options.subtasks.toString());
-  }
+  if (options.includeClosed !== undefined) params.set("include_closed", options.includeClosed.toString());
+  if (options.orderBy) params.set("order_by", options.orderBy);
+  if (options.subtasks !== undefined) params.set("subtasks", options.subtasks.toString());
 
   let endpoint = "/task";
-  if (options.listId) {
-    endpoint = `/list/${options.listId}/task`;
-  } else if (options.folderId) {
-    endpoint = `/folder/${options.folderId}/task`;
-  } else if (options.spaceId) {
-    endpoint = `/space/${options.spaceId}/task`;
-  }
+  if (options.listId) endpoint = `/list/${options.listId}/task`;
+  else if (options.folderId) endpoint = `/folder/${options.folderId}/task`;
+  else if (options.spaceId) endpoint = `/space/${options.spaceId}/task`;
 
-  const queryString = params.toString();
-  const url = queryString ? `${endpoint}?${queryString}` : endpoint;
-
-  const response = await clickupFetch<{ tasks: ClickUpTask[] }>(url);
+  const response = await clickupFetch<{ tasks: ClickUpTask[] }>(withQuery(endpoint, params));
   return response.tasks;
 }
 
-export async function getTask(taskId: string, options?: {
-  customTaskIds?: boolean;
-  teamId?: string;
-  includeSubtasks?: boolean;
-}): Promise<ClickUpTask> {
-  const params = new URLSearchParams();
+export async function getTask(
+  taskId: string,
+  options?: {
+    customTaskIds?: boolean;
+    teamId?: string;
+    includeSubtasks?: boolean;
+  },
+): Promise<ClickUpTask> {
+  const params = buildCustomTaskParams(options);
 
-  if (options?.customTaskIds) {
-    params.set("custom_task_ids", "true");
-    if (options.teamId) {
-      params.set("team_id", options.teamId);
-    }
-  }
+  if (options?.includeSubtasks) params.set("include_subtasks", "true");
 
-  if (options?.includeSubtasks) {
-    params.set("include_subtasks", "true");
-  }
-
-  const queryString = params.toString();
-  const url = queryString ? `/task/${taskId}?${queryString}` : `/task/${taskId}`;
-
-  return await clickupFetch<ClickUpTask>(url);
+  return clickupFetch<ClickUpTask>(withQuery(`/task/${taskId}`, params));
 }
 
 export async function createTask(options: {
@@ -288,42 +274,33 @@ export async function createTask(options: {
   customTaskIds?: boolean;
   teamId?: string;
 }): Promise<ClickUpTask> {
-  const body: Record<string, unknown> = {
-    name: options.name,
-  };
+  const body: Record<string, unknown> = { name: options.name };
 
   if (options.description) body.description = options.description;
   if (options.assignees) body.assignees = options.assignees;
   if (options.tags) body.tags = options.tags;
   if (options.status) body.status = options.status;
   if (options.priority !== undefined) body.priority = options.priority;
+
   if (options.dueDate) {
     body.due_date = options.dueDate;
     if (options.dueDateTime !== undefined) body.due_date_time = options.dueDateTime;
   }
+
   if (options.timeEstimate) body.time_estimate = options.timeEstimate;
+
   if (options.startDate) {
     body.start_date = options.startDate;
     if (options.startDateTime !== undefined) body.start_date_time = options.startDateTime;
   }
+
   if (options.notifyAll !== undefined) body.notify_all = options.notifyAll;
   if (options.parent) body.parent = options.parent;
   if (options.linksTo) body.links_to = options.linksTo;
 
-  const params = new URLSearchParams();
-  if (options.customTaskIds) {
-    params.set("custom_task_ids", "true");
-    if (options.teamId) {
-      params.set("team_id", options.teamId);
-    }
-  }
+  const url = withQuery(`/list/${options.listId}/task`, buildCustomTaskParams(options));
 
-  const queryString = params.toString();
-  const url = queryString
-    ? `/list/${options.listId}/task?${queryString}`
-    : `/list/${options.listId}/task`;
-
-  return await clickupFetch<ClickUpTask>(url, {
+  return clickupFetch<ClickUpTask>(url, {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -358,30 +335,25 @@ export async function updateTask(
   if (updates.description !== undefined) body.description = updates.description;
   if (updates.status !== undefined) body.status = updates.status;
   if (updates.priority !== undefined) body.priority = updates.priority;
+
   if (updates.dueDate !== undefined) {
     body.due_date = updates.dueDate;
     if (updates.dueDateTime !== undefined) body.due_date_time = updates.dueDateTime;
   }
+
   if (updates.timeEstimate !== undefined) body.time_estimate = updates.timeEstimate;
+
   if (updates.startDate !== undefined) {
     body.start_date = updates.startDate;
     if (updates.startDateTime !== undefined) body.start_date_time = updates.startDateTime;
   }
+
   if (updates.assignees) body.assignees = updates.assignees;
   if (updates.archived !== undefined) body.archived = updates.archived;
 
-  const params = new URLSearchParams();
-  if (options?.customTaskIds) {
-    params.set("custom_task_ids", "true");
-    if (options.teamId) {
-      params.set("team_id", options.teamId);
-    }
-  }
+  const url = withQuery(`/task/${taskId}`, buildCustomTaskParams(options));
 
-  const queryString = params.toString();
-  const url = queryString ? `/task/${taskId}?${queryString}` : `/task/${taskId}`;
-
-  return await clickupFetch<ClickUpTask>(url, {
+  return clickupFetch<ClickUpTask>(url, {
     method: "PUT",
     body: JSON.stringify(body),
   });
@@ -396,7 +368,7 @@ export async function getAuthorizedUser(): Promise<{
     profilePicture: string;
   };
 }> {
-  return await clickupFetch<{
+  return clickupFetch<{
     user: {
       id: number;
       username: string;
@@ -407,19 +379,21 @@ export async function getAuthorizedUser(): Promise<{
   }>("/user");
 }
 
-export async function getTeams(): Promise<Array<{
-  id: string;
-  name: string;
-  color: string;
-  avatar: string | null;
-  members: Array<{
-    user: {
-      id: number;
-      username: string;
-      email: string;
-    };
-  }>;
-}>> {
+export async function getTeams(): Promise<
+  Array<{
+    id: string;
+    name: string;
+    color: string;
+    avatar: string | null;
+    members: Array<{
+      user: {
+        id: number;
+        username: string;
+        email: string;
+      };
+    }>;
+  }>
+> {
   const response = await clickupFetch<{
     teams: Array<{
       id: string;
@@ -435,5 +409,6 @@ export async function getTeams(): Promise<Array<{
       }>;
     }>;
   }>("/team");
+
   return response.teams;
 }

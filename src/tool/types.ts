@@ -1,9 +1,10 @@
-/**
+/****
  * Tool type definitions
  */
 
 import type { z } from "zod";
 import type { JsonSchema } from "./schema/json-schema.ts";
+import type { BlobStorage } from "../workflow/blob/types.ts";
 
 /**
  * Tool configuration options
@@ -28,10 +29,7 @@ export interface ToolConfig<TInput = any, TOutput = any> {
   /**
    * Tool execution function
    */
-  execute: (
-    input: TInput,
-    context?: ToolExecutionContext,
-  ) => Promise<TOutput> | TOutput;
+  execute: (input: TInput, context?: ToolExecutionContext) => Promise<TOutput> | TOutput;
 
   /** MCP configuration */
   mcp?: {
@@ -45,10 +43,6 @@ export interface ToolConfig<TInput = any, TOutput = any> {
     cachePolicy?: "no-cache" | "cache" | "cache-first";
   };
 }
-
-// Forward reference for BlobStorage - will be defined in workflow module
-// Using type-only import to avoid circular runtime dependency
-import type { BlobStorage } from "../workflow/blob/types.ts";
 
 /**
  * Context passed to tool execution
@@ -99,10 +93,7 @@ export interface Tool<TInput = any, TOutput = any> {
   /**
    * Execute the tool
    */
-  execute: (
-    input: TInput,
-    context?: ToolExecutionContext,
-  ) => Promise<TOutput>;
+  execute: (input: TInput, context?: ToolExecutionContext) => Promise<TOutput>;
 
   /** MCP configuration */
   mcp?: ToolConfig["mcp"];

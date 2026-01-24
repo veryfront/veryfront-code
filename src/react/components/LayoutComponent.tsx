@@ -15,9 +15,9 @@ export interface LayoutComponentProps {
 
 function useStableObject<T>(obj: T): T {
   const ref = useRef(obj);
-  const serialized = JSON.stringify(obj);
-  const prevSerialized = useRef(serialized);
+  const prevSerialized = useRef(JSON.stringify(obj));
 
+  const serialized = JSON.stringify(obj);
   if (prevSerialized.current !== serialized) {
     ref.current = obj;
     prevSerialized.current = serialized;
@@ -31,32 +31,33 @@ export function LayoutComponent({
   children,
   components = {},
   pageContext,
-}: LayoutComponentProps) {
+}: LayoutComponentProps): React.ReactElement {
   const stableFrontmatter = useStableObject(mdxBundle.frontmatter);
   const stablePageContext = useStableObject(pageContext);
+
+  const fallback = <>{children}</>;
 
   const element = useMemo(() => {
     try {
       return mdxRenderer.render(mdxBundle.compiledCode, {
         components,
-        frontmatter: { ...(stableFrontmatter || {}), pageContext: stablePageContext },
+        frontmatter: { ...(stableFrontmatter ?? {}), pageContext: stablePageContext },
         globals: mdxBundle.globals,
         extractLayout: true,
         children,
       });
     } catch (error) {
       logger.error("[LayoutComponent] Render failed:", error);
-      return <>{children}</>;
+      return fallback;
     }
   }, [
     mdxBundle.compiledCode,
-    stableFrontmatter,
+    mdxBundle.globals,
     components,
     children,
+    stableFrontmatter,
     stablePageContext,
-    mdxBundle.globals,
   ]);
 
-  if (!element) return <>{children}</>;
-  return element as React.ReactElement;
+  return element || fallback;
 }

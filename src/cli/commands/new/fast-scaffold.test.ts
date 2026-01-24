@@ -7,7 +7,12 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ScaffoldResult } from "./fast-scaffold.ts";
 
-// Test the scaffolding result structure
+function buildEnvContent(envVars: Record<string, string>): string {
+  return Object.entries(envVars)
+    .map(([key, value]) => `${key}=${value}`)
+    .join("\n");
+}
+
 describe("fast-scaffold", () => {
   describe("ScaffoldResult type", () => {
     it("should have required properties", () => {
@@ -48,28 +53,20 @@ describe("fast-scaffold", () => {
     });
 
     it("should create .env for ai template", () => {
-      const envVars: Record<string, string> = {
+      const content = buildEnvContent({
         OPENAI_API_KEY: "sk-your-openai-api-key",
-      };
-
-      const content = Object.entries(envVars)
-        .map(([key, value]) => `${key}=${value}`)
-        .join("\n");
+      });
 
       assertExists(content);
       assertEquals(content.includes("OPENAI_API_KEY"), true);
     });
 
     it("should create .env with integration env vars", () => {
-      const envVars: Record<string, string> = {
+      const content = buildEnvContent({
         OPENAI_API_KEY: "sk-your-openai-api-key",
         GITHUB_CLIENT_ID: "your-github-client-id",
         GITHUB_CLIENT_SECRET: "your-github-client-secret",
-      };
-
-      const content = Object.entries(envVars)
-        .map(([key, value]) => `${key}=${value}`)
-        .join("\n");
+      });
 
       assertExists(content);
       assertEquals(content.includes("OPENAI_API_KEY"), true);
@@ -80,15 +77,14 @@ describe("fast-scaffold", () => {
 
   describe(".env.example generation", () => {
     it("should create .env.example with documentation headers", () => {
-      const lines = [
+      const content = [
         "# Environment variables",
         "# Copy this file to .env and fill in your values",
         "",
         "# OpenAI API key (https://platform.openai.com/api-keys)",
         "OPENAI_API_KEY=sk-...",
-      ];
+      ].join("\n") + "\n";
 
-      const content = lines.join("\n") + "\n";
       assertExists(content);
       assertEquals(content.includes("# Environment variables"), true);
       assertEquals(content.includes("OPENAI_API_KEY"), true);
@@ -100,11 +96,7 @@ describe("fast-scaffold", () => {
         { name: "GITHUB_CLIENT_SECRET", placeholder: "your-github-client-secret" },
       ];
 
-      const lines = [
-        "# Environment variables",
-        "",
-        "# Integration credentials",
-      ];
+      const lines = ["# Environment variables", "", "# Integration credentials"];
 
       for (const { name, placeholder } of integrationEnvVars) {
         lines.push(`${name}=${placeholder}`);

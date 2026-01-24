@@ -10,14 +10,18 @@ export function instrumentReactRender<T>(
     SpanNames.RENDER_COMPONENT,
     async (span) => {
       const startTime = performance.now();
+
       try {
         const result = renderFn();
 
         if (result instanceof Promise) {
-          return await handleAsyncRender(result, span, startTime);
+          const resolved = await result;
+          recordRenderDuration(span, startTime);
+          return resolved;
         }
 
-        return handleSyncRender(result, span, startTime);
+        recordRenderDuration(span, startTime);
+        return result;
       } catch (error) {
         handleRenderError(span, error, componentName);
         throw error;
@@ -35,37 +39,19 @@ export function instrumentErrorHandler(
   captureToSpan = true,
 ): (error: Error, request?: Request) => Promise<Response> | Response {
   return (error: Error, request?: Request): Promise<Response> | Response => {
-    if (captureToSpan) {
-      captureErrorToSpan(error, request);
-    }
-
+    if (captureToSpan) captureErrorToSpan(error, request);
     return handler(error, request);
   };
-}
-
-async function handleAsyncRender<T>(
-  result: Promise<T>,
-  span: Span | null,
-  startTime: number,
-): Promise<T> {
-  const resolved = await result;
-  recordRenderDuration(span, startTime);
-  return resolved;
-}
-
-function handleSyncRender<T>(result: T, span: Span | null, startTime: number): T {
-  recordRenderDuration(span, startTime);
-  return result;
 }
 
 function handleRenderError(span: Span | null, error: unknown, componentName: string): void {
   recordRenderError({ component: componentName });
   // endSpan is handled by withActiveSpan automatically,
   // but we need to record the exception and status
-  if (span) {
-    span.recordException(error as Error);
-    span.setStatus({ code: 2, message: String(error) }); // 2 = ERROR
-  }
+  if (!span) return;
+
+  span.recordException(error as Error);
+  span.setStatus({ code: 2, message: String(error) }); // 2 = ERROR
 }
 
 function recordRenderDuration(span: Span | null, startTime: number): void {
@@ -79,7 +65,7 @@ function captureErrorToSpan(error: Error, request?: Request): void {
     attributes: {
       "error.type": error.constructor.name,
       "error.message": error.message,
-      "error.stack": error.stack || "",
+      "error.stack": error.stack ?? "",
     },
   });
 

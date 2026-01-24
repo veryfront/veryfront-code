@@ -1,4 +1,4 @@
-/**
+/****
  * Empty State Components
  * @module ai/react/components/chat/components/empty-state
  */
@@ -7,18 +7,19 @@ import * as React from "react";
 import { cn } from "../../theme.ts";
 import { ArrowDownIcon } from "../../icons/index.ts";
 
-/**
- * Suggestion component - ChatGPT-style suggestion card
- */
 export interface SuggestionProps {
   suggestion: string;
   onClick?: (suggestion: string) => void;
   className?: string;
-  /** Optional icon to display */
   icon?: React.ReactNode;
 }
 
-export function Suggestion({ suggestion, onClick, className, icon }: SuggestionProps) {
+export function Suggestion({
+  suggestion,
+  onClick,
+  className,
+  icon,
+}: SuggestionProps): React.ReactElement {
   return (
     <button
       type="button"
@@ -28,45 +29,36 @@ export function Suggestion({ suggestion, onClick, className, icon }: SuggestionP
         className,
       )}
     >
-      {icon && (
-        <span className="shrink-0 text-muted-foreground group-hover:text-foreground transition-colors">
-          {icon}
-        </span>
-      )}
+      {icon
+        ? (
+          <span className="shrink-0 text-muted-foreground transition-colors group-hover:text-foreground">
+            {icon}
+          </span>
+        )
+        : null}
       <span className="line-clamp-2">{suggestion}</span>
     </button>
   );
 }
 
-/**
- * Suggestions container - ChatGPT-style 2x2 grid layout
- */
 export interface SuggestionsProps {
   children: React.ReactNode;
   className?: string;
-  /** Layout mode: 'grid' for 2x2 grid (ChatGPT style), 'horizontal' for scrollable pills */
   layout?: "grid" | "horizontal";
 }
 
-export function Suggestions({ children, className, layout = "grid" }: SuggestionsProps) {
-  if (layout === "horizontal") {
-    return (
-      <div className={cn("flex gap-2 overflow-x-auto pb-2 scrollbar-hide", className)}>
-        {children}
-      </div>
-    );
-  }
+export function Suggestions({
+  children,
+  className,
+  layout = "grid",
+}: SuggestionsProps): React.ReactElement {
+  const containerClassName = layout === "horizontal"
+    ? "flex gap-2 overflow-x-auto pb-2 scrollbar-hide"
+    : "grid grid-cols-2 gap-3 max-w-2xl mx-auto";
 
-  return (
-    <div className={cn("grid grid-cols-2 gap-3 max-w-2xl mx-auto", className)}>
-      {children}
-    </div>
-  );
+  return <div className={cn(containerClassName, className)}>{children}</div>;
 }
 
-/**
- * ConversationEmptyState - ChatGPT-style empty state with large greeting
- */
 export interface ConversationEmptyStateProps {
   icon?: React.ReactNode;
   title?: string;
@@ -81,21 +73,19 @@ export function ConversationEmptyState({
   description,
   children,
   className,
-}: ConversationEmptyStateProps) {
+}: ConversationEmptyStateProps): React.ReactElement {
   return (
     <div className={cn("flex flex-col items-center justify-center text-center", className)}>
-      {icon && <div className="mb-4 text-muted-foreground">{icon}</div>}
+      {icon ? <div className="mb-4 text-muted-foreground">{icon}</div> : null}
       <h1 className="text-3xl font-semibold text-foreground">{title}</h1>
-      {description && <p className="mt-2 text-base text-muted-foreground max-w-md">{description}
-      </p>}
+      {description
+        ? <p className="mt-2 max-w-md text-base text-muted-foreground">{description}</p>
+        : null}
       {children}
     </div>
   );
 }
 
-/**
- * ConversationScrollButton - scroll to bottom button
- */
 export interface ConversationScrollButtonProps {
   onClick?: () => void;
   visible?: boolean;
@@ -106,7 +96,7 @@ export function ConversationScrollButton({
   onClick,
   visible = true,
   className,
-}: ConversationScrollButtonProps) {
+}: ConversationScrollButtonProps): React.ReactElement | null {
   if (!visible) return null;
 
   return (

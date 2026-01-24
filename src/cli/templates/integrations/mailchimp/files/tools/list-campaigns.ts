@@ -11,28 +11,18 @@ export default tool({
       .enum(["save", "paused", "schedule", "sending", "sent"])
       .optional()
       .describe("Filter campaigns by status"),
-    limit: z.number().min(1).max(50).default(20).describe("Maximum number of campaigns to return"),
+    limit: z
+      .number()
+      .min(1)
+      .max(50)
+      .default(20)
+      .describe("Maximum number of campaigns to return"),
   }),
   async execute({ status, limit }) {
-    const campaigns = await listCampaigns({
-      status,
-      count: limit,
-    });
+    const campaigns = await listCampaigns({ status, count: limit });
 
-    return campaigns.map((campaign) => ({
-      id: campaign.id,
-      webId: campaign.web_id,
-      type: campaign.type,
-      status: campaign.status,
-      title: campaign.settings.title,
-      subject: campaign.settings.subject_line,
-      fromName: campaign.settings.from_name,
-      listName: campaign.recipients.list_name,
-      emailsSent: campaign.emails_sent,
-      sendTime: campaign.send_time,
-      createdAt: campaign.create_time,
-      archiveUrl: campaign.archive_url,
-      reportSummary: campaign.report_summary
+    return campaigns.map((campaign) => {
+      const reportSummary = campaign.report_summary
         ? {
             opens: campaign.report_summary.opens,
             uniqueOpens: campaign.report_summary.unique_opens,
@@ -40,7 +30,23 @@ export default tool({
             clicks: campaign.report_summary.clicks,
             clickRate: campaign.report_summary.click_rate,
           }
-        : undefined,
-    }));
+        : undefined;
+
+      return {
+        id: campaign.id,
+        webId: campaign.web_id,
+        type: campaign.type,
+        status: campaign.status,
+        title: campaign.settings.title,
+        subject: campaign.settings.subject_line,
+        fromName: campaign.settings.from_name,
+        listName: campaign.recipients.list_name,
+        emailsSent: campaign.emails_sent,
+        sendTime: campaign.send_time,
+        createdAt: campaign.create_time,
+        archiveUrl: campaign.archive_url,
+        reportSummary,
+      };
+    });
   },
 });

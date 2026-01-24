@@ -21,7 +21,6 @@ import {
 } from "./route-module-manifest.ts";
 
 describe("Route Module Manifest", () => {
-  // Clean up before tests
   clearAllManifests();
 
   it("recordSSRModules creates manifest entry", () => {
@@ -38,25 +37,24 @@ describe("Route Module Manifest", () => {
 
   it("getRouteModulePaths returns paths in order", () => {
     const paths = getRouteModulePaths("test-project", "index");
-    assertEquals(paths.length, 2);
-    assertEquals(paths[0], "pages/index.js");
-    assertEquals(paths[1], "components/Header.js");
+    assertEquals(paths, ["pages/index.js", "components/Header.js"]);
   });
 
   it("recordSSRModules merges with existing manifest", () => {
-    recordSSRModules("test-project", "index", [
-      "_vf_modules/components/Footer.js",
-    ]);
+    recordSSRModules("test-project", "index", ["_vf_modules/components/Footer.js"]);
 
     const manifest = getRouteManifest("test-project", "index");
     assertExists(manifest);
-    assertEquals(manifest.moduleCount, 3); // Original 2 + 1 new
+    assertEquals(manifest.moduleCount, 3);
   });
 
   it("generateModulePreloadHintsFromManifest returns HTML hints", () => {
     const hints = generateModulePreloadHintsFromManifest("test-project", "index", 10);
     assertEquals(hints.length, 3);
-    assertEquals(hints[0], '<link rel="modulepreload" href="/_vf_modules/pages/index.js">');
+    assertEquals(
+      hints[0],
+      '<link rel="modulepreload" href="/_vf_modules/pages/index.js">',
+    );
   });
 
   it("collection API works for tracking", () => {
@@ -73,29 +71,24 @@ describe("Route Module Manifest", () => {
 
   it("getCriticalModulePaths returns critical modules only", () => {
     const critical = getCriticalModulePaths("test-project", "about");
-    assertEquals(critical.length, 1);
-    assertEquals(critical[0], "pages/about.js");
+    assertEquals(critical, ["pages/about.js"]);
   });
 
   it("getManifestStats returns correct statistics", () => {
     const stats = getManifestStats();
-    assertEquals(stats.routeCount, 2); // index and about
+    assertEquals(stats.routeCount, 2);
     assertEquals(stats.routes.length, 2);
   });
 
   it("clearProjectManifests removes project manifests", () => {
     clearProjectManifests("test-project");
-    const manifest = getRouteManifest("test-project", "index");
-    assertEquals(manifest, null);
+    assertEquals(getRouteManifest("test-project", "index"), null);
   });
 
   it("handles undefined projectSlug gracefully", () => {
     recordSSRModules(undefined, "home", ["pages/home.js"]);
-    const paths = getRouteModulePaths(undefined, "home");
-    assertEquals(paths.length, 1);
-    assertEquals(paths[0], "pages/home.js");
+    assertEquals(getRouteModulePaths(undefined, "home"), ["pages/home.js"]);
   });
 
-  // Clean up after tests
   clearAllManifests();
 });

@@ -1,11 +1,3 @@
-/**
- * API Handler Module
- *
- * Barrel export for API handler components.
- *
- * @module
- */
-
 export { ApiHandlerWrapper } from "./api-handler-wrapper.ts";
 export { handleAppRouter } from "./app-router-handler.ts";
 export { resolveAppRouteFile } from "./app-router-resolver.ts";

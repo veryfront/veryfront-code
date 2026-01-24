@@ -1,14 +1,14 @@
 import { getPosts } from "../../lib/posts.ts";
 import { formatDate } from "../../lib/utils.ts";
 
-export default async function Archive() {
+export default async function Archive(): Promise<JSX.Element> {
   const posts = await getPosts();
-  const postsByYear = posts.reduce((acc, post) => {
+
+  const postsByYear = posts.reduce<Record<number, typeof posts>>((acc, post) => {
     const year = new Date(post.date).getFullYear();
-    if (!acc[year]) acc[year] = [];
-    acc[year].push(post);
+    (acc[year] ??= []).push(post);
     return acc;
-  }, {} as Record<number, typeof posts>);
+  }, {});
 
   const years = Object.keys(postsByYear)
     .map(Number)
@@ -17,11 +17,11 @@ export default async function Archive() {
   return (
     <div>
       <h1 className="text-4xl font-bold mb-8">Archive</h1>
-      {years.map(year => (
+      {years.map((year) => (
         <div key={year} className="mb-8">
           <h2 className="text-2xl font-semibold mb-4">{year}</h2>
           <ul className="space-y-2">
-            {postsByYear[year]?.map(post => (
+            {postsByYear[year]?.map((post) => (
               <li key={post.slug}>
                 <a
                   href={`/blog/${post.slug}`}

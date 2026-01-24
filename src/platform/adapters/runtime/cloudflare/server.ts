@@ -9,7 +9,8 @@ declare class WebSocketPair {
 export class CloudflareServerAdapter implements ServerAdapter {
   upgradeWebSocket(_request: Request): WebSocketUpgrade {
     const pair = new WebSocketPair();
-    const [client, server] = [pair[0], pair[1]];
+    const client = pair[0];
+    const server = pair[1];
 
     server.accept();
 
@@ -18,11 +19,10 @@ export class CloudflareServerAdapter implements ServerAdapter {
       statusText: "Switching Protocols",
       webSocket: client,
     };
-    const response = new Response(null, responseInit);
 
     return {
       socket: server as unknown as WebSocket,
-      response,
+      response: new Response(null, responseInit),
     };
   }
 }
@@ -32,7 +32,7 @@ export class CloudflareServer implements Server {
     return Promise.resolve();
   }
 
-  get addr() {
+  get addr(): { hostname: string; port: number } {
     return { hostname: "worker", port: 443 };
   }
 }

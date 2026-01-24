@@ -2,6 +2,8 @@ import { tool } from "veryfront/tool";
 import { z } from "zod";
 import { createCalendarClient } from "../../lib/calendar-client.ts";
 
+type FreeSlot = { start: Date; end: Date };
+
 export default tool({
   id: "find-free-time",
   description: "Find available time slots in the calendar for scheduling",
@@ -23,39 +25,39 @@ export default tool({
       .default(true)
       .describe("Only show slots during working hours (9 AM - 6 PM)"),
   }),
-  execute: async ({ durationMinutes, daysToSearch, workingHoursOnly }, context) => {
+  execute: async (
+    { durationMinutes, daysToSearch, workingHoursOnly },
+    context,
+  ): Promise<unknown> => {
     // Default to "current-user" for development; in production, always pass userId from session
-    const userId = (context?.userId as string | undefined) || "current-user";
+    const userId = context?.userId ?? "current-user";
 
     try {
       const calendar = createCalendarClient(userId);
 
       const now = new Date();
       const searchEnd = new Date();
-      searchEnd.setDate(searchEnd.getDate() + (daysToSearch ?? 7));
+      searchEnd.setDate(searchEnd.getDate() + daysToSearch);
 
-      type FreeSlot = { start: Date; end: Date };
       const freeSlots = (await calendar.findFreeSlots({
         timeMin: now,
         timeMax: searchEnd,
-        durationMinutes: durationMinutes ?? 60,
+        durationMinutes,
       })) as FreeSlot[];
 
-      // Filter to working hours if requested
-      let filteredSlots = freeSlots;
-      if (workingHoursOnly) {
-        filteredSlots = freeSlots.filter((slot: FreeSlot) => {
-          const startHour = slot.start.getHours();
-          const endHour = slot.end.getHours();
-          return startHour >= 9 && endHour <= 18;
-        });
-      }
+      const slots = workingHoursOnly
+        ? freeSlots.filter((slot) => {
+            const startHour = slot.start.getHours();
+            const endHour = slot.end.getHours();
+            return startHour >= 9 && endHour <= 18;
+          })
+        : freeSlots;
 
-      // Format slots for display
-      const formattedSlots = filteredSlots.slice(0, 10).map((slot: FreeSlot) => {
+      const formattedSlots = slots.slice(0, 10).map((slot) => {
         const duration = Math.round(
           (slot.end.getTime() - slot.start.getTime()) / (1000 * 60),
         );
+
         return {
           start: slot.start.toISOString(),
           end: slot.end.toISOString(),
@@ -65,31 +67,30 @@ export default tool({
             month: "short",
             day: "numeric",
           }),
-          timeRange: `${
-            slot.start.toLocaleTimeString("en-US", {
-              hour: "numeric",
-              minute: "2-digit",
-            })
-          } - ${
-            slot.end.toLocaleTimeString("en-US", {
-              hour: "numeric",
-              minute: "2-digit",
-            })
-          }`,
+          timeRange: `${slot.start.toLocaleTimeString("en-US", {
+            hour: "numeric",
+            minute: "2-digit",
+          })} - ${slot.end.toLocaleTimeString("en-US", {
+            hour: "numeric",
+            minute: "2-digit",
+          })}`,
         };
       });
 
+      const count = formattedSlots.length;
+
       return {
         freeSlots: formattedSlots,
-        count: formattedSlots.length,
+        count,
         searchCriteria: {
           durationMinutes,
           daysToSearch,
           workingHoursOnly,
         },
-        message: formattedSlots.length > 0
-          ? `Found ${formattedSlots.length} available slot(s) of ${durationMinutes} minutes or more.`
-          : `No free slots of ${durationMinutes} minutes found in the next ${daysToSearch} days.`,
+        message:
+          count > 0
+            ? `Found ${count} available slot(s) of ${durationMinutes} minutes or more.`
+            : `No free slots of ${durationMinutes} minutes found in the next ${daysToSearch} days.`,
       };
     } catch (error) {
       if (error instanceof Error && error.message.includes("not connected")) {

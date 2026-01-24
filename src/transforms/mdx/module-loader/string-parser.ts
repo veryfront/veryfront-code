@@ -4,39 +4,37 @@ export function extractBalancedBlock(
   open: "{" | "[" | "(",
   close?: "}" | "]" | ")",
 ): string {
-  const closeCh = close || (open === "{" ? "}" : open === "[" ? "]" : ")");
+  const closeCh = close ?? (open === "{" ? "}" : open === "[" ? "]" : ")");
   let depth = 0;
-  let i = startIndex;
 
-  while (i < source.length) {
-    const ch = source[i] as string;
+  for (let i = startIndex; i < source.length; i++) {
+    const ch = source[i];
 
     if (ch === '"' || ch === "'") {
       const quote = ch;
       i++;
+
       while (i < source.length) {
-        const q = source[i] as string;
+        const q = source[i];
         if (q === "\\") {
           i += 2;
           continue;
         }
         if (q === quote) {
-          i++;
           break;
         }
         i++;
       }
+
       continue;
     }
 
     if (ch === open) depth++;
+
     if (ch === closeCh) {
       depth--;
-      if (depth === 0) {
-        return source.slice(startIndex, i + 1);
-      }
+      if (depth === 0) return source.slice(startIndex, i + 1);
     }
-    i++;
   }
 
   return "";
@@ -55,5 +53,6 @@ export function parseJsonish(value: string): unknown {
   const jsonish = value
     .replace(/'([^']*)'/g, '"$1"')
     .replace(/([{,]\s*)([A-Za-z_$][\w$]*)\s*:/g, '$1"$2":');
+
   return JSON.parse(jsonish);
 }

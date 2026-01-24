@@ -3,9 +3,15 @@
  */
 
 import { z } from "zod";
-import { tool } from "veryfront/tool";
 import { getServiceNowClient } from "../../lib/servicenow-client.ts";
 import { isServiceNowConnected } from "../../lib/token-store.ts";
+
+function getDisplayValue(value: unknown): unknown {
+  if (value && typeof value === "object" && "display_value" in value) {
+    return (value as { display_value: unknown }).display_value;
+  }
+  return value;
+}
 
 export default defineTool({
   id: "servicenow-get-incident",
@@ -15,8 +21,7 @@ export default defineTool({
     id: z.string().describe("Incident number (INC0010001) or sys_id"),
   }),
   async execute(input) {
-    const connected = await isServiceNowConnected();
-    if (!connected) {
+    if (!(await isServiceNowConnected())) {
       return {
         error: "ServiceNow not connected",
         action: "Please connect ServiceNow via /api/auth/servicenow",
@@ -38,12 +43,8 @@ export default defineTool({
         impact: incident.impact,
         category: incident.category,
         subcategory: incident.subcategory,
-        assigned_to: typeof incident.assigned_to === "object"
-          ? incident.assigned_to.display_value
-          : incident.assigned_to,
-        caller_id: typeof incident.caller_id === "object"
-          ? incident.caller_id.display_value
-          : incident.caller_id,
+        assigned_to: getDisplayValue(incident.assigned_to),
+        caller_id: getDisplayValue(incident.caller_id),
         opened_at: incident.opened_at,
         resolved_at: incident.resolved_at,
         closed_at: incident.closed_at,

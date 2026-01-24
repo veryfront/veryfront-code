@@ -26,40 +26,44 @@ export class MemoCache<V> {
   }
 }
 
-export function memoizeAsync<Args extends unknown[], Result>(
-  fn: (...args: Args) => Promise<Result>,
+function memoizeWithCache<Args extends unknown[], Result>(
+  fn: (...args: Args) => Result | Promise<Result>,
   keyHasher: (...args: Args) => string,
-): (...args: Args) => Promise<Result> {
+): (...args: Args) => Result | Promise<Result> {
   const cache = new MemoCache<Result>();
 
-  return async (...args: Args): Promise<Result> => {
-    const key = keyHasher(...args);
-    if (cache.has(key)) {
-      return cache.get(key)!;
-    }
-
-    const result = await fn(...args);
-    cache.set(key, result);
-    return result;
-  };
-}
-
-export function memoize<Args extends unknown[], Result>(
-  fn: (...args: Args) => Result,
-  keyHasher: (...args: Args) => string,
-): (...args: Args) => Result {
-  const cache = new MemoCache<Result>();
-
-  return (...args: Args): Result => {
+  return (...args: Args): Result | Promise<Result> => {
     const key = keyHasher(...args);
     if (cache.has(key)) {
       return cache.get(key)!;
     }
 
     const result = fn(...args);
+
+    if (result instanceof Promise) {
+      return result.then((resolved) => {
+        cache.set(key, resolved);
+        return resolved;
+      });
+    }
+
     cache.set(key, result);
     return result;
   };
+}
+
+export function memoizeAsync<Args extends unknown[], Result>(
+  fn: (...args: Args) => Promise<Result>,
+  keyHasher: (...args: Args) => string,
+): (...args: Args) => Promise<Result> {
+  return memoizeWithCache(fn, keyHasher) as (...args: Args) => Promise<Result>;
+}
+
+export function memoize<Args extends unknown[], Result>(
+  fn: (...args: Args) => Result,
+  keyHasher: (...args: Args) => string,
+): (...args: Args) => Result {
+  return memoizeWithCache(fn, keyHasher) as (...args: Args) => Result;
 }
 
 /**

@@ -66,20 +66,22 @@ async function webexFetch<T>(
   const response = await fetch(`${WEBEX_BASE_URL}${endpoint}`, {
     ...options,
     headers: {
-      "Authorization": `Bearer ${token}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
       ...options.headers,
     },
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
+    const error = (await response.json().catch(() => ({}))) as {
+      message?: string;
+    };
     throw new Error(
-      `Webex API error: ${response.status} ${error.message || response.statusText}`,
+      `Webex API error: ${response.status} ${error.message ?? response.statusText}`,
     );
   }
 
-  return response.json();
+  return response.json() as Promise<T>;
 }
 
 export async function getMe(): Promise<WebexPerson> {
@@ -98,16 +100,16 @@ export async function listMeetings(options?: {
 }): Promise<WebexMeeting[]> {
   const params = new URLSearchParams();
 
-  if (options?.max) params.set("max", options.max.toString());
+  if (options?.max) params.set("max", String(options.max));
   if (options?.from) params.set("from", options.from);
   if (options?.to) params.set("to", options.to);
   if (options?.meetingType) params.set("meetingType", options.meetingType);
   if (options?.state) params.set("state", options.state);
 
-  const response = await webexFetch<{ items: WebexMeeting[] }>(
+  const response = await webexFetch<{ items?: WebexMeeting[] }>(
     `/meetings?${params}`,
   );
-  return response.items || [];
+  return response.items ?? [];
 }
 
 /**
@@ -134,19 +136,16 @@ export async function createMeeting(options: {
     title: options.title,
     start: options.start,
     end: options.end,
-    timezone: options.timezone || "UTC",
+    timezone: options.timezone ?? "UTC",
+    ...(options.agenda ? { agenda: options.agenda } : {}),
+    ...(options.enabledAutoRecordMeeting !== undefined
+      ? { enabledAutoRecordMeeting: options.enabledAutoRecordMeeting }
+      : {}),
+    ...(options.allowAnyUserToBeCoHost !== undefined
+      ? { allowAnyUserToBeCoHost: options.allowAnyUserToBeCoHost }
+      : {}),
+    ...(options.invitees?.length ? { invitees: options.invitees } : {}),
   };
-
-  if (options.agenda) body.agenda = options.agenda;
-  if (options.enabledAutoRecordMeeting !== undefined) {
-    body.enabledAutoRecordMeeting = options.enabledAutoRecordMeeting;
-  }
-  if (options.allowAnyUserToBeCoHost !== undefined) {
-    body.allowAnyUserToBeCoHost = options.allowAnyUserToBeCoHost;
-  }
-  if (options.invitees && options.invitees.length > 0) {
-    body.invitees = options.invitees;
-  }
 
   return webexFetch<WebexMeeting>("/meetings", {
     method: "POST",
@@ -178,9 +177,7 @@ export async function updateMeeting(
  * Delete a meeting
  */
 export async function deleteMeeting(meetingId: string): Promise<void> {
-  await webexFetch<void>(`/meetings/${meetingId}`, {
-    method: "DELETE",
-  });
+  await webexFetch<void>(`/meetings/${meetingId}`, { method: "DELETE" });
 }
 
 /**
@@ -193,14 +190,12 @@ export async function listRooms(options?: {
 }): Promise<WebexRoom[]> {
   const params = new URLSearchParams();
 
-  if (options?.max) params.set("max", options.max.toString());
+  if (options?.max) params.set("max", String(options.max));
   if (options?.type) params.set("type", options.type);
   if (options?.sortBy) params.set("sortBy", options.sortBy);
 
-  const response = await webexFetch<{ items: WebexRoom[] }>(
-    `/rooms?${params}`,
-  );
-  return response.items || [];
+  const response = await webexFetch<{ items?: WebexRoom[] }>(`/rooms?${params}`);
+  return response.items ?? [];
 }
 
 /**
@@ -259,21 +254,21 @@ export async function listMessages(options: {
 }): Promise<WebexMessage[]> {
   const params = new URLSearchParams({ roomId: options.roomId });
 
-  if (options.max) params.set("max", options.max.toString());
+  if (options.max) params.set("max", String(options.max));
   if (options.before) params.set("before", options.before);
-  if (options.beforeMessage) params.set("beforeMessage", options.beforeMessage);
+  if (options.beforeMessage) {
+    params.set("beforeMessage", options.beforeMessage);
+  }
 
-  const response = await webexFetch<{ items: WebexMessage[] }>(
+  const response = await webexFetch<{ items?: WebexMessage[] }>(
     `/messages?${params}`,
   );
-  return response.items || [];
+  return response.items ?? [];
 }
 
 /**
  * Delete a message
  */
 export async function deleteMessage(messageId: string): Promise<void> {
-  await webexFetch<void>(`/messages/${messageId}`, {
-    method: "DELETE",
-  });
+  await webexFetch<void>(`/messages/${messageId}`, { method: "DELETE" });
 }

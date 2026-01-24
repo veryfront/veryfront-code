@@ -8,18 +8,17 @@ export default tool({
     "Get recent messages from a Discord channel. Returns message content, authors, timestamps, and attachments.",
   inputSchema: z.object({
     channelId: z.string().describe("The ID of the Discord channel to get messages from"),
-    limit: z.number().min(1).max(100).default(50).describe(
-      "Maximum number of messages to retrieve (1-100)",
-    ),
+    limit: z
+      .number()
+      .min(1)
+      .max(100)
+      .default(50)
+      .describe("Maximum number of messages to retrieve (1-100)"),
     before: z.string().optional().describe("Get messages before this message ID"),
     after: z.string().optional().describe("Get messages after this message ID"),
   }),
   async execute({ channelId, limit, before, after }) {
-    const messages = await getMessages(channelId, {
-      limit,
-      before,
-      after,
-    });
+    const messages = await getMessages(channelId, { limit, before, after });
 
     return messages.map((message) => ({
       id: message.id,

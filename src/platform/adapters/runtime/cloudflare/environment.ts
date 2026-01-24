@@ -6,7 +6,8 @@ export class CloudflareEnvironmentAdapter implements EnvironmentAdapter {
 
   get(key: string): string | undefined {
     const value = this.env[key];
-    return typeof value === "string" ? value : undefined;
+    if (typeof value !== "string") return undefined;
+    return value;
   }
 
   set(key: string, value: string): void {
@@ -15,11 +16,12 @@ export class CloudflareEnvironmentAdapter implements EnvironmentAdapter {
 
   toObject(): Record<string, string> {
     const result: Record<string, string> = {};
+
     for (const [key, value] of Object.entries(this.env)) {
-      if (typeof value === "string") {
-        result[key] = value;
-      }
+      if (typeof value !== "string") continue;
+      result[key] = value;
     }
+
     return result;
   }
 }

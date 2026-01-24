@@ -8,31 +8,28 @@ export class PathNormalizer {
   }
 
   normalize(path: string): string {
+    const projectDir = this.projectDir;
+    const wasAbsoluteInProject = !!projectDir && path.startsWith(projectDir);
+
     let normalized = path;
 
-    if (this.projectDir && normalized.startsWith(this.projectDir)) {
-      normalized = normalized.slice(this.projectDir.length);
+    if (wasAbsoluteInProject) {
+      normalized = normalized.slice(projectDir.length);
     }
 
-    normalized = normalized.replace(/^\/+|\/+$/g, "");
-    normalized = normalized.replace(/\/+/g, "/");
+    normalized = normalized.replace(/^\/+|\/+$/g, "").replace(/\/+/g, "/");
 
-    // Strip common path aliases (@/, ~/, etc.)
-    // These are typically configured in tsconfig/vite to point to project root
     if (normalized.startsWith("@/")) {
       const original = normalized;
-      normalized = normalized.slice(2); // Remove "@/"
-      logger.debug("[PathNormalizer] Stripped path alias", {
-        original,
-        normalized,
-      });
+      normalized = normalized.slice(2);
+      logger.debug("[PathNormalizer] Stripped path alias", { original, normalized });
     }
 
-    if (this.projectDir && path.startsWith(this.projectDir) && normalized !== path) {
+    if (wasAbsoluteInProject && normalized !== path) {
       logger.debug("[PathNormalizer] Converted absolute to relative path", {
         absolute: path,
         relative: normalized,
-        projectDir: this.projectDir,
+        projectDir,
       });
     }
 

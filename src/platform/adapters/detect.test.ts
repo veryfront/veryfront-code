@@ -4,14 +4,20 @@ import { detectRuntime, getAdapter } from "./detect.ts";
 import type { RuntimeId } from "./base.ts";
 import { isBun, isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 
-// Get the expected runtime based on actual environment
-const expectedRuntime: RuntimeId = isDeno ? "deno" : isNode ? "node" : isBun ? "bun" : "deno";
+function getExpectedRuntime(): RuntimeId {
+  if (isDeno) return "deno";
+  if (isNode) return "node";
+  if (isBun) return "bun";
+  return "deno";
+}
+
+const expectedRuntime = getExpectedRuntime();
 
 describe("detect.ts", () => {
   describe("detectRuntime", () => {
     it("should return a valid runtime identifier", () => {
       const runtime = detectRuntime();
-      const validRuntimes: (RuntimeId | "unknown")[] = [
+      const validRuntimes: Array<RuntimeId | "unknown"> = [
         "deno",
         "node",
         "bun",
@@ -23,7 +29,6 @@ describe("detect.ts", () => {
     });
 
     it("should detect current runtime in this test environment", () => {
-      // Should return the current runtime
       const runtime = detectRuntime();
       assertEquals(runtime, expectedRuntime);
     });
@@ -55,12 +60,13 @@ describe("detect.ts", () => {
 
     it("should return adapter with correct capabilities", async () => {
       const adapter = await getAdapter();
+      const { capabilities } = adapter;
 
-      assertEquals(typeof adapter.capabilities.typescript, "boolean");
-      assertEquals(typeof adapter.capabilities.jsx, "boolean");
-      assertEquals(typeof adapter.capabilities.http2, "boolean");
-      assertEquals(typeof adapter.capabilities.websocket, "boolean");
-      assertEquals(typeof adapter.capabilities.workers, "boolean");
+      assertEquals(typeof capabilities.typescript, "boolean");
+      assertEquals(typeof capabilities.jsx, "boolean");
+      assertEquals(typeof capabilities.http2, "boolean");
+      assertEquals(typeof capabilities.websocket, "boolean");
+      assertEquals(typeof capabilities.workers, "boolean");
     });
   });
 

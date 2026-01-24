@@ -8,34 +8,29 @@ import {
 describe("method-validator", () => {
   describe("createAppRouteMethodNotAllowed", () => {
     it("should return 405 response", () => {
-      const handler = { GET: () => new Response("ok") };
-      const response = createAppRouteMethodNotAllowed(handler);
-
+      const response = createAppRouteMethodNotAllowed({ GET: () => new Response("ok") });
       assertEquals(response.status, 405);
     });
 
     it("should include Allow header with available methods", () => {
-      const handler = {
+      const response = createAppRouteMethodNotAllowed({
         GET: () => new Response("ok"),
         POST: () => new Response("ok"),
-      };
-      const response = createAppRouteMethodNotAllowed(handler);
+      });
 
-      const allowHeader = response.headers.get("Allow");
-      assertEquals(allowHeader?.includes("GET"), true);
-      assertEquals(allowHeader?.includes("POST"), true);
+      const allowHeader = response.headers.get("Allow") ?? "";
+      assertEquals(allowHeader.includes("GET"), true);
+      assertEquals(allowHeader.includes("POST"), true);
     });
 
     it("should handle handler with no methods", () => {
-      const handler = {};
-      const response = createAppRouteMethodNotAllowed(handler);
-
+      const response = createAppRouteMethodNotAllowed({});
       assertEquals(response.status, 405);
       assertEquals(response.headers.get("Allow"), "");
     });
 
     it("should detect all standard HTTP methods", () => {
-      const handler = {
+      const response = createAppRouteMethodNotAllowed({
         GET: () => new Response(""),
         POST: () => new Response(""),
         PUT: () => new Response(""),
@@ -43,49 +38,40 @@ describe("method-validator", () => {
         PATCH: () => new Response(""),
         HEAD: () => new Response(""),
         OPTIONS: () => new Response(""),
-      };
-      const response = createAppRouteMethodNotAllowed(handler);
-      const allowHeader = response.headers.get("Allow") || "";
+      });
 
-      assertEquals(allowHeader.includes("GET"), true);
-      assertEquals(allowHeader.includes("POST"), true);
-      assertEquals(allowHeader.includes("PUT"), true);
-      assertEquals(allowHeader.includes("DELETE"), true);
-      assertEquals(allowHeader.includes("PATCH"), true);
-      assertEquals(allowHeader.includes("HEAD"), true);
-      assertEquals(allowHeader.includes("OPTIONS"), true);
+      const allowHeader = response.headers.get("Allow") ?? "";
+      for (const method of ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]) {
+        assertEquals(allowHeader.includes(method), true);
+      }
     });
   });
 
   describe("createPagesRouteMethodNotAllowed", () => {
     it("should return 405 response", () => {
-      const handler = { GET: () => new Response("ok") };
-      const response = createPagesRouteMethodNotAllowed(handler);
-
+      const response = createPagesRouteMethodNotAllowed({ GET: () => new Response("ok") });
       assertEquals(response.status, 405);
     });
 
     it("should exclude default from allowed methods", () => {
-      const handler = {
+      const response = createPagesRouteMethodNotAllowed({
         GET: () => new Response("ok"),
         default: () => new Response("ok"),
-      };
-      const response = createPagesRouteMethodNotAllowed(handler);
+      });
 
-      const allowHeader = response.headers.get("Allow") || "";
+      const allowHeader = response.headers.get("Allow") ?? "";
       assertEquals(allowHeader.includes("GET"), true);
       assertEquals(allowHeader.includes("default"), false);
     });
 
     it("should only include function handlers", () => {
-      const handler = {
+      const response = createPagesRouteMethodNotAllowed({
         GET: () => new Response("ok"),
         notAMethod: "string value",
         config: { runtime: "edge" },
-      };
-      const response = createPagesRouteMethodNotAllowed(handler);
+      });
 
-      const allowHeader = response.headers.get("Allow") || "";
+      const allowHeader = response.headers.get("Allow") ?? "";
       assertEquals(allowHeader.includes("GET"), true);
       assertEquals(allowHeader.includes("notAMethod"), false);
       assertEquals(allowHeader.includes("config"), false);

@@ -12,7 +12,7 @@ export default tool({
   async execute({ pageId }) {
     const page = await getPageContent(pageId);
 
-    const content = page.body?.storage?.value || page.body?.view?.value || "";
+    const content = page.body?.storage?.value ?? page.body?.view?.value ?? "";
     const plainTextContent = extractPlainText(content);
 
     return {

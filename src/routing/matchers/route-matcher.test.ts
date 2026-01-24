@@ -26,7 +26,7 @@ describe("route-matcher", () => {
       const match = matchRoute("/users/123", route);
 
       assertEquals(match !== null, true);
-      assertEquals(match?.params["id"], "123");
+      assertEquals(match?.params.id, "123");
     });
 
     it("should extract multiple dynamic params", () => {
@@ -34,8 +34,8 @@ describe("route-matcher", () => {
       const match = matchRoute("/blog/2024/01", route);
 
       assertEquals(match !== null, true);
-      assertEquals(match?.params["year"], "2024");
-      assertEquals(match?.params["month"], "01");
+      assertEquals(match?.params.year, "2024");
+      assertEquals(match?.params.month, "01");
     });
 
     it("should decode URL-encoded params", () => {
@@ -43,7 +43,7 @@ describe("route-matcher", () => {
       const match = matchRoute("/search/hello%20world", route);
 
       assertEquals(match !== null, true);
-      assertEquals(match?.params["query"], "hello world");
+      assertEquals(match?.params.query, "hello world");
     });
 
     it("should extract catch-all params as array", () => {
@@ -51,7 +51,7 @@ describe("route-matcher", () => {
       const match = matchRoute("/docs/getting-started/intro", route);
 
       assertEquals(match !== null, true);
-      assertEquals(match?.params["slug"], ["getting-started", "intro"]);
+      assertEquals(match?.params.slug, ["getting-started", "intro"]);
     });
 
     it("should handle empty catch-all for optional routes", () => {
@@ -59,7 +59,7 @@ describe("route-matcher", () => {
       const match = matchRoute("/shop", route);
 
       assertEquals(match !== null, true);
-      assertEquals(match?.params["category"], []);
+      assertEquals(match?.params.category, []);
     });
 
     it("should decode catch-all segments", () => {
@@ -67,7 +67,7 @@ describe("route-matcher", () => {
       const match = matchRoute("/files/my%20folder/sub%20dir", route);
 
       assertEquals(match !== null, true);
-      assertEquals(match?.params["path"], ["my folder", "sub dir"]);
+      assertEquals(match?.params.path, ["my folder", "sub dir"]);
     });
 
     it("should match nested static + dynamic routes", () => {
@@ -75,7 +75,7 @@ describe("route-matcher", () => {
       const match = matchRoute("/api/users/42/posts", route);
 
       assertEquals(match !== null, true);
-      assertEquals(match?.params["id"], "42");
+      assertEquals(match?.params.id, "42");
     });
   });
 });

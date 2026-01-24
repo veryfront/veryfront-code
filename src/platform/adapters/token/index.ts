@@ -1,4 +1,3 @@
-// Token Adapters
 export {
   MemoryTokenAdapter,
   type TokenStorageAdapter,
@@ -9,7 +8,6 @@ export {
   type VeryfrontTokenConfig,
 } from "./veryfront/index.ts";
 
-// Factory and utilities
 export { createTokenStorageAdapter } from "./factory.ts";
 
 export {

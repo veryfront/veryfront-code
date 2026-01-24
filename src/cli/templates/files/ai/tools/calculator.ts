@@ -10,6 +10,10 @@ export default tool({
     b: z.number(),
   }),
   execute: async ({ operation, a, b }) => {
+    if (operation === "divide" && b === 0) {
+      throw new Error("Cannot divide by zero");
+    }
+
     switch (operation) {
       case "add":
         return { result: a + b };
@@ -18,7 +22,6 @@ export default tool({
       case "multiply":
         return { result: a * b };
       case "divide":
-        if (b === 0) throw new Error("Cannot divide by zero");
         return { result: a / b };
     }
   },

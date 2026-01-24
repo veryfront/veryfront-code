@@ -5,7 +5,6 @@
 
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { BrowserLogger } from "./browser-logger.ts";
 import {
   browserLogger,
   hydrateLogger,
@@ -14,32 +13,82 @@ import {
   rscLogger,
 } from "./browser-logger.ts";
 
-// Mock console methods
-class MockConsole {
-  logs: Array<{ level: string; args: unknown[] }> = [];
+type ConsoleLevel = "debug" | "log" | "warn" | "error";
 
-  debug(...args: unknown[]) {
+class MockConsole {
+  logs: Array<{ level: ConsoleLevel; args: unknown[] }> = [];
+
+  debug(...args: unknown[]): void {
     this.logs.push({ level: "debug", args });
   }
 
-  log(...args: unknown[]) {
+  log(...args: unknown[]): void {
     this.logs.push({ level: "log", args });
   }
 
-  warn(...args: unknown[]) {
+  warn(...args: unknown[]): void {
     this.logs.push({ level: "warn", args });
   }
 
-  error(...args: unknown[]) {
+  error(...args: unknown[]): void {
     this.logs.push({ level: "error", args });
   }
 
-  clear() {
+  clear(): void {
     this.logs = [];
   }
 
-  getLogs(level: string) {
+  getLogs(level: ConsoleLevel): Array<{ level: ConsoleLevel; args: unknown[] }> {
     return this.logs.filter((log) => log.level === level);
+  }
+}
+
+function withMockConsole<T>(fn: (mockConsole: MockConsole) => T): T {
+  const mockConsole = new MockConsole();
+  const originalConsole = globalThis.console;
+
+  // @ts-ignore - Mock console
+  globalThis.console = mockConsole;
+
+  try {
+    return fn(mockConsole);
+  } finally {
+    globalThis.console = originalConsole;
+  }
+}
+
+function withWindow<T>(windowValue: any, fn: () => T): T {
+  const originalWindow = (globalThis as any).window;
+  (globalThis as any).window = windowValue;
+
+  try {
+    return fn();
+  } finally {
+    (globalThis as any).window = originalWindow;
+  }
+}
+
+class TestLogger {
+  constructor(private prefix: string, private level: LogLevel) {}
+
+  debug(message: string, ...args: unknown[]): void {
+    if (this.level > LogLevel.DEBUG) return;
+    console.debug?.(`[${this.prefix}] DEBUG: ${message}`, ...args);
+  }
+
+  info(message: string, ...args: unknown[]): void {
+    if (this.level > LogLevel.INFO) return;
+    console.log?.(`[${this.prefix}] ${message}`, ...args);
+  }
+
+  warn(message: string, ...args: unknown[]): void {
+    if (this.level > LogLevel.WARN) return;
+    console.warn?.(`[${this.prefix}] WARN: ${message}`, ...args);
+  }
+
+  error(message: string, ...args: unknown[]): void {
+    if (this.level > LogLevel.ERROR) return;
+    console.error?.(`[${this.prefix}] ERROR: ${message}`, ...args);
   }
 }
 
@@ -55,195 +104,55 @@ describe("Browser Logger", () => {
 
   describe("ConditionalBrowserLogger", () => {
     it("should log debug messages when level is DEBUG", () => {
-      const mockConsole = new MockConsole();
-      const originalConsole = globalThis.console;
+      withMockConsole((mockConsole) => {
+        const logger = new TestLogger("TEST", LogLevel.DEBUG);
+        logger.debug("test debug", { data: 123 });
+        logger.info("test info");
+        logger.warn("test warn");
+        logger.error("test error");
 
-      // @ts-ignore - Mock console
-      globalThis.console = mockConsole;
-
-      class TestLogger implements BrowserLogger {
-        private prefix = "TEST";
-        private level = LogLevel.DEBUG;
-
-        debug(message: string, ...args: unknown[]): void {
-          if (this.level <= LogLevel.DEBUG) {
-            console.debug?.(`[${this.prefix}] DEBUG: ${message}`, ...args);
-          }
-        }
-
-        info(message: string, ...args: unknown[]): void {
-          if (this.level <= LogLevel.INFO) {
-            console.log?.(`[${this.prefix}] ${message}`, ...args);
-          }
-        }
-
-        warn(message: string, ...args: unknown[]): void {
-          if (this.level <= LogLevel.WARN) {
-            console.warn?.(`[${this.prefix}] WARN: ${message}`, ...args);
-          }
-        }
-
-        error(message: string, ...args: unknown[]): void {
-          if (this.level <= LogLevel.ERROR) {
-            console.error?.(`[${this.prefix}] ERROR: ${message}`, ...args);
-          }
-        }
-      }
-
-      const logger = new TestLogger();
-      logger.debug("test debug", { data: 123 });
-      logger.info("test info");
-      logger.warn("test warn");
-      logger.error("test error");
-
-      assertEquals(mockConsole.getLogs("debug").length, 1);
-      assertEquals(mockConsole.getLogs("log").length, 1);
-      assertEquals(mockConsole.getLogs("warn").length, 1);
-      assertEquals(mockConsole.getLogs("error").length, 1);
-
-      globalThis.console = originalConsole;
+        assertEquals(mockConsole.getLogs("debug").length, 1);
+        assertEquals(mockConsole.getLogs("log").length, 1);
+        assertEquals(mockConsole.getLogs("warn").length, 1);
+        assertEquals(mockConsole.getLogs("error").length, 1);
+      });
     });
 
     it("should not log debug when level is INFO", () => {
-      const mockConsole = new MockConsole();
-      const originalConsole = globalThis.console;
+      withMockConsole((mockConsole) => {
+        const logger = new TestLogger("TEST", LogLevel.INFO);
+        logger.debug("test debug");
+        logger.info("test info");
 
-      // @ts-ignore - Mock console
-      globalThis.console = mockConsole;
-
-      class TestLogger implements BrowserLogger {
-        private prefix = "TEST";
-        private level = LogLevel.INFO;
-
-        debug(message: string, ...args: unknown[]): void {
-          if (this.level <= LogLevel.DEBUG) {
-            console.debug?.(`[${this.prefix}] DEBUG: ${message}`, ...args);
-          }
-        }
-
-        info(message: string, ...args: unknown[]): void {
-          if (this.level <= LogLevel.INFO) {
-            console.log?.(`[${this.prefix}] ${message}`, ...args);
-          }
-        }
-
-        warn(message: string, ...args: unknown[]): void {
-          if (this.level <= LogLevel.WARN) {
-            console.warn?.(`[${this.prefix}] WARN: ${message}`, ...args);
-          }
-        }
-
-        error(message: string, ...args: unknown[]): void {
-          if (this.level <= LogLevel.ERROR) {
-            console.error?.(`[${this.prefix}] ERROR: ${message}`, ...args);
-          }
-        }
-      }
-
-      const logger = new TestLogger();
-      logger.debug("test debug");
-      logger.info("test info");
-
-      assertEquals(mockConsole.getLogs("debug").length, 0);
-      assertEquals(mockConsole.getLogs("log").length, 1);
-
-      globalThis.console = originalConsole;
+        assertEquals(mockConsole.getLogs("debug").length, 0);
+        assertEquals(mockConsole.getLogs("log").length, 1);
+      });
     });
 
     it("should only log errors when level is ERROR", () => {
-      const mockConsole = new MockConsole();
-      const originalConsole = globalThis.console;
+      withMockConsole((mockConsole) => {
+        const logger = new TestLogger("TEST", LogLevel.ERROR);
+        logger.debug("test debug");
+        logger.info("test info");
+        logger.warn("test warn");
+        logger.error("test error");
 
-      // @ts-ignore - Mock console
-      globalThis.console = mockConsole;
-
-      class TestLogger implements BrowserLogger {
-        private prefix = "TEST";
-        private level = LogLevel.ERROR;
-
-        debug(message: string, ...args: unknown[]): void {
-          if (this.level <= LogLevel.DEBUG) {
-            console.debug?.(`[${this.prefix}] DEBUG: ${message}`, ...args);
-          }
-        }
-
-        info(message: string, ...args: unknown[]): void {
-          if (this.level <= LogLevel.INFO) {
-            console.log?.(`[${this.prefix}] ${message}`, ...args);
-          }
-        }
-
-        warn(message: string, ...args: unknown[]): void {
-          if (this.level <= LogLevel.WARN) {
-            console.warn?.(`[${this.prefix}] WARN: ${message}`, ...args);
-          }
-        }
-
-        error(message: string, ...args: unknown[]): void {
-          if (this.level <= LogLevel.ERROR) {
-            console.error?.(`[${this.prefix}] ERROR: ${message}`, ...args);
-          }
-        }
-      }
-
-      const logger = new TestLogger();
-      logger.debug("test debug");
-      logger.info("test info");
-      logger.warn("test warn");
-      logger.error("test error");
-
-      assertEquals(mockConsole.getLogs("debug").length, 0);
-      assertEquals(mockConsole.getLogs("log").length, 0);
-      assertEquals(mockConsole.getLogs("warn").length, 0);
-      assertEquals(mockConsole.getLogs("error").length, 1);
-
-      globalThis.console = originalConsole;
+        assertEquals(mockConsole.getLogs("debug").length, 0);
+        assertEquals(mockConsole.getLogs("log").length, 0);
+        assertEquals(mockConsole.getLogs("warn").length, 0);
+        assertEquals(mockConsole.getLogs("error").length, 1);
+      });
     });
 
     it("should format log messages with prefix", () => {
-      const mockConsole = new MockConsole();
-      const originalConsole = globalThis.console;
+      withMockConsole((mockConsole) => {
+        const logger = new TestLogger("CUSTOM", LogLevel.DEBUG);
+        logger.info("test message");
 
-      // @ts-ignore - Mock console
-      globalThis.console = mockConsole;
-
-      class TestLogger implements BrowserLogger {
-        private prefix = "CUSTOM";
-        private level = LogLevel.DEBUG;
-
-        debug(message: string, ...args: unknown[]): void {
-          if (this.level <= LogLevel.DEBUG) {
-            console.debug?.(`[${this.prefix}] DEBUG: ${message}`, ...args);
-          }
-        }
-
-        info(message: string, ...args: unknown[]): void {
-          if (this.level <= LogLevel.INFO) {
-            console.log?.(`[${this.prefix}] ${message}`, ...args);
-          }
-        }
-
-        warn(message: string, ...args: unknown[]): void {
-          if (this.level <= LogLevel.WARN) {
-            console.warn?.(`[${this.prefix}] WARN: ${message}`, ...args);
-          }
-        }
-
-        error(message: string, ...args: unknown[]): void {
-          if (this.level <= LogLevel.ERROR) {
-            console.error?.(`[${this.prefix}] ERROR: ${message}`, ...args);
-          }
-        }
-      }
-
-      const logger = new TestLogger();
-      logger.info("test message");
-
-      const logs = mockConsole.getLogs("log");
-      assertEquals(logs.length, 1);
-      assertEquals(logs[0]?.args[0], "[CUSTOM] test message");
-
-      globalThis.console = originalConsole;
+        const logs = mockConsole.getLogs("log");
+        assertEquals(logs.length, 1);
+        assertEquals(logs[0]?.args[0], "[CUSTOM] test message");
+      });
     });
   });
 
@@ -283,101 +192,44 @@ describe("Browser Logger", () => {
 
   describe("Log Level Detection", () => {
     it("should use WARN level when not in development", () => {
-      const originalWindow = (globalThis as any).window;
-      (globalThis as any).window = {};
-
-      // The default level should be WARN in non-development
-      const mockConsole = new MockConsole();
-      const originalConsole = globalThis.console;
-      // @ts-ignore - Mock console
-      globalThis.console = mockConsole;
-
-      // Since we can't easily reimport, we'll verify the behavior indirectly
-      // by checking that loggers exist and are callable
-      assertExists(browserLogger);
-      browserLogger.info("test");
-
-      // Restore
-      globalThis.console = originalConsole;
-      (globalThis as any).window = originalWindow;
+      withWindow({}, () => {
+        withMockConsole(() => {
+          assertExists(browserLogger);
+          browserLogger.info("test");
+        });
+      });
     });
 
     it("should use DEBUG level when __VERYFRONT_DEBUG__ is set", () => {
-      const originalWindow = (globalThis as any).window;
-      (globalThis as any).window = {
-        __VERYFRONT_DEV__: true,
-        __VERYFRONT_DEBUG__: true,
-      };
-
-      // Verify loggers exist
-      assertExists(browserLogger);
-      assertExists(rscLogger);
-      (globalThis as any).window = originalWindow;
+      withWindow({ __VERYFRONT_DEV__: true, __VERYFRONT_DEBUG__: true }, () => {
+        assertExists(browserLogger);
+        assertExists(rscLogger);
+      });
     });
 
     it("should use INFO level when __VERYFRONT_DEV__ is set without DEBUG", () => {
-      const originalWindow = (globalThis as any).window;
-      (globalThis as any).window = {
-        __VERYFRONT_DEV__: true,
-      };
-
-      // Verify loggers exist
-      assertExists(browserLogger);
-      assertExists(prefetchLogger);
-      (globalThis as any).window = originalWindow;
+      withWindow({ __VERYFRONT_DEV__: true }, () => {
+        assertExists(browserLogger);
+        assertExists(prefetchLogger);
+      });
     });
   });
 
   describe("Additional Arguments Support", () => {
     it("should pass additional arguments to console methods", () => {
-      const mockConsole = new MockConsole();
-      const originalConsole = globalThis.console;
+      withMockConsole((mockConsole) => {
+        const logger = new TestLogger("TEST", LogLevel.DEBUG);
+        const obj = { key: "value" };
+        const arr = [1, 2, 3];
 
-      // @ts-ignore - Mock console
-      globalThis.console = mockConsole;
+        logger.info("test", obj, arr);
 
-      class TestLogger implements BrowserLogger {
-        private prefix = "TEST";
-        private level = LogLevel.DEBUG;
-
-        debug(message: string, ...args: unknown[]): void {
-          if (this.level <= LogLevel.DEBUG) {
-            console.debug?.(`[${this.prefix}] DEBUG: ${message}`, ...args);
-          }
-        }
-
-        info(message: string, ...args: unknown[]): void {
-          if (this.level <= LogLevel.INFO) {
-            console.log?.(`[${this.prefix}] ${message}`, ...args);
-          }
-        }
-
-        warn(message: string, ...args: unknown[]): void {
-          if (this.level <= LogLevel.WARN) {
-            console.warn?.(`[${this.prefix}] WARN: ${message}`, ...args);
-          }
-        }
-
-        error(message: string, ...args: unknown[]): void {
-          if (this.level <= LogLevel.ERROR) {
-            console.error?.(`[${this.prefix}] ERROR: ${message}`, ...args);
-          }
-        }
-      }
-
-      const logger = new TestLogger();
-      const obj = { key: "value" };
-      const arr = [1, 2, 3];
-
-      logger.info("test", obj, arr);
-
-      const logs = mockConsole.getLogs("log");
-      assertEquals(logs.length, 1);
-      assertEquals(logs[0]?.args.length, 3);
-      assertEquals(logs[0]?.args[1], obj);
-      assertEquals(logs[0]?.args[2], arr);
-
-      globalThis.console = originalConsole;
+        const logs = mockConsole.getLogs("log");
+        assertEquals(logs.length, 1);
+        assertEquals(logs[0]?.args.length, 3);
+        assertEquals(logs[0]?.args[1], obj);
+        assertEquals(logs[0]?.args[2], arr);
+      });
     });
   });
 
@@ -393,42 +245,14 @@ describe("Browser Logger", () => {
       // @ts-ignore - Partial console
       globalThis.console = partialConsole;
 
-      class TestLogger implements BrowserLogger {
-        private prefix = "TEST";
-        private level = LogLevel.DEBUG;
+      try {
+        const logger = new TestLogger("TEST", LogLevel.DEBUG);
 
-        debug(message: string, ...args: unknown[]): void {
-          if (this.level <= LogLevel.DEBUG) {
-            console.debug?.(`[${this.prefix}] DEBUG: ${message}`, ...args);
-          }
-        }
-
-        info(message: string, ...args: unknown[]): void {
-          if (this.level <= LogLevel.INFO) {
-            console.log?.(`[${this.prefix}] ${message}`, ...args);
-          }
-        }
-
-        warn(message: string, ...args: unknown[]): void {
-          if (this.level <= LogLevel.WARN) {
-            console.warn?.(`[${this.prefix}] WARN: ${message}`, ...args);
-          }
-        }
-
-        error(message: string, ...args: unknown[]): void {
-          if (this.level <= LogLevel.ERROR) {
-            console.error?.(`[${this.prefix}] ERROR: ${message}`, ...args);
-          }
-        }
+        logger.debug("test");
+        logger.info("test");
+      } finally {
+        globalThis.console = originalConsole;
       }
-
-      const logger = new TestLogger();
-
-      // Should not throw
-      logger.debug("test");
-      logger.info("test");
-
-      globalThis.console = originalConsole;
     });
   });
 });

@@ -5,8 +5,10 @@ export function generateDevComponentManifestScript(
   nonce?: string,
 ): string {
   const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
+  const components = config.dev?.components ?? [];
+
   return `
   <script${nonceAttr}>
-    window.__veryfrontComponents = ${JSON.stringify(config?.dev?.components || [])};
+    window.__veryfrontComponents = ${JSON.stringify(components)};
   </script>`;
 }

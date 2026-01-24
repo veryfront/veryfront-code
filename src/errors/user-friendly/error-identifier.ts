@@ -4,6 +4,7 @@ export function identifyError(error: Error): string {
   if (message.includes("veryfront.config") && message.includes("not found")) {
     return "missing-config";
   }
+
   if (message.includes("config") && (message.includes("invalid") || message.includes("parse"))) {
     return "invalid-config";
   }
@@ -17,8 +18,7 @@ export function identifyError(error: Error): string {
   }
 
   if (
-    message.includes("import") ||
-    message.includes("module not found") ||
+    message.includes("import") || message.includes("module not found") ||
     message.includes("resolve")
   ) {
     return "import-not-found";

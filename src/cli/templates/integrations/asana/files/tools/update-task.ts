@@ -13,14 +13,8 @@ export default tool({
     dueOn: z.string().optional().describe("New due date in YYYY-MM-DD format"),
     assigneeGid: z.string().optional().describe("GID of the user to reassign the task to"),
   }),
-  async execute({ taskGid, name, notes, completed, dueOn, assigneeGid }) {
-    const task = await updateTask(taskGid, {
-      name,
-      notes,
-      completed,
-      dueOn,
-      assigneeGid,
-    });
+  async execute({ taskGid, ...updates }) {
+    const task = await updateTask(taskGid, updates);
 
     return {
       success: true,

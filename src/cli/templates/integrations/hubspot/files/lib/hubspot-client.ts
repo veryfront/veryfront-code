@@ -68,10 +68,29 @@ interface HubSpotDeal {
   archived: boolean;
 }
 
-async function hubspotFetch<T>(
-  endpoint: string,
-  options: RequestInit = {},
-): Promise<T> {
+function buildQueryString(options: {
+  limit?: number;
+  after?: string;
+  properties?: string[];
+  defaultProperties: string[];
+}): string {
+  const params = new URLSearchParams();
+
+  if (options.limit) params.set("limit", options.limit.toString());
+  if (options.after) params.set("after", options.after);
+
+  const properties =
+    options.properties && options.properties.length > 0
+      ? options.properties
+      : options.defaultProperties;
+
+  for (const prop of properties) params.append("properties", prop);
+
+  const queryString = params.toString();
+  return queryString ? `?${queryString}` : "";
+}
+
+async function hubspotFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = await getAccessToken();
   if (!token) {
     throw new Error("Not authenticated with HubSpot. Please connect your account.");
@@ -80,14 +99,14 @@ async function hubspotFetch<T>(
   const response = await fetch(`${HUBSPOT_BASE_URL}${endpoint}`, {
     ...options,
     headers: {
-      "Authorization": `Bearer ${token}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
       ...options.headers,
     },
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
+    const error = await response.json().catch(() => ({} as { message?: string }));
     throw new Error(
       `HubSpot API error: ${response.status} ${error.message || response.statusText}`,
     );
@@ -105,47 +124,23 @@ export function listContacts(options?: {
   after?: string;
   properties?: string[];
 }): Promise<HubSpotResponse<HubSpotContact>> {
-  const params = new URLSearchParams();
+  const query = buildQueryString({
+    limit: options?.limit,
+    after: options?.after,
+    properties: options?.properties,
+    defaultProperties: ["email", "firstname", "lastname", "phone", "company", "jobtitle"],
+  });
 
-  if (options?.limit) {
-    params.set("limit", options.limit.toString());
-  }
-  if (options?.after) {
-    params.set("after", options.after);
-  }
-  if (options?.properties && options.properties.length > 0) {
-    options.properties.forEach((prop) => params.append("properties", prop));
-  } else {
-    // Default properties
-    ["email", "firstname", "lastname", "phone", "company", "jobtitle"].forEach(
-      (prop) => params.append("properties", prop),
-    );
-  }
-
-  const queryString = params.toString();
-  const url = `/crm/v3/objects/contacts${queryString ? `?${queryString}` : ""}`;
-
-  return hubspotFetch<HubSpotResponse<HubSpotContact>>(url);
+  return hubspotFetch<HubSpotResponse<HubSpotContact>>(`/crm/v3/objects/contacts${query}`);
 }
 
-export function getContact(
-  contactId: string,
-  properties?: string[],
-): Promise<HubSpotContact> {
-  const params = new URLSearchParams();
+export function getContact(contactId: string, properties?: string[]): Promise<HubSpotContact> {
+  const query = buildQueryString({
+    properties,
+    defaultProperties: ["email", "firstname", "lastname", "phone", "company", "jobtitle", "website"],
+  });
 
-  if (properties && properties.length > 0) {
-    properties.forEach((prop) => params.append("properties", prop));
-  } else {
-    ["email", "firstname", "lastname", "phone", "company", "jobtitle", "website"].forEach(
-      (prop) => params.append("properties", prop),
-    );
-  }
-
-  const queryString = params.toString();
-  const url = `/crm/v3/objects/contacts/${contactId}${queryString ? `?${queryString}` : ""}`;
-
-  return hubspotFetch<HubSpotContact>(url);
+  return hubspotFetch<HubSpotContact>(`/crm/v3/objects/contacts/${contactId}${query}`);
 }
 
 export function createContact(properties: {
@@ -196,25 +191,16 @@ export function searchContacts(options: {
   limit?: number;
   after?: string;
 }): Promise<HubSpotResponse<HubSpotContact>> {
-  const body: Record<string, unknown> = {};
+  const body: Record<string, unknown> = {
+    properties:
+      options.properties && options.properties.length > 0
+        ? options.properties
+        : ["email", "firstname", "lastname", "phone", "company", "jobtitle"],
+  };
 
-  if (options.filterGroups) {
-    body.filterGroups = options.filterGroups;
-  }
-
-  if (options.properties && options.properties.length > 0) {
-    body.properties = options.properties;
-  } else {
-    body.properties = ["email", "firstname", "lastname", "phone", "company", "jobtitle"];
-  }
-
-  if (options.limit) {
-    body.limit = options.limit;
-  }
-
-  if (options.after) {
-    body.after = options.after;
-  }
+  if (options.filterGroups) body.filterGroups = options.filterGroups;
+  if (options.limit) body.limit = options.limit;
+  if (options.after) body.after = options.after;
 
   return hubspotFetch<HubSpotResponse<HubSpotContact>>("/crm/v3/objects/contacts/search", {
     method: "POST",
@@ -231,46 +217,23 @@ export function listCompanies(options?: {
   after?: string;
   properties?: string[];
 }): Promise<HubSpotResponse<HubSpotCompany>> {
-  const params = new URLSearchParams();
+  const query = buildQueryString({
+    limit: options?.limit,
+    after: options?.after,
+    properties: options?.properties,
+    defaultProperties: ["name", "domain", "city", "state", "industry", "phone"],
+  });
 
-  if (options?.limit) {
-    params.set("limit", options.limit.toString());
-  }
-  if (options?.after) {
-    params.set("after", options.after);
-  }
-  if (options?.properties && options.properties.length > 0) {
-    options.properties.forEach((prop) => params.append("properties", prop));
-  } else {
-    ["name", "domain", "city", "state", "industry", "phone"].forEach(
-      (prop) => params.append("properties", prop),
-    );
-  }
-
-  const queryString = params.toString();
-  const url = `/crm/v3/objects/companies${queryString ? `?${queryString}` : ""}`;
-
-  return hubspotFetch<HubSpotResponse<HubSpotCompany>>(url);
+  return hubspotFetch<HubSpotResponse<HubSpotCompany>>(`/crm/v3/objects/companies${query}`);
 }
 
-export function getCompany(
-  companyId: string,
-  properties?: string[],
-): Promise<HubSpotCompany> {
-  const params = new URLSearchParams();
+export function getCompany(companyId: string, properties?: string[]): Promise<HubSpotCompany> {
+  const query = buildQueryString({
+    properties,
+    defaultProperties: ["name", "domain", "city", "state", "country", "industry", "phone"],
+  });
 
-  if (properties && properties.length > 0) {
-    properties.forEach((prop) => params.append("properties", prop));
-  } else {
-    ["name", "domain", "city", "state", "country", "industry", "phone"].forEach(
-      (prop) => params.append("properties", prop),
-    );
-  }
-
-  const queryString = params.toString();
-  const url = `/crm/v3/objects/companies/${companyId}${queryString ? `?${queryString}` : ""}`;
-
-  return hubspotFetch<HubSpotCompany>(url);
+  return hubspotFetch<HubSpotCompany>(`/crm/v3/objects/companies/${companyId}${query}`);
 }
 
 export function createCompany(properties: {
@@ -298,46 +261,23 @@ export function listDeals(options?: {
   after?: string;
   properties?: string[];
 }): Promise<HubSpotResponse<HubSpotDeal>> {
-  const params = new URLSearchParams();
+  const query = buildQueryString({
+    limit: options?.limit,
+    after: options?.after,
+    properties: options?.properties,
+    defaultProperties: ["dealname", "amount", "dealstage", "pipeline", "closedate"],
+  });
 
-  if (options?.limit) {
-    params.set("limit", options.limit.toString());
-  }
-  if (options?.after) {
-    params.set("after", options.after);
-  }
-  if (options?.properties && options.properties.length > 0) {
-    options.properties.forEach((prop) => params.append("properties", prop));
-  } else {
-    ["dealname", "amount", "dealstage", "pipeline", "closedate"].forEach(
-      (prop) => params.append("properties", prop),
-    );
-  }
-
-  const queryString = params.toString();
-  const url = `/crm/v3/objects/deals${queryString ? `?${queryString}` : ""}`;
-
-  return hubspotFetch<HubSpotResponse<HubSpotDeal>>(url);
+  return hubspotFetch<HubSpotResponse<HubSpotDeal>>(`/crm/v3/objects/deals${query}`);
 }
 
-export function getDeal(
-  dealId: string,
-  properties?: string[],
-): Promise<HubSpotDeal> {
-  const params = new URLSearchParams();
+export function getDeal(dealId: string, properties?: string[]): Promise<HubSpotDeal> {
+  const query = buildQueryString({
+    properties,
+    defaultProperties: ["dealname", "amount", "dealstage", "pipeline", "closedate"],
+  });
 
-  if (properties && properties.length > 0) {
-    properties.forEach((prop) => params.append("properties", prop));
-  } else {
-    ["dealname", "amount", "dealstage", "pipeline", "closedate"].forEach(
-      (prop) => params.append("properties", prop),
-    );
-  }
-
-  const queryString = params.toString();
-  const url = `/crm/v3/objects/deals/${dealId}${queryString ? `?${queryString}` : ""}`;
-
-  return hubspotFetch<HubSpotDeal>(url);
+  return hubspotFetch<HubSpotDeal>(`/crm/v3/objects/deals/${dealId}${query}`);
 }
 
 export function createDeal(properties: {
@@ -376,10 +316,12 @@ export function updateDeal(
 // ============================================================================
 
 export function formatContactName(contact: HubSpotContact): string {
-  const parts = [];
-  if (contact.properties.firstname) parts.push(contact.properties.firstname);
-  if (contact.properties.lastname) parts.push(contact.properties.lastname);
-  return parts.length > 0 ? parts.join(" ") : contact.properties.email || "Unnamed Contact";
+  const parts = [contact.properties.firstname, contact.properties.lastname].filter(
+    (p): p is string => Boolean(p),
+  );
+
+  if (parts.length > 0) return parts.join(" ");
+  return contact.properties.email || "Unnamed Contact";
 }
 
 export function formatCompanyName(company: HubSpotCompany): string {

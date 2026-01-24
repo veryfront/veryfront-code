@@ -4,9 +4,9 @@ import type { SharpConstructor } from "./types.ts";
 
 export async function loadSharp(): Promise<SharpConstructor | null> {
   try {
-    const sharpModule = await import(SHARP_CDN_URL);
+    const { default: sharp } = await import(SHARP_CDN_URL);
     logger.info("Sharp image optimizer loaded successfully");
-    return sharpModule.default;
+    return sharp;
   } catch (error) {
     logger.warn("Sharp not available. Install with: npm install sharp", {
       error: error instanceof Error ? error.message : String(error),

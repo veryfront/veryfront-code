@@ -63,8 +63,7 @@ describe("tag-generators", () => {
 
   describe("generateLinkTags", () => {
     it("should return empty string when no links", () => {
-      const result = generateLinkTags({});
-      assertEquals(result, "");
+      assertEquals(generateLinkTags({}), "");
     });
 
     it("should generate link tags", () => {
@@ -78,7 +77,12 @@ describe("tag-generators", () => {
     it("should add crossorigin for font preloads", () => {
       const result = generateLinkTags({
         links: [
-          { rel: "preload", as: "font", href: "/font.woff2", type: "font/woff2" },
+          {
+            rel: "preload",
+            as: "font",
+            href: "/font.woff2",
+            type: "font/woff2",
+          },
         ],
       });
       assertStringIncludes(result, 'crossorigin="anonymous"');
@@ -102,7 +106,11 @@ describe("tag-generators", () => {
       const result = generateLinkTags({
         icons: [
           { href: "/favicon.ico" },
-          { href: "/apple-touch-icon.png", rel: "apple-touch-icon", sizes: "180x180" },
+          {
+            href: "/apple-touch-icon.png",
+            rel: "apple-touch-icon",
+            sizes: "180x180",
+          },
         ],
       });
       assertStringIncludes(result, 'rel="icon"');
@@ -114,8 +122,7 @@ describe("tag-generators", () => {
 
   describe("generateScriptTags", () => {
     it("should return empty string when no scripts", () => {
-      const result = generateScriptTags({});
-      assertEquals(result, "");
+      assertEquals(generateScriptTags({}), "");
     });
 
     it("should generate external script tags", () => {
@@ -143,12 +150,10 @@ describe("tag-generators", () => {
     });
 
     it("should prioritize src over content", () => {
-      // When both src and content are provided, src takes precedence
       const result = generateScriptTags({
         scripts: [{ content: "alert(1);", src: "/script.js" }],
       });
       assertStringIncludes(result, 'src="/script.js"');
-      // Content is not included when src is present
       assertEquals(result.includes("alert(1);"), false);
     });
 
@@ -162,8 +167,7 @@ describe("tag-generators", () => {
 
   describe("generateStyleTags", () => {
     it("should return empty string when no styles", () => {
-      const result = generateStyleTags({});
-      assertEquals(result, "");
+      assertEquals(generateStyleTags({}), "");
     });
 
     it("should generate external stylesheet links", () => {

@@ -1,4 +1,3 @@
-// Client and Operations
 export { type FileContext, VeryfrontAPIClient } from "./client.ts";
 export {
   type FileDetail,
@@ -6,11 +5,7 @@ export {
   type ListFilesOptions,
   VeryfrontAPIOperations,
 } from "./operations.ts";
-
-// Retry Handler
 export { type RequestOptions, requestWithRetry, type RetryConfig } from "./retry-handler.ts";
-
-// Types
 export {
   type Environment,
   type LookupDomainResponse,
@@ -20,8 +15,6 @@ export {
   type VeryfrontAPIConfig,
   VeryfrontAPIError,
 } from "./types.ts";
-
-// Schemas
 export {
   API_ENDPOINTS,
   BranchFileDetailSchema,

@@ -10,7 +10,6 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { type CallbackServer, getCallbackUrl, startCallbackServer } from "./callback-server.ts";
 import { isDeno, scaleMs } from "#veryfront/testing";
 
-// Skip these tests on non-Deno runtimes since they use Deno.serve
 describe(
   "Callback Server",
   { sanitizeOps: false, sanitizeResources: false, ignore: !isDeno },
@@ -18,21 +17,18 @@ describe(
     let server: CallbackServer | null = null;
 
     afterEach(async () => {
-      if (server) {
-        await server.stop();
-        server = null;
-      }
+      if (!server) return;
+      await server.stop();
+      server = null;
     });
 
     describe("getCallbackUrl", { sanitizeOps: false, sanitizeResources: false }, () => {
       it("should return correct callback URL format", () => {
-        const url = getCallbackUrl(9876);
-        assertEquals(url, "http://localhost:9876/callback");
+        assertEquals(getCallbackUrl(9876), "http://localhost:9876/callback");
       });
 
       it("should use the provided port", () => {
-        const url = getCallbackUrl(12345);
-        assertEquals(url, "http://localhost:12345/callback");
+        assertEquals(getCallbackUrl(12345), "http://localhost:12345/callback");
       });
     });
 
@@ -45,15 +41,12 @@ describe(
       });
 
       it("should find alternative port if preferred is taken", async () => {
-        // Start first server
         const server1 = await startCallbackServer(9876);
         server = server1;
 
-        // Start second server - should get different port
         const server2 = await startCallbackServer(9876);
         assertExists(server2);
 
-        // Both should be running on different ports
         assertEquals(server1.port !== server2.port || server1.port === 9876, true);
 
         await server2.stop();
@@ -73,17 +66,19 @@ describe(
     });
 
     describe("callback handling", { sanitizeOps: false, sanitizeResources: false }, () => {
+      async function fetchAndCancel(url: string): Promise<void> {
+        const resp = await fetch(url);
+        await resp.body?.cancel();
+      }
+
       it("should receive token from callback", async () => {
         server = await startCallbackServer(9876);
         const callbackUrl = getCallbackUrl(server.port);
 
-        // Simulate OAuth callback with token
         const callbackPromise = server.waitForCallback(scaleMs(5000));
 
-        // Make request to callback endpoint
-        setTimeout(async () => {
-          const resp = await fetch(`${callbackUrl}?token=test-oauth-token`);
-          await resp.body?.cancel(); // Consume response to prevent leak
+        setTimeout(() => {
+          void fetchAndCancel(`${callbackUrl}?token=test-oauth-token`);
         }, scaleMs(100));
 
         const result = await callbackPromise;
@@ -97,9 +92,8 @@ describe(
 
         const callbackPromise = server.waitForCallback(scaleMs(5000));
 
-        setTimeout(async () => {
-          const resp = await fetch(`${callbackUrl}?error=access_denied`);
-          await resp.body?.cancel(); // Consume response to prevent leak
+        setTimeout(() => {
+          void fetchAndCancel(`${callbackUrl}?error=access_denied`);
         }, scaleMs(100));
 
         const result = await callbackPromise;
@@ -113,9 +107,8 @@ describe(
 
         const callbackPromise = server.waitForCallback(scaleMs(5000));
 
-        setTimeout(async () => {
-          const resp = await fetch(callbackUrl);
-          await resp.body?.cancel(); // Consume response to prevent leak
+        setTimeout(() => {
+          void fetchAndCancel(callbackUrl);
         }, scaleMs(100));
 
         const result = await callbackPromise;
@@ -127,7 +120,7 @@ describe(
         server = await startCallbackServer(9876);
         const response = await fetch(`http://localhost:${server.port}/other-path`);
         assertEquals(response.status, 404);
-        await response.body?.cancel(); // Consume response to prevent leak
+        await response.body?.cancel();
       });
     });
   },

@@ -1,7 +1,7 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { remarkAddNodeId } from "./remark-node-id.ts";
-import type { Heading, Paragraph, Root } from "mdast";
+import type { Paragraph, Root } from "mdast";
 
 function createParagraph(text: string): Paragraph {
   return {
@@ -10,19 +10,24 @@ function createParagraph(text: string): Paragraph {
   };
 }
 
-function _createHeading(text: string): Heading {
-  return {
-    type: "heading",
-    depth: 1,
-    children: [{ type: "text", value: text }],
-  };
-}
-
-function createTree(...nodes: any[]): Root {
+function createTree(...nodes: Root["children"]): Root {
   return {
     type: "root",
     children: nodes,
   };
+}
+
+function runPlugin(tree: Root, file: any, options?: Parameters<typeof remarkAddNodeId>[0]): void {
+  const plugin = remarkAddNodeId(options as any);
+  plugin(tree, file);
+}
+
+function getNodeId(node: any): unknown {
+  return node?.data?.hProperties?.["data-node-id"];
+}
+
+function getHProperties(node: any): any {
+  return node?.data?.hProperties;
 }
 
 describe("remark-node-id", () => {
@@ -34,16 +39,11 @@ describe("remark-node-id", () => {
     );
     const file = { data: {} };
 
-    const plugin = remarkAddNodeId();
-    plugin(tree, file);
+    runPlugin(tree, file);
 
-    const para1 = tree.children[0] as any;
-    const para2 = tree.children[1] as any;
-    const para3 = tree.children[2] as any;
-
-    assertExists(para1.data?.hProperties?.["data-node-id"]);
-    assertExists(para2.data?.hProperties?.["data-node-id"]);
-    assertExists(para3.data?.hProperties?.["data-node-id"]);
+    for (const node of tree.children as any[]) {
+      assertExists(getNodeId(node));
+    }
   });
 
   it("generates unique IDs", () => {
@@ -54,10 +54,9 @@ describe("remark-node-id", () => {
     );
     const file = { data: {} };
 
-    const plugin = remarkAddNodeId();
-    plugin(tree, file);
+    runPlugin(tree, file);
 
-    const ids = tree.children.map((n: any) => n.data?.hProperties?.["data-node-id"]);
+    const ids = (tree.children as any[]).map(getNodeId);
     const uniqueIds = new Set(ids);
 
     assertEquals(ids.length, uniqueIds.size);
@@ -67,10 +66,9 @@ describe("remark-node-id", () => {
     const tree = createTree(createParagraph("Test"));
     const file = { data: {} };
 
-    const plugin = remarkAddNodeId({ prefix: "custom" });
-    plugin(tree, file);
+    runPlugin(tree, file, { prefix: "custom" });
 
-    const nodeId = (tree.children[0] as any).data?.hProperties?.["data-node-id"];
+    const nodeId = getNodeId(tree.children[0] as any) as string;
     assertEquals(nodeId.startsWith("custom-"), true);
   });
 
@@ -83,10 +81,9 @@ describe("remark-node-id", () => {
     const tree = createTree(para);
     const file = { data: {} };
 
-    const plugin = remarkAddNodeId();
-    plugin(tree, file);
+    runPlugin(tree, file);
 
-    const props = (tree.children[0] as any).data?.hProperties;
+    const props = getHProperties(tree.children[0] as any);
     assertExists(props?.["data-node-start"]);
     assertExists(props?.["data-node-end"]);
     assertExists(props?.["data-node-line"]);
@@ -101,10 +98,9 @@ describe("remark-node-id", () => {
     const tree = createTree(para);
     const file = { data: {} };
 
-    const plugin = remarkAddNodeId({ includePosition: false });
-    plugin(tree, file);
+    runPlugin(tree, file, { includePosition: false });
 
-    const props = (tree.children[0] as any).data?.hProperties;
+    const props = getHProperties(tree.children[0] as any);
     assertEquals(props?.["data-node-start"], undefined);
     assertEquals(props?.["data-node-end"], undefined);
     assertEquals(props?.["data-node-line"], undefined);
@@ -114,11 +110,10 @@ describe("remark-node-id", () => {
     const tree = createTree(createParagraph("Test"));
     const file = { data: {} };
 
-    const plugin = remarkAddNodeId();
-    plugin(tree, file);
+    runPlugin(tree, file);
 
-    assertExists((file.data as any).nodeMap);
-    assertEquals((file.data as any).nodeMap instanceof Map, true);
+    assertExists(file.data.nodeMap);
+    assertEquals(file.data.nodeMap instanceof Map, true);
   });
 
   it("stores node count in file data", () => {
@@ -128,12 +123,11 @@ describe("remark-node-id", () => {
     );
     const file = { data: {} };
 
-    const plugin = remarkAddNodeId();
-    plugin(tree, file);
+    runPlugin(tree, file);
 
-    assertExists((file.data as any).nodeCount);
-    assertEquals(typeof (file.data as any).nodeCount, "number");
-    assertEquals((file.data as any).nodeCount > 0, true);
+    assertExists(file.data.nodeCount);
+    assertEquals(typeof file.data.nodeCount, "number");
+    assertEquals(file.data.nodeCount > 0, true);
   });
 
   it("skips yaml nodes", () => {
@@ -141,14 +135,13 @@ describe("remark-node-id", () => {
       type: "yaml",
       value: "title: test",
     };
-    const tree = createTree(yamlNode, createParagraph("Test"));
+    const tree = createTree(yamlNode as any, createParagraph("Test"));
     const file = { data: {} };
 
-    const plugin = remarkAddNodeId();
-    plugin(tree, file);
+    runPlugin(tree, file);
 
-    assertEquals((tree.children[0] as any).data?.hProperties?.["data-node-id"], undefined);
-    assertExists((tree.children[1] as any).data?.hProperties?.["data-node-id"]);
+    assertEquals(getNodeId(tree.children[0] as any), undefined);
+    assertExists(getNodeId(tree.children[1] as any));
   });
 
   it("skips toml nodes", () => {
@@ -156,14 +149,13 @@ describe("remark-node-id", () => {
       type: "toml",
       value: 'title = "test"',
     };
-    const tree = createTree(tomlNode, createParagraph("Test"));
+    const tree = createTree(tomlNode as any, createParagraph("Test"));
     const file = { data: {} };
 
-    const plugin = remarkAddNodeId();
-    plugin(tree, file);
+    runPlugin(tree, file);
 
-    assertEquals((tree.children[0] as any).data?.hProperties?.["data-node-id"], undefined);
-    assertExists((tree.children[1] as any).data?.hProperties?.["data-node-id"]);
+    assertEquals(getNodeId(tree.children[0] as any), undefined);
+    assertExists(getNodeId(tree.children[1] as any));
   });
 
   it("skips mdxjsEsm nodes", () => {
@@ -171,14 +163,13 @@ describe("remark-node-id", () => {
       type: "mdxjsEsm",
       value: "export const x = 1",
     };
-    const tree = createTree(mdxNode, createParagraph("Test"));
+    const tree = createTree(mdxNode as any, createParagraph("Test"));
     const file = { data: {} };
 
-    const plugin = remarkAddNodeId();
-    plugin(tree, file);
+    runPlugin(tree, file);
 
-    assertEquals((tree.children[0] as any).data?.hProperties?.["data-node-id"], undefined);
-    assertExists((tree.children[1] as any).data?.hProperties?.["data-node-id"]);
+    assertEquals(getNodeId(tree.children[0] as any), undefined);
+    assertExists(getNodeId(tree.children[1] as any));
   });
 
   it("skips mdxjsFlow nodes", () => {
@@ -186,25 +177,22 @@ describe("remark-node-id", () => {
       type: "mdxjsFlow",
       value: "const x = 1",
     };
-    const tree = createTree(mdxFlow, createParagraph("Test"));
+    const tree = createTree(mdxFlow as any, createParagraph("Test"));
     const file = { data: {} };
 
-    const plugin = remarkAddNodeId();
-    plugin(tree, file);
+    runPlugin(tree, file);
 
-    assertEquals((tree.children[0] as any).data?.hProperties?.["data-node-id"], undefined);
-    assertExists((tree.children[1] as any).data?.hProperties?.["data-node-id"]);
+    assertEquals(getNodeId(tree.children[0] as any), undefined);
+    assertExists(getNodeId(tree.children[1] as any));
   });
 
   it("handles nodes without position", () => {
-    const para = createParagraph("Test");
-    const tree = createTree(para);
+    const tree = createTree(createParagraph("Test"));
     const file = { data: {} };
 
-    const plugin = remarkAddNodeId();
-    plugin(tree, file);
+    runPlugin(tree, file);
 
-    const props = (tree.children[0] as any).data?.hProperties;
+    const props = getHProperties(tree.children[0] as any);
     assertExists(props?.["data-node-id"]);
     assertEquals(props?.["data-node-start"], undefined);
   });
@@ -218,10 +206,9 @@ describe("remark-node-id", () => {
     const tree = createTree(para);
     const file = { data: {} };
 
-    const plugin = remarkAddNodeId();
-    plugin(tree, file);
+    runPlugin(tree, file);
 
-    const props = (tree.children[0] as any).data?.hProperties;
+    const props = getHProperties(tree.children[0] as any);
     assertEquals(props?.["data-node-start"], 100);
     assertEquals(props?.["data-node-end"], 109);
     assertEquals(props?.["data-node-line"], 5);
@@ -229,16 +216,15 @@ describe("remark-node-id", () => {
 
   it("preserves existing data properties", () => {
     const para = createParagraph("Test");
-    // deno-lint-ignore no-explicit-any
     (para as any).data = { customProp: "value" };
     const tree = createTree(para);
     const file = { data: {} };
 
-    const plugin = remarkAddNodeId();
-    plugin(tree, file);
+    runPlugin(tree, file);
 
-    assertEquals((tree.children[0] as any).data.customProp, "value");
-    assertExists((tree.children[0] as any).data.hProperties?.["data-node-id"]);
+    const node = tree.children[0] as any;
+    assertEquals(node.data.customProp, "value");
+    assertExists(node.data.hProperties?.["data-node-id"]);
   });
 
   it("preserves existing hProperties", () => {
@@ -249,11 +235,11 @@ describe("remark-node-id", () => {
     const tree = createTree(para);
     const file = { data: {} };
 
-    const plugin = remarkAddNodeId();
-    plugin(tree, file);
+    runPlugin(tree, file);
 
-    assertEquals((tree.children[0] as any).data.hProperties.className, "existing");
-    assertExists((tree.children[0] as any).data.hProperties["data-node-id"]);
+    const node = tree.children[0] as any;
+    assertEquals(node.data.hProperties.className, "existing");
+    assertExists(node.data.hProperties["data-node-id"]);
   });
 
   it("handles empty tree", () => {
@@ -263,33 +249,30 @@ describe("remark-node-id", () => {
     };
     const file = { data: {} };
 
-    const plugin = remarkAddNodeId();
-    plugin(tree, file);
+    runPlugin(tree, file);
 
-    assertEquals((file.data as any).nodeCount, 1);
-    assertEquals((file.data as any).nodeMap.size, 1);
+    assertEquals(file.data.nodeCount, 1);
+    assertEquals(file.data.nodeMap.size, 1);
   });
 
   it("initializes file data if missing", () => {
     const tree = createTree(createParagraph("Test"));
-    const file = {} as any;
+    const file: any = {};
 
-    const plugin = remarkAddNodeId();
-    plugin(tree as Root, file);
+    runPlugin(tree, file);
 
-    assertExists((file as any).data);
-    assertExists(((file as any).data as any).nodeMap);
-    assertExists(((file as any).data as any).nodeCount);
+    assertExists(file.data);
+    assertExists(file.data.nodeMap);
+    assertExists(file.data.nodeCount);
   });
 
   it("stores node type in map", () => {
     const tree = createTree(createParagraph("Test"));
     const file = { data: {} };
 
-    const plugin = remarkAddNodeId();
-    plugin(tree, file);
+    runPlugin(tree, file);
 
-    const nodeInfo: any = Array.from((file.data as any).nodeMap.values())[1];
+    const nodeInfo: any = Array.from(file.data.nodeMap.values())[1];
     assertEquals(nodeInfo.type, "paragraph");
   });
 
@@ -299,13 +282,12 @@ describe("remark-node-id", () => {
       lang: "js",
       value: 'console.log("test")',
     };
-    const tree = createTree(codeNode);
+    const tree = createTree(codeNode as any);
     const file = { data: {} };
 
-    const plugin = remarkAddNodeId();
-    plugin(tree, file);
+    runPlugin(tree, file);
 
-    const nodeInfo: any = Array.from((file.data as any).nodeMap.values())[1];
+    const nodeInfo: any = Array.from(file.data.nodeMap.values())[1];
     assertEquals(nodeInfo.value, 'console.log("test")');
   });
 });

@@ -4,11 +4,11 @@
  * Reusable handler for OAuth callback routes.
  */
 
-import { type EnvReader, OAuthService } from "../providers/base.ts";
-import type { OAuthServiceConfig, TokenStore } from "../types.ts";
-import { memoryTokenStore } from "../token-store/memory.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { type EnvReader, OAuthService } from "../providers/base.ts";
+import { memoryTokenStore } from "../token-store/memory.ts";
+import type { OAuthServiceConfig, TokenStore } from "../types.ts";
 
 export interface OAuthCallbackHandlerOptions {
   /** Token store to use (defaults to memory store) */
@@ -63,24 +63,19 @@ export function createOAuthCallbackHandler(
     envReader = getEnv,
   } = options;
 
-  return async (request: Request): Promise<Response> => {
+  return async function handler(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const code = url.searchParams.get("code");
     const state = url.searchParams.get("state");
-    const error = url.searchParams.get("error");
+    const oauthError = url.searchParams.get("error");
     const errorDescription = url.searchParams.get("error_description");
 
-    const appUrl = baseUrl || env.appUrl || "http://localhost:3000";
+    const appUrl = baseUrl ?? env.appUrl ?? "http://localhost:3000";
 
-    function redirectWithError(
-      errorCode: string,
-      description?: string | null,
-    ): Response {
+    function redirectWithError(errorCode: string, description?: string | null): Response {
       const errorUrl = new URL(errorRedirect, appUrl);
       errorUrl.searchParams.set("error", errorCode);
-      if (description) {
-        errorUrl.searchParams.set("error_description", description);
-      }
+      if (description) errorUrl.searchParams.set("error_description", description);
       return Response.redirect(errorUrl.toString());
     }
 
@@ -89,27 +84,24 @@ export function createOAuthCallbackHandler(
       logMessage?: string,
       logData?: unknown,
     ): Promise<Response> {
-      if (logMessage) {
-        console.error(logMessage, logData);
-      }
+      if (logMessage) console.error(logMessage, logData);
       await onError?.(config.serviceId, errorCode);
       return redirectWithError(errorCode);
     }
 
-    // Handle OAuth errors
-    if (error) {
-      console.error(`OAuth error for ${config.serviceId}:`, error, errorDescription);
-      await onError?.(config.serviceId, error);
-      return redirectWithError(error, errorDescription);
+    if (oauthError) {
+      console.error(
+        `OAuth error for ${config.serviceId}:`,
+        oauthError,
+        errorDescription,
+      );
+      await onError?.(config.serviceId, oauthError);
+      return redirectWithError(oauthError, errorDescription);
     }
 
-    // Validate code
-    if (!code) {
-      return handleError("no_code");
-    }
+    if (!code) return handleError("no_code");
 
-    // Validate and retrieve state
-    let oauthState = null;
+    let oauthState: Awaited<ReturnType<TokenStore["getState"]>> | null = null;
     if (state) {
       oauthState = await tokenStore.getState(state);
       if (!oauthState) {
@@ -130,24 +122,18 @@ export function createOAuthCallbackHandler(
 
       if (!result.success || !result.tokens) {
         return handleError(
-          result.error || "token_exchange_failed",
+          result.error ?? "token_exchange_failed",
           `Token exchange failed for ${config.serviceId}:`,
           result.error,
         );
       }
 
-      // Store tokens
       await tokenStore.setTokens(config.serviceId, result.tokens);
 
-      // Clear state
-      if (state) {
-        await tokenStore.clearState(state);
-      }
+      if (state) await tokenStore.clearState(state);
 
-      // Call success callback
       await onSuccess?.(config.serviceId, result.tokens);
 
-      // Redirect to success URL
       const successUrl = new URL(successRedirect, appUrl);
       successUrl.searchParams.set("connected", config.serviceId);
       return Response.redirect(successUrl.toString());

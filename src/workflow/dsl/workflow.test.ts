@@ -25,9 +25,7 @@ describe("workflow()", () => {
   it("should create a workflow with dynamic steps", () => {
     const wf = workflow<{ topic: string }>({
       id: "dynamic-workflow",
-      steps: ({ input }) => [
-        step("research", { agent: "researcher", input: input.topic }),
-      ],
+      steps: ({ input }) => [step("research", { agent: "researcher", input: input.topic })],
     });
 
     assertEquals(wf.id, "dynamic-workflow");
@@ -79,16 +77,16 @@ describe("sequence()", () => {
     );
 
     assertEquals(nodes.length, 3);
-    assertEquals(nodes[0]!.dependsOn, undefined);
-    assertEquals(nodes[1]!.dependsOn, ["step1"]);
-    assertEquals(nodes[2]!.dependsOn, ["step2"]);
+    assertEquals(nodes[0]?.dependsOn, undefined);
+    assertEquals(nodes[1]?.dependsOn, ["step1"]);
+    assertEquals(nodes[2]?.dependsOn, ["step2"]);
   });
 
   it("should handle single node", () => {
     const nodes = sequence(step("only", { agent: "agent" }));
 
     assertEquals(nodes.length, 1);
-    assertEquals(nodes[0]!.dependsOn, undefined);
+    assertEquals(nodes[0]?.dependsOn, undefined);
   });
 
   it("should handle empty array", () => {
@@ -105,8 +103,8 @@ describe("dag()", () => {
     });
 
     assertEquals(nodes.length, 2);
-    assertEquals(nodes[0]!.id, "fetch");
-    assertEquals(nodes[1]!.id, "process");
+    assertEquals(nodes[0]?.id, "fetch");
+    assertEquals(nodes[1]?.id, "process");
   });
 
   it("should handle nodes with explicit dependencies", () => {
@@ -119,16 +117,13 @@ describe("dag()", () => {
     });
 
     assertEquals(nodes.length, 2);
-    assertEquals(nodes[1]!.dependsOn, ["fetch"]);
+    assertEquals(nodes[1]?.dependsOn, ["fetch"]);
   });
 });
 
 describe("dependsOn()", () => {
   it("should add single dependency", () => {
-    const node = dependsOn(
-      step("process", { agent: "processor" }),
-      "fetch",
-    );
+    const node = dependsOn(step("process", { agent: "processor" }), "fetch");
 
     assertEquals(node.dependsOn, ["fetch"]);
   });

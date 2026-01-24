@@ -14,9 +14,7 @@ function toAbsPath(spec: string, basedir: string): string {
     if (spec.startsWith("/")) return pathResolve(spec);
     if (spec.startsWith("http://") || spec.startsWith("https://")) return spec;
 
-    if (!spec.startsWith(".") && !spec.startsWith("/")) {
-      return spec; // Return unchanged - it's a bare specifier
-    }
+    if (!spec.startsWith(".") && !spec.startsWith("/")) return spec;
 
     return pathResolve(join(basedir, spec));
   } catch {
@@ -26,6 +24,7 @@ function toAbsPath(spec: string, basedir: string): string {
 
 function toBrowserFs(abs: string, baseUrl?: string): string {
   if (abs.startsWith("http://") || abs.startsWith("https://")) return abs;
+
   const b64 = btoa(abs).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
   const path = `/_veryfront/fs/${b64}.js`;
   return baseUrl ? `${baseUrl}${path}` : path;
@@ -36,36 +35,26 @@ function mapSpec(
   basedir: string,
   target: CompilationTarget,
   baseUrl?: string,
-  _projectDir?: string,
 ): string {
   // Handle @/ project-relative aliases
   // @/ maps to components/ directory in veryfront projects
   if (spec.startsWith("@/")) {
-    const relativePath = spec.slice(2); // Remove @/ prefix
-    if (target === "browser") {
-      // For browser, use module server endpoint
-      const path = `/_vf_modules/${relativePath}.js`;
-      return baseUrl ? `${baseUrl}${path}` : path;
-    } else {
-      // For server (SSR), leave @/ imports as-is
-      // The SSRModuleLoader's transformProjectAliasImports will handle these,
-      // properly resolving file extensions and transforming dependencies
-      return spec;
-    }
+    const relativePath = spec.slice(2);
+    if (target !== "browser") return spec;
+
+    const path = `/_vf_modules/${relativePath}.js`;
+    return baseUrl ? `${baseUrl}${path}` : path;
   }
 
   const abs = toAbsPath(spec, basedir);
-  if (typeof abs !== "string") return spec;
 
-  if (
-    abs === spec &&
+  const isBare = abs === spec &&
     !spec.startsWith(".") &&
     !spec.startsWith("/") &&
     !spec.startsWith("file://") &&
-    !spec.startsWith("http")
-  ) {
-    return spec; // Bare specifier - leave for import map resolution
-  }
+    !spec.startsWith("http");
+
+  if (isBare) return spec;
 
   if (target === "browser") return toBrowserFs(abs, baseUrl);
   return abs.startsWith("http") ? abs : `file://${abs}`;
@@ -76,26 +65,22 @@ function rewriteLine(
   basedir: string,
   target: CompilationTarget,
   baseUrl?: string,
-  projectDir?: string,
 ): string {
-  const mapper = (spec: string) => mapSpec(spec, basedir, target, baseUrl, projectDir);
+  const mapper = (spec: string) => mapSpec(spec, basedir, target, baseUrl);
 
-  line = line.replace(
-    /^(\s*import\s+[^'";]+?from\s+)(["'])([^"']+)(\2)/,
-    (_m, p1, q, s, q2) => `${p1}${q}${mapper(s)}${q2}`,
-  );
-
-  line = line.replace(
-    /^(\s*import\s+)(["'])([^"']+)(\2)/,
-    (_m, p1, q, s, q2) => `${p1}${q}${mapper(s)}${q2}`,
-  );
-
-  line = line.replace(
-    /^(\s*export\s+[^'";]+?from\s+)(["'])([^"']+)(\2)/,
-    (_m, p1, q, s, q2) => `${p1}${q}${mapper(s)}${q2}`,
-  );
-
-  return line;
+  return line
+    .replace(
+      /^(\s*import\s+[^'";]+?from\s+)(["'])([^"']+)(\2)/,
+      (_m, p1, q, s, q2) => `${p1}${q}${mapper(s)}${q2}`,
+    )
+    .replace(
+      /^(\s*import\s+)(["'])([^"']+)(\2)/,
+      (_m, p1, q, s, q2) => `${p1}${q}${mapper(s)}${q2}`,
+    )
+    .replace(
+      /^(\s*export\s+[^'";]+?from\s+)(["'])([^"']+)(\2)/,
+      (_m, p1, q, s, q2) => `${p1}${q}${mapper(s)}${q2}`,
+    );
 }
 
 export function rewriteBodyImports(body: string, config: ImportRewriterConfig): string {
@@ -103,53 +88,47 @@ export function rewriteBodyImports(body: string, config: ImportRewriterConfig): 
 
   return body
     .split(/\r?\n/)
-    .map((ln) => {
-      const trimmed = ln.trimStart();
-      if (trimmed.startsWith("import") || trimmed.startsWith("export")) {
-        return rewriteLine(ln, basedir, config.target, config.baseUrl, config.projectDir);
-      }
-      return ln;
+    .map((line) => {
+      const trimmed = line.trimStart();
+      if (!trimmed.startsWith("import") && !trimmed.startsWith("export")) return line;
+      return rewriteLine(line, basedir, config.target, config.baseUrl);
     })
     .join("\n");
 }
 
 export function rewriteCompiledImports(compiledCode: string, config: ImportRewriterConfig): string {
   const basedir = dirname(config.filePath);
-  const mapper = (spec: string) =>
-    mapSpec(spec, basedir, config.target, config.baseUrl, config.projectDir);
+  const mapper = (spec: string) => mapSpec(spec, basedir, config.target, config.baseUrl);
+
+  const _replaceFrom = (pattern: RegExp): string =>
+    compiledCode.replace(pattern, (_m, p1, p2, p3) => `${p1}${mapper(p2)}${p3}`);
 
   let code = compiledCode;
 
-  // Handle @/ aliased imports
   code = code.replace(
     /(from\s+["'])(@\/[^"']+)(["'])/g,
     (_m, p1, p2, p3) => `${p1}${mapper(p2)}${p3}`,
   );
-
   code = code.replace(
     /(import\(\s*["'])(@\/[^"']+)(["']\s*\))/g,
     (_m, p1, p2, p3) => `${p1}${mapper(p2)}${p3}`,
   );
 
-  code = code.replace(
+  const fromPatterns = [
     /(from\s+["'])(\.{1,2}\/[^"']+)(["'])/g,
-    (_m, p1, p2, p3) => `${p1}${mapper(p2)}${p3}`,
-  );
-
-  code = code.replace(
     /(from\s+["'])(file:\/\/[^"']+)(["'])/g,
-    (_m, p1, p2, p3) => `${p1}${mapper(p2)}${p3}`,
-  );
+  ];
+  for (const pattern of fromPatterns) {
+    code = code.replace(pattern, (_m, p1, p2, p3) => `${p1}${mapper(p2)}${p3}`);
+  }
 
-  code = code.replace(
+  const importPatterns = [
     /(import\(\s*["'])(\.{1,2}\/[^"']+)(["']\s*\))/g,
-    (_m, p1, p2, p3) => `${p1}${mapper(p2)}${p3}`,
-  );
-
-  code = code.replace(
     /(import\(\s*["'])(file:\/\/[^"']+)(["']\s*\))/g,
-    (_m, p1, p2, p3) => `${p1}${mapper(p2)}${p3}`,
-  );
+  ];
+  for (const pattern of importPatterns) {
+    code = code.replace(pattern, (_m, p1, p2, p3) => `${p1}${mapper(p2)}${p3}`);
+  }
 
   code = code.replace(/file:\/\/[A-Za-z0-9_\-./%]+/g, (match) => mapper(match));
 

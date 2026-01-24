@@ -1,6 +1,8 @@
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 export function validateHTTPImports(source: string, allowedHosts: string[]): void {
+  if (!allowedHosts?.length) return;
+
   const importRegex = /import\s+(?:[\w\s{},*]+\s+from\s+)?['"]https?:\/\/[^'"]+['"]/g;
   const dynamicImportRegex = /import\s*\(['"]https?:\/\/[^'"]+['"]\)/g;
 
@@ -13,23 +15,22 @@ export function validateHTTPImports(source: string, allowedHosts: string[]): voi
     const urlMatch = match[0].match(/https?:\/\/[^'"]+/);
     if (!urlMatch) continue;
 
-    const fullUrl = urlMatch[0];
     try {
-      const u = new URL(fullUrl);
+      const u = new URL(urlMatch[0]);
       const hostUrl = `${u.protocol}//${u.host}`;
 
-      if (allowedHosts?.length) {
-        const isAllowed = allowedHosts.some((h) => hostUrl.startsWith(h));
-        if (!isAllowed) {
-          const remediation =
-            `Add "${hostUrl}" to security.remoteHosts in veryfront.config.(ts|js) or replace with an approved CDN (e.g., https://esm.sh).`;
-          throw toError(createError({
-            type: "api",
-            message:
-              `[API] handler build failed: Remote import blocked by allow-list: ${hostUrl}. ${remediation}`,
-          }));
-        }
-      }
+      const isAllowed = allowedHosts.some((h) => hostUrl.startsWith(h));
+      if (isAllowed) continue;
+
+      const remediation =
+        `Add "${hostUrl}" to security.remoteHosts in veryfront.config.(ts|js) or replace with an approved CDN (e.g., https://esm.sh).`;
+      throw toError(
+        createError({
+          type: "api",
+          message:
+            `[API] handler build failed: Remote import blocked by allow-list: ${hostUrl}. ${remediation}`,
+        }),
+      );
     } catch (e) {
       if (e instanceof Error && e.message.includes("Remote import blocked")) {
         throw e;

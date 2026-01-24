@@ -10,10 +10,8 @@ export default tool({
     name: z.string().describe("The name of the folder to create"),
   }),
   async execute({ parentFolderId, name }) {
-    const folder = await createFolder({
-      parentFolderId,
-      name,
-    });
+    const folder = await createFolder({ parentFolderId, name });
+    const path = folder.path_collection?.entries.map((e) => e.name).join("/") ?? "/";
 
     return {
       success: true,
@@ -21,7 +19,7 @@ export default tool({
         id: folder.id,
         name: folder.name,
         createdAt: folder.created_at,
-        path: folder.path_collection?.entries.map((e) => e.name).join("/") || "/",
+        path,
       },
     };
   },

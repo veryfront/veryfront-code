@@ -22,27 +22,28 @@ interface Plugin {
   description: string;
 }
 
-export function ServerTab() {
+interface BuildInfo {
+  transformStages: TransformStage[];
+  remarkPlugins: Plugin[];
+  rehypePlugins: Plugin[];
+}
+
+export function ServerTab(): React.ReactElement {
   const [subTab, setSubTab] = useState<SubTab>("handlers");
   const [handlers, setHandlers] = useState<Handler[]>([]);
-  const [build, setBuild] = useState<
-    {
-      transformStages: TransformStage[];
-      remarkPlugins: Plugin[];
-      rehypePlugins: Plugin[];
-    } | null
-  >(null);
-  const [loading, setLoading] = useState(true);
+  const [build, setBuild] = useState<BuildInfo | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
+
     Promise.all([
       fetch("/_dev/api/handlers").then((r) => r.json()),
       fetch("/_dev/api/build").then((r) => r.json()),
     ])
       .then(([h, b]) => {
-        setHandlers(h.handlers || []);
+        setHandlers(h.handlers ?? []);
         setBuild(b);
         setError(null);
       })
@@ -81,12 +82,12 @@ export function ServerTab() {
         <TabButton
           active={subTab === "build"}
           onClick={() => setSubTab("build")}
-          label={`Build (${build?.transformStages.length || 0} stages)`}
+          label={`Build (${build?.transformStages.length ?? 0} stages)`}
         />
       </div>
 
-      {subTab === "handlers" && <HandlersSection handlers={handlers} />}
-      {subTab === "build" && build && <BuildSection build={build} />}
+      {subTab === "handlers" ? <HandlersSection handlers={handlers} /> : null}
+      {subTab === "build" && build ? <BuildSection build={build} /> : null}
     </PageLayout>
   );
 }
@@ -99,23 +100,19 @@ function TabButton({
   active: boolean;
   onClick: () => void;
   label: string;
-}) {
+}): React.ReactElement {
+  const className = active
+    ? "px-3 py-1.5 text-sm font-medium rounded-t transition-colors bg-white text-sky-600 border border-gray-200 border-b-white -mb-[1px]"
+    : "px-3 py-1.5 text-sm font-medium rounded-t transition-colors text-gray-500 hover:text-gray-700";
+
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`px-3 py-1.5 text-sm font-medium rounded-t transition-colors ${
-        active
-          ? "bg-white text-sky-600 border border-gray-200 border-b-white -mb-[1px]"
-          : "text-gray-500 hover:text-gray-700"
-      }`}
-    >
+    <button type="button" onClick={onClick} className={className}>
       {label}
     </button>
   );
 }
 
-function HandlersSection({ handlers }: { handlers: Handler[] }) {
+function HandlersSection({ handlers }: { handlers: Handler[] }): React.ReactElement {
   return (
     <Card title="REQUEST HANDLER CHAIN">
       <table className="w-full text-sm">
@@ -133,32 +130,30 @@ function HandlersSection({ handlers }: { handlers: Handler[] }) {
           </tr>
         </thead>
         <tbody>
-          {handlers.map((h, i) => (
-            <tr key={i} className="border-b last:border-0">
-              <td className="px-3 py-2">
-                <span className="px-1.5 py-0.5 bg-gray-100 text-gray-600 text-[10px] font-mono rounded">
-                  {h.priority}
-                </span>
-              </td>
-              <td className="px-3 py-2">
-                <code className="text-xs text-sky-600 font-medium">{h.name}</code>
-              </td>
-              <td className="px-3 py-2 text-gray-500 text-xs truncate max-w-xs">
-                {h.patterns.map((p) => p.pattern).join(", ") || "*"}
-              </td>
-            </tr>
-          ))}
+          {handlers.map((h, i) => {
+            const patterns = h.patterns.map((p) => p.pattern).join(", ") || "*";
+
+            return (
+              <tr key={i} className="border-b last:border-0">
+                <td className="px-3 py-2">
+                  <span className="px-1.5 py-0.5 bg-gray-100 text-gray-600 text-[10px] font-mono rounded">
+                    {h.priority}
+                  </span>
+                </td>
+                <td className="px-3 py-2">
+                  <code className="text-xs text-sky-600 font-medium">{h.name}</code>
+                </td>
+                <td className="px-3 py-2 text-gray-500 text-xs truncate max-w-xs">{patterns}</td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </Card>
   );
 }
 
-function BuildSection({
-  build,
-}: {
-  build: { transformStages: TransformStage[]; remarkPlugins: Plugin[]; rehypePlugins: Plugin[] };
-}) {
+function BuildSection({ build }: { build: BuildInfo }): React.ReactElement {
   return (
     <>
       <Card title="TRANSFORM PIPELINE" className="mb-4">
@@ -201,6 +196,7 @@ function BuildSection({
             ))}
           </div>
         </Card>
+
         <Card title={`REHYPE (${build.rehypePlugins.length})`}>
           <div className="divide-y">
             {build.rehypePlugins.map((p) => (

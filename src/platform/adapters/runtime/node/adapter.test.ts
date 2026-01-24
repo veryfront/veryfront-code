@@ -16,43 +16,47 @@ describe("NodeAdapter", () => {
   });
 
   describe("instance", () => {
+    function createAdapter(): NodeAdapter {
+      return new NodeAdapter();
+    }
+
     it("should be instantiable", () => {
-      const adapter = new NodeAdapter();
+      const adapter = createAdapter();
       assertExists(adapter);
     });
 
     it("should have id property", () => {
-      const adapter = new NodeAdapter();
+      const adapter = createAdapter();
       assertEquals(adapter.id, "node");
     });
 
     it("should have name property", () => {
-      const adapter = new NodeAdapter();
+      const adapter = createAdapter();
       assertEquals(adapter.name, "node");
     });
 
     it("should have fs adapter", () => {
-      const adapter = new NodeAdapter();
+      const adapter = createAdapter();
       assertExists(adapter.fs);
     });
 
     it("should have env adapter", () => {
-      const adapter = new NodeAdapter();
+      const adapter = createAdapter();
       assertExists(adapter.env);
     });
 
     it("should have server adapter", () => {
-      const adapter = new NodeAdapter();
+      const adapter = createAdapter();
       assertExists(adapter.server);
     });
 
     it("should have shell adapter", () => {
-      const adapter = new NodeAdapter();
+      const adapter = createAdapter();
       assertExists(adapter.shell);
     });
 
     it("should have capabilities", () => {
-      const adapter = new NodeAdapter();
+      const adapter = createAdapter();
       assertExists(adapter.capabilities);
       assertEquals(adapter.capabilities.typescript, false);
       assertEquals(adapter.capabilities.jsx, false);
@@ -65,13 +69,13 @@ describe("NodeAdapter", () => {
     });
 
     it("should have serve method", () => {
-      const adapter = new NodeAdapter();
+      const adapter = createAdapter();
       assertExists(adapter.serve);
       assertEquals(typeof adapter.serve, "function");
     });
 
     it("should have shutdown method", () => {
-      const adapter = new NodeAdapter();
+      const adapter = createAdapter();
       assertExists(adapter.shutdown);
       assertEquals(typeof adapter.shutdown, "function");
     });

@@ -1,4 +1,4 @@
-/**
+/****
  * Agent Memory System
  *
  * Manages conversation history with different strategies:
@@ -39,59 +39,70 @@ export class ConversationMemory<M extends MinimalMessage = MinimalMessage> imple
   }
 
   add(message: M): Promise<void> {
-    return withSpan("agent.memory.conversation.add", async () => {
-      this.messages.push(message);
+    return withSpan(
+      "agent.memory.conversation.add",
+      async () => {
+        this.messages.push(message);
 
-      // Trim if max messages exceeded
-      if (
-        this.config.maxMessages &&
-        this.messages.length > this.config.maxMessages
-      ) {
-        this.messages = this.messages.slice(-this.config.maxMessages);
-      }
+        if (this.config.maxMessages && this.messages.length > this.config.maxMessages) {
+          this.messages = this.messages.slice(-this.config.maxMessages);
+        }
 
-      // Trim if max tokens exceeded
-      if (this.config.maxTokens) {
-        await this.trimToTokenLimit();
-      }
-    }, { "memory.type": "conversation", "memory.message_count": this.messages.length });
+        if (this.config.maxTokens) {
+          await this.trimToTokenLimit();
+        }
+      },
+      { "memory.type": "conversation", "memory.message_count": this.messages.length },
+    );
   }
 
   getMessages(): Promise<M[]> {
-    return Promise.resolve(withSpanSync("agent.memory.conversation.getMessages", () => {
-      return [...this.messages];
-    }, { "memory.type": "conversation", "memory.message_count": this.messages.length }));
+    return Promise.resolve(
+      withSpanSync(
+        "agent.memory.conversation.getMessages",
+        () => [...this.messages],
+        { "memory.type": "conversation", "memory.message_count": this.messages.length },
+      ),
+    );
   }
 
   clear(): Promise<void> {
-    return Promise.resolve(withSpanSync("agent.memory.conversation.clear", () => {
-      this.messages = [];
-    }, { "memory.type": "conversation" }));
+    return Promise.resolve(
+      withSpanSync(
+        "agent.memory.conversation.clear",
+        () => {
+          this.messages = [];
+        },
+        { "memory.type": "conversation" },
+      ),
+    );
   }
 
   getStats(): Promise<MemoryStats> {
-    return Promise.resolve(withSpanSync("agent.memory.conversation.getStats", () => {
-      return {
-        totalMessages: this.messages.length,
-        estimatedTokens: estimateTokens(this.messages),
-        type: "conversation",
-      };
-    }, { "memory.type": "conversation" }));
+    return Promise.resolve(
+      withSpanSync(
+        "agent.memory.conversation.getStats",
+        () => ({
+          totalMessages: this.messages.length,
+          estimatedTokens: estimateTokens(this.messages),
+          type: "conversation",
+        }),
+        { "memory.type": "conversation" },
+      ),
+    );
   }
 
   private trimToTokenLimit(): Promise<void> {
-    if (!this.config.maxTokens) return Promise.resolve();
+    const maxTokens = this.config.maxTokens;
+    if (!maxTokens) return Promise.resolve();
 
     let tokenCount = estimateTokens(this.messages);
 
-    // Remove oldest messages until under limit
-    while (
-      tokenCount > this.config.maxTokens &&
-      this.messages.length > 1
-    ) {
+    while (tokenCount > maxTokens && this.messages.length > 1) {
       this.messages.shift();
       tokenCount = estimateTokens(this.messages);
     }
+
     return Promise.resolve();
   }
 }
@@ -110,36 +121,55 @@ export class BufferMemory<M extends MinimalMessage = MinimalMessage> implements 
   }
 
   add(message: M): Promise<void> {
-    return Promise.resolve(withSpanSync("agent.memory.buffer.add", () => {
-      this.messages.push(message);
+    return Promise.resolve(
+      withSpanSync(
+        "agent.memory.buffer.add",
+        () => {
+          this.messages.push(message);
 
-      // Keep only last N messages
-      if (this.messages.length > this.bufferSize) {
-        this.messages = this.messages.slice(-this.bufferSize);
-      }
-    }, { "memory.type": "buffer", "memory.buffer_size": this.bufferSize }));
+          if (this.messages.length > this.bufferSize) {
+            this.messages = this.messages.slice(-this.bufferSize);
+          }
+        },
+        { "memory.type": "buffer", "memory.buffer_size": this.bufferSize },
+      ),
+    );
   }
 
   getMessages(): Promise<M[]> {
-    return Promise.resolve(withSpanSync("agent.memory.buffer.getMessages", () => {
-      return [...this.messages];
-    }, { "memory.type": "buffer", "memory.message_count": this.messages.length }));
+    return Promise.resolve(
+      withSpanSync(
+        "agent.memory.buffer.getMessages",
+        () => [...this.messages],
+        { "memory.type": "buffer", "memory.message_count": this.messages.length },
+      ),
+    );
   }
 
   clear(): Promise<void> {
-    return Promise.resolve(withSpanSync("agent.memory.buffer.clear", () => {
-      this.messages = [];
-    }, { "memory.type": "buffer" }));
+    return Promise.resolve(
+      withSpanSync(
+        "agent.memory.buffer.clear",
+        () => {
+          this.messages = [];
+        },
+        { "memory.type": "buffer" },
+      ),
+    );
   }
 
   getStats(): Promise<MemoryStats> {
-    return Promise.resolve(withSpanSync("agent.memory.buffer.getStats", () => {
-      return {
-        totalMessages: this.messages.length,
-        estimatedTokens: estimateTokens(this.messages),
-        type: "buffer",
-      };
-    }, { "memory.type": "buffer" }));
+    return Promise.resolve(
+      withSpanSync(
+        "agent.memory.buffer.getStats",
+        () => ({
+          totalMessages: this.messages.length,
+          estimatedTokens: estimateTokens(this.messages),
+          type: "buffer",
+        }),
+        { "memory.type": "buffer" },
+      ),
+    );
   }
 }
 
@@ -149,7 +179,7 @@ export class BufferMemory<M extends MinimalMessage = MinimalMessage> implements 
  */
 export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements Memory<M> {
   private messages: M[] = [];
-  private summary: string = "";
+  private summary = "";
   private config: MemoryConfigBase;
   private summaryThreshold: number;
 
@@ -159,67 +189,81 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
   }
 
   add(message: M): Promise<void> {
-    return withSpan("agent.memory.summary.add", async () => {
-      this.messages.push(message);
+    return withSpan(
+      "agent.memory.summary.add",
+      async () => {
+        this.messages.push(message);
 
-      // Summarize if threshold exceeded
-      if (this.messages.length > this.summaryThreshold) {
-        await this.summarizeOldMessages();
-      }
-    }, { "memory.type": "summary", "memory.threshold": this.summaryThreshold });
+        if (this.messages.length > this.summaryThreshold) {
+          await this.summarizeOldMessages();
+        }
+      },
+      { "memory.type": "summary", "memory.threshold": this.summaryThreshold },
+    );
   }
 
   getMessages(): Promise<M[]> {
-    return Promise.resolve(withSpanSync("agent.memory.summary.getMessages", () => {
-      // If we have a summary, include it as first message
-      if (this.summary) {
-        // Create a summary message that conforms to M
-        // Note: This cast is necessary because we're creating a new message
-        const summaryMessage = {
-          id: "summary",
-          role: "system" as const,
-          parts: [{
-            type: "text" as const,
-            text: `Previous conversation summary:\n${this.summary}`,
-          }],
-          timestamp: Date.now(),
-        } as unknown as M;
+    return Promise.resolve(
+      withSpanSync(
+        "agent.memory.summary.getMessages",
+        () => {
+          if (!this.summary) return [...this.messages];
 
-        return [summaryMessage, ...this.messages];
-      }
+          const summaryMessage = {
+            id: "summary",
+            role: "system" as const,
+            parts: [
+              {
+                type: "text" as const,
+                text: `Previous conversation summary:\n${this.summary}`,
+              },
+            ],
+            timestamp: Date.now(),
+          } as unknown as M;
 
-      return [...this.messages];
-    }, { "memory.type": "summary", "memory.has_summary": !!this.summary }));
+          return [summaryMessage, ...this.messages];
+        },
+        { "memory.type": "summary", "memory.has_summary": !!this.summary },
+      ),
+    );
   }
 
   clear(): Promise<void> {
-    return Promise.resolve(withSpanSync("agent.memory.summary.clear", () => {
-      this.messages = [];
-      this.summary = "";
-    }, { "memory.type": "summary" }));
+    return Promise.resolve(
+      withSpanSync(
+        "agent.memory.summary.clear",
+        () => {
+          this.messages = [];
+          this.summary = "";
+        },
+        { "memory.type": "summary" },
+      ),
+    );
   }
 
   getStats(): Promise<MemoryStats> {
-    return withSpan("agent.memory.summary.getStats", async () => {
-      const allMessages = await this.getMessages();
-      // Add summary length to token estimate
-      const baseTokens = estimateTokens(allMessages);
-      const summaryTokens = Math.ceil(this.summary.length / 4);
-      return {
-        totalMessages: allMessages.length,
-        estimatedTokens: baseTokens + summaryTokens,
-        type: "summary",
-      };
-    }, { "memory.type": "summary" });
+    return withSpan(
+      "agent.memory.summary.getStats",
+      async () => {
+        const allMessages = await this.getMessages();
+        const baseTokens = estimateTokens(allMessages);
+        const summaryTokens = Math.ceil(this.summary.length / 4);
+
+        return {
+          totalMessages: allMessages.length,
+          estimatedTokens: baseTokens + summaryTokens,
+          type: "summary",
+        };
+      },
+      { "memory.type": "summary" },
+    );
   }
 
   private summarizeOldMessages(): Promise<void> {
-    // Take first half of messages for summarization
     const halfIndex = Math.floor(this.messages.length / 2);
     const toSummarize = this.messages.slice(0, halfIndex);
     const remaining = this.messages.slice(halfIndex);
 
-    // Simple summarization (in production, use LLM)
     const topics = toSummarize
       .filter((m) => m.role === "user")
       .map((m) =>
@@ -229,6 +273,7 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
 
     this.summary = `Discussed: ${topics}`;
     this.messages = remaining;
+
     return Promise.resolve();
   }
 }

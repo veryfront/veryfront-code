@@ -1,8 +1,8 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { delay } from "#std/async.ts";
 import { NavigationHandlers } from "./navigation-handlers.ts";
 import type { NavigationCallbacks } from "./navigation-handlers.ts";
-import { delay } from "#std/async.ts";
 
 interface MockElement {
   tagName?: string;
@@ -15,23 +15,24 @@ interface MockLocation {
   pathname: string;
 }
 
-const setupMocks = () => {
+function setupMocks(): {
+  mockLocation: MockLocation;
+  setScrollY: (value: number) => void;
+  cleanup: () => void;
+} {
   const originalLocation = (globalThis as any).location;
   const originalScrollY = (globalThis as any).scrollY;
   const originalHTMLAnchorElement = (globalThis as any).HTMLAnchorElement;
   const originalHTMLElement = (globalThis as any).HTMLElement;
 
-  const mockLocation: MockLocation = {
-    pathname: "/current-page",
-  };
+  const mockLocation: MockLocation = { pathname: "/current-page" };
 
-  // Mock HTMLElement base class for instanceof checks
   class MockHTMLElement {
     tagName = "";
     private _attributes = new Map<string, string>();
 
     getAttribute(name: string): string | null {
-      return this._attributes.get(name) || null;
+      return this._attributes.get(name) ?? null;
     }
 
     setAttribute(name: string, value: string): void {
@@ -39,7 +40,6 @@ const setupMocks = () => {
     }
   }
 
-  // Mock HTMLAnchorElement extending HTMLElement
   class MockHTMLAnchorElement extends MockHTMLElement {
     constructor() {
       super();
@@ -54,55 +54,63 @@ const setupMocks = () => {
 
   return {
     mockLocation,
-    setScrollY: (value: number) => {
+    setScrollY(value: number) {
       (globalThis as any).scrollY = value;
     },
-    cleanup: () => {
+    cleanup() {
       (globalThis as any).location = originalLocation;
       (globalThis as any).scrollY = originalScrollY;
       (globalThis as any).HTMLAnchorElement = originalHTMLAnchorElement;
       (globalThis as any).HTMLElement = originalHTMLElement;
     },
   };
-};
+}
 
-const createMockAnchor = (href: string, attributes: Record<string, string> = {}): any => {
+function createMockAnchor(
+  href: string,
+  attributes: Record<string, string> = {},
+): any {
   const MockHTMLAnchorElement = (globalThis as any).HTMLAnchorElement;
   if (!MockHTMLAnchorElement) {
     throw new Error("MockHTMLAnchorElement not set up. Call setupMocks() first.");
   }
+
   const anchor = new MockHTMLAnchorElement();
   anchor.setAttribute("href", href);
+
   for (const [key, value] of Object.entries(attributes)) {
     anchor.setAttribute(key, value);
   }
-  (anchor as any).parentElement = null;
-  return anchor;
-};
 
-const createMockElement = (
+  anchor.parentElement = null;
+  return anchor;
+}
+
+function createMockElement(
   tagName: string,
   attributes: Record<string, string> = {},
-): MockElement => {
+): MockElement {
   const MockHTMLElement = (globalThis as any).HTMLElement;
   if (!MockHTMLElement) {
-    // Fallback for tests that don't call setupMocks()
     const attrs = new Map<string, string>(Object.entries(attributes));
     return {
       tagName: tagName.toUpperCase(),
-      getAttribute: (name: string) => attrs.get(name) || null,
+      getAttribute: (name: string) => attrs.get(name) ?? null,
       parentElement: null,
       _attributes: attrs,
-    } as MockElement;
+    };
   }
+
   const element = new MockHTMLElement();
   element.tagName = tagName.toUpperCase();
+
   for (const [key, value] of Object.entries(attributes)) {
     element.setAttribute(key, value);
   }
-  (element as any).parentElement = null;
+
+  element.parentElement = null;
   return element as MockElement;
-};
+}
 
 describe("NavigationHandlers", () => {
   describe("Constructor", () => {
@@ -125,16 +133,15 @@ describe("NavigationHandlers", () => {
   describe("createClickHandler", () => {
     it("should handle click on internal link", () => {
       const mocks = setupMocks();
-
       const handlers = new NavigationHandlers();
 
       let navigatedUrl = "";
       const callbacks: NavigationCallbacks = {
-        onNavigate: (url: string) => {
+        onNavigate(url: string) {
           navigatedUrl = url;
           return Promise.resolve();
         },
-        onPrefetch: () => {},
+        onPrefetch() {},
       };
 
       const clickHandler = handlers.createClickHandler(callbacks);
@@ -142,24 +149,22 @@ describe("NavigationHandlers", () => {
       const anchor = createMockAnchor("/about");
       const event = {
         target: anchor,
-        preventDefault: () => {},
+        preventDefault() {},
       } as unknown as MouseEvent;
 
       clickHandler(event);
 
       assertEquals(navigatedUrl, "/about", "Should navigate to internal link URL");
-
       mocks.cleanup();
     });
 
     it("should prevent default behavior on internal link click", () => {
       const mocks = setupMocks();
-
       const handlers = new NavigationHandlers();
 
       const callbacks: NavigationCallbacks = {
         onNavigate: () => Promise.resolve(),
-        onPrefetch: () => {},
+        onPrefetch() {},
       };
 
       const clickHandler = handlers.createClickHandler(callbacks);
@@ -168,7 +173,7 @@ describe("NavigationHandlers", () => {
       const anchor = createMockAnchor("/about");
       const event = {
         target: anchor,
-        preventDefault: () => {
+        preventDefault() {
           preventDefaultCalled = true;
         },
       } as unknown as MouseEvent;
@@ -176,22 +181,20 @@ describe("NavigationHandlers", () => {
       clickHandler(event);
 
       assertEquals(preventDefaultCalled, true, "Should prevent default link behavior");
-
       mocks.cleanup();
     });
 
     it("should ignore click on external link", () => {
       const mocks = setupMocks();
-
       const handlers = new NavigationHandlers();
 
       let navigationCalled = false;
       const callbacks: NavigationCallbacks = {
-        onNavigate: () => {
+        onNavigate() {
           navigationCalled = true;
           return Promise.resolve();
         },
-        onPrefetch: () => {},
+        onPrefetch() {},
       };
 
       const clickHandler = handlers.createClickHandler(callbacks);
@@ -199,28 +202,26 @@ describe("NavigationHandlers", () => {
       const anchor = createMockAnchor("https://external.com/page");
       const event = {
         target: anchor,
-        preventDefault: () => {},
+        preventDefault() {},
       } as unknown as MouseEvent;
 
       clickHandler(event);
 
       assertEquals(navigationCalled, false, "Should not navigate for external links");
-
       mocks.cleanup();
     });
 
     it("should ignore click on link with target=_blank", () => {
       const mocks = setupMocks();
-
       const handlers = new NavigationHandlers();
 
       let navigationCalled = false;
       const callbacks: NavigationCallbacks = {
-        onNavigate: () => {
+        onNavigate() {
           navigationCalled = true;
           return Promise.resolve();
         },
-        onPrefetch: () => {},
+        onPrefetch() {},
       };
 
       const clickHandler = handlers.createClickHandler(callbacks);
@@ -228,28 +229,26 @@ describe("NavigationHandlers", () => {
       const anchor = createMockAnchor("/page", { target: "_blank" });
       const event = {
         target: anchor,
-        preventDefault: () => {},
+        preventDefault() {},
       } as unknown as MouseEvent;
 
       clickHandler(event);
 
       assertEquals(navigationCalled, false, "Should not navigate for links with target=_blank");
-
       mocks.cleanup();
     });
 
     it("should ignore click on download link", () => {
       const mocks = setupMocks();
-
       const handlers = new NavigationHandlers();
 
       let navigationCalled = false;
       const callbacks: NavigationCallbacks = {
-        onNavigate: () => {
+        onNavigate() {
           navigationCalled = true;
           return Promise.resolve();
         },
-        onPrefetch: () => {},
+        onPrefetch() {},
       };
 
       const clickHandler = handlers.createClickHandler(callbacks);
@@ -257,28 +256,26 @@ describe("NavigationHandlers", () => {
       const anchor = createMockAnchor("/file.pdf", { download: "file.pdf" });
       const event = {
         target: anchor,
-        preventDefault: () => {},
+        preventDefault() {},
       } as unknown as MouseEvent;
 
       clickHandler(event);
 
       assertEquals(navigationCalled, false, "Should not navigate for download links");
-
       mocks.cleanup();
     });
 
     it("should ignore click on hash link", () => {
       const mocks = setupMocks();
-
       const handlers = new NavigationHandlers();
 
       let navigationCalled = false;
       const callbacks: NavigationCallbacks = {
-        onNavigate: () => {
+        onNavigate() {
           navigationCalled = true;
           return Promise.resolve();
         },
-        onPrefetch: () => {},
+        onPrefetch() {},
       };
 
       const clickHandler = handlers.createClickHandler(callbacks);
@@ -286,28 +283,26 @@ describe("NavigationHandlers", () => {
       const anchor = createMockAnchor("#section");
       const event = {
         target: anchor,
-        preventDefault: () => {},
+        preventDefault() {},
       } as unknown as MouseEvent;
 
       clickHandler(event);
 
       assertEquals(navigationCalled, false, "Should not navigate for hash links");
-
       mocks.cleanup();
     });
 
     it("should ignore click on non-anchor element", () => {
       const mocks = setupMocks();
-
       const handlers = new NavigationHandlers();
 
       let navigationCalled = false;
       const callbacks: NavigationCallbacks = {
-        onNavigate: () => {
+        onNavigate() {
           navigationCalled = true;
           return Promise.resolve();
         },
-        onPrefetch: () => {},
+        onPrefetch() {},
       };
 
       const clickHandler = handlers.createClickHandler(callbacks);
@@ -315,13 +310,12 @@ describe("NavigationHandlers", () => {
       const div = createMockElement("div");
       const event = {
         target: div,
-        preventDefault: () => {},
+        preventDefault() {},
       } as unknown as MouseEvent;
 
       clickHandler(event);
 
       assertEquals(navigationCalled, false, "Should not navigate for non-anchor elements");
-
       mocks.cleanup();
     });
   });
@@ -335,39 +329,35 @@ describe("NavigationHandlers", () => {
 
       let navigatedUrl = "";
       const callbacks: NavigationCallbacks = {
-        onNavigate: (url: string) => {
+        onNavigate(url: string) {
           navigatedUrl = url;
           return Promise.resolve();
         },
-        onPrefetch: () => {},
+        onPrefetch() {},
       };
 
       const popStateHandler = handlers.createPopStateHandler(callbacks);
 
-      const event = {} as PopStateEvent;
-      popStateHandler(event);
+      popStateHandler({} as PopStateEvent);
 
       assertEquals(navigatedUrl, "/new-page", "Should navigate to current pathname");
-
       mocks.cleanup();
     });
 
     it("should set popstate navigation flag", () => {
       const mocks = setupMocks();
-
       const handlers = new NavigationHandlers();
 
       const callbacks: NavigationCallbacks = {
         onNavigate: () => Promise.resolve(),
-        onPrefetch: () => {},
+        onPrefetch() {},
       };
 
       const popStateHandler = handlers.createPopStateHandler(callbacks);
 
       assertEquals(handlers.isPopState(), false, "PopState flag should be false initially");
 
-      const event = {} as PopStateEvent;
-      popStateHandler(event);
+      popStateHandler({} as PopStateEvent);
 
       assertEquals(
         handlers.isPopState(),
@@ -387,7 +377,7 @@ describe("NavigationHandlers", () => {
       let prefetchedUrl = "";
       const callbacks: NavigationCallbacks = {
         onNavigate: async () => {},
-        onPrefetch: (url: string) => {
+        onPrefetch(url: string) {
           prefetchedUrl = url;
         },
       };
@@ -395,9 +385,7 @@ describe("NavigationHandlers", () => {
       const mouseOverHandler = handlers.createMouseOverHandler(callbacks);
 
       const anchor = createMockAnchor("/page");
-      const event = {
-        target: anchor,
-      } as unknown as MouseEvent;
+      const event = { target: anchor } as unknown as MouseEvent;
 
       mouseOverHandler(event);
 
@@ -414,7 +402,7 @@ describe("NavigationHandlers", () => {
       let prefetchCalled = false;
       const callbacks: NavigationCallbacks = {
         onNavigate: async () => {},
-        onPrefetch: () => {
+        onPrefetch() {
           prefetchCalled = true;
         },
       };
@@ -422,9 +410,7 @@ describe("NavigationHandlers", () => {
       const mouseOverHandler = handlers.createMouseOverHandler(callbacks);
 
       const div = createMockElement("div");
-      const event = {
-        target: div,
-      } as unknown as MouseEvent;
+      const event = { target: div } as unknown as MouseEvent;
 
       mouseOverHandler(event);
 
@@ -441,7 +427,7 @@ describe("NavigationHandlers", () => {
       let prefetchCalled = false;
       const callbacks: NavigationCallbacks = {
         onNavigate: async () => {},
-        onPrefetch: () => {
+        onPrefetch() {
           prefetchCalled = true;
         },
       };
@@ -449,9 +435,7 @@ describe("NavigationHandlers", () => {
       const mouseOverHandler = handlers.createMouseOverHandler(callbacks);
 
       const anchor = createMockAnchor("https://external.com/page");
-      const event = {
-        target: anchor,
-      } as unknown as MouseEvent;
+      const event = { target: anchor } as unknown as MouseEvent;
 
       mouseOverHandler(event);
 
@@ -468,7 +452,7 @@ describe("NavigationHandlers", () => {
       let prefetchCalled = false;
       const callbacks: NavigationCallbacks = {
         onNavigate: async () => {},
-        onPrefetch: () => {
+        onPrefetch() {
           prefetchCalled = true;
         },
       };
@@ -476,9 +460,7 @@ describe("NavigationHandlers", () => {
       const mouseOverHandler = handlers.createMouseOverHandler(callbacks);
 
       const anchor = createMockAnchor("#section");
-      const event = {
-        target: anchor,
-      } as unknown as MouseEvent;
+      const event = { target: anchor } as unknown as MouseEvent;
 
       mouseOverHandler(event);
 
@@ -495,7 +477,7 @@ describe("NavigationHandlers", () => {
       let prefetchCalled = false;
       const callbacks: NavigationCallbacks = {
         onNavigate: async () => {},
-        onPrefetch: () => {
+        onPrefetch() {
           prefetchCalled = true;
         },
       };
@@ -503,9 +485,7 @@ describe("NavigationHandlers", () => {
       const mouseOverHandler = handlers.createMouseOverHandler(callbacks);
 
       const anchor = createMockAnchor("/page", { "data-prefetch": "false" });
-      const event = {
-        target: anchor,
-      } as unknown as MouseEvent;
+      const event = { target: anchor } as unknown as MouseEvent;
 
       mouseOverHandler(event);
 
@@ -522,7 +502,7 @@ describe("NavigationHandlers", () => {
       let prefetchedUrl = "";
       const callbacks: NavigationCallbacks = {
         onNavigate: async () => {},
-        onPrefetch: (url: string) => {
+        onPrefetch(url: string) {
           prefetchedUrl = url;
         },
       };
@@ -530,9 +510,7 @@ describe("NavigationHandlers", () => {
       const mouseOverHandler = handlers.createMouseOverHandler(callbacks);
 
       const anchor = createMockAnchor("/page", { "data-prefetch": "true" });
-      const event = {
-        target: anchor,
-      } as unknown as MouseEvent;
+      const event = { target: anchor } as unknown as MouseEvent;
 
       mouseOverHandler(event);
 
@@ -549,7 +527,7 @@ describe("NavigationHandlers", () => {
       let prefetchCount = 0;
       const callbacks: NavigationCallbacks = {
         onNavigate: async () => {},
-        onPrefetch: () => {
+        onPrefetch() {
           prefetchCount++;
         },
       };
@@ -557,9 +535,7 @@ describe("NavigationHandlers", () => {
       const mouseOverHandler = handlers.createMouseOverHandler(callbacks);
 
       const anchor = createMockAnchor("/page");
-      const event = {
-        target: anchor,
-      } as unknown as MouseEvent;
+      const event = { target: anchor } as unknown as MouseEvent;
 
       mouseOverHandler(event);
       mouseOverHandler(event);
@@ -578,7 +554,7 @@ describe("NavigationHandlers", () => {
       let prefetchCount = 0;
       const callbacks: NavigationCallbacks = {
         onNavigate: async () => {},
-        onPrefetch: () => {
+        onPrefetch() {
           prefetchCount++;
         },
       };
@@ -586,9 +562,7 @@ describe("NavigationHandlers", () => {
       const mouseOverHandler = handlers.createMouseOverHandler(callbacks);
 
       const anchor = createMockAnchor("/page");
-      const event = {
-        target: anchor,
-      } as unknown as MouseEvent;
+      const event = { target: anchor } as unknown as MouseEvent;
 
       mouseOverHandler(event);
 
@@ -613,7 +587,6 @@ describe("NavigationHandlers", () => {
       handlers.saveScrollPosition("/page1");
 
       assertEquals(handlers.getScrollPosition("/page1"), 300, "Should save scroll position");
-
       mocks.cleanup();
     });
 
@@ -624,26 +597,25 @@ describe("NavigationHandlers", () => {
       const handlers = new NavigationHandlers();
 
       handlers.saveScrollPosition("/page2");
-      mocks.setScrollY(0); // Change scroll position
+      mocks.setScrollY(0);
 
       const savedPosition = handlers.getScrollPosition("/page2");
 
       assertEquals(savedPosition, 500, "Should retrieve previously saved scroll position");
-
       mocks.cleanup();
     });
 
     it("should return 0 for unknown path", () => {
       const handlers = new NavigationHandlers();
-
-      const position = handlers.getScrollPosition("/unknown-page");
-
-      assertEquals(position, 0, "Should return 0 for paths without saved position");
+      assertEquals(
+        handlers.getScrollPosition("/unknown-page"),
+        0,
+        "Should return 0 for paths without saved position",
+      );
     });
 
     it("should save multiple scroll positions", () => {
       const mocks = setupMocks();
-
       const handlers = new NavigationHandlers();
 
       mocks.setScrollY(100);
@@ -667,7 +639,6 @@ describe("NavigationHandlers", () => {
       delete (globalThis as any).scrollY;
 
       const handlers = new NavigationHandlers();
-
       handlers.saveScrollPosition("/page");
 
       mocks.cleanup();
@@ -675,7 +646,6 @@ describe("NavigationHandlers", () => {
 
     it("should update scroll position when saving same path again", () => {
       const mocks = setupMocks();
-
       const handlers = new NavigationHandlers();
 
       mocks.setScrollY(100);
@@ -697,18 +667,16 @@ describe("NavigationHandlers", () => {
   describe("PopState Flag Management", () => {
     it("should return false initially", () => {
       const handlers = new NavigationHandlers();
-
       assertEquals(handlers.isPopState(), false, "PopState flag should be false initially");
     });
 
     it("should clear popstate flag", () => {
       const mocks = setupMocks();
-
       const handlers = new NavigationHandlers();
 
       const callbacks: NavigationCallbacks = {
         onNavigate: () => Promise.resolve(),
-        onPrefetch: () => {},
+        onPrefetch() {},
       };
 
       const popStateHandler = handlers.createPopStateHandler(callbacks);
@@ -726,12 +694,11 @@ describe("NavigationHandlers", () => {
   describe("Clear", () => {
     it("should clear all state", () => {
       const mocks = setupMocks();
-
       const handlers = new NavigationHandlers(50, { hover: true });
 
       const callbacks: NavigationCallbacks = {
         onNavigate: () => Promise.resolve(),
-        onPrefetch: () => {},
+        onPrefetch() {},
       };
 
       mocks.setScrollY(300);
@@ -743,11 +710,7 @@ describe("NavigationHandlers", () => {
       handlers.clear();
 
       assertEquals(handlers.isPopState(), false, "PopState flag should be cleared");
-      assertEquals(
-        handlers.getScrollPosition("/page1"),
-        0,
-        "Scroll positions should be cleared",
-      );
+      assertEquals(handlers.getScrollPosition("/page1"), 0, "Scroll positions should be cleared");
 
       mocks.cleanup();
     });
@@ -759,7 +722,7 @@ describe("NavigationHandlers", () => {
       let prefetchCount = 0;
       const callbacks: NavigationCallbacks = {
         onNavigate: async () => {},
-        onPrefetch: () => {
+        onPrefetch() {
           prefetchCount++;
         },
       };
@@ -767,9 +730,7 @@ describe("NavigationHandlers", () => {
       const mouseOverHandler = handlers.createMouseOverHandler(callbacks);
 
       const anchor = createMockAnchor("/page");
-      const event = {
-        target: anchor,
-      } as unknown as MouseEvent;
+      const event = { target: anchor } as unknown as MouseEvent;
 
       mouseOverHandler(event);
 

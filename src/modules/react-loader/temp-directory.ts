@@ -13,45 +13,41 @@ const projectTmpDirs = new Map<string, string>();
  */
 function normalizeProjectKey(projectId: string): string {
   if (!projectId) return "default";
-  // Simple hash to create a safe directory name
+
   let hash = 0;
   for (let i = 0; i < projectId.length; i++) {
-    const char = projectId.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash;
+    hash = (hash << 5) - hash + projectId.charCodeAt(i);
+    hash |= 0;
   }
+
   return `proj-${Math.abs(hash).toString(16)}`;
 }
 
 export async function getGlobalTmpDir(): Promise<string> {
   const cacheBaseDir = getCacheBaseDir();
   const baseDir = isAbsolute(cacheBaseDir) ? cacheBaseDir : join(cwd(), cacheBaseDir);
-  const cached = globalTmpDirs.get(baseDir);
-  if (cached) {
-    return cached;
-  }
 
-  // Use a cache dir outside node_modules to avoid triggering Node.js module resolution.
-  // Any cache base dir works as long as it is outside node_modules.
+  const cached = globalTmpDirs.get(baseDir);
+  if (cached) return cached;
+
   const tmpDir = join(baseDir, "veryfront-modules");
-  const fs = createFileSystem();
-  await fs.mkdir(tmpDir, { recursive: true });
+  await createFileSystem().mkdir(tmpDir, { recursive: true });
+
   globalTmpDirs.set(baseDir, tmpDir);
   return tmpDir;
 }
 
 export async function getProjectTmpDir(projectId: string): Promise<string> {
-  const normalizedKey = normalizeProjectKey(projectId);
   const baseDir = await getGlobalTmpDir();
+  const normalizedKey = normalizeProjectKey(projectId);
   const cacheKey = `${baseDir}:${normalizedKey}`;
-  const existing = projectTmpDirs.get(cacheKey);
-  if (existing) {
-    return existing;
-  }
 
-  const fs = createFileSystem();
+  const cached = projectTmpDirs.get(cacheKey);
+  if (cached) return cached;
+
   const projectTmpDir = join(baseDir, normalizedKey);
-  await fs.mkdir(projectTmpDir, { recursive: true });
+  await createFileSystem().mkdir(projectTmpDir, { recursive: true });
+
   projectTmpDirs.set(cacheKey, projectTmpDir);
   return projectTmpDir;
 }

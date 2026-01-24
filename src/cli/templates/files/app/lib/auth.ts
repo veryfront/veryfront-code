@@ -11,7 +11,6 @@ interface Session {
   expiresAt: Date;
 }
 
-// In-memory storage (replace with database)
 const sessions = new Map<string, Session>();
 const ONE_DAY_MS = 86_400_000;
 
@@ -20,7 +19,7 @@ export async function createSession(user: User): Promise<Session> {
   const session: Session = {
     token,
     userId: user.id,
-    expiresAt: new Date(Date.now() + ONE_DAY_MS), // 24 hours
+    expiresAt: new Date(Date.now() + ONE_DAY_MS),
   };
 
   sessions.set(token, session);
@@ -31,7 +30,7 @@ export async function verifySession(token: string): Promise<Session | null> {
   const session = sessions.get(token);
   if (!session) return null;
 
-  if (session.expiresAt < new Date()) {
+  if (session.expiresAt.getTime() < Date.now()) {
     sessions.delete(token);
     return null;
   }
@@ -40,7 +39,6 @@ export async function verifySession(token: string): Promise<Session | null> {
 }
 
 export async function getSession(): Promise<{ user: User } | null> {
-  // This is a placeholder - in real app, get from cookies
   return null;
 }
 

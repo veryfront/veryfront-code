@@ -11,7 +11,9 @@ export interface ProviderComponentProps {
   components?: MDXComponents;
 }
 
-function useStableFrontmatter(frontmatter: MdxBundle["frontmatter"]): MdxBundle["frontmatter"] {
+function useStableFrontmatter(
+  frontmatter: MdxBundle["frontmatter"],
+): MdxBundle["frontmatter"] {
   const ref = useRef(frontmatter);
   const serialized = JSON.stringify(frontmatter);
   const prevSerialized = useRef(serialized);
@@ -28,7 +30,7 @@ export function ProviderComponent({
   mdxBundle,
   children,
   components = {},
-}: ProviderComponentProps) {
+}: ProviderComponentProps): React.ReactElement {
   const stableFrontmatter = useStableFrontmatter(mdxBundle.frontmatter);
 
   const element = useMemo(() => {
@@ -42,10 +44,15 @@ export function ProviderComponent({
       });
     } catch (error) {
       logger.error("[ProviderComponent] Render failed:", error);
-      return <>{children}</>;
+      return null;
     }
-  }, [mdxBundle.compiledCode, stableFrontmatter, components, children, mdxBundle.globals]);
+  }, [
+    mdxBundle.compiledCode,
+    stableFrontmatter,
+    components,
+    mdxBundle.globals,
+    children,
+  ]);
 
-  if (!element) return <>{children}</>;
-  return element as React.ReactElement;
+  return element ?? <>{children}</>;
 }

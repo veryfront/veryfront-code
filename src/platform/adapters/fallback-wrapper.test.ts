@@ -78,17 +78,24 @@ describe("fallback-wrapper", () => {
       const primary = () => Promise.reject(primaryError);
       const fallback = () => Promise.reject(fallbackError);
 
+      await assertRejects(
+        () =>
+          withFallback(primary, fallback, {
+            operationName: "test-operation",
+            logError: false,
+          }),
+        FallbackExecutionError,
+      );
+
       try {
         await withFallback(primary, fallback, {
           operationName: "test-operation",
           logError: false,
         });
-        throw new Error("Should have thrown");
       } catch (error) {
-        assertEquals(error instanceof FallbackExecutionError, true);
-        const executionError = error as FallbackExecutionError;
-        assertEquals(executionError.primaryError, primaryError);
-        assertEquals(executionError.fallbackError, fallbackError);
+        if (!(error instanceof FallbackExecutionError)) throw error;
+        assertEquals(error.primaryError, primaryError);
+        assertEquals(error.fallbackError, fallbackError);
       }
     });
 
@@ -163,9 +170,9 @@ describe("fallback-wrapper", () => {
         });
         throw new Error("Should have thrown");
       } catch (error) {
-        assertEquals(error instanceof FallbackExecutionError, true);
+        if (!(error instanceof FallbackExecutionError)) throw error;
         assertEquals(
-          (error as Error).message,
+          error.message,
           "Both primary and fallback operations failed for test-operation",
         );
       }
@@ -227,13 +234,13 @@ describe("fallback-wrapper", () => {
 
     it("should allow multiple executions", async () => {
       let callCount = 0;
+
       const adapterOperation = () => {
         callCount++;
-        if (callCount === 1) {
-          return Promise.reject(new Error("adapter-error"));
-        }
+        if (callCount === 1) return Promise.reject(new Error("adapter-error"));
         return Promise.resolve("adapter-result");
       };
+
       const directOperation = () => Promise.resolve("direct-result");
 
       const wrapper = createAdapterFallback(
@@ -261,11 +268,7 @@ describe("fallback-wrapper", () => {
         { logError: false, rethrowOnFallbackFailure: false },
       );
 
-      await assertRejects(
-        () => wrapper.execute(),
-        Error,
-        "direct-error",
-      );
+      await assertRejects(() => wrapper.execute(), Error, "direct-error");
     });
   });
 
@@ -303,13 +306,13 @@ describe("fallback-wrapper", () => {
 
     it("should allow multiple executions", () => {
       let callCount = 0;
+
       const adapterOperation = () => {
         callCount++;
-        if (callCount === 1) {
-          throw new Error("adapter-error");
-        }
+        if (callCount === 1) throw new Error("adapter-error");
         return "adapter-result";
       };
+
       const directOperation = () => "direct-result";
 
       const wrapper = createAdapterFallbackSync(
@@ -360,15 +363,10 @@ describe("fallback-wrapper", () => {
       const adapterFetch = () => Promise.resolve(new Response("adapter response"));
       const directFetch = () => Promise.resolve(new Response("direct response"));
 
-      const wrapper = createAdapterFallback(
-        adapterFetch,
-        directFetch,
-        "fetch",
-      );
+      const wrapper = createAdapterFallback(adapterFetch, directFetch, "fetch");
 
       const response = await wrapper.execute();
-      const text = await response.text();
-      assertEquals(text, "adapter response");
+      assertEquals(await response.text(), "adapter response");
     });
   });
 
@@ -392,10 +390,7 @@ describe("fallback-wrapper", () => {
     it("should work without fallback error", () => {
       const primaryError = new Error("primary");
 
-      const error = new FallbackExecutionError(
-        "Primary failed",
-        primaryError,
-      );
+      const error = new FallbackExecutionError("Primary failed", primaryError);
 
       assertEquals(error.primaryError, primaryError);
       assertEquals(error.fallbackError, undefined);

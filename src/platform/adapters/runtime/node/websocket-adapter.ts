@@ -11,33 +11,39 @@ export class NodeServerAdapter implements ServerAdapter {
     const protocol = request.headers.get("sec-websocket-protocol");
 
     if (!key) {
-      throw toError(createError({
-        type: "network",
-        message: "Missing Sec-WebSocket-Key header",
-      }));
+      throw toError(
+        createError({
+          type: "network",
+          message: "Missing Sec-WebSocket-Key header",
+        }),
+      );
     }
 
-    // Create a proxy WebSocket that will be connected when the upgrade completes
     const socket = new NodeWebSocket();
 
-    // Register the upgrade and connect when complete
-    registerWebSocketUpgrade(key).then((ws) => {
-      socket._attachRealSocket(ws);
-    }).catch((error) => {
-      serverLogger.error("WebSocket upgrade failed:", error);
-      socket._emitError(error);
-    });
+    registerWebSocketUpgrade(key)
+      .then((ws) => {
+        socket._attachRealSocket(ws);
+      })
+      .catch((error) => {
+        serverLogger.error("WebSocket upgrade failed:", error);
+        socket._emitError(error);
+      });
 
-    // Return 101 response - the http-server upgrade handler will complete the handshake
+    const headers: Record<string, string> = {
+      Upgrade: "websocket",
+      Connection: "Upgrade",
+      "Sec-WebSocket-Accept": this.generateAcceptKey(key),
+    };
+
+    if (protocol) {
+      headers["Sec-WebSocket-Protocol"] = protocol;
+    }
+
     const response = new Response(null, {
       status: 101,
       statusText: "Switching Protocols",
-      headers: {
-        "Upgrade": "websocket",
-        "Connection": "Upgrade",
-        "Sec-WebSocket-Accept": this.generateAcceptKey(key),
-        ...(protocol ? { "Sec-WebSocket-Protocol": protocol } : {}),
-      },
+      headers,
     });
 
     return { socket: socket as unknown as WebSocket, response };
@@ -49,10 +55,6 @@ export class NodeServerAdapter implements ServerAdapter {
   }
 }
 
-/**
- * NodeWebSocket - A WebSocket wrapper that works with Node.js
- * Proxies to the real ws WebSocket once the upgrade completes
- */
 export class NodeWebSocket {
   private ws: WSWebSocket | null = null;
   public readyState = 0; // CONNECTING
@@ -67,18 +69,12 @@ export class NodeWebSocket {
   static readonly CLOSING = 2;
   static readonly CLOSED = 3;
 
-  // Queue messages sent before the socket is ready
   private pendingMessages: Array<string | ArrayBuffer> = [];
 
-  /**
-   * Attach the real WebSocket after upgrade completes
-   * Called by NodeServerAdapter
-   */
-  _attachRealSocket(ws: WSWebSocket) {
+  _attachRealSocket(ws: WSWebSocket): void {
     this.ws = ws;
     this.readyState = 1; // OPEN
 
-    // Set up event handlers
     ws.on("open", () => {
       this.readyState = 1;
       this.onopen?.(new Event("open"));
@@ -97,79 +93,72 @@ export class NodeWebSocket {
       this.onerror?.(new ErrorEvent("error", { error }));
     });
 
-    // Send any pending messages
-    for (const msg of this.pendingMessages) {
-      ws.send(msg);
-    }
+    for (const msg of this.pendingMessages) ws.send(msg);
     this.pendingMessages = [];
 
-    // The socket is already open when we get it from handleUpgrade
     this.onopen?.(new Event("open"));
   }
 
-  /**
-   * Emit an error when upgrade fails
-   * Called by NodeServerAdapter
-   */
-  _emitError(error: Error) {
+  _emitError(error: Error): void {
     this.readyState = 3; // CLOSED
     this.onerror?.(new ErrorEvent("error", { error }));
   }
 
-  send(data: string | ArrayBuffer) {
+  send(data: string | ArrayBuffer): void {
     if (this.ws && this.readyState === 1) {
       this.ws.send(data);
-    } else if (this.readyState === 0) {
-      // Queue the message until the socket is ready
+      return;
+    }
+
+    if (this.readyState === 0) {
       this.pendingMessages.push(data);
-    } else {
-      throw toError(createError({
+      return;
+    }
+
+    throw toError(
+      createError({
         type: "network",
         message: "WebSocket is not open",
-      }));
-    }
+      }),
+    );
   }
 
-  close(code?: number, reason?: string) {
-    if (this.ws) {
-      this.ws.close(code, reason);
-    }
+  close(code?: number, reason?: string): void {
+    this.ws?.close(code, reason);
     this.readyState = 2; // CLOSING
   }
 
-  // WebSocket standard interface
-  addEventListener(type: string, listener: EventListener) {
+  addEventListener(type: string, listener: EventListener): void {
     switch (type) {
       case "open":
         this.onopen = listener as (event: Event) => void;
-        break;
+        return;
       case "close":
         this.onclose = listener as (event: CloseEvent) => void;
-        break;
+        return;
       case "error":
         this.onerror = listener as (event: Event) => void;
-        break;
+        return;
       case "message":
         this.onmessage = listener as (event: MessageEvent) => void;
-        break;
+        return;
     }
   }
 
-  removeEventListener(_type: string, _listener: EventListener) {
-    // Simplified - just null out the handler
-    switch (_type) {
+  removeEventListener(type: string, _listener: EventListener): void {
+    switch (type) {
       case "open":
         this.onopen = null;
-        break;
+        return;
       case "close":
         this.onclose = null;
-        break;
+        return;
       case "error":
         this.onerror = null;
-        break;
+        return;
       case "message":
         this.onmessage = null;
-        break;
+        return;
     }
   }
 }

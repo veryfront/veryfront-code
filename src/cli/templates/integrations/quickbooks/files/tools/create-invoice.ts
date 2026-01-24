@@ -7,15 +7,17 @@ export default tool({
   description: "Create a new invoice in QuickBooks.",
   inputSchema: z.object({
     customerId: z.string().describe("The ID of the customer to invoice"),
-    lineItems: z.array(
-      z.object({
-        description: z.string().optional().describe("Description of the line item"),
-        amount: z.number().describe("Total amount for this line item"),
-        itemId: z.string().optional().describe("QuickBooks item/service ID"),
-        quantity: z.number().optional().describe("Quantity of items"),
-        unitPrice: z.number().optional().describe("Price per unit"),
-      }),
-    ).describe("Line items for the invoice"),
+    lineItems: z
+      .array(
+        z.object({
+          description: z.string().optional().describe("Description of the line item"),
+          amount: z.number().describe("Total amount for this line item"),
+          itemId: z.string().optional().describe("QuickBooks item/service ID"),
+          quantity: z.number().optional().describe("Quantity of items"),
+          unitPrice: z.number().optional().describe("Price per unit"),
+        }),
+      )
+      .describe("Line items for the invoice"),
     txnDate: z.string().optional().describe("Transaction date in YYYY-MM-DD format"),
     dueDate: z.string().optional().describe("Due date in YYYY-MM-DD format"),
     customerMemo: z.string().optional().describe("Memo/note for the customer"),
@@ -29,6 +31,8 @@ export default tool({
       customerMemo,
     });
 
+    const { CustomerRef } = invoice;
+
     return {
       success: true,
       invoice: {
@@ -39,8 +43,8 @@ export default tool({
         totalAmount: invoice.TotalAmt,
         balance: invoice.Balance,
         customer: {
-          id: invoice.CustomerRef.value,
-          name: invoice.CustomerRef.name,
+          id: CustomerRef.value,
+          name: CustomerRef.name,
         },
       },
     };

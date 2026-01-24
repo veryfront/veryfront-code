@@ -25,10 +25,9 @@ describe("compat/index.ts exports", () => {
 
   it("should export runtime detection constants", async () => {
     const { isBun, isDeno, isNode, isCloudflare } = await import("./index.ts");
-    // These are boolean constants
-    assertExists(typeof isDeno === "boolean" ? true : false);
-    assertExists(typeof isNode === "boolean" ? true : false);
-    assertExists(typeof isBun === "boolean" ? true : false);
-    assertExists(typeof isCloudflare === "boolean" ? true : false);
+    assertExists(typeof isDeno === "boolean");
+    assertExists(typeof isNode === "boolean");
+    assertExists(typeof isBun === "boolean");
+    assertExists(typeof isCloudflare === "boolean");
   });
 });

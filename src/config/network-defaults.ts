@@ -35,16 +35,24 @@ export const LOCALHOST_URLS = {
   HTTPS_IPV4: "https://127.0.0.1",
 } as const;
 
+function buildUrl(
+  host: string,
+  port: number,
+  protocol: "http" | "https" = "http",
+): string {
+  return `${protocol}://${host}:${port}`;
+}
+
 export function buildLocalhostUrl(
   port: number,
   protocol: "http" | "https" = "http",
 ): string {
-  return `${protocol}://${LOCALHOST.HOSTNAME}:${port}`;
+  return buildUrl(LOCALHOST.HOSTNAME, port, protocol);
 }
 
 export function buildIpv4Url(
   port: number,
   protocol: "http" | "https" = "http",
 ): string {
-  return `${protocol}://${LOCALHOST.IPV4}:${port}`;
+  return buildUrl(LOCALHOST.IPV4, port, protocol);
 }

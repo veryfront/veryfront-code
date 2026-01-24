@@ -9,17 +9,19 @@ export default tool({
   inputSchema: z.object({
     baseId: z.string().describe('The ID of the Airtable base (starts with "app")'),
     tableIdOrName: z.string().describe("The ID or name of the table"),
-    fields: z.record(z.unknown()).describe(
-      'Object with field names as keys and their values. Field names must match exactly. Example: { "Name": "John Doe", "Email": "john@example.com", "Status": "Active" }',
-    ),
+    fields: z
+      .record(z.unknown())
+      .describe(
+        'Object with field names as keys and their values. Field names must match exactly. Example: { "Name": "John Doe", "Email": "john@example.com", "Status": "Active" }',
+      ),
   }),
   async execute({ baseId, tableIdOrName, fields }) {
-    const record = await createRecord(baseId, tableIdOrName, fields);
+    const { id, createdTime, fields: recordFields } = await createRecord(
+      baseId,
+      tableIdOrName,
+      fields,
+    );
 
-    return {
-      id: record.id,
-      createdTime: record.createdTime,
-      fields: record.fields,
-    };
+    return { id, createdTime, fields: recordFields };
   },
 });

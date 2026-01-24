@@ -2,11 +2,11 @@ import { serverLogger as logger } from "#veryfront/utils";
 import type { FileWatcherMetrics } from "./types.ts";
 
 export class OptimizedFileWatcher {
-  private changeQueue = new Set<string>();
+  private readonly changeQueue = new Set<string>();
   private debounceTimer?: number;
   private readonly debounceMs: number;
-  private processCallback: (changes: string[]) => Promise<void>;
-  private metrics = {
+  private readonly processCallback: (changes: string[]) => Promise<void>;
+  private readonly metrics = {
     totalEvents: 0,
     batchedOperations: 0,
     totalBatchSize: 0,
@@ -55,8 +55,11 @@ export class OptimizedFileWatcher {
 
     this.changeQueue.clear();
 
-    const reductionPercent =
-      ((1 - (this.metrics.batchedOperations / this.metrics.totalEvents)) * 100).toFixed(1);
+    const reductionPercent = (
+      (1 - this.metrics.batchedOperations / this.metrics.totalEvents) *
+      100
+    ).toFixed(1);
+
     logger.debug(
       `[HMR] Processing batch of ${batchSize} file changes (${reductionPercent}% reduction in FS operations)`,
     );
@@ -69,27 +72,32 @@ export class OptimizedFileWatcher {
   }
 
   cleanup(): void {
-    if (this.debounceTimer !== undefined) {
-      clearTimeout(this.debounceTimer);
-      this.debounceTimer = undefined;
+    if (this.debounceTimer === undefined) {
+      this.changeQueue.clear();
+      return;
     }
+
+    clearTimeout(this.debounceTimer);
+    this.debounceTimer = undefined;
     this.changeQueue.clear();
   }
 
   getMetrics(): FileWatcherMetrics {
-    const avgBatchSize = this.metrics.batchedOperations > 0
-      ? (this.metrics.totalBatchSize / this.metrics.batchedOperations).toFixed(2)
+    const { totalEvents, batchedOperations, totalBatchSize, largestBatch } = this.metrics;
+
+    const averageBatchSize = batchedOperations > 0
+      ? (totalBatchSize / batchedOperations).toFixed(2)
       : "0";
 
-    const reductionPercent = this.metrics.totalEvents > 0
-      ? ((1 - (this.metrics.batchedOperations / this.metrics.totalEvents)) * 100).toFixed(1)
+    const reductionPercent = totalEvents > 0
+      ? ((1 - batchedOperations / totalEvents) * 100).toFixed(1)
       : "0";
 
     return {
-      totalFileChangeEvents: this.metrics.totalEvents,
-      routeDiscoveryCalls: this.metrics.batchedOperations,
-      averageBatchSize: avgBatchSize,
-      largestBatch: this.metrics.largestBatch,
+      totalFileChangeEvents: totalEvents,
+      routeDiscoveryCalls: batchedOperations,
+      averageBatchSize,
+      largestBatch,
       fsOperationReduction: `${reductionPercent}%`,
     };
   }

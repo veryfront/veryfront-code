@@ -7,7 +7,6 @@ export interface NavigationCallbacks {
   onPrefetch: (url: string) => void;
 }
 
-// Maximum scroll positions to store (LRU eviction)
 const MAX_SCROLL_POSITIONS = 100;
 
 export class NavigationHandlers {
@@ -16,10 +15,7 @@ export class NavigationHandlers {
   private scrollPositions = new Map<string, number>();
   private isPopStateNav = false;
   private prefetchDelay: number;
-  private prefetchOptions: {
-    hover?: boolean;
-    viewport?: boolean;
-  };
+  private prefetchOptions: { hover?: boolean; viewport?: boolean };
 
   constructor(
     prefetchDelay = DEFAULT_PREFETCH_DELAY_MS,
@@ -46,9 +42,8 @@ export class NavigationHandlers {
 
   createPopStateHandler(callbacks: NavigationCallbacks) {
     return (_event: PopStateEvent) => {
-      const path = globalThis.location.pathname;
       this.isPopStateNav = true;
-      callbacks.onNavigate(path);
+      callbacks.onNavigate(globalThis.location.pathname);
     };
   }
 
@@ -63,43 +58,42 @@ export class NavigationHandlers {
       if (!href || href.startsWith("http") || href.startsWith("#")) return;
 
       if (!this.shouldPrefetchOnHover(target)) return;
+      if (this.prefetchQueue.has(href)) return;
 
-      if (!this.prefetchQueue.has(href)) {
-        this.prefetchQueue.add(href);
-        const timeoutId = setTimeout(() => {
-          callbacks.onPrefetch(href);
-          this.prefetchQueue.delete(href);
-          this.pendingTimeouts.delete(href);
-        }, this.prefetchDelay);
-        this.pendingTimeouts.set(href, timeoutId);
-      }
+      this.prefetchQueue.add(href);
+
+      const timeoutId = setTimeout(() => {
+        callbacks.onPrefetch(href);
+        this.prefetchQueue.delete(href);
+        this.pendingTimeouts.delete(href);
+      }, this.prefetchDelay);
+
+      this.pendingTimeouts.set(href, timeoutId);
     };
   }
 
   private shouldPrefetchOnHover(target: HTMLElement): boolean {
     const prefetchAttribute = target.getAttribute("data-prefetch");
-    const isHoverEnabled = Boolean(this.prefetchOptions.hover);
-
     if (prefetchAttribute === "false") return false;
-
-    return prefetchAttribute === "true" || isHoverEnabled;
+    if (prefetchAttribute === "true") return true;
+    return Boolean(this.prefetchOptions.hover);
   }
 
   saveScrollPosition(path: string): void {
     try {
-      // LRU eviction if at capacity
       if (this.scrollPositions.size >= MAX_SCROLL_POSITIONS) {
-        const oldest = this.scrollPositions.keys().next().value;
+        const oldest = this.scrollPositions.keys().next().value as string | undefined;
         if (oldest) this.scrollPositions.delete(oldest);
       }
 
       const scrollY = globalThis.scrollY;
-      if (typeof scrollY === "number") {
-        this.scrollPositions.set(path, scrollY);
-      } else {
+      if (typeof scrollY !== "number") {
         logger.debug("[Veryfront] No valid scrollY value available");
         this.scrollPositions.set(path, 0);
+        return;
       }
+
+      this.scrollPositions.set(path, scrollY);
     } catch (error) {
       logger.warn("[Veryfront] failed to record scroll position", error);
     }
@@ -123,9 +117,7 @@ export class NavigationHandlers {
   }
 
   clear(): void {
-    for (const timeoutId of this.pendingTimeouts.values()) {
-      clearTimeout(timeoutId);
-    }
+    for (const timeoutId of this.pendingTimeouts.values()) clearTimeout(timeoutId);
     this.pendingTimeouts.clear();
     this.prefetchQueue.clear();
     this.scrollPositions.clear();

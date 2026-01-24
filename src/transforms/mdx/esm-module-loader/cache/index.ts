@@ -18,16 +18,14 @@ import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 
 // Local filesystem for cache operations (not project's FSAdapter which may be remote/read-only)
 // This uses the platform's native fs (Deno, Node, Bun) for local cache writes
-let _localFs: FileSystem | null = null;
+let localFs: FileSystem | null = null;
 
 /**
  * Get or create the local filesystem instance.
  */
 export function getLocalFs(): FileSystem {
-  if (!_localFs) {
-    _localFs = createFileSystem();
-  }
-  return _localFs;
+  localFs ??= createFileSystem();
+  return localFs;
 }
 
 // Persistent module path cache - survives across requests
@@ -35,23 +33,16 @@ export function getLocalFs(): FileSystem {
 const modulePathCaches = new Map<string, Map<string, string>>();
 const modulePathCacheLoaded = new Set<string>();
 
-function getCacheKey(cacheDir: string): string {
-  return cacheDir;
-}
-
 /**
  * Get or load the module path cache.
  * The cache maps normalized module paths to their disk cache file paths.
  */
 export async function getModulePathCache(cacheDir: string): Promise<Map<string, string>> {
-  const cacheKey = getCacheKey(cacheDir);
-  const existing = modulePathCaches.get(cacheKey);
-  if (existing && modulePathCacheLoaded.has(cacheKey)) {
-    return existing;
-  }
+  const existing = modulePathCaches.get(cacheDir);
+  if (existing && modulePathCacheLoaded.has(cacheDir)) return existing;
 
   const cache = existing ?? new Map<string, string>();
-  modulePathCaches.set(cacheKey, cache);
+  modulePathCaches.set(cacheDir, cache);
 
   const indexPath = join(cacheDir, "_index.json");
 
@@ -66,7 +57,7 @@ export async function getModulePathCache(cacheDir: string): Promise<Map<string, 
     // Index doesn't exist yet
   }
 
-  modulePathCacheLoaded.add(cacheKey);
+  modulePathCacheLoaded.add(cacheDir);
   return cache;
 }
 
@@ -74,8 +65,7 @@ export async function getModulePathCache(cacheDir: string): Promise<Map<string, 
  * Save the module path cache to disk.
  */
 export async function saveModulePathCache(cacheDir: string): Promise<void> {
-  const cacheKey = getCacheKey(cacheDir);
-  const cache = modulePathCaches.get(cacheKey);
+  const cache = modulePathCaches.get(cacheDir);
   if (!cache) return;
 
   const indexPath = join(cacheDir, "_index.json");
@@ -112,17 +102,16 @@ export function invalidateModulePaths(changedPaths: string[]): void {
   let invalidatedCount = 0;
 
   for (const changedPath of changedPaths) {
-    // Normalize the path for matching
-    const normalizedChanged = changedPath.replace(/^\/+/, "").replace(/\.(tsx?|jsx?|mdx)$/, "");
+    const normalizedChanged = changedPath
+      .replace(/^\/+/, "")
+      .replace(/\.(tsx?|jsx?|mdx)$/, "");
 
     for (const cache of modulePathCaches.values()) {
-      // Find and remove all cache entries that match or depend on this file
-      for (const [cachedPath] of cache.entries()) {
+      for (const cachedPath of cache.keys()) {
         const normalizedCached = cachedPath
           .replace(/^_vf_modules\//, "")
           .replace(/\.js$/, "");
 
-        // Check if the cached module matches the changed file
         if (
           normalizedCached === normalizedChanged ||
           normalizedCached.endsWith(`/${normalizedChanged}`) ||
@@ -148,16 +137,14 @@ export function invalidateModulePaths(changedPaths: string[]): void {
 export async function clearESMDiskCache(): Promise<void> {
   const cacheDir = getMdxEsmCacheDir();
   const fs = getLocalFs();
+
   try {
-    // Remove all cached module files
     for await (const entry of fs.readDir(cacheDir)) {
-      if (entry.isFile && entry.name.endsWith(".mjs")) {
-        await fs.remove(join(cacheDir, entry.name));
-      }
+      if (!entry.isFile || !entry.name.endsWith(".mjs")) continue;
+      await fs.remove(join(cacheDir, entry.name));
     }
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Cleared ESM disk cache`);
   } catch (error) {
-    // Cache dir might not exist yet
     if (!isNotFoundError(error)) {
       logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to clear ESM disk cache`, error);
     }

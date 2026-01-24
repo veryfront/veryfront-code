@@ -8,9 +8,6 @@
 
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
-/**
- * Options for creating an SSRModuleLoader instance.
- */
 export interface SSRModuleLoaderOptions {
   projectDir: string;
   projectId: string;
@@ -21,25 +18,16 @@ export interface SSRModuleLoaderOptions {
   contentSourceId?: string;
 }
 
-/**
- * Cache entry for transformed modules.
- */
 export interface ModuleCacheEntry {
   tempPath: string;
   contentHash: string;
 }
 
-/**
- * Circuit breaker failure record.
- */
 export interface FailureRecord {
   count: number;
   lastFailure: number;
 }
 
-/**
- * SSR module cache statistics.
- */
 export interface SSRModuleCacheStats {
   memoryEntries: number;
   maxEntries: number;

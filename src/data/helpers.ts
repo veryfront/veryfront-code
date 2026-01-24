@@ -1,9 +1,9 @@
 import type { DataResult } from "./types.ts";
 
-export const redirect = (destination: string, permanent = false): DataResult => ({
-  redirect: { destination, permanent },
-});
+export function redirect(destination: string, permanent = false): DataResult {
+  return { redirect: { destination, permanent } };
+}
 
-export const notFound = (): DataResult => ({
-  notFound: true,
-});
+export function notFound(): DataResult {
+  return { notFound: true };
+}

@@ -8,12 +8,16 @@ export default tool({
     "Get messages from a specific Microsoft Teams chat. Returns message content, sender information, and timestamps. Use list-chats first to get chat IDs.",
   inputSchema: z.object({
     chatId: z.string().describe("The ID of the chat to get messages from"),
-    limit: z.number().min(1).max(50).default(20).describe(
-      "Maximum number of messages to return (1-50)",
-    ),
-    includeHtml: z.boolean().default(false).describe(
-      "Include HTML formatted content in addition to plain text",
-    ),
+    limit: z
+      .number()
+      .min(1)
+      .max(50)
+      .default(20)
+      .describe("Maximum number of messages to return (1-50)"),
+    includeHtml: z
+      .boolean()
+      .default(false)
+      .describe("Include HTML formatted content in addition to plain text"),
   }),
   async execute({ chatId, limit, includeHtml }) {
     const messages = await getChatMessages(chatId, {
@@ -22,7 +26,7 @@ export default tool({
     });
 
     return messages
-      .filter((msg) => msg.messageType === "message") // Filter out typing indicators and events
+      .filter((msg) => msg.messageType === "message")
       .map((msg) => ({
         id: msg.id,
         content: getPlainTextContent(msg),
@@ -36,8 +40,8 @@ export default tool({
         lastModified: msg.lastModifiedDateTime,
         importance: msg.importance,
         subject: msg.subject,
-        hasAttachments: msg.attachments && msg.attachments.length > 0,
-        attachmentCount: msg.attachments?.length || 0,
+        hasAttachments: (msg.attachments?.length ?? 0) > 0,
+        attachmentCount: msg.attachments?.length ?? 0,
         attachments: msg.attachments?.map((att) => ({
           id: att.id,
           name: att.name,
@@ -49,7 +53,7 @@ export default tool({
           userId: mention.mentioned.user.id,
           displayName: mention.mentioned.user.displayName,
         })),
-        reactionCount: msg.reactions?.length || 0,
+        reactionCount: msg.reactions?.length ?? 0,
       }));
   },
 });

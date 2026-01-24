@@ -16,7 +16,6 @@ export type {
   ToolResultUIPart,
   ToolState,
   ToolUIPart,
-  // AI SDK v5 compatible types
   UIMessage,
   UIMessagePart,
   UseChatOptions,

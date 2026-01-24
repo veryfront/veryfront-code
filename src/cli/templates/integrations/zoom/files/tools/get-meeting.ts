@@ -6,12 +6,11 @@ export default tool({
   id: "get-meeting",
   description: "Get detailed information about a specific Zoom meeting by its ID.",
   inputSchema: z.object({
-    meetingId: z
-      .union([z.string(), z.number()])
-      .describe("The meeting ID or UUID"),
+    meetingId: z.union([z.string(), z.number()]).describe("The meeting ID or UUID"),
   }),
   async execute({ meetingId }) {
     const meeting = await getMeeting(meetingId);
+    const settings = meeting.settings;
 
     return {
       id: meeting.id,
@@ -28,15 +27,15 @@ export default tool({
       hostEmail: meeting.host_email,
       status: meeting.status,
       createdAt: meeting.created_at,
-      settings: meeting.settings
+      settings: settings
         ? {
-            hostVideo: meeting.settings.host_video,
-            participantVideo: meeting.settings.participant_video,
-            joinBeforeHost: meeting.settings.join_before_host,
-            muteUponEntry: meeting.settings.mute_upon_entry,
-            watermark: meeting.settings.watermark,
-            audio: meeting.settings.audio,
-            autoRecording: meeting.settings.auto_recording,
+            hostVideo: settings.host_video,
+            participantVideo: settings.participant_video,
+            joinBeforeHost: settings.join_before_host,
+            muteUponEntry: settings.mute_upon_entry,
+            watermark: settings.watermark,
+            audio: settings.audio,
+            autoRecording: settings.auto_recording,
           }
         : undefined,
     };

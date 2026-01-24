@@ -11,14 +11,13 @@ import { step } from "./dsl/step.ts";
 import { parallel } from "./dsl/parallel.ts";
 import { branch } from "./dsl/branch.ts";
 
-describe("WorkflowRegistry", () => {
-  beforeEach(() => {
-    workflowRegistry.clear();
-  });
+function node(id: string, type: string): WorkflowNode {
+  return { id, config: { type } } as WorkflowNode;
+}
 
-  afterEach(() => {
-    workflowRegistry.clear();
-  });
+describe("WorkflowRegistry", () => {
+  beforeEach(() => workflowRegistry.clear());
+  afterEach(() => workflowRegistry.clear());
 
   describe("register()", () => {
     it("should register a workflow definition", () => {
@@ -36,7 +35,7 @@ describe("WorkflowRegistry", () => {
     it("should register a plain workflow definition", () => {
       const definition: WorkflowDefinition = {
         id: "plain-workflow",
-        steps: [{ id: "step1", config: { type: "step" } } as WorkflowNode],
+        steps: [node("step1", "step")],
       };
 
       workflowRegistry.register(definition);
@@ -50,10 +49,7 @@ describe("WorkflowRegistry", () => {
         description: "Test description",
         version: "1.0.0",
         timeout: "30m",
-        steps: [
-          { id: "step1", config: { type: "step" } } as WorkflowNode,
-          { id: "step2", config: { type: "parallel" } } as WorkflowNode,
-        ],
+        steps: [node("step1", "step"), node("step2", "parallel")],
       };
 
       workflowRegistry.register(definition);
@@ -73,10 +69,7 @@ describe("WorkflowRegistry", () => {
 
   describe("get()", () => {
     it("should return metadata for registered workflow", () => {
-      workflowRegistry.register({
-        id: "get-test",
-        steps: [],
-      });
+      workflowRegistry.register({ id: "get-test", steps: [] });
 
       const metadata = workflowRegistry.get("get-test");
       assertExists(metadata);
@@ -84,8 +77,7 @@ describe("WorkflowRegistry", () => {
     });
 
     it("should return undefined for non-existent workflow", () => {
-      const metadata = workflowRegistry.get("non-existent");
-      assertEquals(metadata, undefined);
+      assertEquals(workflowRegistry.get("non-existent"), undefined);
     });
   });
 
@@ -106,8 +98,7 @@ describe("WorkflowRegistry", () => {
     });
 
     it("should return undefined for non-existent workflow", () => {
-      const definition = workflowRegistry.getDefinition("non-existent");
-      assertEquals(definition, undefined);
+      assertEquals(workflowRegistry.getDefinition("non-existent"), undefined);
     });
   });
 
@@ -134,8 +125,7 @@ describe("WorkflowRegistry", () => {
     });
 
     it("should return empty array when no workflows registered", () => {
-      const ids = workflowRegistry.getAllIds();
-      assertEquals(ids, []);
+      assertEquals(workflowRegistry.getAllIds(), []);
     });
   });
 
@@ -166,16 +156,11 @@ describe("WorkflowRegistry", () => {
     it("should return correct statistics", () => {
       workflowRegistry.register({
         id: "stats-1",
-        steps: [
-          { id: "s1", config: { type: "step" } } as WorkflowNode,
-          { id: "s2", config: { type: "step" } } as WorkflowNode,
-        ],
+        steps: [node("s1", "step"), node("s2", "step")],
       });
       workflowRegistry.register({
         id: "stats-2",
-        steps: [
-          { id: "p1", config: { type: "parallel" } } as WorkflowNode,
-        ],
+        steps: [node("p1", "parallel")],
       });
 
       const stats = workflowRegistry.getStats();
@@ -209,8 +194,7 @@ describe("WorkflowRegistry", () => {
     });
 
     it("should return false for non-existent workflow", () => {
-      const result = workflowRegistry.unregister("not-there");
-      assertEquals(result, false);
+      assertEquals(workflowRegistry.unregister("not-there"), false);
     });
   });
 
@@ -227,13 +211,8 @@ describe("WorkflowRegistry", () => {
 });
 
 describe("Exported helper functions", () => {
-  beforeEach(() => {
-    workflowRegistry.clear();
-  });
-
-  afterEach(() => {
-    workflowRegistry.clear();
-  });
+  beforeEach(() => workflowRegistry.clear());
+  afterEach(() => workflowRegistry.clear());
 
   describe("registerWorkflow()", () => {
     it("should register via helper function", () => {
@@ -245,6 +224,7 @@ describe("Exported helper functions", () => {
   describe("getWorkflow()", () => {
     it("should get workflow via helper function", () => {
       workflowRegistry.register({ id: "get-helper", steps: [] });
+
       const metadata = getWorkflow("get-helper");
       assertExists(metadata);
       assertEquals(metadata.id, "get-helper");
@@ -255,6 +235,7 @@ describe("Exported helper functions", () => {
     it("should get all IDs via helper function", () => {
       workflowRegistry.register({ id: "ids-1", steps: [] });
       workflowRegistry.register({ id: "ids-2", steps: [] });
+
       const ids = getAllWorkflowIds();
       assertEquals(ids.sort(), ["ids-1", "ids-2"]);
     });
@@ -262,21 +243,14 @@ describe("Exported helper functions", () => {
 });
 
 describe("Auto-registration with workflow() DSL", () => {
-  beforeEach(() => {
-    workflowRegistry.clear();
-  });
-
-  afterEach(() => {
-    workflowRegistry.clear();
-  });
+  beforeEach(() => workflowRegistry.clear());
+  afterEach(() => workflowRegistry.clear());
 
   it("should auto-register when creating workflow via DSL", () => {
     const wf = workflow({
       id: "auto-registered",
       description: "Auto-registered workflow",
-      steps: [
-        step("step1", { agent: "test-agent" }),
-      ],
+      steps: [step("step1", { agent: "test-agent" })],
     });
 
     assertEquals(wf.id, "auto-registered");

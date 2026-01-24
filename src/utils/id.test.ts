@@ -17,9 +17,11 @@ describe("id", () => {
 
     it("should generate unique IDs", () => {
       const ids = new Set<string>();
+
       for (let i = 0; i < 100; i++) {
         ids.add(generateId());
       }
+
       assertEquals(ids.size, 100);
     });
   });
@@ -27,14 +29,12 @@ describe("id", () => {
   describe("createIdGenerator", () => {
     it("should create generator with prefix", () => {
       const generate = createIdGenerator({ prefix: "test" });
-      const id = generate();
-      assertMatch(id, /^test-[0-9a-zA-Z]{16}$/);
+      assertMatch(generate(), /^test-[0-9a-zA-Z]{16}$/);
     });
 
     it("should use custom separator", () => {
       const generate = createIdGenerator({ prefix: "test", separator: "_" });
-      const id = generate();
-      assertMatch(id, /^test_[0-9a-zA-Z]{16}$/);
+      assertMatch(generate(), /^test_[0-9a-zA-Z]{16}$/);
     });
 
     it("should use custom size", () => {
@@ -46,8 +46,7 @@ describe("id", () => {
 
     it("should generate without prefix", () => {
       const generate = createIdGenerator({});
-      const id = generate();
-      assertEquals(id.length, 16);
+      assertEquals(generate().length, 16);
     });
   });
 });

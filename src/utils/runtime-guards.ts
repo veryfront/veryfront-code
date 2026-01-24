@@ -25,21 +25,16 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 export function hasDenoRuntime(global: unknown): global is GlobalWithDeno {
-  return (
-    isObject(global) &&
-    "Deno" in global &&
-    typeof (global as GlobalWithDeno).Deno?.env?.get === "function"
-  );
+  if (!isObject(global) || !("Deno" in global)) return false;
+  return typeof (global as GlobalWithDeno).Deno?.env?.get === "function";
 }
 
 export function hasNodeProcess(global: unknown): global is GlobalWithProcess {
-  return (
-    isObject(global) &&
-    "process" in global &&
-    typeof (global as GlobalWithProcess).process?.env === "object"
-  );
+  if (!isObject(global) || !("process" in global)) return false;
+  return typeof (global as GlobalWithProcess).process?.env === "object";
 }
 
 export function hasBunRuntime(global: unknown): global is GlobalWithBun {
-  return isObject(global) && "Bun" in global && (global as GlobalWithBun).Bun !== undefined;
+  if (!isObject(global) || !("Bun" in global)) return false;
+  return (global as GlobalWithBun).Bun !== undefined;
 }

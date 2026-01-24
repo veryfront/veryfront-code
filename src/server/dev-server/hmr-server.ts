@@ -3,9 +3,14 @@
  * Handles Hot Module Replacement and WebSocket connections
  */
 
-import { serverLogger as logger } from "#veryfront/utils";
-import { HTTP_NOT_FOUND, HTTP_NOT_IMPLEMENTED, HTTP_SERVER_ERROR } from "#veryfront/utils";
-import { HMR_MAX_MESSAGE_SIZE_BYTES, HMR_MAX_MESSAGES_PER_MINUTE } from "#veryfront/utils";
+import {
+  HMR_MAX_MESSAGE_SIZE_BYTES,
+  HMR_MAX_MESSAGES_PER_MINUTE,
+  HTTP_NOT_FOUND,
+  HTTP_NOT_IMPLEMENTED,
+  HTTP_SERVER_ERROR,
+  serverLogger as logger,
+} from "#veryfront/utils";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import type { HMRServerOptions, HMRUpdate } from "./hmr-types.ts";
 import type { Server } from "#veryfront/platform/adapters/base.ts";
@@ -41,12 +46,19 @@ export class HMRServer {
    * Sets up HTTP server with WebSocket upgrade and runtime script serving
    */
   start(): Promise<void> {
-    const _handler = (req: Request): Response => {
+    if (!this.options.adapter) {
+      throw toError(
+        createError({
+          type: "config",
+          message: "HMR server requires a runtime adapter",
+        }),
+      );
+    }
+
+    const handler = (req: Request): Response => {
       const url = new URL(req.url);
 
-      // WebSocket upgrade for HMR
       if (req.headers.get("upgrade") === "websocket") {
-        // Use the runtime adapter's WebSocket upgrade method
         if (!this.options.adapter?.server) {
           return new Response("WebSocket not supported in this runtime", {
             status: HTTP_NOT_IMPLEMENTED,
@@ -56,7 +68,6 @@ export class HMRServer {
         try {
           const { socket, response } = this.options.adapter.server.upgradeWebSocket(req);
 
-          // Setup all WebSocket handlers using extracted module
           setupWebSocketHandlers(socket, {
             clients: this.clients,
             rateLimiter: this.rateLimiter,
@@ -71,7 +82,6 @@ export class HMRServer {
         }
       }
 
-      // Serve HMR runtime script
       if (url.pathname === "/hmr-runtime.js") {
         return new Response(this.getHMRRuntime(), {
           headers: {
@@ -81,11 +91,11 @@ export class HMRServer {
         });
       }
 
-      // Serve React Refresh runtime if enabled
       if (url.pathname === "/react-refresh-runtime.js") {
         if (!this.options.reactRefresh) {
           return new Response("React Refresh not enabled", { status: HTTP_NOT_FOUND });
         }
+
         return new Response(this.getReactRefreshRuntime(), {
           headers: {
             "content-type": "application/javascript",
@@ -97,34 +107,23 @@ export class HMRServer {
       return new Response("Not Found", { status: HTTP_NOT_FOUND });
     };
 
-    // Ensure we have an adapter
-    if (!this.options.adapter) {
-      throw toError(createError({
-        type: "config",
-        message: "HMR server requires a runtime adapter",
-      }));
-    }
-
-    // Create AbortController if no signal provided for fast shutdown
     const controller = new AbortController();
-    const signal = this.options.signal || controller.signal;
+    const signal = this.options.signal ?? controller.signal;
     this.abortController = this.options.signal ? undefined : controller;
 
-    // Use the adapter's serve method - works on any runtime (Deno, Node, Bun)
-    // Bind to 0.0.0.0 to accept connections from all interfaces (IPv4 and IPv6)
-    // This is needed because lvh.me resolves to 127.0.0.1 (IPv4), not ::1 (IPv6)
-    const startPromise = this.options.adapter.serve(_handler, {
-      port: this.options.port,
-      hostname: "0.0.0.0",
-      signal,
-      onListen: ({ port }: { port: number }) => {
-        logger.debug(`HMR server running on port ${port}`);
-      },
-    }).then((server) => {
-      this.server = server;
-    });
+    const startPromise = this.options.adapter
+      .serve(handler, {
+        port: this.options.port,
+        hostname: "0.0.0.0",
+        signal,
+        onListen: ({ port }: { port: number }) => {
+          logger.debug(`HMR server running on port ${port}`);
+        },
+      })
+      .then((server) => {
+        this.server = server;
+      });
 
-    // Attach a handler to avoid unhandled rejections when callers forget to await
     startPromise.catch((error) => {
       logger.error("HMR server failed to start", error);
     });
@@ -138,24 +137,14 @@ export class HMRServer {
    */
   async stop(): Promise<void> {
     try {
-      // Use AbortController to trigger immediate shutdown
-      if (this.abortController) {
-        this.abortController.abort();
-      }
+      this.abortController?.abort();
 
-      // Close all WebSocket connections gracefully using extracted module
-      // This waits for the close handshake to complete (~100ms)
       await closeAllConnections(this.clients, this.rateLimiter);
 
-      // Stop the HTTP server
-      // Called AFTER WebSocket close handshake completes to avoid aborting connections
-      if (this.server) {
-        await this.server.stop();
-      }
+      await this.server?.stop();
 
       logger.debug("HMR server stopped");
     } catch (error) {
-      // Server already stopped or shutdown failed - safe to ignore
       logger.debug("[HMRServer] Server shutdown failed", { error });
     }
   }
@@ -166,17 +155,19 @@ export class HMRServer {
    */
   sendUpdate(update: HMRUpdate): void {
     const message = JSON.stringify(update);
+
     logger.debug("[HMRServer] sendUpdate called", {
       type: update.type,
       connectedClients: this.clients.size,
     });
+
     let sentCount = 0;
     for (const client of this.clients) {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(message);
-        sentCount++;
-      }
+      if (client.readyState !== WebSocket.OPEN) continue;
+      client.send(message);
+      sentCount++;
     }
+
     logger.debug("[HMRServer] Update sent to clients", {
       sentCount,
       totalClients: this.clients.size,
@@ -196,12 +187,7 @@ export class HMRServer {
    * Uses cached version if available for better performance
    */
   private getHMRRuntime(): string {
-    if (this.cachedRuntime) {
-      return this.cachedRuntime;
-    }
-
-    // Generate runtime script using extracted generator
-    this.cachedRuntime = generateHMRRuntimeScript({
+    this.cachedRuntime ??= generateHMRRuntimeScript({
       port: this.options.port,
       reactRefresh: this.options.reactRefresh,
     });
@@ -214,8 +200,6 @@ export class HMRServer {
    * Provides React Fast Refresh support for hot reloading
    */
   private getReactRefreshRuntime(): string {
-    // Minimal React Refresh runtime marker
-    // In a real implementation, this would load the actual React Refresh runtime
     return `// React Refresh Runtime
 window.__REACT_REFRESH_RUNTIME__ = true;
 console.log('[React Refresh] Runtime loaded');`;

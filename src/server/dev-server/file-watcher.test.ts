@@ -1,18 +1,14 @@
+import { delay } from "#std/async.ts";
 import { expect } from "#std/expect.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { OptimizedFileWatcher } from "./file-watcher.ts";
-import { delay } from "#std/async.ts";
 
-function createDeferred<T = void>() {
+function createDeferred<T = void>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((res) => {
     resolve = res;
   });
   return { promise, resolve };
-}
-
-function waitFor(ms: number): Promise<void> {
-  return delay(ms);
 }
 
 describe("OptimizedFileWatcher", () => {
@@ -29,7 +25,7 @@ describe("OptimizedFileWatcher", () => {
     watcher.handleChange(["src/pages/index.tsx"]);
     watcher.handleChange(["src/pages/about.tsx", "src/pages/index.tsx"]);
 
-    await waitFor(10);
+    await delay(10);
     await completion.promise;
 
     expect(processedBatches).toHaveLength(1);
@@ -56,9 +52,10 @@ describe("OptimizedFileWatcher", () => {
     watcher.handleChange(["src/pages/hmr.tsx"]);
     watcher.cleanup();
 
-    await waitFor(10);
+    await delay(10);
 
     expect(processed).toBe(false);
+
     const metrics = watcher.getMetrics();
     expect(metrics.totalFileChangeEvents).toBe(1);
     expect(metrics.routeDiscoveryCalls).toBe(0);

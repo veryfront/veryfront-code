@@ -2,19 +2,17 @@ import { getAccessToken } from "./token-store.ts";
 
 const QUICKBOOKS_BASE_URL = "https://quickbooks.api.intuit.com/v3";
 
-// Note: QuickBooks requires a realmId (company ID) which should be stored during OAuth
-// For this template, we'll use an environment variable or parameter
-const getRealmId = (): string => {
+function getRealmId(): string {
   const realmId = process.env.QUICKBOOKS_REALM_ID;
   if (!realmId) {
     throw new Error("QUICKBOOKS_REALM_ID environment variable is required");
   }
   return realmId;
-};
+}
 
 interface QuickBooksResponse<T> {
   QueryResponse?: {
-    [key: string]: T[];
+    [key: string]: T[] | number | undefined;
     maxResults?: number;
     startPosition?: number;
   };
@@ -95,14 +93,13 @@ async function quickbooksFetch<T>(
     throw new Error("Not authenticated with QuickBooks. Please connect your account.");
   }
 
-  const realmId = getRealmId();
-  const url = `${QUICKBOOKS_BASE_URL}/company/${realmId}${endpoint}`;
+  const url = `${QUICKBOOKS_BASE_URL}/company/${getRealmId()}${endpoint}`;
 
   const response = await fetch(url, {
     ...options,
     headers: {
-      "Authorization": `Bearer ${token}`,
-      "Accept": "application/json",
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
       "Content-Type": "application/json",
       ...options.headers,
     },
@@ -110,9 +107,8 @@ async function quickbooksFetch<T>(
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(
-      `QuickBooks API error: ${response.status} ${error.Fault?.Error?.[0]?.Message || response.statusText}`,
-    );
+    const message = error.Fault?.Error?.[0]?.Message ?? response.statusText;
+    throw new Error(`QuickBooks API error: ${response.status} ${message}`);
   }
 
   return response.json();
@@ -122,18 +118,17 @@ export async function listInvoices(options?: {
   customerId?: string;
   maxResults?: number;
 }): Promise<QuickBooksInvoice[]> {
-  const maxResults = options?.maxResults || 100;
-  let query = `SELECT * FROM Invoice MAXRESULTS ${maxResults}`;
+  const maxResults = options?.maxResults ?? 100;
 
-  if (options?.customerId) {
-    query = `SELECT * FROM Invoice WHERE CustomerRef = '${options.customerId}' MAXRESULTS ${maxResults}`;
-  }
+  const query = options?.customerId
+    ? `SELECT * FROM Invoice WHERE CustomerRef = '${options.customerId}' MAXRESULTS ${maxResults}`
+    : `SELECT * FROM Invoice MAXRESULTS ${maxResults}`;
 
   const response = await quickbooksFetch<QuickBooksResponse<QuickBooksInvoice>>(
     `/query?query=${encodeURIComponent(query)}`,
   );
 
-  return response.QueryResponse?.Invoice || [];
+  return response.QueryResponse?.Invoice ?? [];
 }
 
 export async function getInvoice(invoiceId: string): Promise<QuickBooksInvoice> {
@@ -141,11 +136,12 @@ export async function getInvoice(invoiceId: string): Promise<QuickBooksInvoice> 
     `/invoice/${invoiceId}`,
   );
 
-  if (!response.Invoice) {
+  const invoice = response.Invoice;
+  if (!invoice) {
     throw new Error(`Invoice ${invoiceId} not found`);
   }
 
-  return response.Invoice;
+  return invoice;
 }
 
 export async function createInvoice(options: {
@@ -174,11 +170,9 @@ export async function createInvoice(options: {
 
     if (item.itemId) {
       line.SalesItemLineDetail = {
-        ItemRef: {
-          value: item.itemId,
-        },
-        Qty: item.quantity || 1,
-        UnitPrice: item.unitPrice || item.amount,
+        ItemRef: { value: item.itemId },
+        Qty: item.quantity ?? 1,
+        UnitPrice: item.unitPrice ?? item.amount,
       };
     }
 
@@ -186,25 +180,14 @@ export async function createInvoice(options: {
   });
 
   const invoiceData: Record<string, unknown> = {
-    CustomerRef: {
-      value: options.customerId,
-    },
+    CustomerRef: { value: options.customerId },
     Line: lines,
+    ...(options.txnDate ? { TxnDate: options.txnDate } : {}),
+    ...(options.dueDate ? { DueDate: options.dueDate } : {}),
+    ...(options.customerMemo
+      ? { CustomerMemo: { value: options.customerMemo } }
+      : {}),
   };
-
-  if (options.txnDate) {
-    invoiceData.TxnDate = options.txnDate;
-  }
-
-  if (options.dueDate) {
-    invoiceData.DueDate = options.dueDate;
-  }
-
-  if (options.customerMemo) {
-    invoiceData.CustomerMemo = {
-      value: options.customerMemo,
-    };
-  }
 
   const response = await quickbooksFetch<QuickBooksResponse<QuickBooksInvoice>>(
     "/invoice",
@@ -214,29 +197,30 @@ export async function createInvoice(options: {
     },
   );
 
-  if (!response.Invoice) {
+  const invoice = response.Invoice;
+  if (!invoice) {
     throw new Error("Failed to create invoice");
   }
 
-  return response.Invoice;
+  return invoice;
 }
 
 export async function listCustomers(options?: {
   maxResults?: number;
   active?: boolean;
 }): Promise<QuickBooksCustomer[]> {
-  const maxResults = options?.maxResults || 100;
-  let query = `SELECT * FROM Customer MAXRESULTS ${maxResults}`;
+  const maxResults = options?.maxResults ?? 100;
 
-  if (options?.active !== undefined) {
-    query = `SELECT * FROM Customer WHERE Active = ${options.active} MAXRESULTS ${maxResults}`;
-  }
+  const query =
+    options?.active === undefined
+      ? `SELECT * FROM Customer MAXRESULTS ${maxResults}`
+      : `SELECT * FROM Customer WHERE Active = ${options.active} MAXRESULTS ${maxResults}`;
 
   const response = await quickbooksFetch<QuickBooksResponse<QuickBooksCustomer>>(
     `/query?query=${encodeURIComponent(query)}`,
   );
 
-  return response.QueryResponse?.Customer || [];
+  return response.QueryResponse?.Customer ?? [];
 }
 
 export async function getCustomer(customerId: string): Promise<QuickBooksCustomer> {
@@ -244,9 +228,10 @@ export async function getCustomer(customerId: string): Promise<QuickBooksCustome
     `/customer/${customerId}`,
   );
 
-  if (!response.Customer) {
+  const customer = response.Customer;
+  if (!customer) {
     throw new Error(`Customer ${customerId} not found`);
   }
 
-  return response.Customer;
+  return customer;
 }

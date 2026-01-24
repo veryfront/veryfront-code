@@ -8,12 +8,16 @@ export default tool({
     "Get detailed information about a specific Sentry issue including error details, stack traces, and recent events. Use this to investigate and debug specific errors.",
   inputSchema: z.object({
     issueId: z.string().describe("The ID of the issue to retrieve"),
-    includeEvents: z.boolean().default(true).describe(
-      "Whether to include recent events for this issue",
-    ),
-    eventLimit: z.number().min(1).max(50).default(5).describe(
-      "Number of recent events to include (1-50)",
-    ),
+    includeEvents: z
+      .boolean()
+      .default(true)
+      .describe("Whether to include recent events for this issue"),
+    eventLimit: z
+      .number()
+      .min(1)
+      .max(50)
+      .default(5)
+      .describe("Number of recent events to include (1-50)"),
   }),
   async execute({ issueId, includeEvents, eventLimit }) {
     const issue = await getIssue(issueId);
@@ -50,17 +54,29 @@ export default tool({
         assignedTo: issue.assignedTo,
         stats: issue.stats,
       },
-      events: events.map((event) => ({
-        id: event.id,
-        eventID: event.eventID,
-        message: event.message,
-        platform: event.platform,
-        dateCreated: event.dateCreated,
-        user: event.user,
-        tags: event.tags,
-        contexts: event.contexts,
-        entries: event.entries,
-      })),
+      events: events.map(
+        ({
+          id,
+          eventID,
+          message,
+          platform,
+          dateCreated,
+          user,
+          tags,
+          contexts,
+          entries,
+        }) => ({
+          id,
+          eventID,
+          message,
+          platform,
+          dateCreated,
+          user,
+          tags,
+          contexts,
+          entries,
+        }),
+      ),
     };
   },
 });

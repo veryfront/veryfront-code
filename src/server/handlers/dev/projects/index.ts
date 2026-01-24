@@ -19,10 +19,6 @@ export class ProjectsHandler extends BaseHandler {
       { pattern: "/_projects", exact: false },
     ],
     enabled: (ctx) => {
-      // Only enable when:
-      // 1. We're on a veryfront domain (lvh.me, veryfront.me, etc.)
-      // 2. There's NO project slug (root domain without subdomain)
-      // 3. We're in proxy mode (multi-project mode)
       const isVeryfrontDomain = ctx.parsedDomain?.isVeryfrontDomain === true;
       const hasNoSlug = !ctx.projectSlug;
       const isProxyMode = ctx.config?.fs?.veryfront?.proxyMode === true;
@@ -43,27 +39,30 @@ export class ProjectsHandler extends BaseHandler {
 
     const { pathname } = new URL(req.url);
 
-    // Serve the React app shell for root path
     if (pathname === "/" || pathname === "/_projects" || pathname === "/_projects/") {
       return this.respond(
-        this.createResponseBuilder(ctx)
-          .withCache("no-cache")
-          .withContentType("text/html; charset=utf-8", PROJECTS_SHELL_HTML, HTTP_OK),
+        this.createResponseBuilder(ctx).withCache("no-cache").withContentType(
+          "text/html; charset=utf-8",
+          PROJECTS_SHELL_HTML,
+          HTTP_OK,
+        ),
       );
     }
 
-    // Handle UI module requests
     if (pathname.startsWith("/_projects/ui/")) {
       const response = await handleProjectsUI(req);
-      if (response) return this.respond(response);
+      return response ? this.respond(response) : this.notFound();
     }
 
-    // Handle API requests
     if (pathname.startsWith("/_projects/api/")) {
       const response = await handleProjectsAPI(req, ctx);
-      if (response) return this.respond(response);
+      return response ? this.respond(response) : this.notFound();
     }
 
+    return this.notFound();
+  }
+
+  private notFound(): HandlerResult {
     return this.respond(
       new Response(JSON.stringify({ error: "Not found" }), {
         status: 404,

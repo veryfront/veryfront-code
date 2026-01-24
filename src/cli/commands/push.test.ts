@@ -8,22 +8,18 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createBranch, generateBranchName, uploadFiles, type UploadOp } from "./push.ts";
 import type { ApiClient } from "../shared/config.ts";
 
-// Mock client creator - returns ApiClient-compatible mock
-function createMockClient(overrides: {
-  get?: (url: string, params?: unknown) => Promise<unknown>;
-  post?: (url: string, body?: unknown) => Promise<unknown>;
-  put?: (url: string, body?: unknown) => Promise<unknown>;
-} = {}): ApiClient {
+function createMockClient(
+  overrides: Partial<Pick<ApiClient, "get" | "post" | "put">> = {},
+): ApiClient {
   return {
     get: overrides.get ?? (() => Promise.resolve({ data: [] })),
     post: overrides.post ?? (() => Promise.resolve({})),
     put: overrides.put ?? (() => Promise.resolve({})),
     patch: () => Promise.resolve({}),
     delete: () => Promise.resolve({}),
-  } as unknown as ApiClient;
+  } as ApiClient;
 }
 
-// Test generateBranchName
 describe("generateBranchName", () => {
   it("should generate a branch name with cli/push- prefix", () => {
     const name = generateBranchName();
@@ -32,22 +28,17 @@ describe("generateBranchName", () => {
 
   it("should generate a branch name with timestamp", () => {
     const name = generateBranchName();
-    // Format: cli/push-YYYYMMDDTHHMMSS
     assertMatch(name, /^cli\/push-\d{8}T\d{6}$/);
   });
 
   it("should generate unique names on successive calls", () => {
-    // Since timestamps have second precision, we can test uniqueness
-    // by checking format rather than actual uniqueness
     const name1 = generateBranchName();
     const name2 = generateBranchName();
-    // Both should match the format
     assertMatch(name1, /^cli\/push-\d{8}T\d{6}$/);
     assertMatch(name2, /^cli\/push-\d{8}T\d{6}$/);
   });
 });
 
-// Test createBranch
 describe("createBranch", () => {
   it("should call POST with correct URL and body", async () => {
     let capturedUrl = "";
@@ -93,7 +84,6 @@ describe("createBranch", () => {
   });
 });
 
-// Test uploadFiles
 describe("uploadFiles", () => {
   it("should upload files to branch endpoint when branchId is provided", async () => {
     const capturedUrls: string[] = [];
@@ -216,9 +206,7 @@ describe("uploadFiles", () => {
     const mockClient = createMockClient({
       put: () => {
         callCount++;
-        if (callCount === 2) {
-          return Promise.reject(new Error("API error"));
-        }
+        if (callCount === 2) return Promise.reject(new Error("API error"));
         return Promise.resolve({});
       },
     });
@@ -236,11 +224,11 @@ describe("uploadFiles", () => {
   });
 
   it("should handle empty ops array", async () => {
-    const mockClient = createMockClient();
+    const mockClient = createMockClient({
+      put: () => Promise.resolve({}),
+    });
 
-    const ops: UploadOp[] = [];
-
-    const result = await uploadFiles(mockClient, "my-project", "branch-123", ops, false);
+    const result = await uploadFiles(mockClient, "my-project", "branch-123", [], false);
 
     assertEquals(result.uploaded, 0);
     assertEquals(result.failed, 0);

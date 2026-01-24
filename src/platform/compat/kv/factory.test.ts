@@ -43,7 +43,6 @@ describe("kv/factory", () => {
     });
 
     it("should be callable without error", () => {
-      // polyfillDenoKv should not throw
       polyfillDenoKv();
     });
   });

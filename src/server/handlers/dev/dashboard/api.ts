@@ -17,7 +17,28 @@ import { isRSCEnabled } from "#veryfront/utils/feature-flags.ts";
 import { getRuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import type { HandlerContext } from "../../types.ts";
 
-const JSON_HEADERS = { "Content-Type": "application/json", "Cache-Control": "no-cache" };
+const JSON_HEADERS = {
+  "Content-Type": "application/json",
+  "Cache-Control": "no-cache",
+};
+
+const TEXT_EXTENSIONS = new Set([
+  "ts",
+  "tsx",
+  "js",
+  "jsx",
+  "json",
+  "md",
+  "mdx",
+  "css",
+  "html",
+  "yaml",
+  "yml",
+  "txt",
+  "env",
+  "gitignore",
+  "dockerignore",
+]);
 
 function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data, null, 2), { status, headers: JSON_HEADERS });
@@ -27,14 +48,17 @@ function errorResponse(message: string, status = 500): Response {
   return jsonResponse({ error: message }, status);
 }
 
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export function handleDashboardAPI(
   req: Request,
   ctx: HandlerContext,
 ): Promise<Response | null> | Response | null {
   const { pathname } = new URL(req.url);
-  const { method } = req;
 
-  if (method === "GET") {
+  if (req.method === "GET") {
     switch (pathname) {
       case "/_dev/api/stats":
         return handleStats();
@@ -57,7 +81,7 @@ export function handleDashboardAPI(
       case "/_dev/api/file-content":
         return handleReadFileContent(req, ctx);
       case "/_dev/api/infrastructure":
-        return handleGetInfrastructure(ctx);
+        return handleGetInfrastructure();
       case "/_dev/api/memory":
         return handleGetMemory();
       case "/_dev/api/build":
@@ -66,10 +90,12 @@ export function handleDashboardAPI(
         return handleGetErrors();
       case "/_dev/api/config":
         return handleGetConfig(ctx);
+      default:
+        return null;
     }
   }
 
-  if (method === "POST") {
+  if (req.method === "POST") {
     switch (pathname) {
       case "/_dev/api/execute-tool":
         return handleExecuteTool(req);
@@ -79,6 +105,8 @@ export function handleDashboardAPI(
         return handleRenderPrompt(req);
       case "/_dev/api/start-workflow":
         return handleStartWorkflow(req);
+      default:
+        return null;
     }
   }
 
@@ -130,25 +158,22 @@ function handleListPrompts(): Response {
 }
 
 function handleListAgents(): Response {
-  // Get all tool IDs for expanding tools: true
   const allToolIds = Array.from(toolRegistry.getAll().keys());
 
   const list = Array.from(agentRegistry.getAll().entries()).map(([id, agent]) => {
     const cfg = agent.config as unknown as Record<string, unknown>;
-    // Get system prompt - could be string or function
+
     let system: string | null = null;
-    if (typeof cfg.system === "string") {
-      system = cfg.system;
-    } else if (typeof cfg.system === "function") {
-      system = "(dynamic)";
-    }
-    // Expand tools: true to all tool IDs
+    if (typeof cfg.system === "string") system = cfg.system;
+    else if (typeof cfg.system === "function") system = "(dynamic)";
+
     let tools: Record<string, boolean> = {};
     if (cfg.tools === true) {
       tools = Object.fromEntries(allToolIds.map((tid) => [tid, true]));
     } else if (typeof cfg.tools === "object" && cfg.tools !== null) {
       tools = cfg.tools as Record<string, boolean>;
     }
+
     return {
       id,
       description: (cfg.description as string) || `Model: ${agent.config.model}`,
@@ -160,6 +185,7 @@ function handleListAgents(): Response {
       maxSteps: cfg.maxSteps || null,
     };
   });
+
   return jsonResponse({ agents: list, count: list.length });
 }
 
@@ -184,7 +210,7 @@ async function handleExecuteTool(req: Request): Promise<Response> {
     const result = await executeTool(toolId, args || {});
     return jsonResponse({ success: true, toolId, result, duration: Date.now() - startTime });
   } catch (error) {
-    return errorResponse(error instanceof Error ? error.message : String(error));
+    return errorResponse(getErrorMessage(error));
   }
 }
 
@@ -199,6 +225,7 @@ async function handleReadResource(req: Request): Promise<Response> {
     const params = resourceRegistry.extractParams(uri, resource.pattern);
     const startTime = Date.now();
     const data = await resource.load(params);
+
     return jsonResponse({
       success: true,
       uri,
@@ -207,7 +234,7 @@ async function handleReadResource(req: Request): Promise<Response> {
       duration: Date.now() - startTime,
     });
   } catch (error) {
-    return errorResponse(error instanceof Error ? error.message : String(error));
+    return errorResponse(getErrorMessage(error));
   }
 }
 
@@ -216,12 +243,13 @@ async function handleRenderPrompt(req: Request): Promise<Response> {
     const { promptId, variables } = await req.json();
     if (!promptId) return errorResponse("promptId is required", 400);
 
-    const content = await promptRegistry.getContent(promptId, variables || {});
+    const vars = variables || {};
+    const content = await promptRegistry.getContent(promptId, vars);
     if (content === undefined) return errorResponse(`Prompt not found: ${promptId}`, 404);
 
-    return jsonResponse({ success: true, promptId, content, variablesUsed: variables || {} });
+    return jsonResponse({ success: true, promptId, content, variablesUsed: vars });
   } catch (error) {
-    return errorResponse(error instanceof Error ? error.message : String(error));
+    return errorResponse(getErrorMessage(error));
   }
 }
 
@@ -229,25 +257,25 @@ async function handleRenderPrompt(req: Request): Promise<Response> {
 let devWorkflowClient: WorkflowClient | null = null;
 
 function getDevWorkflowClient(): WorkflowClient {
-  if (!devWorkflowClient) {
-    devWorkflowClient = new WorkflowClient({
-      debug: true,
-      executor: {
-        stepExecutor: {
-          // Provide registries so workflows can resolve agents and tools
-          toolRegistry: toolRegistry,
-          agentRegistry: agentRegistry,
-        },
+  if (devWorkflowClient) return devWorkflowClient;
+
+  devWorkflowClient = new WorkflowClient({
+    debug: true,
+    executor: {
+      stepExecutor: {
+        // Provide registries so workflows can resolve agents and tools
+        toolRegistry,
+        agentRegistry,
       },
-    });
-    // Register all workflows from the global registry
-    for (const id of workflowRegistry.getAllIds()) {
-      const definition = workflowRegistry.getDefinition(id);
-      if (definition) {
-        devWorkflowClient.register(definition);
-      }
-    }
+    },
+  });
+
+  // Register all workflows from the global registry
+  for (const id of workflowRegistry.getAllIds()) {
+    const definition = workflowRegistry.getDefinition(id);
+    if (definition) devWorkflowClient.register(definition);
   }
+
   return devWorkflowClient;
 }
 
@@ -255,19 +283,14 @@ async function handleStartWorkflow(req: Request): Promise<Response> {
   try {
     const { workflowId, input } = await req.json();
     if (!workflowId) return errorResponse("workflowId is required", 400);
-
-    // Check if workflow exists
     if (!workflowRegistry.has(workflowId)) {
       return errorResponse(`Workflow not found: ${workflowId}`, 404);
     }
 
     const client = getDevWorkflowClient();
     const startTime = Date.now();
-
-    // Start the workflow and wait for completion (with timeout)
     const handle = await client.start(workflowId, input || {});
 
-    // Wait for result with a timeout
     const timeoutMs = 30000; // 30 seconds timeout for dev testing
     const result = await Promise.race([
       handle.result(),
@@ -288,14 +311,16 @@ async function handleStartWorkflow(req: Request): Promise<Response> {
       nodeStates: run?.nodeStates || {},
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    // Check if it's a timeout or actual error
+    const message = getErrorMessage(error);
     if (message.includes("timed out")) {
-      return jsonResponse({
-        success: false,
-        error: message,
-        hint: "Workflow is still running. Check logs or use a shorter workflow for testing.",
-      }, 408);
+      return jsonResponse(
+        {
+          success: false,
+          error: message,
+          hint: "Workflow is still running. Check logs or use a shorter workflow for testing.",
+        },
+        408,
+      );
     }
     return errorResponse(message);
   }
@@ -324,7 +349,7 @@ function handleGetMetrics(): Response {
   try {
     return jsonResponse({ counters: metrics.snapshot(), timestamp: new Date().toISOString() });
   } catch (error) {
-    return errorResponse(error instanceof Error ? error.message : String(error));
+    return errorResponse(getErrorMessage(error));
   }
 }
 
@@ -345,38 +370,21 @@ async function handleListFiles(req: Request, ctx: HandlerContext): Promise<Respo
         path: relativePath ? `${relativePath}/${entry.name}` : entry.name,
       });
     }
-    files.sort((
-      a,
-      b,
-    ) => (a.type !== b.type ? (a.type === "directory" ? -1 : 1) : a.name.localeCompare(b.name)));
+
+    files.sort((a, b) =>
+      a.type !== b.type ? (a.type === "directory" ? -1 : 1) : a.name.localeCompare(b.name)
+    );
+
     return jsonResponse({ files, path: relativePath, projectDir, count: files.length });
-  } catch (e) {
+  } catch (error) {
     return jsonResponse({
       files: [],
       path: relativePath,
       projectDir,
-      error: e instanceof Error ? e.message : String(e),
+      error: getErrorMessage(error),
     });
   }
 }
-
-const TEXT_EXTENSIONS = new Set([
-  "ts",
-  "tsx",
-  "js",
-  "jsx",
-  "json",
-  "md",
-  "mdx",
-  "css",
-  "html",
-  "yaml",
-  "yml",
-  "txt",
-  "env",
-  "gitignore",
-  "dockerignore",
-]);
 
 async function handleReadFileContent(req: Request, ctx: HandlerContext): Promise<Response> {
   const { adapter, projectDir } = ctx;
@@ -406,16 +414,12 @@ async function handleReadFileContent(req: Request, ctx: HandlerContext): Promise
       lines: content.split("\n").length,
       size: content.length,
     });
-  } catch (e) {
-    return jsonResponse({ path: relativePath, error: e instanceof Error ? e.message : String(e) });
+  } catch (error) {
+    return jsonResponse({ path: relativePath, error: getErrorMessage(error) });
   }
 }
 
-// ============================================================================
-// Infrastructure Tab APIs
-// ============================================================================
-
-function handleGetInfrastructure(_ctx: HandlerContext): Response {
+function handleGetInfrastructure(): Response {
   const providers = providerRegistry.getAvailableProviders().map((name) => ({
     name,
     configured: providerRegistry.hasProvider(name),
@@ -435,26 +439,14 @@ function handleGetInfrastructure(_ctx: HandlerContext): Response {
   });
 }
 
-// ============================================================================
-// Memory Tab APIs
-// ============================================================================
-
 function handleGetMemory(): Response {
-  const heap = getHeapStats();
-  const caches = getCacheStats();
-  const pressure = checkMemoryPressure();
-
   return jsonResponse({
-    heap,
-    caches,
-    pressure,
+    heap: getHeapStats(),
+    caches: getCacheStats(),
+    pressure: checkMemoryPressure(),
     timestamp: new Date().toISOString(),
   });
 }
-
-// ============================================================================
-// Build Tab APIs
-// ============================================================================
 
 function handleGetBuild(): Response {
   const transformStages = Object.entries(TransformStage)
@@ -506,10 +498,6 @@ function getStageDescription(name: string): string {
   return descriptions[name] || name;
 }
 
-// ============================================================================
-// Errors Tab APIs
-// ============================================================================
-
 function getCategoryFromCode(code: string): string {
   const num = parseInt(code.replace("VF", ""), 10);
   if (num < 100) return "config";
@@ -546,10 +534,6 @@ function handleGetErrors(): Response {
     timestamp: new Date().toISOString(),
   });
 }
-
-// ============================================================================
-// Config Tab APIs
-// ============================================================================
 
 function handleGetConfig(ctx: HandlerContext): Response {
   const featureFlags = [

@@ -7,15 +7,19 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { MDXComponents, MDXFrontmatter, MDXModule } from "./types.ts";
 
 export function loadCompiledMDX(modulePath: string): Promise<MDXModule | null> {
-  return withSpan("transforms.mdx.loadCompiledMDX", async () => {
-    try {
-      const module = await import(modulePath);
-      return module as MDXModule;
-    } catch (_error) {
-      logger.error(`Failed to load MDX module from ${modulePath}:`, _error);
-      return null;
-    }
-  }, { "mdx.module_path": modulePath });
+  return withSpan(
+    "transforms.mdx.loadCompiledMDX",
+    async () => {
+      try {
+        const module = await import(modulePath);
+        return module as MDXModule;
+      } catch (error) {
+        logger.error(`Failed to load MDX module from ${modulePath}:`, error);
+        return null;
+      }
+    },
+    { "mdx.module_path": modulePath },
+  );
 }
 
 export function getCompiledMDXPath(
@@ -30,35 +34,36 @@ export function getCompiledMDXPath(
 export function renderCompiledMDX(
   projectDir: string,
   slug: string,
-  components: MDXComponents = {
-    /* empty */
-  },
+  components: MDXComponents = {},
   type: "pages" | "layouts" | "providers" = "pages",
 ): Promise<{ element: React.ReactElement; frontmatter: MDXFrontmatter } | null> {
-  return withSpan("transforms.mdx.renderCompiledMDX", async () => {
-    const modulePath = getCompiledMDXPath(projectDir, slug, type);
-    try {
-      const { loadMDXModule } = await import("./module-loader/index.ts");
-      const module = await loadMDXModule(modulePath, projectDir);
-      if (!module) return null;
-      const Component = module.MDXContent || module.MDXWrapper || module.default;
-      if (!Component) {
-        logger.error(`No component found in MDX module: ${modulePath}`);
+  return withSpan(
+    "transforms.mdx.renderCompiledMDX",
+    async () => {
+      const modulePath = getCompiledMDXPath(projectDir, slug, type);
+
+      try {
+        const { loadMDXModule } = await import("./module-loader/index.ts");
+        const module = await loadMDXModule(modulePath, projectDir);
+        if (!module) return null;
+
+        const Component = module.MDXContent ?? module.MDXWrapper ?? module.default;
+        if (!Component) {
+          logger.error(`No component found in MDX module: ${modulePath}`);
+          return null;
+        }
+
+        return {
+          element: React.createElement(Component, { components }),
+          frontmatter: module.frontmatter ?? {},
+        };
+      } catch (error) {
+        logger.error(`Failed to render compiled MDX from ${modulePath}:`, error);
         return null;
       }
-      const element = React.createElement(Component, { components });
-      return {
-        element,
-        frontmatter: module.frontmatter ||
-          {
-            /* empty */
-          },
-      };
-    } catch (_error) {
-      logger.error(`Failed to render compiled MDX from ${modulePath}:`, _error);
-      return null;
-    }
-  }, { "mdx.slug": slug, "mdx.type": type });
+    },
+    { "mdx.slug": slug, "mdx.type": type },
+  );
 }
 
 export function hasCompiledMDX(
@@ -66,17 +71,24 @@ export function hasCompiledMDX(
   slug: string,
   type: "pages" | "layouts" | "providers" = "pages",
 ): Promise<boolean> {
-  return withSpan("transforms.mdx.hasCompiledMDX", async () => {
-    const modulePath = getCompiledMDXPath(projectDir, slug, type);
-    logger.debug(`Checking for compiled MDX at: ${modulePath}`);
-    try {
-      const fs = createFileSystem();
-      const fileStat = await fs.stat(modulePath);
-      logger.debug(`Found compiled MDX file: ${modulePath}, size: ${fileStat.size}`);
-      return true;
-    } catch (error) {
-      logger.debug(`No compiled MDX found at: ${modulePath}, error: ${getErrorMessage(error)}`);
-      return false;
-    }
-  }, { "mdx.slug": slug, "mdx.type": type });
+  return withSpan(
+    "transforms.mdx.hasCompiledMDX",
+    async () => {
+      const modulePath = getCompiledMDXPath(projectDir, slug, type);
+      logger.debug(`Checking for compiled MDX at: ${modulePath}`);
+
+      try {
+        const fs = createFileSystem();
+        const fileStat = await fs.stat(modulePath);
+        logger.debug(`Found compiled MDX file: ${modulePath}, size: ${fileStat.size}`);
+        return true;
+      } catch (error) {
+        logger.debug(
+          `No compiled MDX found at: ${modulePath}, error: ${getErrorMessage(error)}`,
+        );
+        return false;
+      }
+    },
+    { "mdx.slug": slug, "mdx.type": type },
+  );
 }

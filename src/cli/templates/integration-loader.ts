@@ -98,11 +98,7 @@ export const USE_CASE_CONFIGS: Record<UseCaseName, UseCaseConfig> = {
     displayName: "Personal Productivity",
     description: "Email, calendar, and team communication management",
     integrations: ["gmail", "slack", "calendar"],
-    defaultPrompts: [
-      "summarize-emails",
-      "catch-up-slack",
-      "block-deep-work",
-    ],
+    defaultPrompts: ["summarize-emails", "catch-up-slack", "block-deep-work"],
     chatUI: "full-page",
     icon: "productivity",
   },
@@ -111,11 +107,7 @@ export const USE_CASE_CONFIGS: Record<UseCaseName, UseCaseConfig> = {
     displayName: "Developer Tools",
     description: "Code review, issue tracking, and team updates",
     integrations: ["github", "jira", "slack"],
-    defaultPrompts: [
-      "review-prs",
-      "create-ticket",
-      "update-team",
-    ],
+    defaultPrompts: ["review-prs", "create-ticket", "update-team"],
     chatUI: "sidebar",
     icon: "code",
   },
@@ -124,11 +116,7 @@ export const USE_CASE_CONFIGS: Record<UseCaseName, UseCaseConfig> = {
     displayName: "Customer Support",
     description: "Ticket management, knowledge base, and escalation",
     integrations: ["servicenow", "slack", "notion"],
-    defaultPrompts: [
-      "check-ticket-status",
-      "search-kb",
-      "escalate-issue",
-    ],
+    defaultPrompts: ["check-ticket-status", "search-kb", "escalate-issue"],
     chatUI: "widget",
     icon: "support",
   },
@@ -137,11 +125,7 @@ export const USE_CASE_CONFIGS: Record<UseCaseName, UseCaseConfig> = {
     displayName: "Social Media",
     description: "Content scheduling, posting, and monitoring",
     integrations: ["slack", "notion", "calendar"],
-    defaultPrompts: [
-      "draft-content",
-      "schedule-content",
-      "monitor-channels",
-    ],
+    defaultPrompts: ["draft-content", "schedule-content", "monitor-channels"],
     chatUI: "cards",
     icon: "social",
   },
@@ -156,27 +140,30 @@ export const USE_CASE_CONFIGS: Record<UseCaseName, UseCaseConfig> = {
   },
 };
 
+function getModuleDir(): string {
+  const moduleUrl = new URL(".", import.meta.url);
+
+  if (moduleUrl.protocol !== "file:") {
+    return moduleUrl.href;
+  }
+
+  let moduleDir = moduleUrl.pathname;
+  if (
+    typeof process !== "undefined" &&
+    process.platform === "win32" &&
+    moduleDir.startsWith("/")
+  ) {
+    moduleDir = moduleDir.slice(1);
+  }
+
+  return moduleDir;
+}
+
 /**
  * Get the directory path for an integration
  */
 export function getIntegrationDirectory(integrationName: string): string {
-  const moduleUrl = new URL(".", import.meta.url);
-  let moduleDir: string;
-
-  if (moduleUrl.protocol === "file:") {
-    moduleDir = moduleUrl.pathname;
-    if (
-      typeof process !== "undefined" &&
-      process.platform === "win32" &&
-      moduleDir.startsWith("/")
-    ) {
-      moduleDir = moduleDir.slice(1);
-    }
-  } else {
-    moduleDir = moduleUrl.href;
-  }
-
-  return pathHelper.join(moduleDir, "integrations", integrationName);
+  return pathHelper.join(getModuleDir(), "integrations", integrationName);
 }
 
 /**
@@ -186,8 +173,10 @@ export async function loadIntegrationConfig(
   integrationName: IntegrationName,
 ): Promise<IntegrationConfig | null> {
   const fs = createFileSystem();
-  const integrationDir = getIntegrationDirectory(integrationName);
-  const configPath = pathHelper.join(integrationDir, "connector.json");
+  const configPath = pathHelper.join(
+    getIntegrationDirectory(integrationName),
+    "connector.json",
+  );
 
   try {
     const content = await fs.readTextFile(configPath);
@@ -204,19 +193,16 @@ export async function loadIntegration(
   integrationName: IntegrationName,
 ): Promise<ResolvedIntegration | null> {
   const config = await loadIntegrationConfig(integrationName);
-  if (!config) {
-    return null;
-  }
+  if (!config) return null;
 
-  const integrationDir = getIntegrationDirectory(integrationName);
-  const filesDir = pathHelper.join(integrationDir, "files");
-
-  // Load integration files
-  const files = await loadTemplateFromDirectory(filesDir);
+  const filesDir = pathHelper.join(
+    getIntegrationDirectory(integrationName),
+    "files",
+  );
 
   return {
     config,
-    files,
+    files: await loadTemplateFromDirectory(filesDir),
   };
 }
 
@@ -237,10 +223,7 @@ export function validateIntegrations(integrations: IntegrationName[]): {
     }
   }
 
-  return {
-    valid: errors.length === 0,
-    errors,
-  };
+  return { valid: errors.length === 0, errors };
 }
 
 /**
@@ -255,22 +238,21 @@ export async function loadIntegrations(
 }> {
   const integrations: ResolvedIntegration[] = [];
   const errors: string[] = [];
-  const allFiles: TemplateFile[] = [];
+  const fileMap = new Map<string, TemplateFile>();
 
   for (const name of integrationNames) {
     const integration = await loadIntegration(name);
-    if (integration) {
-      integrations.push(integration);
-      allFiles.push(...integration.files);
-    } else {
-      errors.push(`Integration not found: ${name}`);
-    }
-  }
 
-  // Merge files (later integrations override earlier ones)
-  const fileMap = new Map<string, TemplateFile>();
-  for (const file of allFiles) {
-    fileMap.set(file.path, file);
+    if (!integration) {
+      errors.push(`Integration not found: ${name}`);
+      continue;
+    }
+
+    integrations.push(integration);
+    for (const file of integration.files) {
+      // Later integrations override earlier ones
+      fileMap.set(file.path, file);
+    }
   }
 
   return {
@@ -309,17 +291,22 @@ export function getUseCaseConfig(useCaseName: UseCaseName): UseCaseConfig {
  */
 export async function getAvailablePrompts(
   integrationNames: IntegrationName[],
-): Promise<Array<{ integration: IntegrationName; prompts: IntegrationConfig["prompts"] }>> {
-  const result: Array<{ integration: IntegrationName; prompts: IntegrationConfig["prompts"] }> = [];
+): Promise<
+  Array<{
+    integration: IntegrationName;
+    prompts: IntegrationConfig["prompts"];
+  }>
+> {
+  const result: Array<{
+    integration: IntegrationName;
+    prompts: IntegrationConfig["prompts"];
+  }> = [];
 
   for (const name of integrationNames) {
     const config = await loadIntegrationConfig(name);
-    if (config && config.prompts) {
-      result.push({
-        integration: name,
-        prompts: config.prompts,
-      });
-    }
+    if (!config?.prompts) continue;
+
+    result.push({ integration: name, prompts: config.prompts });
   }
 
   return result;
@@ -330,8 +317,7 @@ export async function getAvailablePrompts(
  * These include setup guide page and status API
  */
 export function loadIntegrationBaseFilesFromDirectory(): Promise<TemplateFile[]> {
-  const baseDir = getIntegrationDirectory("_base");
-  const filesDir = pathHelper.join(baseDir, "files");
+  const filesDir = pathHelper.join(getIntegrationDirectory("_base"), "files");
   return loadTemplateFromDirectory(filesDir);
 }
 
@@ -589,9 +575,10 @@ interface ActionCardsProps {
 export function ActionCards({ actions, onPrompt, categories }: ActionCardsProps) {
   const [selectedCategory, setSelectedCategory] = useState<string>("featured");
 
-  const filteredActions = selectedCategory === "featured"
-    ? actions
-    : actions.filter(a => a.category === selectedCategory);
+  const filteredActions =
+    selectedCategory === "featured"
+      ? actions
+      : actions.filter((a) => a.category === selectedCategory);
 
   return (
     <div className="space-y-6">
@@ -602,7 +589,7 @@ export function ActionCards({ actions, onPrompt, categories }: ActionCardsProps)
             selected={selectedCategory === "featured"}
             onClick={() => setSelectedCategory("featured")}
           />
-          {categories.map(cat => (
+          {categories.map((cat) => (
             <CategoryTab
               key={cat}
               label={cat.charAt(0).toUpperCase() + cat.slice(1)}
@@ -614,7 +601,7 @@ export function ActionCards({ actions, onPrompt, categories }: ActionCardsProps)
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {filteredActions.map(action => (
+        {filteredActions.map((action) => (
           <div
             key={action.id}
             className="bg-white dark:bg-neutral-800 rounded-2xl border border-neutral-200 dark:border-neutral-700 p-6 hover:shadow-lg transition-shadow"
@@ -666,14 +653,14 @@ function CategoryTab({
   selected: boolean;
   onClick: () => void;
 }) {
+  const className = selected
+    ? "bg-neutral-900 dark:bg-white text-white dark:text-neutral-900"
+    : "bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-700";
+
   return (
     <button
       onClick={onClick}
-      className={\`px-4 py-2 rounded-full text-sm font-medium transition-colors \${
-        selected
-          ? "bg-neutral-900 dark:bg-white text-white dark:text-neutral-900"
-          : "bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-700"
-      }\`}
+      className={\`px-4 py-2 rounded-full text-sm font-medium transition-colors \${className}\`}
     >
       {label}
     </button>
@@ -686,8 +673,6 @@ export default ActionCards;
     {
       path: "components/ServiceStatus.tsx",
       content: `"use client";
-
-import { useState, useEffect } from "react";
 
 interface Service {
   id: string;
@@ -705,12 +690,8 @@ interface ServiceStatusProps {
 export function ServiceStatus({ services, onConnect }: ServiceStatusProps) {
   return (
     <div className="flex flex-wrap gap-2">
-      {services.map(service => (
-        <ServiceBadge
-          key={service.id}
-          service={service}
-          onConnect={onConnect}
-        />
+      {services.map((service) => (
+        <ServiceBadge key={service.id} service={service} onConnect={onConnect} />
       ))}
     </div>
   );
@@ -737,13 +718,7 @@ function ServiceBadge({
 
   return (
     <button
-      onClick={() => {
-        if (onConnect) {
-          onConnect(service.id);
-        } else {
-          window.location.href = service.connectUrl;
-        }
-      }}
+      onClick={() => (onConnect ? onConnect(service.id) : (window.location.href = service.connectUrl))}
       className="inline-flex items-center gap-2 px-3 py-1.5 bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-full hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-colors"
     >
       <span className="w-5 h-5 opacity-50">{service.icon}</span>

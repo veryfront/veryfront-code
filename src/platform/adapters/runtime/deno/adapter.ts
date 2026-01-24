@@ -34,7 +34,7 @@ type FileSnapshotEntry = {
 
 function toSnapshotEntry(info: Deno.FileInfo): FileSnapshotEntry {
   return {
-    mtimeMs: info.mtime ? info.mtime.getTime() : 0,
+    mtimeMs: info.mtime?.getTime() ?? 0,
     size: info.size,
   };
 }
@@ -56,29 +56,24 @@ async function collectPathSnapshot(
     return;
   }
 
-  if (!info.isDirectory) {
-    return;
-  }
+  if (!info.isDirectory) return;
 
   try {
     for await (const entry of Deno.readDir(path)) {
       const entryPath = join(path, entry.name);
+
       if (entry.isDirectory) {
-        if (recursive) {
-          await collectPathSnapshot(entryPath, recursive, snapshot);
-        }
+        if (recursive) await collectPathSnapshot(entryPath, recursive, snapshot);
         continue;
       }
 
-      if (entry.isFile || entry.isSymlink) {
-        try {
-          const entryInfo = await Deno.stat(entryPath);
-          if (entryInfo.isFile) {
-            snapshot.set(entryPath, toSnapshotEntry(entryInfo));
-          }
-        } catch {
-          // Ignore files that disappear during traversal
-        }
+      if (!entry.isFile && !entry.isSymlink) continue;
+
+      try {
+        const entryInfo = await Deno.stat(entryPath);
+        if (entryInfo.isFile) snapshot.set(entryPath, toSnapshotEntry(entryInfo));
+      } catch {
+        // Ignore files that disappear during traversal
       }
     }
   } catch {
@@ -105,6 +100,7 @@ function diffSnapshots(
 
   for (const [path, nextEntry] of next) {
     const prevEntry = prev.get(path);
+
     if (!prevEntry) {
       events.push({ kind: "create", paths: [path] });
       continue;
@@ -116,9 +112,7 @@ function diffSnapshots(
   }
 
   for (const path of prev.keys()) {
-    if (!next.has(path)) {
-      events.push({ kind: "delete", paths: [path] });
-    }
+    if (!next.has(path)) events.push({ kind: "delete", paths: [path] });
   }
 
   return events;
@@ -151,7 +145,7 @@ class DenoFileSystemAdapter implements FileSystemAdapter {
     try {
       await Deno.stat(path);
       return true;
-    } catch (_error) {
+    } catch {
       return false;
     }
   }
@@ -197,6 +191,7 @@ class DenoFileSystemAdapter implements FileSystemAdapter {
 
   watch(paths: string | string[], options?: WatchOptions): FileWatcher {
     this.assertDeno("watch");
+
     const pathArray = Array.isArray(paths) ? paths : [paths];
     const recursive = options?.recursive ?? true;
     const signal = options?.signal;
@@ -215,16 +210,15 @@ class DenoFileSystemAdapter implements FileSystemAdapter {
       () => signal?.aborted ?? false,
     );
 
-    const cleanup = () => {
+    const cleanup = (): void => {
       if (closed) return;
       closed = true;
-      if (resolver) {
-        resolver({ done: true, value: undefined });
-        resolver = null;
-      }
+
+      resolver?.({ done: true, value: undefined });
+      resolver = null;
     };
 
-    const pollLoop = async () => {
+    const pollLoop = async (): Promise<void> => {
       let snapshot = new Map<string, FileSnapshotEntry>();
       try {
         snapshot = await collectFileSnapshot(pathArray, recursive);
@@ -260,10 +254,7 @@ class DenoFileSystemAdapter implements FileSystemAdapter {
       }
     };
 
-    if (signal) {
-      signal.addEventListener("abort", cleanup);
-    }
-
+    signal?.addEventListener("abort", cleanup);
     void pollLoop();
 
     return createFileWatcher(iterator, cleanup);
@@ -307,15 +298,14 @@ class DenoShellAdapter implements ShellAdapter {
     }
     try {
       const stat = Deno.statSync(path);
-      return {
-        isFile: stat.isFile,
-        isDirectory: stat.isDirectory,
-      };
+      return { isFile: stat.isFile, isDirectory: stat.isDirectory };
     } catch (error) {
-      throw toError(createError({
-        type: "file",
-        message: `Failed to stat file: ${error}`,
-      }));
+      throw toError(
+        createError({
+          type: "file",
+          message: `Failed to stat file: ${error}`,
+        }),
+      );
     }
   }
 
@@ -326,10 +316,12 @@ class DenoShellAdapter implements ShellAdapter {
     try {
       return Deno.readTextFileSync(path);
     } catch (error) {
-      throw toError(createError({
-        type: "file",
-        message: `Failed to read file: ${error}`,
-      }));
+      throw toError(
+        createError({
+          type: "file",
+          message: `Failed to read file: ${error}`,
+        }),
+      );
     }
   }
 }
@@ -344,17 +336,14 @@ class DenoServer implements Server {
 
   async stop(): Promise<void> {
     try {
-      if (this.abortController) {
-        this.abortController.abort();
-      }
-
+      this.abortController?.abort();
       await this.server.shutdown();
     } catch (error) {
       serverLogger.debug("[Deno] Server shutdown failed", { error });
     }
   }
 
-  get addr() {
+  get addr(): { hostname: string; port: number } {
     return { hostname: this.hostname, port: this.port };
   }
 }
@@ -388,6 +377,7 @@ export class DenoAdapter implements RuntimeAdapter {
     if (typeof Deno === "undefined") {
       throw new Error("DenoAdapter.serve() can only be used in Deno runtime");
     }
+
     const { port = DEFAULT_PORT, hostname = "localhost", onListen } = options;
 
     const controller = new AbortController();
@@ -396,21 +386,20 @@ export class DenoAdapter implements RuntimeAdapter {
     const envOverlay = getEnvOverlayStorage();
     const envStore = envOverlay?.getStore();
 
-    const wrappedHandler = envOverlay && envStore
-      ? (request: Request) => {
-        if (envOverlay.run) {
-          return envOverlay.run(envStore, () => handler(request));
-        }
+    let wrappedHandler = handler;
+    if (envOverlay && envStore) {
+      wrappedHandler = (request: Request) => {
+        if (envOverlay.run) return envOverlay.run(envStore, () => handler(request));
         envOverlay.enterWith?.(envStore);
         return handler(request);
-      }
-      : handler;
+      };
+    }
 
     const server = Deno.serve({
       port,
       hostname,
       signal,
-      handler: async (request, _info) => {
+      handler: async (request) => {
         try {
           return await wrappedHandler(request);
         } catch (error) {
@@ -429,10 +418,9 @@ export class DenoAdapter implements RuntimeAdapter {
   }
 
   async shutdown(): Promise<void> {
-    if (this.activeServer) {
-      await this.activeServer.stop();
-      this.activeServer = null;
-    }
+    if (!this.activeServer) return;
+    await this.activeServer.stop();
+    this.activeServer = null;
   }
 }
 

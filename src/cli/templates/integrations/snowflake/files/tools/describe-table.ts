@@ -7,18 +7,18 @@ export default tool({
   description:
     "Get detailed schema information about a specific table in Snowflake. Returns column names, data types, constraints, and table statistics.",
   inputSchema: z.object({
-    database: z.string().describe(
-      "The name of the database containing the table",
-    ),
-    schema: z.string().default("PUBLIC").describe(
-      "The name of the schema containing the table. Defaults to PUBLIC.",
-    ),
-    table: z.string().describe(
-      "The name of the table to describe",
-    ),
-    includeRowCount: z.boolean().default(false).describe(
-      "Include the current row count for the table (may be slow for large tables)",
-    ),
+    database: z.string().describe("The name of the database containing the table"),
+    schema: z
+      .string()
+      .default("PUBLIC")
+      .describe("The name of the schema containing the table. Defaults to PUBLIC."),
+    table: z.string().describe("The name of the table to describe"),
+    includeRowCount: z
+      .boolean()
+      .default(false)
+      .describe(
+        "Include the current row count for the table (may be slow for large tables)",
+      ),
   }),
   async execute({ database, schema, table, includeRowCount }) {
     const description = await describeTable(database, schema, table);
@@ -27,8 +27,7 @@ export default tool({
     if (includeRowCount) {
       try {
         rowCount = await getTableRowCount(database, schema, table);
-      } catch (_error) {
-        // Silently fail if row count cannot be retrieved
+      } catch {
         rowCount = null;
       }
     }

@@ -15,7 +15,10 @@ export interface LiveLayoutComponentProps {
   layout?: MdxBundle;
 }
 
-export function LiveLayoutComponent({ children, layout }: LiveLayoutComponentProps) {
+export function LiveLayoutComponent({
+  children,
+  layout,
+}: LiveLayoutComponentProps): React.ReactNode {
   const { data } = useLiveData();
   const pageContext = usePageContext();
 
@@ -24,25 +27,24 @@ export function LiveLayoutComponent({ children, layout }: LiveLayoutComponentPro
   let liveLayout: MdxBundle | undefined;
 
   if (layoutName) {
-    data.entities.forEach((entity, _id) => {
-      if (entity.isLayout && entity.slug === layoutName) {
-        const liveEntity = entity as LiveEntity;
-        if (liveEntity.compiledCode) {
-          liveLayout = {
-            compiledCode: liveEntity.compiledCode,
-            frontmatter: entity.frontmatter || {},
-            globals: liveEntity.globals,
-          };
-        }
-      }
-    });
+    for (const entity of data.entities.values()) {
+      if (!entity.isLayout || entity.slug !== layoutName) continue;
+
+      const liveEntity = entity as LiveEntity;
+      if (!liveEntity.compiledCode) continue;
+
+      liveLayout = {
+        compiledCode: liveEntity.compiledCode,
+        frontmatter: entity.frontmatter ?? {},
+        globals: liveEntity.globals,
+      };
+      break;
+    }
   }
 
-  const activeLayout = liveLayout || layout;
+  const activeLayout = liveLayout ?? layout;
 
-  if (!activeLayout) {
-    return <>{children}</>;
-  }
+  if (!activeLayout) return <>{children}</>;
 
   return <LayoutComponent mdxBundle={activeLayout}>{children}</LayoutComponent>;
 }

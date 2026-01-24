@@ -1,9 +1,3 @@
-/**
- * Streaming Module
- *
- * Handles streaming responses for agent execution.
- */
-
 export {
   type AgentStreamEvent,
   AgentStreamEventSchema,

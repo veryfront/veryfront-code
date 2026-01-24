@@ -1,4 +1,4 @@
-export function Header() {
+export function Header(): React.JSX.Element {
   return (
     <header>
       <a href="/" className="inline-block text-gray-900 hover:text-gray-700 transition-colors">

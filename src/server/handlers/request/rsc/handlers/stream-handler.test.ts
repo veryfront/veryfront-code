@@ -21,7 +21,7 @@ describe("StreamHandler", () => {
           }),
         );
       },
-    } as unknown as RenderHandler;
+    };
 
     streamHandler = new StreamHandler(mockRenderHandler);
   });
@@ -43,32 +43,28 @@ describe("StreamHandler", () => {
       const text = await response.text();
       const lines = text.trim().split("\n");
 
-      // Should have at least the initial slots and final content
       expect(lines.length).toBeGreaterThan(0);
 
-      // Each line should be valid JSON
       for (const line of lines) {
-        if (line.trim()) {
-          expect(() => JSON.parse(line)).not.toThrow();
-          const parsed = JSON.parse(line);
-          expect(parsed.type).toBe("slot");
-          expect(parsed.id).toBeDefined();
-          expect(parsed.html).toBeDefined();
-        }
+        if (!line.trim()) continue;
+
+        expect(() => JSON.parse(line)).not.toThrow();
+        const parsed = JSON.parse(line);
+        expect(parsed.type).toBe("slot");
+        expect(parsed.id).toBeDefined();
+        expect(parsed.html).toBeDefined();
       }
     });
 
     it("should use page query param when provided", async () => {
-      const searchParams = new URLSearchParams({ page: "/custom-page" });
-      await streamHandler.handle("/", searchParams);
+      await streamHandler.handle("/", new URLSearchParams({ page: "/custom-page" }));
 
       expect(handleCalls.length).toBe(1);
       expect(handleCalls[0]?.[0]).toBe("/custom-page");
     });
 
     it("should use pathname when page query param is not provided", async () => {
-      const searchParams = new URLSearchParams();
-      await streamHandler.handle("/my-page", searchParams);
+      await streamHandler.handle("/my-page", new URLSearchParams());
 
       expect(handleCalls.length).toBe(1);
       expect(handleCalls[0]?.[0]).toBe("/my-page");
@@ -80,7 +76,6 @@ describe("StreamHandler", () => {
       const response = await streamHandler.handle("/", new URLSearchParams());
       const text = await response.text();
 
-      // Should still produce valid output with fallback HTML
       expect(text).toContain("OK");
     });
 
@@ -90,42 +85,37 @@ describe("StreamHandler", () => {
       const response = await streamHandler.handle("/", new URLSearchParams());
       const text = await response.text();
 
-      // Should still produce valid output with fallback HTML
       expect(text).toContain("OK");
     });
 
     it("should include malformed JSON when bad query param is set", async () => {
-      const searchParams = new URLSearchParams({ bad: "1" });
-      const response = await streamHandler.handle("/", searchParams);
+      const response = await streamHandler.handle(
+        "/",
+        new URLSearchParams({ bad: "1" }),
+      );
       const text = await response.text();
 
-      // Should contain malformed JSON line
       expect(text).toContain("MALFORMED_JSON");
     });
   });
 
   describe("error handling", () => {
     it("should handle render handler errors gracefully", async () => {
-      // When renderHandler throws before stream creation, the error propagates
       mockRenderHandler.handle = () => Promise.reject(new Error("Render failed"));
 
-      // The error from getFinalHtml propagates before stream is created
       await expect(
         streamHandler.handle("/", new URLSearchParams()),
       ).rejects.toThrow("Render failed");
     });
 
     it("should return valid response even with non-ok render response", async () => {
-      // When renderHandler returns a non-ok response, stream still works
       mockRenderHandler.handle = () => Promise.resolve(new Response("Error", { status: 500 }));
 
       const response = await streamHandler.handle("/", new URLSearchParams());
 
-      // The response should be created and contain fallback HTML
       expect(response).toBeInstanceOf(Response);
       expect(response.status).toBe(200);
-      const text = await response.text();
-      expect(text).toContain("OK");
+      expect(await response.text()).toContain("OK");
     });
   });
 });

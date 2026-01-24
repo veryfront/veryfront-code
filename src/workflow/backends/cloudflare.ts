@@ -1,8 +1,3 @@
-/**
- * Cloudflare Adapter - workflow backend using Durable Objects for edge deployments.
- * @see https://developers.cloudflare.com/durable-objects/
- */
-
 import type {
   ApprovalDecision,
   Checkpoint,
@@ -40,36 +35,29 @@ export class CloudflareAdapter implements WorkflowBackend {
     };
 
     console.warn(
-      "[CloudflareAdapter] This is a stub implementation. " +
-        "Full Cloudflare integration requires Workers environment bindings. " +
-        "See: https://developers.cloudflare.com/durable-objects/",
+      "[CloudflareAdapter] This is a stub implementation. Full Cloudflare integration requires Workers environment bindings. See: https://developers.cloudflare.com/durable-objects/",
     );
   }
 
   // Run Management
   createRun(_run: WorkflowRun): Promise<void> {
-    // This would create/get a Durable Object instance for the run
     throw new Error("CloudflareAdapter.createRun not implemented");
   }
 
   getRun(_runId: string): Promise<WorkflowRun | null> {
-    // This would fetch state from the Durable Object
     throw new Error("CloudflareAdapter.getRun not implemented");
   }
 
   updateRun(_runId: string, _patch: Partial<WorkflowRun>): Promise<void> {
-    // This would update state in the Durable Object
     throw new Error("CloudflareAdapter.updateRun not implemented");
   }
 
   listRuns(_filter: RunFilter): Promise<WorkflowRun[]> {
-    // This would query KV for run indexes
     throw new Error("CloudflareAdapter.listRuns not implemented");
   }
 
   // Checkpointing
   saveCheckpoint(_runId: string, _checkpoint: Checkpoint): Promise<void> {
-    // This would persist checkpoint to the Durable Object
     throw new Error("CloudflareAdapter.saveCheckpoint not implemented");
   }
 
@@ -96,23 +84,19 @@ export class CloudflareAdapter implements WorkflowBackend {
 
   // Queue (using Cloudflare Queues)
   enqueue(_job: WorkflowJob): Promise<void> {
-    // This would send a message to Cloudflare Queue
     throw new Error("CloudflareAdapter.enqueue not implemented");
   }
 
   dequeue(): Promise<WorkflowJob | null> {
-    // Cloudflare Queues use push model, not pull
     throw new Error("CloudflareAdapter.dequeue not implemented");
   }
 
   acknowledge(_runId: string): Promise<void> {
-    // Cloudflare Queues handle acknowledgment differently
     return Promise.resolve();
   }
 
   // Lifecycle
   destroy(): Promise<void> {
-    // No cleanup needed - Cloudflare manages lifecycle
     return Promise.resolve();
   }
 }

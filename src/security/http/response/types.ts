@@ -3,9 +3,7 @@
  * Type definitions for response construction
  */
 
-// Re-export CORS types from CORS module
-import type { CORSConfig } from "../cors/index.ts";
-export type { CORSConfig };
+export type { CORSConfig } from "../cors/index.ts";
 
 /**
  * HSTS Configuration
@@ -20,7 +18,7 @@ export interface HSTSConfig {
  * Security Configuration Interface
  */
 export interface SecurityConfig {
-  cors?: boolean | CORSConfig;
+  cors?: boolean | import("../cors/index.ts").CORSConfig;
   csp?: Partial<Record<string, string | string[]>>;
   coop?: "same-origin" | "same-origin-allow-popups" | "unsafe-none";
   corp?: "same-origin" | "same-site" | "cross-origin";
@@ -42,7 +40,12 @@ export type CacheStrategy =
   | "long"
   | "immutable"
   | "none"
-  | { maxAge: number; public?: boolean; immutable?: boolean; mustRevalidate?: boolean };
+  | {
+    maxAge: number;
+    public?: boolean;
+    immutable?: boolean;
+    mustRevalidate?: boolean;
+  };
 
 /**
  * Response builder configuration

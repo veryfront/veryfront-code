@@ -1,6 +1,7 @@
 import { getAccessToken } from "./token-store.ts";
 
 const BOX_BASE_URL = "https://api.box.com/2.0";
+const BOX_UPLOAD_URL = "https://upload.box.com/api/2.0/files/content";
 
 interface BoxItemCollection<T> {
   total_count: number;
@@ -70,32 +71,54 @@ interface BoxSearchResult {
   };
 }
 
-async function boxFetch<T>(
-  endpoint: string,
-  options: RequestInit = {},
-): Promise<T> {
+async function requireAccessToken(): Promise<string> {
   const token = await getAccessToken();
   if (!token) {
     throw new Error("Not authenticated with Box. Please connect your account.");
   }
+  return token;
+}
+
+async function parseErrorMessage(
+  response: Response,
+  fallback: string,
+): Promise<string> {
+  const error = await response.json().catch(() => ({} as { message?: string }));
+  return `${fallback}: ${response.status} ${error.message || response.statusText}`;
+}
+
+async function boxFetch<T>(
+  endpoint: string,
+  options: RequestInit = {},
+): Promise<T> {
+  const token = await requireAccessToken();
 
   const response = await fetch(`${BOX_BASE_URL}${endpoint}`, {
     ...options,
     headers: {
-      "Authorization": `Bearer ${token}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
       ...options.headers,
     },
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(
-      `Box API error: ${response.status} ${error.message || response.statusText}`,
-    );
+    throw new Error(await parseErrorMessage(response, "Box API error"));
   }
 
-  return response.json();
+  return response.json() as Promise<T>;
+}
+
+function toUploadBlob(fileContent: string | Buffer | Blob): Blob {
+  if (typeof fileContent === "string") {
+    return new Blob([fileContent], { type: "text/plain" });
+  }
+
+  if (fileContent instanceof Buffer) {
+    return new Blob([fileContent]);
+  }
+
+  return fileContent;
 }
 
 /**
@@ -111,7 +134,8 @@ export async function listFiles(options: {
   const params = new URLSearchParams({
     limit: limit.toString(),
     offset: offset.toString(),
-    fields: "id,type,name,size,created_at,modified_at,description,path_collection,created_by,modified_by",
+    fields:
+      "id,type,name,size,created_at,modified_at,description,path_collection,created_by,modified_by",
   });
 
   const response = await boxFetch<BoxItemCollection<BoxItem>>(
@@ -124,13 +148,20 @@ export async function listFiles(options: {
 /**
  * Get details of a specific file or folder
  */
-export async function getFile(itemId: string, itemType: "file" | "folder" = "file"): Promise<BoxItem> {
-  const endpoint = itemType === "file" ? `/files/${itemId}` : `/folders/${itemId}`;
+export async function getFile(
+  itemId: string,
+  itemType: "file" | "folder" = "file",
+): Promise<BoxItem> {
+  const endpoint = itemType === "file"
+    ? `/files/${itemId}`
+    : `/folders/${itemId}`;
+
   const params = new URLSearchParams({
-    fields: "id,type,name,size,created_at,modified_at,description,path_collection,created_by,modified_by,shared_link",
+    fields:
+      "id,type,name,size,created_at,modified_at,description,path_collection,created_by,modified_by,shared_link",
   });
 
-  return await boxFetch<BoxItem>(`${endpoint}?${params}`);
+  return boxFetch<BoxItem>(`${endpoint}?${params}`);
 }
 
 /**
@@ -143,44 +174,31 @@ export async function uploadFile(options: {
 }): Promise<BoxFile> {
   const { parentFolderId, fileName, fileContent } = options;
 
-  const token = await getAccessToken();
-  if (!token) {
-    throw new Error("Not authenticated with Box. Please connect your account.");
-  }
+  const token = await requireAccessToken();
 
   const formData = new FormData();
-  const attributes = JSON.stringify({
-    name: fileName,
-    parent: { id: parentFolderId },
-  });
+  formData.append(
+    "attributes",
+    JSON.stringify({
+      name: fileName,
+      parent: { id: parentFolderId },
+    }),
+  );
+  formData.append("file", toUploadBlob(fileContent), fileName);
 
-  formData.append("attributes", attributes);
-
-  // Convert content to Blob if it's a string or Buffer
-  const blob = typeof fileContent === "string"
-    ? new Blob([fileContent], { type: "text/plain" })
-    : fileContent instanceof Buffer
-    ? new Blob([fileContent])
-    : fileContent;
-
-  formData.append("file", blob, fileName);
-
-  const response = await fetch("https://upload.box.com/api/2.0/files/content", {
+  const response = await fetch(BOX_UPLOAD_URL, {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${token}`,
+      Authorization: `Bearer ${token}`,
     },
     body: formData,
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(
-      `Box upload error: ${response.status} ${error.message || response.statusText}`,
-    );
+    throw new Error(await parseErrorMessage(response, "Box upload error"));
   }
 
-  const result = await response.json();
+  const result = (await response.json()) as { entries: BoxFile[] };
   return result.entries[0];
 }
 
@@ -192,35 +210,25 @@ export async function downloadFile(fileId: string): Promise<{
   fileName: string;
   mimeType: string;
 }> {
-  const token = await getAccessToken();
-  if (!token) {
-    throw new Error("Not authenticated with Box. Please connect your account.");
-  }
+  const token = await requireAccessToken();
 
-  // First get file metadata to get the name
-  const fileInfo = await getFile(fileId, "file") as BoxFile;
+  const fileInfo = (await getFile(fileId, "file")) as BoxFile;
 
   const response = await fetch(`${BOX_BASE_URL}/files/${fileId}/content`, {
     headers: {
-      "Authorization": `Bearer ${token}`,
+      Authorization: `Bearer ${token}`,
     },
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(
-      `Box download error: ${response.status} ${error.message || response.statusText}`,
-    );
+    throw new Error(await parseErrorMessage(response, "Box download error"));
   }
 
   const content = await response.arrayBuffer();
-  const mimeType = response.headers.get("content-type") || "application/octet-stream";
+  const mimeType =
+    response.headers.get("content-type") ?? "application/octet-stream";
 
-  return {
-    content,
-    fileName: fileInfo.name,
-    mimeType,
-  };
+  return { content, fileName: fileInfo.name, mimeType };
 }
 
 /**
@@ -232,15 +240,13 @@ export async function createFolder(options: {
 }): Promise<BoxFolder> {
   const { parentFolderId, name } = options;
 
-  const response = await boxFetch<BoxFolder>("/folders", {
+  return boxFetch<BoxFolder>("/folders", {
     method: "POST",
     body: JSON.stringify({
       name,
       parent: { id: parentFolderId },
     }),
   });
-
-  return response;
 }
 
 /**
@@ -261,7 +267,7 @@ export async function searchFiles(options: {
     fields: "id,type,name,size,created_at,modified_at,path_collection",
   });
 
-  if (contentTypes && contentTypes.length > 0) {
+  if (contentTypes?.length) {
     params.set("content_types", contentTypes.join(","));
   }
 
@@ -276,5 +282,5 @@ export async function searchFiles(options: {
  * Get current user info
  */
 export async function getMe(): Promise<{ id: string; name: string; login: string }> {
-  return await boxFetch<{ id: string; name: string; login: string }>("/users/me");
+  return boxFetch<{ id: string; name: string; login: string }>("/users/me");
 }

@@ -13,10 +13,8 @@ export default tool({
       .describe("Tweet text content (max 280 characters)"),
   }),
   execute: async ({ text }, context) => {
-    // Default to "current-user" for development; in production, always pass userId from session
-    const userId = (context?.userId as string | undefined) || "current-user";
+    const userId = context?.userId ?? "current-user";
 
-    // Validate tweet length
     if (text.length > 280) {
       return {
         error: "Tweet text exceeds 280 character limit",

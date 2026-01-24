@@ -25,9 +25,8 @@ describe("path-candidate-generator", () => {
 
     it("should generate candidates with all supported extensions", () => {
       const candidates = generateAppRouterCandidates("/project", "test");
-      const extensions = [".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"];
 
-      for (const ext of extensions) {
+      for (const ext of getSupportedExtensions()) {
         assertEquals(candidates.some((c) => c.endsWith(ext)), true);
       }
     });
@@ -50,7 +49,7 @@ describe("path-candidate-generator", () => {
       const candidates = generatePagesRouterCandidates("/project", "custom");
 
       assertEquals(candidates.some((c) => c.includes("/pages/custom")), true);
-      assertEquals(candidates.some((c) => c.match(/\/project\/custom\.[a-z]+$/)), true);
+      assertEquals(candidates.some((c) => /\/project\/custom\.[a-z]+$/.test(c)), true);
     });
 
     it("should try index.tsx in subdirectory", () => {
@@ -62,17 +61,17 @@ describe("path-candidate-generator", () => {
 
   describe("getPathCandidates", () => {
     it("should return both app and pages router candidates", () => {
-      const result = getPathCandidates("/project", "about");
+      const { appRouter, pagesRouter } = getPathCandidates("/project", "about");
 
-      assertEquals(result.appRouter.length > 0, true);
-      assertEquals(result.pagesRouter.length > 0, true);
+      assertEquals(appRouter.length > 0, true);
+      assertEquals(pagesRouter.length > 0, true);
     });
 
     it("should normalize empty slug", () => {
-      const result = getPathCandidates("/project", "");
+      const { appRouter, pagesRouter } = getPathCandidates("/project", "");
 
-      assertEquals(result.appRouter.length > 0, true);
-      assertEquals(result.pagesRouter.length > 0, true);
+      assertEquals(appRouter.length > 0, true);
+      assertEquals(pagesRouter.length > 0, true);
     });
   });
 

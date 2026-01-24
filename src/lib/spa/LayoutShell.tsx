@@ -26,28 +26,22 @@ function LayoutLoading(): JSX.Element {
   );
 }
 
+type LayoutComponentType = ComponentType<{ children: ReactNode; [key: string]: unknown }>;
+
 function LayoutWrapper({ layout, layoutProps, children }: LayoutWrapperProps): JSX.Element {
-  const [LayoutComponent, setLayoutComponent] = useState<
-    ComponentType<{
-      children: ReactNode;
-      [key: string]: unknown;
-    }> | null
-  >(() => {
+  const [LayoutComponent, setLayoutComponent] = useState<LayoutComponentType | null>(() => {
     // Try to get from cache synchronously first (for SSR hydration match)
-    const cached = getCachedComponent(layout.path);
-    return cached as ComponentType<{ children: ReactNode; [key: string]: unknown }> | null;
+    return (getCachedComponent(layout.path) as LayoutComponentType | null) ?? null;
   });
 
   useEffect(() => {
     if (LayoutComponent) return;
 
     let mounted = true;
+
     loadComponent(layout.path).then((Component) => {
-      if (mounted && Component) {
-        setLayoutComponent(() =>
-          Component as ComponentType<{ children: ReactNode; [key: string]: unknown }>
-        );
-      }
+      if (!mounted || !Component) return;
+      setLayoutComponent(() => Component as LayoutComponentType);
     });
 
     return () => {
@@ -55,19 +49,15 @@ function LayoutWrapper({ layout, layoutProps, children }: LayoutWrapperProps): J
     };
   }, [layout.path, LayoutComponent]);
 
-  if (!LayoutComponent) {
-    return <LayoutLoading />;
-  }
+  if (!LayoutComponent) return <LayoutLoading />;
 
-  return <LayoutComponent {...(layoutProps || {})}>{children}</LayoutComponent>;
+  return <LayoutComponent {...(layoutProps ?? {})}>{children}</LayoutComponent>;
 }
 
 export function LayoutShell(
   { layouts, layoutProps = {}, children }: LayoutShellProps,
 ): JSX.Element {
-  if (layouts.length === 0) {
-    return <>{children}</>;
-  }
+  if (layouts.length === 0) return <>{children}</>;
 
   // Build layout tree from outermost to innermost
   // layouts[0] is outermost, layouts[layouts.length - 1] is innermost
@@ -75,7 +65,7 @@ export function LayoutShell(
 
   for (let i = layouts.length - 1; i >= 0; i--) {
     const layout = layouts[i];
-    const props = layoutProps[layout.path] || {};
+    const props = layoutProps[layout.path] ?? {};
 
     // Use the layout path as key for React to preserve the component instance
     tree = (

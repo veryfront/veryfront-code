@@ -1,9 +1,3 @@
-/**
- * RenderPipeline Tests
- *
- * Tests the rendering pipeline configuration and types.
- */
-
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RenderPipelineConfig } from "./pipeline.ts";
@@ -11,74 +5,49 @@ import type { RenderPipelineConfig } from "./pipeline.ts";
 describe("RenderPipeline", () => {
   describe("RenderPipelineConfig", () => {
     it("should require pageResolver", () => {
-      const config = {
-        pageResolver: {},
-      } as Partial<RenderPipelineConfig>;
-
+      const config: Partial<RenderPipelineConfig> = { pageResolver: {} };
       assertExists(config.pageResolver);
     });
 
     it("should require cacheCoordinator", () => {
-      const config = {
-        cacheCoordinator: {},
-      } as Partial<RenderPipelineConfig>;
-
+      const config: Partial<RenderPipelineConfig> = { cacheCoordinator: {} };
       assertExists(config.cacheCoordinator);
     });
 
     it("should require pageRenderer", () => {
-      const config = {
-        pageRenderer: {},
-      } as Partial<RenderPipelineConfig>;
-
+      const config: Partial<RenderPipelineConfig> = { pageRenderer: {} };
       assertExists(config.pageRenderer);
     });
 
     it("should require layoutOrchestrator", () => {
-      const config = {
-        layoutOrchestrator: {},
-      } as Partial<RenderPipelineConfig>;
-
+      const config: Partial<RenderPipelineConfig> = { layoutOrchestrator: {} };
       assertExists(config.layoutOrchestrator);
     });
 
     it("should require ssrOrchestrator", () => {
-      const config = {
-        ssrOrchestrator: {},
-      } as Partial<RenderPipelineConfig>;
-
+      const config: Partial<RenderPipelineConfig> = { ssrOrchestrator: {} };
       assertExists(config.ssrOrchestrator);
     });
 
     it("should require adapter", () => {
-      const config = {
-        adapter: {},
-      } as Partial<RenderPipelineConfig>;
-
+      const config: Partial<RenderPipelineConfig> = { adapter: {} };
       assertExists(config.adapter);
     });
 
     it("should accept 'development' mode", () => {
-      const config = {
-        mode: "development" as const,
-      } as Partial<RenderPipelineConfig>;
-
+      const config: Partial<RenderPipelineConfig> = { mode: "development" };
       assertEquals(config.mode, "development");
     });
 
     it("should accept 'production' mode", () => {
-      const config = {
-        mode: "production" as const,
-      } as Partial<RenderPipelineConfig>;
-
+      const config: Partial<RenderPipelineConfig> = { mode: "production" };
       assertEquals(config.mode, "production");
     });
 
     it("should require projectDir", () => {
-      const config = {
+      const config: Partial<RenderPipelineConfig> = {
         projectDir: "/path/to/project",
-      } as Partial<RenderPipelineConfig>;
-
+      };
       assertEquals(config.projectDir, "/path/to/project");
     });
   });
@@ -109,14 +78,10 @@ describe("RenderPipeline", () => {
       ];
 
       assertEquals(requiredComponents.length, 8);
-      assertEquals(requiredComponents.includes("pageResolver"), true);
-      assertEquals(requiredComponents.includes("cacheCoordinator"), true);
-      assertEquals(requiredComponents.includes("pageRenderer"), true);
-      assertEquals(requiredComponents.includes("layoutOrchestrator"), true);
-      assertEquals(requiredComponents.includes("ssrOrchestrator"), true);
-      assertEquals(requiredComponents.includes("adapter"), true);
-      assertEquals(requiredComponents.includes("mode"), true);
-      assertEquals(requiredComponents.includes("projectDir"), true);
+
+      for (const component of requiredComponents) {
+        assertEquals(requiredComponents.includes(component), true);
+      }
     });
   });
 });

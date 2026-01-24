@@ -571,6 +571,7 @@ type MockElement = {
   hasAttribute: (name: string) => boolean;
   removeAttribute: (name: string) => void;
   appendChild: (child: MockElement) => MockElement;
+  append: (...children: MockElement[]) => void;
   removeChild: (child: MockElement) => MockElement;
   querySelector: (selector: string) => MockElement | null;
   querySelectorAll: (selector: string) => MockElement[];
@@ -714,6 +715,12 @@ function createMinimalDocument() {
           this.children.push(child);
           child.parentElement = this;
           return child;
+        },
+        append: function (...children: MockElement[]) {
+          for (const child of children) {
+            this.children.push(child);
+            child.parentElement = this;
+          }
         },
         removeChild: function (child: MockElement) {
           const index = this.children.indexOf(child);

@@ -1,21 +1,15 @@
 import { requireAuth } from "../../../middleware/auth.ts";
 import { getStats } from "../../../lib/stats.ts";
 
-export async function GET(request: Request) {
+export async function GET(request: Request): Promise<Response> {
   const auth = await requireAuth(request);
   if (!auth.ok) return auth.response;
 
-  const url = new URL(request.url);
-  const userId = url.searchParams.get("userId");
-
+  const userId = new URL(request.url).searchParams.get("userId");
   if (!userId) {
-    return Response.json(
-      { error: "userId parameter required" },
-      { status: 400 }
-    );
+    return Response.json({ error: "userId parameter required" }, { status: 400 });
   }
 
   const stats = await getStats(userId);
-
   return Response.json({ stats });
 }

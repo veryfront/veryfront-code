@@ -30,56 +30,59 @@ export class CacheCoordinator {
   }
 
   checkCache(slug: string): Promise<CacheLookupResult> {
-    return withSpan("cache.checkCache", async () => {
-      const cached = await this.store.get(slug);
+    return withSpan(
+      "cache.checkCache",
+      async () => {
+        const cached = await this.store.get(slug);
 
-      if (cached && !this.isExpired(cached)) {
-        // Return cached result directly - no cloning needed on reads
-        // The cache stores immutable data; callers should not mutate it
+        if (!cached) {
+          return { depAwareSlug: slug, moduleCacheKey: slug };
+        }
+
+        if (this.isExpired(cached)) {
+          await this.store.delete(slug);
+          return { depAwareSlug: slug, moduleCacheKey: slug };
+        }
+
         return {
           cachedResult: cached.result,
           depAwareSlug: slug,
           moduleCacheKey: slug,
           cachedModule: cached.result.pageModule,
         };
-      }
-
-      if (cached) {
-        await this.store.delete(slug);
-      }
-
-      return {
-        depAwareSlug: slug,
-        moduleCacheKey: slug,
-      };
-    }, { "cache.slug": slug });
+      },
+      { "cache.slug": slug },
+    );
   }
 
   persistResult(result: RenderResult, slug: string): Promise<void> {
-    return withSpan("cache.persistResult", async () => {
-      if (!result || result.stream) {
-        return;
-      }
+    return withSpan(
+      "cache.persistResult",
+      async () => {
+        if (result.stream) {
+          return;
+        }
 
-      // Store result directly - shallow copy of primitives is sufficient
-      // The result object is not mutated after rendering completes
-      const payload: CachePayload = {
-        result: {
-          html: result.html,
-          css: result.css,
-          frontmatter: result.frontmatter,
-          headings: result.headings,
-          nodeMap: result.nodeMap,
-          stream: null,
-          ssrHash: result.ssrHash,
-          pageModule: result.pageModule,
-        },
-        storedAt: Date.now(),
-        expiresAt: this.ttlMs ? Date.now() + this.ttlMs : undefined,
-      };
+        const now = Date.now();
+        const payload: CachePayload = {
+          result: {
+            html: result.html,
+            css: result.css,
+            frontmatter: result.frontmatter,
+            headings: result.headings,
+            nodeMap: result.nodeMap,
+            stream: null,
+            ssrHash: result.ssrHash,
+            pageModule: result.pageModule,
+          },
+          storedAt: now,
+          expiresAt: this.ttlMs ? now + this.ttlMs : undefined,
+        };
 
-      await this.store.set(slug, payload);
-    }, { "cache.slug": slug });
+        await this.store.set(slug, payload);
+      },
+      { "cache.slug": slug },
+    );
   }
 
   async clearAll(): Promise<void> {

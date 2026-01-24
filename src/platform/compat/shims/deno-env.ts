@@ -1,10 +1,5 @@
-/**
- * Shim for Deno.env in Node.js environment
- * This file is injected by esbuild to provide Deno.env compatibility
- */
-
 // @ts-ignore - Global Deno shim for Node.js
-globalThis.Deno = globalThis.Deno || {
+globalThis.Deno ??= {
   env: {
     get(key: string): string | undefined {
       return process.env[key];

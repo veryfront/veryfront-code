@@ -13,8 +13,10 @@ export interface SharpMetadata {
   hasAlpha?: boolean;
 }
 
+export type SharpResizeFit = "cover" | "contain" | "fill" | "inside" | "outside";
+
 export interface SharpResizeOptions {
-  fit?: "cover" | "contain" | "fill" | "inside" | "outside";
+  fit?: SharpResizeFit;
   withoutEnlargement?: boolean;
 }
 

@@ -1,23 +1,23 @@
 import { hasNodePath, isDeno, nodePath } from "./runtime.ts";
 
-export function join(...paths: string[]): string {
-  if (!isDeno && hasNodePath) {
-    return nodePath!.join(...paths);
-  }
+function useNodePath(): boolean {
+  return !isDeno && hasNodePath;
+}
 
-  return (
-    paths
-      .filter((p) => p.length > 0)
-      .join("/")
-      .replace(/\/+/g, "/")
-      .replace(/\/$/, "") || "/"
-  );
+export function join(...paths: string[]): string {
+  if (useNodePath()) return nodePath!.join(...paths);
+
+  const joined = paths
+    .filter((p) => p.length > 0)
+    .join("/")
+    .replace(/\/+/g, "/")
+    .replace(/\/$/, "");
+
+  return joined || "/";
 }
 
 export function dirname(path: string): string {
-  if (!isDeno && hasNodePath) {
-    return nodePath!.dirname(path);
-  }
+  if (useNodePath()) return nodePath!.dirname(path);
 
   const lastSlash = path.lastIndexOf("/");
   if (lastSlash === -1) return ".";
@@ -26,12 +26,11 @@ export function dirname(path: string): string {
 }
 
 export function basename(path: string, ext?: string): string {
-  if (!isDeno && hasNodePath) {
+  if (useNodePath()) {
     // Only pass ext if defined - Bun is strict about this parameter
     return ext !== undefined ? nodePath!.basename(path, ext) : nodePath!.basename(path);
   }
 
-  // Strip trailing slashes for consistent behavior with Node/Bun
   let normalizedPath = path;
   while (normalizedPath.length > 1 && normalizedPath.endsWith("/")) {
     normalizedPath = normalizedPath.slice(0, -1);
@@ -40,20 +39,16 @@ export function basename(path: string, ext?: string): string {
   const lastSlash = normalizedPath.lastIndexOf("/");
   let base = lastSlash === -1 ? normalizedPath : normalizedPath.slice(lastSlash + 1);
 
-  if (ext && base.endsWith(ext)) {
-    base = base.slice(0, -ext.length);
-  }
+  if (ext && base.endsWith(ext)) base = base.slice(0, -ext.length);
 
   return base;
 }
 
 export function extname(path: string): string {
-  if (!isDeno && hasNodePath) {
-    return nodePath!.extname(path);
-  }
+  if (useNodePath()) return nodePath!.extname(path);
 
   const base = basename(path);
   const lastDot = base.lastIndexOf(".");
-  if (lastDot === -1 || lastDot === 0) return "";
+  if (lastDot <= 0) return "";
   return base.slice(lastDot);
 }

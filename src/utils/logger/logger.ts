@@ -116,10 +116,7 @@ function getDefaultFormat(
   envFormat: string | undefined = getEnvironmentVariable("LOG_FORMAT"),
   envMode: string | undefined = getEnvironmentVariable("NODE_ENV"),
 ): LogFormat {
-  if (envFormat === "json" || envFormat === "text") {
-    return envFormat;
-  }
-  // Default to JSON in production for structured logging
+  if (envFormat === "json" || envFormat === "text") return envFormat;
   return envMode === "production" ? "json" : "text";
 }
 
@@ -128,19 +125,10 @@ function getDefaultFormat(
  */
 function serializeError(err: unknown): LogEntry["error"] | undefined {
   if (err instanceof Error) {
-    return {
-      name: err.name,
-      message: err.message,
-      stack: err.stack,
-    };
+    return { name: err.name, message: err.message, stack: err.stack };
   }
-  if (err != null) {
-    return {
-      name: "UnknownError",
-      message: String(err),
-    };
-  }
-  return undefined;
+  if (err == null) return undefined;
+  return { name: "UnknownError", message: String(err) };
 }
 
 /**
@@ -156,8 +144,10 @@ function extractContext(
   for (const arg of args) {
     if (arg instanceof Error) {
       error = serializeError(arg);
-    } else if (typeof arg === "object" && arg !== null && !Array.isArray(arg)) {
-      context = { ...context, ...(arg as Record<string, unknown>) };
+      continue;
+    }
+    if (typeof arg === "object" && arg !== null && !Array.isArray(arg)) {
+      context = { ...context, ...arg };
     }
   }
 
@@ -215,14 +205,12 @@ function formatTimestamp(date: Date = new Date()): string {
 function isTty(): boolean {
   try {
     if (hasDenoRuntime(globalThis)) {
-      return Boolean(
-        (globalThis as { Deno?: { stdout?: { isTerminal?: () => boolean } } }).Deno?.stdout
-          ?.isTerminal?.(),
-      );
+      return Boolean(globalThis.Deno?.stdout?.isTerminal?.());
     }
     if (hasNodeProcess(globalThis)) {
       return Boolean(
-        (globalThis as { process?: { stdout?: { isTTY?: boolean } } }).process?.stdout?.isTTY,
+        (globalThis as unknown as { process?: { stdout?: { isTTY?: boolean } } }).process?.stdout
+          ?.isTTY,
       );
     }
   } catch {
@@ -235,10 +223,12 @@ function shouldUseColor(): boolean {
   const noColor = getEnvironmentVariable("NO_COLOR");
   const forceColor = getEnvironmentVariable("FORCE_COLOR");
   const logColor = getEnvironmentVariable("LOG_COLOR");
+
   if (forceColor === "0" || logColor === "0") return false;
   if (noColor !== undefined) return false;
   if (getEnvironmentVariable("CI") !== undefined) return false;
   if (forceColor || logColor === "1" || logColor === "true") return true;
+
   return isTty();
 }
 
@@ -259,18 +249,19 @@ function truncateText(value: string, maxLength = 80): string {
 function formatValue(value: unknown): string {
   if (typeof value === "string") {
     const trimmed = normalizeText(value);
-    if (/\s/.test(trimmed)) return JSON.stringify(trimmed);
-    return trimmed;
+    return /\s/.test(trimmed) ? JSON.stringify(trimmed) : trimmed;
   }
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   if (value === null) return "null";
   if (value === undefined) return "undefined";
-  let text = "";
+
+  let text: string | undefined;
   try {
     text = JSON.stringify(value);
   } catch {
     text = String(value);
   }
+
   // JSON.stringify can return undefined for certain values (e.g., functions, symbols)
   if (text === undefined) return "undefined";
   return truncateText(normalizeText(text));
@@ -279,8 +270,7 @@ function formatValue(value: unknown): string {
 type SerializedError = NonNullable<LogEntry["error"]>;
 
 function formatErrorText(error: SerializedError): string {
-  const text = `${error.name}: ${error.message}`;
-  return truncateText(normalizeText(text), 120);
+  return truncateText(normalizeText(`${error.name}: ${error.message}`), 120);
 }
 
 // Prefix width: timestamp(8) + gap(2) + tag(10) + space(1) + glyph(1) + space(1) = 23
@@ -292,18 +282,28 @@ function formatContextText(
   enableColor: boolean,
 ): string {
   const entries = Object.entries(context).map(([key, value]) => `${key}=${formatValue(value)}`);
-  if (error) {
-    entries.push(`err=${formatErrorText(error)}`);
-  }
+  if (error) entries.push(`err=${formatErrorText(error)}`);
   if (entries.length === 0) return "";
-  const text = entries.join(" ");
-  // Put context on new line, indented to align with message
+
   const indent = " ".repeat(PREFIX_WIDTH);
-  return `\n${indent}${colorize(text, ANSI.dim, enableColor)}`;
+  return `\n${indent}${colorize(entries.join(" "), ANSI.dim, enableColor)}`;
+}
+
+function extractToEntryField(
+  entry: LogEntry,
+  context: Record<string, unknown>,
+  key: keyof LogEntry,
+  coerce: (value: unknown) => LogEntry[keyof LogEntry],
+): void {
+  if (!(key in context)) return;
+  (entry as unknown as Record<string, unknown>)[key] = coerce(
+    (context as Record<string, unknown>)[key],
+  );
+  delete (context as Record<string, unknown>)[key];
 }
 
 class ConsoleLogger implements Logger {
-  private boundContext: Record<string, unknown> = {};
+  private boundContext: Record<string, unknown>;
 
   constructor(
     private prefix: string,
@@ -312,23 +312,13 @@ class ConsoleLogger implements Logger {
     this.boundContext = boundContext ?? {};
   }
 
-  /**
-   * Create a child logger with additional bound context.
-   */
   child(context: Record<string, unknown>): Logger {
-    return new ConsoleLogger(this.prefix, {
-      ...this.boundContext,
-      ...context,
-    });
+    return new ConsoleLogger(this.prefix, { ...this.boundContext, ...context });
   }
 
-  private formatJson(
-    level: LogEntry["level"],
-    message: string,
-    args: unknown[],
-  ): string {
+  private formatJson(level: LogEntry["level"], message: string, args: unknown[]): string {
     const { context, error } = extractContext(args);
-    const mergedContext = { ...this.boundContext, ...context };
+    const mergedContext: Record<string, unknown> = { ...this.boundContext, ...context };
 
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
@@ -338,75 +328,36 @@ class ConsoleLogger implements Logger {
     };
 
     // Extract known fields to top level for easier Grafana filtering
-    if ("requestId" in mergedContext) {
-      entry.requestId = String(mergedContext.requestId);
-      delete mergedContext.requestId;
-    }
-    if ("traceId" in mergedContext) {
-      entry.traceId = String(mergedContext.traceId);
-      delete mergedContext.traceId;
-    }
-    if ("projectSlug" in mergedContext) {
-      entry.projectSlug = String(mergedContext.projectSlug);
-      delete mergedContext.projectSlug;
-    }
-    if ("durationMs" in mergedContext) {
-      entry.durationMs = Number(mergedContext.durationMs);
-      delete mergedContext.durationMs;
-    }
+    extractToEntryField(entry, mergedContext, "requestId", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "traceId", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "projectSlug", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "durationMs", (v) => Number(v));
+
     // Extract standard fields for Loki filtering
-    if ("project_slug" in mergedContext) {
-      entry.project_slug = String(mergedContext.project_slug);
-      delete mergedContext.project_slug;
-    }
-    if ("request_url" in mergedContext) {
-      entry.request_url = String(mergedContext.request_url);
-      delete mergedContext.request_url;
-    }
-    if ("domain" in mergedContext) {
-      entry.domain = String(mergedContext.domain);
-      delete mergedContext.domain;
-    }
-    if ("project_id" in mergedContext) {
-      entry.project_id = String(mergedContext.project_id);
-      delete mergedContext.project_id;
-    }
-    if ("release_id" in mergedContext) {
-      entry.release_id = String(mergedContext.release_id);
-      delete mergedContext.release_id;
-    }
-    if ("branch_id" in mergedContext) {
-      entry.branch_id = String(mergedContext.branch_id);
-      delete mergedContext.branch_id;
-    }
-    if ("branch_name" in mergedContext) {
-      entry.branch_name = String(mergedContext.branch_name);
-      delete mergedContext.branch_name;
-    }
+    extractToEntryField(entry, mergedContext, "project_slug", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "request_url", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "domain", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "project_id", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "release_id", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "branch_id", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "branch_name", (v) => String(v));
 
-    if (Object.keys(mergedContext).length > 0) {
-      entry.context = mergedContext;
-    }
-
-    if (error) {
-      entry.error = error;
-    }
+    if (Object.keys(mergedContext).length > 0) entry.context = mergedContext;
+    if (error) entry.error = error;
 
     return JSON.stringify(entry);
   }
 
-  private formatTextLine(
-    level: LogEntry["level"],
-    message: string,
-    args: unknown[],
-  ): string {
+  private formatTextLine(level: LogEntry["level"], message: string, args: unknown[]): string {
     const { context, error } = extractContext(args);
     const mergedContext = { ...this.boundContext, ...context };
     const enableColor = shouldUseColor();
+
     const timestamp = colorize(formatTimestamp(), ANSI.dim, enableColor);
     const tag = colorize(padTag(this.prefix), TAG_COLORS[this.prefix] ?? ANSI.cyan, enableColor);
     const glyph = colorize(LEVEL_GLYPHS[level], LEVEL_COLORS[level], enableColor);
     const contextText = formatContextText(mergedContext, error, enableColor);
+
     return `${timestamp}  ${tag} ${glyph} ${message}${contextText}`;
   }
 
@@ -419,11 +370,12 @@ class ConsoleLogger implements Logger {
   ): void {
     const { level: resolvedLevel, format: resolvedFormat } = resolveLoggerConfig();
     if (resolvedLevel > logLevel) return;
-    if (resolvedFormat === "json") {
-      consoleFn(this.formatJson(level, message, args));
-    } else {
-      consoleFn(this.formatTextLine(level, message, args));
-    }
+
+    const line = resolvedFormat === "json"
+      ? this.formatJson(level, message, args)
+      : this.formatTextLine(level, message, args);
+
+    consoleFn(line);
   }
 
   debug(message: string, ...args: unknown[]): void {
@@ -480,9 +432,7 @@ export function getDefaultLevel(
 ): LogLevel {
   const parsedLevel = parseLogLevel(envLevel);
   if (parsedLevel !== undefined) return parsedLevel;
-
   if (debugFlag === "1" || debugFlag === "true") return LogLevel.DEBUG;
-
   return LogLevel.INFO;
 }
 

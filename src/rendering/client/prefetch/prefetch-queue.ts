@@ -16,9 +16,11 @@ const DEFAULT_OPTIONS: PrefetchQueueOptions = {
 };
 
 function isAbortError(error: unknown): boolean {
-  return Boolean(
-    error && typeof error === "object" && "name" in error &&
-      (error as { name?: string }).name === "AbortError",
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    (error as { name?: string }).name === "AbortError"
   );
 }
 
@@ -74,15 +76,10 @@ export class PrefetchQueue {
   }
 
   async prefetchLink(link: HTMLAnchorElement): Promise<void> {
-    if (this.stopped) {
-      return;
-    }
+    if (this.stopped) return;
 
     const url = link.href;
-
-    if (!url || this.controllers.has(url) || this.prefetchedUrls.has(url)) {
-      return;
-    }
+    if (!url || this.controllers.has(url) || this.prefetchedUrls.has(url)) return;
 
     if (this.concurrent >= this.options.maxConcurrent) {
       prefetchLogger.debug?.(`Prefetch queue full, skipping ${url}`);
@@ -92,7 +89,7 @@ export class PrefetchQueue {
     let parsedUrl: URL;
     try {
       parsedUrl = new URL(url);
-    } catch (_error) {
+    } catch {
       prefetchLogger.debug?.(`Invalid prefetch URL ${url}`);
       return;
     }
@@ -112,9 +109,7 @@ export class PrefetchQueue {
         headers: { "X-Veryfront-Prefetch": "1" },
       });
 
-      if (!response.ok) {
-        return;
-      }
+      if (!response.ok) return;
 
       if (this.isResponseTooLarge(response)) {
         prefetchLogger.debug?.(`Prefetch too large, skipping ${url}`);
@@ -123,21 +118,19 @@ export class PrefetchQueue {
 
       this.prefetchedUrls.add(url);
 
-      if (this.onResourcesFetched) {
-        try {
-          await this.onResourcesFetched(response, url);
-        } catch (callbackError) {
-          prefetchLogger.error?.(`Prefetch callback failed for ${url}`, callbackError);
-        }
+      if (!this.onResourcesFetched) return;
+
+      try {
+        await this.onResourcesFetched(response, url);
+      } catch (callbackError) {
+        prefetchLogger.error?.(`Prefetch callback failed for ${url}`, callbackError);
       }
     } catch (error) {
       if (!isAbortError(error)) {
         prefetchLogger.error?.(`Failed to prefetch ${url}`, error);
       }
     } finally {
-      if (timeoutId !== undefined) {
-        clearTimeout(timeoutId);
-      }
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
 
       this.controllers.delete(url);
       this.concurrent = Math.max(0, this.concurrent - 1);
@@ -145,7 +138,7 @@ export class PrefetchQueue {
   }
 
   async prefetch(url: string): Promise<void> {
-    const link = (typeof document !== "undefined")
+    const link = typeof document !== "undefined"
       ? document.createElement("a")
       : ({ href: url } as HTMLAnchorElement);
 
@@ -164,14 +157,10 @@ export class PrefetchQueue {
 
   private isResponseTooLarge(response: Response): boolean {
     const rawLength = response.headers.get("content-length");
-    if (rawLength === null) {
-      return false;
-    }
+    if (rawLength === null) return false;
 
     const size = Number.parseInt(rawLength, 10);
-    if (!Number.isFinite(size)) {
-      return false;
-    }
+    if (!Number.isFinite(size)) return false;
 
     return size > this.options.maxSize;
   }

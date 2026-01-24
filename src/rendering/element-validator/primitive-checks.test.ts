@@ -70,23 +70,19 @@ describe("primitive-checks", () => {
 
   describe("hasReactSymbol", () => {
     it("should return true for objects with symbol $$typeof", () => {
-      const obj = { $$typeof: Symbol.for("react.element") };
-      expect(hasReactSymbol(obj)).toBe(true);
+      expect(hasReactSymbol({ $$typeof: Symbol.for("react.element") })).toBe(true);
     });
 
     it("should return true for objects with numeric $$typeof", () => {
-      const obj = { $$typeof: 0xeac7 };
-      expect(hasReactSymbol(obj)).toBe(true);
+      expect(hasReactSymbol({ $$typeof: 0xeac7 })).toBe(true);
     });
 
     it("should return false for objects without $$typeof", () => {
-      const obj = { foo: "bar" };
-      expect(hasReactSymbol(obj)).toBe(false);
+      expect(hasReactSymbol({ foo: "bar" })).toBe(false);
     });
 
     it("should return false for objects with non-symbol/non-number $$typeof", () => {
-      const obj = { $$typeof: "string" };
-      expect(hasReactSymbol(obj)).toBe(false);
+      expect(hasReactSymbol({ $$typeof: "string" })).toBe(false);
     });
 
     it("should return true for actual React elements", () => {
@@ -113,8 +109,6 @@ describe("primitive-checks", () => {
       }
       Component.displayName = "CustomDisplayName";
       const element = React.createElement(Component, null);
-      // Note: getElementTypeName checks for name first, then displayName
-      // For named functions, it returns the name
       expect(getElementTypeName(element)).toBe("Component");
     });
 
@@ -124,11 +118,8 @@ describe("primitive-checks", () => {
     });
 
     it("should return tag name for intrinsic elements", () => {
-      const divElement = React.createElement("div", null, "test");
-      expect(getElementTypeName(divElement)).toBe("div");
-
-      const spanElement = React.createElement("span", null, "test");
-      expect(getElementTypeName(spanElement)).toBe("span");
+      expect(getElementTypeName(React.createElement("div", null, "test"))).toBe("div");
+      expect(getElementTypeName(React.createElement("span", null, "test"))).toBe("span");
     });
 
     it("should handle class components", () => {
@@ -158,8 +149,7 @@ describe("primitive-checks", () => {
     });
 
     it("should return keys for simple objects", () => {
-      const obj = { foo: 1, bar: 2, baz: 3 };
-      const keys = getObjectKeys(obj);
+      const keys = getObjectKeys({ foo: 1, bar: 2, baz: 3 });
       expect(keys).toContain("foo");
       expect(keys).toContain("bar");
       expect(keys).toContain("baz");
@@ -168,16 +158,13 @@ describe("primitive-checks", () => {
 
     it("should limit to first 15 keys", () => {
       const obj: Record<string, number> = {};
-      for (let i = 0; i < 20; i++) {
-        obj[`key${i}`] = i;
-      }
-      const keys = getObjectKeys(obj);
-      expect(keys.length).toBe(15);
+      for (let i = 0; i < 20; i++) obj[`key${i}`] = i;
+
+      expect(getObjectKeys(obj).length).toBe(15);
     });
 
     it("should work with arrays", () => {
-      const arr = [1, 2, 3];
-      const keys = getObjectKeys(arr);
+      const keys = getObjectKeys([1, 2, 3]);
       expect(keys).toContain("0");
       expect(keys).toContain("1");
       expect(keys).toContain("2");
@@ -190,8 +177,7 @@ describe("primitive-checks", () => {
 
   describe("getObjectSample", () => {
     it("should return JSON string for simple objects", () => {
-      const obj = { foo: "bar", num: 42 };
-      const sample = getObjectSample(obj);
+      const sample = getObjectSample({ foo: "bar", num: 42 });
       expect(sample).toContain('"foo"');
       expect(sample).toContain('"bar"');
       expect(sample).toContain('"num"');
@@ -199,9 +185,7 @@ describe("primitive-checks", () => {
     });
 
     it("should return JSON string for arrays", () => {
-      const arr = [1, 2, 3];
-      const sample = getObjectSample(arr);
-      expect(sample).toBe("[\n  1,\n  2,\n  3\n]");
+      expect(getObjectSample([1, 2, 3])).toBe("[\n  1,\n  2,\n  3\n]");
     });
 
     it("should return JSON string for null", () => {
@@ -216,18 +200,15 @@ describe("primitive-checks", () => {
 
     it("should limit output to 500 characters", () => {
       const largeObj: Record<string, string> = {};
-      for (let i = 0; i < 100; i++) {
-        largeObj[`key${i}`] = `value${i}`.repeat(10);
-      }
-      const sample = getObjectSample(largeObj);
-      expect(sample.length).toBeLessThanOrEqual(500);
+      for (let i = 0; i < 100; i++) largeObj[`key${i}`] = `value${i}`.repeat(10);
+
+      expect(getObjectSample(largeObj).length).toBeLessThanOrEqual(500);
     });
 
     it("should handle circular references", () => {
       const obj: Record<string, unknown> = { foo: "bar" };
-      obj.self = obj; // circular reference
-      const sample = getObjectSample(obj);
-      expect(sample).toBe("[Unable to stringify]");
+      obj.self = obj;
+      expect(getObjectSample(obj)).toBe("[Unable to stringify]");
     });
 
     it("should handle objects that throw on stringify", () => {
@@ -236,21 +217,17 @@ describe("primitive-checks", () => {
           throw new Error("Cannot access");
         },
       };
-      const sample = getObjectSample(obj);
-      expect(sample).toBe("[Unable to stringify]");
+      expect(getObjectSample(obj)).toBe("[Unable to stringify]");
     });
 
     it("should format JSON with proper indentation", () => {
-      const obj = { nested: { value: 42 } };
-      const sample = getObjectSample(obj);
+      const sample = getObjectSample({ nested: { value: 42 } });
       expect(sample).toContain("  ");
       expect(sample).toContain("\n");
     });
 
     it("should handle undefined", () => {
-      const sample = getObjectSample(undefined);
-      // JSON.stringify(undefined) throws, so it returns error message
-      expect(sample).toBe("[Unable to stringify]");
+      expect(getObjectSample(undefined)).toBe("[Unable to stringify]");
     });
   });
 });

@@ -15,118 +15,122 @@ import {
 import type { ApiClient } from "../shared/config.ts";
 import type { ParsedArgs } from "../index/types.ts";
 
-// Mock client creator - returns ApiClient-compatible mock
-function createMockClient(overrides: {
-  get?: (url: string, params?: unknown) => Promise<unknown>;
-  post?: (url: string, body?: unknown) => Promise<unknown>;
-} = {}): ApiClient {
+function createMockClient(
+  overrides: Partial<Pick<ApiClient, "get" | "post">> = {},
+): ApiClient {
   return {
     get: overrides.get ?? (() => Promise.resolve({ data: [] })),
     post: overrides.post ?? (() => Promise.resolve({})),
     put: () => Promise.resolve({}),
     patch: () => Promise.resolve({}),
     delete: () => Promise.resolve({}),
-  } as unknown as ApiClient;
+  } as ApiClient;
 }
 
-// Test exported schema
+async function expectErrorMessage(fn: () => Promise<unknown>): Promise<string | undefined> {
+  try {
+    await fn();
+    return undefined;
+  } catch (e) {
+    return (e as Error).message;
+  }
+}
+
 describe("DeployArgsSchema", () => {
   it("should use default values", () => {
     const result = DeployArgsSchema.safeParse({});
     assertEquals(result.success, true);
-    if (result.success) {
-      assertEquals(result.data.branch, "main");
-      assertEquals(result.data.env, "production");
-    }
+    if (!result.success) return;
+
+    assertEquals(result.data.branch, "main");
+    assertEquals(result.data.env, "production");
   });
 
   it("should accept custom branch and env", () => {
     const result = DeployArgsSchema.safeParse({ branch: "develop", env: "staging" });
     assertEquals(result.success, true);
-    if (result.success) {
-      assertEquals(result.data.branch, "develop");
-      assertEquals(result.data.env, "staging");
-    }
+    if (!result.success) return;
+
+    assertEquals(result.data.branch, "develop");
+    assertEquals(result.data.env, "staging");
   });
 
   it("should accept optional release name", () => {
     const result = DeployArgsSchema.safeParse({ releaseName: "v1.0.0" });
     assertEquals(result.success, true);
-    if (result.success) {
-      assertEquals(result.data.releaseName, "v1.0.0");
-    }
+    if (!result.success) return;
+
+    assertEquals(result.data.releaseName, "v1.0.0");
   });
 });
 
-// Test exported parseArgs function
 describe("parseDeployArgs", () => {
   it("should use defaults when no args provided", () => {
     const args = { _: ["deploy"] } as ParsedArgs;
     const result = parseDeployArgs(args);
     assertEquals(result.success, true);
-    if (result.success) {
-      assertEquals(result.data.branch, "main");
-      assertEquals(result.data.env, "production");
-    }
+    if (!result.success) return;
+
+    assertEquals(result.data.branch, "main");
+    assertEquals(result.data.env, "production");
   });
 
   it("should parse --branch flag", () => {
     const args = { _: ["deploy"], branch: "develop" } as ParsedArgs;
     const result = parseDeployArgs(args);
     assertEquals(result.success, true);
-    if (result.success) {
-      assertEquals(result.data.branch, "develop");
-    }
+    if (!result.success) return;
+
+    assertEquals(result.data.branch, "develop");
   });
 
   it("should parse -b flag as branch", () => {
     const args = { _: ["deploy"], b: "feature" } as ParsedArgs;
     const result = parseDeployArgs(args);
     assertEquals(result.success, true);
-    if (result.success) {
-      assertEquals(result.data.branch, "feature");
-    }
+    if (!result.success) return;
+
+    assertEquals(result.data.branch, "feature");
   });
 
   it("should parse --env flag", () => {
     const args = { _: ["deploy"], env: "staging" } as ParsedArgs;
     const result = parseDeployArgs(args);
     assertEquals(result.success, true);
-    if (result.success) {
-      assertEquals(result.data.env, "staging");
-    }
+    if (!result.success) return;
+
+    assertEquals(result.data.env, "staging");
   });
 
   it("should parse --release-name flag", () => {
     const args = { _: ["deploy"], "release-name": "v2.0.0" } as ParsedArgs;
     const result = parseDeployArgs(args);
     assertEquals(result.success, true);
-    if (result.success) {
-      assertEquals(result.data.releaseName, "v2.0.0");
-    }
+    if (!result.success) return;
+
+    assertEquals(result.data.releaseName, "v2.0.0");
   });
 
   it("should parse --dry-run and --force flags", () => {
     const args = { _: ["deploy"], "dry-run": true, force: true } as ParsedArgs;
     const result = parseDeployArgs(args);
     assertEquals(result.success, true);
-    if (result.success) {
-      assertEquals(result.data.dryRun, true);
-      assertEquals(result.data.force, true);
-    }
+    if (!result.success) return;
+
+    assertEquals(result.data.dryRun, true);
+    assertEquals(result.data.force, true);
   });
 
   it("should parse -f flag as force", () => {
     const args = { _: ["deploy"], f: true } as ParsedArgs;
     const result = parseDeployArgs(args);
     assertEquals(result.success, true);
-    if (result.success) {
-      assertEquals(result.data.force, true);
-    }
+    if (!result.success) return;
+
+    assertEquals(result.data.force, true);
   });
 });
 
-// Test getEnvironmentByName
 describe("getEnvironmentByName", () => {
   it("should find environment by name", async () => {
     const mockClient = createMockClient({
@@ -139,11 +143,7 @@ describe("getEnvironmentByName", () => {
         }),
     });
 
-    const env = await getEnvironmentByName(
-      mockClient,
-      "my-project",
-      "staging",
-    );
+    const env = await getEnvironmentByName(mockClient, "my-project", "staging");
     assertEquals(env, { id: "env-2", name: "staging", protected: false });
   });
 
@@ -152,16 +152,11 @@ describe("getEnvironmentByName", () => {
       get: () => Promise.resolve({ data: [] }),
     });
 
-    const env = await getEnvironmentByName(
-      mockClient,
-      "my-project",
-      "nonexistent",
-    );
+    const env = await getEnvironmentByName(mockClient, "my-project", "nonexistent");
     assertEquals(env, null);
   });
 });
 
-// Test createRelease
 describe("createRelease", () => {
   it("should create release without options", async () => {
     let capturedUrl = "";
@@ -228,20 +223,16 @@ describe("createRelease", () => {
   });
 });
 
-// Test getEnvironmentByName - error handling
 describe("getEnvironmentByName - error handling", () => {
   it("should handle API error gracefully", async () => {
     const mockClient = createMockClient({
       get: () => Promise.reject(new Error("Network error")),
     });
 
-    let error: Error | null = null;
-    try {
-      await getEnvironmentByName(mockClient, "my-project", "production");
-    } catch (e) {
-      error = e as Error;
-    }
-    assertEquals(error?.message, "Network error");
+    const message = await expectErrorMessage(() =>
+      getEnvironmentByName(mockClient, "my-project", "production")
+    );
+    assertEquals(message, "Network error");
   });
 
   it("should handle paginated empty results", async () => {
@@ -265,7 +256,6 @@ describe("getEnvironmentByName - error handling", () => {
   });
 });
 
-// Test DeployArgsSchema - invalid inputs
 describe("DeployArgsSchema - invalid inputs", () => {
   it("should reject empty branch name", () => {
     const result = DeployArgsSchema.safeParse({ branch: "" });
@@ -283,20 +273,14 @@ describe("DeployArgsSchema - invalid inputs", () => {
   });
 });
 
-// Test createRelease - error handling
 describe("createRelease - error handling", () => {
   it("should propagate API errors", async () => {
     const mockClient = createMockClient({
       post: () => Promise.reject(new Error("Release creation failed")),
     });
 
-    let error: Error | null = null;
-    try {
-      await createRelease(mockClient, "my-project");
-    } catch (e) {
-      error = e as Error;
-    }
-    assertEquals(error?.message, "Release creation failed");
+    const message = await expectErrorMessage(() => createRelease(mockClient, "my-project"));
+    assertEquals(message, "Release creation failed");
   });
 
   it("should propagate errors for invalid branch", async () => {
@@ -304,17 +288,13 @@ describe("createRelease - error handling", () => {
       post: () => Promise.reject(new Error("Branch not found")),
     });
 
-    let error: Error | null = null;
-    try {
-      await createRelease(mockClient, "my-project", { branch: "nonexistent" });
-    } catch (e) {
-      error = e as Error;
-    }
-    assertEquals(error?.message, "Branch not found");
+    const message = await expectErrorMessage(() =>
+      createRelease(mockClient, "my-project", { branch: "nonexistent" })
+    );
+    assertEquals(message, "Branch not found");
   });
 });
 
-// Test createDeployment
 describe("createDeployment", () => {
   it("should create deployment with release and environment", async () => {
     let capturedUrl = "";
@@ -332,19 +312,13 @@ describe("createDeployment", () => {
       },
     });
 
-    const deployment = await createDeployment(
-      mockClient,
-      "my-project",
-      "rel-456",
-      "env-789",
-    );
+    const deployment = await createDeployment(mockClient, "my-project", "rel-456", "env-789");
     assertEquals(capturedUrl, "/projects/my-project/deployments");
     assertEquals(capturedBody, { release_id: "rel-456", environment_id: "env-789" });
     assertEquals(deployment.id, "deploy-123");
   });
 });
 
-// Test createDeployment - error handling
 describe("createDeployment - error handling", () => {
   it("should propagate API errors for protected environment", async () => {
     const mockClient = createMockClient({
@@ -352,13 +326,10 @@ describe("createDeployment - error handling", () => {
         Promise.reject(new Error("Cannot deploy to protected environment without approval")),
     });
 
-    let error: Error | null = null;
-    try {
-      await createDeployment(mockClient, "my-project", "rel-123", "protected-env");
-    } catch (e) {
-      error = e as Error;
-    }
-    assertEquals(error?.message, "Cannot deploy to protected environment without approval");
+    const message = await expectErrorMessage(() =>
+      createDeployment(mockClient, "my-project", "rel-123", "protected-env")
+    );
+    assertEquals(message, "Cannot deploy to protected environment without approval");
   });
 
   it("should propagate API errors for invalid release", async () => {
@@ -366,13 +337,10 @@ describe("createDeployment - error handling", () => {
       post: () => Promise.reject(new Error("Release not found")),
     });
 
-    let error: Error | null = null;
-    try {
-      await createDeployment(mockClient, "my-project", "invalid-rel", "env-123");
-    } catch (e) {
-      error = e as Error;
-    }
-    assertEquals(error?.message, "Release not found");
+    const message = await expectErrorMessage(() =>
+      createDeployment(mockClient, "my-project", "invalid-rel", "env-123")
+    );
+    assertEquals(message, "Release not found");
   });
 
   it("should propagate API errors for invalid environment", async () => {
@@ -380,12 +348,9 @@ describe("createDeployment - error handling", () => {
       post: () => Promise.reject(new Error("Environment not found")),
     });
 
-    let error: Error | null = null;
-    try {
-      await createDeployment(mockClient, "my-project", "rel-123", "invalid-env");
-    } catch (e) {
-      error = e as Error;
-    }
-    assertEquals(error?.message, "Environment not found");
+    const message = await expectErrorMessage(() =>
+      createDeployment(mockClient, "my-project", "rel-123", "invalid-env")
+    );
+    assertEquals(message, "Environment not found");
   });
 });

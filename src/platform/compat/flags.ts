@@ -16,33 +16,30 @@ export interface Args {
   [key: string]: unknown;
 }
 
-export function parse(
-  args: string[],
-  options: ParseOptions = {},
-) {
-  const parsed = denoFlagsParse(args, options);
+export function parse(args: string[], options: ParseOptions = {}): Args {
+  const parsed = denoFlagsParse(args, options) as Args;
 
-  if (options.collect) {
-    const collectKeys = Array.isArray(options.collect) ? options.collect : [options.collect];
-    for (const key of collectKeys) {
-      if (key in parsed && !Array.isArray(parsed[key])) {
-        parsed[key] = [parsed[key]];
-      }
+  const collectKeys = options.collect
+    ? Array.isArray(options.collect) ? options.collect : [options.collect]
+    : [];
+
+  for (const key of collectKeys) {
+    if (key in parsed && !Array.isArray(parsed[key])) {
+      parsed[key] = [parsed[key]];
     }
   }
 
-  if (options.negatable) {
-    const negatableKeys = Array.isArray(options.negatable)
-      ? options.negatable
-      : [options.negatable];
-    for (const key of negatableKeys) {
-      const noKey = `no-${key}`;
-      if (noKey in parsed) {
-        parsed[key] = !parsed[noKey];
-        delete parsed[noKey];
-      }
+  const negatableKeys = options.negatable
+    ? Array.isArray(options.negatable) ? options.negatable : [options.negatable]
+    : [];
+
+  for (const key of negatableKeys) {
+    const noKey = `no-${key}`;
+    if (noKey in parsed) {
+      parsed[key] = !parsed[noKey];
+      delete parsed[noKey];
     }
   }
 
-  return parsed as Args;
+  return parsed;
 }

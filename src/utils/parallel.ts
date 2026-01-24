@@ -1,102 +1,76 @@
-/**
+/*******************************
  * Parallel Execution Utilities
  *
  * Provides utilities for parallel execution with concurrency control.
  * Uses a semaphore to limit the number of concurrent operations.
  *
  * @module core/utils/parallel
- */
+ *******************************/
 
 import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
-/** Default max concurrent operations */
 const DEFAULT_CONCURRENCY = 20;
-
-/** Timeout for acquiring semaphore permits (ms) */
 const ACQUIRE_TIMEOUT_MS = 30_000;
 
-/** Global semaphore for API calls - shared across all parallel operations */
 const apiSemaphore = new Semaphore(DEFAULT_CONCURRENCY);
 
-/**
- * Map over items in parallel with concurrency control.
- *
- * Like Promise.all(items.map(fn)) but limits concurrent executions
- * to prevent overwhelming the API or exhausting resources.
- *
- * @param items - Array of items to process
- * @param fn - Async function to apply to each item
- * @param options - Configuration options
- * @returns Promise resolving to array of results in same order as input
- *
- * @example
- * ```ts
- * // Process up to 5 files concurrently
- * const contents = await parallelMap(
- *   filePaths,
- *   path => fs.readFile(path),
- *   { concurrency: 5 }
- * );
- * ```
- */
-export async function parallelMap<T, R>(
-  items: T[],
-  fn: (item: T, index: number) => Promise<R>,
-  options: { concurrency?: number; semaphore?: Semaphore; timeoutMs?: number } = {},
-): Promise<R[]> {
-  return await withSpan("utils.parallelMap", async () => {
-    if (items.length === 0) return [];
+type ParallelOptions = {
+  concurrency?: number;
+  semaphore?: Semaphore;
+  timeoutMs?: number;
+};
 
-    const semaphore = options.semaphore ?? apiSemaphore;
-    const timeoutMs = options.timeoutMs ?? ACQUIRE_TIMEOUT_MS;
-    const results: R[] = new Array(items.length);
+async function acquireOrThrow(
+  semaphore: Semaphore,
+  timeoutMs: number,
+  label: string,
+): Promise<void> {
+  const acquired = await semaphore.tryAcquire(timeoutMs);
+  if (acquired) return;
 
-    await Promise.all(
-      items.map(async (item, index) => {
-        // Use tryAcquire with timeout to prevent deadlocks
-        const acquired = await semaphore.tryAcquire(timeoutMs);
-        if (!acquired) {
-          throw new Error(
-            `parallelMap: timed out waiting for semaphore after ${timeoutMs}ms (available: ${semaphore.available}, waiting: ${semaphore.waiting})`,
-          );
-        }
-        try {
-          results[index] = await fn(item, index);
-        } finally {
-          semaphore.release();
-        }
-      }),
-    );
-
-    return results;
-  }, {
-    "parallel.itemCount": items.length,
-    "parallel.timeoutMs": options.timeoutMs ?? ACQUIRE_TIMEOUT_MS,
-  });
+  throw new Error(
+    `${label}: timed out waiting for semaphore after ${timeoutMs}ms (available: ${semaphore.available}, waiting: ${semaphore.waiting})`,
+  );
 }
 
-/**
- * Execute async functions in parallel with concurrency control.
- *
- * Like Promise.all but limits concurrent executions.
- *
- * @param fns - Array of async functions to execute
- * @param options - Configuration options
- * @returns Promise resolving to array of results
- *
- * @example
- * ```ts
- * const [user, posts, comments] = await parallelAll([
- *   () => fetchUser(id),
- *   () => fetchPosts(id),
- *   () => fetchComments(id),
- * ]);
- * ```
- */
+export function parallelMap<T, R>(
+  items: T[],
+  fn: (item: T, index: number) => Promise<R>,
+  options: ParallelOptions = {},
+): Promise<R[]> {
+  return withSpan(
+    "utils.parallelMap",
+    async () => {
+      if (items.length === 0) return [];
+
+      const semaphore = options.semaphore ?? apiSemaphore;
+      const timeoutMs = options.timeoutMs ?? ACQUIRE_TIMEOUT_MS;
+      const results: R[] = new Array(items.length);
+
+      await Promise.all(
+        items.map(async (item, index) => {
+          await acquireOrThrow(semaphore, timeoutMs, "parallelMap");
+          try {
+            results[index] = await fn(item, index);
+          } finally {
+            semaphore.release();
+          }
+        }),
+      );
+
+      return results;
+    },
+    {
+      "parallel.itemCount": items.length,
+      "parallel.timeoutMs": options.timeoutMs ?? ACQUIRE_TIMEOUT_MS,
+    },
+  );
+}
+
 export function parallelAll<T extends readonly (() => Promise<unknown>)[]>(
   fns: T,
-  options: { concurrency?: number; semaphore?: Semaphore; timeoutMs?: number } = {},
+  options: ParallelOptions = {},
 ): Promise<{ [K in keyof T]: Awaited<ReturnType<T[K]>> }> {
   return parallelMap(
     [...fns] as (() => Promise<unknown>)[],
@@ -105,104 +79,70 @@ export function parallelAll<T extends readonly (() => Promise<unknown>)[]>(
   ) as Promise<{ [K in keyof T]: Awaited<ReturnType<T[K]>> }>;
 }
 
-/**
- * Find the first item that matches a predicate, checking in parallel with concurrency control.
- *
- * Returns as soon as a match is found, cancelling remaining checks.
- *
- * @param items - Array of items to check
- * @param predicate - Async predicate function
- * @param options - Configuration options
- * @returns Promise resolving to first matching item or undefined
- *
- * @example
- * ```ts
- * const existingFile = await parallelFind(
- *   possiblePaths,
- *   async path => await fs.exists(path),
- * );
- * ```
- */
-export async function parallelFind<T>(
+export function parallelFind<T>(
   items: T[],
   predicate: (item: T, index: number) => Promise<boolean>,
-  options: { concurrency?: number; semaphore?: Semaphore; timeoutMs?: number } = {},
+  options: ParallelOptions = {},
 ): Promise<T | undefined> {
-  return await withSpan("utils.parallelFind", async () => {
-    if (items.length === 0) return undefined;
+  return withSpan(
+    "utils.parallelFind",
+    async () => {
+      if (items.length === 0) return undefined;
 
-    const semaphore = options.semaphore ?? apiSemaphore;
-    const timeoutMs = options.timeoutMs ?? ACQUIRE_TIMEOUT_MS;
-    let found: T | undefined;
-    let foundIndex = Infinity;
+      const semaphore = options.semaphore ?? apiSemaphore;
+      const timeoutMs = options.timeoutMs ?? ACQUIRE_TIMEOUT_MS;
+      let found: T | undefined;
+      let foundIndex = Infinity;
 
-    await Promise.all(
-      items.map(async (item, index) => {
-        // Skip if we already found an earlier match
-        if (index >= foundIndex) return;
-
-        // Use tryAcquire with timeout to prevent deadlocks
-        const acquired = await semaphore.tryAcquire(timeoutMs);
-        if (!acquired) {
-          throw new Error(
-            `parallelFind: timed out waiting for semaphore after ${timeoutMs}ms (available: ${semaphore.available}, waiting: ${semaphore.waiting})`,
-          );
-        }
-        try {
-          // Check again after acquiring permit
+      await Promise.all(
+        items.map(async (item, index) => {
           if (index >= foundIndex) return;
 
-          const matches = await predicate(item, index);
-          if (matches && index < foundIndex) {
+          await acquireOrThrow(semaphore, timeoutMs, "parallelFind");
+          try {
+            if (index >= foundIndex) return;
+
+            const matches = await predicate(item, index);
+            if (!matches || index >= foundIndex) return;
+
             found = item;
             foundIndex = index;
+          } finally {
+            semaphore.release();
           }
-        } finally {
-          semaphore.release();
-        }
-      }),
-    );
+        }),
+      );
 
-    return found;
-  }, { "parallel.itemCount": items.length });
+      return found;
+    },
+    { "parallel.itemCount": items.length },
+  );
 }
 
-/**
- * Filter items in parallel with concurrency control.
- *
- * @param items - Array of items to filter
- * @param predicate - Async predicate function
- * @param options - Configuration options
- * @returns Promise resolving to filtered array (maintains order)
- */
-export async function parallelFilter<T>(
+export function parallelFilter<T>(
   items: T[],
   predicate: (item: T, index: number) => Promise<boolean>,
-  options: { concurrency?: number; semaphore?: Semaphore; timeoutMs?: number } = {},
+  options: ParallelOptions = {},
 ): Promise<T[]> {
-  return await withSpan("utils.parallelFilter", async () => {
-    const results = await parallelMap(
-      items,
-      async (item, index) => ({ item, keep: await predicate(item, index) }),
-      options,
-    );
-    return results.filter((r) => r.keep).map((r) => r.item);
-  }, { "parallel.itemCount": items.length });
+  return withSpan(
+    "utils.parallelFilter",
+    async () => {
+      const results = await parallelMap(
+        items,
+        async (item, index) => ({ item, keep: await predicate(item, index) }),
+        options,
+      );
+
+      return results.filter((r) => r.keep).map((r) => r.item);
+    },
+    { "parallel.itemCount": items.length },
+  );
 }
 
-/**
- * Create a new semaphore for custom concurrency control.
- *
- * @param permits - Maximum concurrent operations
- * @returns New Semaphore instance
- */
 export function createSemaphore(permits: number): Semaphore {
   return new Semaphore(permits);
 }
 
-/**
- * Get the shared API semaphore for coordinating across modules.
- */
 export function getApiSemaphore(): Semaphore {
   return apiSemaphore;
 }

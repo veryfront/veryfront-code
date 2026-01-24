@@ -17,31 +17,37 @@ export default tool({
       .max(300)
       .default(30)
       .describe("Number of meetings to return per page"),
-    pageNumber: z
-      .number()
-      .min(1)
-      .default(1)
-      .describe("Page number for pagination"),
+    pageNumber: z.number().min(1).default(1).describe("Page number for pagination"),
   }),
   async execute({ type, pageSize, pageNumber }) {
-    const meetings = await listMeetings({
-      type,
-      pageSize,
-      pageNumber,
-    });
+    const meetings = await listMeetings({ type, pageSize, pageNumber });
 
-    return meetings.map((meeting) => ({
-      id: meeting.id,
-      uuid: meeting.uuid,
-      topic: meeting.topic,
-      type: meeting.type,
-      startTime: meeting.start_time,
-      duration: meeting.duration,
-      timezone: meeting.timezone,
-      agenda: meeting.agenda,
-      joinUrl: meeting.join_url,
-      password: meeting.password,
-      status: meeting.status,
-    }));
+    return meetings.map(
+      ({
+        id,
+        uuid,
+        topic,
+        type: meetingType,
+        start_time,
+        duration,
+        timezone,
+        agenda,
+        join_url,
+        password,
+        status,
+      }) => ({
+        id,
+        uuid,
+        topic,
+        type: meetingType,
+        startTime: start_time,
+        duration,
+        timezone,
+        agenda,
+        joinUrl: join_url,
+        password,
+        status,
+      }),
+    );
   },
 });

@@ -20,8 +20,10 @@ export function buildStudioUrl(
 ): string {
   const base = `https://veryfront.com/projects/${encodeURIComponent(project)}`;
   const params = new URLSearchParams();
+
   if (options.branch) params.set("branch", options.branch);
   if (options.file) params.set("path", options.file);
+
   const query = params.toString();
   return query ? `${base}?${query}` : base;
 }
@@ -33,33 +35,27 @@ async function resolveProjectSlug(
   projectDir: string,
   env: RuntimeEnv = getRuntimeEnv(),
 ): Promise<string> {
-  // 1. Environment variable
   if (env.projectSlug) return env.projectSlug;
 
-  // 2. Config file
   const config = await readConfigFile(projectDir);
   if (config?.projectSlug) return config.projectSlug;
 
-  // 3. Infer from package.json or directory
   const fs = createFileSystem();
   const packagePath = join(projectDir, "package.json");
+
   try {
     if (await fs.exists(packagePath)) {
       const content = await fs.readTextFile(packagePath);
-      const pkg = JSON.parse(content) as { name?: string };
-      if (pkg.name) {
-        return pkg.name.replace(/^@[^/]+\//, "").replace(/[^a-z0-9-]/gi, "-");
-      }
+      const pkg = JSON.parse(content) as { name?: string } | null;
+      const name = pkg?.name;
+      if (name) return name.replace(/^@[^/]+\//, "").replace(/[^a-z0-9-]/gi, "-");
     }
   } catch {
     // Ignore errors
   }
 
-  // 4. Fall back to directory name
-  const dirName = projectDir.split("/").pop() || projectDir.split("\\").pop();
-  if (dirName) {
-    return dirName.replace(/[^a-z0-9-]/gi, "-");
-  }
+  const dirName = projectDir.split(/[/\\]/).pop();
+  if (dirName) return dirName.replace(/[^a-z0-9-]/gi, "-");
 
   throw new Error("Could not determine project slug");
 }
@@ -75,11 +71,9 @@ export async function studioCommand(
   } = {},
   env: RuntimeEnv = getRuntimeEnv(),
 ): Promise<{ url: string; opened: boolean }> {
-  // Resolve project (explicit or auto-detect)
   const project = options.project ?? (await resolveProjectSlug(cwd(), env));
   const url = buildStudioUrl(project, options);
 
-  // Open browser or print URL
   const opened = canOpenBrowser();
 
   console.log();

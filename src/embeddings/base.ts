@@ -23,14 +23,14 @@ export abstract class BaseEmbeddingProvider implements EmbeddingProvider {
   }
 
   protected validateConfig(): void {
-    if (!this.config.apiKey) {
-      throw toError(
-        createError({
-          type: "config",
-          message: `${this.name}: API key is required`,
-        }),
-      );
-    }
+    if (this.config.apiKey) return;
+
+    throw toError(
+      createError({
+        type: "config",
+        message: `${this.name}: API key is required`,
+      }),
+    );
   }
 
   protected abstract getHeaders(): Record<string, string>;
@@ -39,17 +39,13 @@ export abstract class BaseEmbeddingProvider implements EmbeddingProvider {
   protected abstract transformResponse(response: unknown, model: string): EmbeddingResponse;
 
   async embed(request: EmbeddingRequest): Promise<EmbeddingResponse> {
-    const endpoint = this.getEndpoint();
-    const headers = this.getHeaders();
-    const body = this.transformRequest(request);
-
-    const response = await fetch(endpoint, {
+    const response = await fetch(this.getEndpoint(), {
       method: "POST",
       headers: {
-        ...headers,
+        ...this.getHeaders(),
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify(this.transformRequest(request)),
     });
 
     if (!response.ok) {
@@ -72,44 +68,37 @@ export abstract class BaseEmbeddingProvider implements EmbeddingProvider {
    */
   async embedBatch(inputs: string[]): Promise<EmbeddingResponse> {
     const batchSize = this.config.batchSize ?? 100;
+    if (inputs.length <= batchSize) return this.embed({ inputs });
 
-    if (inputs.length <= batchSize) {
-      return this.embed({ inputs });
-    }
-
-    // Process in batches
-    const allEmbeddings: EmbeddingResponse["embeddings"] = [];
-    let totalPromptTokens = 0;
+    const embeddings: EmbeddingResponse["embeddings"] = [];
+    let promptTokens = 0;
     let totalTokens = 0;
     let model = "";
     let dimension = 0;
 
     for (let i = 0; i < inputs.length; i += batchSize) {
-      const batch = inputs.slice(i, i + batchSize);
-      const response = await this.embed({ inputs: batch });
+      const response = await this.embed({ inputs: inputs.slice(i, i + batchSize) });
 
-      // Adjust indices for concatenation
-      for (const embedding of response.embeddings) {
-        allEmbeddings.push({
-          index: embedding.index + i,
-          embedding: embedding.embedding,
-        });
+      for (const { index, embedding } of response.embeddings) {
+        embeddings.push({ index: index + i, embedding });
       }
 
       model = response.model;
       dimension = response.dimension;
-      if (response.usage) {
-        totalPromptTokens += response.usage.promptTokens;
-        totalTokens += response.usage.totalTokens;
+
+      const usage = response.usage;
+      if (usage) {
+        promptTokens += usage.promptTokens;
+        totalTokens += usage.totalTokens;
       }
     }
 
     return {
-      embeddings: allEmbeddings,
+      embeddings,
       model,
       dimension,
       usage: {
-        promptTokens: totalPromptTokens,
+        promptTokens,
         totalTokens,
       },
     };

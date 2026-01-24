@@ -10,11 +10,8 @@ function generateHMRScript(
   skipDevHMR?: boolean,
 ): string {
   // Skip dev HMR script when preview-hmr.js will be used instead
-  if (skipDevHMR || !config.dev?.hmr) {
-    return "";
-  }
-  // HMR script detects port at runtime (window.location.port + 1)
-  // The port param is kept for backward compatibility but is ignored
+  if (skipDevHMR || !config.dev?.hmr) return "";
+
   const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
   return `<script type="module" src="/_veryfront/hmr.js"${nonceAttr}></script>`;
 }

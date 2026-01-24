@@ -7,12 +7,29 @@ export default tool({
   description:
     "Get detailed information about a specific Linear issue by its ID or identifier (e.g., ENG-123). Returns complete issue details including description, status, assignee, labels, and project.",
   inputSchema: z.object({
-    issueId: z.string().describe(
-      'The ID or identifier of the issue (e.g., "ENG-123" or full UUID)',
-    ),
+    issueId: z
+      .string()
+      .describe(
+        'The ID or identifier of the issue (e.g., "ENG-123" or full UUID)',
+      ),
   }),
   async execute({ issueId }) {
     const issue = await getIssue(issueId);
+
+    const assignee = issue.assignee
+      ? {
+          id: issue.assignee.id,
+          name: issue.assignee.name,
+          email: issue.assignee.email,
+        }
+      : null;
+
+    const project = issue.project
+      ? {
+          id: issue.project.id,
+          name: issue.project.name,
+        }
+      : null;
 
     return {
       id: issue.id,
@@ -24,28 +41,17 @@ export default tool({
       status: issue.state.name,
       statusType: issue.state.type,
       stateId: issue.state.id,
-      assignee: issue.assignee
-        ? {
-          id: issue.assignee.id,
-          name: issue.assignee.name,
-          email: issue.assignee.email,
-        }
-        : null,
+      assignee,
       team: {
         id: issue.team.id,
         name: issue.team.name,
         key: issue.team.key,
       },
-      project: issue.project
-        ? {
-          id: issue.project.id,
-          name: issue.project.name,
-        }
-        : null,
-      labels: issue.labels.nodes.map((label) => ({
-        id: label.id,
-        name: label.name,
-        color: label.color,
+      project,
+      labels: issue.labels.nodes.map(({ id, name, color }) => ({
+        id,
+        name,
+        color,
       })),
       url: issue.url,
       createdAt: issue.createdAt,

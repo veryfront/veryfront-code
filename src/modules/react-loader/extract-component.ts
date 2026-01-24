@@ -6,14 +6,17 @@ export function extractComponent(
   filePath: string,
 ): React.ComponentType<Record<string, unknown>> {
   const moduleObj = mod as Record<string, unknown>;
-  const component = moduleObj.default ?? moduleObj[Object.keys(moduleObj)[0] ?? ""];
+  const firstKey = Object.keys(moduleObj)[0];
+  const component = moduleObj.default ?? (firstKey ? moduleObj[firstKey] : undefined);
 
   if (!component) {
-    throw toError(createError({
-      type: "build",
-      message: `No component exported from ${filePath}`,
-      context: { file: filePath, phase: "transform" },
-    }));
+    throw toError(
+      createError({
+        type: "build",
+        message: `No component exported from ${filePath}`,
+        context: { file: filePath, phase: "transform" },
+      }),
+    );
   }
 
   return component as React.ComponentType<Record<string, unknown>>;

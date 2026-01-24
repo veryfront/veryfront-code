@@ -20,8 +20,7 @@ describe("stack-parser", () => {
     });
 
     it("should return empty array for empty stack", () => {
-      const frames = parseStackTrace("");
-      expect(frames).toEqual([]);
+      expect(parseStackTrace("")).toEqual([]);
     });
 
     it("should skip empty lines", () => {
@@ -44,18 +43,14 @@ describe("stack-parser", () => {
     });
 
     it("should handle single line stack", () => {
-      const stack = "Error: Test";
-      const frames = parseStackTrace(stack);
+      const frames = parseStackTrace("Error: Test");
 
       expect(frames).toHaveLength(1);
       expect(frames[0]?.raw).toBe("Error: Test");
     });
 
     it("should handle stack with only whitespace lines", () => {
-      const stack = "   \n  \t  \n   ";
-      const frames = parseStackTrace(stack);
-
-      expect(frames).toEqual([]);
+      expect(parseStackTrace("   \n  \t  \n   ")).toEqual([]);
     });
 
     it("should parse real Deno stack trace", () => {
@@ -115,33 +110,30 @@ describe("stack-parser", () => {
   describe("formatStackTrace", () => {
     it("should return stack as-is", () => {
       const stack = "Error: Test\n    at foo (file.ts:10:5)";
-      const result = formatStackTrace(stack);
-      expect(result).toBe(stack);
+      expect(formatStackTrace(stack)).toBe(stack);
     });
 
     it("should return empty string for empty stack", () => {
-      const result = formatStackTrace("");
-      expect(result).toBe("");
+      expect(formatStackTrace("")).toBe("");
     });
 
     it("should preserve multiline stack", () => {
       const stack = `Error: Test
     at foo (file.ts:10:5)
     at bar (file.ts:20:3)`;
-      const result = formatStackTrace(stack);
-      expect(result).toBe(stack);
+      expect(formatStackTrace(stack)).toBe(stack);
     });
 
     it("should preserve whitespace", () => {
       const stack = "  Error  \n    at foo  ";
-      const result = formatStackTrace(stack);
-      expect(result).toBe(stack);
+      expect(formatStackTrace(stack)).toBe(stack);
     });
 
     it("should handle long stack traces", () => {
       const lines = Array.from({ length: 100 }, (_, i) => `    at func${i} (file.ts:${i}:1)`);
       const stack = `Error: Test\n${lines.join("\n")}`;
       const result = formatStackTrace(stack);
+
       expect(result).toBe(stack);
       expect(result.split("\n")).toHaveLength(101);
     });
@@ -149,19 +141,18 @@ describe("stack-parser", () => {
 
   describe("hasStackTrace", () => {
     it("should return true for error with stack", () => {
-      const error = new Error("Test");
-      expect(hasStackTrace(error)).toBe(true);
+      expect(hasStackTrace(new Error("Test"))).toBe(true);
     });
 
     it("should return false for error without stack", () => {
       const error = new Error("Test");
-      delete (error as Error & { stack?: string }).stack;
+      delete (error as { stack?: string }).stack;
       expect(hasStackTrace(error)).toBe(false);
     });
 
     it("should return false for error with empty stack", () => {
       const error = new Error("Test");
-      (error as Error & { stack?: string }).stack = "";
+      (error as { stack?: string }).stack = "";
       expect(hasStackTrace(error)).toBe(false);
     });
 
@@ -172,29 +163,26 @@ describe("stack-parser", () => {
           this.name = "CustomError";
         }
       }
-      const error = new CustomError("Test");
-      expect(hasStackTrace(error)).toBe(true);
+
+      expect(hasStackTrace(new CustomError("Test"))).toBe(true);
     });
 
     it("should return false for manually set falsy stack", () => {
       const error = new Error("Test");
-      (error as Error & { stack?: string | undefined }).stack = undefined;
+      (error as { stack?: string }).stack = undefined;
       expect(hasStackTrace(error)).toBe(false);
     });
 
     it("should handle TypeError with stack", () => {
-      const error = new TypeError("Test");
-      expect(hasStackTrace(error)).toBe(true);
+      expect(hasStackTrace(new TypeError("Test"))).toBe(true);
     });
 
     it("should handle ReferenceError with stack", () => {
-      const error = new ReferenceError("Test");
-      expect(hasStackTrace(error)).toBe(true);
+      expect(hasStackTrace(new ReferenceError("Test"))).toBe(true);
     });
 
     it("should handle SyntaxError with stack", () => {
-      const error = new SyntaxError("Test");
-      expect(hasStackTrace(error)).toBe(true);
+      expect(hasStackTrace(new SyntaxError("Test"))).toBe(true);
     });
   });
 
@@ -202,32 +190,31 @@ describe("stack-parser", () => {
     it("should work end-to-end with real error", () => {
       const error = new Error("Test error");
 
-      // Check if error has stack
       expect(hasStackTrace(error)).toBe(true);
 
-      // Parse the stack
-      const frames = parseStackTrace(error.stack || "");
+      const stack = error.stack ?? "";
+      const frames = parseStackTrace(stack);
       expect(frames.length).toBeGreaterThan(0);
 
-      // Format the stack
-      const formatted = formatStackTrace(error.stack || "");
+      const formatted = formatStackTrace(stack);
       expect(formatted).toContain("Test error");
     });
 
     it("should handle error thrown from function", () => {
-      function throwError() {
+      function throwError(): never {
         throw new Error("Function error");
       }
 
       try {
         throwError();
       } catch (error) {
-        if (error instanceof Error) {
-          expect(hasStackTrace(error)).toBe(true);
-          const frames = parseStackTrace(error.stack || "");
-          expect(frames.length).toBeGreaterThan(0);
-          expect(frames[0]?.raw).toContain("Function error");
-        }
+        if (!(error instanceof Error)) return;
+
+        expect(hasStackTrace(error)).toBe(true);
+
+        const frames = parseStackTrace(error.stack ?? "");
+        expect(frames.length).toBeGreaterThan(0);
+        expect(frames[0]?.raw).toContain("Function error");
       }
     });
   });

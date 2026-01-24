@@ -6,22 +6,18 @@
 import * as React from "react";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { renderToString } from "react-dom/server";
 
 const { Component, Suspense } = React as any;
 
-import { renderToString } from "react-dom/server";
-
-// Note: renderToPipeableStream is not available via ESM.sh for Deno
-// We'll test streaming SSR concepts without the actual streaming implementation
-
 // Test Components
-const AsyncComponent = (React as any).lazy(() => {
+const AsyncComponent = (React as any).lazy(() =>
   // For SSR testing, resolve immediately to avoid timer leaks
-  return Promise.resolve({
+  Promise.resolve({
     default: () =>
       React.createElement("div", { className: "async-content" }, "Async Component Loaded"),
-  });
-});
+  })
+);
 
 class ErrorBoundary extends (Component as any)<
   { children: React.ReactNode; fallback: React.ReactNode },
@@ -37,28 +33,24 @@ class ErrorBoundary extends (Component as any)<
   }
 
   render() {
-    if (this.state.hasError) {
-      return this.props.fallback;
-    }
+    if (this.state.hasError) return this.props.fallback;
     return this.props.children;
   }
 }
 
-const ErrorComponent = () => {
+function ErrorComponent(): never {
   throw new Error("Test error");
-};
+}
 
-const SuspenseComponent = () => {
+function SuspenseComponent(): React.ReactElement {
   return React.createElement(
     Suspense,
-    {
-      fallback: React.createElement("div", { className: "loading" }, "Loading..."),
-    },
+    { fallback: React.createElement("div", { className: "loading" }, "Loading...") },
     React.createElement(AsyncComponent),
   );
-};
+}
 
-const NestedSuspenseComponent = () => {
+function NestedSuspenseComponent(): React.ReactElement {
   return React.createElement(
     "div",
     { className: "outer" },
@@ -85,27 +77,27 @@ const NestedSuspenseComponent = () => {
       ),
     ),
   );
-};
+}
 
 // Concurrent Feature Component
 // Note: useTransition is not available in the ESM.sh React import
-const ConcurrentComponent = () => {
+function ConcurrentComponent(): React.ReactElement {
   const [count, setCount] = React.useState(0);
 
-  const handleClick = () => {
+  function handleClick(): void {
     setCount((c) => c + 1);
-  };
+  }
 
   return React.createElement(
     "div",
     { className: "concurrent" },
     React.createElement("button", { onClick: handleClick }, `Count: ${count}`),
   );
-};
+}
 
 describe("React 18 SSR", () => {
   it("renderToString handles Suspense boundaries", () => {
-    const html = renderToString(React.createElement(SuspenseComponent) as any);
+    const html = renderToString(React.createElement(SuspenseComponent));
 
     // Should render fallback during SSR
     assertStringIncludes(html, "Loading...");
@@ -120,15 +112,14 @@ describe("React 18 SSR", () => {
     // They only work on the client side during hydration
     // This test verifies that errors are thrown during SSR
     let errorThrown = false;
+
     try {
       const component = React.createElement(
         ErrorBoundary as any,
-        {
-          fallback: React.createElement("div", { className: "error" }, "Error occurred"),
-        },
+        { fallback: React.createElement("div", { className: "error" }, "Error occurred") },
         React.createElement(ErrorComponent),
       );
-      renderToString(component as any);
+      renderToString(component);
     } catch (error) {
       errorThrown = true;
       assertEquals((error as Error).message, "Test error");
@@ -138,7 +129,7 @@ describe("React 18 SSR", () => {
   });
 
   it("renderToString handles nested Suspense boundaries", () => {
-    const html = renderToString(React.createElement(NestedSuspenseComponent) as any);
+    const html = renderToString(React.createElement(NestedSuspenseComponent));
 
     // Since our AsyncComponent resolves synchronously for testing,
     // it renders the content directly without showing fallback
@@ -148,46 +139,17 @@ describe("React 18 SSR", () => {
   });
 
   it("renderToString handles concurrent features", () => {
-    const html = renderToString(React.createElement(ConcurrentComponent) as any);
+    const html = renderToString(React.createElement(ConcurrentComponent));
 
     // Should render initial state
     assertStringIncludes(html, "Count: 0");
     assertStringIncludes(html, 'class="concurrent"');
   });
 
-  // Note: renderToPipeableStream tests are commented out because ESM.sh doesn't properly export it for Deno
-  // In a real implementation, you would need to implement streaming SSR support using Node.js compatible streams
-
-  /*
-  // Test renderToPipeableStream for streaming SSR
-  it("renderToPipeableStream supports streaming", () => {
-    // This test would verify that streaming SSR works properly
-    // Key features to test:
-    // 1. Shell is sent immediately with Suspense fallbacks
-    // 2. Async components are streamed later
-    // 3. HTML is properly formed with script tags to hydrate async content
-
-    // For now, we're using renderToString which waits for all Suspense boundaries
-    const html = renderToString(React.createElement(SuspenseComponent) as any);
-    assertStringIncludes(html, "Loading...");
-  });
-  */
-
-  /*
-  // Test streaming with shell and deferred content
-  it("renderToPipeableStream with shell and deferred content", () => {
-    // This test would verify:
-    // 1. Shell HTML is sent immediately with main content
-    // 2. Suspense boundaries show fallbacks in the shell
-    // 3. Async content is streamed later and replaces fallbacks
-    // 4. Proper script tags are injected to handle the replacement
-  });
-  */
-
   it("React 18 automatic batching", () => {
     let renderCount = 0;
 
-    const BatchedComponent = () => {
+    function BatchedComponent(): React.ReactElement {
       renderCount++;
       const [count1, setCount1] = React.useState(0);
       const [count2, setCount2] = React.useState(0);
@@ -203,9 +165,9 @@ describe("React 18 SSR", () => {
         null,
         `Count1: ${count1}, Count2: ${count2}, Renders: ${renderCount}`,
       );
-    };
+    }
 
-    const html = renderToString(React.createElement(BatchedComponent) as any);
+    const html = renderToString(React.createElement(BatchedComponent));
 
     // During SSR, effects don't run, so counts stay at 0
     assertStringIncludes(html, "Count1: 0, Count2: 0");
@@ -216,28 +178,31 @@ describe("React 18 SSR", () => {
 
   it("React.lazy with custom Suspense fallback", () => {
     // Create a component that actually suspends
-    const TrulyAsyncComponent = React.lazy(() => {
-      return new Promise<{ default: React.ComponentType<any> }>(() => {
-        // Never resolves - will always show fallback
-      });
-    });
+    const TrulyAsyncComponent = React.lazy(
+      () =>
+        new Promise<{ default: React.ComponentType<any> }>(() => {
+          /* never resolves */
+        }),
+    );
 
-    const CustomFallback = () =>
-      React.createElement(
+    function CustomFallback(): React.ReactElement {
+      return React.createElement(
         "div",
         { className: "custom-fallback" },
         React.createElement("div", { className: "spinner" }, "⏳"),
         React.createElement("p", null, "Please wait..."),
       );
+    }
 
-    const LazyApp = () =>
-      React.createElement(
+    function LazyApp(): React.ReactElement {
+      return React.createElement(
         Suspense,
         { fallback: React.createElement(CustomFallback) },
         React.createElement(TrulyAsyncComponent),
       );
+    }
 
-    const html = renderToString(React.createElement(LazyApp) as any);
+    const html = renderToString(React.createElement(LazyApp));
 
     // Should render custom fallback
     assertStringIncludes(html, 'class="custom-fallback"');
@@ -261,8 +226,8 @@ describe("React 18 SSR", () => {
         }),
     );
 
-    const MultiSuspenseApp = () =>
-      React.createElement(
+    function MultiSuspenseApp(): React.ReactElement {
+      return React.createElement(
         "div",
         { className: "app" },
         React.createElement(
@@ -270,9 +235,7 @@ describe("React 18 SSR", () => {
           { className: "header" },
           React.createElement(
             Suspense,
-            {
-              fallback: React.createElement("div", null, "Loading header..."),
-            },
+            { fallback: React.createElement("div", null, "Loading header...") },
             React.createElement(HeaderAsync),
           ),
         ),
@@ -286,15 +249,14 @@ describe("React 18 SSR", () => {
           { className: "sidebar" },
           React.createElement(
             Suspense,
-            {
-              fallback: React.createElement("div", null, "Loading sidebar..."),
-            },
+            { fallback: React.createElement("div", null, "Loading sidebar...") },
             React.createElement(SidebarAsync),
           ),
         ),
       );
+    }
 
-    const html = renderToString(React.createElement(MultiSuspenseApp) as any);
+    const html = renderToString(React.createElement(MultiSuspenseApp));
 
     // Should render all sections with appropriate fallbacks
     assertStringIncludes(html, 'class="header"');
@@ -306,25 +268,21 @@ describe("React 18 SSR", () => {
   });
 
   it("Consistent rendering across multiple calls", () => {
-    const ComponentWithState = () => {
+    function ComponentWithState(): React.ReactElement {
       const [value] = React.useState("initial");
 
       return React.createElement(
         "form",
         null,
         React.createElement("label", { htmlFor: "name" }, "Name:"),
-        React.createElement("input", {
-          id: "name",
-          type: "text",
-          defaultValue: value,
-        }),
+        React.createElement("input", { id: "name", type: "text", defaultValue: value }),
         React.createElement("label", { htmlFor: "email" }, "Email:"),
         React.createElement("input", { id: "email", type: "email" }),
       );
-    };
+    }
 
-    const html1 = renderToString(React.createElement(ComponentWithState) as any);
-    const html2 = renderToString(React.createElement(ComponentWithState) as any);
+    const html1 = renderToString(React.createElement(ComponentWithState));
+    const html2 = renderToString(React.createElement(ComponentWithState));
 
     // Both renders should produce identical HTML
     assertEquals(html1, html2);

@@ -8,13 +8,10 @@ import { TimeoutError, withTimeoutThrow } from "#veryfront/rendering/utils/strea
 import { getSemaphore } from "#veryfront/utils/semaphore.ts";
 import {
   MAX_CONCURRENT_REVALIDATIONS,
-  REVALIDATION_TIMEOUT_MS as REVALIDATION_TIMEOUT_CONFIG,
+  REVALIDATION_TIMEOUT_MS,
 } from "#veryfront/utils/constants/cache.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
-
-/** Shorter timeout for background revalidation (non-blocking, fire-and-forget) */
-const REVALIDATION_TIMEOUT_MS = REVALIDATION_TIMEOUT_CONFIG;
 
 /** Semaphore to limit concurrent revalidations and prevent resource exhaustion */
 const revalidationSemaphore = getSemaphore("revalidation", MAX_CONCURRENT_REVALIDATIONS, {
@@ -30,27 +27,20 @@ export class StaticDataFetcher {
   ) {}
 
   async fetch(pageModule: PageWithData, context: DataContext): Promise<DataResult> {
-    if (!pageModule.getStaticData || typeof pageModule.getStaticData !== "function") {
-      return { props: {} };
-    }
+    if (typeof pageModule.getStaticData !== "function") return { props: {} };
 
-    const pathname = context.url?.pathname || "unknown";
+    const pathname = context.url?.pathname ?? "unknown";
     const cacheKey = this.cacheManager.createCacheKey(context);
 
     // No caching in preview mode (cacheKey is null)
     if (!cacheKey) {
-      return await withSpan(
-        "data.fetch_static",
-        () => this.fetchFreshNoCache(pageModule, context),
-        {
-          "data.fetch_method": "getStaticData",
-          "data.pathname": pathname,
-          "data.cache": "disabled",
-        },
-      );
+      return withSpan("data.fetch_static", () => this.fetchFreshNoCache(pageModule, context), {
+        "data.fetch_method": "getStaticData",
+        "data.pathname": pathname,
+        "data.cache": "disabled",
+      });
     }
 
-    // Check cache
     const cached = await withSpan(
       SpanNames.DATA_CACHE_GET,
       () => Promise.resolve(this.cacheManager.get(cacheKey)),
@@ -58,20 +48,18 @@ export class StaticDataFetcher {
     );
 
     if (!cached) {
-      return await withSpan(
-        "data.fetch_static",
-        () => this.fetchFresh(pageModule, context, cacheKey),
-        { "data.fetch_method": "getStaticData", "data.pathname": pathname, "data.cache": "miss" },
-      );
+      return withSpan("data.fetch_static", () => this.fetchFresh(pageModule, context, cacheKey), {
+        "data.fetch_method": "getStaticData",
+        "data.pathname": pathname,
+        "data.cache": "miss",
+      });
     }
 
-    if (this.cacheManager.shouldRevalidate(cached)) {
-      if (!this.pendingRevalidations.has(cacheKey)) {
-        this.pendingRevalidations.set(
-          cacheKey,
-          this.revalidateInBackground(pageModule, context, cacheKey),
-        );
-      }
+    if (this.cacheManager.shouldRevalidate(cached) && !this.pendingRevalidations.has(cacheKey)) {
+      this.pendingRevalidations.set(
+        cacheKey,
+        this.revalidateInBackground(pageModule, context, cacheKey),
+      );
     }
 
     return cached.data;
@@ -81,7 +69,7 @@ export class StaticDataFetcher {
     pageModule: PageWithData,
     context: DataContext,
   ): Promise<DataResult> {
-    const pathname = context.url?.pathname || "unknown";
+    const pathname = context.url?.pathname ?? "unknown";
     const start = performance.now();
 
     try {
@@ -92,6 +80,7 @@ export class StaticDataFetcher {
       );
     } catch (error) {
       const durationMs = Math.round(performance.now() - start);
+
       if (error instanceof TimeoutError) {
         serverLogger.error("DATA_FETCH_TIMEOUT getStaticData timed out", {
           pathname,
@@ -101,6 +90,7 @@ export class StaticDataFetcher {
       } else {
         this.logError("DATA_FETCH_ERROR getStaticData failed", error, { pathname, durationMs });
       }
+
       throw error;
     }
   }
@@ -110,7 +100,7 @@ export class StaticDataFetcher {
     context: DataContext,
     cacheKey: string,
   ): Promise<DataResult> {
-    const pathname = context.url?.pathname || "unknown";
+    const pathname = context.url?.pathname ?? "unknown";
     const start = performance.now();
 
     try {
@@ -136,6 +126,7 @@ export class StaticDataFetcher {
       return result;
     } catch (error) {
       const durationMs = Math.round(performance.now() - start);
+
       if (error instanceof TimeoutError) {
         serverLogger.error("DATA_FETCH_TIMEOUT getStaticData timed out", {
           pathname,
@@ -150,6 +141,7 @@ export class StaticDataFetcher {
           cacheKey,
         });
       }
+
       throw error;
     }
   }
@@ -159,15 +151,14 @@ export class StaticDataFetcher {
     context: DataContext,
     cacheKey: string,
   ): Promise<void> {
-    if (!pageModule.getStaticData) return;
+    if (typeof pageModule.getStaticData !== "function") return;
 
-    const pathname = context.url?.pathname || "unknown";
+    const pathname = context.url?.pathname ?? "unknown";
 
-    // Use semaphore to limit concurrent revalidations
-    // This prevents resource exhaustion during traffic spikes
     try {
       await revalidationSemaphore.acquire(async () => {
         const start = performance.now();
+
         try {
           const result = await withTimeoutThrow(
             Promise.resolve(
@@ -184,6 +175,7 @@ export class StaticDataFetcher {
           });
         } catch (error) {
           const durationMs = Math.round(performance.now() - start);
+
           if (error instanceof TimeoutError) {
             serverLogger.error("DATA_REVALIDATION_TIMEOUT background revalidation timed out", {
               pathname,
@@ -214,9 +206,7 @@ export class StaticDataFetcher {
   }
 
   private logError(message: string, error: unknown, context?: Record<string, unknown>): void {
-    const debugEnabled = this.adapter?.env.get("VERYFRONT_DEBUG");
-    if (debugEnabled) {
-      serverLogger.error(message, context ?? {}, error);
-    }
+    if (!this.adapter?.env.get("VERYFRONT_DEBUG")) return;
+    serverLogger.error(message, context ?? {}, error);
   }
 }

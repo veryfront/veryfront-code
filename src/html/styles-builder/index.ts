@@ -1,10 +1,6 @@
-export { generateThemeVariables } from "./theme-variables.ts";
-
 export { getDevStyles } from "./dev-styles.ts";
-
 export { getProductionStyles } from "./production-styles.ts";
-
-// Tailwind CSS v4 JIT compiler - unified, native Tailwind
+export { generateThemeVariables } from "./theme-variables.ts";
 export {
   cacheCSSAsync,
   clearCSSCache,

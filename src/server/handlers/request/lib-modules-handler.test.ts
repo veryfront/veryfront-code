@@ -8,30 +8,18 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { LibModulesHandler } from "./lib-modules-handler.ts";
 
-/** Helper to get pattern as RegExp (throws if not RegExp) */
-function getRegExpPattern(handler: LibModulesHandler, index: number): RegExp {
+function getPattern(handler: LibModulesHandler, method: string): RegExp {
   const patterns = handler.metadata.patterns;
-  if (!patterns || patterns.length === 0) {
-    throw new Error("No patterns defined");
-  }
-  const pattern = patterns[index]?.pattern;
-  if (!(pattern instanceof RegExp)) {
-    throw new Error(`Pattern at index ${index} is not a RegExp`);
-  }
-  return pattern;
-}
+  if (!patterns?.length) throw new Error("No patterns defined");
 
-/** Helper to find pattern by method */
-function findPatternByMethod(handler: LibModulesHandler, method: string): RegExp {
-  const patterns = handler.metadata.patterns;
-  if (!patterns) {
-    throw new Error("No patterns defined");
-  }
   const found = patterns.find((p) => p.method === method);
-  if (!found || !(found.pattern instanceof RegExp)) {
+  const pattern = found?.pattern;
+
+  if (!(pattern instanceof RegExp)) {
     throw new Error(`Pattern for method ${method} not found or not a RegExp`);
   }
-  return found.pattern;
+
+  return pattern;
 }
 
 describe("LibModulesHandler", () => {
@@ -50,12 +38,12 @@ describe("LibModulesHandler", () => {
     it("should have two patterns (GET and HEAD)", () => {
       const handler = new LibModulesHandler();
       assertExists(handler.metadata.patterns);
-      assertEquals(handler.metadata.patterns!.length, 2);
+      assertEquals(handler.metadata.patterns?.length, 2);
     });
 
     it("should match GET requests to /_veryfront/lib/", () => {
       const handler = new LibModulesHandler();
-      const pattern = findPatternByMethod(handler, "GET");
+      const pattern = getPattern(handler, "GET");
 
       assertEquals(pattern.test("/_veryfront/lib/agent/react.js"), true);
       assertEquals(pattern.test("/_veryfront/lib/components/ai.js"), true);
@@ -64,14 +52,14 @@ describe("LibModulesHandler", () => {
 
     it("should match HEAD requests to /_veryfront/lib/", () => {
       const handler = new LibModulesHandler();
-      const pattern = findPatternByMethod(handler, "HEAD");
+      const pattern = getPattern(handler, "HEAD");
 
       assertEquals(pattern.test("/_veryfront/lib/agent/react.js"), true);
     });
 
     it("should not match other paths", () => {
       const handler = new LibModulesHandler();
-      const pattern = findPatternByMethod(handler, "GET");
+      const pattern = getPattern(handler, "GET");
 
       assertEquals(pattern.test("/api/users"), false);
       assertEquals(pattern.test("/veryfront/lib/ai/react.js"), false);
@@ -82,21 +70,21 @@ describe("LibModulesHandler", () => {
   describe("ALLOWED_MODULES whitelist", () => {
     it("should allow agent/react.js path pattern", () => {
       const handler = new LibModulesHandler();
-      const pattern = getRegExpPattern(handler, 0);
+      const pattern = getPattern(handler, "GET");
 
       assertEquals(pattern.test("/_veryfront/lib/agent/react.js"), true);
     });
 
     it("should allow components/ai.js path pattern", () => {
       const handler = new LibModulesHandler();
-      const pattern = getRegExpPattern(handler, 0);
+      const pattern = getPattern(handler, "GET");
 
       assertEquals(pattern.test("/_veryfront/lib/components/ai.js"), true);
     });
 
     it("should allow primitives.js path pattern", () => {
       const handler = new LibModulesHandler();
-      const pattern = getRegExpPattern(handler, 0);
+      const pattern = getPattern(handler, "GET");
 
       assertEquals(pattern.test("/_veryfront/lib/primitives.js"), true);
     });
@@ -105,16 +93,15 @@ describe("LibModulesHandler", () => {
   describe("URL pattern matching", () => {
     it("should match lib module path prefix", () => {
       const handler = new LibModulesHandler();
-      const pattern = getRegExpPattern(handler, 0);
+      const pattern = getPattern(handler, "GET");
 
-      // The pattern matches the prefix /_veryfront/lib/
       assertEquals(pattern.test("/_veryfront/lib/"), true);
       assertEquals(pattern.test("/_veryfront/lib/anything"), true);
     });
 
     it("should not match paths without /_veryfront/lib/ prefix", () => {
       const handler = new LibModulesHandler();
-      const pattern = getRegExpPattern(handler, 0);
+      const pattern = getPattern(handler, "GET");
 
       assertEquals(pattern.test("/veryfront/lib/agent/react.js"), false);
       assertEquals(pattern.test("/_veryfront/agent/react.js"), false);
@@ -123,7 +110,7 @@ describe("LibModulesHandler", () => {
 
     it("should be case sensitive", () => {
       const handler = new LibModulesHandler();
-      const pattern = getRegExpPattern(handler, 0);
+      const pattern = getPattern(handler, "GET");
 
       assertEquals(pattern.test("/_veryfront/lib/agent/react.js"), true);
       assertEquals(pattern.test("/_VERYFRONT/lib/agent/react.js"), false);

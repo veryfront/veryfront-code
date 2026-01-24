@@ -1,14 +1,5 @@
-/**
- * Microsoft OAuth Provider
- *
- * Pre-configured OAuth for Microsoft services: Outlook, Teams, SharePoint, OneDrive
- */
-
 import type { OAuthServiceConfig } from "../types.ts";
 
-/**
- * Base Microsoft OAuth configuration
- */
 const microsoftBase = {
   providerId: "microsoft",
   displayName: "Microsoft",
@@ -20,16 +11,15 @@ const microsoftBase = {
   additionalAuthParams: {
     response_mode: "query",
   },
-};
+} satisfies Omit<OAuthServiceConfig, "serviceId" | "apiBaseUrl" | "defaultScopes">;
 
-/**
- * Microsoft Outlook OAuth configuration
- */
+const graphApiBaseUrl = "https://graph.microsoft.com/v1.0";
+
 export const outlookConfig: OAuthServiceConfig = {
   ...microsoftBase,
   serviceId: "outlook",
   displayName: "Outlook",
-  apiBaseUrl: "https://graph.microsoft.com/v1.0",
+  apiBaseUrl: graphApiBaseUrl,
   defaultScopes: [
     "Mail.Read",
     "Mail.Send",
@@ -41,14 +31,11 @@ export const outlookConfig: OAuthServiceConfig = {
   ],
 };
 
-/**
- * Microsoft Teams OAuth configuration
- */
 export const teamsConfig: OAuthServiceConfig = {
   ...microsoftBase,
   serviceId: "teams",
   displayName: "Microsoft Teams",
-  apiBaseUrl: "https://graph.microsoft.com/v1.0",
+  apiBaseUrl: graphApiBaseUrl,
   defaultScopes: [
     "Team.ReadBasic.All",
     "Channel.ReadBasic.All",
@@ -60,14 +47,11 @@ export const teamsConfig: OAuthServiceConfig = {
   ],
 };
 
-/**
- * Microsoft SharePoint OAuth configuration
- */
 export const sharePointConfig: OAuthServiceConfig = {
   ...microsoftBase,
   serviceId: "sharepoint",
   displayName: "SharePoint",
-  apiBaseUrl: "https://graph.microsoft.com/v1.0",
+  apiBaseUrl: graphApiBaseUrl,
   defaultScopes: [
     "Sites.Read.All",
     "Sites.ReadWrite.All",
@@ -78,14 +62,11 @@ export const sharePointConfig: OAuthServiceConfig = {
   ],
 };
 
-/**
- * Microsoft OneDrive OAuth configuration
- */
 export const oneDriveConfig: OAuthServiceConfig = {
   ...microsoftBase,
   serviceId: "onedrive",
   displayName: "OneDrive",
-  apiBaseUrl: "https://graph.microsoft.com/v1.0",
+  apiBaseUrl: graphApiBaseUrl,
   defaultScopes: [
     "Files.Read",
     "Files.ReadWrite",
@@ -96,9 +77,6 @@ export const oneDriveConfig: OAuthServiceConfig = {
   ],
 };
 
-/**
- * All Microsoft service configurations
- */
 export const microsoftServices = {
   outlook: outlookConfig,
   teams: teamsConfig,

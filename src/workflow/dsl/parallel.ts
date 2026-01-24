@@ -23,20 +23,19 @@ export function parallel(
 ): WorkflowNode {
   validateNodeId(id);
 
-  if (!nodes || nodes.length === 0) {
+  if (nodes.length === 0) {
     throw new Error(`Parallel node "${id}" must have at least one child node`);
   }
 
-  // Generate unique IDs for child nodes if they're nested under this parallel
-  // Also validate child node IDs
   const prefixedNodes = nodes.map((node, index) => {
-    if (!node.id || typeof node.id !== "string") {
+    if (typeof node.id !== "string" || node.id.length === 0) {
       throw new Error(`Child node at index ${index} in parallel "${id}" has invalid ID`);
     }
-    return {
-      ...node,
-      id: node.id.startsWith(`${id}/`) ? node.id : `${id}/${node.id}`,
-    };
+
+    const prefix = `${id}/`;
+    const childId = node.id.startsWith(prefix) ? node.id : `${prefix}${node.id}`;
+
+    return { ...node, id: childId };
   });
 
   const config: ParallelNodeConfig = {
@@ -49,8 +48,5 @@ export function parallel(
     skip: options.skip,
   };
 
-  return {
-    id,
-    config,
-  };
+  return { id, config };
 }

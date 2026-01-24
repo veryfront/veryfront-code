@@ -19,7 +19,6 @@ export class VeryfrontTokenAdapter implements TokenStorageAdapter {
 
   constructor(config: TokenStorageAdapterConfig) {
     const tokenConfig = createTokenConfig(config);
-
     this.client = new TokenStorageAPIClient(tokenConfig);
 
     logger.debug("[VeryfrontTokenAdapter] Created", {
@@ -34,9 +33,7 @@ export class VeryfrontTokenAdapter implements TokenStorageAdapter {
     logger.debug("[VeryfrontTokenAdapter] Initializing...");
 
     const connected = await this.client.ping();
-    if (!connected) {
-      throw new Error("Failed to connect to Veryfront token storage API");
-    }
+    if (!connected) throw new Error("Failed to connect to Veryfront token storage API");
 
     this.initialized = true;
     logger.debug("[VeryfrontTokenAdapter] Initialized successfully");
@@ -44,28 +41,24 @@ export class VeryfrontTokenAdapter implements TokenStorageAdapter {
 
   async get(key: string): Promise<string | null> {
     await this.ensureInitialized();
-
     logger.debug("[VeryfrontTokenAdapter] Get", { key });
     return this.client.get(key);
   }
 
   async set(key: string, value: string): Promise<void> {
     await this.ensureInitialized();
-
     logger.debug("[VeryfrontTokenAdapter] Set", { key, valueLength: value.length });
     await this.client.set(key, value);
   }
 
   async delete(key: string): Promise<void> {
     await this.ensureInitialized();
-
     logger.debug("[VeryfrontTokenAdapter] Delete", { key });
     await this.client.delete(key);
   }
 
   async list(prefix?: string): Promise<string[]> {
     await this.ensureInitialized();
-
     logger.debug("[VeryfrontTokenAdapter] List", { prefix });
     return this.client.list(prefix);
   }
@@ -76,8 +69,7 @@ export class VeryfrontTokenAdapter implements TokenStorageAdapter {
   }
 
   private async ensureInitialized(): Promise<void> {
-    if (!this.initialized) {
-      await this.initialize();
-    }
+    if (this.initialized) return;
+    await this.initialize();
   }
 }

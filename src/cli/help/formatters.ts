@@ -4,32 +4,25 @@ import { bold, brand, dim, muted, shouldUseColor } from "../ui/colors.ts";
 import { AGENT_FACE } from "../ui/dot-matrix.ts";
 
 const RESET = "\x1b[0m";
+const LOGO_FALLBACK = "             "; // Logo width ~13 chars
 
-/**
- * Render a small inline logo for help header
- */
 function renderMiniLogo(): string[] {
-  const litColor = shouldUseColor() ? "\x1b[38;2;0;163;244m" : "";
-  const offColor = shouldUseColor() ? "\x1b[38;5;240m" : "";
+  const useColor = shouldUseColor();
+  const litColor = useColor ? "\x1b[38;2;0;163;244m" : "";
+  const offColor = useColor ? "\x1b[38;5;240m" : "";
 
-  const result: string[] = [];
-  for (const row of AGENT_FACE) {
-    const dots = row.map((dot) => {
-      if (dot === 1) {
-        return `${litColor}●${RESET}`;
-      }
-      return `${offColor}○${RESET}`;
-    });
-    result.push(dots.join(" "));
-  }
-  return result;
+  return AGENT_FACE.map((row) =>
+    row
+      .map((dot) => `${dot === 1 ? litColor : offColor}${dot === 1 ? "●" : "○"}${RESET}`)
+      .join(" ")
+  );
 }
 
 export function formatHeader(): string {
   const logoLines = renderMiniLogo();
   const textLines = [
     "",
-    bold(brand("veryfront")) + " " + dim(`v${VERSION}`),
+    `${bold(brand("veryfront"))} ${dim(`v${VERSION}`)}`,
     dim("A Deno-first React framework"),
     "",
     "",
@@ -37,12 +30,12 @@ export function formatHeader(): string {
     "",
   ];
 
-  // Combine logo and text horizontally
-  const output: string[] = [""];
   const maxHeight = Math.max(logoLines.length, textLines.length);
+  const output: string[] = [""];
+
   for (let i = 0; i < maxHeight; i++) {
-    const logoLine = logoLines[i] || "             "; // Logo width ~13 chars
-    const textLine = textLines[i] || "";
+    const logoLine = logoLines[i] ?? LOGO_FALLBACK;
+    const textLine = textLines[i] ?? "";
     output.push(`  ${logoLine}   ${textLine}`);
   }
 
@@ -77,7 +70,7 @@ export function formatExample(example: string): string {
 }
 
 export function formatSectionHeader(title: string): string {
-  return bold(title + ":");
+  return bold(`${title}:`);
 }
 
 export function formatCommandHeader(commandName: string): string {
@@ -98,7 +91,7 @@ export function calculateMaxLength(items: Array<{ length: number }>): number {
 
 export function formatCommandList(commands: CommandHelp[]): string[] {
   const maxLength = calculateMaxLength(commands.map((c) => ({ length: c.name.length })));
-  return commands.map((cmd) =>
-    `    ${formatCommandName(cmd.name, maxLength)} ${formatDescription(cmd.description)}`
+  return commands.map(
+    (cmd) => `    ${formatCommandName(cmd.name, maxLength)} ${formatDescription(cmd.description)}`,
   );
 }

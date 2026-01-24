@@ -15,10 +15,7 @@ export default tool({
     limit: z.number().min(1).max(50).default(20).describe("Maximum number of members to return"),
   }),
   async execute({ listId, status, limit }) {
-    const members = await listMembers(listId, {
-      status,
-      count: limit,
-    });
+    const members = await listMembers(listId, { status, count: limit });
 
     return members.map((member) => ({
       id: member.id,
@@ -41,10 +38,7 @@ export default tool({
         avgClickRate: member.stats.avg_click_rate,
       },
       mergeFields: member.merge_fields,
-      tags: member.tags.map((tag) => ({
-        id: tag.id,
-        name: tag.name,
-      })),
+      tags: member.tags.map(({ id, name }) => ({ id, name })),
       location: member.location
         ? {
             countryCode: member.location.country_code,

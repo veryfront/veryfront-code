@@ -1,13 +1,3 @@
-/**
- * Shared Renderer Services Module
- *
- * Provides services that can be safely shared across all projects
- * in a multi-tenant environment.
- *
- * @module rendering/shared
- */
-
-// Shared services singleton
 export {
   areSharedServicesInitialized,
   destroySharedServices,
@@ -19,7 +9,6 @@ export {
   type SharedServicesOptions,
 } from "./shared-services.ts";
 
-// Context-aware cache
 export {
   ContextAwareCacheCoordinator,
   type ContextAwareCacheLookupResult,

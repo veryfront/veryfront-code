@@ -1,6 +1,5 @@
 // Server public exports (minimal)
 // Docs: docs/deployment.md, docs/security.md
-// Dev server exports
 export { createDevServer, DevServer } from "./dev-server.ts";
 export { startUniversalServer } from "./production-server.ts";
 export { createVeryfrontHandler } from "./universal-handler/index.ts";
@@ -15,7 +14,7 @@ export {
   applyCORSHeaders,
   badRequest,
   createContext,
-  DynamicRouter as APIDynamicRouter, // Alias to avoid collision with routing DynamicRouter
+  DynamicRouter as APIDynamicRouter,
   forbidden,
   handleCORSPreflight,
   json,

@@ -2,9 +2,9 @@
  * Security headers handler (CSP, COOP, CORP, COEP) with nonce-based CSP
  */
 
-import type { SecurityConfig } from "./types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { recordSecurityHeaders } from "#veryfront/observability";
+import type { SecurityConfig } from "./types.ts";
 
 /** Generate cryptographic nonce for CSP */
 export function generateNonce(): string {
@@ -24,36 +24,27 @@ export function buildCSP(
   const envCsp = adapter?.env?.get?.("VERYFRONT_CSP");
   if (envCsp?.trim()) return envCsp.replace(/{NONCE}/g, nonce);
 
-  // CSP disabled by default - users can enable via config or env var
-  // Projects often use various CDNs, analytics, etc. that would be blocked
-  // To enable CSP, set VERYFRONT_CSP env var or use security.csp in config
-  //
-  // Development mode has relaxed CSP for HMR and dev tools (if CSP is forced)
-  // Production mode uses nonce-based CSP (if CSP is forced via env/config)
-  const defaultCsp = "";
-
-  // User-provided CSP from config header takes precedence
   if (cspUserHeader?.trim()) {
     return cspUserHeader.replace(/{NONCE}/g, nonce);
   }
 
-  // If config has CSP directives, use them
   const cfgCsp = config?.csp;
   if (cfgCsp && typeof cfgCsp === "object") {
     const pieces: string[] = [];
+
     for (const [k, v] of Object.entries(cfgCsp)) {
       if (v === undefined) continue;
-      const key = String(k).replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
+
+      const key = k.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
       const val = Array.isArray(v) ? v.join(" ") : String(v);
       pieces.push(`${key} ${val}`.replace(/{NONCE}/g, nonce));
     }
-    if (pieces.length > 0) {
-      return pieces.join("; ");
-    }
+
+    if (pieces.length) return pieces.join("; ");
   }
 
   // Return empty string - CSP disabled by default
-  return defaultCsp;
+  return "";
 }
 
 /** Get security header value from config or environment */
@@ -63,10 +54,11 @@ export function getSecurityHeader(
   config?: SecurityConfig | null,
   adapter?: RuntimeAdapter,
 ): string {
-  const configKey = headerName.toLowerCase();
-  const configValue = config?.[configKey as keyof SecurityConfig];
+  const configKey = headerName.toLowerCase() as keyof SecurityConfig;
+  const configValue = config?.[configKey];
   const envValue = adapter?.env?.get?.(`VERYFRONT_${headerName}`);
-  return (typeof configValue === "string" ? configValue : undefined) || envValue || defaultValue;
+
+  return (typeof configValue === "string" ? configValue : undefined) ?? envValue ?? defaultValue;
 }
 
 /** Apply security headers to Headers object with nonce */
@@ -82,35 +74,28 @@ export function applySecurityHeaders(
   const getHeaderOverride = (name: string): string | undefined => {
     const overrides = config?.headers;
     if (!overrides) return undefined;
+
     const lower = name.toLowerCase();
     for (const [key, value] of Object.entries(overrides)) {
-      if (key.toLowerCase() === lower) {
-        return value;
-      }
+      if (key.toLowerCase() === lower) return value;
     }
+
     return undefined;
   };
 
-  // Always set basic security headers
-  const contentTypeOptions = getHeaderOverride("x-content-type-options") ?? "nosniff";
-  headers.set("X-Content-Type-Options", contentTypeOptions);
+  headers.set("X-Content-Type-Options", getHeaderOverride("x-content-type-options") ?? "nosniff");
 
   // X-Frame-Options: Block iframe embedding by default for security
   // Allow embedding on veryfront domains (for Studio) and in development
   // Projects can customize via config.headers["x-frame-options"]
   if (!isDev && !isVeryfrontDomain) {
-    const frameOptions = getHeaderOverride("x-frame-options") ?? "DENY";
-    headers.set("X-Frame-Options", frameOptions);
+    headers.set("X-Frame-Options", getHeaderOverride("x-frame-options") ?? "DENY");
   }
 
-  const xssProtection = getHeaderOverride("x-xss-protection") ?? "1; mode=block";
-  headers.set("X-XSS-Protection", xssProtection);
+  headers.set("X-XSS-Protection", getHeaderOverride("x-xss-protection") ?? "1; mode=block");
 
-  // Build and set CSP with nonce
   const csp = buildCSP(isDev, nonce, cspUserHeader, config, adapter);
-  if (csp) {
-    headers.set("Content-Security-Policy", csp);
-  }
+  if (csp) headers.set("Content-Security-Policy", csp);
 
   // Set HSTS (Strict-Transport-Security) for HTTPS connections
   // Only set in production to enforce HTTPS
@@ -120,15 +105,13 @@ export function applySecurityHeaders(
     const hstsPreload = config?.hsts?.preload ?? false;
 
     let hstsValue = `max-age=${hstsMaxAge}`;
-    if (hstsIncludeSubDomains) {
-      hstsValue += "; includeSubDomains";
-    }
-    if (hstsPreload) {
-      hstsValue += "; preload";
-    }
+    if (hstsIncludeSubDomains) hstsValue += "; includeSubDomains";
+    if (hstsPreload) hstsValue += "; preload";
 
-    const hstsOverride = getHeaderOverride("strict-transport-security");
-    headers.set("Strict-Transport-Security", hstsOverride ?? hstsValue);
+    headers.set(
+      "Strict-Transport-Security",
+      getHeaderOverride("strict-transport-security") ?? hstsValue,
+    );
   }
 
   // Set COOP, CORP, COEP (skip COOP in dev - browsers ignore it for non-trustworthy origins)
@@ -136,21 +119,17 @@ export function applySecurityHeaders(
   const corp = getSecurityHeader("CORP", "same-origin", config, adapter);
   const coep = getSecurityHeader("COEP", "", config, adapter);
 
-  if (coop) {
-    headers.set("Cross-Origin-Opener-Policy", coop);
-  }
+  if (coop) headers.set("Cross-Origin-Opener-Policy", coop);
   headers.set("Cross-Origin-Resource-Policy", corp);
-  if (coep) {
-    headers.set("Cross-Origin-Embedder-Policy", coep);
-  }
+  if (coep) headers.set("Cross-Origin-Embedder-Policy", coep);
 
-  if (config?.headers) {
-    for (const [key, value] of Object.entries(config.headers)) {
+  const extraHeaders = config?.headers;
+  if (extraHeaders) {
+    for (const [key, value] of Object.entries(extraHeaders)) {
       if (value === undefined) continue;
       headers.set(key, value);
     }
   }
 
-  // Record metrics for security headers application
   recordSecurityHeaders();
 }

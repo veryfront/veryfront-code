@@ -13,13 +13,17 @@ import {
 describe("cache-key-builder", () => {
   describe("getContentHashKey", () => {
     it("should build key without suffix", () => {
-      const key = getContentHashKey("prefix", "pages/index.tsx", "abc123");
-      assertEquals(key, "prefix:pages/index.tsx:abc123");
+      assertEquals(
+        getContentHashKey("prefix", "pages/index.tsx", "abc123"),
+        "prefix:pages/index.tsx:abc123",
+      );
     });
 
     it("should build key with suffix", () => {
-      const key = getContentHashKey("prefix", "pages/index.tsx", "abc123", "ssr");
-      assertEquals(key, "prefix:pages/index.tsx:abc123:ssr");
+      assertEquals(
+        getContentHashKey("prefix", "pages/index.tsx", "abc123", "ssr"),
+        "prefix:pages/index.tsx:abc123:ssr",
+      );
     });
   });
 
@@ -31,9 +35,7 @@ describe("cache-key-builder", () => {
         versionId: "rel_123",
       };
 
-      const result = runWithCacheKeyContext(ctx, () => {
-        return getCurrentCacheKeyContext();
-      });
+      const result = runWithCacheKeyContext(ctx, getCurrentCacheKeyContext);
 
       assertEquals(result.projectId, "test-project");
       assertEquals(result.mode, "production");
@@ -41,33 +43,25 @@ describe("cache-key-builder", () => {
     });
 
     it("should throw on invalid context", () => {
-      const invalidCtx = {
+      const invalidCtx: CacheKeyContext = {
         projectId: "",
         mode: "production",
         versionId: "rel_123",
-      } as CacheKeyContext;
+      };
 
-      assertThrows(
-        () => runWithCacheKeyContext(invalidCtx, () => {}),
-        Error,
-      );
+      assertThrows(() => runWithCacheKeyContext(invalidCtx, () => {}), Error);
     });
   });
 
   describe("getCurrentCacheKeyContext", () => {
     it("should throw when no context set", () => {
-      assertThrows(
-        () => getCurrentCacheKeyContext(),
-        Error,
-        "No cache context available",
-      );
+      assertThrows(() => getCurrentCacheKeyContext(), Error, "No cache context available");
     });
   });
 
   describe("tryGetCacheKeyContext", () => {
     it("should return null when no context set", () => {
-      const result = tryGetCacheKeyContext();
-      assertEquals(result, null);
+      assertEquals(tryGetCacheKeyContext(), null);
     });
 
     it("should return context when set", () => {
@@ -77,9 +71,7 @@ describe("cache-key-builder", () => {
         versionId: "v1",
       };
 
-      const result = runWithCacheKeyContext(ctx, () => {
-        return tryGetCacheKeyContext();
-      });
+      const result = runWithCacheKeyContext(ctx, tryGetCacheKeyContext);
 
       assertEquals(result?.projectId, "test");
     });
@@ -87,8 +79,7 @@ describe("cache-key-builder", () => {
 
   describe("getProjectScopedKey", () => {
     it("should return null when no context", () => {
-      const key = getProjectScopedKey("prefix", "resource");
-      assertEquals(key, null);
+      assertEquals(getProjectScopedKey("prefix", "resource"), null);
     });
 
     it("should return null for preview mode", () => {
@@ -98,9 +89,7 @@ describe("cache-key-builder", () => {
         versionId: "main",
       };
 
-      const key = runWithCacheKeyContext(ctx, () => {
-        return getProjectScopedKey("prefix", "resource");
-      });
+      const key = runWithCacheKeyContext(ctx, () => getProjectScopedKey("prefix", "resource"));
 
       assertEquals(key, null);
     });
@@ -112,9 +101,7 @@ describe("cache-key-builder", () => {
         versionId: "rel_123",
       };
 
-      const key = runWithCacheKeyContext(ctx, () => {
-        return getProjectScopedKey("prefix", "resource");
-      });
+      const key = runWithCacheKeyContext(ctx, () => getProjectScopedKey("prefix", "resource"));
 
       assertEquals(key, "prefix:test:production:rel_123:resource");
     });
@@ -128,9 +115,10 @@ describe("cache-key-builder", () => {
         versionId: "main",
       };
 
-      const key = runWithCacheKeyContext(ctx, () => {
-        return getProjectScopedKeyAlways("prefix", "resource");
-      });
+      const key = runWithCacheKeyContext(
+        ctx,
+        () => getProjectScopedKeyAlways("prefix", "resource"),
+      );
 
       assertEquals(key, "prefix:test:preview:main:resource");
     });

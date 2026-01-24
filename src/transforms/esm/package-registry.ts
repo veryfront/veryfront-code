@@ -18,18 +18,19 @@ export const TAILWIND_VERSION = "4.1.8";
  */
 export const TRANSFORM_CACHE_VERSION = 3;
 
+function esmSh(pkg: string, version: string, path = "", query = "target=es2022"): string {
+  return `https://esm.sh/${pkg}@${version}${path}?${query}`;
+}
+
 /**
  * Generate esm.sh URL for browser.
  * Uses ?external= so browser import map provides React (ensures single instance).
  * Uses ?target=es2022 for consistent builds.
  */
 export function getEsmShUrl(pkg: string, version: string, external?: readonly string[]): string {
-  const base = `https://esm.sh/${pkg}@${version}`;
-  const params = [`target=es2022`];
-  if (external?.length) {
-    params.push(`external=${external.join(",")}`);
-  }
-  return `${base}?${params.join("&")}`;
+  const params = ["target=es2022"];
+  if (external?.length) params.push(`external=${external.join(",")}`);
+  return `https://esm.sh/${pkg}@${version}?${params.join("&")}`;
 }
 
 /**
@@ -39,14 +40,14 @@ export function getEsmShUrl(pkg: string, version: string, external?: readonly st
  *
  * @param version - React version to use (defaults to REACT_VERSION)
  */
-export function getReactUrls(version: string = REACT_VERSION) {
+export function getReactUrls(version: string = REACT_VERSION): Record<string, string> {
   return {
-    react: `https://esm.sh/react@${version}?target=es2022`,
-    "react-dom": `https://esm.sh/react-dom@${version}?target=es2022`,
-    "react-dom/client": `https://esm.sh/react-dom@${version}/client?target=es2022`,
-    "react-dom/server": `https://esm.sh/react-dom@${version}/server?target=es2022`,
-    "react/jsx-runtime": `https://esm.sh/react@${version}/jsx-runtime?target=es2022`,
-    "react/jsx-dev-runtime": `https://esm.sh/react@${version}/jsx-dev-runtime?target=es2022`,
+    react: esmSh("react", version),
+    "react-dom": esmSh("react-dom", version),
+    "react-dom/client": esmSh("react-dom", version, "/client"),
+    "react-dom/server": esmSh("react-dom", version, "/server"),
+    "react/jsx-runtime": esmSh("react", version, "/jsx-runtime"),
+    "react/jsx-dev-runtime": esmSh("react", version, "/jsx-dev-runtime"),
   };
 }
 
@@ -64,7 +65,7 @@ export function getReactImportMap(version: string = REACT_VERSION): Record<strin
   return {
     ...getReactUrls(version),
     // Prefix match for any react/* subpath imports
-    "react/": `https://esm.sh/react@${version}/?target=es2022`,
+    "react/": esmSh("react", version, "/"),
   };
 }
 
@@ -74,16 +75,20 @@ export function getReactImportMap(version: string = REACT_VERSION): Record<strin
  * Uses ?target=es2022 for consistent builds.
  */
 export function getTailwindImportMap(): Record<string, string> {
-  const tw = TAILWIND_VERSION;
+  const v = TAILWIND_VERSION;
+
   // Note: We don't use "tailwindcss/" prefix entry because import map spec requires
   // URLs to end with "/" when keys end with "/", but query params prevent that.
   // Instead, we explicitly map all known subpaths.
   return {
-    tailwindcss: `https://esm.sh/tailwindcss@${tw}?target=es2022`,
-    "tailwindcss/plugin": `https://esm.sh/tailwindcss@${tw}/plugin?target=es2022`,
-    "tailwindcss/colors": `https://esm.sh/tailwindcss@${tw}/colors?target=es2022`,
-    "tailwindcss/defaultTheme": `https://esm.sh/tailwindcss@${tw}/defaultTheme?target=es2022`,
-    "tailwindcss/lib/util/flattenColorPalette":
-      `https://esm.sh/tailwindcss@${tw}/lib/util/flattenColorPalette?target=es2022`,
+    tailwindcss: esmSh("tailwindcss", v),
+    "tailwindcss/plugin": esmSh("tailwindcss", v, "/plugin"),
+    "tailwindcss/colors": esmSh("tailwindcss", v, "/colors"),
+    "tailwindcss/defaultTheme": esmSh("tailwindcss", v, "/defaultTheme"),
+    "tailwindcss/lib/util/flattenColorPalette": esmSh(
+      "tailwindcss",
+      v,
+      "/lib/util/flattenColorPalette",
+    ),
   };
 }

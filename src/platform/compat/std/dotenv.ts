@@ -9,10 +9,6 @@
 
 import { isDeno } from "../runtime.ts";
 
-// ============================================================================
-// Types
-// ============================================================================
-
 export interface LoadOptions {
   envPath?: string;
   export?: boolean;
@@ -21,71 +17,22 @@ export interface LoadOptions {
   defaultsPath?: string | null;
 }
 
-// ============================================================================
-// Node.js/Bun implementation
-// ============================================================================
-
-async function nodeLoad(options: LoadOptions = {}): Promise<Record<string, string>> {
-  const { readFile } = await import("node:fs/promises");
-  const { resolve: pathResolve, join } = await import("node:path");
-  const { cwd } = await import("node:process");
-
-  const envPath = options.envPath || join(cwd(), ".env");
-  const shouldExport = options.export ?? false;
-
-  try {
-    const content = await readFile(pathResolve(envPath), "utf-8");
-    const parsed = parseEnvFile(content, options.allowEmptyValues ?? false);
-
-    if (shouldExport) {
-      for (const [key, value] of Object.entries(parsed)) {
-        if (!(key in process.env)) {
-          process.env[key] = value;
-        }
-      }
-    }
-
-    return parsed;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return {};
-    }
-    throw err;
-  }
-}
-
 function parseEnvFile(content: string, allowEmptyValues: boolean): Record<string, string> {
   const result: Record<string, string> = {};
-  const lines = content.split("\n");
 
-  for (const line of lines) {
+  for (const line of content.split("\n")) {
     const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
 
-    // Skip empty lines and comments
-    if (!trimmed || trimmed.startsWith("#")) {
-      continue;
-    }
-
-    // Find the first = sign
     const eqIndex = trimmed.indexOf("=");
-    if (eqIndex === -1) {
-      continue;
-    }
+    if (eqIndex === -1) continue;
 
     const key = trimmed.slice(0, eqIndex).trim();
+    if (!key) continue;
+
     let value = trimmed.slice(eqIndex + 1).trim();
+    if (!value && !allowEmptyValues) continue;
 
-    // Skip if key is empty
-    if (!key) {
-      continue;
-    }
-
-    // Skip if value is empty and allowEmptyValues is false
-    if (!value && !allowEmptyValues) {
-      continue;
-    }
-
-    // Remove quotes if present
     if (
       (value.startsWith('"') && value.endsWith('"')) ||
       (value.startsWith("'") && value.endsWith("'"))
@@ -93,7 +40,6 @@ function parseEnvFile(content: string, allowEmptyValues: boolean): Record<string
       value = value.slice(1, -1);
     }
 
-    // Handle escape sequences in double-quoted values
     if (value.includes("\\")) {
       value = value
         .replace(/\\n/g, "\n")
@@ -108,17 +54,36 @@ function parseEnvFile(content: string, allowEmptyValues: boolean): Record<string
   return result;
 }
 
-// ============================================================================
-// Exports
-// ============================================================================
+async function nodeLoad(options: LoadOptions = {}): Promise<Record<string, string>> {
+  const { readFile } = await import("node:fs/promises");
+  const { resolve: pathResolve, join } = await import("node:path");
+  const { cwd } = await import("node:process");
+
+  const envPath = options.envPath ?? join(cwd(), ".env");
+  const shouldExport = options.export ?? false;
+
+  try {
+    const content = await readFile(pathResolve(envPath), "utf-8");
+    const parsed = parseEnvFile(content, options.allowEmptyValues ?? false);
+
+    if (shouldExport) {
+      for (const [key, value] of Object.entries(parsed)) {
+        if (process.env[key] === undefined) process.env[key] = value;
+      }
+    }
+
+    return parsed;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return {};
+    throw err;
+  }
+}
 
 export let load: (options?: LoadOptions) => Promise<Record<string, string>>;
 
 if (isDeno) {
-  // Deno: Use @std/dotenv
   const stdDotenv = await import("#std/dotenv.ts");
   load = stdDotenv.load;
 } else {
-  // Node.js/Bun: Use our implementation
   load = nodeLoad;
 }

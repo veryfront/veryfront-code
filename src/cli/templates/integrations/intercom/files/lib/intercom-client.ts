@@ -96,10 +96,11 @@ interface IntercomMessageRequest {
   };
 }
 
-async function intercomFetch<T>(
-  endpoint: string,
-  options: RequestInit = {},
-): Promise<T> {
+function hasMorePages(pages?: IntercomResponse<unknown>["pages"]): boolean {
+  return pages ? pages.page < pages.total_pages : false;
+}
+
+async function intercomFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = await getAccessToken();
   if (!token) {
     throw new Error("Not authenticated with Intercom. Please connect your account.");
@@ -108,124 +109,97 @@ async function intercomFetch<T>(
   const response = await fetch(`${INTERCOM_BASE_URL}${endpoint}`, {
     ...options,
     headers: {
-      "Authorization": `Bearer ${token}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
-      "Accept": "application/json",
+      Accept: "application/json",
       "Intercom-Version": "2.11",
       ...options.headers,
     },
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(
-      `Intercom API error: ${response.status} ${error.errors?.[0]?.message || error.message || response.statusText}`,
-    );
+    const error = await response.json().catch(() => ({} as Record<string, unknown>));
+    const message =
+      (error as { errors?: Array<{ message?: string }>; message?: string }).errors?.[0]?.message ??
+      (error as { message?: string }).message ??
+      response.statusText;
+
+    throw new Error(`Intercom API error: ${response.status} ${message}`);
   }
 
-  return response.json();
+  return response.json() as Promise<T>;
 }
 
-export async function listContacts(options: {
-  page?: number;
-  perPage?: number;
-} = {}): Promise<{ contacts: IntercomContact[]; hasMore: boolean }> {
+export async function listContacts(
+  options: { page?: number; perPage?: number } = {},
+): Promise<{ contacts: IntercomContact[]; hasMore: boolean }> {
   const params = new URLSearchParams({
-    per_page: String(options.perPage || 50),
+    per_page: String(options.perPage ?? 50),
   });
 
-  if (options.page) {
-    params.set("page", String(options.page));
-  }
+  if (options.page) params.set("page", String(options.page));
 
-  const response = await intercomFetch<IntercomResponse<IntercomContact[]>>(
-    `/contacts?${params}`,
-  );
+  const response = await intercomFetch<IntercomResponse<IntercomContact[]>>(`/contacts?${params}`);
 
   return {
-    contacts: response.data || [],
-    hasMore: response.pages ? response.pages.page < response.pages.total_pages : false,
+    contacts: response.data ?? [],
+    hasMore: hasMorePages(response.pages),
   };
 }
 
 export async function getContact(contactId: string): Promise<IntercomContact> {
-  const response = await intercomFetch<IntercomContact>(
-    `/contacts/${contactId}`,
-  );
-  return response;
+  return intercomFetch<IntercomContact>(`/contacts/${contactId}`);
 }
 
-export async function searchContacts(query: {
-  email?: string;
-  name?: string;
-}): Promise<IntercomContact[]> {
-  const searchQuery: Record<string, unknown> = {
-    query: {
-      operator: "AND",
-      value: [] as Array<Record<string, unknown>>,
-    },
-  };
+export async function searchContacts(query: { email?: string; name?: string }): Promise<IntercomContact[]> {
+  const value: Array<Record<string, unknown>> = [];
 
   if (query.email) {
-    (searchQuery.query as { value: Array<Record<string, unknown>> }).value.push({
-      field: "email",
-      operator: "=",
-      value: query.email,
-    });
+    value.push({ field: "email", operator: "=", value: query.email });
   }
 
   if (query.name) {
-    (searchQuery.query as { value: Array<Record<string, unknown>> }).value.push({
-      field: "name",
-      operator: "~",
-      value: query.name,
-    });
+    value.push({ field: "name", operator: "~", value: query.name });
   }
 
-  const response = await intercomFetch<IntercomResponse<IntercomContact[]>>(
-    "/contacts/search",
-    {
-      method: "POST",
-      body: JSON.stringify(searchQuery),
+  const searchQuery = {
+    query: {
+      operator: "AND",
+      value,
     },
-  );
+  };
 
-  return response.data || [];
+  const response = await intercomFetch<IntercomResponse<IntercomContact[]>>("/contacts/search", {
+    method: "POST",
+    body: JSON.stringify(searchQuery),
+  });
+
+  return response.data ?? [];
 }
 
-export async function listConversations(options: {
-  page?: number;
-  perPage?: number;
-  open?: boolean;
-} = {}): Promise<{ conversations: IntercomConversation[]; hasMore: boolean }> {
+export async function listConversations(
+  options: { page?: number; perPage?: number; open?: boolean } = {},
+): Promise<{ conversations: IntercomConversation[]; hasMore: boolean }> {
   const params = new URLSearchParams({
-    per_page: String(options.perPage || 50),
+    per_page: String(options.perPage ?? 50),
     display_as: "plaintext",
   });
 
-  if (options.page) {
-    params.set("page", String(options.page));
-  }
-
-  if (options.open !== undefined) {
-    params.set("state", options.open ? "open" : "closed");
-  }
+  if (options.page) params.set("page", String(options.page));
+  if (options.open !== undefined) params.set("state", options.open ? "open" : "closed");
 
   const response = await intercomFetch<IntercomResponse<IntercomConversation[]>>(
     `/conversations?${params}`,
   );
 
   return {
-    conversations: response.data || [],
-    hasMore: response.pages ? response.pages.page < response.pages.total_pages : false,
+    conversations: response.data ?? [],
+    hasMore: hasMorePages(response.pages),
   };
 }
 
 export async function getConversation(conversationId: string): Promise<IntercomConversation> {
-  const response = await intercomFetch<IntercomConversation>(
-    `/conversations/${conversationId}`,
-  );
-  return response;
+  return intercomFetch<IntercomConversation>(`/conversations/${conversationId}`);
 }
 
 export async function sendMessage(options: {
@@ -234,29 +208,22 @@ export async function sendMessage(options: {
   messageType?: "comment" | "note";
   adminId?: string;
 }): Promise<IntercomConversation> {
-  if (options.conversationId) {
-    // Reply to existing conversation
-    const body: Record<string, unknown> = {
-      message_type: options.messageType || "comment",
-      type: "admin",
-      body: options.body,
-    };
-
-    if (options.adminId) {
-      body.admin_id = options.adminId;
-    }
-
-    const response = await intercomFetch<IntercomConversation>(
-      `/conversations/${options.conversationId}/reply`,
-      {
-        method: "POST",
-        body: JSON.stringify(body),
-      },
-    );
-    return response;
-  } else {
+  if (!options.conversationId) {
     throw new Error("conversationId is required to send a message");
   }
+
+  const body: Record<string, unknown> = {
+    message_type: options.messageType ?? "comment",
+    type: "admin",
+    body: options.body,
+  };
+
+  if (options.adminId) body.admin_id = options.adminId;
+
+  return intercomFetch<IntercomConversation>(`/conversations/${options.conversationId}/reply`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
 export async function createMessage(options: {
@@ -276,33 +243,19 @@ export async function createMessage(options: {
   };
 
   if (options.contactId) {
-    messageBody.to = {
-      type: "contact",
-      id: options.contactId,
-    };
+    messageBody.to = { type: "contact", id: options.contactId };
   } else if (options.email) {
-    messageBody.to = {
-      type: "contact",
-      email: options.email,
-    };
+    messageBody.to = { type: "contact", email: options.email };
   } else {
     throw new Error("Either contactId or email is required");
   }
 
-  const response = await intercomFetch<{ type: string; id: string }>(
-    "/messages",
-    {
-      method: "POST",
-      body: JSON.stringify(messageBody),
-    },
-  );
-
-  return response;
+  return intercomFetch<{ type: string; id: string }>("/messages", {
+    method: "POST",
+    body: JSON.stringify(messageBody),
+  });
 }
 
 export async function getMe(): Promise<{ type: string; id: string; name: string; email: string }> {
-  const response = await intercomFetch<{ type: string; id: string; name: string; email: string }>(
-    "/me",
-  );
-  return response;
+  return intercomFetch<{ type: string; id: string; name: string; email: string }>("/me");
 }

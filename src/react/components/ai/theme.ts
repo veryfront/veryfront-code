@@ -82,27 +82,36 @@ export const defaultAgentTheme: AgentTheme = {
 /**
  * Merge themes (user theme overrides default)
  */
-export function mergeThemes<T extends Record<string, any>>(
+export function mergeThemes<T extends Record<string, unknown>>(
   defaultTheme: T,
   userTheme?: Partial<T>,
 ): T {
   if (!userTheme) return defaultTheme;
 
-  const merged = { ...defaultTheme };
+  const merged: T = { ...defaultTheme };
 
   for (const key in userTheme) {
     const value = userTheme[key];
+    if (value === undefined) continue;
 
-    if (value === undefined) {
+    const defaultValue = defaultTheme[key];
+
+    if (
+      value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      defaultValue &&
+      typeof defaultValue === "object" &&
+      !Array.isArray(defaultValue)
+    ) {
+      merged[key] = {
+        ...(defaultValue as object),
+        ...(value as object),
+      } as T[Extract<keyof T, string>];
       continue;
     }
 
-    if (typeof value === "object" && !Array.isArray(value)) {
-      // Merge nested objects
-      merged[key] = { ...defaultTheme[key], ...value } as T[Extract<keyof T, string>];
-    } else {
-      merged[key] = value as T[Extract<keyof T, string>];
-    }
+    merged[key] = value as T[Extract<keyof T, string>];
   }
 
   return merged;

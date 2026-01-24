@@ -1,6 +1,3 @@
-/**
- * Cohere Embedding Provider
- */
 import { z } from "zod";
 import { BaseEmbeddingProvider } from "../base.ts";
 import type { EmbeddingDimension, EmbeddingRequest, EmbeddingResponse } from "../types.ts";
@@ -24,37 +21,29 @@ export class CohereEmbeddingProvider extends BaseEmbeddingProvider {
   defaultDimension: EmbeddingDimension = 1024;
 
   protected getHeaders(): Record<string, string> {
-    return {
-      Authorization: `Bearer ${this.config.apiKey}`,
-    };
+    return { Authorization: `Bearer ${this.config.apiKey}` };
   }
 
   protected getEndpoint(): string {
-    const baseURL = this.config.baseURL ?? "https://api.cohere.ai/v1";
-    return `${baseURL}/embed`;
+    return `${this.config.baseURL ?? "https://api.cohere.ai/v1"}/embed`;
   }
 
   protected transformRequest(request: EmbeddingRequest): Record<string, unknown> {
-    const model = request.model ?? this.config.model ?? this.defaultModel;
-
     return {
-      model,
+      model: request.model ?? this.config.model ?? this.defaultModel,
       texts: request.inputs,
-      input_type: "search_document", // For semantic search
+      input_type: "search_document",
       truncate: "END",
     };
   }
 
   protected transformResponse(response: unknown, model: string): EmbeddingResponse {
-    const parsed = CohereEmbeddingResponseSchema.parse(response);
-    const dimension = parsed.embeddings[0]?.length ?? this.defaultDimension;
-    const inputTokens = parsed.meta?.billed_units?.input_tokens ?? 0;
+    const { embeddings, meta } = CohereEmbeddingResponseSchema.parse(response);
+    const dimension = embeddings[0]?.length ?? this.defaultDimension;
+    const inputTokens = meta?.billed_units?.input_tokens ?? 0;
 
     return {
-      embeddings: parsed.embeddings.map((embedding, index) => ({
-        index,
-        embedding,
-      })),
+      embeddings: embeddings.map((embedding, index) => ({ index, embedding })),
       model,
       dimension,
       usage: {

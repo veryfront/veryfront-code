@@ -10,6 +10,7 @@ export default tool({
   }),
   async execute({ customerId }) {
     const customer = await getCustomer(customerId);
+    const billAddr = customer.BillAddr;
 
     return {
       id: customer.Id,
@@ -19,12 +20,14 @@ export default tool({
       familyName: customer.FamilyName,
       email: customer.PrimaryEmailAddr?.Address,
       phone: customer.PrimaryPhone?.FreeFormNumber,
-      address: customer.BillAddr ? {
-        line1: customer.BillAddr.Line1,
-        city: customer.BillAddr.City,
-        state: customer.BillAddr.CountrySubDivisionCode,
-        postalCode: customer.BillAddr.PostalCode,
-      } : undefined,
+      address: billAddr
+        ? {
+            line1: billAddr.Line1,
+            city: billAddr.City,
+            state: billAddr.CountrySubDivisionCode,
+            postalCode: billAddr.PostalCode,
+          }
+        : undefined,
       balance: customer.Balance,
       active: customer.Active,
       metadata: {

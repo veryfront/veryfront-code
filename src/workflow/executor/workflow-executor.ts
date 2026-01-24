@@ -1,8 +1,8 @@
-/**
+/**************************
  * Workflow Executor
  *
  * Main orchestrator for executing durable workflows
- */
+ **************************/
 
 import type {
   BlobResolver,
@@ -91,7 +91,6 @@ export class WorkflowExecutor {
       ...config,
     };
 
-    // Initialize components
     this.stepExecutor = new StepExecutor({
       ...this.config.stepExecutor,
       blobStorage: this.config.blobStorage,
@@ -107,19 +106,24 @@ export class WorkflowExecutor {
       checkpointManager: this.checkpointManager,
       maxConcurrency: this.config.maxConcurrency,
       debug: this.config.debug,
-      // onWaiting is intentionally a no-op here - waiting state is handled
-      // by executeAsync() after DAG execution returns with waiting: true
+      // waiting state is handled by executeAsync() after DAG execution returns with waiting: true
       onWaiting: () => {},
     });
 
-    if (this.config.blobStorage) {
-      const bs = this.config.blobStorage;
+    const bs = this.config.blobStorage;
+    if (bs) {
+      const resolveIfBlob = <T>(
+        ref: any,
+        fn: (id: string) => Promise<T>,
+        fallback: T,
+      ): Promise<T> => ref?.__kind === "blob" ? fn(ref.id) : Promise.resolve(fallback);
+
       this.blobResolver = {
-        getText: (ref) => ref.__kind === "blob" ? bs.getText(ref.id) : Promise.resolve(null),
-        getBytes: (ref) => ref.__kind === "blob" ? bs.getBytes(ref.id) : Promise.resolve(null),
-        getStream: (ref) => ref.__kind === "blob" ? bs.getStream(ref.id) : Promise.resolve(null),
-        stat: (ref) => ref.__kind === "blob" ? bs.stat(ref.id) : Promise.resolve(null),
-        delete: (ref) => ref.__kind === "blob" ? bs.delete(ref.id) : Promise.resolve(undefined),
+        getText: (ref) => resolveIfBlob(ref, (id) => bs.getText(id), null),
+        getBytes: (ref) => resolveIfBlob(ref, (id) => bs.getBytes(id), null),
+        getStream: (ref) => resolveIfBlob(ref, (id) => bs.getStream(id), null),
+        stat: (ref) => resolveIfBlob(ref, (id) => bs.stat(id), null),
+        delete: (ref) => resolveIfBlob(ref, (id) => bs.delete(id), undefined),
       };
     }
   }
@@ -151,14 +155,10 @@ export class WorkflowExecutor {
       throw new Error(`Workflow not found: ${workflowId}`);
     }
 
-    // Validate input if schema provided
-    if (workflow.inputSchema) {
-      workflow.inputSchema.parse(input);
-    }
+    workflow.inputSchema?.parse(input);
 
-    // Create run
     const run: WorkflowRun<TInput, TOutput> = {
-      id: options?.runId || generateId("run"),
+      id: options?.runId ?? generateId("run"),
       workflowId,
       version: workflow.version,
       status: "pending",
@@ -171,10 +171,8 @@ export class WorkflowExecutor {
       createdAt: new Date(),
     };
 
-    // Persist run
     await this.config.backend.createRun(run);
 
-    // Start execution asynchronously
     this.executeAsync(run.id).catch((error) => {
       console.error(`Workflow ${run.id} failed:`, error);
     });
@@ -198,23 +196,15 @@ export class WorkflowExecutor {
       );
     }
 
-    // Get workflow definition
     const workflow = this.workflows.get(run.workflowId);
     if (!workflow) {
       throw new Error(`Workflow not found: ${run.workflowId}`);
     }
 
-    // Get nodes
     const nodes = this.resolveNodes(workflow, run.context);
 
-    // Get resume point
-    const resumeInfo = await this.checkpointManager.prepareResume(
-      runId,
-      nodes,
-      fromCheckpoint,
-    );
+    const resumeInfo = await this.checkpointManager.prepareResume(runId, nodes, fromCheckpoint);
 
-    // If an explicit checkpoint was requested but not found, throw error
     if (fromCheckpoint && !resumeInfo) {
       throw new Error(
         `Checkpoint "${fromCheckpoint}" not found for run "${runId}". ` +
@@ -223,7 +213,6 @@ export class WorkflowExecutor {
     }
 
     if (resumeInfo) {
-      // Update run state from checkpoint
       await this.config.backend.updateRun(runId, {
         status: "running",
         context: resumeInfo.context,
@@ -231,7 +220,6 @@ export class WorkflowExecutor {
       });
     }
 
-    // Resume execution
     await this.executeAsync(runId, resumeInfo?.startFromNode);
   }
 
@@ -247,16 +235,13 @@ export class WorkflowExecutor {
       throw new Error(`Run not found: ${runId}`);
     }
 
-    // Get workflow definition
     const workflow = this.workflows.get(run.workflowId);
     if (!workflow) {
       throw new Error(`Workflow not found: ${run.workflowId}`);
     }
 
-    // Try to acquire lock if backend supports it and locking is enabled
-    const useLocking = this.config.enableLocking !== false &&
-      hasLockSupport(this.config.backend);
-    const lockDuration = this.config.lockDuration!;
+    const useLocking = this.config.enableLocking !== false && hasLockSupport(this.config.backend);
+    const lockDuration = this.config.lockDuration ?? WorkflowExecutor.DEFAULT_LOCK_DURATION;
 
     if (useLocking) {
       const acquired = await this.config.backend.acquireLock!(runId, lockDuration);
@@ -273,63 +258,45 @@ export class WorkflowExecutor {
     }
 
     try {
-      // Update status to running
       await this.config.backend.updateRun(runId, {
         status: "running",
         startedAt: run.startedAt || new Date(),
       });
 
-      // Notify start
       const updatedRun = await this.config.backend.getRun(runId);
       this.config.onStart?.(updatedRun!);
 
-      // Resolve workflow nodes
       const nodes = this.resolveNodes(workflow, run.context);
 
-      // Execute with timeout if configured
       const result = await this.executeWithTimeout(
         () => this.dagExecutor.execute(nodes, run as WorkflowRun, startFromNode),
         workflow.timeout,
       );
 
-      // Update run based on result
       if (result.completed) {
-        // Workflow completed successfully
-        const finalRun = await this.completeRun(
-          runId,
-          result.context,
-          result.nodeStates,
-        );
+        const finalRun = await this.completeRun(runId, result.context, result.nodeStates);
 
-        // Validate output if schema provided
-        if (workflow.outputSchema) {
-          workflow.outputSchema.parse(finalRun.output);
-        }
+        workflow.outputSchema?.parse(finalRun.output);
 
-        // Call completion handler
         await workflow.onComplete?.(finalRun.output, finalRun.context);
         this.config.onComplete?.(finalRun);
-      } else if (result.waiting) {
-        // Workflow is waiting for approval/event
-        await this.pauseRun(
-          runId,
-          result.waitingNode!,
-          result.context,
-          result.nodeStates,
-        );
+        return;
+      }
+
+      if (result.waiting) {
+        await this.pauseRun(runId, result.waitingNode!, result.context, result.nodeStates);
 
         const pausedRun = await this.config.backend.getRun(runId);
         this.config.onWaiting?.(pausedRun!, result.waitingNode!);
-      } else {
-        // Workflow failed
-        const error = new Error(result.error || "Unknown error");
-        await this.failRun(runId, error, result.context, result.nodeStates);
-
-        await workflow.onError?.(error, result.context);
-        this.config.onError?.(run, error);
+        return;
       }
+
+      const error = new Error(result.error || "Unknown error");
+      await this.failRun(runId, error, result.context, result.nodeStates);
+
+      await workflow.onError?.(error, result.context);
+      this.config.onError?.(run, error);
     } catch (error) {
-      // Unexpected error during execution
       const err = error instanceof Error ? error : new Error(String(error));
       await this.failRun(runId, err, run.context, run.nodeStates);
 
@@ -338,7 +305,6 @@ export class WorkflowExecutor {
 
       throw error;
     } finally {
-      // Always release lock when done
       if (useLocking) {
         await this.config.backend.releaseLock!(runId);
 
@@ -352,33 +318,17 @@ export class WorkflowExecutor {
   /**
    * Resolve workflow nodes from definition
    */
-  private resolveNodes(
-    workflow: WorkflowDefinition,
-    context: WorkflowContext,
-  ): WorkflowNode[] {
-    let nodes: WorkflowNode[];
-
-    if (Array.isArray(workflow.steps)) {
-      nodes = workflow.steps;
-    } else {
-      // Dynamic steps - call the function
-      if (!this.config.blobStorage) {
-        // Warn if blobStorage is missing but dynamic steps might need it?
-        // For now, we allow it to be undefined if user doesn't use it.
-      }
-
-      const builderContext: StepBuilderContext = {
+  private resolveNodes(workflow: WorkflowDefinition, context: WorkflowContext): WorkflowNode[] {
+    const nodes = Array.isArray(workflow.steps) ? workflow.steps : workflow.steps(
+      {
         input: context.input,
         context,
         blobStorage: this.config.blobStorage,
         blob: this.blobResolver,
-      };
-      nodes = workflow.steps(builderContext);
-    }
+      } satisfies StepBuilderContext,
+    );
 
-    // Validate resolved nodes
     this.validateNodes(nodes, workflow.id);
-
     return nodes;
   }
 
@@ -428,10 +378,7 @@ export class WorkflowExecutor {
    * Uses Promise.race() to properly handle timeout cleanup.
    * The timeout is always cleared in the finally block to prevent memory leaks.
    */
-  private async executeWithTimeout<T>(
-    fn: () => Promise<T>,
-    timeout?: string | number,
-  ): Promise<T> {
+  private async executeWithTimeout<T>(fn: () => Promise<T>, timeout?: string | number): Promise<T> {
     if (!timeout) {
       return fn();
     }
@@ -462,7 +409,6 @@ export class WorkflowExecutor {
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
   ): Promise<WorkflowRun> {
-    // Determine output (last node's output or accumulated context)
     const output = this.determineOutput(context);
 
     await this.config.backend.updateRun(runId, {
@@ -518,7 +464,6 @@ export class WorkflowExecutor {
    * Determine workflow output from context
    */
   private determineOutput(context: WorkflowContext): unknown {
-    // Remove 'input' and return the rest as output
     const { input: _input, ...rest } = context;
     return rest;
   }
@@ -538,10 +483,7 @@ export class WorkflowExecutor {
   /**
    * Wait for workflow result
    */
-  private async waitForResult<TOutput>(
-    runId: string,
-    pollInterval: number = 1000,
-  ): Promise<TOutput> {
+  private async waitForResult<TOutput>(runId: string, pollInterval = 1000): Promise<TOutput> {
     while (true) {
       const run = await this.config.backend.getRun(runId);
       if (!run) {
@@ -560,7 +502,6 @@ export class WorkflowExecutor {
         throw new Error("Workflow was cancelled");
       }
 
-      // Wait before polling again
       await new Promise((resolve) => setTimeout(resolve, pollInterval));
     }
   }

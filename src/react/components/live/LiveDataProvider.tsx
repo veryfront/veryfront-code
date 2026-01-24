@@ -1,8 +1,8 @@
-import type React from "react";
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import type React from "react";
 import type { VeryfrontConfig } from "#veryfront/config";
-import type { ComponentFunction, Entity } from "#veryfront/types";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import type { ComponentFunction, Entity } from "#veryfront/types";
 
 interface LiveData {
   entities: Map<string, Entity>;
@@ -16,13 +16,13 @@ interface LiveDataContextValue {
   updateEntity: (id: string, data: Entity) => void;
   updateComponent: (name: string, component: ComponentFunction) => void;
   updateStyle: (id: string, css: string) => void;
-  updateConfig: (_config: Partial<VeryfrontConfig>) => void;
+  updateConfig: (config: Partial<VeryfrontConfig>) => void;
   subscribe: (callback: () => void) => () => void;
 }
 
 const LiveDataContext = createContext<LiveDataContextValue | null>(null);
 
-export function LiveDataProvider({ children }: { children: React.ReactNode }) {
+export function LiveDataProvider({ children }: { children: React.ReactNode }): React.ReactNode {
   const [data, setData] = useState<LiveData>({
     entities: new Map(),
     components: new Map(),
@@ -32,89 +32,80 @@ export function LiveDataProvider({ children }: { children: React.ReactNode }) {
 
   const [subscribers, setSubscribers] = useState<Set<() => void>>(new Set());
 
-  const notifySubscribers = useCallback(() => {
+  const notifySubscribers = useCallback((): void => {
     subscribers.forEach((callback) => callback());
   }, [subscribers]);
 
-  const updateEntity = useCallback(
-    (id: string, entityData: Entity) => {
+  const updateMap = useCallback(
+    <K, V>(key: K, value: V, mapKey: "entities" | "components" | "styles"): void => {
       setData((prev) => {
-        const newData = { ...prev };
-        newData.entities = new Map(prev.entities);
-        newData.entities.set(id, entityData);
-        return newData;
+        const next = { ...prev };
+        const nextMap = new Map(prev[mapKey] as Map<K, V>);
+        nextMap.set(key, value);
+        (next as unknown as Record<typeof mapKey, Map<K, V>>)[mapKey] = nextMap;
+        return next;
       });
       notifySubscribers();
     },
     [notifySubscribers],
+  );
+
+  const updateEntity = useCallback(
+    (id: string, entityData: Entity): void => updateMap(id, entityData, "entities"),
+    [updateMap],
   );
 
   const updateComponent = useCallback(
-    (name: string, component: ComponentFunction) => {
-      setData((prev) => {
-        const newData = { ...prev };
-        newData.components = new Map(prev.components);
-        newData.components.set(name, component);
-        return newData;
-      });
-      notifySubscribers();
-    },
-    [notifySubscribers],
+    (name: string, component: ComponentFunction): void => updateMap(name, component, "components"),
+    [updateMap],
   );
 
   const updateStyle = useCallback(
-    (id: string, css: string) => {
-      setData((prev) => {
-        const newData = { ...prev };
-        newData.styles = new Map(prev.styles);
-        newData.styles.set(id, css);
-        return newData;
-      });
-      notifySubscribers();
-    },
-    [notifySubscribers],
+    (id: string, css: string): void => updateMap(id, css, "styles"),
+    [updateMap],
   );
 
   const updateConfig = useCallback(
-    (config: Partial<VeryfrontConfig>) => {
+    (config: Partial<VeryfrontConfig>): void => {
       setData((prev) => ({ ...prev, config }));
       notifySubscribers();
     },
     [notifySubscribers],
   );
 
-  const subscribe = useCallback((callback: () => void) => {
+  const subscribe = useCallback((callback: () => void): () => void => {
     setSubscribers((prev) => new Set(prev).add(callback));
+
     return () => {
       setSubscribers((prev) => {
-        const newSet = new Set(prev);
-        newSet.delete(callback);
-        return newSet;
+        const next = new Set(prev);
+        next.delete(callback);
+        return next;
       });
     };
   }, []);
 
   useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === "studio:update") {
-        const { target, id, data } = event.data;
+    function handleMessage(event: MessageEvent): void {
+      if (event.data?.type !== "studio:update") return;
 
-        switch (target) {
-          case "entity":
-            updateEntity(id, data);
-            break;
-          case "component":
-            updateComponent(id, data);
-            break;
-          case "style":
-            updateStyle(id, data);
-            break;
-          case "config":
-            updateConfig(data);
-            break;
-        }
+      const { target, id, data } = event.data;
+
+      switch (target) {
+        case "entity":
+          updateEntity(id, data);
+          return;
+        case "component":
+          updateComponent(id, data);
+          return;
+        case "style":
+          updateStyle(id, data);
+          return;
+        case "config":
+          updateConfig(data);
+          return;
       }
-    };
+    }
 
     globalThis.addEventListener("message", handleMessage);
     return () => globalThis.removeEventListener("message", handleMessage);
@@ -136,27 +127,29 @@ export function LiveDataProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function useLiveData() {
+export function useLiveData(): LiveDataContextValue {
   const context = useContext(LiveDataContext);
-  if (!context) {
-    throw toError(createError({
+
+  if (context) return context;
+
+  throw toError(
+    createError({
       type: "config",
       message: "useLiveData must be used within LiveDataProvider",
-    }));
-  }
-  return context;
+    }),
+  );
 }
 
-export function useEntity(id: string) {
+export function useEntity(id: string): Entity | undefined {
   const { data, subscribe } = useLiveData();
-  const [entity, setEntity] = useState(data.entities.get(id));
+  const [entity, setEntity] = useState(() => data.entities.get(id));
 
   useEffect(() => {
-    const updateEntity = () => {
+    function handleUpdate(): void {
       setEntity(data.entities.get(id));
-    };
+    }
 
-    return subscribe(updateEntity);
+    return subscribe(handleUpdate);
   }, [id, data, subscribe]);
 
   return entity;

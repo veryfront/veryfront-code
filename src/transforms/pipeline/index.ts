@@ -1,10 +1,3 @@
-/**
- * ESM Transform Pipeline Orchestrator.
- *
- * Executes transform plugins in stage order, tracking timing and handling caching.
- * This replaces the monolithic transform-core.ts with a modular, testable architecture.
- */
-
 import {
   generateCacheKey,
   getCachedTransformAsync,
@@ -32,27 +25,19 @@ import {
   ssrHttpStubPlugin,
 } from "./stages/index.ts";
 
-/**
- * Default SSR pipeline configuration.
- * Runs all stages in order with SSR-specific resolution.
- */
 const SSR_PIPELINE: TransformPlugin[] = [
   parsePlugin,
   compilePlugin,
   resolveAliasesPlugin,
   resolveReactPlugin,
   resolveContextPlugin,
-  ssrHttpStubPlugin, // Stub browser-only HTTP imports during SSR
+  ssrHttpStubPlugin,
   resolveRelativePlugin,
   resolveBarePlugin,
-  ssrHttpCachePlugin, // Cache HTTP imports to local file:// for SSR
+  ssrHttpCachePlugin,
   finalizePlugin,
 ];
 
-/**
- * Default browser pipeline configuration.
- * Runs all stages in order with browser-specific resolution.
- */
 const BROWSER_PIPELINE: TransformPlugin[] = [
   parsePlugin,
   compilePlugin,
@@ -64,45 +49,31 @@ const BROWSER_PIPELINE: TransformPlugin[] = [
   finalizePlugin,
 ];
 
-/**
- * Run the transform pipeline on source code.
- *
- * @param source - Source code to transform
- * @param filePath - Path to the source file
- * @param projectDir - Project root directory
- * @param options - Transform options
- * @param config - Optional pipeline configuration
- * @returns Transform result with code and timing info
- */
-export async function runPipeline(
+export function runPipeline(
   source: string,
   filePath: string,
   projectDir: string,
   options: TransformOptions,
   config?: PipelineConfig,
 ): Promise<TransformResult> {
-  // Extract filename for span attributes
   const fileName = filePath.split("/").pop() || filePath;
 
-  return await withSpan(
+  return withSpan(
     "transform.pipeline",
     async () => {
       const transformStart = performance.now();
 
-      // Create transform context
       const ctx = await createTransformContext(source, filePath, projectDir, options);
       ctx.debug = config?.debug ?? false;
 
-      // Generate cache key and check cache (content-addressable)
       const cacheKey = generateCacheKey(
         filePath,
         ctx.contentHash,
         options.ssr ?? false,
         options.studioEmbed ?? false,
       );
-      // Use async cache check to support distributed backends (Redis/API)
-      const cached = await getCachedTransformAsync(cacheKey);
 
+      const cached = await getCachedTransformAsync(cacheKey);
       if (cached) {
         return {
           code: cached.code,
@@ -113,25 +84,19 @@ export async function runPipeline(
         };
       }
 
-      // Select pipeline based on target
       const basePipeline = options.ssr ? SSR_PIPELINE : BROWSER_PIPELINE;
-
-      // Merge with custom plugins if provided
       const pipeline = config?.plugins
         ? [...basePipeline, ...config.plugins].sort((a, b) => a.stage - b.stage)
         : basePipeline;
 
-      // Execute pipeline stages
       for (const plugin of pipeline) {
-        // Check condition if present
-        if (plugin.condition && !plugin.condition(ctx)) {
+        if (plugin.condition?.(ctx) === false) {
           continue;
         }
 
         const stageStart = performance.now();
 
         try {
-          // Wrap each stage in its own span
           ctx.code = await withSpan(
             `transform.stage.${plugin.name}`,
             async () => await plugin.transform(ctx),
@@ -149,12 +114,10 @@ export async function runPipeline(
         recordStageTiming(ctx, plugin.stage, stageStart);
       }
 
-      // Cache the result
       setCachedTransform(cacheKey, ctx.code, ctx.contentHash);
 
       const totalMs = performance.now() - transformStart;
 
-      // Log timing in debug mode
       if (ctx.debug) {
         logger.debug("[PIPELINE] Transform complete", formatTimingLog(ctx));
       }
@@ -175,19 +138,6 @@ export async function runPipeline(
   );
 }
 
-/**
- * Transform source to ESM.
- *
- * Drop-in replacement for the legacy transformToESM function.
- * Returns just the code string for backwards compatibility.
- *
- * @param source - Source code to transform
- * @param filePath - Path to the source file
- * @param projectDir - Project root directory
- * @param _adapter - Runtime adapter (unused, kept for API compatibility)
- * @param options - Transform options
- * @returns Transformed ESM code
- */
 export async function transformToESM(
   source: string,
   filePath: string,
@@ -195,23 +145,18 @@ export async function transformToESM(
   _adapter: unknown,
   options: TransformOptions,
 ): Promise<string> {
-  // CSS and JSON files don't need JS transforms - return as-is
   if (filePath.endsWith(".css") || filePath.endsWith(".json")) {
     return source;
   }
 
-  const result = await runPipeline(source, filePath, projectDir, options);
-  return result.code;
+  const { code } = await runPipeline(source, filePath, projectDir, options);
+  return code;
 }
 
-/**
- * Get available plugins for a target.
- */
 export function getDefaultPlugins(ssr: boolean): TransformPlugin[] {
   return ssr ? [...SSR_PIPELINE] : [...BROWSER_PIPELINE];
 }
 
-// Re-export types for consumers
 export type {
   PipelineConfig,
   TransformContext,
@@ -223,7 +168,6 @@ export type {
 
 export { TransformStage } from "./types.ts";
 
-// Re-export context utilities
 export {
   createTransformContext,
   createTransformContextSync,

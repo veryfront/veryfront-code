@@ -13,11 +13,21 @@ export default tool({
     stageId: z.number().optional().describe("New pipeline stage ID"),
     personId: z.number().optional().describe("New person/contact ID"),
     orgId: z.number().optional().describe("New organization ID"),
-    expectedCloseDate: z.string().optional().describe(
-      "New expected close date in YYYY-MM-DD format",
-    ),
+    expectedCloseDate: z
+      .string()
+      .optional()
+      .describe("New expected close date in YYYY-MM-DD format"),
   }),
-  async execute({ dealId, title, value, status, stageId, personId, orgId, expectedCloseDate }) {
+  async execute({
+    dealId,
+    title,
+    value,
+    status,
+    stageId,
+    personId,
+    orgId,
+    expectedCloseDate,
+  }) {
     const deal = await updateDeal(dealId, {
       title,
       value,

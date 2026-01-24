@@ -9,57 +9,44 @@
 
 import { isBun, isDeno, isNode } from "../platform/compat/runtime.ts";
 import { cacheModuleToLocal } from "../transforms/esm/http-cache.ts";
-import { getHttpBundleCacheDir } from "../utils/cache-dir.ts";
 import { getReactUrls } from "../transforms/esm/package-registry.ts";
+import { getHttpBundleCacheDir } from "../utils/cache-dir.ts";
 
 type JsxRuntimeType = typeof import("react/jsx-runtime");
 
-// Internal cache to ensure single instance
 let jsxRuntimeCache: JsxRuntimeType | null = null;
 
-/**
- * Load JSX runtime, caching from esm.sh if needed.
- */
 async function loadJsxRuntime(): Promise<JsxRuntimeType> {
-  if (jsxRuntimeCache) {
+  if (jsxRuntimeCache) return jsxRuntimeCache;
+
+  const urls = getReactUrls();
+  const jsxRuntimeUrl = urls["react/jsx-runtime"]!;
+
+  if (isDeno) {
+    jsxRuntimeCache = (await import(jsxRuntimeUrl)) as JsxRuntimeType;
     return jsxRuntimeCache;
   }
 
-  // Node/Bun with node_modules: try native resolution first
-  if ((isNode || isBun) && !isDeno) {
+  if (isNode || isBun) {
     try {
-      const nativeJsxRuntime = await import("react/jsx-runtime");
-      jsxRuntimeCache = nativeJsxRuntime as JsxRuntimeType;
+      jsxRuntimeCache = (await import("react/jsx-runtime")) as JsxRuntimeType;
       return jsxRuntimeCache;
     } catch {
       // Fall through to esm.sh caching
     }
   }
 
-  const urls = getReactUrls();
-
-  // Deno: use HTTP imports directly (Deno supports them natively)
-  if (isDeno) {
-    const httpJsxRuntime = await import(urls["react/jsx-runtime"]);
-    jsxRuntimeCache = httpJsxRuntime as JsxRuntimeType;
-    return jsxRuntimeCache;
-  }
-
-  // Node/Bun without node_modules: cache from esm.sh to local file://
   const cacheDir = getHttpBundleCacheDir();
-  const cachedPath = await cacheModuleToLocal(urls["react/jsx-runtime"], cacheDir);
-  const cachedJsxRuntime = await import(cachedPath);
-  jsxRuntimeCache = cachedJsxRuntime as JsxRuntimeType;
+  const cachedPath = await cacheModuleToLocal(jsxRuntimeUrl, cacheDir);
+  jsxRuntimeCache = (await import(cachedPath)) as JsxRuntimeType;
   return jsxRuntimeCache;
 }
 
-// Top-level await - caches at module load
 const jsxRuntime = await loadJsxRuntime();
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
 
-// Named exports with explicit type annotations to avoid circular type inference
 export const jsx = jsxRuntime.jsx as Any;
 export const jsxs = jsxRuntime.jsxs as Any;
 export const Fragment = jsxRuntime.Fragment as Any;

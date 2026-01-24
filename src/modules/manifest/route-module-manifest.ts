@@ -56,37 +56,22 @@ const manifestStore = new Map<string, RouteManifest>();
  */
 const pendingCollections = new Map<string, Set<string>>();
 
-/**
- * Build manifest key from project and route
- */
 function buildKey(projectSlug: string | undefined, route: string): string {
-  return `${projectSlug || "default"}:${route || "index"}`;
+  return `${projectSlug ?? "default"}:${route || "index"}`;
 }
 
-/**
- * Start collecting modules for a request
- */
 export function startModuleCollection(requestId: string): void {
   pendingCollections.set(requestId, new Set());
 }
 
-/**
- * Record a module being loaded for a request
- */
 export function recordModuleLoad(
   requestId: string,
   modulePath: string,
   _critical = false,
 ): void {
-  const collection = pendingCollections.get(requestId);
-  if (collection) {
-    collection.add(modulePath);
-  }
+  pendingCollections.get(requestId)?.add(modulePath);
 }
 
-/**
- * Finish collecting and update the manifest
- */
 export function finishModuleCollection(
   requestId: string,
   projectSlug: string | undefined,
@@ -94,42 +79,36 @@ export function finishModuleCollection(
   criticalModules: string[] = [],
 ): void {
   const collection = pendingCollections.get(requestId);
-  if (!collection) {
-    return;
-  }
+  if (!collection) return;
 
   pendingCollections.delete(requestId);
 
   const key = buildKey(projectSlug, route);
   const existing = manifestStore.get(key);
 
-  // Build module entries
   const criticalSet = new Set(criticalModules);
-  const modules: ModuleEntry[] = [];
+  const newModules: ModuleEntry[] = [];
   let loadOrder = 0;
 
-  // Add critical modules first
   for (const path of criticalModules) {
     if (collection.has(path)) {
-      modules.push({ path, critical: true, loadOrder: loadOrder++ });
+      newModules.push({ path, critical: true, loadOrder: loadOrder++ });
     }
   }
 
-  // Add remaining modules
   for (const path of collection) {
     if (!criticalSet.has(path)) {
-      modules.push({ path, critical: false, loadOrder: loadOrder++ });
+      newModules.push({ path, critical: false, loadOrder: loadOrder++ });
     }
   }
 
-  // Merge with existing manifest (union of modules)
-  const existingPaths = new Set(existing?.modules.map((m) => m.path) ?? []);
   const mergedModules = existing?.modules ?? [];
+  const existingPaths = new Set(mergedModules.map((m) => m.path));
 
-  for (const mod of modules) {
-    if (!existingPaths.has(mod.path)) {
-      mergedModules.push(mod);
-    }
+  for (const mod of newModules) {
+    if (existingPaths.has(mod.path)) continue;
+    mergedModules.push(mod);
+    existingPaths.add(mod.path);
   }
 
   const manifest: RouteManifest = {
@@ -149,52 +128,41 @@ export function finishModuleCollection(
   });
 }
 
-/**
- * Get manifest for a route (for modulepreload hints)
- */
 export function getRouteManifest(
   projectSlug: string | undefined,
   route: string,
 ): RouteManifest | null {
   const key = buildKey(projectSlug, route);
   const manifest = manifestStore.get(key);
+
   logger.debug("[RouteModuleManifest] Get manifest", {
     key,
     found: !!manifest,
     moduleCount: manifest?.moduleCount ?? 0,
     renderCount: manifest?.renderCount ?? 0,
   });
+
   return manifest ?? null;
 }
 
-/**
- * Get all module paths for a route in load order
- */
 export function getRouteModulePaths(
   projectSlug: string | undefined,
   route: string,
 ): string[] {
   const manifest = getRouteManifest(projectSlug, route);
-  if (!manifest) {
-    return [];
-  }
+  if (!manifest) return [];
 
   return manifest.modules
     .sort((a, b) => a.loadOrder - b.loadOrder)
     .map((m) => m.path);
 }
 
-/**
- * Get critical module paths for a route (page, layouts)
- */
 export function getCriticalModulePaths(
   projectSlug: string | undefined,
   route: string,
 ): string[] {
   const manifest = getRouteManifest(projectSlug, route);
-  if (!manifest) {
-    return [];
-  }
+  if (!manifest) return [];
 
   return manifest.modules
     .filter((m) => m.critical)
@@ -202,10 +170,6 @@ export function getCriticalModulePaths(
     .map((m) => m.path);
 }
 
-/**
- * Record modules loaded via SSR module loader
- * This is called from the MDX ESM loader when modules are fetched
- */
 export function recordSSRModules(
   projectSlug: string | undefined,
   route: string,
@@ -216,19 +180,19 @@ export function recordSSRModules(
   const existingModules = existing?.modules ?? [];
   const existingPaths = new Set(existingModules.map((m) => m.path));
 
-  // Add new modules that don't already exist
   let addedCount = 0;
+
   for (const path of modules) {
     const normalizedPath = path.replace(/^_vf_modules\//, "");
-    if (!existingPaths.has(normalizedPath)) {
-      existingModules.push({
-        path: normalizedPath,
-        critical: false,
-        loadOrder: existingModules.length,
-      });
-      existingPaths.add(normalizedPath);
-      addedCount++;
-    }
+    if (existingPaths.has(normalizedPath)) continue;
+
+    existingModules.push({
+      path: normalizedPath,
+      critical: false,
+      loadOrder: existingModules.length,
+    });
+    existingPaths.add(normalizedPath);
+    addedCount++;
   }
 
   const manifest: RouteManifest = {
@@ -250,33 +214,20 @@ export function recordSSRModules(
   });
 }
 
-/**
- * Generate modulepreload hints HTML for a route
- * Returns empty array if no manifest exists (first render)
- */
 export function generateModulePreloadHintsFromManifest(
   projectSlug: string | undefined,
   route: string,
   maxHints = 50,
 ): string[] {
   const modules = getRouteModulePaths(projectSlug, route);
+  if (modules.length === 0) return [];
 
-  if (modules.length === 0) {
-    return [];
-  }
-
-  // Limit to most critical modules to avoid overwhelming the browser
-  const limitedModules = modules.slice(0, maxHints);
-
-  return limitedModules.map((path) => {
+  return modules.slice(0, maxHints).map((path) => {
     const url = `/_vf_modules/${path}`;
     return `<link rel="modulepreload" href="${url}">`;
   });
 }
 
-/**
- * Get manifest statistics for debugging
- */
 export function getManifestStats(): {
   routeCount: number;
   totalModules: number;
@@ -294,29 +245,20 @@ export function getManifestStats(): {
     totalModules += manifest.moduleCount;
   }
 
-  return {
-    routeCount: manifestStore.size,
-    totalModules,
-    routes,
-  };
+  return { routeCount: manifestStore.size, totalModules, routes };
 }
 
-/**
- * Clear manifest for a specific project (on deployment)
- */
 export function clearProjectManifests(projectSlug: string): void {
   const prefix = `${projectSlug}:`;
+
   for (const key of manifestStore.keys()) {
-    if (key.startsWith(prefix)) {
-      manifestStore.delete(key);
-    }
+    if (!key.startsWith(prefix)) continue;
+    manifestStore.delete(key);
   }
+
   logger.debug("[RouteModuleManifest] Cleared manifests for project", { projectSlug });
 }
 
-/**
- * Clear all manifests (on server restart)
- */
 export function clearAllManifests(): void {
   manifestStore.clear();
   pendingCollections.clear();

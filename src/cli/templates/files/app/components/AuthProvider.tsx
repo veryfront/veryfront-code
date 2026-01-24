@@ -1,7 +1,7 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect } from "react";
-import { logout as logoutUser } from "../lib/auth-client.ts";
+import React, { createContext, useContext, useEffect, useState } from 'react';
+import { logout as logoutUser } from '../lib/auth-client.ts';
 
 interface User {
   id: string;
@@ -22,30 +22,40 @@ const AuthContext = createContext<AuthContextType>({
   logout: () => {},
 });
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
+export function AuthProvider({ children }: { children: React.ReactNode }): React.ReactNode {
   const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
-    // Check if user is logged in
-    fetch("/api/auth/me")
-      .then(res => res.ok ? res.json() : null)
-      .then(data => {
-        if (data?.user) setUser(data.user);
-      })
-      .finally(() => setLoading(false));
+    let active = true;
+
+    async function loadUser(): Promise<void> {
+      try {
+        const res = await fetch('/api/auth/me');
+        if (!res.ok) return;
+
+        const data = await res.json();
+        if (active && data?.user) setUser(data.user);
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+
+    loadUser();
+
+    return () => {
+      active = false;
+    };
   }, []);
 
-  const logout = () => {
+  function logout(): void {
     logoutUser();
     setUser(null);
-  };
+  }
 
-  return (
-    <AuthContext.Provider value={{ user, loading, logout }}>
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={{ user, loading, logout }}>{children}</AuthContext.Provider>;
 }
 
-export const useAuth = () => useContext(AuthContext);
+export function useAuth(): AuthContextType {
+  return useContext(AuthContext);
+}

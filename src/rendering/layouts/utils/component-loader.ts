@@ -1,5 +1,4 @@
-import { rendererLogger as logger } from "#veryfront/utils";
-import { computeHash, TSX_LAYOUT_MAX_ENTRIES } from "#veryfront/utils";
+import { computeHash, rendererLogger as logger, TSX_LAYOUT_MAX_ENTRIES } from "#veryfront/utils";
 import * as BundledReact from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { LayoutItem, MdxBundle, MDXComponents, MDXModule } from "#veryfront/types";
@@ -25,22 +24,25 @@ class InMemoryLayoutComponentCache implements LayoutComponentCache {
 
   get(key: string): BundledReact.ComponentType | undefined {
     const value = this.entries.get(key);
-    if (value) {
-      this.entries.delete(key);
-      this.entries.set(key, value);
-    }
+    if (!value) return undefined;
+
+    this.entries.delete(key);
+    this.entries.set(key, value);
     return value;
   }
 
   set(key: string, value: BundledReact.ComponentType): void {
     if (this.entries.has(key)) {
       this.entries.delete(key);
-    } else if (this.entries.size >= this.maxEntries) {
-      const oldest = this.entries.keys().next();
-      if (!oldest.done) {
-        this.entries.delete(oldest.value);
-      }
+      this.entries.set(key, value);
+      return;
     }
+
+    if (this.entries.size >= this.maxEntries) {
+      const oldestKey = this.entries.keys().next().value as string | undefined;
+      if (oldestKey) this.entries.delete(oldestKey);
+    }
+
     this.entries.set(key, value);
   }
 
@@ -70,6 +72,7 @@ export async function loadTSXComponent(
   const source = await adapter.fs.readFile(componentPath);
   const hash = await computeHash(source);
   const effectiveProjectId = projectId ?? projectDir;
+
   // Include contentSourceId in cache key for branch/release isolation
   const cacheKey = buildLayoutComponentCacheKey(
     effectiveProjectId,
@@ -77,31 +80,28 @@ export async function loadTSXComponent(
     hash,
     contentSourceId,
   );
-  let component = cache.get(cacheKey);
 
-  if (!component) {
-    const loadedComponent = await loadComponentFromSource(
-      source,
-      componentPath,
-      projectDir,
-      adapter,
-      { dev: true, projectId: projectId ?? projectDir, ssr: true, contentSourceId },
+  const cached = cache.get(cacheKey);
+  if (cached) return cached;
+
+  const loaded = await loadComponentFromSource(source, componentPath, projectDir, adapter, {
+    dev: true,
+    projectId: effectiveProjectId,
+    ssr: true,
+    contentSourceId,
+  });
+
+  if (!loaded) {
+    throw toError(
+      createError({
+        type: "render",
+        message: "Component loading failed",
+      }),
     );
-
-    if (loadedComponent) {
-      component = loadedComponent;
-      cache.set(cacheKey, component);
-    }
   }
 
-  if (!component) {
-    throw toError(createError({
-      type: "render",
-      message: "Component loading failed",
-    }));
-  }
-
-  return component;
+  cache.set(cacheKey, loaded);
+  return loaded;
 }
 
 export async function loadMDXLayout(
@@ -138,6 +138,7 @@ export async function loadMDXLayout(
     projectSlug,
     contentSourceId,
   )) as MDXModule;
+
   logger.debug("[loadMDXLayout] loadModuleESM DONE", {
     projectSlug,
     duration: `${(performance.now() - modStart).toFixed(2)}ms`,
@@ -148,6 +149,7 @@ export async function loadMDXLayout(
     projectSlug,
     totalDuration: `${(performance.now() - loadStart).toFixed(2)}ms`,
   });
+
   return mod.MDXLayout || mod.MainLayout || mod.default;
 }
 
@@ -163,10 +165,13 @@ export async function applyTSXLayout(
 ): Promise<BundledReact.ReactElement> {
   const start = performance.now();
   logger.debug("[applyTSXLayout] START", { componentPath: item.componentPath, projectId });
+
   const React = await getProjectReact();
+
   try {
     logger.debug("[applyTSXLayout] loadTSXComponent START", { componentPath: item.componentPath });
     const loadStart = performance.now();
+
     const LayoutComponent = await loadTSXComponent(
       item.componentPath!,
       projectDir,
@@ -175,23 +180,26 @@ export async function applyTSXLayout(
       projectId,
       contentSourceId,
     );
+
     logger.debug("[applyTSXLayout] loadTSXComponent DONE", {
       componentPath: item.componentPath,
       duration: `${(performance.now() - loadStart).toFixed(2)}ms`,
     });
+
     const result = React.createElement(
       LayoutComponent,
-      props || {},
+      props ?? {},
       element,
     ) as BundledReact.ReactElement;
+
     logger.debug("[applyTSXLayout] DONE", {
       componentPath: item.componentPath,
       totalDuration: `${(performance.now() - start).toFixed(2)}ms`,
     });
+
     return result;
   } catch (e) {
     logger.error("Failed to compile/import TSX layout", e);
-
     throw e;
   }
 }

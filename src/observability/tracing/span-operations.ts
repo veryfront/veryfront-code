@@ -1,21 +1,22 @@
 import { serverLogger as logger } from "#veryfront/utils";
-import type { Span, SpanKind } from "./types.ts";
-import type { OpenTelemetryAPI, SpanOptions } from "./types.ts";
+import type { Context, OpenTelemetryAPI, Span, SpanKind, SpanOptions, Tracer } from "./types.ts";
 
 export class SpanOperations {
   constructor(
     private api: OpenTelemetryAPI,
-    private tracer: import("./types.ts").Tracer,
+    private tracer: Tracer,
   ) {}
 
   startSpan(name: string, options: SpanOptions = {}): Span | null {
     try {
-      const spanKind = this.mapSpanKind(options.kind);
-
-      const span = this.tracer.startSpan(name, {
-        kind: spanKind,
-        attributes: options.attributes || {},
-      }, options.parent as import("./types.ts").Context | undefined);
+      const span = this.tracer.startSpan(
+        name,
+        {
+          kind: this.mapSpanKind(options.kind),
+          attributes: options.attributes ?? {},
+        },
+        options.parent as Context | undefined,
+      );
 
       return span;
     } catch (error) {
@@ -37,6 +38,7 @@ export class SpanOperations {
       } else {
         span.setStatus({ code: this.api.SpanStatusCode.OK });
       }
+
       span.end();
     } catch (err) {
       logger.debug("[tracing] Failed to end span", err);
@@ -83,13 +85,13 @@ export class SpanOperations {
     if (!kind) return this.api.SpanKind.INTERNAL;
 
     const kindMap: Record<string, SpanKind> = {
-      "internal": this.api.SpanKind.INTERNAL,
-      "server": this.api.SpanKind.SERVER,
-      "client": this.api.SpanKind.CLIENT,
-      "producer": this.api.SpanKind.PRODUCER,
-      "consumer": this.api.SpanKind.CONSUMER,
+      internal: this.api.SpanKind.INTERNAL,
+      server: this.api.SpanKind.SERVER,
+      client: this.api.SpanKind.CLIENT,
+      producer: this.api.SpanKind.PRODUCER,
+      consumer: this.api.SpanKind.CONSUMER,
     };
 
-    return kindMap[kind.toLowerCase()] || this.api.SpanKind.INTERNAL;
+    return kindMap[kind.toLowerCase()] ?? this.api.SpanKind.INTERNAL;
   }
 }

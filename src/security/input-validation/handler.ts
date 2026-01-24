@@ -18,8 +18,8 @@ export type ValidatedHandlerFunction<TBody = unknown, TQuery = unknown> = (
 export function createValidatedHandler<TBody = unknown, TQuery = unknown>(
   config: ValidatedHandlerConfig<TBody, TQuery>,
   handler: ValidatedHandlerFunction<TBody, TQuery>,
-) {
-  return async (request: Request): Promise<Response> => {
+): (request: Request) => Promise<Response> {
+  return async function validatedHandler(request: Request): Promise<Response> {
     try {
       const validated: ValidatedData<TBody, TQuery> = {};
 
@@ -33,19 +33,18 @@ export function createValidatedHandler<TBody = unknown, TQuery = unknown>(
 
       return await handler(request, validated);
     } catch (error) {
-      if (error instanceof ValidationError) {
-        return new Response(
-          JSON.stringify({
-            error: error.message,
-            details: error.details,
-          }),
-          {
-            status: 400,
-            headers: { "Content-Type": "application/json" },
-          },
-        );
-      }
-      throw error;
+      if (!(error instanceof ValidationError)) throw error;
+
+      return new Response(
+        JSON.stringify({
+          error: error.message,
+          details: error.details,
+        }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
     }
   };
 }

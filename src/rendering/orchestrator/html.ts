@@ -53,30 +53,16 @@ export class HTMLGenerator {
   }
 
   async generateFullHTML(context: HTMLGenerationContext): Promise<string> {
-    let html: string;
+    const html = isFullHTMLDocument(context.html)
+      ? await this.handleFullHTMLDocument(context)
+      : await this.wrapHTMLFragment(context);
 
-    if (isFullHTMLDocument(context.html)) {
-      html = await this.handleFullHTMLDocument(context);
-    } else {
-      html = await this.wrapHTMLFragment(context);
-    }
+    if (!context.options?.studioEmbed) return html;
 
-    // Inject element selectors for Studio Navigator when in studio embed mode
-    if (context.options?.studioEmbed) {
-      html = injectElementSelectors(html);
-      logger.debug("[HTMLGenerator] Injected element selectors for Studio");
-    }
-
-    return html;
+    logger.debug("[HTMLGenerator] Injected element selectors for Studio");
+    return injectElementSelectors(html);
   }
 
-  /**
-   * Generate HTML stream for streaming SSR.
-   *
-   * Buffers React stream with timeout protection, then generates Tailwind CSS
-   * from the content. If timeout occurs, uses partial content for CSS generation.
-   * This ensures styles work without JS while preventing indefinite blocking.
-   */
   async generateHTMLStream(
     reactStream: ReadableStream,
     context: Omit<HTMLGenerationContext, "html">,
@@ -87,56 +73,27 @@ export class HTMLGenerator {
       mergedFrontmatter,
     );
 
-    // Buffer stream with timeout protection
-    // If timeout, use partial content - better than blocking forever
     let reactContent: string;
     try {
       reactContent = (await streamToString(reactStream)).trim();
     } catch (error) {
-      if (error instanceof StreamTimeoutError) {
-        logger.warn("[HTMLGenerator] Stream timed out, using partial content", {
-          partialLength: error.partialContent.length,
-        });
-        reactContent = error.partialContent.trim();
-      } else {
-        throw error;
-      }
+      if (!(error instanceof StreamTimeoutError)) throw error;
+
+      logger.warn("[HTMLGenerator] Stream timed out, using partial content", {
+        partialLength: error.partialContent.length,
+      });
+      reactContent = error.partialContent.trim();
     }
 
-    // Use collected head data from HeadCollector (collected during SSR render)
-    const head = context.collectedHead;
-    const effectiveTitle = head?.title || mergedFrontmatter.title || "Veryfront App";
-    const effectiveDescription = head?.description || mergedFrontmatter.description || "";
-    const enrichedFrontmatter = {
-      ...mergedFrontmatter,
-      ...(head?.title && { title: head.title }),
-      ...(head?.description && { description: head.description }),
-    };
-
-    // Generate Tailwind CSS from content (works even with partial content on timeout)
-    const { start, end } = await generateHTMLShellParts(
-      {
-        title: effectiveTitle,
-        description: effectiveDescription,
-        slug: context.slug,
-        frontmatter: enrichedFrontmatter,
-        layoutFrontmatter: context.layoutBundle?.frontmatter,
-        ssrHash: context.ssrHash,
-      },
+    const { start, end } = await this.generateShellParts(
+      context as HTMLGenerationContext,
+      mergedFrontmatter,
       htmlOptions,
-      context.options?.params,
-      context.options?.props,
       reactContent,
     );
 
-    // Build additional head elements from collected data
-    const headElements = this.buildHeadElements(head);
-    const startWithHeadElements = headElements
-      ? start.replace("</head>", `  ${headElements}\n</head>`)
-      : start;
-
     const encoder = new TextEncoder();
-    const fullHtml = `${startWithHeadElements}${reactContent}${end}`;
+    const fullHtml = `${start}${reactContent}${end}`;
 
     return new ReadableStream({
       start(controller) {
@@ -146,58 +103,22 @@ export class HTMLGenerator {
     });
   }
 
-  /** Convert collected head data to HTML string for injection into <head>. */
-  private buildHeadElements(head?: CollectedHead): string {
-    if (!head) return "";
-
-    const parts: string[] = [];
-
-    // Add meta tags (skip description - handled by shell)
-    for (const meta of head.metas) {
-      if (meta.name === "description") continue;
-      const attrs: string[] = [];
-      if (meta.name) attrs.push(`name="${meta.name}"`);
-      if (meta.property) attrs.push(`property="${meta.property}"`);
-      if (meta.content) attrs.push(`content="${meta.content}"`);
-      if (attrs.length) parts.push(`<meta ${attrs.join(" ")}>`);
-    }
-
-    // Add link tags
-    for (const link of head.links) {
-      const attrs = Object.entries(link)
-        .filter(([_, v]) => v != null)
-        .map(([k, v]) => `${k}="${v}"`)
-        .join(" ");
-      if (attrs) parts.push(`<link ${attrs}>`);
-    }
-
-    // Add style tags
-    for (const style of head.styles) {
-      parts.push(`<style>${style}</style>`);
-    }
-
-    return parts.join("\n  ");
-  }
-
-  private async handleFullHTMLDocument(
-    context: HTMLGenerationContext,
-  ): Promise<string> {
+  private async handleFullHTMLDocument(context: HTMLGenerationContext): Promise<string> {
     const metadata = extractHTMLMetadata(
       (context.pageInfo.entity.frontmatter || {}) as MDXFrontmatter,
       (context.layoutBundle?.frontmatter || {}) as MDXFrontmatter,
     );
 
-    // Detect if the page has 'use client' directive for hydration
     let isClientPage = false;
     const pagePath = context.pageInfo.entity.path;
+
     try {
       const pageContent = await this.config.adapter.fs.readFile(pagePath);
-      // Match 'use client' or "use client" at start of line
       isClientPage = /^\s*['"]use client['"];?\s*$/m.test(pageContent);
       if (isClientPage) {
         logger.debug(`[HTMLGenerator] Detected 'use client' page: ${pagePath}`);
       }
-    } catch (_e) {
+    } catch {
       logger.debug(
         `[HTMLGenerator] Could not read page file for directive detection: ${pagePath}`,
       );
@@ -207,23 +128,38 @@ export class HTMLGenerator {
       mode: this.config.mode,
       slug: context.slug,
       devPort: this.config.config?.dev?.port || DEFAULT_DASHBOARD_PORT,
-      pagePath, // Always provide pagePath for module resolution, not just client pages
+      pagePath,
       isClientPage,
     });
 
-    return injectedHtml.trimStart().toLowerCase().startsWith("<!doctype")
-      ? injectedHtml
-      : `<!DOCTYPE html>\n${injectedHtml}`;
+    if (injectedHtml.trimStart().toLowerCase().startsWith("<!doctype")) {
+      return injectedHtml;
+    }
+
+    return `<!DOCTYPE html>\n${injectedHtml}`;
   }
 
-  private async wrapHTMLFragment(
-    context: HTMLGenerationContext,
-  ): Promise<string> {
+  private async wrapHTMLFragment(context: HTMLGenerationContext): Promise<string> {
     const mergedFrontmatter = this.mergeFrontmatter(context);
     const htmlOptions = await this.buildHTMLOptions(context, mergedFrontmatter);
     const reactContent = context.html.trim();
 
-    // Use collected head data from HeadCollector
+    const { start, end } = await this.generateShellParts(
+      context,
+      mergedFrontmatter,
+      htmlOptions,
+      reactContent,
+    );
+
+    return `${start}${reactContent}${end}`;
+  }
+
+  private async generateShellParts(
+    context: HTMLGenerationContext,
+    mergedFrontmatter: MDXFrontmatter,
+    htmlOptions: HTMLGenerationOptions,
+    reactContent: string,
+  ): Promise<{ start: string; end: string }> {
     const head = context.collectedHead;
     const effectiveTitle = head?.title || mergedFrontmatter.title || "Veryfront App";
     const effectiveDescription = head?.description || mergedFrontmatter.description || "";
@@ -248,13 +184,43 @@ export class HTMLGenerator {
       reactContent,
     );
 
-    // Build additional head elements from collected data
     const headElements = this.buildHeadElements(head);
-    const startWithHeadElements = headElements
-      ? start.replace("</head>", `  ${headElements}\n</head>`)
-      : start;
+    if (!headElements) return { start, end };
 
-    return `${startWithHeadElements}${reactContent}${end}`;
+    return {
+      start: start.replace("</head>", `  ${headElements}\n</head>`),
+      end,
+    };
+  }
+
+  private buildHeadElements(head?: CollectedHead): string {
+    if (!head) return "";
+
+    const parts: string[] = [];
+
+    for (const meta of head.metas) {
+      if (meta.name === "description") continue;
+
+      const attrs: string[] = [];
+      if (meta.name) attrs.push(`name="${meta.name}"`);
+      if (meta.property) attrs.push(`property="${meta.property}"`);
+      if (meta.content) attrs.push(`content="${meta.content}"`);
+      if (attrs.length) parts.push(`<meta ${attrs.join(" ")}>`);
+    }
+
+    for (const link of head.links) {
+      const attrs = Object.entries(link)
+        .filter(([, v]) => v != null)
+        .map(([k, v]) => `${k}="${v}"`)
+        .join(" ");
+      if (attrs) parts.push(`<link ${attrs}>`);
+    }
+
+    for (const style of head.styles) {
+      parts.push(`<style>${style}</style>`);
+    }
+
+    return parts.join("\n  ");
   }
 
   private mergeFrontmatter(context: HTMLGenerationContext): MDXFrontmatter {
@@ -297,6 +263,7 @@ export class HTMLGenerator {
       this.loadProjectFile(stylesheetPath),
       this.extractProjectClasses(),
     ]);
+
     logger.debug("[HTMLGenerator] App component resolution", {
       appComponentPath,
       projectDir: this.config.projectDir,
@@ -304,7 +271,11 @@ export class HTMLGenerator {
       configApp: this.config.config?.app,
     });
 
-    const pagePath = extractRelativePath(context.pageInfo.entity.path, this.config.projectDir);
+    const pagePath = extractRelativePath(
+      context.pageInfo.entity.path,
+      this.config.projectDir,
+    );
+
     const sourceHash = context.options?.studioEmbed && context.pageInfo.entity.content
       ? computeSourceHash(context.pageInfo.entity.content)
       : undefined;
@@ -335,22 +306,15 @@ export class HTMLGenerator {
     };
   }
 
-  /**
-   * Extract Tailwind classes from all project source files.
-   * This is done fresh each request (no caching) for predictable behavior.
-   */
   private async extractProjectClasses(): Promise<Set<string>> {
     const SOURCE_EXTENSIONS = [".tsx", ".jsx", ".mdx", ".ts", ".js"];
     const classes = new Set<string>();
 
-    // Get the underlying FS adapter (unwrap from FSAdapterWrapper)
     const wrappedFs = this.config.adapter.fs as unknown as {
       getUnderlyingAdapter?: () => unknown;
     };
 
-    if (typeof wrappedFs.getUnderlyingAdapter !== "function") {
-      return classes;
-    }
+    if (typeof wrappedFs.getUnderlyingAdapter !== "function") return classes;
 
     const fsAdapter = wrappedFs.getUnderlyingAdapter() as {
       getAllSourceFiles?: () =>
@@ -358,27 +322,23 @@ export class HTMLGenerator {
         | Promise<Array<{ path: string; content?: string }>>;
     };
 
-    if (typeof fsAdapter.getAllSourceFiles !== "function") {
-      return classes;
-    }
+    if (typeof fsAdapter.getAllSourceFiles !== "function") return classes;
 
     const files = await fsAdapter.getAllSourceFiles();
 
+    let filesProcessed = 0;
     for (const file of files) {
       if (!file.content) continue;
       if (!SOURCE_EXTENSIONS.some((ext) => file.path.endsWith(ext))) continue;
 
-      // Extract candidates from file content
-      const extracted = extractCandidates(file.content);
-      for (const cls of extracted) {
+      filesProcessed++;
+      for (const cls of extractCandidates(file.content)) {
         classes.add(cls);
       }
     }
 
     logger.debug("[HTMLGenerator] extractProjectClasses", {
-      filesProcessed: files.filter((f) =>
-        f.content && SOURCE_EXTENSIONS.some((ext) => f.path.endsWith(ext))
-      ).length,
+      filesProcessed,
       totalClasses: classes.size,
     });
 

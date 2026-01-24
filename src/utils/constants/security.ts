@@ -1,8 +1,6 @@
 export const MAX_PATH_TRAVERSAL_DEPTH = 10;
 
-export const FORBIDDEN_PATH_PATTERNS = [
-  /\0/, // Null bytes
-];
+export const FORBIDDEN_PATH_PATTERNS = [/\0/];
 
 export const DIRECTORY_TRAVERSAL_PATTERN = /\.\.[\/\\]/;
 

@@ -1,17 +1,7 @@
-/**
- * Asset Pipeline - Automated Image and CSS Optimization
- *
- * Provides optional but streamlined integrations for:
- * - Image optimization with Sharp (WebP, AVIF, responsive sizes)
- * - CSS optimization with Lightning CSS (minification, autoprefixer, purging)
- *
- * Dependencies are optional - the pipeline gracefully degrades if not available.
- */
-
 export * from "./css-optimizer/index.ts";
 
-import { type ImageOptimizationOptions, ImageOptimizer } from "./image-optimizer/index.ts";
 import { type CSSOptimizationOptions, CSSOptimizer } from "./css-optimizer/index.ts";
+import { type ImageOptimizationOptions, ImageOptimizer } from "./image-optimizer/index.ts";
 import {
   processTailwindCSSInDirectory,
   type TailwindProcessResult,
@@ -53,9 +43,10 @@ export interface AssetPipelineResult {
   duration: number;
 }
 
-/**
- * Run the complete asset pipeline
- */
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export async function runAssetPipeline(
   options: AssetPipelineOptions = {},
 ): Promise<AssetPipelineResult> {
@@ -63,30 +54,13 @@ export async function runAssetPipeline(
 
   logger.info("Starting asset pipeline");
 
-  // Initialize results
   const result: AssetPipelineResult = {
-    images: {
-      optimized: 0,
-      variants: 0,
-      totalSize: 0,
-      enabled: false,
-    },
-    css: {
-      optimized: 0,
-      originalSize: 0,
-      minifiedSize: 0,
-      savings: 0,
-      enabled: false,
-    },
-    tailwind: {
-      processed: 0,
-      utilities: 0,
-      enabled: false,
-    },
+    images: { optimized: 0, variants: 0, totalSize: 0, enabled: false },
+    css: { optimized: 0, originalSize: 0, minifiedSize: 0, savings: 0, enabled: false },
+    tailwind: { processed: 0, utilities: 0, enabled: false },
     duration: 0,
   };
 
-  // Run image optimization
   if (options.images?.enabled !== false) {
     try {
       const imageOptimizer = new ImageOptimizer(options.images);
@@ -106,15 +80,13 @@ export async function runAssetPipeline(
         size: `${(imageStats.totalSize / 1024 / 1024).toFixed(2)}MB`,
       });
     } catch (error) {
-      logger.error("Image optimization failed", {
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.error("Image optimization failed", { error: getErrorMessage(error) });
     }
   }
 
-  // Run Tailwind CSS processing (before general CSS optimization)
-  if (options.tailwind && options.tailwind.enabled !== false) {
+  if (options.tailwind?.enabled !== false && options.tailwind) {
     const { projectDir, sourceDir = "styles", outputDir = ".veryfront/css" } = options.tailwind;
+
     if (!projectDir) {
       logger.warn("Tailwind CSS processing skipped: projectDir not provided");
     } else {
@@ -125,9 +97,14 @@ export async function runAssetPipeline(
           outputDir,
         );
 
-        if (tailwindResults.length > 0) {
+        if (tailwindResults.length === 0) {
+          result.tailwind.enabled = true;
+          logger.info("Tailwind CSS processing skipped - no Tailwind files detected", {
+            directory: sourceDir,
+          });
+        } else {
           const totalUtilities = tailwindResults.reduce(
-            (sum, result) => sum + (result.detectedUtilities ?? 0),
+            (sum, r) => sum + (r.detectedUtilities ?? 0),
             0,
           );
 
@@ -141,21 +118,13 @@ export async function runAssetPipeline(
             files: tailwindResults.length,
             utilities: totalUtilities,
           });
-        } else {
-          result.tailwind.enabled = true;
-          logger.info("Tailwind CSS processing skipped - no Tailwind files detected", {
-            directory: sourceDir,
-          });
         }
       } catch (error) {
-        logger.error("Tailwind CSS processing failed", {
-          error: error instanceof Error ? error.message : String(error),
-        });
+        logger.error("Tailwind CSS processing failed", { error: getErrorMessage(error) });
       }
     }
   }
 
-  // Run CSS optimization
   if (options.css?.enabled !== false) {
     try {
       const cssOptimizer = new CSSOptimizer(options.css);
@@ -177,9 +146,7 @@ export async function runAssetPipeline(
         savings: `${cssStats.averageSavings.toFixed(1)}%`,
       });
     } catch (error) {
-      logger.error("CSS optimization failed", {
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.error("CSS optimization failed", { error: getErrorMessage(error) });
     }
   }
 
@@ -195,19 +162,12 @@ export async function runAssetPipeline(
   return result;
 }
 
-/**
- * Check if asset pipeline dependencies are available
- */
 export async function checkAssetPipelineDependencies(): Promise<{
   sharp: boolean;
   lightningCSS: boolean;
 }> {
-  const dependencies = {
-    sharp: false,
-    lightningCSS: false,
-  };
+  const dependencies = { sharp: false, lightningCSS: false };
 
-  // Check Sharp
   try {
     await import("https://esm.sh/sharp@0.33.0");
     dependencies.sharp = true;
@@ -215,7 +175,6 @@ export async function checkAssetPipelineDependencies(): Promise<{
     logger.debug("Sharp image processing library not available:", error);
   }
 
-  // Check Lightning CSS
   try {
     await import("https://esm.sh/lightningcss@1.22.0");
     dependencies.lightningCSS = true;
@@ -226,9 +185,6 @@ export async function checkAssetPipelineDependencies(): Promise<{
   return dependencies;
 }
 
-/**
- * Get asset pipeline status and recommendations
- */
 export async function getAssetPipelineStatus(): Promise<{
   available: string[];
   missing: string[];
@@ -256,9 +212,5 @@ export async function getAssetPipelineStatus(): Promise<{
     );
   }
 
-  return {
-    available,
-    missing,
-    recommendations,
-  };
+  return { available, missing, recommendations };
 }

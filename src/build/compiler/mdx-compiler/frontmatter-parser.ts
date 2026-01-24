@@ -1,7 +1,7 @@
 import { extract } from "#std/front-matter/yaml.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { bundlerLogger as logger } from "#veryfront/utils";
 import type { MDXFrontmatter } from "./types.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 export interface ParsedContent {
   frontmatter: MDXFrontmatter;
@@ -9,47 +9,42 @@ export interface ParsedContent {
 }
 
 export async function parseFrontmatter(content: string): Promise<ParsedContent> {
-  let frontmatter: MDXFrontmatter = {};
-  let mdxContent = content;
-
   try {
     const result = extract(content);
-    frontmatter = result.attrs ? result.attrs as MDXFrontmatter : {};
-    mdxContent = result.body;
+    return {
+      frontmatter: (result.attrs ?? {}) as MDXFrontmatter,
+      content: result.body,
+    };
   } catch {
     const manualResult = await parseManually(content);
-    if (manualResult) {
-      frontmatter = manualResult.frontmatter;
-      mdxContent = manualResult.content;
-    }
+    if (manualResult) return manualResult;
+    return { frontmatter: {}, content };
   }
-
-  return { frontmatter, content: mdxContent };
 }
 
 async function parseManually(content: string): Promise<ParsedContent | null> {
-  if (!content.startsWith("---")) {
-    return null;
-  }
+  if (!content.startsWith("---")) return null;
 
   const match = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-  if (!match?.[1]) {
-    return null;
-  }
+  const frontmatterText = match?.[1];
+  if (!frontmatterText) return null;
 
   try {
     const { parse } = await import("std/yaml/parse.ts");
-
-    const parsed = parse(match[1]);
+    const parsed = parse(frontmatterText);
     const frontmatter = (parsed && typeof parsed === "object" ? parsed : {}) as MDXFrontmatter;
-    if (!match[2]) {
-      throw toError(createError({
-        type: "build",
-        message: "MDX content missing after frontmatter",
-      }));
+
+    const mdxBody = match?.[2];
+    if (!mdxBody) {
+      throw toError(
+        createError({
+          type: "build",
+          message: "MDX content missing after frontmatter",
+        }),
+      );
     }
-    const mdxContent = String(match[2]);
-    return { frontmatter, content: mdxContent };
+
+    return { frontmatter, content: String(mdxBody) };
   } catch (error) {
     logger.error("Failed to parse YAML frontmatter:", error);
     return null;
@@ -59,17 +54,15 @@ async function parseManually(content: string): Promise<ParsedContent | null> {
 export function extractExports(content: string): { frontmatter: MDXFrontmatter; content: string } {
   const frontmatter: MDXFrontmatter = {};
   const exportRegex = /^export\s+const\s+(\w+)\s*=\s*(.+)$/gm;
-  let match: RegExpExecArray | null;
 
+  let match: RegExpExecArray | null;
   while ((match = exportRegex.exec(content)) !== null) {
-    const [, key, value] = match;
-    if (typeof key === "string" && key.length > 0 && value) {
-      frontmatter[key] = parseExportValue(value);
-    }
+    const key = match[1];
+    const value = match[2];
+    if (key && value) frontmatter[key] = parseExportValue(value);
   }
 
-  const cleanedContent = content.replace(exportRegex, "");
-  return { frontmatter, content: cleanedContent };
+  return { frontmatter, content: content.replace(exportRegex, "") };
 }
 
 function parseExportValue(value: string): unknown {

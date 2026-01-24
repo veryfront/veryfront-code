@@ -11,11 +11,15 @@ import {
   NodeWebSocket,
 } from "./index.ts";
 
+function assertExportedFunction(value: unknown): void {
+  assertExists(value);
+  assertEquals(typeof value, "function");
+}
+
 describe("runtime/node/index.ts exports", () => {
   describe("NodeAdapter", () => {
     it("should export NodeAdapter class", () => {
-      assertExists(NodeAdapter);
-      assertEquals(typeof NodeAdapter, "function");
+      assertExportedFunction(NodeAdapter);
     });
 
     it("should export nodeAdapter singleton", () => {
@@ -27,43 +31,37 @@ describe("runtime/node/index.ts exports", () => {
 
   describe("NodeFileSystemAdapter", () => {
     it("should export NodeFileSystemAdapter class", () => {
-      assertExists(NodeFileSystemAdapter);
-      assertEquals(typeof NodeFileSystemAdapter, "function");
+      assertExportedFunction(NodeFileSystemAdapter);
     });
   });
 
   describe("NodeEnvironmentAdapter", () => {
     it("should export NodeEnvironmentAdapter class", () => {
-      assertExists(NodeEnvironmentAdapter);
-      assertEquals(typeof NodeEnvironmentAdapter, "function");
+      assertExportedFunction(NodeEnvironmentAdapter);
     });
   });
 
   describe("NodeServerAdapter", () => {
     it("should export NodeServerAdapter class", () => {
-      assertExists(NodeServerAdapter);
-      assertEquals(typeof NodeServerAdapter, "function");
+      assertExportedFunction(NodeServerAdapter);
     });
   });
 
   describe("NodeWebSocket", () => {
     it("should export NodeWebSocket class", () => {
-      assertExists(NodeWebSocket);
-      assertEquals(typeof NodeWebSocket, "function");
+      assertExportedFunction(NodeWebSocket);
     });
   });
 
   describe("NodeServer", () => {
     it("should export NodeServer class", () => {
-      assertExists(NodeServer);
-      assertEquals(typeof NodeServer, "function");
+      assertExportedFunction(NodeServer);
     });
   });
 
   describe("createNodeServer", () => {
     it("should export createNodeServer function", () => {
-      assertExists(createNodeServer);
-      assertEquals(typeof createNodeServer, "function");
+      assertExportedFunction(createNodeServer);
     });
   });
 });

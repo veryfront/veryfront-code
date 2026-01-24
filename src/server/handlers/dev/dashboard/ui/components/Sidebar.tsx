@@ -24,7 +24,9 @@ export function Sidebar({
   emptyMessage,
   onBack,
   backLabel,
-}: SidebarProps) {
+}: SidebarProps): React.ReactElement {
+  const showSubTabs = !!subTabs && !!onSubTabChange;
+
   return (
     <aside className="bg-white border-r border-gray-200 flex flex-col overflow-hidden">
       <div className="p-3 border-b border-gray-100">
@@ -37,22 +39,26 @@ export function Sidebar({
         />
       </div>
 
-      {subTabs && onSubTabChange && (
+      {showSubTabs && (
         <div className="flex px-3 py-2 gap-0.5 border-b border-gray-100">
-          {subTabs.map((tab) => (
-            <button
-              type="button"
-              key={tab.id}
-              onClick={() => onSubTabChange(tab.id)}
-              className={`px-2.5 py-1 text-[11px] font-medium rounded transition-colors ${
-                currentSubTab === tab.id
-                  ? "bg-sky-50 text-sky-600"
-                  : "text-gray-400 hover:bg-gray-50 hover:text-gray-600"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
+          {subTabs.map((tab) => {
+            const isActive = currentSubTab === tab.id;
+
+            return (
+              <button
+                type="button"
+                key={tab.id}
+                onClick={() => onSubTabChange(tab.id)}
+                className={`px-2.5 py-1 text-[11px] font-medium rounded transition-colors ${
+                  isActive
+                    ? "bg-sky-50 text-sky-600"
+                    : "text-gray-400 hover:bg-gray-50 hover:text-gray-600"
+                }`}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -64,7 +70,7 @@ export function Sidebar({
             className="w-full px-2.5 py-2 text-sm text-sky-600 rounded hover:bg-gray-50 flex items-center gap-1.5 text-left"
           >
             <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
-            {backLabel || ".. (back)"}
+            {backLabel ?? ".. (back)"}
           </button>
         )}
 
@@ -75,25 +81,29 @@ export function Sidebar({
             </div>
           )
           : (
-            items.map((item) => (
-              <button
-                type="button"
-                key={item.id}
-                onClick={() => onSelect(item.id)}
-                className={`w-full px-2.5 py-2 text-sm rounded flex items-center gap-1.5 text-left transition-colors ${
-                  selectedId === item.id
-                    ? "bg-sky-500 text-white"
-                    : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
-                } ${item.bold ? "font-semibold" : ""}`}
-              >
-                <span
-                  className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                    selectedId === item.id ? "bg-white" : "bg-current opacity-30"
-                  }`}
-                />
-                {item.label}
-              </button>
-            ))
+            items.map((item) => {
+              const isSelected = selectedId === item.id;
+
+              return (
+                <button
+                  type="button"
+                  key={item.id}
+                  onClick={() => onSelect(item.id)}
+                  className={`w-full px-2.5 py-2 text-sm rounded flex items-center gap-1.5 text-left transition-colors ${
+                    isSelected
+                      ? "bg-sky-500 text-white"
+                      : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                  } ${item.bold ? "font-semibold" : ""}`}
+                >
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                      isSelected ? "bg-white" : "bg-current opacity-30"
+                    }`}
+                  />
+                  {item.label}
+                </button>
+              );
+            })
           )}
       </div>
     </aside>

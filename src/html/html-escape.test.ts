@@ -69,13 +69,14 @@ describe("html-escape", () => {
     });
 
     it("should build multiple attributes", () => {
-      const result = buildAttributes({ id: "test", class: "foo" });
-      assertEquals(result, 'id="test" class="foo"');
+      assertEquals(buildAttributes({ id: "test", class: "foo" }), 'id="test" class="foo"');
     });
 
     it("should escape attribute values", () => {
-      const result = buildAttributes({ title: '<script>alert("xss")</script>' });
-      assertEquals(result, 'title="&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;"');
+      assertEquals(
+        buildAttributes({ title: '<script>alert("xss")</script>' }),
+        'title="&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;"',
+      );
     });
 
     it("should handle empty object", () => {
@@ -83,17 +84,15 @@ describe("html-escape", () => {
     });
 
     it("should convert numeric values to string", () => {
-      const result = buildAttributes({ tabindex: "0", value: "42" });
-      assertEquals(result, 'tabindex="0" value="42"');
+      assertEquals(buildAttributes({ tabindex: "0", value: "42" }), 'tabindex="0" value="42"');
     });
 
     it("should escape attribute names with special characters in values", () => {
-      const result = buildAttributes({
-        "data-value": "test & value",
-        "aria-label": 'Say "Hello"',
-      });
       assertEquals(
-        result,
+        buildAttributes({
+          "data-value": "test & value",
+          "aria-label": 'Say "Hello"',
+        }),
         'data-value="test &amp; value" aria-label="Say &quot;Hello&quot;"',
       );
     });

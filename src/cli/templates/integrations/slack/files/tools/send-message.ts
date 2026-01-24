@@ -9,10 +9,7 @@ export default tool({
     channel: z
       .string()
       .describe("Channel ID or name (e.g., 'C1234567890' or '#general')"),
-    text: z
-      .string()
-      .min(1)
-      .describe("Message text to send"),
+    text: z.string().min(1).describe("Message text to send"),
     threadTs: z
       .string()
       .optional()
@@ -20,17 +17,21 @@ export default tool({
   }),
   execute: async ({ channel, text, threadTs }, context) => {
     // Default to "current-user" for development; in production, always pass userId from session
-    const userId = (context?.userId as string | undefined) || "current-user";
+    const userId = context?.userId ?? "current-user";
 
     try {
       const slack = createSlackClient(userId);
       const result = await slack.sendMessage(channel, text, { threadTs });
 
+      const message = threadTs
+        ? `Reply sent to thread in ${channel}.`
+        : `Message sent to ${channel}.`;
+
       return {
         success: true,
         messageTs: result.ts,
         channel: result.channel,
-        message: threadTs ? `Reply sent to thread in ${channel}.` : `Message sent to ${channel}.`,
+        message,
       };
     } catch (error) {
       if (error instanceof Error && error.message.includes("not connected")) {

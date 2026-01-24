@@ -77,7 +77,6 @@ describe("delay()", () => {
     assertEquals(node.config.type, "wait");
 
     const config = node.config as WaitNodeConfig;
-    // delay uses waitType: "event" with special eventName
     assertEquals(config.waitType, "event");
     assertEquals(config.timeout, "5m");
   });

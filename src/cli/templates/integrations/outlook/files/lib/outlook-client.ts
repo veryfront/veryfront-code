@@ -61,10 +61,7 @@ export interface SendEmailOptions {
   bodyType?: "text" | "html";
 }
 
-async function graphFetch<T>(
-  endpoint: string,
-  options: RequestInit = {},
-): Promise<T> {
+async function graphFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = await getAccessToken();
   if (!token) {
     throw new Error("Not authenticated with Microsoft. Please connect your account.");
@@ -73,7 +70,7 @@ async function graphFetch<T>(
   const response = await fetch(`${GRAPH_BASE_URL}${endpoint}`, {
     ...options,
     headers: {
-      "Authorization": `Bearer ${token}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
       ...options.headers,
     },
@@ -82,9 +79,7 @@ async function graphFetch<T>(
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
     throw new Error(
-      `Microsoft Graph API error: ${response.status} ${
-        error.error?.message || response.statusText
-      }`,
+      `Microsoft Graph API error: ${response.status} ${error.error?.message ?? response.statusText}`,
     );
   }
 
@@ -105,13 +100,15 @@ export async function listEmails(options?: {
   if (options?.filter) params.set("$filter", options.filter);
   if (options?.orderBy) params.set("$orderby", options.orderBy);
 
-  const folderPath = options?.folderId ? `/mailFolders/${options.folderId}/messages` : "/messages";
+  const folderPath = options?.folderId
+    ? `/mailFolders/${options.folderId}/messages`
+    : "/messages";
 
   const queryString = params.toString();
-  const endpoint = `${folderPath}${queryString ? `?${queryString}` : ""}`;
+  const endpoint = queryString ? `${folderPath}?${queryString}` : folderPath;
 
   const response = await graphFetch<GraphResponse<OutlookMessage>>(endpoint);
-  return response.value || [];
+  return response.value ?? [];
 }
 
 export function getEmail(messageId: string): Promise<OutlookMessage> {
@@ -122,7 +119,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<void> {
   const message = {
     subject: options.subject,
     body: {
-      contentType: options.bodyType || "text",
+      contentType: options.bodyType ?? "text",
       content: options.body,
     },
     toRecipients: options.to.map((email) => ({
@@ -134,7 +131,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<void> {
     bccRecipients: options.bcc?.map((email) => ({
       emailAddress: { address: email },
     })),
-    importance: options.importance || "normal",
+    importance: options.importance ?? "normal",
   };
 
   await graphFetch("/sendMail", {
@@ -148,8 +145,9 @@ export async function searchEmails(options: {
   top?: number;
   skip?: number;
 }): Promise<OutlookMessage[]> {
-  const params = new URLSearchParams();
-  params.set("$search", `"${options.query}"`);
+  const params = new URLSearchParams({
+    $search: `"${options.query}"`,
+  });
 
   if (options.top) params.set("$top", options.top.toString());
   if (options.skip) params.set("$skip", options.skip.toString());
@@ -157,32 +155,31 @@ export async function searchEmails(options: {
   const response = await graphFetch<GraphResponse<OutlookMessage>>(
     `/messages?${params.toString()}`,
   );
-  return response.value || [];
+  return response.value ?? [];
 }
 
 export async function listFolders(): Promise<OutlookFolder[]> {
   const response = await graphFetch<GraphResponse<OutlookFolder>>("/mailFolders");
-  return response.value || [];
+  return response.value ?? [];
+}
+
+async function setReadState(messageId: string, isRead: boolean): Promise<void> {
+  await graphFetch(`/messages/${messageId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ isRead }),
+  });
 }
 
 export async function markAsRead(messageId: string): Promise<void> {
-  await graphFetch(`/messages/${messageId}`, {
-    method: "PATCH",
-    body: JSON.stringify({ isRead: true }),
-  });
+  await setReadState(messageId, true);
 }
 
 export async function markAsUnread(messageId: string): Promise<void> {
-  await graphFetch(`/messages/${messageId}`, {
-    method: "PATCH",
-    body: JSON.stringify({ isRead: false }),
-  });
+  await setReadState(messageId, false);
 }
 
 export async function deleteEmail(messageId: string): Promise<void> {
-  await graphFetch(`/messages/${messageId}`, {
-    method: "DELETE",
-  });
+  await graphFetch(`/messages/${messageId}`, { method: "DELETE" });
 }
 
 export async function moveEmail(messageId: string, destinationFolderId: string): Promise<void> {
@@ -192,13 +189,17 @@ export async function moveEmail(messageId: string, destinationFolderId: string):
   });
 }
 
-// Helper to format email for display
 export function formatEmail(message: OutlookMessage): string {
-  return `From: ${message.from.emailAddress.name || message.from.emailAddress.address}
-To: ${message.toRecipients.map((r) => r.emailAddress.address).join(", ")}
+  const from = message.from.emailAddress.name || message.from.emailAddress.address;
+  const to = message.toRecipients.map((r) => r.emailAddress.address).join(", ");
+  const date = new Date(message.receivedDateTime).toLocaleString();
+  const read = message.isRead ? "Yes" : "No";
+
+  return `From: ${from}
+To: ${to}
 Subject: ${message.subject}
-Date: ${new Date(message.receivedDateTime).toLocaleString()}
-Read: ${message.isRead ? "Yes" : "No"}
+Date: ${date}
+Read: ${read}
 
 ${message.bodyPreview}`;
 }

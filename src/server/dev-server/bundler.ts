@@ -17,6 +17,7 @@ export class Bundler {
     try {
       const { build } = await import("esbuild");
       const loader = this.determineFileLoader(content, filePath);
+
       const result = await build({
         bundle: true,
         write: false,
@@ -34,6 +35,7 @@ export class Bundler {
         },
         plugins: [createRelativeFsPlugin(this.projectDir, this.shell), createBareExternalPlugin()],
       });
+
       return result.outputFiles?.[0]?.text ?? "export default null";
     } catch (error) {
       logger.warn("Bundle to JavaScript failed", error);
@@ -42,11 +44,9 @@ export class Bundler {
   }
 
   private determineFileLoader(content: string, filePath: string): "tsx" | "ts" | "jsx" | "js" {
-    // Check extension first
     const loader = getLoaderForPath(filePath);
     if (loader !== "js") return loader;
 
-    // For .js files, check if content contains TypeScript patterns
     const hasTypeScript = /:\s*\w+|interface\s+|type\s+|<\w|Props>/.test(content);
     return hasTypeScript ? "ts" : "js";
   }
@@ -57,43 +57,42 @@ function createRelativeFsPlugin(projectDir: string, shell: ShellAdapter): Plugin
     name: "vf-rel-fs",
     setup(build) {
       const exts = [".tsx", ".ts", ".jsx", ".js", ".mjs"];
+
       build.onResolve({ filter: /.*/ }, (args) => {
         const isRel = args.path.startsWith(".") || args.path.startsWith("/");
-        if (!isRel) return undefined;
+        if (!isRel) return;
+
         const basedir = args.importer ? dirname(args.importer) : projectDir;
         const candidate = args.path.startsWith("/")
           ? pathResolve(args.path)
           : pathResolve(join(basedir, args.path));
+
         const candidates: string[] = [candidate];
         for (const ext of exts) candidates.push(candidate + ext);
         for (const ext of exts) candidates.push(join(candidate, `index${ext}`));
+
         for (const file of candidates) {
           try {
-            const stat = shell.statSync(file);
-            if (stat.isFile) return { path: file };
+            if (shell.statSync(file).isFile) return { path: file };
           } catch {
-            // File doesn't exist, try next candidate
+            // ignore
           }
         }
-        return undefined;
       });
+
       build.onLoad({ filter: /\.(tsx?|jsx?|mjs)$/ }, (args) => {
         try {
           const contents = shell.readFileSync(args.path);
-          const loader = getLoaderForPath(args.path);
-          return { contents, loader } as const;
+          return { contents, loader: getLoaderForPath(args.path) };
         } catch (error) {
           logger.debug("[DevBundler] Failed to read file contents", { path: args.path, error });
-          return { contents: "", loader: "js" as const };
+          return { contents: "", loader: "js" };
         }
       });
     },
   };
 }
 
-/**
- * Determine esbuild loader from file path extension.
- */
 function getLoaderForPath(path: string): "tsx" | "ts" | "jsx" | "js" {
   if (path.endsWith(".tsx")) return "tsx";
   if (path.endsWith(".ts")) return "ts";
@@ -110,11 +109,12 @@ function createBareExternalPlugin(): Plugin {
           !args.path.startsWith("/") &&
           !args.path.startsWith("http://") &&
           !args.path.startsWith("https://");
-        if (!isBare) return undefined;
+
+        if (!isBare) return;
+
         if (args.kind === "import-statement" || args.kind === "dynamic-import") {
           return { path: args.path, external: true };
         }
-        return undefined;
       });
     },
   };

@@ -2,14 +2,32 @@ import { tool } from "veryfront/tool";
 import { z } from "zod";
 import { listConversations } from "../../lib/intercom-client.ts";
 
+function toIsoSeconds(seconds?: number | null): string | null {
+  if (!seconds) return null;
+  return new Date(seconds * 1000).toISOString();
+}
+
 export default tool({
   id: "list-conversations",
   description: "List conversations from Intercom. Can filter by open/closed status.",
   inputSchema: z.object({
     page: z.number().min(1).default(1).describe("Page number for pagination"),
-    perPage: z.number().min(1).max(150).default(50).describe("Number of conversations per page (max 150)"),
-    open: z.boolean().optional().describe("Filter by open (true) or closed (false) conversations"),
-    limit: z.number().min(1).max(50).default(20).describe("Maximum number of conversations to return"),
+    perPage: z
+      .number()
+      .min(1)
+      .max(150)
+      .default(50)
+      .describe("Number of conversations per page (max 150)"),
+    open: z
+      .boolean()
+      .optional()
+      .describe("Filter by open (true) or closed (false) conversations"),
+    limit: z
+      .number()
+      .min(1)
+      .max(50)
+      .default(20)
+      .describe("Maximum number of conversations to return"),
   }),
   async execute({ page, perPage, open, limit }) {
     const { conversations, hasMore } = await listConversations({ page, perPage, open });
@@ -21,14 +39,10 @@ export default tool({
         state: conv.state,
         read: conv.read,
         priority: conv.priority,
-        createdAt: new Date(conv.created_at * 1000).toISOString(),
-        updatedAt: new Date(conv.updated_at * 1000).toISOString(),
-        waitingSince: conv.waiting_since
-          ? new Date(conv.waiting_since * 1000).toISOString()
-          : null,
-        snoozedUntil: conv.snoozed_until
-          ? new Date(conv.snoozed_until * 1000).toISOString()
-          : null,
+        createdAt: toIsoSeconds(conv.created_at) as string,
+        updatedAt: toIsoSeconds(conv.updated_at) as string,
+        waitingSince: toIsoSeconds(conv.waiting_since),
+        snoozedUntil: toIsoSeconds(conv.snoozed_until),
         source: {
           type: conv.source.type,
           subject: conv.source.subject,

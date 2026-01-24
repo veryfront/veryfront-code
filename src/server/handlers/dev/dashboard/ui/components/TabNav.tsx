@@ -6,23 +6,28 @@ interface TabNavProps {
   onTabChange: (tab: TabId) => void;
 }
 
-export function TabNav({ tabs, currentTab, onTabChange }: TabNavProps) {
+export function TabNav({ tabs, currentTab, onTabChange }: TabNavProps): JSX.Element {
   return (
     <nav className="bg-white border-b border-gray-200 px-5 flex gap-0.5">
-      {tabs.map((tab) => (
-        <button
-          type="button"
-          key={tab.id}
-          onClick={() => onTabChange(tab.id)}
-          className={`px-3 py-2.5 text-xs font-medium border-b-2 -mb-px transition-colors ${
-            currentTab === tab.id
-              ? "text-sky-500 border-sky-500"
-              : "text-gray-400 border-transparent hover:text-gray-600"
-          }`}
-        >
-          {tab.label}
-        </button>
-      ))}
+      {tabs.map((tab) => {
+        const isActive = currentTab === tab.id;
+        const className = `px-3 py-2.5 text-xs font-medium border-b-2 -mb-px transition-colors ${
+          isActive
+            ? "text-sky-500 border-sky-500"
+            : "text-gray-400 border-transparent hover:text-gray-600"
+        }`;
+
+        return (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => onTabChange(tab.id)}
+            className={className}
+          >
+            {tab.label}
+          </button>
+        );
+      })}
     </nav>
   );
 }

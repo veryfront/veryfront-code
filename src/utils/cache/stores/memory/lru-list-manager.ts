@@ -13,40 +13,40 @@ export class LRUListManager<T> {
   }
 
   moveToFront(node: LRUNode<T>): void {
+    node.entry.lastAccessed = Date.now();
+
     if (node === this.head) {
-      node.entry.lastAccessed = Date.now();
       return;
     }
 
     this.removeNode(node);
-
     this.addToFront(node);
   }
 
   addToFront(node: LRUNode<T>): void {
     node.next = this.head;
     node.prev = null;
+
     if (this.head) {
       this.head.prev = node;
-    }
-    this.head = node;
-    if (!this.tail) {
+    } else {
       this.tail = node;
     }
+
+    this.head = node;
     node.entry.lastAccessed = Date.now();
   }
 
   removeNode(node: LRUNode<T>): void {
     if (node.prev) {
       node.prev.next = node.next;
-    }
-    if (node.next) {
-      node.next.prev = node.prev;
-    }
-    if (node === this.head) {
+    } else if (node === this.head) {
       this.head = node.next;
     }
-    if (node === this.tail) {
+
+    if (node.next) {
+      node.next.prev = node.prev;
+    } else if (node === this.tail) {
       this.tail = node.prev;
     }
   }

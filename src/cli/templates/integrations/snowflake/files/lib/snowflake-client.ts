@@ -7,11 +7,6 @@ import {
   getSnowflakeWarehouse,
 } from "./token-store.ts";
 
-/**
- * Snowflake SQL REST API Response Types
- * Based on: https://docs.snowflake.com/en/developer-guide/sql-api/reference
- */
-
 interface SnowflakeStatementResponse {
   statementHandle: string;
   statementStatusUrl: string;
@@ -104,9 +99,6 @@ interface SnowflakeError extends Error {
   sqlState?: string;
 }
 
-/**
- * Execute a Snowflake SQL API request
- */
 async function snowflakeFetch<T>(
   endpoint: string,
   options: RequestInit = {},
@@ -115,39 +107,37 @@ async function snowflakeFetch<T>(
   const username = getSnowflakeUsername();
   const password = getSnowflakePassword();
 
-  // Construct the base URL for Snowflake SQL REST API
   const baseUrl = `https://${account}.snowflakecomputing.com/api/v2`;
-
-  // Create basic auth header
   const authHeader = `Basic ${btoa(`${username}:${password}`)}`;
 
   const response = await fetch(`${baseUrl}${endpoint}`, {
     ...options,
     headers: {
-      "Authorization": authHeader,
+      Authorization: authHeader,
       "Content-Type": "application/json",
-      "Accept": "application/json",
+      Accept: "application/json",
       "X-Snowflake-Authorization-Token-Type": "KEYPAIR_JWT",
       ...options.headers,
     },
   });
 
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({})) as SnowflakeError;
-    const errorMessage = errorData.message ||
-      `Snowflake API error: ${response.status} ${response.statusText}`;
-    const err: SnowflakeError = new Error(errorMessage);
-    err.code = errorData.code;
-    err.sqlState = errorData.sqlState;
-    throw err;
+  if (response.ok) {
+    return await response.json();
   }
 
-  return await response.json();
+  const errorData = (await response.json().catch(() => ({}))) as Partial<
+    SnowflakeError
+  >;
+  const errorMessage =
+    errorData.message ??
+      `Snowflake API error: ${response.status} ${response.statusText}`;
+
+  const err: SnowflakeError = new Error(errorMessage);
+  err.code = errorData.code;
+  err.sqlState = errorData.sqlState;
+  throw err;
 }
 
-/**
- * Submit a SQL statement for execution
- */
 async function submitStatement(
   sqlText: string,
   database?: string,
@@ -156,26 +146,18 @@ async function submitStatement(
   async_exec = false,
 ): Promise<SnowflakeStatementResponse | SnowflakeQueryResult> {
   const warehouse = getSnowflakeWarehouse();
-  const defaultDatabase = database || getSnowflakeDatabase();
-  const defaultSchema = schema || getSnowflakeSchema();
 
   const requestBody = {
     statement: sqlText,
     warehouse,
-    database: defaultDatabase,
-    schema: defaultSchema,
-    timeout: timeout || 60,
-    resultSetMetaData: {
-      format: "json",
-    },
+    database: database ?? getSnowflakeDatabase(),
+    schema: schema ?? getSnowflakeSchema(),
+    timeout: timeout ?? 60,
+    resultSetMetaData: { format: "json" },
     parameters: {},
   };
 
-  // For async execution, use the /statements endpoint
-  // For sync execution, use /statements with async=false
-  const endpoint = async_exec
-    ? "/statements?async=true"
-    : "/statements";
+  const endpoint = async_exec ? "/statements?async=true" : "/statements";
 
   return await snowflakeFetch<SnowflakeStatementResponse | SnowflakeQueryResult>(
     endpoint,
@@ -186,9 +168,6 @@ async function submitStatement(
   );
 }
 
-/**
- * Get the status and results of a statement
- */
 export async function getQueryStatus(
   statementHandle: string,
 ): Promise<SnowflakeQueryStatusResponse> {
@@ -197,37 +176,26 @@ export async function getQueryStatus(
   );
 }
 
-/**
- * Cancel a running statement
- */
 export async function cancelQuery(statementHandle: string): Promise<void> {
   await snowflakeFetch(`/statements/${statementHandle}/cancel`, {
     method: "POST",
   });
 }
 
-/**
- * Transform Snowflake result format to more usable JSON objects
- */
-function transformResults(result: SnowflakeQueryResult): Record<string, unknown>[] {
-  if (!result.data || result.data.length === 0) {
-    return [];
-  }
+function transformResults(
+  result: SnowflakeQueryResult,
+): Record<string, unknown>[] {
+  if (result.data.length === 0) return [];
 
   const columns = result.resultSetMetaData.rowType.map((col) => col.name);
 
   return result.data.map((row) => {
     const obj: Record<string, unknown> = {};
-    columns.forEach((col, index) => {
-      obj[col] = row[index];
-    });
+    for (let i = 0; i < columns.length; i++) obj[columns[i]] = row[i];
     return obj;
   });
 }
 
-/**
- * Run a SQL query and return results
- */
 export async function runQuery(
   sql: string,
   database?: string,
@@ -250,7 +218,6 @@ export async function runQuery(
     options.async,
   );
 
-  // Handle async execution
   if ("statementHandle" in result && !("data" in result)) {
     return {
       columns: [],
@@ -260,57 +227,38 @@ export async function runQuery(
     };
   }
 
-  // Handle synchronous result
   const queryResult = result as SnowflakeQueryResult;
 
-  const columns = queryResult.resultSetMetaData.rowType.map((col) => ({
-    name: col.name,
-    type: col.type,
-    nullable: col.nullable,
-  }));
-
-  const rows = transformResults(queryResult);
-
   return {
-    columns,
-    rows,
+    columns: queryResult.resultSetMetaData.rowType.map((col) => ({
+      name: col.name,
+      type: col.type,
+      nullable: col.nullable,
+    })),
+    rows: transformResults(queryResult),
     rowCount: queryResult.resultSetMetaData.numRows,
     statementHandle: queryResult.statementHandle,
   };
 }
 
-/**
- * List all databases in the account
- */
 export async function listDatabases(): Promise<DatabaseInfo[]> {
   const result = await runQuery("SHOW DATABASES");
   return result.rows as DatabaseInfo[];
 }
 
-/**
- * List all schemas in a database
- */
 export async function listSchemas(database: string): Promise<SchemaInfo[]> {
   const result = await runQuery(`SHOW SCHEMAS IN DATABASE ${database}`);
   return result.rows as SchemaInfo[];
 }
 
-/**
- * List all tables in a database schema
- */
 export async function listTables(
   database: string,
   schema: string,
 ): Promise<TableInfo[]> {
-  const result = await runQuery(
-    `SHOW TABLES IN ${database}.${schema}`,
-  );
+  const result = await runQuery(`SHOW TABLES IN ${database}.${schema}`);
   return result.rows as TableInfo[];
 }
 
-/**
- * Get detailed information about a table's columns
- */
 export async function describeTable(
   database: string,
   schema: string,
@@ -319,24 +267,16 @@ export async function describeTable(
   columns: ColumnInfo[];
   primaryKeys: string[];
 }> {
-  const result = await runQuery(
-    `DESCRIBE TABLE ${database}.${schema}.${table}`,
-  );
+  const result = await runQuery(`DESCRIBE TABLE ${database}.${schema}.${table}`);
 
   const columns = result.rows as ColumnInfo[];
   const primaryKeys = columns
     .filter((col) => col.primary_key === "Y")
     .map((col) => col.name);
 
-  return {
-    columns,
-    primaryKeys,
-  };
+  return { columns, primaryKeys };
 }
 
-/**
- * Get table row count
- */
 export async function getTableRowCount(
   database: string,
   schema: string,
@@ -346,16 +286,10 @@ export async function getTableRowCount(
     `SELECT COUNT(*) as count FROM ${database}.${schema}.${table}`,
   );
 
-  if (result.rows.length > 0 && "count" in result.rows[0]) {
-    return Number(result.rows[0].count);
-  }
-
-  return 0;
+  const count = result.rows[0]?.count;
+  return count == null ? 0 : Number(count);
 }
 
-/**
- * Get current Snowflake version and session info
- */
 export async function getSessionInfo(): Promise<{
   version: string;
   warehouse: string;
@@ -374,11 +308,10 @@ export async function getSessionInfo(): Promise<{
       CURRENT_ROLE() as role
   `);
 
-  if (result.rows.length === 0) {
-    throw new Error("Failed to get session info");
-  }
+  const row = result.rows[0];
+  if (!row) throw new Error("Failed to get session info");
 
-  return result.rows[0] as {
+  return row as {
     version: string;
     warehouse: string;
     database?: string;

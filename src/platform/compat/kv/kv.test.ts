@@ -20,7 +20,7 @@ describe("openKv", () => {
       const key = e.key.join(":");
       if (key >= "a:2") gotBounds.push(key);
     }
-    assert(gotBounds.some((k) => k === "a:2"));
+    assert(gotBounds.includes("a:2"));
 
     const limited: string[] = [];
     for await (const e of kv.list({ prefix: ["a"], limit: 1 })) {
@@ -28,10 +28,11 @@ describe("openKv", () => {
       break; // consume only first page/item to respect limit semantics
     }
     assertEquals(limited.length, 1);
+
     try {
-      await (kv as any).close?.();
-    } catch (_error) {
-      void _error;
+      await (kv as { close?: () => Promise<void> }).close?.();
+    } catch {
+      // ignore
     }
   });
 });

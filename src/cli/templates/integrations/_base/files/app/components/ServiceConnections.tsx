@@ -18,31 +18,43 @@ interface ServiceConnectionsProps {
   className?: string;
 }
 
-export function ServiceConnections({ services, className = "" }: ServiceConnectionsProps) {
+function useIntegrationStatus(): { status: Record<string, boolean>; loading: boolean } {
   const [status, setStatus] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    async function checkStatus() {
+    async function checkStatus(): Promise<void> {
       try {
         const res = await fetch("/api/integrations/status");
-        if (res.ok) {
-          const data = await res.json();
-          // Convert array to Record<id, boolean> for status lookup
-          const statusMap: Record<string, boolean> = {};
-          for (const integration of data.integrations || []) {
-            statusMap[integration.id] = integration.connected;
-          }
-          setStatus(statusMap);
+        if (!res.ok) return;
+
+        const data = await res.json();
+        const integrations = data?.integrations ?? [];
+
+        const statusMap: Record<string, boolean> = {};
+        for (const integration of integrations) {
+          statusMap[integration.id] = integration.connected;
         }
+
+        setStatus(statusMap);
       } catch (err) {
         console.error("Failed to check service status:", err);
       } finally {
         setLoading(false);
       }
     }
+
     checkStatus();
   }, []);
+
+  return { status, loading };
+}
+
+export function ServiceConnections({
+  services,
+  className = "",
+}: ServiceConnectionsProps): React.ReactElement {
+  const { status, loading } = useIntegrationStatus();
 
   const servicesWithStatus: Service[] = services.map((s) => ({
     ...s,
@@ -61,7 +73,9 @@ export function ServiceConnections({ services, className = "" }: ServiceConnecti
 
   return (
     <div className={`flex items-center gap-2 ${className}`}>
-      {servicesWithStatus.map((service) => <ServiceBadge key={service.id} service={service} />)}
+      {servicesWithStatus.map((service) => (
+        <ServiceBadge key={service.id} service={service} />
+      ))}
       {connectedCount < services.length && (
         <span className="text-xs text-neutral-500 dark:text-neutral-400 ml-1">
           {connectedCount}/{services.length} connected
@@ -71,11 +85,7 @@ export function ServiceConnections({ services, className = "" }: ServiceConnecti
   );
 }
 
-function ServiceBadge({ service }: { service: Service }) {
-  const handleConnect = () => {
-    globalThis.location.href = service.authUrl;
-  };
-
+function ServiceBadge({ service }: { service: Service }): React.ReactElement {
   if (service.connected) {
     return (
       <span
@@ -86,6 +96,10 @@ function ServiceBadge({ service }: { service: Service }) {
         {service.name}
       </span>
     );
+  }
+
+  function handleConnect(): void {
+    globalThis.location.href = service.authUrl;
   }
 
   return (
@@ -101,31 +115,11 @@ function ServiceBadge({ service }: { service: Service }) {
   );
 }
 
-export function ServiceConnectionsCard({ services, className = "" }: ServiceConnectionsProps) {
-  const [status, setStatus] = useState<Record<string, boolean>>({});
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    async function checkStatus() {
-      try {
-        const res = await fetch("/api/integrations/status");
-        if (res.ok) {
-          const data = await res.json();
-          // Convert array to Record<id, boolean> for status lookup
-          const statusMap: Record<string, boolean> = {};
-          for (const integration of data.integrations || []) {
-            statusMap[integration.id] = integration.connected;
-          }
-          setStatus(statusMap);
-        }
-      } catch (err) {
-        console.error("Failed to check service status:", err);
-      } finally {
-        setLoading(false);
-      }
-    }
-    checkStatus();
-  }, []);
+export function ServiceConnectionsCard({
+  services,
+  className = "",
+}: ServiceConnectionsProps): React.ReactElement | null {
+  const { status, loading } = useIntegrationStatus();
 
   const servicesWithStatus: Service[] = services.map((s) => ({
     ...s,
@@ -134,9 +128,7 @@ export function ServiceConnectionsCard({ services, className = "" }: ServiceConn
 
   const disconnectedServices = servicesWithStatus.filter((s) => !s.connected);
 
-  if (loading || disconnectedServices.length === 0) {
-    return null;
-  }
+  if (loading || disconnectedServices.length === 0) return null;
 
   return (
     <div

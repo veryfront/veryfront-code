@@ -2,10 +2,6 @@ export default function RootLayout({
   children,
 }: {
   children: React.ReactNode;
-}) {
-  return (
-    <div className="h-full bg-slate-50 dark:bg-slate-900">
-      {children}
-    </div>
-  );
+}): React.ReactNode {
+  return <div className="h-full bg-slate-50 dark:bg-slate-900">{children}</div>;
 }

@@ -13,7 +13,6 @@ export interface SSRRewriteOptions {
 }
 
 function shouldKeepBareSpecifier(specifier: string): boolean {
-  // Skip if already has protocol prefix
   if (
     specifier.startsWith("npm:") ||
     specifier.startsWith("http://") ||
@@ -24,24 +23,12 @@ function shouldKeepBareSpecifier(specifier: string): boolean {
     return true;
   }
 
-  // Skip @/ path aliases - handled separately
-  if (specifier.startsWith("@/")) {
-    return true;
-  }
+  if (specifier.startsWith("@/")) return true;
 
-  // Keep React as bare specifiers - deno.json resolves to esm.sh
-  // This ensures same React instance as react-dom/server
-  if (specifier === "react" || specifier.startsWith("react/")) {
-    return true;
-  }
-  if (specifier === "react-dom" || specifier.startsWith("react-dom/")) {
-    return true;
-  }
+  if (specifier === "react" || specifier.startsWith("react/")) return true;
+  if (specifier === "react-dom" || specifier.startsWith("react-dom/")) return true;
 
-  // Keep veryfront/* imports as bare specifiers for Deno to resolve via deno.json exports
-  if (specifier.startsWith("veryfront/")) {
-    return true;
-  }
+  if (specifier.startsWith("veryfront/")) return true;
 
   return false;
 }
@@ -50,35 +37,30 @@ function resolveReactForRuntime(specifier: string): string | null {
   if (isDeno) return null;
 
   const reactMap = getReactImportMap();
-  if (reactMap[specifier]) {
-    return reactMap[specifier]!;
-  }
+  const mapped = reactMap[specifier];
+  if (mapped) return mapped;
+
   if (specifier.startsWith("react/")) {
     const subpath = specifier.slice("react/".length);
     return `https://esm.sh/react@${REACT_VERSION}/${subpath}?target=es2022`;
   }
+
   if (specifier.startsWith("react-dom/")) {
     const subpath = specifier.slice("react-dom/".length);
     return `https://esm.sh/react-dom@${REACT_VERSION}/${subpath}?target=es2022`;
   }
+
   return null;
 }
 
 function rewriteBareImports(code: string): string {
-  return code.replace(
-    /from\s+["']([^"'./][^"']*)["']/g,
-    (_match, specifier) => {
-      const reactUrl = resolveReactForRuntime(specifier);
-      if (reactUrl) {
-        return `from "${reactUrl}"`;
-      }
-      if (shouldKeepBareSpecifier(specifier)) {
-        return `from "${specifier}"`;
-      }
-      // Other packages go to esm.sh with ?deps to pin React version
-      return `from "https://esm.sh/${specifier}?deps=react@${REACT_VERSION},react-dom@${REACT_VERSION}&target=es2022"`;
-    },
-  );
+  return code.replace(/from\s+["']([^"'./][^"']*)["']/g, (_match, specifier: string) => {
+    const reactUrl = resolveReactForRuntime(specifier);
+    if (reactUrl) return `from "${reactUrl}"`;
+    if (shouldKeepBareSpecifier(specifier)) return `from "${specifier}"`;
+
+    return `from "https://esm.sh/${specifier}?deps=react@${REACT_VERSION},react-dom@${REACT_VERSION}&target=es2022"`;
+  });
 }
 
 function rewritePathAliases(code: string, options: SSRRewriteOptions): string {
@@ -86,25 +68,15 @@ function rewritePathAliases(code: string, options: SSRRewriteOptions): string {
   const projectParam = projectSlug ? `&project=${projectSlug}` : "";
   const branchParam = branch ? `&branch=${branch}` : "";
 
-  // For cross-project imports, @/ paths resolve to the external project
-  if (crossProjectRef) {
-    return code.replace(
-      /from\s+["']@\/([^"']+)["']/g,
-      (_match, path) => {
-        const jsPath = path.endsWith(".js") ? path : `${path}.js`;
-        return `from "/_vf_modules/_cross/${crossProjectRef}/@/${jsPath}?ssr=true&v=${cacheBuster}"`;
-      },
-    );
-  }
+  return code.replace(/from\s+["']@\/([^"']+)["']/g, (_match, path: string) => {
+    const jsPath = path.endsWith(".js") ? path : `${path}.js`;
 
-  // Regular @/ paths resolve to current project
-  return code.replace(
-    /from\s+["']@\/([^"']+)["']/g,
-    (_match, path) => {
-      const jsPath = path.endsWith(".js") ? path : `${path}.js`;
-      return `from "/_vf_modules/${jsPath}?ssr=true${projectParam}${branchParam}&v=${cacheBuster}"`;
-    },
-  );
+    if (crossProjectRef) {
+      return `from "/_vf_modules/_cross/${crossProjectRef}/@/${jsPath}?ssr=true&v=${cacheBuster}"`;
+    }
+
+    return `from "/_vf_modules/${jsPath}?ssr=true${projectParam}${branchParam}&v=${cacheBuster}"`;
+  });
 }
 
 function rewriteRelativeImports(code: string, options: SSRRewriteOptions): string {
@@ -114,7 +86,8 @@ function rewriteRelativeImports(code: string, options: SSRRewriteOptions): strin
 
   return code.replace(
     /from\s+["']((?:\.\.?\/|\/)[^"']+\.js)["']/g,
-    (_match, path) => `from "${path}?ssr=true${projectParam}${branchParam}&v=${cacheBuster}"`,
+    (_match, path: string) =>
+      `from "${path}?ssr=true${projectParam}${branchParam}&v=${cacheBuster}"`,
   );
 }
 

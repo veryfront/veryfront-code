@@ -9,17 +9,15 @@ export default tool({
     boardId: z.string().describe("The ID of the board to create the item in"),
     itemName: z.string().describe("The name/title of the item"),
     groupId: z.string().optional().describe("Optional group ID within the board to add the item to"),
-    columnValues: z.record(z.unknown()).optional().describe(
-      "Optional column values as a key-value object. Keys are column IDs, values depend on column type.",
-    ),
+    columnValues: z
+      .record(z.unknown())
+      .optional()
+      .describe(
+        "Optional column values as a key-value object. Keys are column IDs, values depend on column type.",
+      ),
   }),
   async execute({ boardId, itemName, groupId, columnValues }) {
-    const item = await createItem({
-      boardId,
-      itemName,
-      groupId,
-      columnValues,
-    });
+    const item = await createItem({ boardId, itemName, groupId, columnValues });
 
     return {
       success: true,

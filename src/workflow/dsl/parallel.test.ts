@@ -8,6 +8,10 @@ import { parallel } from "./parallel.ts";
 import { step } from "./step.ts";
 import type { ParallelNodeConfig } from "../types.ts";
 
+function getConfig(node: { config: unknown }): ParallelNodeConfig {
+  return node.config as ParallelNodeConfig;
+}
+
 describe("parallel()", () => {
   it("should create a parallel node with children", () => {
     const node = parallel("generate", [
@@ -18,7 +22,7 @@ describe("parallel()", () => {
     assertEquals(node.id, "generate");
     assertEquals(node.config.type, "parallel");
 
-    const config = node.config as ParallelNodeConfig;
+    const config = getConfig(node);
     assertEquals(config.nodes?.length, 2);
     // parallel() prefixes child IDs
     assertEquals(config.nodes?.[0]?.id, "generate/write");
@@ -26,7 +30,7 @@ describe("parallel()", () => {
   });
 
   it("should support strategy option", () => {
-    const raceNode = parallel(
+    const node = parallel(
       "batch",
       [
         step("task1", { agent: "a" }),
@@ -36,8 +40,7 @@ describe("parallel()", () => {
       { strategy: "race" },
     );
 
-    const config = raceNode.config as ParallelNodeConfig;
-    assertEquals(config.strategy, "race");
+    assertEquals(getConfig(node).strategy, "race");
   });
 
   it("should support allSettled strategy", () => {
@@ -47,8 +50,7 @@ describe("parallel()", () => {
       { strategy: "allSettled" },
     );
 
-    const config = node.config as ParallelNodeConfig;
-    assertEquals(config.strategy, "allSettled");
+    assertEquals(getConfig(node).strategy, "allSettled");
   });
 
   it("should throw for empty children array", () => {
@@ -62,8 +64,7 @@ describe("parallel()", () => {
   it("should handle single child", () => {
     const node = parallel("single", [step("only", { agent: "a" })]);
 
-    const config = node.config as ParallelNodeConfig;
-    assertEquals(config.nodes?.length, 1);
+    assertEquals(getConfig(node).nodes?.length, 1);
   });
 
   it("should support nested parallel nodes", () => {
@@ -78,7 +79,7 @@ describe("parallel()", () => {
       ]),
     ]);
 
-    const config = node.config as ParallelNodeConfig;
+    const config = getConfig(node);
     assertEquals(config.nodes?.length, 2);
     assertEquals(config.nodes?.[0]?.config.type, "parallel");
     assertEquals(config.nodes?.[1]?.config.type, "parallel");
@@ -87,14 +88,12 @@ describe("parallel()", () => {
   it("should default strategy to all", () => {
     const node = parallel("test", [step("a", { agent: "a" })]);
 
-    const config = node.config as ParallelNodeConfig;
-    assertEquals(config.strategy, "all");
+    assertEquals(getConfig(node).strategy, "all");
   });
 
   it("should support timeout option", () => {
     const node = parallel("test", [step("a", { agent: "a" })], { timeout: "5m" });
 
-    const config = node.config as ParallelNodeConfig;
-    assertEquals(config.timeout, "5m");
+    assertEquals(getConfig(node).timeout, "5m");
   });
 });

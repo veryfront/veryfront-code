@@ -2,11 +2,6 @@ import { init, parse } from "es-module-lexer";
 
 let initPromise: Promise<void> | null = null;
 
-// ============================================================================
-// URL Masking - es-module-lexer cannot parse HTTP URLs with special chars
-// We temporarily replace them with safe placeholders before parsing
-// ============================================================================
-
 // Matches HTTP/HTTPS URLs in string literals (single, double, or backtick quotes)
 // Uses negative lookbehind to avoid matching URLs inside escaped quotes (like \")
 const HTTP_URL_PATTERN = /(?<!\\)(['"`])(https?:\/\/[^'"`\n\\]+)\1/g;
@@ -20,7 +15,7 @@ function maskHttpUrls(code: string): UrlMaskResult {
   const urlMap = new Map<string, string>();
   let counter = 0;
 
-  const masked = code.replace(HTTP_URL_PATTERN, (_match, quote, url) => {
+  const masked = code.replace(HTTP_URL_PATTERN, (_match, quote: string, url: string) => {
     const placeholder = `__VFURL_${counter++}__`;
     urlMap.set(placeholder, url);
     return `${quote}${placeholder}${quote}`;
@@ -37,7 +32,7 @@ function unmaskHttpUrls(code: string, urlMap: Map<string, string>): string {
   return result;
 }
 
-export async function initLexer() {
+export async function initLexer(): Promise<void> {
   if (!initPromise) {
     // es-module-lexer@1.5 exports init as a Promise (not a function) in ESM build
     // but some typings expect a function. Handle both to avoid type errors.
@@ -62,44 +57,46 @@ export type ImportSpecifier = {
 export async function parseImports(code: string): Promise<readonly ImportSpecifier[]> {
   await initLexer();
 
-  // Mask HTTP URLs to avoid es-module-lexer parse errors
   const { masked, urlMap } = maskHttpUrls(code);
 
   let imports: readonly ImportSpecifier[];
   try {
     [imports] = parse(masked);
   } catch (error) {
-    // Log the problematic code around the error location for debugging
     const errorMsg = error instanceof Error ? error.message : String(error);
     const match = errorMsg.match(/@:(\d+):(\d+)/);
+
     if (match) {
-      const line = parseInt(match[1]!, 10);
-      const col = parseInt(match[2]!, 10);
+      const line = Number.parseInt(match[1] ?? "", 10);
+      const col = Number.parseInt(match[2] ?? "", 10);
       const lines = masked.split("\n");
-      const context = lines.slice(Math.max(0, line - 3), line + 2).map((l, i) => {
-        const lineNum = Math.max(0, line - 3) + i + 1;
-        const prefix = lineNum === line ? ">>> " : "    ";
-        return `${prefix}${lineNum}: ${l.substring(0, 200)}${l.length > 200 ? "..." : ""}`;
-      }).join("\n");
-      console.error(`[es-module-lexer] Parse error at line ${line}, column ${col}:\n${context}`);
+      const start = Math.max(0, line - 3);
+
+      const context = lines
+        .slice(start, line + 2)
+        .map((l, i) => {
+          const lineNum = start + i + 1;
+          const prefix = lineNum === line ? ">>> " : "    ";
+          const snippet = l.length > 200 ? `${l.substring(0, 200)}...` : l;
+          return `${prefix}${lineNum}: ${snippet}`;
+        })
+        .join("\n");
+
+      console.error(
+        `[es-module-lexer] Parse error at line ${line}, column ${col}:\n${context}`,
+      );
     }
+
     throw error;
   }
 
-  // If no URLs were masked, return as-is
-  if (urlMap.size === 0) {
-    return imports;
-  }
+  if (urlMap.size === 0) return imports;
 
-  // Restore original URLs in import specifiers
   return imports.map((imp) => {
-    if (imp.n) {
-      const restoredN = unmaskHttpUrls(imp.n, urlMap);
-      if (restoredN !== imp.n) {
-        return { ...imp, n: restoredN };
-      }
-    }
-    return imp;
+    if (!imp.n) return imp;
+
+    const restoredN = unmaskHttpUrls(imp.n, urlMap);
+    return restoredN === imp.n ? imp : { ...imp, n: restoredN };
   });
 }
 
@@ -113,33 +110,23 @@ export async function replaceSpecifiers(
 ): Promise<string> {
   await initLexer();
 
-  // Mask HTTP URLs to avoid es-module-lexer parse errors
   const { masked, urlMap } = maskHttpUrls(code);
   const [imports] = parse(masked);
 
   let result = masked;
 
-  // Process in reverse order to maintain indices
   for (let i = imports.length - 1; i >= 0; i--) {
     const imp = imports[i];
-    if (!imp) continue;
-    if (imp.n === undefined) continue;
+    if (!imp?.n) continue;
 
-    // Unmask the specifier for the replacer to see the original URL
     const originalSpecifier = unmaskHttpUrls(imp.n, urlMap);
     const replacement = replacer(originalSpecifier, imp.d > -1);
 
-    if (replacement && replacement !== originalSpecifier) {
-      // Replace only the specifier part [s, e]
-      // imp.s and imp.e are indices in the masked string.
-      // Since we modify 'result' from right to left, these indices are valid for 'result' too.
-      const before = result.substring(0, imp.s);
-      const after = result.substring(imp.e);
-      result = before + replacement + after;
-    }
+    if (!replacement || replacement === originalSpecifier) continue;
+
+    result = result.substring(0, imp.s) + replacement + result.substring(imp.e);
   }
 
-  // Unmask any remaining HTTP URLs that weren't replaced
   return unmaskHttpUrls(result, urlMap);
 }
 
@@ -153,7 +140,6 @@ export async function rewriteImports(
 ): Promise<string> {
   await initLexer();
 
-  // Mask HTTP URLs to avoid es-module-lexer parse errors
   const { masked, urlMap } = maskHttpUrls(code);
   const [imports] = parse(masked);
 
@@ -163,21 +149,14 @@ export async function rewriteImports(
     const imp = imports[i];
     if (!imp) continue;
 
-    // Unmask the import specifier for the rewriter
     const unmaskedImp = imp.n ? { ...imp, n: unmaskHttpUrls(imp.n, urlMap) } : imp;
-
-    // Extract the full statement from the masked code and unmask it
     const statement = unmaskHttpUrls(masked.substring(imp.ss, imp.se), urlMap);
 
     const replacement = rewriter(unmaskedImp, statement);
+    if (replacement === null) continue;
 
-    if (replacement !== null) {
-      const before = result.substring(0, imp.ss);
-      const after = result.substring(imp.se);
-      result = before + replacement + after;
-    }
+    result = result.substring(0, imp.ss) + replacement + result.substring(imp.se);
   }
 
-  // Unmask any remaining HTTP URLs
   return unmaskHttpUrls(result, urlMap);
 }

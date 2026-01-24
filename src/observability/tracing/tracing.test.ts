@@ -1,18 +1,3 @@
-/**
- * OpenTelemetry Tracing Tests
- *
- * Tests the distributed tracing infrastructure:
- * - Initialization with different configurations
- * - Environment variable override logic
- * - Span lifecycle (start, end, attributes, events)
- * - Context extraction from/injection to HTTP headers
- * - withSpan and withSpanSync helpers
- * - Child span creation from parent
- * - Error recording in spans
- * - isTracingEnabled checks
- * - Edge cases: tracing disabled, null spans, missing API
- */
-
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
@@ -20,88 +5,67 @@ import { TracingManager } from "./manager.ts";
 
 describe("Tracing Module", () => {
   describe("Module Exports", () => {
+    async function assertExportedFunction(name: string): Promise<void> {
+      const mod = await import("./index.ts");
+      const value = (mod as Record<string, unknown>)[name];
+      assertExists(value, `${name} should be exported`);
+      assertEquals(typeof value, "function", "Should be a function");
+    }
+
     it("should export initTracing function", async () => {
-      const { initTracing } = await import("./index.ts");
-      assertExists(initTracing, "initTracing should be exported");
-      assertEquals(typeof initTracing, "function", "Should be a function");
+      await assertExportedFunction("initTracing");
     });
 
     it("should export isTracingEnabled function", async () => {
-      const { isTracingEnabled } = await import("./index.ts");
-      assertExists(isTracingEnabled, "isTracingEnabled should be exported");
-      assertEquals(typeof isTracingEnabled, "function", "Should be a function");
+      await assertExportedFunction("isTracingEnabled");
     });
 
     it("should export startSpan function", async () => {
-      const { startSpan } = await import("./index.ts");
-      assertExists(startSpan, "startSpan should be exported");
-      assertEquals(typeof startSpan, "function", "Should be a function");
+      await assertExportedFunction("startSpan");
     });
 
     it("should export endSpan function", async () => {
-      const { endSpan } = await import("./index.ts");
-      assertExists(endSpan, "endSpan should be exported");
-      assertEquals(typeof endSpan, "function", "Should be a function");
+      await assertExportedFunction("endSpan");
     });
 
     it("should export setSpanAttributes function", async () => {
-      const { setSpanAttributes } = await import("./index.ts");
-      assertExists(setSpanAttributes, "setSpanAttributes should be exported");
-      assertEquals(typeof setSpanAttributes, "function", "Should be a function");
+      await assertExportedFunction("setSpanAttributes");
     });
 
     it("should export addSpanEvent function", async () => {
-      const { addSpanEvent } = await import("./index.ts");
-      assertExists(addSpanEvent, "addSpanEvent should be exported");
-      assertEquals(typeof addSpanEvent, "function", "Should be a function");
+      await assertExportedFunction("addSpanEvent");
     });
 
     it("should export withSpan function", async () => {
-      const { withSpan } = await import("./index.ts");
-      assertExists(withSpan, "withSpan should be exported");
-      assertEquals(typeof withSpan, "function", "Should be a function");
+      await assertExportedFunction("withSpan");
     });
 
     it("should export withSpanSync function", async () => {
-      const { withSpanSync } = await import("./index.ts");
-      assertExists(withSpanSync, "withSpanSync should be exported");
-      assertEquals(typeof withSpanSync, "function", "Should be a function");
+      await assertExportedFunction("withSpanSync");
     });
 
     it("should export extractContext function", async () => {
-      const { extractContext } = await import("./index.ts");
-      assertExists(extractContext, "extractContext should be exported");
-      assertEquals(typeof extractContext, "function", "Should be a function");
+      await assertExportedFunction("extractContext");
     });
 
     it("should export injectContext function", async () => {
-      const { injectContext } = await import("./index.ts");
-      assertExists(injectContext, "injectContext should be exported");
-      assertEquals(typeof injectContext, "function", "Should be a function");
+      await assertExportedFunction("injectContext");
     });
 
     it("should export getActiveContext function", async () => {
-      const { getActiveContext } = await import("./index.ts");
-      assertExists(getActiveContext, "getActiveContext should be exported");
-      assertEquals(typeof getActiveContext, "function", "Should be a function");
+      await assertExportedFunction("getActiveContext");
     });
 
     it("should export withActiveSpan function", async () => {
-      const { withActiveSpan } = await import("./index.ts");
-      assertExists(withActiveSpan, "withActiveSpan should be exported");
-      assertEquals(typeof withActiveSpan, "function", "Should be a function");
+      await assertExportedFunction("withActiveSpan");
     });
 
     it("should export createChildSpan function", async () => {
-      const { createChildSpan } = await import("./index.ts");
-      assertExists(createChildSpan, "createChildSpan should be exported");
-      assertEquals(typeof createChildSpan, "function", "Should be a function");
+      await assertExportedFunction("createChildSpan");
     });
 
     it("should export shutdownTracing function", async () => {
-      const { shutdownTracing } = await import("./index.ts");
-      assertExists(shutdownTracing, "shutdownTracing should be exported");
-      assertEquals(typeof shutdownTracing, "function", "Should be a function");
+      await assertExportedFunction("shutdownTracing");
     });
 
     it("should export SpanNames constants", async () => {
@@ -119,25 +83,35 @@ describe("Tracing Module", () => {
     it("should have correct SpanNames constants", async () => {
       const { SpanNames } = await import("./index.ts");
 
-      assertEquals(SpanNames.HTTP_REQUEST, "http.request", "HTTP request span name");
-      assertEquals(SpanNames.HTTP_HANDLER, "http.handler", "HTTP handler span name");
-      assertEquals(SpanNames.RENDER_PAGE, "render.page", "Render page span name");
-      assertEquals(SpanNames.RENDER_COMPONENT, "render.component", "Render component span name");
-      assertEquals(SpanNames.RENDER_LAYOUT, "render.layout", "Render layout span name");
-      assertEquals(SpanNames.RENDER_SSR, "render.ssr", "Render SSR span name");
-      assertEquals(SpanNames.RENDER_RSC, "render.rsc", "Render RSC span name");
-      assertEquals(SpanNames.DATA_FETCH, "data.fetch", "Data fetch span name");
-      assertEquals(SpanNames.DATA_CACHE_GET, "data.cache.get", "Data cache get span name");
-      assertEquals(SpanNames.DATA_CACHE_SET, "data.cache.set", "Data cache set span name");
-      assertEquals(SpanNames.BUILD_BUNDLE, "build.bundle", "Build bundle span name");
-      assertEquals(SpanNames.BUILD_SPLIT, "build.split", "Build split span name");
-      assertEquals(SpanNames.BUILD_OPTIMIZE, "build.optimize", "Build optimize span name");
-      assertEquals(SpanNames.BUILD_COMPILE, "build.compile", "Build compile span name");
-      assertEquals(SpanNames.RSC_RENDER, "rsc.render", "RSC render span name");
-      assertEquals(SpanNames.RSC_SERIALIZE, "rsc.serialize", "RSC serialize span name");
-      assertEquals(SpanNames.RSC_STREAM, "rsc.stream", "RSC stream span name");
-      assertEquals(SpanNames.ROUTER_MATCH, "router.match", "Router match span name");
-      assertEquals(SpanNames.ROUTER_RESOLVE, "router.resolve", "Router resolve span name");
+      const expected: Record<string, string> = {
+        HTTP_REQUEST: "http.request",
+        HTTP_HANDLER: "http.handler",
+        RENDER_PAGE: "render.page",
+        RENDER_COMPONENT: "render.component",
+        RENDER_LAYOUT: "render.layout",
+        RENDER_SSR: "render.ssr",
+        RENDER_RSC: "render.rsc",
+        DATA_FETCH: "data.fetch",
+        DATA_CACHE_GET: "data.cache.get",
+        DATA_CACHE_SET: "data.cache.set",
+        BUILD_BUNDLE: "build.bundle",
+        BUILD_SPLIT: "build.split",
+        BUILD_OPTIMIZE: "build.optimize",
+        BUILD_COMPILE: "build.compile",
+        RSC_RENDER: "rsc.render",
+        RSC_SERIALIZE: "rsc.serialize",
+        RSC_STREAM: "rsc.stream",
+        ROUTER_MATCH: "router.match",
+        ROUTER_RESOLVE: "router.resolve",
+      };
+
+      for (const [key, value] of Object.entries(expected)) {
+        assertEquals(
+          (SpanNames as Record<string, string>)[key],
+          value,
+          `${key} span name`,
+        );
+      }
     });
   });
 
@@ -149,8 +123,7 @@ describe("Tracing Module", () => {
     });
 
     it("should return false when not initialized", () => {
-      const enabled = manager.isEnabled();
-      assertEquals(enabled, false, "Should be disabled when not initialized");
+      assertEquals(manager.isEnabled(), false, "Should be disabled when not initialized");
     });
 
     it("should handle disabled tracing", async () => {
@@ -161,7 +134,6 @@ describe("Tracing Module", () => {
     it("should skip duplicate initialization attempts", async () => {
       await manager.initialize({ enabled: false });
       await manager.initialize({ enabled: true }); // Second init should be skipped
-      // No error should be thrown
     });
   });
 
@@ -173,29 +145,28 @@ describe("Tracing Module", () => {
     });
 
     it("should return null span ops when not initialized", () => {
-      const spanOps = manager.getSpanOperations();
-      assertEquals(spanOps, null, "Should return null when not initialized");
+      assertEquals(manager.getSpanOperations(), null, "Should return null when not initialized");
     });
 
     it("should return null context prop when not initialized", () => {
-      const contextProp = manager.getContextPropagation();
-      assertEquals(contextProp, null, "Should return null when not initialized");
+      assertEquals(
+        manager.getContextPropagation(),
+        null,
+        "Should return null when not initialized",
+      );
     });
   });
 
   describe("Public API - Span Functions (Disabled Tracing)", () => {
-    // Note: Tests that verify "not initialized" behavior use fresh TracingManager
-    // instances since the global singleton may be initialized by other test files.
-
     it("should accept span name parameter", async () => {
       const { startSpan } = await import("./index.ts");
-      const _span = startSpan("my-operation");
+      startSpan("my-operation");
       assert(true, "Should accept span name");
     });
 
     it("should accept optional SpanOptions", async () => {
       const { startSpan } = await import("./index.ts");
-      const _span = startSpan("my-operation", {
+      startSpan("my-operation", {
         kind: "server",
         attributes: { "http.method": "GET" },
       });
@@ -245,8 +216,7 @@ describe("Tracing Module", () => {
     it("should accept optional error parameter", async () => {
       const { startSpan, endSpan } = await import("./index.ts");
       const span = startSpan("test-span");
-      const error = new Error("Test error");
-      endSpan(span, error);
+      endSpan(span, new Error("Test error"));
       assert(true, "Should accept error parameter");
     });
   });
@@ -310,20 +280,14 @@ describe("Tracing Module", () => {
 
     it("should return function result", async () => {
       const { withSpan } = await import("./index.ts");
-
-      const result = await withSpan("test-span", () => {
-        return Promise.resolve("test-result");
-      });
-
+      const result = await withSpan("test-span", () => Promise.resolve("test-result"));
       assertEquals(result, "test-result", "Should return function result");
     });
 
     it("should pass span to function", async () => {
       const { withSpan } = await import("./index.ts");
 
-      await withSpan("test-span", (_span) => {
-        return Promise.resolve();
-      });
+      await withSpan("test-span", (_span) => Promise.resolve());
 
       assert(true, "Should pass span to function");
     });
@@ -333,9 +297,7 @@ describe("Tracing Module", () => {
       const testError = new Error("Test error");
 
       try {
-        await withSpan("test-span", () => {
-          return Promise.reject(testError);
-        });
+        await withSpan("test-span", () => Promise.reject(testError));
         assert(false, "Should throw error");
       } catch (error) {
         assertEquals(error, testError, "Should re-throw the error");
@@ -345,12 +307,11 @@ describe("Tracing Module", () => {
     it("should accept span options", async () => {
       const { withSpan } = await import("./index.ts");
 
-      await withSpan("test-span", () => {
-        return Promise.resolve("result");
-      }, {
-        kind: "server",
-        attributes: { "http.method": "GET" },
-      });
+      await withSpan(
+        "test-span",
+        () => Promise.resolve("result"),
+        { kind: "server", attributes: { "http.method": "GET" } },
+      );
 
       assert(true, "Should accept span options");
     });
@@ -358,9 +319,7 @@ describe("Tracing Module", () => {
     it("should handle async operations", async () => {
       const { withSpan } = await import("./index.ts");
 
-      const result = await withSpan("test-span", () => {
-        return delay(10).then(() => "async-result");
-      });
+      const result = await withSpan("test-span", () => delay(10).then(() => "async-result"));
 
       assertEquals(result, "async-result", "Should handle async operations");
     });
@@ -381,11 +340,7 @@ describe("Tracing Module", () => {
 
     it("should return function result", async () => {
       const { withSpanSync } = await import("./index.ts");
-
-      const result = withSpanSync("test-span", () => {
-        return "test-result";
-      });
-
+      const result = withSpanSync("test-span", () => "test-result");
       assertEquals(result, "test-result", "Should return function result");
     });
 
@@ -406,12 +361,11 @@ describe("Tracing Module", () => {
     it("should accept span options", async () => {
       const { withSpanSync } = await import("./index.ts");
 
-      withSpanSync("test-span", () => {
-        return "result";
-      }, {
-        kind: "internal",
-        attributes: { "operation": "compute" },
-      });
+      withSpanSync(
+        "test-span",
+        () => "result",
+        { kind: "internal", attributes: { operation: "compute" } },
+      );
 
       assert(true, "Should accept span options");
     });
@@ -437,9 +391,7 @@ describe("Tracing Module", () => {
 
     it("should handle empty Headers", async () => {
       const { extractContext } = await import("./index.ts");
-      const headers = new Headers();
-
-      extractContext(headers);
+      extractContext(new Headers());
       assert(true, "Should handle empty headers");
     });
 
@@ -448,9 +400,7 @@ describe("Tracing Module", () => {
       const context = getActiveContext();
       const headers = new Headers();
 
-      if (context) {
-        injectContext(context, headers);
-      }
+      if (context) injectContext(context, headers);
 
       assert(true, "Should inject context into headers");
     });
@@ -461,9 +411,7 @@ describe("Tracing Module", () => {
       const headers = new Headers();
       headers.set("x-custom-header", "value");
 
-      if (context) {
-        injectContext(context, headers);
-      }
+      if (context) injectContext(context, headers);
 
       assertEquals(headers.get("x-custom-header"), "value", "Should preserve existing headers");
     });
@@ -493,9 +441,7 @@ describe("Tracing Module", () => {
       const { startSpan, withActiveSpan } = await import("./index.ts");
       const span = startSpan("test-span");
 
-      const result = await withActiveSpan(span, () => {
-        return Promise.resolve("result");
-      });
+      const result = await withActiveSpan(span, () => Promise.resolve("result"));
 
       assertEquals(result, "result", "Should return function result");
     });
@@ -503,9 +449,7 @@ describe("Tracing Module", () => {
     it("should handle null span", async () => {
       const { withActiveSpan } = await import("./index.ts");
 
-      const result = await withActiveSpan(null, () => {
-        return Promise.resolve("result");
-      });
+      const result = await withActiveSpan(null, () => Promise.resolve("result"));
 
       assertEquals(result, "result", "Should handle null span");
     });
@@ -516,9 +460,7 @@ describe("Tracing Module", () => {
       const testError = new Error("Test error");
 
       try {
-        await withActiveSpan(span, () => {
-          return Promise.reject(testError);
-        });
+        await withActiveSpan(span, () => Promise.reject(testError));
         assert(false, "Should throw error");
       } catch (error) {
         assertEquals(error, testError, "Should propagate error");
@@ -539,7 +481,6 @@ describe("Tracing Module", () => {
       // When tracing is disabled, it returns null
       const { createChildSpan } = await import("./index.ts");
       const child = createChildSpan(null, "child-span");
-      // Should not throw - result depends on whether tracing is enabled
       assert(child === null || typeof child === "object", "Should handle null parent gracefully");
     });
 
@@ -548,7 +489,7 @@ describe("Tracing Module", () => {
       const parent = startSpan("parent-span");
       createChildSpan(parent, "child-span", {
         kind: "client",
-        attributes: { "operation": "fetch" },
+        attributes: { operation: "fetch" },
       });
 
       assert(true, "Should accept span options");
@@ -577,7 +518,6 @@ describe("Tracing Module", () => {
     it("should not throw when called", async () => {
       const { shutdownTracing } = await import("./index.ts");
       await shutdownTracing();
-
       assert(true, "Should not throw");
     });
 
@@ -585,7 +525,6 @@ describe("Tracing Module", () => {
       const { shutdownTracing } = await import("./index.ts");
       await shutdownTracing();
       await shutdownTracing();
-
       assert(true, "Should be callable multiple times");
     });
   });
@@ -627,8 +566,7 @@ describe("Tracing Module", () => {
 
     it("should handle very long span names", async () => {
       const { startSpan } = await import("./index.ts");
-      const longName = "a".repeat(1000);
-      startSpan(longName);
+      startSpan("a".repeat(1000));
       assert(true, "Should handle long names");
     });
 
@@ -647,8 +585,7 @@ describe("Tracing Module", () => {
     it("should handle large attribute values", async () => {
       const { startSpan, setSpanAttributes } = await import("./index.ts");
       const span = startSpan("test");
-      const largeValue = "x".repeat(10000);
-      setSpanAttributes(span, { large: largeValue });
+      setSpanAttributes(span, { large: "x".repeat(10000) });
       assert(true, "Should handle large attributes");
     });
 
@@ -656,9 +593,9 @@ describe("Tracing Module", () => {
       const { startSpan, setSpanAttributes } = await import("./index.ts");
       const span = startSpan("test");
       const manyAttrs: Record<string, string> = {};
-      for (let i = 0; i < 100; i++) {
-        manyAttrs[`attr_${i}`] = `value_${i}`;
-      }
+
+      for (let i = 0; i < 100; i++) manyAttrs[`attr_${i}`] = `value_${i}`;
+
       setSpanAttributes(span, manyAttrs);
       assert(true, "Should handle many attributes");
     });
@@ -667,8 +604,7 @@ describe("Tracing Module", () => {
       const { startSpan, endSpan } = await import("./index.ts");
 
       for (let i = 0; i < 100; i++) {
-        const span = startSpan(`span-${i}`);
-        endSpan(span);
+        endSpan(startSpan(`span-${i}`));
       }
 
       assert(true, "Should handle rapid span creation");
@@ -683,10 +619,7 @@ describe("Tracing Module", () => {
     });
 
     it("should accept console exporter config", async () => {
-      await manager.initialize({
-        enabled: false,
-        exporter: "console",
-      });
+      await manager.initialize({ enabled: false, exporter: "console" });
       assert(true, "Should accept console exporter");
     });
 
@@ -718,33 +651,22 @@ describe("Tracing Module", () => {
     });
 
     it("should accept custom service name", async () => {
-      await manager.initialize({
-        enabled: false,
-        serviceName: "my-custom-service",
-      });
+      await manager.initialize({ enabled: false, serviceName: "my-custom-service" });
       assert(true, "Should accept custom service name");
     });
 
     it("should accept sample rate", async () => {
-      await manager.initialize({
-        enabled: false,
-        sampleRate: 0.5,
-      });
+      await manager.initialize({ enabled: false, sampleRate: 0.5 });
       assert(true, "Should accept sample rate");
     });
 
     it("should accept debug flag", async () => {
-      await manager.initialize({
-        enabled: false,
-        debug: true,
-      });
+      await manager.initialize({ enabled: false, debug: true });
       assert(true, "Should accept debug flag");
     });
 
     it("should accept partial config", async () => {
-      await manager.initialize({
-        enabled: false,
-      });
+      await manager.initialize({ enabled: false });
       assert(true, "Should accept partial config");
     });
 

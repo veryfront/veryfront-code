@@ -13,14 +13,8 @@ import { pathToFileURL } from "node:url";
 import { isBun, isDeno, isNode } from "./runtime.ts";
 import { cwd } from "./process.ts";
 
-/**
- * Cache for resolved local React paths.
- */
 let localReactPathsCache: Record<string, string> | null = null;
 
-/**
- * Standard React specifiers that need resolution for SSR.
- */
 const REACT_SPECIFIERS = [
   "react",
   "react-dom",
@@ -30,9 +24,6 @@ const REACT_SPECIFIERS = [
   "react/jsx-dev-runtime",
 ] as const;
 
-/**
- * Check if Bun.resolveSync is available.
- */
 function hasBunResolveSync(): boolean {
   // deno-lint-ignore no-explicit-any
   return typeof Bun !== "undefined" && typeof (Bun as any).resolveSync === "function";
@@ -44,12 +35,6 @@ type ImportMetaWithResolve = ImportMeta & {
 
 const IMPORT_META_RESOLVE_ERROR = "ImportMetaResolveUnavailable";
 
-function rethrowIfImportMetaResolveMissing(error: unknown): void {
-  if (error instanceof Error && error.name === IMPORT_META_RESOLVE_ERROR) {
-    throw error;
-  }
-}
-
 function resolveWithImportMeta(specifier: string, parentUrl: string): string | null {
   const metaResolve = (import.meta as ImportMetaWithResolve).resolve;
   if (typeof metaResolve !== "function") {
@@ -59,6 +44,7 @@ function resolveWithImportMeta(specifier: string, parentUrl: string): string | n
     error.name = IMPORT_META_RESOLVE_ERROR;
     throw error;
   }
+
   try {
     return metaResolve(specifier, parentUrl);
   } catch {
@@ -66,10 +52,6 @@ function resolveWithImportMeta(specifier: string, parentUrl: string): string | n
   }
 }
 
-/**
- * Resolve a single React specifier to an absolute file path.
- * Returns undefined if resolution fails.
- */
 function resolveReactSpecifier(specifier: string): string | undefined {
   try {
     if (isBun && hasBunResolveSync()) {
@@ -77,67 +59,35 @@ function resolveReactSpecifier(specifier: string): string | undefined {
       const resolved = (Bun as any).resolveSync(specifier, cwd());
       return `file://${resolved}`;
     }
+
     if (isNode) {
-      const parentUrl = pathToFileURL(cwd() + "/").href;
-      const resolved = resolveWithImportMeta(specifier, parentUrl);
-      if (resolved) return resolved;
+      const parentUrl = pathToFileURL(`${cwd()}/`).href;
+      return resolveWithImportMeta(specifier, parentUrl) ?? undefined;
     }
   } catch (error) {
-    rethrowIfImportMetaResolveMissing(error);
-    // Module not found
+    if (error instanceof Error && error.name === IMPORT_META_RESOLVE_ERROR) {
+      throw error;
+    }
   }
+
   return undefined;
 }
 
-/**
- * Get local React import map for Bun/Node SSR.
- *
- * Returns absolute file:// paths to node_modules React packages.
- * This ensures the same React instance as react-dom-server and allows
- * modules to be imported from temp directories.
- *
- * In Deno, returns an empty object since Deno handles bare specifiers
- * via import maps.
- *
- * @returns Record mapping React specifiers to file:// URLs
- *
- * @example
- * ```ts
- * const paths = getLocalReactPaths();
- * // {
- * //   "react": "file:///path/to/node_modules/react/index.js",
- * //   "react-dom": "file:///path/to/node_modules/react-dom/index.js",
- * //   ...
- * // }
- * ```
- */
 export function getLocalReactPaths(): Record<string, string> {
-  // Deno handles React via import maps
-  if (isDeno) {
-    return {};
-  }
-
-  // Return cached paths if available
-  if (localReactPathsCache) {
-    return localReactPathsCache;
-  }
+  if (isDeno) return {};
+  if (localReactPathsCache) return localReactPathsCache;
 
   const paths: Record<string, string> = {};
 
   for (const specifier of REACT_SPECIFIERS) {
     const resolved = resolveReactSpecifier(specifier);
-    if (resolved) {
-      paths[specifier] = resolved;
-    }
+    if (resolved) paths[specifier] = resolved;
   }
 
   localReactPathsCache = paths;
   return paths;
 }
 
-/**
- * Check if a specifier is a React package.
- */
 export function isReactSpecifier(specifier: string): boolean {
   return (
     specifier === "react" ||
@@ -147,10 +97,6 @@ export function isReactSpecifier(specifier: string): boolean {
   );
 }
 
-/**
- * Clear the cached React paths.
- * Useful for testing or when node_modules changes.
- */
 export function clearReactPathsCache(): void {
   localReactPathsCache = null;
 }

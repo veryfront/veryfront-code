@@ -24,7 +24,6 @@ export const getRendererScript = () => `
       }
 
       try {
-        let pagePath;
         let pageModule;
 
         if (data.pagePath) {
@@ -42,32 +41,29 @@ export const getRendererScript = () => `
         if (!pageModule) {
           const pageSlug = pathname === '/' ? 'index' : pathname.slice(1);
           log('Falling back to Pages Router pattern:', pageSlug);
+
           // Don't add pages/ prefix for @/ paths (alias paths like @/components/)
           const prefix = pageSlug.startsWith('@/') ? '' : '/pages';
-          pagePath = MODULE_SERVER_URL + prefix + '/' + pageSlug + '.js';
+
+          const basePath = MODULE_SERVER_URL + prefix + '/' + pageSlug;
           try {
-            pageModule = await import(pagePath);
+            pageModule = await import(basePath + '.js');
           } catch (err) {
             // Only try /index.js variant if slug is not already 'index' or ending with '/index'
             // e.g., 'about' -> 'about/index.js', but 'index' should NOT become 'index/index.js'
-            if (pageSlug !== 'index' && !pageSlug.endsWith('/index')) {
-              pagePath = MODULE_SERVER_URL + prefix + '/' + pageSlug + '/index.js';
-              pageModule = await import(pagePath);
-            } else {
+            if (pageSlug === 'index' || pageSlug.endsWith('/index')) {
               throw err; // Re-throw original error for index pages
             }
+            pageModule = await import(basePath + '/index.js');
           }
         }
 
-        // Defensive null check - pageModule should always be defined here due to
-        // fallback logic above, but check explicitly to prevent runtime crashes
         if (!pageModule) {
           logError('Page module failed to load');
           return;
         }
 
         const PageComponent = pageModule.default || pageModule;
-
         if (!PageComponent) {
           logError('Page component not found');
           return;
@@ -77,10 +73,9 @@ export const getRendererScript = () => `
         const pageProps = { ...(data.props || {}), params: data.params || {} };
         let tree = React.createElement(PageComponent, pageProps);
 
-        if (data.layouts && data.layouts.length > 0) {
+        if (data.layouts?.length) {
           for (let i = data.layouts.length - 1; i >= 0; i--) {
-            const layout = data.layouts[i];
-            const LayoutComponent = await loadComponent(layout.path);
+            const LayoutComponent = await loadComponent(data.layouts[i].path);
             if (LayoutComponent) {
               tree = React.createElement(LayoutComponent, { children: tree });
             }
@@ -116,35 +111,37 @@ export const getRendererScript = () => `
         // This allows users to configure their own QueryClient options
 
         const container = document.getElementById('veryfront-content');
-        if (container) {
-          if (!container.__reactRoot) {
-            // Always use hydrateRoot to preserve SSR content
-            // IMPORTANT: identifierPrefix must match SSR to prevent useId() mismatch
-            const { hydrateRoot } = await import('react-dom/client');
-            // Always suppress recoverable hydration errors - they're common with animation
-            // libraries that use useLayoutEffect and other SSR edge cases. React 18's
-            // hydration recovers gracefully from mismatches. The SSR content is preserved
-            // and client takes over interactivity.
-            const options = {
-              identifierPrefix: 'vf',
-              onRecoverableError: (error) => {
-                // Only log in dev mode with DEBUG enabled
-                if (data.dev && typeof DEBUG !== 'undefined' && DEBUG) {
-                  log('Hydration mismatch (suppressed):', error.message);
-                }
-              }
-            };
-            const root = hydrateRoot(container, tree, options);
-            container.__reactRoot = root;
-            log('Client-side React app hydrated successfully');
-            // Signal hydration complete for SPA navigation
-            if (window.__veryfrontHydrationComplete) {
-              window.__veryfrontHydrationComplete();
+        if (!container) return;
+
+        if (container.__reactRoot) {
+          container.__reactRoot.render(tree);
+          log('Page re-rendered');
+          return;
+        }
+
+        // Always use hydrateRoot to preserve SSR content
+        // IMPORTANT: identifierPrefix must match SSR to prevent useId() mismatch
+        const { hydrateRoot } = await import('react-dom/client');
+        // Always suppress recoverable hydration errors - they're common with animation
+        // libraries that use useLayoutEffect and other SSR edge cases. React 18's
+        // hydration recovers gracefully from mismatches. The SSR content is preserved
+        // and client takes over interactivity.
+        const options = {
+          identifierPrefix: 'vf',
+          onRecoverableError: (error) => {
+            // Only log in dev mode with DEBUG enabled
+            if (data.dev && typeof DEBUG !== 'undefined' && DEBUG) {
+              log('Hydration mismatch (suppressed):', error.message);
             }
-          } else {
-            container.__reactRoot.render(tree);
-            log('Page re-rendered');
           }
+        };
+        const root = hydrateRoot(container, tree, options);
+        container.__reactRoot = root;
+        log('Client-side React app hydrated successfully');
+
+        // Signal hydration complete for SPA navigation
+        if (window.__veryfrontHydrationComplete) {
+          window.__veryfrontHydrationComplete();
         }
       } catch (error) {
         logError('Client initialization error:', error);

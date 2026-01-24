@@ -13,71 +13,31 @@ import {
   showVersion,
 } from "./index.ts";
 
-// Strip ANSI escape codes from string
 function stripAnsi(str: string): string {
-  const ESC = String.fromCharCode(27);
-  const ansiPattern = new RegExp(ESC + "\\[[0-9;]*m", "g");
-  return str.replace(ansiPattern, "");
+  // deno-lint-ignore no-control-regex
+  return str.replace(/\x1B\[[0-9;]*m/g, "");
 }
 
-// Helper to capture console output
-function captureOutput(fn: () => void | Promise<void>): { stdout: string; stderr: string } {
+function captureOutput(fn: () => void): { stdout: string; stderr: string } {
   const originalLog = console.log;
   const originalError = console.error;
   const originalWarn = console.warn;
-  let stdout = "";
-  let stderr = "";
 
-  console.log = (...args: any[]) => {
-    stdout += `${args.join(" ")}\n`;
-  };
-
-  console.error = (...args: any[]) => {
-    stderr += `${args.join(" ")}\n`;
-  };
-
-  console.warn = (...args: any[]) => {
-    stderr += `${args.join(" ")}\n`;
-  };
-
-  try {
-    const result = fn();
-    if (result instanceof Promise) {
-      throw new Error("Async functions not supported in captureOutput");
-    }
-  } finally {
-    console.log = originalLog;
-    console.error = originalError;
-    console.warn = originalWarn;
-  }
-
-  return { stdout, stderr };
-}
-
-// Helper for async capture (available for future tests)
-async function _captureAsyncOutput(
-  fn: () => Promise<void>,
-): Promise<{ stdout: string; stderr: string }> {
-  const originalLog = console.log;
-  const originalError = console.error;
-  const originalWarn = console.warn;
   let stdout = "";
   let stderr = "";
 
   console.log = (...args: unknown[]) => {
     stdout += `${args.join(" ")}\n`;
   };
-
   console.error = (...args: unknown[]) => {
     stderr += `${args.join(" ")}\n`;
   };
-
   console.warn = (...args: unknown[]) => {
     stderr += `${args.join(" ")}\n`;
   };
 
   try {
-    await fn();
+    fn();
   } finally {
     console.log = originalLog;
     console.error = originalError;
@@ -86,28 +46,23 @@ async function _captureAsyncOutput(
 
   return { stdout, stderr };
 }
-void _captureAsyncOutput; // Prevent unused warning
 
 describe("showLogo", () => {
   it("outputs Veryfront in cyan", () => {
-    const { stdout } = captureOutput(() => showLogo());
-    // The cyan color code is ANSI escape sequences
+    const { stdout } = captureOutput(showLogo);
     assertStringIncludes(stdout, "Veryfront");
   });
 });
 
 describe("showHelp", () => {
   it("displays complete help information", () => {
-    const { stdout } = captureOutput(() => showHelp());
+    const { stdout } = captureOutput(showHelp);
 
-    // Check for logo
     assertStringIncludes(stdout, "Veryfront");
 
-    // Check for usage
     assertStringIncludes(stdout, "Usage:");
     assertStringIncludes(stdout, "veryfront <command> [options]");
 
-    // Check for commands
     assertStringIncludes(stdout, "Commands:");
     assertStringIncludes(stdout, "init");
     assertStringIncludes(stdout, "dev");
@@ -118,32 +73,27 @@ describe("showHelp", () => {
     assertStringIncludes(stdout, "routes");
     assertStringIncludes(stdout, "generate");
 
-    // Check for options
     assertStringIncludes(stdout, "Options:");
     assertStringIncludes(stdout, "--version");
     assertStringIncludes(stdout, "--help");
 
-    // Check for examples
     assertStringIncludes(stdout, "Examples:");
     assertStringIncludes(stdout, "veryfront init my-app");
     assertStringIncludes(stdout, "veryfront dev --port 3000");
 
-    // Check for config tips
     assertStringIncludes(stdout, "Config tips:");
     assertStringIncludes(stdout, "veryfront.config.js");
 
-    // Check for docs
     assertStringIncludes(stdout, "Docs:");
     assertStringIncludes(stdout, "RSC Security");
 
-    // Check version is included
     assertStringIncludes(stdout, `Version: ${VERSION}`);
   });
 });
 
 describe("showVersion", () => {
   it("displays version", () => {
-    const { stdout } = captureOutput(() => showVersion());
+    const { stdout } = captureOutput(showVersion);
     assertStringIncludes(stripAnsi(stdout), `veryfront v${VERSION}`);
   });
 });
@@ -213,33 +163,26 @@ describe("formatBytes", () => {
   });
 
   it("handles edge cases", () => {
-    // Very small decimal - should return as-is with "Bytes"
     assertEquals(formatBytes(0.1), "0.1 Bytes");
     assertEquals(formatBytes(0.5), "0.5 Bytes");
     assertEquals(formatBytes(0.99), "0.99 Bytes");
 
-    // Negative numbers - uses absolute value
     assertEquals(formatBytes(-1024), "1 KB");
     assertEquals(formatBytes(-2048), "2 KB");
 
-    // Large numbers with decimals
     assertEquals(formatBytes(1536), "1.5 KB");
     assertEquals(formatBytes(1792), "1.75 KB");
 
-    // Very large numbers - clamped to TB
     const veryLarge = 1024 ** 6; // Would be EB
     assertStringIncludes(formatBytes(veryLarge), "TB");
   });
 });
 
-// These tests mock globalThis.prompt which only works in Deno
-// Node.js takes a different code path using fs to read from stdin
 const hasPrompt = typeof globalThis.prompt === "function";
 const promptTestIt = hasPrompt ? it : it.skip;
 
 describe("promptUser", () => {
   promptTestIt("reads from stdin", async () => {
-    // Mock the global prompt function (used by promptSync in Deno)
     const originalPrompt = globalThis.prompt;
     globalThis.prompt = (_message?: string) => "test input";
 
@@ -252,7 +195,6 @@ describe("promptUser", () => {
   });
 
   promptTestIt("handles empty input", async () => {
-    // Mock the global prompt function to return null (user cancelled)
     const originalPrompt = globalThis.prompt;
     globalThis.prompt = (_message?: string) => null;
 
@@ -265,7 +207,6 @@ describe("promptUser", () => {
   });
 
   promptTestIt("trims whitespace", async () => {
-    // Mock the global prompt function to return string with whitespace
     const originalPrompt = globalThis.prompt;
     globalThis.prompt = (_message?: string) => "  test with spaces  ";
 
@@ -290,7 +231,6 @@ describe("exports", () => {
     assertExists(logInfo);
     assertExists(formatBytes);
 
-    // Verify they're functions
     assertEquals(typeof showLogo, "function");
     assertEquals(typeof showHelp, "function");
     assertEquals(typeof showVersion, "function");

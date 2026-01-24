@@ -10,6 +10,7 @@ export default tool({
   }),
   async execute({ listId }) {
     const list = await getList(listId);
+    const { contact, campaign_defaults, stats } = list;
 
     return {
       id: list.id,
@@ -21,30 +22,30 @@ export default tool({
       subscribeUrlShort: list.subscribe_url_short,
       subscribeUrlLong: list.subscribe_url_long,
       contact: {
-        company: list.contact.company,
-        address1: list.contact.address1,
-        city: list.contact.city,
-        state: list.contact.state,
-        zip: list.contact.zip,
-        country: list.contact.country,
+        company: contact.company,
+        address1: contact.address1,
+        city: contact.city,
+        state: contact.state,
+        zip: contact.zip,
+        country: contact.country,
       },
       campaignDefaults: {
-        fromName: list.campaign_defaults.from_name,
-        fromEmail: list.campaign_defaults.from_email,
-        subject: list.campaign_defaults.subject,
-        language: list.campaign_defaults.language,
+        fromName: campaign_defaults.from_name,
+        fromEmail: campaign_defaults.from_email,
+        subject: campaign_defaults.subject,
+        language: campaign_defaults.language,
       },
       stats: {
-        memberCount: list.stats.member_count,
-        totalContacts: list.stats.total_contacts,
-        unsubscribeCount: list.stats.unsubscribe_count,
-        cleanedCount: list.stats.cleaned_count,
-        memberCountSinceSend: list.stats.member_count_since_send,
-        unsubscribeCountSinceSend: list.stats.unsubscribe_count_since_send,
-        cleanedCountSinceSend: list.stats.cleaned_count_since_send,
-        campaignCount: list.stats.campaign_count,
-        openRate: list.stats.open_rate,
-        clickRate: list.stats.click_rate,
+        memberCount: stats.member_count,
+        totalContacts: stats.total_contacts,
+        unsubscribeCount: stats.unsubscribe_count,
+        cleanedCount: stats.cleaned_count,
+        memberCountSinceSend: stats.member_count_since_send,
+        unsubscribeCountSinceSend: stats.unsubscribe_count_since_send,
+        cleanedCountSinceSend: stats.cleaned_count_since_send,
+        campaignCount: stats.campaign_count,
+        openRate: stats.open_rate,
+        clickRate: stats.click_rate,
       },
     };
   },

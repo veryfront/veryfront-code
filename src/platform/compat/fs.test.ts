@@ -41,34 +41,38 @@ describe("Filesystem Compat", () => {
     it("should create a filesystem instance", () => {
       const fs = createFileSystem();
       assertExists(fs);
-      assertEquals(typeof fs.readTextFile, "function");
-      assertEquals(typeof fs.writeTextFile, "function");
-      assertEquals(typeof fs.exists, "function");
-      assertEquals(typeof fs.mkdir, "function");
-      assertEquals(typeof fs.remove, "function");
-      assertEquals(typeof fs.chmod, "function");
+
+      const methods = [
+        "readTextFile",
+        "writeTextFile",
+        "exists",
+        "mkdir",
+        "remove",
+        "chmod",
+      ] as const;
+
+      for (const method of methods) {
+        assertEquals(typeof fs[method], "function");
+      }
     });
   });
 
   describe("writeTextFile / readTextFile", () => {
-    it("should write and read text files", async () => {
-      const filePath = join(testDir, "test-text.txt");
-      const content = "Hello, World!\nLine 2\n";
-
+    async function assertWriteReadTextFile(
+      fileName: string,
+      content: string,
+    ): Promise<void> {
+      const filePath = join(testDir, fileName);
       await writeTextFile(filePath, content);
-      const readContent = await readTextFile(filePath);
+      assertEquals(await readTextFile(filePath), content);
+    }
 
-      assertEquals(readContent, content);
+    it("should write and read text files", async () => {
+      await assertWriteReadTextFile("test-text.txt", "Hello, World!\nLine 2\n");
     });
 
     it("should handle unicode content", async () => {
-      const filePath = join(testDir, "test-unicode.txt");
-      const content = "こんにちは 🌍 مرحبا";
-
-      await writeTextFile(filePath, content);
-      const readContent = await readTextFile(filePath);
-
-      assertEquals(readContent, content);
+      await assertWriteReadTextFile("test-unicode.txt", "こんにちは 🌍 مرحبا");
     });
   });
 
@@ -161,11 +165,14 @@ describe("Filesystem Compat", () => {
       const names = entries.map((e) => e.name).sort();
       assertEquals(names, ["file1.txt", "file2.txt", "subdir"]);
 
-      const file1 = entries.find((e) => e.name === "file1.txt");
-      assertEquals(file1?.isFile, true);
-
-      const dir = entries.find((e) => e.name === "subdir");
-      assertEquals(dir?.isDirectory, true);
+      assertEquals(
+        entries.find((e) => e.name === "file1.txt")?.isFile,
+        true,
+      );
+      assertEquals(
+        entries.find((e) => e.name === "subdir")?.isDirectory,
+        true,
+      );
     });
   });
 
@@ -194,10 +201,8 @@ describe("Filesystem Compat", () => {
 
       assertExists(tempDir);
       assertEquals(await exists(tempDir), true);
-      const info = await stat(tempDir);
-      assertEquals(info.isDirectory, true);
+      assertEquals((await stat(tempDir)).isDirectory, true);
 
-      // Cleanup
       await remove(tempDir, { recursive: true });
     });
   });

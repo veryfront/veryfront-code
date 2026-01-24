@@ -5,6 +5,7 @@ import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts
 
 const DEFAULT_TIMEOUT_MS = 60000;
 const HTTP_GATEWAY_TIMEOUT = 504;
+const TIMEOUT_SENTINEL = Symbol("timeout");
 
 export interface TimeoutOptions {
   /** Timeout in milliseconds (default: 60000) */
@@ -44,37 +45,35 @@ export function timeout(options?: TimeoutOptions): Middleware {
 
     try {
       const result = await Promise.race([next(), timeoutPromise]);
-      clearTimeout(timeoutId);
+      if (timeoutId) clearTimeout(timeoutId);
       return result;
     } catch (error) {
-      clearTimeout(timeoutId);
+      if (timeoutId) clearTimeout(timeoutId);
 
-      if (error === TIMEOUT_SENTINEL) {
-        serverLogger.warn("[timeout] Request timed out", {
-          path: pathname,
-          method: req.method,
-          timeoutMs,
-        });
-
-        return new Response(
-          JSON.stringify({
-            error: message,
-            timeoutMs,
-            path: pathname,
-          }),
-          {
-            status: HTTP_GATEWAY_TIMEOUT,
-            headers: { "Content-Type": "application/json" },
-          },
-        );
+      if (error !== TIMEOUT_SENTINEL) {
+        throw error;
       }
 
-      throw error;
+      serverLogger.warn("[timeout] Request timed out", {
+        path: pathname,
+        method: req.method,
+        timeoutMs,
+      });
+
+      return new Response(
+        JSON.stringify({
+          error: message,
+          timeoutMs,
+          path: pathname,
+        }),
+        {
+          status: HTTP_GATEWAY_TIMEOUT,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
     }
   };
 }
-
-const TIMEOUT_SENTINEL = Symbol("timeout");
 
 /**
  * Gets timeout from environment variable REQUEST_TIMEOUT_MS
@@ -82,9 +81,8 @@ const TIMEOUT_SENTINEL = Symbol("timeout");
  * @param env - Optional RuntimeEnv for test isolation
  */
 export function getTimeoutFromEnv(env: RuntimeEnv = getRuntimeEnv()): number {
-  if (env.requestTimeoutMs !== undefined && env.requestTimeoutMs > 0) {
-    return env.requestTimeoutMs;
-  }
+  const timeoutMs = env.requestTimeoutMs;
+  if (timeoutMs && timeoutMs > 0) return timeoutMs;
   return DEFAULT_TIMEOUT_MS;
 }
 
@@ -92,8 +90,5 @@ export function getTimeoutFromEnv(env: RuntimeEnv = getRuntimeEnv()): number {
  * Creates a timeout middleware with configuration from environment
  */
 export function timeoutFromEnv(options?: Omit<TimeoutOptions, "timeoutMs">): Middleware {
-  return timeout({
-    ...options,
-    timeoutMs: getTimeoutFromEnv(),
-  });
+  return timeout({ ...options, timeoutMs: getTimeoutFromEnv() });
 }

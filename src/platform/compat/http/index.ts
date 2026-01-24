@@ -15,11 +15,7 @@ export type {
 
 export { DenoHttpServer } from "./deno-server.ts";
 export { NodeHttpServer } from "./node-server.ts";
-
 export { convertNodeRequestToWebRequest } from "./request-adapter.ts";
-
 export { createHttpServer } from "./factory.ts";
-
 export { isWebSocketUpgrade, upgradeWebSocket } from "./websocket.ts";
-
 export * from "./responses.ts";

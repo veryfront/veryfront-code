@@ -29,18 +29,15 @@ export interface CodeBlockProps {
   inline?: boolean;
 }
 
-// Check if we're in a browser environment
 const isBrowser = typeof window !== "undefined" && typeof document !== "undefined";
 
-// esm.sh CDN URLs for browser-side dynamic imports
-// These URLs are stored in variables to prevent bundler transforms
-// Using ?external= so React comes from browser import map (shared instance)
 const ESM_REACT_MARKDOWN = "https://esm.sh/react-markdown@9?external=react&target=es2022";
 const ESM_REMARK_GFM = "https://esm.sh/remark-gfm@4?target=es2022";
 const ESM_REHYPE_HIGHLIGHT = "https://esm.sh/rehype-highlight@7?target=es2022";
 const ESM_MERMAID = "https://esm.sh/mermaid@11";
 
-// Lazy load heavy dependencies
+const dynamicImport = new Function("url", "return import(url)") as (url: string) => Promise<any>;
+
 // deno-lint-ignore no-explicit-any
 let ReactMarkdown: any = null;
 // deno-lint-ignore no-explicit-any
@@ -48,67 +45,60 @@ let remarkGfm: any = null;
 // deno-lint-ignore no-explicit-any
 let rehypeHighlight: any = null;
 
-// Mermaid state (browser only)
 // deno-lint-ignore no-explicit-any
 let mermaidPromise: Promise<any> | null = null;
 // deno-lint-ignore no-explicit-any
 let mermaidModule: any = null;
 
-async function loadMermaid() {
+async function loadMermaid(): Promise<any | null> {
   if (!isBrowser) return null;
   if (mermaidModule) return mermaidModule;
-  if (!mermaidPromise) {
-    // Use Function constructor to prevent bundler from transforming the import
-    const dynamicImport = new Function("url", "return import(url)");
-    mermaidPromise = dynamicImport(ESM_MERMAID);
-  }
+
+  mermaidPromise ??= dynamicImport(ESM_MERMAID);
   mermaidModule = await mermaidPromise;
+
   mermaidModule.default.initialize({
     startOnLoad: false,
     theme: "neutral",
     securityLevel: "strict",
   });
+
   return mermaidModule;
 }
 
-/**
- * Mermaid diagram component with lazy loading (client-side only)
- */
-function MermaidDiagram({ code }: { code: string }) {
+function MermaidDiagram({ code }: { code: string }): React.ReactElement {
   const [svg, setSvg] = React.useState<string>("");
   const [error, setError] = React.useState<string>("");
 
   React.useEffect(() => {
-    // Only render in browser
     if (!isBrowser) return;
 
     let cancelled = false;
 
-    async function render() {
+    async function render(): Promise<void> {
       try {
         const mermaid = await loadMermaid();
         if (!mermaid) return;
 
         const id = `mermaid-${Math.random().toString(36).slice(2, 9)}`;
         const { svg: renderedSvg } = await mermaid.default.render(id, code);
-        if (!cancelled) {
-          setSvg(renderedSvg);
-          setError("");
-        }
+
+        if (cancelled) return;
+        setSvg(renderedSvg);
+        setError("");
       } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to render diagram");
-        }
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : "Failed to render diagram");
       }
     }
 
     render();
+
     return () => {
       cancelled = true;
     };
   }, [code]);
 
-  // Server-side: show code block fallback
   if (!isBrowser) {
     return (
       <pre className="my-4 p-4 bg-neutral-100 dark:bg-neutral-800 rounded-lg overflow-auto">
@@ -145,9 +135,6 @@ function MermaidDiagram({ code }: { code: string }) {
   );
 }
 
-/**
- * Code block component with syntax highlighting and mermaid support
- */
 function CodeBlock({
   language,
   code,
@@ -157,13 +144,11 @@ function CodeBlock({
 }: CodeBlockProps & {
   enableMermaid: boolean;
   renderCodeBlock?: MarkdownProps["renderCodeBlock"];
-}) {
-  // Custom renderer takes priority
+}): React.ReactElement {
   if (renderCodeBlock) {
     return <>{renderCodeBlock({ language, code, inline })}</>;
   }
 
-  // Inline code
   if (inline) {
     return (
       <code className="bg-neutral-100 dark:bg-neutral-800 px-1.5 py-0.5 rounded text-sm font-mono">
@@ -172,24 +157,17 @@ function CodeBlock({
     );
   }
 
-  // Mermaid diagrams
   if (enableMermaid && language === "mermaid") {
     return <MermaidDiagram code={code} />;
   }
 
-  // Regular code block (syntax highlighting handled by rehype-highlight)
   return (
     <pre className="my-4 p-4 bg-neutral-900 dark:bg-neutral-950 rounded-lg overflow-auto">
-      <code className={language ? `language-${language} hljs` : "hljs"}>
-        {code}
-      </code>
+      <code className={language ? `language-${language} hljs` : "hljs"}>{code}</code>
     </pre>
   );
 }
 
-/**
- * Rich Markdown renderer with GFM, syntax highlighting, and mermaid support
- */
 export function Markdown({
   children,
   className,
@@ -197,31 +175,29 @@ export function Markdown({
   renderCodeBlock,
 }: MarkdownProps): React.ReactElement {
   const [isLoaded, setIsLoaded] = React.useState(false);
-  const [, forceUpdate] = React.useReducer((x) => x + 1, 0);
+  const [, forceUpdate] = React.useReducer((x: number) => x + 1, 0);
 
-  // Lazy load react-markdown and plugins
   React.useEffect(() => {
-    async function load() {
+    async function load(): Promise<void> {
       if (!ReactMarkdown) {
-        // Always use esm.sh URLs - the bundle runs in browser
-        // Using Function constructor to prevent bundler from transforming the imports
-        const dynamicImport = new Function("url", "return import(url)");
         const [rmModule, gfmModule, highlightModule] = await Promise.all([
           dynamicImport(ESM_REACT_MARKDOWN),
           dynamicImport(ESM_REMARK_GFM),
           dynamicImport(ESM_REHYPE_HIGHLIGHT),
         ]);
+
         ReactMarkdown = rmModule.default;
         remarkGfm = gfmModule.default;
         rehypeHighlight = highlightModule.default;
       }
+
       setIsLoaded(true);
       forceUpdate();
     }
+
     load();
   }, []);
 
-  // Fallback while loading
   if (!isLoaded || !ReactMarkdown) {
     return (
       <div className={cn("prose prose-sm dark:prose-invert max-w-none", className)}>
@@ -236,7 +212,6 @@ export function Markdown({
         remarkPlugins={remarkGfm ? [remarkGfm] : []}
         rehypePlugins={rehypeHighlight ? [rehypeHighlight] : []}
         components={{
-          // Custom code rendering
           // deno-lint-ignore no-explicit-any
           code(props: any) {
             const { className: codeClassName, children: codeChildren, node } = props;
@@ -255,7 +230,6 @@ export function Markdown({
               />
             );
           },
-          // Style tables
           // deno-lint-ignore no-explicit-any
           table(props: any) {
             return (
@@ -266,7 +240,6 @@ export function Markdown({
               </div>
             );
           },
-          // Style links
           // deno-lint-ignore no-explicit-any
           a(props: any) {
             return (
@@ -280,7 +253,6 @@ export function Markdown({
               </a>
             );
           },
-          // Style blockquotes
           // deno-lint-ignore no-explicit-any
           blockquote(props: any) {
             return (

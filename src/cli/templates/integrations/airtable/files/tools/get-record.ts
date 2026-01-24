@@ -12,12 +12,6 @@ export default tool({
     recordId: z.string().describe('The ID of the record to retrieve (starts with "rec")'),
   }),
   async execute({ baseId, tableIdOrName, recordId }) {
-    const record = await getRecord(baseId, tableIdOrName, recordId);
-
-    return {
-      id: record.id,
-      createdTime: record.createdTime,
-      fields: record.fields,
-    };
+    return getRecord(baseId, tableIdOrName, recordId);
   },
 });

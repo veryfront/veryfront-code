@@ -12,7 +12,11 @@ interface MCPTabProps {
   prompts: Prompt[];
 }
 
-export function MCPTab({ tools, resources, prompts }: MCPTabProps) {
+function getItemId(item: Tool | Resource | Prompt): string {
+  return "id" in item ? item.id : item.pattern;
+}
+
+export function MCPTab({ tools, resources, prompts }: MCPTabProps): JSX.Element {
   const [subTab, setSubTab] = useState<SubTab>("tools");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -22,20 +26,22 @@ export function MCPTab({ tools, resources, prompts }: MCPTabProps) {
       setSubTab(e.detail.subTab);
       setSelectedId(e.detail.itemId);
     }
-    globalThis.addEventListener("mcp-navigate", handleNavigate as EventListener);
-    return () => globalThis.removeEventListener("mcp-navigate", handleNavigate as EventListener);
+
+    const listener = handleNavigate as unknown as EventListener;
+    globalThis.addEventListener("mcp-navigate", listener);
+    return () => globalThis.removeEventListener("mcp-navigate", listener);
   }, []);
 
-  const items = subTab === "tools" ? tools : subTab === "resources" ? resources : prompts;
-  const filteredItems = items.filter((item) => {
-    const id = "id" in item ? item.id : (item as Resource).pattern;
-    return id.toLowerCase().includes(search.toLowerCase());
-  });
+  const items: Array<Tool | Resource | Prompt> = subTab === "tools"
+    ? tools
+    : subTab === "resources"
+    ? resources
+    : prompts;
 
-  const selectedItem = items.find((item) => {
-    const id = "id" in item ? item.id : (item as Resource).pattern;
-    return id === selectedId;
-  });
+  const searchLower = search.toLowerCase();
+  const filteredItems = items.filter((item) => getItemId(item).toLowerCase().includes(searchLower));
+
+  const selectedItem = items.find((item) => getItemId(item) === selectedId);
 
   const sidebar = (
     <Sidebar
@@ -52,7 +58,7 @@ export function MCPTab({ tools, resources, prompts }: MCPTabProps) {
         setSelectedId(null);
       }}
       items={filteredItems.map((item) => {
-        const id = "id" in item ? item.id : (item as Resource).pattern;
+        const id = getItemId(item);
         return { id, label: id };
       })}
       selectedId={selectedId}
@@ -61,8 +67,9 @@ export function MCPTab({ tools, resources, prompts }: MCPTabProps) {
     />
   );
 
-  function renderDetail() {
+  function renderDetail(): JSX.Element {
     if (!selectedItem) return <EmptyState message="Select an item to inspect" />;
+
     if (subTab === "tools") return <ToolDetail tool={selectedItem as Tool} />;
     if (subTab === "resources") return <ResourceDetail resource={selectedItem as Resource} />;
     return <PromptDetail prompt={selectedItem as Prompt} />;
@@ -84,22 +91,18 @@ function generateExampleFromSchema(schema: Tool["schema"]): Record<string, unkno
       type?: string;
       default?: unknown;
       enum?: unknown[];
-      description?: string;
     };
 
-    // Use default value if available
     if (propDef.default !== undefined) {
       example[name] = propDef.default;
       continue;
     }
 
-    // Use first enum value if available
-    if (propDef.enum && propDef.enum.length > 0) {
+    if (propDef.enum?.length) {
       example[name] = propDef.enum[0];
       continue;
     }
 
-    // Generate example based on type
     switch (propDef.type) {
       case "string":
         example[name] = `example-${name}`;
@@ -125,25 +128,26 @@ function generateExampleFromSchema(schema: Tool["schema"]): Record<string, unkno
   return example;
 }
 
-function ToolDetail({ tool }: { tool: Tool }) {
+function ToolDetail({ tool }: { tool: Tool }): JSX.Element {
   const [args, setArgs] = useState(() => {
     const example = generateExampleFromSchema(tool.schema);
     return JSON.stringify(example, null, 2);
   });
   const [result, setResult] = useState<
     { success: boolean; data: string; duration?: number } | null
-  >(null);
+  >(
+    null,
+  );
   const [loading, setLoading] = useState(false);
 
-  // Update args when tool changes
   useEffect(() => {
     const example = generateExampleFromSchema(tool.schema);
     setArgs(JSON.stringify(example, null, 2));
     setResult(null);
   }, [tool.id]);
 
-  async function execute() {
-    let parsed;
+  async function execute(): Promise<void> {
+    let parsed: unknown;
     try {
       parsed = JSON.parse(args);
     } catch (e) {
@@ -159,12 +163,17 @@ function ToolDetail({ tool }: { tool: Tool }) {
         body: JSON.stringify({ toolId: tool.id, args: parsed }),
       });
       const d = await res.json();
-      if (d.error) setResult({ success: false, data: d.error });
-      else {setResult({
-          success: true,
-          data: JSON.stringify(d.result, null, 2),
-          duration: d.duration,
-        });}
+
+      if (d.error) {
+        setResult({ success: false, data: d.error });
+        return;
+      }
+
+      setResult({
+        success: true,
+        data: JSON.stringify(d.result, null, 2),
+        duration: d.duration,
+      });
     } catch (e) {
       setResult({ success: false, data: (e as Error).message });
     } finally {
@@ -193,26 +202,27 @@ function ToolDetail({ tool }: { tool: Tool }) {
               </tr>
             </thead>
             <tbody>
-              {Object.entries(tool.schema.properties).map(([name, prop]) => (
-                <tr key={name} className="border-b last:border-0">
-                  <td className="px-3 py-2.5">
-                    <code className="text-xs text-sky-600 font-medium">{name}</code>
-                    {tool.schema?.required?.includes(name) && (
-                      <span className="ml-1.5 px-1 py-0.5 bg-red-50 text-red-600 text-[9px] font-semibold uppercase rounded">
-                        required
+              {Object.entries(tool.schema.properties).map(([name, prop]) => {
+                const p = prop as { type?: string; description?: string };
+                return (
+                  <tr key={name} className="border-b last:border-0">
+                    <td className="px-3 py-2.5">
+                      <code className="text-xs text-sky-600 font-medium">{name}</code>
+                      {tool.schema?.required?.includes(name) && (
+                        <span className="ml-1.5 px-1 py-0.5 bg-red-50 text-red-600 text-[9px] font-semibold uppercase rounded">
+                          required
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <span className="px-1.5 py-0.5 bg-gray-100 text-gray-500 text-[10px] font-medium font-mono rounded">
+                        {p.type || "any"}
                       </span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2.5">
-                    <span className="px-1.5 py-0.5 bg-gray-100 text-gray-500 text-[10px] font-medium font-mono rounded">
-                      {(prop as { type?: string }).type || "any"}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2.5 text-gray-600">
-                    {(prop as { description?: string }).description || "-"}
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td className="px-3 py-2.5 text-gray-600">{p.description || "-"}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </Card>
@@ -246,11 +256,13 @@ function ToolDetail({ tool }: { tool: Tool }) {
   );
 }
 
-function ResourceDetail({ resource }: { resource: Resource }) {
+function ResourceDetail({ resource }: { resource: Resource }): JSX.Element {
   const [uri, setUri] = useState(resource.pattern);
   const [result, setResult] = useState<
     { success: boolean; data: string; duration?: number } | null
-  >(null);
+  >(
+    null,
+  );
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -258,7 +270,7 @@ function ResourceDetail({ resource }: { resource: Resource }) {
     setResult(null);
   }, [resource.pattern]);
 
-  async function read() {
+  async function read(): Promise<void> {
     setLoading(true);
     try {
       const res = await fetch("/_dev/api/read-resource", {
@@ -267,12 +279,17 @@ function ResourceDetail({ resource }: { resource: Resource }) {
         body: JSON.stringify({ uri }),
       });
       const d = await res.json();
-      if (d.error) setResult({ success: false, data: d.error });
-      else {setResult({
-          success: true,
-          data: JSON.stringify(d.data, null, 2),
-          duration: d.duration,
-        });}
+
+      if (d.error) {
+        setResult({ success: false, data: d.error });
+        return;
+      }
+
+      setResult({
+        success: true,
+        data: JSON.stringify(d.data, null, 2),
+        duration: d.duration,
+      });
     } catch (e) {
       setResult({ success: false, data: (e as Error).message });
     } finally {
@@ -316,13 +333,13 @@ function ResourceDetail({ resource }: { resource: Resource }) {
   );
 }
 
-function PromptDetail({ prompt }: { prompt: Prompt }) {
+function PromptDetail({ prompt }: { prompt: Prompt }): JSX.Element {
   const [variables, setVariables] = useState("{}");
   const [result, setResult] = useState<{ success: boolean; data: string } | null>(null);
   const [loading, setLoading] = useState(false);
 
-  async function render() {
-    let parsed;
+  async function render(): Promise<void> {
+    let parsed: unknown;
     try {
       parsed = JSON.parse(variables);
     } catch (e) {
@@ -338,8 +355,13 @@ function PromptDetail({ prompt }: { prompt: Prompt }) {
         body: JSON.stringify({ promptId: prompt.id, variables: parsed }),
       });
       const d = await res.json();
-      if (d.error) setResult({ success: false, data: d.error });
-      else setResult({ success: true, data: d.content });
+
+      if (d.error) {
+        setResult({ success: false, data: d.error });
+        return;
+      }
+
+      setResult({ success: true, data: d.content });
     } catch (e) {
       setResult({ success: false, data: (e as Error).message });
     } finally {

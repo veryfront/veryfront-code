@@ -1,16 +1,3 @@
-/**
- * Redis Client Types
- *
- * Type definitions for Redis client interfaces across runtimes.
- * These types normalize the differences between Deno and Node.js Redis clients.
- *
- * @module platform/adapters/redis/types
- */
-
-// =========================================================================
-// Deno Redis Client Types
-// =========================================================================
-
 export interface DenoRedisModule {
   connect(options: { hostname?: string; port?: number }): Promise<DenoRedisClient>;
 }
@@ -47,15 +34,10 @@ export interface DenoRedisClient {
   close(): Promise<void>;
 }
 
-// =========================================================================
-// Node Redis Client Types
-// =========================================================================
-
 export interface NodeRedisModule {
-  createClient(options: {
-    url?: string;
-    socket?: { host?: string; port?: number };
-  }): NodeRedisClient;
+  createClient(
+    options: { url?: string; socket?: { host?: string; port?: number } },
+  ): NodeRedisClient;
 }
 
 export interface NodeRedisClient {

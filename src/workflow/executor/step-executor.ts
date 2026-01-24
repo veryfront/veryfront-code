@@ -14,6 +14,7 @@ import type {
   WorkflowNode,
 } from "../types.ts";
 import { parseDuration } from "../types.ts";
+import type { BlobStorage } from "../blob/types.ts";
 
 /** Default retry configuration */
 const DEFAULT_RETRY: RetryConfig = {
@@ -22,7 +23,6 @@ const DEFAULT_RETRY: RetryConfig = {
   initialDelay: 1000,
   maxDelay: 30000,
 };
-import type { BlobStorage } from "../blob/types.ts";
 
 /** Default timeout for workflow steps (5 minutes) */
 const DEFAULT_STEP_TIMEOUT_MS = 5 * 60 * 1000;
@@ -98,10 +98,7 @@ export class StepExecutor {
   /**
    * Execute a step node with retry support
    */
-  async execute(
-    node: WorkflowNode,
-    context: WorkflowContext,
-  ): Promise<StepResult> {
+  async execute(node: WorkflowNode, context: WorkflowContext): Promise<StepResult> {
     const startTime = Date.now();
     const config = node.config as StepNodeConfig;
 
@@ -116,20 +113,15 @@ export class StepExecutor {
     const maxAttempts = retryConfig.maxAttempts ?? 1;
 
     let lastError: Error | undefined;
-    let attempt = 0;
 
-    while (attempt < maxAttempts) {
-      attempt++;
-
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        // Notify start
         const resolvedInput = await this.resolveInput(config.input, context);
         this.config.onStepStart?.(node.id, resolvedInput);
 
-        // Execute with timeout
         const timeout = config.timeout
           ? parseDuration(config.timeout)
-          : this.config.defaultTimeout!;
+          : (this.config.defaultTimeout ?? DEFAULT_STEP_TIMEOUT_MS);
 
         const output = await this.executeWithTimeout(
           () => this.executeStep(config, resolvedInput, context),
@@ -137,7 +129,6 @@ export class StepExecutor {
           node.id,
         );
 
-        // Notify completion
         this.config.onStepComplete?.(node.id, output);
 
         return {
@@ -148,16 +139,13 @@ export class StepExecutor {
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
 
-        // Check if we should retry
         const shouldRetry = attempt < maxAttempts && this.isRetryableError(lastError, retryConfig);
 
         if (shouldRetry) {
-          const delay = this.calculateRetryDelay(attempt, retryConfig);
-          await this.sleep(delay);
+          await this.sleep(this.calculateRetryDelay(attempt, retryConfig));
           continue;
         }
 
-        // Notify error (only on final failure)
         this.config.onStepError?.(node.id, lastError);
 
         return {
@@ -168,7 +156,6 @@ export class StepExecutor {
       }
     }
 
-    // Should not reach here, but just in case
     return {
       success: false,
       error: lastError?.message ?? "Unknown error",
@@ -180,12 +167,8 @@ export class StepExecutor {
    * Check if error is retryable
    */
   private isRetryableError(error: Error, config: RetryConfig): boolean {
-    // Check custom retryable condition
-    if (config.retryIf) {
-      return config.retryIf(error);
-    }
+    if (config.retryIf) return config.retryIf(error);
 
-    // Default: retry on timeout and network-like errors
     const retryablePatterns = [
       /timeout/i,
       /ECONNRESET/i,
@@ -207,11 +190,11 @@ export class StepExecutor {
     const initialDelay = config.initialDelay ?? 1000;
     const maxDelay = config.maxDelay ?? 30000;
 
-    const backoffStrategies: Record<string, number> = {
-      exponential: initialDelay * Math.pow(2, attempt - 1),
-      linear: initialDelay * attempt,
-    };
-    const baseDelay = backoffStrategies[config.backoff ?? "fixed"] ?? initialDelay;
+    const baseDelay = config.backoff === "exponential"
+      ? initialDelay * Math.pow(2, attempt - 1)
+      : config.backoff === "linear"
+      ? initialDelay * attempt
+      : initialDelay;
 
     // Add jitter (±10%) and cap at maxDelay
     const jitter = baseDelay * 0.1 * (Math.random() * 2 - 1);
@@ -232,15 +215,8 @@ export class StepExecutor {
     input: StepNodeConfig["input"],
     context: WorkflowContext,
   ): Promise<unknown> {
-    if (input === undefined) {
-      // Default to the original workflow input
-      return context.input;
-    }
-
-    if (typeof input === "function") {
-      return await input(context);
-    }
-
+    if (input === undefined) return context.input;
+    if (typeof input === "function") return await input(context);
     return input;
   }
 
@@ -266,9 +242,7 @@ export class StepExecutor {
     try {
       return await Promise.race([fn(), timeoutPromise]);
     } finally {
-      if (timeoutId !== undefined) {
-        clearTimeout(timeoutId);
-      }
+      if (timeoutId) clearTimeout(timeoutId);
     }
   }
 
@@ -280,14 +254,8 @@ export class StepExecutor {
     input: unknown,
     context: WorkflowContext,
   ): Promise<unknown> {
-    if (config.agent) {
-      return await this.executeAgent(config.agent, input, context);
-    }
-
-    if (config.tool) {
-      return await this.executeTool(config.tool, input);
-    }
-
+    if (config.agent) return await this.executeAgent(config.agent, input, context);
+    if (config.tool) return await this.executeTool(config.tool, input);
     throw new Error("Step must have either 'agent' or 'tool' specified");
   }
 
@@ -299,19 +267,14 @@ export class StepExecutor {
     input: unknown,
     context: WorkflowContext,
   ): Promise<unknown> {
-    // Resolve agent from registry if string
     const resolvedAgent = typeof agent === "string" ? this.getAgent(agent) : agent;
-
-    // Prepare input for agent
     const agentInput = typeof input === "string" ? input : JSON.stringify(input);
 
-    // Execute agent
     const response: AgentResponse = await resolvedAgent.generate({
       input: agentInput,
       context,
     });
 
-    // Return the agent's response
     return {
       text: response.text,
       toolCalls: response.toolCalls,
@@ -323,10 +286,7 @@ export class StepExecutor {
   /**
    * Execute a tool
    */
-  private async executeTool(
-    tool: string | Tool,
-    input: unknown,
-  ): Promise<unknown> {
+  private async executeTool(tool: string | Tool, input: unknown): Promise<unknown> {
     const resolvedTool = typeof tool === "string" ? this.getTool(tool) : tool;
 
     return await resolvedTool.execute(input as Record<string, unknown>, {
@@ -348,26 +308,21 @@ export class StepExecutor {
     registry: { get(id: string): T | undefined; list?(): string[] } | undefined,
     type: "agent" | "tool",
   ): T {
+    const label = type.charAt(0).toUpperCase() + type.slice(1);
+
     if (!registry) {
-      throw new Error(
-        `${
-          type.charAt(0).toUpperCase() + type.slice(1)
-        } registry not configured. Cannot resolve ${type} "${id}"`,
-      );
+      throw new Error(`${label} registry not configured. Cannot resolve ${type} "${id}"`);
     }
 
     const item = registry.get(id);
-    if (!item) {
-      const available = registry.list?.() ?? [];
-      const suggestion = available.length > 0
-        ? this.formatAvailableItems(available)
-        : ` No ${type}s are registered.`;
-      throw new Error(
-        `${type.charAt(0).toUpperCase() + type.slice(1)} not found: "${id}".${suggestion}`,
-      );
-    }
+    if (item) return item;
 
-    return item;
+    const available = registry.list?.() ?? [];
+    const suggestion = available.length > 0
+      ? this.formatAvailableItems(available)
+      : ` No ${type}s are registered.`;
+
+    throw new Error(`${label} not found: "${id}".${suggestion}`);
   }
 
   private getAgent(id: string): Agent {
@@ -381,17 +336,10 @@ export class StepExecutor {
   /**
    * Check if a step should be skipped
    */
-  async shouldSkip(
-    node: WorkflowNode,
-    context: WorkflowContext,
-  ): Promise<boolean> {
-    const config = node.config;
-
-    if (!config.skip) {
-      return false;
-    }
-
-    return await config.skip(context);
+  async shouldSkip(node: WorkflowNode, context: WorkflowContext): Promise<boolean> {
+    const { skip } = node.config;
+    if (!skip) return false;
+    return await skip(context);
   }
 
   createInitialState(nodeId: string): NodeState {
@@ -404,9 +352,12 @@ export class StepExecutor {
 
   createCompletedState(result: StepResult, previousState: NodeState): NodeState {
     const completedAt = new Date();
-    return result.success
-      ? { ...previousState, status: "completed", output: result.output, completedAt }
-      : { ...previousState, status: "failed", error: result.error, completedAt };
+
+    if (result.success) {
+      return { ...previousState, status: "completed", output: result.output, completedAt };
+    }
+
+    return { ...previousState, status: "failed", error: result.error, completedAt };
   }
 
   createSkippedState(nodeId: string): NodeState {

@@ -1,15 +1,7 @@
-/**
- * Twilio API Client
- *
- * Provides a type-safe interface to Twilio API operations for SMS, WhatsApp, and voice calls.
- * Documentation: https://www.twilio.com/docs/api
- */
-
 import { getTwilioCredentials } from "./token-store.ts";
 
 const TWILIO_API_VERSION = "2010-04-01";
 
-// Types
 export interface TwilioMessage {
   sid: string;
   account_sid: string;
@@ -67,9 +59,28 @@ interface TwilioErrorResponse {
   status: number;
 }
 
-/**
- * Helper function for Twilio API calls
- */
+function buildParams(params: Record<string, string | number>): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    search.append(key, String(value));
+  }
+  return search.toString();
+}
+
+function addMediaUrls(params: Record<string, string>, mediaUrl?: string[]): void {
+  if (!mediaUrl?.length) return;
+
+  mediaUrl.forEach((url, index) => {
+    params[`MediaUrl[${index}]`] = url;
+  });
+}
+
+function ensureTwilioCredentials(): NonNullable<ReturnType<typeof getTwilioCredentials>> {
+  const credentials = getTwilioCredentials();
+  if (!credentials) throw new Error("Twilio credentials not configured");
+  return credentials;
+}
+
 async function twilioFetch<T>(
   endpoint: string,
   options: RequestInit & { params?: Record<string, string | number> } = {},
@@ -82,60 +93,35 @@ async function twilioFetch<T>(
   }
 
   const { accountSid, authToken } = credentials;
-
-  // Build base URL
   const baseUrl = `https://api.twilio.com/${TWILIO_API_VERSION}/Accounts/${accountSid}`;
   let url = `${baseUrl}${endpoint}`;
 
-  // Build authorization header (Basic Auth)
-  const authString = btoa(`${accountSid}:${authToken}`);
-
-  // For POST requests, use form-urlencoded body
-  let body: string | undefined;
   const headers: Record<string, string> = {
-    "Authorization": `Basic ${authString}`,
+    Authorization: `Basic ${btoa(`${accountSid}:${authToken}`)}`,
   };
 
-  if (options.method === "POST" && options.params) {
-    const formData = new URLSearchParams();
-    Object.entries(options.params).forEach(([key, value]) => {
-      formData.append(key, String(value));
-    });
-    body = formData.toString();
-    headers["Content-Type"] = "application/x-www-form-urlencoded";
-  } else if (options.params) {
-    // For GET requests, add query parameters
-    const queryParams = new URLSearchParams();
-    Object.entries(options.params).forEach(([key, value]) => {
-      queryParams.append(key, String(value));
-    });
-    url += `?${queryParams.toString()}`;
+  let body: string | undefined;
+  if (options.params) {
+    const encoded = buildParams(options.params);
+    if (options.method === "POST") {
+      body = encoded;
+      headers["Content-Type"] = "application/x-www-form-urlencoded";
+    } else {
+      url += `?${encoded}`;
+    }
   }
 
-  const response = await fetch(url, {
-    ...options,
-    headers,
-    body,
-  });
-
+  const response = await fetch(url, { ...options, headers, body });
   const data = await response.json();
 
   if (!response.ok) {
     const error = data as TwilioErrorResponse;
-    throw new Error(
-      `Twilio API error (${error.code}): ${error.message}\nMore info: ${error.more_info}`,
-    );
+    throw new Error(`Twilio API error (${error.code}): ${error.message}\nMore info: ${error.more_info}`);
   }
 
   return data as T;
 }
 
-/**
- * Send an SMS message
- * @param to - Recipient phone number in E.164 format (e.g., +14155552671)
- * @param body - Message text (max 1600 characters)
- * @param options - Optional parameters like MediaUrl for MMS
- */
 export async function sendSMS(
   to: string,
   body: string,
@@ -144,38 +130,21 @@ export async function sendSMS(
     statusCallback?: string;
   },
 ): Promise<TwilioMessage> {
-  const credentials = getTwilioCredentials();
-  if (!credentials) {
-    throw new Error("Twilio credentials not configured");
-  }
+  const { phoneNumber } = ensureTwilioCredentials();
 
   const params: Record<string, string> = {
     To: to,
-    From: credentials.phoneNumber,
+    From: phoneNumber,
     Body: body,
   };
 
-  if (options?.mediaUrl && options.mediaUrl.length > 0) {
-    options.mediaUrl.forEach((url, index) => {
-      params[`MediaUrl[${index}]`] = url;
-    });
-  }
+  addMediaUrls(params, options?.mediaUrl);
 
-  if (options?.statusCallback) {
-    params.StatusCallback = options.statusCallback;
-  }
+  if (options?.statusCallback) params.StatusCallback = options.statusCallback;
 
-  return twilioFetch<TwilioMessage>("/Messages.json", {
-    method: "POST",
-    params,
-  });
+  return twilioFetch<TwilioMessage>("/Messages.json", { method: "POST", params });
 }
 
-/**
- * Send a WhatsApp message
- * @param to - Recipient phone number in E.164 format with 'whatsapp:' prefix (e.g., whatsapp:+14155552671)
- * @param body - Message text
- */
 export async function sendWhatsApp(
   to: string,
   body: string,
@@ -184,16 +153,10 @@ export async function sendWhatsApp(
     statusCallback?: string;
   },
 ): Promise<TwilioMessage> {
-  const credentials = getTwilioCredentials();
-  if (!credentials) {
-    throw new Error("Twilio credentials not configured");
-  }
+  const { phoneNumber } = ensureTwilioCredentials();
 
-  // Ensure 'whatsapp:' prefix
   const whatsappTo = to.startsWith("whatsapp:") ? to : `whatsapp:${to}`;
-  const whatsappFrom = credentials.phoneNumber.startsWith("whatsapp:")
-    ? credentials.phoneNumber
-    : `whatsapp:${credentials.phoneNumber}`;
+  const whatsappFrom = phoneNumber.startsWith("whatsapp:") ? phoneNumber : `whatsapp:${phoneNumber}`;
 
   const params: Record<string, string> = {
     To: whatsappTo,
@@ -201,26 +164,13 @@ export async function sendWhatsApp(
     Body: body,
   };
 
-  if (options?.mediaUrl && options.mediaUrl.length > 0) {
-    options.mediaUrl.forEach((url, index) => {
-      params[`MediaUrl[${index}]`] = url;
-    });
-  }
+  addMediaUrls(params, options?.mediaUrl);
 
-  if (options?.statusCallback) {
-    params.StatusCallback = options.statusCallback;
-  }
+  if (options?.statusCallback) params.StatusCallback = options.statusCallback;
 
-  return twilioFetch<TwilioMessage>("/Messages.json", {
-    method: "POST",
-    params,
-  });
+  return twilioFetch<TwilioMessage>("/Messages.json", { method: "POST", params });
 }
 
-/**
- * List messages
- * @param options - Filter options for listing messages
- */
 export async function listMessages(options?: {
   to?: string;
   from?: string;
@@ -234,26 +184,14 @@ export async function listMessages(options?: {
   if (options?.dateSent) params.DateSent = options.dateSent;
   if (options?.limit) params.PageSize = options.limit;
 
-  const response = await twilioFetch<TwilioListResponse<TwilioMessage>>(
-    "/Messages.json",
-    { params },
-  );
-
-  return response.messages || [];
+  const response = await twilioFetch<TwilioListResponse<TwilioMessage>>("/Messages.json", { params });
+  return response.messages ?? [];
 }
 
-/**
- * Get a specific message by SID
- * @param messageSid - The unique identifier for the message
- */
 export function getMessage(messageSid: string): Promise<TwilioMessage> {
   return twilioFetch<TwilioMessage>(`/Messages/${messageSid}.json`);
 }
 
-/**
- * List calls
- * @param options - Filter options for listing calls
- */
 export async function listCalls(options?: {
   to?: string;
   from?: string;
@@ -269,27 +207,14 @@ export async function listCalls(options?: {
   if (options?.startTime) params.StartTime = options.startTime;
   if (options?.limit) params.PageSize = options.limit;
 
-  const response = await twilioFetch<TwilioListResponse<TwilioCall>>(
-    "/Calls.json",
-    { params },
-  );
-
-  return response.calls || [];
+  const response = await twilioFetch<TwilioListResponse<TwilioCall>>("/Calls.json", { params });
+  return response.calls ?? [];
 }
 
-/**
- * Get a specific call by SID
- * @param callSid - The unique identifier for the call
- */
 export function getCall(callSid: string): Promise<TwilioCall> {
   return twilioFetch<TwilioCall>(`/Calls/${callSid}.json`);
 }
 
-/**
- * Make an outbound call
- * @param to - Recipient phone number in E.164 format
- * @param twiml - TwiML instructions for the call (or URL to TwiML)
- */
 export async function makeCall(
   to: string,
   twiml: string,
@@ -300,76 +225,36 @@ export async function makeCall(
     timeout?: number;
   },
 ): Promise<TwilioCall> {
-  const credentials = getTwilioCredentials();
-  if (!credentials) {
-    throw new Error("Twilio credentials not configured");
-  }
+  const { phoneNumber } = ensureTwilioCredentials();
 
   const params: Record<string, string | number> = {
     To: to,
-    From: credentials.phoneNumber,
+    From: phoneNumber,
   };
 
-  // Use either Twiml or Url
-  if (options?.twimlUrl) {
-    params.Url = options.twimlUrl;
-  } else {
-    params.Twiml = twiml;
-  }
+  if (options?.twimlUrl) params.Url = options.twimlUrl;
+  else params.Twiml = twiml;
 
-  if (options?.statusCallback) {
-    params.StatusCallback = options.statusCallback;
-  }
+  if (options?.statusCallback) params.StatusCallback = options.statusCallback;
+  if (options?.statusCallbackMethod) params.StatusCallbackMethod = options.statusCallbackMethod;
+  if (options?.timeout) params.Timeout = options.timeout;
 
-  if (options?.statusCallbackMethod) {
-    params.StatusCallbackMethod = options.statusCallbackMethod;
-  }
-
-  if (options?.timeout) {
-    params.Timeout = options.timeout;
-  }
-
-  return twilioFetch<TwilioCall>("/Calls.json", {
-    method: "POST",
-    params,
-  });
+  return twilioFetch<TwilioCall>("/Calls.json", { method: "POST", params });
 }
 
-/**
- * Format phone number to E.164 format
- * Note: This is a simple helper. For production, use libphonenumber-js
- */
 export function formatPhoneNumber(phone: string, defaultCountryCode = "+1"): string {
-  // Remove all non-digit characters
   const digits = phone.replace(/\D/g, "");
 
-  // If it doesn't start with +, add country code
-  if (!phone.startsWith("+")) {
-    // If it's 10 digits (US), add +1
-    if (digits.length === 10) {
-      return `${defaultCountryCode}${digits}`;
-    }
-    // If it's 11 digits starting with 1, add +
-    if (digits.length === 11 && digits.startsWith("1")) {
-      return `+${digits}`;
-    }
-    // Otherwise, just add +
-    return `+${digits}`;
-  }
-
-  return phone;
+  if (phone.startsWith("+")) return phone;
+  if (digits.length === 10) return `${defaultCountryCode}${digits}`;
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  return `+${digits}`;
 }
 
-/**
- * Format date for Twilio API queries (YYYY-MM-DD)
- */
 export function formatDate(date: Date): string {
   return date.toISOString().split("T")[0];
 }
 
-/**
- * Parse Twilio date strings to Date objects
- */
 export function parseDate(dateString: string): Date {
   return new Date(dateString);
 }

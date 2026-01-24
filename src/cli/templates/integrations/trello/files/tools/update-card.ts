@@ -30,18 +30,8 @@ export default tool({
       .optional()
       .describe("Array of label IDs for the card (replaces existing)"),
   }),
-  async execute({ cardId, name, desc, closed, idList, due, dueComplete, pos, idMembers, idLabels }) {
-    const card = await updateCard(cardId, {
-      name,
-      desc,
-      closed,
-      idList,
-      due,
-      dueComplete,
-      pos,
-      idMembers,
-      idLabels,
-    });
+  async execute({ cardId, ...updates }) {
+    const card = await updateCard(cardId, updates);
 
     return {
       success: true,
@@ -54,11 +44,7 @@ export default tool({
         idList: card.idList,
         due: card.due,
         dueComplete: card.dueComplete,
-        labels: card.labels.map((label) => ({
-          id: label.id,
-          name: label.name,
-          color: label.color,
-        })),
+        labels: card.labels.map(({ id, name, color }) => ({ id, name, color })),
       },
     };
   },

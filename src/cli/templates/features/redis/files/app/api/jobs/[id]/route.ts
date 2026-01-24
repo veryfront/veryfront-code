@@ -1,6 +1,9 @@
 import { getJob } from "../../../../lib/redis.ts";
 
-export async function GET(_req: Request, { params }: { params: { id: string } }) {
+export async function GET(
+  _req: Request,
+  { params }: { params: { id: string } },
+): Promise<Response> {
   const job = await getJob(params.id);
 
   if (!job) {

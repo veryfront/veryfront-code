@@ -9,13 +9,13 @@ export {
   LRUNode,
 } from "./stores/memory/index.ts";
 
-export { EvictionManager } from "./eviction/eviction-manager.ts";
-export type {
-  EvictableEntry,
-  EvictionManagerOptions,
-  LRUListManagerInterface,
-  LRUNodeInterface,
-  LRUTrackerInterface,
+export {
+  type EvictableEntry,
+  EvictionManager,
+  type EvictionManagerOptions,
+  type LRUListManagerInterface,
+  type LRUNodeInterface,
+  type LRUTrackerInterface,
 } from "./eviction/eviction-manager.ts";
 
 export * from "./keys/index.ts";

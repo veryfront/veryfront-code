@@ -7,19 +7,14 @@ export function composeMiddleware(
 ): MiddlewareHandler {
   return (context: Context, finalNext: Next): Promise<Response | undefined> => {
     let index = -1;
+    const pathname = new URL(context.req.url).pathname;
 
-    const url = new URL(context.req.url);
-    const pathname = url.pathname;
-
-    const scoped: MiddlewareHandler[] = [];
-    for (const entry of registry) {
-      if (entry.pattern.test(pathname)) {
-        scoped.push(...entry.use);
-      }
+    const chain: MiddlewareHandler[] = [...globalMiddlewares];
+    for (const { pattern, use } of registry) {
+      if (pattern.test(pathname)) chain.push(...use);
     }
-    const chain = [...globalMiddlewares, ...scoped];
 
-    const dispatch = async (i: number): Promise<Response | undefined> => {
+    function dispatch(i: number): Promise<Response | undefined> {
       if (i <= index) {
         throw toError(createError({ type: "api", message: "next() called multiple times" }));
       }
@@ -27,12 +22,16 @@ export function composeMiddleware(
       index = i;
 
       if (i === chain.length) {
-        return finalNext();
+        const result = finalNext();
+        return result instanceof Promise ? result : Promise.resolve(result);
       }
 
-      const middleware = chain[i]!;
-      return await middleware(context, () => dispatch(i + 1));
-    };
+      const middleware = chain[i];
+      if (!middleware) return Promise.resolve(undefined);
+
+      const result = middleware(context, () => dispatch(i + 1));
+      return result instanceof Promise ? result : Promise.resolve(result);
+    }
 
     return dispatch(0);
   };

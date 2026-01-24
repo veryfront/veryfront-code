@@ -10,43 +10,43 @@ export default tool({
     limit: z.number().min(1).max(100).default(10).describe("Maximum number of contacts to return"),
     offset: z.number().min(0).default(0).describe("Number of records to skip for pagination"),
     accountId: z.string().optional().describe("Filter contacts by Account ID"),
-    fields: z.array(z.string()).optional().describe(
-      "Additional fields to retrieve (e.g., Account.Name, Owner.Name, LeadSource)",
-    ),
+    fields: z
+      .array(z.string())
+      .optional()
+      .describe("Additional fields to retrieve (e.g., Account.Name, Owner.Name, LeadSource)"),
   }),
   async execute({ limit, offset, accountId, fields }) {
-    const response = await listContacts({
-      limit,
-      offset,
-      accountId,
-      fields,
-    });
+    const response = await listContacts({ limit, offset, accountId, fields });
 
     return {
-      contacts: response.records.map((contact) => ({
-        id: contact.Id,
-        name: formatContactName(contact),
-        firstName: contact.FirstName,
-        lastName: contact.LastName,
-        email: contact.Email,
-        phone: contact.Phone,
-        mobilePhone: contact.MobilePhone,
-        title: contact.Title,
-        department: contact.Department,
-        accountId: contact.AccountId,
-        mailingCity: contact.MailingCity,
-        mailingState: contact.MailingState,
-        mailingCountry: contact.MailingCountry,
-        createdDate: contact.CreatedDate,
-        lastModifiedDate: contact.LastModifiedDate,
-        additionalFields: fields
+      contacts: response.records.map((contact) => {
+        const additionalFields = fields
           ? Object.fromEntries(
-            fields
-              .filter((field) => contact[field] !== undefined)
-              .map((field) => [field, contact[field]]),
-          )
-          : undefined,
-      })),
+              fields
+                .filter((field) => contact[field] !== undefined)
+                .map((field) => [field, contact[field]]),
+            )
+          : undefined;
+
+        return {
+          id: contact.Id,
+          name: formatContactName(contact),
+          firstName: contact.FirstName,
+          lastName: contact.LastName,
+          email: contact.Email,
+          phone: contact.Phone,
+          mobilePhone: contact.MobilePhone,
+          title: contact.Title,
+          department: contact.Department,
+          accountId: contact.AccountId,
+          mailingCity: contact.MailingCity,
+          mailingState: contact.MailingState,
+          mailingCountry: contact.MailingCountry,
+          createdDate: contact.CreatedDate,
+          lastModifiedDate: contact.LastModifiedDate,
+          additionalFields,
+        };
+      }),
       totalSize: response.totalSize,
       hasMore: !response.done,
     };

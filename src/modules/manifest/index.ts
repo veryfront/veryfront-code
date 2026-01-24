@@ -1,9 +1,3 @@
-/**
- * Module Manifest - Barrel Exports
- *
- * @module module-system/manifest
- */
-
 export {
   clearAllManifests,
   clearProjectManifests,
@@ -11,11 +5,9 @@ export {
   generateModulePreloadHintsFromManifest,
   getCriticalModulePaths,
   getManifestStats,
-  // Manifest management
   getRouteManifest,
   getRouteModulePaths,
   recordModuleLoad,
   recordSSRModules,
-  // Collection API
   startModuleCollection,
 } from "./route-module-manifest.ts";

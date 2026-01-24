@@ -138,65 +138,23 @@ describe("factory", () => {
     });
 
     it("should work with different error code categories", () => {
-      const configSolution = createErrorSolution(ErrorCode.CONFIG_NOT_FOUND, {
-        title: "Config not found",
-        message: "Config missing",
-      });
-      expect(configSolution.docs).toBe("https://veryfront.com/docs/errors/VF001");
+      const cases: Array<[ErrorCode, string]> = [
+        [ErrorCode.CONFIG_NOT_FOUND, "https://veryfront.com/docs/errors/VF001"],
+        [ErrorCode.BUILD_FAILED, "https://veryfront.com/docs/errors/VF100"],
+        [ErrorCode.RENDER_ERROR, "https://veryfront.com/docs/errors/VF201"],
+        [ErrorCode.ROUTE_CONFLICT, "https://veryfront.com/docs/errors/VF300"],
+        [ErrorCode.MODULE_NOT_FOUND, "https://veryfront.com/docs/errors/VF400"],
+        [ErrorCode.PORT_IN_USE, "https://veryfront.com/docs/errors/VF500"],
+        [ErrorCode.CLIENT_BOUNDARY_VIOLATION, "https://veryfront.com/docs/errors/VF600"],
+        [ErrorCode.DEV_SERVER_ERROR, "https://veryfront.com/docs/errors/VF700"],
+        [ErrorCode.DEPLOYMENT_ERROR, "https://veryfront.com/docs/errors/VF800"],
+        [ErrorCode.UNKNOWN_ERROR, "https://veryfront.com/docs/errors/VF900"],
+      ];
 
-      const buildSolution = createErrorSolution(ErrorCode.BUILD_FAILED, {
-        title: "Build failed",
-        message: "Build error",
-      });
-      expect(buildSolution.docs).toBe("https://veryfront.com/docs/errors/VF100");
-
-      const runtimeSolution = createErrorSolution(ErrorCode.RENDER_ERROR, {
-        title: "Render error",
-        message: "Rendering failed",
-      });
-      expect(runtimeSolution.docs).toBe("https://veryfront.com/docs/errors/VF201");
-
-      const routeSolution = createErrorSolution(ErrorCode.ROUTE_CONFLICT, {
-        title: "Route conflict",
-        message: "Conflicting routes",
-      });
-      expect(routeSolution.docs).toBe("https://veryfront.com/docs/errors/VF300");
-
-      const importSolution = createErrorSolution(ErrorCode.MODULE_NOT_FOUND, {
-        title: "Module not found",
-        message: "Module missing",
-      });
-      expect(importSolution.docs).toBe("https://veryfront.com/docs/errors/VF400");
-
-      const serverSolution = createErrorSolution(ErrorCode.PORT_IN_USE, {
-        title: "Port in use",
-        message: "Port already taken",
-      });
-      expect(serverSolution.docs).toBe("https://veryfront.com/docs/errors/VF500");
-
-      const rscSolution = createErrorSolution(ErrorCode.CLIENT_BOUNDARY_VIOLATION, {
-        title: "Client boundary violation",
-        message: "Invalid client component usage",
-      });
-      expect(rscSolution.docs).toBe("https://veryfront.com/docs/errors/VF600");
-
-      const devSolution = createErrorSolution(ErrorCode.DEV_SERVER_ERROR, {
-        title: "Dev server error",
-        message: "Dev server failed",
-      });
-      expect(devSolution.docs).toBe("https://veryfront.com/docs/errors/VF700");
-
-      const deploySolution = createErrorSolution(ErrorCode.DEPLOYMENT_ERROR, {
-        title: "Deployment error",
-        message: "Deployment failed",
-      });
-      expect(deploySolution.docs).toBe("https://veryfront.com/docs/errors/VF800");
-
-      const generalSolution = createErrorSolution(ErrorCode.UNKNOWN_ERROR, {
-        title: "Unknown error",
-        message: "Unknown error occurred",
-      });
-      expect(generalSolution.docs).toBe("https://veryfront.com/docs/errors/VF900");
+      for (const [code, docs] of cases) {
+        const solution = createErrorSolution(code, { title: "Title", message: "Message" });
+        expect(solution.docs).toBe(docs);
+      }
     });
 
     it("should handle multiline messages", () => {
@@ -296,79 +254,23 @@ describe("factory", () => {
     });
 
     it("should work with all error code categories", () => {
-      const configs = createSimpleError(
-        ErrorCode.CONFIG_INVALID,
-        "Config invalid",
-        "Invalid config",
-        ["Fix config"],
-      );
-      expect(configs.docs).toBe("https://veryfront.com/docs/errors/VF002");
+      const cases: Array<[ErrorCode, string]> = [
+        [ErrorCode.CONFIG_INVALID, "https://veryfront.com/docs/errors/VF002"],
+        [ErrorCode.BUNDLE_ERROR, "https://veryfront.com/docs/errors/VF101"],
+        [ErrorCode.HYDRATION_MISMATCH, "https://veryfront.com/docs/errors/VF200"],
+        [ErrorCode.INVALID_ROUTE_FILE, "https://veryfront.com/docs/errors/VF301"],
+        [ErrorCode.IMPORT_RESOLUTION_ERROR, "https://veryfront.com/docs/errors/VF401"],
+        [ErrorCode.HMR_ERROR, "https://veryfront.com/docs/errors/VF502"],
+        [ErrorCode.SERVER_ONLY_IN_CLIENT, "https://veryfront.com/docs/errors/VF601"],
+        [ErrorCode.FAST_REFRESH_ERROR, "https://veryfront.com/docs/errors/VF701"],
+        [ErrorCode.PLATFORM_ERROR, "https://veryfront.com/docs/errors/VF801"],
+        [ErrorCode.INVALID_ARGUMENT, "https://veryfront.com/docs/errors/VF903"],
+      ];
 
-      const build = createSimpleError(ErrorCode.BUNDLE_ERROR, "Bundle error", "Bundle failed", [
-        "Check bundle",
-      ]);
-      expect(build.docs).toBe("https://veryfront.com/docs/errors/VF101");
-
-      const runtime = createSimpleError(
-        ErrorCode.HYDRATION_MISMATCH,
-        "Hydration mismatch",
-        "Mismatch detected",
-        ["Fix HTML"],
-      );
-      expect(runtime.docs).toBe("https://veryfront.com/docs/errors/VF200");
-
-      const route = createSimpleError(
-        ErrorCode.INVALID_ROUTE_FILE,
-        "Invalid route",
-        "Route invalid",
-        ["Fix route"],
-      );
-      expect(route.docs).toBe("https://veryfront.com/docs/errors/VF301");
-
-      const importErr = createSimpleError(
-        ErrorCode.IMPORT_RESOLUTION_ERROR,
-        "Import error",
-        "Import failed",
-        ["Check import"],
-      );
-      expect(importErr.docs).toBe("https://veryfront.com/docs/errors/VF401");
-
-      const server = createSimpleError(ErrorCode.HMR_ERROR, "HMR error", "HMR failed", [
-        "Restart dev server",
-      ]);
-      expect(server.docs).toBe("https://veryfront.com/docs/errors/VF502");
-
-      const rsc = createSimpleError(
-        ErrorCode.SERVER_ONLY_IN_CLIENT,
-        "Server-only in client",
-        "Invalid usage",
-        ["Remove server code"],
-      );
-      expect(rsc.docs).toBe("https://veryfront.com/docs/errors/VF601");
-
-      const dev = createSimpleError(
-        ErrorCode.FAST_REFRESH_ERROR,
-        "Fast refresh error",
-        "Refresh failed",
-        ["Reload page"],
-      );
-      expect(dev.docs).toBe("https://veryfront.com/docs/errors/VF701");
-
-      const deploy = createSimpleError(
-        ErrorCode.PLATFORM_ERROR,
-        "Platform error",
-        "Platform failed",
-        ["Check platform"],
-      );
-      expect(deploy.docs).toBe("https://veryfront.com/docs/errors/VF801");
-
-      const general = createSimpleError(
-        ErrorCode.INVALID_ARGUMENT,
-        "Invalid argument",
-        "Argument invalid",
-        ["Check arguments"],
-      );
-      expect(general.docs).toBe("https://veryfront.com/docs/errors/VF903");
+      for (const [code, docs] of cases) {
+        const solution = createSimpleError(code, "Title", "Message", ["Step"]);
+        expect(solution.docs).toBe(docs);
+      }
     });
 
     it("should handle special characters in title", () => {
@@ -407,17 +309,19 @@ describe("factory", () => {
 
   describe("integration", () => {
     it("should produce identical results when used equivalently", () => {
+      const steps = ["Check error messages", "Fix errors"];
+
       const simple = createSimpleError(
         ErrorCode.BUILD_FAILED,
         "Build failed",
         "The build process encountered errors",
-        ["Check error messages", "Fix errors"],
+        steps,
       );
 
       const full = createErrorSolution(ErrorCode.BUILD_FAILED, {
         title: "Build failed",
         message: "The build process encountered errors",
-        steps: ["Check error messages", "Fix errors"],
+        steps,
       });
 
       expect(simple.code).toBe(full.code);
@@ -435,11 +339,9 @@ describe("factory", () => {
         ["Check import path"],
       );
 
-      expect(simple).toHaveProperty("code");
-      expect(simple).toHaveProperty("title");
-      expect(simple).toHaveProperty("message");
-      expect(simple).toHaveProperty("steps");
-      expect(simple).toHaveProperty("docs");
+      for (const key of ["code", "title", "message", "steps", "docs"] as const) {
+        expect(simple).toHaveProperty(key);
+      }
     });
 
     it("should both functions generate correct docs URLs", () => {

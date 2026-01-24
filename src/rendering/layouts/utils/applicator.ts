@@ -30,79 +30,85 @@ export async function applyLayoutsESM(
     hasLayoutBundle: !!layoutBundle,
   });
 
-  if (nestedLayouts.length > 0) {
-    for (let i = nestedLayouts.length - 1; i >= 0; i--) {
-      const item = nestedLayouts[i];
-      if (!item) continue;
-      logger.debug("[applyLayoutsESM] Processing layout", {
-        projectSlug,
-        index: i,
-        kind: item.kind,
-        componentPath: item.componentPath,
-        hasBundleCode: !!(item.bundle?.compiledCode),
-      });
-      const layoutStart = performance.now();
-      try {
-        if (item.kind === "mdx" && item.bundle?.compiledCode) {
-          logger.debug("[applyLayoutsESM] Calling applyMDXLayout START", { projectSlug, index: i });
-          element = await applyMDXLayout(
-            element,
-            item.bundle,
-            projectDir,
-            mergedComponents,
-            adapter,
-            projectId,
-            projectSlug,
-            contentSourceId,
-          );
-          logger.debug("[applyLayoutsESM] applyMDXLayout DONE", {
-            projectSlug,
-            index: i,
-            duration: `${(performance.now() - layoutStart).toFixed(2)}ms`,
-          });
-        } else if (item.kind === "tsx") {
-          logger.debug("[applyLayoutsESM] Calling applyTSXLayout START", { projectSlug, index: i });
-          const props = item.componentPath ? layoutDataMap?.get(item.componentPath) : undefined;
-          element = await applyTSXLayout(
-            element,
-            item,
-            tsxLayoutModuleCache,
-            projectDir,
-            adapter,
-            props,
-            projectId,
-            contentSourceId,
-          );
-          logger.debug("[applyLayoutsESM] applyTSXLayout DONE", {
-            projectSlug,
-            index: i,
-            duration: `${(performance.now() - layoutStart).toFixed(2)}ms`,
-          });
-        }
-      } catch (e) {
-        logger.error("Failed to apply nested layout:", e);
-        throw e;
+  for (let i = nestedLayouts.length - 1; i >= 0; i--) {
+    const item = nestedLayouts[i];
+    if (!item) continue;
+
+    logger.debug("[applyLayoutsESM] Processing layout", {
+      projectSlug,
+      index: i,
+      kind: item.kind,
+      componentPath: item.componentPath,
+      hasBundleCode: !!item.bundle?.compiledCode,
+    });
+
+    const layoutStart = performance.now();
+
+    try {
+      if (item.kind === "mdx" && item.bundle?.compiledCode) {
+        logger.debug("[applyLayoutsESM] Calling applyMDXLayout START", { projectSlug, index: i });
+        element = await applyMDXLayout(
+          element,
+          item.bundle,
+          projectDir,
+          mergedComponents,
+          adapter,
+          projectId,
+          projectSlug,
+          contentSourceId,
+        );
+        logger.debug("[applyLayoutsESM] applyMDXLayout DONE", {
+          projectSlug,
+          index: i,
+          duration: `${(performance.now() - layoutStart).toFixed(2)}ms`,
+        });
+        continue;
       }
+
+      if (item.kind === "tsx") {
+        logger.debug("[applyLayoutsESM] Calling applyTSXLayout START", { projectSlug, index: i });
+        const props = item.componentPath ? layoutDataMap?.get(item.componentPath) : undefined;
+        element = await applyTSXLayout(
+          element,
+          item,
+          tsxLayoutModuleCache,
+          projectDir,
+          adapter,
+          props,
+          projectId,
+          contentSourceId,
+        );
+        logger.debug("[applyLayoutsESM] applyTSXLayout DONE", {
+          projectSlug,
+          index: i,
+          duration: `${(performance.now() - layoutStart).toFixed(2)}ms`,
+        });
+      }
+    } catch (e) {
+      logger.error("Failed to apply nested layout:", e);
+      throw e;
     }
   }
+
   logger.debug("[applyLayoutsESM] All nested layouts applied", { projectSlug });
 
-  if (layoutBundle) {
-    logger.debug("[applyLayoutsESM] Applying named layoutBundle (frontmatter layout)");
-    element = await applyMDXLayout(
-      element,
-      layoutBundle,
-      projectDir,
-      mergedComponents,
-      adapter,
-      projectId,
-      projectSlug,
-      contentSourceId,
-    );
-    logger.debug("[applyLayoutsESM] Named layoutBundle applied successfully");
-  } else {
+  if (!layoutBundle) {
     logger.debug("[applyLayoutsESM] No layoutBundle to apply");
+    return element;
   }
+
+  logger.debug("[applyLayoutsESM] Applying named layoutBundle (frontmatter layout)");
+  element = await applyMDXLayout(
+    element,
+    layoutBundle,
+    projectDir,
+    mergedComponents,
+    adapter,
+    projectId,
+    projectSlug,
+    contentSourceId,
+  );
+  logger.debug("[applyLayoutsESM] Named layoutBundle applied successfully");
 
   return element;
 }
@@ -132,49 +138,54 @@ export async function applyLayoutsFunctionBody(
     })),
   });
 
-  if (nestedLayouts.length > 0) {
-    for (let i = nestedLayouts.length - 1; i >= 0; i--) {
-      const item = nestedLayouts[i];
-      if (!item) continue;
-      logger.debug(`Applying layout ${i}:`, {
-        kind: item.kind,
-        path: item.componentPath,
+  for (let i = nestedLayouts.length - 1; i >= 0; i--) {
+    const item = nestedLayouts[i];
+    if (!item) continue;
+
+    logger.debug(`Applying layout ${i}:`, {
+      kind: item.kind,
+      path: item.componentPath,
+    });
+
+    if (item.kind === "mdx" && item.bundle?.compiledCode) {
+      element = mdxRenderer.render(item.bundle.compiledCode, {
+        components: mergedComponents,
+        extractLayout: true,
+        children: element,
       });
-      if (item.kind === "mdx" && item.bundle?.compiledCode) {
-        element = mdxRenderer.render(item.bundle.compiledCode, {
-          components: mergedComponents,
-          extractLayout: true,
-          children: element,
-        });
-      } else if (item.kind === "tsx" && item.componentPath) {
-        try {
-          const LayoutComponent = await loadTSXComponent(
-            item.componentPath,
-            projectDir,
-            tsxLayoutModuleCache,
-            adapter,
-            projectId,
-            contentSourceId,
-          );
-          const child = ensureValidChild(element, React);
-          logger.debug("Applying TSX layout:", {
-            layoutName: LayoutComponent.name || "Anonymous",
-            childType: React.isValidElement(child)
-              ? getElementTypeName(child as BundledReact.ReactElement)
-              : typeof child,
-          });
-          const props = item.componentPath ? layoutDataMap?.get(item.componentPath) : undefined;
-          element = React.createElement(LayoutComponent, props, child) as BundledReact.ReactElement;
-          logger.debug("After TSX layout applied:", {
-            pageElementType: React.isValidElement(element)
-              ? getElementTypeName(element)
-              : typeof element,
-          });
-        } catch (e) {
-          logger.error("Failed to compile/import TSX layout (non-ESM path)", e);
-          throw e;
-        }
-      }
+      continue;
+    }
+
+    if (item.kind !== "tsx" || !item.componentPath) continue;
+
+    try {
+      const LayoutComponent = await loadTSXComponent(
+        item.componentPath,
+        projectDir,
+        tsxLayoutModuleCache,
+        adapter,
+        projectId,
+        contentSourceId,
+      );
+
+      const child = ensureValidChild(element, React);
+
+      logger.debug("Applying TSX layout:", {
+        layoutName: LayoutComponent.name || "Anonymous",
+        childType: React.isValidElement(child) ? getElementTypeName(child) : typeof child,
+      });
+
+      const props = layoutDataMap?.get(item.componentPath);
+      element = React.createElement(LayoutComponent, props, child) as BundledReact.ReactElement;
+
+      logger.debug("After TSX layout applied:", {
+        pageElementType: React.isValidElement(element)
+          ? getElementTypeName(element)
+          : typeof element,
+      });
+    } catch (e) {
+      logger.error("Failed to compile/import TSX layout (non-ESM path)", e);
+      throw e;
     }
   }
 

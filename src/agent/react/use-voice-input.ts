@@ -1,9 +1,3 @@
-/**
- * useVoiceInput - Web Speech API hook for voice input
- *
- * Provides browser-based speech recognition for chat input.
- */
-
 import * as React from "react";
 
 export interface UseVoiceInputOptions {
@@ -55,7 +49,6 @@ export interface UseVoiceInputResult {
   error: string | null;
 }
 
-// Type for SpeechRecognition (not in all TypeScript libs)
 interface SpeechRecognitionEvent extends Event {
   results: SpeechRecognitionResultList;
   resultIndex: number;
@@ -97,32 +90,11 @@ interface SpeechRecognition extends EventTarget {
   abort(): void;
 }
 
-// Global type augmentation for SpeechRecognition API
 interface GlobalWithSpeechRecognition {
   SpeechRecognition?: new () => SpeechRecognition;
   webkitSpeechRecognition?: new () => SpeechRecognition;
 }
 
-/**
- * useVoiceInput - Voice input hook using Web Speech API
- *
- * @example
- * ```tsx
- * const { isListening, transcript, toggle, isSupported } = useVoiceInput({
- *   onTranscript: (text, isFinal) => {
- *     if (isFinal) setInput(text);
- *   }
- * });
- *
- * if (!isSupported) return <span>Voice not supported</span>;
- *
- * return (
- *   <button onClick={toggle}>
- *     {isListening ? 'Stop' : 'Start'} Voice
- *   </button>
- * );
- * ```
- */
 export function useVoiceInput(
   options: UseVoiceInputOptions = {},
 ): UseVoiceInputResult {
@@ -142,29 +114,23 @@ export function useVoiceInput(
 
   const recognitionRef = React.useRef<SpeechRecognition | null>(null);
 
-  // Check browser support
-  const isSupported = React.useMemo(() => {
+  const isSupported = React.useMemo((): boolean => {
     if (typeof globalThis === "undefined") return false;
     const g = globalThis as unknown as GlobalWithSpeechRecognition;
     return !!(g.SpeechRecognition || g.webkitSpeechRecognition);
   }, []);
 
-  // Initialize recognition
   React.useEffect(() => {
     if (!isSupported) return;
 
     const g = globalThis as unknown as GlobalWithSpeechRecognition;
-    const SpeechRecognitionAPI = g.SpeechRecognition || g.webkitSpeechRecognition;
-
+    const SpeechRecognitionAPI = g.SpeechRecognition ?? g.webkitSpeechRecognition;
     if (!SpeechRecognitionAPI) return;
 
     const recognition = new SpeechRecognitionAPI();
     recognition.continuous = continuous;
     recognition.interimResults = interimResults;
-
-    if (language) {
-      recognition.lang = language;
-    }
+    if (language) recognition.lang = language;
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
       let finalTranscript = "";
@@ -172,12 +138,13 @@ export function useVoiceInput(
 
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i];
-        if (!result || !result[0]) continue;
+        const alt = result?.[0];
+        if (!alt) continue;
 
         if (result.isFinal) {
-          finalTranscript += result[0].transcript;
+          finalTranscript += alt.transcript;
         } else {
-          interimTranscript += result[0].transcript;
+          interimTranscript += alt.transcript;
         }
       }
 
@@ -209,9 +176,18 @@ export function useVoiceInput(
     return () => {
       recognition.abort();
     };
-  }, [isSupported, language, continuous, interimResults, onTranscript, onError, onStart, onEnd]);
+  }, [
+    isSupported,
+    language,
+    continuous,
+    interimResults,
+    onTranscript,
+    onError,
+    onStart,
+    onEnd,
+  ]);
 
-  const start = React.useCallback(() => {
+  const start = React.useCallback((): void => {
     if (!recognitionRef.current || isListening) return;
 
     setTranscript("");
@@ -220,26 +196,24 @@ export function useVoiceInput(
     try {
       recognitionRef.current.start();
     } catch {
-      // Already started
       console.warn("Speech recognition already started");
     }
   }, [isListening]);
 
-  const stop = React.useCallback(() => {
+  const stop = React.useCallback((): void => {
     if (!recognitionRef.current || !isListening) return;
-
     recognitionRef.current.stop();
   }, [isListening]);
 
-  const toggle = React.useCallback(() => {
+  const toggle = React.useCallback((): void => {
     if (isListening) {
       stop();
-    } else {
-      start();
+      return;
     }
+    start();
   }, [isListening, start, stop]);
 
-  const clear = React.useCallback(() => {
+  const clear = React.useCallback((): void => {
     setTranscript("");
   }, []);
 

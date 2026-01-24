@@ -21,27 +21,56 @@ describe("install command integration", () => {
     await remove(tempDir, { recursive: true });
   });
 
-  async function runInstall(target: string): Promise<{ code: number; output: string }> {
+  async function runInstall(
+    target: string,
+  ): Promise<{ code: number; output: string }> {
     const cliPath = new URL("../../main.ts", import.meta.url).pathname;
     const result = await runCommand("deno", {
-      args: ["run", "--allow-all", cliPath, "install", "--target", target, "--force"],
+      args: [
+        "run",
+        "--allow-all",
+        cliPath,
+        "install",
+        "--target",
+        target,
+        "--force",
+      ],
       cwd: tempDir,
       capture: true,
     });
-    const output = (result.stdout ?? "") + (result.stderr ?? "");
-    return { code: result.code, output };
+
+    return {
+      code: result.code,
+      output: (result.stdout ?? "") + (result.stderr ?? ""),
+    };
+  }
+
+  async function assertFileExists(path: string): Promise<void> {
+    assertEquals(await exists(path), true);
+  }
+
+  async function assertFileNotExists(path: string): Promise<void> {
+    assertEquals(await exists(path), false);
+  }
+
+  async function assertFileContains(
+    path: string,
+    substrings: string[],
+  ): Promise<void> {
+    const content = await readTextFile(path);
+    for (const substring of substrings) {
+      assertEquals(content.includes(substring), true);
+    }
   }
 
   describe("cursor", () => {
     it("should install .cursorrules", async () => {
       const { code } = await runInstall("cursor");
       assertEquals(code, 0);
-      assertEquals(await exists(join(tempDir, ".cursorrules")), true);
 
-      const content = await readTextFile(join(tempDir, ".cursorrules"));
-      assertEquals(content.includes("Veryfront"), true);
-      assertEquals(content.includes("veryfront dev"), true);
-      assertEquals(content.includes("src/pages/"), true);
+      const filePath = join(tempDir, ".cursorrules");
+      await assertFileExists(filePath);
+      await assertFileContains(filePath, ["Veryfront", "veryfront dev", "src/pages/"]);
     });
   });
 
@@ -49,11 +78,10 @@ describe("install command integration", () => {
     it("should install .claude/CLAUDE.md", async () => {
       const { code } = await runInstall("claude-code");
       assertEquals(code, 0);
-      assertEquals(await exists(join(tempDir, ".claude/CLAUDE.md")), true);
 
-      const content = await readTextFile(join(tempDir, ".claude/CLAUDE.md"));
-      assertEquals(content.includes("Veryfront"), true);
-      assertEquals(content.includes("veryfront dev"), true);
+      const filePath = join(tempDir, ".claude/CLAUDE.md");
+      await assertFileExists(filePath);
+      await assertFileContains(filePath, ["Veryfront", "veryfront dev"]);
     });
   });
 
@@ -61,13 +89,21 @@ describe("install command integration", () => {
     it("should install SKILL.md with YAML frontmatter", async () => {
       const { code } = await runInstall("skill");
       assertEquals(code, 0);
-      assertEquals(await exists(join(tempDir, "SKILL.md")), true);
 
-      const content = await readTextFile(join(tempDir, "SKILL.md"));
+      const filePath = join(tempDir, "SKILL.md");
+      await assertFileExists(filePath);
+
+      const content = await readTextFile(filePath);
       assertEquals(content.startsWith("---"), true);
-      assertEquals(content.includes("name: veryfront"), true);
-      assertEquals(content.includes("description:"), true);
-      assertEquals(content.includes("compatibility:"), true);
+      for (
+        const substring of [
+          "name: veryfront",
+          "description:",
+          "compatibility:",
+        ]
+      ) {
+        assertEquals(content.includes(substring), true);
+      }
     });
   });
 
@@ -75,11 +111,10 @@ describe("install command integration", () => {
     it("should install .github/copilot-instructions.md", async () => {
       const { code } = await runInstall("copilot");
       assertEquals(code, 0);
-      assertEquals(await exists(join(tempDir, ".github/copilot-instructions.md")), true);
 
-      const content = await readTextFile(join(tempDir, ".github/copilot-instructions.md"));
-      assertEquals(content.includes("Veryfront"), true);
-      assertEquals(content.includes("veryfront dev"), true);
+      const filePath = join(tempDir, ".github/copilot-instructions.md");
+      await assertFileExists(filePath);
+      await assertFileContains(filePath, ["Veryfront", "veryfront dev"]);
     });
   });
 
@@ -87,11 +122,10 @@ describe("install command integration", () => {
     it("should install .windsurfrules", async () => {
       const { code } = await runInstall("windsurf");
       assertEquals(code, 0);
-      assertEquals(await exists(join(tempDir, ".windsurfrules")), true);
 
-      const content = await readTextFile(join(tempDir, ".windsurfrules"));
-      assertEquals(content.includes("Veryfront"), true);
-      assertEquals(content.includes("veryfront dev"), true);
+      const filePath = join(tempDir, ".windsurfrules");
+      await assertFileExists(filePath);
+      await assertFileContains(filePath, ["Veryfront", "veryfront dev"]);
     });
   });
 
@@ -99,11 +133,10 @@ describe("install command integration", () => {
     it("should install AGENTS.md", async () => {
       const { code } = await runInstall("agents");
       assertEquals(code, 0);
-      assertEquals(await exists(join(tempDir, "AGENTS.md")), true);
 
-      const content = await readTextFile(join(tempDir, "AGENTS.md"));
-      assertEquals(content.includes("Veryfront"), true);
-      assertEquals(content.includes("npx veryfront"), true);
+      const filePath = join(tempDir, "AGENTS.md");
+      await assertFileExists(filePath);
+      await assertFileContains(filePath, ["Veryfront", "npx veryfront"]);
     });
   });
 
@@ -112,12 +145,12 @@ describe("install command integration", () => {
       const { code } = await runInstall("all");
       assertEquals(code, 0);
 
-      assertEquals(await exists(join(tempDir, ".cursorrules")), true);
-      assertEquals(await exists(join(tempDir, ".claude/CLAUDE.md")), true);
-      assertEquals(await exists(join(tempDir, "SKILL.md")), true);
-      assertEquals(await exists(join(tempDir, ".github/copilot-instructions.md")), true);
-      assertEquals(await exists(join(tempDir, ".windsurfrules")), true);
-      assertEquals(await exists(join(tempDir, "AGENTS.md")), true);
+      await assertFileExists(join(tempDir, ".cursorrules"));
+      await assertFileExists(join(tempDir, ".claude/CLAUDE.md"));
+      await assertFileExists(join(tempDir, "SKILL.md"));
+      await assertFileExists(join(tempDir, ".github/copilot-instructions.md"));
+      await assertFileExists(join(tempDir, ".windsurfrules"));
+      await assertFileExists(join(tempDir, "AGENTS.md"));
     });
   });
 
@@ -126,23 +159,23 @@ describe("install command integration", () => {
       const { code } = await runInstall("cursor,claude-code,skill");
       assertEquals(code, 0);
 
-      assertEquals(await exists(join(tempDir, ".cursorrules")), true);
-      assertEquals(await exists(join(tempDir, ".claude/CLAUDE.md")), true);
-      assertEquals(await exists(join(tempDir, "SKILL.md")), true);
-      assertEquals(await exists(join(tempDir, ".windsurfrules")), false);
-      assertEquals(await exists(join(tempDir, "AGENTS.md")), false);
+      await assertFileExists(join(tempDir, ".cursorrules"));
+      await assertFileExists(join(tempDir, ".claude/CLAUDE.md"));
+      await assertFileExists(join(tempDir, "SKILL.md"));
+      await assertFileNotExists(join(tempDir, ".windsurfrules"));
+      await assertFileNotExists(join(tempDir, "AGENTS.md"));
     });
   });
 
   describe("force flag", () => {
     it("should overwrite existing files with --force", async () => {
-      await writeTextFile(join(tempDir, ".cursorrules"), "existing content");
+      const filePath = join(tempDir, ".cursorrules");
+      await writeTextFile(filePath, "existing content");
 
       const { code } = await runInstall("cursor");
       assertEquals(code, 0);
 
-      const content = await readTextFile(join(tempDir, ".cursorrules"));
-      assertEquals(content.includes("Veryfront"), true);
+      await assertFileContains(filePath, ["Veryfront"]);
     });
   });
 });

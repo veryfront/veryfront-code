@@ -5,7 +5,7 @@ import { MiddlewareContext } from "../context.ts";
 import type { MiddlewareHandler } from "../types.ts";
 
 describe("composeMiddleware", () => {
-  function createContext(path: string = "/"): MiddlewareContext {
+  function createContext(path = "/"): MiddlewareContext {
     return new MiddlewareContext(new Request(`https://example.com${path}`));
   }
 
@@ -27,20 +27,16 @@ describe("composeMiddleware", () => {
     };
 
     const composed = composeMiddleware([middleware1, middleware2], []);
-    const ctx = createContext();
-    await composed(ctx, () => Promise.resolve(new Response("OK")));
+    await composed(createContext(), () => Promise.resolve(new Response("OK")));
 
     assertEquals(order, [1, 2, 3, 4]);
   });
 
   it("should return final response", async () => {
-    const middleware: MiddlewareHandler = async (_ctx, next) => {
-      return await next();
-    };
+    const middleware: MiddlewareHandler = (_ctx, next) => next();
 
     const composed = composeMiddleware([middleware], []);
-    const ctx = createContext();
-    const response = await composed(ctx, () => Promise.resolve(new Response("Final")));
+    const response = await composed(createContext(), () => Promise.resolve(new Response("Final")));
 
     assertEquals(await response?.text(), "Final");
   });
@@ -48,9 +44,7 @@ describe("composeMiddleware", () => {
   it("should allow middleware to short-circuit", async () => {
     let reachedSecond = false;
 
-    const middleware1: MiddlewareHandler = () => {
-      return new Response("Short circuit");
-    };
+    const middleware1: MiddlewareHandler = () => new Response("Short circuit");
 
     const middleware2: MiddlewareHandler = async (_ctx, next) => {
       reachedSecond = true;
@@ -58,8 +52,7 @@ describe("composeMiddleware", () => {
     };
 
     const composed = composeMiddleware([middleware1, middleware2], []);
-    const ctx = createContext();
-    const response = await composed(ctx, () => Promise.resolve(new Response("Final")));
+    const response = await composed(createContext(), () => Promise.resolve(new Response("Final")));
 
     assertEquals(await response?.text(), "Short circuit");
     assertEquals(reachedSecond, false);
@@ -73,12 +66,9 @@ describe("composeMiddleware", () => {
     };
 
     const composed = composeMiddleware([middleware], []);
-    const ctx = createContext();
 
     await assertRejects(
-      async () => {
-        await composed(ctx, () => Promise.resolve(new Response("OK")));
-      },
+      () => composed(createContext(), () => Promise.resolve(new Response("OK"))),
       Error,
       "next() called multiple times",
     );
@@ -102,15 +92,11 @@ describe("composeMiddleware", () => {
       [{ pattern: /^\/api/, use: [apiMiddleware] }],
     );
 
-    // Request to /api path
-    const ctx1 = createContext("/api/users");
-    await composed(ctx1, () => Promise.resolve(new Response("OK")));
+    await composed(createContext("/api/users"), () => Promise.resolve(new Response("OK")));
     assertEquals(order, ["global", "api"]);
 
-    // Request to non-/api path
     order.length = 0;
-    const ctx2 = createContext("/home");
-    await composed(ctx2, () => Promise.resolve(new Response("OK")));
+    await composed(createContext("/home"), () => Promise.resolve(new Response("OK")));
     assertEquals(order, ["global"]);
   });
 
@@ -135,16 +121,14 @@ describe("composeMiddleware", () => {
       ],
     );
 
-    const ctx = createContext("/api/test");
-    await composed(ctx, () => Promise.resolve(new Response("OK")));
+    await composed(createContext("/api/test"), () => Promise.resolve(new Response("OK")));
 
     assertEquals(order, ["auth", "logging"]);
   });
 
   it("should handle empty middleware array", async () => {
     const composed = composeMiddleware([], []);
-    const ctx = createContext();
-    const response = await composed(ctx, () => Promise.resolve(new Response("Final")));
+    const response = await composed(createContext(), () => Promise.resolve(new Response("Final")));
 
     assertEquals(await response?.text(), "Final");
   });

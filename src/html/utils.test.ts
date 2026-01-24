@@ -70,12 +70,10 @@ describe("html-generation/utils", () => {
 
   describe("getDefaultImportMap", () => {
     it("should return veryfront exports only (no React)", () => {
-      const config = getDefaultImportMap();
-      const map = config.imports;
-
+      const map = getDefaultImportMap().imports;
       assert(map !== undefined);
-      if (!map) return; // TypeScript type guard
-      // Veryfront exports are included for SSR transforms
+      if (!map) return;
+
       assert(map["veryfront/head"] !== undefined);
       assert(map["veryfront/router"] !== undefined);
       assert(map["veryfront/context"] !== undefined);
@@ -83,17 +81,13 @@ describe("html-generation/utils", () => {
     });
 
     it("should NOT include React (resolved via deno.json for single instance)", () => {
-      const config = getDefaultImportMap();
-      const map = config.imports;
-
+      const map = getDefaultImportMap().imports;
       assert(map !== undefined);
-      if (!map) return; // TypeScript type guard
-      // React is NOT included - bare specifiers stay bare so bundleHttpImports
-      // can externalize them, then Deno resolves via deno.json
+      if (!map) return;
+
       assertEquals(map.react, undefined);
       assertEquals(map["react-dom"], undefined);
       assertEquals(map["react/jsx-runtime"], undefined);
-      // Context packages are also NOT included - they are app-specific
       assertEquals(map["@tanstack/react-query"], undefined);
       assertEquals(map["next-themes"], undefined);
     });
@@ -114,7 +108,6 @@ describe("html-generation/utils", () => {
 
       assertStringIncludes(result, '"react"');
       assertStringIncludes(result, '"react-dom"');
-      // Uses esm.sh URLs across runtimes
       assertStringIncludes(result, "esm.sh");
     });
 

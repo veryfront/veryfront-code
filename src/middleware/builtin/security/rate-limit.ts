@@ -14,26 +14,22 @@ const DEFAULT_RATE_LIMIT_WINDOW_MS = MS_PER_MINUTE;
 
 export class MemoryRateLimitStore implements RateLimitStore {
   private counts = new Map<string, RateLimitEntry>();
-  private cleanupInterval: ReturnType<typeof setInterval> | undefined;
+  private cleanupInterval?: ReturnType<typeof setInterval>;
 
   constructor(windowMs: number) {
     const shouldSkipInterval =
       (globalThis as Record<string, unknown>).__vfDisableLruInterval === true;
 
-    if (!shouldSkipInterval) {
-      this.cleanupInterval = setInterval(() => {
-        const now = Date.now();
-        for (const [key, entry] of this.counts.entries()) {
-          if (entry.resetAt < now) {
-            this.counts.delete(key);
-          }
-        }
-      }, windowMs * CLEANUP_INTERVAL_MULTIPLIER);
+    if (shouldSkipInterval) return;
 
-      if (this.cleanupInterval) {
-        unrefTimer(this.cleanupInterval);
+    this.cleanupInterval = setInterval(() => {
+      const now = Date.now();
+      for (const [key, entry] of this.counts.entries()) {
+        if (entry.resetAt < now) this.counts.delete(key);
       }
-    }
+    }, windowMs * CLEANUP_INTERVAL_MULTIPLIER);
+
+    unrefTimer(this.cleanupInterval);
   }
 
   increment(key: string, windowMs: number): Promise<RateLimitEntry> {
@@ -55,9 +51,8 @@ export class MemoryRateLimitStore implements RateLimitStore {
   }
 
   destroy(): void {
-    if (this.cleanupInterval) {
-      clearInterval(this.cleanupInterval);
-    }
+    if (!this.cleanupInterval) return;
+    clearInterval(this.cleanupInterval);
   }
 }
 
@@ -72,37 +67,29 @@ export function rateLimit(
   optionsOrMaxRequests?: number | RateLimitOptions,
   windowMsArg?: number,
 ): Middleware {
-  let options: RateLimitOptions;
-
-  if (typeof optionsOrMaxRequests === "number") {
-    options = {
-      maxRequests: optionsOrMaxRequests,
-      windowMs: windowMsArg,
-    };
-  } else {
-    options = optionsOrMaxRequests || {};
-  }
+  const options: RateLimitOptions = typeof optionsOrMaxRequests === "number"
+    ? { maxRequests: optionsOrMaxRequests, windowMs: windowMsArg }
+    : optionsOrMaxRequests ?? {};
 
   const maxRequests = options.maxRequests ?? DEFAULT_RATE_LIMIT_REQUESTS;
   const windowMs = options.windowMs ?? DEFAULT_RATE_LIMIT_WINDOW_MS;
   const store = options.store ?? new MemoryRateLimitStore(windowMs);
   const keyGenerator = options.keyGenerator ??
-    ((req) => req.headers.get("x-forwarded-for") || "anonymous");
+    ((req: Request) => req.headers.get("x-forwarded-for") || "anonymous");
 
   return async (ctx, next) => {
     const req = getRequest(ctx);
     const key = keyGenerator(req);
-
     const entry = await store.increment(key, windowMs);
 
     if (entry.count > maxRequests) {
-      const now = Date.now();
-      const retryAfterSeconds = Math.ceil((entry.resetAt - now) / MS_PER_SECOND);
+      const retryAfterSeconds = Math.ceil(
+        (entry.resetAt - Date.now()) / MS_PER_SECOND,
+      );
+
       return new Response("Too Many Requests", {
         status: HTTP_TOO_MANY_REQUESTS,
-        headers: {
-          "Retry-After": String(retryAfterSeconds),
-        },
+        headers: { "Retry-After": String(retryAfterSeconds) },
       });
     }
 

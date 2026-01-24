@@ -18,8 +18,6 @@ import {
 import { detectAppRouter } from "../router-detection.ts";
 import { getProjectReact } from "#veryfront/react";
 import { extract } from "#std/front-matter/yaml.ts";
-// Import using bare specifiers that match browser import map
-// This ensures SSR and client use the same module instance (same React context)
 import { RouterProvider } from "veryfront/router";
 import { PageContextProvider } from "veryfront/context";
 
@@ -51,7 +49,6 @@ export class LayoutApplicator {
   private layoutCache: LayoutComponentCache;
   private mergedComponents: MDXComponents;
   private mode: "development" | "production";
-  private moduleServerUrl?: string;
   private requestUrl?: URL;
   private frontmatter?: Record<string, unknown>;
   private headings?: Array<{ id: string; text: string; level: number }>;
@@ -69,7 +66,6 @@ export class LayoutApplicator {
     this.layoutCache = options.layoutCache;
     this.mergedComponents = options.mergedComponents;
     this.mode = options.mode;
-    this.moduleServerUrl = options.moduleServerUrl;
     this.requestUrl = options.requestUrl;
     this.frontmatter = options.frontmatter;
     this.headings = options.headings;
@@ -95,8 +91,6 @@ export class LayoutApplicator {
         const useAppRouter = await detectAppRouter(this.projectDir, this.config, this.adapter);
         const pageFilePath = pageInfo.entity.path;
 
-        // Skip App component wrapping for dot-prefixed paths (e.g., .veryfront) - these are
-        // framework-level pages that should not use user-defined App component
         const isDotPath = pageFilePath.split("/").some((s) =>
           s.startsWith(".") && s !== "." && s !== ".."
         );
@@ -111,39 +105,35 @@ export class LayoutApplicator {
           wrappedElement = await this.wrapWithReservedComponents(wrappedElement, pageFilePath);
         }
 
-        // Wrap with RouterProvider to match client-side tree structure
-        // This ensures useId() generates consistent IDs between SSR and client
         const React = await getProjectReact();
 
-        // Build page context with frontmatter for usePageContext() hook
-        // Use merged frontmatter (from MDX compilation + entity) when available
-        const headingsArray = this.headings || [];
+        const headingsArray = this.headings ?? [];
         const pageContext = {
           slug: pageInfo.entity.slug || "",
           path: pageFilePath,
           params: {},
           query: {},
-          frontmatter: this.frontmatter || pageInfo.entity.frontmatter || {},
+          frontmatter: this.frontmatter ?? pageInfo.entity.frontmatter ?? {},
           headings: headingsArray,
-          mdxHeadings: headingsArray, // Alias for backwards compatibility
+          mdxHeadings: headingsArray,
         };
+
         logger.debug("[LayoutApplicator] PageContext", {
           frontmatterKeys: Object.keys(pageContext.frontmatter),
           headingsCount: headingsArray.length,
         });
 
-        // Wrap with PageContextProvider so layout components can access frontmatter via usePageContext()
-        wrappedElement = React.createElement(
-          PageContextProvider,
-          { pageContext, children: wrappedElement },
-        ) as BundledReact.ReactElement;
+        wrappedElement = React.createElement(PageContextProvider, {
+          pageContext,
+          children: wrappedElement,
+        }) as BundledReact.ReactElement;
+
         logger.debug("Wrapped element with PageContextProvider for frontmatter access");
 
-        // Build router value with domain from request URL for SSR
         const ssrRouter = {
-          domain: this.requestUrl ? this.requestUrl.origin : "",
-          path: this.requestUrl?.pathname || pageFilePath,
-          pathname: this.requestUrl?.pathname || `/${pageInfo.entity.slug || ""}`,
+          domain: this.requestUrl?.origin ?? "",
+          path: this.requestUrl?.pathname ?? pageFilePath,
+          pathname: this.requestUrl?.pathname ?? `/${pageInfo.entity.slug || ""}`,
           params: {},
           query: this.requestUrl ? Object.fromEntries(this.requestUrl.searchParams) : {},
           isPreview: false,
@@ -154,10 +144,11 @@ export class LayoutApplicator {
           reload: async () => {},
         };
 
-        wrappedElement = React.createElement(
-          RouterProvider,
-          { router: ssrRouter, children: wrappedElement },
-        ) as BundledReact.ReactElement;
+        wrappedElement = React.createElement(RouterProvider, {
+          router: ssrRouter,
+          children: wrappedElement,
+        }) as BundledReact.ReactElement;
+
         logger.debug("Wrapped element with RouterProvider for SSR");
 
         return wrappedElement;
@@ -184,6 +175,7 @@ export class LayoutApplicator {
           nestedLayoutCount: nestedLayouts.length,
           hasLayoutBundle: !!layoutBundle,
         });
+
         const useESMWrap = Boolean(this.config?.experimental?.esmLayouts);
 
         if (useESMWrap) {
@@ -237,13 +229,11 @@ export class LayoutApplicator {
           const appSource = await this.adapter.fs.readFile(appPath);
           const isMdx = appPath.endsWith(".mdx") || appPath.endsWith(".md");
 
-          let App: React.ComponentType<Record<string, unknown>> | null = null;
+          let App: React.ComponentType<Record<string, unknown>> | null;
 
           if (isMdx) {
-            // Handle MDX files - compile and load
             App = await this.loadMdxAppComponent(appSource, appPath);
           } else {
-            // Handle regular TSX/JSX files
             const { loadComponentFromSource } = await import(
               "@veryfront/modules/react-loader/index.ts"
             );
@@ -260,16 +250,15 @@ export class LayoutApplicator {
             );
           }
 
-          if (App) {
-            const React = await getProjectReact();
-            logger.debug("Wrapped page with App component");
-            return React.createElement(App, { children: pageElement }) as BundledReact.ReactElement;
-          }
+          if (!App) return pageElement;
+
+          const React = await getProjectReact();
+          logger.debug("Wrapped page with App component");
+          return React.createElement(App, { children: pageElement }) as BundledReact.ReactElement;
         } catch (error) {
           logger.warn("Failed to load App component:", error);
+          return pageElement;
         }
-
-        return pageElement;
       },
       {
         "layout.project_dir": this.projectDir,
@@ -287,17 +276,16 @@ export class LayoutApplicator {
         "@veryfront/transforms/plugins/plugin-loader.ts"
       );
 
-      // Extract frontmatter
       let body = source;
       if (source.trim().startsWith("---")) {
-        const extracted = extract(source);
-        body = extracted.body;
+        body = extract(source).body;
       }
 
-      const remarkPlugins = await getRemarkPlugins();
-      const rehypePlugins = await getRehypePlugins();
+      const [remarkPlugins, rehypePlugins] = await Promise.all([
+        getRemarkPlugins(),
+        getRehypePlugins(),
+      ]);
 
-      // Compile MDX to JavaScript
       const compiled = await compile(body, {
         jsx: true,
         jsxRuntime: "automatic",
@@ -307,15 +295,12 @@ export class LayoutApplicator {
         rehypePlugins,
       });
 
-      const jsCode = String(compiled);
-
-      // Load the compiled module
       const { loadComponentFromSource } = await import(
         "@veryfront/modules/react-loader/index.ts"
       );
 
       return await loadComponentFromSource(
-        jsCode,
+        String(compiled),
         appPath.replace(/\.mdx?$/, ".jsx"),
         this.projectDir,
         this.adapter,
@@ -339,28 +324,30 @@ export class LayoutApplicator {
       SpanNames.LAYOUT_WRAP_RESERVED,
       async () => {
         const React = await getProjectReact();
+
         try {
           const segmentDir = dirname(pageFilePath);
           const appRootDir = join(this.projectDir, "app");
           const searchDirs = await collectAncestorDirs(segmentDir, appRootDir);
 
-          const loadingComp = await tryLoadReservedInDirs(
-            searchDirs,
-            "loading",
-            this.projectDir,
-            this.mode,
-            this.adapter,
-            this.projectId,
-          );
-
-          const errorComp = await tryLoadReservedInDirs(
-            searchDirs,
-            "error",
-            this.projectDir,
-            this.mode,
-            this.adapter,
-            this.projectId,
-          );
+          const [loadingComp, errorComp] = await Promise.all([
+            tryLoadReservedInDirs(
+              searchDirs,
+              "loading",
+              this.projectDir,
+              this.mode,
+              this.adapter,
+              this.projectId,
+            ),
+            tryLoadReservedInDirs(
+              searchDirs,
+              "error",
+              this.projectDir,
+              this.mode,
+              this.adapter,
+              this.projectId,
+            ),
+          ]);
 
           if (loadingComp) {
             const fallbackEl = React.createElement(loadingComp, {});

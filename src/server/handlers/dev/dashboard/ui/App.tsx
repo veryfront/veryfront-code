@@ -55,7 +55,7 @@ export interface Handler {
 
 export type TabId = "ai" | "server" | "runtime" | "files" | "errors" | "config" | "api";
 
-const TABS: { id: TabId; label: string }[] = [
+const TABS: Array<{ id: TabId; label: string }> = [
   { id: "ai", label: "AI" },
   { id: "server", label: "Server" },
   { id: "runtime", label: "Runtime" },
@@ -65,7 +65,12 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "api", label: "API" },
 ];
 
-export function App() {
+async function fetchJson(url: string): Promise<any> {
+  const res = await fetch(url);
+  return res.json();
+}
+
+export function App(): JSX.Element {
   const [currentTab, setCurrentTab] = useState<TabId>("ai");
   const [tools, setTools] = useState<Tool[]>([]);
   const [resources, setResources] = useState<Resource[]>([]);
@@ -73,25 +78,26 @@ export function App() {
   const [agents, setAgents] = useState<Agent[]>([]);
 
   useEffect(() => {
+    async function fetchData(): Promise<void> {
+      try {
+        const [t, r, p, a] = await Promise.all([
+          fetchJson("/_dev/api/tools"),
+          fetchJson("/_dev/api/resources"),
+          fetchJson("/_dev/api/prompts"),
+          fetchJson("/_dev/api/agents"),
+        ]);
+
+        setTools(t?.tools ?? []);
+        setResources(r?.resources ?? []);
+        setPrompts(p?.prompts ?? []);
+        setAgents(a?.agents ?? []);
+      } catch (e) {
+        console.error("Failed to fetch data:", e);
+      }
+    }
+
     fetchData();
   }, []);
-
-  async function fetchData() {
-    try {
-      const [t, r, p, a] = await Promise.all([
-        fetch("/_dev/api/tools").then((r) => r.json()),
-        fetch("/_dev/api/resources").then((r) => r.json()),
-        fetch("/_dev/api/prompts").then((r) => r.json()),
-        fetch("/_dev/api/agents").then((r) => r.json()),
-      ]);
-      setTools(t.tools || []);
-      setResources(r.resources || []);
-      setPrompts(p.prompts || []);
-      setAgents(a.agents || []);
-    } catch (e) {
-      console.error("Failed to fetch data:", e);
-    }
-  }
 
   return (
     <div className="min-h-screen bg-gray-50">

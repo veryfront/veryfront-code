@@ -7,14 +7,19 @@ export default tool({
   description:
     "Search emails by query string. Searches across subject, body, sender, and recipients. Supports advanced search syntax.",
   inputSchema: z.object({
-    query: z.string().min(1).describe("Search query (searches subject, body, from, to fields)"),
-    limit: z.number().min(1).max(50).default(10).describe("Maximum number of results to return"),
+    query: z
+      .string()
+      .min(1)
+      .describe("Search query (searches subject, body, from, to fields)"),
+    limit: z
+      .number()
+      .min(1)
+      .max(50)
+      .default(10)
+      .describe("Maximum number of results to return"),
   }),
   async execute({ query, limit }) {
-    const messages = await searchEmails({
-      query,
-      top: limit,
-    });
+    const messages = await searchEmails({ query, top: limit });
 
     return {
       totalResults: messages.length,

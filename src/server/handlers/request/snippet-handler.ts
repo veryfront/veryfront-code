@@ -7,21 +7,18 @@
 
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
-// Priority 450 - before static (500) to handle @/ component previews first
-const PRIORITY_SNIPPET = 450;
 import { serverLogger as logger } from "#veryfront/utils";
 import { renderSnippet } from "#veryfront/rendering/snippet-renderer.ts";
 import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import { VeryfrontAPIError } from "#veryfront/platform/adapters/veryfront-api-client/types.ts";
 
-/**
- * SnippetHandler handles @/ and @components/ prefixed paths.
- * These are component snippets that need to be rendered as previews.
- */
+// Priority 450 - before static (500) to handle @/ component previews first
+const PRIORITY_SNIPPET = 450;
+
 export class SnippetHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "SnippetHandler",
-    priority: PRIORITY_SNIPPET as HandlerPriority, // Before static (500), after dev handlers
+    priority: PRIORITY_SNIPPET as HandlerPriority,
     patterns: [{ pattern: /^\/(@\/|@components\/)/, method: "GET" }],
   };
 
@@ -29,7 +26,6 @@ export class SnippetHandler extends BaseHandler {
     const url = new URL(req.url);
     const pathname = url.pathname;
 
-    // Only handle @/ and @components/ paths
     if (!pathname.startsWith("/@/") && !pathname.startsWith("/@components/")) {
       return Promise.resolve(this.continue());
     }
@@ -39,53 +35,23 @@ export class SnippetHandler extends BaseHandler {
       projectSlug: ctx.projectSlug,
     });
 
-    // Strip the @/ or @components/ prefix to get the file path
-    let filePath: string;
-    if (pathname.startsWith("/@components/")) {
-      // @components/Button -> components/Button.snippet.mdx
-      // But if path already ends with .snippet.mdx, don't add it again
-      filePath = pathname.replace("/@components/", "components/");
-      if (!filePath.endsWith(".snippet.mdx")) {
-        filePath += ".snippet.mdx";
-      }
-    } else {
-      // @/components/Button.snippet.mdx -> components/Button.snippet.mdx
-      filePath = pathname.replace("/@/", "");
-    }
+    const filePath = this.resolveFilePath(pathname);
 
     logger.debug("[SnippetHandler] Resolved file path", { filePath });
 
-    // Use proxy context if available
     return this.withProxyContext(ctx, async () => {
       try {
-        // Read the file content through the adapter
         const content = await ctx.adapter.fs.readFile(filePath);
 
         if (!content) {
           logger.debug("[SnippetHandler] File not found or empty", { filePath });
-          const builder = this.createResponseBuilder(ctx);
-          return this.respond(
-            builder
-              .withCache("no-cache")
-              .withContentType(
-                "application/json",
-                JSON.stringify({ error: "Snippet not found", path: filePath }),
-                404,
-              ),
-          );
+          return this.respondNotFound(ctx, filePath);
         }
 
-        // Get module server URL from context or request
-        // ctx.moduleServerUrl may be just a path like "/_vf_modules", we need a full URL for SSR
-        const isFullUrl = ctx.moduleServerUrl?.startsWith("http://") ||
-          ctx.moduleServerUrl?.startsWith("https://");
-        const moduleServerUrl = isFullUrl ? ctx.moduleServerUrl : `${url.protocol}//${url.host}`;
-
-        // Get page_id from URL params (passed by Studio for postMessage communication)
+        const moduleServerUrl = this.getModuleServerUrl(ctx.moduleServerUrl, url);
         const pageId = url.searchParams.get("page_id") || undefined;
-
-        // Render the MDX snippet to HTML
         const isDev = ctx.requestContext?.isLocalDev ?? false;
+
         const result = await renderSnippet(content, {
           mode: isDev ? "development" : "production",
           projectDir: ctx.projectDir,
@@ -100,9 +66,8 @@ export class SnippetHandler extends BaseHandler {
           htmlLength: result.html.length,
         });
 
-        // Return rendered HTML
         const builder = this.createResponseBuilder(ctx);
-        // In local dev mode, relax COOP/CORP headers to allow Studio iframe embedding
+
         return this.respond(
           builder
             .withCORS(req, ctx.securityConfig?.cors)
@@ -119,8 +84,6 @@ export class SnippetHandler extends BaseHandler {
             .withContentType("text/html; charset=utf-8", result.html, 200),
         );
       } catch (error) {
-        // Return 404 directly for file-not-found errors instead of falling through to SSR handler
-        // This prevents 30s timeouts when snippet files don't exist
         const is404 = error instanceof VeryfrontAPIError && error.status === 404;
 
         if (is404) {
@@ -133,17 +96,37 @@ export class SnippetHandler extends BaseHandler {
           });
         }
 
-        const builder = this.createResponseBuilder(ctx);
-        return this.respond(
-          builder
-            .withCache("no-cache")
-            .withContentType(
-              "application/json",
-              JSON.stringify({ error: "Snippet not found", path: filePath }),
-              404,
-            ),
-        );
+        return this.respondNotFound(ctx, filePath);
       }
     });
+  }
+
+  private resolveFilePath(pathname: string): string {
+    if (pathname.startsWith("/@components/")) {
+      let filePath = pathname.replace("/@components/", "components/");
+      if (!filePath.endsWith(".snippet.mdx")) filePath += ".snippet.mdx";
+      return filePath;
+    }
+
+    return pathname.replace("/@/", "");
+  }
+
+  private getModuleServerUrl(moduleServerUrl: string | undefined, url: URL): string {
+    const isFullUrl = moduleServerUrl?.startsWith("http://") ||
+      moduleServerUrl?.startsWith("https://");
+    return isFullUrl ? moduleServerUrl! : `${url.protocol}//${url.host}`;
+  }
+
+  private respondNotFound(ctx: HandlerContext, filePath: string): HandlerResult {
+    const builder = this.createResponseBuilder(ctx);
+    return this.respond(
+      builder
+        .withCache("no-cache")
+        .withContentType(
+          "application/json",
+          JSON.stringify({ error: "Snippet not found", path: filePath }),
+          404,
+        ),
+    );
   }
 }

@@ -10,10 +10,10 @@ export default tool({
   async execute() {
     const bases = await listBases();
 
-    return bases.map((base) => ({
-      id: base.id,
-      name: base.name,
-      permissionLevel: base.permissionLevel,
+    return bases.map(({ id, name, permissionLevel }) => ({
+      id,
+      name,
+      permissionLevel,
     }));
   },
 });

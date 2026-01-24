@@ -56,9 +56,7 @@ let backendInitPromise: Promise<void> | null = null;
  * Call this at startup if you want to enable distributed caching.
  */
 export async function initializeFileCacheBackend(): Promise<boolean> {
-  if (backendInitialized) {
-    return cacheBackend?.type !== "memory";
-  }
+  if (backendInitialized) return cacheBackend?.type !== "memory";
 
   if (backendInitPromise) {
     await backendInitPromise;
@@ -68,17 +66,18 @@ export async function initializeFileCacheBackend(): Promise<boolean> {
   backendInitPromise = withSpan("platform.fs.cache.initializeBackend", async () => {
     try {
       cacheBackend = await CacheBackends.file();
-      backendInitialized = true;
       logger.debug("[FileCache] Backend initialized", { type: cacheBackend.type });
     } catch (error) {
       logger.warn("[FileCache] Backend init failed, using memory fallback", { error });
       cacheBackend = new MemoryCacheBackend(FALLBACK_MAX_ENTRIES);
+    } finally {
       backendInitialized = true;
     }
   }) as Promise<void>;
 
   await backendInitPromise;
   backendInitPromise = null;
+
   return cacheBackend?.type !== "memory";
 }
 
@@ -103,10 +102,10 @@ export const isFileCacheRedisEnabled = isFileCacheDistributedEnabled;
  */
 export class FileCache {
   private fallbackCache: Map<string, CacheEntry<unknown>>;
-  private fallbackMemoryUsed: number = 0;
+  private fallbackMemoryUsed = 0;
   private options: Required<FileCacheOptions>;
-  private hits: number = 0;
-  private misses: number = 0;
+  private hits = 0;
+  private misses = 0;
 
   constructor(options: FileCacheOptions = {}) {
     this.options = {
@@ -124,6 +123,14 @@ export class FileCache {
     logger.debug("[FileCache] Initialized", { ...this.options, mode });
   }
 
+  private isDistributed(): boolean {
+    return cacheBackend?.type !== undefined && cacheBackend.type !== "memory";
+  }
+
+  private getBackend(): CacheBackend | null {
+    return this.isDistributed() ? cacheBackend : null;
+  }
+
   /**
    * Synchronous get - only checks fallback cache (for local dev without backend).
    * In production with backend, use getAsync instead.
@@ -135,12 +142,11 @@ export class FileCache {
     }
 
     // In distributed mode, sync get always misses - use getAsync
-    if (cacheBackend && cacheBackend.type !== "memory") {
+    if (this.isDistributed()) {
       this.misses++;
       return undefined;
     }
 
-    // Fallback mode: check memory cache
     const entry = this.fallbackCache.get(key) as CacheEntry<T> | undefined;
     if (!entry) {
       this.misses++;
@@ -167,10 +173,12 @@ export class FileCache {
       return Promise.resolve(undefined);
     }
 
-    // Try backend first
-    if (cacheBackend && cacheBackend.type !== "memory") {
-      const backend = cacheBackend;
-      return withSpan("platform.fs.cache.getAsync", async () => {
+    const backend = this.getBackend();
+    if (!backend) return Promise.resolve(this.get<T>(key));
+
+    return withSpan(
+      "platform.fs.cache.getAsync",
+      async () => {
         try {
           // Use request-scoped batching to dedupe and batch cache requests
           // Note: key already includes the full prefix from buildFileCacheKeyPrefix (e.g., "file:env:project:...")
@@ -188,13 +196,12 @@ export class FileCache {
         } catch (error) {
           logger.debug("[FileCache] Backend get failed", { key, error });
         }
+
         this.misses++;
         return undefined;
-      }, { "cache.key": key, "cache.backend": backend.type });
-    }
-
-    // Fallback mode: check memory cache
-    return Promise.resolve(this.get<T>(key));
+      },
+      { "cache.key": key, "cache.backend": backend.type },
+    );
   }
 
   /**
@@ -202,68 +209,57 @@ export class FileCache {
    * In production with backend, use setAsync instead.
    */
   set<T>(key: string, value: T): void {
-    if (!this.options.enabled) {
-      return;
-    }
+    if (!this.options.enabled) return;
 
     const size = estimateSize(value);
+    const entry: CacheEntry<T> = { value, timestamp: Date.now(), size };
 
     // In distributed mode, fire-and-forget to backend
     // Note: key already includes the full prefix from buildFileCacheKeyPrefix (e.g., "file:env:project:...")
-    if (cacheBackend && cacheBackend.type !== "memory") {
-      const entry: CacheEntry<T> = { value, timestamp: Date.now(), size };
+    const backend = this.getBackend();
+    if (backend) {
       const serialized = JSON.stringify(entry);
       // Update request-scoped cache so subsequent reads in same request see the new value
       setInRequestCache(key, serialized);
-      cacheBackend.set(key, serialized, BACKEND_TTL_SECONDS).catch(() => {});
+      backend.set(key, serialized, BACKEND_TTL_SECONDS).catch(() => {});
       return;
     }
 
-    // Fallback mode: write to memory cache
-    if (size > this.options.maxMemory) {
-      logger.warn("[FileCache] Value too large for fallback cache", { key, size });
-      return;
-    }
-
-    this.evictFallbackIfNeeded(size);
-
-    const entry: CacheEntry<T> = { value, timestamp: Date.now(), size };
-    this.fallbackCache.set(key, entry as CacheEntry<unknown>);
-    this.fallbackMemoryUsed += size;
+    this.setToFallback(key, entry, size);
   }
 
   /**
    * Async set - writes to backend (primary) or fallback memory cache.
    */
   setAsync<T>(key: string, value: T): Promise<void> {
-    if (!this.options.enabled) {
-      return Promise.resolve();
-    }
+    if (!this.options.enabled) return Promise.resolve();
 
     const size = estimateSize(value);
     const entry: CacheEntry<T> = { value, timestamp: Date.now(), size };
 
     // Try backend first
     // Note: key already includes the full prefix from buildFileCacheKeyPrefix (e.g., "file:env:project:...")
-    if (cacheBackend && cacheBackend.type !== "memory") {
-      const backend = cacheBackend;
-      return withSpan("platform.fs.cache.setAsync", async () => {
+    const backend = this.getBackend();
+    if (!backend) {
+      this.setToFallback(key, entry, size);
+      return Promise.resolve();
+    }
+
+    return withSpan(
+      "platform.fs.cache.setAsync",
+      async () => {
         try {
           const serialized = JSON.stringify(entry);
           // Update request-scoped cache so subsequent reads in same request see the new value
           setInRequestCache(key, serialized);
           await backend.set(key, serialized, BACKEND_TTL_SECONDS);
-          return;
         } catch (error) {
           logger.debug("[FileCache] Backend set failed, using fallback", { key, error });
           this.setToFallback(key, entry, size);
         }
-      }, { "cache.key": key, "cache.backend": backend.type, "cache.size": size });
-    }
-
-    // Fallback mode: write to memory cache
-    this.setToFallback(key, entry, size);
-    return Promise.resolve();
+      },
+      { "cache.key": key, "cache.backend": backend.type, "cache.size": size },
+    );
   }
 
   /** Write to fallback memory cache with size check and eviction. */
@@ -272,98 +268,106 @@ export class FileCache {
       logger.warn("[FileCache] Value too large for fallback cache", { key, size });
       return;
     }
+
     this.evictFallbackIfNeeded(size);
-    this.fallbackCache.set(key, entry as CacheEntry<unknown>);
+    this.fallbackCache.set(key, entry);
     this.fallbackMemoryUsed += size;
   }
 
   has(key: string): boolean {
     if (!this.options.enabled) return false;
-    if (cacheBackend && cacheBackend.type !== "memory") return false; // Use hasAsync for distributed mode
+    if (this.isDistributed()) return false; // Use hasAsync for distributed mode
 
     const entry = this.fallbackCache.get(key);
     if (!entry) return false;
+
     if (Date.now() - entry.timestamp > this.options.ttl) {
       this.delete(key);
       return false;
     }
+
     return true;
   }
 
   delete(key: string): boolean {
     const entry = this.fallbackCache.get(key);
-    if (entry) {
-      this.fallbackMemoryUsed -= entry.size;
-    }
+    if (entry) this.fallbackMemoryUsed -= entry.size;
     return this.fallbackCache.delete(key);
   }
 
   deleteByPrefix(prefix: string): number {
     let count = 0;
-    for (const key of [...this.fallbackCache.keys()]) {
-      if (key.startsWith(prefix)) {
-        const entry = this.fallbackCache.get(key);
-        if (entry) this.fallbackMemoryUsed -= entry.size;
-        this.fallbackCache.delete(key);
-        count++;
-      }
+
+    for (const key of this.fallbackCache.keys()) {
+      if (!key.startsWith(prefix)) continue;
+
+      const entry = this.fallbackCache.get(key);
+      if (entry) this.fallbackMemoryUsed -= entry.size;
+      this.fallbackCache.delete(key);
+      count++;
     }
 
     // Fire-and-forget backend deletion
     // Note: prefix already includes "file:" from buildFileCacheKeyPrefix, don't add it again
-    if (cacheBackend?.delByPattern) {
-      cacheBackend.delByPattern(`${prefix}*`).catch(() => {});
-    }
+    cacheBackend?.delByPattern?.(`${prefix}*`).catch(() => {});
 
     return count;
   }
 
   deleteByPrefixAsync(prefix: string): Promise<number> {
-    return withSpan("platform.fs.cache.deleteByPrefixAsync", async () => {
-      const count = this.deleteByPrefix(prefix);
+    return withSpan(
+      "platform.fs.cache.deleteByPrefixAsync",
+      async () => {
+        const count = this.deleteByPrefix(prefix);
 
-      // Await backend deletion for cross-pod consistency
-      // Note: prefix already includes "file:" from buildFileCacheKeyPrefix, don't add it again
-      if (cacheBackend?.delByPattern) {
-        await cacheBackend.delByPattern(`${prefix}*`);
-      }
+        // Await backend deletion for cross-pod consistency
+        // Note: prefix already includes "file:" from buildFileCacheKeyPrefix, don't add it again
+        if (cacheBackend?.delByPattern) {
+          await cacheBackend.delByPattern(`${prefix}*`);
+        }
 
-      return count;
-    }, { "cache.prefix": prefix });
+        return count;
+      },
+      { "cache.prefix": prefix },
+    );
   }
 
   deleteByPrefixAndSuffix(prefix: string, suffix: string): number {
     let count = 0;
-    for (const key of [...this.fallbackCache.keys()]) {
-      if (key.startsWith(prefix) && key.endsWith(`:${suffix}`)) {
-        const entry = this.fallbackCache.get(key);
-        if (entry) this.fallbackMemoryUsed -= entry.size;
-        this.fallbackCache.delete(key);
-        count++;
-      }
+    const suffixWithColon = `:${suffix}`;
+
+    for (const key of this.fallbackCache.keys()) {
+      if (!key.startsWith(prefix) || !key.endsWith(suffixWithColon)) continue;
+
+      const entry = this.fallbackCache.get(key);
+      if (entry) this.fallbackMemoryUsed -= entry.size;
+      this.fallbackCache.delete(key);
+      count++;
     }
 
     // Fire-and-forget backend deletion
     // Note: prefix already includes "file:" from buildFileCacheKeyPrefix, don't add it again
-    if (cacheBackend?.delByPattern) {
-      cacheBackend.delByPattern(`${prefix}*:${suffix}`).catch(() => {});
-    }
+    cacheBackend?.delByPattern?.(`${prefix}*:${suffix}`).catch(() => {});
 
     return count;
   }
 
   deleteByPrefixAndSuffixAsync(prefix: string, suffix: string): Promise<number> {
-    return withSpan("platform.fs.cache.deleteByPrefixAndSuffixAsync", async () => {
-      const count = this.deleteByPrefixAndSuffix(prefix, suffix);
+    return withSpan(
+      "platform.fs.cache.deleteByPrefixAndSuffixAsync",
+      async () => {
+        const count = this.deleteByPrefixAndSuffix(prefix, suffix);
 
-      // Await backend deletion for cross-pod consistency
-      // Note: prefix already includes "file:" from buildFileCacheKeyPrefix, don't add it again
-      if (cacheBackend?.delByPattern) {
-        await cacheBackend.delByPattern(`${prefix}*:${suffix}`);
-      }
+        // Await backend deletion for cross-pod consistency
+        // Note: prefix already includes "file:" from buildFileCacheKeyPrefix, don't add it again
+        if (cacheBackend?.delByPattern) {
+          await cacheBackend.delByPattern(`${prefix}*:${suffix}`);
+        }
 
-      return count;
-    }, { "cache.prefix": prefix, "cache.suffix": suffix });
+        return count;
+      },
+      { "cache.prefix": prefix, "cache.suffix": suffix },
+    );
   }
 
   clear(): void {
@@ -375,14 +379,13 @@ export class FileCache {
 
   stats(): CacheStats & { backend: string } {
     const total = this.hits + this.misses;
-    const hitRate = total > 0 ? this.hits / total : 0;
 
     return {
       size: this.fallbackCache.size,
       memoryUsed: this.fallbackMemoryUsed,
       hits: this.hits,
       misses: this.misses,
-      hitRate,
+      hitRate: total > 0 ? this.hits / total : 0,
       backend: cacheBackend?.type ?? "uninitialized",
     };
   }
@@ -392,37 +395,37 @@ export class FileCache {
     let evicted = 0;
 
     for (const [key, entry] of this.fallbackCache) {
-      if (now - entry.timestamp > this.options.ttl) {
-        this.fallbackMemoryUsed -= entry.size;
-        this.fallbackCache.delete(key);
-        evicted++;
-      }
+      if (now - entry.timestamp <= this.options.ttl) continue;
+
+      this.fallbackMemoryUsed -= entry.size;
+      this.fallbackCache.delete(key);
+      evicted++;
     }
 
     return evicted;
   }
 
   private evictFallbackIfNeeded(newSize: number): void {
+    const evictOldest = (): void => {
+      const oldest = this.fallbackCache.keys().next().value as string | undefined;
+      if (!oldest) return;
+
+      const entry = this.fallbackCache.get(oldest);
+      if (entry) this.fallbackMemoryUsed -= entry.size;
+      this.fallbackCache.delete(oldest);
+    };
+
     // Evict by count
     while (this.fallbackCache.size >= this.options.maxSize) {
-      const oldest = this.fallbackCache.keys().next().value;
-      if (oldest) {
-        const entry = this.fallbackCache.get(oldest);
-        if (entry) this.fallbackMemoryUsed -= entry.size;
-        this.fallbackCache.delete(oldest);
-      } else break;
+      if (this.fallbackCache.size === 0) break;
+      evictOldest();
     }
 
     // Evict by memory
     while (
       this.fallbackMemoryUsed + newSize > this.options.maxMemory && this.fallbackCache.size > 0
     ) {
-      const oldest = this.fallbackCache.keys().next().value;
-      if (oldest) {
-        const entry = this.fallbackCache.get(oldest);
-        if (entry) this.fallbackMemoryUsed -= entry.size;
-        this.fallbackCache.delete(oldest);
-      } else break;
+      evictOldest();
     }
   }
 }

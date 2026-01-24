@@ -15,9 +15,6 @@ export interface UseWorkflowStartResult<TInput = unknown> {
   resetError: () => void;
 }
 
-/**
- * Start new workflow runs.
- */
 export function useWorkflowStart<TInput = unknown>(
   options: UseWorkflowStartOptions,
 ): UseWorkflowStartResult<TInput> {
@@ -35,21 +32,21 @@ export function useWorkflowStart<TInput = unknown>(
       try {
         const response = await fetch(`${apiBase}/${workflowId}/start`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ input }),
         });
 
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
+          const errorData: { message?: string } = await response
+            .json()
+            .catch(() => ({}));
           throw new Error(
-            errorData.message || `Failed to start workflow: ${response.status}`,
+            errorData.message ?? `Failed to start workflow: ${response.status}`,
           );
         }
 
-        const data = await response.json();
-        const runId = data.runId || data.id;
+        const data: { runId?: string; id?: string } = await response.json();
+        const runId = data.runId ?? data.id ?? "";
 
         setLastRunId(runId);
         onStart?.(runId);
@@ -64,18 +61,12 @@ export function useWorkflowStart<TInput = unknown>(
         setIsStarting(false);
       }
     },
-    [workflowId, apiBase, onStart, onError],
+    [apiBase, onError, onStart, workflowId],
   );
 
-  const resetError = useCallback(() => {
+  const resetError = useCallback((): void => {
     setError(null);
   }, []);
 
-  return {
-    start,
-    isStarting,
-    lastRunId,
-    error,
-    resetError,
-  };
+  return { start, isStarting, lastRunId, error, resetError };
 }

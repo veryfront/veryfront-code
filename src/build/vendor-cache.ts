@@ -5,10 +5,10 @@
  * Provides per-project vendor bundle management with automatic invalidation.
  */
 
-import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
-import type { VendorBundleResult } from "./vendor-bundle.ts";
-import { getBuildConfig } from "./config/environment.ts";
 import { getDisableLruIntervalEnv } from "#veryfront/config/env.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { getBuildConfig } from "./config/environment.ts";
+import type { VendorBundleResult } from "./vendor-bundle.ts";
 
 interface VendorCacheEntry {
   bundle: VendorBundleResult;
@@ -28,10 +28,9 @@ export class VendorCacheManager {
 
   constructor() {
     const config = getBuildConfig();
-    const disableIntervals = isLruIntervalDisabled();
     this.cache = new LRUCache<string, VendorCacheEntry>({
       maxEntries: config.cacheMaxEntries,
-      ttlMs: disableIntervals ? undefined : config.cacheTTLMs,
+      ttlMs: isLruIntervalDisabled() ? undefined : config.cacheTTLMs,
     });
   }
 
@@ -42,8 +41,7 @@ export class VendorCacheManager {
    * @returns Cached vendor bundle or undefined if not found
    */
   get(key: string): VendorBundleResult | undefined {
-    const entry = this.cache.get(key);
-    return entry?.bundle;
+    return this.cache.get(key)?.bundle;
   }
 
   /**
@@ -63,10 +61,7 @@ export class VendorCacheManager {
     this.cache.set(key, {
       bundle,
       timestamp: Date.now(),
-      config: {
-        reactVersion,
-        dependencies,
-      },
+      config: { reactVersion, dependencies },
     });
   }
 
@@ -78,9 +73,7 @@ export class VendorCacheManager {
   invalidateProject(projectId: string): void {
     const prefix = `vendor:${projectId}:`;
     for (const key of this.cache.keys()) {
-      if (key.startsWith(prefix)) {
-        this.cache.delete(key);
-      }
+      if (key.startsWith(prefix)) this.cache.delete(key);
     }
   }
 
@@ -96,7 +89,7 @@ export class VendorCacheManager {
    *
    * @returns Object with cache stats
    */
-  getStats() {
+  getStats(): { size: number; maxEntries: number; ttlMs: number } {
     const config = getBuildConfig();
     return {
       size: this.cache.size,
@@ -114,10 +107,8 @@ export class VendorCacheManager {
 }
 
 function isLruIntervalDisabled(): boolean {
-  if ((globalThis as Record<string, unknown>).__vfDisableLruInterval === true) {
-    return true;
-  }
-  return getDisableLruIntervalEnv();
+  const globalFlag = (globalThis as Record<string, unknown>).__vfDisableLruInterval;
+  return globalFlag === true || getDisableLruIntervalEnv();
 }
 
 // Default singleton instance for backward compatibility
@@ -125,9 +116,7 @@ function isLruIntervalDisabled(): boolean {
 let defaultInstance: VendorCacheManager | undefined;
 
 function _getDefaultInstance(): VendorCacheManager {
-  if (!defaultInstance) {
-    defaultInstance = new VendorCacheManager();
-  }
+  defaultInstance ??= new VendorCacheManager();
   return defaultInstance;
 }
 
@@ -167,22 +156,18 @@ export async function generateVendorCacheKey(
   reactVersion: string,
   dependencies: Record<string, string>,
 ): Promise<string> {
-  // Create deterministic string from config
   const configStr = JSON.stringify({
     transformVersion: TRANSFORM_VERSION,
     react: reactVersion,
     deps: Object.entries(dependencies).sort(([a], [b]) => a.localeCompare(b)),
   });
 
-  // Hash the config
-  const encoder = new TextEncoder();
-  const data = encoder.encode(configStr);
+  const data = new TextEncoder().encode(configStr);
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  const hash = hashArray
+  const hash = Array.from(new Uint8Array(hashBuffer))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("")
-    .substring(0, 16);
+    .slice(0, 16);
 
   return `vendor:${projectId}:${hash}`;
 }
@@ -192,8 +177,6 @@ export async function generateVendorCacheKey(
  * This function is now safe to call in production code
  */
 export function destroyVendorCache(): void {
-  if (defaultInstance) {
-    defaultInstance.destroy();
-    defaultInstance = undefined;
-  }
+  defaultInstance?.destroy();
+  defaultInstance = undefined;
 }

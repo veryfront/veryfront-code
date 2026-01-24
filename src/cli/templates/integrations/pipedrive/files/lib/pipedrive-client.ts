@@ -50,16 +50,6 @@ interface PipedrivePerson {
   update_time: string;
 }
 
-interface PipedriveOrganization {
-  id: number;
-  name: string;
-  owner_id: number;
-  owner_name: string;
-  address: string | null;
-  add_time: string;
-  update_time: string;
-}
-
 interface PipedriveStage {
   id: number;
   name: string;
@@ -68,10 +58,7 @@ interface PipedriveStage {
   pipeline_name: string;
 }
 
-async function pipedriveFetch<T>(
-  endpoint: string,
-  options: RequestInit = {},
-): Promise<T> {
+async function pipedriveFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = await getAccessToken();
   if (!token) {
     throw new Error("Not authenticated with Pipedrive. Please connect your account.");
@@ -89,13 +76,16 @@ async function pipedriveFetch<T>(
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(
-      `Pipedrive API error: ${response.status} ${error.error || response.statusText}`,
-    );
+    const error = await response.json().catch(() => ({} as { error?: string }));
+    throw new Error(`Pipedrive API error: ${response.status} ${error.error ?? response.statusText}`);
   }
 
   return response.json();
+}
+
+function buildEndpoint(path: string, params: URLSearchParams): string {
+  const queryString = params.toString();
+  return queryString ? `${path}?${queryString}` : path;
 }
 
 export async function listDeals(options?: {
@@ -106,30 +96,19 @@ export async function listDeals(options?: {
 }): Promise<PipedriveDeal[]> {
   const params = new URLSearchParams();
 
-  if (options?.status) {
-    params.set("status", options.status);
-  }
-  if (options?.ownerId) {
-    params.set("user_id", options.ownerId.toString());
-  }
-  if (options?.stageId) {
-    params.set("stage_id", options.stageId.toString());
-  }
-  if (options?.limit) {
-    params.set("limit", options.limit.toString());
-  }
+  if (options?.status) params.set("status", options.status);
+  if (options?.ownerId) params.set("user_id", options.ownerId.toString());
+  if (options?.stageId) params.set("stage_id", options.stageId.toString());
+  if (options?.limit) params.set("limit", options.limit.toString());
 
-  const queryString = params.toString();
-  const endpoint = queryString ? `/deals?${queryString}` : "/deals";
-
+  const endpoint = buildEndpoint("/deals", params);
   const response = await pipedriveFetch<PipedriveResponse<PipedriveDeal[]>>(endpoint);
+
   return response.data || [];
 }
 
 export async function getDeal(dealId: number): Promise<PipedriveDeal> {
-  const response = await pipedriveFetch<PipedriveResponse<PipedriveDeal>>(
-    `/deals/${dealId}`,
-  );
+  const response = await pipedriveFetch<PipedriveResponse<PipedriveDeal>>(`/deals/${dealId}`);
   return response.data;
 }
 
@@ -142,9 +121,7 @@ export async function createDeal(options: {
   stageId?: number;
   expectedCloseDate?: string;
 }): Promise<PipedriveDeal> {
-  const body: Record<string, unknown> = {
-    title: options.title,
-  };
+  const body: Record<string, unknown> = { title: options.title };
 
   if (options.value !== undefined) body.value = options.value;
   if (options.currency) body.currency = options.currency;
@@ -157,6 +134,7 @@ export async function createDeal(options: {
     method: "POST",
     body: JSON.stringify(body),
   });
+
   return response.data;
 }
 
@@ -182,13 +160,11 @@ export async function updateDeal(
   if (updates.orgId !== undefined) body.org_id = updates.orgId;
   if (updates.expectedCloseDate !== undefined) body.expected_close_date = updates.expectedCloseDate;
 
-  const response = await pipedriveFetch<PipedriveResponse<PipedriveDeal>>(
-    `/deals/${dealId}`,
-    {
-      method: "PUT",
-      body: JSON.stringify(body),
-    },
-  );
+  const response = await pipedriveFetch<PipedriveResponse<PipedriveDeal>>(`/deals/${dealId}`, {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+
   return response.data;
 }
 
@@ -198,24 +174,17 @@ export async function listPersons(options?: {
 }): Promise<PipedrivePerson[]> {
   const params = new URLSearchParams();
 
-  if (options?.searchTerm) {
-    params.set("term", options.searchTerm);
-  }
-  if (options?.limit) {
-    params.set("limit", options.limit.toString());
-  }
+  if (options?.searchTerm) params.set("term", options.searchTerm);
+  if (options?.limit) params.set("limit", options.limit.toString());
 
-  const queryString = params.toString();
-  const endpoint = queryString ? `/persons?${queryString}` : "/persons";
-
+  const endpoint = buildEndpoint("/persons", params);
   const response = await pipedriveFetch<PipedriveResponse<PipedrivePerson[]>>(endpoint);
+
   return response.data || [];
 }
 
 export async function getPerson(personId: number): Promise<PipedrivePerson> {
-  const response = await pipedriveFetch<PipedriveResponse<PipedrivePerson>>(
-    `/persons/${personId}`,
-  );
+  const response = await pipedriveFetch<PipedriveResponse<PipedrivePerson>>(`/persons/${personId}`);
   return response.data;
 }
 
@@ -225,24 +194,17 @@ export async function createPerson(options: {
   phone?: string;
   orgId?: number;
 }): Promise<PipedrivePerson> {
-  const body: Record<string, unknown> = {
-    name: options.name,
-  };
+  const body: Record<string, unknown> = { name: options.name };
 
-  if (options.email) {
-    body.email = [{ value: options.email, primary: true }];
-  }
-  if (options.phone) {
-    body.phone = [{ value: options.phone, primary: true }];
-  }
-  if (options.orgId) {
-    body.org_id = options.orgId;
-  }
+  if (options.email) body.email = [{ value: options.email, primary: true }];
+  if (options.phone) body.phone = [{ value: options.phone, primary: true }];
+  if (options.orgId) body.org_id = options.orgId;
 
   const response = await pipedriveFetch<PipedriveResponse<PipedrivePerson>>("/persons", {
     method: "POST",
     body: JSON.stringify(body),
   });
+
   return response.data;
 }
 
@@ -252,8 +214,8 @@ export async function listStages(): Promise<PipedriveStage[]> {
 }
 
 export async function getCurrentUser(): Promise<{ id: number; name: string; email: string }> {
-  const response = await pipedriveFetch<PipedriveResponse<{ id: number; name: string; email: string }>>(
-    "/users/me",
-  );
+  const response = await pipedriveFetch<
+    PipedriveResponse<{ id: number; name: string; email: string }>
+  >("/users/me");
   return response.data;
 }

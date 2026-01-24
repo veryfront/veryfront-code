@@ -8,9 +8,6 @@ import {
 } from "./wrapper.ts";
 import type { ContextualFSAdapter, FSAdapter } from "./veryfront/types.ts";
 
-/**
- * Create a minimal mock FSAdapter for testing
- */
 function createMockFSAdapter(overrides: Partial<FSAdapter> = {}): FSAdapter {
   return {
     readFile: (path: string) => {
@@ -28,6 +25,7 @@ function createMockFSAdapter(overrides: Partial<FSAdapter> = {}): FSAdapter {
           mtime: new Date(),
         });
       }
+
       if (path === "/dir") {
         return Promise.resolve({
           size: 0,
@@ -37,15 +35,13 @@ function createMockFSAdapter(overrides: Partial<FSAdapter> = {}): FSAdapter {
           mtime: new Date(),
         });
       }
+
       return Promise.reject(new Error(`Path not found: ${path}`));
     },
     ...overrides,
   };
 }
 
-/**
- * Create a mock ContextualFSAdapter for testing contextual operations
- */
 function createMockContextualAdapter(
   overrides: Partial<ContextualFSAdapter> = {},
 ): ContextualFSAdapter {
@@ -70,18 +66,14 @@ describe("NotSupportedError", () => {
 
 describe("wrapFSAdapter", () => {
   it("should create FSAdapterWrapper instance", () => {
-    const fsAdapter = createMockFSAdapter();
-    const wrapper = wrapFSAdapter(fsAdapter);
-
+    const wrapper = wrapFSAdapter(createMockFSAdapter());
     assertEquals(wrapper instanceof FSAdapterWrapper, true);
   });
 });
 
 describe("isExtendedFSAdapter", () => {
   it("should return true for FSAdapterWrapper", () => {
-    const fsAdapter = createMockFSAdapter();
-    const wrapper = new FSAdapterWrapper(fsAdapter);
-
+    const wrapper = new FSAdapterWrapper(createMockFSAdapter());
     assertEquals(isExtendedFSAdapter(wrapper), true);
   });
 
@@ -111,7 +103,7 @@ describe("isExtendedFSAdapter", () => {
   it("should return false for partial implementations", () => {
     const partialFs = {
       readFile: () => Promise.resolve(""),
-      isVeryfrontAdapter: () => false, // Has one method but not all
+      isVeryfrontAdapter: () => false,
     };
 
     assertEquals(isExtendedFSAdapter(partialFs as any), false);
@@ -128,9 +120,7 @@ describe("FSAdapterWrapper", () => {
     });
 
     it("getAdapterType should return constructor name", () => {
-      const fsAdapter = createMockFSAdapter();
-      const wrapper = new FSAdapterWrapper(fsAdapter);
-
+      const wrapper = new FSAdapterWrapper(createMockFSAdapter());
       assertEquals(wrapper.getAdapterType(), "Object");
     });
 
@@ -147,16 +137,13 @@ describe("FSAdapterWrapper", () => {
             mtime: new Date(),
           });
       }
-      const fsAdapter = new CustomAdapter() as unknown as FSAdapter;
-      const wrapper = new FSAdapterWrapper(fsAdapter);
 
+      const wrapper = new FSAdapterWrapper(new CustomAdapter() as unknown as FSAdapter);
       assertEquals(wrapper.getAdapterType(), "CustomAdapter");
     });
 
     it("isVeryfrontAdapter should return false for non-Veryfront adapters", () => {
-      const fsAdapter = createMockFSAdapter();
-      const wrapper = new FSAdapterWrapper(fsAdapter);
-
+      const wrapper = new FSAdapterWrapper(createMockFSAdapter());
       assertEquals(wrapper.isVeryfrontAdapter(), false);
     });
 
@@ -173,9 +160,8 @@ describe("FSAdapterWrapper", () => {
             mtime: new Date(),
           });
       }
-      const fsAdapter = new VeryfrontFSAdapter() as unknown as FSAdapter;
-      const wrapper = new FSAdapterWrapper(fsAdapter);
 
+      const wrapper = new FSAdapterWrapper(new VeryfrontFSAdapter() as unknown as FSAdapter);
       assertEquals(wrapper.isVeryfrontAdapter(), true);
     });
 
@@ -192,9 +178,8 @@ describe("FSAdapterWrapper", () => {
             mtime: new Date(),
           });
       }
-      const fsAdapter = new MultiProjectFSAdapter() as unknown as FSAdapter;
-      const wrapper = new FSAdapterWrapper(fsAdapter);
 
+      const wrapper = new FSAdapterWrapper(new MultiProjectFSAdapter() as unknown as FSAdapter);
       assertEquals(wrapper.isVeryfrontAdapter(), true);
     });
   });
@@ -270,20 +255,15 @@ describe("FSAdapterWrapper", () => {
     });
 
     it("should throw NotSupportedError when writeFile not available", async () => {
-      const fsAdapter = createMockFSAdapter();
-      const wrapper = new FSAdapterWrapper(fsAdapter);
+      const wrapper = new FSAdapterWrapper(createMockFSAdapter());
 
-      await assertRejects(
-        () => wrapper.writeFile("/new.txt", "content"),
-        NotSupportedError,
-      );
+      await assertRejects(() => wrapper.writeFile("/new.txt", "content"), NotSupportedError);
     });
   });
 
   describe("exists", () => {
     it("should delegate to fsAdapter.exists", async () => {
-      const fsAdapter = createMockFSAdapter();
-      const wrapper = new FSAdapterWrapper(fsAdapter);
+      const wrapper = new FSAdapterWrapper(createMockFSAdapter());
 
       assertEquals(await wrapper.exists("/exists.txt"), true);
       assertEquals(await wrapper.exists("/missing.txt"), false);
@@ -292,8 +272,7 @@ describe("FSAdapterWrapper", () => {
 
   describe("stat", () => {
     it("should return FileInfo for file", async () => {
-      const fsAdapter = createMockFSAdapter();
-      const wrapper = new FSAdapterWrapper(fsAdapter);
+      const wrapper = new FSAdapterWrapper(createMockFSAdapter());
 
       const stat = await wrapper.stat("/exists.txt");
       assertEquals(stat.isFile, true);
@@ -302,8 +281,7 @@ describe("FSAdapterWrapper", () => {
     });
 
     it("should return FileInfo for directory", async () => {
-      const fsAdapter = createMockFSAdapter();
-      const wrapper = new FSAdapterWrapper(fsAdapter);
+      const wrapper = new FSAdapterWrapper(createMockFSAdapter());
 
       const stat = await wrapper.stat("/dir");
       assertEquals(stat.isFile, false);
@@ -359,27 +337,20 @@ describe("FSAdapterWrapper", () => {
       const wrapper = new FSAdapterWrapper(fsAdapter);
 
       const entries = [];
-      for await (const entry of wrapper.readDir("/dir")) {
-        entries.push(entry);
-      }
+      for await (const entry of wrapper.readDir("/dir")) entries.push(entry);
 
       assertEquals(entries.length, 1);
       assertEquals(entries[0]?.name, "a.txt");
     });
 
     it("should throw NotSupportedError when neither readdir nor readDir available", async () => {
-      const fsAdapter = createMockFSAdapter();
-      const wrapper = new FSAdapterWrapper(fsAdapter);
+      const wrapper = new FSAdapterWrapper(createMockFSAdapter());
 
-      await assertRejects(
-        async () => {
-          const entries = [];
-          for await (const entry of wrapper.readDir("/dir")) {
-            entries.push(entry);
-          }
-        },
-        NotSupportedError,
-      );
+      await assertRejects(async () => {
+        for await (const _entry of wrapper.readDir("/dir")) {
+          // consume iterator
+        }
+      }, NotSupportedError);
     });
   });
 
@@ -421,13 +392,8 @@ describe("FSAdapterWrapper", () => {
     });
 
     it("should throw NotSupportedError when mkdir not available", async () => {
-      const fsAdapter = createMockFSAdapter();
-      const wrapper = new FSAdapterWrapper(fsAdapter);
-
-      await assertRejects(
-        () => wrapper.mkdir("/newdir"),
-        NotSupportedError,
-      );
+      const wrapper = new FSAdapterWrapper(createMockFSAdapter());
+      await assertRejects(() => wrapper.mkdir("/newdir"), NotSupportedError);
     });
   });
 
@@ -447,13 +413,8 @@ describe("FSAdapterWrapper", () => {
     });
 
     it("should throw NotSupportedError when remove not available", async () => {
-      const fsAdapter = createMockFSAdapter();
-      const wrapper = new FSAdapterWrapper(fsAdapter);
-
-      await assertRejects(
-        () => wrapper.remove("/file.txt"),
-        NotSupportedError,
-      );
+      const wrapper = new FSAdapterWrapper(createMockFSAdapter());
+      await assertRejects(() => wrapper.remove("/file.txt"), NotSupportedError);
     });
   });
 
@@ -469,37 +430,22 @@ describe("FSAdapterWrapper", () => {
     });
 
     it("should throw NotSupportedError when resolveFile not available", () => {
-      const fsAdapter = createMockFSAdapter();
-      const wrapper = new FSAdapterWrapper(fsAdapter);
-
-      assertThrows(
-        () => wrapper.resolveFile("/pages/index"),
-        NotSupportedError,
-      );
+      const wrapper = new FSAdapterWrapper(createMockFSAdapter());
+      assertThrows(() => wrapper.resolveFile("/pages/index"), NotSupportedError);
     });
   });
 
   describe("makeTempDir", () => {
     it("should throw NotSupportedError (not supported by FSAdapter)", () => {
-      const fsAdapter = createMockFSAdapter();
-      const wrapper = new FSAdapterWrapper(fsAdapter);
-
-      assertThrows(
-        () => wrapper.makeTempDir("test"),
-        NotSupportedError,
-      );
+      const wrapper = new FSAdapterWrapper(createMockFSAdapter());
+      assertThrows(() => wrapper.makeTempDir("test"), NotSupportedError);
     });
   });
 
   describe("watch", () => {
     it("should throw NotSupportedError (not supported by FSAdapter)", () => {
-      const fsAdapter = createMockFSAdapter();
-      const wrapper = new FSAdapterWrapper(fsAdapter);
-
-      assertThrows(
-        () => wrapper.watch("/dir"),
-        NotSupportedError,
-      );
+      const wrapper = new FSAdapterWrapper(createMockFSAdapter());
+      assertThrows(() => wrapper.watch("/dir"), NotSupportedError);
     });
   });
 
@@ -519,11 +465,8 @@ describe("FSAdapterWrapper", () => {
     });
 
     it("should do nothing when fsAdapter.shutdown not available", async () => {
-      const fsAdapter = createMockFSAdapter();
-      const wrapper = new FSAdapterWrapper(fsAdapter);
-
+      const wrapper = new FSAdapterWrapper(createMockFSAdapter());
       await wrapper.shutdown();
-      // No error thrown
     });
   });
 
@@ -538,9 +481,7 @@ describe("FSAdapterWrapper", () => {
     });
 
     it("isMultiProjectMode should return false when runWithContext not available", () => {
-      const fsAdapter = createMockFSAdapter();
-      const wrapper = new FSAdapterWrapper(fsAdapter);
-
+      const wrapper = new FSAdapterWrapper(createMockFSAdapter());
       assertEquals(wrapper.isMultiProjectMode(), false);
     });
 
@@ -554,69 +495,37 @@ describe("FSAdapterWrapper", () => {
     });
 
     it("setRequestToken should throw when not supported", () => {
-      const fsAdapter = createMockFSAdapter();
-      const wrapper = new FSAdapterWrapper(fsAdapter);
-
-      assertThrows(
-        () => wrapper.setRequestToken("token"),
-        NotSupportedError,
-      );
+      const wrapper = new FSAdapterWrapper(createMockFSAdapter());
+      assertThrows(() => wrapper.setRequestToken("token"), NotSupportedError);
     });
 
     it("clearRequestToken should throw when not supported", () => {
-      const fsAdapter = createMockFSAdapter();
-      const wrapper = new FSAdapterWrapper(fsAdapter);
-
-      assertThrows(
-        () => wrapper.clearRequestToken(),
-        NotSupportedError,
-      );
+      const wrapper = new FSAdapterWrapper(createMockFSAdapter());
+      assertThrows(() => wrapper.clearRequestToken(), NotSupportedError);
     });
 
     it("setRequestBranch should throw when not supported", () => {
-      const fsAdapter = createMockFSAdapter();
-      const wrapper = new FSAdapterWrapper(fsAdapter);
-
-      assertThrows(
-        () => wrapper.setRequestBranch("main"),
-        NotSupportedError,
-      );
+      const wrapper = new FSAdapterWrapper(createMockFSAdapter());
+      assertThrows(() => wrapper.setRequestBranch("main"), NotSupportedError);
     });
 
     it("getRequestBranch should throw when not supported", () => {
-      const fsAdapter = createMockFSAdapter();
-      const wrapper = new FSAdapterWrapper(fsAdapter);
-
-      assertThrows(
-        () => wrapper.getRequestBranch(),
-        NotSupportedError,
-      );
+      const wrapper = new FSAdapterWrapper(createMockFSAdapter());
+      assertThrows(() => wrapper.getRequestBranch(), NotSupportedError);
     });
 
     it("clearRequestBranch should throw when not supported", () => {
-      const fsAdapter = createMockFSAdapter();
-      const wrapper = new FSAdapterWrapper(fsAdapter);
-
-      assertThrows(
-        () => wrapper.clearRequestBranch(),
-        NotSupportedError,
-      );
+      const wrapper = new FSAdapterWrapper(createMockFSAdapter());
+      assertThrows(() => wrapper.clearRequestBranch(), NotSupportedError);
     });
 
     it("setProductionMode should throw when not supported", () => {
-      const fsAdapter = createMockFSAdapter();
-      const wrapper = new FSAdapterWrapper(fsAdapter);
-
-      assertThrows(
-        () => wrapper.setProductionMode(true),
-        NotSupportedError,
-      );
+      const wrapper = new FSAdapterWrapper(createMockFSAdapter());
+      assertThrows(() => wrapper.setProductionMode(true), NotSupportedError);
     });
 
     it("runWithContext should throw when not supported", () => {
-      const fsAdapter = createMockFSAdapter();
-      const wrapper = new FSAdapterWrapper(fsAdapter);
-
+      const wrapper = new FSAdapterWrapper(createMockFSAdapter());
       assertThrows(
         () => wrapper.runWithContext("slug", "token", () => Promise.resolve("result")),
         NotSupportedError,

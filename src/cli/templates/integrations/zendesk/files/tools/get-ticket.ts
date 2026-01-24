@@ -1,9 +1,4 @@
-/**
- * Get Zendesk Ticket Tool
- */
-
 import { z } from "zod";
-import { tool } from "veryfront/tool";
 import { getZendeskClient } from "../../lib/zendesk-client.ts";
 import { isZendeskConnected } from "../../lib/token-store.ts";
 
@@ -14,8 +9,7 @@ export default defineTool({
     ticketId: z.number().describe("The ticket ID to retrieve"),
   }),
   async execute(input) {
-    const connected = await isZendeskConnected();
-    if (!connected) {
+    if (!(await isZendeskConnected())) {
       return {
         error: "Zendesk not connected",
         action: "Please connect Zendesk via /api/auth/zendesk",

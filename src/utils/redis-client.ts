@@ -5,8 +5,8 @@
  * automatic reconnection, and graceful fallback handling.
  */
 
-import { logger } from "./logger/logger.ts";
 import { getRedisUrlEnv } from "#veryfront/config/env.ts";
+import { logger } from "./logger/logger.ts";
 
 export interface RedisClient {
   connect(): Promise<void>;
@@ -31,39 +31,25 @@ export interface RedisClientOptions {
   autoReconnect?: boolean;
 }
 
-// Singleton client instance
 let sharedClient: RedisClient | null = null;
 let connectionPromise: Promise<RedisClient> | null = null;
 let isConnecting = false;
 let connectionFailed = false;
 let lastConnectionAttempt = 0;
 
-const RECONNECT_DELAY_MS = 5000; // Wait 5 seconds before retrying failed connection
+const RECONNECT_DELAY_MS = 5000;
 
-/**
- * Get or create the shared Redis client.
- * Uses a singleton pattern to avoid multiple connections.
- */
 export async function getRedisClient(options: RedisClientOptions = {}): Promise<RedisClient> {
-  // If we have a connected client, return it
-  if (sharedClient && sharedClient.isOpen !== false) {
-    return sharedClient;
-  }
+  if (sharedClient && sharedClient.isOpen !== false) return sharedClient;
 
-  // If connection recently failed, don't retry immediately
   if (connectionFailed && Date.now() - lastConnectionAttempt < RECONNECT_DELAY_MS) {
     throw new Error("[Redis] Connection recently failed, waiting before retry");
   }
 
-  // If already connecting, wait for that promise
-  if (isConnecting && connectionPromise) {
-    return connectionPromise;
-  }
+  if (isConnecting && connectionPromise) return connectionPromise;
 
-  // Start new connection
   isConnecting = true;
   lastConnectionAttempt = Date.now();
-
   connectionPromise = createClient(options);
 
   try {
@@ -81,28 +67,22 @@ export async function getRedisClient(options: RedisClientOptions = {}): Promise<
   }
 }
 
-/**
- * Create a new Redis client instance.
- */
 async function createClient(options: RedisClientOptions): Promise<RedisClient> {
   let createClientFn: ((opts: { url?: string }) => RedisClient) | undefined;
 
   try {
-    // Dynamic import to avoid static analysis issues with Deno
     const redisClientModule = ["npm:@redis/client", "@1.5.8"].join("");
     const mod = await import(redisClientModule);
-    createClientFn = mod.createClient as unknown as (opts: { url?: string }) => RedisClient;
+    createClientFn = mod.createClient as (opts: { url?: string }) => RedisClient;
   } catch {
     throw new Error(
       "[Redis] Failed to load @redis/client. Install with: deno add npm:@redis/client@1.5.8",
     );
   }
 
-  const url = options.url || getEnvRedisUrl();
-  const client = createClientFn({ url });
+  const client = createClientFn({ url: options.url ?? getRedisUrlEnv() });
 
-  // Set up error handler
-  if (typeof client?.on === "function") {
+  if (typeof client.on === "function") {
     client.on("error", (err: unknown) => {
       logger.error("[Redis] Client error", err);
       connectionFailed = true;
@@ -122,30 +102,14 @@ async function createClient(options: RedisClientOptions): Promise<RedisClient> {
   return client;
 }
 
-/**
- * Get Redis URL from environment.
- */
-function getEnvRedisUrl(): string | undefined {
-  return getRedisUrlEnv();
-}
-
-/**
- * Check if Redis is available (has a connected client).
- */
 export function isRedisAvailable(): boolean {
   return sharedClient !== null && sharedClient.isOpen !== false && !connectionFailed;
 }
 
-/**
- * Check if Redis is configured (URL is set).
- */
 export function isRedisConfigured(): boolean {
-  return !!getEnvRedisUrl();
+  return !!getRedisUrlEnv();
 }
 
-/**
- * Disconnect and cleanup the shared client.
- */
 export async function disconnectRedis(): Promise<void> {
   if (sharedClient) {
     try {
@@ -155,14 +119,12 @@ export async function disconnectRedis(): Promise<void> {
     }
     sharedClient = null;
   }
+
   connectionFailed = false;
   isConnecting = false;
   connectionPromise = null;
 }
 
-/**
- * Reset connection state (for testing).
- */
 export function resetRedisState(): void {
   sharedClient = null;
   connectionFailed = false;

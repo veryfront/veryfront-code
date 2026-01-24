@@ -19,10 +19,8 @@ export function AppWrapper({
   providers = [],
   layout,
   components = {},
-  mode: _mode,
-  studioEnabled: _studioEnabled,
   pageContext,
-}: AppWrapperProps) {
+}: AppWrapperProps): React.ReactNode {
   let content = children;
 
   if (layout) {
@@ -33,7 +31,9 @@ export function AppWrapper({
     );
   }
 
-  for (const provider of [...providers].reverse()) {
+  for (let i = providers.length - 1; i >= 0; i--) {
+    const provider = providers[i];
+    if (!provider) continue;
     content = (
       <ProviderComponent mdxBundle={provider} components={components}>
         {content}

@@ -1,8 +1,6 @@
 export function escapeHTML(str: string): string {
   if (str == null) return "";
-  const strValue = String(str);
-
-  return strValue
+  return String(str)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")

@@ -12,16 +12,14 @@ import { useCallback, useRef, useState } from "react";
 import { createError, ensureError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 import { handleStreamingResponse } from "./streaming/index.ts";
-import type { TextUIPart, ToolOutput, UIMessage, UseChatOptions, UseChatResult } from "./types.ts";
+import type { ToolOutput, UIMessage, UseChatOptions, UseChatResult } from "./types.ts";
 import { generateClientId } from "./utils.ts";
 
 /**
  * useChat hook for managing chat state - AI SDK v5 compatible
  */
 export function useChat(options: UseChatOptions): UseChatResult {
-  const [messages, setMessages] = useState<UIMessage[]>(
-    options.initialMessages || [],
-  );
+  const [messages, setMessages] = useState<UIMessage[]>(options.initialMessages ?? []);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
@@ -38,22 +36,21 @@ export function useChat(options: UseChatOptions): UseChatResult {
   const addToolOutput = useCallback((output: ToolOutput) => {
     pendingToolOutputsRef.current.set(output.toolCallId, output);
 
-    // Update the tool part state in messages
-    // Match tool-${toolName} pattern (AI SDK v5) or dynamic-tool
     setMessages((prev) =>
       prev.map((msg) => ({
         ...msg,
         parts: msg.parts.map((part) => {
           const isToolPart = part.type.startsWith("tool-") || part.type === "dynamic-tool";
-          if (isToolPart && "toolCallId" in part && part.toolCallId === output.toolCallId) {
-            return {
-              ...part,
-              state: output.state || "output-available",
-              output: output.output,
-              errorText: output.errorText,
-            };
+          if (!isToolPart || !("toolCallId" in part) || part.toolCallId !== output.toolCallId) {
+            return part;
           }
-          return part;
+
+          return {
+            ...part,
+            state: output.state ?? "output-available",
+            output: output.output,
+            errorText: output.errorText,
+          };
         }),
       }))
     );
@@ -93,62 +90,62 @@ export function useChat(options: UseChatOptions): UseChatResult {
         });
 
         if (!response.ok) {
-          throw toError(createError({
-            type: "agent",
-            message: `API error: ${response.status}`,
-          }));
+          throw toError(
+            createError({
+              type: "agent",
+              message: `API error: ${response.status}`,
+            }),
+          );
         }
 
         options.onResponse?.(response);
 
-        if (response.body) {
-          const streamingMessageId = generateClientId("msg");
-          let hasAddedStreamingMessage = false;
-          let currentMessageId = streamingMessageId;
+        if (!response.body) return;
 
-          await handleStreamingResponse(response.body, {
-            onMessage: (assistantMessage) => {
-              setMessages((prev) => {
-                if (hasAddedStreamingMessage) {
-                  return prev.map((m) => m.id === currentMessageId ? assistantMessage : m);
-                }
-                return [...prev, assistantMessage];
-              });
-              options.onFinish?.(assistantMessage);
-            },
-            onData: setData,
-            onUpdate: (parts, messageId) => {
-              const id = messageId || streamingMessageId;
-              if (messageId && messageId !== currentMessageId) {
-                const oldId = currentMessageId;
-                currentMessageId = messageId;
-                if (hasAddedStreamingMessage) {
-                  setMessages((prev) => prev.map((m) => m.id === oldId ? { ...m, id, parts } : m));
-                  return;
-                }
+        const streamingMessageId = generateClientId("msg");
+        let hasAddedStreamingMessage = false;
+        let currentMessageId = streamingMessageId;
+
+        await handleStreamingResponse(response.body, {
+          onMessage: (assistantMessage) => {
+            setMessages((prev) => {
+              if (!hasAddedStreamingMessage) return [...prev, assistantMessage];
+              return prev.map((m) => (m.id === currentMessageId ? assistantMessage : m));
+            });
+            options.onFinish?.(assistantMessage);
+          },
+          onData: setData,
+          onUpdate: (parts, messageId) => {
+            const id = messageId ?? streamingMessageId;
+
+            if (messageId && messageId !== currentMessageId) {
+              const oldId = currentMessageId;
+              currentMessageId = messageId;
+
+              if (hasAddedStreamingMessage) {
+                setMessages((prev) => prev.map((m) => (m.id === oldId ? { ...m, id, parts } : m)));
+                return;
               }
-              if (!hasAddedStreamingMessage) {
-                hasAddedStreamingMessage = true;
-                setMessages((prev) => [...prev, {
-                  id,
-                  role: "assistant",
-                  parts,
-                }]);
-              } else {
-                setMessages((prev) =>
-                  prev.map((m) => m.id === currentMessageId ? { ...m, parts } : m)
-                );
-              }
-            },
-            onToolCall: options.onToolCall,
-          });
-        }
+            }
+
+            if (!hasAddedStreamingMessage) {
+              hasAddedStreamingMessage = true;
+              setMessages((prev) => [...prev, { id, role: "assistant", parts }]);
+              return;
+            }
+
+            setMessages((prev) =>
+              prev.map((m) => (m.id === currentMessageId ? { ...m, parts } : m))
+            );
+          },
+          onToolCall: options.onToolCall,
+        });
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") return;
 
-        const error = ensureError(err);
-        setError(error);
-        options.onError?.(error);
+        const nextError = ensureError(err);
+        setError(nextError);
+        options.onError?.(nextError);
       } finally {
         setIsLoading(false);
         abortControllerRef.current = null;
@@ -169,8 +166,8 @@ export function useChat(options: UseChatOptions): UseChatResult {
     const lastUserMessage = messages[lastUserIndex];
     if (!lastUserMessage) return;
 
-    const textPart = lastUserMessage.parts.find((p) => p.type === "text") as TextUIPart | undefined;
-    if (!textPart) return;
+    const textPart = lastUserMessage.parts.find((p) => p.type === "text");
+    if (!textPart || !("text" in textPart)) return;
 
     setMessages(messages.slice(0, lastUserIndex));
     await sendMessage({ text: textPart.text });
@@ -180,10 +177,8 @@ export function useChat(options: UseChatOptions): UseChatResult {
    * Stop generation
    */
   const stop = useCallback(() => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-    }
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
     setIsLoading(false);
   }, []);
 
@@ -203,11 +198,13 @@ export function useChat(options: UseChatOptions): UseChatResult {
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault();
-      if (!input.trim() || isLoading) return;
+      if (isLoading) return;
 
-      const text = input;
+      const text = input.trim();
+      if (!text) return;
+
       setInput("");
-      await sendMessage({ text });
+      await sendMessage({ text: input });
     },
     [input, isLoading, sendMessage],
   );

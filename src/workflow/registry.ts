@@ -1,4 +1,4 @@
-/**
+/****
  * Workflow Registry
  *
  * Global registry for workflow DEFINITIONS (not executions).
@@ -59,36 +59,38 @@ export interface WorkflowMetadata {
   registeredAt: string;
 }
 
+function createProxy(): unknown {
+  return new Proxy(
+    {},
+    {
+      get: (_target, prop) => (typeof prop === "string" ? createProxy() : undefined),
+    },
+  );
+}
+
 /**
  * Extract metadata from a workflow definition
  */
 function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
-  // Get nodes - handle both static array and function form
   let workflowNodes: WorkflowNode[] = [];
   let dynamicSteps = false;
   let introspectionSkipped = false;
   let introspectionError: string | undefined;
+
   if (Array.isArray(definition.steps)) {
     workflowNodes = definition.steps;
   } else if (typeof definition.steps === "function") {
     dynamicSteps = true;
-    if (definition.introspect) {
-      // Try calling with dummy input to extract static structure
-      // This works for workflows that only use input for data values, not control flow
-      try {
-        // Create proxies that return placeholder values for any property access
-        const createProxy = (): unknown =>
-          new Proxy({}, {
-            get: (_target, prop) => {
-              if (typeof prop === "string") {
-                return createProxy(); // Return nested proxy for chained access
-              }
-              return undefined;
-            },
-          });
 
+    if (!definition.introspect) {
+      introspectionSkipped = true;
+      logger.debug(
+        `[WorkflowRegistry] Skipping dynamic steps introspection for "${definition.id}" (introspect=false)`,
+      );
+    } else {
+      try {
         const dummyInput = createProxy();
-        const dummyContext = { input: createProxy() } as Record<string, unknown>;
+        const dummyContext: Record<string, unknown> = { input: createProxy() };
 
         workflowNodes = definition.steps(
           {
@@ -101,19 +103,10 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
         logger.warn(
           `[WorkflowRegistry] Failed to introspect steps for "${definition.id}": ${introspectionError}`,
         );
-        // If it fails (e.g., requires specific input structure), treat as dynamic
-        workflowNodes = [];
       }
-    } else {
-      introspectionSkipped = true;
-      logger.debug(
-        `[WorkflowRegistry] Skipping dynamic steps introspection for "${definition.id}" (introspect=false)`,
-      );
-      workflowNodes = [];
     }
   }
 
-  // Collect node types, node info, and references
   const nodeTypes = new Set<string>();
   const nodeInfoList: NodeInfo[] = [];
   const agentRefs = new Set<string>();
@@ -121,64 +114,68 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
 
   function extractNodeInfo(nodeList: WorkflowNode[]): string[] {
     const ids: string[] = [];
+
     for (const node of nodeList) {
-      nodeTypes.add(node.config.type);
+      const type = node.config.type;
+      nodeTypes.add(type);
       ids.push(node.id);
 
       const nodeInfo: NodeInfo = {
         id: node.id,
-        type: node.config.type,
+        type,
         dependsOn: node.dependsOn,
       };
 
-      // Extract agent/tool references from step nodes
       const config = node.config as unknown as Record<string, unknown>;
-      if (node.config.type === "step") {
-        if ("agent" in config) {
-          const agentRef = typeof config.agent === "string"
-            ? config.agent
-            : (config.agent as { id?: string })?.id;
-          if (agentRef) {
-            nodeInfo.agent = agentRef;
-            agentRefs.add(agentRef);
-          }
+
+      if (type === "step") {
+        const agentValue = config.agent;
+        const agentRef = typeof agentValue === "string"
+          ? agentValue
+          : (agentValue as { id?: string } | undefined)?.id;
+
+        if (agentRef) {
+          nodeInfo.agent = agentRef;
+          agentRefs.add(agentRef);
         }
-        if ("tool" in config) {
-          const toolRef = typeof config.tool === "string"
-            ? config.tool
-            : (config.tool as { id?: string })?.id;
-          if (toolRef) {
-            nodeInfo.tool = toolRef;
-            toolRefs.add(toolRef);
-          }
+
+        const toolValue = config.tool;
+        const toolRef = typeof toolValue === "string"
+          ? toolValue
+          : (toolValue as { id?: string } | undefined)?.id;
+
+        if (toolRef) {
+          nodeInfo.tool = toolRef;
+          toolRefs.add(toolRef);
         }
       }
 
-      // Extract message from wait nodes
-      if (node.config.type === "wait" && "message" in config) {
+      if (type === "wait" && "message" in config) {
         nodeInfo.message = config.message as string;
       }
 
-      // Recurse into parallel/branch children
+      const children: string[] = [];
+
       if ("nodes" in config && Array.isArray(config.nodes)) {
-        nodeInfo.children = extractNodeInfo(config.nodes as WorkflowNode[]);
+        children.push(...extractNodeInfo(config.nodes as WorkflowNode[]));
       }
       if ("then" in config && Array.isArray(config.then)) {
-        nodeInfo.children = extractNodeInfo(config.then as WorkflowNode[]);
+        children.push(...extractNodeInfo(config.then as WorkflowNode[]));
       }
       if ("else" in config && Array.isArray(config.else)) {
-        const elseIds = extractNodeInfo(config.else as WorkflowNode[]);
-        nodeInfo.children = [...(nodeInfo.children || []), ...elseIds];
+        children.push(...extractNodeInfo(config.else as WorkflowNode[]));
       }
+
+      if (children.length) nodeInfo.children = children;
 
       nodeInfoList.push(nodeInfo);
     }
+
     return ids;
   }
 
   extractNodeInfo(workflowNodes);
 
-  // Convert input schema to JSON Schema if available
   let inputSchemaJson: Record<string, unknown> | undefined;
   if (definition.inputSchema) {
     try {
@@ -283,7 +280,7 @@ class WorkflowRegistryClass {
 
     for (const metadata of this.workflows.values()) {
       for (const nodeType of metadata.nodeTypes) {
-        byNodeType[nodeType] = (byNodeType[nodeType] || 0) + 1;
+        byNodeType[nodeType] = (byNodeType[nodeType] ?? 0) + 1;
       }
       if (metadata.hasInputSchema) withInputSchema++;
       if (metadata.hasOutputSchema) withOutputSchema++;
@@ -316,10 +313,11 @@ class WorkflowRegistryClass {
 
 // Singleton using globalThis pattern
 const WORKFLOW_REGISTRY_KEY = "__veryfront_workflow_registry__";
-// deno-lint-ignore no-explicit-any
-const _globalWorkflow = globalThis as any;
-export const workflowRegistry: WorkflowRegistryClass = _globalWorkflow[WORKFLOW_REGISTRY_KEY] ||=
-  new WorkflowRegistryClass();
+const _globalWorkflow = globalThis as unknown as Record<string, unknown>;
+
+export const workflowRegistry: WorkflowRegistryClass =
+  (_globalWorkflow[WORKFLOW_REGISTRY_KEY] as WorkflowRegistryClass | undefined) ??=
+    new WorkflowRegistryClass();
 
 // Export class for type usage
 export { WorkflowRegistryClass };

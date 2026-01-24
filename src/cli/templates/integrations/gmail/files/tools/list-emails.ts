@@ -13,10 +13,7 @@ export default tool({
       .max(50)
       .default(10)
       .describe("Maximum number of emails to return"),
-    unreadOnly: z
-      .boolean()
-      .default(false)
-      .describe("Only return unread emails"),
+    unreadOnly: z.boolean().default(false).describe("Only return unread emails"),
     label: z
       .string()
       .optional()
@@ -24,36 +21,27 @@ export default tool({
   }),
   execute: async ({ maxResults, unreadOnly, label }, context) => {
     // Default to "current-user" for development; in production, always pass userId from session
-    const userId = (context?.userId as string | undefined) || "current-user";
+    const userId = context?.userId ?? "current-user";
 
     try {
       const gmail = createGmailClient(userId);
 
-      let query = "";
-      if (unreadOnly) {
-        query = "is:unread";
-      }
-
+      const query = unreadOnly ? "is:unread" : undefined;
       const labelIds = label ? [label] : undefined;
 
-      const list = await gmail.listMessages({
-        maxResults,
-        query: query || undefined,
-        labelIds,
-      });
+      const list = await gmail.listMessages({ maxResults, query, labelIds });
 
-      if (!list.messages || list.messages.length === 0) {
+      if (!list.messages?.length) {
         return {
           emails: [],
           message: "No emails found matching your criteria.",
         };
       }
 
-      // Fetch metadata for each email
       const emails = await Promise.all(
-        list.messages.map(async (m: { id: string }) => {
-          const message = await gmail.getMessage(m.id, "metadata");
-          const headers = parseEmailHeaders(message.payload?.headers || []);
+        list.messages.map(async ({ id }: { id: string }) => {
+          const message = await gmail.getMessage(id, "metadata");
+          const headers = parseEmailHeaders(message.payload?.headers ?? []);
 
           return {
             id: message.id,
@@ -63,9 +51,9 @@ export default tool({
             subject: headers.subject,
             date: headers.date,
             snippet: message.snippet,
-            isUnread: message.labelIds?.includes("UNREAD") || false,
-            isStarred: message.labelIds?.includes("STARRED") || false,
-            isImportant: message.labelIds?.includes("IMPORTANT") || false,
+            isUnread: message.labelIds?.includes("UNREAD") ?? false,
+            isStarred: message.labelIds?.includes("STARRED") ?? false,
+            isImportant: message.labelIds?.includes("IMPORTANT") ?? false,
           };
         }),
       );

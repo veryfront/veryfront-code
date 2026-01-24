@@ -29,7 +29,7 @@ export interface DistributedCacheStatus {
   fileCache: boolean;
 }
 
-function determineBackend(): "api" | "redis" | "memory" {
+function determineBackend(): DistributedCacheStatus["backend"] {
   if (isApiCacheAvailable()) return "api";
   if (isRedisConfigured()) return "redis";
   return "memory";
@@ -77,13 +77,14 @@ export function initializeDistributedCaches(): Promise<DistributedCacheStatus> {
         fileCache: wasSuccessful(fileResult),
       };
 
-      const enabledCount = [status.transformCache, status.ssrModuleCache, status.fileCache]
-        .filter(Boolean).length;
+      const enabled = [status.transformCache, status.ssrModuleCache, status.fileCache].filter(
+        Boolean,
+      ).length;
 
-      if (enabledCount > 0) {
+      if (enabled > 0) {
         logger.info("[DistributedCache] Initialization complete", {
           backend,
-          enabled: enabledCount,
+          enabled,
           transform: status.transformCache,
           ssrModule: status.ssrModuleCache,
           file: status.fileCache,
@@ -96,8 +97,6 @@ export function initializeDistributedCaches(): Promise<DistributedCacheStatus> {
 
       return status;
     },
-    {
-      "cache.backend": backend,
-    },
+    { "cache.backend": backend },
   );
 }

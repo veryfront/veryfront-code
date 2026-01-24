@@ -14,18 +14,22 @@ export class CompilerService {
     this._compileMDX = fn;
   }
 
-  async compileMDX(
+  compileMDX(
     content: string,
     frontmatter?: Record<string, unknown>,
     filePath?: string,
   ): Promise<MdxBundle> {
-    if (!this._compileMDX) {
-      throw toError(createError({
-        type: "render",
-        message: "CompilerService: compileMDX not initialized",
-      }));
+    const compile = this._compileMDX;
+    if (!compile) {
+      throw toError(
+        createError({
+          type: "render",
+          message: "CompilerService: compileMDX not initialized",
+        }),
+      );
     }
-    return await this._compileMDX(content, frontmatter, filePath);
+
+    return compile(content, frontmatter, filePath);
   }
 
   getCompileFunction(): CompileMDXFunction {

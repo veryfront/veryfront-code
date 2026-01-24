@@ -12,10 +12,20 @@ function extractYamlFrontmatter(content: string): FrontmatterExtractionResult {
   }
 
   const extracted = extract(content);
+
   return {
     body: extracted.body,
     frontmatter: extracted.attrs as Record<string, unknown>,
   };
+}
+
+function parseExportValue(rawValue: string): unknown {
+  if (rawValue === "true") return true;
+  if (rawValue === "false") return false;
+  if (rawValue === "null") return null;
+  if (/^\d+(?:\.\d+)?$/.test(rawValue)) return parseFloat(rawValue);
+
+  return rawValue.replace(/^['"`]|['"`]$/g, "");
 }
 
 function extractExportConstants(body: string): { body: string; exports: Record<string, unknown> } {
@@ -23,6 +33,7 @@ function extractExportConstants(body: string): { body: string; exports: Record<s
   // Avoid matching complex exports like arrays, objects, or functions
   const exportRegex =
     /^export\s+const\s+(\w+)\s*=\s*(['"`][^'"`\n]*['"`]|\d+(?:\.\d+)?|true|false|null)\s*;?\s*$/gm;
+
   const exports: Record<string, unknown> = {};
   const linesToRemove: string[] = [];
   let match: RegExpExecArray | null;
@@ -30,29 +41,18 @@ function extractExportConstants(body: string): { body: string; exports: Record<s
   while ((match = exportRegex.exec(body)) !== null) {
     const key = match[1];
     const rawValue = match[2];
-    if (key && rawValue) {
-      linesToRemove.push(match[0]);
-      // Parse the value
-      if (rawValue === "true") {
-        exports[key] = true;
-      } else if (rawValue === "false") {
-        exports[key] = false;
-      } else if (rawValue === "null") {
-        exports[key] = null;
-      } else if (/^\d+(?:\.\d+)?$/.test(rawValue)) {
-        exports[key] = parseFloat(rawValue);
-      } else {
-        // Remove quotes from string values
-        exports[key] = rawValue.replace(/^['"`]|['"`]$/g, "");
-      }
-    }
+
+    if (!key || !rawValue) continue;
+
+    linesToRemove.push(match[0]);
+    exports[key] = parseExportValue(rawValue);
   }
 
-  // Remove matched lines from body
   let cleanedBody = body;
   for (const line of linesToRemove) {
     cleanedBody = cleanedBody.replace(line, "");
   }
+
   return { body: cleanedBody, exports };
 }
 
@@ -60,21 +60,13 @@ export function extractFrontmatter(
   content: string,
   providedFrontmatter?: Record<string, unknown>,
 ): FrontmatterExtractionResult {
-  let body = content;
-  let frontmatter: Record<string, unknown> = {};
+  const yamlResult = extractYamlFrontmatter(content);
+  let body = yamlResult.body;
 
-  // Always extract YAML frontmatter from content if present
-  // This ensures the body is stripped of frontmatter markers regardless of providedFrontmatter
-  if (content.trim().startsWith("---")) {
-    const yamlResult = extractYamlFrontmatter(content);
-    body = yamlResult.body;
-    frontmatter = yamlResult.frontmatter;
-  }
-
-  // Merge provided frontmatter on top of extracted frontmatter
-  if (providedFrontmatter) {
-    frontmatter = { ...frontmatter, ...providedFrontmatter };
-  }
+  let frontmatter: Record<string, unknown> = {
+    ...yamlResult.frontmatter,
+    ...(providedFrontmatter ?? {}),
+  };
 
   const exportResult = extractExportConstants(body);
   body = exportResult.body;

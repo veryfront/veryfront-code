@@ -11,24 +11,24 @@
 
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
-import { createWorkflowClient, WorkflowClient } from "../api/workflow-client.ts";
-import { branch, loop, parallel, step, waitForApproval, workflow } from "../dsl/index.ts";
-import { MemoryBackend } from "../backends/memory.ts";
-import type { Tool } from "#veryfront/tool";
-import { z } from "zod";
 import { delay } from "#std/async.ts";
 import { scaleMs } from "#veryfront/testing";
+import type { Tool } from "#veryfront/tool";
+import { z } from "zod";
+import { MemoryBackend } from "../backends/memory.ts";
+import { createWorkflowClient, WorkflowClient } from "../api/workflow-client.ts";
+import { branch, loop, parallel, step, waitForApproval, workflow } from "../dsl/index.ts";
 
-// Mock tool for testing
-const createMockTool = (name: string, handler: (input: any) => any): Tool => ({
-  id: name,
-  type: "function" as const,
-  description: `Mock tool: ${name}`,
-  inputSchema: z.object({}).passthrough(),
-  execute: (input) => Promise.resolve(handler(input)),
-});
+function createMockTool(name: string, handler: (input: any) => any): Tool {
+  return {
+    id: name,
+    type: "function",
+    description: `Mock tool: ${name}`,
+    inputSchema: z.object({}).passthrough(),
+    execute: (input) => Promise.resolve(handler(input)),
+  };
+}
 
-// Helper to wait for workflow to reach a specific status
 async function waitForStatus(
   client: WorkflowClient,
   runId: string,
@@ -36,15 +36,16 @@ async function waitForStatus(
   timeout = 5000,
 ): Promise<void> {
   const start = Date.now();
+
   while (Date.now() - start < timeout) {
     const run = await client.getRun(runId);
     if (run?.status === expectedStatus) return;
     await delay(50);
   }
+
   throw new Error(`Timeout waiting for status "${expectedStatus}"`);
 }
 
-// Helper to wait for pending approvals
 async function waitForApprovals(
   client: WorkflowClient,
   runId: string,
@@ -52,11 +53,13 @@ async function waitForApprovals(
   timeout = 5000,
 ): Promise<void> {
   const start = Date.now();
+
   while (Date.now() - start < timeout) {
     const approvals = await client.getPendingApprovals(runId);
     if (approvals.length >= count) return;
     await delay(50);
   }
+
   throw new Error(`Timeout waiting for ${count} approvals`);
 }
 
@@ -64,15 +67,12 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
   let client: WorkflowClient;
   let backend: MemoryBackend;
 
-  beforeEach(() => {
+  beforeEach((): void => {
     backend = new MemoryBackend({ debug: false });
-    client = createWorkflowClient({
-      backend,
-      debug: false,
-    });
+    client = createWorkflowClient({ backend, debug: false });
   });
 
-  afterEach(async () => {
+  afterEach(async (): Promise<void> => {
     await client.destroy();
   });
 
@@ -97,7 +97,6 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
 
       client.register(simpleWorkflow);
       const handle = await client.start("simple", { data: "test" });
-      // Wait for workflow to complete
       await handle.result();
 
       expect(toolCalled).toBe(true);
@@ -134,7 +133,6 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
       const handle = await client.start("parallel-test", {});
       await handle.result();
 
-      // tool2 should finish first since it has shorter delay
       expect(executionOrder).toContain("tool1");
       expect(executionOrder).toContain("tool2");
     });
@@ -165,12 +163,10 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
 
       client.register(branchWorkflow);
 
-      // Test "then" branch
       const handle1 = await client.start("branch-test", { value: 15 });
       await handle1.result();
       expect(executedBranch).toContain("then");
 
-      // Reset and test "else" branch
       executedBranch.length = 0;
       const handle2 = await client.start("branch-test", { value: 5 });
       await handle2.result();
@@ -193,9 +189,7 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
           loop("count-loop", {
             maxIterations: 10,
             while: () => counter < 3,
-            steps: [
-              step("increment", { tool: incrementTool }),
-            ],
+            steps: [step("increment", { tool: incrementTool })],
           }),
         ],
       });
@@ -222,10 +216,8 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
         steps: [
           loop("infinite-loop", {
             maxIterations: 5,
-            while: () => true, // Always true
-            steps: [
-              step("run", { tool: infiniteTool }),
-            ],
+            while: () => true,
+            steps: [step("run", { tool: infiniteTool })],
             onMaxIterations: (_ctx, loop) => ({
               hitMax: true,
               iterations: loop.totalIterations,
@@ -281,9 +273,7 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
 
       const flakeyTool = createMockTool("flakey", () => {
         attempts++;
-        if (attempts < 3) {
-          throw new Error("ECONNRESET");
-        }
+        if (attempts < 3) throw new Error("ECONNRESET");
         return { success: true };
       });
 
@@ -335,7 +325,6 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
       client.register(retryWorkflow);
       const handle = await client.start("fail-test", {});
 
-      // result() throws on failure, so we catch and verify via getRun
       await expect(handle.result()).rejects.toThrow();
 
       expect(attempts).toBe(3);
@@ -364,7 +353,7 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
         steps: [
           step("slow-step", {
             tool: slowTool,
-            timeout: 100, // 100ms timeout
+            timeout: 100,
           }),
         ],
       });
@@ -372,11 +361,9 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
       client.register(timeoutWorkflow);
       const handle = await client.start("timeout-test", {});
 
-      // result() throws on failure
       await expect(handle.result()).rejects.toThrow(/timed out/i);
 
-      // Clean up the leaked timer
-      if (timeoutId) clearTimeout(timeoutId);
+      if (timeoutId != null) clearTimeout(timeoutId);
 
       const run = await client.getRun(handle.runId);
       expect(run?.status).toBe("failed");
@@ -385,13 +372,13 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
 
   describe("Approval Flow", () => {
     it("should pause at waitForApproval", async () => {
-      const mockTool = createMockTool("before", () => ({ before: true }));
+      const beforeTool = createMockTool("before", () => ({ before: true }));
       const afterTool = createMockTool("after", () => ({ after: true }));
 
       const approvalWorkflow = workflow({
         id: "approval-test",
         steps: [
-          step("before", { tool: mockTool }),
+          step("before", { tool: beforeTool }),
           waitForApproval("need-approval", {
             message: "Please approve",
             timeout: "1h",
@@ -403,16 +390,13 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
       client.register(approvalWorkflow);
       const handle = await client.start("approval-test", {});
 
-      // Wait for workflow to reach waiting status
       await waitForStatus(client, handle.runId, "waiting");
 
       const run = await client.getRun(handle.runId);
       expect(run?.status).toBe("waiting");
 
-      // Wait for pending approvals to be registered
       await waitForApprovals(client, handle.runId, 1);
 
-      // Get pending approvals
       const approvals = await client.getPendingApprovals(handle.runId);
       expect(approvals.length).toBe(1);
       expect(approvals[0]?.message).toBe("Please approve");
@@ -420,7 +404,8 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
 
     it("should resume after approval", async () => {
       let afterExecuted = false;
-      const mockTool = createMockTool("before", () => ({ before: true }));
+
+      const beforeTool = createMockTool("before", () => ({ before: true }));
       const afterTool = createMockTool("after", () => {
         afterExecuted = true;
         return { after: true };
@@ -429,7 +414,7 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
       const approvalWorkflow = workflow({
         id: "resume-test",
         steps: [
-          step("before", { tool: mockTool }),
+          step("before", { tool: beforeTool }),
           waitForApproval("need-approval", {
             message: "Please approve",
             timeout: "1h",
@@ -441,15 +426,12 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
       client.register(approvalWorkflow);
       const handle = await client.start("resume-test", {});
 
-      // Wait for workflow to reach waiting status and have pending approvals
       await waitForStatus(client, handle.runId, "waiting");
       await waitForApprovals(client, handle.runId, 1);
 
-      // Approve
       const approvals = await client.getPendingApprovals(handle.runId);
       await client.approve(handle.runId, approvals[0]!.id, "test@test.com");
 
-      // Wait for completion
       await handle.result();
 
       expect(afterExecuted).toBe(true);
@@ -462,24 +444,21 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
 describe("Cron Job Pattern", { sanitizeOps: false, sanitizeResources: false }, () => {
   it("should support infinite loop with delay (cron pattern)", async () => {
     let iterations = 0;
-    const maxIterations = 3; // For test, limit to 3
+    const maxIterations = 3;
 
     const cronTool = createMockTool("cron-task", () => {
       iterations++;
       return { ran: true, iteration: iterations };
     });
 
-    // Simulate a cron-like workflow using loop with delay
     const cronWorkflow = workflow({
       id: "cron-job",
       steps: [
         loop("cron-loop", {
-          maxIterations, // In production, set high (e.g., 1000000)
+          maxIterations,
           while: () => iterations < maxIterations,
-          delay: 50, // 50ms delay between iterations (in prod: "1m", "1h", etc)
-          steps: [
-            step("run-task", { tool: cronTool }),
-          ],
+          delay: 50,
+          steps: [step("run-task", { tool: cronTool })],
         }),
       ],
     });
@@ -494,7 +473,6 @@ describe("Cron Job Pattern", { sanitizeOps: false, sanitizeResources: false }, (
     const elapsed = Date.now() - startTime;
 
     expect(iterations).toBe(3);
-    // Should take at least 100ms (2 delays of 50ms between 3 iterations)
     expect(elapsed).toBeGreaterThanOrEqual(100);
 
     await client.destroy();

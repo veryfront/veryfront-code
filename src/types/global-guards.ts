@@ -10,18 +10,12 @@ export interface GlobalWithVeryFrontCache {
 }
 
 export function hasReactDOM(global: unknown): global is GlobalWithReactDOM {
-  return (
-    typeof global === "object" &&
-    global !== null &&
-    "ReactDOM" in global &&
-    typeof (global as GlobalWithReactDOM).ReactDOM !== "undefined"
-  );
+  if (typeof global !== "object" || global === null) return false;
+  if (!("ReactDOM" in global)) return false;
+  return typeof (global as GlobalWithReactDOM).ReactDOM !== "undefined";
 }
 
 export function hasVeryFrontCache(global: unknown): global is GlobalWithVeryFrontCache {
-  return (
-    typeof global === "object" &&
-    global !== null &&
-    "__VF_CACHE_NAMESPACE__" in global
-  );
+  if (typeof global !== "object" || global === null) return false;
+  return "__VF_CACHE_NAMESPACE__" in global;
 }

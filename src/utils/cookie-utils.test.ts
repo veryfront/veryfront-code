@@ -27,9 +27,7 @@ describe("cookie-utils", () => {
     });
 
     it("should decode URL-encoded values", () => {
-      assertEquals(parseCookies("name=hello%20world"), {
-        name: "hello world",
-      });
+      assertEquals(parseCookies("name=hello%20world"), { name: "hello world" });
     });
 
     it("should handle empty cookies", () => {
@@ -63,8 +61,7 @@ describe("cookie-utils", () => {
     });
 
     it("should return empty object when no cookie header", () => {
-      const headers = new Headers();
-      assertEquals(parseCookiesFromHeaders(headers), {});
+      assertEquals(parseCookiesFromHeaders(new Headers()), {});
     });
   });
 });

@@ -2,9 +2,6 @@ import { tool } from 'veryfront/tool';
 import { z } from 'zod';
 import { getAnthropicAdminClient } from '../../lib/anthropic-admin-client';
 
-/**
- * Tool for retrieving Anthropic organization details
- */
 export const getOrganization = tool({
   name: 'get_organization',
   description:
@@ -21,12 +18,14 @@ export const getOrganization = tool({
         message: `Retrieved organization details for ${organization.display_name}`,
       };
     } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Failed to retrieve organization details';
+
       return {
         success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : 'Failed to retrieve organization details',
+        error: message,
         organization: null,
       };
     }

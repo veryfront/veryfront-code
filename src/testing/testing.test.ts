@@ -44,13 +44,11 @@ describe("testing/assert", () => {
   });
 });
 
-// Temp file tests use the cross-runtime compat layer
 describe("testing/deno-compat", () => {
   it("makeTempDir creates a directory", async () => {
     const tempDir = await makeTempDir({ prefix: "test-" });
     assertExists(tempDir);
 
-    // Clean up using portable API
     await remove(tempDir, { recursive: true });
   });
 
@@ -58,7 +56,6 @@ describe("testing/deno-compat", () => {
     const tempFile = await makeTempFile({ prefix: "test-", suffix: ".txt" });
     assertExists(tempFile);
 
-    // Clean up using portable API
     await remove(tempFile);
   });
 
@@ -69,12 +66,10 @@ describe("testing/deno-compat", () => {
       capturedPath = tempDir;
       assertExists(tempDir);
 
-      // Verify directory exists during callback using portable API
       const statResult = await stat(tempDir);
       assertEquals(statResult.isDirectory, true);
     });
 
-    // Verify directory was cleaned up
     try {
       await stat(capturedPath);
       throw new Error("Directory should have been removed");

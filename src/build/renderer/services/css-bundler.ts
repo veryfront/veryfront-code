@@ -1,58 +1,50 @@
-/**
- * CSS bundling service
- */
-
-import { bundlerLogger as logger } from "#veryfront/utils";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
 import { withSpanSync } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { bundlerLogger as logger } from "#veryfront/utils";
 import type { BundleResult, BundlerOptions } from "../types/bundler-types.ts";
 
-/**
- * Bundle CSS files
- */
 export function bundleCss(
   source: { path: string; content: string },
   options: BundlerOptions,
   result: BundleResult,
 ): void {
-  return withSpanSync("build.renderer.bundleCSS", () => {
-    try {
-      const processedCss = options.mode === "production"
-        ? minifyCss(source.content)
-        : source.content;
+  withSpanSync(
+    "build.renderer.bundleCSS",
+    () => {
+      try {
+        const processedCss = options.mode === "production"
+          ? minifyCss(source.content)
+          : source.content;
 
-      result.outputs.set(source.path, {
-        path: source.path,
-        content: processedCss,
-        type: "css",
-      });
+        result.outputs.set(source.path, {
+          path: source.path,
+          content: processedCss,
+          type: "css",
+        });
 
-      logger.debug(`Bundled CSS: ${source.path}`);
-    } catch (error) {
-      logger.error(`Failed to bundle CSS ${source.path}`, error);
-      result.errors.push(ensureError(error));
-    }
-  }, {
-    "source.path": source.path,
-    "options.mode": options.mode,
-  });
-}
-
-function minifyCss(css: string): string {
-  return (
-    css
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/\s+/g, " ")
-      .replace(/\s*([{}:;,])\s*/g, "$1")
-      .replace(/;}/g, "}")
-      .replace(/url\(["']([^"']+)["']\)/g, "url($1)")
-      .trim()
+        logger.debug(`Bundled CSS: ${source.path}`);
+      } catch (error) {
+        logger.error(`Failed to bundle CSS ${source.path}`, error);
+        result.errors.push(ensureError(error));
+      }
+    },
+    {
+      "source.path": source.path,
+      "options.mode": options.mode,
+    },
   );
 }
 
-/**
- * Process CSS imports (placeholder for future import resolution)
- */
+function minifyCss(css: string): string {
+  return css
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\s+/g, " ")
+    .replace(/\s*([{}:;,])\s*/g, "$1")
+    .replace(/;}/g, "}")
+    .replace(/url\(["']([^"']+)["']\)/g, "url($1)")
+    .trim();
+}
+
 export function processCssImports(css: string, _fromPath: string): string {
   return css;
 }

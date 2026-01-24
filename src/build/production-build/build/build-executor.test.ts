@@ -1,9 +1,3 @@
-/**
- * Build Executor Tests
- *
- * Tests the build executor types and configuration.
- */
-
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { BuildExecutorOptions, BuildResult } from "./build-executor.ts";
@@ -11,86 +5,60 @@ import type { BuildExecutorOptions, BuildResult } from "./build-executor.ts";
 describe("BuildExecutor", () => {
   describe("BuildExecutorOptions", () => {
     it("should require adapter", () => {
-      const options = {
-        adapter: {},
-      } as Partial<BuildExecutorOptions>;
-
+      const options: Partial<BuildExecutorOptions> = { adapter: {} };
       assertExists(options.adapter);
     });
 
     it("should require projectDir", () => {
-      const options = {
+      const options: Partial<BuildExecutorOptions> = {
         projectDir: "/path/to/project",
-      } as Partial<BuildExecutorOptions>;
-
+      };
       assertEquals(options.projectDir, "/path/to/project");
     });
 
     it("should require outputDir", () => {
-      const options = {
+      const options: Partial<BuildExecutorOptions> = {
         outputDir: "/path/to/output",
-      } as Partial<BuildExecutorOptions>;
-
+      };
       assertEquals(options.outputDir, "/path/to/output");
     });
 
     it("should require renderer", () => {
-      const options = {
-        renderer: {},
-      } as Partial<BuildExecutorOptions>;
-
+      const options: Partial<BuildExecutorOptions> = { renderer: {} };
       assertExists(options.renderer);
     });
 
     it("should require config", () => {
-      const options = {
-        config: {},
-      } as Partial<BuildExecutorOptions>;
-
+      const options: Partial<BuildExecutorOptions> = { config: {} };
       assertExists(options.config);
     });
 
     it("should require enablePrefetch boolean", () => {
-      const options = {
-        enablePrefetch: true,
-      } as Partial<BuildExecutorOptions>;
-
+      const options: Partial<BuildExecutorOptions> = { enablePrefetch: true };
       assertEquals(options.enablePrefetch, true);
     });
 
     it("should allow null chunkManifest", () => {
-      const options = {
-        chunkManifest: null,
-      } as Partial<BuildExecutorOptions>;
-
+      const options: Partial<BuildExecutorOptions> = { chunkManifest: null };
       assertEquals(options.chunkManifest, null);
     });
 
     it("should require baseUrl", () => {
-      const options = {
+      const options: Partial<BuildExecutorOptions> = {
         baseUrl: "http://localhost:3000",
-      } as Partial<BuildExecutorOptions>;
-
+      };
       assertEquals(options.baseUrl, "http://localhost:3000");
     });
 
     it("should require dryRun boolean", () => {
-      const options = {
-        dryRun: false,
-      } as Partial<BuildExecutorOptions>;
-
+      const options: Partial<BuildExecutorOptions> = { dryRun: false };
       assertEquals(options.dryRun, false);
     });
   });
 
   describe("BuildResult", () => {
     it("should have pages count", () => {
-      const result: BuildResult = {
-        pages: 10,
-        totalSize: 0,
-        ssgPaths: [],
-      };
-
+      const result: BuildResult = { pages: 10, totalSize: 0, ssgPaths: [] };
       assertEquals(result.pages, 10);
     });
 
@@ -100,7 +68,6 @@ describe("BuildExecutor", () => {
         totalSize: 1024000,
         ssgPaths: [],
       };
-
       assertEquals(result.totalSize, 1024000);
     });
 
@@ -111,19 +78,11 @@ describe("BuildExecutor", () => {
         ssgPaths: ["/", "/about", "/blog"],
       };
 
-      assertEquals(result.ssgPaths.length, 3);
-      assertEquals(result.ssgPaths[0], "/");
-      assertEquals(result.ssgPaths[1], "/about");
-      assertEquals(result.ssgPaths[2], "/blog");
+      assertEquals(result.ssgPaths, ["/", "/about", "/blog"]);
     });
 
     it("should allow empty ssgPaths", () => {
-      const result: BuildResult = {
-        pages: 0,
-        totalSize: 0,
-        ssgPaths: [],
-      };
-
+      const result: BuildResult = { pages: 0, totalSize: 0, ssgPaths: [] };
       assertEquals(result.ssgPaths.length, 0);
     });
 
@@ -149,18 +108,15 @@ describe("BuildExecutor", () => {
 
   describe("Build configuration", () => {
     it("should support dryRun mode", () => {
-      const dryRun = true;
-      assertEquals(dryRun, true);
+      assertEquals(true, true);
     });
 
     it("should support prefetch enabled", () => {
-      const enablePrefetch = true;
-      assertEquals(enablePrefetch, true);
+      assertEquals(true, true);
     });
 
     it("should support prefetch disabled", () => {
-      const enablePrefetch = false;
-      assertEquals(enablePrefetch, false);
+      assertEquals(false, false);
     });
   });
 });

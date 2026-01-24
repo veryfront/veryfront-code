@@ -13,18 +13,12 @@ export const DEPLOYMENT_ERROR_CATALOG: PartialErrorCatalog = {
       "Ensure build succeeded first",
     ],
   ),
-
   [ErrorCode.PLATFORM_ERROR]: createSimpleError(
     ErrorCode.PLATFORM_ERROR,
     "Platform error",
     "Deployment platform returned an error.",
-    [
-      "Check platform status page",
-      "Verify API keys and credentials",
-      "Try deploying again",
-    ],
+    ["Check platform status page", "Verify API keys and credentials", "Try deploying again"],
   ),
-
   [ErrorCode.ENV_VAR_MISSING]: createSimpleError(
     ErrorCode.ENV_VAR_MISSING,
     "Environment variable missing",
@@ -35,7 +29,6 @@ export const DEPLOYMENT_ERROR_CATALOG: PartialErrorCatalog = {
       "Check variable name is correct",
     ],
   ),
-
   [ErrorCode.PRODUCTION_BUILD_REQUIRED]: createSimpleError(
     ErrorCode.PRODUCTION_BUILD_REQUIRED,
     "Production build required",

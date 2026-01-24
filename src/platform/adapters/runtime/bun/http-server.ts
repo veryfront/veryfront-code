@@ -15,7 +15,7 @@ export class BunServer implements Server {
     return Promise.resolve();
   }
 
-  get addr() {
+  get addr(): { hostname: string; port: number } {
     return { hostname: this.hostname, port: this.port };
   }
 }
@@ -29,7 +29,7 @@ export function createBunServer(
   const server = Bun.serve({
     port,
     hostname,
-    async fetch(request: Request) {
+    fetch: async (request: Request) => {
       try {
         return await handler(request);
       } catch (error) {

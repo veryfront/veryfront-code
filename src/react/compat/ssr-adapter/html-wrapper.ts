@@ -1,39 +1,40 @@
 import type { HTMLWrapOptions } from "./types.ts";
 
 export function wrapInHTML(content: string, options: HTMLWrapOptions): string {
+  const nonceAttr = options.nonce ? ` nonce="${options.nonce}"` : "";
+
+  const metaTags = Object.entries(options.meta)
+    .map(([name, metaContent]) => `<meta name="${name}" content="${metaContent}">`)
+    .join("\n  ");
+
+  const linkTags = options.links
+    .map((link) => `<link rel="${link.rel}" href="${link.href}">`)
+    .join("\n  ");
+
+  const scriptTags = options.scripts
+    .map((script) => {
+      const typeAttr = script.type ? ` type="${script.type}"` : "";
+      return `<script src="${script.src}"${typeAttr}${nonceAttr}></script>`;
+    })
+    .join("\n  ");
+
+  const bootstrapScriptTags = options.bootstrapScripts
+    .map((src) => `<script src="${src}"${nonceAttr} async></script>`)
+    .join("\n  ");
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${options.title}</title>
-  ${
-    Object.entries(options.meta)
-      .map(([name, content]) => `<meta name="${name}" content="${content}">`)
-      .join("\n  ")
-  }
-  ${options.links.map((link) => `<link rel="${link.rel}" href="${link.href}">`).join("\n  ")}
-  ${
-    options.scripts
-      .map(
-        (script) =>
-          `<script src="${script.src}"${script.type ? ` type="${script.type}"` : ""}${
-            options.nonce ? ` nonce="${options.nonce}"` : ""
-          }></script>`,
-      )
-      .join("\n  ")
-  }
+  ${metaTags}
+  ${linkTags}
+  ${scriptTags}
 </head>
 <body>
   <div id="root">${content}</div>
-  ${
-    options.bootstrapScripts
-      .map(
-        (src) =>
-          `<script src="${src}"${options.nonce ? ` nonce="${options.nonce}"` : ""} async></script>`,
-      )
-      .join("\n  ")
-  }
+  ${bootstrapScriptTags}
 </body>
 </html>`;
 }

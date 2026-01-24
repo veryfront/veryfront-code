@@ -1,8 +1,3 @@
-/**
- * Base handler abstract class
- * Provides common functionality for all handlers
- */
-
 import type {
   Handler,
   HandlerContext,
@@ -10,14 +5,10 @@ import type {
   HandlerResult,
   RoutePattern,
 } from "#veryfront/types";
-import { ResponseBuilder } from "./response/index.ts";
-import { serverLogger } from "#veryfront/utils";
 import { runWithCacheBatching } from "#veryfront/cache/request-cache-batcher.ts";
+import { serverLogger } from "#veryfront/utils";
+import { ResponseBuilder } from "./response/index.ts";
 
-/**
- * Pre-bound handler helper methods.
- * Created once per handler instance to avoid repeated binding on each request.
- */
 export interface HandlerHelpers {
   createResponseBuilder: (ctx: HandlerContext, nonce?: string) => ResponseBuilder;
   respond: (response: Response, metadata?: Record<string, unknown>) => HandlerResult;
@@ -29,10 +20,6 @@ export interface HandlerHelpers {
 export abstract class BaseHandler implements Handler {
   abstract metadata: HandlerMetadata;
 
-  /**
-   * Pre-bound helper methods for passing to handler functions.
-   * Bind methods once in constructor to avoid creating new functions on each request.
-   */
   protected readonly helpers: HandlerHelpers;
 
   constructor() {
@@ -45,76 +32,46 @@ export abstract class BaseHandler implements Handler {
     };
   }
 
-  /**
-   * Main handler method to be implemented by subclasses
-   */
   abstract handle(req: Request, ctx: HandlerContext): Promise<HandlerResult>;
 
-  /**
-   * Check if this handler should process the request
-   */
   protected shouldHandle(req: Request, ctx: HandlerContext): boolean {
-    // Check if handler is enabled
-    if (this.metadata.enabled && !this.metadata.enabled(ctx)) {
-      return false;
-    }
+    if (this.metadata.enabled && !this.metadata.enabled(ctx)) return false;
 
-    // If no patterns specified, handler decides internally
-    if (!this.metadata.patterns || this.metadata.patterns.length === 0) {
-      return true;
-    }
+    const patterns = this.metadata.patterns;
+    if (!patterns?.length) return true;
 
-    const url = new URL(req.url);
-    const pathname = url.pathname;
+    const { pathname } = new URL(req.url);
     const method = req.method.toUpperCase();
 
-    // Check each pattern
-    for (const pattern of this.metadata.patterns) {
-      if (this.matchesPattern(pathname, method, pattern)) {
-        return true;
-      }
+    for (const pattern of patterns) {
+      if (this.matchesPattern(pathname, method, pattern)) return true;
     }
 
     return false;
   }
 
-  /**
-   * Check if request matches a pattern
-   */
   private matchesPattern(pathname: string, method: string, pattern: RoutePattern): boolean {
-    // Check method if specified
     if (pattern.method) {
-      const methods = Array.isArray(pattern.method) ? pattern.method : [pattern.method];
-      if (!methods.map((m) => m.toUpperCase()).includes(method)) {
-        return false;
-      }
+      const methods = (Array.isArray(pattern.method) ? pattern.method : [pattern.method]).map((m) =>
+        m.toUpperCase()
+      );
+      if (!methods.includes(method)) return false;
     }
 
-    // Check path pattern
-    if (typeof pattern.pattern === "string") {
-      if (pattern.exact) {
-        return pathname === pattern.pattern;
-      }
-      if (pattern.prefix) {
-        return pathname.startsWith(pattern.pattern);
-      }
-      // Default to exact match for strings
-      return pathname === pattern.pattern;
+    const routePattern = pattern.pattern;
+
+    if (typeof routePattern === "string") {
+      if (pattern.prefix) return pathname.startsWith(routePattern);
+      return pathname === routePattern;
     }
 
-    if (pattern.pattern instanceof RegExp) {
-      return pattern.pattern.test(pathname);
+    if (routePattern instanceof RegExp) {
+      return routePattern.test(pathname);
     }
 
     return false;
   }
 
-  /**
-   * Create a response builder with context
-   * @param ctx - Handler context
-   * @param nonce - Optional pre-generated nonce for CSP consistency
-   * @param _options - Additional options (reserved for future use)
-   */
   protected createResponseBuilder(
     ctx: HandlerContext,
     nonce?: string,
@@ -130,53 +87,28 @@ export abstract class BaseHandler implements Handler {
     });
   }
 
-  /**
-   * Log debug message if debug mode is enabled
-   */
   protected logDebug(message: string, extra?: Record<string, unknown>, ctx?: HandlerContext): void {
-    if (ctx?.debug || ctx?.adapter.env.get("VERYFRONT_DEBUG")) {
-      serverLogger.debug(`[${this.metadata.name}] ${message}`, extra || undefined);
-    }
+    if (!ctx?.debug && !ctx?.adapter.env.get("VERYFRONT_DEBUG")) return;
+    serverLogger.debug(`[${this.metadata.name}] ${message}`, extra ?? undefined);
   }
 
-  /**
-   * Log info message (always logged, for observability)
-   */
   protected logInfo(message: string, extra?: Record<string, unknown>, _ctx?: HandlerContext): void {
-    serverLogger.info(`[${this.metadata.name}] ${message}`, extra || undefined);
+    serverLogger.info(`[${this.metadata.name}] ${message}`, extra ?? undefined);
   }
 
-  /**
-   * Helper to extract error message safely
-   */
   protected getErrorMessage(error: unknown): string {
     if (error instanceof Error) return error.message;
     return String(error);
   }
 
-  /**
-   * Continue to next handler
-   */
   protected continue(): HandlerResult {
     return { continue: true };
   }
 
-  /**
-   * Return a response and stop the chain
-   */
   protected respond(response: Response, metadata?: Record<string, unknown>): HandlerResult {
     return { response, continue: false, metadata };
   }
 
-  /**
-   * Execute a function within a proxy context for multi-project mode.
-   * Sets up the appropriate filesystem context based on project slug and token.
-   *
-   * @param ctx - Handler context with proxy information
-   * @param fn - Async function to execute within the proxy context
-   * @param options - Optional configuration
-   * @returns Promise resolving to the function result
-   */
   protected withProxyContext<T>(
     ctx: HandlerContext,
     fn: () => Promise<T>,
@@ -195,42 +127,34 @@ export abstract class BaseHandler implements Handler {
       ) => Promise<R>;
     };
 
-    // Set branch context from parsed domain (for branch-aware file resolution)
-    // In multi-project mode, this may not be supported (branch is per-project via runWithContext)
     if (typeof fsWrapper.setRequestBranch === "function") {
       try {
-        const branch = ctx.parsedDomain?.branch ?? null;
-        fsWrapper.setRequestBranch(branch);
+        fsWrapper.setRequestBranch(ctx.parsedDomain?.branch ?? null);
       } catch {
         // Ignore - multi-project mode uses runWithContext for branch context
       }
     }
 
-    // Check if we have required context for proxy mode
     const requireToken = options.requireToken ?? false;
-    const hasToken = !!ctx.proxyToken;
     const hasSlug = !!ctx.projectSlug;
+    const hasToken = !!ctx.proxyToken;
 
-    if (!hasSlug || (requireToken && !hasToken)) {
-      return fn();
-    }
+    if (!hasSlug || (requireToken && !hasToken)) return fn();
 
-    // Multi-project mode: use runWithContext
-    // Use isMultiProjectMode() to check support - the method exists on wrapper but throws if unsupported
     if (typeof fsWrapper.isMultiProjectMode === "function" && fsWrapper.isMultiProjectMode()) {
-      // Determine production mode from resolvedEnvironment (domain lookup) or request context
       const isProduction = (ctx.resolvedEnvironment ?? ctx.requestContext?.mode) === "production";
-
-      // Extract branch from parsed domain (for preview URLs like slug--branch.preview.veryfront.com)
       const branch = ctx.parsedDomain?.branch ?? null;
 
-      // Log detailed context for debugging HMR/preview issues
-      this.logDebug("[withProxyContext] Setting up multi-project context", {
-        projectSlug: ctx.projectSlug,
-        productionMode: isProduction,
-        releaseId: ctx.releaseId,
-        branch,
-      }, ctx);
+      this.logDebug(
+        "[withProxyContext] Setting up multi-project context",
+        {
+          projectSlug: ctx.projectSlug,
+          productionMode: isProduction,
+          releaseId: ctx.releaseId,
+          branch,
+        },
+        ctx,
+      );
 
       return fsWrapper.runWithContext!(
         ctx.projectSlug!,
@@ -241,12 +165,10 @@ export abstract class BaseHandler implements Handler {
       );
     }
 
-    // Single-project mode: use setRequestToken
     if (typeof fsWrapper.setRequestToken === "function" && ctx.proxyToken) {
       fsWrapper.setRequestToken(ctx.proxyToken);
     }
 
-    // Wrap with cache batching for request-scoped deduplication (same as multi-project mode)
     return runWithCacheBatching(fn);
   }
 }

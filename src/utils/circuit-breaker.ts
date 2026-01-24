@@ -55,17 +55,21 @@ export class CircuitBreaker {
   async execute<T>(operation: () => Promise<T>): Promise<T> {
     if (this.state === "OPEN") {
       const elapsed = Date.now() - this.lastFailureTime;
-      if (elapsed >= this.resetTimeoutMs) {
-        this.transitionTo("HALF_OPEN");
-      } else {
-        throw new CircuitBreakerOpen(this.breakerName, this.resetTimeoutMs - elapsed);
+      const remaining = this.resetTimeoutMs - elapsed;
+
+      if (remaining > 0) {
+        throw new CircuitBreakerOpen(this.breakerName, remaining);
       }
+
+      this.transitionTo("HALF_OPEN");
     }
 
-    if (this.state === "HALF_OPEN" && this.halfOpenAttempts >= 3) {
-      throw new CircuitBreakerOpen(this.breakerName, this.resetTimeoutMs);
+    if (this.state === "HALF_OPEN") {
+      if (this.halfOpenAttempts >= 3) {
+        throw new CircuitBreakerOpen(this.breakerName, this.resetTimeoutMs);
+      }
+      this.halfOpenAttempts++;
     }
-    if (this.state === "HALF_OPEN") this.halfOpenAttempts++;
 
     try {
       const result = await operation();
@@ -79,11 +83,12 @@ export class CircuitBreaker {
 
   private recordSuccess(): void {
     this.failureCount = 0;
-    if (this.state === "HALF_OPEN") {
-      this.successCount++;
-      if (this.successCount >= this.successThreshold) {
-        this.transitionTo("CLOSED");
-      }
+
+    if (this.state !== "HALF_OPEN") return;
+
+    this.successCount++;
+    if (this.successCount >= this.successThreshold) {
+      this.transitionTo("CLOSED");
     }
   }
 
@@ -93,7 +98,10 @@ export class CircuitBreaker {
 
     if (this.state === "HALF_OPEN") {
       this.transitionTo("OPEN");
-    } else if (this.state === "CLOSED" && this.failureCount >= this.failureThreshold) {
+      return;
+    }
+
+    if (this.state === "CLOSED" && this.failureCount >= this.failureThreshold) {
       this.transitionTo("OPEN");
     }
   }
@@ -102,10 +110,13 @@ export class CircuitBreaker {
     const oldState = this.state;
     this.state = newState;
 
-    if (newState === "CLOSED" || newState === "HALF_OPEN") {
+    if (newState === "CLOSED") {
       this.successCount = 0;
       this.halfOpenAttempts = 0;
-      if (newState === "CLOSED") this.failureCount = 0;
+      this.failureCount = 0;
+    } else if (newState === "HALF_OPEN") {
+      this.successCount = 0;
+      this.halfOpenAttempts = 0;
     }
 
     logger.info(`[CircuitBreaker] ${this.breakerName}: ${oldState} → ${newState}`);
@@ -116,18 +127,16 @@ export class CircuitBreaker {
   }
 }
 
-/** Named circuit breakers registry */
 const breakers = new Map<string, CircuitBreaker>();
 
-/** Get or create a named circuit breaker */
 export function getCircuitBreaker(
   name: string,
   options?: Omit<CircuitBreakerOptions, "name">,
 ): CircuitBreaker {
-  let breaker = breakers.get(name);
-  if (!breaker) {
-    breaker = new CircuitBreaker({ ...options, name });
-    breakers.set(name, breaker);
-  }
+  const existing = breakers.get(name);
+  if (existing) return existing;
+
+  const breaker = new CircuitBreaker({ ...options, name });
+  breakers.set(name, breaker);
   return breaker;
 }

@@ -34,15 +34,16 @@ const TOOL_STATUS_CONFIG: Record<string, { label: string; icon: React.ReactNode 
   "output-error": { label: "Error", icon: <XCircleIcon className="size-3.5 text-red-600" /> },
   "output-denied": { label: "Denied", icon: <XCircleIcon className="size-3.5 text-orange-600" /> },
   // Legacy states
-  "call": { label: "Running", icon: <ClockIcon className="size-3.5 animate-pulse" /> },
+  call: { label: "Running", icon: <ClockIcon className="size-3.5 animate-pulse" /> },
   "partial-call": { label: "Running", icon: <ClockIcon className="size-3.5 animate-pulse" /> },
-  "result": { label: "Completed", icon: <CheckCircleIcon className="size-3.5 text-green-600" /> },
-  "error": { label: "Error", icon: <XCircleIcon className="size-3.5 text-red-600" /> },
+  result: { label: "Completed", icon: <CheckCircleIcon className="size-3.5 text-green-600" /> },
+  error: { label: "Error", icon: <XCircleIcon className="size-3.5 text-red-600" /> },
 };
 
 /** Tool call status badge component (AI Elements style) */
-export function ToolStatusBadge({ state }: { state: string }) {
+export function ToolStatusBadge({ state }: { state: string }): React.JSX.Element {
   const config = TOOL_STATUS_CONFIG[state];
+
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full bg-secondary px-2.5 py-0.5 text-xs font-medium text-secondary-foreground border border-border">
       {config?.icon ?? <CircleIcon className="size-3.5" />}
@@ -75,8 +76,6 @@ function formatJsonWithHighlight(obj: unknown): React.ReactNode {
   // SECURITY: Escape HTML first to prevent XSS attacks
   const escaped = escapeHtml(jsonStr);
 
-  // Apply syntax highlighting to the escaped content
-  // The escaped content uses &quot; for quotes, so we match those
   const highlighted = escaped
     .replace(
       /&quot;([^&]*)&quot;:/g,
@@ -104,7 +103,7 @@ function renderOutputAsTable(output: unknown): React.ReactNode | null {
   if (!Array.isArray(output) || output.length === 0) return null;
 
   const firstItem = output[0];
-  if (typeof firstItem !== "object" || firstItem === null) return null;
+  if (typeof firstItem !== "object" || firstItem == null) return null;
 
   const keys = Object.keys(firstItem);
   if (keys.length === 0) return null;
@@ -129,7 +128,7 @@ function renderOutputAsTable(output: unknown): React.ReactNode | null {
             <tr key={i} className="border-b border-neutral-100 dark:border-neutral-800">
               {keys.map((key) => (
                 <td key={key} className="px-4 py-2 text-neutral-700 dark:text-neutral-300">
-                  {String((row as Record<string, unknown>)[key] ?? "")}
+                  {String((row as Record<string, unknown>)?.[key] ?? "")}
                 </td>
               ))}
             </tr>
@@ -144,17 +143,20 @@ function renderOutputAsTable(output: unknown): React.ReactNode | null {
  * Tool call card component - renders tool invocations with parameters and results
  * Styled to match AI Elements (https://ai-sdk.dev/elements)
  */
-export function ToolCallCard({ tool }: { tool: ToolUIPart | DynamicToolUIPart }) {
+export function ToolCallCard({
+  tool,
+}: {
+  tool: ToolUIPart | DynamicToolUIPart;
+}): React.JSX.Element {
   const [isExpanded, setIsExpanded] = React.useState(true);
 
   const tableOutput = tool.output !== undefined ? renderOutputAsTable(tool.output) : null;
 
   return (
     <div className="not-prose w-full rounded-md border border-border bg-card">
-      {/* Header - CollapsibleTrigger style */}
       <button
         type="button"
-        onClick={() => setIsExpanded(!isExpanded)}
+        onClick={() => setIsExpanded((v) => !v)}
         className="group flex w-full items-center justify-between gap-4 p-3 hover:bg-muted/50 transition-colors"
       >
         <div className="flex items-center gap-2">
@@ -170,10 +172,8 @@ export function ToolCallCard({ tool }: { tool: ToolUIPart | DynamicToolUIPart })
         />
       </button>
 
-      {/* Content - CollapsibleContent style */}
       {isExpanded && (
         <div className="border-t border-border">
-          {/* Parameters section - ToolInput style */}
           {tool.input !== undefined && (
             <div className="space-y-2 overflow-hidden p-4">
               <h4 className="font-medium text-muted-foreground text-xs uppercase tracking-wide">
@@ -185,23 +185,17 @@ export function ToolCallCard({ tool }: { tool: ToolUIPart | DynamicToolUIPart })
             </div>
           )}
 
-          {/* Result section - ToolOutput style */}
           {tool.output !== undefined && (
             <div className="space-y-2 p-4 border-t border-border">
               <h4 className="font-medium text-muted-foreground text-xs uppercase tracking-wide">
                 Result
               </h4>
               <div className="overflow-x-auto rounded-md bg-muted/50 text-foreground">
-                {tableOutput || (
-                  <div className="p-3">
-                    {formatJsonWithHighlight(tool.output)}
-                  </div>
-                )}
+                {tableOutput ?? <div className="p-3">{formatJsonWithHighlight(tool.output)}</div>}
               </div>
             </div>
           )}
 
-          {/* Error section */}
           {tool.errorText && (
             <div className="space-y-2 p-4 border-t border-border">
               <h4 className="font-medium text-destructive text-xs uppercase tracking-wide">

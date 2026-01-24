@@ -20,37 +20,27 @@ export class NetworkUtils {
   }
 
   private getNavigatorWithConnection(): NavigatorWithConnection | null {
-    if (typeof globalThis.navigator === "undefined") {
-      return null;
-    }
+    if (typeof globalThis.navigator === "undefined") return null;
     return globalThis.navigator as NavigatorWithConnection;
   }
 
   private getNetworkConnection(): NetworkInfo | null {
     const nav = this.getNavigatorWithConnection();
-    return nav?.connection || nav?.mozConnection || nav?.webkitConnection || null;
+    return nav?.connection ?? nav?.mozConnection ?? nav?.webkitConnection ?? null;
   }
 
   shouldPrefetch(): boolean {
     const nav = this.getNavigatorWithConnection();
-    if (nav?.connection?.saveData) {
-      return false;
-    }
+    if (nav?.connection?.saveData) return false;
 
-    if (this.networkInfo) {
-      const effectiveType = this.networkInfo.effectiveType;
-      if (effectiveType !== undefined && !this.allowedNetworks.includes(effectiveType)) {
-        return false;
-      }
-    }
+    const effectiveType = this.networkInfo?.effectiveType;
+    if (effectiveType !== undefined && !this.allowedNetworks.includes(effectiveType)) return false;
 
     return true;
   }
 
   onNetworkChange(callback: () => void): void {
-    if (this.networkInfo?.addEventListener) {
-      this.networkInfo.addEventListener("change", callback);
-    }
+    this.networkInfo?.addEventListener?.("change", callback);
   }
 
   getNetworkInfo(): NetworkInfo | null {

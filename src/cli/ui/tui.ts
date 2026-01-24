@@ -1,7 +1,7 @@
-/**
+/**************************
  * Veryfront CLI TUI
  * Shared UI for new/dev commands with collapsible logs
- */
+ **************************/
 
 import { getTerminalSize, writeStdout } from "#veryfront/platform/compat/process.ts";
 import { getStdinReader, setRawMode } from "#veryfront/platform/compat/stdin.ts";
@@ -12,8 +12,6 @@ import {
   DEFAULT_TERMINAL_WIDTH,
   SPINNER_INTERVAL_MS,
 } from "./constants.ts";
-
-// No static logo - using animated matrix instead
 
 export interface TuiConfig {
   title?: string;
@@ -39,83 +37,68 @@ let spinnerInterval: number | null = null;
 let termH = DEFAULT_TERMINAL_HEIGHT;
 let termW = DEFAULT_TERMINAL_WIDTH;
 
-/** Write to stdout (alias for consistency with existing code) */
 const write = writeStdout;
 
-function getSize() {
+function getSize(): void {
   try {
     const { rows, columns } = getTerminalSize();
     termH = rows;
     termW = columns;
-  } catch { /* use defaults */ }
+  } catch {
+    // use defaults
+  }
 }
 
-function render() {
+function render(): void {
   getSize();
   const lines: string[] = [];
 
-  // Spacing
   lines.push("");
 
-  // Info section
   const infoKeys = Object.keys(state.info);
   if (infoKeys.length > 0) {
     const maxKeyLen = Math.max(...infoKeys.map((k) => k.length));
     for (const key of infoKeys) {
       const padding = " ".repeat(maxKeyLen - key.length);
-      // Info values can include pre-styled content (e.g., green dots)
-      lines.push("  " + dim(key) + padding + "  " + (state.info[key] ?? ""));
+      lines.push(`  ${dim(key)}${padding}  ${state.info[key] ?? ""}`);
     }
     lines.push("");
   }
 
-  // Steps (if any)
   if (state.steps.length > 0) {
     const spinner = getSpinnerFrame(spinnerFrame);
-    const stepLine = state.steps.map((s, i) => {
-      const icon = s.done ? success("✓") : (i === state.currentStep ? brand(spinner) : dim("○"));
-      const text = s.done ? dim(s.label) : s.label;
-      return icon + " " + text;
-    }).join("  ");
-    lines.push("  " + stepLine);
+    const stepLine = state.steps
+      .map((s, i) => {
+        const icon = s.done ? success("✓") : i === state.currentStep ? brand(spinner) : dim("○");
+        const text = s.done ? dim(s.label) : s.label;
+        return `${icon} ${text}`;
+      })
+      .join("  ");
+    lines.push(`  ${stepLine}`);
     lines.push("");
   }
 
-  // Status
-  let statusIcon: string;
   const spinnerChar = getSpinnerFrame(spinnerFrame);
-  switch (state.statusType) {
-    case "loading":
-      statusIcon = brand(spinnerChar);
-      break;
-    case "success":
-      statusIcon = success("●");
-      break;
-    case "error":
-      statusIcon = error("✗");
-      break;
-    default:
-      statusIcon = dim("○");
-  }
-  lines.push("  " + statusIcon + " " + state.status);
+  let statusIcon = dim("○");
+  if (state.statusType === "loading") statusIcon = brand(spinnerChar);
+  else if (state.statusType === "success") statusIcon = success("●");
+  else if (state.statusType === "error") statusIcon = error("✗");
+
+  lines.push(`  ${statusIcon} ${state.status}`);
   lines.push("");
 
-  // Help
   const helpParts: string[] = [];
   if (state.statusType === "success" && state.status.includes("Ready")) {
     helpParts.push(dim("enter") + " deploy");
   }
-  if (config.showLogs !== false) {
-    helpParts.push(dim("l") + " logs");
-  }
+  if (config.showLogs !== false) helpParts.push(dim("l") + " logs");
   helpParts.push(dim("ctrl+c") + " exit");
-  lines.push("  " + helpParts.join("  "));
+  lines.push(`  ${helpParts.join("  ")}`);
   lines.push("");
 
-  // Logs section
   if (config.showLogs !== false) {
     const logIcon = state.logsExpanded ? "▼" : "▶";
-    lines.push("  " + dim(logIcon + " Logs") + dim(` (${state.logs.length})`));
+    lines.push(`  ${dim(`${logIcon} Logs`)}${dim(` (${state.logs.length})`)}`);
 
     if (state.logsExpanded && state.logs.length > 0) {
       const maxLogLines = Math.max(5, termH - lines.length - 3);
@@ -124,24 +107,22 @@ function render() {
       const visible = state.logs.slice(start, end);
 
       for (const log of visible) {
-        const truncated = log.length > termW - 6 ? log.slice(0, termW - 9) + "..." : log;
-        lines.push("    " + muted(truncated));
+        const maxWidth = termW - 6;
+        const truncated = log.length > maxWidth ? log.slice(0, termW - 9) + "..." : log;
+        lines.push(`    ${muted(truncated)}`);
       }
 
-      if (state.logs.length > maxLogLines) {
-        lines.push("    " + dim(`↑↓ scroll`));
-      }
+      if (state.logs.length > maxLogLines) lines.push(`    ${dim("↑↓ scroll")}`);
     }
   }
 
-  // Render to screen
   write(cursor.moveTo(1, 1) + screen.clearDown);
   for (let i = 0; i < lines.length; i++) {
     write(cursor.moveTo(i + 1, 1) + screen.clearLine + lines[i]);
   }
 }
 
-function startSpinner() {
+function startSpinner(): void {
   if (spinnerInterval) return;
   spinnerInterval = setInterval(() => {
     spinnerFrame = (spinnerFrame + 1) % SPINNER_FRAMES.length;
@@ -149,14 +130,23 @@ function startSpinner() {
   }, SPINNER_INTERVAL_MS);
 }
 
-function stopSpinner() {
-  if (spinnerInterval) {
-    clearInterval(spinnerInterval);
-    spinnerInterval = null;
-  }
+function stopSpinner(): void {
+  if (!spinnerInterval) return;
+  clearInterval(spinnerInterval);
+  spinnerInterval = null;
 }
 
-export function createTui(cfg: TuiConfig = {}) {
+export function createTui(cfg: TuiConfig = {}): {
+  setInfo: (info: Record<string, string>) => void;
+  setSteps: (steps: string[]) => void;
+  completeStep: () => void;
+  setStatus: (status: string, type?: TuiState["statusType"]) => void;
+  addLog: (msg: string) => void;
+  toggleLogs: () => void;
+  scrollLogs: (dir: "up" | "down") => void;
+  cleanup: () => void;
+  render: () => void;
+} {
   config = { title: "Veryfront", showLogs: true, ...cfg };
   state = {
     status: "Initializing...",
@@ -174,56 +164,62 @@ export function createTui(cfg: TuiConfig = {}) {
   render();
 
   return {
-    setInfo(info: Record<string, string>) {
+    setInfo(info: Record<string, string>): void {
       state.info = info;
       render();
     },
 
-    setSteps(steps: string[]) {
+    setSteps(steps: string[]): void {
       state.steps = steps.map((label) => ({ label, done: false }));
       state.currentStep = 0;
       render();
     },
 
-    completeStep() {
+    completeStep(): void {
       const step = state.steps[state.currentStep];
-      if (step) {
-        step.done = true;
-        state.currentStep++;
-        render();
-      }
-    },
-
-    setStatus(status: string, type: TuiState["statusType"] = "info") {
-      state.status = status;
-      state.statusType = type;
-      if (type !== "loading") stopSpinner();
-      else startSpinner();
+      if (!step) return;
+      step.done = true;
+      state.currentStep++;
       render();
     },
 
-    addLog(msg: string) {
-      const clean = msg.replace(ANSI_REGEX, "").trim();
-      if (clean) {
-        state.logs.push(clean);
-        if (state.logsExpanded) render();
-      }
+    setStatus(status: string, type: TuiState["statusType"] = "info"): void {
+      state.status = status;
+      state.statusType = type;
+
+      if (type === "loading") startSpinner();
+      else stopSpinner();
+
+      render();
     },
 
-    toggleLogs() {
+    addLog(msg: string): void {
+      const clean = msg.replace(ANSI_REGEX, "").trim();
+      if (!clean) return;
+
+      state.logs.push(clean);
+      if (state.logsExpanded) render();
+    },
+
+    toggleLogs(): void {
       state.logsExpanded = !state.logsExpanded;
       state.logScroll = 0;
       render();
     },
 
-    scrollLogs(dir: "up" | "down") {
+    scrollLogs(dir: "up" | "down"): void {
       if (!state.logsExpanded) return;
-      if (dir === "up" && state.logScroll < state.logs.length - 5) state.logScroll++;
-      if (dir === "down" && state.logScroll > 0) state.logScroll--;
+
+      if (dir === "up") {
+        if (state.logScroll < state.logs.length - 5) state.logScroll++;
+      } else {
+        if (state.logScroll > 0) state.logScroll--;
+      }
+
       render();
     },
 
-    cleanup() {
+    cleanup(): void {
       stopSpinner();
       write(cursor.show + screen.altOff);
     },
@@ -234,24 +230,28 @@ export function createTui(cfg: TuiConfig = {}) {
 
 export type Tui = ReturnType<typeof createTui>;
 
-// Console interceptor
-export function interceptConsole(tui: Tui) {
+export function interceptConsole(tui: Tui): () => void {
   const orig = { log: console.log, error: console.error, warn: console.warn, info: console.info };
-  const capture = (...args: unknown[]) => {
-    tui.addLog(args.map((a) => typeof a === "string" ? a : JSON.stringify(a)).join(" "));
+  const capture = (...args: unknown[]): void => {
+    tui.addLog(
+      args
+        .map((a) => (typeof a === "string" ? a : JSON.stringify(a)))
+        .join(" "),
+    );
   };
+
   console.log = capture;
   console.error = capture;
   console.warn = capture;
   console.info = capture;
+
   return () => Object.assign(console, orig);
 }
 
-// Keyboard handler
-export async function handleInput(tui: Tui, opts: {
-  onEnter?: () => void;
-  onExit?: () => void;
-}) {
+export async function handleInput(
+  tui: Tui,
+  opts: { onEnter?: () => void; onExit?: () => void },
+): Promise<void> {
   setRawMode(true);
   const reader = getStdinReader();
   const dec = new TextDecoder();
@@ -260,19 +260,32 @@ export async function handleInput(tui: Tui, opts: {
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
+
       const key = dec.decode(value);
 
       if (key === "\x03") {
         opts.onExit?.();
         break;
       }
+
       if (key === "\r" || key === "\n") {
         opts.onEnter?.();
         break;
       }
-      if (key === "l" || key === "L") tui.toggleLogs();
-      if (key === "\x1b[A" || key === "k") tui.scrollLogs("up");
-      if (key === "\x1b[B" || key === "j") tui.scrollLogs("down");
+
+      if (key === "l" || key === "L") {
+        tui.toggleLogs();
+        continue;
+      }
+
+      if (key === "\x1b[A" || key === "k") {
+        tui.scrollLogs("up");
+        continue;
+      }
+
+      if (key === "\x1b[B" || key === "j") {
+        tui.scrollLogs("down");
+      }
     }
   } finally {
     reader.releaseLock();

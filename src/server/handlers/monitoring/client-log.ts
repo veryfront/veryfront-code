@@ -4,26 +4,24 @@ import { ResponseBuilder } from "#veryfront/security/index.ts";
 import { serverLogger } from "#veryfront/utils";
 import { HTTP_OK, PRIORITY_HIGH_CLIENT_LOG } from "#veryfront/utils/constants/index.ts";
 import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
+
 export class ClientLogHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "ClientLogHandler",
-    priority: PRIORITY_HIGH_CLIENT_LOG as HandlerPriority, // HIGH priority
-    patterns: [
-      { pattern: "/_veryfront/log", exact: true, method: "POST" },
-    ],
-    // Enable in local dev only
+    priority: PRIORITY_HIGH_CLIENT_LOG as HandlerPriority,
+    patterns: [{ pattern: "/_veryfront/log", exact: true, method: "POST" }],
     enabled: (ctx) => ctx.requestContext?.isLocalDev ?? false,
   };
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
-    const url = new URL(req.url);
-    const pathname = url.pathname;
+    const { pathname } = new URL(req.url);
 
     if (pathname !== "/_veryfront/log" || req.method !== "POST") {
       return this.continue();
     }
 
     let body = "";
+
     try {
       body = await req.text();
       const logData = JSON.parse(body);
@@ -37,29 +35,23 @@ export class ClientLogHandler extends BaseHandler {
         : undefined;
 
       const prefix = this.getLogPrefix(level);
+
       // Use appropriate log level: client errors/warns show as info, client info shows as debug
       if (level === "error" || level === "warn") {
         serverLogger.info(`${prefix} ${message}`, details);
       } else {
         serverLogger.debug(`${prefix} ${message}`, details);
       }
-
-      return this.respond(
-        ResponseBuilder.json({ ok: true }, req, {
-          corsConfig: ctx.securityConfig?.cors,
-          status: HTTP_OK,
-        }),
-      );
     } catch (e) {
       this.handleParseError(e, body);
-
-      return this.respond(
-        ResponseBuilder.json({ ok: true }, req, {
-          corsConfig: ctx.securityConfig?.cors,
-          status: HTTP_OK,
-        }),
-      );
     }
+
+    return this.respond(
+      ResponseBuilder.json({ ok: true }, req, {
+        corsConfig: ctx.securityConfig?.cors,
+        status: HTTP_OK,
+      }),
+    );
   }
 
   private static readonly LOG_PREFIXES: Record<string, string> = {
@@ -84,23 +76,26 @@ export class ClientLogHandler extends BaseHandler {
     serverLogger.error("[ClientLogHandler] Body length:", body.length);
 
     // Try to identify the problematic character for SyntaxError
-    if (e instanceof SyntaxError && e.message.includes("position")) {
-      const match = e.message.match(/position (\d+)/);
-      if (match && match[1]) {
-        const pos = parseInt(match[1], 10);
-        const start = Math.max(0, pos - 20);
-        const end = Math.min(body.length, pos + 20);
-        serverLogger.error(
-          "[ClientLogHandler] Context around error position:",
-          body.slice(start, end),
-        );
-        serverLogger.error(
-          "[ClientLogHandler] Character at position:",
-          body.charCodeAt(pos),
-          "which is:",
-          body.charAt(pos),
-        );
-      }
+    if (!(e instanceof SyntaxError) || !e.message.includes("position")) {
+      return;
     }
+
+    const match = e.message.match(/position (\d+)/);
+    const posStr = match?.[1];
+    if (!posStr) {
+      return;
+    }
+
+    const pos = parseInt(posStr, 10);
+    const start = Math.max(0, pos - 20);
+    const end = Math.min(body.length, pos + 20);
+
+    serverLogger.error("[ClientLogHandler] Context around error position:", body.slice(start, end));
+    serverLogger.error(
+      "[ClientLogHandler] Character at position:",
+      body.charCodeAt(pos),
+      "which is:",
+      body.charAt(pos),
+    );
   }
 }

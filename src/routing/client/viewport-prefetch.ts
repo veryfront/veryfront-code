@@ -3,10 +3,7 @@ import { rendererLogger as logger } from "#veryfront/utils";
 export class ViewportPrefetch {
   private observer: IntersectionObserver | null = null;
   private prefetchCallback: (path: string) => void;
-  private prefetchOptions: {
-    hover?: boolean;
-    viewport?: boolean;
-  };
+  private prefetchOptions: { hover?: boolean; viewport?: boolean };
 
   constructor(
     prefetchCallback: (path: string) => void,
@@ -20,8 +17,7 @@ export class ViewportPrefetch {
     try {
       if (!("IntersectionObserver" in globalThis)) return;
 
-      if (this.observer) this.observer.disconnect();
-
+      this.observer?.disconnect();
       this.createObserver();
       this.observeLinks(root);
     } catch (error) {
@@ -33,16 +29,13 @@ export class ViewportPrefetch {
     this.observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
-          if (entry.isIntersecting) {
-            // Check if target is an anchor element
-            if (entry.target instanceof HTMLAnchorElement) {
-              const href = entry.target.getAttribute("href");
-              if (href) {
-                this.prefetchCallback(href);
-              }
-              this.observer?.unobserve(entry.target);
-            }
-          }
+          if (!entry.isIntersecting) continue;
+          if (!(entry.target instanceof HTMLAnchorElement)) continue;
+
+          const href = entry.target.getAttribute("href");
+          if (href) this.prefetchCallback(href);
+
+          this.observer?.unobserve(entry.target);
         }
       },
       { rootMargin: "200px" },
@@ -50,25 +43,21 @@ export class ViewportPrefetch {
   }
 
   private observeLinks(root: Document | HTMLElement): void {
-    const anchors: NodeListOf<HTMLAnchorElement> =
-      root.querySelectorAll?.('a[href]:not([target="_blank"])') ??
-        document.createDocumentFragment().querySelectorAll("a");
+    const anchors = root.querySelectorAll<HTMLAnchorElement>('a[href]:not([target="_blank"])') ??
+      document.createDocumentFragment().querySelectorAll<HTMLAnchorElement>("a");
     const isViewportEnabled = Boolean(this.prefetchOptions.viewport);
 
     for (const anchor of anchors) {
-      if (this.shouldObserveAnchor(anchor, isViewportEnabled)) {
-        this.observer?.observe(anchor);
-      }
+      if (!this.shouldObserveAnchor(anchor, isViewportEnabled)) continue;
+      this.observer?.observe(anchor);
     }
   }
 
   private shouldObserveAnchor(anchor: HTMLAnchorElement, isViewportEnabled: boolean): boolean {
-    const href = anchor.getAttribute("href") || "";
-    if (
-      !href || href.startsWith("http") || href.startsWith("#") || anchor.getAttribute("download")
-    ) {
-      return false;
-    }
+    const href = anchor.getAttribute("href") ?? "";
+    if (!href) return false;
+    if (href.startsWith("http") || href.startsWith("#")) return false;
+    if (anchor.getAttribute("download")) return false;
 
     const prefetchAttribute = anchor.getAttribute("data-prefetch");
     if (prefetchAttribute === "false") return false;
@@ -77,12 +66,13 @@ export class ViewportPrefetch {
   }
 
   disconnect(): void {
-    if (this.observer) {
-      try {
-        this.observer.disconnect();
-      } catch (error) {
-        logger.warn("[Veryfront] prefetchObserver.disconnect failed", error);
-      }
+    if (!this.observer) return;
+
+    try {
+      this.observer.disconnect();
+    } catch (error) {
+      logger.warn("[Veryfront] prefetchObserver.disconnect failed", error);
+    } finally {
       this.observer = null;
     }
   }

@@ -19,21 +19,20 @@ import {
   optimizeCSS,
 } from "./css-optimizer/index.ts";
 
-// Test helpers
 const TEST_DIR = "./.veryfront/test-css";
 const OUTPUT_DIR = "./.veryfront/test-output-css";
 
+async function removeDir(path: string): Promise<void> {
+  try {
+    await remove(path, { recursive: true });
+  } catch {
+    // Directory doesn't exist
+  }
+}
+
 async function cleanupTestDirs(): Promise<void> {
-  try {
-    await remove(TEST_DIR, { recursive: true });
-  } catch {
-    // Directory doesn't exist
-  }
-  try {
-    await remove(OUTPUT_DIR, { recursive: true });
-  } catch {
-    // Directory doesn't exist
-  }
+  await removeDir(TEST_DIR);
+  await removeDir(OUTPUT_DIR);
 }
 
 async function setupTestCSS(filename: string, content: string): Promise<void> {
@@ -86,10 +85,7 @@ describe("CSSOptimizer", () => {
     it("should return empty manifest when disabled", async () => {
       await cleanupTestDirs();
 
-      const optimizer = new CSSOptimizer({
-        enabled: false,
-      });
-
+      const optimizer = new CSSOptimizer({ enabled: false });
       const manifest = await optimizer.optimize();
 
       assertEquals(manifest.size, 0);
@@ -115,11 +111,8 @@ describe("CSSOptimizer", () => {
       // Should process CSS (with Lightning CSS or fallback)
       assertEquals(typeof manifest.size, "number");
 
-      if (manifest.size > 0) {
-        const bundle = manifest.get("test.css");
-        assertExists(bundle);
-        assertEquals(bundle.minifiedSize < bundle.size, true);
-      }
+      const bundle = manifest.get("test.css");
+      if (bundle) assertEquals(bundle.minifiedSize < bundle.size, true);
 
       await cleanupTestDirs();
     });
@@ -138,10 +131,8 @@ describe("CSSOptimizer", () => {
       const manifest = await optimizer.optimize();
 
       // Even without Lightning CSS, fallback should work
-      if (manifest.size > 0) {
-        const bundle = manifest.get("test.css");
-        assertExists(bundle);
-
+      const bundle = manifest.get("test.css");
+      if (bundle) {
         // Fallback minification should at least remove whitespace
         assertEquals(bundle.minifiedSize <= bundle.size, true);
       }
@@ -175,13 +166,10 @@ describe("CSSOptimizer", () => {
 
       const manifest = await optimizer.optimize();
 
-      if (manifest.size > 0) {
-        const bundle = manifest.get("commented.css");
-        assertExists(bundle);
-
+      const bundle = manifest.get("commented.css");
+      if (bundle) {
         // Minified version should not contain comments
-        const hasComments = bundle.content.includes("/*");
-        assertEquals(hasComments, false);
+        assertEquals(bundle.content.includes("/*"), false);
       }
 
       await cleanupTestDirs();
@@ -227,7 +215,10 @@ describe("CSSOptimizer", () => {
 
       if (stats.totalFiles > 0) {
         assertEquals(stats.totalSavings, stats.originalSize - stats.minifiedSize);
-        assertEquals(stats.averageSavings, (stats.totalSavings / stats.originalSize) * 100);
+        assertEquals(
+          stats.averageSavings,
+          (stats.totalSavings / stats.originalSize) * 100,
+        );
       }
 
       await cleanupTestDirs();
@@ -288,10 +279,10 @@ describe("CSSOptimizer", () => {
 
       const manifest = await optimizer.optimize();
 
-      if (manifest.size > 0) {
-        const bundle = manifest.get("test.css");
+      const bundle = manifest.get("test.css");
+      if (bundle) {
         // Source maps may or may not be generated depending on Lightning CSS availability
-        const sourceMapType = typeof bundle?.sourceMap;
+        const sourceMapType = typeof bundle.sourceMap;
         assert(sourceMapType === "string" || sourceMapType === "undefined");
       }
 
@@ -344,7 +335,10 @@ describe("CSSOptimizer", () => {
       await optimizer.optimize();
 
       const html = '<div class="above-fold header">Visible content</div>';
-      const result = await optimizer.extractCriticalCSS(join(TEST_DIR, "critical.css"), html);
+      const result = await optimizer.extractCriticalCSS(
+        join(TEST_DIR, "critical.css"),
+        html,
+      );
 
       assertExists(result.critical);
       assertExists(result.remaining);
@@ -398,7 +392,6 @@ describe("CSSOptimizer", () => {
       await cleanupTestDirs();
       await setupTestCSS("test.css", TEST_CSS);
 
-      // Create some content files
       await ensureDir(join(TEST_DIR, "pages"));
       await writeTextFile(
         join(TEST_DIR, "pages", "index.tsx"),
@@ -432,7 +425,6 @@ describe("CSSOptimizer", () => {
 
       await setupTestCSS("purgeable.css", css);
 
-      // Create content files
       await ensureDir(join(TEST_DIR, "pages"));
       await writeTextFile(
         join(TEST_DIR, "pages", "index.tsx"),
@@ -641,11 +633,8 @@ describe("CSSOptimizer", () => {
 
       const manifest = await optimizer.optimize();
 
-      if (manifest.size > 0) {
-        const bundle = manifest.get("whitespace.css");
-        assertExists(bundle);
-        assertEquals(bundle.content.trim(), "");
-      }
+      const bundle = manifest.get("whitespace.css");
+      if (bundle) assertEquals(bundle.content.trim(), "");
 
       await cleanupTestDirs();
     });
@@ -728,9 +717,8 @@ describe("CSSOptimizer", () => {
 
       const manifest = await optimizer.optimize();
 
-      if (manifest.size > 0) {
-        const bundle = manifest.get("modern.css");
-        assertExists(bundle);
+      const bundle = manifest.get("modern.css");
+      if (bundle) {
         // Should minify even with fallback
         assertEquals(bundle.minifiedSize <= bundle.size, true);
       }
@@ -781,11 +769,8 @@ describe("CSSOptimizer", () => {
 
       const manifest = await optimizer.optimize();
 
-      if (manifest.size > 0) {
-        const bundle = manifest.get("tailwind.css");
-        assertExists(bundle);
-        assert(bundle.minifiedSize < bundle.size);
-      }
+      const bundle = manifest.get("tailwind.css");
+      if (bundle) assert(bundle.minifiedSize < bundle.size);
 
       await cleanupTestDirs();
     });
@@ -906,9 +891,8 @@ describe("CSSOptimizer", () => {
 
       const manifest = await optimizer.optimize();
 
-      if (manifest.size > 0) {
-        const bundle = manifest.get("imports.css");
-        assertExists(bundle);
+      const bundle = manifest.get("imports.css");
+      if (bundle) {
         // Should preserve imports
         assertStringIncludes(bundle.content, "@import");
       }
@@ -997,8 +981,7 @@ describe("loadCSSManifest", () => {
     const manifest = await loadCSSManifest(OUTPUT_DIR);
 
     assertEquals(manifest.size, 1);
-    const entry = manifest.get("test.css");
-    assertExists(entry);
+    assertExists(manifest.get("test.css"));
 
     await cleanupTestDirs();
   });

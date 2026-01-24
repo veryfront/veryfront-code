@@ -38,15 +38,17 @@ describe("base.ts type exports", () => {
         writableFs: true,
       };
 
-      assertEquals(capabilities.typescript, true);
-      assertEquals(capabilities.jsx, true);
-      assertEquals(capabilities.http2, true);
-      assertEquals(capabilities.websocket, true);
-      assertEquals(capabilities.workers, true);
-      assertEquals(capabilities.fileWatching, true);
-      assertEquals(capabilities.shell, true);
-      assertEquals(capabilities.kvStore, true);
-      assertEquals(capabilities.writableFs, true);
+      assertEquals(capabilities, {
+        typescript: true,
+        jsx: true,
+        http2: true,
+        websocket: true,
+        workers: true,
+        fileWatching: true,
+        shell: true,
+        kvStore: true,
+        writableFs: true,
+      });
     });
   });
 
@@ -119,30 +121,24 @@ describe("base.ts type exports", () => {
         hostname: "localhost",
       };
 
-      assertEquals(options.port, 3000);
-      assertEquals(options.hostname, "localhost");
+      assertEquals(options, { port: 3000, hostname: "localhost" });
     });
 
     it("should allow optional fields", () => {
       const options: ServeOptions = {};
-      assertEquals(options.port, undefined);
-      assertEquals(options.hostname, undefined);
+      assertEquals(options, {});
     });
   });
 
   describe("WatchOptions", () => {
     it("should define watch options structure", () => {
-      const options: WatchOptions = {
-        recursive: true,
-      };
-
+      const options: WatchOptions = { recursive: true };
       assertEquals(options.recursive, true);
     });
   });
 
   describe("Interface shapes", () => {
     it("FileSystemAdapter should require core methods", () => {
-      // This test verifies the interface shape at compile time
       const mockFs: FileSystemAdapter = {
         readFile: () => Promise.resolve(""),
         writeFile: () => Promise.resolve(),

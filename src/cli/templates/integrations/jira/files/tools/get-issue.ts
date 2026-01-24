@@ -11,46 +11,47 @@ export default tool({
   }),
   async execute({ issueKey }) {
     const issue = await getIssue(issueKey);
+    const { fields } = issue;
 
     return {
       key: issue.key,
       id: issue.id,
-      summary: issue.fields.summary,
-      description: extractDescriptionText(issue.fields.description),
-      status: issue.fields.status.name,
-      statusCategory: issue.fields.status.statusCategory.name,
+      summary: fields.summary,
+      description: extractDescriptionText(fields.description),
+      status: fields.status.name,
+      statusCategory: fields.status.statusCategory.name,
       type: {
-        name: issue.fields.issuetype.name,
-        iconUrl: issue.fields.issuetype.iconUrl,
+        name: fields.issuetype.name,
+        iconUrl: fields.issuetype.iconUrl,
       },
-      priority: issue.fields.priority
+      priority: fields.priority
         ? {
-          name: issue.fields.priority.name,
-          iconUrl: issue.fields.priority.iconUrl,
-        }
+            name: fields.priority.name,
+            iconUrl: fields.priority.iconUrl,
+          }
         : null,
-      assignee: issue.fields.assignee
+      assignee: fields.assignee
         ? {
-          displayName: issue.fields.assignee.displayName,
-          email: issue.fields.assignee.emailAddress,
-          accountId: issue.fields.assignee.accountId,
-        }
+            displayName: fields.assignee.displayName,
+            email: fields.assignee.emailAddress,
+            accountId: fields.assignee.accountId,
+          }
         : null,
-      reporter: issue.fields.reporter
+      reporter: fields.reporter
         ? {
-          displayName: issue.fields.reporter.displayName,
-          email: issue.fields.reporter.emailAddress,
-          accountId: issue.fields.reporter.accountId,
-        }
+            displayName: fields.reporter.displayName,
+            email: fields.reporter.emailAddress,
+            accountId: fields.reporter.accountId,
+          }
         : null,
       project: {
-        key: issue.fields.project.key,
-        name: issue.fields.project.name,
-        id: issue.fields.project.id,
+        key: fields.project.key,
+        name: fields.project.name,
+        id: fields.project.id,
       },
-      created: issue.fields.created,
-      updated: issue.fields.updated,
-      labels: issue.fields.labels || [],
+      created: fields.created,
+      updated: fields.updated,
+      labels: fields.labels ?? [],
       url: issue.self,
     };
   },

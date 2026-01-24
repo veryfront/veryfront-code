@@ -11,50 +11,40 @@ import { validateNodeId } from "./validation.ts";
 
 export interface StepOptions extends Omit<BaseNodeConfig, "checkpoint"> {
   agent?: string | Agent;
-  tool?: string | Tool | undefined;
-  input?:
-    | string
-    | Record<string, unknown>
-    | ((context: WorkflowContext) => unknown);
+  tool?: string | Tool;
+  input?: string | Record<string, unknown> | ((context: WorkflowContext) => unknown);
   checkpoint?: boolean;
   retry?: RetryConfig;
   timeout?: string | number;
   skip?: (context: WorkflowContext) => boolean | Promise<boolean>;
 }
 
-/**
- * Create a step node for agent or tool execution.
- */
 export function step(id: string, options: StepOptions): WorkflowNode {
   validateNodeId(id);
 
-  // Validate that either agent or tool is specified
-  if (!options.agent && !options.tool) {
+  const hasAgent = !!options.agent;
+  const hasTool = !!options.tool;
+
+  if (!hasAgent && !hasTool) {
     throw new Error(`Step "${id}" must specify either 'agent' or 'tool'`);
   }
 
-  if (options.agent && options.tool) {
+  if (hasAgent && hasTool) {
     throw new Error(`Step "${id}" cannot specify both 'agent' and 'tool'`);
   }
-
-  // Default checkpoint to true for agent steps
-  const shouldCheckpoint = options.checkpoint ?? !!options.agent;
 
   const config: StepNodeConfig = {
     type: "step",
     agent: options.agent,
     tool: options.tool,
     input: options.input,
-    checkpoint: shouldCheckpoint,
+    checkpoint: options.checkpoint ?? hasAgent,
     retry: options.retry,
     timeout: options.timeout,
     skip: options.skip,
   };
 
-  return {
-    id,
-    config,
-  };
+  return { id, config };
 }
 
 export function agentStep(

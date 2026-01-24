@@ -31,11 +31,7 @@ describe("VeryfrontAPIClient", () => {
 
     it("throws when no token available", () => {
       const client = new VeryfrontAPIClient({ apiBaseUrl: "http://test.api" });
-      assertThrows(
-        () => client.getToken(),
-        VeryfrontAPIError,
-        "No API token available",
-      );
+      assertThrows(() => client.getToken(), VeryfrontAPIError, "No API token available");
     });
   });
 

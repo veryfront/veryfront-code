@@ -20,6 +20,11 @@ async function cleanupTestDir(): Promise<void> {
   }
 }
 
+async function setupTestSrcDir(): Promise<void> {
+  await cleanupTestDir();
+  await ensureDir(join(TEST_DIR, "src"));
+}
+
 const TEST_CSS = `
 .button {
   padding: 12px 24px;
@@ -67,7 +72,6 @@ describe("LightningCSSStrategy", () => {
   it("canProcess returns false when not initialized", () => {
     const strategy = new LightningCSSStrategy();
 
-    // Before initialization, should return false
     assertEquals(strategy.canProcess({ enabled: true }), false);
   });
 
@@ -75,7 +79,6 @@ describe("LightningCSSStrategy", () => {
     const strategy = new LightningCSSStrategy();
     const success = await strategy.init();
 
-    // Should return boolean (true if loaded, false if not available)
     assertEquals(typeof success, "boolean");
   });
 });
@@ -90,8 +93,7 @@ describe("PurgeStrategy", () => {
   });
 
   it("analyzeContent extracts selectors", async () => {
-    await cleanupTestDir();
-    await ensureDir(join(TEST_DIR, "src"));
+    await setupTestSrcDir();
 
     await writeTextFile(
       join(TEST_DIR, "src", "component.tsx"),
@@ -110,8 +112,7 @@ describe("PurgeStrategy", () => {
   });
 
   it("process removes unused rules", async () => {
-    await cleanupTestDir();
-    await ensureDir(join(TEST_DIR, "src"));
+    await setupTestSrcDir();
 
     await writeTextFile(
       join(TEST_DIR, "src", "component.tsx"),
@@ -133,15 +134,12 @@ describe("PurgeStrategy", () => {
     const result = await strategy.process(css, "test.css", options);
 
     assertEquals(result.code.includes(".button"), true);
-    // Note: Our basic purging implementation may not perfectly remove all unused rules
-    // but it should attempt to filter them
 
     await cleanupTestDir();
   });
 
   it("clearCache resets used selectors", async () => {
-    await cleanupTestDir();
-    await ensureDir(join(TEST_DIR, "src"));
+    await setupTestSrcDir();
 
     await writeTextFile(
       join(TEST_DIR, "src", "component.tsx"),
@@ -166,11 +164,8 @@ describe("Strategy priority ordering", () => {
     const minification = new MinificationStrategy();
     const purge = new PurgeStrategy();
 
-    // Lightning should have highest priority
     assertEquals(lightning.priority > purge.priority, true);
     assertEquals(lightning.priority > minification.priority, true);
-
-    // Purge should be medium priority
     assertEquals(purge.priority > minification.priority, true);
   });
 });

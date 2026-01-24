@@ -1,16 +1,7 @@
-/**
- * CLI wizard for `new` command
- * Standard select/multi-select with Veryfront agent logo
- */
-
 import { writeStdout } from "#veryfront/platform/compat/process.ts";
 import { getStdinReader, setRawMode } from "#veryfront/platform/compat/stdin.ts";
 import type { InitTemplate } from "./init/types.ts";
 import type { IntegrationName } from "../templates/types.ts";
-
-// ============================================================================
-// Types
-// ============================================================================
 
 export interface NewTuiResult {
   template: InitTemplate;
@@ -18,22 +9,14 @@ export interface NewTuiResult {
   cancelled: boolean;
 }
 
-// ============================================================================
-// Brand Colors (24-bit RGB)
-// ============================================================================
-
 const ESC = "\x1b";
-const rgb = (r: number, g: number, b: number) => (t: string) =>
+const rgb = (r: number, g: number, b: number) => (t: string): string =>
   `${ESC}[38;2;${r};${g};${b}m${t}${ESC}[0m`;
 
-const BRAND = rgb(0, 163, 244); // #00A3F4
+const BRAND = rgb(0, 163, 244);
 const GREEN = rgb(34, 197, 94);
 const DIM = rgb(113, 113, 122);
-const BOLD = (t: string) => `${ESC}[1m${t}${ESC}[0m`;
-
-// ============================================================================
-// Data
-// ============================================================================
+const BOLD = (t: string): string => `${ESC}[1m${t}${ESC}[0m`;
 
 const TEMPLATES: { id: InitTemplate; label: string }[] = [
   { id: "ai", label: "AI Agent" },
@@ -54,28 +37,32 @@ const INTEGRATIONS: { id: IntegrationName; label: string }[] = [
   { id: "linear", label: "Linear" },
 ];
 
-// ============================================================================
-// Terminal Helpers
-// ============================================================================
-
 const hide = `${ESC}[?25l`;
 const show = `${ESC}[?25h`;
-const up = (n = 1) => `${ESC}[${n}A`;
+const up = (n = 1): string => `${ESC}[${n}A`;
 const clearLine = `${ESC}[2K`;
 const col1 = `${ESC}[1G`;
 
-function write(s: string) {
+function write(s: string): void {
   writeStdout(s);
 }
 
-function clear(n: number) {
+function clear(n: number): void {
   for (let i = 0; i < n; i++) write(up() + clearLine);
   write(col1);
 }
 
-// ============================================================================
-// Standard Select
-// ============================================================================
+function isEnter(key: string): boolean {
+  return key === "\r" || key === "\n";
+}
+
+function isUp(key: string): boolean {
+  return key === "\x1b[A" || key === "k";
+}
+
+function isDown(key: string): boolean {
+  return key === "\x1b[B" || key === "j";
+}
 
 async function select<T extends string>(
   label: string,
@@ -84,13 +71,16 @@ async function select<T extends string>(
   let idx = 0;
   let lines = 0;
 
-  function draw() {
+  function draw(): void {
     if (lines > 0) clear(lines);
+
     console.log(DIM("?") + " " + BOLD(label));
     lines = 1;
+
     for (let i = 0; i < options.length; i++) {
       const opt = options[i];
       if (!opt) continue;
+
       const sel = i === idx;
       console.log(`  ${sel ? BRAND("❯") : " "} ${sel ? BRAND(opt.label) : DIM(opt.label)}`);
       lines++;
@@ -108,6 +98,7 @@ async function select<T extends string>(
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
+
       const key = dec.decode(value);
 
       if (key === "\x03") {
@@ -117,12 +108,16 @@ async function select<T extends string>(
         clear(lines);
         return null;
       }
-      if (key === "\r" || key === "\n") break;
-      if (key === "\x1b[A" || key === "k") {
+
+      if (isEnter(key)) break;
+
+      if (isUp(key)) {
         idx = idx > 0 ? idx - 1 : options.length - 1;
         draw();
+        continue;
       }
-      if (key === "\x1b[B" || key === "j") {
+
+      if (isDown(key)) {
         idx = idx < options.length - 1 ? idx + 1 : 0;
         draw();
       }
@@ -134,14 +129,11 @@ async function select<T extends string>(
 
   write(show);
   clear(lines);
+
   const selected = options[idx];
   console.log(DIM("?") + " " + BOLD(label) + " " + BRAND(selected?.label ?? ""));
   return selected?.id ?? null;
 }
-
-// ============================================================================
-// Standard Multi-Select
-// ============================================================================
 
 async function multiSelect<T extends string>(
   label: string,
@@ -151,17 +143,21 @@ async function multiSelect<T extends string>(
   const picked = new Set<T>();
   let lines = 0;
 
-  function draw() {
+  function draw(): void {
     if (lines > 0) clear(lines);
+
     console.log(DIM("?") + " " + BOLD(label) + DIM(" (space to toggle, enter to confirm)"));
     lines = 1;
+
     for (let i = 0; i < options.length; i++) {
       const opt = options[i];
       if (!opt) continue;
+
       const focus = i === idx;
       const on = picked.has(opt.id);
       const check = on ? GREEN("◉") : DIM("○");
       const text = focus ? (on ? GREEN(opt.label) : opt.label) : DIM(opt.label);
+
       console.log(`  ${focus ? BRAND("❯") : " "} ${check} ${text}`);
       lines++;
     }
@@ -178,6 +174,7 @@ async function multiSelect<T extends string>(
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
+
       const key = dec.decode(value);
 
       if (key === "\x03") {
@@ -187,7 +184,9 @@ async function multiSelect<T extends string>(
         clear(lines);
         return null;
       }
-      if (key === "\r" || key === "\n") break;
+
+      if (isEnter(key)) break;
+
       if (key === " ") {
         const opt = options[idx];
         if (opt) {
@@ -195,15 +194,21 @@ async function multiSelect<T extends string>(
           else picked.add(opt.id);
           draw();
         }
+        continue;
       }
-      if (key === "\x1b[A" || key === "k") {
+
+      if (isUp(key)) {
         idx = idx > 0 ? idx - 1 : options.length - 1;
         draw();
+        continue;
       }
-      if (key === "\x1b[B" || key === "j") {
+
+      if (isDown(key)) {
         idx = idx < options.length - 1 ? idx + 1 : 0;
         draw();
+        continue;
       }
+
       if (key === "a") {
         if (picked.size === options.length) picked.clear();
         else options.forEach((o) => picked.add(o.id));
@@ -217,29 +222,25 @@ async function multiSelect<T extends string>(
 
   write(show);
   clear(lines);
+
   const labels = options.filter((o) => picked.has(o.id)).map((o) => o.label);
   console.log(
     DIM("?") + " " + BOLD(label) + " " + (labels.length ? BRAND(labels.join(", ")) : DIM("none")),
   );
+
   return Array.from(picked);
 }
-
-// ============================================================================
-// Main TUI
-// ============================================================================
 
 export async function runNewTui(projectName: string, _userEmail?: string): Promise<NewTuiResult> {
   console.log();
   console.log("  Creating " + BRAND(projectName));
   console.log();
 
-  // Template selection
   const template = await select("Template", TEMPLATES);
   if (!template) return { template: "ai", integrations: [], cancelled: true };
 
   console.log();
 
-  // Integration selection
   const integrations = await multiSelect("Integrations", INTEGRATIONS);
   if (!integrations) return { template, integrations: [], cancelled: true };
 

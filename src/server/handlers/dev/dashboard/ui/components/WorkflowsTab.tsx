@@ -44,14 +44,12 @@ export function WorkflowsTab({
   tools,
   onNavigateToAgent,
   onNavigateToTool,
-}: WorkflowsTabProps) {
+}: WorkflowsTabProps): React.ReactElement {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
 
-  const filteredWorkflows = workflows.filter((wf) =>
-    wf.id.toLowerCase().includes(search.toLowerCase())
-  );
-
+  const searchLower = search.toLowerCase();
+  const filteredWorkflows = workflows.filter((wf) => wf.id.toLowerCase().includes(searchLower));
   const selectedWorkflow = workflows.find((wf) => wf.id === selectedId);
 
   const sidebar = (
@@ -98,19 +96,29 @@ function WorkflowDetail({
   tools: Tool[];
   onNavigateToAgent?: (agentId: string) => void;
   onNavigateToTool?: (toolId: string) => void;
-}) {
-  // Check if referenced agents/tools exist
+}): React.ReactElement {
   const agentMap = new Map(agents.map((a) => [a.id, a]));
   const toolMap = new Map(tools.map((t) => [t.id, t]));
 
+  function getNodeTypeBadgeClass(type: string): string {
+    switch (type) {
+      case "step":
+        return "bg-blue-50 text-blue-600";
+      case "parallel":
+        return "bg-green-50 text-green-600";
+      case "branch":
+        return "bg-yellow-50 text-yellow-700";
+      case "wait":
+        return "bg-orange-50 text-orange-600";
+      default:
+        return "bg-gray-100 text-gray-600";
+    }
+  }
+
   return (
     <div>
-      <DetailHeader
-        title={workflow.id}
-        description={workflow.description || "No description"}
-      />
+      <DetailHeader title={workflow.id} description={workflow.description || "No description"} />
 
-      {/* Overview stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <Card className="p-4">
           <div className="text-2xl font-bold text-gray-900">{workflow.nodeCount || "dynamic"}</div>
@@ -125,14 +133,11 @@ function WorkflowDetail({
           <div className="text-xs text-gray-500 uppercase tracking-wide">Tools</div>
         </Card>
         <Card className="p-4">
-          <div className="text-lg font-bold text-gray-900">
-            {workflow.timeout || "-"}
-          </div>
+          <div className="text-lg font-bold text-gray-900">{workflow.timeout || "-"}</div>
           <div className="text-xs text-gray-500 uppercase tracking-wide">Timeout</div>
         </Card>
       </div>
 
-      {/* Node Types */}
       {workflow.nodeTypes.length > 0 && (
         <Card title="Node Types" className="mb-6">
           <div className="p-4 flex flex-wrap gap-2">
@@ -148,43 +153,32 @@ function WorkflowDetail({
         </Card>
       )}
 
-      {/* Workflow Steps/Nodes */}
-      {workflow.nodes.length > 0
-        ? (
-          <Card title="Workflow Steps" className="mb-6">
+      <Card title="Workflow Steps" className="mb-6">
+        {workflow.nodes.length > 0
+          ? (
             <div className="divide-y">
               {workflow.nodes.map((node, index) => (
                 <div key={node.id} className="p-4">
                   <div className="flex items-start gap-4">
-                    {/* Step number */}
                     <div className="flex-shrink-0 w-8 h-8 rounded-full bg-sky-100 text-sky-700 flex items-center justify-center text-sm font-medium">
                       {index + 1}
                     </div>
 
                     <div className="flex-1 min-w-0">
-                      {/* Node header */}
                       <div className="flex items-center gap-2 mb-1">
                         <code className="text-sm font-medium text-gray-900">{node.id}</code>
                         <span
                           className={`px-1.5 py-0.5 text-[10px] font-semibold uppercase rounded ${
-                            node.type === "step"
-                              ? "bg-blue-50 text-blue-600"
-                              : node.type === "parallel"
-                              ? "bg-green-50 text-green-600"
-                              : node.type === "branch"
-                              ? "bg-yellow-50 text-yellow-700"
-                              : node.type === "wait"
-                              ? "bg-orange-50 text-orange-600"
-                              : "bg-gray-100 text-gray-600"
+                            getNodeTypeBadgeClass(
+                              node.type,
+                            )
                           }`}
                         >
                           {node.type}
                         </span>
                       </div>
 
-                      {/* Node details */}
                       <div className="text-sm text-gray-600 space-y-1">
-                        {/* Agent reference */}
                         {node.agent && (
                           <div className="flex items-center gap-2">
                             <span className="text-gray-400">Agent:</span>
@@ -192,7 +186,7 @@ function WorkflowDetail({
                               ? (
                                 <button
                                   type="button"
-                                  onClick={() => onNavigateToAgent?.(node.agent!)}
+                                  onClick={() => onNavigateToAgent?.(node.agent)}
                                   className="text-sky-600 hover:underline"
                                 >
                                   {node.agent}
@@ -202,7 +196,6 @@ function WorkflowDetail({
                           </div>
                         )}
 
-                        {/* Tool reference */}
                         {node.tool && (
                           <div className="flex items-center gap-2">
                             <span className="text-gray-400">Tool:</span>
@@ -210,7 +203,7 @@ function WorkflowDetail({
                               ? (
                                 <button
                                   type="button"
-                                  onClick={() => onNavigateToTool?.(node.tool!)}
+                                  onClick={() => onNavigateToTool?.(node.tool)}
                                   className="text-sky-600 hover:underline"
                                 >
                                   {node.tool}
@@ -220,49 +213,49 @@ function WorkflowDetail({
                           </div>
                         )}
 
-                        {/* Dependencies */}
-                        {node.dependsOn && node.dependsOn.length > 0 && (
-                          <div className="flex items-center gap-2">
-                            <span className="text-gray-400">Depends on:</span>
-                            <span className="text-gray-600">{node.dependsOn.join(", ")}</span>
-                          </div>
-                        )}
+                        {node.dependsOn?.length
+                          ? (
+                            <div className="flex items-center gap-2">
+                              <span className="text-gray-400">Depends on:</span>
+                              <span className="text-gray-600">{node.dependsOn.join(", ")}</span>
+                            </div>
+                          )
+                          : null}
 
-                        {/* Children (for parallel/branch) */}
-                        {node.children && node.children.length > 0 && (
-                          <div className="flex items-center gap-2">
-                            <span className="text-gray-400">Contains:</span>
-                            <span className="text-gray-600">{node.children.join(", ")}</span>
-                          </div>
-                        )}
+                        {node.children?.length
+                          ? (
+                            <div className="flex items-center gap-2">
+                              <span className="text-gray-400">Contains:</span>
+                              <span className="text-gray-600">{node.children.join(", ")}</span>
+                            </div>
+                          )
+                          : null}
 
-                        {/* Message (for wait nodes) */}
-                        {node.message && (
-                          <div className="flex items-start gap-2">
-                            <span className="text-gray-400">Message:</span>
-                            <span className="text-gray-600 italic">"{node.message}"</span>
-                          </div>
-                        )}
+                        {node.message
+                          ? (
+                            <div className="flex items-start gap-2">
+                              <span className="text-gray-400">Message:</span>
+                              <span className="text-gray-600 italic">"{node.message}"</span>
+                            </div>
+                          )
+                          : null}
                       </div>
                     </div>
                   </div>
                 </div>
               ))}
             </div>
-          </Card>
-        )
-        : (
-          <Card title="Workflow Steps" className="mb-6">
+          )
+          : (
             <div className="p-8 text-center text-gray-400">
               <div className="mb-2">Dynamic steps</div>
               <div className="text-sm text-gray-500">
                 This workflow uses a function to generate steps at runtime
               </div>
             </div>
-          </Card>
-        )}
+          )}
+      </Card>
 
-      {/* DAG Visualization */}
       {workflow.nodes.length > 0 && (
         <Card title="Workflow Flow" className="mb-6">
           <div className="p-4 font-mono text-sm bg-gray-50 overflow-x-auto">
@@ -271,9 +264,7 @@ function WorkflowDetail({
         </Card>
       )}
 
-      {/* References Summary */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Agent References */}
         <Card title={`Agents Used (${workflow.agentRefs.length})`}>
           {workflow.agentRefs.length > 0
             ? (
@@ -300,14 +291,9 @@ function WorkflowDetail({
                 })}
               </div>
             )
-            : (
-              <div className="p-4 text-center text-gray-400 text-sm">
-                No agents referenced
-              </div>
-            )}
+            : <div className="p-4 text-center text-gray-400 text-sm">No agents referenced</div>}
         </Card>
 
-        {/* Tool References */}
         <Card title={`Tools Used (${workflow.toolRefs.length})`}>
           {workflow.toolRefs.length > 0
             ? (
@@ -338,15 +324,10 @@ function WorkflowDetail({
                 })}
               </div>
             )
-            : (
-              <div className="p-4 text-center text-gray-400 text-sm">
-                No tools referenced
-              </div>
-            )}
+            : <div className="p-4 text-center text-gray-400 text-sm">No tools referenced</div>}
         </Card>
       </div>
 
-      {/* Schema info */}
       <Card title="Schema" className="mt-6">
         <div className="p-4 flex gap-4">
           <div className="flex items-center gap-2">
@@ -368,15 +349,11 @@ function WorkflowDetail({
         </div>
       </Card>
 
-      {/* Execute Workflow */}
       <WorkflowExecutor workflowId={workflow.id} inputSchema={workflow.inputSchemaJson} />
     </div>
   );
 }
 
-/**
- * Generate example values from a JSON schema (recursive for nested objects)
- */
 function generateExampleFromSchema(schema?: Record<string, unknown>): Record<string, unknown> {
   if (!schema || schema.type !== "object") return {};
 
@@ -386,25 +363,23 @@ function generateExampleFromSchema(schema?: Record<string, unknown>): Record<str
   const example: Record<string, unknown> = {};
 
   for (const [name, prop] of Object.entries(properties)) {
-    // Use default value if available
     if (prop.default !== undefined) {
       example[name] = prop.default;
       continue;
     }
 
-    // Use first enum value if available
-    if (prop.enum && Array.isArray(prop.enum) && prop.enum.length > 0) {
+    if (Array.isArray(prop.enum) && prop.enum.length > 0) {
       example[name] = prop.enum[0];
       continue;
     }
 
-    // Generate example based on type
+    const nameLower = name.toLowerCase();
+
     switch (prop.type) {
       case "string":
-        // Check for URL-like field names
-        if (name.toLowerCase().includes("url") || name.toLowerCase().includes("uri")) {
+        if (nameLower.includes("url") || nameLower.includes("uri")) {
           example[name] = "https://example.com/data";
-        } else if (name.toLowerCase().includes("email")) {
+        } else if (nameLower.includes("email")) {
           example[name] = "user@example.com";
         } else {
           example[name] = `example-${name}`;
@@ -421,7 +396,6 @@ function generateExampleFromSchema(schema?: Record<string, unknown>): Record<str
         example[name] = [];
         break;
       case "object":
-        // Recursively generate nested object examples
         example[name] = generateExampleFromSchema(prop as Record<string, unknown>);
         break;
       default:
@@ -432,13 +406,18 @@ function generateExampleFromSchema(schema?: Record<string, unknown>): Record<str
   return example;
 }
 
-function WorkflowExecutor(
-  { workflowId, inputSchema }: { workflowId: string; inputSchema?: Record<string, unknown> },
-) {
-  const [input, setInput] = useState(() => {
+function WorkflowExecutor({
+  workflowId,
+  inputSchema,
+}: {
+  workflowId: string;
+  inputSchema?: Record<string, unknown>;
+}): React.ReactElement {
+  const [input, setInput] = useState<string>(() => {
     const example = generateExampleFromSchema(inputSchema);
     return JSON.stringify(example, null, 2);
   });
+
   const [result, setResult] = useState<
     {
       success: boolean;
@@ -448,17 +427,17 @@ function WorkflowExecutor(
       status?: string;
     } | null
   >(null);
+
   const [loading, setLoading] = useState(false);
 
-  // Update input when workflow or schema changes
   useEffect(() => {
     const example = generateExampleFromSchema(inputSchema);
     setInput(JSON.stringify(example, null, 2));
     setResult(null);
   }, [workflowId, inputSchema]);
 
-  async function startWorkflow() {
-    let parsed;
+  async function startWorkflow(): Promise<void> {
+    let parsed: unknown;
     try {
       parsed = JSON.parse(input);
     } catch (e) {
@@ -468,27 +447,31 @@ function WorkflowExecutor(
 
     setLoading(true);
     setResult(null);
+
     try {
       const res = await fetch("/_dev/api/start-workflow", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ workflowId, input: parsed }),
       });
+
       const d = await res.json();
+
       if (d.error) {
         setResult({
           success: false,
           data: d.error + (d.hint ? `\n\n${d.hint}` : ""),
         });
-      } else {
-        setResult({
-          success: true,
-          data: JSON.stringify(d.result, null, 2),
-          duration: d.duration,
-          runId: d.runId,
-          status: d.status,
-        });
+        return;
       }
+
+      setResult({
+        success: true,
+        data: JSON.stringify(d.result, null, 2),
+        duration: d.duration,
+        runId: d.runId,
+        status: d.status,
+      });
     } catch (e) {
       setResult({ success: false, data: (e as Error).message });
     } finally {
@@ -511,63 +494,62 @@ function WorkflowExecutor(
         <ActionButton onClick={startWorkflow} loading={loading} loadingText="Running...">
           Start
         </ActionButton>
-        {result && (
-          <div>
-            {result.runId && (
-              <div className="mt-2 text-xs text-gray-500">
-                Run ID: <code className="text-sky-600">{result.runId}</code>
-                {result.status && (
-                  <span className="ml-2">
-                    Status:{" "}
-                    <span
-                      className={result.status === "completed"
-                        ? "text-green-600"
-                        : "text-yellow-600"}
-                    >
-                      {result.status}
-                    </span>
-                  </span>
-                )}
-              </div>
-            )}
-            <ResultBox
-              success={result.success}
-              label={result.success ? "Result" : "Error"}
-              duration={result.duration}
-            >
-              {result.data}
-            </ResultBox>
-          </div>
-        )}
+
+        {result
+          ? (
+            <div>
+              {result.runId
+                ? (
+                  <div className="mt-2 text-xs text-gray-500">
+                    Run ID: <code className="text-sky-600">{result.runId}</code>
+                    {result.status
+                      ? (
+                        <span className="ml-2">
+                          Status:{" "}
+                          <span
+                            className={result.status === "completed"
+                              ? "text-green-600"
+                              : "text-yellow-600"}
+                          >
+                            {result.status}
+                          </span>
+                        </span>
+                      )
+                      : null}
+                  </div>
+                )
+                : null}
+
+              <ResultBox
+                success={result.success}
+                label={result.success ? "Result" : "Error"}
+                duration={result.duration}
+              >
+                {result.data}
+              </ResultBox>
+            </div>
+          )
+          : null}
       </div>
     </Card>
   );
 }
 
-/**
- * Visual DAG component showing workflow flow with boxes and arrows
- */
-function WorkflowDAG({ nodes }: { nodes: NodeInfo[] }) {
+function WorkflowDAG({ nodes }: { nodes: NodeInfo[] }): React.ReactElement {
   if (nodes.length === 0) {
     return (
-      <div className="text-gray-400 text-center py-4">
-        (dynamic - steps generated at runtime)
-      </div>
+      <div className="text-gray-400 text-center py-4">(dynamic - steps generated at runtime)</div>
     );
   }
 
-  // Build adjacency and reverse adjacency maps
   const dependsOnMap = new Map<string, string[]>();
   const dependentsMap = new Map<string, string[]>();
-  const nodeMap = new Map<string, NodeInfo>();
 
   for (const node of nodes) {
-    nodeMap.set(node.id, node);
     dependsOnMap.set(node.id, node.dependsOn || []);
     dependentsMap.set(node.id, []);
   }
 
-  // Build dependents (reverse of dependsOn)
   for (const node of nodes) {
     for (const dep of node.dependsOn || []) {
       const deps = dependentsMap.get(dep) || [];
@@ -576,32 +558,27 @@ function WorkflowDAG({ nodes }: { nodes: NodeInfo[] }) {
     }
   }
 
-  // Find root nodes (no dependencies)
-  const rootNodes = nodes.filter((n) => !n.dependsOn || n.dependsOn.length === 0);
+  const rootNodes = nodes.filter((n) => !n.dependsOn?.length);
 
-  // Compute levels using BFS
   const levels = new Map<string, number>();
-  const queue = [...rootNodes.map((n) => n.id)];
-  for (const id of queue) {
-    levels.set(id, 0);
-  }
+  const queue = rootNodes.map((n) => n.id);
+
+  for (const id of queue) levels.set(id, 0);
 
   while (queue.length > 0) {
-    const current = queue.shift()!;
-    const _currentLevel = levels.get(current)!;
+    const current = queue.shift() as string;
 
     for (const dependent of dependentsMap.get(current) || []) {
       const deps = dependsOnMap.get(dependent) || [];
       const allDepsResolved = deps.every((d) => levels.has(d));
-      if (allDepsResolved && !levels.has(dependent)) {
-        const maxDepLevel = Math.max(...deps.map((d) => levels.get(d) || 0));
-        levels.set(dependent, maxDepLevel + 1);
-        queue.push(dependent);
-      }
+      if (!allDepsResolved || levels.has(dependent)) continue;
+
+      const maxDepLevel = Math.max(...deps.map((d) => levels.get(d) ?? 0));
+      levels.set(dependent, maxDepLevel + 1);
+      queue.push(dependent);
     }
   }
 
-  // Group nodes by level
   const levelGroups = new Map<number, NodeInfo[]>();
   for (const node of nodes) {
     const level = levels.get(node.id) ?? 0;
@@ -612,8 +589,7 @@ function WorkflowDAG({ nodes }: { nodes: NodeInfo[] }) {
 
   const maxLevel = Math.max(...Array.from(levels.values()), 0);
 
-  // Color coding for node types
-  const getNodeStyle = (type: string) => {
+  function getNodeStyle(type: string): string {
     switch (type) {
       case "step":
         return "bg-blue-50 border-blue-200 text-blue-700";
@@ -626,7 +602,7 @@ function WorkflowDAG({ nodes }: { nodes: NodeInfo[] }) {
       default:
         return "bg-gray-50 border-gray-200 text-gray-700";
     }
-  };
+  }
 
   return (
     <div className="flex flex-col items-center gap-2">
@@ -636,52 +612,61 @@ function WorkflowDAG({ nodes }: { nodes: NodeInfo[] }) {
 
         return (
           <div key={level}>
-            {/* Arrow from previous level */}
-            {level > 0 && (
-              <div className="flex justify-center py-1">
-                <svg width="24" height="20" viewBox="0 0 24 20" className="text-gray-400">
-                  <path
-                    d="M12 0 L12 14 M6 10 L12 16 L18 10"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    fill="none"
-                  />
-                </svg>
-              </div>
-            )}
-
-            {/* Nodes at this level */}
-            <div className={`flex gap-3 ${isParallel ? "items-start" : "justify-center"}`}>
-              {isParallel && (
-                <div className="flex items-center text-gray-400 text-xs font-mono self-center">
-                  [
+            {level > 0
+              ? (
+                <div className="flex justify-center py-1">
+                  <svg width="24" height="20" viewBox="0 0 24 20" className="text-gray-400">
+                    <path
+                      d="M12 0 L12 14 M6 10 L12 16 L18 10"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      fill="none"
+                    />
+                  </svg>
                 </div>
-              )}
+              )
+              : null}
+
+            <div className={`flex gap-3 ${isParallel ? "items-start" : "justify-center"}`}>
+              {isParallel
+                ? (
+                  <div className="flex items-center text-gray-400 text-xs font-mono self-center">
+                    [
+                  </div>
+                )
+                : null}
+
               {nodesAtLevel.map((node, idx) => (
                 <div key={node.id} className="flex items-center gap-2">
                   <div
                     className={`px-3 py-2 rounded-lg border text-sm font-medium ${
-                      getNodeStyle(node.type)
+                      getNodeStyle(
+                        node.type,
+                      )
                     }`}
                   >
                     <div className="font-semibold">{node.id}</div>
-                    {node.tool && (
-                      <div className="text-xs opacity-75 mt-0.5">tool: {node.tool}</div>
-                    )}
-                    {node.agent && (
-                      <div className="text-xs opacity-75 mt-0.5">agent: {node.agent}</div>
-                    )}
+                    {node.tool
+                      ? <div className="text-xs opacity-75 mt-0.5">tool: {node.tool}</div>
+                      : null}
+                    {node.agent
+                      ? <div className="text-xs opacity-75 mt-0.5">agent: {node.agent}</div>
+                      : null}
                   </div>
-                  {isParallel && idx < nodesAtLevel.length - 1 && (
-                    <div className="text-gray-400 text-xs font-mono">,</div>
-                  )}
+
+                  {isParallel && idx < nodesAtLevel.length - 1
+                    ? <div className="text-gray-400 text-xs font-mono">,</div>
+                    : null}
                 </div>
               ))}
-              {isParallel && (
-                <div className="flex items-center text-gray-400 text-xs font-mono self-center">
-                  ]
-                </div>
-              )}
+
+              {isParallel
+                ? (
+                  <div className="flex items-center text-gray-400 text-xs font-mono self-center">
+                    ]
+                  </div>
+                )
+                : null}
             </div>
           </div>
         );

@@ -3,15 +3,13 @@ import {
   DATA_FETCHING_MAX_ENTRIES,
   DATA_FETCHING_TTL_MS,
 } from "#veryfront/utils/constants/cache.ts";
-import type { CacheEntry, DataContext } from "./types.ts";
 import { getDisableLruIntervalEnv } from "#veryfront/config/env.ts";
 import { getProjectScopedKey } from "#veryfront/cache/cache-key-builder.ts";
+import type { CacheEntry, DataContext } from "./types.ts";
 
 function isLruIntervalDisabled(): boolean {
-  if ((globalThis as Record<string, unknown>).__vfDisableLruInterval === true) {
-    return true;
-  }
-  return getDisableLruIntervalEnv();
+  return (globalThis as Record<string, unknown>).__vfDisableLruInterval === true ||
+    getDisableLruIntervalEnv();
 }
 
 export class CacheManager {
@@ -21,8 +19,7 @@ export class CacheManager {
   });
 
   get(key: string): CacheEntry | null {
-    const entry = this.cache.get(key);
-    return entry ?? null;
+    return this.cache.get(key) ?? null;
   }
 
   set(key: string, entry: CacheEntry): void {
@@ -38,44 +35,25 @@ export class CacheManager {
   }
 
   clearPattern(pattern: string): void {
-    // Use LRU cache's keys() directly - no separate tracking needed
-    // This stays in sync with LRU evictions automatically
-    const keysToDelete: string[] = [];
     for (const key of this.cache.keys()) {
       if (key.includes(pattern)) {
-        keysToDelete.push(key);
+        this.cache.delete(key);
       }
-    }
-    for (const key of keysToDelete) {
-      this.cache.delete(key);
     }
   }
 
   shouldRevalidate(entry: CacheEntry): boolean {
-    if (entry.revalidate === false) {
-      return false;
-    }
+    if (entry.revalidate === false) return false;
 
-    if (typeof entry.revalidate === "number") {
-      const age = Date.now() - entry.timestamp;
-      return age > entry.revalidate * 1000;
-    }
+    if (typeof entry.revalidate !== "number") return false;
 
-    return false;
+    const age = Date.now() - entry.timestamp;
+    return age > entry.revalidate * 1000;
   }
 
-  /**
-   * Create a project-scoped cache key for data fetching.
-   *
-   * Returns null in preview mode (no caching without content hash).
-   * In production mode, returns a key scoped by project and release.
-   */
   createCacheKey(context: DataContext): string | null {
     const params = JSON.stringify(context.params);
-    const pathname = context.url.pathname;
-    const resourceKey = `${pathname}::${params}`;
-
-    // Use project-scoped key (returns null in preview mode)
+    const resourceKey = `${context.url.pathname}::${params}`;
     return getProjectScopedKey("veryfront:data", resourceKey);
   }
 }

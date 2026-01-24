@@ -6,14 +6,17 @@
 export interface BuildOptions {
   projectDir: string;
   outputDir?: string;
+
   // CLI-style options (shorthand)
   splitting?: boolean;
   compress?: boolean;
   prefetch?: boolean;
+
   // Server-style options (verbose)
   enableSplitting?: boolean;
   enableCompression?: boolean;
   enablePrefetch?: boolean;
+
   // Common options
   ssg?: boolean;
   include?: string[];

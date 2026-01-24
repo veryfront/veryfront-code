@@ -13,7 +13,6 @@
 import { assert, assertEquals, assertExists } from "#std/assert.ts";
 import { describe, it } from "#std/testing/bdd.ts";
 
-// Import platform compat modules
 import {
   basename,
   dirname,
@@ -42,10 +41,8 @@ import {
 } from "./process.ts";
 
 import { createFileSystem } from "./fs.ts";
-
 import { isBun, isDeno, isNode } from "./runtime.ts";
 
-// Detect current runtime for reporting
 function getCurrentRuntime(): string {
   if (isDeno) return "Deno";
   if (isBun) return "Bun";
@@ -56,10 +53,6 @@ function getCurrentRuntime(): string {
 console.log(`\n\x1b[1mCross-Runtime Compatibility Tests\x1b[0m`);
 console.log(`Runtime: \x1b[36m${getCurrentRuntime()}\x1b[0m`);
 console.log(`Version: \x1b[36m${getRuntimeVersion()}\x1b[0m\n`);
-
-// ============================================================================
-// Path Tests
-// ============================================================================
 
 describe("Path Operations", () => {
   it("join combines paths", () => {
@@ -72,7 +65,6 @@ describe("Path Operations", () => {
   it("basename extracts filename", () => {
     assertEquals(basename("/path/to/file.txt"), "file.txt");
     assertEquals(basename("/path/to/dir"), "dir");
-    // Note: Node/Bun/Deno all strip trailing slashes first
     assertEquals(basename("/path/to/dir/"), "dir");
   });
 
@@ -100,8 +92,7 @@ describe("Path Operations", () => {
   });
 
   it("relative computes relative path", () => {
-    const result = relative("/foo/bar", "/foo/baz");
-    assertEquals(result, "../baz");
+    assertEquals(relative("/foo/bar", "/foo/baz"), "../baz");
   });
 
   it("resolve creates absolute path", () => {
@@ -126,10 +117,6 @@ describe("Path Operations", () => {
   });
 });
 
-// ============================================================================
-// Process Tests
-// ============================================================================
-
 describe("Process Operations", () => {
   it("cwd returns current directory", () => {
     const dir = cwd();
@@ -139,28 +126,22 @@ describe("Process Operations", () => {
   });
 
   it("getArgs returns array", () => {
-    const args = getArgs();
-    assertEquals(Array.isArray(args), true);
+    assertEquals(Array.isArray(getArgs()), true);
   });
 
   it("env returns object", () => {
-    const envObj = env();
-    assertEquals(typeof envObj, "object");
+    assertEquals(typeof env(), "object");
   });
 
   it("setEnv/getEnv/deleteEnv work correctly", () => {
     const key = `TEST_VAR_${Date.now()}`;
-    const value = "test_value_123";
 
-    // Set
-    setEnv(key, value);
-    assertEquals(getEnv(key), value);
+    setEnv(key, "test_value_123");
+    assertEquals(getEnv(key), "test_value_123");
 
-    // Update
     setEnv(key, "updated");
     assertEquals(getEnv(key), "updated");
 
-    // Delete
     deleteEnv(key);
     assertEquals(getEnv(key), undefined);
   });
@@ -185,7 +166,6 @@ describe("Process Operations", () => {
     const version = getRuntimeVersion();
     assertEquals(typeof version, "string");
     assert(version.length > 0, "version should not be empty");
-    // Should start with runtime name
     assert(
       version.startsWith("Deno") || version.startsWith("Node") || version.startsWith("Bun"),
       `version should start with runtime name, got: ${version}`,
@@ -194,15 +174,10 @@ describe("Process Operations", () => {
 
   it("unrefTimer accepts interval", () => {
     const timer = setInterval(() => {}, 10000);
-    // Should not throw
     unrefTimer(timer);
     clearInterval(timer);
   });
 });
-
-// ============================================================================
-// Filesystem Tests
-// ============================================================================
 
 describe("Filesystem Operations", () => {
   it("createFileSystem returns valid interface", () => {
@@ -219,14 +194,10 @@ describe("Filesystem Operations", () => {
 
   it("fs.exists works for known paths", async () => {
     const fs = createFileSystem();
-    // Current file should exist
     const thisFile = new URL(import.meta.url).pathname;
-    const exists = await fs.exists(thisFile);
-    assertEquals(exists, true);
 
-    // Random path should not exist
-    const notExists = await fs.exists("/this/path/definitely/does/not/exist/xyz123");
-    assertEquals(notExists, false);
+    assertEquals(await fs.exists(thisFile), true);
+    assertEquals(await fs.exists("/this/path/definitely/does/not/exist/xyz123"), false);
   });
 
   it("fs.stat returns file info", async () => {
@@ -245,23 +216,29 @@ describe("Filesystem Operations", () => {
   });
 });
 
-// ============================================================================
-// Runtime Detection Tests
-// ============================================================================
-
 describe("Runtime Detection", () => {
   it("exactly one runtime is detected", () => {
-    const runtimes = [isDeno, isBun, isNode].filter(Boolean);
-    assertEquals(runtimes.length, 1, "exactly one runtime should be detected");
+    assertEquals(
+      [isDeno, isBun, isNode].filter(Boolean).length,
+      1,
+      "exactly one runtime should be detected",
+    );
   });
 
   it("detected runtime matches version string", () => {
     const version = getRuntimeVersion();
+
     if (isDeno) {
       assert(version.startsWith("Deno"), "version should start with Deno");
-    } else if (isBun) {
+      return;
+    }
+
+    if (isBun) {
       assert(version.startsWith("Bun"), "version should start with Bun");
-    } else if (isNode) {
+      return;
+    }
+
+    if (isNode) {
       assert(version.startsWith("Node"), "version should start with Node");
     }
   });

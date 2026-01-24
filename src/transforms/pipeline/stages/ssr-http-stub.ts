@@ -19,31 +19,34 @@ const BROWSER_ONLY_PATTERNS = [
 ];
 
 function isHttpImport(specifier: string | undefined): boolean {
-  return !!specifier && (specifier.startsWith("http://") || specifier.startsWith("https://"));
+  return specifier?.startsWith("http://") || specifier?.startsWith("https://") || false;
 }
 
 function isBrowserOnlyModule(specifier: string): boolean {
   return BROWSER_ONLY_PATTERNS.some((pattern) => specifier.includes(pattern));
 }
 
+function extractImportNames(list: string): string[] {
+  return list
+    .split(",")
+    .map((n) => n.trim().split(/\s+as\s+/).at(-1)?.trim() ?? "")
+    .filter(Boolean);
+}
+
 /** Generate a stub for a given import statement */
-function generateStub(imp: {
-  n: string | undefined;
-  ss: number;
-  se: number;
-  d: number;
-}, statement: string): string | null {
-  if (!imp.n || !isHttpImport(imp.n) || !isBrowserOnlyModule(imp.n)) return null;
-  if (imp.d > -1) return null; // Skip dynamic imports
+function generateStub(
+  imp: { n: string | undefined; ss: number; se: number; d: number },
+  statement: string,
+): string | null {
+  if (!imp.n || imp.d > -1 || !isHttpImport(imp.n) || !isBrowserOnlyModule(imp.n)) return null;
 
   const trimmed = statement.trim();
 
-  // Side-effect import: import 'url' -> // SSR stub: import 'url'
+  // Side-effect import: import 'url' -> /* SSR stub: import 'url' */
   if (/^import\s+['"`]/.test(trimmed)) {
     return `/* SSR stub: ${trimmed} */`;
   }
 
-  // Extract what's between 'import' and 'from'
   const fromIndex = trimmed.lastIndexOf(" from ");
   if (fromIndex === -1) return null;
 
@@ -63,27 +66,19 @@ function generateStub(imp: {
   // Named imports: import { X, Y as Z } from 'url' -> const X = null, Z = null
   const namedMatch = importClause.match(/^\{([^}]+)\}$/);
   if (namedMatch?.[1]) {
-    const names = namedMatch[1].split(",").map((n) => {
-      const parts = n.trim().split(/\s+as\s+/);
-      return parts[parts.length - 1]?.trim() ?? "";
-    });
-    const stubs = names.map((n) => `${n} = null`).join(", ");
-    return `const ${stubs}; /* SSR stub for ${imp.n} */`;
+    const names = extractImportNames(namedMatch[1]);
+    if (!names.length) return null;
+    return `const ${names.map((n) => `${n} = null`).join(", ")}; /* SSR stub for ${imp.n} */`;
   }
 
   // Mixed import: import X, { Y } from 'url'
   const mixedMatch = importClause.match(/^([a-zA-Z_$][a-zA-Z0-9_$]*)\s*,\s*\{([^}]+)\}$/);
   if (mixedMatch?.[1] && mixedMatch[2]) {
-    const defaultName = mixedMatch[1];
-    const names = mixedMatch[2].split(",").map((n) => {
-      const parts = n.trim().split(/\s+as\s+/);
-      return parts[parts.length - 1]?.trim() ?? "";
-    });
-    const allNames = [defaultName, ...names].map((n) => `${n} = null`).join(", ");
-    return `const ${allNames}; /* SSR stub for ${imp.n} */`;
+    const names = [mixedMatch[1], ...extractImportNames(mixedMatch[2])];
+    if (!names.length) return null;
+    return `const ${names.map((n) => `${n} = null`).join(", ")}; /* SSR stub for ${imp.n} */`;
   }
 
-  // Unknown pattern - don't modify
   return null;
 }
 
@@ -91,21 +86,14 @@ export const ssrHttpStubPlugin: TransformPlugin = {
   name: "ssr-http-stub",
   stage: TransformStage.RESOLVE_CONTEXT + 1, // Run just after resolve-context, before resolve-relative
 
-  // No condition needed - this plugin is only added to SSR_PIPELINE
-
   async transform(ctx) {
     const imports = await parseImports(ctx.code);
 
-    // Check if any HTTP imports need stubbing
     const needsStubbing = imports.some(
-      (imp) => imp.n && isHttpImport(imp.n) && isBrowserOnlyModule(imp.n) && imp.d === -1,
+      (imp) => imp.n && imp.d === -1 && isHttpImport(imp.n) && isBrowserOnlyModule(imp.n),
     );
+    if (!needsStubbing) return ctx.code;
 
-    if (!needsStubbing) {
-      return ctx.code;
-    }
-
-    // Rewrite browser-only HTTP imports to stubs
-    return await rewriteImports(ctx.code, (imp, statement) => generateStub(imp, statement));
+    return rewriteImports(ctx.code, (imp, statement) => generateStub(imp, statement));
   },
 };

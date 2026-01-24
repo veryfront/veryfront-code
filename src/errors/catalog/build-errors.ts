@@ -83,9 +83,6 @@ import Button from './components/Button.jsx'
     ErrorCode.SOURCEMAP_ERROR,
     "Source map generation failed",
     "Failed to generate source maps.",
-    [
-      "Try disabling source maps temporarily",
-      "Check for very large files that might cause issues",
-    ],
+    ["Try disabling source maps temporarily", "Check for very large files that might cause issues"],
   ),
 };

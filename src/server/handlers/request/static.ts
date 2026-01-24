@@ -32,6 +32,7 @@ export class StaticHandler extends BaseHandler {
     string,
     { assets: Map<string, string>; mtime: number | null }
   >();
+
   private static manifestLoading = new Map<
     string,
     Promise<{ assets: Map<string, string>; mtime: number | null } | null>
@@ -47,30 +48,19 @@ export class StaticHandler extends BaseHandler {
   };
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
-    // Only handle GET and HEAD requests
     const method = req.method.toUpperCase();
     if (method !== "GET" && method !== "HEAD") {
       return Promise.resolve(this.continue());
     }
 
-    const url = new URL(req.url);
-    const pathname = url.pathname;
-
-    // Skip internal paths
+    const pathname = new URL(req.url).pathname;
     if (pathname.startsWith("/_")) {
       return Promise.resolve(this.continue());
     }
 
-    // For proxy mode, wrap file access in project context
     return this.withProxyContext(ctx, async () => {
-      // Try to serve static file
       const response = await this.tryServeStatic(req, pathname, ctx);
-      if (response) {
-        return this.respond(response);
-      }
-
-      // Not a static file, continue to next handler
-      return this.continue();
+      return response ? this.respond(response) : this.continue();
     });
   }
 
@@ -79,140 +69,134 @@ export class StaticHandler extends BaseHandler {
     pathname: string,
     ctx: HandlerContext,
   ): Promise<Response | null> {
-    return withSpan("static.tryServeStatic", async () => {
-      // Create secure filesystem wrapper for static file serving
-      const secureFs = createSecureFs({
-        baseDir: ctx.projectDir,
-        adapter: ctx.adapter,
-        context: "static-serving",
-        throwOnError: false, // Don't throw, just skip invalid paths
-      });
+    return withSpan(
+      "static.tryServeStatic",
+      async () => {
+        const secureFs = createSecureFs({
+          baseDir: ctx.projectDir,
+          adapter: ctx.adapter,
+          context: "static-serving",
+          throwOnError: false,
+        });
 
-      const tryDirs = ["dist", "public"] as const;
-      const reqPath = pathname === "/" ? "/index.html" : pathname;
-      const manifestCandidate = await this.resolveManifestAsset(reqPath, ctx);
+        const tryDirs = ["dist", "public"] as const;
+        const reqPath = pathname === "/" ? "/index.html" : pathname;
+        const manifestCandidate = await this.resolveManifestAsset(reqPath, ctx);
 
-      const seen = new Set<string>();
-      const candidates: Array<{ abs: string; source: "manifest" | typeof tryDirs[number] }> = [];
+        const seen = new Set<string>();
+        const candidates: Array<{ abs: string; source: "manifest" | (typeof tryDirs)[number] }> =
+          [];
 
-      const pushCandidate = (
-        abs: string,
-        source: "manifest" | typeof tryDirs[number],
-      ) => {
-        const normalized = normalizePath(abs);
-        if (seen.has(normalized)) return;
-        seen.add(normalized);
-        candidates.push({ abs: normalized, source });
-      };
+        const pushCandidate = (abs: string, source: "manifest" | (typeof tryDirs)[number]) => {
+          const normalized = normalizePath(abs);
+          if (seen.has(normalized)) return;
+          seen.add(normalized);
+          candidates.push({ abs: normalized, source });
+        };
 
-      if (manifestCandidate) {
-        pushCandidate(manifestCandidate, "manifest");
-      }
-
-      for (const dir of tryDirs) {
-        const root = joinPath(ctx.projectDir, dir);
-        const abs = normalizePath(joinPath(root, reqPath));
-
-        // Security check: ensure path is within directory
-        // Note: secureFs will perform additional validation
-        if (!isWithinDirectory(root, abs)) {
-          continue;
+        if (manifestCandidate) {
+          pushCandidate(manifestCandidate, "manifest");
         }
 
-        pushCandidate(abs, dir);
-      }
+        for (const dir of tryDirs) {
+          const root = joinPath(ctx.projectDir, dir);
+          const abs = normalizePath(joinPath(root, reqPath));
 
-      this.logDebug(`Trying static file candidates`, {
-        reqPath,
-        candidateCount: candidates.length,
-        candidates: candidates.map((c) => ({ source: c.source, path: c.abs })),
-      }, ctx);
+          // Security check: ensure path is within directory
+          // Note: secureFs will perform additional validation
+          if (!isWithinDirectory(root, abs)) continue;
 
-      for (const candidate of candidates) {
-        try {
-          // Use secure filesystem wrapper (automatic path validation)
-          this.logDebug(
-            `Checking candidate`,
-            { path: candidate.abs, source: candidate.source },
-            ctx,
-          );
-          const info = await secureFs.stat(candidate.abs);
-          if (!info.isFile) continue;
+          pushCandidate(abs, dir);
+        }
 
-          const fileData = await secureFs.readFileBytes(candidate.abs);
-          const etag = computeEtag(fileData);
+        this.logDebug(
+          `Trying static file candidates`,
+          {
+            reqPath,
+            candidateCount: candidates.length,
+            candidates: candidates.map((c) => ({ source: c.source, path: c.abs })),
+          },
+          ctx,
+        );
 
-          // Check if-none-match
-          if (hasMatchingEtag(req, etag)) {
+        const isHead = req.method.toUpperCase() === "HEAD";
+
+        for (const candidate of candidates) {
+          try {
+            this.logDebug(
+              `Checking candidate`,
+              { path: candidate.abs, source: candidate.source },
+              ctx,
+            );
+
+            const info = await secureFs.stat(candidate.abs);
+            if (!info.isFile) continue;
+
+            const fileData = await secureFs.readFileBytes(candidate.abs);
+            const etag = computeEtag(fileData);
+
+            if (hasMatchingEtag(req, etag)) {
+              const builder = this.createResponseBuilder(ctx);
+              return builder
+                .withCORS(req, ctx.securityConfig?.cors)
+                .withSecurity(ctx.securityConfig ?? undefined)
+                .notModified(etag);
+            }
+
+            const ext = getExtension(candidate.abs);
+            const isHashed = hasHashedFilename(candidate.abs);
+            const isVeryfrontAsset = reqPath.includes("/_veryfront/");
+
+            let cacheStrategy: CacheStrategy;
+            const isPreviewMode = ctx.requestContext?.mode === "preview" &&
+              !ctx.requestContext?.isLocalDev;
+
+            if (isPreviewMode) {
+              cacheStrategy = "no-cache";
+            } else if (
+              isHashed ||
+              ((candidate.source === "dist" || candidate.source === "manifest") && isVeryfrontAsset)
+            ) {
+              cacheStrategy = "immutable";
+            } else {
+              cacheStrategy = "medium";
+            }
+
+            const contentType = getContentType(ext);
             const builder = this.createResponseBuilder(ctx);
-            return builder
+            const body = isHead ? null : fileData;
+
+            const response = builder
               .withCORS(req, ctx.securityConfig?.cors)
               .withSecurity(ctx.securityConfig ?? undefined)
-              .notModified(etag);
+              .withCache(cacheStrategy)
+              .withETag(etag)
+              .withContentType(contentType, body, HTTP_OK);
+
+            this.logDebug(
+              `Served static file: ${candidate.abs}`,
+              {
+                contentType,
+                cacheStrategy,
+                size: fileData.byteLength,
+                source: candidate.source,
+              },
+              ctx,
+            );
+
+            return response;
+          } catch (error) {
+            this.logDebug(
+              `Failed to serve ${candidate.abs}: ${this.getErrorMessage(error)}`,
+              { source: candidate.source },
+              ctx,
+            );
           }
-
-          // Determine cache strategy
-          // Static files use ETag-based caching (browser validates freshness via If-None-Match)
-          // Only preview mode uses no-cache (remote preview needs instant updates)
-          // Local dev uses normal caching since ETag handles freshness efficiently
-          const ext = getExtension(candidate.abs);
-          const isHashed = hasHashedFilename(candidate.abs);
-          const isVeryfrontAsset = reqPath.includes("/_veryfront/");
-
-          let cacheStrategy: CacheStrategy;
-          // Only preview mode (not local dev) uses no-cache for static files
-          const isPreviewMode = ctx.requestContext?.mode === "preview" &&
-            !ctx.requestContext?.isLocalDev;
-          if (isPreviewMode) {
-            // Preview: browser must fetch fresh, server handles caching
-            cacheStrategy = "no-cache";
-          } else if (
-            isHashed ||
-            ((candidate.source === "dist" || candidate.source === "manifest") && isVeryfrontAsset)
-          ) {
-            // Production: immutable cache for hashed files or dist/_veryfront assets
-            cacheStrategy = "immutable";
-          } else {
-            // Production: medium cache for other static files
-            cacheStrategy = "medium";
-          }
-
-          const contentType = getContentType(ext);
-          const builder = this.createResponseBuilder(ctx);
-
-          // For HEAD requests, don't include body
-          // Cast to BodyInit to satisfy type in newer TypeScript/Deno versions
-          const body = req.method.toUpperCase() === "HEAD" ? null : fileData as BodyInit;
-
-          const response = builder
-            .withCORS(req, ctx.securityConfig?.cors)
-            .withSecurity(ctx.securityConfig ?? undefined)
-            .withCache(cacheStrategy)
-            .withETag(etag)
-            .withContentType(contentType, body, HTTP_OK);
-
-          this.logDebug(`Served static file: ${candidate.abs}`, {
-            contentType,
-            cacheStrategy,
-            size: fileData.byteLength,
-            source: candidate.source,
-          }, ctx);
-
-          return response;
-        } catch (error) {
-          // File not found or read error, try next candidate
-          this.logDebug(
-            `Failed to serve ${candidate.abs}: ${this.getErrorMessage(error)}`,
-            { source: candidate.source },
-            ctx,
-          );
-          continue;
         }
-      }
 
-      if (this.isAssetRequest(pathname)) {
+        if (!this.isAssetRequest(pathname)) return null;
+
         const builder = this.createResponseBuilder(ctx);
-        const isHead = req.method.toUpperCase() === "HEAD";
         return builder
           .withCORS(req, ctx.securityConfig?.cors)
           .withSecurity(ctx.securityConfig ?? undefined)
@@ -222,10 +206,9 @@ export class StaticHandler extends BaseHandler {
             isHead ? null : "Not Found",
             HTTP_NOT_FOUND,
           );
-      }
-
-      return null;
-    }, { "static.pathname": pathname, "static.projectSlug": ctx.projectSlug || "unknown" });
+      },
+      { "static.pathname": pathname, "static.projectSlug": ctx.projectSlug || "unknown" },
+    );
   }
 
   private async resolveManifestAsset(
@@ -236,16 +219,12 @@ export class StaticHandler extends BaseHandler {
     if (!index) return null;
 
     const normalized = normalizePath(reqPath.startsWith("/") ? reqPath : `/${reqPath}`);
-    const asset = index.assets.get(normalized);
-    if (!asset) return null;
-
-    return asset;
+    return index.assets.get(normalized) ?? null;
   }
 
   private async loadManifestIndex(
     ctx: HandlerContext,
   ): Promise<{ assets: Map<string, string>; mtime: number | null } | null> {
-    // Create secure filesystem wrapper for manifest loading
     const secureFs = createSecureFs({
       baseDir: ctx.projectDir,
       adapter: ctx.adapter,
@@ -265,62 +244,60 @@ export class StaticHandler extends BaseHandler {
     }
 
     const cached = StaticHandler.manifestCache.get(cacheKey);
-    const cachedMtime = cached?.mtime ?? null;
-    const currentMtime = stat.mtime ? stat.mtime.getTime() : null;
+    const currentMtime = stat.mtime?.getTime() ?? null;
 
-    if (cached && cachedMtime === currentMtime) {
+    if (cached && (cached.mtime ?? null) === currentMtime) {
       return cached;
     }
 
     let loader = StaticHandler.manifestLoading.get(cacheKey);
-    if (!loader) {
-      loader = (async () => {
-        try {
-          const manifestRaw = await secureFs.readFile(manifestPath);
-          const manifest = JSON.parse(manifestRaw) as BuildManifest;
-          const assets = this.extractManifestAssets(manifest, distRoot);
-          const indexValue = { assets, mtime: currentMtime };
-          StaticHandler.manifestCache.set(cacheKey, indexValue);
-          return indexValue;
-        } catch (error) {
-          this.logDebug(
-            "Failed to load manifest",
-            { error: this.getErrorMessage(error), manifestPath },
-            ctx,
-          );
-          StaticHandler.manifestCache.delete(cacheKey);
-          return null;
-        } finally {
-          StaticHandler.manifestLoading.delete(cacheKey);
-        }
-      })();
-      StaticHandler.manifestLoading.set(cacheKey, loader);
-    }
+    if (loader) return await loader;
 
+    loader = (async () => {
+      try {
+        const manifestRaw = await secureFs.readFile(manifestPath);
+        const manifest = JSON.parse(manifestRaw) as BuildManifest;
+        const assets = this.extractManifestAssets(manifest, distRoot);
+        const indexValue = { assets, mtime: currentMtime };
+        StaticHandler.manifestCache.set(cacheKey, indexValue);
+        return indexValue;
+      } catch (error) {
+        this.logDebug(
+          "Failed to load manifest",
+          { error: this.getErrorMessage(error), manifestPath },
+          ctx,
+        );
+        StaticHandler.manifestCache.delete(cacheKey);
+        return null;
+      } finally {
+        StaticHandler.manifestLoading.delete(cacheKey);
+      }
+    })();
+
+    StaticHandler.manifestLoading.set(cacheKey, loader);
     return await loader;
   }
 
   private extractManifestAssets(manifest: BuildManifest, distRoot: string): Map<string, string> {
     const assets = new Map<string, string>();
+
     const addAsset = (requestPath: string | null | undefined) => {
       if (!requestPath) return;
       const normalized = normalizePath(
         requestPath.startsWith("/") ? requestPath : `/${requestPath}`,
       );
-      const abs = normalizePath(joinPath(distRoot, normalized));
-      assets.set(normalized, abs);
+      assets.set(normalized, normalizePath(joinPath(distRoot, normalized)));
     };
 
     if (manifest.chunks) {
       for (const chunkInfo of Object.values(manifest.chunks.chunks || {})) {
         if (!chunkInfo || typeof chunkInfo !== "object") continue;
+
         const chunk = chunkInfo as { file?: string; css?: string; imports?: string[] };
-        if (chunk.file) {
-          addAsset(normalizeChunkPath(chunk.file, "/_veryfront"));
-        }
-        if (chunk.css) {
-          addAsset(normalizeChunkPath(chunk.css, "/_veryfront"));
-        }
+
+        if (chunk.file) addAsset(normalizeChunkPath(chunk.file, "/_veryfront"));
+        if (chunk.css) addAsset(normalizeChunkPath(chunk.css, "/_veryfront"));
+
         if (Array.isArray(chunk.imports)) {
           for (const dependency of chunk.imports) {
             addAsset(normalizeChunkPath(dependency, "/_veryfront/chunks"));
@@ -334,10 +311,9 @@ export class StaticHandler extends BaseHandler {
     }
 
     for (const route of manifest.routes || []) {
-      if (Array.isArray(route.chunks)) {
-        for (const chunk of route.chunks) {
-          addAsset(normalizeChunkPath(chunk, "/_veryfront/chunks"));
-        }
+      if (!Array.isArray(route.chunks)) continue;
+      for (const chunk of route.chunks) {
+        addAsset(normalizeChunkPath(chunk, "/_veryfront/chunks"));
       }
     }
 

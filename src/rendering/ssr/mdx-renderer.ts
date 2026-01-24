@@ -1,58 +1,59 @@
+import { CompilationError } from "#veryfront/errors/index.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import * as React from "react";
-import { CompilationError } from "#veryfront/errors/index.ts";
 import { loadCompiledMDXModule } from "./mdx-module-loader.ts";
 import type { MDXRenderOptions } from "./types.ts";
-import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 export function renderMDXToReactAsync(
   compiledCode: string,
   options: MDXRenderOptions = {},
 ): Promise<React.ReactElement> {
-  return withSpan("mdx.renderToReact", async () => {
-    try {
-      const cacheKey = await hashCode(compiledCode);
-      const module = await loadCompiledMDXModule(compiledCode, cacheKey);
+  return withSpan(
+    "mdx.renderToReact",
+    async () => {
+      try {
+        const cacheKey = await hashCode(compiledCode);
+        const module = await loadCompiledMDXModule(compiledCode, cacheKey);
 
-      const MDXContent = module.default || module.MDXContent;
+        const MDXContent = module.default ?? module.MDXContent;
+        if (!MDXContent) {
+          throw new CompilationError("No MDXContent found in compiled module");
+        }
 
-      if (!MDXContent) {
-        throw new CompilationError("No MDXContent found in compiled module");
+        if (React.isValidElement(MDXContent)) {
+          return MDXContent;
+        }
+
+        const mergedProps: Record<string, unknown> = {
+          ...(options as Record<string, unknown>),
+          frontmatter: {
+            ...(module.frontmatter ?? {}),
+            ...(options.frontmatter ?? {}),
+          },
+        };
+
+        return React.createElement(
+          MDXContent as React.ComponentType<Record<string, unknown>>,
+          mergedProps,
+        );
+      } catch (error) {
+        logger.error("[MDX] Render error:", error);
+        return createErrorElement(error);
       }
-
-      const moduleFrontmatter = module.frontmatter ?? {};
-      const optionFrontmatter = options.frontmatter ?? {};
-      const mergedProps: Record<string, unknown> = {
-        ...(options as Record<string, unknown>),
-        frontmatter: {
-          ...moduleFrontmatter,
-          ...optionFrontmatter,
-        },
-      };
-
-      if (React.isValidElement(MDXContent)) {
-        return MDXContent;
-      }
-
-      return React.createElement(
-        MDXContent as React.ComponentType<Record<string, unknown>>,
-        mergedProps,
-      );
-    } catch (error) {
-      logger.error("[MDX] Render error:", error);
-      return createErrorElement(error);
-    }
-  }, {});
+    },
+    {},
+  );
 }
 
 // Hex lookup table for efficient byte-to-hex conversion
 const HEX_CHARS = "0123456789abcdef";
 
 async function hashCode(code: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(code);
+  const data = new TextEncoder().encode(code);
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
   const bytes = new Uint8Array(hashBuffer);
+
   // Single-pass hex encoding without intermediate array allocations
   let hex = "";
   for (let i = 0; i < 8; i++) {

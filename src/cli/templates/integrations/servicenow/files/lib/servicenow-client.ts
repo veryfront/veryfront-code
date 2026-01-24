@@ -6,14 +6,14 @@
 
 import { getServiceNowTokens } from "./token-store.ts";
 
-const getEnv = (name: string): string | undefined => {
+function getEnv(name: string): string | undefined {
   if (typeof Deno !== "undefined") {
     // @ts-ignore: Deno global
     return Deno.env.get(name);
   }
   // @ts-ignore: Node process
   return globalThis.process?.env?.[name];
-};
+}
 
 export interface ServiceNowIncident {
   sys_id: string;
@@ -59,9 +59,8 @@ export class ServiceNowClient {
 
   constructor() {
     const instance = getEnv("SERVICENOW_INSTANCE");
-    if (!instance) {
-      throw new Error("SERVICENOW_INSTANCE not configured");
-    }
+    if (!instance) throw new Error("SERVICENOW_INSTANCE not configured");
+
     this.instance = instance.replace(/^https?:\/\//, "").replace(/\/$/, "");
   }
 
@@ -79,10 +78,7 @@ export class ServiceNowClient {
     this.accessToken = tokens.accessToken;
   }
 
-  private async request<T>(
-    endpoint: string,
-    options: RequestInit = {},
-  ): Promise<T> {
+  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     await this.ensureAuthenticated();
 
     const url = `${this.baseUrl}${endpoint}`;
@@ -115,10 +111,11 @@ export class ServiceNowClient {
     assignedTo?: string;
     query?: string;
   } = {}): Promise<ServiceNowIncident[]> {
-    const params = new URLSearchParams();
-    params.set("sysparm_limit", String(options.limit || 20));
-    params.set("sysparm_offset", String(options.offset || 0));
-    params.set("sysparm_display_value", "all");
+    const params = new URLSearchParams({
+      sysparm_limit: String(options.limit ?? 20),
+      sysparm_offset: String(options.offset ?? 0),
+      sysparm_display_value: "all",
+    });
 
     const queryParts: string[] = [];
     if (options.state) queryParts.push(`state=${options.state}`);
@@ -126,9 +123,7 @@ export class ServiceNowClient {
     if (options.assignedTo) queryParts.push(`assigned_to.name=${options.assignedTo}`);
     if (options.query) queryParts.push(`short_descriptionLIKE${options.query}`);
 
-    if (queryParts.length > 0) {
-      params.set("sysparm_query", queryParts.join("^"));
-    }
+    if (queryParts.length) params.set("sysparm_query", queryParts.join("^"));
 
     const response = await this.request<ServiceNowListResponse<ServiceNowIncident>>(
       `/table/incident?${params}`,
@@ -140,20 +135,17 @@ export class ServiceNowClient {
    * Get a specific incident by sys_id or number
    */
   async getIncident(idOrNumber: string): Promise<ServiceNowIncident> {
-    // Check if it's a number (INC0010001) or sys_id
-    const isNumber = idOrNumber.toUpperCase().startsWith("INC");
-    const params = new URLSearchParams();
-    params.set("sysparm_display_value", "all");
+    const params = new URLSearchParams({ sysparm_display_value: "all" });
 
-    if (isNumber) {
+    if (idOrNumber.toUpperCase().startsWith("INC")) {
       params.set("sysparm_query", `number=${idOrNumber}`);
       const response = await this.request<ServiceNowListResponse<ServiceNowIncident>>(
         `/table/incident?${params}`,
       );
-      if (response.result.length === 0) {
-        throw new Error(`Incident ${idOrNumber} not found`);
-      }
-      return response.result[0];
+
+      const incident = response.result[0];
+      if (!incident) throw new Error(`Incident ${idOrNumber} not found`);
+      return incident;
     }
 
     const response = await this.request<ServiceNowResponse<ServiceNowIncident>>(
@@ -213,13 +205,14 @@ export class ServiceNowClient {
   /**
    * Search knowledge base articles
    */
-  async searchKnowledge(query: string, limit = 10): Promise<ServiceNowKnowledgeArticle[]> {
-    const params = new URLSearchParams();
-    params.set("sysparm_limit", String(limit));
-    params.set(
-      "sysparm_query",
-      `short_descriptionLIKE${query}^ORtextLIKE${query}^workflow_state=published`,
-    );
+  async searchKnowledge(
+    query: string,
+    limit = 10,
+  ): Promise<ServiceNowKnowledgeArticle[]> {
+    const params = new URLSearchParams({
+      sysparm_limit: String(limit),
+      sysparm_query: `short_descriptionLIKE${query}^ORtextLIKE${query}^workflow_state=published`,
+    });
 
     const response = await this.request<ServiceNowListResponse<ServiceNowKnowledgeArticle>>(
       `/table/kb_knowledge?${params}`,
@@ -232,8 +225,6 @@ export class ServiceNowClient {
 let client: ServiceNowClient | null = null;
 
 export function getServiceNowClient(): ServiceNowClient {
-  if (!client) {
-    client = new ServiceNowClient();
-  }
+  client ??= new ServiceNowClient();
   return client;
 }

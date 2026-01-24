@@ -32,9 +32,8 @@ const HTTP_USER_AGENT = "Mozilla/5.0 Veryfront/1.0";
  * @param env - Optional RuntimeEnv for test isolation
  */
 function getHttpTimeout(env: RuntimeEnv = getRuntimeEnv()): number {
-  if (env.httpFetchTimeoutMs !== undefined && env.httpFetchTimeoutMs > 0) {
-    return env.httpFetchTimeoutMs;
-  }
+  const timeout = env.httpFetchTimeoutMs;
+  if (timeout !== undefined && timeout > 0) return timeout;
   return DEFAULT_HTTP_TIMEOUT_MS;
 }
 
@@ -73,37 +72,35 @@ export function createHTTPPlugin(): Plugin {
       }));
 
       build.onResolve({ filter: /.*/, namespace: "http-url" }, (args) => {
-        if (args.path.startsWith("http://") || args.path.startsWith("https://")) {
-          return { path: args.path, namespace: "http-url" };
+        const path = args.path;
+
+        if (path.startsWith("http://") || path.startsWith("https://")) {
+          return { path, namespace: "http-url" };
         }
-        if (
-          args.path.startsWith("./") ||
-          args.path.startsWith("../") ||
-          args.path.startsWith("/")
-        ) {
+
+        if (path.startsWith("./") || path.startsWith("../") || path.startsWith("/")) {
           try {
-            const resolved = new URL(args.path, args.importer).toString();
-            return { path: resolved, namespace: "http-url" };
+            return { path: new URL(path, args.importer).toString(), namespace: "http-url" };
           } catch {
             return undefined;
           }
         }
-        if (isReactSpecifier(args.path)) {
-          return { path: args.path, external: true };
-        }
+
+        if (isReactSpecifier(path)) return { path, external: true };
+
         if (
-          args.path.startsWith("node:") ||
-          args.path.startsWith("bun:") ||
-          args.path.startsWith("data:") ||
-          args.path.startsWith("file:")
+          path.startsWith("node:") ||
+          path.startsWith("bun:") ||
+          path.startsWith("data:") ||
+          path.startsWith("file:")
         ) {
-          return { path: args.path, external: true };
+          return { path, external: true };
         }
+
         try {
-          const resolved = new URL(args.path, args.importer).toString();
-          return { path: resolved, namespace: "http-url" };
+          return { path: new URL(path, args.importer).toString(), namespace: "http-url" };
         } catch {
-          return { path: `https://esm.sh/${args.path}`, namespace: "http-url" };
+          return { path: `https://esm.sh/${path}`, namespace: "http-url" };
         }
       });
 
@@ -126,8 +123,7 @@ export function createHTTPPlugin(): Plugin {
         }
 
         const controller = new AbortController();
-        const timeoutMs = getHttpTimeout();
-        const timeout = setTimeout(() => controller.abort(), timeoutMs);
+        const timeout = setTimeout(() => controller.abort(), getHttpTimeout());
 
         try {
           const res = await fetch(requestUrl, {
@@ -135,26 +131,22 @@ export function createHTTPPlugin(): Plugin {
             signal: controller.signal,
             redirect: "follow",
           });
-          clearTimeout(timeout);
 
           if (!res.ok) {
             logger.warn(`${LOG_PREFIX} HTTP ${res.status} fetching ${args.path}`);
-            return {
-              errors: [{ text: `Failed to fetch ${args.path}: ${res.status}` }],
-            };
+            return { errors: [{ text: `Failed to fetch ${args.path}: ${res.status}` }] };
           }
 
           const contents = await res.text();
           return { contents, loader: "js" };
         } catch (error) {
-          clearTimeout(timeout);
           const errorMessage = error instanceof Error ? error.message : String(error);
           logger.warn(`${LOG_PREFIX} Network error fetching ${args.path}: ${errorMessage}`);
           return {
-            errors: [{
-              text: `Network error fetching ${args.path}: ${errorMessage}`,
-            }],
+            errors: [{ text: `Network error fetching ${args.path}: ${errorMessage}` }],
           };
+        } finally {
+          clearTimeout(timeout);
         }
       });
     },
@@ -172,58 +164,45 @@ export function bundleHttpImports(
 ): string | Promise<string> {
   const has = hasHttpImports(code);
   logger.debug(`${LOG_PREFIX} Check: hasHttp=${has}, hash=${hash.slice(0, 8)}`);
-
   if (!has) return code;
 
   return replaceSpecifiers(code, (specifier) => {
-    // Handle esm.sh and veryfront esm proxies
     const isEsmSh = specifier.startsWith("https://esm.sh/") ||
       specifier.startsWith("http://esm.sh/");
     const isVfEsm = specifier.startsWith("https://esm.veryfront.com/");
-    if (!isEsmSh && !isVfEsm) {
-      return null;
-    }
+    if (!isEsmSh && !isVfEsm) return null;
 
-    // Check if this is a React package - never add external=react to React itself
     const isReactPackage = /\/react(-dom)?(@|\/|$)/.test(specifier);
 
-    // Skip if already has both external and target params
     if (specifier.includes("external=react") && specifier.includes("target=es2022")) {
       return null;
     }
 
-    // Build query params to add
     const params: string[] = [];
-    if (!specifier.includes("target=")) {
-      params.push("target=es2022");
-    }
-    // Only add external to non-React packages
-    // Include both react AND react-dom to ensure version consistency
+
+    const hasTarget = specifier.includes("target=");
+    if (!hasTarget) params.push("target=es2022");
+
     if (!isReactPackage) {
       const hasExternalReact = specifier.includes("external=react");
       const hasExternalReactDom = specifier.includes("external=react-dom") ||
         specifier.includes("external=react,react-dom") ||
         specifier.includes("external=react-dom,react");
+
       if (!hasExternalReact && !hasExternalReactDom) {
         params.push("external=react,react-dom");
       } else if (hasExternalReact && !hasExternalReactDom) {
-        // Already has external=react, need to add react-dom
-        // This replaces the specifier to include both
         const updated = specifier.replace("external=react", "external=react,react-dom");
         if (updated !== specifier) {
-          return !specifier.includes("target=") ? updated + "&target=es2022" : updated;
+          return hasTarget ? updated : `${updated}&target=es2022`;
         }
       }
     }
-    if (params.length === 0) {
-      return null;
-    }
 
-    // Add params
-    const hasQuery = specifier.includes("?");
-    const newSpec = hasQuery
-      ? `${specifier}&${params.join("&")}`
-      : `${specifier}?${params.join("&")}`;
+    if (params.length === 0) return null;
+
+    const joiner = specifier.includes("?") ? "&" : "?";
+    const newSpec = `${specifier}${joiner}${params.join("&")}`;
 
     logger.debug(`${LOG_PREFIX} ${specifier} -> ${newSpec}`);
     return newSpec;

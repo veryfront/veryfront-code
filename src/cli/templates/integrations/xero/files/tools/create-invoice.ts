@@ -10,12 +10,8 @@ export default tool({
     type: z
       .enum(["ACCREC", "ACCPAY"])
       .describe("Invoice type (ACCREC = sales invoice, ACCPAY = bill)"),
-    date: z
-      .string()
-      .describe("Invoice date in YYYY-MM-DD format"),
-    dueDate: z
-      .string()
-      .describe("Due date in YYYY-MM-DD format"),
+    date: z.string().describe("Invoice date in YYYY-MM-DD format"),
+    dueDate: z.string().describe("Due date in YYYY-MM-DD format"),
     lineItems: z
       .array(
         z.object({
@@ -23,14 +19,14 @@ export default tool({
           quantity: z.number().describe("Quantity"),
           unitAmount: z.number().describe("Unit price/amount"),
           accountCode: z.string().optional().describe("Account code"),
-          taxType: z.string().optional().describe("Tax type (e.g., 'NONE', 'OUTPUT2', 'INPUT2')"),
+          taxType: z
+            .string()
+            .optional()
+            .describe("Tax type (e.g., 'NONE', 'OUTPUT2', 'INPUT2')"),
         }),
       )
       .describe("Line items for the invoice"),
-    reference: z
-      .string()
-      .optional()
-      .describe("Optional reference number"),
+    reference: z.string().optional().describe("Optional reference number"),
     status: z
       .enum(["DRAFT", "SUBMITTED", "AUTHORISED"])
       .optional()

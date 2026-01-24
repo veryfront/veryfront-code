@@ -8,10 +8,20 @@ export default tool({
     "Get detailed information about a specific email, including full body content, recipients, and metadata.",
   inputSchema: z.object({
     messageId: z.string().describe("The ID of the email message to retrieve"),
-    includeBody: z.boolean().default(true).describe("Include full email body content"),
+    includeBody: z
+      .boolean()
+      .default(true)
+      .describe("Include full email body content"),
   }),
   async execute({ messageId, includeBody }) {
     const message = await getEmail(messageId);
+
+    const body = includeBody
+      ? {
+          contentType: message.body.contentType,
+          content: message.body.content,
+        }
+      : undefined;
 
     return {
       id: message.id,
@@ -28,12 +38,7 @@ export default tool({
         name: r.emailAddress.name,
         email: r.emailAddress.address,
       })),
-      body: includeBody
-        ? {
-          contentType: message.body.contentType,
-          content: message.body.content,
-        }
-        : undefined,
+      body,
       bodyPreview: message.bodyPreview,
       receivedAt: message.receivedDateTime,
       sentAt: message.sentDateTime,

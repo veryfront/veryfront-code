@@ -1,17 +1,6 @@
-/**
- * CLI App State Management
- *
- * Centralized state for the interactive CLI app.
- * Manages views, projects, server status, and MCP connections.
- */
-
 import type { ListItem, ListSelectState } from "./components/list-select.ts";
 import { createListState } from "./components/list-select.ts";
 import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
-
-// ============================================================================
-// Types
-// ============================================================================
 
 export type AppView =
   | "dashboard"
@@ -58,28 +47,19 @@ export interface LogEntry {
 }
 
 export interface AppState {
-  // Navigation
   view: AppView;
   previousView: AppView | null;
 
-  // Server
   server: ServerStatus;
-
-  // MCP
   mcp: MCPStatus;
 
-  // Projects
   projects: ListSelectState<ProjectInfo>;
   examples: ListSelectState<ProjectInfo>;
   templates: ListSelectState<ProjectInfo>;
 
-  // Active selection (which list is focused)
   activeList: "projects" | "examples" | "templates";
-
-  // Selected project for detail view
   selectedProject: ProjectInfo | null;
 
-  // Wizard state
   wizard: {
     step: number;
     startType: "scratch" | "template" | "example" | null;
@@ -88,23 +68,16 @@ export interface AppState {
     projectName: string;
   };
 
-  // Input state for inline prompts
   input: InputState;
 
-  // Server logs buffer
   logs: LogEntry[];
   maxLogs: number;
 }
-
-// ============================================================================
-// Initial State
-// ============================================================================
 
 export function createInitialState(): AppState {
   return {
     view: "dashboard",
     previousView: null,
-
     server: {
       running: false,
       url: "http://lvh.me:8080",
@@ -112,20 +85,16 @@ export function createInitialState(): AppState {
       errors: 0,
       warnings: 0,
     },
-
     mcp: {
       enabled: false,
       transport: null,
       connected: false,
     },
-
     projects: createListState([]),
     examples: createListState([]),
     templates: createListState([]),
-
     activeList: "projects",
     selectedProject: null,
-
     wizard: {
       step: 0,
       startType: null,
@@ -133,7 +102,6 @@ export function createInitialState(): AppState {
       integrations: [],
       projectName: "",
     },
-
     input: {
       active: false,
       prompt: "",
@@ -142,21 +110,13 @@ export function createInitialState(): AppState {
       onSubmit: null,
       onCancel: null,
     },
-
     logs: [],
     maxLogs: 100,
   };
 }
 
-// ============================================================================
-// State Updates
-// ============================================================================
-
 export type StateUpdater = (state: AppState) => AppState;
 
-/**
- * Set projects list
- */
 export function setProjects(
   projects: Array<{ slug: string; path: string }>,
 ): StateUpdater {
@@ -167,15 +127,12 @@ export function setProjects(
         id: p.slug,
         label: p.slug,
         meta: shortenPath(p.path),
-        data: { slug: p.slug, path: p.path, type: "local" as const },
+        data: { slug: p.slug, path: p.path, type: "local" },
       })),
     ),
   });
 }
 
-/**
- * Set examples list
- */
 export function setExamples(
   examples: Array<{ slug: string; path: string; description?: string }>,
 ): StateUpdater {
@@ -186,15 +143,12 @@ export function setExamples(
         id: e.slug,
         label: e.slug,
         description: e.description,
-        data: { slug: e.slug, path: e.path, type: "example" as const },
+        data: { slug: e.slug, path: e.path, type: "example" },
       })),
     ),
   });
 }
 
-/**
- * Set templates list
- */
 export function setTemplates(
   templates: Array<{ id: string; name: string; description: string }>,
 ): StateUpdater {
@@ -205,108 +159,66 @@ export function setTemplates(
         id: t.id,
         label: t.name,
         description: t.description,
-        data: { slug: t.id, path: "", type: "template" as const },
+        data: { slug: t.id, path: "", type: "template" },
       })),
     ),
   });
 }
 
-/**
- * Update server status
- */
 export function updateServer(update: Partial<ServerStatus>): StateUpdater {
-  return (state) => ({
-    ...state,
-    server: { ...state.server, ...update },
-  });
+  return (state) => ({ ...state, server: { ...state.server, ...update } });
 }
 
-/**
- * Update MCP status
- */
 export function updateMCP(update: Partial<MCPStatus>): StateUpdater {
-  return (state) => ({
-    ...state,
-    mcp: { ...state.mcp, ...update },
-  });
+  return (state) => ({ ...state, mcp: { ...state.mcp, ...update } });
 }
 
-/**
- * Navigate to a view
- */
 export function navigateTo(view: AppView): StateUpdater {
-  return (state) => ({
-    ...state,
-    view,
-    previousView: state.view,
-  });
+  return (state) => ({ ...state, view, previousView: state.view });
 }
 
-/**
- * Go back to previous view
- */
 export function goBack(): StateUpdater {
   return (state) => ({
     ...state,
-    view: state.previousView || "dashboard",
+    view: state.previousView ?? "dashboard",
     previousView: null,
   });
 }
 
-/**
- * Set active list (which list receives keyboard input)
- */
 export function setActiveList(
   list: "projects" | "examples" | "templates",
 ): StateUpdater {
-  return (state) => ({
-    ...state,
-    activeList: list,
-  });
+  return (state) => ({ ...state, activeList: list });
 }
 
-/**
- * Update the active list's state
- */
 export function updateActiveList(
   updater: (list: ListSelectState<ProjectInfo>) => ListSelectState<ProjectInfo>,
 ): StateUpdater {
   return (state) => {
     const key = state.activeList;
+    return { ...state, [key]: updater(state[key]) };
+  };
+}
+
+export function selectProject(project: ProjectInfo | null): StateUpdater {
+  return (state) => {
+    if (!project) return { ...state, selectedProject: null };
+
     return {
       ...state,
-      [key]: updater(state[key]),
+      selectedProject: project,
+      view: "project-detail",
+      previousView: state.view,
     };
   };
 }
 
-/**
- * Select a project for detail view
- */
-export function selectProject(project: ProjectInfo | null): StateUpdater {
-  return (state) => ({
-    ...state,
-    selectedProject: project,
-    view: project ? "project-detail" : state.view,
-    previousView: project ? state.view : state.previousView,
-  });
-}
-
-/**
- * Update wizard state
- */
 export function updateWizard(
   update: Partial<AppState["wizard"]>,
 ): StateUpdater {
-  return (state) => ({
-    ...state,
-    wizard: { ...state.wizard, ...update },
-  });
+  return (state) => ({ ...state, wizard: { ...state.wizard, ...update } });
 }
 
-/**
- * Reset wizard to initial state
- */
 export function resetWizard(): StateUpdater {
   return (state) => ({
     ...state,
@@ -320,9 +232,6 @@ export function resetWizard(): StateUpdater {
   });
 }
 
-/**
- * Start input mode with a prompt
- */
 export function startInput(
   prompt: string,
   onSubmit: (value: string) => void,
@@ -336,28 +245,18 @@ export function startInput(
       value: "",
       cursorPos: 0,
       onSubmit,
-      onCancel: onCancel || null,
+      onCancel: onCancel ?? null,
     },
   });
 }
 
-/**
- * Update input value
- */
 export function updateInputValue(value: string, cursorPos: number): StateUpdater {
   return (state) => ({
     ...state,
-    input: {
-      ...state.input,
-      value,
-      cursorPos,
-    },
+    input: { ...state.input, value, cursorPos },
   });
 }
 
-/**
- * End input mode
- */
 export function endInput(): StateUpdater {
   return (state) => ({
     ...state,
@@ -372,50 +271,27 @@ export function endInput(): StateUpdater {
   });
 }
 
-/**
- * Add a log entry
- */
 export function addLog(level: LogEntry["level"], message: string): StateUpdater {
   return (state) => {
-    const newLog: LogEntry = { time: new Date(), level, message };
-    const logs = [...state.logs, newLog];
-    // Keep only maxLogs entries
-    if (logs.length > state.maxLogs) {
-      logs.shift();
-    }
+    const logs = [...state.logs, { time: new Date(), level, message }];
+    if (logs.length > state.maxLogs) logs.shift();
     return { ...state, logs };
   };
 }
 
-/**
- * Clear all logs
- */
 export function clearLogs(): StateUpdater {
-  return (state) => ({
-    ...state,
-    logs: [],
-  });
+  return (state) => ({ ...state, logs: [] });
 }
 
-// ============================================================================
-// Helpers
-// ============================================================================
-
-/**
- * Shorten path for display (replace home dir with ~)
- */
 function shortenPath(path: string, env: RuntimeEnv = getRuntimeEnv()): string {
-  const home = env.homeDir || "";
-  if (home && path.startsWith(home)) {
-    return "~" + path.slice(home.length);
-  }
-  return path;
+  const home = env.homeDir ?? "";
+  if (!home || !path.startsWith(home)) return path;
+  return `~${path.slice(home.length)}`;
 }
 
-/**
- * Get currently selected item from active list
- */
-export function getActiveSelection(state: AppState): ListItem<ProjectInfo> | undefined {
+export function getActiveSelection(
+  state: AppState,
+): ListItem<ProjectInfo> | undefined {
   const list = state[state.activeList];
   return list.items[list.selectedIndex];
 }

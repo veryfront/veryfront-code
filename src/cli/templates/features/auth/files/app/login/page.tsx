@@ -1,14 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import React, { useState } from "react";
 
-export default function LoginPage() {
+export default function LoginPage(): React.JSX.Element {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent): Promise<void> {
     e.preventDefault();
     setError("");
     setLoading(true);
@@ -42,11 +42,13 @@ export default function LoginPage() {
       </div>
 
       <div className="bg-white dark:bg-neutral-800 p-6 rounded-2xl border border-neutral-200 dark:border-neutral-700">
-        {error && (
-          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 px-4 py-3 rounded-xl text-sm mb-4">
-            {error}
-          </div>
-        )}
+        {error
+          ? (
+            <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 px-4 py-3 rounded-xl text-sm mb-4">
+              {error}
+            </div>
+          )
+          : null}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
@@ -86,7 +88,9 @@ export default function LoginPage() {
 
         <p className="text-center mt-6 text-sm text-neutral-600 dark:text-neutral-400">
           Don't have an account?{" "}
-          <a href="/signup" className="text-blue-500 hover:text-blue-600 font-medium">Sign up</a>
+          <a href="/signup" className="text-blue-500 hover:text-blue-600 font-medium">
+            Sign up
+          </a>
         </p>
       </div>
     </div>

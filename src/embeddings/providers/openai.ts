@@ -1,6 +1,3 @@
-/**
- * OpenAI Embedding Provider
- */
 import { z } from "zod";
 import { BaseEmbeddingProvider } from "../base.ts";
 import type { EmbeddingDimension, EmbeddingRequest, EmbeddingResponse } from "../types.ts";
@@ -25,26 +22,27 @@ export class OpenAIEmbeddingProvider extends BaseEmbeddingProvider {
   defaultDimension: EmbeddingDimension = 1536;
 
   protected getHeaders(): Record<string, string> {
-    return {
-      Authorization: `Bearer ${this.config.apiKey}`,
-    };
+    return { Authorization: `Bearer ${this.config.apiKey}` };
   }
 
   protected getEndpoint(): string {
-    const baseURL = this.config.baseURL ?? "https://api.openai.com/v1";
-    return `${baseURL}/embeddings`;
+    return `${this.config.baseURL ?? "https://api.openai.com/v1"}/embeddings`;
   }
 
   protected transformRequest(request: EmbeddingRequest): Record<string, unknown> {
     const model = request.model ?? this.config.model ?? this.defaultModel;
     const dimension = request.dimension ?? this.config.dimension ?? this.defaultDimension;
-    const supportsDimension = model.startsWith("text-embedding-3");
 
-    return {
+    const body: Record<string, unknown> = {
       model,
       input: request.inputs,
-      ...(supportsDimension && { dimensions: dimension }),
     };
+
+    if (model.startsWith("text-embedding-3")) {
+      body.dimensions = dimension;
+    }
+
+    return body;
   }
 
   protected transformResponse(response: unknown, _model: string): EmbeddingResponse {
@@ -52,10 +50,7 @@ export class OpenAIEmbeddingProvider extends BaseEmbeddingProvider {
     const dimension = parsed.data[0]?.embedding.length ?? this.defaultDimension;
 
     return {
-      embeddings: parsed.data.map((d) => ({
-        index: d.index,
-        embedding: d.embedding,
-      })),
+      embeddings: parsed.data.map(({ index, embedding }) => ({ index, embedding })),
       model: parsed.model,
       dimension,
       usage: {

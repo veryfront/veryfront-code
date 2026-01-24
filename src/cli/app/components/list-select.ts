@@ -62,13 +62,9 @@ export function createListState<T>(items: ListItem<T>[]): ListSelectState<T> {
 export function moveUp<T>(state: ListSelectState<T>): ListSelectState<T> {
   if (state.items.length === 0) return state;
 
-  const newIndex = state.selectedIndex > 0 ? state.selectedIndex - 1 : state.items.length - 1; // Wrap to bottom
+  const newIndex = state.selectedIndex > 0 ? state.selectedIndex - 1 : state.items.length - 1;
 
-  // Adjust scroll if needed
-  let scrollOffset = state.scrollOffset;
-  if (newIndex < scrollOffset) {
-    scrollOffset = newIndex;
-  }
+  const scrollOffset = newIndex < state.scrollOffset ? newIndex : state.scrollOffset;
 
   return { ...state, selectedIndex: newIndex, scrollOffset };
 }
@@ -82,15 +78,14 @@ export function moveDown<T>(
 ): ListSelectState<T> {
   if (state.items.length === 0) return state;
 
-  const newIndex = state.selectedIndex < state.items.length - 1 ? state.selectedIndex + 1 : 0; // Wrap to top
+  const newIndex = state.selectedIndex < state.items.length - 1 ? state.selectedIndex + 1 : 0;
 
-  // Adjust scroll if needed
   let scrollOffset = state.scrollOffset;
-  if (newIndex >= scrollOffset + visibleCount) {
-    scrollOffset = newIndex - visibleCount + 1;
-  }
+
   if (newIndex === 0) {
     scrollOffset = 0;
+  } else if (newIndex >= scrollOffset + visibleCount) {
+    scrollOffset = newIndex - visibleCount + 1;
   }
 
   return { ...state, selectedIndex: newIndex, scrollOffset };
@@ -104,10 +99,8 @@ export function selectByNumber<T>(
   num: number,
 ): ListSelectState<T> {
   const index = num - 1;
-  if (index >= 0 && index < state.items.length) {
-    return { ...state, selectedIndex: index };
-  }
-  return state;
+  if (index < 0 || index >= state.items.length) return state;
+  return { ...state, selectedIndex: index };
 }
 
 /**
@@ -135,74 +128,59 @@ export function renderList<T>(
     showSelection = true,
   } = options;
 
-  if (state.items.length === 0) {
-    return `  ${dim(emptyMessage)}`;
-  }
+  if (state.items.length === 0) return `  ${dim(emptyMessage)}`;
 
   const lines: string[] = [];
   const start = state.scrollOffset;
   const end = Math.min(start + visibleCount, state.items.length);
   const visibleItems = state.items.slice(start, end);
 
-  // Calculate column widths
   const numberWidth = showNumbers ? 4 : 0; // " [1] "
   const cursorWidth = 2; // "› " or "  "
   const metaSpace = 20; // Space for meta info
   const labelWidth = maxWidth - numberWidth - cursorWidth - metaSpace;
 
   for (let i = 0; i < visibleItems.length; i++) {
-    const item = visibleItems[i]!;
+    const item = visibleItems[i];
+    if (!item) continue;
+
     const actualIndex = start + i;
     const isSelected = showSelection && actualIndex === state.selectedIndex;
-    const displayNum = actualIndex + 1 + numberOffset; // Apply offset for display
+    const displayNum = actualIndex + 1 + numberOffset;
 
-    // Build line parts
     const parts: string[] = [];
 
-    // Cursor (only show if section is active)
-    parts.push(isSelected ? brand("›") : " ");
-    parts.push(" ");
+    parts.push(isSelected ? brand("›") : " ", " ");
 
-    // Number/letter shortcut (1-9, then a-z for 10+)
-    if (showNumbers && displayNum <= 35) { // 1-9 + a-z (26 letters)
-      const shortcut = displayNum <= 9
-        ? String(displayNum)
-        : String.fromCharCode(96 + displayNum - 9); // 10='a', 11='b', etc.
-      parts.push(isSelected ? brand(`[${shortcut}]`) : dim(`[${shortcut}]`));
-      parts.push(" ");
-    } else if (showNumbers) {
-      parts.push("    "); // Keep alignment
+    if (showNumbers) {
+      if (displayNum <= 35) {
+        const shortcut = displayNum <= 9
+          ? String(displayNum)
+          : String.fromCharCode(96 + displayNum - 9); // 10='a', 11='b', etc.
+        parts.push(isSelected ? brand(`[${shortcut}]`) : dim(`[${shortcut}]`), " ");
+      } else {
+        parts.push("    ");
+      }
     }
 
-    // Label
-    const label = truncate(item.label, labelWidth);
-    parts.push(isSelected ? label : label);
+    parts.push(truncate(item.label, labelWidth));
 
-    // Meta (right-aligned)
     if (item.meta) {
       const labelLen = visibleLength(parts.join(""));
       const metaLen = visibleLength(item.meta);
       const padding = Math.max(1, maxWidth - labelLen - metaLen);
-      parts.push(" ".repeat(padding));
-      parts.push(dim(truncate(item.meta, metaSpace)));
+      parts.push(" ".repeat(padding), dim(truncate(item.meta, metaSpace)));
     }
 
     lines.push(parts.join(""));
 
-    // Description on next line if selected
     if (isSelected && item.description) {
-      const descLine = "     " + dim(truncate(item.description, maxWidth - 5));
-      lines.push(descLine);
+      lines.push(`     ${dim(truncate(item.description, maxWidth - 5))}`);
     }
   }
 
-  // Scroll indicators
-  if (start > 0) {
-    lines.unshift(`  ${dim("↑ more above")}`);
-  }
-  if (end < state.items.length) {
-    lines.push(`  ${dim("↓ more below")}`);
-  }
+  if (start > 0) lines.unshift(`  ${dim("↑ more above")}`);
+  if (end < state.items.length) lines.push(`  ${dim("↓ more below")}`);
 
   return lines.join("\n");
 }
@@ -216,6 +194,5 @@ export function listSection<T>(
   options: ListSelectOptions = {},
 ): string {
   const header = `  ${dim(title)} ${dim(`(${state.items.length})`)}`;
-  const list = renderList(state, options);
-  return `${header}\n${list}`;
+  return `${header}\n${renderList(state, options)}`;
 }

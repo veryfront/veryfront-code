@@ -27,14 +27,14 @@ export const ssrHttpCachePlugin: TransformPlugin = {
 
   async transform(ctx) {
     const cachedMap = ctx.metadata.get("importMap") as ImportMapConfig | undefined;
-    const importMap = cachedMap ?? await loadImportMap(ctx.projectDir);
+    const importMap = cachedMap ?? (await loadImportMap(ctx.projectDir));
+
     if (!cachedMap) {
       ctx.metadata.set("importMap", importMap);
     }
 
-    const cacheDir = getHttpBundleCacheDir();
     const updated = await cacheHttpImportsToLocal(ctx.code, {
-      cacheDir,
+      cacheDir: getHttpBundleCacheDir(),
       importMap,
       reactVersion: ctx.reactVersion,
     });

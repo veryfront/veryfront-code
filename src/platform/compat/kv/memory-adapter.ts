@@ -1,7 +1,7 @@
 import type { Kv, KvEntry, KvListOptions } from "./types.ts";
 
 export class MemoryKv implements Kv {
-  private store: Map<string, { value: unknown; versionstamp: string }> = new Map();
+  private store = new Map<string, { value: unknown; versionstamp: string }>();
 
   private keyToString(key: string[]): string {
     return JSON.stringify(key);
@@ -12,35 +12,29 @@ export class MemoryKv implements Kv {
   }
 
   get<T = unknown>(key: string[]): Promise<{ value: T | undefined; versionstamp?: string }> {
-    const keyStr = this.keyToString(key);
-    const entry = this.store.get(keyStr);
-    return Promise.resolve(
-      entry
-        ? { value: entry.value as T, versionstamp: entry.versionstamp }
-        : { value: undefined as T | undefined },
-    );
+    const entry = this.store.get(this.keyToString(key));
+    if (!entry) return Promise.resolve({ value: undefined });
+
+    return Promise.resolve({ value: entry.value as T, versionstamp: entry.versionstamp });
   }
 
   set<T = unknown>(key: string[], value: T): Promise<void> {
-    const keyStr = this.keyToString(key);
-    const versionstamp = Date.now().toString();
-    this.store.set(keyStr, { value, versionstamp });
+    this.store.set(this.keyToString(key), { value, versionstamp: Date.now().toString() });
     return Promise.resolve();
   }
 
   delete(key: string[]): Promise<void> {
-    const keyStr = this.keyToString(key);
-    this.store.delete(keyStr);
+    this.store.delete(this.keyToString(key));
     return Promise.resolve();
   }
 
   async *list<T = unknown>(options?: KvListOptions): AsyncIterableIterator<KvEntry<T>> {
     const entries = Array.from(this.store.entries());
-
     let filtered = entries;
+
     if (options?.prefix) {
       const prefixStr = this.keyToString(options.prefix);
-      filtered = entries.filter(([key]) => key.startsWith(prefixStr.slice(0, -1)));
+      filtered = filtered.filter(([key]) => key.startsWith(prefixStr.slice(0, -1)));
     }
 
     filtered.sort((a, b) => {
@@ -58,7 +52,7 @@ export class MemoryKv implements Kv {
       filtered = filtered.filter(([key]) => key < endStr);
     }
 
-    if (options?.limit !== undefined) {
+    if (options?.limit != null) {
       filtered = filtered.slice(0, options.limit);
     }
 

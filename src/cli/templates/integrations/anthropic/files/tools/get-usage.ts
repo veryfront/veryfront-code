@@ -2,9 +2,6 @@ import { tool } from 'veryfront/tool';
 import { z } from 'zod';
 import { getAnthropicAdminClient } from '../../lib/anthropic-admin-client';
 
-/**
- * Tool for retrieving API usage statistics from Anthropic
- */
 export const getUsage = tool({
   name: 'get_usage',
   description:
@@ -21,9 +18,7 @@ export const getUsage = tool({
     workspaceId: z
       .string()
       .optional()
-      .describe(
-        'Optional workspace ID to filter usage by specific workspace'
-      ),
+      .describe('Optional workspace ID to filter usage by specific workspace'),
     model: z
       .string()
       .optional()
@@ -46,22 +41,15 @@ export const getUsage = tool({
         granularity,
       });
 
-      // Calculate summary statistics
-      const totalInputTokens = result.usage.reduce(
-        (sum, record) => sum + record.input_tokens,
-        0
-      );
-      const totalOutputTokens = result.usage.reduce(
-        (sum, record) => sum + record.output_tokens,
-        0
-      );
-      const totalCacheCreationTokens = result.usage.reduce(
-        (sum, record) => sum + (record.cache_creation_tokens || 0),
-        0
-      );
-      const totalCacheReadTokens = result.usage.reduce(
-        (sum, record) => sum + (record.cache_read_tokens || 0),
-        0
+      const totals = result.usage.reduce(
+        (acc, record) => {
+          acc.input += record.input_tokens;
+          acc.output += record.output_tokens;
+          acc.cacheCreation += record.cache_creation_tokens ?? 0;
+          acc.cacheRead += record.cache_read_tokens ?? 0;
+          return acc;
+        },
+        { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 }
       );
 
       return {
@@ -69,10 +57,10 @@ export const getUsage = tool({
         usage: result.usage,
         summary: {
           total_cost_usd: result.total_cost_usd,
-          total_input_tokens: totalInputTokens,
-          total_output_tokens: totalOutputTokens,
-          total_cache_creation_tokens: totalCacheCreationTokens,
-          total_cache_read_tokens: totalCacheReadTokens,
+          total_input_tokens: totals.input,
+          total_output_tokens: totals.output,
+          total_cache_creation_tokens: totals.cacheCreation,
+          total_cache_read_tokens: totals.cacheRead,
           record_count: result.usage.length,
           date_range: {
             start: startDate,
@@ -89,8 +77,7 @@ export const getUsage = tool({
     } catch (error) {
       return {
         success: false,
-        error:
-          error instanceof Error ? error.message : 'Failed to retrieve usage data',
+        error: error instanceof Error ? error.message : 'Failed to retrieve usage data',
         usage: [],
       };
     }

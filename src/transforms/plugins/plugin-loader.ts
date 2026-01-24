@@ -1,6 +1,11 @@
 import type { Root as HastRoot } from "hast";
 import type { Root as MdastRoot } from "mdast";
 import type { Pluggable } from "unified";
+import rehypeHighlight from "rehype-highlight";
+import rehypeSlug from "rehype-slug";
+import remarkFrontmatter from "remark-frontmatter";
+import remarkGfm from "remark-gfm";
+import { rehypeMermaid } from "./rehype-mermaid.ts";
 import { rehypeAddClasses, rehypeMdxComponents, rehypePreserveNodeIds } from "./rehype-utils.ts";
 import { remarkMdxHeadings } from "./remark-headings.ts";
 import {
@@ -8,11 +13,6 @@ import {
   remarkMdxImports,
   remarkMdxRemoveParagraphs,
 } from "./remark-mdx-utils.ts";
-import { rehypeMermaid } from "./rehype-mermaid.ts";
-import remarkGfm from "remark-gfm";
-import remarkFrontmatter from "remark-frontmatter";
-import rehypeHighlight from "rehype-highlight";
-import rehypeSlug from "rehype-slug";
 
 export type PluginFunction = (
   tree: MdastRoot | HastRoot,

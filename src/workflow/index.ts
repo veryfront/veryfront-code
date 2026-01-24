@@ -50,14 +50,12 @@
 // Core Types
 // =============================================================================
 export type {
-  // Operations
   ApprovalDecision,
   BaseNodeConfig,
   BlobResolver,
   BranchNodeConfig,
   Checkpoint,
   DurationString,
-  // Run state
   NodeState,
   NodeStatus,
   ParallelNodeConfig,
@@ -68,16 +66,13 @@ export type {
   StepNodeConfig,
   SubWorkflowNodeConfig,
   WaitNodeConfig,
-  // Workflow definition
   WorkflowContext,
   WorkflowDefinition,
   WorkflowJob,
   WorkflowNode,
   WorkflowNodeConfig,
-  // Node types
   WorkflowNodeType,
   WorkflowRun,
-  // Status types
   WorkflowStatus,
 } from "./types.ts";
 
@@ -87,7 +82,6 @@ export { generateId, parseDuration } from "./types.ts";
 // DSL Builders
 // =============================================================================
 export {
-  // Convenience builders
   agentStep,
   branch,
   dag,
@@ -95,7 +89,6 @@ export {
   dependsOn,
   map,
   parallel,
-  // DAG helpers
   sequence,
   step,
   subWorkflow,
@@ -104,7 +97,6 @@ export {
   waitForApproval,
   waitForEvent,
   when,
-  // Main builders
   workflow,
 } from "./dsl/index.ts";
 
@@ -138,12 +130,10 @@ export {
 // Backend
 // =============================================================================
 export type { BackendConfig, Lock, WorkflowBackend } from "./backends/types.ts";
-
 export { hasEventSupport, hasLockSupport, hasQueueSupport } from "./backends/types.ts";
 
 export { MemoryBackend } from "./backends/memory.ts";
 
-// Redis backend (production)
 export { RedisBackend } from "./backends/redis.ts";
 export type { RedisAdapter, RedisBackendConfig } from "./backends/redis.ts";
 
@@ -174,10 +164,8 @@ export type {
 // Runtime
 // =============================================================================
 export { ApprovalManager } from "./runtime/index.ts";
-
 export type { ApprovalManagerConfig, ApprovalNotifier, ApprovalRequest } from "./runtime/index.ts";
 
-// Agent/Tool Registry
 export {
   createMockAgent,
   createMockTool,
@@ -189,14 +177,12 @@ export {
 // Client API
 // =============================================================================
 export { createWorkflowClient, WorkflowClient } from "./api/index.ts";
-
 export type { WorkflowClientConfig } from "./api/index.ts";
 
 // =============================================================================
 // Workflow Registry (for discovery/dev tools)
 // =============================================================================
 export { getAllWorkflowIds, getWorkflow, registerWorkflow, workflowRegistry } from "./registry.ts";
-
 export type { WorkflowMetadata } from "./registry.ts";
 
 // =============================================================================

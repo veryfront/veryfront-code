@@ -8,124 +8,66 @@ export interface BlockExternalUrlResult {
   blockedUrls: string[];
 }
 
-/**
- * Pattern to match cross-project imports (with or without version).
- *
- * Supported formats:
- *   - projectSlug@version/@/path (versioned)
- *   - projectSlug/@/path (versionless, defaults to "latest")
- *
- * Examples:
- *   - demo@0.0.1/@/components/Button
- *   - shadcn-ui@1.2.3/@/lib/utils
- *   - demo/@/app.tsx (defaults to latest)
- *
- * The separator /@/ distinguishes cross-project imports from other patterns.
- */
 const CROSS_PROJECT_VERSIONED_PATTERN = /^([a-z0-9-]+)@([\d^~x][\d.x^~-]*)\/@\/(.+)$/;
 const CROSS_PROJECT_LATEST_PATTERN = /^([a-z0-9-]+)\/@\/(.+)$/;
 
-/**
- * Check if a specifier is a cross-project import (versioned or versionless).
- */
 export function isCrossProjectImport(specifier: string): boolean {
   return CROSS_PROJECT_VERSIONED_PATTERN.test(specifier) ||
     CROSS_PROJECT_LATEST_PATTERN.test(specifier);
 }
 
-/**
- * Parse a cross-project import specifier into its components.
- * Returns null if the specifier doesn't match the pattern.
- * Versionless imports default to "latest".
- */
 export function parseCrossProjectImport(
   specifier: string,
 ): { projectSlug: string; version: string; path: string } | null {
-  // Try versioned pattern first
   const versionedMatch = specifier.match(CROSS_PROJECT_VERSIONED_PATTERN);
   if (versionedMatch) {
-    return {
-      projectSlug: versionedMatch[1]!,
-      version: versionedMatch[2]!,
-      path: versionedMatch[3]!,
-    };
+    const [, projectSlug, version, path] = versionedMatch;
+    return { projectSlug: projectSlug!, version: version!, path: path! };
   }
 
-  // Try versionless pattern (defaults to "latest")
   const latestMatch = specifier.match(CROSS_PROJECT_LATEST_PATTERN);
-  if (latestMatch) {
-    return {
-      projectSlug: latestMatch[1]!,
-      version: "latest",
-      path: latestMatch[2]!,
-    };
-  }
+  if (!latestMatch) return null;
 
-  return null;
+  const [, projectSlug, path] = latestMatch;
+  return { projectSlug: projectSlug!, version: "latest", path: path! };
 }
 
 export interface CrossProjectImportOptions {
-  /** Base URL for the API (unused in browser mode, kept for interface compat) */
   apiBaseUrl?: string;
-  /** Whether this is SSR mode */
   ssr?: boolean;
 }
 
-/**
- * Rewrite cross-project imports to module server URLs (browser mode only).
- *
- * For browser mode, transforms imports like:
- *   import { Button } from "demo@0.0.1/@/components/Button"  (versioned)
- *   import { Button } from "demo/@/components/Button"        (versionless → latest)
- *
- * To module server URL:
- *   /_vf_modules/_cross/demo@0.0.1/@/components/Button.tsx
- *   /_vf_modules/_cross/demo/@/components/Button.tsx
- *
- * For SSR mode, imports are left as-is. The SSRModuleLoader handles cross-project
- * imports by fetching from registry and writing to temp files with file:// URLs.
- */
 export function resolveCrossProjectImports(
   code: string,
   options: CrossProjectImportOptions,
 ): Promise<string> {
-  return Promise.resolve(withSpanSync("transforms.esm.resolveCrossProjectImports", () => {
-    const { ssr = false } = options;
+  return Promise.resolve(
+    withSpanSync(
+      "transforms.esm.resolveCrossProjectImports",
+      () => {
+        const ssr = options.ssr ?? false;
+        if (ssr) return code;
 
-    // In SSR mode, leave cross-project imports as-is
-    // SSRModuleLoader handles them by fetching from registry and writing to temp files
-    if (ssr) {
-      return code;
-    }
+        return replaceSpecifiers(code, (specifier) => {
+          const parsed = parseCrossProjectImport(specifier);
+          if (!parsed) return null;
 
-    // Browser mode: rewrite to module server URL
-    return replaceSpecifiers(code, (specifier) => {
-      const parsed = parseCrossProjectImport(specifier);
-      if (!parsed) return null;
+          const { projectSlug, version, path } = parsed;
 
-      const { projectSlug, version, path } = parsed;
+          const modulePath = /\.(js|mjs|jsx|ts|tsx|mdx)$/.test(path) ? path : `${path}.tsx`;
+          const projectRef = version === "latest" ? projectSlug : `${projectSlug}@${version}`;
+          const moduleServerUrl = `/_vf_modules/_cross/${projectRef}/@/${modulePath}`;
 
-      // Keep the original extension - module server will handle it
-      let modulePath = path;
-      if (!/\.(js|mjs|jsx|ts|tsx|mdx)$/.test(modulePath)) {
-        modulePath = `${modulePath}.tsx`;
-      }
+          logger.debug("[CrossProjectImport] Rewriting", { from: specifier, to: moduleServerUrl });
 
-      // Build URL - omit version for "latest" (versionless imports)
-      const projectRef = version === "latest" ? projectSlug : `${projectSlug}@${version}`;
-      const moduleServerUrl = `/_vf_modules/_cross/${projectRef}/@/${modulePath}`;
-
-      logger.debug("[CrossProjectImport] Rewriting", { from: specifier, to: moduleServerUrl });
-
-      return moduleServerUrl;
-    });
-  }, { "transforms.ssr": options.ssr ?? false }));
+          return moduleServerUrl;
+        });
+      },
+      { "transforms.ssr": options.ssr ?? false },
+    ),
+  );
 }
 
-/**
- * Pass-through function for SSR mode (no-op).
- * External URL imports are handled by esbuild in esm-module-loader.
- */
 export function blockExternalUrlImports(
   code: string,
   _filePath: string,
@@ -133,72 +75,49 @@ export function blockExternalUrlImports(
   return Promise.resolve({ code, blockedUrls: [] });
 }
 
-/**
- * Rewrite @veryfront/* imports to veryfront/* for npm compatibility
- * This allows Deno-style imports to work in Node.js environments
- */
 export function resolveVeryfrontImports(code: string): Promise<string> {
-  return Promise.resolve(replaceSpecifiers(code, (specifier) => {
-    if (specifier.startsWith("@veryfront/")) {
-      // @veryfront/tool -> veryfront/tool
-      // @veryfront/agent/react -> veryfront/agent/react
-      return specifier.replace("@veryfront/", "veryfront/");
-    }
-    if (specifier === "@veryfront") {
-      return "veryfront";
-    }
-    return null;
-  }));
+  return Promise.resolve(
+    replaceSpecifiers(code, (specifier) => {
+      if (specifier.startsWith("@veryfront/")) {
+        return specifier.replace("@veryfront/", "veryfront/");
+      }
+      if (specifier === "@veryfront") return "veryfront";
+      return null;
+    }),
+  );
 }
 
-/**
- * Rewrite #veryfront/* imports to module server URLs for browser.
- * SSR mode leaves imports as-is (Deno's import map handles them).
- *
- * Browser mode transforms:
- *   import { collectHead } from "#veryfront/react/head-collector.ts"
- * To:
- *   import { collectHead } from "/_vf_modules/_veryfront/react/head-collector.js"
- */
 export function resolveVeryfrontSubpathImports(
   code: string,
   ssr = false,
 ): Promise<string> {
-  // SSR mode: leave as-is (Deno's import map resolves #veryfront)
-  if (ssr) {
-    return Promise.resolve(code);
-  }
+  if (ssr) return Promise.resolve(code);
 
-  // Browser mode: rewrite to module server URL
-  return Promise.resolve(replaceSpecifiers(code, (specifier) => {
-    if (specifier.startsWith("#veryfront/")) {
-      // #veryfront/react/head-collector.ts -> /_vf_modules/_veryfront/react/head-collector.js
+  return Promise.resolve(
+    replaceSpecifiers(code, (specifier) => {
+      if (!specifier.startsWith("#veryfront/")) return null;
+
       const path = specifier.substring("#veryfront/".length);
-      // Normalize extension to .js for browser
       const normalizedPath = path.replace(/\.(tsx?|jsx)$/, ".js");
       return `/_vf_modules/_veryfront/${normalizedPath}`;
-    }
-    return null;
-  }));
+    }),
+  );
 }
 
-/**
- * Get a file path relative to the project directory.
- * Handles path normalization and edge cases for both SSR and browser modes.
- */
 function getRelativeFilePath(filePath: string, normalizedProjectDir: string): string {
   if (filePath.startsWith(normalizedProjectDir)) {
     return filePath.substring(normalizedProjectDir.length + 1);
   }
 
-  if (filePath.startsWith("/")) {
-    const pathParts = filePath.split("/");
-    const projectParts = normalizedProjectDir.split("/");
-    const lastProjectPart = projectParts[projectParts.length - 1];
-    const projectIndex = pathParts.indexOf(lastProjectPart!);
-    if (projectIndex >= 0) {
-      return pathParts.slice(projectIndex + 1).join("/");
-    }
+  if (!filePath.startsWith("/")) return filePath;
+
+  const pathParts = filePath.split("/");
+  const projectParts = normalizedProjectDir.split("/");
+  const lastProjectPart = projectParts[projectParts.length - 1];
+  const projectIndex = lastProjectPart ? pathParts.indexOf(lastProjectPart) : -1;
+
+  if (projectIndex >= 0) {
+    return pathParts.slice(projectIndex + 1).join("/");
   }
 
   return filePath;
@@ -210,36 +129,36 @@ export function resolvePathAliases(
   projectDir: string,
   ssr = false,
 ): Promise<string> {
-  return Promise.resolve(withSpanSync("transforms.esm.resolvePathAliases", () => {
-    const normalizedProjectDir = projectDir.replace(/\\/g, "/").replace(/\/$/, "");
+  return Promise.resolve(
+    withSpanSync(
+      "transforms.esm.resolvePathAliases",
+      () => {
+        const normalizedProjectDir = projectDir.replace(/\\/g, "/").replace(/\/$/, "");
+        const relativeFilePath = getRelativeFilePath(filePath, normalizedProjectDir);
+        const fileDir = relativeFilePath.substring(0, relativeFilePath.lastIndexOf("/"));
+        const depth = fileDir.split("/").filter(Boolean).length;
+        const relativeToRoot = depth === 0 ? "." : "../".repeat(depth).slice(0, -1);
 
-    // For both SSR and browser, we need to resolve @/ aliases to relative paths
-    // SSR files are written to a temp directory with the same relative structure as the source
-    // So @/components from pages/index.tsx becomes ../components (relative path)
-    const relativeFilePath = getRelativeFilePath(filePath, normalizedProjectDir);
-    const fileDir = relativeFilePath.substring(0, relativeFilePath.lastIndexOf("/"));
-    const depth = fileDir.split("/").filter(Boolean).length;
-    const relativeToRoot = depth === 0 ? "." : "../".repeat(depth).slice(0, -1);
+        return replaceSpecifiers(code, (specifier) => {
+          if (!specifier.startsWith("@/")) return null;
 
-    return replaceSpecifiers(code, (specifier) => {
-      if (specifier.startsWith("@/")) {
-        const path = specifier.substring(2);
-        // @/ maps to project root in veryfront projects
-        const relativePath = depth === 0 ? `./${path}` : `${relativeToRoot}/${path}`;
-        // Add .js extension if path doesn't already have a valid JS/TS extension
-        // This ensures Deno can properly identify the module type when loading via HTTP
-        if (!/\.(tsx?|jsx?|mjs|cjs|mdx)$/.test(relativePath)) {
-          return relativePath + ".js";
-        }
-        // For SSR, also normalize TS/TSX extensions to .js
-        if (ssr) {
-          return relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js");
-        }
-        return relativePath;
-      }
-      return null;
-    });
-  }, { "transforms.ssr": ssr }));
+          const path = specifier.substring(2);
+          const relativePath = depth === 0 ? `./${path}` : `${relativeToRoot}/${path}`;
+
+          if (!/\.(tsx?|jsx?|mjs|cjs|mdx)$/.test(relativePath)) {
+            return `${relativePath}.js`;
+          }
+
+          if (ssr) {
+            return relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js");
+          }
+
+          return relativePath;
+        });
+      },
+      { "transforms.ssr": ssr },
+    ),
+  );
 }
 
 export function resolveRelativeImports(
@@ -248,30 +167,30 @@ export function resolveRelativeImports(
   projectDir: string,
   moduleServerUrl?: string,
 ): Promise<string> {
-  return Promise.resolve(withSpanSync("transforms.esm.resolveRelativeImports", () => {
-    const normalizedProjectDir = projectDir.replace(/\\/g, "/").replace(/\/$/, "");
-    const relativeFilePath = getRelativeFilePath(filePath, normalizedProjectDir);
-    const fileDir = relativeFilePath.substring(0, relativeFilePath.lastIndexOf("/"));
+  return Promise.resolve(
+    withSpanSync(
+      "transforms.esm.resolveRelativeImports",
+      () => {
+        const normalizedProjectDir = projectDir.replace(/\\/g, "/").replace(/\/$/, "");
+        const relativeFilePath = getRelativeFilePath(filePath, normalizedProjectDir);
+        const fileDir = relativeFilePath.substring(0, relativeFilePath.lastIndexOf("/"));
 
-    return replaceSpecifiers(code, (specifier) => {
-      if (specifier.startsWith("./") || specifier.startsWith("../")) {
-        // Rewrite TypeScript extensions to .js for browser compatibility
-        let rewrittenSpecifier = specifier;
-        if (/\.(tsx?|jsx)$/.test(specifier)) {
-          rewrittenSpecifier = specifier.replace(/\.(tsx?|jsx)$/, ".js");
-        }
+        return replaceSpecifiers(code, (specifier) => {
+          if (!specifier.startsWith("./") && !specifier.startsWith("../")) return null;
 
-        // If moduleServerUrl provided, convert to absolute URL
-        if (moduleServerUrl) {
+          const rewrittenSpecifier = /\.(tsx?|jsx)$/.test(specifier)
+            ? specifier.replace(/\.(tsx?|jsx)$/, ".js")
+            : specifier;
+
+          if (!moduleServerUrl) return rewrittenSpecifier;
+
           const resolvedPath = resolveRelativePath(fileDir, rewrittenSpecifier);
           return `${moduleServerUrl}/${resolvedPath}`;
-        }
-
-        return rewrittenSpecifier;
-      }
-      return null;
-    });
-  }, { "transforms.has_module_server": !!moduleServerUrl }));
+        });
+      },
+      { "transforms.has_module_server": !!moduleServerUrl },
+    ),
+  );
 }
 
 function resolveRelativePath(currentDir: string, importPath: string): string {
@@ -280,10 +199,12 @@ function resolveRelativePath(currentDir: string, importPath: string): string {
 
 function resolvePath(baseParts: string[], relativePath: string): string[] {
   const resolvedParts = [...baseParts];
+
   for (const part of relativePath.split("/").filter(Boolean)) {
     if (part === "..") resolvedParts.pop();
     else if (part !== ".") resolvedParts.push(part);
   }
+
   return resolvedParts;
 }
 
@@ -296,11 +217,7 @@ export function resolveRelativeImportsToAbsolute(
     const normalizedFilePath = filePath.replace(/\\/g, "/");
     const fileDir = normalizedFilePath.substring(0, normalizedFilePath.lastIndexOf("/"));
 
-    // Build a map of specifiers to resolved paths with extensions
-    const resolvedImports = new Map<string, string>();
     const specifiersToResolve: string[] = [];
-
-    // First pass: collect all relative import specifiers
     await replaceSpecifiers(code, (specifier) => {
       if (specifier.startsWith("./") || specifier.startsWith("../")) {
         specifiersToResolve.push(specifier);
@@ -308,71 +225,55 @@ export function resolveRelativeImportsToAbsolute(
       return null;
     });
 
-    // Resolve each specifier to an absolute path with extension
+    const resolvedImports = new Map<string, string>();
     for (const specifier of specifiersToResolve) {
       const absolutePath = resolveAbsolutePath(fileDir, specifier);
       const resolvedPath = await findFileWithExtension(absolutePath);
       resolvedImports.set(specifier, `file://${resolvedPath}`);
     }
 
-    // Second pass: replace specifiers with resolved paths
-    return replaceSpecifiers(code, (specifier) => {
-      return resolvedImports.get(specifier) || null;
-    });
-  }, { "transforms.specifiers_count": 0 }); // Count will be determined at runtime
+    return replaceSpecifiers(code, (specifier) => resolvedImports.get(specifier) ?? null);
+  }, { "transforms.specifiers_count": 0 });
 }
 
-/**
- * Find a file by trying common TypeScript/JavaScript extensions
- * If the path already has an extension, return it as-is
- */
 async function findFileWithExtension(basePath: string): Promise<string> {
-  // If already has a valid extension, return as-is
-  if (/\.(tsx?|jsx?|mjs|cjs|mdx)$/.test(basePath)) {
-    return basePath;
-  }
+  if (/\.(tsx?|jsx?|mjs|cjs|mdx)$/.test(basePath)) return basePath;
 
   const extensions = [".tsx", ".ts", ".jsx", ".js", ".mdx"];
-
   for (const ext of extensions) {
     const fullPath = basePath + ext;
     try {
       const fileStat = await stat(fullPath);
-      if (fileStat.isFile) {
-        return fullPath;
-      }
+      if (fileStat.isFile) return fullPath;
     } catch {
-      // File doesn't exist with this extension, try next
+      // ignore
     }
   }
 
-  // If no file found, return with .ts extension as fallback
-  // (Deno will give a clearer error message)
   return basePath + ".ts";
 }
 
 export function resolveRelativeImportsForNodeSSR(code: string): Promise<string> {
-  return Promise.resolve(replaceSpecifiers(code, (specifier) => {
-    if (specifier.startsWith("./") || specifier.startsWith("../")) {
+  return Promise.resolve(
+    replaceSpecifiers(code, (specifier) => {
+      if (!specifier.startsWith("./") && !specifier.startsWith("../")) return null;
       return specifier.replace(/\.(tsx|ts|jsx)$/, ".js");
-    }
-    return null;
-  }));
+    }),
+  );
 }
 
 export function resolveRelativeImportsForSSR(code: string): Promise<string> {
-  return Promise.resolve(replaceSpecifiers(code, (specifier) => {
-    if (specifier.startsWith("./") || specifier.startsWith("../")) {
-      if (/\.(js|mjs|cjs)$/.test(specifier)) {
-        return null;
-      }
+  return Promise.resolve(
+    replaceSpecifiers(code, (specifier) => {
+      if (!specifier.startsWith("./") && !specifier.startsWith("../")) return null;
+      if (/\.(js|mjs|cjs)$/.test(specifier)) return null;
+
       const withoutExt = specifier.replace(/\.(tsx?|jsx|mdx)$/, "");
-      return withoutExt + ".js";
-    }
-    return null;
-  }));
+      return `${withoutExt}.js`;
+    }),
+  );
 }
 
 function resolveAbsolutePath(baseDir: string, relativePath: string): string {
-  return "/" + resolvePath(baseDir.split("/").filter(Boolean), relativePath).join("/");
+  return `/${resolvePath(baseDir.split("/").filter(Boolean), relativePath).join("/")}`;
 }

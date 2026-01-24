@@ -1,6 +1,5 @@
 import { relative } from "#veryfront/platform/compat/path/index.ts";
-import { logger } from "#veryfront/utils";
-import { DEFAULT_BUILD_CONCURRENCY } from "#veryfront/utils";
+import { DEFAULT_BUILD_CONCURRENCY, logger } from "#veryfront/utils";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { DEFAULT_OPTIONS } from "./constants.ts";
@@ -20,6 +19,7 @@ import type {
 
 function chunkArray<T>(items: T[], chunkSize: number): T[][] {
   if (chunkSize <= 0) return [items];
+
   const chunks: T[][] = [];
   for (let i = 0; i < items.length; i += chunkSize) {
     chunks.push(items.slice(i, i + chunkSize));
@@ -30,7 +30,7 @@ function chunkArray<T>(items: T[], chunkSize: number): T[][] {
 export class ImageOptimizer {
   private options: Required<ImageOptimizationOptions>;
   private sharp: SharpConstructor | null = null;
-  private imageManifest: Map<string, OptimizedImageMetadata> = new Map();
+  private imageManifest = new Map<string, OptimizedImageMetadata>();
   private fs = createFileSystem();
 
   constructor(options: ImageOptimizationOptions = {}) {
@@ -38,107 +38,120 @@ export class ImageOptimizer {
   }
 
   init(): Promise<boolean> {
-    return withSpan("build.asset.ImageOptimizer.init", async () => {
-      if (!this.options.enabled) {
-        logger.info("Image optimization is disabled");
-        return false;
-      }
+    return withSpan(
+      "build.asset.ImageOptimizer.init",
+      async () => {
+        if (!this.options.enabled) {
+          logger.info("Image optimization is disabled");
+          return false;
+        }
 
-      this.sharp = await loadSharp();
-      return this.sharp !== null;
-    }, { "optimizer.enabled": this.options.enabled });
+        this.sharp = await loadSharp();
+        return this.sharp !== null;
+      },
+      { "optimizer.enabled": this.options.enabled },
+    );
   }
 
   optimize(): Promise<Map<string, OptimizedImageMetadata>> {
-    return withSpan("build.asset.ImageOptimizer.optimize", async () => {
-      const isReady = await this.init();
-      if (!isReady) {
+    return withSpan(
+      "build.asset.ImageOptimizer.optimize",
+      async () => {
+        const isReady = await this.init();
+        if (!isReady) return this.imageManifest;
+
+        logger.info("Starting image optimization", {
+          inputDir: this.options.inputDir,
+          outputDir: this.options.outputDir,
+          formats: this.options.formats,
+          sizes: this.options.sizes,
+        });
+
+        await this.fs.mkdir(this.options.outputDir, { recursive: true });
+
+        const images = await findImages(this.options.inputDir);
+        logger.info(`Found ${images.length} images to optimize`);
+
+        for (const chunk of chunkArray(images, DEFAULT_BUILD_CONCURRENCY)) {
+          await Promise.all(chunk.map((imagePath) => this.optimizeImage(imagePath)));
+        }
+
+        await writeManifest(this.imageManifest, this.options.outputDir);
+
+        logger.info("Image optimization complete", {
+          totalImages: this.imageManifest.size,
+          totalVariants: this.getTotalVariants(),
+        });
+
         return this.imageManifest;
-      }
-
-      logger.info("Starting image optimization", {
-        inputDir: this.options.inputDir,
-        outputDir: this.options.outputDir,
-        formats: this.options.formats,
-        sizes: this.options.sizes,
-      });
-
-      await this.fs.mkdir(this.options.outputDir, { recursive: true });
-
-      const images = await findImages(this.options.inputDir);
-      logger.info(`Found ${images.length} images to optimize`);
-
-      const chunks = chunkArray(images, DEFAULT_BUILD_CONCURRENCY);
-
-      for (const chunk of chunks) {
-        await Promise.all(chunk.map((imagePath) => this.optimizeImage(imagePath)));
-      }
-
-      await writeManifest(this.imageManifest, this.options.outputDir);
-
-      logger.info("Image optimization complete", {
-        totalImages: this.imageManifest.size,
-        totalVariants: this.getTotalVariants(),
-      });
-
-      return this.imageManifest;
-    }, {
-      "optimizer.inputDir": this.options.inputDir,
-      "optimizer.outputDir": this.options.outputDir,
-      "optimizer.formats": this.options.formats.join(","),
-    });
+      },
+      {
+        "optimizer.inputDir": this.options.inputDir,
+        "optimizer.outputDir": this.options.outputDir,
+        "optimizer.formats": this.options.formats.join(","),
+      },
+    );
   }
 
   private optimizeImage(imagePath: string): Promise<void> {
     const relPath = relative(this.options.inputDir, imagePath);
 
-    return withSpan("build.asset.ImageOptimizer.optimizeImage", async () => {
-      logger.debug(`Optimizing: ${relPath}`);
+    return withSpan(
+      "build.asset.ImageOptimizer.optimizeImage",
+      async () => {
+        logger.debug(`Optimizing: ${relPath}`);
 
-      try {
-        if (!this.sharp) {
-          throw toError(createError({
-            type: "build",
-            message: "Sharp not initialized - call init() first",
-          }));
+        try {
+          if (!this.sharp) {
+            throw toError(
+              createError({
+                type: "build",
+                message: "Sharp not initialized - call init() first",
+              }),
+            );
+          }
+
+          const defaultFormat = this.options.formats[0];
+          if (!defaultFormat) {
+            throw toError(
+              createError({
+                type: "build",
+                message: "No image formats configured for optimization",
+              }),
+            );
+          }
+
+          const imageBuffer = await this.fs.readFile(imagePath);
+          const image = this.sharp(imageBuffer);
+          const metadata = await image.metadata();
+
+          const variants = await generateImageVariants(
+            this.sharp,
+            image,
+            relPath,
+            metadata,
+            this.options.formats,
+            this.options.sizes,
+            this.options.quality,
+            this.options.outputDir,
+          );
+
+          this.imageManifest.set(relPath, {
+            original: relPath,
+            variants,
+            defaultFormat,
+            aspectRatio: calculateAspectRatio(metadata.width, metadata.height),
+          });
+
+          logger.debug(`Generated ${variants.length} variants for ${relPath}`);
+        } catch (error) {
+          logger.error(`Failed to optimize ${relPath}`, {
+            error: error instanceof Error ? error.message : String(error),
+          });
         }
-        const imageBuffer = await this.fs.readFile(imagePath);
-        const image = this.sharp(imageBuffer);
-        const metadata = await image.metadata();
-
-        const variants = await generateImageVariants(
-          this.sharp,
-          image,
-          relPath,
-          metadata,
-          this.options.formats,
-          this.options.sizes,
-          this.options.quality,
-          this.options.outputDir,
-        );
-
-        const defaultFormat = this.options.formats[0];
-        if (!defaultFormat) {
-          throw toError(createError({
-            type: "build",
-            message: `No image formats configured for optimization`,
-          }));
-        }
-
-        this.imageManifest.set(relPath, {
-          original: relPath,
-          variants,
-          defaultFormat,
-          aspectRatio: calculateAspectRatio(metadata.width, metadata.height),
-        });
-
-        logger.debug(`Generated ${variants.length} variants for ${relPath}`);
-      } catch (error) {
-        logger.error(`Failed to optimize ${relPath}`, {
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }, { "image.path": relPath });
+      },
+      { "image.path": relPath },
+    );
   }
 
   getImageMetadata(imagePath: string): OptimizedImageMetadata | null {
@@ -147,25 +160,28 @@ export class ImageOptimizer {
 
   generateSrcSet(imagePath: string, format?: ImageFormat): string {
     const metadata = this.imageManifest.get(imagePath);
-    return metadata ? generateSrcSet(imagePath, metadata, this.options.outputDir, format) : "";
+    if (!metadata) return "";
+    return generateSrcSet(imagePath, metadata, this.options.outputDir, format);
   }
 
   private getTotalVariants(): number {
-    return Array.from(this.imageManifest.values()).reduce(
-      (sum, metadata) => sum + metadata.variants.length,
-      0,
-    );
+    let total = 0;
+    for (const metadata of this.imageManifest.values()) {
+      total += metadata.variants.length;
+    }
+    return total;
   }
 
   getStats(): ImageOptimizationStats {
     const totalImages = this.imageManifest.size;
     const totalVariants = this.getTotalVariants();
 
-    const totalSize = Array.from(this.imageManifest.values()).reduce(
-      (sum, metadata) =>
-        sum + metadata.variants.reduce((variantSum, variant) => variantSum + variant.fileSize, 0),
-      0,
-    );
+    let totalSize = 0;
+    for (const metadata of this.imageManifest.values()) {
+      for (const variant of metadata.variants) {
+        totalSize += variant.fileSize;
+      }
+    }
 
     return {
       totalImages,

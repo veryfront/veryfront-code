@@ -2,9 +2,9 @@ import { Z_INDEX_ERROR_OVERLAY } from "#veryfront/utils";
 
 export function getDevStyles(nonce?: string): string {
   const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
+
   return `
   <style${nonceAttr}>
-    /* Error overlay */
     #veryfront-error-overlay {
       position: fixed;
       top: 0;
@@ -19,15 +19,16 @@ export function getDevStyles(nonce?: string): string {
       padding: 2rem;
     }
 
-    /* Custom animations for dev UI (CSP-compliant) */
     .animate-bounce-delay-200 {
       animation: vf-bounce 1s infinite;
       animation-delay: 0.2s;
     }
+
     .animate-bounce-delay-400 {
       animation: vf-bounce 1s infinite;
       animation-delay: 0.4s;
     }
+
     @keyframes vf-bounce {
       0%, 100% {
         transform: translateY(-25%);
@@ -39,7 +40,6 @@ export function getDevStyles(nonce?: string): string {
       }
     }
 
-    /* View Transitions for smooth page navigation */
     @view-transition {
       navigation: auto;
     }

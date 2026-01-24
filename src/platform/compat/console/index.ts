@@ -35,13 +35,8 @@ async function loadColors(): Promise<ConsoleStyler> {
   if (_colors) return _colors;
 
   try {
-    if (isDeno) {
-      const mod = await import("./deno.ts");
-      _colors = mod.colors;
-    } else {
-      const mod = await import("./node.ts");
-      _colors = mod.colors;
-    }
+    const mod = isDeno ? await import("./deno.ts") : await import("./node.ts");
+    _colors = mod.colors;
   } catch {
     _colors = fallbackColors;
   }
@@ -55,20 +50,24 @@ function getColors(): ConsoleStyler {
   return _colors ?? fallbackColors;
 }
 
-export const red: ColorFunction = (text) => getColors().red(text);
-export const green: ColorFunction = (text) => getColors().green(text);
-export const yellow: ColorFunction = (text) => getColors().yellow(text);
-export const blue: ColorFunction = (text) => getColors().blue(text);
-export const cyan: ColorFunction = (text) => getColors().cyan(text);
-export const magenta: ColorFunction = (text) => getColors().magenta(text);
-export const white: ColorFunction = (text) => getColors().white(text);
-export const gray: ColorFunction = (text) => getColors().gray(text);
-export const bold: ColorFunction = (text) => getColors().bold(text);
-export const dim: ColorFunction = (text) => getColors().dim(text);
-export const italic: ColorFunction = (text) => getColors().italic(text);
-export const underline: ColorFunction = (text) => getColors().underline(text);
-export const strikethrough: ColorFunction = (text) => getColors().strikethrough(text);
-export const reset: ColorFunction = (text) => getColors().reset(text);
+function makeColor(fn: (c: ConsoleStyler) => ColorFunction): ColorFunction {
+  return (text: string) => fn(getColors())(text);
+}
+
+export const red: ColorFunction = makeColor((c) => c.red);
+export const green: ColorFunction = makeColor((c) => c.green);
+export const yellow: ColorFunction = makeColor((c) => c.yellow);
+export const blue: ColorFunction = makeColor((c) => c.blue);
+export const cyan: ColorFunction = makeColor((c) => c.cyan);
+export const magenta: ColorFunction = makeColor((c) => c.magenta);
+export const white: ColorFunction = makeColor((c) => c.white);
+export const gray: ColorFunction = makeColor((c) => c.gray);
+export const bold: ColorFunction = makeColor((c) => c.bold);
+export const dim: ColorFunction = makeColor((c) => c.dim);
+export const italic: ColorFunction = makeColor((c) => c.italic);
+export const underline: ColorFunction = makeColor((c) => c.underline);
+export const strikethrough: ColorFunction = makeColor((c) => c.strikethrough);
+export const reset: ColorFunction = makeColor((c) => c.reset);
 
 export const colors = {
   red,

@@ -26,27 +26,21 @@ export function getColorSchemeFromRequest(
   request: Request,
   url?: URL,
 ): ColorSchemeResult {
-  // Priority 1: Check color_mode query parameter (explicit user override)
-  const requestUrl = url || new URL(request.url);
-  const colorModeParam = requestUrl.searchParams.get("color_mode");
+  const requestUrl = url ?? new URL(request.url);
+  const colorModeParam = requestUrl.searchParams.get("color_mode")?.trim().toLowerCase();
 
-  if (colorModeParam) {
-    const normalizedParam = colorModeParam.trim().toLowerCase();
-    if (normalizedParam === "dark" || normalizedParam === "light") {
-      return { scheme: normalizedParam, fromParam: true };
-    }
+  if (colorModeParam === "dark" || colorModeParam === "light") {
+    return { scheme: colorModeParam, fromParam: true };
   }
 
-  // Priority 2: Check Sec-CH-Prefers-Color-Scheme header
-  const header = request.headers.get("Sec-CH-Prefers-Color-Scheme");
+  const headerValue = request.headers
+    .get("Sec-CH-Prefers-Color-Scheme")
+    ?.replace(/"/g, "")
+    .trim()
+    .toLowerCase();
 
-  if (header) {
-    // Header value is quoted: "dark" or "light"
-    const value = header.replace(/"/g, "").trim().toLowerCase();
-
-    if (value === "dark") {
-      return { scheme: "dark", fromParam: false };
-    }
+  if (headerValue === "dark") {
+    return { scheme: "dark", fromParam: false };
   }
 
   return { scheme: "light", fromParam: false };

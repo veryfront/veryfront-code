@@ -10,7 +10,6 @@ import * as traverseModule from "@babel/traverse";
 import * as generateModule from "@babel/generator";
 import * as t from "@babel/types";
 
-// Types for ESM/CJS interop
 type TraverseFunction = typeof traverseModule.default;
 type GenerateFunction = typeof generateModule.default;
 
@@ -18,21 +17,18 @@ interface ModuleWithDefault<T> {
   default: T | { default: T };
 }
 
-// ESM/CJS interop for Deno - Babel packages export default as .default.default in some cases
-// Final fallback to the module object itself handles CJS where function is the module
-const traverseMod = traverseModule as unknown as ModuleWithDefault<TraverseFunction>;
-const traverse: TraverseFunction = typeof traverseMod.default === "function"
-  ? traverseMod.default
-  : typeof (traverseMod.default as { default?: TraverseFunction }).default === "function"
-  ? (traverseMod.default as { default: TraverseFunction }).default
-  : (traverseModule as unknown as TraverseFunction);
+function resolveDefaultExport<T>(mod: unknown): T {
+  const m = mod as ModuleWithDefault<T>;
+  if (typeof m.default === "function") return m.default as T;
 
-const generateMod = generateModule as unknown as ModuleWithDefault<GenerateFunction>;
-const generate: GenerateFunction = typeof generateMod.default === "function"
-  ? generateMod.default
-  : typeof (generateMod.default as { default?: GenerateFunction }).default === "function"
-  ? (generateMod.default as { default: GenerateFunction }).default
-  : (generateModule as unknown as GenerateFunction);
+  const nested = m.default as { default?: T } | undefined;
+  if (nested && typeof nested.default === "function") return nested.default as T;
+
+  return mod as T;
+}
+
+const traverse: TraverseFunction = resolveDefaultExport<TraverseFunction>(traverseModule);
+const generate: GenerateFunction = resolveDefaultExport<GenerateFunction>(generateModule);
 
 type NodePath<T> = traverseModule.NodePath<T>;
 
@@ -72,35 +68,29 @@ interface TransformOptions {
 }
 
 function getElementName(openingElement: t.JSXOpeningElement): string {
-  const name = openingElement.name;
+  const { name } = openingElement;
 
-  if (t.isJSXIdentifier(name)) {
-    return name.name;
-  }
+  if (t.isJSXIdentifier(name)) return name.name;
 
   if (t.isJSXMemberExpression(name)) {
-    let memberName = "";
+    const parts: string[] = [];
     let current: t.JSXMemberExpression | t.JSXIdentifier = name;
 
     while (t.isJSXMemberExpression(current)) {
-      if (t.isJSXIdentifier(current.property)) {
-        memberName = current.property.name + (memberName ? "." + memberName : "");
-      }
+      if (t.isJSXIdentifier(current.property)) parts.unshift(current.property.name);
       current = current.object;
     }
 
-    if (t.isJSXIdentifier(current)) {
-      memberName = current.name + (memberName ? "." + memberName : "");
-    }
+    if (t.isJSXIdentifier(current)) parts.unshift(current.name);
 
-    return memberName || "MemberExpression";
+    return parts.length ? parts.join(".") : "MemberExpression";
   }
 
   return "DynamicComponent";
 }
 
 function isFragment(openingElement: t.JSXOpeningElement): boolean {
-  const name = openingElement.name;
+  const { name } = openingElement;
 
   if (t.isJSXMemberExpression(name)) {
     return (
@@ -115,97 +105,66 @@ function isFragment(openingElement: t.JSXOpeningElement): boolean {
 }
 
 function hasPositionAttribute(attributes: (t.JSXAttribute | t.JSXSpreadAttribute)[]): boolean {
-  return attributes.some(
-    (attr) =>
-      t.isJSXAttribute(attr) &&
-      t.isJSXIdentifier(attr.name) &&
-      (attr.name.name === "data-node-line" || attr.name.name === "data-vf-id"),
-  );
+  return attributes.some((attr) => {
+    if (!t.isJSXAttribute(attr) || !t.isJSXIdentifier(attr.name)) return false;
+    return attr.name.name === "data-node-line" || attr.name.name === "data-vf-id";
+  });
 }
 
 /**
  * Transform TSX source to inject position data attributes into JSX elements.
  * This enables Studio Navigator to map rendered elements back to source positions.
  */
-export function injectNodePositions(source: string, options: TransformOptions): string {
-  const { filePath: _filePath } = options;
-
-  if (!source.trim()) {
-    return source;
-  }
-
-  let ast: ReturnType<typeof parser.parse>;
+export function injectNodePositions(source: string, _options: TransformOptions): string {
+  if (!source.trim()) return source;
 
   try {
-    ast = parser.parse(source, {
+    const ast = parser.parse(source, {
       sourceType: "module",
       plugins: ["typescript", "jsx"],
     });
-  } catch {
-    return source;
-  }
 
-  let nodeCounter = 0;
+    let nodeCounter = 0;
 
-  try {
     traverse(ast, {
       JSXElement: {
         enter(path: NodePath<t.JSXElement>) {
           const openingElement = path.node.openingElement;
           const elementName = getElementName(openingElement);
 
-          if (SKIPPED_ELEMENTS.has(elementName.toLowerCase())) {
-            return;
-          }
-
-          if (isFragment(openingElement)) {
-            return;
-          }
-
-          if (hasPositionAttribute(openingElement.attributes)) {
-            return;
-          }
+          if (SKIPPED_ELEMENTS.has(elementName.toLowerCase())) return;
+          if (isFragment(openingElement)) return;
+          if (hasPositionAttribute(openingElement.attributes)) return;
 
           const loc = openingElement.loc;
-          if (!loc) {
-            return;
-          }
+          if (!loc) return;
 
           const nodeId = `node-${nodeCounter++}`;
 
           openingElement.attributes.push(
             t.jsxAttribute(t.jsxIdentifier("data-node-id"), t.stringLiteral(nodeId)),
-          );
-
-          openingElement.attributes.push(
             t.jsxAttribute(
               t.jsxIdentifier("data-node-line"),
               t.stringLiteral(String(loc.start.line)),
             ),
-          );
-
-          openingElement.attributes.push(
             t.jsxAttribute(
               t.jsxIdentifier("data-node-column"),
               t.stringLiteral(String(loc.start.column)),
             ),
           );
 
-          if (loc.end) {
-            openingElement.attributes.push(
-              t.jsxAttribute(
-                t.jsxIdentifier("data-node-end-line"),
-                t.stringLiteral(String(loc.end.line)),
-              ),
-            );
+          if (!loc.end) return;
 
-            openingElement.attributes.push(
-              t.jsxAttribute(
-                t.jsxIdentifier("data-node-end-column"),
-                t.stringLiteral(String(loc.end.column)),
-              ),
-            );
-          }
+          openingElement.attributes.push(
+            t.jsxAttribute(
+              t.jsxIdentifier("data-node-end-line"),
+              t.stringLiteral(String(loc.end.line)),
+            ),
+            t.jsxAttribute(
+              t.jsxIdentifier("data-node-end-column"),
+              t.stringLiteral(String(loc.end.column)),
+            ),
+          );
         },
       },
     });

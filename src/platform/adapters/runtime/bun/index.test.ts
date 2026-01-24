@@ -11,11 +11,15 @@ import {
   createBunServer,
 } from "./index.ts";
 
+function assertExportedFunction(value: unknown): void {
+  assertExists(value);
+  assertEquals(typeof value, "function");
+}
+
 describe("runtime/bun/index.ts exports", () => {
   describe("BunAdapter", () => {
     it("should export BunAdapter class", () => {
-      assertExists(BunAdapter);
-      assertEquals(typeof BunAdapter, "function");
+      assertExportedFunction(BunAdapter);
     });
 
     it("should export bunAdapter singleton", () => {
@@ -27,43 +31,37 @@ describe("runtime/bun/index.ts exports", () => {
 
   describe("BunFileSystemAdapter", () => {
     it("should export BunFileSystemAdapter class", () => {
-      assertExists(BunFileSystemAdapter);
-      assertEquals(typeof BunFileSystemAdapter, "function");
+      assertExportedFunction(BunFileSystemAdapter);
     });
   });
 
   describe("BunEnvironmentAdapter", () => {
     it("should export BunEnvironmentAdapter class", () => {
-      assertExists(BunEnvironmentAdapter);
-      assertEquals(typeof BunEnvironmentAdapter, "function");
+      assertExportedFunction(BunEnvironmentAdapter);
     });
   });
 
   describe("BunServerAdapter", () => {
     it("should export BunServerAdapter class", () => {
-      assertExists(BunServerAdapter);
-      assertEquals(typeof BunServerAdapter, "function");
+      assertExportedFunction(BunServerAdapter);
     });
   });
 
   describe("BunWebSocket", () => {
     it("should export BunWebSocket class", () => {
-      assertExists(BunWebSocket);
-      assertEquals(typeof BunWebSocket, "function");
+      assertExportedFunction(BunWebSocket);
     });
   });
 
   describe("BunServer", () => {
     it("should export BunServer class", () => {
-      assertExists(BunServer);
-      assertEquals(typeof BunServer, "function");
+      assertExportedFunction(BunServer);
     });
   });
 
   describe("createBunServer", () => {
     it("should export createBunServer function", () => {
-      assertExists(createBunServer);
-      assertEquals(typeof createBunServer, "function");
+      assertExportedFunction(createBunServer);
     });
   });
 });

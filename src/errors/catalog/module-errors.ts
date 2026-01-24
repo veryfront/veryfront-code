@@ -55,15 +55,17 @@ resolve: {
     ],
   ),
 
-  [ErrorCode.DEPENDENCY_MISSING]: createErrorSolution(ErrorCode.DEPENDENCY_MISSING, {
-    title: "Required dependency not found",
-    message: "A required dependency is missing.",
-    steps: [
-      "Add React to your import map",
-      "Ensure all peer dependencies are included",
-      "Run 'veryfront doctor' to verify setup",
-    ],
-    example: `// Minimum required imports
+  [ErrorCode.DEPENDENCY_MISSING]: createErrorSolution(
+    ErrorCode.DEPENDENCY_MISSING,
+    {
+      title: "Required dependency not found",
+      message: "A required dependency is missing.",
+      steps: [
+        "Add React to your import map",
+        "Ensure all peer dependencies are included",
+        "Run 'veryfront doctor' to verify setup",
+      ],
+      example: `// Minimum required imports
 resolve: {
   importMap: {
     imports: {
@@ -72,7 +74,8 @@ resolve: {
     }
   }
 }`,
-  }),
+    },
+  ),
 
   [ErrorCode.VERSION_MISMATCH]: createSimpleError(
     ErrorCode.VERSION_MISMATCH,

@@ -1,11 +1,10 @@
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { StaticDataFetcher } from "./static-data-fetcher.ts";
-import { CacheManager } from "./data-fetching-cache.ts";
-import type { DataContext, PageWithData } from "./types.ts";
 import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
+import { CacheManager } from "./data-fetching-cache.ts";
+import { StaticDataFetcher } from "./static-data-fetcher.ts";
+import type { DataContext, PageWithData } from "./types.ts";
 
-// Helper to run tests with production mode cache context
 function withProductionContext<T>(fn: () => T): T {
   return runWithCacheKeyContext(
     { projectId: "test-project", mode: "production", versionId: "rel_123" },
@@ -13,15 +12,17 @@ function withProductionContext<T>(fn: () => T): T {
   );
 }
 
-describe("StaticDataFetcher", () => {
-  const createContext = (overrides: Partial<DataContext> = {}): DataContext => ({
+function createContext(overrides: Partial<DataContext> = {}): DataContext {
+  return {
     params: {},
     query: new URLSearchParams(),
     request: new Request("http://localhost/test"),
     url: new URL("http://localhost/test"),
     ...overrides,
-  });
+  };
+}
 
+describe("StaticDataFetcher", () => {
   describe("constructor", () => {
     it("should create instance with cache manager", () => {
       const cache = new CacheManager();
@@ -31,9 +32,7 @@ describe("StaticDataFetcher", () => {
 
     it("should create instance with adapter", () => {
       const cache = new CacheManager();
-      const mockAdapter = {
-        env: { get: () => undefined },
-      } as any;
+      const mockAdapter = { env: { get: () => undefined } } as any;
       const fetcher = new StaticDataFetcher(cache, mockAdapter);
       assertExists(fetcher);
     });
@@ -43,9 +42,7 @@ describe("StaticDataFetcher", () => {
     it("should return empty props when getStaticData is not defined", async () => {
       const cache = new CacheManager();
       const fetcher = new StaticDataFetcher(cache);
-      const pageModule: PageWithData = {
-        default: () => null,
-      };
+      const pageModule: PageWithData = { default: () => null };
 
       const result = await fetcher.fetch(pageModule, createContext());
 
@@ -90,7 +87,7 @@ describe("StaticDataFetcher", () => {
       const pageModule: PageWithData = {
         default: () => null,
         getStaticData: (ctx) => {
-          receivedContext = ctx as typeof receivedContext;
+          receivedContext = ctx;
           return { props: {} };
         },
       };
@@ -107,14 +104,12 @@ describe("StaticDataFetcher", () => {
       const fetcher = new StaticDataFetcher(cache);
       const pageModule: PageWithData<{ title: string }> = {
         default: () => null,
-        getStaticData: () => ({
-          props: { title: "Static Title" },
-        }),
+        getStaticData: () => ({ props: { title: "Static Title" } }),
       };
 
       const result = await fetcher.fetch(pageModule, createContext());
 
-      assertEquals((result.props as { title: string })?.title, "Static Title");
+      assertEquals((result.props as { title: string }).title, "Static Title");
     });
 
     it("should cache result after fetch in production mode", async () => {
@@ -131,18 +126,14 @@ describe("StaticDataFetcher", () => {
           },
         };
 
-        const context = createContext({
-          url: new URL("http://localhost/cached-page"),
-        });
+        const context = createContext({ url: new URL("http://localhost/cached-page") });
 
-        // First fetch should call getStaticData
         const result1 = await fetcher.fetch(pageModule, context);
-        assertEquals((result1.props as { count: number })?.count, 1);
+        assertEquals((result1.props as { count: number }).count, 1);
 
-        // Second fetch should use cache
         const result2 = await fetcher.fetch(pageModule, context);
-        assertEquals((result2.props as { count: number })?.count, 1);
-        assertEquals(callCount, 1); // Only called once
+        assertEquals((result2.props as { count: number }).count, 1);
+        assertEquals(callCount, 1);
       });
     });
 
@@ -172,7 +163,7 @@ describe("StaticDataFetcher", () => {
         await fetcher.fetch(pageModule, context1);
         await fetcher.fetch(pageModule, context2);
 
-        assertEquals(callCount, 2); // Called for each unique path
+        assertEquals(callCount, 2);
       });
     });
 
@@ -181,9 +172,7 @@ describe("StaticDataFetcher", () => {
       const fetcher = new StaticDataFetcher(cache);
       const pageModule: PageWithData = {
         default: () => null,
-        getStaticData: () => ({
-          redirect: { destination: "/moved", permanent: true },
-        }),
+        getStaticData: () => ({ redirect: { destination: "/moved", permanent: true } }),
       };
 
       const result = await fetcher.fetch(pageModule, createContext());
@@ -197,9 +186,7 @@ describe("StaticDataFetcher", () => {
       const fetcher = new StaticDataFetcher(cache);
       const pageModule: PageWithData = {
         default: () => null,
-        getStaticData: () => ({
-          notFound: true,
-        }),
+        getStaticData: () => ({ notFound: true }),
       };
 
       const result = await fetcher.fetch(pageModule, createContext());
@@ -229,14 +216,12 @@ describe("StaticDataFetcher", () => {
       const fetcher = new StaticDataFetcher(cache);
       const pageModule: PageWithData<{ sync: boolean }> = {
         default: () => null,
-        getStaticData: () => ({
-          props: { sync: true },
-        }),
+        getStaticData: () => ({ props: { sync: true } }),
       };
 
       const result = await fetcher.fetch(pageModule, createContext());
 
-      assertEquals((result.props as { sync: boolean })?.sync, true);
+      assertEquals((result.props as { sync: boolean }).sync, true);
     });
 
     it("should cache with revalidate time in production mode", async () => {
@@ -245,23 +230,17 @@ describe("StaticDataFetcher", () => {
         const fetcher = new StaticDataFetcher(cache);
         const pageModule: PageWithData = {
           default: () => null,
-          getStaticData: () => ({
-            props: { data: "cached" },
-            revalidate: 60,
-          }),
+          getStaticData: () => ({ props: { data: "cached" }, revalidate: 60 }),
         };
 
-        const context = createContext({
-          url: new URL("http://localhost/isr-page"),
-        });
+        const context = createContext({ url: new URL("http://localhost/isr-page") });
 
         await fetcher.fetch(pageModule, context);
 
-        // Verify cache entry has revalidate
         const cacheKey = cache.createCacheKey(context);
         assertExists(cacheKey);
-        const entry = cache.get(cacheKey);
 
+        const entry = cache.get(cacheKey);
         assertExists(entry);
         assertEquals(entry.revalidate, 60);
       });
@@ -283,17 +262,13 @@ describe("StaticDataFetcher", () => {
             },
           };
 
-          const context = createContext({
-            url: new URL("http://localhost/preview-page"),
-          });
+          const context = createContext({ url: new URL("http://localhost/preview-page") });
 
-          // First fetch
           const result1 = await fetcher.fetch(pageModule, context);
-          assertEquals((result1.props as { count: number })?.count, 1);
+          assertEquals((result1.props as { count: number }).count, 1);
 
-          // Second fetch should call again (no caching in preview)
           const result2 = await fetcher.fetch(pageModule, context);
-          assertEquals((result2.props as { count: number })?.count, 2);
+          assertEquals((result2.props as { count: number }).count, 2);
           assertEquals(callCount, 2);
         },
       );
@@ -309,24 +284,17 @@ describe("StaticDataFetcher", () => {
           default: () => null,
           getStaticData: () => {
             callCount++;
-            return {
-              props: { version: callCount },
-              revalidate: 3600, // 1 hour
-            };
+            return { props: { version: callCount }, revalidate: 3600 };
           },
         };
 
-        const context = createContext({
-          url: new URL("http://localhost/fresh-page"),
-        });
+        const context = createContext({ url: new URL("http://localhost/fresh-page") });
 
-        // First fetch
         const result1 = await fetcher.fetch(pageModule, context);
-        assertEquals((result1.props as { version: number })?.version, 1);
+        assertEquals((result1.props as { version: number }).version, 1);
 
-        // Second fetch should use cache (still fresh)
         const result2 = await fetcher.fetch(pageModule, context);
-        assertEquals((result2.props as { version: number })?.version, 1);
+        assertEquals((result2.props as { version: number }).version, 1);
         assertEquals(callCount, 1);
       });
     });

@@ -1,33 +1,24 @@
 import { setApiKey } from "../../../../lib/token-store.ts";
 
-export async function POST(request: Request) {
+export async function POST(request: Request): Promise<Response> {
   try {
-    const body = await request.json();
-    const { apiKey, databaseUrl } = body;
+    const { apiKey, databaseUrl } = await request.json();
 
     if (!apiKey) {
-      return Response.json(
-        { error: "API key is required" },
-        { status: 400 },
-      );
+      return Response.json({ error: "API key is required" }, { status: 400 });
     }
 
-    // Validate the API key by making a test request to Neon API
     const response = await fetch("https://console.neon.tech/api/v2/projects", {
       headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Accept": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+        Accept: "application/json",
       },
     });
 
     if (!response.ok) {
-      return Response.json(
-        { error: "Invalid API key" },
-        { status: 401 },
-      );
+      return Response.json({ error: "Invalid API key" }, { status: 401 });
     }
 
-    // Store the API key
     setApiKey(apiKey, databaseUrl);
 
     return Response.json({
@@ -36,14 +27,11 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     console.error("Neon auth error:", error);
-    return Response.json(
-      { error: "Authentication failed" },
-      { status: 500 },
-    );
+    return Response.json({ error: "Authentication failed" }, { status: 500 });
   }
 }
 
-export function GET() {
+export function GET(): Response {
   return Response.json({
     authenticated: false,
     message: "Use POST to authenticate with API key",

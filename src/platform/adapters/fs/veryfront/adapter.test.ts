@@ -2,6 +2,17 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontFSAdapter } from "./adapter.ts";
 
+function createAdapter(): VeryfrontFSAdapter {
+  return new VeryfrontFSAdapter({
+    veryfront: {
+      baseUrl: "https://api.example.com",
+      apiToken: "test-token",
+      projectSlug: "test-project",
+      cache: { enabled: false },
+    },
+  });
+}
+
 describe("VeryfrontFSAdapter", () => {
   describe("class", () => {
     it("should export VeryfrontFSAdapter class", () => {
@@ -15,143 +26,66 @@ describe("VeryfrontFSAdapter", () => {
     // These tests verify the class structure without network calls
 
     it("should be instantiable with minimal config", () => {
-      const adapter = new VeryfrontFSAdapter({
-        veryfront: {
-          baseUrl: "https://api.example.com",
-          apiToken: "test-token",
-          projectSlug: "test-project",
-          cache: { enabled: false },
-        },
-      });
+      const adapter = createAdapter();
       assertExists(adapter);
     });
 
     it("should have readFile method", () => {
-      const adapter = new VeryfrontFSAdapter({
-        veryfront: {
-          baseUrl: "https://api.example.com",
-          apiToken: "test-token",
-          projectSlug: "test-project",
-          cache: { enabled: false },
-        },
-      });
+      const adapter = createAdapter();
       assertExists(adapter.readFile);
       assertEquals(typeof adapter.readFile, "function");
     });
 
     it("should have readTextFile method", () => {
-      const adapter = new VeryfrontFSAdapter({
-        veryfront: {
-          baseUrl: "https://api.example.com",
-          apiToken: "test-token",
-          projectSlug: "test-project",
-          cache: { enabled: false },
-        },
-      });
+      const adapter = createAdapter();
       assertExists(adapter.readTextFile);
       assertEquals(typeof adapter.readTextFile, "function");
     });
 
     it("should have readdir method", () => {
-      const adapter = new VeryfrontFSAdapter({
-        veryfront: {
-          baseUrl: "https://api.example.com",
-          apiToken: "test-token",
-          projectSlug: "test-project",
-          cache: { enabled: false },
-        },
-      });
+      const adapter = createAdapter();
       assertExists(adapter.readdir);
       assertEquals(typeof adapter.readdir, "function");
     });
 
     it("should have stat method", () => {
-      const adapter = new VeryfrontFSAdapter({
-        veryfront: {
-          baseUrl: "https://api.example.com",
-          apiToken: "test-token",
-          projectSlug: "test-project",
-          cache: { enabled: false },
-        },
-      });
+      const adapter = createAdapter();
       assertExists(adapter.stat);
       assertEquals(typeof adapter.stat, "function");
     });
 
     it("should have exists method", () => {
-      const adapter = new VeryfrontFSAdapter({
-        veryfront: {
-          baseUrl: "https://api.example.com",
-          apiToken: "test-token",
-          projectSlug: "test-project",
-          cache: { enabled: false },
-        },
-      });
+      const adapter = createAdapter();
       assertExists(adapter.exists);
       assertEquals(typeof adapter.exists, "function");
     });
 
     it("should have initialize method", () => {
-      const adapter = new VeryfrontFSAdapter({
-        veryfront: {
-          baseUrl: "https://api.example.com",
-          apiToken: "test-token",
-          projectSlug: "test-project",
-          cache: { enabled: false },
-        },
-      });
+      const adapter = createAdapter();
       assertExists(adapter.initialize);
       assertEquals(typeof adapter.initialize, "function");
     });
 
     it("should have dispose method", () => {
-      const adapter = new VeryfrontFSAdapter({
-        veryfront: {
-          baseUrl: "https://api.example.com",
-          apiToken: "test-token",
-          projectSlug: "test-project",
-          cache: { enabled: false },
-        },
-      });
+      const adapter = createAdapter();
       assertExists(adapter.dispose);
       assertEquals(typeof adapter.dispose, "function");
     });
 
     it("should have getCacheStats method", () => {
-      const adapter = new VeryfrontFSAdapter({
-        veryfront: {
-          baseUrl: "https://api.example.com",
-          apiToken: "test-token",
-          projectSlug: "test-project",
-          cache: { enabled: false },
-        },
-      });
+      const adapter = createAdapter();
       assertExists(adapter.getCacheStats);
       assertEquals(typeof adapter.getCacheStats, "function");
     });
 
     it("should have setRequestToken method", () => {
-      const adapter = new VeryfrontFSAdapter({
-        veryfront: {
-          baseUrl: "https://api.example.com",
-          apiToken: "test-token",
-          projectSlug: "test-project",
-          cache: { enabled: false },
-        },
-      });
+      const adapter = createAdapter();
       assertExists(adapter.setRequestToken);
       assertEquals(typeof adapter.setRequestToken, "function");
     });
 
     it("should have setContentContext method", () => {
-      const adapter = new VeryfrontFSAdapter({
-        veryfront: {
-          baseUrl: "https://api.example.com",
-          apiToken: "test-token",
-          projectSlug: "test-project",
-          cache: { enabled: false },
-        },
-      });
+      const adapter = createAdapter();
       assertExists(adapter.setContentContext);
       assertEquals(typeof adapter.setContentContext, "function");
     });
@@ -159,14 +93,7 @@ describe("VeryfrontFSAdapter", () => {
 
   describe("content context", () => {
     it("should default to null before initialize", () => {
-      const adapter = new VeryfrontFSAdapter({
-        veryfront: {
-          baseUrl: "https://api.example.com",
-          apiToken: "test-token",
-          projectSlug: "test-project",
-          cache: { enabled: false },
-        },
-      });
+      const adapter = createAdapter();
       // Context is null until initialize() is called or setContentContext() is used
       assertEquals(adapter.getContentContext(), null);
     });
@@ -174,14 +101,7 @@ describe("VeryfrontFSAdapter", () => {
     it("should preserve context set via setContentContext before initialize", () => {
       // This test verifies the fix for the bug where initialize() would
       // overwrite a pre-set content context (e.g., from ProxyFSAdapterManager)
-      const adapter = new VeryfrontFSAdapter({
-        veryfront: {
-          baseUrl: "https://api.example.com",
-          apiToken: "test-token",
-          projectSlug: "test-project",
-          cache: { enabled: false },
-        },
-      });
+      const adapter = createAdapter();
 
       // Simulate what ProxyFSAdapterManager does: set context before initialize
       adapter.setContentContext({
@@ -202,14 +122,7 @@ describe("VeryfrontFSAdapter", () => {
     });
 
     it("should be able to set environment context", () => {
-      const adapter = new VeryfrontFSAdapter({
-        veryfront: {
-          baseUrl: "https://api.example.com",
-          apiToken: "test-token",
-          projectSlug: "test-project",
-          cache: { enabled: false },
-        },
-      });
+      const adapter = createAdapter();
       adapter.setContentContext({
         sourceType: "environment",
         projectSlug: "test-project",
@@ -221,14 +134,7 @@ describe("VeryfrontFSAdapter", () => {
     });
 
     it("should be able to set release context", () => {
-      const adapter = new VeryfrontFSAdapter({
-        veryfront: {
-          baseUrl: "https://api.example.com",
-          apiToken: "test-token",
-          projectSlug: "test-project",
-          cache: { enabled: false },
-        },
-      });
+      const adapter = createAdapter();
       adapter.setContentContext({
         sourceType: "release",
         projectSlug: "test-project",
@@ -240,14 +146,7 @@ describe("VeryfrontFSAdapter", () => {
     });
 
     it("should be able to set branch context", () => {
-      const adapter = new VeryfrontFSAdapter({
-        veryfront: {
-          baseUrl: "https://api.example.com",
-          apiToken: "test-token",
-          projectSlug: "test-project",
-          cache: { enabled: false },
-        },
-      });
+      const adapter = createAdapter();
       adapter.setContentContext({
         sourceType: "branch",
         projectSlug: "test-project",
@@ -261,39 +160,18 @@ describe("VeryfrontFSAdapter", () => {
 
   describe("request branch", () => {
     it("should default to null request branch", () => {
-      const adapter = new VeryfrontFSAdapter({
-        veryfront: {
-          baseUrl: "https://api.example.com",
-          apiToken: "test-token",
-          projectSlug: "test-project",
-          cache: { enabled: false },
-        },
-      });
+      const adapter = createAdapter();
       assertEquals(adapter.getRequestBranch(), null);
     });
 
     it("should be able to set request branch", () => {
-      const adapter = new VeryfrontFSAdapter({
-        veryfront: {
-          baseUrl: "https://api.example.com",
-          apiToken: "test-token",
-          projectSlug: "test-project",
-          cache: { enabled: false },
-        },
-      });
+      const adapter = createAdapter();
       adapter.setRequestBranch("feature-branch");
       assertEquals(adapter.getRequestBranch(), "feature-branch");
     });
 
     it("should be able to clear request branch", () => {
-      const adapter = new VeryfrontFSAdapter({
-        veryfront: {
-          baseUrl: "https://api.example.com",
-          apiToken: "test-token",
-          projectSlug: "test-project",
-          cache: { enabled: false },
-        },
-      });
+      const adapter = createAdapter();
       adapter.setRequestBranch("feature-branch");
       adapter.clearRequestBranch();
       assertEquals(adapter.getRequestBranch(), null);

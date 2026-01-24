@@ -11,17 +11,10 @@ import { getOsType, runCommand } from "#veryfront/platform/compat/process.ts";
 
 export type PackageManager = "npm" | "yarn" | "pnpm" | "bun";
 
-/**
- * Check if running on Windows
- */
 function isWindows(): boolean {
   return getOsType() === "windows";
 }
 
-/**
- * Execute a shell command cross-runtime (Deno/Node.js)
- * @returns Promise with exit code
- */
 async function executeCommand(
   cmd: string,
   args: string[],
@@ -34,7 +27,28 @@ async function executeCommand(
     inherit: !silent,
     shell: isWindows(), // Use shell on Windows for .cmd files
   });
+
   return result.code;
+}
+
+const LOCKFILES: Array<{ file: string; pm: PackageManager }> = [
+  { file: "bun.lockb", pm: "bun" },
+  { file: "pnpm-lock.yaml", pm: "pnpm" },
+  { file: "yarn.lock", pm: "yarn" },
+  { file: "package-lock.json", pm: "npm" },
+];
+
+async function detectFromDir(dir: string): Promise<PackageManager | undefined> {
+  const fs = createFileSystem();
+
+  for (const { file, pm } of LOCKFILES) {
+    const lockPath = join(dir, file);
+    if (await fs.exists(lockPath)) {
+      return pm;
+    }
+  }
+
+  return undefined;
 }
 
 /**
@@ -50,39 +64,23 @@ export async function detectPackageManager(
   projectDir: string,
   preference?: PackageManager,
 ): Promise<PackageManager> {
-  if (preference) {
-    return preference;
+  if (preference) return preference;
+
+  const detected = await detectFromDir(projectDir);
+  if (detected) {
+    const file = LOCKFILES.find((l) => l.pm === detected)?.file;
+    if (file) logger.debug(`Detected ${detected} from ${file}`);
+    return detected;
   }
 
-  const fs = createFileSystem();
-
-  // Check for lockfiles in project directory
-  const lockfiles: Array<{ file: string; pm: PackageManager }> = [
-    { file: "bun.lockb", pm: "bun" },
-    { file: "pnpm-lock.yaml", pm: "pnpm" },
-    { file: "yarn.lock", pm: "yarn" },
-    { file: "package-lock.json", pm: "npm" },
-  ];
-
-  for (const { file, pm } of lockfiles) {
-    const lockPath = join(projectDir, file);
-    if (await fs.exists(lockPath)) {
-      logger.debug(`Detected ${pm} from ${file}`);
-      return pm;
-    }
-  }
-
-  // Check parent directory (monorepo support)
   const parentDir = join(projectDir, "..");
-  for (const { file, pm } of lockfiles) {
-    const lockPath = join(parentDir, file);
-    if (await fs.exists(lockPath)) {
-      logger.debug(`Detected ${pm} from parent directory ${file}`);
-      return pm;
-    }
+  const detectedFromParent = await detectFromDir(parentDir);
+  if (detectedFromParent) {
+    const file = LOCKFILES.find((l) => l.pm === detectedFromParent)?.file;
+    if (file) logger.debug(`Detected ${detectedFromParent} from parent directory ${file}`);
+    return detectedFromParent;
   }
 
-  // Default to npm
   return "npm";
 }
 
@@ -91,7 +89,7 @@ const INSTALL_COMMANDS: Record<PackageManager, string> = {
   pnpm: "pnpm install",
   yarn: "yarn",
   npm: "npm install",
-} as const;
+};
 
 /**
  * Get the install command for a package manager
@@ -114,32 +112,25 @@ export async function installDependencies(
     silent?: boolean;
   } = {},
 ): Promise<boolean> {
+  const silent = options.silent ?? false;
   const pm = await detectPackageManager(projectDir, options.packageManager);
   const command = getInstallCommand(pm);
 
-  if (!options.silent) {
-    logger.info(`Installing dependencies with ${pm}...`);
-  }
+  if (!silent) logger.info(`Installing dependencies with ${pm}...`);
 
   try {
-    const parts = command.split(" ");
-    const cmd = parts[0];
-    const args = parts.slice(1);
-    if (!cmd) {
-      throw new Error("Invalid command");
-    }
+    const [cmd, ...args] = command.split(" ");
+    if (!cmd) throw new Error("Invalid command");
 
-    const code = await executeCommand(cmd, args, projectDir, options.silent ?? false);
+    const code = await executeCommand(cmd, args, projectDir, silent);
 
-    if (code === 0) {
-      if (!options.silent) {
-        logger.info(`Dependencies installed successfully`);
-      }
-      return true;
-    } else {
+    if (code !== 0) {
       logger.error(`Failed to install dependencies (exit code: ${code})`);
       return false;
     }
+
+    if (!silent) logger.info("Dependencies installed successfully");
+    return true;
   } catch (error) {
     logger.error(
       `Failed to install dependencies: ${error instanceof Error ? error.message : String(error)}`,

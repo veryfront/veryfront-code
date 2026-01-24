@@ -37,10 +37,8 @@ export const ISSUES_DIR = "issues";
 export function parseFrontmatter(content: string): { frontmatter: string; body: string } | null {
   const match = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
   if (!match || !match[1] || match[2] === undefined) return null;
-  return {
-    frontmatter: match[1],
-    body: match[2].trim(),
-  };
+
+  return { frontmatter: match[1], body: match[2].trim() };
 }
 
 /**
@@ -49,68 +47,65 @@ export function parseFrontmatter(content: string): { frontmatter: string; body: 
 export function parseYaml(yaml: string): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   const lines = yaml.split("\n");
+
   let currentKey: string | null = null;
   let arrayValues: string[] = [];
   let inArray = false;
 
-  for (const line of lines) {
-    // Skip empty lines and comments
-    if (!line.trim() || line.trim().startsWith("#")) continue;
+  const flushArray = (): void => {
+    if (!inArray || !currentKey) return;
+    result[currentKey] = arrayValues;
+    arrayValues = [];
+    inArray = false;
+  };
 
-    // Array item
-    if (line.match(/^\s+-\s+/)) {
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+
+    if (/^\s+-\s+/.test(line)) {
       const itemValue = line.replace(/^\s+-\s+/, "").trim();
-      // Remove quotes if present
       const cleanValue = itemValue.replace(/^["']|["']$/g, "");
       arrayValues.push(cleanValue);
       continue;
     }
 
-    // Key-value pair
     const kvMatch = line.match(/^(\w+):\s*(.*)$/);
-    if (kvMatch) {
-      // Save previous array if any
-      if (inArray && currentKey) {
-        result[currentKey] = arrayValues;
-        arrayValues = [];
-        inArray = false;
-      }
+    if (!kvMatch) continue;
 
-      const key = kvMatch[1];
-      const value = kvMatch[2];
+    flushArray();
 
-      if (!key) continue;
-      currentKey = key;
+    const key = kvMatch[1];
+    const value = kvMatch[2];
+    if (!key) continue;
 
-      if (!value || value === "" || value === "[]") {
-        // Empty array or start of array block
-        inArray = true;
-        arrayValues = [];
-      } else if (value.startsWith("[") && value.endsWith("]")) {
-        // Inline array: [a, b, c]
-        const items = value
-          .slice(1, -1)
-          .split(",")
-          .map((s) => s.trim().replace(/^["']|["']$/g, ""))
-          .filter((s) => s);
-        result[key] = items;
-      } else {
-        // Scalar value
-        let cleanValue: unknown = value.replace(/^["']|["']$/g, "");
-        // Handle special values
-        if (cleanValue === "true") cleanValue = true;
-        else if (cleanValue === "false") cleanValue = false;
-        else if (cleanValue === "null" || cleanValue === "~") cleanValue = undefined;
-        result[key] = cleanValue;
-      }
+    currentKey = key;
+
+    if (!value || value === "[]") {
+      inArray = true;
+      arrayValues = [];
+      continue;
     }
+
+    if (value.startsWith("[") && value.endsWith("]")) {
+      const items = value
+        .slice(1, -1)
+        .split(",")
+        .map((s) => s.trim().replace(/^["']|["']$/g, ""))
+        .filter(Boolean);
+      result[key] = items;
+      continue;
+    }
+
+    let cleanValue: unknown = value.replace(/^["']|["']$/g, "");
+    if (cleanValue === "true") cleanValue = true;
+    else if (cleanValue === "false") cleanValue = false;
+    else if (cleanValue === "null" || cleanValue === "~") cleanValue = undefined;
+
+    result[key] = cleanValue;
   }
 
-  // Save final array if any
-  if (inArray && currentKey) {
-    result[currentKey] = arrayValues;
-  }
-
+  flushArray();
   return result;
 }
 
@@ -123,22 +118,19 @@ export function serializeYaml(metadata: IssueMetadata): string {
   lines.push(`id: ${metadata.id}`);
   lines.push(`title: "${metadata.title.replace(/"/g, '\\"')}"`);
   lines.push(`state: ${metadata.state}`);
+  lines.push(
+    metadata.labels.length > 0
+      ? `labels: [${metadata.labels.map((l) => `"${l}"`).join(", ")}]`
+      : "labels: []",
+  );
 
-  if (metadata.labels.length > 0) {
-    lines.push(`labels: [${metadata.labels.map((l) => `"${l}"`).join(", ")}]`);
-  } else {
-    lines.push("labels: []");
-  }
+  if (metadata.milestone) lines.push(`milestone: ${metadata.milestone}`);
 
-  if (metadata.milestone) {
-    lines.push(`milestone: ${metadata.milestone}`);
-  }
-
-  if (metadata.assignees.length > 0) {
-    lines.push(`assignees: [${metadata.assignees.map((a) => `"${a}"`).join(", ")}]`);
-  } else {
-    lines.push("assignees: []");
-  }
+  lines.push(
+    metadata.assignees.length > 0
+      ? `assignees: [${metadata.assignees.map((a) => `"${a}"`).join(", ")}]`
+      : "assignees: []",
+  );
 
   lines.push(`created_at: ${metadata.created_at}`);
   lines.push(`updated_at: ${metadata.updated_at}`);
@@ -165,11 +157,7 @@ export function parseIssue(content: string, path: string): Issue | null {
 
   try {
     const metadata = validateMetadata(rawMetadata);
-    return {
-      metadata,
-      body: parsed.body,
-      path,
-    };
+    return { metadata, body: parsed.body, path };
   } catch {
     return null;
   }
@@ -196,10 +184,7 @@ export class IssuesManager {
     try {
       await this.fs.mkdir(this.issuesDir, { recursive: true });
     } catch (error) {
-      // Directory might already exist
-      if ((error as { code?: string }).code !== "EEXIST") {
-        throw error;
-      }
+      if ((error as { code?: string }).code !== "EEXIST") throw error;
     }
   }
 
@@ -212,12 +197,10 @@ export class IssuesManager {
     try {
       const entries = this.fs.readDir(this.issuesDir);
       for await (const entry of entries) {
-        if (entry.isFile && entry.name.endsWith(".md")) {
-          const id = entry.name.replace(/\.md$/, "");
-          if (ISSUE_ID_PATTERN.test(id)) {
-            ids.push(id);
-          }
-        }
+        if (!entry.isFile || !entry.name.endsWith(".md")) continue;
+
+        const id = entry.name.replace(/\.md$/, "");
+        if (ISSUE_ID_PATTERN.test(id)) ids.push(id);
       }
     } catch {
       // Directory doesn't exist yet
@@ -234,8 +217,7 @@ export class IssuesManager {
     await this.ensureDir();
 
     const existingIds = await this.listIds();
-    const prefix = validated.prefix as IssuePrefix;
-    const id = generateIssueId(prefix, existingIds);
+    const id = generateIssueId(validated.prefix as IssuePrefix, existingIds);
     const now = new Date().toISOString();
 
     const metadata: IssueMetadata = {
@@ -250,16 +232,9 @@ export class IssuesManager {
     };
 
     const path = `${ISSUES_DIR}/${id}.md`;
-    const issue: Issue = {
-      metadata,
-      body: validated.body ?? "",
-      path,
-    };
+    const issue: Issue = { metadata, body: validated.body ?? "", path };
 
-    const content = serializeIssue(issue);
-    const fullPath = join(this.projectDir, path);
-    await this.fs.writeTextFile(fullPath, content);
-
+    await this.fs.writeTextFile(join(this.projectDir, path), serializeIssue(issue));
     return issue;
   }
 
@@ -268,10 +243,9 @@ export class IssuesManager {
    */
   async get(id: string): Promise<Issue | null> {
     const path = `${ISSUES_DIR}/${id}.md`;
-    const fullPath = join(this.projectDir, path);
 
     try {
-      const content = await this.fs.readTextFile(fullPath);
+      const content = await this.fs.readTextFile(join(this.projectDir, path));
       return parseIssue(content, path);
     } catch {
       return null;
@@ -286,34 +260,26 @@ export class IssuesManager {
     const existing = await this.get(id);
     if (!existing) return null;
 
-    const now = new Date().toISOString();
-
     const metadata: IssueMetadata = {
       ...existing.metadata,
       title: validated.title ?? existing.metadata.title,
       state: validated.state ?? existing.metadata.state,
       labels: validated.labels ?? existing.metadata.labels,
       assignees: validated.assignees ?? existing.metadata.assignees,
-      updated_at: now,
+      updated_at: new Date().toISOString(),
     };
 
-    // Handle milestone (can be set to null to remove)
     if (validated.milestone !== undefined) {
       metadata.milestone = validated.milestone ?? undefined;
     }
 
-    const body = validated.body ?? existing.body;
-
     const issue: Issue = {
       metadata,
-      body,
+      body: validated.body ?? existing.body,
       path: existing.path,
     };
 
-    const content = serializeIssue(issue);
-    const fullPath = join(this.projectDir, existing.path);
-    await this.fs.writeTextFile(fullPath, content);
-
+    await this.fs.writeTextFile(join(this.projectDir, existing.path), serializeIssue(issue));
     return issue;
   }
 
@@ -322,10 +288,9 @@ export class IssuesManager {
    */
   async delete(id: string): Promise<boolean> {
     const path = `${ISSUES_DIR}/${id}.md`;
-    const fullPath = join(this.projectDir, path);
 
     try {
-      await this.fs.remove(fullPath);
+      await this.fs.remove(join(this.projectDir, path));
       return true;
     } catch {
       return false;
@@ -341,56 +306,38 @@ export class IssuesManager {
     const issues: Issue[] = [];
 
     for (const id of ids) {
-      // Filter by prefix early
-      if (validated.prefix && !id.startsWith(`${validated.prefix}-`)) {
-        continue;
-      }
+      if (validated.prefix && !id.startsWith(`${validated.prefix}-`)) continue;
 
       const issue = await this.get(id);
       if (!issue) continue;
 
-      // Apply filters
-      if (validated.state && issue.metadata.state !== validated.state) {
-        continue;
-      }
+      if (validated.state && issue.metadata.state !== validated.state) continue;
 
-      if (validated.labels && validated.labels.length > 0) {
+      if (validated.labels?.length) {
         const hasAllLabels = validated.labels.every((label) =>
           issue.metadata.labels.includes(label)
         );
         if (!hasAllLabels) continue;
       }
 
-      if (validated.milestone && issue.metadata.milestone !== validated.milestone) {
-        continue;
-      }
+      if (validated.milestone && issue.metadata.milestone !== validated.milestone) continue;
 
-      if (validated.assignee && !issue.metadata.assignees.includes(validated.assignee)) {
-        continue;
-      }
+      if (validated.assignee && !issue.metadata.assignees.includes(validated.assignee)) continue;
 
       issues.push(issue);
     }
 
-    // Sort
     const sortKey = validated.sortBy ?? "created_at";
     const sortDir = validated.sortDirection ?? "desc";
 
     issues.sort((a, b) => {
-      let cmp: number;
-      if (sortKey === "id") {
-        cmp = a.metadata.id.localeCompare(b.metadata.id);
-      } else {
-        const aVal = a.metadata[sortKey];
-        const bVal = b.metadata[sortKey];
-        cmp = String(aVal).localeCompare(String(bVal));
-      }
+      const cmp = sortKey === "id"
+        ? a.metadata.id.localeCompare(b.metadata.id)
+        : String(a.metadata[sortKey]).localeCompare(String(b.metadata[sortKey]));
       return sortDir === "desc" ? -cmp : cmp;
     });
 
     const total = issues.length;
-
-    // Apply limit
     const limited = validated.limit ? issues.slice(0, validated.limit) : issues;
 
     return { issues: limited, total };

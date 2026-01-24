@@ -71,14 +71,12 @@ describe("Process Compat", () => {
     });
 
     it("should throw when env var does not exist", () => {
-      let threw = false;
       try {
         requireEnv("__DEFINITELY_NOT_SET__");
+        assertEquals(false, true);
       } catch (e) {
-        threw = true;
         assertEquals(e instanceof Error, true);
       }
-      assertEquals(threw, true);
     });
   });
 
@@ -87,8 +85,7 @@ describe("Process Compat", () => {
       const envVars = env();
       assertExists(envVars);
       assertEquals(typeof envVars, "object");
-      // PATH is almost always set
-      assertExists(envVars["PATH"] || envVars["Path"]);
+      assertExists(envVars["PATH"] ?? envVars["Path"]);
     });
   });
 
@@ -103,8 +100,7 @@ describe("Process Compat", () => {
 
   describe("getArgs", () => {
     it("should return command line arguments array", () => {
-      const args = getArgs();
-      assertEquals(Array.isArray(args), true);
+      assertEquals(Array.isArray(getArgs()), true);
     });
   });
 
@@ -132,7 +128,7 @@ describe("Process Compat", () => {
       const os = getOsType();
       assertExists(os);
       assertEquals(typeof os, "string");
-      // Should be one of the common OS types
+
       const validTypes = ["darwin", "linux", "windows", "freebsd", "netbsd", "aix", "solaris"];
       assertEquals(validTypes.includes(os) || os === "unknown", true);
     });
@@ -143,7 +139,7 @@ describe("Process Compat", () => {
       const version = getRuntimeVersion();
       assertExists(version);
       assertEquals(typeof version, "string");
-      // Should start with one of the known runtimes
+
       const startsWithKnown = version.startsWith("Deno") ||
         version.startsWith("Node.js") ||
         version.startsWith("Bun") ||
@@ -158,7 +154,6 @@ describe("Process Compat", () => {
       assertExists(size);
       assertEquals(typeof size.columns, "number");
       assertEquals(typeof size.rows, "number");
-      // Should return default or actual values
       assertEquals(size.columns > 0, true);
       assertEquals(size.rows > 0, true);
     });
@@ -166,13 +161,11 @@ describe("Process Compat", () => {
 
   describe("isInteractive / isStdoutTTY", () => {
     it("should return boolean for isInteractive", () => {
-      const interactive = isInteractive();
-      assertEquals(typeof interactive, "boolean");
+      assertEquals(typeof isInteractive(), "boolean");
     });
 
     it("should return boolean for isStdoutTTY", () => {
-      const tty = isStdoutTTY();
-      assertEquals(typeof tty, "boolean");
+      assertEquals(typeof isStdoutTTY(), "boolean");
     });
   });
 
@@ -180,15 +173,12 @@ describe("Process Compat", () => {
     it("should return stdout object with write method", () => {
       const stdout = getStdout();
       assertExists(stdout);
-      if (stdout) {
-        assertEquals(typeof stdout.write, "function");
-      }
+      assertEquals(typeof stdout?.write, "function");
     });
   });
 
   describe("writeStdout", () => {
     it("should write to stdout without throwing", () => {
-      // Should not throw
       writeStdout("");
     });
   });

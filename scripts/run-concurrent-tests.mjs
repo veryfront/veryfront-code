@@ -94,8 +94,16 @@ if (!nodeEnv.NODE_TEST_CONCURRENCY && !nodeEnv.VF_TEST_CONCURRENCY) {
 if (!nodeEnv.NODE_TEST_SHARDS && !nodeEnv.VF_TEST_SHARDS && autoShards > 1) {
   nodeEnv.NODE_TEST_SHARDS = String(autoShards);
 }
-if (profile === "fast" && !nodeEnv.VF_TEST_EXCLUDE && !nodeEnv.NODE_TEST_EXCLUDE) {
-  nodeEnv.VF_TEST_EXCLUDE = "tests/integration/**,tests/ai/**,tests/rendering/**";
+// Exclude Deno-specific test files that use Deno.test directly
+const denoOnlyTests = "src/issues/**,src/cache/backend.test.ts";
+if (!nodeEnv.VF_TEST_EXCLUDE && !nodeEnv.NODE_TEST_EXCLUDE) {
+  nodeEnv.VF_TEST_EXCLUDE = denoOnlyTests;
+} else {
+  const existing = nodeEnv.VF_TEST_EXCLUDE || nodeEnv.NODE_TEST_EXCLUDE || "";
+  nodeEnv.VF_TEST_EXCLUDE = existing ? `${existing},${denoOnlyTests}` : denoOnlyTests;
+}
+if (profile === "fast" && !nodeEnv.VF_TEST_EXCLUDE) {
+  nodeEnv.VF_TEST_EXCLUDE = `${denoOnlyTests},tests/integration/**,tests/ai/**,tests/rendering/**`;
 }
 if (profile === "fast" && !nodeEnv.VF_TEST_TIME_SCALE) {
   nodeEnv.VF_TEST_TIME_SCALE = "0.25";

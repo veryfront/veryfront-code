@@ -7,12 +7,15 @@ export default tool({
   description: "Send a message to a Discord channel. Returns the sent message details.",
   inputSchema: z.object({
     channelId: z.string().describe("The ID of the Discord channel to send the message to"),
-    content: z.string().min(1).max(2000).describe(
-      "The message content to send (1-2000 characters)",
-    ),
-    tts: z.boolean().default(false).describe(
-      "Whether this message should be sent as text-to-speech",
-    ),
+    content: z
+      .string()
+      .min(1)
+      .max(2000)
+      .describe("The message content to send (1-2000 characters)"),
+    tts: z
+      .boolean()
+      .default(false)
+      .describe("Whether this message should be sent as text-to-speech"),
   }),
   async execute({ channelId, content, tts }) {
     const message = await sendMessage(channelId, content, { tts });

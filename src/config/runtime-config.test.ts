@@ -1,4 +1,4 @@
-/**
+/****
  * Tests for runtime configuration.
  * @module
  */
@@ -64,22 +64,28 @@ describe("RuntimeConfig", () => {
     });
 
     it("computes runtime flags correctly", () => {
-      const prodEnv = createTestRuntimeEnv({ nodeEnv: "production" });
-      const prodConfig = createRuntimeConfig({}, prodEnv);
+      const prodConfig = createRuntimeConfig(
+        {},
+        createTestRuntimeEnv({ nodeEnv: "production" }),
+      );
 
       expect(prodConfig.runtime.isProduction).toBe(true);
       expect(prodConfig.runtime.isDevelopment).toBe(false);
       expect(prodConfig.runtime.isTest).toBe(false);
 
-      const devEnv = createTestRuntimeEnv({ nodeEnv: "development" });
-      const devConfig = createRuntimeConfig({}, devEnv);
+      const devConfig = createRuntimeConfig(
+        {},
+        createTestRuntimeEnv({ nodeEnv: "development" }),
+      );
 
       expect(devConfig.runtime.isProduction).toBe(false);
       expect(devConfig.runtime.isDevelopment).toBe(true);
       expect(devConfig.runtime.isTest).toBe(false);
 
-      const testEnv = createTestRuntimeEnv({ nodeEnv: "test" });
-      const testConfig = createRuntimeConfig({}, testEnv);
+      const testConfig = createRuntimeConfig(
+        {},
+        createTestRuntimeEnv({ nodeEnv: "test" }),
+      );
 
       expect(testConfig.runtime.isProduction).toBe(false);
       expect(testConfig.runtime.isDevelopment).toBe(false);
@@ -87,42 +93,46 @@ describe("RuntimeConfig", () => {
     });
 
     it("detects test mode from DENO_TESTING", () => {
-      const env = createTestRuntimeEnv({
-        nodeEnv: "development",
-        denoTesting: true,
-      });
-      const config = createRuntimeConfig({}, env);
+      const config = createRuntimeConfig(
+        {},
+        createTestRuntimeEnv({ nodeEnv: "development", denoTesting: true }),
+      );
 
       expect(config.runtime.isTest).toBe(true);
     });
 
     it("env projectSlug overrides file config", () => {
-      const env = createTestRuntimeEnv({ projectSlug: "env-slug" });
-      const config = createRuntimeConfig({ projectSlug: "file-slug" }, env);
+      const config = createRuntimeConfig(
+        { projectSlug: "file-slug" },
+        createTestRuntimeEnv({ projectSlug: "env-slug" }),
+      );
 
       expect(config.projectSlug).toBe("env-slug");
     });
 
     it("env can enable experimental.rsc", () => {
-      const env = createTestRuntimeEnv({ experimentalRsc: true });
-      const config = createRuntimeConfig({}, env);
+      const config = createRuntimeConfig(
+        {},
+        createTestRuntimeEnv({ experimentalRsc: true }),
+      );
 
       expect(config.experimental?.rsc).toBe(true);
     });
 
     it("file config experimental.rsc takes precedence", () => {
-      const env = createTestRuntimeEnv({ experimentalRsc: false });
       const config = createRuntimeConfig(
         { experimental: { rsc: true } },
-        env,
+        createTestRuntimeEnv({ experimentalRsc: false }),
       );
 
       expect(config.experimental?.rsc).toBe(true);
     });
 
     it("env port overrides file config", () => {
-      const env = createTestRuntimeEnv({ port: 9000 });
-      const config = createRuntimeConfig({ dev: { port: 3000 } }, env);
+      const config = createRuntimeConfig(
+        { dev: { port: 3000 } },
+        createTestRuntimeEnv({ port: 9000 }),
+      );
 
       expect(config.dev?.port).toBe(9000);
     });
@@ -156,17 +166,15 @@ describe("RuntimeConfig", () => {
     it("auto-initializes if not initialized", () => {
       expect(isRuntimeConfigInitialized()).toBe(false);
 
-      const config = getRuntimeConfig();
+      getRuntimeConfig();
 
-      expect(config).toBeDefined();
       expect(isRuntimeConfigInitialized()).toBe(true);
     });
 
     it("returns initialized config", () => {
       const initialized = initRuntimeConfig({ title: "Test" });
-      const retrieved = getRuntimeConfig();
 
-      expect(retrieved).toBe(initialized);
+      expect(getRuntimeConfig()).toBe(initialized);
     });
   });
 
@@ -198,13 +206,11 @@ describe("RuntimeConfig", () => {
     });
 
     it("creates new RuntimeInfo with current env", () => {
-      const config1 = initRuntimeConfig();
-      const runtime1 = config1.runtime;
+      const runtime1 = initRuntimeConfig().runtime;
 
       updateRuntimeConfig({ title: "New" });
       const config2 = getRuntimeConfig();
 
-      // Runtime should be recalculated
       expect(config2.runtime).not.toBe(runtime1);
       expect(config2.runtime.env).toBeDefined();
     });
@@ -251,8 +257,7 @@ describe("RuntimeConfig", () => {
 
   describe("_setRuntimeConfigForTesting", () => {
     it("sets full RuntimeConfig", () => {
-      const testConfig = createTestConfig({ title: "Override" });
-      _setRuntimeConfigForTesting(testConfig);
+      _setRuntimeConfigForTesting(createTestConfig({ title: "Override" }));
 
       expect(getRuntimeConfig().title).toBe("Override");
     });
@@ -281,12 +286,10 @@ describe("RuntimeConfig", () => {
     it("RuntimeConfig extends VeryfrontConfig", () => {
       const config: RuntimeConfig = createTestConfig();
 
-      // Should have VeryfrontConfig properties
       expect("title" in config).toBe(true);
       expect("experimental" in config).toBe(true);
       expect("build" in config).toBe(true);
 
-      // Should have runtime property
       expect("runtime" in config).toBe(true);
       expect(config.runtime.isProduction).toBeDefined();
     });

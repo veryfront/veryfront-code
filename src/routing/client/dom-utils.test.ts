@@ -10,7 +10,7 @@ import {
   parsePageDataFromHTML,
   updateMetaTags,
 } from "./dom-utils.ts";
-import type { FrontmatterData, PageData as _PageData } from "./page-loader.ts";
+import type { FrontmatterData } from "./page-loader.ts";
 
 type GlobalWithDOM = typeof globalThis & {
   HTMLAnchorElement: typeof HTMLAnchorElement;
@@ -28,15 +28,13 @@ class MockHTMLAnchorElement {
   parentElement: MockHTMLElement | MockHTMLAnchorElement | null = null;
   private attrs = new Map<string, string>();
 
-  constructor(href: string = "", attributes: Record<string, string> = {}) {
+  constructor(href = "", attributes: Record<string, string> = {}) {
     this.attrs.set("href", href);
-    for (const [key, value] of Object.entries(attributes)) {
-      this.attrs.set(key, value);
-    }
+    for (const [key, value] of Object.entries(attributes)) this.attrs.set(key, value);
   }
 
   getAttribute(name: string): string | null {
-    return this.attrs.get(name) || null;
+    return this.attrs.get(name) ?? null;
   }
 
   setAttribute(name: string, value: string): void {
@@ -56,13 +54,11 @@ class MockHTMLElement {
   ) {
     this.tagName = tagName.toUpperCase();
     this.parentElement = parent;
-    for (const [key, value] of Object.entries(attributes)) {
-      this.attrs.set(key, value);
-    }
+    for (const [key, value] of Object.entries(attributes)) this.attrs.set(key, value);
   }
 
   getAttribute(name: string): string | null {
-    return this.attrs.get(name) || null;
+    return this.attrs.get(name) ?? null;
   }
 
   setAttribute(name: string, value: string): void {
@@ -84,22 +80,21 @@ class MockElement {
   childNodes: MockElement[] = [];
   parentElement: MockElement | null = null;
 
-  constructor(tagName: string = "DIV") {
+  constructor(tagName = "DIV") {
     this.tagName = tagName.toUpperCase();
   }
 
   getAttribute(name: string): string | null {
-    const attr = this.attributes.find((a) => a.name === name);
-    return attr ? attr.value : null;
+    return this.attributes.find((a) => a.name === name)?.value ?? null;
   }
 
   setAttribute(name: string, value: string): void {
     const existing = this.attributes.find((a) => a.name === name);
     if (existing) {
       existing.value = value;
-    } else {
-      this.attributes.push({ name, value });
+      return;
     }
+    this.attributes.push({ name, value });
   }
 
   hasAttribute(name: string): boolean {
@@ -107,27 +102,26 @@ class MockElement {
   }
 }
 
-const createMockAnchor = (
+function createMockAnchor(
   href: string,
   attributes: Record<string, string> = {},
-): HTMLAnchorElement => {
+): HTMLAnchorElement {
   return new MockHTMLAnchorElement(href, attributes) as unknown as HTMLAnchorElement;
-};
+}
 
-const createMockElement = (
+function createMockElement(
   tagName: string,
   attributes: Record<string, string> = {},
   parent: HTMLElement | HTMLAnchorElement | null = null,
-): HTMLElement => {
-  const element = new MockHTMLElement(
+): HTMLElement {
+  return new MockHTMLElement(
     tagName,
     attributes,
     parent as unknown as MockHTMLElement | MockHTMLAnchorElement | null,
   ) as unknown as HTMLElement;
-  return element;
-};
+}
 
-const setupHTMLAnchorElementMock = () => {
+function setupHTMLAnchorElementMock(): { cleanup: () => void } {
   (globalThis as GlobalWithDOM).HTMLAnchorElement =
     MockHTMLAnchorElement as unknown as typeof HTMLAnchorElement;
 
@@ -136,9 +130,9 @@ const setupHTMLAnchorElementMock = () => {
       (globalThis as GlobalWithDOM).HTMLAnchorElement = originalHTMLAnchorElement;
     },
   };
-};
+}
 
-const setupHTMLElementMock = () => {
+function setupHTMLElementMock(): { cleanup: () => void } {
   (globalThis as GlobalWithDOM).HTMLElement = MockHTMLElement as unknown as typeof HTMLElement;
 
   return {
@@ -146,9 +140,9 @@ const setupHTMLElementMock = () => {
       (globalThis as GlobalWithDOM).HTMLElement = originalHTMLElement;
     },
   };
-};
+}
 
-const setupElementMock = () => {
+function setupElementMock(): { cleanup: () => void } {
   (globalThis as GlobalWithDOM).Element = MockElement as unknown as typeof Element;
 
   return {
@@ -156,9 +150,9 @@ const setupElementMock = () => {
       (globalThis as GlobalWithDOM).Element = originalElement;
     },
   };
-};
+}
 
-const setupDOMMocks = () => {
+function setupDOMMocks(): { cleanup: () => void } {
   const htmlAnchorMock = setupHTMLAnchorElementMock();
   const htmlElementMock = setupHTMLElementMock();
   const elementMock = setupElementMock();
@@ -170,7 +164,7 @@ const setupDOMMocks = () => {
       elementMock.cleanup();
     },
   };
-};
+}
 
 describe("DOM Utils", () => {
   describe("isInternalLink", () => {
@@ -274,16 +268,24 @@ describe("DOM Utils", () => {
     });
 
     it("should return null when no anchor found", () => {
+      const mocks = setupHTMLAnchorElementMock();
+
       const div = createMockElement("div");
       const result = findAnchorElement(div);
 
       assertEquals(result, null, "Should return null when no anchor found");
+
+      mocks.cleanup();
     });
 
     it("should return null when given null", () => {
+      const mocks = setupHTMLAnchorElementMock();
+
       const result = findAnchorElement(null);
 
       assertEquals(result, null, "Should handle null input");
+
+      mocks.cleanup();
     });
 
     it("should stop at anchor element", () => {
@@ -301,12 +303,16 @@ describe("DOM Utils", () => {
     });
 
     it("should handle non-HTMLAnchorElement parents", () => {
+      const mocks = setupHTMLAnchorElementMock();
+
       const div = createMockElement("div");
       const span = createMockElement("span", {}, div);
 
       const result = findAnchorElement(span);
 
       assertEquals(result, null, "Should return null when parent chain has no anchor");
+
+      mocks.cleanup();
     });
   });
 
@@ -317,7 +323,7 @@ describe("DOM Utils", () => {
       setAttribute: (name: string, value: string) => void;
     };
 
-    const setupMockDocument = () => {
+    function setupMockDocument(): { headElements: MockMetaElement[]; cleanup: () => void } {
       const domMocks = setupDOMMocks();
       const originalDocument = (globalThis as GlobalWithDOM).document;
       const headElements: MockMetaElement[] = [];
@@ -340,7 +346,7 @@ describe("DOM Utils", () => {
               return el.getAttribute("property") === "og:title";
             }
             return false;
-          }) || null;
+          }) ?? null;
         },
         createElement: (tag: string) => {
           const attributes = new Map<string, string>();
@@ -349,7 +355,7 @@ describe("DOM Utils", () => {
             setAttribute: (name: string, value: string) => {
               attributes.set(name, value);
             },
-            getAttribute: (name: string) => attributes.get(name) || null,
+            getAttribute: (name: string) => attributes.get(name) ?? null,
           };
         },
       } as unknown as Document;
@@ -361,7 +367,7 @@ describe("DOM Utils", () => {
           domMocks.cleanup();
         },
       };
-    };
+    }
 
     it("should update description meta tag", () => {
       const mocks = setupMockDocument();
@@ -372,9 +378,7 @@ describe("DOM Utils", () => {
 
       updateMetaTags(frontmatter);
 
-      const descMeta = mocks.headElements.find(
-        (el) => el.getAttribute("name") === "description",
-      );
+      const descMeta = mocks.headElements.find((el) => el.getAttribute("name") === "description");
 
       assertExists(descMeta, "Description meta tag should be created");
       assertEquals(
@@ -421,9 +425,7 @@ describe("DOM Utils", () => {
     it("should not create meta tags when frontmatter is empty", () => {
       const mocks = setupMockDocument();
 
-      const frontmatter: FrontmatterData = {};
-
-      updateMetaTags(frontmatter);
+      updateMetaTags({});
 
       assertEquals(mocks.headElements.length, 0, "Should not create meta tags");
 
@@ -441,23 +443,18 @@ describe("DOM Utils", () => {
           return null;
         },
         setAttribute: (name: string, value: string) => {
-          if (name === "content") {
-            existingMeta.getAttribute = (n: string) => {
-              if (n === "name") return "description";
-              if (n === "content") return value;
-              return null;
-            };
-          }
+          if (name !== "content") return;
+          existingMeta.getAttribute = (n: string) => {
+            if (n === "name") return "description";
+            if (n === "content") return value;
+            return null;
+          };
         },
       };
 
       mocks.headElements.push(existingMeta);
 
-      const frontmatter: FrontmatterData = {
-        description: "New description",
-      };
-
-      updateMetaTags(frontmatter);
+      updateMetaTags({ description: "New description" });
 
       assertEquals(
         existingMeta.getAttribute("content"),
@@ -470,28 +467,19 @@ describe("DOM Utils", () => {
   });
 
   describe("executeScripts", () => {
-    type MockScriptElement = {
-      tagName: string;
-      setAttribute: (name: string, value: string) => void;
-      attributes: Array<{ name: string; value: string }>;
-      textContent: string;
-    };
-
     it("should execute scripts in container", () => {
       const scriptExecutions: string[] = [];
       const originalDocument = (globalThis as GlobalWithDOM).document;
 
       (globalThis as GlobalWithDOM).document = {
         createElement: (tag: string) => {
-          if (tag === "script") {
-            return {
-              tagName: "SCRIPT",
-              setAttribute: () => {},
-              attributes: [],
-              textContent: "",
-            };
-          }
-          return null;
+          if (tag !== "script") return null;
+          return {
+            tagName: "SCRIPT",
+            setAttribute: () => {},
+            attributes: [],
+            textContent: "",
+          };
         },
       } as unknown as Document;
 
@@ -500,19 +488,14 @@ describe("DOM Utils", () => {
         attributes: [{ name: "type", value: "text/javascript" }],
         textContent: "console.log('test')",
         parentNode: {
-          replaceChild: (newScript: any, _oldScript: any) => {
+          replaceChild: (newScript: any) => {
             scriptExecutions.push(newScript.textContent);
           },
         },
       };
 
       const container = {
-        querySelectorAll: (selector: string) => {
-          if (selector === "script") {
-            return [oldScript];
-          }
-          return [];
-        },
+        querySelectorAll: (selector: string) => (selector === "script" ? [oldScript] : []),
       } as unknown as HTMLElement;
 
       executeScripts(container);
@@ -529,17 +512,15 @@ describe("DOM Utils", () => {
 
       (globalThis as GlobalWithDOM).document = {
         createElement: (tag: string) => {
-          if (tag === "script") {
-            return {
-              tagName: "SCRIPT",
-              setAttribute: (name: string, value: string) => {
-                copiedAttributes.push({ name, value });
-              },
-              attributes: [],
-              textContent: "",
-            };
-          }
-          return null;
+          if (tag !== "script") return null;
+          return {
+            tagName: "SCRIPT",
+            setAttribute: (name: string, value: string) => {
+              copiedAttributes.push({ name, value });
+            },
+            attributes: [],
+            textContent: "",
+          };
         },
       } as unknown as Document;
 
@@ -625,23 +606,22 @@ describe("DOM Utils", () => {
       parentElement?: { removeChild: (child: MockHeadElement) => void };
     };
 
-    const setupMockDocument = () => {
+    function setupMockDocument(): {
+      headElements: MockHeadElement[];
+      getTitle: () => string;
+      cleanup: () => void;
+    } {
       const domMocks = setupDOMMocks();
       const originalDocument = (globalThis as GlobalWithDOM).document;
       const headElements: MockHeadElement[] = [];
-      const removedElements: MockHeadElement[] = [];
 
       const mockHead = {
         appendChild: (element: MockHeadElement) => {
           headElements.push(element);
         },
         querySelectorAll: (selector: string) => {
-          if (selector === '[data-veryfront-managed="1"]') {
-            return headElements.filter(
-              (el) => el.getAttribute?.("data-veryfront-managed") === "1",
-            );
-          }
-          return [];
+          if (selector !== '[data-veryfront-managed="1"]') return [];
+          return headElements.filter((el) => el.getAttribute?.("data-veryfront-managed") === "1");
         },
       };
 
@@ -655,7 +635,7 @@ describe("DOM Utils", () => {
             setAttribute: (name: string, value: string) => {
               attributes.set(name, value);
             },
-            getAttribute: (name: string) => attributes.get(name) || null,
+            getAttribute: (name: string) => attributes.get(name) ?? null,
             hasAttribute: (name: string) => attributes.has(name),
             textContent: "",
           };
@@ -664,17 +644,13 @@ describe("DOM Utils", () => {
 
       return {
         headElements,
-        removedElements,
         getTitle: () => (globalThis as GlobalWithDOM).document.title,
-        setTitle: (title: string) => {
-          (globalThis as GlobalWithDOM).document.title = title;
-        },
         cleanup: () => {
           (globalThis as GlobalWithDOM).document = originalDocument;
           domMocks.cleanup();
         },
       };
-    };
+    }
 
     it("should update document title from vf-head", () => {
       const mocks = setupMockDocument();
@@ -690,12 +666,9 @@ describe("DOM Utils", () => {
       };
 
       const container = {
-        querySelectorAll: (selector: string) => {
-          if (selector === '[data-veryfront-head="1"], vf-head') {
-            return [vfHead];
-          }
-          return [];
-        },
+        querySelectorAll: (
+          selector: string,
+        ) => (selector === '[data-veryfront-head="1"], vf-head' ? [vfHead] : []),
       } as unknown as HTMLElement;
 
       applyHeadDirectives(container);
@@ -771,9 +744,7 @@ describe("DOM Utils", () => {
         parentElement: {
           removeChild: (child: any) => {
             const index = mocks.headElements.indexOf(child);
-            if (index > -1) {
-              mocks.headElements.splice(index, 1);
-            }
+            if (index > -1) mocks.headElements.splice(index, 1);
           },
         },
       };
@@ -868,9 +839,7 @@ describe("DOM Utils", () => {
         childNodes: [],
         parentElement: {
           removeChild: (child: any) => {
-            if (child === vfHead) {
-              wrapperRemoved = true;
-            }
+            if (child === vfHead) wrapperRemoved = true;
           },
         },
       };
@@ -951,10 +920,9 @@ describe("DOM Utils", () => {
       };
 
       const container = {
-        querySelector: (selector: string) => {
-          if (selector === "[data-router-focus]") return focusElement;
-          return null;
-        },
+        querySelector: (
+          selector: string,
+        ) => (selector === "[data-router-focus]" ? focusElement : null),
       } as unknown as HTMLElement;
 
       manageFocus(container);
@@ -1092,10 +1060,9 @@ describe("DOM Utils", () => {
       };
 
       (globalThis as GlobalWithDOM).document = {
-        querySelector: (selector: string) => {
-          if (selector === "script[data-veryfront-page]") return script;
-          return null;
-        },
+        querySelector: (
+          selector: string,
+        ) => (selector === "script[data-veryfront-page]" ? script : null),
       } as unknown as Document;
 
       const result = extractPageDataFromScript();
@@ -1179,37 +1146,21 @@ describe("DOM Utils", () => {
       DOMParser: typeof DOMParser;
     };
 
-    const setupMockDOMParser = () => {
+    function setupMockDOMParser(): { cleanup: () => void } {
       const originalDOMParser = (globalThis as GlobalWithDOMParser).DOMParser;
 
       class MockDOMParser {
         parseFromString(html: string, _type: string) {
           const rootMatch = html.match(/<div id="root"[^>]*>(.*?)<\/div>/s);
-          const scriptMatch = html.match(
-            /<script data-veryfront-page[^>]*>(.*?)<\/script>/s,
-          );
+          const scriptMatch = html.match(/<script data-veryfront-page[^>]*>(.*?)<\/script>/s);
 
-          const mockRoot = rootMatch
-            ? {
-              innerHTML: rootMatch[1],
-            }
-            : null;
-
-          const mockScript = scriptMatch
-            ? {
-              textContent: scriptMatch[1],
-            }
-            : null;
+          const mockRoot = rootMatch ? { innerHTML: rootMatch[1] } : null;
+          const mockScript = scriptMatch ? { textContent: scriptMatch[1] } : null;
 
           return {
-            getElementById: (id: string) => {
-              if (id === "root") return mockRoot;
-              return null;
-            },
-            querySelector: (selector: string) => {
-              if (selector === "script[data-veryfront-page]") return mockScript;
-              return null;
-            },
+            getElementById: (id: string) => (id === "root" ? mockRoot : null),
+            querySelector: (selector: string) =>
+              selector === "script[data-veryfront-page]" ? mockScript : null,
           };
         }
       }
@@ -1221,7 +1172,7 @@ describe("DOM Utils", () => {
           (globalThis as GlobalWithDOMParser).DOMParser = originalDOMParser;
         },
       };
-    };
+    }
 
     it("should extract content from root element", () => {
       const mocks = setupMockDOMParser();

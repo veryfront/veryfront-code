@@ -56,11 +56,14 @@ export const ESBUILD_LOADERS = {
   ".html": "text",
 } as const;
 
-// Type-safe array includes check
 type ImageExtension = (typeof FILE_EXTENSIONS.IMAGE)[number];
 type ScriptExtension = (typeof FILE_EXTENSIONS.SCRIPT)[number];
 type StyleExtension = (typeof FILE_EXTENSIONS.STYLE)[number];
 type DocumentExtension = (typeof FILE_EXTENSIONS.DOCUMENT)[number];
+
+function getLowerExt(filePath: string): string {
+  return extname(filePath).toLowerCase();
+}
 
 function isInArray<T extends string>(arr: readonly T[], value: string): value is T {
   return (arr as readonly string[]).includes(value);
@@ -70,32 +73,28 @@ function isInArray<T extends string>(arr: readonly T[], value: string): value is
  * Check if file is an image based on extension
  */
 export function isImageFile(filePath: string): boolean {
-  const ext = extname(filePath).toLowerCase();
-  return isInArray<ImageExtension>(FILE_EXTENSIONS.IMAGE, ext);
+  return isInArray<ImageExtension>(FILE_EXTENSIONS.IMAGE, getLowerExt(filePath));
 }
 
 /**
  * Check if file is a script based on extension
  */
 export function isScriptFile(filePath: string): boolean {
-  const ext = extname(filePath).toLowerCase();
-  return isInArray<ScriptExtension>(FILE_EXTENSIONS.SCRIPT, ext);
+  return isInArray<ScriptExtension>(FILE_EXTENSIONS.SCRIPT, getLowerExt(filePath));
 }
 
 /**
  * Check if file is a style file based on extension
  */
 export function isStyleFile(filePath: string): boolean {
-  const ext = extname(filePath).toLowerCase();
-  return isInArray<StyleExtension>(FILE_EXTENSIONS.STYLE, ext);
+  return isInArray<StyleExtension>(FILE_EXTENSIONS.STYLE, getLowerExt(filePath));
 }
 
 /**
  * Check if file is a document (markdown/mdx) based on extension
  */
 export function isDocumentFile(filePath: string): boolean {
-  const ext = extname(filePath).toLowerCase();
-  return isInArray<DocumentExtension>(FILE_EXTENSIONS.DOCUMENT, ext);
+  return isInArray<DocumentExtension>(FILE_EXTENSIONS.DOCUMENT, getLowerExt(filePath));
 }
 
 const IMAGE_FORMAT_MAP: Record<string, ImageFormat> = {
@@ -120,8 +119,8 @@ export function getOptimizedImageFormat(originalFormat: string): ImageFormat {
  * Get esbuild loader type from file path
  */
 export function getEsbuildLoader(filePath: string): string {
-  const ext = extname(filePath).toLowerCase();
-  return ESBUILD_LOADERS[ext as keyof typeof ESBUILD_LOADERS] || "text";
+  const ext = getLowerExt(filePath);
+  return ESBUILD_LOADERS[ext as keyof typeof ESBUILD_LOADERS] ?? "text";
 }
 
 /**
@@ -141,7 +140,7 @@ export function getFileCategory(filePath: string): FileCategory {
  * Check if file needs transpilation
  */
 export function needsTranspilation(filePath: string): boolean {
-  const ext = extname(filePath).toLowerCase();
+  const ext = getLowerExt(filePath);
   return ext === ".ts" || ext === ".tsx" || ext === ".jsx" || ext === ".mdx";
 }
 
@@ -149,7 +148,7 @@ export function needsTranspilation(filePath: string): boolean {
  * Check if file is a TypeScript file
  */
 export function isTypeScriptFile(filePath: string): boolean {
-  const ext = extname(filePath).toLowerCase();
+  const ext = getLowerExt(filePath);
   return ext === ".ts" || ext === ".tsx";
 }
 
@@ -157,7 +156,7 @@ export function isTypeScriptFile(filePath: string): boolean {
  * Check if file is a JSX/TSX file
  */
 export function isJSXFile(filePath: string): boolean {
-  const ext = extname(filePath).toLowerCase();
+  const ext = getLowerExt(filePath);
   return ext === ".jsx" || ext === ".tsx";
 }
 
@@ -165,43 +164,41 @@ export function isJSXFile(filePath: string): boolean {
  * Check if file is an MDX file
  */
 export function isMDXFile(filePath: string): boolean {
-  const ext = extname(filePath).toLowerCase();
-  return ext === ".mdx";
+  return getLowerExt(filePath) === ".mdx";
 }
+
+const MIME_TYPES: Record<string, string> = {
+  // Images
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".webp": "image/webp",
+  ".avif": "image/avif",
+  ".gif": "image/gif",
+  ".svg": "image/svg+xml",
+  // Scripts
+  ".js": "application/javascript",
+  ".jsx": "application/javascript",
+  ".ts": "application/typescript",
+  ".tsx": "application/typescript",
+  ".mjs": "application/javascript",
+  ".cjs": "application/javascript",
+  ".json": "application/json",
+  // Styles
+  ".css": "text/css",
+  ".scss": "text/x-scss",
+  ".sass": "text/x-sass",
+  ".less": "text/x-less",
+  // Documents
+  ".md": "text/markdown",
+  ".mdx": "text/mdx",
+  ".html": "text/html",
+  ".xml": "application/xml",
+};
 
 /**
  * Get MIME type for file
  */
 export function getMimeType(filePath: string): string {
-  const ext = extname(filePath).toLowerCase();
-  const mimeTypes: Record<string, string> = {
-    // Images
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".png": "image/png",
-    ".webp": "image/webp",
-    ".avif": "image/avif",
-    ".gif": "image/gif",
-    ".svg": "image/svg+xml",
-    // Scripts
-    ".js": "application/javascript",
-    ".jsx": "application/javascript",
-    ".ts": "application/typescript",
-    ".tsx": "application/typescript",
-    ".mjs": "application/javascript",
-    ".cjs": "application/javascript",
-    ".json": "application/json",
-    // Styles
-    ".css": "text/css",
-    ".scss": "text/x-scss",
-    ".sass": "text/x-sass",
-    ".less": "text/x-less",
-    // Documents
-    ".md": "text/markdown",
-    ".mdx": "text/mdx",
-    ".html": "text/html",
-    ".xml": "application/xml",
-  };
-
-  return mimeTypes[ext] || "application/octet-stream";
+  return MIME_TYPES[getLowerExt(filePath)] ?? "application/octet-stream";
 }

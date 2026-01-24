@@ -45,79 +45,78 @@ export function startUniversalServer(
     adapter?: RuntimeAdapter;
   },
 ): Promise<ServerHandle> {
-  return withSpan("server.startUniversalServer", async () => {
-    const { projectDir, port, bindAddress = "0.0.0.0", signal, debug, mode } = options;
-    const baseAdapter = options.adapter ?? (await runtime.get());
+  return withSpan(
+    "server.startUniversalServer",
+    async () => {
+      const { projectDir, port, bindAddress = "0.0.0.0", signal, debug, mode } = options;
+      const baseAdapter = options.adapter ?? (await runtime.get());
 
-    // Bootstrap framework to initialize FSAdapter if configured
-    const bootstrap = await bootstrapProd(projectDir, baseAdapter);
-    const adapter = bootstrap.adapter;
+      // Bootstrap framework to initialize FSAdapter if configured
+      const bootstrap = await bootstrapProd(projectDir, baseAdapter);
+      const adapter = bootstrap.adapter;
 
-    if (bootstrap.usingFSAdapter) {
-      logger.debug("FSAdapter initialized", { type: bootstrap.fsAdapterType });
-    }
+      if (bootstrap.usingFSAdapter) {
+        logger.debug("FSAdapter initialized", { type: bootstrap.fsAdapterType });
+      }
 
-    // Enable SSR fetch interception to handle relative URLs during SSR
-    setSSRServerPort(port);
-    enableSSRFetchInterception();
+      // Enable SSR fetch interception to handle relative URLs during SSR
+      setSSRServerPort(port);
+      enableSSRFetchInterception();
 
-    // Enable client-only fetching for /api/* routes in production.
-    // This returns empty mock responses during SSR (instead of failing with
-    // "Invalid URL" or "Connection refused"). React Query will refetch
-    // the actual data client-side after hydration.
-    enableSSRClientOnlyFetching();
+      // Enable client-only fetching for /api/* routes in production.
+      // This returns empty mock responses during SSR (instead of failing with
+      // "Invalid URL" or "Connection refused"). React Query will refetch
+      // the actual data client-side after hydration.
+      enableSSRClientOnlyFetching();
 
-    logger.info("Starting universal production server", { projectDir, port, bindAddress });
+      logger.info("Starting universal production server", { projectDir, port, bindAddress });
 
-    const handler = createVeryfrontHandler(projectDir, adapter, {
-      projectDir,
-      debug,
-      config: bootstrap.config,
-      // When mode is "development", enable dev-only features (e.g., /_veryfront/fs/)
-      // Otherwise explicitly disable dev mode (don't rely on NODE_ENV which may not be set in tests)
-      envConfig: mode === "development" ? { isLocalDev: true } : { isLocalDev: false },
-    });
+      const handler = createVeryfrontHandler(projectDir, adapter, {
+        projectDir,
+        debug,
+        config: bootstrap.config,
+        // When mode is "development", enable dev-only features (e.g., /_veryfront/fs/)
+        // Otherwise explicitly disable dev mode (don't rely on NODE_ENV which may not be set in tests)
+        envConfig: mode === "development" ? { isLocalDev: true } : { isLocalDev: false },
+      });
 
-    let onListenResolve: (() => void) | null = null;
-    const listenReady = new Promise<void>((resolve) => (onListenResolve = resolve));
+      let resolveListenReady: (() => void) | undefined;
+      const listenReady = new Promise<void>((resolve) => {
+        resolveListenReady = resolve;
+      });
 
-    const ready = Promise.all([
-      listenReady,
-      handler.ready ?? Promise.resolve(),
-    ]).then(() => {
-      // Mark server as initialized when ready resolves
-      setServerInitialized(true);
-    });
+      const ready = Promise.all([listenReady, handler.ready ?? Promise.resolve()]).then(() => {
+        // Mark server as initialized when ready resolves
+        setServerInitialized(true);
+      });
 
-    const server = await adapter.serve(handler, {
-      port,
-      hostname: bindAddress, // Deno uses "hostname" for bind address
-      signal,
-      onListen: (params) => {
-        try {
-          onListenResolve?.();
+      const server = await adapter.serve(handler, {
+        port,
+        hostname: bindAddress, // Deno uses "hostname" for bind address
+        signal,
+        onListen: (params) => {
+          resolveListenReady?.();
           logger.info("Universal server listening", params);
+        },
+      });
+
+      async function stop(): Promise<void> {
+        try {
+          setServerInitialized(false);
+          await server.stop();
         } catch {
           /* ignore */
         }
-      },
-    });
-
-    const stop = async () => {
-      try {
-        setServerInitialized(false);
-        await server.stop();
-      } catch {
-        /* ignore */
       }
-    };
 
-    return { ready, stop };
-  }, { "server.port": options.port, "server.bindAddress": options.bindAddress || "0.0.0.0" });
+      return { ready, stop };
+    },
+    { "server.port": options.port, "server.bindAddress": options.bindAddress || "0.0.0.0" },
+  );
 }
 
-export async function startProductionServer(options: ServerOptions): Promise<ServerHandle> {
-  return await startUniversalServer({ ...options });
+export function startProductionServer(options: ServerOptions): Promise<ServerHandle> {
+  return startUniversalServer({ ...options });
 }
 
 if (import.meta.main) {
@@ -166,9 +165,7 @@ if (import.meta.main) {
 
     const shutdownController = new AbortController();
     const projectDir = cwd();
-    const port = Number(
-      adapter.env.get("PORT") ?? adapter.env.get("VERYFRONT_PORT") ?? 3000,
-    );
+    const port = Number(adapter.env.get("PORT") ?? adapter.env.get("VERYFRONT_PORT") ?? 3000);
     // BIND_ADDRESS: 0.0.0.0 = all interfaces, 127.0.0.1 = localhost only
     // Note: Don't use HOSTNAME - K8s sets it to pod name which resolves to pod IP
     const bindAddress = adapter.env.get("BIND_ADDRESS") ?? "0.0.0.0";
@@ -190,19 +187,15 @@ if (import.meta.main) {
 
     // Graceful shutdown for direct CLI execution (e.g., deno run)
     // Default drain timeout: 25 seconds (K8s default terminationGracePeriodSeconds is 30)
-    const drainTimeoutMs = parseInt(
-      adapter.env.get("SHUTDOWN_DRAIN_TIMEOUT_MS") ?? "25000",
-      10,
-    );
+    const drainTimeoutMs = parseInt(adapter.env.get("SHUTDOWN_DRAIN_TIMEOUT_MS") ?? "25000", 10);
 
     let shuttingDown = false;
-    const shutdown = async (signal: "SIGINT" | "SIGTERM") => {
+    const shutdown = async (signal: "SIGINT" | "SIGTERM"): Promise<void> => {
       if (shuttingDown) return;
       shuttingDown = true;
 
-      const inFlightCount = requestTracker.getInFlightCount();
       logger.info(`Received ${signal}, initiating graceful shutdown...`, {
-        inFlightRequests: inFlightCount,
+        inFlightRequests: requestTracker.getInFlightCount(),
         drainTimeoutMs,
       });
 

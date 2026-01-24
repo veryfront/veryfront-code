@@ -10,30 +10,14 @@ import type { InitOptions, InitTemplate } from "./types.ts";
 
 describe("InitCommand Types", () => {
   describe("InitTemplate", () => {
-    it("should support 'ai' template", () => {
-      const template: InitTemplate = "ai";
-      assertEquals(template, "ai");
-    });
+    const templates: InitTemplate[] = ["ai", "app", "blog", "docs", "minimal"];
 
-    it("should support 'app' template", () => {
-      const template: InitTemplate = "app";
-      assertEquals(template, "app");
-    });
-
-    it("should support 'blog' template", () => {
-      const template: InitTemplate = "blog";
-      assertEquals(template, "blog");
-    });
-
-    it("should support 'docs' template", () => {
-      const template: InitTemplate = "docs";
-      assertEquals(template, "docs");
-    });
-
-    it("should support 'minimal' template", () => {
-      const template: InitTemplate = "minimal";
-      assertEquals(template, "minimal");
-    });
+    for (const template of templates) {
+      it(`should support '${template}' template`, () => {
+        const value: InitTemplate = template;
+        assertEquals(value, template);
+      });
+    }
   });
 
   describe("InitOptions", () => {
@@ -43,44 +27,32 @@ describe("InitCommand Types", () => {
     });
 
     it("should allow name option", () => {
-      const options: InitOptions = {
-        name: "my-project",
-      };
+      const options: InitOptions = { name: "my-project" };
       assertEquals(options.name, "my-project");
     });
 
     it("should allow template option", () => {
-      const options: InitOptions = {
-        template: "ai",
-      };
+      const options: InitOptions = { template: "ai" };
       assertEquals(options.template, "ai");
     });
 
     it("should allow skipInstall option", () => {
-      const options: InitOptions = {
-        skipInstall: true,
-      };
+      const options: InitOptions = { skipInstall: true };
       assertEquals(options.skipInstall, true);
     });
 
     it("should allow skipEnvPrompt option", () => {
-      const options: InitOptions = {
-        skipEnvPrompt: true,
-      };
+      const options: InitOptions = { skipEnvPrompt: true };
       assertEquals(options.skipEnvPrompt, true);
     });
 
     it("should allow features array", () => {
-      const options: InitOptions = {
-        features: [],
-      };
+      const options: InitOptions = { features: [] };
       assertEquals(options.features?.length, 0);
     });
 
     it("should allow integrations array", () => {
-      const options: InitOptions = {
-        integrations: [],
-      };
+      const options: InitOptions = { integrations: [] };
       assertEquals(options.integrations?.length, 0);
     });
 

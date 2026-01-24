@@ -1,10 +1,9 @@
 'use client';
 
-import * as React from "react";
-import { MDXProvider } from "@mdx-js/react";
+import * as React from 'react';
+import { MDXProvider } from '@mdx-js/react';
 
 const components = {
-  // Add custom components here
   pre: ({ children, ...props }: React.ComponentProps<'pre'>) => (
     <pre {...props} className="bg-gray-100 p-4 rounded-lg overflow-x-auto">
       {children}
@@ -17,10 +16,6 @@ const components = {
   ),
 };
 
-export function MDXContent({ content }: { content: React.ReactNode }) {
-  return (
-    <MDXProvider components={components}>
-      {content}
-    </MDXProvider>
-  );
+export function MDXContent({ content }: { content: React.ReactNode }): React.JSX.Element {
+  return <MDXProvider components={components}>{content}</MDXProvider>;
 }

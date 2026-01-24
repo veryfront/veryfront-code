@@ -4,7 +4,6 @@
  * @module veryfront/agent
  */
 
-// Types
 export type {
   Agent,
   AgentConfig,
@@ -27,10 +26,8 @@ export type {
   ToolResultPart,
 } from "./types.ts";
 
-// Type guards and helpers
 export { getTextFromParts, getToolArguments, hasArgs, hasInput } from "./types.ts";
 
-// Memory
 export {
   BufferMemory,
   ConversationMemory,
@@ -46,7 +43,6 @@ export {
   SummaryMemory,
 } from "./memory/index.ts";
 
-// Composition
 export {
   agentAsTool,
   agentRegistry,
@@ -61,6 +57,5 @@ export {
   type WorkflowStep,
 } from "./composition/index.ts";
 
-// Agent factory and runtime
 export { agent } from "./factory.ts";
 export { AgentRuntime } from "./runtime/index.ts";

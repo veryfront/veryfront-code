@@ -8,12 +8,12 @@ export default tool({
     "Get file metadata and optionally download file content from Dropbox. Use this to read file information or retrieve file contents.",
   inputSchema: z.object({
     path: z.string().describe('Path to the file in Dropbox (e.g., "/Documents/file.txt")'),
-    includeContent: z.boolean().default(false).describe(
-      "Whether to download and return the file content (only works for text files and small files)",
-    ),
+    includeContent: z
+      .boolean()
+      .default(false)
+      .describe("Whether to download and return the file content (only works for text files and small files)"),
   }),
-  async execute({ path, includeContent }) {
-    // Get metadata first
+  async execute({ path, includeContent }): Promise<Record<string, unknown>> {
     const metadata = await getMetadata(path);
 
     if (!isFile(metadata)) {
@@ -22,7 +22,7 @@ export default tool({
 
     const result: Record<string, unknown> = {
       name: metadata.name,
-      path: metadata.path_display || metadata.path_lower || "",
+      path: metadata.path_display ?? metadata.path_lower ?? "",
       id: metadata.id,
       size: metadata.size,
       sizeFormatted: formatFileSize(metadata.size),
@@ -32,28 +32,26 @@ export default tool({
       rev: metadata.rev,
     };
 
-    // Download content if requested
-    if (includeContent) {
-      if (!metadata.is_downloadable) {
-        throw new Error(`File "${path}" is not downloadable`);
-      }
+    if (!includeContent) return result;
 
-      // Only download small files (< 1MB) to avoid memory issues
-      if (metadata.size > 1024 * 1024) {
-        throw new Error(
-          `File is too large to download content (${
-            formatFileSize(metadata.size)
-          }). Maximum size is 1MB. Use includeContent: false to get metadata only.`,
-        );
-      }
+    if (!metadata.is_downloadable) {
+      throw new Error(`File "${path}" is not downloadable`);
+    }
 
-      try {
-        const { content } = await downloadFile(path);
-        result.content = content;
-        result.contentLength = content.length;
-      } catch (error) {
-        result.contentError = error instanceof Error ? error.message : "Failed to download content";
-      }
+    if (metadata.size > 1024 * 1024) {
+      throw new Error(
+        `File is too large to download content (${formatFileSize(
+          metadata.size,
+        )}). Maximum size is 1MB. Use includeContent: false to get metadata only.`,
+      );
+    }
+
+    try {
+      const { content } = await downloadFile(path);
+      result.content = content;
+      result.contentLength = content.length;
+    } catch (error) {
+      result.contentError = error instanceof Error ? error.message : "Failed to download content";
     }
 
     return result;

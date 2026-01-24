@@ -5,9 +5,11 @@ const ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ
 function randomString(length: number): string {
   const bytes = new Uint8Array(length);
   crypto.getRandomValues(bytes);
+
   let result = "";
   for (let i = 0; i < length; i++) {
-    result += ALPHABET[bytes[i]! % ALPHABET.length];
+    const byte = bytes[i];
+    if (byte !== undefined) result += ALPHABET[byte % ALPHABET.length];
   }
   return result;
 }
@@ -26,7 +28,7 @@ export function createIdGenerator(options: {
 }): () => string {
   const { prefix, separator = "-", size = 16 } = options;
 
-  return () => {
+  return function generate(): string {
     const id = randomString(size);
     return prefix ? `${prefix}${separator}${id}` : id;
   };

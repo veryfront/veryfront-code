@@ -70,7 +70,7 @@ function inspectReactElement(
     });
   }
 
-  const props = (element as React.ReactElement).props;
+  const props = element.props;
   if (props && typeof props === "object") {
     inspectElementProps(props as Record<string, unknown>, path, depth, options);
   }
@@ -87,19 +87,20 @@ function inspectElementProps(
 
     if (key === "children") {
       inspectChildren(value, path, depth, options);
-    } else if (isReactElement(value)) {
+      continue;
+    }
+
+    if (isReactElement(value)) {
       deepInspectElement(value, `${path}.props.${key}`, depth + 1, options);
-    } else if (Array.isArray(value)) {
-      for (let i = 0; i < value.length; i++) {
-        const item = value[i];
-        if (isReactElement(item)) {
-          deepInspectElement(
-            item,
-            `${path}.props.${key}[${i}]`,
-            depth + 1,
-            options,
-          );
-        }
+      continue;
+    }
+
+    if (!Array.isArray(value)) continue;
+
+    for (let i = 0; i < value.length; i++) {
+      const item = value[i];
+      if (isReactElement(item)) {
+        deepInspectElement(item, `${path}.props.${key}[${i}]`, depth + 1, options);
       }
     }
   }
@@ -115,7 +116,10 @@ function inspectChildren(
     for (let i = 0; i < children.length; i++) {
       deepInspectElement(children[i], `${path}.children[${i}]`, depth + 1, options);
     }
-  } else if (children != null) {
+    return;
+  }
+
+  if (children != null) {
     deepInspectElement(children, `${path}.children`, depth + 1, options);
   }
 }
@@ -132,16 +136,13 @@ function inspectArray(
       depth,
     });
   }
+
   for (let i = 0; i < arr.length; i++) {
     deepInspectElement(arr[i], `${path}[${i}]`, depth + 1, options);
   }
 }
 
-function handleInvalidObject(
-  element: unknown,
-  path: string,
-  depth: number,
-): void {
+function handleInvalidObject(element: object, path: string, depth: number): void {
   const obj = element as Record<string, unknown>;
   const keys = getObjectKeys(element);
 
@@ -153,6 +154,8 @@ function handleInvalidObject(
     return;
   }
 
+  const constructorName = (element as { constructor?: { name?: string } }).constructor?.name;
+
   const errorDetails: InvalidObjectDetails = {
     path,
     depth,
@@ -160,7 +163,7 @@ function handleInvalidObject(
     hasSymbol: "$$typeof" in obj,
     symbolValue: obj.$$typeof,
     type: obj.type,
-    constructor: (element as { constructor?: { name?: string } }).constructor?.name,
+    constructor: constructorName,
     sample: getObjectSample(element),
   };
 
@@ -170,14 +173,14 @@ function handleInvalidObject(
   );
 
   // Throw error to stop rendering and provide clear debugging info
-  throw toError(createError({
-    type: "config",
-    message: `Invalid React child found at ${path}! ` +
-      `This object cannot be rendered as a React child. ` +
-      `Keys: [${keys.join(", ")}]. ` +
-      `Type: ${obj.type || "unknown"}. ` +
-      `Constructor: ${
-        (element as { constructor?: { name?: string } }).constructor?.name || "unknown"
-      }.`,
-  }));
+  throw toError(
+    createError({
+      type: "config",
+      message: `Invalid React child found at ${path}! ` +
+        `This object cannot be rendered as a React child. ` +
+        `Keys: [${keys.join(", ")}]. ` +
+        `Type: ${obj.type || "unknown"}. ` +
+        `Constructor: ${constructorName || "unknown"}.`,
+    }),
+  );
 }

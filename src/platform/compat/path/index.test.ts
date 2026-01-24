@@ -21,16 +21,24 @@ import {
   validatePathSecurity,
 } from "./index.ts";
 
+function assertExportedFunction(value: unknown): void {
+  assertExists(value);
+  assertEquals(typeof value, "function");
+}
+
+function assertExportedString(value: unknown): void {
+  assertExists(value);
+  assertEquals(typeof value, "string");
+}
+
 describe("compat/path/index.ts exports", () => {
   describe("runtime exports", () => {
     it("should export delimiter", () => {
-      assertExists(delimiter);
-      assertEquals(typeof delimiter, "string");
+      assertExportedString(delimiter);
     });
 
     it("should export sep", () => {
-      assertExists(sep);
-      assertEquals(typeof sep, "string");
+      assertExportedString(sep);
     });
 
     it("should export hasNodePath", () => {
@@ -48,23 +56,19 @@ describe("compat/path/index.ts exports", () => {
 
   describe("basic operations", () => {
     it("should export basename", () => {
-      assertExists(basename);
-      assertEquals(typeof basename, "function");
+      assertExportedFunction(basename);
     });
 
     it("should export dirname", () => {
-      assertExists(dirname);
-      assertEquals(typeof dirname, "function");
+      assertExportedFunction(dirname);
     });
 
     it("should export extname", () => {
-      assertExists(extname);
-      assertEquals(typeof extname, "function");
+      assertExportedFunction(extname);
     });
 
     it("should export join", () => {
-      assertExists(join);
-      assertEquals(typeof join, "function");
+      assertExportedFunction(join);
     });
 
     it("basename should extract filename", () => {
@@ -87,23 +91,19 @@ describe("compat/path/index.ts exports", () => {
 
   describe("resolution operations", () => {
     it("should export isAbsolute", () => {
-      assertExists(isAbsolute);
-      assertEquals(typeof isAbsolute, "function");
+      assertExportedFunction(isAbsolute);
     });
 
     it("should export normalize", () => {
-      assertExists(normalize);
-      assertEquals(typeof normalize, "function");
+      assertExportedFunction(normalize);
     });
 
     it("should export relative", () => {
-      assertExists(relative);
-      assertEquals(typeof relative, "function");
+      assertExportedFunction(relative);
     });
 
     it("should export resolve", () => {
-      assertExists(resolve);
-      assertEquals(typeof resolve, "function");
+      assertExportedFunction(resolve);
     });
 
     it("isAbsolute should detect absolute paths", () => {
@@ -114,13 +114,11 @@ describe("compat/path/index.ts exports", () => {
 
   describe("parse/format operations", () => {
     it("should export parse", () => {
-      assertExists(parse);
-      assertEquals(typeof parse, "function");
+      assertExportedFunction(parse);
     });
 
     it("should export format", () => {
-      assertExists(format);
-      assertEquals(typeof format, "function");
+      assertExportedFunction(format);
     });
 
     it("parse should break down path", () => {
@@ -134,20 +132,17 @@ describe("compat/path/index.ts exports", () => {
 
   describe("URL conversion", () => {
     it("should export fromFileUrl", () => {
-      assertExists(fromFileUrl);
-      assertEquals(typeof fromFileUrl, "function");
+      assertExportedFunction(fromFileUrl);
     });
 
     it("should export toFileUrl", () => {
-      assertExists(toFileUrl);
-      assertEquals(typeof toFileUrl, "function");
+      assertExportedFunction(toFileUrl);
     });
   });
 
   describe("security", () => {
     it("should export validatePathSecurity", () => {
-      assertExists(validatePathSecurity);
-      assertEquals(typeof validatePathSecurity, "function");
+      assertExportedFunction(validatePathSecurity);
     });
   });
 });

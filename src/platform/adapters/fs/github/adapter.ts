@@ -1,4 +1,5 @@
 import { logger } from "#veryfront/utils";
+import { getGithubEnvConfig } from "#veryfront/config/env.ts";
 import { FileCache } from "../cache/file-cache.ts";
 import type { FSAdapter, FSAdapterConfig } from "../veryfront/types.ts";
 import { GitHubAPIClient } from "./github-api-client.ts";
@@ -12,16 +13,9 @@ import {
   type GitHubConfig,
   type ResolvedGitHubConfig,
 } from "./types.ts";
-import { getGithubEnvConfig } from "#veryfront/config/env.ts";
 
 const LOG_PREFIX = "[GitHubFSAdapter]";
 
-/**
- * GitHub filesystem adapter for veryfront-renderer
- *
- * Provides read-only access to files in a GitHub repository via the GitHub API.
- * Uses tree-based indexing for efficient file resolution and caching.
- */
 export class GitHubFSAdapter implements FSAdapter {
   private readonly config: ResolvedGitHubConfig;
   private readonly client: GitHubAPIClient;
@@ -34,27 +28,24 @@ export class GitHubFSAdapter implements FSAdapter {
   private initialized = false;
 
   constructor(adapterConfig: FSAdapterConfig) {
-    if (!adapterConfig.github) {
+    const githubConfig = adapterConfig.github;
+    if (!githubConfig) {
       throw new Error("GitHub adapter requires github configuration");
     }
 
-    // Store projectDir to strip from absolute paths
     this.projectDir = adapterConfig.projectDir || "";
 
-    // Resolve config from raw config + environment
     const envConfig = getGithubEnvConfig();
     const rawConfig: GitHubConfig = {
-      token: adapterConfig.github.token || envConfig.token || "",
-      owner: adapterConfig.github.owner || envConfig.owner || "",
-      repo: adapterConfig.github.repo || envConfig.repo || "",
-      ref: adapterConfig.github.ref || envConfig.ref || "main",
-      cache: adapterConfig.github.cache,
-      retry: adapterConfig.github.retry,
+      token: githubConfig.token || envConfig.token || "",
+      owner: githubConfig.owner || envConfig.owner || "",
+      repo: githubConfig.repo || envConfig.repo || "",
+      ref: githubConfig.ref || envConfig.ref || "main",
+      cache: githubConfig.cache,
+      retry: githubConfig.retry,
     };
 
     this.config = createGitHubConfig(rawConfig);
-
-    // Initialize components
     this.client = new GitHubAPIClient(this.config);
 
     this.cache = new FileCache({
@@ -85,86 +76,55 @@ export class GitHubFSAdapter implements FSAdapter {
     });
   }
 
-  /**
-   * Initialize the adapter by fetching the repository tree
-   */
   async initialize(): Promise<void> {
-    if (this.initialized) {
-      return;
-    }
+    if (this.initialized) return;
 
     logger.debug(`${LOG_PREFIX} Initializing`, {
       repo: this.client.repoId,
       ref: this.config.ref,
     });
 
-    // Build the file index from repository tree
     await this.statOps.buildIndex();
-
     this.initialized = true;
 
     logger.debug(`${LOG_PREFIX} Initialized successfully`);
   }
 
-  /**
-   * Read file content
-   */
   async readFile(path: string): Promise<Uint8Array | string> {
     await this.ensureInitialized();
     return this.readOps.readFile(path);
   }
 
-  /**
-   * Read file content as text
-   */
   async readTextFile(path: string): Promise<string> {
     await this.ensureInitialized();
     return this.readOps.readTextFile(path);
   }
 
-  /**
-   * Check if file or directory exists
-   */
   async exists(path: string): Promise<boolean> {
     await this.ensureInitialized();
     return this.statOps.exists(path);
   }
 
-  /**
-   * Get file or directory stat information
-   */
   async stat(path: string): Promise<FileInfo> {
     await this.ensureInitialized();
     return this.statOps.stat(path);
   }
 
-  /**
-   * Read directory contents (async iterable)
-   */
   async *readDir(path: string): AsyncIterable<DirectoryEntry> {
     await this.ensureInitialized();
     yield* this.dirOps.readDir(path);
   }
 
-  /**
-   * Read directory contents (array)
-   */
   async readdir(path: string): Promise<DirectoryEntry[]> {
     await this.ensureInitialized();
     return this.dirOps.readdir(path);
   }
 
-  /**
-   * Resolve a file path, trying various extensions
-   */
   async resolveFile(basePath: string): Promise<string | null> {
     await this.ensureInitialized();
     return this.statOps.resolveFile(basePath);
   }
 
-  /**
-   * Get cache statistics
-   */
   getCacheStats(): {
     cache: {
       size: number;
@@ -174,32 +134,14 @@ export class GitHubFSAdapter implements FSAdapter {
       hitRate: number;
     };
   } {
-    const stats = this.cache.stats();
-    return {
-      cache: {
-        size: stats.size,
-        memoryUsed: stats.memoryUsed,
-        hits: stats.hits,
-        misses: stats.misses,
-        hitRate: stats.hitRate,
-      },
-    };
+    const { size, memoryUsed, hits, misses, hitRate } = this.cache.stats();
+    return { cache: { size, memoryUsed, hits, misses, hitRate } };
   }
 
-  /**
-   * Get rate limit information from GitHub API
-   */
-  getRateLimitInfo(): {
-    limit: number;
-    remaining: number;
-    reset: Date;
-  } | null {
+  getRateLimitInfo(): { limit: number; remaining: number; reset: Date } | null {
     return this.client.getRateLimitInfo();
   }
 
-  /**
-   * Clear all caches and reset state
-   */
   dispose(): void {
     this.cache.clear();
     this.statOps.clearIndex();
@@ -208,12 +150,8 @@ export class GitHubFSAdapter implements FSAdapter {
     logger.debug(`${LOG_PREFIX} Disposed`);
   }
 
-  /**
-   * Ensure adapter is initialized before operations
-   */
   private async ensureInitialized(): Promise<void> {
-    if (!this.initialized) {
-      await this.initialize();
-    }
+    if (this.initialized) return;
+    await this.initialize();
   }
 }

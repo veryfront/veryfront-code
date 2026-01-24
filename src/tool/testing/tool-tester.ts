@@ -43,28 +43,6 @@ export interface ToolTestResult {
   executionTime: number;
 }
 
-/**
- * Test a tool with multiple test cases
- *
- * @example
- * ```typescript
- * import { testTool } from 'veryfront/tool/testing';
- *
- * const results = await testTool(calculatorTool, [
- *   {
- *     name: 'Addition',
- *     input: { operation: 'add', a: 2, b: 3 },
- *     expectedOutput: { result: 5 },
- *   },
- *   {
- *     name: 'Division by zero',
- *     input: { operation: 'divide', a: 5, b: 0 },
- *     shouldThrow: true,
- *     expectedError: /cannot divide by zero/i,
- *   },
- * ]);
- * ```
- */
 export async function testTool(
   tool: Tool,
   testCases: ToolTestCase[],
@@ -72,16 +50,12 @@ export async function testTool(
   const results: ToolTestResult[] = [];
 
   for (const testCase of testCases) {
-    const result = await runToolTest(tool, testCase);
-    results.push(result);
+    results.push(await runToolTest(tool, testCase));
   }
 
   return results;
 }
 
-/**
- * Run a single tool test
- */
 async function runToolTest(
   tool: Tool,
   testCase: ToolTestCase,
@@ -89,11 +63,9 @@ async function runToolTest(
   const startTime = Date.now();
 
   try {
-    // Execute tool
     const result = await tool.execute(testCase.input);
     const executionTime = Date.now() - startTime;
 
-    // If we expected an error but didn't get one
     if (testCase.shouldThrow) {
       return {
         name: testCase.name,
@@ -103,81 +75,86 @@ async function runToolTest(
       };
     }
 
-    // Validate output
-    let passed = true;
-    let error: string | undefined;
-
     if (testCase.expectedOutput !== undefined) {
-      passed = deepMatch(result, testCase.expectedOutput);
-      if (!passed) {
-        error = `Output mismatch. Expected: ${JSON.stringify(testCase.expectedOutput)}, Got: ${
-          JSON.stringify(result)
-        }`;
-      }
-    }
-
-    if (passed && testCase.validate) {
-      try {
-        passed = await testCase.validate(result);
-        if (!passed) {
-          error = "Custom validation failed";
-        }
-      } catch (err) {
-        passed = false;
-        error = `Validation error: ${err instanceof Error ? err.message : String(err)}`;
-      }
-    }
-
-    return {
-      name: testCase.name,
-      passed,
-      result,
-      error,
-      executionTime,
-    };
-  } catch (err) {
-    const executionTime = Date.now() - startTime;
-    const errorMessage = err instanceof Error ? err.message : String(err);
-
-    // If we expected an error
-    if (testCase.shouldThrow) {
-      let passed = true;
-      let error: string | undefined;
-
-      if (testCase.expectedError) {
-        if (testCase.expectedError instanceof RegExp) {
-          passed = testCase.expectedError.test(errorMessage);
-        } else {
-          passed = errorMessage.includes(testCase.expectedError);
-        }
-
-        if (!passed) {
-          error =
-            `Error message mismatch. Expected pattern: ${testCase.expectedError}, Got: ${errorMessage}`;
-        }
-      }
+      const passed = deepMatch(result, testCase.expectedOutput);
 
       return {
         name: testCase.name,
         passed,
-        error,
+        result,
+        error: passed
+          ? undefined
+          : `Output mismatch. Expected: ${JSON.stringify(testCase.expectedOutput)}, Got: ${
+            JSON.stringify(result)
+          }`,
         executionTime,
       };
     }
 
-    // Unexpected error
+    if (!testCase.validate) {
+      return {
+        name: testCase.name,
+        passed: true,
+        result,
+        executionTime,
+      };
+    }
+
+    try {
+      const passed = await testCase.validate(result);
+
+      return {
+        name: testCase.name,
+        passed,
+        result,
+        error: passed ? undefined : "Custom validation failed",
+        executionTime,
+      };
+    } catch (err) {
+      return {
+        name: testCase.name,
+        passed: false,
+        result,
+        error: `Validation error: ${err instanceof Error ? err.message : String(err)}`,
+        executionTime,
+      };
+    }
+  } catch (err) {
+    const executionTime = Date.now() - startTime;
+    const errorMessage = err instanceof Error ? err.message : String(err);
+
+    if (!testCase.shouldThrow) {
+      return {
+        name: testCase.name,
+        passed: false,
+        error: `Unexpected error: ${errorMessage}`,
+        executionTime,
+      };
+    }
+
+    if (!testCase.expectedError) {
+      return {
+        name: testCase.name,
+        passed: true,
+        executionTime,
+      };
+    }
+
+    const passed = testCase.expectedError instanceof RegExp
+      ? testCase.expectedError.test(errorMessage)
+      : errorMessage.includes(testCase.expectedError);
+
     return {
       name: testCase.name,
-      passed: false,
-      error: `Unexpected error: ${errorMessage}`,
+      passed,
+      error: passed
+        ? undefined
+        : `Error message mismatch. Expected pattern: ${testCase.expectedError}, Got: ${errorMessage}`,
       executionTime,
     };
   }
 }
 
-/**
- * Deep match for partial object comparison
- */
 function deepMatch(actual: unknown, expected: unknown): boolean {
   if (expected === actual) return true;
   if (typeof expected !== "object" || expected === null) return false;
@@ -194,17 +171,15 @@ function deepMatch(actual: unknown, expected: unknown): boolean {
 
     if (typeof expectedValue === "object" && expectedValue !== null) {
       if (!deepMatch(actualValue, expectedValue)) return false;
-    } else {
-      if (actualValue !== expectedValue) return false;
+      continue;
     }
+
+    if (actualValue !== expectedValue) return false;
   }
 
   return true;
 }
 
-/**
- * Print tool test results
- */
 export function printToolTestResults(
   toolId: string,
   results: ToolTestResult[],

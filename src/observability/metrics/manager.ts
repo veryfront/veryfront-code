@@ -19,20 +19,9 @@ export class MetricsManager {
   private initialized = false;
   private meter: Meter | null = null;
   private api: OpenTelemetryAPI | null = null;
-  private instruments: MetricsInstruments;
-  private runtimeState: RuntimeState;
-  private recorder: MetricsRecorder | null = null;
-
-  constructor() {
-    this.instruments = this.createEmptyInstruments();
-    this.runtimeState = {
-      cacheSize: 0,
-      activeRequests: 0,
-    };
-    // Create recorder immediately so state tracking works even before initialization
-    // The recorder gracefully handles null instruments (optional chaining)
-    this.recorder = new MetricsRecorder(this.instruments, this.runtimeState);
-  }
+  private instruments: MetricsInstruments = this.createEmptyInstruments();
+  private runtimeState: RuntimeState = { cacheSize: 0, activeRequests: 0 };
+  private recorder: MetricsRecorder = new MetricsRecorder(this.instruments, this.runtimeState);
 
   private createEmptyInstruments(): MetricsInstruments {
     return {
@@ -70,10 +59,7 @@ export class MetricsManager {
     };
   }
 
-  async initialize(
-    config: Partial<MetricsConfig> = {},
-    adapter?: RuntimeAdapter,
-  ): Promise<void> {
+  async initialize(config: Partial<MetricsConfig> = {}, adapter?: RuntimeAdapter): Promise<void> {
     if (this.initialized) {
       logger.debug("[metrics] Already initialized");
       return;
@@ -88,24 +74,11 @@ export class MetricsManager {
     }
 
     try {
-      // Load OpenTelemetry API
       this.api = await import("@opentelemetry/api");
-
-      // Get or create meter
       this.meter = this.api.metrics.getMeter(finalConfig.prefix, "0.1.0");
 
-      // Initialize all metric instruments
-      this.instruments = await initializeInstruments(
-        this.meter,
-        finalConfig,
-        this.runtimeState,
-      );
-
-      // Update recorder with initialized instruments
-      // Recorder was already created in constructor, just update its instruments reference
-      if (this.recorder) {
-        this.recorder.instruments = this.instruments;
-      }
+      this.instruments = await initializeInstruments(this.meter, finalConfig, this.runtimeState);
+      this.recorder.instruments = this.instruments;
 
       this.initialized = true;
       logger.info("[metrics] OpenTelemetry metrics initialized", {
@@ -127,7 +100,7 @@ export class MetricsManager {
     return this.recorder;
   }
 
-  getState() {
+  getState(): { initialized: boolean; cacheSize: number; activeRequests: number } {
     return {
       initialized: this.initialized,
       cacheSize: this.runtimeState.cacheSize,

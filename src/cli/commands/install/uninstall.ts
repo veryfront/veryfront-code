@@ -35,20 +35,18 @@ function clearLines(n: number): void {
   write(COL_1);
 }
 
-async function multiSelect(
-  options: MultiSelectOption[],
-): Promise<AIToolId[] | null> {
+async function multiSelect(options: MultiSelectOption[]): Promise<AIToolId[] | null> {
   if (!isTTY()) {
-    return options.filter((o) => o.selected).map((o) => o.value) as AIToolId[];
+    return options.filter((o) => o.selected).map((o) => o.value as AIToolId);
   }
 
   let idx = 0;
   let lines = 0;
-  const selected = new Set(
-    options.filter((o) => o.selected).map((o) => o.value),
+  const selected = new Set<AIToolId>(
+    options.filter((o) => o.selected).map((o) => o.value as AIToolId),
   );
 
-  function draw() {
+  function draw(): void {
     if (lines > 0) clearLines(lines);
 
     console.log();
@@ -63,10 +61,11 @@ async function multiSelect(
     for (let i = 0; i < options.length; i++) {
       const opt = options[i]!;
       const isCurrent = i === idx;
-      const isSelected = selected.has(opt.value);
+      const isSelected = selected.has(opt.value as AIToolId);
       const pointer = isCurrent ? brand("❯") : " ";
       const checkbox = isSelected ? success("[✓]") : dim("[ ]");
       const label = isCurrent ? brand(opt.label) : opt.label;
+
       console.log(
         `  ${pointer} ${checkbox} ${label.padEnd(24)} ${muted(opt.description)}`,
       );
@@ -92,36 +91,50 @@ async function multiSelect(
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
+
       const key = dec.decode(value);
 
       if (key === "\x03" || key === "q" || key === "Q") {
         result = null;
         break;
       }
+
       if (key === "\r" || key === "\n") {
-        result = Array.from(selected) as AIToolId[];
+        result = Array.from(selected);
         break;
       }
+
       if (key === " ") {
         const opt = options[idx]!;
-        selected.has(opt.value) ? selected.delete(opt.value) : selected.add(opt.value);
+        const value = opt.value as AIToolId;
+        if (selected.has(value)) selected.delete(value);
+        else selected.add(value);
         draw();
+        continue;
       }
+
       if (key === "\x1b[A" || key === "k") {
         idx = idx > 0 ? idx - 1 : options.length - 1;
         draw();
+        continue;
       }
+
       if (key === "\x1b[B" || key === "j") {
         idx = idx < options.length - 1 ? idx + 1 : 0;
         draw();
+        continue;
       }
+
       if (key === "a" || key === "A") {
-        options.forEach((o) => selected.add(o.value));
+        for (const o of options) selected.add(o.value as AIToolId);
         draw();
+        continue;
       }
+
       if (key === "n" || key === "N") {
         selected.clear();
         draw();
+        continue;
       }
     }
   } finally {
@@ -138,6 +151,7 @@ const TargetFlagSchema = z
   .string()
   .transform((val) => {
     if (val === "all") return AI_TOOLS.map((t) => t.id);
+
     return val
       .split(",")
       .map((t) => t.trim())
@@ -159,12 +173,15 @@ export async function findInstalledTools(
 
   for (const tool of AI_TOOLS) {
     const path = options.global ? join(homeDir, tool.file) : join(cwd, tool.file);
-    if (await exists(path)) {
-      installed.push(tool.id);
-    }
+    if (await exists(path)) installed.push(tool.id);
   }
 
   return installed;
+}
+
+async function isDirEmpty(path: string): Promise<boolean> {
+  for await (const _entry of readDir(path)) return false;
+  return true;
 }
 
 export async function uninstallTargets(
@@ -196,16 +213,10 @@ export async function uninstallTargets(
     try {
       const parent = dirname(dest);
       const baseDir = options.global ? homeDir : cwd;
-      // Only remove parent if it's not the base directory
-      if (parent !== baseDir) {
-        const entries = [];
-        for await (const entry of readDir(parent)) {
-          entries.push(entry);
-        }
-        if (entries.length === 0) {
-          // Node.js requires recursive: true to remove directories
-          await remove(parent, { recursive: true });
-        }
+
+      if (parent !== baseDir && (await isDirEmpty(parent))) {
+        // Node.js requires recursive: true to remove directories
+        await remove(parent, { recursive: true });
       }
     } catch {
       // Ignore - parent dir might not be empty or might not exist
@@ -219,15 +230,12 @@ export async function uninstallTargets(
   console.log();
 }
 
-export async function uninstallCommand(
-  options: UninstallOptions = {},
-): Promise<void> {
+export async function uninstallCommand(options: UninstallOptions = {}): Promise<void> {
   const validated = UninstallOptionsSchema.parse(options);
   const cwd = validated.cwd ?? getCwd();
 
   if (validated.target) {
-    const targets = parseTargetFlag(validated.target);
-    await uninstallTargets(targets, { ...validated, cwd });
+    await uninstallTargets(parseTargetFlag(validated.target), { ...validated, cwd });
     return;
   }
 
@@ -250,7 +258,7 @@ export async function uninstallCommand(
     }));
 
   const selected = await multiSelect(selectOptions);
-  if (!selected || selected.length === 0) {
+  if (!selected?.length) {
     console.log();
     console.log("  " + muted("No files selected."));
     console.log();

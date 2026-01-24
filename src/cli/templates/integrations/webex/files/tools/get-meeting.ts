@@ -11,21 +11,6 @@ export default tool({
   async execute({ meetingId }) {
     const meeting = await getMeeting(meetingId);
 
-    return {
-      id: meeting.id,
-      title: meeting.title,
-      agenda: meeting.agenda,
-      start: meeting.start,
-      end: meeting.end,
-      timezone: meeting.timezone,
-      hostEmail: meeting.hostEmail,
-      hostDisplayName: meeting.hostDisplayName,
-      webLink: meeting.webLink,
-      sipAddress: meeting.sipAddress,
-      meetingNumber: meeting.meetingNumber,
-      state: meeting.state,
-      enabledAutoRecordMeeting: meeting.enabledAutoRecordMeeting,
-      allowAnyUserToBeCoHost: meeting.allowAnyUserToBeCoHost,
-    };
+    return { ...meeting };
   },
 });

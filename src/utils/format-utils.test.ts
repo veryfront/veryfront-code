@@ -108,27 +108,27 @@ describe("format-utils", () => {
 
   describe("estimateSizeWithCircularHandling", () => {
     it("should estimate simple objects", () => {
-      const size = estimateSizeWithCircularHandling({ a: 1, b: 2 });
-      assertEquals(size > 0, true);
+      assertEquals(estimateSizeWithCircularHandling({ a: 1, b: 2 }) > 0, true);
     });
 
     it("should handle circular references", () => {
       const obj: Record<string, unknown> = { a: 1 };
       obj.self = obj;
-      const size = estimateSizeWithCircularHandling(obj);
-      assertEquals(size > 0, true);
+      assertEquals(estimateSizeWithCircularHandling(obj) > 0, true);
     });
 
     it("should handle Map", () => {
-      const map = new Map([["key", "value"]]);
-      const size = estimateSizeWithCircularHandling(map);
-      assertEquals(size > 0, true);
+      assertEquals(
+        estimateSizeWithCircularHandling(new Map([["key", "value"]])) > 0,
+        true,
+      );
     });
 
     it("should handle Set", () => {
-      const set = new Set([1, 2, 3]);
-      const size = estimateSizeWithCircularHandling(set);
-      assertEquals(size > 0, true);
+      assertEquals(
+        estimateSizeWithCircularHandling(new Set([1, 2, 3])) > 0,
+        true,
+      );
     });
   });
 });

@@ -27,9 +27,11 @@ export function parseToolArgs(
 ): ParsedToolArgs {
   try {
     const parsed = typeof rawArgs === "string" ? JSON.parse(rawArgs) : rawArgs;
+
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       return { args: parsed as Record<string, unknown> };
     }
+
     return { args: {}, error: "Tool call arguments must be a JSON object" };
   } catch (error) {
     return {
@@ -53,6 +55,13 @@ export function isDynamicTool(name: string): boolean {
 // deno-lint-ignore no-explicit-any
 export type ToolConfigEntry = Tool<any, any> | boolean;
 
+function logToolDefinition(name: string, def: ToolDefinition): void {
+  logger.debug(
+    `[AGENT] Tool definition for "${name}":`,
+    JSON.stringify(def, null, 2),
+  );
+}
+
 /**
  * Get available tools based on agent configuration.
  * When tools === true, loads all tools from registry.
@@ -63,32 +72,36 @@ export function getAvailableTools(
 ): ToolDefinition[] {
   if (!toolsConfig) return [];
 
-  // When tools === true, load ALL tools from the registry
   if (toolsConfig === true) {
     const allTools = toolRegistry.getAll();
     logger.debug(`[AGENT] Loading all ${allTools.size} tools from registry`);
+
     return Array.from(allTools, ([name, tool]) => {
       const def = toolToProviderDefinition(tool);
-      logger.debug(`[AGENT] Tool definition for "${name}":`, JSON.stringify(def, null, 2));
+      logToolDefinition(name, def);
       return def;
     });
   }
 
-  // Load specific tools from config
   const tools: ToolDefinition[] = [];
+
   for (const [name, entry] of Object.entries(toolsConfig)) {
     if (entry === true) {
       const tool = toolRegistry.get(name);
       if (!tool) continue;
+
       const def = toolToProviderDefinition(tool);
-      logger.debug(`[AGENT] Tool definition for "${name}":`, JSON.stringify(def, null, 2));
+      logToolDefinition(name, def);
       tools.push(def);
-    } else if (entry && typeof entry === "object") {
-      // entry is a Tool instance
+      continue;
+    }
+
+    if (entry && typeof entry === "object") {
       const def = toolToProviderDefinition(entry);
-      logger.debug(`[AGENT] Tool definition for "${name}":`, JSON.stringify(def, null, 2));
+      logToolDefinition(name, def);
       tools.push(def);
     }
   }
+
   return tools;
 }

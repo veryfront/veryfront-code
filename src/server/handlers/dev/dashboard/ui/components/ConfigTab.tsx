@@ -18,38 +18,49 @@ interface ConfigData {
   timestamp: string;
 }
 
-export function ConfigTab() {
+export function ConfigTab(): React.JSX.Element {
   const [subTab, setSubTab] = useState<SubTab>("settings");
   const [data, setData] = useState<ConfigData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [debugContent, setDebugContent] = useState<string>("");
-  const [debugLoading, setDebugLoading] = useState(true);
+  const [debugLoading, setDebugLoading] = useState<boolean>(true);
 
-  function loadConfig() {
+  function loadConfig(): void {
     setLoading(true);
+
     fetch("/_dev/api/config")
       .then((res) => res.json())
       .then((d) => {
         setData(d);
         setError(null);
       })
-      .catch((e) => setError((e as Error).message))
+      .catch((e: unknown) => {
+        setError(e instanceof Error ? e.message : String(e));
+      })
       .finally(() => setLoading(false));
   }
 
-  function loadDebug() {
+  function loadDebug(): void {
     setDebugLoading(true);
+
     fetch("/_vf_debug/context")
       .then((res) => res.json())
       .then((d) => setDebugContent(JSON.stringify(d, null, 2)))
-      .catch((e) => setDebugContent(`Error: ${(e as Error).message}`))
+      .catch((e: unknown) => {
+        const message = e instanceof Error ? e.message : String(e);
+        setDebugContent(`Error: ${message}`);
+      })
       .finally(() => setDebugLoading(false));
   }
 
-  useEffect(() => {
+  function refresh(): void {
     loadConfig();
     loadDebug();
+  }
+
+  useEffect(() => {
+    refresh();
   }, []);
 
   if (loading && !data) {
@@ -81,18 +92,12 @@ export function ConfigTab() {
             onClick={() => setSubTab("settings")}
             label="Settings"
           />
-          <TabButton
-            active={subTab === "debug"}
-            onClick={() => setSubTab("debug")}
-            label="Debug"
-          />
+          <TabButton active={subTab === "debug"} onClick={() => setSubTab("debug")} label="Debug" />
         </div>
+
         <button
           type="button"
-          onClick={() => {
-            loadConfig();
-            loadDebug();
-          }}
+          onClick={refresh}
           disabled={loading || debugLoading}
           className="px-3 py-1.5 bg-white border border-gray-200 text-sm text-gray-600 rounded hover:bg-gray-50 disabled:opacity-50"
         >
@@ -100,8 +105,9 @@ export function ConfigTab() {
         </button>
       </div>
 
-      {subTab === "settings" && <SettingsSection data={data} />}
-      {subTab === "debug" && <DebugSection content={debugContent} loading={debugLoading} />}
+      {subTab === "settings"
+        ? <SettingsSection data={data} />
+        : <DebugSection content={debugContent} loading={debugLoading} />}
     </PageLayout>
   );
 }
@@ -114,23 +120,19 @@ function TabButton({
   active: boolean;
   onClick: () => void;
   label: string;
-}) {
+}): React.JSX.Element {
+  const className = active
+    ? "px-3 py-1.5 text-sm font-medium rounded-t transition-colors bg-white text-sky-600 border border-gray-200 border-b-white -mb-[1px]"
+    : "px-3 py-1.5 text-sm font-medium rounded-t transition-colors text-gray-500 hover:text-gray-700";
+
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`px-3 py-1.5 text-sm font-medium rounded-t transition-colors ${
-        active
-          ? "bg-white text-sky-600 border border-gray-200 border-b-white -mb-[1px]"
-          : "text-gray-500 hover:text-gray-700"
-      }`}
-    >
+    <button type="button" onClick={onClick} className={className}>
       {label}
     </button>
   );
 }
 
-function SettingsSection({ data }: { data: ConfigData | null }) {
+function SettingsSection({ data }: { data: ConfigData | null }): React.JSX.Element {
   return (
     <>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
@@ -138,6 +140,7 @@ function SettingsSection({ data }: { data: ConfigData | null }) {
           <div className="text-xs text-gray-500 uppercase mb-1">Mode</div>
           <div className="text-lg font-semibold text-gray-900">{data?.mode || "unknown"}</div>
         </Card>
+
         <Card className="p-4">
           <div className="text-xs text-gray-500 uppercase mb-1">Project Directory</div>
           <code className="text-sm text-sky-600 break-all">{data?.projectDir}</code>
@@ -202,20 +205,26 @@ function SettingsSection({ data }: { data: ConfigData | null }) {
             </tr>
           </thead>
           <tbody>
-            {Object.entries(data?.environment || {}).map(([key, value]) => (
-              <tr key={key} className="border-b last:border-0">
-                <td className="px-3 py-2.5">
-                  <code className="text-xs text-sky-600 font-medium">{key}</code>
-                </td>
-                <td className="px-3 py-2.5">
-                  {typeof value === "string" && value.includes("(set)")
-                    ? <span className="text-green-600 text-sm">{value}</span>
-                    : typeof value === "string" && value.includes("(not set)")
-                    ? <span className="text-gray-400 text-sm">{value}</span>
-                    : <span className="text-gray-900 text-sm">{String(value)}</span>}
-                </td>
-              </tr>
-            ))}
+            {Object.entries(data?.environment ?? {}).map(([key, value]) => {
+              let valueEl: React.JSX.Element;
+
+              if (typeof value === "string" && value.includes("(set)")) {
+                valueEl = <span className="text-green-600 text-sm">{value}</span>;
+              } else if (typeof value === "string" && value.includes("(not set)")) {
+                valueEl = <span className="text-gray-400 text-sm">{value}</span>;
+              } else {
+                valueEl = <span className="text-gray-900 text-sm">{String(value)}</span>;
+              }
+
+              return (
+                <tr key={key} className="border-b last:border-0">
+                  <td className="px-3 py-2.5">
+                    <code className="text-xs text-sky-600 font-medium">{key}</code>
+                  </td>
+                  <td className="px-3 py-2.5">{valueEl}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </Card>
@@ -223,7 +232,9 @@ function SettingsSection({ data }: { data: ConfigData | null }) {
   );
 }
 
-function DebugSection({ content, loading }: { content: string; loading: boolean }) {
+function DebugSection(
+  { content, loading }: { content: string; loading: boolean },
+): React.JSX.Element {
   return (
     <Card title="RUNTIME CONTEXT">
       {loading

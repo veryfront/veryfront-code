@@ -1,8 +1,8 @@
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { addDepsToEsmShUrls, resolveReactImports } from "./react-imports.ts";
 import { rewriteVendorImports } from "./import-rewriter.ts";
-import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 
 // SSR tests are runtime-specific:
 // - Deno SSR: React → esm.sh URLs
@@ -20,7 +20,6 @@ describe("react-imports", () => {
     it("should resolve bare React import with single quotes", async () => {
       const code = "import React from 'react'";
       const result = await resolveReactImports(code);
-      // Preserves single quotes
       expect(result).toBe("import React from 'https://esm.sh/react@19.1.1?target=es2022'");
     });
 
@@ -78,7 +77,6 @@ import ReactDOM from "react-dom"`;
       expect(result).toBe(
         'import { jsx } from "https://esm.sh/react@19.1.1/jsx-runtime?target=es2022"',
       );
-      // Should not have double versioned URL like /jsx-runtime@version
       expect(result).not.toContain("/jsx-runtime@");
     });
 
@@ -303,7 +301,6 @@ import bar from "https://example.com/package.js"`;
     it("should handle single quotes", async () => {
       const code = "import foo from 'https://esm.sh/package@1.0.0'";
       const result = await addDepsToEsmShUrls(code);
-      // Preserves single quotes
       expect(result).toBe(
         "import foo from 'https://esm.sh/package@1.0.0?external=react,react-dom&target=es2022'",
       );
@@ -356,16 +353,11 @@ import { Button } from "some-ui-lib"`;
 
       const result = await rewriteVendorImports(code, "https://modules", "abc123");
 
-      expect(result).toContain(
-        `export { useState } from "https://modules/_vendor.js?v=abc123"`,
-      );
+      expect(result).toContain(`export { useState } from "https://modules/_vendor.js?v=abc123"`);
       expect(result).toContain(
         `export { default as React } from 'https://modules/_vendor.js?v=abc123'`,
       );
-      expect(result).toContain(
-        `export * from "https://modules/_vendor.js?v=abc123"`,
-      );
-      // Should not inject an extra const/assignment for exports
+      expect(result).toContain(`export * from "https://modules/_vendor.js?v=abc123"`);
       expect(result.includes("const {")).toBe(false);
     });
   });

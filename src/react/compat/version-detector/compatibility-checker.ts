@@ -1,22 +1,22 @@
 import type { CompatibilityCheckResult, ReactFeatures, SSRMethod } from "./types.ts";
 import { getReactVersionInfo } from "./version-cache.ts";
 
-const REACT_19_FEATURES: Array<keyof ReactFeatures> = [
+const REACT_19_FEATURES: ReadonlySet<keyof ReactFeatures> = new Set([
   "useFormStatus",
   "useOptimistic",
   "serverActions",
   "improvedSuspense",
   "enhancedStreaming",
-];
+]);
 
-const REACT_18_FEATURES: Array<keyof ReactFeatures> = [
+const REACT_18_FEATURES: ReadonlySet<keyof ReactFeatures> = new Set([
   "streaming",
   "transitions",
   "suspense",
   "automaticBatching",
   "renderToPipeableStream",
   "renderToReadableStream",
-];
+]);
 
 export function checkVersionCompatibility(
   requiredFeatures: Array<keyof ReactFeatures>,
@@ -27,17 +27,21 @@ export function checkVersionCompatibility(
   let compatible = true;
 
   for (const feature of requiredFeatures) {
-    if (!info.features[feature]) {
-      if (REACT_19_FEATURES.includes(feature)) {
-        warnings.push(`Feature "${feature}" requires React 19 (current: ${info.version})`);
-      } else if (REACT_18_FEATURES.includes(feature)) {
-        errors.push(`Feature "${feature}" requires React 18+ (current: ${info.version})`);
-        compatible = false;
-      } else {
-        errors.push(`Feature "${feature}" is not available (current: React ${info.version})`);
-        compatible = false;
-      }
+    if (info.features[feature]) continue;
+
+    if (REACT_19_FEATURES.has(feature)) {
+      warnings.push(`Feature "${feature}" requires React 19 (current: ${info.version})`);
+      continue;
     }
+
+    if (REACT_18_FEATURES.has(feature)) {
+      errors.push(`Feature "${feature}" requires React 18+ (current: ${info.version})`);
+      compatible = false;
+      continue;
+    }
+
+    errors.push(`Feature "${feature}" is not available (current: React ${info.version})`);
+    compatible = false;
   }
 
   return { compatible, warnings, errors };
@@ -46,11 +50,7 @@ export function checkVersionCompatibility(
 export function getRecommendedSSRMethod(): SSRMethod {
   const { isReact18, isReact19, features } = getReactVersionInfo();
 
-  if (isReact19 || (isReact18 && features.renderToReadableStream)) {
-    return "readable-stream";
-  }
-  if (isReact18 && features.renderToPipeableStream) {
-    return "stream";
-  }
+  if (isReact19 || (isReact18 && features.renderToReadableStream)) return "readable-stream";
+  if (isReact18 && features.renderToPipeableStream) return "stream";
   return "string";
 }

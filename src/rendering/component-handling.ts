@@ -4,7 +4,7 @@
 
 import { rendererLogger as logger } from "#veryfront/utils";
 import { ErrorCode, VeryfrontError } from "#veryfront/errors/index.ts";
-import * as BundledReact from "react";
+import type * as BundledReact from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { EntityInfo, PageBundle } from "#veryfront/types";
 import { createError, getErrorMessage, toError } from "../errors/veryfront-error.ts";
@@ -44,62 +44,54 @@ export async function handleComponentPage(
     logger.debug(`Loading TSX/JSX file: ${pageInfo.entity.path}`);
 
     const rawFileContent = await adapter.fs.readFile(pageInfo.entity.path);
-
-    // Inject node positions for Studio Navigator (edit-in-place support)
-    // Only enabled when studioEmbed is true (page embedded in Studio iframe)
     const fileContent = options?.studioEmbed
       ? injectNodePositions(rawFileContent, { filePath: pageInfo.entity.path })
       : rawFileContent;
 
-    // Bundle for client if not cached
-    let clientModuleCode = options?.cachedClientModule;
-    if (!clientModuleCode) {
-      clientModuleCode = await bundleComponentForClient(
+    const clientModuleCode = options?.cachedClientModule ??
+      (await bundleComponentForClient(
         fileContent,
         pageInfo.entity.path,
         projectDir,
         adapter,
         options?.moduleServerUrl,
         options?.projectId,
-      ) ?? undefined;
-    }
+      )) ??
+      undefined;
 
-    // Load the component using NEW ESM component loader for SSR
-    const { loadComponentFromSource } = await import(
-      "@veryfront/modules/react-loader/index.ts"
-    );
+    const { loadComponentFromSource } = await import("@veryfront/modules/react-loader/index.ts");
     const PageComponent = await loadComponentFromSource(
       fileContent,
       pageInfo.entity.path,
       projectDir,
       adapter,
       {
-        projectId: options?.projectId || projectDir,
+        projectId: options?.projectId ?? projectDir,
         dev: true,
         moduleServerUrl: options?.moduleServerUrl,
-        ssr: true, // SSR mode for proper import resolution
+        ssr: true,
         contentSourceId: options?.contentSourceId,
       },
     );
 
     if (!PageComponent) {
-      throw toError(createError({
-        type: "render",
-        message: `Component does not export a default: ${pageInfo.entity.path}`,
-      }));
+      throw toError(
+        createError({
+          type: "render",
+          message: `Component does not export a default: ${pageInfo.entity.path}`,
+        }),
+      );
     }
 
-    // Get project's React for createElement to ensure element symbols match user components
     const React = await getProjectReact();
-    const componentProps = options?.props || {};
     const pageElement = React.createElement(
       PageComponent,
-      componentProps,
+      options?.props ?? {},
     ) as BundledReact.ReactElement;
 
     const pageBundle: PageBundle = {
       compiledCode: "",
-      frontmatter: pageInfo.entity.frontmatter || {},
+      frontmatter: pageInfo.entity.frontmatter ?? {},
       globals: {},
       headings: [],
       nodeMap: new Map(),
@@ -110,7 +102,6 @@ export async function handleComponentPage(
     }
 
     logger.debug(`Successfully loaded TSX/JSX component for ${slug}`);
-
     return { pageElement, pageBundle };
   } catch (error) {
     logger.error(`Failed to import TSX/JSX file: ${pageInfo.entity.path}`, error);
@@ -122,17 +113,13 @@ export async function handleComponentPage(
   }
 }
 
-// Hex lookup table for efficient byte-to-hex conversion (avoids allocations in hot path)
 const HEX_CHARS = "0123456789abcdef";
 
-// Generate SHA-256 hash for content - optimized single-pass hex encoding
 async function generateContentHash(str: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(str);
+  const data = new TextEncoder().encode(str);
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
   const bytes = new Uint8Array(hashBuffer);
-  // Single-pass hex encoding without intermediate array allocations
-  // Only need first 8 bytes for 16 hex chars
+
   let hex = "";
   for (let i = 0; i < 8; i++) {
     const byte = bytes[i]!;
@@ -153,27 +140,15 @@ async function bundleComponentForClient(
     const contentHash = await generateContentHash(source);
     const cacheKey = buildComponentCacheKey(projectId ?? projectDir, filePath, contentHash);
     const cached = componentHydrationCache.get(cacheKey);
-    if (cached) {
-      return cached;
-    }
+    if (cached) return cached;
 
-    // Use ESM transform instead of bundling (modern dev server pattern)
-    // This works because the module server serves all dependencies via HTTP
-    // and the browser natively supports ES modules
     const { transformToESM } = await import("#veryfront/transforms/esm-transform.ts");
-
-    const transformed = await transformToESM(
-      source,
-      filePath,
-      projectDir,
-      adapter,
-      {
-        projectId: projectId ?? projectDir,
-        dev: true,
-        jsxImportSource: "react",
-        moduleServerUrl,
-      },
-    );
+    const transformed = await transformToESM(source, filePath, projectDir, adapter, {
+      projectId: projectId ?? projectDir,
+      dev: true,
+      jsxImportSource: "react",
+      moduleServerUrl,
+    });
 
     componentHydrationCache.set(cacheKey, transformed);
     return transformed;
@@ -183,10 +158,11 @@ async function bundleComponentForClient(
       filePath,
       error: errorMessage,
     });
-    // Don't silently return null - throw to make the error visible
-    throw toError(createError({
-      type: "render",
-      message: `Component transformation failed for ${filePath}: ${errorMessage}`,
-    }));
+    throw toError(
+      createError({
+        type: "render",
+        message: `Component transformation failed for ${filePath}: ${errorMessage}`,
+      }),
+    );
   }
 }

@@ -9,30 +9,33 @@ export default tool({
   inputSchema: z.object({
     siteId: z.string().describe("The ID of the SharePoint site"),
     driveId: z.string().describe("The ID of the document library (drive)"),
-    folderId: z.string().optional().describe(
-      "Optional folder ID to list contents from. If not provided, lists root level.",
-    ),
-    search: z.string().optional().describe(
-      "Optional search query to find files by name or content instead of listing",
-    ),
-    orderBy: z.enum(["name", "lastModifiedDateTime", "size"]).optional().describe(
-      "Sort order for results",
-    ),
-    limit: z.number().min(1).max(100).default(50).describe("Maximum number of items to return"),
+    folderId: z
+      .string()
+      .optional()
+      .describe(
+        "Optional folder ID to list contents from. If not provided, lists root level.",
+      ),
+    search: z
+      .string()
+      .optional()
+      .describe(
+        "Optional search query to find files by name or content instead of listing",
+      ),
+    orderBy: z
+      .enum(["name", "lastModifiedDateTime", "size"])
+      .optional()
+      .describe("Sort order for results"),
+    limit: z
+      .number()
+      .min(1)
+      .max(100)
+      .default(50)
+      .describe("Maximum number of items to return"),
   }),
   async execute({ siteId, driveId, folderId, search, orderBy, limit }) {
-    let files;
-
-    if (search) {
-      // Use search functionality
-      files = await searchFiles(siteId, search, { limit });
-    } else {
-      // List files in folder
-      files = await listFiles(siteId, driveId, folderId, {
-        limit,
-        orderBy,
-      });
-    }
+    const files = search
+      ? await searchFiles(siteId, search, { limit })
+      : await listFiles(siteId, driveId, folderId, { limit, orderBy });
 
     return files.map((file) => ({
       id: file.id,
@@ -59,5 +62,5 @@ function formatBytes(bytes: number): string {
   const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
 
-  return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + " " + sizes[i];
+  return `${Math.round((bytes / Math.pow(k, i)) * 100) / 100} ${sizes[i]}`;
 }

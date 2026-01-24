@@ -1,4 +1,4 @@
-export function HeroSection() {
+export function HeroSection(): JSX.Element {
   return (
     <section className="py-24 md:py-32">
       <div className="max-w-5xl mx-auto px-6">

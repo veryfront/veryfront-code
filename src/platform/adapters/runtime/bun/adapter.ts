@@ -1,8 +1,8 @@
 import type { RuntimeAdapter, RuntimeCapabilities, ServeOptions, Server } from "../../base.ts";
-import { BunFileSystemAdapter } from "./filesystem-adapter.ts";
 import { BunEnvironmentAdapter } from "./environment-adapter.ts";
-import { BunServerAdapter } from "./websocket-adapter.ts";
+import { BunFileSystemAdapter } from "./filesystem-adapter.ts";
 import { createBunServer } from "./http-server.ts";
+import { BunServerAdapter } from "./websocket-adapter.ts";
 import { NodeBasedShellAdapter } from "../shared/node-based-shell-adapter.ts";
 
 export class BunAdapter implements RuntimeAdapter {
@@ -31,15 +31,17 @@ export class BunAdapter implements RuntimeAdapter {
     handler: (request: Request) => Promise<Response> | Response,
     options: ServeOptions = {},
   ): Promise<Server> {
-    this.activeServer = await createBunServer(handler, options);
-    return this.activeServer;
+    const server = await createBunServer(handler, options);
+    this.activeServer = server;
+    return server;
   }
 
   async shutdown(): Promise<void> {
-    if (this.activeServer) {
-      await this.activeServer.stop();
-      this.activeServer = null;
-    }
+    const server = this.activeServer;
+    if (!server) return;
+
+    await server.stop();
+    this.activeServer = null;
   }
 }
 

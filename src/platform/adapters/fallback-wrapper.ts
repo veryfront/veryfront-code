@@ -53,12 +53,20 @@ function handleFallbackFailure(
   throw fallbackError;
 }
 
+function getFallbackConfig(options: FallbackOptions): Required<FallbackOptions> {
+  return {
+    operationName: options.operationName,
+    logError: options.logError ?? true,
+    rethrowOnFallbackFailure: options.rethrowOnFallbackFailure ?? true,
+  };
+}
+
 export async function withFallback<T>(
   primary: () => Promise<T>,
   fallback: () => Promise<T>,
   options: FallbackOptions,
 ): Promise<T> {
-  const { operationName, logError = true, rethrowOnFallbackFailure = true } = options;
+  const { operationName, logError, rethrowOnFallbackFailure } = getFallbackConfig(options);
 
   try {
     return await primary();
@@ -70,7 +78,7 @@ export async function withFallback<T>(
       if (logError) logFallbackSuccess(operationName);
       return result;
     } catch (fallbackError) {
-      handleFallbackFailure(
+      return handleFallbackFailure(
         operationName,
         primaryError,
         fallbackError,
@@ -86,7 +94,7 @@ export function withFallbackSync<T>(
   fallback: () => T,
   options: FallbackOptions,
 ): T {
-  const { operationName, logError = true, rethrowOnFallbackFailure = true } = options;
+  const { operationName, logError, rethrowOnFallbackFailure } = getFallbackConfig(options);
 
   try {
     return primary();
@@ -98,7 +106,7 @@ export function withFallbackSync<T>(
       if (logError) logFallbackSuccess(operationName);
       return result;
     } catch (fallbackError) {
-      handleFallbackFailure(
+      return handleFallbackFailure(
         operationName,
         primaryError,
         fallbackError,

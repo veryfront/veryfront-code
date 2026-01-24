@@ -2,8 +2,6 @@ import { tool } from "veryfront/tool";
 import { z } from "zod";
 import { createSheetsClient } from "../../lib/sheets-client.ts";
 
-// Default user ID for demo/dev purposes
-// In production, get from authenticated session
 const DEFAULT_USER_ID = "demo-user";
 
 export default tool({
@@ -17,7 +15,6 @@ export default tool({
   }),
   async execute({ spreadsheetId }) {
     const client = createSheetsClient(DEFAULT_USER_ID);
-
     const spreadsheet = await client.getSpreadsheet(spreadsheetId);
 
     return {
@@ -26,13 +23,13 @@ export default tool({
       url: spreadsheet.spreadsheetUrl,
       locale: spreadsheet.properties.locale,
       timeZone: spreadsheet.properties.timeZone,
-      sheets: spreadsheet.sheets.map((sheet) => ({
-        id: sheet.properties.sheetId,
-        title: sheet.properties.title,
-        index: sheet.properties.index,
-        type: sheet.properties.sheetType,
-        rowCount: sheet.properties.gridProperties?.rowCount,
-        columnCount: sheet.properties.gridProperties?.columnCount,
+      sheets: spreadsheet.sheets.map(({ properties }) => ({
+        id: properties.sheetId,
+        title: properties.title,
+        index: properties.index,
+        type: properties.sheetType,
+        rowCount: properties.gridProperties?.rowCount,
+        columnCount: properties.gridProperties?.columnCount,
       })),
     };
   },

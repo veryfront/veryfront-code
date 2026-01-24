@@ -46,13 +46,9 @@ interface GlobalWithVeryfrontEnv {
   };
 }
 
-// Check if we're in development mode
 function isDevMode(): boolean {
-  if (typeof globalThis !== "undefined") {
-    const g = globalThis as unknown as GlobalWithVeryfrontEnv;
-    return g.__VERYFRONT_DEV__ === true || g.Deno?.env?.get?.("VERYFRONT_ENV") === "development";
-  }
-  return false;
+  const g = globalThis as unknown as GlobalWithVeryfrontEnv;
+  return g.__VERYFRONT_DEV__ === true || g.Deno?.env?.get?.("VERYFRONT_ENV") === "development";
 }
 
 export interface ValidateTrustedHtmlOptions {
@@ -80,20 +76,15 @@ export function validateTrustedHtml(
   const { strict = false, warn = true } = options;
 
   for (const { pattern, name } of SUSPICIOUS_PATTERNS) {
-    // Reset regex state for global patterns
     pattern.lastIndex = 0;
 
-    if (pattern.test(html)) {
-      const message = `[Security] Suspicious ${name} detected in server HTML`;
+    if (!pattern.test(html)) continue;
 
-      if (warn) {
-        console.warn(message);
-      }
+    const message = `[Security] Suspicious ${name} detected in server HTML`;
+    if (warn) console.warn(message);
 
-      // In strict mode or production, throw
-      if (strict || !isDevMode()) {
-        throw new Error(`Potentially unsafe HTML: ${name} detected`);
-      }
+    if (strict || !isDevMode()) {
+      throw new Error(`Potentially unsafe HTML: ${name} detected`);
     }
   }
 
@@ -114,7 +105,6 @@ export function createErrorDisplay(options: {
 
   const container = document.createElement("div");
 
-  // Apply default error styling
   Object.assign(container.style, {
     color: "red",
     border: "2px solid red",
@@ -126,24 +116,19 @@ export function createErrorDisplay(options: {
     ...style,
   });
 
-  // Title
   const titleEl = document.createElement("strong");
   titleEl.textContent = title;
-  container.appendChild(titleEl);
-  container.appendChild(document.createElement("br"));
+  container.append(titleEl, document.createElement("br"));
 
-  // Message
   const messageEl = document.createElement("span");
   messageEl.textContent = message;
   container.appendChild(messageEl);
 
-  // Details (optional)
   if (details) {
-    container.appendChild(document.createElement("br"));
     const detailsEl = document.createElement("pre");
     detailsEl.style.cssText = "margin: 5px 0; white-space: pre-wrap; word-break: break-word;";
     detailsEl.textContent = details;
-    container.appendChild(detailsEl);
+    container.append(document.createElement("br"), detailsEl);
   }
 
   return container;

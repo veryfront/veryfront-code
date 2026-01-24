@@ -1,15 +1,5 @@
 import { getAnonKey, getServiceKey, getSupabaseUrl } from "./token-store.ts";
 
-interface SupabaseResponse<T> {
-  data: T | null;
-  error: {
-    message: string;
-    details?: string;
-    hint?: string;
-    code?: string;
-  } | null;
-}
-
 interface TableInfo {
   table_name: string;
   table_schema: string;
@@ -48,28 +38,45 @@ async function supabaseFetch<T>(
   const response = await fetch(`${url}/rest/v1${endpoint}`, {
     ...options,
     headers: {
-      "apikey": apiKey,
-      "Authorization": `Bearer ${apiKey}`,
+      apikey: apiKey,
+      Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
-      "Prefer": "return=representation",
+      Prefer: "return=representation",
       ...options.headers,
     },
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({})) as SupabaseError;
-    const errorMessage = error.message ||
-      `Supabase API error: ${response.status} ${response.statusText}`;
-    const err: SupabaseError = new Error(errorMessage);
+    const error = (await response.json().catch(() => ({}))) as Partial<SupabaseError>;
+    const message =
+      error.message ?? `Supabase API error: ${response.status} ${response.statusText}`;
+
+    const err: SupabaseError = new Error(message);
     err.code = error.code;
     err.details = error.details;
     err.hint = error.hint;
     throw err;
   }
 
-  // Handle empty responses (like DELETE)
   const text = await response.text();
-  return text ? JSON.parse(text) : null;
+  return (text ? JSON.parse(text) : null) as T;
+}
+
+function toEqFilterValue(value: unknown): string | null {
+  if (value === null) return "is.null";
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return `eq.${value}`;
+  }
+  return null;
+}
+
+function buildFilterParams(filter: Record<string, unknown>): URLSearchParams {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filter)) {
+    const filterValue = toEqFilterValue(value);
+    if (filterValue !== null) params.append(key, filterValue);
+  }
+  return params;
 }
 
 /**
@@ -78,19 +85,18 @@ async function supabaseFetch<T>(
 export async function listTables(): Promise<TableInfo[]> {
   try {
     const tables = await supabaseFetch<TableInfo[]>(
-      `/rpc/get_tables`,
+      "/rpc/get_tables",
       {
         method: "POST",
         body: JSON.stringify({}),
       },
     );
-    return tables || [];
-  } catch (_error) {
-    // Fallback: query information_schema directly
+    return tables ?? [];
+  } catch {
     const query =
-      `?select=table_name,table_schema,table_type&table_schema=eq.public&table_type=eq.BASE TABLE`;
+      "?select=table_name,table_schema,table_type&table_schema=eq.public&table_type=eq.BASE TABLE";
     const tables = await supabaseFetch<TableInfo[]>(`/information_schema.tables${query}`);
-    return tables || [];
+    return tables ?? [];
   }
 }
 
@@ -101,7 +107,7 @@ export async function getTableColumns(tableName: string): Promise<ColumnInfo[]> 
   const query =
     `?select=column_name,data_type,is_nullable,column_default&table_name=eq.${tableName}&table_schema=eq.public`;
   const columns = await supabaseFetch<ColumnInfo[]>(`/information_schema.columns${query}`);
-  return columns || [];
+  return columns ?? [];
 }
 
 /**
@@ -112,46 +118,23 @@ export async function queryTable<T = Record<string, unknown>>(
   options: QueryOptions = {},
 ): Promise<T[]> {
   const params = new URLSearchParams();
+  params.append("select", options.select ?? "*");
 
-  // Select columns
-  if (options.select) {
-    params.append("select", options.select);
-  } else {
-    params.append("select", "*");
-  }
-
-  // Add filters
   if (options.filter) {
-    for (const [key, value] of Object.entries(options.filter)) {
-      if (value === null) {
-        params.append(key, "is.null");
-      } else if (typeof value === "string") {
-        params.append(key, `eq.${value}`);
-      } else if (typeof value === "number") {
-        params.append(key, `eq.${value}`);
-      } else if (typeof value === "boolean") {
-        params.append(key, `eq.${value}`);
-      }
-    }
+    const filterParams = buildFilterParams(options.filter);
+    for (const [key, value] of filterParams.entries()) params.append(key, value);
   }
 
-  // Add ordering
   if (options.order) {
     const direction = options.order.ascending === false ? ".desc" : ".asc";
     params.append("order", `${options.order.column}${direction}`);
   }
 
-  // Add pagination
-  if (options.limit) {
-    params.append("limit", options.limit.toString());
-  }
-  if (options.offset) {
-    params.append("offset", options.offset.toString());
-  }
+  if (options.limit) params.append("limit", options.limit.toString());
+  if (options.offset) params.append("offset", options.offset.toString());
 
-  const queryString = params.toString();
-  const results = await supabaseFetch<T[]>(`/${tableName}?${queryString}`);
-  return results || [];
+  const results = await supabaseFetch<T[]>(`/${tableName}?${params.toString()}`);
+  return results ?? [];
 }
 
 /**
@@ -169,10 +152,7 @@ export async function insertRow<T = Record<string, unknown>>(
     },
   );
 
-  if (!result || result.length === 0) {
-    throw new Error("Insert operation did not return data");
-  }
-
+  if (!result?.length) throw new Error("Insert operation did not return data");
   return result[0];
 }
 
@@ -192,10 +172,7 @@ export async function updateRow<T = Record<string, unknown>>(
     },
   );
 
-  if (!result || result.length === 0) {
-    throw new Error(`No row found with id ${id}`);
-  }
-
+  if (!result?.length) throw new Error(`No row found with id ${id}`);
   return result[0];
 }
 
@@ -207,11 +184,7 @@ export async function updateRows<T = Record<string, unknown>>(
   filter: Record<string, unknown>,
   data: Record<string, unknown>,
 ): Promise<T[]> {
-  const params = new URLSearchParams();
-
-  for (const [key, value] of Object.entries(filter)) {
-    params.append(key, `eq.${value}`);
-  }
+  const params = buildFilterParams(filter);
 
   const result = await supabaseFetch<T[]>(
     `/${tableName}?${params.toString()}`,
@@ -221,7 +194,7 @@ export async function updateRows<T = Record<string, unknown>>(
     },
   );
 
-  return result || [];
+  return result ?? [];
 }
 
 /**
@@ -238,10 +211,7 @@ export async function deleteRow<T = Record<string, unknown>>(
     },
   );
 
-  if (!result || result.length === 0) {
-    throw new Error(`No row found with id ${id}`);
-  }
-
+  if (!result?.length) throw new Error(`No row found with id ${id}`);
   return result[0];
 }
 
@@ -252,11 +222,7 @@ export async function deleteRows<T = Record<string, unknown>>(
   tableName: string,
   filter: Record<string, unknown>,
 ): Promise<T[]> {
-  const params = new URLSearchParams();
-
-  for (const [key, value] of Object.entries(filter)) {
-    params.append(key, `eq.${value}`);
-  }
+  const params = buildFilterParams(filter);
 
   const result = await supabaseFetch<T[]>(
     `/${tableName}?${params.toString()}`,
@@ -265,16 +231,14 @@ export async function deleteRows<T = Record<string, unknown>>(
     },
   );
 
-  return result || [];
+  return result ?? [];
 }
 
 /**
  * Execute a raw SQL query using RPC
  * Note: This requires a stored procedure to be created in your Supabase database
  */
-export function runRawQuery<T = unknown>(
-  query: string,
-): Promise<T> {
+export function runRawQuery<T = unknown>(query: string): Promise<T> {
   return supabaseFetch<T>(
     "/rpc/execute_sql",
     {
@@ -287,7 +251,7 @@ export function runRawQuery<T = unknown>(
 /**
  * Get client instance (for use with @supabase/supabase-js if needed)
  */
-export function getClient() {
+export function getClient(): { url: string; anonKey: string; serviceKey: string } {
   return {
     url: getSupabaseUrl(),
     anonKey: getAnonKey(),

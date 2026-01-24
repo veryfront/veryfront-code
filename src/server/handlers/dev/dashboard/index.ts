@@ -1,20 +1,16 @@
 import { BaseHandler } from "../../response/base.ts";
-import type {
-  HandlerContext,
-  HandlerMetadata,
-  HandlerPriority,
-  HandlerResult,
-} from "../../types.ts";
+import type { HandlerContext, HandlerMetadata, HandlerResult } from "../../types.ts";
 import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
+import type { HandlerPriority } from "#veryfront/types";
 import { DASHBOARD_SHELL_HTML } from "./html-shell.ts";
 import { handleDashboardAPI } from "./api.ts";
 import { handleDashboardUI } from "./ui-handler.ts";
+
 export class DevDashboardHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "DevDashboardHandler",
     priority: PRIORITY_HIGH_DEV as HandlerPriority,
     patterns: [{ pattern: "/_dev", exact: false }],
-    // Enable in local dev only
     enabled: (ctx) => ctx.requestContext?.isLocalDev ?? false,
   };
 
@@ -30,22 +26,28 @@ export class DevDashboardHandler extends BaseHandler {
 
     if (pathname === "/_dev" || pathname === "/_dev/") {
       return this.respond(
-        this.createResponseBuilder(ctx)
-          .withCache("no-cache")
-          .withContentType("text/html; charset=utf-8", DASHBOARD_SHELL_HTML, HTTP_OK),
+        this.createResponseBuilder(ctx).withCache("no-cache").withContentType(
+          "text/html; charset=utf-8",
+          DASHBOARD_SHELL_HTML,
+          HTTP_OK,
+        ),
       );
     }
 
     if (pathname.startsWith("/_dev/ui/")) {
       const response = await handleDashboardUI(req);
-      if (response) return this.respond(response);
+      return response ? this.respond(response) : this.respondNotFound();
     }
 
     if (pathname.startsWith("/_dev/api/")) {
       const response = await handleDashboardAPI(req, ctx);
-      if (response) return this.respond(response);
+      return response ? this.respond(response) : this.respondNotFound();
     }
 
+    return this.respondNotFound();
+  }
+
+  private respondNotFound(): HandlerResult {
     return this.respond(
       new Response(JSON.stringify({ error: "Not found" }), {
         status: 404,

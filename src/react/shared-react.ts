@@ -13,67 +13,52 @@
 
 import { isBun, isDeno, isNode } from "../platform/compat/runtime.ts";
 import { cacheModuleToLocal } from "../transforms/esm/http-cache.ts";
-import { getHttpBundleCacheDir } from "../utils/cache-dir.ts";
 import { getReactUrls } from "../transforms/esm/package-registry.ts";
+import { getHttpBundleCacheDir } from "../utils/cache-dir.ts";
+
+import type * as ReactTypes from "https://esm.sh/@types/react@18.3.27";
 
 type ReactType = typeof import("react");
 
-// Internal cache to ensure single instance
 let reactCache: ReactType | null = null;
 
-/**
- * Load React, caching from esm.sh if needed.
- */
-async function loadReact(): Promise<ReactType> {
-  if (reactCache) {
-    return reactCache;
-  }
+function getDefaultExport<T>(mod: T): T {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return ((mod as any).default ?? mod) as T;
+}
 
-  // Node/Bun with node_modules: try native resolution first
+async function loadReact(): Promise<ReactType> {
+  if (reactCache) return reactCache;
+
   if ((isNode || isBun) && !isDeno) {
     try {
-      // Dynamic import to avoid static analysis issues
       const nativeReact = await import("react");
-      const mod = nativeReact.default ?? nativeReact;
-      reactCache = mod as ReactType;
+      reactCache = getDefaultExport(nativeReact) as ReactType;
       return reactCache;
     } catch {
       // Fall through to esm.sh caching
     }
   }
 
-  const urls = getReactUrls();
+  const reactUrl = getReactUrls().react!;
 
-  // Deno: use HTTP imports directly (Deno supports them natively)
-  // This ensures the same React instance is used by both shared modules and
-  // user code, preventing "Invalid hook call" errors from multiple React instances.
   if (isDeno) {
-    const httpReact = await import(urls.react);
-    const mod = httpReact.default ?? httpReact;
-    reactCache = mod as ReactType;
+    const httpReact = await import(reactUrl);
+    reactCache = getDefaultExport(httpReact) as ReactType;
     return reactCache;
   }
 
-  // Node/Bun without node_modules: cache from esm.sh to local file://
   const cacheDir = getHttpBundleCacheDir();
-  const cachedPath = await cacheModuleToLocal(urls.react, cacheDir);
+  const cachedPath = await cacheModuleToLocal(reactUrl, cacheDir);
   const cachedReact = await import(cachedPath);
-  const mod = cachedReact.default ?? cachedReact;
-  reactCache = mod as ReactType;
+  reactCache = getDefaultExport(cachedReact) as ReactType;
   return reactCache;
 }
 
-// Top-level await - caches at module load
 const React = await loadReact();
 
-// Re-export everything from React
 export default React;
 
-// Import types from @types/react for proper type annotations
-import type * as ReactTypes from "https://esm.sh/@types/react@18.3.27";
-
-// Named exports for tree-shaking support
-// Explicitly typed to preserve React's generic type signatures
 export const Children: typeof ReactTypes.Children = React.Children;
 export const Component: typeof ReactTypes.Component = React.Component;
 export const Fragment: ReactTypes.ExoticComponent<{ children?: ReactTypes.ReactNode }> =
@@ -110,8 +95,6 @@ export const useSyncExternalStore: typeof ReactTypes.useSyncExternalStore =
 export const useTransition: typeof ReactTypes.useTransition = React.useTransition;
 export const version: string = React.version;
 
-// Re-export types from @types/react for consistency
-// This ensures TypeScript can resolve types when "react" points to this module
 export type {
   AnchorHTMLAttributes,
   Attributes,
@@ -166,6 +149,4 @@ export type {
   WheelEvent,
 } from "https://esm.sh/@types/react@18.3.27";
 
-// Re-export JSX namespace for JSX type checking
-// JSX is a namespace, not a value, so we use 'export type'
 export type { JSX } from "https://esm.sh/@types/react@18.3.27";

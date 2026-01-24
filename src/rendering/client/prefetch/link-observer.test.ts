@@ -1,38 +1,35 @@
-/**
- * Unit Tests for Link Observer
- * Tests intersection observer-based link prefetching functionality
- */
-
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { delay } from "#std/async.ts";
 import { LinkObserver } from "./link-observer.ts";
 import type { LinkObserverOptions } from "./link-observer.ts";
-import { delay } from "#std/async.ts";
 
-// Mock IntersectionObserver
 class MockIntersectionObserver {
   callback: IntersectionObserverCallback;
   options: IntersectionObserverInit;
   observedElements = new Set<Element>();
 
-  constructor(callback: IntersectionObserverCallback, options: IntersectionObserverInit = {}) {
+  constructor(
+    callback: IntersectionObserverCallback,
+    options: IntersectionObserverInit = {},
+  ) {
     this.callback = callback;
     this.options = options;
   }
 
-  observe(element: Element) {
+  observe(element: Element): void {
     this.observedElements.add(element);
   }
 
-  unobserve(element: Element) {
+  unobserve(element: Element): void {
     this.observedElements.delete(element);
   }
 
-  disconnect() {
+  disconnect(): void {
     this.observedElements.clear();
   }
 
-  triggerIntersection(element: Element, isIntersecting: boolean) {
+  triggerIntersection(element: Element, isIntersecting: boolean): void {
     const entry: IntersectionObserverEntry = {
       target: element,
       isIntersecting,
@@ -42,11 +39,11 @@ class MockIntersectionObserver {
       rootBounds: null,
       time: Date.now(),
     };
+
     this.callback([entry], this as unknown as IntersectionObserver);
   }
 }
 
-// Mock MutationObserver
 class MockMutationObserver {
   callback: MutationCallback;
   observedTarget: Node | null = null;
@@ -56,17 +53,17 @@ class MockMutationObserver {
     this.callback = callback;
   }
 
-  observe(target: Node, options: MutationObserverInit) {
+  observe(target: Node, options: MutationObserverInit): void {
     this.observedTarget = target;
     this.observerOptions = options;
   }
 
-  disconnect() {
+  disconnect(): void {
     this.observedTarget = null;
     this.observerOptions = null;
   }
 
-  triggerMutation(addedNodes: Node[]) {
+  triggerMutation(addedNodes: Node[]): void {
     const mutation: MutationRecord = {
       type: "childList",
       target: this.observedTarget!,
@@ -78,35 +75,66 @@ class MockMutationObserver {
       attributeNamespace: null,
       oldValue: null,
     };
+
     this.callback([mutation], this as unknown as MutationObserver);
   }
 }
 
-// Setup global mocks
-const setupMocks = () => {
-  const originalIntersectionObserver = (globalThis as any).IntersectionObserver;
-  const originalMutationObserver = (globalThis as any).MutationObserver;
-  const originalDocument = globalThis.document;
-  const originalLocation = globalThis.location;
-  const originalNode = (globalThis as any).Node;
+function createLink(overrides: Partial<any> = {}): any {
+  return {
+    tagName: "A",
+    href: "http://example.com/page",
+    hostname: "example.com",
+    pathname: "/page",
+    hash: "",
+    target: "",
+    hasAttribute: () => false,
+    dataset: {},
+    ...overrides,
+  };
+}
+
+function createOptions(overrides: Partial<LinkObserverOptions> = {}): LinkObserverOptions {
+  return {
+    rootMargin: "100px",
+    delay: 100,
+    onLinkVisible: () => {},
+    ...overrides,
+  };
+}
+
+function setupMocks(): {
+  cleanup: () => void;
+  getMockIntersectionObserver: () => MockIntersectionObserver;
+  getMockMutationObserver: () => MockMutationObserver;
+  setDocument: (doc: any) => void;
+} {
+  const g = globalThis as any;
+
+  const originalIntersectionObserver = g.IntersectionObserver;
+  const originalMutationObserver = g.MutationObserver;
+  const originalDocument = g.document;
+  const originalLocation = g.location;
+  const originalNode = g.Node;
 
   let mockIntersectionObserver: MockIntersectionObserver | null = null;
   let mockMutationObserver: MockMutationObserver | null = null;
-  (globalThis as any).IntersectionObserver = class {
+
+  g.IntersectionObserver = class {
     constructor(callback: IntersectionObserverCallback, options: IntersectionObserverInit) {
       mockIntersectionObserver = new MockIntersectionObserver(callback, options);
       return mockIntersectionObserver;
     }
   };
-  (globalThis as any).MutationObserver = class {
+
+  g.MutationObserver = class {
     constructor(callback: MutationCallback) {
       mockMutationObserver = new MockMutationObserver(callback);
       return mockMutationObserver;
     }
   };
 
-  // Mock Node constants
-  (globalThis as any).Node = {
+  g.Node = {
     ELEMENT_NODE: 1,
     TEXT_NODE: 3,
     COMMENT_NODE: 8,
@@ -114,13 +142,12 @@ const setupMocks = () => {
     DOCUMENT_FRAGMENT_NODE: 11,
   };
 
-  // Mock document
-  const mockDocument = {
+  g.document = {
     querySelectorAll: (_selector: string) => [],
     body: {},
   };
-  (globalThis as any).document = mockDocument; // Mock location
-  (globalThis as any).location = {
+
+  g.location = {
     hostname: "example.com",
     href: "http://example.com/current",
     pathname: "/current",
@@ -128,33 +155,26 @@ const setupMocks = () => {
 
   return {
     cleanup: () => {
-      (globalThis as any).IntersectionObserver = originalIntersectionObserver;
-      (globalThis as any).MutationObserver = originalMutationObserver;
-      (globalThis as any).Node = originalNode;
-      (globalThis as any).document = originalDocument;
-      (globalThis as any).location = originalLocation;
+      g.IntersectionObserver = originalIntersectionObserver;
+      g.MutationObserver = originalMutationObserver;
+      g.Node = originalNode;
+      g.document = originalDocument;
+      g.location = originalLocation;
     },
     getMockIntersectionObserver: () => mockIntersectionObserver!,
     getMockMutationObserver: () => mockMutationObserver!,
     setDocument: (doc: any) => {
-      (globalThis as any).document = doc;
+      g.document = doc;
     },
   };
-};
+}
 
 describe("LinkObserver", () => {
   describe("Constructor and Initialization", () => {
     it("should create LinkObserver with options and prefetchedUrls", () => {
       const mocks = setupMocks();
 
-      const options: LinkObserverOptions = {
-        rootMargin: "100px",
-        delay: 100,
-        onLinkVisible: () => {},
-      };
-      const prefetchedUrls = new Set<string>();
-
-      const observer = new LinkObserver(options, prefetchedUrls);
+      const observer = new LinkObserver(createOptions(), new Set<string>());
       assertExists(observer);
 
       mocks.cleanup();
@@ -163,14 +183,10 @@ describe("LinkObserver", () => {
     it("should initialize intersection observer with correct rootMargin", () => {
       const mocks = setupMocks();
 
-      const options: LinkObserverOptions = {
-        rootMargin: "200px",
-        delay: 50,
-        onLinkVisible: () => {},
-      };
-      const prefetchedUrls = new Set<string>();
-
-      const observer = new LinkObserver(options, prefetchedUrls);
+      const observer = new LinkObserver(
+        createOptions({ rootMargin: "200px", delay: 50 }),
+        new Set<string>(),
+      );
       observer.init();
 
       const mockIO = mocks.getMockIntersectionObserver();
@@ -183,14 +199,7 @@ describe("LinkObserver", () => {
     it("should setup mutation observer on document.body", () => {
       const mocks = setupMocks();
 
-      const options: LinkObserverOptions = {
-        rootMargin: "100px",
-        delay: 100,
-        onLinkVisible: () => {},
-      };
-      const prefetchedUrls = new Set<string>();
-
-      const observer = new LinkObserver(options, prefetchedUrls);
+      const observer = new LinkObserver(createOptions(), new Set<string>());
       observer.init();
 
       const mockMO = mocks.getMockMutationObserver();
@@ -207,46 +216,18 @@ describe("LinkObserver", () => {
     it("should observe valid internal links on init", () => {
       const mocks = setupMocks();
 
-      const link1 = {
-        tagName: "A",
-        href: "http://example.com/page1",
-        hostname: "example.com",
-        pathname: "/page1",
-        hash: "",
-        target: "",
-        hasAttribute: () => false,
-        dataset: {},
-      };
-
-      const link2 = {
-        tagName: "A",
-        href: "http://example.com/page2",
-        hostname: "example.com",
-        pathname: "/page2",
-        hash: "",
-        target: "",
-        hasAttribute: () => false,
-        dataset: {},
-      };
+      const link1 = createLink({ href: "http://example.com/page1", pathname: "/page1" });
+      const link2 = createLink({ href: "http://example.com/page2", pathname: "/page2" });
 
       mocks.setDocument({
         querySelectorAll: (selector: string) => {
-          if (selector === 'a[href^="/"], a[href^="./"]') {
-            return [link1, link2];
-          }
+          if (selector === 'a[href^="/"], a[href^="./"]') return [link1, link2];
           return [];
         },
         body: {},
       });
 
-      const options: LinkObserverOptions = {
-        rootMargin: "100px",
-        delay: 100,
-        onLinkVisible: () => {},
-      };
-      const prefetchedUrls = new Set<string>();
-
-      const observer = new LinkObserver(options, prefetchedUrls);
+      const observer = new LinkObserver(createOptions(), new Set<string>());
       observer.init();
 
       const mockIO = mocks.getMockIntersectionObserver();
@@ -259,30 +240,18 @@ describe("LinkObserver", () => {
     it("should not observe external links", () => {
       const mocks = setupMocks();
 
-      const externalLink = {
-        tagName: "A",
+      const externalLink = createLink({
         href: "http://external.com/page",
         hostname: "external.com",
         pathname: "/page",
-        hash: "",
-        target: "",
-        hasAttribute: () => false,
-        dataset: {},
-      };
+      });
 
       mocks.setDocument({
         querySelectorAll: () => [externalLink],
         body: {},
       });
 
-      const options: LinkObserverOptions = {
-        rootMargin: "100px",
-        delay: 100,
-        onLinkVisible: () => {},
-      };
-      const prefetchedUrls = new Set<string>();
-
-      const observer = new LinkObserver(options, prefetchedUrls);
+      const observer = new LinkObserver(createOptions(), new Set<string>());
       observer.init();
 
       const mockIO = mocks.getMockIntersectionObserver();
@@ -295,30 +264,18 @@ describe("LinkObserver", () => {
     it("should not observe links with download attribute", () => {
       const mocks = setupMocks();
 
-      const downloadLink = {
-        tagName: "A",
+      const downloadLink = createLink({
         href: "http://example.com/file.pdf",
-        hostname: "example.com",
         pathname: "/file.pdf",
-        hash: "",
-        target: "",
         hasAttribute: (attr: string) => attr === "download",
-        dataset: {},
-      };
+      });
 
       mocks.setDocument({
         querySelectorAll: () => [downloadLink],
         body: {},
       });
 
-      const options: LinkObserverOptions = {
-        rootMargin: "100px",
-        delay: 100,
-        onLinkVisible: () => {},
-      };
-      const prefetchedUrls = new Set<string>();
-
-      const observer = new LinkObserver(options, prefetchedUrls);
+      const observer = new LinkObserver(createOptions(), new Set<string>());
       observer.init();
 
       const mockIO = mocks.getMockIntersectionObserver();
@@ -331,30 +288,14 @@ describe("LinkObserver", () => {
     it('should not observe links with target="_blank"', () => {
       const mocks = setupMocks();
 
-      const blankLink = {
-        tagName: "A",
-        href: "http://example.com/page",
-        hostname: "example.com",
-        pathname: "/page",
-        hash: "",
-        target: "_blank",
-        hasAttribute: () => false,
-        dataset: {},
-      };
+      const blankLink = createLink({ target: "_blank" });
 
       mocks.setDocument({
         querySelectorAll: () => [blankLink],
         body: {},
       });
 
-      const options: LinkObserverOptions = {
-        rootMargin: "100px",
-        delay: 100,
-        onLinkVisible: () => {},
-      };
-      const prefetchedUrls = new Set<string>();
-
-      const observer = new LinkObserver(options, prefetchedUrls);
+      const observer = new LinkObserver(createOptions(), new Set<string>());
       observer.init();
 
       const mockIO = mocks.getMockIntersectionObserver();
@@ -367,30 +308,20 @@ describe("LinkObserver", () => {
     it("should not observe already prefetched URLs", () => {
       const mocks = setupMocks();
 
-      const link = {
-        tagName: "A",
+      const link = createLink({
         href: "http://example.com/prefetched",
-        hostname: "example.com",
         pathname: "/prefetched",
-        hash: "",
-        target: "",
-        hasAttribute: () => false,
-        dataset: {},
-      };
+      });
 
       mocks.setDocument({
         querySelectorAll: () => [link],
         body: {},
       });
 
-      const options: LinkObserverOptions = {
-        rootMargin: "100px",
-        delay: 100,
-        onLinkVisible: () => {},
-      };
-      const prefetchedUrls = new Set(["http://example.com/prefetched"]);
-
-      const observer = new LinkObserver(options, prefetchedUrls);
+      const observer = new LinkObserver(
+        createOptions(),
+        new Set(["http://example.com/prefetched"]),
+      );
       observer.init();
 
       const mockIO = mocks.getMockIntersectionObserver();
@@ -403,30 +334,17 @@ describe("LinkObserver", () => {
     it("should not observe current page URL", () => {
       const mocks = setupMocks();
 
-      const currentLink = {
-        tagName: "A",
+      const currentLink = createLink({
         href: "http://example.com/current",
-        hostname: "example.com",
         pathname: "/current",
-        hash: "",
-        target: "",
-        hasAttribute: () => false,
-        dataset: {},
-      };
+      });
 
       mocks.setDocument({
         querySelectorAll: () => [currentLink],
         body: {},
       });
 
-      const options: LinkObserverOptions = {
-        rootMargin: "100px",
-        delay: 100,
-        onLinkVisible: () => {},
-      };
-      const prefetchedUrls = new Set<string>();
-
-      const observer = new LinkObserver(options, prefetchedUrls);
+      const observer = new LinkObserver(createOptions(), new Set<string>());
       observer.init();
 
       const mockIO = mocks.getMockIntersectionObserver();
@@ -439,30 +357,18 @@ describe("LinkObserver", () => {
     it("should not observe hash-only links on same page", () => {
       const mocks = setupMocks();
 
-      const hashLink = {
-        tagName: "A",
+      const hashLink = createLink({
         href: "http://example.com/current#section",
-        hostname: "example.com",
         pathname: "/current",
         hash: "#section",
-        target: "",
-        hasAttribute: () => false,
-        dataset: {},
-      };
+      });
 
       mocks.setDocument({
         querySelectorAll: () => [hashLink],
         body: {},
       });
 
-      const options: LinkObserverOptions = {
-        rootMargin: "100px",
-        delay: 100,
-        onLinkVisible: () => {},
-      };
-      const prefetchedUrls = new Set<string>();
-
-      const observer = new LinkObserver(options, prefetchedUrls);
+      const observer = new LinkObserver(createOptions(), new Set<string>());
       observer.init();
 
       const mockIO = mocks.getMockIntersectionObserver();
@@ -475,30 +381,14 @@ describe("LinkObserver", () => {
     it("should not observe links with data-no-prefetch attribute", () => {
       const mocks = setupMocks();
 
-      const noPrefetchLink = {
-        tagName: "A",
-        href: "http://example.com/page",
-        hostname: "example.com",
-        pathname: "/page",
-        hash: "",
-        target: "",
-        hasAttribute: () => false,
-        dataset: { noPrefetch: true },
-      };
+      const noPrefetchLink = createLink({ dataset: { noPrefetch: true } });
 
       mocks.setDocument({
         querySelectorAll: () => [noPrefetchLink],
         body: {},
       });
 
-      const options: LinkObserverOptions = {
-        rootMargin: "100px",
-        delay: 100,
-        onLinkVisible: () => {},
-      };
-      const prefetchedUrls = new Set<string>();
-
-      const observer = new LinkObserver(options, prefetchedUrls);
+      const observer = new LinkObserver(createOptions(), new Set<string>());
       observer.init();
 
       const mockIO = mocks.getMockIntersectionObserver();
@@ -513,16 +403,7 @@ describe("LinkObserver", () => {
     it("should call onLinkVisible when link becomes visible", async () => {
       const mocks = setupMocks();
 
-      const link = {
-        tagName: "A",
-        href: "http://example.com/page",
-        hostname: "example.com",
-        pathname: "/page",
-        hash: "",
-        target: "",
-        hasAttribute: () => false,
-        dataset: {},
-      };
+      const link = createLink();
 
       mocks.setDocument({
         querySelectorAll: () => [link],
@@ -530,23 +411,21 @@ describe("LinkObserver", () => {
       });
 
       let callbackCalled = false;
-      const options: LinkObserverOptions = {
-        rootMargin: "100px",
-        delay: 0,
-        onLinkVisible: (visibleLink) => {
-          callbackCalled = true;
-          assertEquals(visibleLink.href, link.href);
-        },
-      };
-      const prefetchedUrls = new Set<string>();
-
-      const observer = new LinkObserver(options, prefetchedUrls);
+      const observer = new LinkObserver(
+        createOptions({
+          delay: 0,
+          onLinkVisible: (visibleLink) => {
+            callbackCalled = true;
+            assertEquals(visibleLink.href, link.href);
+          },
+        }),
+        new Set<string>(),
+      );
       observer.init();
 
       const mockIO = mocks.getMockIntersectionObserver();
       mockIO.triggerIntersection(link as any, true);
 
-      // Wait for callback to be called
       await delay(10);
 
       assertEquals(callbackCalled, true);
@@ -558,16 +437,7 @@ describe("LinkObserver", () => {
     it("should respect delay option before calling onLinkVisible", async () => {
       const mocks = setupMocks();
 
-      const link = {
-        tagName: "A",
-        href: "http://example.com/page",
-        hostname: "example.com",
-        pathname: "/page",
-        hash: "",
-        target: "",
-        hasAttribute: () => false,
-        dataset: {},
-      };
+      const link = createLink();
 
       mocks.setDocument({
         querySelectorAll: () => [link],
@@ -575,27 +445,24 @@ describe("LinkObserver", () => {
       });
 
       let callbackTime = 0;
-      const options: LinkObserverOptions = {
-        rootMargin: "100px",
-        delay: 50,
-        onLinkVisible: () => {
-          callbackTime = Date.now();
-        },
-      };
-      const prefetchedUrls = new Set<string>();
-
-      const observer = new LinkObserver(options, prefetchedUrls);
+      const observer = new LinkObserver(
+        createOptions({
+          delay: 50,
+          onLinkVisible: () => {
+            callbackTime = Date.now();
+          },
+        }),
+        new Set<string>(),
+      );
       observer.init();
 
       const mockIO = mocks.getMockIntersectionObserver();
       const startTime = Date.now();
       mockIO.triggerIntersection(link as any, true);
 
-      // Wait for delay
       await delay(100);
 
-      const elapsed = callbackTime - startTime;
-      assertEquals(elapsed >= 50, true);
+      assertEquals(callbackTime - startTime >= 50, true);
 
       observer.destroy();
       mocks.cleanup();
@@ -604,16 +471,7 @@ describe("LinkObserver", () => {
     it("should not call onLinkVisible when link is not intersecting", async () => {
       const mocks = setupMocks();
 
-      const link = {
-        tagName: "A",
-        href: "http://example.com/page",
-        hostname: "example.com",
-        pathname: "/page",
-        hash: "",
-        target: "",
-        hasAttribute: () => false,
-        dataset: {},
-      };
+      const link = createLink();
 
       mocks.setDocument({
         querySelectorAll: () => [link],
@@ -621,16 +479,15 @@ describe("LinkObserver", () => {
       });
 
       let callbackCalled = false;
-      const options: LinkObserverOptions = {
-        rootMargin: "100px",
-        delay: 0,
-        onLinkVisible: () => {
-          callbackCalled = true;
-        },
-      };
-      const prefetchedUrls = new Set<string>();
-
-      const observer = new LinkObserver(options, prefetchedUrls);
+      const observer = new LinkObserver(
+        createOptions({
+          delay: 0,
+          onLinkVisible: () => {
+            callbackCalled = true;
+          },
+        }),
+        new Set<string>(),
+      );
       observer.init();
 
       const mockIO = mocks.getMockIntersectionObserver();
@@ -654,35 +511,23 @@ describe("LinkObserver", () => {
         body: {},
       });
 
-      const options: LinkObserverOptions = {
-        rootMargin: "100px",
-        delay: 100,
-        onLinkVisible: () => {},
-      };
-      const prefetchedUrls = new Set<string>();
-
-      const observer = new LinkObserver(options, prefetchedUrls);
+      const observer = new LinkObserver(createOptions(), new Set<string>());
       observer.init();
 
       const mockIO = mocks.getMockIntersectionObserver();
 
       const newLink = {
-        nodeType: 1, // Node.ELEMENT_NODE
-        tagName: "A",
-        href: "http://example.com/new-page",
-        hostname: "example.com",
-        pathname: "/new-page",
-        hash: "",
-        target: "",
-        hasAttribute: () => false,
-        dataset: {},
+        nodeType: 1,
+        ...createLink({
+          href: "http://example.com/new-page",
+          pathname: "/new-page",
+        }),
         querySelectorAll: () => [],
       };
 
       const mockMO = mocks.getMockMutationObserver();
       mockMO.triggerMutation([newLink as any]);
 
-      // Should have observed the new link
       assertEquals(mockIO.observedElements.has(newLink as any), true);
 
       observer.destroy();
@@ -697,36 +542,21 @@ describe("LinkObserver", () => {
         body: {},
       });
 
-      const options: LinkObserverOptions = {
-        rootMargin: "100px",
-        delay: 100,
-        onLinkVisible: () => {},
-      };
-      const prefetchedUrls = new Set<string>();
-
-      const observer = new LinkObserver(options, prefetchedUrls);
+      const observer = new LinkObserver(createOptions(), new Set<string>());
       observer.init();
 
       const mockIO = mocks.getMockIntersectionObserver();
 
-      const innerLink = {
-        tagName: "A",
+      const innerLink = createLink({
         href: "http://example.com/inner",
-        hostname: "example.com",
         pathname: "/inner",
-        hash: "",
-        target: "",
-        hasAttribute: () => false,
-        dataset: {},
-      };
+      });
 
       const newContainer = {
         nodeType: 1,
         tagName: "DIV",
         querySelectorAll: (selector: string) => {
-          if (selector === 'a[href^="/"], a[href^="./"]') {
-            return [innerLink];
-          }
+          if (selector === 'a[href^="/"], a[href^="./"]') return [innerLink];
           return [];
         },
       };
@@ -734,7 +564,6 @@ describe("LinkObserver", () => {
       const mockMO = mocks.getMockMutationObserver();
       mockMO.triggerMutation([newContainer as any]);
 
-      // Should have observed the inner link
       assertEquals(mockIO.observedElements.has(innerLink as any), true);
 
       observer.destroy();
@@ -749,21 +578,12 @@ describe("LinkObserver", () => {
         body: {},
       });
 
-      const options: LinkObserverOptions = {
-        rootMargin: "100px",
-        delay: 100,
-        onLinkVisible: () => {},
-      };
-      const prefetchedUrls = new Set<string>();
-
-      const observer = new LinkObserver(options, prefetchedUrls);
+      const observer = new LinkObserver(createOptions(), new Set<string>());
       observer.init();
 
       const mockIO = mocks.getMockIntersectionObserver();
 
-      const textNode = {
-        nodeType: 3, // Node.TEXT_NODE
-      };
+      const textNode = { nodeType: 3 };
 
       const mockMO = mocks.getMockMutationObserver();
       mockMO.triggerMutation([textNode as any]);
@@ -784,14 +604,7 @@ describe("LinkObserver", () => {
         body: {},
       });
 
-      const options: LinkObserverOptions = {
-        rootMargin: "100px",
-        delay: 100,
-        onLinkVisible: () => {},
-      };
-      const prefetchedUrls = new Set<string>();
-
-      const observer = new LinkObserver(options, prefetchedUrls);
+      const observer = new LinkObserver(createOptions(), new Set<string>());
       observer.init();
 
       const mockIO = mocks.getMockIntersectionObserver();
@@ -816,14 +629,7 @@ describe("LinkObserver", () => {
         body: {},
       });
 
-      const options: LinkObserverOptions = {
-        rootMargin: "100px",
-        delay: 100,
-        onLinkVisible: () => {},
-      };
-      const prefetchedUrls = new Set<string>();
-
-      const observer = new LinkObserver(options, prefetchedUrls);
+      const observer = new LinkObserver(createOptions(), new Set<string>());
       observer.init();
 
       observer.destroy();
@@ -849,14 +655,7 @@ describe("LinkObserver", () => {
         body: {},
       });
 
-      const options: LinkObserverOptions = {
-        rootMargin: "100px",
-        delay: 100,
-        onLinkVisible: () => {},
-      };
-      const prefetchedUrls = new Set<string>();
-
-      const observer = new LinkObserver(options, prefetchedUrls);
+      const observer = new LinkObserver(createOptions(), new Set<string>());
       observer.init();
 
       const mockIO = mocks.getMockIntersectionObserver();
@@ -869,27 +668,8 @@ describe("LinkObserver", () => {
     it("should handle multiple links becoming visible simultaneously", async () => {
       const mocks = setupMocks();
 
-      const link1 = {
-        tagName: "A",
-        href: "http://example.com/page1",
-        hostname: "example.com",
-        pathname: "/page1",
-        hash: "",
-        target: "",
-        hasAttribute: () => false,
-        dataset: {},
-      };
-
-      const link2 = {
-        tagName: "A",
-        href: "http://example.com/page2",
-        hostname: "example.com",
-        pathname: "/page2",
-        hash: "",
-        target: "",
-        hasAttribute: () => false,
-        dataset: {},
-      };
+      const link1 = createLink({ href: "http://example.com/page1", pathname: "/page1" });
+      const link2 = createLink({ href: "http://example.com/page2", pathname: "/page2" });
 
       mocks.setDocument({
         querySelectorAll: () => [link1, link2],
@@ -897,16 +677,15 @@ describe("LinkObserver", () => {
       });
 
       const calledLinks: HTMLAnchorElement[] = [];
-      const options: LinkObserverOptions = {
-        rootMargin: "100px",
-        delay: 0,
-        onLinkVisible: (link) => {
-          calledLinks.push(link);
-        },
-      };
-      const prefetchedUrls = new Set<string>();
-
-      const observer = new LinkObserver(options, prefetchedUrls);
+      const observer = new LinkObserver(
+        createOptions({
+          delay: 0,
+          onLinkVisible: (link) => {
+            calledLinks.push(link);
+          },
+        }),
+        new Set<string>(),
+      );
       observer.init();
 
       const mockIO = mocks.getMockIntersectionObserver();

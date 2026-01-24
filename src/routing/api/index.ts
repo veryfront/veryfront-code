@@ -16,5 +16,5 @@ export {
 
 export { applyCORSHeaders, handleCORSPreflight } from "#veryfront/security";
 
-export type { APIContext as APIContextType } from "./context-builder.ts";
 export { createContext, normalizeParams, parseCookies } from "./context-builder.ts";
+export type { APIContext as APIContextType } from "./context-builder.ts";

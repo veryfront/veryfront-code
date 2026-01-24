@@ -16,10 +16,7 @@ function hasSpreadParam(parts: string[]): boolean {
   return parts.some(isSpreadParam);
 }
 
-export function extractParams(
-  pattern: string,
-  slug: string,
-): RouteParams | null {
+export function extractParams(pattern: string, slug: string): RouteParams | null {
   const patternParts = pattern.split("/").filter(Boolean);
   const slugParts = slug.split("/").filter(Boolean);
   const params: RouteParams = {};
@@ -37,20 +34,19 @@ export function extractParams(
       return params;
     }
 
+    const slugPart = slugParts[slugIndex];
+
     if (isDynamicParam(patternPart)) {
-      if (slugIndex >= slugParts.length) {
+      if (slugPart === undefined) {
         return null;
       }
       const paramName = patternPart.slice(1, -1);
-      const slugPart = slugParts[slugIndex];
-      if (slugPart !== undefined) {
-        params[paramName] = slugPart;
-      }
+      params[paramName] = slugPart;
       slugIndex++;
       continue;
     }
 
-    if (slugIndex >= slugParts.length || slugParts[slugIndex] !== patternPart) {
+    if (slugPart !== patternPart) {
       return null;
     }
     slugIndex++;

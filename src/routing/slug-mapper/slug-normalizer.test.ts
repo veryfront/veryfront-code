@@ -4,198 +4,90 @@ import { getSlugFromPath, normalizeSlug, pathToSlug, slugToPath } from "./slug-n
 
 describe("slug-normalizer", () => {
   describe("normalizeSlug", () => {
-    it("should remove leading slash", () => {
-      expect(normalizeSlug("/blog/post")).toBe("blog/post");
-    });
+    it("should normalize slashes and segments", () => {
+      const cases: Array<[string, string]> = [
+        ["/blog/post", "blog/post"],
+        ["blog/post/", "blog/post"],
+        ["/blog/post/", "blog/post"],
+        ["///blog/post", "blog/post"],
+        ["blog/post///", "blog/post"],
+        ["//blog//post//", "blog/post"],
+        ["", ""],
+        ["/", ""],
+        ["blog", "blog"],
+        ["/blog/category/post/detail", "blog/category/post/detail"],
+        ["///", ""],
+      ];
 
-    it("should remove trailing slash", () => {
-      expect(normalizeSlug("blog/post/")).toBe("blog/post");
-    });
-
-    it("should remove both leading and trailing slashes", () => {
-      expect(normalizeSlug("/blog/post/")).toBe("blog/post");
-    });
-
-    it("should remove multiple leading slashes", () => {
-      expect(normalizeSlug("///blog/post")).toBe("blog/post");
-    });
-
-    it("should remove multiple trailing slashes", () => {
-      expect(normalizeSlug("blog/post///")).toBe("blog/post");
-    });
-
-    it("should remove empty segments between slashes", () => {
-      expect(normalizeSlug("//blog//post//")).toBe("blog/post");
-    });
-
-    it("should handle empty string", () => {
-      expect(normalizeSlug("")).toBe("");
-    });
-
-    it("should handle root path", () => {
-      expect(normalizeSlug("/")).toBe("");
-    });
-
-    it("should handle single segment", () => {
-      expect(normalizeSlug("blog")).toBe("blog");
-    });
-
-    it("should handle deep nested paths", () => {
-      expect(normalizeSlug("/blog/category/post/detail")).toBe("blog/category/post/detail");
-    });
-
-    it("should preserve middle slashes", () => {
-      expect(normalizeSlug("/blog/post")).toBe("blog/post");
-    });
-
-    it("should handle path with only slashes", () => {
-      expect(normalizeSlug("///")).toBe("");
+      for (const [input, expected] of cases) {
+        expect(normalizeSlug(input)).toBe(expected);
+      }
     });
   });
 
   describe("slugToPath", () => {
-    it("should convert slug to path with leading slash", () => {
-      expect(slugToPath("blog/post")).toBe("/blog/post");
-    });
+    it("should convert slug to path", () => {
+      const cases: Array<[string, string]> = [
+        ["blog/post", "/blog/post"],
+        ["", "/"],
+        ["/blog/post/", "/blog/post"],
+        ["/", "/"],
+        ["blog", "/blog"],
+        ["blog/category/post", "/blog/category/post"],
+        ["//blog//post//", "/blog/post"],
+        ["about", "/about"],
+      ];
 
-    it("should handle empty slug as root", () => {
-      expect(slugToPath("")).toBe("/");
-    });
-
-    it("should normalize and convert slug", () => {
-      expect(slugToPath("/blog/post/")).toBe("/blog/post");
-    });
-
-    it("should handle root path", () => {
-      expect(slugToPath("/")).toBe("/");
-    });
-
-    it("should handle single segment", () => {
-      expect(slugToPath("blog")).toBe("/blog");
-    });
-
-    it("should handle deep nested paths", () => {
-      expect(slugToPath("blog/category/post")).toBe("/blog/category/post");
-    });
-
-    it("should remove duplicate slashes", () => {
-      expect(slugToPath("//blog//post//")).toBe("/blog/post");
-    });
-
-    it("should add leading slash to normalized slug", () => {
-      expect(slugToPath("about")).toBe("/about");
+      for (const [input, expected] of cases) {
+        expect(slugToPath(input)).toBe(expected);
+      }
     });
   });
 
   describe("pathToSlug", () => {
-    it("should remove leading slash from path", () => {
-      expect(pathToSlug("/blog/post")).toBe("blog/post");
-    });
+    it("should convert path to slug", () => {
+      const cases: Array<[string, string]> = [
+        ["/blog/post", "blog/post"],
+        ["/", ""],
+        ["/blog/", "blog"],
+        ["blog/post", "blog/post"],
+        ["//blog//post//", "blog/post"],
+        ["/about", "about"],
+        ["/blog/category/post", "blog/category/post"],
+        ["", ""],
+      ];
 
-    it("should handle root path", () => {
-      expect(pathToSlug("/")).toBe("");
-    });
-
-    it("should remove trailing slash", () => {
-      expect(pathToSlug("/blog/")).toBe("blog");
-    });
-
-    it("should handle path without leading slash", () => {
-      expect(pathToSlug("blog/post")).toBe("blog/post");
-    });
-
-    it("should normalize before converting", () => {
-      expect(pathToSlug("//blog//post//")).toBe("blog/post");
-    });
-
-    it("should handle single segment", () => {
-      expect(pathToSlug("/about")).toBe("about");
-    });
-
-    it("should handle deep nested paths", () => {
-      expect(pathToSlug("/blog/category/post")).toBe("blog/category/post");
-    });
-
-    it("should handle empty string", () => {
-      expect(pathToSlug("")).toBe("");
+      for (const [input, expected] of cases) {
+        expect(pathToSlug(input)).toBe(expected);
+      }
     });
   });
 
   describe("getSlugFromPath", () => {
-    it("should extract slug from MDX file", () => {
-      expect(getSlugFromPath("/project/pages/blog.mdx")).toBe("blog");
-    });
+    it("should extract slug from file paths", () => {
+      const cases: Array<[string, string]> = [
+        ["/project/pages/blog.mdx", "blog"],
+        ["/project/pages/about.tsx", "about"],
+        ["/project/pages/contact.jsx", "contact"],
+        ["/project/pages/index.tsx", ""],
+        ["/project/app/blog/page.tsx", "blog"],
+        ["/project/app/blog/post/page.tsx", "post"],
+        ["/project/pages/blog/index.tsx", "blog"],
+        ["/project/app/page.tsx", ""],
+        ["/project/pages/readme.md", "readme"],
+        ["/project/pages/api.ts", "api"],
+        ["/project/pages/utils.js", "utils"],
+        ["blog.mdx", "blog"],
+        ["/project/app/blog/category/post/detail.tsx", "detail"],
+        ["/project/pages/index.mdx", ""],
+        ["/project/app/about/page.tsx", "about"],
+        ["/project/pages/about/index.tsx", "about"],
+        ["/project/pages/", ""],
+      ];
 
-    it("should extract slug from TSX file", () => {
-      expect(getSlugFromPath("/project/pages/about.tsx")).toBe("about");
-    });
-
-    it("should extract slug from JSX file", () => {
-      expect(getSlugFromPath("/project/pages/contact.jsx")).toBe("contact");
-    });
-
-    it("should handle index file as empty slug", () => {
-      expect(getSlugFromPath("/project/pages/index.tsx")).toBe("");
-    });
-
-    it("should handle page file as parent directory", () => {
-      expect(getSlugFromPath("/project/app/blog/page.tsx")).toBe("blog");
-    });
-
-    it("should handle nested page file", () => {
-      expect(getSlugFromPath("/project/app/blog/post/page.tsx")).toBe("post");
-    });
-
-    it("should handle index in subdirectory", () => {
-      expect(getSlugFromPath("/project/pages/blog/index.tsx")).toBe("blog");
-    });
-
-    it("should handle root index file", () => {
-      expect(getSlugFromPath("/project/pages/index.tsx")).toBe("");
-    });
-
-    it("should handle root page file", () => {
-      expect(getSlugFromPath("/project/app/page.tsx")).toBe("");
-    });
-
-    it("should handle MD file", () => {
-      expect(getSlugFromPath("/project/pages/readme.md")).toBe("readme");
-    });
-
-    it("should handle TS file", () => {
-      expect(getSlugFromPath("/project/pages/api.ts")).toBe("api");
-    });
-
-    it("should handle JS file", () => {
-      expect(getSlugFromPath("/project/pages/utils.js")).toBe("utils");
-    });
-
-    it("should handle file without directory", () => {
-      expect(getSlugFromPath("blog.mdx")).toBe("blog");
-    });
-
-    it("should handle deep nested file", () => {
-      expect(getSlugFromPath("/project/app/blog/category/post/detail.tsx")).toBe("detail");
-    });
-
-    it("should handle page in app directory", () => {
-      expect(getSlugFromPath("/project/app/page.tsx")).toBe("");
-    });
-
-    it("should handle index in pages directory", () => {
-      expect(getSlugFromPath("/project/pages/index.mdx")).toBe("");
-    });
-
-    it("should extract parent directory for page files", () => {
-      expect(getSlugFromPath("/project/app/about/page.tsx")).toBe("about");
-    });
-
-    it("should extract parent directory for index files", () => {
-      expect(getSlugFromPath("/project/pages/about/index.tsx")).toBe("about");
-    });
-
-    it("should handle empty filename", () => {
-      expect(getSlugFromPath("/project/pages/")).toBe("");
+      for (const [input, expected] of cases) {
+        expect(getSlugFromPath(input)).toBe(expected);
+      }
     });
   });
 

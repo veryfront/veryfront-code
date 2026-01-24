@@ -1,15 +1,10 @@
-/**
- * Common OAuth Providers
- *
- * Pre-configured OAuth service configurations for popular SaaS providers.
- */
-
 import type { OAuthServiceConfig } from "../types.ts";
 
-/**
- * GitHub OAuth configuration
- */
-export const githubConfig: OAuthServiceConfig = {
+function createConfig(config: OAuthServiceConfig): OAuthServiceConfig {
+  return config;
+}
+
+export const githubConfig = createConfig({
   providerId: "github",
   serviceId: "github",
   displayName: "GitHub",
@@ -20,12 +15,9 @@ export const githubConfig: OAuthServiceConfig = {
   apiBaseUrl: "https://api.github.com",
   defaultScopes: ["repo", "user"],
   additionalAuthParams: {},
-};
+});
 
-/**
- * Slack OAuth configuration
- */
-export const slackConfig: OAuthServiceConfig = {
+export const slackConfig = createConfig({
   providerId: "slack",
   serviceId: "slack",
   displayName: "Slack",
@@ -36,12 +28,9 @@ export const slackConfig: OAuthServiceConfig = {
   apiBaseUrl: "https://slack.com/api",
   defaultScopes: ["channels:read", "chat:write", "users:read"],
   additionalAuthParams: {},
-};
+});
 
-/**
- * Notion OAuth configuration
- */
-export const notionConfig: OAuthServiceConfig = {
+export const notionConfig = createConfig({
   providerId: "notion",
   serviceId: "notion",
   displayName: "Notion",
@@ -55,12 +44,9 @@ export const notionConfig: OAuthServiceConfig = {
   additionalAuthParams: {
     owner: "user",
   },
-};
+});
 
-/**
- * Figma OAuth configuration
- */
-export const figmaConfig: OAuthServiceConfig = {
+export const figmaConfig = createConfig({
   providerId: "figma",
   serviceId: "figma",
   displayName: "Figma",
@@ -71,12 +57,9 @@ export const figmaConfig: OAuthServiceConfig = {
   apiBaseUrl: "https://api.figma.com/v1",
   defaultScopes: ["file_read"],
   additionalAuthParams: {},
-};
+});
 
-/**
- * Discord OAuth configuration
- */
-export const discordConfig: OAuthServiceConfig = {
+export const discordConfig = createConfig({
   providerId: "discord",
   serviceId: "discord",
   displayName: "Discord",
@@ -87,12 +70,9 @@ export const discordConfig: OAuthServiceConfig = {
   apiBaseUrl: "https://discord.com/api/v10",
   defaultScopes: ["identify", "guilds"],
   additionalAuthParams: {},
-};
+});
 
-/**
- * Linear OAuth configuration
- */
-export const linearConfig: OAuthServiceConfig = {
+export const linearConfig = createConfig({
   providerId: "linear",
   serviceId: "linear",
   displayName: "Linear",
@@ -103,12 +83,9 @@ export const linearConfig: OAuthServiceConfig = {
   apiBaseUrl: "https://api.linear.app",
   defaultScopes: ["read", "write"],
   additionalAuthParams: {},
-};
+});
 
-/**
- * GitLab OAuth configuration
- */
-export const gitlabConfig: OAuthServiceConfig = {
+export const gitlabConfig = createConfig({
   providerId: "gitlab",
   serviceId: "gitlab",
   displayName: "GitLab",
@@ -119,12 +96,9 @@ export const gitlabConfig: OAuthServiceConfig = {
   apiBaseUrl: "https://gitlab.com/api/v4",
   defaultScopes: ["read_user", "api"],
   additionalAuthParams: {},
-};
+});
 
-/**
- * Airtable OAuth configuration
- */
-export const airtableConfig: OAuthServiceConfig = {
+export const airtableConfig = createConfig({
   providerId: "airtable",
   serviceId: "airtable",
   displayName: "Airtable",
@@ -136,12 +110,9 @@ export const airtableConfig: OAuthServiceConfig = {
   defaultScopes: ["data.records:read", "data.records:write", "schema.bases:read"],
   useBasicAuth: true,
   additionalAuthParams: {},
-};
+});
 
-/**
- * Dropbox OAuth configuration
- */
-export const dropboxConfig: OAuthServiceConfig = {
+export const dropboxConfig = createConfig({
   providerId: "dropbox",
   serviceId: "dropbox",
   displayName: "Dropbox",
@@ -154,12 +125,9 @@ export const dropboxConfig: OAuthServiceConfig = {
   additionalAuthParams: {
     token_access_type: "offline",
   },
-};
+});
 
-/**
- * HubSpot OAuth configuration
- */
-export const hubspotConfig: OAuthServiceConfig = {
+export const hubspotConfig = createConfig({
   providerId: "hubspot",
   serviceId: "hubspot",
   displayName: "HubSpot",
@@ -170,12 +138,9 @@ export const hubspotConfig: OAuthServiceConfig = {
   apiBaseUrl: "https://api.hubapi.com",
   defaultScopes: ["crm.objects.contacts.read", "crm.objects.contacts.write"],
   additionalAuthParams: {},
-};
+});
 
-/**
- * Salesforce OAuth configuration
- */
-export const salesforceConfig: OAuthServiceConfig = {
+export const salesforceConfig = createConfig({
   providerId: "salesforce",
   serviceId: "salesforce",
   displayName: "Salesforce",
@@ -186,12 +151,9 @@ export const salesforceConfig: OAuthServiceConfig = {
   apiBaseUrl: "https://login.salesforce.com/services/data/v59.0",
   defaultScopes: ["api", "refresh_token"],
   additionalAuthParams: {},
-};
+});
 
-/**
- * Twitter/X OAuth configuration
- */
-export const twitterConfig: OAuthServiceConfig = {
+export const twitterConfig = createConfig({
   providerId: "twitter",
   serviceId: "twitter",
   displayName: "Twitter/X",
@@ -203,12 +165,9 @@ export const twitterConfig: OAuthServiceConfig = {
   defaultScopes: ["tweet.read", "users.read", "offline.access"],
   useBasicAuth: true,
   additionalAuthParams: {},
-};
+});
 
-/**
- * Asana OAuth configuration
- */
-export const asanaConfig: OAuthServiceConfig = {
+export const asanaConfig = createConfig({
   providerId: "asana",
   serviceId: "asana",
   displayName: "Asana",
@@ -219,12 +178,9 @@ export const asanaConfig: OAuthServiceConfig = {
   apiBaseUrl: "https://app.asana.com/api/1.0",
   defaultScopes: ["default"],
   additionalAuthParams: {},
-};
+});
 
-/**
- * Monday.com OAuth configuration
- */
-export const mondayConfig: OAuthServiceConfig = {
+export const mondayConfig = createConfig({
   providerId: "monday",
   serviceId: "monday",
   displayName: "Monday.com",
@@ -235,12 +191,9 @@ export const mondayConfig: OAuthServiceConfig = {
   apiBaseUrl: "https://api.monday.com/v2",
   defaultScopes: ["me:read", "boards:read", "boards:write"],
   additionalAuthParams: {},
-};
+});
 
-/**
- * Zoom OAuth configuration
- */
-export const zoomConfig: OAuthServiceConfig = {
+export const zoomConfig = createConfig({
   providerId: "zoom",
   serviceId: "zoom",
   displayName: "Zoom",
@@ -252,12 +205,9 @@ export const zoomConfig: OAuthServiceConfig = {
   defaultScopes: ["meeting:read", "meeting:write", "user:read"],
   useBasicAuth: true,
   additionalAuthParams: {},
-};
+});
 
-/**
- * Intercom OAuth configuration
- */
-export const intercomConfig: OAuthServiceConfig = {
+export const intercomConfig = createConfig({
   providerId: "intercom",
   serviceId: "intercom",
   displayName: "Intercom",
@@ -268,12 +218,9 @@ export const intercomConfig: OAuthServiceConfig = {
   apiBaseUrl: "https://api.intercom.io",
   defaultScopes: [],
   additionalAuthParams: {},
-};
+});
 
-/**
- * Freshdesk OAuth configuration
- */
-export const freshdeskConfig: OAuthServiceConfig = {
+export const freshdeskConfig = createConfig({
   providerId: "freshdesk",
   serviceId: "freshdesk",
   displayName: "Freshdesk",
@@ -284,12 +231,9 @@ export const freshdeskConfig: OAuthServiceConfig = {
   apiBaseUrl: "https://domain.freshdesk.com/api/v2",
   defaultScopes: ["freshdesk"],
   additionalAuthParams: {},
-};
+});
 
-/**
- * Mailchimp OAuth configuration
- */
-export const mailchimpConfig: OAuthServiceConfig = {
+export const mailchimpConfig = createConfig({
   providerId: "mailchimp",
   serviceId: "mailchimp",
   displayName: "Mailchimp",
@@ -300,12 +244,9 @@ export const mailchimpConfig: OAuthServiceConfig = {
   apiBaseUrl: "https://server.api.mailchimp.com/3.0",
   defaultScopes: [],
   additionalAuthParams: {},
-};
+});
 
-/**
- * Shopify OAuth configuration
- */
-export const shopifyConfig: OAuthServiceConfig = {
+export const shopifyConfig = createConfig({
   providerId: "shopify",
   serviceId: "shopify",
   displayName: "Shopify",
@@ -316,12 +257,9 @@ export const shopifyConfig: OAuthServiceConfig = {
   apiBaseUrl: "https://shop.myshopify.com/admin/api/2024-01",
   defaultScopes: ["read_products", "write_products", "read_orders"],
   additionalAuthParams: {},
-};
+});
 
-/**
- * QuickBooks OAuth configuration
- */
-export const quickbooksConfig: OAuthServiceConfig = {
+export const quickbooksConfig = createConfig({
   providerId: "quickbooks",
   serviceId: "quickbooks",
   displayName: "QuickBooks",
@@ -332,12 +270,9 @@ export const quickbooksConfig: OAuthServiceConfig = {
   apiBaseUrl: "https://quickbooks.api.intuit.com/v3",
   defaultScopes: ["com.intuit.quickbooks.accounting"],
   additionalAuthParams: {},
-};
+});
 
-/**
- * Xero OAuth configuration
- */
-export const xeroConfig: OAuthServiceConfig = {
+export const xeroConfig = createConfig({
   providerId: "xero",
   serviceId: "xero",
   displayName: "Xero",
@@ -348,12 +283,9 @@ export const xeroConfig: OAuthServiceConfig = {
   apiBaseUrl: "https://api.xero.com/api.xro/2.0",
   defaultScopes: ["openid", "profile", "email", "accounting.transactions", "offline_access"],
   additionalAuthParams: {},
-};
+});
 
-/**
- * Box OAuth configuration
- */
-export const boxConfig: OAuthServiceConfig = {
+export const boxConfig = createConfig({
   providerId: "box",
   serviceId: "box",
   displayName: "Box",
@@ -364,12 +296,9 @@ export const boxConfig: OAuthServiceConfig = {
   apiBaseUrl: "https://api.box.com/2.0",
   defaultScopes: [],
   additionalAuthParams: {},
-};
+});
 
-/**
- * Webex OAuth configuration
- */
-export const webexConfig: OAuthServiceConfig = {
+export const webexConfig = createConfig({
   providerId: "webex",
   serviceId: "webex",
   displayName: "Webex",
@@ -380,12 +309,9 @@ export const webexConfig: OAuthServiceConfig = {
   apiBaseUrl: "https://webexapis.com/v1",
   defaultScopes: ["spark:all", "spark:kms"],
   additionalAuthParams: {},
-};
+});
 
-/**
- * Trello OAuth configuration
- */
-export const trelloConfig: OAuthServiceConfig = {
+export const trelloConfig = createConfig({
   providerId: "trello",
   serviceId: "trello",
   displayName: "Trello",
@@ -398,12 +324,9 @@ export const trelloConfig: OAuthServiceConfig = {
   additionalAuthParams: {
     expiration: "never",
   },
-};
+});
 
-/**
- * Clickup OAuth configuration
- */
-export const clickupConfig: OAuthServiceConfig = {
+export const clickupConfig = createConfig({
   providerId: "clickup",
   serviceId: "clickup",
   displayName: "ClickUp",
@@ -414,12 +337,9 @@ export const clickupConfig: OAuthServiceConfig = {
   apiBaseUrl: "https://api.clickup.com/api/v2",
   defaultScopes: [],
   additionalAuthParams: {},
-};
+});
 
-/**
- * Pipedrive OAuth configuration
- */
-export const pipedriveConfig: OAuthServiceConfig = {
+export const pipedriveConfig = createConfig({
   providerId: "pipedrive",
   serviceId: "pipedrive",
   displayName: "Pipedrive",
@@ -430,11 +350,8 @@ export const pipedriveConfig: OAuthServiceConfig = {
   apiBaseUrl: "https://api.pipedrive.com/v1",
   defaultScopes: [],
   additionalAuthParams: {},
-};
+});
 
-/**
- * Export grouped services for convenience
- */
 export const commonServices = {
   github: githubConfig,
   slack: slackConfig,

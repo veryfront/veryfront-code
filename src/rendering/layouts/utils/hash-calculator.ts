@@ -8,29 +8,31 @@ export async function computeDepsHash(
   adapter: RuntimeAdapter,
 ): Promise<string> {
   try {
-    // Parallelize all hash computations for better performance
     const hashPromises: Promise<string>[] = [];
 
-    // Hash the main layout bundle
     if (layoutBundle) {
-      const code = String(layoutBundle.compiledCode || "");
-      hashPromises.push(computeHash(code));
+      hashPromises.push(computeHash(String(layoutBundle.compiledCode ?? "")));
     }
 
-    // Hash all nested layouts in parallel
     for (const item of nestedLayouts) {
       if (!item) continue;
+
       if (item.componentPath) {
         hashPromises.push(
-          adapter.fs.readFile(item.componentPath)
+          adapter.fs
+            .readFile(item.componentPath)
             .then((src) => computeHash(src))
             .catch((e) => {
               logger.debug("[layout] reading tsx layout for dep hash failed", e as Error);
               return "";
             }),
         );
-      } else if (item.bundle?.compiledCode) {
-        hashPromises.push(computeHash(String(item.bundle.compiledCode)));
+        continue;
+      }
+
+      const compiledCode = item.bundle?.compiledCode;
+      if (compiledCode) {
+        hashPromises.push(computeHash(String(compiledCode)));
       }
     }
 

@@ -11,19 +11,19 @@ export async function compileMDXLayouts(
   ) => Promise<MdxBundle>,
   adapter: RuntimeAdapter,
 ): Promise<void> {
-  // Filter to only MDX layouts that need compilation
   const mdxLayouts = layouts.filter(
     (layout) => layout.kind === "mdx" && layout.path && !layout.bundle,
   );
 
-  // Compile all MDX layouts in parallel with concurrency control
+  if (mdxLayouts.length === 0) return;
+
   const bundles = await parallelMap(mdxLayouts, async (layout) => {
-    const content = await adapter.fs.readFile(layout.path!);
-    const bundle = await compileMDX(content, { isLayout: true }, layout.path);
+    const path = layout.path!;
+    const content = await adapter.fs.readFile(path);
+    const bundle = await compileMDX(content, { isLayout: true }, path);
     return { layout, bundle };
   });
 
-  // Apply bundles back to layouts
   for (const { layout, bundle } of bundles) {
     layout.bundle = bundle;
   }

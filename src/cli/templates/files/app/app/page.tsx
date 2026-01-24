@@ -1,8 +1,8 @@
+import { FeatureGrid } from "../components/FeatureGrid.tsx";
 import { Header } from "../components/Header.tsx";
 import { HeroSection } from "../components/HeroSection.tsx";
-import { FeatureGrid } from "../components/FeatureGrid.tsx";
 
-export default function HomePage() {
+export default function HomePage(): JSX.Element {
   return (
     <>
       <Header />

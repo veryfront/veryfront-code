@@ -6,7 +6,6 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { makeTempDir, mkdir, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 
-// Adapter stub that forces router-detection to use compat fs fallback
 const failingAdapter: RuntimeAdapter = {
   id: "node",
   name: "node-stub",
@@ -22,32 +21,25 @@ const failingAdapter: RuntimeAdapter = {
     writableFs: true,
   },
   fs: {
-    // deno-lint-ignore require-await
-    async stat() {
+    stat() {
       throw new Error("adapter stat failure");
     },
-    // deno-lint-ignore require-yield
-    async *readDir() {
+    readDir() {
       throw new Error("adapter readDir failure");
     },
-    // Unused in this test
-    // deno-lint-ignore require-await
-    async readFile() {
+    readFile() {
       throw new Error("not implemented");
     },
-    // deno-lint-ignore require-await
-    async writeFile() {
+    writeFile() {
       throw new Error("not implemented");
     },
-    // deno-lint-ignore require-await
-    async exists() {
-      return false;
+    exists() {
+      return Promise.resolve(false);
     },
-    async mkdir() {},
-    async remove() {},
-    // deno-lint-ignore require-await
-    async makeTempDir() {
-      return "";
+    mkdir() {},
+    remove() {},
+    makeTempDir() {
+      return Promise.resolve("");
     },
     watch() {
       return {
@@ -74,12 +66,11 @@ const failingAdapter: RuntimeAdapter = {
     },
   },
   kv: {
-    // deno-lint-ignore require-await
-    async get() {
-      return null;
+    get() {
+      return Promise.resolve(null);
     },
-    async set() {},
-    async delete() {},
+    set() {},
+    delete() {},
     async *list() {},
   },
   watcher: {
@@ -95,12 +86,11 @@ const failingAdapter: RuntimeAdapter = {
       throw new Error("not implemented");
     },
   },
-  // deno-lint-ignore require-await
-  async serve() {
-    return {
-      stop: async () => {},
+  serve() {
+    return Promise.resolve({
+      stop: () => Promise.resolve(),
       addr: { hostname: "0.0.0.0", port: 0 },
-    };
+    });
   },
 };
 
@@ -108,6 +98,7 @@ describe("detectAppRouter", () => {
   it("falls back to compat fs when adapter fails", async () => {
     const tmpDir = await makeTempDir();
     const appDir = join(tmpDir, "app");
+
     await mkdir(appDir, { recursive: true });
     await writeTextFile(
       join(appDir, "page.tsx"),

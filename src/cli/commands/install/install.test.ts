@@ -1,4 +1,4 @@
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { installTargets, parseTargetFlag } from "./install.ts";
 import {
@@ -87,7 +87,9 @@ describe("installTargets", () => {
 
   it("should install copilot with nested directory", async () => {
     await installTargets(["copilot"], { cwd: tempDir, force: true });
-    const content = await readTextFile(`${tempDir}/.github/copilot-instructions.md`);
+    const content = await readTextFile(
+      `${tempDir}/.github/copilot-instructions.md`,
+    );
     assertEquals(content.includes("Veryfront"), true);
   });
 
@@ -104,7 +106,10 @@ describe("installTargets", () => {
   });
 
   it("should install multiple targets", async () => {
-    await installTargets(["cursor", "claude-code", "skill"], { cwd: tempDir, force: true });
+    await installTargets(["cursor", "claude-code", "skill"], {
+      cwd: tempDir,
+      force: true,
+    });
     assertEquals(await exists(`${tempDir}/.cursorrules`), true);
     assertEquals(await exists(`${tempDir}/.claude/CLAUDE.md`), true);
     assertEquals(await exists(`${tempDir}/SKILL.md`), true);
@@ -125,22 +130,16 @@ describe("installTargets", () => {
   });
 
   it("should throw for empty targets", async () => {
-    let error: Error | null = null;
-    try {
-      await installTargets([], { cwd: tempDir });
-    } catch (e) {
-      error = e as Error;
-    }
-    assertEquals(error !== null, true);
+    await assertRejects(
+      () => installTargets([], { cwd: tempDir }),
+      Error,
+    );
   });
 
   it("should throw for invalid targets", async () => {
-    let error: Error | null = null;
-    try {
-      await installTargets(["invalid" as never], { cwd: tempDir });
-    } catch (e) {
-      error = e as Error;
-    }
-    assertEquals(error !== null, true);
+    await assertRejects(
+      () => installTargets(["invalid" as never], { cwd: tempDir }),
+      Error,
+    );
   });
 });

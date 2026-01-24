@@ -36,47 +36,42 @@ export interface TableOptions {
 
 export type TableRow = Record<string, string | number | boolean | undefined>;
 
+function getTotalWidth(widths: number[], separator: string, columnCount: number): number {
+  return widths.reduce((a, b) => a + b, 0) + separator.length * (columnCount - 1);
+}
+
 /**
  * Render a table
  */
 export function table(rows: TableRow[], options: TableOptions): string {
-  const {
-    columns,
-    showHeader = true,
-    border = "none",
-    indent = 2,
-    separator = "  ",
-  } = options;
+  const { columns, showHeader = true, border = "none", indent = 2, separator = "  " } = options;
 
-  // Calculate column widths
   const widths = columns.map((col) => {
     const headerWidth = visibleLength(col.header);
-    const dataWidths = rows.map((row) => {
-      const value = row[col.key];
-      return visibleLength(String(value ?? ""));
-    });
-    const maxDataWidth = Math.max(0, ...dataWidths);
+    const maxDataWidth = rows.reduce((max, row) => {
+      const valueWidth = visibleLength(String(row[col.key] ?? ""));
+      return Math.max(max, valueWidth);
+    }, 0);
+
     let width = Math.max(headerWidth, maxDataWidth);
 
-    if (col.minWidth) width = Math.max(width, col.minWidth);
-    if (col.maxWidth) width = Math.min(width, col.maxWidth);
+    if (col.minWidth != null) width = Math.max(width, col.minWidth);
+    if (col.maxWidth != null) width = Math.min(width, col.maxWidth);
 
     return width;
   });
 
   const lines: string[] = [];
   const indentStr = repeat(" ", indent);
-  const borderChars = border !== "none" ? BORDER_STYLES[border] : null;
+  const borderChars = border === "none" ? null : BORDER_STYLES[border];
 
-  // Header
   if (showHeader) {
     const headerCells = columns.map((col, i) =>
-      dim(pad(col.header, widths[i]!, col.align || "left"))
+      dim(pad(col.header, widths[i] ?? 0, col.align ?? "left"))
     );
 
     if (borderChars) {
-      const totalWidth = widths.reduce((a, b) => a + b, 0) +
-        separator.length * (columns.length - 1);
+      const totalWidth = getTotalWidth(widths, separator, columns.length);
       lines.push(
         indentStr +
           borderChars.topLeft +
@@ -84,11 +79,7 @@ export function table(rows: TableRow[], options: TableOptions): string {
           borderChars.topRight,
       );
       lines.push(
-        indentStr +
-          borderChars.vertical +
-          " " +
-          headerCells.join(separator) +
-          " " +
+        indentStr + borderChars.vertical + " " + headerCells.join(separator) + " " +
           borderChars.vertical,
       );
       lines.push(
@@ -99,38 +90,28 @@ export function table(rows: TableRow[], options: TableOptions): string {
       );
     } else {
       lines.push(indentStr + headerCells.join(separator));
-      // Underline header
-      const underline = columns.map((_, i) => dim(repeat("─", widths[i]!)));
+      const underline = columns.map((_, i) => dim(repeat("─", widths[i] ?? 0)));
       lines.push(indentStr + underline.join(separator));
     }
   }
 
-  // Rows
   for (const row of rows) {
     const cells = columns.map((col, i) => {
-      const value = row[col.key];
-      const str = String(value ?? "");
-      return pad(str, widths[i]!, col.align || "left");
+      const str = String(row[col.key] ?? "");
+      return pad(str, widths[i] ?? 0, col.align ?? "left");
     });
 
     if (borderChars) {
       lines.push(
-        indentStr +
-          borderChars.vertical +
-          " " +
-          cells.join(separator) +
-          " " +
-          borderChars.vertical,
+        indentStr + borderChars.vertical + " " + cells.join(separator) + " " + borderChars.vertical,
       );
     } else {
       lines.push(indentStr + cells.join(separator));
     }
   }
 
-  // Bottom border
   if (borderChars) {
-    const totalWidth = widths.reduce((a, b) => a + b, 0) +
-      separator.length * (columns.length - 1);
+    const totalWidth = getTotalWidth(widths, separator, columns.length);
     lines.push(
       indentStr +
         borderChars.bottomLeft +
@@ -152,27 +133,16 @@ export function keyValueList(
   const { indent = 2, keyWidth } = options;
   const indentStr = repeat(" ", indent);
 
-  // Calculate key width
   const maxKeyWidth = keyWidth ?? Math.max(...items.map((i) => i.key.length));
 
   const lines = items.map(({ key, value, status }) => {
     const paddedKey = pad(key, maxKeyWidth, "right");
-    let icon = "";
 
-    switch (status) {
-      case "success":
-        icon = success("✓") + " ";
-        break;
-      case "error":
-        icon = error("✗") + " ";
-        break;
-      case "warning":
-        icon = warning("!") + " ";
-        break;
-      case "info":
-        icon = brand("●") + " ";
-        break;
-    }
+    let icon = "";
+    if (status === "success") icon = `${success("✓")} `;
+    else if (status === "error") icon = `${error("✗")} `;
+    else if (status === "warning") icon = `${warning("!")} `;
+    else if (status === "info") icon = `${brand("●")} `;
 
     return `${indentStr}${icon}${dim(paddedKey)}  ${value}`;
   });
@@ -194,23 +164,18 @@ export function checkList(
     let icon: string;
     let labelStyled: string;
 
-    switch (status) {
-      case "pass":
-        icon = success("✓");
-        labelStyled = dim(label);
-        break;
-      case "fail":
-        icon = error("✗");
-        labelStyled = label;
-        break;
-      case "warn":
-        icon = warning("!");
-        labelStyled = label;
-        break;
-      case "skip":
-        icon = dim("○");
-        labelStyled = dim(label);
-        break;
+    if (status === "pass") {
+      icon = success("✓");
+      labelStyled = dim(label);
+    } else if (status === "fail") {
+      icon = error("✗");
+      labelStyled = label;
+    } else if (status === "warn") {
+      icon = warning("!");
+      labelStyled = label;
+    } else {
+      icon = dim("○");
+      labelStyled = dim(label);
     }
 
     const detailStr = detail ? ` ${dim(`(${detail})`)}` : "";

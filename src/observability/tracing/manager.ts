@@ -29,15 +29,15 @@ export class TracingManager {
 
     const finalConfig = loadConfig(config, adapter);
 
+    this.state.initialized = true;
+
     if (!finalConfig.enabled) {
       logger.debug("[tracing] Tracing disabled");
-      this.state.initialized = true;
       return;
     }
 
     try {
       await this.initializeTracer(finalConfig);
-      this.state.initialized = true;
 
       logger.info("[tracing] OpenTelemetry tracing initialized", {
         exporter: finalConfig.exporter,
@@ -49,13 +49,12 @@ export class TracingManager {
         "[tracing] Failed to initialize OpenTelemetry tracing - running in degraded mode",
         error,
       );
-      this.state.initialized = true;
       this.state.degraded = true;
     }
   }
 
   private async initializeTracer(config: TracingConfig): Promise<void> {
-    const api = await import("@opentelemetry/api") as OpenTelemetryAPI;
+    const api = (await import("@opentelemetry/api")) as OpenTelemetryAPI;
     this.state.api = api;
 
     this.state.tracer = api.trace.getTracer(config.serviceName || "veryfront", "0.1.0");
@@ -65,13 +64,11 @@ export class TracingManager {
     this.state.propagator = propagator;
     api.propagation.setGlobalPropagator(propagator);
 
-    if (this.state.api && this.state.tracer) {
-      this.spanOps = new SpanOperations(this.state.api, this.state.tracer);
+    if (this.state.tracer) {
+      this.spanOps = new SpanOperations(api, this.state.tracer);
     }
 
-    if (this.state.api && this.state.propagator) {
-      this.contextProp = new ContextPropagation(this.state.api, this.state.propagator);
-    }
+    this.contextProp = new ContextPropagation(api, propagator);
   }
 
   isEnabled(): boolean {

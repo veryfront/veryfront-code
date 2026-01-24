@@ -1,13 +1,8 @@
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { ErrorCode, VeryfrontError } from "./types.ts";
 
-/** Default max retries for retry operations */
 const DEFAULT_MAX_RETRIES = 3;
-
-/** Default initial delay for exponential backoff (100ms) */
 const DEFAULT_INITIAL_DELAY_MS = 100;
-
-/** Default max delay cap for exponential backoff (5 seconds) */
 const DEFAULT_MAX_DELAY_MS = 5000;
 
 function safeLog(logFn: () => void): void {
@@ -30,7 +25,7 @@ export function handleError(error: Error): void {
   }
 
   if (error.stack) {
-    safeLog(() => serverLogger.error(error.stack as string));
+    safeLog(() => serverLogger.error(error.stack!));
   }
 }
 
@@ -66,10 +61,7 @@ export function logAndThrow(
 
   safeLog(() => logger.error(logMessage, error));
 
-  if (error instanceof Error) {
-    throw error;
-  }
-  throw errorObj;
+  throw error instanceof Error ? error : errorObj;
 }
 
 export async function handleErrorWithFallback<T>(
@@ -124,10 +116,10 @@ export async function retryWithBackoff<T>(
       lastError = error;
       safeLog(() => log.warn(`Attempt ${attempt + 1} failed, retrying...`, error));
 
-      if (attempt < maxRetries - 1) {
-        await new Promise((resolve) => setTimeout(resolve, delay));
-        delay = Math.min(delay * 2, maxDelay);
-      }
+      if (attempt >= maxRetries - 1) continue;
+
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      delay = Math.min(delay * 2, maxDelay);
     }
   }
 

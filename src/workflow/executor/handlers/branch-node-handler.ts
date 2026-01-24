@@ -45,18 +45,15 @@ export class BranchNodeHandler extends BaseNodeHandler<BranchNodeConfig> {
     const config = node.config as BranchNodeConfig;
     const startTime = Date.now();
 
-    // Evaluate condition
     const conditionResult = await config.condition(context);
-
-    // Select branch to execute
-    const branchNodes = conditionResult ? config.then : (config.else || []);
+    const branch = conditionResult ? "then" : "else";
+    const branchNodes = conditionResult ? config.then : (config.else ?? []);
 
     if (branchNodes.length === 0) {
-      // No nodes to execute - branch is skipped
       const state: NodeState = {
         nodeId: node.id,
         status: "completed",
-        output: { branch: conditionResult ? "then" : "else", skipped: true },
+        output: { branch, skipped: true },
         attempt: 1,
         startedAt: new Date(startTime),
         completedAt: new Date(),
@@ -65,7 +62,6 @@ export class BranchNodeHandler extends BaseNodeHandler<BranchNodeConfig> {
       return { state, contextUpdates: {}, waiting: false };
     }
 
-    // Execute branch nodes
     const result = await this.subExecutor.executeSubDAG(branchNodes, {
       id: `${node.id}_branch`,
       workflowId: "",
@@ -79,16 +75,12 @@ export class BranchNodeHandler extends BaseNodeHandler<BranchNodeConfig> {
       createdAt: new Date(),
     });
 
-    // Merge child node states
     Object.assign(nodeStates, result.nodeStates);
 
     const state: NodeState = {
       nodeId: node.id,
       status: deriveNodeStatus(result.completed, result.waiting),
-      output: {
-        branch: conditionResult ? "then" : "else",
-        result: result.context,
-      },
+      output: { branch, result: result.context },
       error: result.error,
       attempt: 1,
       startedAt: new Date(startTime),
@@ -97,11 +89,7 @@ export class BranchNodeHandler extends BaseNodeHandler<BranchNodeConfig> {
 
     this.callbacks?.onNodeComplete?.(node.id, state);
 
-    return {
-      state,
-      contextUpdates: result.context,
-      waiting: result.waiting,
-    };
+    return { state, contextUpdates: result.context, waiting: result.waiting };
   }
 }
 

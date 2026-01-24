@@ -4,11 +4,18 @@ import { listCustomers } from "../../lib/shopify-client.ts";
 
 export default tool({
   id: "list-customers",
-  description:
-    "List customers from your Shopify store. Can search by query string.",
+  description: "List customers from your Shopify store. Can search by query string.",
   inputSchema: z.object({
-    limit: z.number().min(1).max(250).default(20).describe("Maximum number of customers to return"),
-    query: z.string().optional().describe("Search query to filter customers (e.g., email, name)"),
+    limit: z
+      .number()
+      .min(1)
+      .max(250)
+      .default(20)
+      .describe("Maximum number of customers to return"),
+    query: z
+      .string()
+      .optional()
+      .describe("Search query to filter customers (e.g., email, name)"),
   }),
   async execute({ limit, query }) {
     const customers = await listCustomers({ limit, query });
@@ -26,14 +33,14 @@ export default tool({
       tags: customer.tags,
       state: customer.state,
       verifiedEmail: customer.verified_email,
-      addresses: customer.addresses.map((addr) => ({
-        id: addr.id,
-        address1: addr.address1,
-        city: addr.city,
-        province: addr.province,
-        country: addr.country,
-        zip: addr.zip,
-        default: addr.default,
+      addresses: customer.addresses.map((address) => ({
+        id: address.id,
+        address1: address.address1,
+        city: address.city,
+        province: address.province,
+        country: address.country,
+        zip: address.zip,
+        default: address.default,
       })),
     }));
   },

@@ -145,8 +145,7 @@ describe("CacheManager", () => {
     await cache.writeManifest(TEST_DIR);
 
     const manifestPath = join(TEST_DIR, "css-manifest.json");
-    const content = await readTextFile(manifestPath);
-    const parsed = JSON.parse(content);
+    const parsed = JSON.parse(await readTextFile(manifestPath));
 
     assertExists(parsed["test.css"]);
     assertEquals(parsed["test.css"].file, "test.css");
@@ -172,7 +171,6 @@ describe("CacheManager", () => {
 
     const savings = cache.getTotalSavings();
 
-    // Should be formatted like "10.0KB → 5.0KB (50.0%)"
     assertEquals(typeof savings, "string");
     assertEquals(savings.includes("KB"), true);
     assertEquals(savings.includes("→"), true);
@@ -213,7 +211,6 @@ describe("loadCSSManifest", () => {
     await cleanupTestDir();
 
     const loaded = await loadCSSManifest(TEST_DIR);
-
     assertEquals(loaded.size, 0);
 
     await cleanupTestDir();
@@ -226,7 +223,6 @@ describe("loadCSSManifest", () => {
     await writeTextFile(join(TEST_DIR, "css-manifest.json"), "invalid{json}");
 
     const loaded = await loadCSSManifest(TEST_DIR);
-
     assertEquals(loaded.size, 0);
 
     await cleanupTestDir();

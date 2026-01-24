@@ -2,7 +2,7 @@ import { db } from "../../../../lib/db.ts";
 import { verifyPassword } from "../../../../lib/auth.ts";
 import { sign } from "../../../../lib/jwt.ts";
 
-export async function POST(req: Request) {
+export async function POST(req: Request): Promise<Response> {
   try {
     const { email, password } = await req.json();
 
@@ -22,17 +22,18 @@ export async function POST(req: Request) {
 
     const token = await sign({ userId: user.id, email: user.email, name: user.name });
 
-    const headers = new Headers();
-    headers.set(
-      "Set-Cookie",
-      `session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${7 * 24 * 60 * 60}`,
-    );
+    const headers = new Headers({
+      "Set-Cookie": `session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${7 * 24 * 60 * 60}`,
+    });
 
-    return Response.json({
-      success: true,
-      user: { id: user.id, email: user.email, name: user.name },
-    }, { headers });
-  } catch (_error) {
+    return Response.json(
+      {
+        success: true,
+        user: { id: user.id, email: user.email, name: user.name },
+      },
+      { headers },
+    );
+  } catch {
     return Response.json({ error: "Internal server error" }, { status: 500 });
   }
 }

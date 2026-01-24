@@ -10,22 +10,17 @@ export interface AppRouteContext {
 export type HTTPMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS";
 
 export type PagesRouteHandler = (ctx: APIContext) => Promise<Response> | Response;
+
 export type AppRouteHandler = (
   request: Request,
   context: AppRouteContext,
 ) => Promise<Response> | Response;
+
 export type RouteHandler = PagesRouteHandler | AppRouteHandler;
 
-export interface APIRoute {
-  GET?: RouteHandler;
-  POST?: RouteHandler;
-  PUT?: RouteHandler;
-  PATCH?: RouteHandler;
-  DELETE?: RouteHandler;
-  HEAD?: RouteHandler;
-  OPTIONS?: RouteHandler;
+export type APIRoute = Partial<Record<HTTPMethod, RouteHandler>> & {
   default?: RouteHandler;
-}
+};
 
 export interface LoadModuleOptions {
   projectDir: string;

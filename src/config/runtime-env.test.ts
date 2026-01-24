@@ -16,13 +16,8 @@ import {
 } from "./runtime-env.ts";
 
 describe("RuntimeEnv", () => {
-  beforeEach(() => {
-    _resetRuntimeEnv();
-  });
-
-  afterEach(() => {
-    _resetRuntimeEnv();
-  });
+  beforeEach(_resetRuntimeEnv);
+  afterEach(_resetRuntimeEnv);
 
   describe("initRuntimeEnv", () => {
     it("initializes RuntimeEnv from environment", () => {
@@ -103,7 +98,6 @@ describe("RuntimeEnv", () => {
       expect(env.debug).toBe(true);
       expect(env.experimentalRsc).toBe(true);
       expect(env.port).toBe(9999);
-      // Still has test default
       expect(env.nodeEnv).toBe("test");
     });
 
@@ -157,22 +151,17 @@ describe("RuntimeEnv", () => {
 
   describe("test isolation pattern", () => {
     it("createTestRuntimeEnv provides isolated config for tests", () => {
-      // This demonstrates the preferred pattern for test isolation
       const testEnv = createTestRuntimeEnv({
         apiToken: "test-token-123",
         projectSlug: "test-project",
         ci: true,
       });
 
-      // Test env has custom values
       expect(testEnv.apiToken).toBe("test-token-123");
       expect(testEnv.projectSlug).toBe("test-project");
       expect(testEnv.ci).toBe(true);
-
-      // Test env has test defaults
       expect(testEnv.nodeEnv).toBe("test");
 
-      // Global env is unaffected (important for concurrent test execution)
       const globalEnv = getRuntimeEnv();
       expect(globalEnv.apiToken).not.toBe("test-token-123");
     });
@@ -183,8 +172,6 @@ describe("RuntimeEnv", () => {
 
       expect(env1.port).toBe(1111);
       expect(env2.port).toBe(2222);
-
-      // Modifying one doesn't affect the other
       expect(env1.port).toBe(1111);
     });
 
@@ -215,26 +202,20 @@ describe("RuntimeEnv", () => {
     it("handles all RuntimeEnv properties", () => {
       const env = createTestRuntimeEnv();
 
-      // Verify all expected properties exist
       const expectedProps: (keyof RuntimeEnv)[] = [
-        // Environment Mode
         "nodeEnv",
         "veryfrontEnv",
         "veryfrontMode",
-        // Debug & Testing
         "debug",
         "ci",
         "denoTesting",
         "perfEnabled",
-        // API Configuration
         "apiBaseUrl",
         "apiUrl",
         "apiToken",
         "projectSlug",
-        // System Paths
         "homeDir",
         "xdgConfigHome",
-        // Environment Detection
         "continuousIntegration",
         "sshClient",
         "sshTty",
@@ -243,20 +224,15 @@ describe("RuntimeEnv", () => {
         "cursorSession",
         "serverStartTime",
         "vcr",
-        // Experimental Features
         "experimentalRsc",
-        // Cache & Storage
         "redisUrl",
         "cacheDir",
         "disableLruInterval",
-        // Application URLs
         "appUrl",
-        // Server Configuration
         "port",
         "requestTimeoutMs",
         "httpFetchTimeoutMs",
         "ssrMaxConcurrentTransforms",
-        // Observability
         "otelEnabled",
         "otelServiceName",
         "otelEndpoint",
@@ -265,24 +241,19 @@ describe("RuntimeEnv", () => {
         "otelTracesExporter",
         "otelMetricsExporter",
         "otelMetricsEnabled",
-        // AI Providers
         "openaiApiKey",
         "openaiBaseUrl",
         "anthropicApiKey",
         "anthropicBaseUrl",
         "googleApiKey",
-        // GitHub Integration
         "githubToken",
         "githubOwner",
         "githubRepo",
         "githubRef",
-        // Display & Terminal
         "noColor",
         "forceColor",
-        // Deno-specific
         "denoV8Flags",
         "v8MaxOldSpaceSize",
-        // Versioning
         "veryfrontVersion",
       ];
 

@@ -8,9 +8,4 @@ describe("createHttpServer", () => {
     assertExists(server);
     assertExists(server.serve);
   });
-
-  it("should have serve method", () => {
-    const server = createHttpServer();
-    assertExists(server.serve);
-  });
 });

@@ -14,16 +14,13 @@ export default tool({
       .describe("Maximum number of tweets to return (default: 10)"),
   }),
   execute: async ({ maxResults }, context) => {
-    // Default to "current-user" for development; in production, always pass userId from session
-    const userId = (context?.userId as string | undefined) || "current-user";
+    const userId = context?.userId ?? "current-user";
 
     try {
       const twitter = createTwitterClient(userId);
-      const tweets = await twitter.getTimeline({
-        maxResults: maxResults || 10,
-      });
+      const tweets = await twitter.getTimeline({ maxResults: maxResults ?? 10 });
 
-      if (!tweets || tweets.length === 0) {
+      if (!tweets?.length) {
         return {
           success: true,
           tweets: [],

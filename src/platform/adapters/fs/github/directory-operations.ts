@@ -1,14 +1,11 @@
+import { buildGitHubDirCacheKey } from "#veryfront/cache";
 import { logger } from "#veryfront/utils";
 import type { FileCache } from "../cache/file-cache.ts";
 import type { GitHubStatOperations } from "./stat-operations.ts";
 import type { DirectoryEntry, ResolvedGitHubConfig } from "./types.ts";
-import { buildGitHubDirCacheKey } from "#veryfront/cache";
 
 const LOG_PREFIX = "[GitHubDirectoryOperations]";
 
-/**
- * Handles directory listing operations for GitHub adapter
- */
 export class GitHubDirectoryOperations {
   private readonly config: ResolvedGitHubConfig;
   private readonly cache: FileCache;
@@ -27,35 +24,24 @@ export class GitHubDirectoryOperations {
     this.projectDir = projectDir;
   }
 
-  /**
-   * Read directory contents
-   */
   readdir(path: string): DirectoryEntry[] {
     const normalizedPath = this.normalizePath(path);
-
-    // Check cache
     const cacheKey = buildGitHubDirCacheKey(this.config.ref, normalizedPath);
+
     const cached = this.cache.get<DirectoryEntry[]>(cacheKey);
-    if (cached) {
-      return cached;
-    }
+    if (cached) return cached;
 
     logger.debug(`${LOG_PREFIX} Reading directory`, { path: normalizedPath });
 
-    // Check if directory exists
     if (normalizedPath && !this.statOps.isDirectory(normalizedPath)) {
-      logger.debug(`${LOG_PREFIX} Directory not found`, {
-        path: normalizedPath,
-      });
+      logger.debug(`${LOG_PREFIX} Directory not found`, { path: normalizedPath });
       return [];
     }
 
     const entries: DirectoryEntry[] = [];
 
-    // Get files in directory
-    const files = this.statOps.getFilesInDirectory(normalizedPath);
-    for (const file of files) {
-      const name = file.path.split("/").pop() || file.path;
+    for (const file of this.statOps.getFilesInDirectory(normalizedPath)) {
+      const name = file.path.split("/").pop() ?? file.path;
       entries.push({
         name,
         path: file.path,
@@ -65,9 +51,7 @@ export class GitHubDirectoryOperations {
       });
     }
 
-    // Get subdirectories
-    const subdirs = this.statOps.getSubdirectories(normalizedPath);
-    for (const subdir of subdirs) {
+    for (const subdir of this.statOps.getSubdirectories(normalizedPath)) {
       const fullPath = normalizedPath ? `${normalizedPath}/${subdir}` : subdir;
       entries.push({
         name: subdir,
@@ -78,32 +62,22 @@ export class GitHubDirectoryOperations {
       });
     }
 
-    // Sort entries: directories first, then files, alphabetically
     entries.sort((a, b) => {
-      if (a.isDirectory && !b.isDirectory) return -1;
-      if (!a.isDirectory && b.isDirectory) return 1;
+      if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
 
-    // Cache the result
     this.cache.set(cacheKey, entries);
 
     return entries;
   }
 
-  /**
-   * Async generator for readDir compatibility
-   */
   async *readDir(path: string): AsyncIterable<DirectoryEntry> {
-    const entries = this.readdir(path);
-    for (const entry of entries) {
+    for (const entry of this.readdir(path)) {
       yield entry;
     }
   }
 
-  /**
-   * Normalize a file path, stripping projectDir prefix if present
-   */
   private normalizePath(path: string): string {
     let normalized = path;
 
@@ -113,8 +87,8 @@ export class GitHubDirectoryOperations {
     }
 
     return normalized
-      .replace(/^\/+/, "") // Remove leading slashes
-      .replace(/\/+$/, "") // Remove trailing slashes
-      .replace(/\/+/g, "/"); // Collapse multiple slashes
+      .replace(/^\/+/, "")
+      .replace(/\/+$/, "")
+      .replace(/\/+/g, "/");
   }
 }

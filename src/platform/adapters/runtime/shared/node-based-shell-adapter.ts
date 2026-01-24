@@ -6,15 +6,14 @@ export class NodeBasedShellAdapter implements ShellAdapter {
   statSync(path: string): { isFile: boolean; isDirectory: boolean } {
     try {
       const stat = fs.statSync(path);
-      return {
-        isFile: stat.isFile(),
-        isDirectory: stat.isDirectory(),
-      };
+      return { isFile: stat.isFile(), isDirectory: stat.isDirectory() };
     } catch (error) {
-      throw toError(createError({
-        type: "file",
-        message: `Failed to stat file: ${error}`,
-      }));
+      throw toError(
+        createError({
+          type: "file",
+          message: `Failed to stat file: ${error}`,
+        }),
+      );
     }
   }
 
@@ -22,10 +21,12 @@ export class NodeBasedShellAdapter implements ShellAdapter {
     try {
       return fs.readFileSync(path, "utf-8");
     } catch (error) {
-      throw toError(createError({
-        type: "file",
-        message: `Failed to read file: ${error}`,
-      }));
+      throw toError(
+        createError({
+          type: "file",
+          message: `Failed to read file: ${error}`,
+        }),
+      );
     }
   }
 }

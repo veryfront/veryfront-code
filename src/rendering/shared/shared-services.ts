@@ -18,67 +18,35 @@ import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { ElementValidator, type ValidationOptions } from "../element-validator/index.ts";
 import { type CompileMDXFunction, CompilerService } from "../orchestrator/compiler-service.ts";
 
-/**
- * Initialization options for shared services
- */
 export interface SharedServicesOptions {
-  /** Debug mode for element validation */
   debugMode?: boolean;
-  /** Max depth for element validation */
   maxValidationDepth?: number;
 }
 
-/**
- * Collection of shared services that can be used across all projects
- */
 export interface SharedServices {
-  /** Element validator (pure validation, no project state) */
   elementValidator: ElementValidator;
-
-  /** Compiler service (late-binding MDX compiler) */
   compilerService: CompilerService;
-
-  /** Whether esbuild has been initialized */
   esbuildInitialized: boolean;
 }
 
-/**
- * Singleton state for shared services
- */
 let sharedServices: SharedServices | null = null;
 let initializationPromise: Promise<SharedServices> | null = null;
 
-/**
- * Initialize shared services (called once at startup)
- *
- * This function is idempotent - calling it multiple times will return
- * the same singleton instance. Concurrent calls will wait for the
- * first initialization to complete.
- *
- * @param options - Configuration options
- * @returns Shared services singleton
- */
 export async function initializeSharedServices(
   options: SharedServicesOptions = {},
 ): Promise<SharedServices> {
-  // Return existing singleton if available
-  if (sharedServices) {
-    return sharedServices;
-  }
+  if (sharedServices) return sharedServices;
+  if (initializationPromise) return initializationPromise;
 
-  // Wait for in-flight initialization if one exists
-  if (initializationPromise) {
-    return initializationPromise;
-  }
+  const debugMode = options.debugMode ?? false;
+  const maxValidationDepth = options.maxValidationDepth ?? 20;
 
-  // Start initialization (withSpan is intentionally not awaited here to support concurrent initialization)
   initializationPromise = withSpan(
     SpanNames.SHARED_SERVICES_INIT,
     async () => {
       logger.debug("[SharedServices] Initializing shared renderer services");
       const startTime = performance.now();
 
-      // Initialize esbuild (expensive, do once)
       let esbuildInitialized = false;
       try {
         await initializeEsbuild({ worker: false });
@@ -89,19 +57,14 @@ export async function initializeSharedServices(
         esbuildInitialized = true;
       }
 
-      // Create element validator (stateless)
       const validatorOptions: ValidationOptions = {
-        maxDepth: options.maxValidationDepth ?? 20,
-        debugMode: options.debugMode ?? false,
+        maxDepth: maxValidationDepth,
+        debugMode,
       };
-      const elementValidator = new ElementValidator(validatorOptions);
-
-      // Create compiler service (late-binding)
-      const compilerService = new CompilerService();
 
       sharedServices = {
-        elementValidator,
-        compilerService,
+        elementValidator: new ElementValidator(validatorOptions),
+        compilerService: new CompilerService(),
         esbuildInitialized,
       };
 
@@ -113,8 +76,8 @@ export async function initializeSharedServices(
       return sharedServices;
     },
     {
-      "shared_services.debug_mode": options.debugMode ?? false,
-      "shared_services.max_validation_depth": options.maxValidationDepth ?? 20,
+      "shared_services.debug_mode": debugMode,
+      "shared_services.max_validation_depth": maxValidationDepth,
     },
   );
 
@@ -125,60 +88,25 @@ export async function initializeSharedServices(
   }
 }
 
-/**
- * Get the shared services singleton
- *
- * @throws Error if services haven't been initialized
- * @returns Shared services singleton
- */
 export function getSharedServices(): SharedServices {
   if (!sharedServices) {
-    throw new Error(
-      "SharedServices not initialized. Call initializeSharedServices() first.",
-    );
+    throw new Error("SharedServices not initialized. Call initializeSharedServices() first.");
   }
   return sharedServices;
 }
 
-/**
- * Check if shared services have been initialized
- */
 export function areSharedServicesInitialized(): boolean {
   return sharedServices !== null;
 }
 
-/**
- * Set the MDX compile function on the shared compiler service
- *
- * This must be called after initialization to provide the actual
- * MDX compilation implementation.
- *
- * @param compileMDX - MDX compilation function
- */
 export function setSharedCompileMDX(compileMDX: CompileMDXFunction): void {
-  const services = getSharedServices();
-  services.compilerService.setCompileMDX(compileMDX);
+  getSharedServices().compilerService.setCompileMDX(compileMDX);
 }
 
-/**
- * Get the shared MDX compile function
- *
- * Returns a bound function that can be passed to services that
- * need MDX compilation capability.
- *
- * @returns Bound compile function
- */
 export function getSharedCompileMDX(): CompileMDXFunction {
-  const services = getSharedServices();
-  return services.compilerService.getCompileFunction();
+  return getSharedServices().compilerService.getCompileFunction();
 }
 
-/**
- * Destroy shared services (for testing or shutdown)
- *
- * After calling this, initializeSharedServices() must be called
- * again before using any shared services.
- */
 export function destroySharedServices(): void {
   sharedServices = null;
   initializationPromise = null;

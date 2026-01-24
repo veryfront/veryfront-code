@@ -4,35 +4,28 @@ import * as React from "react";
 import { renderToString } from "react-dom/server";
 import {
   compatHooks,
-  CompatHooksContext as _CompatHooksContext,
-  CompatHooksProvider as _CompatHooksProvider,
-  SuspenseCompat as _SuspenseCompat,
-  useCompatHooks as _useCompatHooks,
   useDeferredValueCompat,
   useFormStatusCompat,
   useIdCompat,
   useOptimisticCompat,
   useTransitionCompat,
 } from "./hooks-adapter.ts";
+import { getReactVersionInfo, hasFeature } from "./version-detector/index.ts";
 
 // React 19 SSR doesn't allow optimistic state updates - these tests only work in client context.
 // Use a runtime check to avoid SSR stub leakage across test files.
-const isSSREnvironment = () =>
-  typeof window === "undefined" ||
-  (globalThis as any)?.window?.__veryfrontSSRStub === true ||
-  (globalThis as any)?.document?.__veryfrontSSRStub === true;
+function isSSREnvironment(): boolean {
+  return typeof window === "undefined" ||
+    globalThis.window?.__veryfrontSSRStub === true ||
+    globalThis.document?.__veryfrontSSRStub === true;
+}
 
-const clientOnlyIt = (name: string, fn: () => void | Promise<void>) => {
+function clientOnlyIt(name: string, fn: () => void | Promise<void>): void {
   it(name, () => {
     if (isSSREnvironment()) return;
     return fn();
   });
-};
-import {
-  __resetReactVersionCacheForTests,
-  getReactVersionInfo,
-  hasFeature,
-} from "./version-detector/index.ts";
+}
 
 describe("hooks-adapter", () => {
   describe("version detection", () => {
@@ -174,7 +167,7 @@ describe("hooks-adapter", () => {
         return React.createElement("div", null, "test");
       }
 
-      renderToString(React.createElement(TestComponent) as any);
+      renderToString(React.createElement(TestComponent));
 
       assertExists(formStatus);
       assertEquals(typeof formStatus.pending, "boolean");
@@ -192,14 +185,14 @@ describe("hooks-adapter", () => {
         return React.createElement("div", null, "test");
       }
 
-      renderToString(React.createElement(TestComponent) as any);
+      renderToString(React.createElement(TestComponent));
 
-      if (!hasFeature("useFormStatus")) {
-        assertEquals(formStatus.pending, false, "pending should be false in fallback");
-        assertEquals(formStatus.data, null, "data should be null in fallback");
-        assertEquals(formStatus.method, null, "method should be null in fallback");
-        assertEquals(formStatus.action, null, "action should be null in fallback");
-      }
+      if (hasFeature("useFormStatus")) return;
+
+      assertEquals(formStatus.pending, false, "pending should be false in fallback");
+      assertEquals(formStatus.data, null, "data should be null in fallback");
+      assertEquals(formStatus.method, null, "method should be null in fallback");
+      assertEquals(formStatus.action, null, "action should be null in fallback");
     });
 
     it("multiple calls return consistent state", () => {
@@ -212,7 +205,7 @@ describe("hooks-adapter", () => {
         return React.createElement("div", null, "test");
       }
 
-      renderToString(React.createElement(TestComponent) as any);
+      renderToString(React.createElement(TestComponent));
 
       assertEquals(statuses.length, 2);
       assertEquals(statuses[0].pending, statuses[1].pending);
@@ -227,13 +220,8 @@ describe("hooks-adapter", () => {
         return React.createElement("button", null, formStatus.pending ? "Submitting..." : "Submit");
       }
 
-      const form = React.createElement(
-        "form",
-        null,
-        React.createElement(FormComponent),
-      );
-
-      const html = renderToString(form as any);
+      const form = React.createElement("form", null, React.createElement(FormComponent));
+      const html = renderToString(form);
 
       assertExists(formStatus);
       assert(html.includes("Submit") || html.includes("Submitting"));
@@ -247,7 +235,7 @@ describe("hooks-adapter", () => {
         return React.createElement("div", null, String(formStatus.pending));
       }
 
-      const html = renderToString(React.createElement(TestComponent) as any);
+      const html = renderToString(React.createElement(TestComponent));
 
       assertEquals(typeof formStatus.pending, "boolean");
       assert(html.includes("false") || html.includes("true"));
@@ -261,7 +249,7 @@ describe("hooks-adapter", () => {
         return React.createElement("div", null, "test");
       }
 
-      renderToString(React.createElement(TestComponent) as any);
+      renderToString(React.createElement(TestComponent));
 
       assert(
         formStatus.data === null || formStatus.data instanceof FormData ||
@@ -277,7 +265,7 @@ describe("hooks-adapter", () => {
         return React.createElement("div", null, "test");
       }
 
-      renderToString(React.createElement(TestComponent) as any);
+      renderToString(React.createElement(TestComponent));
 
       assert(formStatus.method === null || typeof formStatus.method === "string");
       assert(formStatus.action === null || typeof formStatus.action === "string");
@@ -296,7 +284,7 @@ describe("hooks-adapter", () => {
         return React.createElement("div", null, "test");
       }
 
-      renderToString(React.createElement(TestComponent) as any);
+      renderToString(React.createElement(TestComponent));
 
       assertEquals(error, undefined);
       assertExists(formStatus);
@@ -304,7 +292,6 @@ describe("hooks-adapter", () => {
 
     it("React 19 uses native if available", () => {
       const info = getReactVersionInfo();
-
       let formStatus: any;
 
       function TestComponent() {
@@ -312,12 +299,12 @@ describe("hooks-adapter", () => {
         return React.createElement("div", null, "test");
       }
 
-      renderToString(React.createElement(TestComponent) as any);
+      renderToString(React.createElement(TestComponent));
 
-      if (info.isReact19 && hasFeature("useFormStatus")) {
-        assertExists(formStatus);
-        assertEquals(typeof formStatus.pending, "boolean");
-      }
+      if (!info.isReact19 || !hasFeature("useFormStatus")) return;
+
+      assertExists(formStatus);
+      assertEquals(typeof formStatus.pending, "boolean");
     });
 
     it("fallback state shape matches native", () => {
@@ -328,10 +315,9 @@ describe("hooks-adapter", () => {
         return React.createElement("div", null, "test");
       }
 
-      renderToString(React.createElement(TestComponent) as any);
+      renderToString(React.createElement(TestComponent));
 
-      const requiredProps = ["pending", "data", "method", "action"];
-      for (const prop of requiredProps) {
+      for (const prop of ["pending", "data", "method", "action"]) {
         assert(prop in formStatus, `should have ${prop} property`);
       }
     });
@@ -346,7 +332,7 @@ describe("hooks-adapter", () => {
         return React.createElement("div", null, result[0]);
       }
 
-      renderToString(React.createElement(TestComponent) as any);
+      renderToString(React.createElement(TestComponent));
 
       assertExists(result);
       assertEquals(result.length, 2);
@@ -365,7 +351,7 @@ describe("hooks-adapter", () => {
         return React.createElement("div", null, state);
       }
 
-      renderToString(React.createElement(TestComponent) as any);
+      renderToString(React.createElement(TestComponent));
 
       assertEquals(optimisticState, "test");
       assertEquals(typeof updateFn, "function");
@@ -383,19 +369,19 @@ describe("hooks-adapter", () => {
         { value: null, type: "object" },
       ];
 
-      const makeTestComponent = (value: any) => {
+      function makeTestComponent(value: any): { TestComponent: () => any; getState: () => any } {
         let state: any;
-        const TestComponent = () => {
+        function TestComponent() {
           const [s] = useOptimisticCompat(value);
           state = s;
           return React.createElement("div", null, String(s));
-        };
+        }
         return { TestComponent, getState: () => state };
-      };
+      }
 
       for (const { value, type } of testCases) {
         const { TestComponent, getState } = makeTestComponent(value);
-        renderToString(React.createElement(TestComponent) as any);
+        renderToString(React.createElement(TestComponent));
         assertEquals(typeof getState(), type);
       }
     });
@@ -404,13 +390,13 @@ describe("hooks-adapter", () => {
       const initialState = { count: 0, name: "test" };
       let state: any;
 
-      const TestComponent = () => {
+      function TestComponent() {
         const [s] = useOptimisticCompat(initialState);
         state = s;
         return React.createElement("div", null, JSON.stringify(s));
-      };
+      }
 
-      const html = renderToString(React.createElement(TestComponent) as any);
+      const html = renderToString(React.createElement(TestComponent));
 
       assertEquals(state.count, 0);
       assertEquals(state.name, "test");
@@ -421,13 +407,13 @@ describe("hooks-adapter", () => {
     clientOnlyIt("updater accepts value", () => {
       let updateFn: any;
 
-      const TestComponent = () => {
+      function TestComponent() {
         const [, update] = useOptimisticCompat("initial");
         updateFn = update;
         return React.createElement("div", null, "test");
-      };
+      }
 
-      renderToString(React.createElement(TestComponent) as any);
+      renderToString(React.createElement(TestComponent));
 
       assertEquals(typeof updateFn, "function");
       updateFn("new value");
@@ -436,13 +422,13 @@ describe("hooks-adapter", () => {
     clientOnlyIt("updater accepts function", () => {
       let updateFn: any;
 
-      const TestComponent = () => {
+      function TestComponent() {
         const [, update] = useOptimisticCompat(5);
         updateFn = update;
         return React.createElement("div", null, "test");
-      };
+      }
 
-      renderToString(React.createElement(TestComponent) as any);
+      renderToString(React.createElement(TestComponent));
 
       updateFn((current: number) => current + 1);
       assertEquals(typeof updateFn, "function");
@@ -452,18 +438,18 @@ describe("hooks-adapter", () => {
       let state: any;
       let updateFn: any;
 
-      const customUpdate = (current: string, optimistic: string) => {
+      function customUpdate(current: string, optimistic: string): string {
         return current + optimistic;
-      };
+      }
 
-      const TestComponent = () => {
+      function TestComponent() {
         const [s, update] = useOptimisticCompat("initial", customUpdate);
         state = s;
         updateFn = update;
         return React.createElement("div", null, s);
-      };
+      }
 
-      renderToString(React.createElement(TestComponent) as any);
+      renderToString(React.createElement(TestComponent));
 
       assertEquals(state, "initial");
       assertEquals(typeof updateFn, "function");
@@ -473,15 +459,15 @@ describe("hooks-adapter", () => {
       let state1: any;
       let state2: any;
 
-      const TestComponent = () => {
+      function TestComponent() {
         const [s1] = useOptimisticCompat("first");
         const [s2] = useOptimisticCompat("second");
         state1 = s1;
         state2 = s2;
         return React.createElement("div", null, `${s1} ${s2}`);
-      };
+      }
 
-      renderToString(React.createElement(TestComponent) as any);
+      renderToString(React.createElement(TestComponent));
 
       assertEquals(state1, "first");
       assertEquals(state2, "second");
@@ -503,13 +489,13 @@ describe("hooks-adapter", () => {
 
       let state: any;
 
-      const TestComponent = () => {
+      function TestComponent() {
         const [s] = useOptimisticCompat(initialState);
         state = s;
         return React.createElement("div", null, JSON.stringify(s));
-      };
+      }
 
-      renderToString(React.createElement(TestComponent) as any);
+      renderToString(React.createElement(TestComponent));
 
       assertEquals(state.items.length, 2);
       assertEquals(state.count, 2);
@@ -519,17 +505,17 @@ describe("hooks-adapter", () => {
     it("React 19 uses native if available", () => {
       let result: any;
 
-      const TestComponent = () => {
+      function TestComponent() {
         result = useOptimisticCompat("test");
         return React.createElement("div", null, result[0]);
-      };
-
-      renderToString(React.createElement(TestComponent) as any);
-
-      if (hasFeature("useOptimistic")) {
-        assertExists(result);
-        assertEquals(result.length, 2);
       }
+
+      renderToString(React.createElement(TestComponent));
+
+      if (!hasFeature("useOptimistic")) return;
+
+      assertExists(result);
+      assertEquals(result.length, 2);
     });
   });
 
@@ -542,7 +528,7 @@ describe("hooks-adapter", () => {
         return React.createElement("div", null, "test");
       }
 
-      renderToString(React.createElement(TestComponent) as any);
+      renderToString(React.createElement(TestComponent));
 
       assertExists(result);
       assertEquals(result.length, 2);
@@ -563,12 +549,12 @@ describe("hooks-adapter", () => {
         return React.createElement("div", null, pending ? "pending" : "ready");
       }
 
-      renderToString(React.createElement(TestComponent) as any);
+      renderToString(React.createElement(TestComponent));
 
-      if (info.isReact18 || info.isReact19) {
-        assertEquals(typeof isPending, "boolean");
-        assertEquals(typeof startTransition, "function");
-      }
+      if (!info.isReact18 && !info.isReact19) return;
+
+      assertEquals(typeof isPending, "boolean");
+      assertEquals(typeof startTransition, "function");
     });
 
     it("fallback on React 17", () => {
@@ -584,12 +570,12 @@ describe("hooks-adapter", () => {
         return React.createElement("div", null, "test");
       }
 
-      renderToString(React.createElement(TestComponent) as any);
+      renderToString(React.createElement(TestComponent));
 
-      if (info.isReact17) {
-        assertEquals(typeof isPending, "boolean");
-        assertEquals(typeof startTransition, "function");
-      }
+      if (!info.isReact17) return;
+
+      assertEquals(typeof isPending, "boolean");
+      assertEquals(typeof startTransition, "function");
     });
 
     it("startTransition executes callback", () => {
@@ -601,7 +587,7 @@ describe("hooks-adapter", () => {
         return React.createElement("div", null, "test");
       }
 
-      renderToString(React.createElement(TestComponent) as any);
+      renderToString(React.createElement(TestComponent));
 
       assertEquals(typeof startTransition, "function");
       assertExists(startTransition);
@@ -616,7 +602,7 @@ describe("hooks-adapter", () => {
         return React.createElement("div", null, String(pending));
       }
 
-      const html = renderToString(React.createElement(TestComponent) as any);
+      const html = renderToString(React.createElement(TestComponent));
 
       assertEquals(isPending, false);
       assert(html.includes("false"));
@@ -633,7 +619,7 @@ describe("hooks-adapter", () => {
         return React.createElement("div", null, "test");
       }
 
-      renderToString(React.createElement(TestComponent) as any);
+      renderToString(React.createElement(TestComponent));
 
       assertEquals(typeof startTransition, "function");
       assertEquals(typeof isPending, "boolean");
@@ -645,19 +631,17 @@ describe("hooks-adapter", () => {
       let transition2: any;
 
       function Component1() {
-        const t = useTransitionCompat();
-        transition1 = t;
+        transition1 = useTransitionCompat();
         return React.createElement("div", null, "c1");
       }
 
       function Component2() {
-        const t = useTransitionCompat();
-        transition2 = t;
+        transition2 = useTransitionCompat();
         return React.createElement("div", null, "c2");
       }
 
-      renderToString(React.createElement(Component1) as any);
-      renderToString(React.createElement(Component2) as any);
+      renderToString(React.createElement(Component1));
+      renderToString(React.createElement(Component2));
 
       assertExists(transition1);
       assertExists(transition2);
@@ -669,13 +653,13 @@ describe("hooks-adapter", () => {
       let startTransition: any;
       let _error: any;
 
-      const TestComponent = () => {
+      function TestComponent() {
         const [, start] = useTransitionCompat();
         startTransition = start;
         return React.createElement("div", null, "test");
-      };
+      }
 
-      renderToString(React.createElement(TestComponent) as any);
+      renderToString(React.createElement(TestComponent));
 
       try {
         startTransition(() => {
@@ -698,14 +682,13 @@ describe("hooks-adapter", () => {
         return React.createElement("div", null, deferred);
       }
 
-      renderToString(React.createElement(TestComponent) as any);
+      renderToString(React.createElement(TestComponent));
 
       assertEquals(deferred, "test value");
     });
 
     it("native on React 18/19", () => {
       const info = getReactVersionInfo();
-
       let deferred: any;
 
       function TestComponent() {
@@ -713,16 +696,14 @@ describe("hooks-adapter", () => {
         return React.createElement("div", null, deferred);
       }
 
-      renderToString(React.createElement(TestComponent) as any);
+      renderToString(React.createElement(TestComponent));
 
-      if (info.isReact18 || info.isReact19) {
-        assertEquals(deferred, "test");
-      }
+      if (!info.isReact18 && !info.isReact19) return;
+      assertEquals(deferred, "test");
     });
 
     it("immediate value on React 17", () => {
       const info = getReactVersionInfo();
-
       let deferred: any;
 
       function TestComponent() {
@@ -730,28 +711,30 @@ describe("hooks-adapter", () => {
         return React.createElement("div", null, deferred);
       }
 
-      renderToString(React.createElement(TestComponent) as any);
+      renderToString(React.createElement(TestComponent));
 
-      if (info.isReact17) {
-        assertEquals(deferred, "immediate");
-      }
+      if (!info.isReact17) return;
+      assertEquals(deferred, "immediate");
     });
 
     it("works with primitive values", () => {
       const testValues = ["string", 42, true, null, undefined];
 
-      const makeTestComponent = (value: any) => {
+      function makeTestComponent(value: any): {
+        TestComponent: () => any;
+        getDeferred: () => any;
+      } {
         let deferred: any;
-        const TestComponent = () => {
+        function TestComponent() {
           deferred = useDeferredValueCompat(value);
           return React.createElement("div", null, String(deferred));
-        };
+        }
         return { TestComponent, getDeferred: () => deferred };
-      };
+      }
 
       for (const value of testValues) {
         const { TestComponent, getDeferred } = makeTestComponent(value);
-        renderToString(React.createElement(TestComponent) as any);
+        renderToString(React.createElement(TestComponent));
         assertEquals(getDeferred(), value);
       }
     });
@@ -760,12 +743,12 @@ describe("hooks-adapter", () => {
       const obj = { name: "test", count: 5 };
       let deferred: any;
 
-      const TestComponent = () => {
+      function TestComponent() {
         deferred = useDeferredValueCompat(obj);
         return React.createElement("div", null, JSON.stringify(deferred));
-      };
+      }
 
-      renderToString(React.createElement(TestComponent) as any);
+      renderToString(React.createElement(TestComponent));
 
       assertEquals(deferred.name, "test");
       assertEquals(deferred.count, 5);
@@ -775,12 +758,12 @@ describe("hooks-adapter", () => {
       const arr = [1, 2, 3];
       let deferred: any;
 
-      const TestComponent = () => {
+      function TestComponent() {
         deferred = useDeferredValueCompat(arr);
         return React.createElement("div", null, JSON.stringify(deferred));
-      };
+      }
 
-      renderToString(React.createElement(TestComponent) as any);
+      renderToString(React.createElement(TestComponent));
 
       assertEquals(deferred.length, 3);
       assertEquals(deferred[0], 1);
@@ -800,7 +783,7 @@ describe("hooks-adapter", () => {
         return React.createElement("div", null, deferred.label);
       }
 
-      const html = renderToString(React.createElement(TestComponent) as any);
+      const html = renderToString(React.createElement(TestComponent));
 
       assertEquals(deferred.id, 1);
       assertEquals(deferred.label, "test");
@@ -818,7 +801,7 @@ describe("hooks-adapter", () => {
           return React.createElement("div", null, d);
         };
 
-        renderToString(React.createElement(TestComponent) as any);
+        renderToString(React.createElement(TestComponent));
       }
 
       assertEquals(deferred.length, 3);
@@ -832,12 +815,12 @@ describe("hooks-adapter", () => {
     it("generates ID on all versions", () => {
       let id: any;
 
-      const TestComponent = () => {
+      function TestComponent() {
         id = useIdCompat();
         return React.createElement("div", { id }, "test");
-      };
+      }
 
-      renderToString(React.createElement(TestComponent) as any);
+      renderToString(React.createElement(TestComponent));
 
       assertExists(id);
       assertEquals(typeof id, "string");
@@ -846,20 +829,19 @@ describe("hooks-adapter", () => {
 
     it("native on React 18/19", () => {
       const info = getReactVersionInfo();
-
       let id: any;
 
-      const TestComponent = () => {
+      function TestComponent() {
         id = useIdCompat();
         return React.createElement("div", { id }, "test");
-      };
-
-      renderToString(React.createElement(TestComponent) as any);
-
-      if (info.isReact18 || info.isReact19) {
-        assertExists(id);
-        assertEquals(typeof id, "string");
       }
+
+      renderToString(React.createElement(TestComponent));
+
+      if (!info.isReact18 && !info.isReact19) return;
+
+      assertExists(id);
+      assertEquals(typeof id, "string");
     });
 
     it("generates unique IDs on React 17", () => {
@@ -873,13 +855,13 @@ describe("hooks-adapter", () => {
           return React.createElement("div", { id }, "test");
         };
 
-        renderToString(React.createElement(TestComponent) as any);
+        renderToString(React.createElement(TestComponent));
       }
 
-      if (info.isReact17) {
-        assertEquals(ids.length, 3);
-        assertEquals(new Set(ids).size, 3);
-      }
+      if (!info.isReact17) return;
+
+      assertEquals(ids.length, 3);
+      assertEquals(new Set(ids).size, 3);
     });
 
     it("IDs are unique across components", () => {
@@ -904,7 +886,7 @@ describe("hooks-adapter", () => {
         React.createElement(Component1),
         React.createElement(Component2),
       );
-      renderToString(container as any);
+      renderToString(container);
 
       assertEquals(ids.length, 2);
 
@@ -931,7 +913,7 @@ describe("hooks-adapter", () => {
           return React.createElement("div", { id }, "test");
         };
 
-        renderToString(React.createElement(TestComponent) as any);
+        renderToString(React.createElement(TestComponent));
       }
 
       if (info.isReact17) {
@@ -947,13 +929,13 @@ describe("hooks-adapter", () => {
       let id1: any;
       let id2: any;
 
-      const TestComponent = () => {
+      function TestComponent() {
         id1 = useIdCompat();
         id2 = useIdCompat();
         return React.createElement("div", null, "test");
-      };
+      }
 
-      renderToString(React.createElement(TestComponent) as any);
+      renderToString(React.createElement(TestComponent));
 
       assertExists(id1);
       assertExists(id2);
@@ -970,7 +952,7 @@ describe("hooks-adapter", () => {
         return React.createElement("div", { id }, "test");
       }
 
-      renderToString(React.createElement(TestComponent) as any);
+      renderToString(React.createElement(TestComponent));
 
       assertExists(id);
       assertExists(formStatus);
@@ -987,7 +969,7 @@ describe("hooks-adapter", () => {
           return React.createElement("div", { id }, "test");
         };
 
-        renderToString(React.createElement(TestComponent) as any);
+        renderToString(React.createElement(TestComponent));
       }
 
       for (const id of ids) {

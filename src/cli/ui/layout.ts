@@ -5,21 +5,21 @@
  * Runtime-agnostic: works on Deno, Node.js, and Bun.
  */
 
-import { getTerminalSize as getSize, isStdoutTTY } from "#veryfront/platform/compat/process.ts";
+import { getTerminalSize, isStdoutTTY } from "#veryfront/platform/compat/process.ts";
 import { ANSI_REGEX, RESET } from "./ansi.ts";
 
 /**
  * Get terminal width, with fallback for non-TTY environments
  */
 export function getTerminalWidth(): number {
-  return getSize().columns;
+  return getTerminalSize().columns;
 }
 
 /**
  * Get terminal height, with fallback for non-TTY environments
  */
 export function getTerminalHeight(): number {
-  return getSize().rows;
+  return getTerminalSize().rows;
 }
 
 /**
@@ -40,36 +40,33 @@ export function visibleLength(text: string): number {
  * Truncate text to fit within maxWidth, adding ellipsis if needed
  */
 export function truncate(text: string, maxWidth: number, ellipsis = "…"): string {
-  const visible = visibleLength(text);
-  if (visible <= maxWidth) return text;
+  if (visibleLength(text) <= maxWidth) return text;
 
-  // Need to truncate - find the right cut point
+  const maxVisible = maxWidth - ellipsis.length;
   let visibleCount = 0;
   let cutIndex = 0;
 
   // Create a new regex instance to avoid state issues with global flag
   const ansiRegex = new RegExp(ANSI_REGEX.source, "g");
   let lastIndex = 0;
-  let match;
+  let match: RegExpExecArray | null;
 
   while ((match = ansiRegex.exec(text)) !== null) {
-    // Count visible chars before this ANSI sequence
     const visiblePart = text.slice(lastIndex, match.index);
-    for (let i = 0; i < visiblePart.length; i++) {
-      if (visibleCount >= maxWidth - ellipsis.length) break;
+
+    for (let i = 0; i < visiblePart.length && visibleCount < maxVisible; i++) {
       cutIndex = lastIndex + i + 1;
       visibleCount++;
     }
-    if (visibleCount >= maxWidth - ellipsis.length) break;
+    if (visibleCount >= maxVisible) break;
+
     cutIndex = match.index + match[0].length;
     lastIndex = ansiRegex.lastIndex;
   }
 
-  // Handle remaining text after last ANSI sequence
-  if (visibleCount < maxWidth - ellipsis.length) {
+  if (visibleCount < maxVisible) {
     const remaining = text.slice(lastIndex);
-    for (let i = 0; i < remaining.length; i++) {
-      if (visibleCount >= maxWidth - ellipsis.length) break;
+    for (let i = 0; i < remaining.length && visibleCount < maxVisible; i++) {
       cutIndex = lastIndex + i + 1;
       visibleCount++;
     }
@@ -91,18 +88,14 @@ export function pad(
 
   const padding = width - visible;
 
-  switch (align) {
-    case "right":
-      return " ".repeat(padding) + text;
-    case "center": {
-      const left = Math.floor(padding / 2);
-      const right = padding - left;
-      return " ".repeat(left) + text + " ".repeat(right);
-    }
-    case "left":
-    default:
-      return text + " ".repeat(padding);
+  if (align === "right") return " ".repeat(padding) + text;
+
+  if (align === "center") {
+    const left = Math.floor(padding / 2);
+    return " ".repeat(left) + text + " ".repeat(padding - left);
   }
+
+  return text + " ".repeat(padding);
 }
 
 /**
@@ -117,22 +110,21 @@ export function wrap(text: string, maxWidth: number): string[] {
   let currentLine = "";
 
   for (const word of words) {
-    const wordLength = visibleLength(word);
-    const lineLength = visibleLength(currentLine);
-
-    if (lineLength === 0) {
+    if (!currentLine) {
       currentLine = word;
-    } else if (lineLength + 1 + wordLength <= maxWidth) {
-      currentLine += " " + word;
-    } else {
-      lines.push(currentLine);
-      currentLine = word;
+      continue;
     }
+
+    if (visibleLength(currentLine) + 1 + visibleLength(word) <= maxWidth) {
+      currentLine += " " + word;
+      continue;
+    }
+
+    lines.push(currentLine);
+    currentLine = word;
   }
 
-  if (currentLine) {
-    lines.push(currentLine);
-  }
+  if (currentLine) lines.push(currentLine);
 
   return lines;
 }
@@ -141,8 +133,7 @@ export function wrap(text: string, maxWidth: number): string[] {
  * Repeat a character or string to fill width
  */
 export function repeat(char: string, count: number): string {
-  if (count <= 0) return "";
-  return char.repeat(count);
+  return count <= 0 ? "" : char.repeat(count);
 }
 
 /**

@@ -1,11 +1,3 @@
-/**
- * Cost Tracking System
- *
- * Track AI model usage and costs for budgeting and analytics.
- *
- * @module veryfront/agent/middleware/cost-tracking
- */
-
 import type { AgentContext, AgentResponse } from "../../types.ts";
 import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 
@@ -60,17 +52,19 @@ export interface UsageSummary {
   };
 }
 
+function getProvider(model: string): string {
+  return model.split("/")[0] || "unknown";
+}
+
 class CostTracker {
   private records: UsageRecord[] = [];
-  private config: CostConfig;
   private dailyTotal = 0;
   private monthlyTotal = 0;
   private lastDayReset = Date.now();
   private lastMonthReset = Date.now();
   private resetInterval: ReturnType<typeof setInterval> | null = null;
 
-  constructor(config: CostConfig) {
-    this.config = config;
+  constructor(private config: CostConfig) {
     this.startPeriodicReset();
   }
 
@@ -85,17 +79,13 @@ class CostTracker {
       return this.createEmptyRecord(agentId, model);
     }
 
-    // Parse provider from model string
-    const provider = model.split("/")[0] || "unknown";
-
-    // Calculate cost
+    const provider = getProvider(model);
     const cost = this.calculateCost(
       provider,
       response.usage.promptTokens,
       response.usage.completionTokens,
     );
 
-    // Create record
     const record: UsageRecord = {
       timestamp: Date.now(),
       agentId,
@@ -110,26 +100,16 @@ class CostTracker {
       userId,
     };
 
-    // Add to records
     this.records.push(record);
-
-    // Update totals
     this.dailyTotal += cost;
     this.monthlyTotal += cost;
-
-    // Check limits
     this.checkLimits();
 
     return record;
   }
 
-  private calculateCost(
-    provider: string,
-    inputTokens: number,
-    outputTokens: number,
-  ): number {
+  private calculateCost(provider: string, inputTokens: number, outputTokens: number): number {
     const pricing = this.config.pricing[provider];
-
     if (!pricing) {
       agentLogger.warn(`No pricing configured for provider: ${provider}`);
       return 0;
@@ -142,8 +122,8 @@ class CostTracker {
   }
 
   getSummary(startTime?: number, endTime?: number): UsageSummary {
-    const start = startTime || 0;
-    const end = endTime || Date.now();
+    const start = startTime ?? 0;
+    const end = endTime ?? Date.now();
 
     const relevantRecords = this.records.filter(
       (r) => r.timestamp >= start && r.timestamp <= end,
@@ -151,11 +131,7 @@ class CostTracker {
 
     const summary: UsageSummary = {
       requests: relevantRecords.length,
-      tokens: {
-        prompt: 0,
-        completion: 0,
-        total: 0,
-      },
+      tokens: { prompt: 0, completion: 0, total: 0 },
       cost: 0,
       byProvider: {},
       period: { start, end },
@@ -167,11 +143,12 @@ class CostTracker {
       summary.tokens.total += record.tokens.total;
       summary.cost += record.cost;
 
-      const providerStats = summary.byProvider[record.provider] ??= {
+      const providerStats = (summary.byProvider[record.provider] ??= {
         requests: 0,
         tokens: 0,
         cost: 0,
-      };
+      });
+
       providerStats.requests++;
       providerStats.tokens += record.tokens.total;
       providerStats.cost += record.cost;
@@ -182,22 +159,22 @@ class CostTracker {
 
   getDailySummary(): UsageSummary {
     const now = Date.now();
-    const dayStart = now - 24 * 60 * 60 * 1000;
-    return this.getSummary(dayStart, now);
+    return this.getSummary(now - 24 * 60 * 60 * 1000, now);
   }
 
   getMonthlySummary(): UsageSummary {
     const now = Date.now();
-    const monthStart = now - 30 * 24 * 60 * 60 * 1000;
-    return this.getSummary(monthStart, now);
+    return this.getSummary(now - 30 * 24 * 60 * 60 * 1000, now);
   }
 
   private checkLimits(): void {
-    if (this.config.limits?.daily && this.dailyTotal > this.config.limits.daily) {
+    const dailyLimit = this.config.limits?.daily;
+    if (dailyLimit && this.dailyTotal > dailyLimit) {
       this.config.onLimitExceeded?.(this.getDailySummary());
     }
 
-    if (this.config.limits?.monthly && this.monthlyTotal > this.config.limits.monthly) {
+    const monthlyLimit = this.config.limits?.monthly;
+    if (monthlyLimit && this.monthlyTotal > monthlyLimit) {
       this.config.onLimitExceeded?.(this.getMonthlySummary());
     }
   }
@@ -215,7 +192,7 @@ class CostTracker {
         this.monthlyTotal = 0;
         this.lastMonthReset = now;
       }
-    }, 60000);
+    }, 60_000);
   }
 
   destroy(): void {
@@ -231,7 +208,7 @@ class CostTracker {
       timestamp: Date.now(),
       agentId,
       model,
-      provider: model.split("/")[0] || "unknown",
+      provider: getProvider(model),
       tokens: { prompt: 0, completion: 0, total: 0 },
       cost: 0,
     };
@@ -248,32 +225,32 @@ class CostTracker {
   }
 }
 
-export function createCostTracker(config: CostConfig) {
+export function createCostTracker(config: CostConfig): {
+  track: (agentId: string, model: string, response: AgentResponse, userId?: string) => UsageRecord;
+  getSummary: (startTime?: number, endTime?: number) => UsageSummary;
+  getDailySummary: () => UsageSummary;
+  getMonthlySummary: () => UsageSummary;
+  getAllRecords: () => UsageRecord[];
+  clear: () => void;
+} {
   const tracker = new CostTracker(config);
 
   return {
-    track: (
-      agentId: string,
-      model: string,
-      response: AgentResponse,
-      userId?: string,
-    ): UsageRecord => tracker.track(agentId, model, response, userId),
-    getSummary: (startTime?: number, endTime?: number): UsageSummary =>
-      tracker.getSummary(startTime, endTime),
-    getDailySummary: (): UsageSummary => tracker.getDailySummary(),
-    getMonthlySummary: (): UsageSummary => tracker.getMonthlySummary(),
-    getAllRecords: (): UsageRecord[] => tracker.getAllRecords(),
-    clear: (): void => tracker.clear(),
+    track: (agentId, model, response, userId) => tracker.track(agentId, model, response, userId),
+    getSummary: (startTime, endTime) => tracker.getSummary(startTime, endTime),
+    getDailySummary: () => tracker.getDailySummary(),
+    getMonthlySummary: () => tracker.getMonthlySummary(),
+    getAllRecords: () => tracker.getAllRecords(),
+    clear: () => tracker.clear(),
   };
 }
 
-export function costTrackingMiddleware(config: CostConfig) {
+export function costTrackingMiddleware(
+  config: CostConfig,
+): (context: AgentContext, next: () => Promise<AgentResponse>) => Promise<AgentResponse> {
   const tracker = createCostTracker(config);
 
-  return async (
-    context: AgentContext,
-    next: () => Promise<AgentResponse>,
-  ): Promise<AgentResponse> => {
+  return async (context, next): Promise<AgentResponse> => {
     const result = await next();
     tracker.track(
       context.agentId,
@@ -281,7 +258,6 @@ export function costTrackingMiddleware(config: CostConfig) {
       result,
       (context.data as Record<string, unknown>)?.userId as string | undefined,
     );
-
     return result;
   };
 }

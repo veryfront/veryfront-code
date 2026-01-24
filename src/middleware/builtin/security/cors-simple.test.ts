@@ -4,14 +4,8 @@ import { corsSimple } from "./cors-simple.ts";
 import { MiddlewareContext } from "../../core/context.ts";
 
 describe("corsSimple", () => {
-  function createContext(
-    method: string = "GET",
-    origin?: string,
-  ): MiddlewareContext {
-    const headers: Record<string, string> = {};
-    if (origin) {
-      headers["origin"] = origin;
-    }
+  function createContext(method = "GET", origin?: string): MiddlewareContext {
+    const headers: Record<string, string> = origin ? { origin } : {};
     return new MiddlewareContext(
       new Request("https://example.com/api/test", { method, headers }),
     );
@@ -35,19 +29,12 @@ describe("corsSimple", () => {
       const ctx = createContext("OPTIONS", "https://other.com");
 
       const response = await middleware(ctx, () => Promise.resolve(new Response("OK")));
+      const allowMethods = response?.headers.get("Access-Control-Allow-Methods") ?? "";
+      const allowHeaders = response?.headers.get("Access-Control-Allow-Headers") ?? "";
 
-      assertStringIncludes(
-        response?.headers.get("Access-Control-Allow-Methods") || "",
-        "GET",
-      );
-      assertStringIncludes(
-        response?.headers.get("Access-Control-Allow-Methods") || "",
-        "POST",
-      );
-      assertStringIncludes(
-        response?.headers.get("Access-Control-Allow-Headers") || "",
-        "Content-Type",
-      );
+      assertStringIncludes(allowMethods, "GET");
+      assertStringIncludes(allowMethods, "POST");
+      assertStringIncludes(allowHeaders, "Content-Type");
     });
 
     it("should set wildcard origin for *", async () => {
@@ -56,10 +43,7 @@ describe("corsSimple", () => {
 
       const response = await middleware(ctx, () => Promise.resolve(new Response("OK")));
 
-      assertEquals(
-        response?.headers.get("Access-Control-Allow-Origin"),
-        "*",
-      );
+      assertEquals(response?.headers.get("Access-Control-Allow-Origin"), "*");
     });
   });
 
@@ -70,10 +54,7 @@ describe("corsSimple", () => {
 
       const response = await middleware(ctx, () => Promise.resolve(new Response("OK")));
 
-      assertEquals(
-        response?.headers.get("Access-Control-Allow-Origin"),
-        "*",
-      );
+      assertEquals(response?.headers.get("Access-Control-Allow-Origin"), "*");
     });
 
     it("should preserve original response body", async () => {
@@ -104,10 +85,7 @@ describe("corsSimple", () => {
       const middleware = corsSimple("*");
       const ctx = createContext("GET", "https://other.com");
 
-      const response = await middleware(
-        ctx,
-        () => Promise.resolve(undefined as unknown as Response),
-      );
+      const response = await middleware(ctx, () => Promise.resolve(undefined as never));
 
       assertEquals(response, undefined);
     });
@@ -144,10 +122,7 @@ describe("corsSimple", () => {
 
       const response = await middleware(ctx, () => Promise.resolve(new Response("OK")));
 
-      assertEquals(
-        response?.headers.get("Access-Control-Allow-Origin"),
-        "*",
-      );
+      assertEquals(response?.headers.get("Access-Control-Allow-Origin"), "*");
     });
   });
 });

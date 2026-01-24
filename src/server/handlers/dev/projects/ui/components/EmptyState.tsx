@@ -4,14 +4,16 @@ interface EmptyStateProps {
   variant?: "default" | "error";
 }
 
-export function EmptyState({ title, description, variant = "default" }: EmptyStateProps) {
+export function EmptyState({
+  title,
+  description,
+  variant = "default",
+}: EmptyStateProps): JSX.Element {
+  const titleClassName = variant === "error" ? "text-amber-600" : "text-gray-600";
+
   return (
     <div className="text-center py-16 px-6">
-      <p
-        className={`text-lg mb-2 ${variant === "error" ? "text-amber-600" : "text-gray-600"}`}
-      >
-        {title}
-      </p>
+      <p className={`text-lg mb-2 ${titleClassName}`}>{title}</p>
       <p className="text-sm text-gray-400">{description}</p>
     </div>
   );

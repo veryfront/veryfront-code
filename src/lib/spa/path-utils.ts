@@ -1,4 +1,4 @@
-/**
+/****
  * Shared path utilities for SPA module resolution.
  * Used by component-loader.ts and hydration script templates.
  */
@@ -14,77 +14,43 @@ const SOURCE_PATH_PATTERN = new RegExp(
   `(${SOURCE_DIRS.join("|")})/(.+)\\.(${SOURCE_EXTENSIONS.join("|")})$`,
 );
 
-/**
- * Get the module server URL from window or return default.
- */
+const KNOWN_EXT_PATTERN = /\.(tsx|ts|jsx|mdx|js|mjs)$/;
+const SOURCE_EXT_REPLACE_PATTERN = /\.(tsx|ts|jsx|mdx)$/;
+
 export function getModuleServerUrl(): string {
-  if (typeof window !== "undefined") {
-    const win = window as { MODULE_SERVER_URL?: string };
-    if (win.MODULE_SERVER_URL) {
-      return win.MODULE_SERVER_URL;
-    }
-  }
-  return "/_vf_modules";
+  const moduleServerUrl = typeof window !== "undefined"
+    ? (window as { MODULE_SERVER_URL?: string }).MODULE_SERVER_URL
+    : undefined;
+
+  return moduleServerUrl ?? "/_vf_modules";
 }
 
-/**
- * Convert a source file path to a module URL.
- *
- * Handles multiple path formats:
- * - Absolute: /project/dir/pages/foo.tsx -> /_vf_modules/pages/foo.js
- * - Relative: pages/foo.mdx -> /_vf_modules/pages/foo.js
- * - Direct: custom/path.tsx -> /_vf_modules/custom/path.js
- *
- * @param path - Source file path (e.g., "pages/index.tsx")
- * @param baseUrl - Module server base URL (default: getModuleServerUrl())
- * @returns Full module URL
- */
 export function pathToModuleUrl(path: string, baseUrl?: string): string {
   const base = baseUrl ?? getModuleServerUrl();
 
-  // Try absolute path format (legacy): /project/dir/pages/foo.tsx
-  let match = path.match(new RegExp(`/${SOURCE_PATH_PATTERN.source}`));
+  const absoluteMatch = path.match(new RegExp(`/${SOURCE_PATH_PATTERN.source}`));
+  const relativeMatch = absoluteMatch ?? path.match(new RegExp(`^${SOURCE_PATH_PATTERN.source}`));
 
-  // Try project-relative path format: pages/foo.mdx
-  if (!match) {
-    match = path.match(new RegExp(`^${SOURCE_PATH_PATTERN.source}`));
-  }
-
-  if (!match) {
-    // Direct path fallback - replace extension or add .js if no known extension
-    const hasKnownExt = /\.(tsx|ts|jsx|mdx|js|mjs)$/.test(path);
-    if (hasKnownExt) {
-      return `${base}/${path.replace(/\.(tsx|ts|jsx|mdx)$/, ".js")}`;
+  if (!relativeMatch) {
+    if (KNOWN_EXT_PATTERN.test(path)) {
+      return `${base}/${path.replace(SOURCE_EXT_REPLACE_PATTERN, ".js")}`;
     }
-    // No extension - add .js (e.g., _snippets/abc123 -> _snippets/abc123.js)
     return `${base}/${path}.js`;
   }
 
-  // match[1] = directory (pages, components, etc.)
-  // match[2] = path within directory
-  return `${base}/${match[1]}/${match[2]}.js`;
+  return `${base}/${relativeMatch[1]}/${relativeMatch[2]}.js`;
 }
 
-/**
- * Generate inline JavaScript for path resolution in hydration templates.
- * This is used in template strings that run in the browser.
- */
 export function getPathToModuleUrlScript(): string {
   return `
     function pathToModuleUrl(path, baseUrl) {
       const base = baseUrl || MODULE_SERVER_URL;
       const pattern = /(pages|components|app|lib|layouts|shared|features)\\/(.+)\\.(tsx|ts|jsx|mdx)$/;
 
-      // Try absolute path format
       let match = path.match(new RegExp('/' + pattern.source));
-
-      // Try project-relative path format
-      if (!match) {
-        match = path.match(new RegExp('^' + pattern.source));
-      }
+      match = match || path.match(new RegExp('^' + pattern.source));
 
       if (!match) {
-        // Replace extension or add .js if no known extension
         const hasKnownExt = /\\.(tsx|ts|jsx|mdx|js|mjs)$/.test(path);
         if (hasKnownExt) {
           return base + '/' + path.replace(/\\.(tsx|ts|jsx|mdx)$/, '.js');

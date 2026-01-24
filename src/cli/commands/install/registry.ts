@@ -1,8 +1,3 @@
-/**
- * AI Tool Registry - Single source of truth for supported AI coding tools
- * To add a new IDE: just add an entry to AI_TOOLS array
- */
-
 import { readTextFile } from "#veryfront/platform/compat/fs.ts";
 import { type AITool, type AIToolId, AIToolIdSchema, AIToolSchema } from "./types.ts";
 
@@ -51,27 +46,25 @@ const AI_TOOLS_RAW = [
   },
 ] as const;
 
-// Validate all tools at module load - fail fast if registry is misconfigured
 export const AI_TOOLS: AITool[] = AI_TOOLS_RAW.map((tool) => AIToolSchema.parse(tool));
 
 export function getAllToolIds(): AIToolId[] {
-  return AI_TOOLS.map((t) => t.id);
+  return AI_TOOLS.map((tool) => tool.id);
 }
 
 export function getToolById(id: string): AITool {
-  const parsed = AIToolIdSchema.parse(id);
-  const tool = AI_TOOLS.find((t) => t.id === parsed);
-  if (!tool) throw new Error(`Tool not found: ${id}`);
-  return tool;
+  const toolId = AIToolIdSchema.parse(id);
+  const tool = AI_TOOLS.find((t) => t.id === toolId);
+  if (tool) return tool;
+  throw new Error(`Tool not found: ${id}`);
 }
 
 export function isValidToolId(id: string): id is AIToolId {
   return AIToolIdSchema.safeParse(id).success;
 }
 
-export async function getTemplateContent(toolId: string): Promise<string> {
-  const tool = getToolById(toolId);
-  const templatePath =
-    new URL(`../../templates/ai-rules/${tool.template}`, import.meta.url).pathname;
-  return await readTextFile(templatePath);
+export function getTemplateContent(toolId: string): Promise<string> {
+  const { template } = getToolById(toolId);
+  const templatePath = new URL(`../../templates/ai-rules/${template}`, import.meta.url).pathname;
+  return readTextFile(templatePath);
 }

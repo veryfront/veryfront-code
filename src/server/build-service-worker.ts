@@ -10,8 +10,8 @@ function sanitizeCacheKey(value: string): string {
 }
 
 function buildCacheVersion(manifest: BuildManifest): string {
-  const manifestVersion = sanitizeCacheKey(manifest.version || "dev");
-  const buildStamp = sanitizeCacheKey(manifest.buildTime || new Date().toISOString());
+  const manifestVersion = sanitizeCacheKey(manifest.version ?? "dev");
+  const buildStamp = sanitizeCacheKey(manifest.buildTime ?? new Date().toISOString());
   return `veryfront-${manifestVersion}-${buildStamp}`;
 }
 
@@ -24,33 +24,32 @@ function buildManifestAssets(manifest: BuildManifest): string[] {
     "/sw.js",
   ]);
 
-  const addAsset = (requestPath: string | null | undefined) => {
+  function addAsset(requestPath: string | null | undefined): void {
     if (!requestPath) return;
-    const normalized = requestPath.startsWith("/") ? requestPath : `/${requestPath}`;
-    assets.add(normalized);
-  };
+    assets.add(requestPath.startsWith("/") ? requestPath : `/${requestPath}`);
+  }
 
-  if (manifest.chunks) {
-    for (const chunk of Object.values(manifest.chunks.chunks || {}) as ManifestChunkInfo[]) {
+  const chunks = manifest.chunks;
+  if (chunks) {
+    for (const chunk of Object.values(chunks.chunks ?? {}) as ManifestChunkInfo[]) {
       addAsset(normalizeChunkPath(chunk.file, "/_veryfront"));
-      if (chunk.css) {
-        addAsset(normalizeChunkPath(chunk.css, "/_veryfront"));
-      }
-      for (const dependency of chunk.imports || []) {
+      addAsset(chunk.css ? normalizeChunkPath(chunk.css, "/_veryfront") : null);
+
+      for (const dependency of chunk.imports ?? []) {
         addAsset(normalizeChunkPath(dependency, "/_veryfront/chunks"));
       }
     }
 
-    for (const shared of manifest.chunks.shared || []) {
+    for (const shared of chunks.shared ?? []) {
       addAsset(normalizeChunkPath(shared, "/_veryfront/chunks"));
     }
   }
 
-  for (const route of manifest.routes || []) {
-    if (Array.isArray(route.chunks)) {
-      for (const chunk of route.chunks) {
-        addAsset(normalizeChunkPath(chunk, "/_veryfront/chunks"));
-      }
+  for (const route of manifest.routes ?? []) {
+    if (!Array.isArray(route.chunks)) continue;
+
+    for (const chunk of route.chunks) {
+      addAsset(normalizeChunkPath(chunk, "/_veryfront/chunks"));
     }
   }
 
@@ -148,7 +147,7 @@ async function handleRequest(request, strategy) {
         return cache.match(request);
       }
 
-    case 'cacheFirst':
+    case 'cacheFirst': {
       const cached = await cache.match(request);
       if (cached) return cached;
 
@@ -157,8 +156,9 @@ async function handleRequest(request, strategy) {
         cache.put(request, response.clone());
       }
       return response;
+    }
 
-    case 'staleWhileRevalidate':
+    case 'staleWhileRevalidate': {
       const cachedResponse = await cache.match(request);
       const fetchPromise = fetch(request).then(response => {
         if (response.ok) {
@@ -168,6 +168,7 @@ async function handleRequest(request, strategy) {
       });
 
       return cachedResponse || fetchPromise;
+    }
 
     default:
       return fetch(request);

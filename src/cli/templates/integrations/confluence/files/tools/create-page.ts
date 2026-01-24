@@ -7,21 +7,29 @@ export default tool({
   description:
     "Create a new page in a Confluence space. Can optionally be created as a child of an existing page.",
   inputSchema: z.object({
-    spaceKey: z.string().describe(
-      'The key of the space to create the page in (e.g., "TEAM", "DEV")',
-    ),
+    spaceKey: z
+      .string()
+      .describe('The key of the space to create the page in (e.g., "TEAM", "DEV")'),
     title: z.string().describe("Title of the new page"),
-    content: z.string().describe(
-      "Content for the page (can be plain text or Confluence storage format HTML)",
-    ),
-    parentId: z.string().optional().describe(
-      "Optional ID of the parent page to create this as a child page",
-    ),
-    type: z.enum(["page", "blogpost"]).default("page").describe("Type of content to create"),
+    content: z
+      .string()
+      .describe(
+        "Content for the page (can be plain text or Confluence storage format HTML)",
+      ),
+    parentId: z
+      .string()
+      .optional()
+      .describe("Optional ID of the parent page to create this as a child page"),
+    type: z
+      .enum(["page", "blogpost"])
+      .default("page")
+      .describe("Type of content to create"),
   }),
   async execute({ spaceKey, title, content, parentId, type }) {
-    // Check if content looks like HTML, otherwise format as storage
-    const storageContent = content.trim().startsWith("<") ? content : formatAsStorage(content);
+    const trimmedContent = content.trim();
+    const storageContent = trimmedContent.startsWith("<")
+      ? content
+      : formatAsStorage(content);
 
     const page = await createPage({
       spaceKey,

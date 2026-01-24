@@ -9,32 +9,23 @@ export default tool({
     repo: z
       .string()
       .describe("Repository in format 'owner/repo' (e.g., 'facebook/react')"),
-    title: z
-      .string()
-      .min(1)
-      .describe("Issue title"),
+    title: z.string().min(1).describe("Issue title"),
     body: z
       .string()
       .optional()
       .describe("Issue body/description (supports Markdown)"),
-    labels: z
-      .array(z.string())
-      .optional()
-      .describe("Labels to add to the issue"),
+    labels: z.array(z.string()).optional().describe("Labels to add to the issue"),
     assignees: z
       .array(z.string())
       .optional()
       .describe("GitHub usernames to assign to the issue"),
   }),
   execute: async ({ repo, title, body, labels, assignees }, context) => {
-    // Default to "current-user" for development; in production, always pass userId from session
-    const userId = (context?.userId as string | undefined) || "current-user";
+    const userId = context?.userId ?? "current-user";
 
     const [owner, repoName] = repo.split("/");
     if (!owner || !repoName) {
-      return {
-        error: "Invalid repository format. Use 'owner/repo' format.",
-      };
+      return { error: "Invalid repository format. Use 'owner/repo' format." };
     }
 
     try {

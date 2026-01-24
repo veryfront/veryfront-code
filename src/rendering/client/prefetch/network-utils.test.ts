@@ -1,21 +1,8 @@
-/**
- * Unit Tests for Network Utils
- * Tests network connection detection and prefetch eligibility based on network conditions
- */
-
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { NetworkUtils } from "./network-utils.ts";
 import type { NetworkInfo } from "./network-utils.ts";
 
-// Navigator type extension for network connection
-interface NavigatorWithConnection extends Navigator {
-  connection?: NetworkInfo;
-  mozConnection?: NetworkInfo;
-  webkitConnection?: NetworkInfo;
-}
-
-// Helper to properly mock navigator (Deno's navigator is non-configurable)
 function mockNavigator(navObject: any): () => void {
   const original = globalThis.navigator;
   delete (globalThis as any).navigator;
@@ -27,179 +14,127 @@ function mockNavigator(navObject: any): () => void {
   };
 }
 
+function withMockNavigator<T>(navObject: any, fn: () => T): T {
+  const restore = mockNavigator(navObject);
+  try {
+    return fn();
+  } finally {
+    restore();
+  }
+}
+
+function connection(effectiveType: NetworkInfo["effectiveType"], saveData = false): NetworkInfo {
+  return { effectiveType, saveData };
+}
+
 describe("NetworkUtils", () => {
   describe("Constructor", () => {
     it("should create NetworkUtils with default allowed networks", () => {
-      const restore = mockNavigator({ connection: null });
-      const networkUtils = new NetworkUtils();
-      assertExists(networkUtils);
-      restore();
+      withMockNavigator({ connection: null }, () => {
+        const networkUtils = new NetworkUtils();
+        assertExists(networkUtils);
+      });
     });
 
     it("should create NetworkUtils with custom allowed networks", () => {
-      const restore = mockNavigator({ connection: null });
-      const networkUtils = new NetworkUtils(["5g", "wifi"]);
-      assertExists(networkUtils);
-      restore();
+      withMockNavigator({ connection: null }, () => {
+        const networkUtils = new NetworkUtils(["5g", "wifi"]);
+        assertExists(networkUtils);
+      });
     });
 
     it("should detect network connection from navigator.connection", () => {
-      const mockConnection: NetworkInfo = {
-        effectiveType: "4g",
-        saveData: false,
-      };
-      const restore = mockNavigator({ connection: mockConnection });
+      const mockConnection: NetworkInfo = connection("4g", false);
 
-      const networkUtils = new NetworkUtils();
-      const info = networkUtils.getNetworkInfo();
+      withMockNavigator({ connection: mockConnection }, () => {
+        const networkUtils = new NetworkUtils();
+        const info = networkUtils.getNetworkInfo();
 
-      assertExists(info);
-      assertEquals(info?.effectiveType, "4g");
-      restore();
+        assertExists(info);
+        assertEquals(info?.effectiveType, "4g");
+      });
     });
 
     it("should detect network connection from navigator.mozConnection", () => {
-      const mockConnection: NetworkInfo = {
-        effectiveType: "wifi",
-        saveData: false,
-      };
-      const restore = mockNavigator({
-        mozConnection: mockConnection,
+      const mockConnection: NetworkInfo = connection("wifi", false);
+
+      withMockNavigator({ mozConnection: mockConnection }, () => {
+        const networkUtils = new NetworkUtils();
+        const info = networkUtils.getNetworkInfo();
+
+        assertExists(info);
+        assertEquals(info?.effectiveType, "wifi");
       });
-
-      const networkUtils = new NetworkUtils();
-      const info = networkUtils.getNetworkInfo();
-
-      assertExists(info);
-      assertEquals(info?.effectiveType, "wifi");
-      restore();
     });
 
     it("should detect network connection from navigator.webkitConnection", () => {
-      const mockConnection: NetworkInfo = {
-        effectiveType: "ethernet",
-        saveData: false,
-      };
-      const restore = mockNavigator({
-        webkitConnection: mockConnection,
+      const mockConnection: NetworkInfo = connection("ethernet", false);
+
+      withMockNavigator({ webkitConnection: mockConnection }, () => {
+        const networkUtils = new NetworkUtils();
+        const info = networkUtils.getNetworkInfo();
+
+        assertExists(info);
+        assertEquals(info?.effectiveType, "ethernet");
       });
-
-      const networkUtils = new NetworkUtils();
-      const info = networkUtils.getNetworkInfo();
-
-      assertExists(info);
-      assertEquals(info?.effectiveType, "ethernet");
-      restore();
     });
 
     it("should return null when no network connection is available", () => {
-      const restore = mockNavigator({});
-
-      const networkUtils = new NetworkUtils();
-      const info = networkUtils.getNetworkInfo();
-
-      assertEquals(info, null);
-      restore();
+      withMockNavigator({}, () => {
+        const networkUtils = new NetworkUtils();
+        assertEquals(networkUtils.getNetworkInfo(), null);
+      });
     });
   });
 
   describe("shouldPrefetch", () => {
     it("should return true for 4g connection by default", () => {
-      const mockConnection: NetworkInfo = {
-        effectiveType: "4g",
-        saveData: false,
-      };
-      const restore = mockNavigator({
-        connection: mockConnection,
+      withMockNavigator({ connection: connection("4g", false) }, () => {
+        const networkUtils = new NetworkUtils();
+        assertEquals(networkUtils.shouldPrefetch(), true);
       });
-
-      const networkUtils = new NetworkUtils();
-      assertEquals(networkUtils.shouldPrefetch(), true);
-      restore();
     });
 
     it("should return true for wifi connection by default", () => {
-      const mockConnection: NetworkInfo = {
-        effectiveType: "wifi",
-        saveData: false,
-      };
-      const restore = mockNavigator({
-        connection: mockConnection,
+      withMockNavigator({ connection: connection("wifi", false) }, () => {
+        const networkUtils = new NetworkUtils();
+        assertEquals(networkUtils.shouldPrefetch(), true);
       });
-
-      const networkUtils = new NetworkUtils();
-      assertEquals(networkUtils.shouldPrefetch(), true);
-      restore();
     });
 
     it("should return true for ethernet connection by default", () => {
-      const mockConnection: NetworkInfo = {
-        effectiveType: "ethernet",
-        saveData: false,
-      };
-      const restore = mockNavigator({
-        connection: mockConnection,
+      withMockNavigator({ connection: connection("ethernet", false) }, () => {
+        const networkUtils = new NetworkUtils();
+        assertEquals(networkUtils.shouldPrefetch(), true);
       });
-
-      const networkUtils = new NetworkUtils();
-      assertEquals(networkUtils.shouldPrefetch(), true);
-      restore();
     });
 
     it("should return false for 3g connection by default", () => {
-      const mockConnection: NetworkInfo = {
-        effectiveType: "3g",
-        saveData: false,
-      };
-      const restore = mockNavigator({
-        connection: mockConnection,
+      withMockNavigator({ connection: connection("3g", false) }, () => {
+        const networkUtils = new NetworkUtils();
+        assertEquals(networkUtils.shouldPrefetch(), false);
       });
-
-      const networkUtils = new NetworkUtils();
-      assertEquals(networkUtils.shouldPrefetch(), false);
-      restore();
     });
 
     it("should return false for 2g connection by default", () => {
-      const mockConnection: NetworkInfo = {
-        effectiveType: "2g",
-        saveData: false,
-      };
-      const restore = mockNavigator({
-        connection: mockConnection,
+      withMockNavigator({ connection: connection("2g", false) }, () => {
+        const networkUtils = new NetworkUtils();
+        assertEquals(networkUtils.shouldPrefetch(), false);
       });
-
-      const networkUtils = new NetworkUtils();
-      assertEquals(networkUtils.shouldPrefetch(), false);
-      restore();
     });
 
     it("should return false for slow-2g connection by default", () => {
-      const mockConnection: NetworkInfo = {
-        effectiveType: "slow-2g",
-        saveData: false,
-      };
-      const restore = mockNavigator({
-        connection: mockConnection,
+      withMockNavigator({ connection: connection("slow-2g", false) }, () => {
+        const networkUtils = new NetworkUtils();
+        assertEquals(networkUtils.shouldPrefetch(), false);
       });
-
-      const networkUtils = new NetworkUtils();
-      assertEquals(networkUtils.shouldPrefetch(), false);
-      restore();
     });
 
     it("should return false when saveData is enabled", () => {
-      const mockConnection: NetworkInfo = {
-        effectiveType: "4g",
-        saveData: true,
-      };
-      const restore = mockNavigator({
-        connection: mockConnection,
+      withMockNavigator({ connection: connection("4g", true) }, () => {
+        const networkUtils = new NetworkUtils();
+        assertEquals(networkUtils.shouldPrefetch(), false);
       });
-
-      const networkUtils = new NetworkUtils();
-      assertEquals(networkUtils.shouldPrefetch(), false);
-      restore();
     });
 
     it("should return true when no network info is available", () => {
@@ -210,39 +145,24 @@ describe("NetworkUtils", () => {
        * This is a sensible default for browsers that don't support
        * the API.
        */
-      const restore = mockNavigator({});
-
-      const networkUtils = new NetworkUtils();
-      assertEquals(networkUtils.shouldPrefetch(), true);
-      restore();
+      withMockNavigator({}, () => {
+        const networkUtils = new NetworkUtils();
+        assertEquals(networkUtils.shouldPrefetch(), true);
+      });
     });
 
     it("should respect custom allowed networks", () => {
-      const mockConnection: NetworkInfo = {
-        effectiveType: "3g",
-        saveData: false,
-      };
-      const restore = mockNavigator({
-        connection: mockConnection,
+      withMockNavigator({ connection: connection("3g", false) }, () => {
+        const networkUtils = new NetworkUtils(["3g", "4g", "5g"]);
+        assertEquals(networkUtils.shouldPrefetch(), true);
       });
-
-      const networkUtils = new NetworkUtils(["3g", "4g", "5g"]);
-      assertEquals(networkUtils.shouldPrefetch(), true);
-      restore();
     });
 
     it("should return false for network not in custom allowed list", () => {
-      const mockConnection: NetworkInfo = {
-        effectiveType: "4g",
-        saveData: false,
-      };
-      const restore = mockNavigator({
-        connection: mockConnection,
+      withMockNavigator({ connection: connection("4g", false) }, () => {
+        const networkUtils = new NetworkUtils(["5g", "wifi"]);
+        assertEquals(networkUtils.shouldPrefetch(), false);
       });
-
-      const networkUtils = new NetworkUtils(["5g", "wifi"]);
-      assertEquals(networkUtils.shouldPrefetch(), false);
-      restore();
     });
 
     it("should prioritize saveData over effectiveType", () => {
@@ -252,17 +172,10 @@ describe("NetworkUtils", () => {
        * enabled data saver mode, we should respect their preference
        * and not prefetch.
        */
-      const mockConnection: NetworkInfo = {
-        effectiveType: "4g",
-        saveData: true,
-      };
-      const restore = mockNavigator({
-        connection: mockConnection,
+      withMockNavigator({ connection: connection("4g", true) }, () => {
+        const networkUtils = new NetworkUtils(["4g"]);
+        assertEquals(networkUtils.shouldPrefetch(), false);
       });
-
-      const networkUtils = new NetworkUtils(["4g"]);
-      assertEquals(networkUtils.shouldPrefetch(), false);
-      restore();
     });
   });
 
@@ -273,46 +186,29 @@ describe("NetworkUtils", () => {
         effectiveType: "4g",
         saveData: false,
         addEventListener: (event: string, _handler: () => void) => {
-          if (event === "change") {
-            listenerAdded = true;
-          }
+          if (event === "change") listenerAdded = true;
         },
       };
-      const restore = mockNavigator({
-        connection: mockConnection,
+
+      withMockNavigator({ connection: mockConnection }, () => {
+        const networkUtils = new NetworkUtils();
+        networkUtils.onNetworkChange(() => {});
+        assertEquals(listenerAdded, true);
       });
-
-      const networkUtils = new NetworkUtils();
-      networkUtils.onNetworkChange(() => {});
-
-      assertEquals(listenerAdded, true);
-      restore();
     });
 
     it("should not throw when addEventListener is not available", () => {
-      const mockConnection: NetworkInfo = {
-        effectiveType: "4g",
-        saveData: false,
-      };
-      const restore = mockNavigator({
-        connection: mockConnection,
+      withMockNavigator({ connection: connection("4g", false) }, () => {
+        const networkUtils = new NetworkUtils();
+        networkUtils.onNetworkChange(() => {});
       });
-
-      const networkUtils = new NetworkUtils();
-
-      // Should not throw
-      networkUtils.onNetworkChange(() => {});
-      restore();
     });
 
     it("should not throw when network info is not available", () => {
-      const restore = mockNavigator({});
-
-      const networkUtils = new NetworkUtils();
-
-      // Should not throw
-      networkUtils.onNetworkChange(() => {});
-      restore();
+      withMockNavigator({}, () => {
+        const networkUtils = new NetworkUtils();
+        networkUtils.onNetworkChange(() => {});
+      });
     });
 
     it("should pass correct event type to addEventListener", () => {
@@ -324,15 +220,12 @@ describe("NetworkUtils", () => {
           eventType = event;
         },
       };
-      const restore = mockNavigator({
-        connection: mockConnection,
+
+      withMockNavigator({ connection: mockConnection }, () => {
+        const networkUtils = new NetworkUtils();
+        networkUtils.onNetworkChange(() => {});
+        assertEquals(eventType, "change");
       });
-
-      const networkUtils = new NetworkUtils();
-      networkUtils.onNetworkChange(() => {});
-
-      assertEquals(eventType, "change");
-      restore();
     });
 
     it("should pass callback function to addEventListener", () => {
@@ -344,199 +237,129 @@ describe("NetworkUtils", () => {
           receivedCallback = handler;
         },
       };
-      const restore = mockNavigator({
-        connection: mockConnection,
+
+      withMockNavigator({ connection: mockConnection }, () => {
+        const networkUtils = new NetworkUtils();
+        const callback = () => {};
+        networkUtils.onNetworkChange(callback);
+
+        assertEquals(receivedCallback, callback);
       });
-
-      const networkUtils = new NetworkUtils();
-      const callback = () => {};
-      networkUtils.onNetworkChange(callback);
-
-      assertEquals(receivedCallback, callback);
-      restore();
     });
   });
 
   describe("getNetworkInfo", () => {
     it("should return network info when available", () => {
-      const mockConnection: NetworkInfo = {
-        effectiveType: "4g",
-        saveData: false,
-      };
-      const restore = mockNavigator({
-        connection: mockConnection,
+      const mockConnection: NetworkInfo = connection("4g", false);
+
+      withMockNavigator({ connection: mockConnection }, () => {
+        const networkUtils = new NetworkUtils();
+        assertEquals(networkUtils.getNetworkInfo(), mockConnection);
       });
-
-      const networkUtils = new NetworkUtils();
-      const info = networkUtils.getNetworkInfo();
-
-      assertEquals(info, mockConnection);
-      restore();
     });
 
     it("should return null when network info is not available", () => {
-      const restore = mockNavigator({});
-
-      const networkUtils = new NetworkUtils();
-      const info = networkUtils.getNetworkInfo();
-
-      assertEquals(info, null);
-      restore();
+      withMockNavigator({}, () => {
+        const networkUtils = new NetworkUtils();
+        assertEquals(networkUtils.getNetworkInfo(), null);
+      });
     });
 
     it("should return same network info on multiple calls", () => {
-      const mockConnection: NetworkInfo = {
-        effectiveType: "4g",
-        saveData: false,
-      };
-      const restore = mockNavigator({
-        connection: mockConnection,
+      const mockConnection: NetworkInfo = connection("4g", false);
+
+      withMockNavigator({ connection: mockConnection }, () => {
+        const networkUtils = new NetworkUtils();
+        const info1 = networkUtils.getNetworkInfo();
+        const info2 = networkUtils.getNetworkInfo();
+
+        assertEquals(info1, info2);
       });
-
-      const networkUtils = new NetworkUtils();
-      const info1 = networkUtils.getNetworkInfo();
-      const info2 = networkUtils.getNetworkInfo();
-
-      assertEquals(info1, info2);
-      restore();
     });
   });
 
   describe("Browser Compatibility", () => {
     it("should handle navigator without any connection properties", () => {
-      const restore = mockNavigator({
-        userAgent: "Mozilla/5.0",
+      withMockNavigator({ userAgent: "Mozilla/5.0" }, () => {
+        const networkUtils = new NetworkUtils();
+        assertEquals(networkUtils.getNetworkInfo(), null);
+        assertEquals(networkUtils.shouldPrefetch(), true);
       });
-
-      const networkUtils = new NetworkUtils();
-      assertEquals(networkUtils.getNetworkInfo(), null);
-      assertEquals(networkUtils.shouldPrefetch(), true);
-      restore();
     });
 
     it("should prefer standard connection over vendor-prefixed", () => {
-      const standardConnection: NetworkInfo = {
-        effectiveType: "4g",
-        saveData: false,
-      };
+      const standardConnection: NetworkInfo = connection("4g", false);
+      const mozConnection: NetworkInfo = connection("3g", false);
 
-      const mozConnection: NetworkInfo = {
-        effectiveType: "3g",
-        saveData: false,
-      };
-      const restore = mockNavigator({
-        connection: standardConnection,
-        mozConnection: mozConnection,
+      withMockNavigator({ connection: standardConnection, mozConnection }, () => {
+        const networkUtils = new NetworkUtils();
+        const info = networkUtils.getNetworkInfo();
+
+        assertEquals(info?.effectiveType, "4g");
       });
-
-      const networkUtils = new NetworkUtils();
-      const info = networkUtils.getNetworkInfo();
-
-      assertEquals(info?.effectiveType, "4g");
-      restore();
     });
 
     it("should fallback to mozConnection when connection is not available", () => {
-      const mozConnection: NetworkInfo = {
-        effectiveType: "4g",
-        saveData: false,
-      };
-      const restore = mockNavigator({
-        mozConnection: mozConnection,
+      const mozConnection: NetworkInfo = connection("4g", false);
+
+      withMockNavigator({ mozConnection }, () => {
+        const networkUtils = new NetworkUtils();
+        const info = networkUtils.getNetworkInfo();
+
+        assertEquals(info?.effectiveType, "4g");
       });
-
-      const networkUtils = new NetworkUtils();
-      const info = networkUtils.getNetworkInfo();
-
-      assertEquals(info?.effectiveType, "4g");
-      restore();
     });
 
     it("should fallback to webkitConnection when others are not available", () => {
-      const webkitConnection: NetworkInfo = {
-        effectiveType: "4g",
-        saveData: false,
-      };
-      const restore = mockNavigator({
-        webkitConnection: webkitConnection,
+      const webkitConnection: NetworkInfo = connection("4g", false);
+
+      withMockNavigator({ webkitConnection }, () => {
+        const networkUtils = new NetworkUtils();
+        const info = networkUtils.getNetworkInfo();
+
+        assertEquals(info?.effectiveType, "4g");
       });
-
-      const networkUtils = new NetworkUtils();
-      const info = networkUtils.getNetworkInfo();
-
-      assertEquals(info?.effectiveType, "4g");
-      restore();
     });
   });
 
   describe("Edge Cases", () => {
     it("should handle undefined effectiveType gracefully", () => {
-      const mockConnection: NetworkInfo = {
-        saveData: false,
-      };
-      const restore = mockNavigator({
-        connection: mockConnection,
-      });
+      const mockConnection: NetworkInfo = { saveData: false };
 
-      const networkUtils = new NetworkUtils();
-      assertEquals(networkUtils.shouldPrefetch(), true);
-      restore();
+      withMockNavigator({ connection: mockConnection }, () => {
+        const networkUtils = new NetworkUtils();
+        assertEquals(networkUtils.shouldPrefetch(), true);
+      });
     });
 
     it("should handle null effectiveType gracefully", () => {
-      const mockConnection: NetworkInfo = {
-        effectiveType: undefined,
-        saveData: false,
-      };
-      const restore = mockNavigator({
-        connection: mockConnection,
-      });
+      const mockConnection: NetworkInfo = { effectiveType: undefined, saveData: false };
 
-      const networkUtils = new NetworkUtils();
-      assertEquals(networkUtils.shouldPrefetch(), true);
-      restore();
+      withMockNavigator({ connection: mockConnection }, () => {
+        const networkUtils = new NetworkUtils();
+        assertEquals(networkUtils.shouldPrefetch(), true);
+      });
     });
 
     it("should handle empty string effectiveType", () => {
-      const mockConnection: NetworkInfo = {
-        effectiveType: "",
-        saveData: false,
-      };
-      const restore = mockNavigator({
-        connection: mockConnection,
+      withMockNavigator({ connection: connection("", false) }, () => {
+        const networkUtils = new NetworkUtils();
+        assertEquals(networkUtils.shouldPrefetch(), false);
       });
-
-      const networkUtils = new NetworkUtils();
-      assertEquals(networkUtils.shouldPrefetch(), false);
-      restore();
     });
 
     it("should handle empty allowed networks array", () => {
-      const mockConnection: NetworkInfo = {
-        effectiveType: "4g",
-        saveData: false,
-      };
-      const restore = mockNavigator({
-        connection: mockConnection,
+      withMockNavigator({ connection: connection("4g", false) }, () => {
+        const networkUtils = new NetworkUtils([]);
+        assertEquals(networkUtils.shouldPrefetch(), false);
       });
-
-      const networkUtils = new NetworkUtils([]);
-      assertEquals(networkUtils.shouldPrefetch(), false);
-      restore();
     });
 
     it("should handle case-sensitive network types", () => {
-      const mockConnection: NetworkInfo = {
-        effectiveType: "4G", // uppercase
-        saveData: false,
-      };
-      const restore = mockNavigator({
-        connection: mockConnection,
+      withMockNavigator({ connection: connection("4G", false) }, () => {
+        const networkUtils = new NetworkUtils(["4g"]);
+        assertEquals(networkUtils.shouldPrefetch(), false);
       });
-
-      const networkUtils = new NetworkUtils(["4g"]);
-      assertEquals(networkUtils.shouldPrefetch(), false);
-      restore();
     });
   });
 });

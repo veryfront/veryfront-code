@@ -36,29 +36,40 @@ class ProviderRegistry {
     this.autoInitialized = true;
 
     const openaiEnv = getOpenAIEnvConfig();
-    if (openaiEnv.apiKey && !this.providers.has("openai")) {
-      this.registerProvider("openai", () =>
-        new OpenAIProvider({
-          apiKey: openaiEnv.apiKey!,
-          baseURL: openaiEnv.baseURL,
-          organizationId: openaiEnv.organizationId,
-        }), true);
+    const openaiApiKey = openaiEnv.apiKey;
+    if (openaiApiKey && !this.providers.has("openai")) {
+      this.registerProvider(
+        "openai",
+        () =>
+          new OpenAIProvider({
+            apiKey: openaiApiKey,
+            baseURL: openaiEnv.baseURL,
+            organizationId: openaiEnv.organizationId,
+          }),
+        true,
+      );
     }
 
     const anthropicEnv = getAnthropicEnvConfig();
-    if (anthropicEnv.apiKey && !this.providers.has("anthropic")) {
-      this.registerProvider("anthropic", () =>
-        new AnthropicProvider({
-          apiKey: anthropicEnv.apiKey!,
-          baseURL: anthropicEnv.baseURL,
-        }), true);
+    const anthropicApiKey = anthropicEnv.apiKey;
+    if (anthropicApiKey && !this.providers.has("anthropic")) {
+      this.registerProvider(
+        "anthropic",
+        () =>
+          new AnthropicProvider({
+            apiKey: anthropicApiKey,
+            baseURL: anthropicEnv.baseURL,
+          }),
+        true,
+      );
     }
 
     const googleEnv = getGoogleGenAIEnvConfig();
-    if (googleEnv.apiKey && !this.providers.has("google")) {
+    const googleApiKey = googleEnv.apiKey;
+    if (googleApiKey && !this.providers.has("google")) {
       this.registerProvider(
         "google",
-        () => new GoogleProvider({ apiKey: googleEnv.apiKey! }),
+        () => new GoogleProvider({ apiKey: googleApiKey }),
         true,
       );
     }
@@ -67,68 +78,72 @@ class ProviderRegistry {
   initialize(config: ProvidersConfig): void {
     this.config = config;
 
-    if (config.openai) {
-      this.registerProvider("openai", () => new OpenAIProvider(config.openai!));
+    const openaiConfig = config.openai;
+    if (openaiConfig) {
+      this.registerProvider("openai", () => new OpenAIProvider(openaiConfig));
     }
-    if (config.anthropic) {
-      this.registerProvider("anthropic", () => new AnthropicProvider(config.anthropic!));
+
+    const anthropicConfig = config.anthropic;
+    if (anthropicConfig) {
+      this.registerProvider(
+        "anthropic",
+        () => new AnthropicProvider(anthropicConfig),
+      );
     }
-    if (config.google) {
-      this.registerProvider("google", () => new GoogleProvider(config.google!));
+
+    const googleConfig = config.google;
+    if (googleConfig) {
+      this.registerProvider("google", () => new GoogleProvider(googleConfig));
     }
   }
 
   getProvider(name: string): Provider {
-    // Auto-initialize from environment variables if not already done
     this.autoInitializeFromEnv();
 
     const provider = this.providers.get(name);
+    if (provider) return provider;
 
-    if (!provider) {
-      throw toError(createError({
+    throw toError(
+      createError({
         type: "agent",
         message: `Provider "${name}" not found. Available providers: ${
-          Array.from(this.providers.keys()).join(", ")
+          Array.from(
+            this.providers.keys(),
+          ).join(", ")
         }`,
-      }));
-    }
-
-    return provider;
+      }),
+    );
   }
 
-  getProviderFromModel(modelString: string): {
-    provider: Provider;
-    model: string;
-  } {
+  getProviderFromModel(modelString: string): { provider: Provider; model: string } {
     const parts = modelString.split("/");
-
     if (parts.length !== 2) {
-      throw toError(createError({
-        type: "config",
-        message:
-          `Invalid model string format: "${modelString}". Expected format: "provider/model-name" (e.g., "openai/gpt-4")`,
-      }));
+      throw toError(
+        createError({
+          type: "config",
+          message:
+            `Invalid model string format: "${modelString}". Expected format: "provider/model-name" (e.g., "openai/gpt-4")`,
+        }),
+      );
     }
 
-    const providerName = parts[0];
-    const modelName = parts[1];
+    const [providerName, modelName] = parts;
 
     if (!providerName || !modelName) {
-      throw toError(createError({
-        type: "config",
-        message:
-          `Invalid model string format: "${modelString}". Both provider and model name are required.`,
-      }));
+      throw toError(
+        createError({
+          type: "config",
+          message:
+            `Invalid model string format: "${modelString}". Both provider and model name are required.`,
+        }),
+      );
     }
 
-    const provider = this.getProvider(providerName);
-
-    return { provider, model: modelName };
+    return { provider: this.getProvider(providerName), model: modelName };
   }
 
   getDefaultProvider(): Provider {
-    const defaultName = this.config.default || "openai";
-    return this.getProvider(defaultName);
+    return this.getProvider(this.config.default ?? "openai");
   }
 
   hasProvider(name: string): boolean {
@@ -150,6 +165,7 @@ class ProviderRegistry {
 const PROVIDER_REGISTRY_KEY = "__veryfront_provider_registry__";
 // deno-lint-ignore no-explicit-any
 const _globalProvider = globalThis as any;
+
 export const providerRegistry: ProviderRegistry = _globalProvider[PROVIDER_REGISTRY_KEY] ||=
   new ProviderRegistry();
 

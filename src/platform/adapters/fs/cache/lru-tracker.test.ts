@@ -15,8 +15,7 @@ describe("LRUTracker", () => {
 
   describe("class instantiation", () => {
     it("should be instantiable", () => {
-      const t = new LRUTracker();
-      assertExists(t);
+      assertExists(new LRUTracker());
     });
 
     it("should start with empty size", () => {
@@ -33,7 +32,7 @@ describe("LRUTracker", () => {
     it("should move existing key to end", () => {
       tracker.update("key1");
       tracker.update("key2");
-      tracker.update("key1"); // Move key1 to end
+      tracker.update("key1");
 
       assertEquals(tracker.getLRU(), "key2");
     });
@@ -82,7 +81,7 @@ describe("LRUTracker", () => {
     it("should update after access", () => {
       tracker.update("key1");
       tracker.update("key2");
-      tracker.update("key1"); // Access key1
+      tracker.update("key1");
 
       assertEquals(tracker.getLRU(), "key2");
     });

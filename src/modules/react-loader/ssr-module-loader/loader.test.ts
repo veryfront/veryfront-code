@@ -10,10 +10,11 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     clearSSRModuleCache();
 
     const projectDir = await makeTempDir({ prefix: "vf-ssr-loader-" });
-    const filePath = join(projectDir, "components", "Widget.tsx");
+    const componentsDir = join(projectDir, "components");
+    const filePath = join(componentsDir, "Widget.tsx");
 
     try {
-      await mkdir(join(projectDir, "components"), { recursive: true });
+      await mkdir(componentsDir, { recursive: true });
 
       const sourceA = "export default function WidgetA() { return null; }";
       const sourceB = "export default function WidgetB() { return null; }";

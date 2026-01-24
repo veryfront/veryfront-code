@@ -1,8 +1,8 @@
-/**
+/**************************
  * Veryfront Workflow Types
  *
  * Core type definitions for durable, DAG-based agentic workflows
- */
+ **************************/
 
 import type { z } from "zod";
 import type { Agent } from "#veryfront/agent";
@@ -88,12 +88,9 @@ export interface StepNodeConfig extends BaseNodeConfig {
   /** Agent ID or agent instance to execute */
   agent?: string | Agent;
   /** Tool ID or tool instance to execute */
-  tool?: string | Tool | undefined;
+  tool?: string | Tool;
   /** Input for the agent/tool - can be static or computed from context */
-  input?:
-    | string
-    | Record<string, unknown>
-    | ((context: WorkflowContext) => unknown);
+  input?: string | Record<string, unknown> | ((context: WorkflowContext) => unknown);
 }
 
 /**
@@ -164,18 +161,6 @@ export interface MapNodeConfig extends BaseNodeConfig {
 }
 
 /**
- * Union of all node configurations
- */
-export type WorkflowNodeConfig =
-  | StepNodeConfig
-  | ParallelNodeConfig
-  | MapNodeConfig
-  | BranchNodeConfig
-  | WaitNodeConfig
-  | SubWorkflowNodeConfig
-  | LoopNodeConfig;
-
-/**
  * Loop node configuration (imported from DSL)
  * Re-exported here for the union type
  */
@@ -197,6 +182,18 @@ export interface LoopNodeConfig extends BaseNodeConfig {
   iterationTimeout?: string | number;
   delay?: number | string;
 }
+
+/**
+ * Union of all node configurations
+ */
+export type WorkflowNodeConfig =
+  | StepNodeConfig
+  | ParallelNodeConfig
+  | MapNodeConfig
+  | BranchNodeConfig
+  | WaitNodeConfig
+  | SubWorkflowNodeConfig
+  | LoopNodeConfig;
 
 /**
  * Loop execution context passed to loop callbacks
@@ -268,10 +265,7 @@ export interface StepBuilderContext<TInput = unknown> {
 /**
  * Workflow definition
  */
-export interface WorkflowDefinition<
-  TInput = unknown,
-  TOutput = unknown,
-> {
+export interface WorkflowDefinition<TInput = unknown, TOutput = unknown> {
   /** Unique workflow identifier */
   id: string;
   /** Optional description */
@@ -292,16 +286,11 @@ export interface WorkflowDefinition<
    */
   introspect?: boolean;
   /** Workflow steps - can be static or dynamic based on input */
-  steps:
-    | WorkflowNode[]
-    | ((context: StepBuilderContext<TInput>) => WorkflowNode[]);
+  steps: WorkflowNode[] | ((context: StepBuilderContext<TInput>) => WorkflowNode[]);
   /** Error handler */
   onError?: (error: Error, context: WorkflowContext) => void | Promise<void>;
   /** Completion handler */
-  onComplete?: (
-    result: TOutput,
-    context: WorkflowContext,
-  ) => void | Promise<void>;
+  onComplete?: (result: TOutput, context: WorkflowContext) => void | Promise<void>;
 }
 
 /**
@@ -509,30 +498,17 @@ export type DurationString = string;
  */
 export function parseDuration(duration: string | number): number {
   if (typeof duration === "number") {
-    if (duration < 0) {
-      throw new Error(`Duration cannot be negative: ${duration}`);
-    }
+    if (duration < 0) throw new Error(`Duration cannot be negative: ${duration}`);
     return duration;
   }
 
   const match = duration.match(/^(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)$/);
-  if (!match) {
-    throw new Error(`Invalid duration format: ${duration}`);
-  }
+  if (!match || !match[1] || !match[2]) throw new Error(`Invalid duration format: ${duration}`);
 
-  const value = match[1];
+  const num = parseFloat(match[1]);
   const unit = match[2];
 
-  if (!value || !unit) {
-    throw new Error(`Invalid duration format: ${duration}`);
-  }
-
-  const num = parseFloat(value);
-
-  // Reject zero and negative values
-  if (num <= 0) {
-    throw new Error(`Duration must be positive: ${duration}`);
-  }
+  if (num <= 0) throw new Error(`Duration must be positive: ${duration}`);
 
   switch (unit) {
     case "ms":
@@ -546,7 +522,7 @@ export function parseDuration(duration: string | number): number {
     case "d":
       return num * 24 * 60 * 60 * 1000;
     default:
-      throw new Error(`Unknown duration unit: ${unit}`);
+      throw new Error(`Invalid duration unit: ${unit}`);
   }
 }
 
@@ -556,39 +532,36 @@ export function parseDuration(duration: string | number): number {
  * @throws Error if retry config has invalid values
  */
 export function validateRetryConfig(config: RetryConfig): void {
-  if (config.maxAttempts !== undefined) {
-    if (!Number.isInteger(config.maxAttempts) || config.maxAttempts < 1) {
-      throw new Error(`maxAttempts must be a positive integer, got: ${config.maxAttempts}`);
-    }
+  const { maxAttempts, initialDelay, maxDelay, backoff } = config;
+
+  if (maxAttempts !== undefined && (!Number.isInteger(maxAttempts) || maxAttempts < 1)) {
+    throw new Error(`maxAttempts must be a positive integer, got: ${maxAttempts}`);
   }
 
-  if (config.initialDelay !== undefined) {
-    if (config.initialDelay < 0) {
-      throw new Error(`initialDelay cannot be negative: ${config.initialDelay}`);
-    }
+  if (initialDelay !== undefined && initialDelay < 0) {
+    throw new Error(`initialDelay cannot be negative: ${initialDelay}`);
   }
 
-  if (config.maxDelay !== undefined) {
-    if (config.maxDelay < 0) {
-      throw new Error(`maxDelay cannot be negative: ${config.maxDelay}`);
-    }
+  if (maxDelay !== undefined && maxDelay < 0) {
+    throw new Error(`maxDelay cannot be negative: ${maxDelay}`);
   }
 
-  if (config.initialDelay !== undefined && config.maxDelay !== undefined) {
-    if (config.initialDelay > config.maxDelay) {
+  if (initialDelay !== undefined && maxDelay !== undefined && initialDelay > maxDelay) {
+    throw new Error(
+      `initialDelay (${initialDelay}) cannot be greater than maxDelay (${maxDelay})`,
+    );
+  }
+
+  if (backoff !== undefined) {
+    const validBackoffs = new Set<NonNullable<RetryConfig["backoff"]>>([
+      "fixed",
+      "linear",
+      "exponential",
+    ]);
+
+    if (!validBackoffs.has(backoff)) {
       throw new Error(
-        `initialDelay (${config.initialDelay}) cannot be greater than maxDelay (${config.maxDelay})`,
-      );
-    }
-  }
-
-  if (config.backoff !== undefined) {
-    const validBackoffs = new Set(["fixed", "linear", "exponential"]);
-    if (!validBackoffs.has(config.backoff)) {
-      throw new Error(
-        `Invalid backoff strategy: ${config.backoff}. Must be one of: ${
-          [...validBackoffs].join(", ")
-        }`,
+        `Invalid backoff strategy: ${backoff}. Must be one of: ${[...validBackoffs].join(", ")}`,
       );
     }
   }
@@ -598,6 +571,5 @@ export function validateRetryConfig(config: RetryConfig): void {
  * Generate a unique ID for workflow runs, nodes, etc.
  */
 export function generateId(prefix: string = "wf"): string {
-  const randomPart = crypto.randomUUID().slice(0, 12);
-  return `${prefix}_${randomPart}`;
+  return `${prefix}_${crypto.randomUUID().slice(0, 12)}`;
 }

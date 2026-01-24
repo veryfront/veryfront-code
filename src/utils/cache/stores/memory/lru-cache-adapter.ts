@@ -4,68 +4,47 @@ import { LRUListManager } from "./lru-list-manager.ts";
 import { EvictionManager } from "../../eviction/eviction-manager.ts";
 import { EntryManager } from "./entry-manager.ts";
 
-// Depth limit for recursive size estimation to prevent stack overflow
 const MAX_ESTIMATION_DEPTH = 10;
 
-// Rough overhead per object/array for memory bookkeeping
 const OBJECT_OVERHEAD_BYTES = 32;
 const ARRAY_OVERHEAD_BYTES = 24;
 const STRING_OVERHEAD_BYTES = 16;
 
-/**
- * Estimate size of a value without JSON.stringify serialization.
- * Uses recursive traversal with depth limit for performance.
- * Accuracy is traded for speed - estimates are approximate.
- */
 function estimateSizeRecursive(value: unknown, depth: number, seen: WeakSet<object>): number {
   if (value == null) return 0;
 
-  // Primitive types - fast path
   const type = typeof value;
+
   if (type === "string") return (value as string).length * 2 + STRING_OVERHEAD_BYTES;
   if (type === "number" || type === "bigint") return 8;
   if (type === "boolean") return 4;
 
-  // Binary data - exact size
-  if (value instanceof Uint8Array || ArrayBuffer.isView(value)) {
-    return (value as Uint8Array).byteLength;
-  }
+  if (value instanceof Uint8Array || ArrayBuffer.isView(value)) return value.byteLength;
   if (value instanceof ArrayBuffer) return value.byteLength;
   if (typeof Blob !== "undefined" && value instanceof Blob) return value.size;
 
-  // Depth limit reached - return rough estimate
-  if (depth >= MAX_ESTIMATION_DEPTH) {
-    return OBJECT_OVERHEAD_BYTES * 2;
-  }
+  if (depth >= MAX_ESTIMATION_DEPTH) return OBJECT_OVERHEAD_BYTES * 2;
 
-  // Objects/Arrays - recursive estimation with cycle detection
-  if (type === "object") {
-    // Cycle detection to prevent infinite loops
-    if (seen.has(value as object)) return 0;
-    seen.add(value as object);
+  if (type !== "object") return 64;
 
-    if (Array.isArray(value)) {
-      let size = ARRAY_OVERHEAD_BYTES + value.length * 8; // 8 bytes per element pointer
-      for (const item of value) {
-        size += estimateSizeRecursive(item, depth + 1, seen);
-      }
-      return size;
-    }
+  if (seen.has(value)) return 0;
+  seen.add(value);
 
-    // Plain object
-    let size = OBJECT_OVERHEAD_BYTES;
-    const obj = value as Record<string, unknown>;
-    for (const key in obj) {
-      if (Object.prototype.hasOwnProperty.call(obj, key)) {
-        size += key.length * 2 + 8; // Key string + pointer overhead
-        size += estimateSizeRecursive(obj[key], depth + 1, seen);
-      }
+  if (Array.isArray(value)) {
+    let size = ARRAY_OVERHEAD_BYTES + value.length * 8;
+    for (const item of value) {
+      size += estimateSizeRecursive(item, depth + 1, seen);
     }
     return size;
   }
 
-  // Functions and symbols - rough estimate
-  return 64;
+  let size = OBJECT_OVERHEAD_BYTES;
+  for (const key in value) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+    size += key.length * 2 + 8;
+    size += estimateSizeRecursive((value as Record<string, unknown>)[key], depth + 1, seen);
+  }
+  return size;
 }
 
 function defaultSizeEstimator(value: unknown): number {
@@ -86,7 +65,7 @@ export class LRUCacheAdapter implements CacheAdapter {
 
   constructor(options: LRUCacheOptions = {}) {
     this.maxEntries = options.maxEntries || 1000;
-    this.maxSizeBytes = options.maxSizeBytes || 50 * 1024 * 1024; // 50MB default
+    this.maxSizeBytes = options.maxSizeBytes || 50 * 1024 * 1024;
     this.defaultTtlMs = options.ttlMs;
     this.onEvict = options.onEvict;
 
@@ -116,7 +95,7 @@ export class LRUCacheAdapter implements CacheAdapter {
     const existingNode = this.store.get(key);
 
     if (existingNode) {
-      const sizeDelta = this.entryManager.updateExistingEntry(
+      this.currentSize += this.entryManager.updateExistingEntry(
         existingNode,
         value,
         ttlMs,
@@ -126,9 +105,8 @@ export class LRUCacheAdapter implements CacheAdapter {
         this.tagIndex,
         key,
       );
-      this.currentSize += sizeDelta;
     } else {
-      const [_node, size] = this.entryManager.createNewEntry(
+      const [, size] = this.entryManager.createNewEntry(
         key,
         value,
         ttlMs,
@@ -140,9 +118,7 @@ export class LRUCacheAdapter implements CacheAdapter {
       this.currentSize += size;
     }
 
-    if (tags?.length) {
-      this.entryManager.updateTagIndex(tags, key, this.tagIndex);
-    }
+    if (tags?.length) this.entryManager.updateTagIndex(tags, key, this.tagIndex);
 
     this.currentSize = this.evictionManager.enforceMemoryLimits(
       this.listManager,
@@ -162,21 +138,17 @@ export class LRUCacheAdapter implements CacheAdapter {
     this.store.delete(key);
     this.currentSize -= node.entry.size;
 
-    if (node.entry.tags) {
-      this.entryManager.cleanupTags(node.entry.tags, key, this.tagIndex);
-    }
+    if (node.entry.tags) this.entryManager.cleanupTags(node.entry.tags, key, this.tagIndex);
 
-    if (this.onEvict) {
-      this.onEvict(key, node.entry.value);
-    }
+    this.onEvict?.(key, node.entry.value);
   }
 
   invalidateTag(tag: string): number {
-    const set = this.tagIndex.get(tag);
-    if (!set) return 0;
+    const keys = this.tagIndex.get(tag);
+    if (!keys) return 0;
 
     let count = 0;
-    for (const key of set) {
+    for (const key of keys) {
       this.delete(key);
       count++;
     }
@@ -212,10 +184,9 @@ export class LRUCacheAdapter implements CacheAdapter {
     let cleaned = 0;
 
     for (const [key, node] of this.store) {
-      if (typeof node.entry.expiry === "number" && now > node.entry.expiry) {
-        this.delete(key);
-        cleaned++;
-      }
+      if (typeof node.entry.expiry !== "number" || now <= node.entry.expiry) continue;
+      this.delete(key);
+      cleaned++;
     }
 
     return cleaned;

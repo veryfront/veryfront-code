@@ -36,19 +36,6 @@ export interface GenerateSpecOptions {
   servers?: Array<{ url: string; description?: string }>;
 }
 
-/**
- * Generate OpenAPI 3.1.0 specification from discovered routes.
- *
- * Iterates through all registered routes, loads their handler modules,
- * extracts OpenAPI metadata from wrapped handlers, and builds the spec.
- *
- * @param router - DynamicRouter with discovered routes
- * @param projectDir - Project root directory
- * @param adapter - Runtime adapter for file operations
- * @param config - Veryfront configuration (for openapi settings)
- * @param options - Additional generation options
- * @returns OpenAPI 3.1.0 specification
- */
 export async function generateOpenAPISpec(
   router: DynamicRouter,
   projectDir: string,
@@ -59,42 +46,33 @@ export async function generateOpenAPISpec(
   const spec: OpenAPISpec = {
     openapi: "3.1.0",
     info: {
-      title: options?.title || config?.openapi?.title || "API Documentation",
-      version: options?.version || config?.openapi?.version || "1.0.0",
-      description: options?.description || config?.openapi?.description,
+      title: options?.title ?? config?.openapi?.title ?? "API Documentation",
+      version: options?.version ?? config?.openapi?.version ?? "1.0.0",
+      description: options?.description ?? config?.openapi?.description,
     },
     paths: {},
     tags: [],
   };
 
-  // Add servers if provided
-  if (options?.servers && options.servers.length > 0) {
+  if (options?.servers?.length) {
     spec.servers = options.servers;
   }
 
   const tagSet = new Set<string>();
-  const routes = router.routes;
 
-  for (const [pattern, entry] of routes) {
-    // Skip non-API routes (only document /api/* routes)
-    if (!pattern.startsWith("/api") && !entry.route.page.includes("/api/")) {
-      continue;
-    }
+  for (const [pattern, entry] of router.routes) {
+    if (!pattern.startsWith("/api") && !entry.route.page.includes("/api/")) continue;
 
     try {
       const pathItem = await processRoute(pattern, entry, projectDir, adapter, config, tagSet);
+      if (!pathItem || Object.keys(pathItem).length === 0) continue;
 
-      if (pathItem && Object.keys(pathItem).length > 0) {
-        const openApiPath = toOpenAPIPath(pattern);
-        spec.paths[openApiPath] = pathItem;
-      }
+      spec.paths[toOpenAPIPath(pattern)] = pathItem;
     } catch (error) {
-      // Log but continue - one broken route shouldn't break the whole spec
       logger.warn(`[OpenAPI] Failed to process route ${pattern}:`, { error: String(error) });
     }
   }
 
-  // Convert tag set to array
   spec.tags = Array.from(tagSet)
     .sort()
     .map((name) => ({ name }));
@@ -102,9 +80,6 @@ export async function generateOpenAPISpec(
   return spec;
 }
 
-/**
- * Process a single route and extract OpenAPI path item.
- */
 async function processRoute(
   pattern: string,
   entry: RouteEntry,
@@ -120,64 +95,58 @@ async function processRoute(
     config,
   });
 
-  if (!module) {
-    return null;
-  }
+  if (!module) return null;
 
   const pathParams = extractPathParams(pattern);
   const pathItem: OpenAPIPathItem = {};
 
-  // Process each HTTP method
   for (const method of HTTP_METHODS) {
     const handler = module[method] as WrappedHandler | undefined;
+    if (typeof handler !== "function") continue;
 
-    if (handler && typeof handler === "function") {
-      const metadata = handler[OPENAPI_METADATA] as OpenAPIRouteMetadata | undefined;
-      const operation = buildOperation(method, pattern, metadata, pathParams, entry);
+    const metadata = handler[OPENAPI_METADATA] as OpenAPIRouteMetadata | undefined;
+    addTags(metadata, tagSet);
 
-      // Collect tags
-      if (metadata?.tags) {
-        for (const tag of metadata.tags) {
-          tagSet.add(tag);
-        }
-      }
-
-      pathItem[method.toLowerCase() as Lowercase<HttpMethod>] = operation;
-    }
+    pathItem[method.toLowerCase() as Lowercase<HttpMethod>] = buildOperation(
+      method,
+      pattern,
+      metadata,
+      pathParams,
+    );
   }
 
-  // Handle default export (responds to all methods not explicitly defined)
-  if (module.default && typeof module.default === "function") {
-    const handler = module.default as WrappedHandler;
-    const metadata = handler[OPENAPI_METADATA] as OpenAPIRouteMetadata | undefined;
+  const defaultHandler = module.default as WrappedHandler | undefined;
+  if (typeof defaultHandler !== "function") return pathItem;
 
-    for (const method of HTTP_METHODS) {
-      const methodKey = method.toLowerCase() as Lowercase<HttpMethod>;
-      if (!pathItem[methodKey]) {
-        const operation = buildOperation(method, pattern, metadata, pathParams, entry);
-        pathItem[methodKey] = operation;
-      }
-    }
+  const defaultMetadata = defaultHandler[OPENAPI_METADATA] as OpenAPIRouteMetadata | undefined;
+  addTags(defaultMetadata, tagSet);
+
+  for (const method of HTTP_METHODS) {
+    const methodKey = method.toLowerCase() as Lowercase<HttpMethod>;
+    if (pathItem[methodKey]) continue;
+
+    pathItem[methodKey] = buildOperation(method, pattern, defaultMetadata, pathParams);
   }
 
   return pathItem;
 }
 
-/**
- * Build OpenAPI operation for a single method.
- */
+function addTags(metadata: OpenAPIRouteMetadata | undefined, tagSet: Set<string>): void {
+  if (!metadata?.tags?.length) return;
+  for (const tag of metadata.tags) tagSet.add(tag);
+}
+
 function buildOperation(
   method: HttpMethod,
   pattern: string,
   metadata: OpenAPIRouteMetadata | undefined,
   pathParams: Array<{ name: string; required: boolean; catchAll: boolean }>,
-  _entry: RouteEntry,
 ): OpenAPIOperation {
   const openApiPath = toOpenAPIPath(pattern);
 
   const operation: OpenAPIOperation = {
     operationId: generateOperationId(method, openApiPath),
-    summary: metadata?.summary || `${method} ${openApiPath}`,
+    summary: metadata?.summary ?? `${method} ${openApiPath}`,
     description: metadata?.description,
     tags: metadata?.tags,
     deprecated: metadata?.deprecated,
@@ -185,9 +154,8 @@ function buildOperation(
     responses: {},
   };
 
-  // Add path parameters
   for (const param of pathParams) {
-    const paramSchema = metadata?.params?.properties?.[param.name] || { type: "string" as const };
+    const paramSchema = metadata?.params?.properties?.[param.name] ?? { type: "string" as const };
 
     const parameter: OpenAPIParameter = {
       name: param.name,
@@ -203,11 +171,10 @@ function buildOperation(
     operation.parameters!.push(parameter);
   }
 
-  // Add query parameters from metadata
-  if (metadata?.query?.properties) {
-    const required = metadata.query.required || [];
-
-    for (const [name, schema] of Object.entries(metadata.query.properties)) {
+  const queryProps = metadata?.query?.properties;
+  if (queryProps) {
+    const required = metadata?.query?.required ?? [];
+    for (const [name, schema] of Object.entries(queryProps)) {
       operation.parameters!.push({
         name,
         in: "query",
@@ -217,8 +184,8 @@ function buildOperation(
     }
   }
 
-  // Add request body for methods that support it
-  if (["POST", "PUT", "PATCH"].includes(method) && metadata?.body) {
+  const supportsBody = method === "POST" || method === "PUT" || method === "PATCH";
+  if (supportsBody && metadata?.body) {
     operation.requestBody = {
       required: true,
       content: {
@@ -227,39 +194,26 @@ function buildOperation(
     };
   }
 
-  // Add responses
-  if (metadata?.responses && Object.keys(metadata.responses).length > 0) {
-    // Ensure all responses have a description (required by OpenAPI spec)
-    operation.responses = {};
-    for (const [statusCode, response] of Object.entries(metadata.responses)) {
+  const responses = metadata?.responses;
+  if (responses && Object.keys(responses).length > 0) {
+    for (const [statusCode, response] of Object.entries(responses)) {
       operation.responses[statusCode] = {
         ...response,
         description: response.description || getDefaultStatusDescription(Number(statusCode)),
       };
     }
   } else {
-    // Default responses for routes without metadata
-    operation.responses = {
-      "200": { description: "Successful response" },
-    };
-
-    // Add common error responses
-    if (["POST", "PUT", "PATCH"].includes(method)) {
+    operation.responses = { "200": { description: "Successful response" } };
+    if (supportsBody) {
       operation.responses["400"] = { description: "Bad request" };
     }
   }
 
-  // Clean up empty parameters array
-  if (operation.parameters!.length === 0) {
-    delete operation.parameters;
-  }
+  if (operation.parameters!.length === 0) delete operation.parameters;
 
   return operation;
 }
 
-/**
- * Generate OpenAPI spec as JSON string.
- */
 export async function generateOpenAPIJson(
   router: DynamicRouter,
   projectDir: string,
@@ -271,10 +225,6 @@ export async function generateOpenAPIJson(
   return JSON.stringify(spec, null, 2);
 }
 
-/**
- * Simple YAML serialization for OpenAPI spec.
- * For more complex cases, consider using a proper YAML library.
- */
 export function specToYaml(spec: OpenAPISpec): string {
   return toYaml(spec, 0);
 }
@@ -282,21 +232,16 @@ export function specToYaml(spec: OpenAPISpec): string {
 function toYaml(obj: unknown, indent: number): string {
   const spaces = "  ".repeat(indent);
 
-  if (obj === null || obj === undefined) {
-    return "null";
-  }
+  if (obj == null) return "null";
 
   if (typeof obj === "string") {
-    // Quote strings that contain special characters
     if (obj.includes(":") || obj.includes("#") || obj.includes("\n") || obj.startsWith("{")) {
       return `"${obj.replace(/"/g, '\\"')}"`;
     }
     return obj;
   }
 
-  if (typeof obj === "number" || typeof obj === "boolean") {
-    return String(obj);
-  }
+  if (typeof obj === "number" || typeof obj === "boolean") return String(obj);
 
   if (Array.isArray(obj)) {
     if (obj.length === 0) return "[]";
@@ -304,7 +249,7 @@ function toYaml(obj: unknown, indent: number): string {
   }
 
   if (typeof obj === "object") {
-    const entries = Object.entries(obj).filter(([_, v]) => v !== undefined);
+    const entries = Object.entries(obj).filter(([, v]) => v !== undefined);
     if (entries.length === 0) return "{}";
 
     return entries
@@ -321,9 +266,6 @@ function toYaml(obj: unknown, indent: number): string {
   return String(obj);
 }
 
-/**
- * Get default description for common HTTP status codes.
- */
 function getDefaultStatusDescription(statusCode: number): string {
   const descriptions: Record<number, string> = {
     200: "Successful response",

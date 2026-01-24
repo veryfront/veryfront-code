@@ -1,9 +1,9 @@
-/**
+/**************************
  * Route Path Utilities
  *
  * Consolidated utilities for route path handling, dynamic segment detection,
  * and route parameter extraction. Used across page rendering, routing, and build.
- */
+ **************************/
 
 /** Supported page file extensions */
 export const PAGE_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js", ".mdx", ".md"] as const;
@@ -29,7 +29,6 @@ const DYNAMIC_SEGMENT_PATTERNS = {
 export function isDynamicSegment(name: string): boolean {
   if (!name.startsWith("[")) return false;
 
-  // Check for directory-style dynamic segments
   if (name.endsWith("]")) {
     return (
       DYNAMIC_SEGMENT_PATTERNS.standard.test(name) ||
@@ -38,7 +37,6 @@ export function isDynamicSegment(name: string): boolean {
     );
   }
 
-  // Check for file-style dynamic segments like "[id].tsx"
   return DYNAMIC_SEGMENT_PATTERNS.withExtension.test(name);
 }
 
@@ -70,7 +68,7 @@ export function removeFileExtension(path: string): string {
  * "[[...params]]" -> "params"
  */
 export function extractParamName(segment: string): string {
-  return segment.replace(/\[\.\.\.|\[\[\.\.\.|\[|\]\]|\]/g, "");
+  return segment.replace(/\[\[\.\.\.|\[\.\.\.|\[|\]\]|\]/g, "");
 }
 
 /**
@@ -87,20 +85,13 @@ export interface RouterBasePath {
  */
 export function extractRouterBasePath(pageEntityId: string): RouterBasePath {
   const appIndex = pageEntityId.indexOf("/app/");
-  const pagesIndex = pageEntityId.indexOf("/pages/");
-
   if (appIndex !== -1) {
-    return {
-      type: "app",
-      relativePath: pageEntityId.substring(appIndex + 5), // Skip "/app/"
-    };
+    return { type: "app", relativePath: pageEntityId.substring(appIndex + 5) };
   }
 
+  const pagesIndex = pageEntityId.indexOf("/pages/");
   if (pagesIndex !== -1) {
-    return {
-      type: "pages",
-      relativePath: pageEntityId.substring(pagesIndex + 7), // Skip "/pages/"
-    };
+    return { type: "pages", relativePath: pageEntityId.substring(pagesIndex + 7) };
   }
 
   return { type: null, relativePath: null };
@@ -122,46 +113,35 @@ export interface ExtractedRouteParams {
  * @param slug - The URL slug to match against
  * @returns Extracted parameters and whether matching succeeded
  */
-export function extractRouteParams(
-  pageEntityId: string,
-  slug: string,
-): ExtractedRouteParams {
+export function extractRouteParams(pageEntityId: string, slug: string): ExtractedRouteParams {
   const params: Record<string, string | string[]> = {};
 
   const { relativePath } = extractRouterBasePath(pageEntityId);
-  if (!relativePath) {
-    return { params, matched: false };
-  }
+  if (!relativePath) return { params, matched: false };
 
-  // Extract path segments, removing file extensions and App Router special file names
   const pathSegments = relativePath
     .split("/")
     .map(removeFileExtension)
-    .filter((s) => s !== "page" && s !== "route" && s.length > 0);
+    .filter((s) => s.length > 0 && s !== "page" && s !== "route");
 
   const slugSegments = slug.split("/").filter(Boolean);
 
-  // Match dynamic segments with slug values
   for (let i = 0; i < pathSegments.length && i < slugSegments.length; i++) {
     const pathSeg = pathSegments[i];
-    const slugSeg = slugSegments[i];
+    if (!pathSeg || !isDynamicSegment(pathSeg)) continue;
 
-    if (pathSeg && isDynamicSegment(pathSeg)) {
-      const paramName = extractParamName(pathSeg);
+    const paramName = extractParamName(pathSeg);
 
-      if (isCatchAllSegment(pathSeg)) {
-        params[paramName] = slugSegments.slice(i);
-        break;
-      } else if (slugSeg !== undefined) {
-        params[paramName] = slugSeg;
-      }
+    if (isCatchAllSegment(pathSeg)) {
+      params[paramName] = slugSegments.slice(i);
+      break;
     }
+
+    const slugSeg = slugSegments[i];
+    if (slugSeg !== undefined) params[paramName] = slugSeg;
   }
 
-  return {
-    params,
-    matched: Object.keys(params).length > 0,
-  };
+  return { params, matched: Object.keys(params).length > 0 };
 }
 
 /**
@@ -172,10 +152,11 @@ export function extractRouteParams(
  * @returns The relative path within the project
  */
 export function extractRelativePath(absolutePath: string, projectDir: string): string {
-  if (absolutePath.startsWith(projectDir)) {
-    return absolutePath.slice(projectDir.length).replace(/^\//, "");
-  }
-  return absolutePath.replace(/^\//, "");
+  const path = absolutePath.startsWith(projectDir)
+    ? absolutePath.slice(projectDir.length)
+    : absolutePath;
+
+  return path.replace(/^\//, "");
 }
 
 /**
@@ -195,59 +176,30 @@ export function extractParamsFromPattern(
 
   const params: Record<string, string | string[]> = {};
 
-  // Check for spread params
-  let hasSpreadParam = false;
-  for (const part of patternParts) {
-    if (isCatchAllSegment(part)) {
-      hasSpreadParam = true;
-      break;
-    }
-  }
-
-  // If no spread param, lengths must match
-  if (!hasSpreadParam && patternParts.length !== slugParts.length) {
-    return null;
-  }
+  const hasSpreadParam = patternParts.some(isCatchAllSegment);
+  if (!hasSpreadParam && patternParts.length !== slugParts.length) return null;
 
   let slugIndex = 0;
 
-  for (let i = 0; i < patternParts.length; i++) {
-    const patternPart = patternParts[i];
-    if (!patternPart) continue;
-
-    // Handle catch-all segments
+  for (const patternPart of patternParts) {
     if (isCatchAllSegment(patternPart)) {
-      const paramName = extractParamName(patternPart);
-      const remainingParts = slugParts.slice(slugIndex);
-      params[paramName] = remainingParts;
+      params[extractParamName(patternPart)] = slugParts.slice(slugIndex);
       return params;
     }
 
-    // Handle regular dynamic segments
     if (isDynamicSegment(patternPart)) {
-      if (slugIndex >= slugParts.length) {
-        return null;
-      }
-      const paramName = extractParamName(patternPart);
+      if (slugIndex >= slugParts.length) return null;
       const slugPart = slugParts[slugIndex];
-      if (slugPart !== undefined) {
-        params[paramName] = slugPart;
-      }
+      if (slugPart !== undefined) params[extractParamName(patternPart)] = slugPart;
       slugIndex++;
       continue;
     }
 
-    // Handle static segments - must match exactly
-    if (slugIndex >= slugParts.length || slugParts[slugIndex] !== patternPart) {
-      return null;
-    }
+    if (slugIndex >= slugParts.length || slugParts[slugIndex] !== patternPart) return null;
     slugIndex++;
   }
 
-  // If we haven't consumed all slug parts, no match
-  if (slugIndex < slugParts.length) {
-    return null;
-  }
+  if (slugIndex < slugParts.length) return null;
 
   return params;
 }

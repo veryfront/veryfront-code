@@ -17,6 +17,5 @@ export interface CompileResult {
   imports: string[];
 }
 
-// deno-lint-ignore no-explicit-any
-type UnifiedPlugin = any | [any, ...any[]];
+export type UnifiedPlugin = unknown | [unknown, ...unknown[]];
 export type PluginList = UnifiedPlugin[];

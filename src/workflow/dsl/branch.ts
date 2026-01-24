@@ -17,6 +17,14 @@ export interface BranchOptions extends Omit<BaseNodeConfig, "checkpoint"> {
   skip?: (context: WorkflowContext) => boolean | Promise<boolean>;
 }
 
+function prefixNodes(id: string, branch: "then" | "else", nodes: WorkflowNode[]): WorkflowNode[] {
+  const prefix = `${id}/${branch}/`;
+  return nodes.map((node) => ({
+    ...node,
+    id: node.id.startsWith(prefix) ? node.id : `${prefix}${node.id}`,
+  }));
+}
+
 /** Create a conditional branch node. */
 export function branch(id: string, options: BranchOptions): WorkflowNode {
   validateNodeId(id);
@@ -25,36 +33,22 @@ export function branch(id: string, options: BranchOptions): WorkflowNode {
     throw new Error(`Branch "${id}" must specify a condition`);
   }
 
-  if (!options.then || options.then.length === 0) {
+  if (!options.then?.length) {
     throw new Error(`Branch "${id}" must have at least one 'then' node`);
   }
-
-  // Prefix child node IDs for proper namespacing
-  const prefixThenNodes = options.then.map((node) => ({
-    ...node,
-    id: node.id.startsWith(`${id}/then/`) ? node.id : `${id}/then/${node.id}`,
-  }));
-
-  const prefixElseNodes = options.else?.map((node) => ({
-    ...node,
-    id: node.id.startsWith(`${id}/else/`) ? node.id : `${id}/else/${node.id}`,
-  }));
 
   const config: BranchNodeConfig = {
     type: "branch",
     condition: options.condition,
-    then: prefixThenNodes,
-    else: prefixElseNodes,
+    then: prefixNodes(id, "then", options.then),
+    else: options.else ? prefixNodes(id, "else", options.else) : undefined,
     checkpoint: options.checkpoint ?? false,
     retry: options.retry,
     timeout: options.timeout,
     skip: options.skip,
   };
 
-  return {
-    id,
-    config,
-  };
+  return { id, config };
 }
 
 /** Create a branch that only executes if condition is true (no else). */

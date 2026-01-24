@@ -5,19 +5,20 @@ export interface FrontmatterData {
   [key: string]: unknown;
 }
 
-export interface ComponentMap {
-  [key: string]: unknown;
-}
+export type ComponentMap = Record<string, unknown>;
 
 export interface PageData {
+  frontmatter?: FrontmatterData;
+  components?: ComponentMap;
+  props?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
 export interface RouteData {
   html?: string;
   frontmatter?: FrontmatterData;
-  components?: ComponentMap;
-  pageData?: PageData;
+  components?: Record<string, unknown>;
+  pageData?: Record<string, unknown>;
 }
 
 export interface LayoutInfo {

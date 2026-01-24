@@ -1,12 +1,3 @@
-/**
- * Cache Constants
- *
- * Environment-configurable cache limits for high-traffic scaling.
- * All limits can be overridden via environment variables for production tuning.
- *
- * @module utils/constants/cache
- */
-
 // Time constants
 export const SECONDS_PER_MINUTE = 60;
 export const MINUTES_PER_HOUR = 60;
@@ -19,12 +10,16 @@ export const ONE_DAY_MS = HOURS_PER_DAY * MS_PER_HOUR;
 
 /** Get env var as number with fallback (works in Deno and Node) */
 function getEnvNumber(key: string, fallback: number): number {
-  // deno-lint-ignore no-explicit-any
-  const g = globalThis as any;
-  const value = g.Deno?.env?.get(key) ?? g.process?.env?.[key];
-  if (value === undefined) return fallback;
-  const parsed = parseInt(value, 10);
-  return isNaN(parsed) ? fallback : parsed;
+  const g = globalThis as {
+    Deno?: { env?: { get?: (k: string) => string | undefined } };
+    process?: { env?: Record<string, string | undefined> };
+  };
+
+  const value = g.Deno?.env?.get?.(key) ?? g.process?.env?.[key];
+  if (value == null) return fallback;
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isNaN(parsed) ? fallback : parsed;
 }
 
 // ============================================================================

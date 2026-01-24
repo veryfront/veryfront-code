@@ -16,55 +16,61 @@ import {
 describe("route-path-utils", () => {
   describe("isDynamicSegment", () => {
     it("should detect standard dynamic segments", () => {
-      assertEquals(isDynamicSegment("[id]"), true);
-      assertEquals(isDynamicSegment("[slug]"), true);
-      assertEquals(isDynamicSegment("[userId]"), true);
+      for (const segment of ["[id]", "[slug]", "[userId]"]) {
+        assertEquals(isDynamicSegment(segment), true);
+      }
     });
 
     it("should detect catch-all segments", () => {
-      assertEquals(isDynamicSegment("[...slug]"), true);
-      assertEquals(isDynamicSegment("[...path]"), true);
+      for (const segment of ["[...slug]", "[...path]"]) {
+        assertEquals(isDynamicSegment(segment), true);
+      }
     });
 
     it("should detect optional catch-all segments", () => {
-      assertEquals(isDynamicSegment("[[...slug]]"), true);
-      assertEquals(isDynamicSegment("[[...params]]"), true);
+      for (const segment of ["[[...slug]]", "[[...params]]"]) {
+        assertEquals(isDynamicSegment(segment), true);
+      }
     });
 
     it("should detect file-style dynamic segments", () => {
-      assertEquals(isDynamicSegment("[id].tsx"), true);
-      assertEquals(isDynamicSegment("[slug].ts"), true);
+      for (const segment of ["[id].tsx", "[slug].ts"]) {
+        assertEquals(isDynamicSegment(segment), true);
+      }
     });
 
     it("should return false for static segments", () => {
-      assertEquals(isDynamicSegment("about"), false);
-      assertEquals(isDynamicSegment("users"), false);
-      assertEquals(isDynamicSegment("page.tsx"), false);
+      for (const segment of ["about", "users", "page.tsx"]) {
+        assertEquals(isDynamicSegment(segment), false);
+      }
     });
 
     it("should return false for non-bracket strings", () => {
-      assertEquals(isDynamicSegment(""), false);
-      assertEquals(isDynamicSegment("normal"), false);
+      for (const segment of ["", "normal"]) {
+        assertEquals(isDynamicSegment(segment), false);
+      }
     });
   });
 
   describe("isDynamicRoute", () => {
     it("should detect routes with dynamic segments", () => {
-      assertEquals(isDynamicRoute("/users/[id]"), true);
-      assertEquals(isDynamicRoute("[...slug]"), true);
-      assertEquals(isDynamicRoute("/blog/[year]/[month]"), true);
+      for (const route of ["/users/[id]", "[...slug]", "/blog/[year]/[month]"]) {
+        assertEquals(isDynamicRoute(route), true);
+      }
     });
 
     it("should return false for static routes", () => {
-      assertEquals(isDynamicRoute("/about"), false);
-      assertEquals(isDynamicRoute("/users/list"), false);
+      for (const route of ["/about", "/users/list"]) {
+        assertEquals(isDynamicRoute(route), false);
+      }
     });
   });
 
   describe("isCatchAllSegment", () => {
     it("should detect catch-all segments", () => {
-      assertEquals(isCatchAllSegment("[...slug]"), true);
-      assertEquals(isCatchAllSegment("[...path]"), true);
+      for (const segment of ["[...slug]", "[...path]"]) {
+        assertEquals(isCatchAllSegment(segment), true);
+      }
     });
 
     it("should detect optional catch-all segments", () => {
@@ -72,8 +78,9 @@ describe("route-path-utils", () => {
     });
 
     it("should return false for standard dynamic segments", () => {
-      assertEquals(isCatchAllSegment("[id]"), false);
-      assertEquals(isCatchAllSegment("[slug]"), false);
+      for (const segment of ["[id]", "[slug]"]) {
+        assertEquals(isCatchAllSegment(segment), false);
+      }
     });
 
     it("should return false for static segments", () => {
@@ -82,29 +89,24 @@ describe("route-path-utils", () => {
   });
 
   describe("removeFileExtension", () => {
-    it("should remove tsx extension", () => {
-      assertEquals(removeFileExtension("page.tsx"), "page");
-    });
+    it("should remove known extensions", () => {
+      const cases: Array<[string, string]> = [
+        ["page.tsx", "page"],
+        ["component.jsx", "component"],
+        ["utils.ts", "utils"],
+        ["script.js", "script"],
+        ["content.mdx", "content"],
+      ];
 
-    it("should remove jsx extension", () => {
-      assertEquals(removeFileExtension("component.jsx"), "component");
-    });
-
-    it("should remove ts extension", () => {
-      assertEquals(removeFileExtension("utils.ts"), "utils");
-    });
-
-    it("should remove js extension", () => {
-      assertEquals(removeFileExtension("script.js"), "script");
-    });
-
-    it("should remove mdx extension", () => {
-      assertEquals(removeFileExtension("content.mdx"), "content");
+      for (const [input, expected] of cases) {
+        assertEquals(removeFileExtension(input), expected);
+      }
     });
 
     it("should not modify paths without extensions", () => {
-      assertEquals(removeFileExtension("folder"), "folder");
-      assertEquals(removeFileExtension("[id]"), "[id]");
+      for (const input of ["folder", "[id]"]) {
+        assertEquals(removeFileExtension(input), input);
+      }
     });
   });
 
@@ -186,13 +188,14 @@ describe("route-path-utils", () => {
 
   describe("extractRelativePath", () => {
     it("should extract relative path from absolute path", () => {
-      const result = extractRelativePath("/project/src/file.ts", "/project");
-      assertEquals(result, "src/file.ts");
+      assertEquals(extractRelativePath("/project/src/file.ts", "/project"), "src/file.ts");
     });
 
     it("should handle paths that dont match project dir", () => {
-      const result = extractRelativePath("/other/path/file.ts", "/project");
-      assertEquals(result, "other/path/file.ts");
+      assertEquals(
+        extractRelativePath("/other/path/file.ts", "/project"),
+        "other/path/file.ts",
+      );
     });
 
     it("should remove leading slash from result", () => {
@@ -203,50 +206,62 @@ describe("route-path-utils", () => {
 
   describe("extractParamsFromPattern", () => {
     it("should extract single param", () => {
-      const result = extractParamsFromPattern("[id]", "123");
-      assertEquals(result, { id: "123" });
+      assertEquals(extractParamsFromPattern("[id]", "123"), { id: "123" });
     });
 
     it("should extract multiple params", () => {
-      const result = extractParamsFromPattern("[year]/[month]", "2024/01");
-      assertEquals(result, { year: "2024", month: "01" });
+      assertEquals(extractParamsFromPattern("[year]/[month]", "2024/01"), {
+        year: "2024",
+        month: "01",
+      });
     });
 
     it("should extract catch-all params", () => {
-      const result = extractParamsFromPattern("[...slug]", "a/b/c");
-      assertEquals(result, { slug: ["a", "b", "c"] });
+      assertEquals(extractParamsFromPattern("[...slug]", "a/b/c"), {
+        slug: ["a", "b", "c"],
+      });
     });
 
     it("should handle mixed static and dynamic segments", () => {
-      const result = extractParamsFromPattern("users/[id]/posts", "users/123/posts");
-      assertEquals(result, { id: "123" });
+      assertEquals(extractParamsFromPattern("users/[id]/posts", "users/123/posts"), {
+        id: "123",
+      });
     });
 
     it("should return null for non-matching static segments", () => {
-      const result = extractParamsFromPattern("users/list", "users/detail");
-      assertEquals(result, null);
+      assertEquals(extractParamsFromPattern("users/list", "users/detail"), null);
     });
 
     it("should return null for length mismatch without catch-all", () => {
-      const result = extractParamsFromPattern("[id]", "a/b");
-      assertEquals(result, null);
+      assertEquals(extractParamsFromPattern("[id]", "a/b"), null);
     });
 
     it("should handle empty slug parts", () => {
-      const result = extractParamsFromPattern("[id]", "123");
-      assertEquals(result, { id: "123" });
+      assertEquals(extractParamsFromPattern("[id]", "123"), { id: "123" });
     });
   });
 
   describe("matchesPattern", () => {
     it("should return true for matching patterns", () => {
-      assertEquals(matchesPattern("[id]", "123"), true);
-      assertEquals(matchesPattern("users/[id]", "users/123"), true);
+      for (
+        const [pattern, path] of [
+          ["[id]", "123"],
+          ["users/[id]", "users/123"],
+        ] as const
+      ) {
+        assertEquals(matchesPattern(pattern, path), true);
+      }
     });
 
     it("should return false for non-matching patterns", () => {
-      assertEquals(matchesPattern("users/list", "users/detail"), false);
-      assertEquals(matchesPattern("[id]", "a/b"), false);
+      for (
+        const [pattern, path] of [
+          ["users/list", "users/detail"],
+          ["[id]", "a/b"],
+        ] as const
+      ) {
+        assertEquals(matchesPattern(pattern, path), false);
+      }
     });
 
     it("should match catch-all patterns", () => {

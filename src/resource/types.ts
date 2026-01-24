@@ -8,6 +8,13 @@
 
 import type { z } from "zod";
 
+export type CachePolicy = "no-cache" | "cache" | "cache-first";
+
+export interface McpConfig {
+  enabled?: boolean;
+  cachePolicy?: CachePolicy;
+}
+
 /**
  * Resource configuration
  */
@@ -32,13 +39,7 @@ export interface ResourceConfig<TParams = unknown, TData = unknown> {
   subscribe?: (params: TParams) => AsyncIterable<TData>;
 
   /** MCP configuration */
-  mcp?: {
-    /** Expose via MCP */
-    enabled?: boolean;
-
-    /** Cache policy */
-    cachePolicy?: "no-cache" | "cache" | "cache-first";
-  };
+  mcp?: McpConfig;
 }
 
 /**
@@ -68,5 +69,5 @@ export interface Resource<TParams = unknown, TData = unknown> {
   subscribe?: (params: TParams) => AsyncIterable<TData>;
 
   /** MCP configuration */
-  mcp?: ResourceConfig["mcp"];
+  mcp?: McpConfig;
 }

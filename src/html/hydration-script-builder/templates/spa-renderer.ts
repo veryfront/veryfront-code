@@ -8,7 +8,7 @@ export const getSpaRendererScript = () => `
 
       let initialData = {};
       try {
-        initialData = JSON.parse(dataScript.textContent || '{}');
+        initialData = JSON.parse(dataScript.textContent ?? '{}');
       } catch (parseError) {
         logError('Failed to parse hydration data:', parseError);
         return;
@@ -22,19 +22,16 @@ export const getSpaRendererScript = () => `
       }
 
       try {
-        // Preload the initial page component
         const pageComponent = await loadComponent(initialData.pagePath);
         if (!pageComponent) {
           logError('Failed to load initial page component');
           return;
         }
 
-        // Preload layout components
-        for (const layout of initialData.layouts || []) {
+        for (const layout of initialData.layouts ?? []) {
           await loadComponent(layout.path);
         }
 
-        // Import ClientApp dynamically
         const { ClientApp } = await import(MODULE_SERVER_URL + '/lib/spa/ClientApp.js');
 
         const container = document.getElementById('veryfront-content');
@@ -43,39 +40,28 @@ export const getSpaRendererScript = () => `
           return;
         }
 
-        // Create React tree with ClientApp
-        // Note: QueryClientProvider should be in user's app.tsx if needed
         const tree = React.createElement(ClientApp, { initialData });
 
-        // Hydrate or render based on whether SSR content exists
-        if (container.innerHTML.trim() !== '') {
-          // SSR content exists, hydrate
-          // identifierPrefix must match SSR to prevent useId() mismatch
-          // Suppress recoverable hydration errors - common with animation libraries
+        if (container.innerHTML.trim()) {
           const { hydrateRoot } = await import('react-dom/client');
           hydrateRoot(container, tree, {
             identifierPrefix: 'vf',
-            onRecoverableError: () => {} // Silently ignore hydration mismatches
+            onRecoverableError: () => {}
           });
           log('Hydrated successfully');
         } else {
-          // No SSR content, render fresh
           const root = createRoot(container);
           root.render(tree);
           log('Rendered successfully');
         }
 
-        // Enable SPA mode in router
         window.__VERYFRONT_SPA_MODE__ = true;
-
       } catch (error) {
         logError('Initialization error:', error);
-        // Fallback to legacy rendering
         renderPage(window.location.pathname);
       }
     }
 
-    // Initialize SPA app
     initSpaApp();
 `;
 
@@ -86,15 +72,11 @@ export const getSpaLoaderScript = () => `
     async function loadComponent(path) {
       if (!path) return null;
 
-      // Check cache
-      if (componentCache.has(path)) {
-        return componentCache.get(path);
-      }
+      const cached = componentCache.get(path);
+      if (cached) return cached;
 
-      // Check if already loading
-      if (loadingPromises.has(path)) {
-        return loadingPromises.get(path);
-      }
+      const existingPromise = loadingPromises.get(path);
+      if (existingPromise) return existingPromise;
 
       const loadPromise = (async () => {
         try {
@@ -105,13 +87,12 @@ export const getSpaLoaderScript = () => `
           const Component = module.default || module;
 
           componentCache.set(path, Component);
-          loadingPromises.delete(path);
-
           return Component;
         } catch (error) {
           logError('Failed to load component:', path, error);
-          loadingPromises.delete(path);
           return null;
+        } finally {
+          loadingPromises.delete(path);
         }
       })();
 
@@ -119,6 +100,5 @@ export const getSpaLoaderScript = () => `
       return loadPromise;
     }
 
-    // Expose for ClientApp
     window.__VERYFRONT_LOAD_COMPONENT__ = loadComponent;
 `;

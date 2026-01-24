@@ -1,7 +1,3 @@
-/**
- * Install Command Types
- */
-
 import { z } from "zod";
 
 export const AIToolIdSchema = z.enum([
@@ -25,29 +21,24 @@ export const AIToolSchema = z.object({
 
 export type AITool = z.infer<typeof AIToolSchema>;
 
-export const InstallOptionsSchema = z.object({
+const BaseCommandOptionsSchema = z.object({
   target: z.string().optional(),
   global: z.boolean().optional(),
   force: z.boolean().optional(),
   cwd: z.string().optional(),
 });
 
+export const InstallOptionsSchema = BaseCommandOptionsSchema;
 export type InstallOptions = z.infer<typeof InstallOptionsSchema>;
+
+export const UninstallOptionsSchema = BaseCommandOptionsSchema;
+export type UninstallOptions = z.infer<typeof UninstallOptionsSchema>;
 
 export const DetectOptionsSchema = z.object({
   cwd: z.string().optional(),
 });
 
 export type DetectOptions = z.infer<typeof DetectOptionsSchema>;
-
-export const UninstallOptionsSchema = z.object({
-  target: z.string().optional(),
-  global: z.boolean().optional(),
-  force: z.boolean().optional(),
-  cwd: z.string().optional(),
-});
-
-export type UninstallOptions = z.infer<typeof UninstallOptionsSchema>;
 
 export interface MultiSelectOption {
   label: string;

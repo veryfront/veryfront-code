@@ -1,13 +1,5 @@
-/**
- * Integration Status API
- *
- * Returns the connection status of all configured integrations.
- * Used by the setup guide to show which services are connected.
- */
-
 import { tokenStore } from "../../../../lib/token-store.ts";
 
-// Define available integrations - will be populated based on project config
 const INTEGRATIONS = [
   { id: "gmail", name: "Gmail", icon: "mail" },
   { id: "slack", name: "Slack", icon: "slack" },
@@ -17,22 +9,18 @@ const INTEGRATIONS = [
   { id: "notion", name: "Notion", icon: "notion" },
 ];
 
-export async function GET(_req: Request) {
-  // Get actual user ID from session in production
+export async function GET(_req: Request): Promise<Response> {
   const userId = "current-user";
 
-  const statuses = await Promise.all(
-    INTEGRATIONS.map(async (integration) => {
-      const connected = await tokenStore.isConnected(userId, integration.id);
-      return {
-        id: integration.id,
-        name: integration.name,
-        icon: integration.icon,
-        connected,
-        connectUrl: `/api/auth/${integration.id}`,
-      };
-    }),
+  const integrations = await Promise.all(
+    INTEGRATIONS.map(async ({ id, name, icon }) => ({
+      id,
+      name,
+      icon,
+      connected: await tokenStore.isConnected(userId, id),
+      connectUrl: `/api/auth/${id}`,
+    })),
   );
 
-  return Response.json({ integrations: statuses });
+  return Response.json({ integrations });
 }

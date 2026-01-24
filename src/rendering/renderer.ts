@@ -80,19 +80,26 @@ function getEnv(name: string): string | undefined {
   return g.Deno?.env?.get(name) ?? g.process?.env?.[name];
 }
 
+function getContentSourceId(ctx: RenderContext): string {
+  if (ctx.environment === "production" && ctx.releaseId) {
+    return `release-${ctx.releaseId}`;
+  }
+  return `${ctx.environment}-draft`;
+}
+
 /**
  * Master timeout for entire render pipeline (must be less than REQUEST_TIMEOUT_MS).
  * Configurable via RENDER_TIMEOUT_MS env var for cold-start scenarios.
  * Default increased to 60s to handle cold-start module transforms.
  */
-const RENDER_PIPELINE_TIMEOUT_MS = parseInt(getEnv("RENDER_TIMEOUT_MS") || "60000", 10);
+const RENDER_PIPELINE_TIMEOUT_MS = parseInt(getEnv("RENDER_TIMEOUT_MS") ?? "60000", 10);
 
 /**
  * Maximum concurrent renders per pod.
  * Configurable via RENDER_MAX_CONCURRENT env var.
  * Prevents one pod from being overwhelmed when multiple projects have issues.
  */
-const RENDER_MAX_CONCURRENT = parseInt(getEnv("RENDER_MAX_CONCURRENT") || "30", 10);
+const RENDER_MAX_CONCURRENT = parseInt(getEnv("RENDER_MAX_CONCURRENT") ?? "30", 10);
 
 /**
  * Timeout for acquiring render permit (ms).
@@ -134,21 +141,13 @@ export interface RendererOptions {
  */
 export class Renderer {
   private cache: ContextAwareCacheCoordinator;
-  private initialized: boolean = false;
+  private initialized = false;
   private initializationPromise: Promise<void> | null = null;
 
   constructor(options: RendererOptions = {}) {
     this.cache = new ContextAwareCacheCoordinator(options.cache);
   }
 
-  /**
-   * Initialize the renderer
-   *
-   * This must be called once at startup. It initializes shared services
-   * like esbuild and the element validator. Takes ~100ms.
-   *
-   * @param options - Shared services options
-   */
   async initialize(options?: SharedServicesOptions): Promise<void> {
     if (this.initialized) {
       return;
@@ -162,13 +161,11 @@ export class Renderer {
       const startTime = performance.now();
       logger.debug("[Renderer] Initializing...");
 
-      // Initialize shared services (esbuild, element validator)
       await initializeSharedServices(options);
 
       this.initialized = true;
-      const duration = performance.now() - startTime;
       logger.info("[Renderer] Initialized", {
-        duration: `${duration.toFixed(2)}ms`,
+        duration: `${(performance.now() - startTime).toFixed(2)}ms`,
       });
     })();
 
@@ -179,95 +176,70 @@ export class Renderer {
     }
   }
 
-  /**
-   * Render a page for a specific project
-   *
-   * Creates context-bound services for the request, then runs the
-   * full rendering pipeline. Services are garbage collected after
-   * the request completes.
-   *
-   * @param slug - Page slug to render
-   * @param ctx - Render context with project info
-   * @param options - Render options
-   * @returns Render result with HTML, frontmatter, etc.
-   */
-  renderPage(
-    slug: string,
-    ctx: RenderContext,
-    options?: RenderOptions,
-  ): Promise<RenderResult> {
-    return withSpan("renderer.renderPage", async () => {
-      if (!this.initialized) {
-        throw new Error("Renderer not initialized. Call initialize() first.");
-      }
+  renderPage(slug: string, ctx: RenderContext, options?: RenderOptions): Promise<RenderResult> {
+    return withSpan(
+      "renderer.renderPage",
+      async () => {
+        if (!this.initialized) {
+          throw new Error("Renderer not initialized. Call initialize() first.");
+        }
 
-      const startTime = performance.now();
-      logger.debug("[Renderer] Rendering page", {
-        slug,
-        projectId: ctx.projectId,
-        environment: ctx.environment,
-      });
-
-      // Check cache first (context-aware, includes colorScheme in key)
-      const cacheResult = await this.cache.checkCache(slug, ctx, options?.colorScheme);
-      if (cacheResult.hit && cacheResult.cachedResult) {
-        logger.debug("[Renderer] Cache hit", {
+        const startTime = performance.now();
+        logger.debug("[Renderer] Rendering page", {
           slug,
           projectId: ctx.projectId,
-          colorScheme: options?.colorScheme,
-          duration: `${(performance.now() - startTime).toFixed(2)}ms`,
+          environment: ctx.environment,
         });
-        return cacheResult.cachedResult;
-      }
 
-      // Acquire render permit - fail fast if overloaded
-      const acquired = await renderSemaphore.tryAcquire(RENDER_ACQUIRE_TIMEOUT_MS);
-      if (!acquired) {
-        logger.error("[Renderer] Render capacity exceeded - service overloaded", {
-          slug,
-          projectId: ctx.projectId,
-          waiting: renderSemaphore.waiting,
-          available: renderSemaphore.available,
-        });
-        throw new VeryfrontError(
-          `Render capacity exceeded (${renderSemaphore.waiting} waiting). Service is overloaded.`,
-          ErrorCode.SERVICE_OVERLOADED,
-          { slug, projectId: ctx.projectId, waiting: renderSemaphore.waiting },
-        );
-      }
+        const cacheResult = await this.cache.checkCache(slug, ctx, options?.colorScheme);
+        if (cacheResult.hit && cacheResult.cachedResult) {
+          logger.debug("[Renderer] Cache hit", {
+            slug,
+            projectId: ctx.projectId,
+            colorScheme: options?.colorScheme,
+            duration: `${(performance.now() - startTime).toFixed(2)}ms`,
+          });
+          return cacheResult.cachedResult;
+        }
 
-      try {
-        return await this.doRenderPage(slug, ctx, options, startTime);
-      } finally {
-        renderSemaphore.release();
-      }
-    }, {
-      "renderer.slug": slug,
-      "renderer.projectId": ctx.projectId,
-      "renderer.environment": ctx.environment,
-    });
+        const acquired = await renderSemaphore.tryAcquire(RENDER_ACQUIRE_TIMEOUT_MS);
+        if (!acquired) {
+          logger.error("[Renderer] Render capacity exceeded - service overloaded", {
+            slug,
+            projectId: ctx.projectId,
+            waiting: renderSemaphore.waiting,
+            available: renderSemaphore.available,
+          });
+          throw new VeryfrontError(
+            `Render capacity exceeded (${renderSemaphore.waiting} waiting). Service is overloaded.`,
+            ErrorCode.SERVICE_OVERLOADED,
+            { slug, projectId: ctx.projectId, waiting: renderSemaphore.waiting },
+          );
+        }
+
+        try {
+          return await this.doRenderPage(slug, ctx, options, startTime);
+        } finally {
+          renderSemaphore.release();
+        }
+      },
+      {
+        "renderer.slug": slug,
+        "renderer.projectId": ctx.projectId,
+        "renderer.environment": ctx.environment,
+      },
+    );
   }
 
-  /**
-   * Internal render implementation (called after acquiring semaphore)
-   */
   private async doRenderPage(
     slug: string,
     ctx: RenderContext,
     options: RenderOptions | undefined,
     startTime: number,
   ): Promise<RenderResult> {
-    // Create context-bound services (lightweight, ~1ms)
-    // Pass colorScheme so the pipeline cache also respects theme
     const services = this.createServicesForContext(ctx, options?.colorScheme);
+    const contentSourceId = getContentSourceId(ctx);
 
-    // Compute contentSourceId for cache isolation between preview/production
-    const contentSourceId = ctx.environment === "production" && ctx.releaseId
-      ? `release-${ctx.releaseId}`
-      : `${ctx.environment}-draft`;
-
-    // Run the render pipeline with master timeout to prevent stuck renders
-    // from blocking other requests. Timeout configurable via RENDER_TIMEOUT_MS.
     let result: RenderResult;
     try {
       result = await withTimeoutThrow(
@@ -277,13 +249,12 @@ export class Renderer {
           projectSlug: ctx.projectSlug,
           environment: ctx.environment,
           contentSourceId,
-          skipCacheCheck: true, // Cache already checked by Renderer.renderPage()
+          skipCacheCheck: true,
         }),
         RENDER_PIPELINE_TIMEOUT_MS,
         `Render pipeline for ${ctx.projectId}:${slug}`,
       );
     } catch (error) {
-      // Log timeout specifically to help identify problematic projects
       if (error instanceof TimeoutError) {
         logger.error("[Renderer] Render pipeline timeout - aborting", {
           slug,
@@ -294,28 +265,18 @@ export class Renderer {
       throw error;
     }
 
-    // Cache the result (context-aware, includes colorScheme in key)
     await this.cache.persistResult(result, slug, ctx, options?.colorScheme);
 
-    const duration = performance.now() - startTime;
     logger.debug("[Renderer] Render complete", {
       slug,
       projectId: ctx.projectId,
-      duration: `${duration.toFixed(2)}ms`,
+      duration: `${(performance.now() - startTime).toFixed(2)}ms`,
       htmlLength: result.html?.length ?? 0,
     });
 
     return result;
   }
 
-  /**
-   * Resolve page data for SPA client-side navigation
-   *
-   * @param slug - Page slug
-   * @param ctx - Render context
-   * @param options - Render options
-   * @returns Page data response
-   */
   resolvePageData(
     slug: string,
     ctx: RenderContext,
@@ -325,12 +286,9 @@ export class Renderer {
       throw new Error("Renderer not initialized. Call initialize() first.");
     }
 
-    // Compute contentSourceId for cache isolation between preview/production
-    const contentSourceId = ctx.environment === "production" && ctx.releaseId
-      ? `release-${ctx.releaseId}`
-      : `${ctx.environment}-draft`;
-
+    const contentSourceId = getContentSourceId(ctx);
     const services = this.createServicesForContext(ctx);
+
     return services.pipeline.resolvePageData(slug, {
       ...options,
       projectId: ctx.projectId,
@@ -340,33 +298,20 @@ export class Renderer {
     });
   }
 
-  /**
-   * Get all pages for a project
-   *
-   * @param ctx - Render context
-   * @returns Array of page slugs
-   */
   getAllPages(ctx: RenderContext): Promise<string[]> {
     if (!this.initialized) {
       throw new Error("Renderer not initialized. Call initialize() first.");
     }
 
-    const pageResolver = createPageResolver(ctx);
-    return pageResolver.getAllPages();
+    return createPageResolver(ctx).getAllPages();
   }
 
-  /**
-   * Clear cache for a specific context
-   *
-   * @param ctx - Render context
-   * @param slug - Optional specific slug to clear
-   */
   async clearCache(ctx: RenderContext, slug?: string): Promise<void> {
     if (slug) {
       await this.cache.clearSlug(slug, ctx);
-    } else {
-      await this.cache.clearForContext(ctx);
+      return;
     }
+    await this.cache.clearForContext(ctx);
   }
 
   /**
@@ -383,10 +328,6 @@ export class Renderer {
     });
   }
 
-  /**
-   * Clear cached render results for a specific project.
-   * Use this in multi-tenant deployments to avoid clearing other projects' caches.
-   */
   async clearCacheForProject(projectId: string): Promise<void> {
     const startTime = Date.now();
     logger.info("[Renderer] Clearing render cache for project", { projectId });
@@ -397,27 +338,12 @@ export class Renderer {
     });
   }
 
-  /**
-   * Destroy the renderer and clean up resources
-   */
   async destroy(): Promise<void> {
     await this.cache.destroy();
     this.initialized = false;
     logger.debug("[Renderer] Destroyed");
   }
 
-  /**
-   * Create all services needed for rendering, bound to a specific context
-   *
-   * These services are lightweight to create (~1ms total) because
-   * expensive initialization (esbuild, etc.) was done in shared services.
-   *
-   * Note: Service caching was removed because the pipeline holds closures
-   * over request-specific context (ctx, colorScheme) which cannot be shared.
-   *
-   * @param ctx - Render context
-   * @param colorScheme - Optional color scheme for cache key variation
-   */
   private createServicesForContext(
     ctx: RenderContext,
     colorScheme?: "light" | "dark",
@@ -426,47 +352,33 @@ export class Renderer {
   } {
     const shared = getSharedServices();
 
-    // Create MDX cache adapter (content-hash keyed, safe to share pattern)
     const mdxCacheAdapter = new MDXCacheAdapter({
       config: ctx.config,
       mode: ctx.mode,
     });
 
-    // Create MDX compiler for this context
     const mdxCompiler = new MDXCompiler({
       projectDir: ctx.projectDir,
       mode: ctx.mode,
       mdxCacheAdapter,
     });
 
-    // Bind the MDX compile function
     const compileMDX = mdxCompiler.compileMDX.bind(mdxCompiler);
-
-    // Set on shared compiler service for late-binding
     setSharedCompileMDX(compileMDX);
 
-    // Create per-request services
     const virtualModules = createVirtualModuleSystem(ctx);
     const componentRegistry = createComponentRegistry(ctx, virtualModules);
     const pageResolver = createPageResolver(ctx);
     const layoutCollector = createLayoutCollector(ctx, compileMDX);
     const layoutCompiler = createLayoutCompiler(ctx, compileMDX);
     const ssrRenderer = createSSRRenderer(ctx);
-    const pageRenderer = createPageRenderer(ctx, {
-      componentRegistry,
-      compileMDX,
-    });
+    const pageRenderer = createPageRenderer(ctx, { componentRegistry, compileMDX });
 
-    // Create layout orchestrator
-    // Compute contentSourceId for cache isolation between preview/production
-    const contentSourceId = ctx.environment === "production" && ctx.releaseId
-      ? `release-${ctx.releaseId}`
-      : `${ctx.environment}-draft`;
     const layoutOrchestrator = new LayoutOrchestrator({
       projectDir: ctx.projectDir,
       projectId: ctx.projectId,
       projectSlug: ctx.projectSlug,
-      contentSourceId,
+      contentSourceId: getContentSourceId(ctx),
       adapter: ctx.adapter,
       config: ctx.config,
       mode: ctx.mode,
@@ -477,7 +389,6 @@ export class Renderer {
       componentRegistry: componentRegistry.getAllAsComponents(),
     });
 
-    // Create HTML generator
     const htmlGenerator = new HTMLGenerator({
       projectDir: ctx.projectDir,
       adapter: ctx.adapter,
@@ -485,7 +396,6 @@ export class Renderer {
       mode: ctx.mode,
     });
 
-    // Create SSR orchestrator
     const ssrOrchestrator = new SSROrchestrator({
       mode: ctx.mode,
       debugMode: ctx.mode === "development",
@@ -494,9 +404,6 @@ export class Renderer {
       htmlGenerator,
     });
 
-    // Create a simple cache coordinator wrapper for the pipeline
-    // (The pipeline uses the old interface, we adapt to context-aware cache)
-    // Include colorScheme in cache key to prevent serving wrong theme
     const pipelineCacheCoordinator = {
       checkCache: async (slug: string) => {
         const result = await this.cache.checkCache(slug, ctx, colorScheme);
@@ -515,7 +422,6 @@ export class Renderer {
       destroy: () => this.cache.destroy(),
     };
 
-    // Create render pipeline
     const pipeline = new RenderPipeline({
       pageResolver,
       cacheCoordinator: pipelineCacheCoordinator as any,
@@ -531,11 +437,6 @@ export class Renderer {
   }
 }
 
-/**
- * Create a render context from handler context
- *
- * Convenience re-export for use in handlers.
- */
 export {
   createRenderContext,
   createRenderContextFromEnriched,
@@ -543,17 +444,8 @@ export {
   type RenderContext,
 };
 
-/**
- * Singleton renderer instance
- */
 let renderer: Renderer | null = null;
 
-/**
- * Get the singleton renderer
- *
- * @returns Renderer instance
- * @throws Error if not initialized
- */
 export function getRenderer(): Renderer {
   if (!renderer) {
     throw new Error("Renderer not initialized. Call initializeRenderer() first.");
@@ -561,12 +453,6 @@ export function getRenderer(): Renderer {
   return renderer;
 }
 
-/**
- * Initialize the singleton renderer
- *
- * @param options - Renderer options
- * @returns Initialized renderer
- */
 export async function initializeRenderer(options?: RendererOptions): Promise<Renderer> {
   if (renderer) {
     return renderer;
@@ -577,21 +463,16 @@ export async function initializeRenderer(options?: RendererOptions): Promise<Ren
   return renderer;
 }
 
-/**
- * Check if the renderer is initialized
- */
 export function isRendererInitialized(): boolean {
   return renderer !== null && areSharedServicesInitialized();
 }
 
-/**
- * Destroy the singleton renderer
- */
 export async function destroyRenderer(): Promise<void> {
-  if (renderer) {
-    await renderer.destroy();
-    renderer = null;
+  if (!renderer) {
+    return;
   }
+  await renderer.destroy();
+  renderer = null;
 }
 
 /**
@@ -600,51 +481,37 @@ export async function destroyRenderer(): Promise<void> {
  * @deprecated Use clearRendererCacheForProject for multi-tenant deployments
  */
 export function clearRendererCaches(): void {
-  logger.debug("[Renderer] clearRendererCaches called (global)", {
-    hasRenderer: !!renderer,
-  });
-  if (renderer) {
-    renderer.clearAllCaches().catch((err) => {
-      logger.warn("[Renderer] Failed to clear caches", { error: String(err) });
-    });
-  } else {
+  logger.debug("[Renderer] clearRendererCaches called (global)", { hasRenderer: !!renderer });
+
+  if (!renderer) {
     logger.debug("[Renderer] No renderer instance, skipping cache clear");
+    return;
   }
+
+  renderer.clearAllCaches().catch((err) => {
+    logger.warn("[Renderer] Failed to clear caches", { error: String(err) });
+  });
 }
 
-/**
- * Clear cached render results for a specific project.
- * Safe to call even if renderer is not initialized (no-op).
- */
 export function clearRendererCacheForProject(projectId: string): void {
   logger.debug("[Renderer] clearRendererCacheForProject called", {
     projectId,
     hasRenderer: !!renderer,
   });
-  if (renderer) {
-    renderer.clearCacheForProject(projectId).catch((err) => {
-      logger.warn("[Renderer] Failed to clear project caches", {
-        projectId,
-        error: String(err),
-      });
-    });
-  } else {
+
+  if (!renderer) {
     logger.debug("[Renderer] No renderer instance, skipping project cache clear", { projectId });
+    return;
   }
+
+  renderer.clearCacheForProject(projectId).catch((err) => {
+    logger.warn("[Renderer] Failed to clear project caches", {
+      projectId,
+      error: String(err),
+    });
+  });
 }
 
-/**
- * Render a page using the renderer
- *
- * Convenience function that creates a render context from handler context
- * and renders the page.
- *
- * @param slug - Page slug
- * @param handlerCtx - Handler context
- * @param options - Render options
- * @param contextOptions - Context creation options
- * @returns Render result
- */
 export function renderPage(
   slug: string,
   handlerCtx: HandlerContext,

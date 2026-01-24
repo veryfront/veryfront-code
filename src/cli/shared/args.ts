@@ -28,6 +28,20 @@ export type ArgMap<T> = {
   [K in keyof T]?: ArgSpec;
 };
 
+function coerceValue(
+  value: unknown,
+  type: ArgSpec["type"],
+): string | boolean | number {
+  switch (type) {
+    case "boolean":
+      return Boolean(value);
+    case "number":
+      return typeof value === "number" ? value : parseInt(String(value), 10);
+    case "string":
+      return String(value);
+  }
+}
+
 /**
  * Extract a single argument value from parsed args
  */
@@ -37,35 +51,17 @@ export function extractArg(
 ): string | boolean | number | undefined {
   const { keys, type, positional } = spec;
 
-  // Check named args first
   for (const key of keys) {
     const value = args[key];
-    if (value !== undefined) {
-      switch (type) {
-        case "boolean":
-          return Boolean(value);
-        case "number":
-          return typeof value === "number" ? value : parseInt(String(value), 10);
-        case "string":
-          return String(value);
-      }
-    }
+    if (value !== undefined) return coerceValue(value, type);
   }
 
-  // Check positional arg
-  if (positional !== undefined && args._.length > positional + 1) {
-    const value = args._[positional + 1]; // +1 because _[0] is the command name
-    switch (type) {
-      case "boolean":
-        return Boolean(value);
-      case "number":
-        return parseInt(String(value), 10);
-      case "string":
-        return String(value);
-    }
-  }
+  if (positional === undefined) return undefined;
 
-  return undefined;
+  const value = args._[positional + 1]; // +1 because _[0] is the command name
+  if (value === undefined) return undefined;
+
+  return coerceValue(value, type);
 }
 
 /**
@@ -78,12 +74,10 @@ export function extractArgs<T extends z.ZodRawShape>(
   const result: Record<string, unknown> = {};
 
   for (const [field, spec] of Object.entries(argMap)) {
-    if (spec) {
-      const value = extractArg(args, spec);
-      if (value !== undefined) {
-        result[field] = value;
-      }
-    }
+    if (!spec) continue;
+
+    const value = extractArg(args, spec);
+    if (value !== undefined) result[field] = value;
   }
 
   return result;
@@ -116,9 +110,10 @@ export function createArgParser<T extends z.ZodRawShape>(
   schema: z.ZodObject<T>,
   argMap: ArgMap<z.infer<z.ZodObject<T>>>,
 ): (args: ParsedArgs) => z.SafeParseReturnType<unknown, z.infer<z.ZodObject<T>>> {
-  return (args: ParsedArgs) => {
-    const rawArgs = extractArgs(args, argMap);
-    return schema.safeParse(rawArgs);
+  return function parseArgs(
+    args: ParsedArgs,
+  ): z.SafeParseReturnType<unknown, z.infer<z.ZodObject<T>>> {
+    return schema.safeParse(extractArgs(args, argMap));
   };
 }
 
@@ -126,10 +121,10 @@ export function createArgParser<T extends z.ZodRawShape>(
  * Common arg specs for reuse across commands
  */
 export const CommonArgs = {
-  force: { keys: ["force", "f"], type: "boolean" } as const,
-  dryRun: { keys: ["dry-run"], type: "boolean" } as const,
-  branch: { keys: ["branch", "b"], type: "string" } as const,
-  env: { keys: ["env"], type: "string" } as const,
-  projectDir: { keys: ["project-dir", "dir", "d"], type: "string" } as const,
-  projectSlug: { keys: ["project-slug", "project", "p"], type: "string" } as const,
+  force: { keys: ["force", "f"], type: "boolean" },
+  dryRun: { keys: ["dry-run"], type: "boolean" },
+  branch: { keys: ["branch", "b"], type: "string" },
+  env: { keys: ["env"], type: "string" },
+  projectDir: { keys: ["project-dir", "dir", "d"], type: "string" },
+  projectSlug: { keys: ["project-slug", "project", "p"], type: "string" },
 } satisfies Record<string, ArgSpec>;

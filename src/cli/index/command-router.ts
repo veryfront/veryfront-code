@@ -6,6 +6,9 @@
 
 import { handleError } from "#veryfront/errors";
 import { formatErrorBox } from "#veryfront/errors/user-friendly/index.ts";
+import { cwd } from "#veryfront/platform/compat/process.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { join } from "#veryfront/platform/compat/path/index.ts";
 import { cliLogger, DEFAULT_DEV_SERVER_PORT, VERSION } from "#veryfront/utils";
 import { z } from "zod";
 import { analyzeChunksCommand } from "../commands/analyze-chunks.ts";
@@ -25,6 +28,7 @@ import { promptProjectName, showMainMenu } from "../commands/main.ts";
 import { issuesCommand } from "../commands/issues.ts";
 import { login, logout, whoami } from "../auth/index.ts";
 import { COMMANDS } from "../help/command-definitions.ts";
+import { showCommandHelp, showMainHelp } from "../help/index.ts";
 import {
   exitProcess,
   registerTerminationSignals,
@@ -37,14 +41,10 @@ import { handleBuildCommand } from "./build-handler.ts";
 import { handleDevCommand } from "./dev-handler.ts";
 import { handleGenerateCommand } from "./generate-handler.ts";
 import { handleStudioCommand } from "./studio-handler.ts";
+import { createMCPServer } from "../mcp/server.ts";
 import type { ParsedArgs } from "./types.ts";
 import type { InitTemplate } from "../commands/init/types.ts";
 import type { IntegrationName } from "../templates/types.ts";
-import { cwd } from "#veryfront/platform/compat/process.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { join } from "#veryfront/platform/compat/path/index.ts";
-import { showCommandHelp, showMainHelp } from "../help/index.ts";
-import { createMCPServer } from "../mcp/server.ts";
 
 /**
  * Handle validation errors using central COMMANDS registry for usage
@@ -53,7 +53,6 @@ function handleValidationError(error: z.ZodError, commandName: string): void {
   const issues = error.issues.map((i) => `  - ${i.path.join(".")}: ${i.message}`).join("\n");
   cliLogger.error(`Invalid ${commandName} arguments:\n${issues}`);
 
-  // Get usage from central COMMANDS registry
   const command = COMMANDS[commandName];
   if (command?.usage) {
     cliLogger.info(`Usage: ${command.usage}`);
@@ -66,9 +65,35 @@ function handleValidationError(error: z.ZodError, commandName: string): void {
 function showHelp(command?: string): void {
   if (command) {
     showCommandHelp(command);
-  } else {
-    showMainHelp();
+    return;
   }
+  showMainHelp();
+}
+
+function resolveProjectDir(args: ParsedArgs, keys: Array<keyof ParsedArgs>): string {
+  const raw = keys.map((k) => args[k]).find((v) => v != null);
+  if (!raw) return cwd();
+
+  const dir = String(raw);
+  return dir.startsWith("/") ? dir : join(cwd(), dir);
+}
+
+function parseCsvArg(value: unknown): string[] | undefined {
+  if (!value) return undefined;
+  return String(value)
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function parseLoginMethod(
+  args: ParsedArgs,
+): "google" | "github" | "microsoft" | "token" | undefined {
+  if (args.google) return "google";
+  if (args.github) return "github";
+  if (args.microsoft) return "microsoft";
+  if (args.token) return "token";
+  return undefined;
 }
 
 /**
@@ -77,31 +102,26 @@ function showHelp(command?: string): void {
  * @param args - Parsed CLI arguments
  */
 export async function routeCommand(args: ParsedArgs): Promise<void> {
-  // Initialize global CLI modes (clig.dev compliance)
-  // Color mode: --no-color disables, --color forces, NO_COLOR env also respected
   if (args["no-color"]) {
     setColorMode(false);
   } else if (args.color) {
     setColorMode(true);
   }
 
-  // Verbose/Quiet mode
   if (args.verbose) {
     setVerboseMode(true);
   } else if (args.quiet || args.q) {
     setQuietMode(true);
   }
 
-  // Handle version flag
   if (args.version || args.v) {
     cliLogger.info(`Veryfront CLI v${VERSION}`);
     exitProcess(0);
     return;
   }
 
-  const command = args._[0] as string;
+  const command = args._[0] as string | undefined;
 
-  // Handle help flag
   if (args.help || args.h) {
     showHelp(command);
     exitProcess(0);
@@ -118,13 +138,13 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         let skipEnvPrompt = Boolean(args["skip-env-prompt"]);
         let env: Record<string, string> | undefined;
 
-        // Support --config flag for JSON-based configuration
         const configPath = args.config || args.c;
         if (configPath) {
           const fs = createFileSystem();
-          const resolvedPath = String(configPath).startsWith("/")
-            ? String(configPath)
-            : join(cwd(), String(configPath));
+          const configPathStr = String(configPath);
+          const resolvedPath = configPathStr.startsWith("/")
+            ? configPathStr
+            : join(cwd(), configPathStr);
 
           try {
             const configContent = await fs.readTextFile(resolvedPath);
@@ -137,7 +157,6 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
               env?: Record<string, string>;
             };
 
-            // Config file values (can be overridden by CLI flags)
             name = name || config.name;
             template = template || config.template;
             integrations = integrations || config.integrations;
@@ -156,11 +175,10 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
           }
         }
 
-        // Parse integrations from --integrations flag (comma-separated)
-        // This overrides config file if provided
         if (args.integrations) {
-          const integrationsArg = String(args.integrations);
-          integrations = integrationsArg.split(",").map((s) => s.trim()) as IntegrationName[];
+          integrations = String(args.integrations)
+            .split(",")
+            .map((s) => s.trim()) as IntegrationName[];
         }
 
         await initCommand({
@@ -185,60 +203,58 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         break;
 
       case "preview":
-      case "serve":
+      case "serve": {
         showLogo();
-        {
-          const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
-          const adapter = await runtime.get();
-          const { startUniversalServer } = await import("#veryfront/server/production-server.ts");
 
-          const projectDir = cwd();
-          const port = args.port ?? DEFAULT_DEV_SERVER_PORT;
-          const bindAddress = String(args.hostname || args.host || "0.0.0.0");
-          const debug = Boolean(args.debug);
-          const shutdownController = new AbortController();
-          const server = await startUniversalServer({
-            projectDir,
-            port,
-            bindAddress,
-            debug,
-            adapter,
-            signal: shutdownController.signal,
-          });
-          await server.ready;
+        const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
+        const adapter = await runtime.get();
+        const { startUniversalServer } = await import("#veryfront/server/production-server.ts");
 
-          // Graceful shutdown for preview/serve mode
-          let shuttingDown = false;
-          const shutdown = async (signal: "SIGINT" | "SIGTERM") => {
-            if (shuttingDown) return;
-            shuttingDown = true;
-            cliLogger.info(`Received ${signal}, shutting down production server...`);
-            try {
-              shutdownController.abort();
-              await server.stop();
-            } catch (error) {
-              cliLogger.warn("Error while shutting down production server:", error);
-            } finally {
-              exitProcess(0);
-            }
-          };
+        const projectDir = cwd();
+        const port = args.port ?? DEFAULT_DEV_SERVER_PORT;
+        const bindAddress = String(args.hostname || args.host || "0.0.0.0");
+        const debug = Boolean(args.debug);
+        const shutdownController = new AbortController();
 
-          registerTerminationSignals((signal) => {
-            void shutdown(signal);
-          });
+        const server = await startUniversalServer({
+          projectDir,
+          port,
+          bindAddress,
+          debug,
+          adapter,
+          signal: shutdownController.signal,
+        });
+        await server.ready;
 
-          // Keep process alive until Ctrl+C
-          await new Promise(() => {
-            /* never resolve */
-          });
-        }
+        let shuttingDown = false;
+        const shutdown = async (signal: "SIGINT" | "SIGTERM"): Promise<void> => {
+          if (shuttingDown) return;
+          shuttingDown = true;
+
+          cliLogger.info(`Received ${signal}, shutting down production server...`);
+          try {
+            shutdownController.abort();
+            await server.stop();
+          } catch (error) {
+            cliLogger.warn("Error while shutting down production server:", error);
+          } finally {
+            exitProcess(0);
+          }
+        };
+
+        registerTerminationSignals((signal) => {
+          void shutdown(signal);
+        });
+
+        await new Promise(() => {
+          /* never resolve */
+        });
         break;
+      }
 
       case "doctor":
         showLogo();
-        await doctorCommand(cwd(), {
-          strict: Boolean(args.strict) || Boolean(args.s),
-        });
+        await doctorCommand(cwd(), { strict: Boolean(args.strict) || Boolean(args.s) });
         break;
 
       case "clean":
@@ -262,9 +278,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
 
       case "routes":
         showLogo();
-        await routesCommand(cwd(), {
-          json: Boolean(args.json) || Boolean(args.j),
-        });
+        await routesCommand(cwd(), { json: Boolean(args.json) || Boolean(args.j) });
         break;
 
       case "studio":
@@ -289,144 +303,108 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         await handleGenerateCommand(args);
         break;
 
-      case "pull":
+      case "pull": {
         showLogo();
-        {
-          // Get project slug from positional argument (e.g., `pull my-project`)
-          const projectSlug = args._.length > 1 ? String(args._[1]) : undefined;
-          // Parse --projects flag (comma-separated list)
-          const projectsArg = args.projects ? String(args.projects) : undefined;
-          const projects = projectsArg
-            ? projectsArg.split(",").map((p) => p.trim()).filter(Boolean)
-            : undefined;
-          // Resolve directory: --project-dir/--dir/-d option, or current working directory
-          const dirArg = args["project-dir"]
-            ? String(args["project-dir"])
-            : args.dir
-            ? String(args.dir)
-            : args.d
-            ? String(args.d)
-            : undefined;
-          const projectDir = dirArg
-            ? (dirArg.startsWith("/") ? dirArg : join(cwd(), dirArg))
-            : cwd();
-          await pullCommand({
-            projectSlug,
-            projects,
-            projectDir,
-            branch: args.branch ? String(args.branch) : args.b ? String(args.b) : undefined,
-            env: args.env ? String(args.env) : undefined,
-            release: args.release ? String(args.release) : undefined,
-            force: Boolean(args.force) || Boolean(args.f),
-            dryRun: Boolean(args["dry-run"]),
-          });
-        }
-        break;
 
-      case "push":
-        showLogo();
-        {
-          // Resolve directory: --dir/-d option, or current working directory
-          const dirArg = args.dir ? String(args.dir) : args.d ? String(args.d) : undefined;
-          const projectDir = dirArg
-            ? (dirArg.startsWith("/") ? dirArg : join(cwd(), dirArg))
-            : cwd();
-          await pushCommand({
-            projectDir,
-            branch: args.branch ? String(args.branch) : args.b ? String(args.b) : undefined,
-            force: Boolean(args.force) || Boolean(args.f),
-            dryRun: Boolean(args["dry-run"]),
-          });
-        }
-        break;
+        const projectSlug = args._.length > 1 ? String(args._[1]) : undefined;
+        const projects = parseCsvArg(args.projects);
 
-      case "merge":
+        const projectDir = resolveProjectDir(args, ["project-dir", "dir", "d"]);
+
+        await pullCommand({
+          projectSlug,
+          projects,
+          projectDir,
+          branch: args.branch ? String(args.branch) : args.b ? String(args.b) : undefined,
+          env: args.env ? String(args.env) : undefined,
+          release: args.release ? String(args.release) : undefined,
+          force: Boolean(args.force) || Boolean(args.f),
+          dryRun: Boolean(args["dry-run"]),
+        });
+        break;
+      }
+
+      case "push": {
         showLogo();
-        {
-          const result = parseMergeArgs(args);
-          if (!result.success) {
-            handleValidationError(result.error, "merge");
-            exitProcess(1);
+
+        const projectDir = resolveProjectDir(args, ["dir", "d"]);
+
+        await pushCommand({
+          projectDir,
+          branch: args.branch ? String(args.branch) : args.b ? String(args.b) : undefined,
+          force: Boolean(args.force) || Boolean(args.f),
+          dryRun: Boolean(args["dry-run"]),
+        });
+        break;
+      }
+
+      case "merge": {
+        showLogo();
+
+        const result = parseMergeArgs(args);
+        if (!result.success) {
+          handleValidationError(result.error, "merge");
+          exitProcess(1);
+          return;
+        }
+        await mergeCommand(result.data);
+        break;
+      }
+
+      case "deploy": {
+        showLogo();
+
+        const result = parseDeployArgs(args);
+        if (!result.success) {
+          handleValidationError(result.error, "deploy");
+          exitProcess(1);
+          return;
+        }
+        await deployCommand(result.data);
+        break;
+      }
+
+      case "up": {
+        const result = parseUpArgs(args);
+        if (!result.success) {
+          handleValidationError(result.error, "up");
+          exitProcess(1);
+          return;
+        }
+        await upCommand(result.data);
+        break;
+      }
+
+      case "new": {
+        let name = args._[1] as string;
+        if (!name) {
+          const prompted = await promptProjectName();
+          if (!prompted) {
+            exitProcess(0);
             return;
           }
-          await mergeCommand(result.data);
+          name = prompted;
         }
-        break;
 
-      case "deploy":
-        showLogo();
-        {
-          const result = parseDeployArgs(args);
-          if (!result.success) {
-            handleValidationError(result.error, "deploy");
-            exitProcess(1);
-            return;
-          }
-          await deployCommand(result.data);
+        const result = parseNewArgs(args);
+        if (!result.success) {
+          handleValidationError(result.error, "new");
+          exitProcess(1);
+          return;
         }
+        await newCommand(name, result.data);
         break;
-
-      case "up":
-        // The main unified command
-        {
-          const result = parseUpArgs(args);
-          if (!result.success) {
-            handleValidationError(result.error, "up");
-            exitProcess(1);
-            return;
-          }
-          await upCommand(result.data);
-        }
-        break;
-
-      case "new":
-        // Lightning-fast project creation for pro coders
-        {
-          let name = args._[1] as string;
-          if (!name) {
-            // Prompt for name interactively (returns null in non-TTY or on Ctrl+C)
-            const prompted = await promptProjectName();
-            if (prompted) {
-              name = prompted;
-            } else {
-              // Non-TTY or user cancelled
-              exitProcess(0);
-              return;
-            }
-          }
-          const result = parseNewArgs(args);
-          if (!result.success) {
-            handleValidationError(result.error, "new");
-            exitProcess(1);
-            return;
-          }
-          await newCommand(name, result.data);
-        }
-        break;
+      }
 
       case "login":
-        // Explicit login command
-        {
-          const method = args.google
-            ? "google"
-            : args.github
-            ? "github"
-            : args.microsoft
-            ? "microsoft"
-            : args.token
-            ? "token"
-            : undefined;
-          await login(method as "google" | "github" | "microsoft" | "token" | undefined);
-        }
+        await login(parseLoginMethod(args));
         break;
 
       case "logout":
-        // Clear stored credentials
         await logout();
         break;
 
       case "whoami":
-        // Show current user
         await whoami();
         break;
 
@@ -446,33 +424,28 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         });
         break;
 
-      case "demo":
-        {
-          const { demoCommand } = await import("../commands/demo/index.ts");
-          await demoCommand({
-            projectName: args._[1] ? String(args._[1]) : undefined,
-            auto: Boolean(args.auto),
-            loginMethod: args.login
-              ? String(args.login) as "google" | "github" | "microsoft" | "token"
-              : undefined,
-          });
-        }
+      case "demo": {
+        const { demoCommand } = await import("../commands/demo/index.ts");
+        await demoCommand({
+          projectName: args._[1] ? String(args._[1]) : undefined,
+          auto: Boolean(args.auto),
+          loginMethod: args.login
+            ? (String(args.login) as "google" | "github" | "microsoft" | "token")
+            : undefined,
+        });
         break;
+      }
 
-      case "mcp":
-        // MCP server for coding agents (stdio transport)
-        {
-          const server = await createMCPServer({ stdio: true });
-          // Keep process alive - MCP server handles stdin/stdout
-          await new Promise(() => {
-            /* never resolve - stdio loop runs until stdin closes */
-          });
-          await server.stop();
-        }
+      case "mcp": {
+        const server = await createMCPServer({ stdio: true });
+        await new Promise(() => {
+          /* never resolve - stdio loop runs until stdin closes */
+        });
+        await server.stop();
         break;
+      }
 
       case "issues":
-        // File-based issue tracking
         await issuesCommand(args);
         break;
 
@@ -481,43 +454,40 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         exitProcess(0);
         return;
 
-      case undefined:
-        // Interactive main menu
-        {
-          const action = await showMainMenu();
+      case undefined: {
+        const action = await showMainMenu();
 
-          switch (action) {
-            case "new": {
-              // Prompt for project name
-              const name = await promptProjectName();
-              if (name) {
-                await newCommand(name, {});
-              }
-              break;
+        switch (action) {
+          case "new": {
+            const name = await promptProjectName();
+            if (name) {
+              await newCommand(name, {});
             }
-            case "dev":
-              await handleDevCommand(args);
-              break;
-            case "deploy": {
-              const result = parseDeployArgs(args);
-              if (result.success) {
-                await deployCommand(result.data);
-              }
-              break;
-            }
-            case "login":
-              await login();
-              break;
-            case "help":
-              showHelp();
-              break;
-            case "exit":
-            case null:
-              exitProcess(0);
-              break;
+            break;
           }
+          case "dev":
+            await handleDevCommand(args);
+            break;
+          case "deploy": {
+            const result = parseDeployArgs(args);
+            if (result.success) {
+              await deployCommand(result.data);
+            }
+            break;
+          }
+          case "login":
+            await login();
+            break;
+          case "help":
+            showHelp();
+            break;
+          case "exit":
+          case null:
+            exitProcess(0);
+            break;
         }
         break;
+      }
 
       default:
         cliLogger.error(`Unknown command: ${command}\n`);
@@ -526,14 +496,15 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         return;
     }
   } catch (error) {
-    // Display polished error box
     const formattedError = error instanceof Error ? formatErrorBox(error) : String(error);
-    console.log(); // Add spacing
+    console.log();
     console.log(formattedError);
     console.log();
+
     if (!(error instanceof Error)) {
       handleError(new Error(String(error)));
     }
+
     exitProcess(1);
     throw error;
   }

@@ -1,9 +1,9 @@
 export async function computeHash(content: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(content);
+  const data = new TextEncoder().encode(content);
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+  return Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 /** @deprecated Use computeHash directly */
@@ -24,11 +24,12 @@ export function computeCodeHash(code: BundleCode): Promise<string> {
 
 export function simpleHash(str: string): number {
   let hash = 0;
+
   for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash;
+    hash = (hash << 5) - hash + str.charCodeAt(i);
+    hash &= hash;
   }
+
   return Math.abs(hash);
 }
 

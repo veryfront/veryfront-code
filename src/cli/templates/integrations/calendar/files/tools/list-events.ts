@@ -2,6 +2,18 @@ import { tool } from "veryfront/tool";
 import { z } from "zod";
 import { createCalendarClient } from "../../lib/calendar-client.ts";
 
+type CalendarEvent = {
+  id: string;
+  summary: string;
+  description?: string;
+  location?: string;
+  start: { dateTime?: string; date?: string };
+  end: { dateTime?: string; date?: string };
+  status: string;
+  htmlLink: string;
+  attendees?: Array<{ email: string; displayName?: string; responseStatus?: string }>;
+};
+
 export default tool({
   id: "list-events",
   description: "List upcoming calendar events. By default shows events from now onwards.",
@@ -18,47 +30,33 @@ export default tool({
       .max(30)
       .default(7)
       .describe("Number of days to look ahead"),
-    todayOnly: z
-      .boolean()
-      .default(false)
-      .describe("Only show events for today"),
+    todayOnly: z.boolean().default(false).describe("Only show events for today"),
   }),
   execute: async ({ maxResults, daysAhead, todayOnly }, context) => {
     // Default to "current-user" for development; in production, always pass userId from session
-    const userId = (context?.userId as string | undefined) || "current-user";
+    const userId = context?.userId ?? "current-user";
 
     try {
       const calendar = createCalendarClient(userId);
 
-      let events;
+      let events: CalendarEvent[];
 
       if (todayOnly) {
-        events = await calendar.getTodayEvents();
+        events = (await calendar.getTodayEvents()) as CalendarEvent[];
       } else {
         const now = new Date();
         const futureDate = new Date();
-        futureDate.setDate(futureDate.getDate() + (daysAhead ?? 7));
+        futureDate.setDate(futureDate.getDate() + daysAhead);
 
-        events = await calendar.listEvents({
+        events = (await calendar.listEvents({
           maxResults,
           timeMin: now,
           timeMax: futureDate,
-        });
+        })) as CalendarEvent[];
       }
 
-      type CalendarEvent = {
-        id: string;
-        summary: string;
-        description?: string;
-        location?: string;
-        start: { dateTime?: string; date?: string };
-        end: { dateTime?: string; date?: string };
-        status: string;
-        htmlLink: string;
-        attendees?: Array<{ email: string; displayName?: string; responseStatus?: string }>;
-      };
       return {
-        events: (events as CalendarEvent[]).map((event) => ({
+        events: events.map((event) => ({
           id: event.id,
           title: event.summary,
           description: event.description || null,
@@ -68,13 +66,11 @@ export default tool({
           isAllDay: !event.start.dateTime,
           status: event.status,
           url: event.htmlLink,
-          attendees: event.attendees?.map((
-            a: { email: string; displayName?: string; responseStatus?: string },
-          ) => ({
+          attendees: event.attendees?.map((a) => ({
             email: a.email,
             name: a.displayName,
             status: a.responseStatus,
-          })) || [],
+          })) ?? [],
         })),
         count: events.length,
         message: todayOnly

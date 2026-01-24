@@ -9,7 +9,6 @@
 
 import { serverLogger as logger } from "#veryfront/utils";
 import { collectAppRoutes, collectPagesRoutes } from "#veryfront/server/build-routes.ts";
-// Direct import from base.ts to avoid circular dependency through barrel
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { AppRouteInfo, RouteInfo } from "#veryfront/server/build-types.ts";
 
@@ -18,9 +17,6 @@ export interface CollectedRoutes {
   app: AppRouteInfo[];
 }
 
-/**
- * Collect all routes from the project
- */
 export async function collectAllRoutes(
   adapter: RuntimeAdapter,
   projectDir: string,
@@ -39,7 +35,8 @@ export async function collectAllRoutes(
   ]);
 
   logger.info(`[BUILD] Collected routes: ${pages.length} pages, ${app.length} app`);
-  if (app.length > 0) {
+
+  if (app.length) {
     logger.info(`[BUILD] App routes: ${app.map((r) => r.path).join(", ")}`);
   }
 

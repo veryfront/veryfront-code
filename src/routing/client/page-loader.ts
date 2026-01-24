@@ -21,10 +21,10 @@ export class PageLoader {
   private pendingSpaRequests = new Map<string, Promise<SpaPageData>>();
 
   private evictIfFull<T>(map: Map<string, T>): void {
-    if (map.size >= MAX_CACHE_SIZE) {
-      const oldest = map.keys().next().value;
-      if (oldest) map.delete(oldest);
-    }
+    if (map.size < MAX_CACHE_SIZE) return;
+
+    const oldest = map.keys().next().value as string | undefined;
+    if (oldest) map.delete(oldest);
   }
 
   getCached(path: string): RouteData | undefined {
@@ -73,14 +73,12 @@ export class PageLoader {
         headers: { "X-Veryfront-Navigation": "client" },
       });
 
-      if (response.ok) {
-        return await response.json();
-      }
+      if (!response.ok) return null;
+      return await response.json();
     } catch (error) {
       logger.debug(`[Veryfront] JSON fetch failed for ${path}, falling back to HTML:`, error);
+      return null;
     }
-
-    return null;
   }
 
   private async fetchAndParseHTML(path: string): Promise<RouteData> {
@@ -89,19 +87,13 @@ export class PageLoader {
     });
 
     if (!response.ok) {
-      throw new NetworkError(`Failed to fetch ${path}`, {
-        status: response.status,
-        path,
-      });
+      throw new NetworkError(`Failed to fetch ${path}`, { status: response.status, path });
     }
 
     const html = await response.text();
     const { content, pageData } = parsePageDataFromHTML(html);
 
-    return {
-      html: content,
-      ...pageData,
-    };
+    return { html: content, ...pageData };
   }
 
   loadPage(path: string): Promise<RouteData> {
@@ -111,24 +103,19 @@ export class PageLoader {
       return Promise.resolve(cachedData);
     }
 
-    // Deduplicate concurrent requests for the same path
     const pending = this.pendingRequests.get(path);
     if (pending) {
       logger.debug(`[Veryfront] Reusing pending request for ${path}`);
       return pending;
     }
 
-    const request = (async () => {
-      try {
-        const data = await this.fetchPageData(path);
-        this.setCache(path, data);
-        return data;
-      } finally {
-        this.pendingRequests.delete(path);
-      }
-    })();
+    const request = this.createPendingRequest(path, this.pendingRequests, async () => {
+      const data = await this.fetchPageData(path);
+      this.setCache(path, data);
+      return data;
+    });
 
-    this.pendingRequests.set(path, request);
+    logger.debug(`[Veryfront] Reusing pending request for ${path}`);
     return request;
   }
 
@@ -175,24 +162,19 @@ export class PageLoader {
       return Promise.resolve(cachedData);
     }
 
-    // Deduplicate concurrent requests for the same path
     const pending = this.pendingSpaRequests.get(path);
     if (pending) {
       logger.debug(`[Veryfront] Reusing pending SPA request for ${path}`);
       return pending;
     }
 
-    const request = (async () => {
-      try {
-        const data = await this.fetchSpaPageData(path);
-        this.setSpaCache(path, data);
-        return data;
-      } finally {
-        this.pendingSpaRequests.delete(path);
-      }
-    })();
+    const request = this.createPendingRequest(path, this.pendingSpaRequests, async () => {
+      const data = await this.fetchSpaPageData(path);
+      this.setSpaCache(path, data);
+      return data;
+    });
 
-    this.pendingSpaRequests.set(path, request);
+    logger.debug(`[Veryfront] Reusing pending SPA request for ${path}`);
     return request;
   }
 
@@ -210,5 +192,22 @@ export class PageLoader {
         error instanceof Error ? error : new Error(String(error)),
       );
     }
+  }
+
+  private createPendingRequest<T>(
+    path: string,
+    pendingMap: Map<string, Promise<T>>,
+    fetcher: () => Promise<T>,
+  ): Promise<T> {
+    const request = (async () => {
+      try {
+        return await fetcher();
+      } finally {
+        pendingMap.delete(path);
+      }
+    })();
+
+    pendingMap.set(path, request);
+    return request;
   }
 }

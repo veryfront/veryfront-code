@@ -13,54 +13,58 @@ export function defineConfigWithEnv(
   return factory(runtimeEnv.nodeEnv);
 }
 
-export function mergeConfigs(
-  ...configs: Partial<VeryfrontConfig>[]
-): VeryfrontConfig {
-  const merged: Partial<VeryfrontConfig> = {};
-
-  for (const config of configs) {
-    Object.assign(merged, config);
-  }
-
-  return merged as VeryfrontConfig;
+export function mergeConfigs(...configs: Partial<VeryfrontConfig>[]): VeryfrontConfig {
+  return Object.assign({}, ...configs) as VeryfrontConfig;
 }
 
 export async function validateConfig(config: unknown): Promise<void> {
   if (!config || typeof config !== "object") {
-    throw toError(createError({
-      type: "config",
-      message: "Configuration must be an object",
-    }));
+    throw toError(
+      createError({
+        type: "config",
+        message: "Configuration must be an object",
+      }),
+    );
   }
 
   const cfg = config as Record<string, unknown>;
+  const dev = cfg.dev;
 
-  if (cfg.dev && typeof cfg.dev === "object") {
-    const dev = cfg.dev as Record<string, unknown>;
-    if (dev.port !== undefined) {
+  if (dev && typeof dev === "object") {
+    const port = (dev as Record<string, unknown>).port;
+
+    if (port !== undefined) {
       const { MIN_PORT, MAX_PORT } = await import("../utils/constants/network.ts");
-      if (typeof dev.port !== "number" || dev.port < MIN_PORT || dev.port > MAX_PORT) {
-        throw toError(createError({
-          type: "config",
-          message: `dev.port must be a number between ${MIN_PORT} and ${MAX_PORT}`,
-          context: {
-            field: "dev.port",
-            value: dev.port,
-            expected: `number between ${MIN_PORT} and ${MAX_PORT}`,
-          },
-        }));
+
+      if (typeof port !== "number" || port < MIN_PORT || port > MAX_PORT) {
+        throw toError(
+          createError({
+            type: "config",
+            message: `dev.port must be a number between ${MIN_PORT} and ${MAX_PORT}`,
+            context: {
+              field: "dev.port",
+              value: port,
+              expected: `number between ${MIN_PORT} and ${MAX_PORT}`,
+            },
+          }),
+        );
       }
     }
   }
 
-  if (cfg.build && typeof cfg.build === "object") {
-    const build = cfg.build as Record<string, unknown>;
-    if (build.outDir !== undefined && typeof build.outDir !== "string") {
-      throw toError(createError({
-        type: "config",
-        message: "build.outDir must be a string",
-        context: { field: "build.outDir", value: build.outDir, expected: "string" },
-      }));
+  const build = cfg.build;
+
+  if (build && typeof build === "object") {
+    const outDir = (build as Record<string, unknown>).outDir;
+
+    if (outDir !== undefined && typeof outDir !== "string") {
+      throw toError(
+        createError({
+          type: "config",
+          message: "build.outDir must be a string",
+          context: { field: "build.outDir", value: outDir, expected: "string" },
+        }),
+      );
     }
   }
 }

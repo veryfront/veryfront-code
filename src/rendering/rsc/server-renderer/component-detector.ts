@@ -1,7 +1,6 @@
 import type * as React from "react";
 import type { ClientComponentMeta } from "../types.ts";
 
-/** Component type with RSC metadata */
 export type RSCComponent = React.ComponentType<any> & {
   __rsc_client?: boolean;
   __rsc_id?: string;
@@ -17,15 +16,18 @@ export function isClientComponent(
 ): boolean {
   if (!Component) return false;
 
-  const hasClientMarker = Component.__rsc_client === true ||
-    Component.$$typeof === Symbol.for("react.client.reference");
+  if (
+    Component.__rsc_client === true ||
+    Component.$$typeof === Symbol.for("react.client.reference")
+  ) {
+    return true;
+  }
 
-  return hasClientMarker || clientManifest.has(getComponentId(Component));
+  return clientManifest.has(getComponentId(Component));
 }
 
 export function getComponentId(Component: RSCComponent): string {
-  if (Component.__rsc_id) return Component.__rsc_id;
-  return Component.displayName || Component.name || "Unknown";
+  return Component.__rsc_id ?? Component.displayName ?? Component.name ?? "Unknown";
 }
 
 export function registerClientRef(

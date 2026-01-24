@@ -32,36 +32,30 @@ function extractParentContext(headers: Headers) {
 export function instrumentHttpHandler(
   handler: (request: Request) => Promise<Response> | Response,
 ): (request: Request) => Promise<Response> {
-  return async (request: Request): Promise<Response> => {
+  return async function instrumentedHttpHandler(request: Request): Promise<Response> {
     const startTime = performance.now();
     const url = new URL(request.url);
     const httpAttrs = buildHttpAttributes(request, url);
     const parentContext = extractParentContext(request.headers);
 
     try {
-      const response = await tracer.startActiveSpan(
+      return await tracer.startActiveSpan(
         "http.server.request",
-        {
-          kind: SpanKind.SERVER,
-          attributes: httpAttrs,
-        },
+        { kind: SpanKind.SERVER, attributes: httpAttrs },
         parentContext,
         async (span) => {
           try {
             const response = await handler(request);
-            const duration = performance.now() - startTime;
-            recordResponseSuccess(span, response, duration, httpAttrs);
+            recordResponseSuccess(span, response, performance.now() - startTime, httpAttrs);
             return response;
           } catch (error) {
-            const duration = performance.now() - startTime;
-            recordResponseError(span, error, duration, httpAttrs);
+            recordResponseError(span, error, performance.now() - startTime, httpAttrs);
             throw error;
           } finally {
             span.end();
           }
         },
       );
-      return response as Response;
     } catch (error) {
       logger.debug(
         "[auto-instrument] HTTP handler span failed, falling back to raw handler",
@@ -94,7 +88,8 @@ export function createInstrumentedFetch(
   ): Promise<Response> {
     const startTime = performance.now();
     const urlString = extractFetchUrl(input);
-    const method = init?.method || "GET";
+    const method = init?.method ?? "GET";
+
     const fetchAttrs: HttpAttributes = {
       "http.method": method,
       "http.url": urlString,
@@ -113,37 +108,32 @@ export function createInstrumentedFetch(
     }
 
     try {
-      const response = await tracer.startActiveSpan(
+      return await tracer.startActiveSpan(
         "http.client.fetch",
-        {
-          kind: SpanKind.CLIENT,
-          attributes: fetchAttrs,
-        },
+        { kind: SpanKind.CLIENT, attributes: fetchAttrs },
         async (span) => {
           try {
-            // Inject trace context into headers
             const headers = new Headers(init?.headers);
             propagation.inject(otContext.active(), headers, {
               set: (h, k, v) => h.set(k, v),
             });
 
-            const updatedInit = { ...init, headers };
-            const response = await baseFetch(input, updatedInit);
-            const duration = performance.now() - startTime;
-            recordResponseSuccess(span, response, duration, fetchAttrs);
+            const response = await baseFetch(input, { ...init, headers });
+            recordResponseSuccess(span, response, performance.now() - startTime, fetchAttrs);
             return response;
           } catch (error) {
-            const duration = performance.now() - startTime;
-            recordResponseError(span, error, duration, fetchAttrs);
+            recordResponseError(span, error, performance.now() - startTime, fetchAttrs);
             throw error;
           } finally {
             span.end();
           }
         },
       );
-      return response as Response;
     } catch (error) {
-      logger.debug("[auto-instrument] Fetch span failed, falling back to base fetch", error);
+      logger.debug(
+        "[auto-instrument] Fetch span failed, falling back to base fetch",
+        error,
+      );
       return await baseFetch(input, init);
     }
   };
@@ -167,13 +157,11 @@ function recordResponseSuccess(
 ): void {
   if (!span) return;
 
-  const attributes: Record<string, number | string> = {
+  span.setAttributes({
     "http.status_code": response.status,
-    "http.response.size": Number(response.headers.get("content-length") || 0),
+    "http.response.size": Number(response.headers.get("content-length") ?? 0),
     "http.duration_ms": Math.round(duration),
-  };
-
-  span.setAttributes(attributes);
+  });
 
   if (response.status >= 500) {
     span.setStatus({ code: SpanStatusCode.ERROR });
@@ -219,7 +207,7 @@ function extractFetchUrl(input: RequestInfo | URL): string {
 
 function buildErrorAttributes(error: unknown): ErrorAttributes {
   return {
-    "error": "true",
+    error: "true",
     "error.type": error instanceof Error ? error.constructor.name : "Unknown",
     "error.message": error instanceof Error ? error.message : String(error),
   };

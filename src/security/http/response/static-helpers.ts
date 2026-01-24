@@ -2,23 +2,27 @@ import { CONTENT_TYPES } from "./constants.ts";
 import type { CacheStrategy, CORSConfig, SecurityConfig } from "./types.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
-interface ResponseBuilderConstructor {
-  new (config?: {
-    securityConfig?: SecurityConfig | null;
-    isDev?: boolean;
-    cspUserHeader?: string | null;
-    adapter?: import("#veryfront/platform/adapters/base.ts").RuntimeAdapter;
-  }): ResponseBuilderInstance;
-}
+// deno-lint-ignore no-explicit-any
+type ResponseBuilderConstructor = new (config?: {
+  securityConfig?: SecurityConfig | null;
+  isDev?: boolean;
+  cspUserHeader?: string | null;
+  adapter?: import("#veryfront/platform/adapters/base.ts").RuntimeAdapter;
+}) => ResponseBuilderInstance;
 
 interface ResponseBuilderInstance {
   headers: Headers;
   status: number;
-  withCORS(req: Request, corsConfig?: boolean | CORSConfig): ResponseBuilderInstance;
-  withSecurity(config?: SecurityConfig): ResponseBuilderInstance;
-  withCache(strategy: CacheStrategy): ResponseBuilderInstance;
-  withETag(etag: string): ResponseBuilderInstance;
-  withAllow(methods: string | string[]): ResponseBuilderInstance;
+  // deno-lint-ignore no-explicit-any
+  withCORS(req: Request, corsConfig?: boolean | CORSConfig): any;
+  // deno-lint-ignore no-explicit-any
+  withSecurity(config?: SecurityConfig): any;
+  // deno-lint-ignore no-explicit-any
+  withCache(strategy: CacheStrategy): any;
+  // deno-lint-ignore no-explicit-any
+  withETag(etag: string): any;
+  // deno-lint-ignore no-explicit-any
+  withAllow(methods: string | string[]): any;
   json(data: unknown, status?: number): Response;
   html(body: string, status?: number): Response;
   text(message: string, status?: number): Response;
@@ -43,22 +47,30 @@ function createBuilder(
   },
 ): ResponseBuilderInstance {
   if (!ResponseBuilderClass) {
-    throw toError(createError({
-      type: "config",
-      message: "ResponseBuilder class not initialized",
-    }));
+    throw toError(
+      createError({
+        type: "config",
+        message: "ResponseBuilder class not initialized",
+      }),
+    );
   }
+
   const builder = new ResponseBuilderClass(config);
+
   builder.withCORS(req, config?.corsConfig);
+
   if (config?.securityConfig !== undefined) {
     builder.withSecurity(config.securityConfig ?? undefined);
   }
+
   if (config?.cache) {
     builder.withCache(config.cache);
   }
+
   if (config?.etag) {
     builder.withETag(config.etag);
   }
+
   return builder;
 }
 
@@ -78,9 +90,11 @@ export function error(
   if (contentType === CONTENT_TYPES.JSON) {
     return builder.json({ error: message }, status);
   }
+
   if (contentType === CONTENT_TYPES.HTML) {
     return builder.html(message, status);
   }
+
   return builder.text(message, status);
 }
 
@@ -123,12 +137,12 @@ export function preflight(
 ): Response {
   const builder = createBuilder(req, config);
 
-  const methods = config?.allowMethods ?? "GET,POST,PUT,PATCH,DELETE,OPTIONS";
-  builder.withAllow(methods);
+  builder.withAllow(config?.allowMethods ?? "GET,POST,PUT,PATCH,DELETE,OPTIONS");
 
   const headers = config?.allowHeaders ??
     req.headers.get("access-control-request-headers") ??
     "Content-Type,Authorization";
+
   builder.headers.set(
     "Access-Control-Allow-Headers",
     Array.isArray(headers) ? headers.join(", ") : headers,
@@ -148,6 +162,5 @@ export function stream(
   },
 ): Response {
   const builder = createBuilder(req, config);
-  const contentType = config?.contentType ?? "application/octet-stream";
-  return builder.withContentType(contentType, streamData);
+  return builder.withContentType(config?.contentType ?? "application/octet-stream", streamData);
 }

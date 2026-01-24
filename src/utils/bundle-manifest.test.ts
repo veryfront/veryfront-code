@@ -1,6 +1,7 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
+import { scaleMs } from "#veryfront/testing/timing.ts";
 import {
   type BundleCode,
   type BundleMetadata,
@@ -34,17 +35,14 @@ describe("InMemoryBundleManifestStore", () => {
 
     const retrievedMetadata = await store.getBundleMetadata("test-key");
     assertExists(retrievedMetadata);
-    if (!retrievedMetadata) return; // TypeScript type guard
     assertEquals(retrievedMetadata.hash, metadata.hash);
     assertEquals(retrievedMetadata.codeHash, metadata.codeHash);
 
     const retrievedCode = await store.getBundleCode("code-hash-1");
     assertExists(retrievedCode);
-    if (!retrievedCode) return; // TypeScript type guard
     assertEquals(retrievedCode.code, code.code);
 
-    const available = await store.isAvailable();
-    assertEquals(available, true);
+    assertEquals(await store.isAvailable(), true);
   });
 
   it("TTL expiration", async () => {
@@ -59,15 +57,13 @@ describe("InMemoryBundleManifestStore", () => {
       mode: "development",
     };
 
-    await store.setBundleMetadata("test-key", metadata, 100);
+    await store.setBundleMetadata("test-key", metadata, scaleMs(100));
 
-    let retrieved = await store.getBundleMetadata("test-key");
-    assertExists(retrieved);
+    assertExists(await store.getBundleMetadata("test-key"));
 
     await delay(150);
 
-    retrieved = await store.getBundleMetadata("test-key");
-    assertEquals(retrieved, undefined);
+    assertEquals(await store.getBundleMetadata("test-key"), undefined);
   });
 
   it("source indexing", async () => {
@@ -94,13 +90,10 @@ describe("InMemoryBundleManifestStore", () => {
     await store.setBundleMetadata("key-1", metadata1);
     await store.setBundleMetadata("key-2", metadata2);
 
-    const count = await store.invalidateSource("test.mdx");
-    assertEquals(count, 2);
+    assertEquals(await store.invalidateSource("test.mdx"), 2);
 
-    const retrieved1 = await store.getBundleMetadata("key-1");
-    const retrieved2 = await store.getBundleMetadata("key-2");
-    assertEquals(retrieved1, undefined);
-    assertEquals(retrieved2, undefined);
+    assertEquals(await store.getBundleMetadata("key-1"), undefined);
+    assertEquals(await store.getBundleMetadata("key-2"), undefined);
   });
 
   it("delete bundle", async () => {
@@ -124,10 +117,8 @@ describe("InMemoryBundleManifestStore", () => {
 
     await store.deleteBundle("test-key");
 
-    const retrievedMetadata = await store.getBundleMetadata("test-key");
-    const retrievedCode = await store.getBundleCode("code-hash-3");
-    assertEquals(retrievedMetadata, undefined);
-    assertEquals(retrievedCode, undefined);
+    assertEquals(await store.getBundleMetadata("test-key"), undefined);
+    assertEquals(await store.getBundleCode("code-hash-3"), undefined);
   });
 
   it("clear all", async () => {
@@ -147,15 +138,12 @@ describe("InMemoryBundleManifestStore", () => {
 
     await store.clear();
 
-    const retrievedMetadata = await store.getBundleMetadata("test-key");
-    const retrievedCode = await store.getBundleCode("code-hash-4");
-    assertEquals(retrievedMetadata, undefined);
-    assertEquals(retrievedCode, undefined);
+    assertEquals(await store.getBundleMetadata("test-key"), undefined);
+    assertEquals(await store.getBundleCode("code-hash-4"), undefined);
   });
 
   it("statistics", async () => {
     const store = new InMemoryBundleManifestStore();
-
     const now = Date.now();
 
     const metadata1: BundleMetadata = {
@@ -194,7 +182,7 @@ describe("computeContentHash", () => {
     const hash2 = await computeContentHash(content);
 
     assertEquals(hash1, hash2);
-    assertEquals(hash1.length, 64); // SHA-256 hex string
+    assertEquals(hash1.length, 64);
   });
 });
 
@@ -209,7 +197,7 @@ describe("computeCodeHash", () => {
     const hash2 = await computeCodeHash(code);
 
     assertEquals(hash1, hash2);
-    assertEquals(hash1.length, 64); // SHA-256 hex string
+    assertEquals(hash1.length, 64);
   });
 
   it("different for different content", async () => {

@@ -6,20 +6,24 @@ export function createWatcherIterator(
   isClosed: () => boolean,
   isAborted: () => boolean,
 ): AsyncIterator<FileChangeEvent> {
+  function isDone(): boolean {
+    return isClosed() || isAborted();
+  }
+
+  function doneResult(): IteratorResult<FileChangeEvent> {
+    return { done: true, value: undefined };
+  }
+
   return {
     next(): Promise<IteratorResult<FileChangeEvent>> {
-      if (isClosed() || isAborted()) {
-        return Promise.resolve({ done: true, value: undefined });
-      }
+      if (isDone()) return Promise.resolve(doneResult());
 
-      if (eventQueue.length > 0) {
-        const event = eventQueue.shift()!;
-        return Promise.resolve({ done: false, value: event });
-      }
+      const event = eventQueue.shift();
+      if (event) return Promise.resolve({ done: false, value: event });
 
       return new Promise((resolve) => {
-        if (isClosed() || isAborted()) {
-          resolve({ done: true, value: undefined });
+        if (isDone()) {
+          resolve(doneResult());
           return;
         }
         setResolver(resolve);
@@ -27,7 +31,7 @@ export function createWatcherIterator(
     },
 
     return(): Promise<IteratorResult<FileChangeEvent>> {
-      return Promise.resolve({ done: true, value: undefined });
+      return Promise.resolve(doneResult());
     },
   };
 }
@@ -39,12 +43,13 @@ export function enqueueWatchEvent(
   setResolver: (resolver: ((value: IteratorResult<FileChangeEvent>) => void) | null) => void,
 ): void {
   const resolver = getResolver();
-  if (resolver) {
-    resolver({ done: false, value: event });
-    setResolver(null);
-  } else {
+  if (!resolver) {
     eventQueue.push(event);
+    return;
   }
+
+  resolver({ done: false, value: event });
+  setResolver(null);
 }
 
 export function createFileWatcher(
@@ -52,7 +57,7 @@ export function createFileWatcher(
   cleanup: () => void,
 ): FileWatcher {
   return {
-    [Symbol.asyncIterator]() {
+    [Symbol.asyncIterator](): AsyncIterator<FileChangeEvent> {
       return iterator;
     },
     close: cleanup,

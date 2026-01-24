@@ -17,14 +17,15 @@ const EXTENSION_LOADERS: Record<string, Loader> = {
   ".ts": "ts",
   ".jsx": "jsx",
   ".js": "js",
-  ".mdx": "jsx", // MDX pre-compiled to JSX
-  ".md": "jsx", // MD files also go through MDX compiler
+  ".mdx": "jsx",
+  ".md": "jsx",
   ".css": "css",
   ".json": "json",
 };
 
 export function getLoaderFromPath(filePath: string): Loader {
-  const ext = filePath.slice(filePath.lastIndexOf("."));
+  const extIndex = filePath.lastIndexOf(".");
+  const ext = extIndex === -1 ? "" : filePath.slice(extIndex);
   return EXTENSION_LOADERS[ext] ?? "tsx";
 }
 

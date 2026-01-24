@@ -31,13 +31,15 @@ export class ElementValidator {
     pageElement: React.ReactNode,
     inspectionEnabled = false,
   ): React.ReactElement {
+    const inspectionOptions: InspectionOptions = {
+      maxDepth: this.maxDepth,
+      debugMode: this.debugMode,
+    };
+
     const normalizationOptions: NormalizationOptions = {
       inspectionEnabled,
       debugMode: this.debugMode,
-      inspectionOptions: {
-        maxDepth: this.maxDepth,
-        debugMode: this.debugMode,
-      },
+      inspectionOptions,
     };
 
     return ensureValidReactElement(pageElement, normalizationOptions);

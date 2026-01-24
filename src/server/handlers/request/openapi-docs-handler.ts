@@ -21,43 +21,43 @@ export class OpenAPIDocsHandler extends BaseHandler {
     name: "OpenAPIDocsHandler",
     priority: PRIORITY_HIGH_DEV as HandlerPriority,
     patterns: [{ pattern: DEFAULT_DOCS_PATH, exact: true }],
-    // Enable by default, can be disabled via config.openapi.docs = false
     enabled: (ctx) => ctx.config?.openapi?.enabled !== false && ctx.config?.openapi?.docs !== false,
   };
 
-  /**
-   * Check if request matches configured docs path.
-   */
   protected override shouldHandle(req: Request, ctx: HandlerContext): boolean {
     const url = new URL(req.url);
-    const docsPath = ctx.config?.openapi?.paths?.docs || DEFAULT_DOCS_PATH;
+    const docsPath = ctx.config?.openapi?.paths?.docs ?? DEFAULT_DOCS_PATH;
     return url.pathname === docsPath;
   }
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
-    if (!this.shouldHandle(req, ctx)) {
-      return Promise.resolve(this.continue());
-    }
+    if (!this.shouldHandle(req, ctx)) return Promise.resolve(this.continue());
 
     const html = this.generateDocsPage(ctx);
-
     const isDev = ctx.requestContext?.isLocalDev ?? false;
+
     const response = this.createResponseBuilder(ctx)
-      .withCache(!isDev ? { maxAge: 3600, public: true } : "no-cache")
+      .withCache(isDev ? "no-cache" : { maxAge: 3600, public: true })
       .withContentType("text/html; charset=utf-8", html, HTTP_OK);
 
     return Promise.resolve(this.respond(response));
   }
 
-  /**
-   * Generate the HTML page with embedded Scalar UI.
-   */
   private generateDocsPage(ctx: HandlerContext): string {
-    const specUrl = ctx.config?.openapi?.paths?.json || DEFAULT_JSON_PATH;
-    const title = escapeHtml(ctx.config?.openapi?.title || "API Documentation");
+    const specUrl = ctx.config?.openapi?.paths?.json ?? DEFAULT_JSON_PATH;
+    const title = escapeHtml(ctx.config?.openapi?.title ?? "API Documentation");
     const description = ctx.config?.openapi?.description
       ? escapeHtml(ctx.config.openapi.description)
       : "";
+
+    const configuration = JSON.stringify({
+      theme: "purple",
+      layout: "modern",
+      hideModels: false,
+      hideDownloadButton: false,
+      hideTryIt: false,
+      hideClientButton: false,
+    });
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -77,16 +77,7 @@ export class OpenAPIDocsHandler extends BaseHandler {
   <script
     id="api-reference"
     data-url="${specUrl}"
-    data-configuration='${
-      JSON.stringify({
-        theme: "purple",
-        layout: "modern",
-        hideModels: false,
-        hideDownloadButton: false,
-        hideTryIt: false,
-        hideClientButton: false,
-      })
-    }'
+    data-configuration='${configuration}'
   ></script>
   <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
 </body>

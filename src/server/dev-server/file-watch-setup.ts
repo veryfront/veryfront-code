@@ -7,7 +7,6 @@ import { OptimizedFileWatcher } from "./file-watcher.ts";
 import type { RouteDiscovery } from "./route-discovery.ts";
 import { ReloadNotifier } from "../reload-notifier.ts";
 
-// Log metrics every N batches (deterministic instead of random sampling)
 const METRICS_LOG_INTERVAL = 10;
 
 export class FileWatchSetup {
@@ -39,13 +38,10 @@ export class FileWatchSetup {
       const watchPaths: string[] = [];
       for (const path of potentialPaths) {
         try {
-          const exists = await this.adapter.fs.exists(path);
-          if (exists) {
-            const stat = await this.adapter.fs.stat(path);
-            if (stat.isDirectory) {
-              watchPaths.push(path);
-            }
-          }
+          if (!(await this.adapter.fs.exists(path))) continue;
+
+          const stat = await this.adapter.fs.stat(path);
+          if (stat.isDirectory) watchPaths.push(path);
         } catch (error) {
           logger.debug(`[HMR] Directory not found, skipping: ${path}`, error);
         }
@@ -56,13 +52,13 @@ export class FileWatchSetup {
         return;
       }
 
-      logger.debug(`[HMR] Initializing optimized file watcher with ${this.debounceMs}ms debounce`);
+      logger.debug(
+        `[HMR] Initializing optimized file watcher with ${this.debounceMs}ms debounce`,
+      );
 
       this.optimizedWatcher = new OptimizedFileWatcher(
         this.debounceMs,
-        async (changes: string[]) => {
-          await this.handleBatchedFileChanges(changes);
-        },
+        (changes) => this.handleBatchedFileChanges(changes),
       );
 
       this.watcherController = new AbortController();
@@ -70,6 +66,7 @@ export class FileWatchSetup {
         recursive: true,
         signal: this.watcherController.signal,
       });
+
       this.fileWatcher = watcher;
       this.processFileWatcher(watcher, this.watcherController.signal);
     } catch (error) {
@@ -84,14 +81,15 @@ export class FileWatchSetup {
     try {
       for await (const event of watcher) {
         if (signal.aborted) break;
-        try {
-          const paths = event.paths;
 
+        try {
+          const { paths } = event;
           if (this.optimizedWatcher) {
             this.optimizedWatcher.handleChange(paths);
-          } else {
-            await this.handleImmediateFileChange(paths);
+            continue;
           }
+
+          await this.handleImmediateFileChange(paths);
         } catch (error) {
           logger.error("[HMR] Failed to handle file change", error);
         }
@@ -103,56 +101,38 @@ export class FileWatchSetup {
     }
   }
 
-  private async handleBatchedFileChanges(changes: string[]): Promise<void> {
-    const startTime = performance.now();
-
-    await handleErrorWithFallback(
-      () => this.routeDiscovery.discoverRoutes(),
-      undefined,
-      logger,
-    );
+  private async refreshAndReload(paths: string[], logMessage: string): Promise<void> {
+    await handleErrorWithFallback(() => this.routeDiscovery.discoverRoutes(), undefined, logger);
     this.invalidateHandler();
 
-    const display = changes
-      .map((p) => p.replace(this.projectDir, "."))
-      .join(", ");
-
-    const duration = (performance.now() - startTime).toFixed(0);
-    logger.debug(`[HMR] Batch processed ${changes.length} file changes in ${duration}ms`, {
-      files: display,
-    });
+    const display = paths.map((p) => p.replace(this.projectDir, ".")).join(", ");
+    logger.debug(logMessage, { files: display });
 
     this.hmrServer.sendUpdate({ type: "reload", timestamp: Date.now() });
 
     // Also trigger ReloadNotifier for /_ws WebSocket clients (preview HMR)
     // This enables HMR for proxy mode where browsers connect via /_ws
-    ReloadNotifier.triggerReload(changes);
+    ReloadNotifier.triggerReload(paths);
+  }
 
-    // Log metrics every METRICS_LOG_INTERVAL batches (deterministic)
+  private async handleBatchedFileChanges(changes: string[]): Promise<void> {
+    const startTime = performance.now();
+
+    await this.refreshAndReload(changes, "");
+
+    const duration = (performance.now() - startTime).toFixed(0);
+    logger.debug(`[HMR] Batch processed ${changes.length} file changes in ${duration}ms`, {
+      files: changes.map((p) => p.replace(this.projectDir, ".")).join(", "),
+    });
+
     this.batchCount++;
     if (this.optimizedWatcher && this.batchCount % METRICS_LOG_INTERVAL === 0) {
-      const metrics = this.optimizedWatcher.getMetrics();
-      logger.debug("[HMR] Performance metrics", metrics);
+      logger.debug("[HMR] Performance metrics", this.optimizedWatcher.getMetrics());
     }
   }
 
   private async handleImmediateFileChange(paths: string[]): Promise<void> {
-    await handleErrorWithFallback(
-      () => this.routeDiscovery.discoverRoutes(),
-      undefined,
-      logger,
-    );
-    this.invalidateHandler();
-
-    const display = Array.isArray(paths)
-      ? paths.map((p) => p.replace(this.projectDir, ".")).join(", ")
-      : "(unknown)";
-    logger.debug(`[HMR] file change`, { files: display });
-
-    this.hmrServer.sendUpdate({ type: "reload", timestamp: Date.now() });
-
-    // Also trigger ReloadNotifier for /_ws WebSocket clients (preview HMR)
-    ReloadNotifier.triggerReload(paths);
+    await this.refreshAndReload(paths, "[HMR] file change");
   }
 
   getMetrics() {
@@ -161,17 +141,14 @@ export class FileWatchSetup {
 
   cleanup(): void {
     this.watcherController?.abort();
+    this.optimizedWatcher?.cleanup();
 
-    if (this.optimizedWatcher) {
-      this.optimizedWatcher.cleanup();
-    }
+    if (!this.fileWatcher) return;
 
-    if (this.fileWatcher) {
-      try {
-        this.fileWatcher.close();
-      } catch (error) {
-        logger.debug("[FileWatchSetup] Error closing file watcher (non-critical)", error);
-      }
+    try {
+      this.fileWatcher.close();
+    } catch (error) {
+      logger.debug("[FileWatchSetup] Error closing file watcher (non-critical)", error);
     }
   }
 }

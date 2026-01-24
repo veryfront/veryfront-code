@@ -11,18 +11,20 @@ import { escapeHtml } from "#veryfront/html/html-escape.ts";
 export class NotFoundHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "NotFoundHandler",
-    priority: PRIORITY_FALLBACK as HandlerPriority, // FALLBACK priority - runs last
-    patterns: [], // Matches everything as fallback
+    priority: PRIORITY_FALLBACK as HandlerPriority,
+    patterns: [],
   };
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const pathname = new URL(req.url).pathname;
+    const securityConfig = ctx.securityConfig ?? undefined;
+    const corsConfig = ctx.securityConfig?.cors;
 
     try {
       const html = this.generate404Html(pathname);
       const response = ResponseBuilder.html(html, req, {
-        securityConfig: ctx.securityConfig ?? undefined,
-        corsConfig: ctx.securityConfig?.cors,
+        securityConfig,
+        corsConfig,
         cache: "no-cache",
         status: HTTP_NOT_FOUND,
       });
@@ -31,12 +33,14 @@ export class NotFoundHandler extends BaseHandler {
     } catch (e) {
       this.logDebug("404 fallback error", { error: this.getErrorMessage(e) }, ctx);
 
-      return Promise.resolve(this.respond(
-        ResponseBuilder.error(HTTP_INTERNAL_SERVER_ERROR, "Internal Server Error", req, {
-          securityConfig: ctx.securityConfig ?? undefined,
-          corsConfig: ctx.securityConfig?.cors,
-        }),
-      ));
+      const response = ResponseBuilder.error(
+        HTTP_INTERNAL_SERVER_ERROR,
+        "Internal Server Error",
+        req,
+        { securityConfig, corsConfig },
+      );
+
+      return Promise.resolve(this.respond(response));
     }
   }
 

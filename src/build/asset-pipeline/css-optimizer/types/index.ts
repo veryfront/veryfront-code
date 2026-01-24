@@ -1,12 +1,3 @@
-/**
- * Type definitions for CSS Optimizer
- */
-
-/**
- * Lightning CSS library types
- * Since lightningcss is an optional dependency loaded dynamically,
- * we define minimal type interfaces for the functionality we use.
- */
 export interface LightningCSSTransformOptions {
   filename: string;
   code: Uint8Array;
@@ -33,9 +24,6 @@ export interface BrowserTargets {
   edge?: number;
 }
 
-/**
- * CSS Optimization configuration
- */
 export interface CSSOptimizationOptions {
   enabled?: boolean;
   minify?: boolean;
@@ -50,9 +38,6 @@ export interface CSSOptimizationOptions {
   sourceMap?: boolean;
 }
 
-/**
- * CSS Bundle result
- */
 export interface CSSBundle {
   file: string;
   content: string;
@@ -62,9 +47,6 @@ export interface CSSBundle {
   savings: number;
 }
 
-/**
- * Critical CSS extraction result
- */
 export interface CriticalCSSResult {
   critical: string;
   remaining: string;
@@ -72,17 +54,11 @@ export interface CriticalCSSResult {
   remainingSize: number;
 }
 
-/**
- * CSS processing result
- */
 export interface CSSProcessingResult {
   code: string;
   sourceMap?: string;
 }
 
-/**
- * CSS Optimization Strategy interface
- */
 export interface CSSOptimizationStrategy {
   readonly name: string;
   readonly priority: number;
@@ -94,9 +70,6 @@ export interface CSSOptimizationStrategy {
   ): Promise<CSSProcessingResult>;
 }
 
-/**
- * CSS Selector extraction result
- */
 export interface SelectorExtractionResult {
   selectors: Set<string>;
   classes: string[];
@@ -104,9 +77,6 @@ export interface SelectorExtractionResult {
   tags: string[];
 }
 
-/**
- * CSS Optimizer statistics
- */
 export interface CSSOptimizerStats {
   totalFiles: number;
   originalSize: number;

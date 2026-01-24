@@ -1,4 +1,4 @@
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { findInstalledTools, parseTargetFlag, uninstallTargets } from "./uninstall.ts";
 import {
@@ -109,22 +109,13 @@ describe("uninstallTargets", () => {
   });
 
   it("should throw for empty targets", async () => {
-    let error: Error | null = null;
-    try {
-      await uninstallTargets([], { cwd: tempDir });
-    } catch (e) {
-      error = e as Error;
-    }
-    assertEquals(error !== null, true);
+    await assertRejects(() => uninstallTargets([], { cwd: tempDir }), Error);
   });
 
   it("should throw for invalid targets", async () => {
-    let error: Error | null = null;
-    try {
-      await uninstallTargets(["invalid" as never], { cwd: tempDir });
-    } catch (e) {
-      error = e as Error;
-    }
-    assertEquals(error !== null, true);
+    await assertRejects(
+      () => uninstallTargets(["invalid" as never], { cwd: tempDir }),
+      Error,
+    );
   });
 });

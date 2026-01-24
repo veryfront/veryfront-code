@@ -4,18 +4,20 @@ import { generateThemeVariables } from "./theme-variables.ts";
 
 describe("theme-variables", () => {
   describe("generateThemeVariables", () => {
+    function getResult(): string {
+      return generateThemeVariables();
+    }
+
     it("should include :root selector", () => {
-      const result = generateThemeVariables();
-      assertStringIncludes(result, ":root {");
+      assertStringIncludes(getResult(), ":root {");
     });
 
     it("should include dark theme selector", () => {
-      const result = generateThemeVariables();
-      assertStringIncludes(result, '[data-theme="dark"]');
+      assertStringIncludes(getResult(), '[data-theme="dark"]');
     });
 
     it("should include all required CSS variables", () => {
-      const result = generateThemeVariables();
+      const result = getResult();
       const requiredVars = [
         "--background",
         "--foreground",
@@ -43,45 +45,37 @@ describe("theme-variables", () => {
         "--radius",
       ];
 
-      for (const varName of requiredVars) {
-        assertStringIncludes(result, varName);
-      }
+      for (const varName of requiredVars) assertStringIncludes(result, varName);
     });
 
     it("should include input-related variables", () => {
-      const result = generateThemeVariables();
+      const result = getResult();
       assertStringIncludes(result, "--input-foreground");
       assertStringIncludes(result, "--input-border");
       assertStringIncludes(result, "--input-placeholder");
     });
 
     it("should include code-block variable", () => {
-      const result = generateThemeVariables();
-      assertStringIncludes(result, "--code-block");
+      assertStringIncludes(getResult(), "--code-block");
     });
 
     it("should include vf-tailwind base styles", () => {
-      const result = generateThemeVariables();
+      const result = getResult();
       assertStringIncludes(result, ".vf-tailwind");
       assertStringIncludes(result, "line-height: 1.5");
       assertStringIncludes(result, "font-family:");
     });
 
     it("should include tap-highlight-color reset", () => {
-      const result = generateThemeVariables();
-      assertStringIncludes(result, "-webkit-tap-highlight-color");
+      assertStringIncludes(getResult(), "-webkit-tap-highlight-color");
     });
 
     it("should include Inter as primary font", () => {
-      const result = generateThemeVariables();
-      assertStringIncludes(result, "Inter");
+      assertStringIncludes(getResult(), "Inter");
     });
 
     it("should have different values for light and dark modes", () => {
-      const result = generateThemeVariables();
-      // Light mode background is white (0 0% 100%)
-      // Dark mode background is dark (222.2 84% 4.9%)
-      // Both should be present
+      const result = getResult();
       assertStringIncludes(result, "0 0% 100%");
       assertStringIncludes(result, "222.2 84% 4.9%");
     });

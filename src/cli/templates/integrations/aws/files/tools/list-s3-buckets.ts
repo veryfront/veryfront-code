@@ -2,9 +2,6 @@ import { tool } from 'veryfront/tool';
 import { z } from 'zod';
 import { getAWSClient } from '../../lib/aws-client';
 
-/**
- * Tool for listing all S3 buckets in the AWS account
- */
 export const listS3BucketsTool = tool({
   name: 'list-s3-buckets',
   description: 'List all S3 buckets in your AWS account. Returns bucket names and creation dates.',
@@ -13,8 +10,9 @@ export const listS3BucketsTool = tool({
     try {
       const client = getAWSClient();
       const buckets = await client.listS3Buckets();
+      const count = buckets.length;
 
-      if (buckets.length === 0) {
+      if (count === 0) {
         return {
           success: true,
           message: 'No S3 buckets found in your AWS account.',
@@ -24,12 +22,12 @@ export const listS3BucketsTool = tool({
 
       return {
         success: true,
-        message: `Found ${buckets.length} S3 bucket${buckets.length === 1 ? '' : 's'}.`,
-        buckets: buckets.map(bucket => ({
+        message: `Found ${count} S3 bucket${count === 1 ? '' : 's'}.`,
+        buckets: buckets.map((bucket) => ({
           name: bucket.name,
           creationDate: bucket.creationDate?.toISOString(),
         })),
-        count: buckets.length,
+        count,
       };
     } catch (error) {
       return {

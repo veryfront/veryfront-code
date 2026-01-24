@@ -1,11 +1,6 @@
 import { getAccessToken } from "./token-store.ts";
 
-// Mailchimp API base URL - note that the actual server prefix is obtained from metadata
 let MAILCHIMP_BASE_URL = "https://us1.api.mailchimp.com/3.0";
-
-interface MailchimpResponse<T> {
-  [key: string]: unknown;
-}
 
 interface MailchimpCampaign {
   id: string;
@@ -131,39 +126,49 @@ interface MailchimpMetadata {
   };
 }
 
-// Initialize the API base URL with the correct datacenter
-async function initializeBaseUrl() {
+function buildQueryString(params: Record<string, string | number | undefined>): string {
+  const searchParams = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined) continue;
+    searchParams.set(key, String(value));
+  }
+
+  const query = searchParams.toString();
+  return query ? `?${query}` : "";
+}
+
+async function fetchMetadata(token: string): Promise<MailchimpMetadata> {
+  const response = await fetch("https://login.mailchimp.com/oauth2/metadata", {
+    headers: { Authorization: `OAuth ${token}` },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch Mailchimp metadata: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+async function initializeBaseUrl(): Promise<void> {
   const token = await getAccessToken();
   if (!token) return;
 
   try {
-    // Get metadata to determine the correct datacenter
-    const response = await fetch("https://login.mailchimp.com/oauth2/metadata", {
-      headers: {
-        Authorization: `OAuth ${token}`,
-      },
-    });
-
-    if (response.ok) {
-      const metadata = (await response.json()) as MailchimpMetadata;
-      MAILCHIMP_BASE_URL = `https://${metadata.dc}.api.mailchimp.com/3.0`;
-    }
+    const metadata = await fetchMetadata(token);
+    MAILCHIMP_BASE_URL = `https://${metadata.dc}.api.mailchimp.com/3.0`;
   } catch (error) {
     // Fallback to us1 if metadata fetch fails
     console.error("Failed to fetch Mailchimp metadata:", error);
   }
 }
 
-async function mailchimpFetch<T>(
-  endpoint: string,
-  options: RequestInit = {},
-): Promise<T> {
+async function mailchimpFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = await getAccessToken();
   if (!token) {
     throw new Error("Not authenticated with Mailchimp. Please connect your account.");
   }
 
-  // Initialize base URL if not done yet
   if (MAILCHIMP_BASE_URL === "https://us1.api.mailchimp.com/3.0") {
     await initializeBaseUrl();
   }
@@ -178,9 +183,9 @@ async function mailchimpFetch<T>(
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
+    const error = (await response.json().catch(() => ({}))) as { detail?: string };
     throw new Error(
-      `Mailchimp API error: ${response.status} ${(error as { detail?: string }).detail || response.statusText}`,
+      `Mailchimp API error: ${response.status} ${error.detail ?? response.statusText}`,
     );
   }
 
@@ -192,15 +197,13 @@ export async function listCampaigns(options?: {
   count?: number;
   offset?: number;
 }): Promise<MailchimpCampaign[]> {
-  const params = new URLSearchParams();
-  if (options?.status) params.set("status", options.status);
-  if (options?.count) params.set("count", options.count.toString());
-  if (options?.offset) params.set("offset", options.offset.toString());
+  const query = buildQueryString({
+    status: options?.status,
+    count: options?.count,
+    offset: options?.offset,
+  });
 
-  const queryString = params.toString();
-  const response = await mailchimpFetch<{ campaigns: MailchimpCampaign[] }>(
-    `/campaigns${queryString ? `?${queryString}` : ""}`,
-  );
+  const response = await mailchimpFetch<{ campaigns: MailchimpCampaign[] }>(`/campaigns${query}`);
   return response.campaigns;
 }
 
@@ -208,18 +211,13 @@ export async function getCampaign(campaignId: string): Promise<MailchimpCampaign
   return mailchimpFetch<MailchimpCampaign>(`/campaigns/${campaignId}`);
 }
 
-export async function listLists(options?: {
-  count?: number;
-  offset?: number;
-}): Promise<MailchimpList[]> {
-  const params = new URLSearchParams();
-  if (options?.count) params.set("count", options.count.toString());
-  if (options?.offset) params.set("offset", options.offset.toString());
+export async function listLists(options?: { count?: number; offset?: number }): Promise<MailchimpList[]> {
+  const query = buildQueryString({
+    count: options?.count,
+    offset: options?.offset,
+  });
 
-  const queryString = params.toString();
-  const response = await mailchimpFetch<{ lists: MailchimpList[] }>(
-    `/lists${queryString ? `?${queryString}` : ""}`,
-  );
+  const response = await mailchimpFetch<{ lists: MailchimpList[] }>(`/lists${query}`);
   return response.lists;
 }
 
@@ -235,14 +233,14 @@ export async function listMembers(
     offset?: number;
   },
 ): Promise<MailchimpMember[]> {
-  const params = new URLSearchParams();
-  if (options?.status) params.set("status", options.status);
-  if (options?.count) params.set("count", options.count.toString());
-  if (options?.offset) params.set("offset", options.offset.toString());
+  const query = buildQueryString({
+    status: options?.status,
+    count: options?.count,
+    offset: options?.offset,
+  });
 
-  const queryString = params.toString();
   const response = await mailchimpFetch<{ members: MailchimpMember[] }>(
-    `/lists/${listId}/members${queryString ? `?${queryString}` : ""}`,
+    `/lists/${listId}/members${query}`,
   );
   return response.members;
 }
@@ -253,15 +251,5 @@ export async function getMetadata(): Promise<MailchimpMetadata> {
     throw new Error("Not authenticated with Mailchimp. Please connect your account.");
   }
 
-  const response = await fetch("https://login.mailchimp.com/oauth2/metadata", {
-    headers: {
-      Authorization: `OAuth ${token}`,
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to fetch Mailchimp metadata: ${response.statusText}`);
-  }
-
-  return response.json();
+  return fetchMetadata(token);
 }

@@ -2,24 +2,18 @@
  * Redis client for job queue operations
  */
 
-// Helper for Cross-Platform environment access
 function getEnv(key: string): string | undefined {
   // @ts-ignore - Deno global
-  if (typeof Deno !== "undefined") {
-    // @ts-ignore - Deno global
-    return Deno.env.get(key);
-  } // @ts-ignore - process global
-  else if (typeof process !== "undefined" && process.env) {
-    // @ts-ignore - process global
-    return process.env[key];
-  }
+  if (typeof Deno !== "undefined") return Deno.env.get(key);
+
+  // @ts-ignore - process global
+  if (typeof process !== "undefined" && process.env) return process.env[key];
+
   return undefined;
 }
 
-const _REDIS_URL = getEnv("REDIS_URL") || "redis://localhost:6379";
+const _REDIS_URL = getEnv("REDIS_URL") ?? "redis://localhost:6379";
 
-// Simple Redis-like job queue using in-memory storage
-// In production, replace with actual redis client
 interface Job {
   id: string;
   type: string;
@@ -35,26 +29,25 @@ const jobs = new Map<string, Job>();
 
 export function queueJob(type: string, data: Record<string, unknown>): Promise<string> {
   const id = crypto.randomUUID();
-  const job: Job = {
+  jobs.set(id, {
     id,
     type,
     data,
     status: "pending",
     createdAt: Date.now(),
-  };
-  jobs.set(id, job);
+  });
+
   console.log(`[Redis] Queued job ${id} of type ${type}`);
 
-  // Simulate async processing
   setTimeout(() => {
-    processJob(id);
+    void processJob(id);
   }, 100);
 
   return Promise.resolve(id);
 }
 
 export function getJob(id: string): Promise<Job | null> {
-  return Promise.resolve(jobs.get(id) || null);
+  return Promise.resolve(jobs.get(id) ?? null);
 }
 
 export async function processJob(id: string): Promise<void> {
@@ -65,8 +58,7 @@ export async function processJob(id: string): Promise<void> {
   console.log(`[Redis] Processing job ${id}`);
 
   try {
-    // Simulate job processing
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await new Promise<void>((resolve) => setTimeout(resolve, 500));
 
     job.status = "completed";
     job.completedAt = Date.now();
@@ -80,5 +72,6 @@ export async function processJob(id: string): Promise<void> {
 }
 
 export function listJobs(): Promise<Job[]> {
-  return Promise.resolve(Array.from(jobs.values()).sort((a, b) => b.createdAt - a.createdAt));
+  const list = Array.from(jobs.values()).sort((a, b) => b.createdAt - a.createdAt);
+  return Promise.resolve(list);
 }

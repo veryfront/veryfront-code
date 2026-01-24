@@ -12,15 +12,36 @@ import {
 describe("MDXCacheAdapter", () => {
   let adapter: MDXCacheAdapter;
   let manifestStore: BundleManifestStore;
+
   const testConfig: VeryfrontConfig = {
     cache: {
       bundleManifest: {
         enabled: true,
         type: "memory",
-        ttl: 60000, // 1 minute for testing
+        ttl: 60000,
       },
     },
   };
+
+  function createBundle(overrides: Partial<{
+    compiledCode: string;
+    frontmatter: Record<string, unknown>;
+    headings: unknown[];
+    nodeMap: Map<unknown, unknown>;
+  }> = {}): {
+    compiledCode: string;
+    frontmatter: Record<string, unknown>;
+    headings: unknown[];
+    nodeMap: Map<unknown, unknown>;
+  } {
+    return {
+      compiledCode: "export default function() {}",
+      frontmatter: {},
+      headings: [],
+      nodeMap: new Map(),
+      ...overrides,
+    };
+  }
 
   beforeEach(() => {
     manifestStore = new InMemoryBundleManifestStore();
@@ -43,30 +64,25 @@ describe("MDXCacheAdapter", () => {
       const hash2 = await adapter.computeHash(content);
 
       expect(hash1).toBe(hash2);
-      expect(hash1).toMatch(/^[a-f0-9]{64}$/); // SHA-256 hex string
+      expect(hash1).toMatch(/^[a-f0-9]{64}$/);
     });
 
     it("should compute different hash for different content", async () => {
-      const content1 = "# Hello World";
-      const content2 = "# Goodbye World";
-
-      const hash1 = await adapter.computeHash(content1);
-      const hash2 = await adapter.computeHash(content2);
+      const hash1 = await adapter.computeHash("# Hello World");
+      const hash2 = await adapter.computeHash("# Goodbye World");
 
       expect(hash1).not.toBe(hash2);
     });
 
     it("should handle empty content", async () => {
-      const content = "";
-      const hash = await adapter.computeHash(content);
+      const hash = await adapter.computeHash("");
 
       expect(hash).toBeTruthy();
       expect(hash).toMatch(/^[a-f0-9]{64}$/);
     });
 
     it("should handle unicode content", async () => {
-      const content = "# 你好世界 🌍";
-      const hash = await adapter.computeHash(content);
+      const hash = await adapter.computeHash("# 你好世界 🌍");
 
       expect(hash).toBeTruthy();
       expect(hash).toMatch(/^[a-f0-9]{64}$/);
@@ -75,12 +91,10 @@ describe("MDXCacheAdapter", () => {
 
   describe("Cache Hit/Miss", () => {
     const testContent = "# Test Page\n\nThis is test content.";
-    const testBundle = {
+    const testBundle = createBundle({
       compiledCode: "export default function MDXContent() { return null; }",
       frontmatter: { title: "Test Page" },
-      headings: [],
-      nodeMap: new Map(),
-    };
+    });
 
     it("should return undefined on cache miss", async () => {
       const result = await adapter.getCachedBundle(testContent);
@@ -107,9 +121,7 @@ describe("MDXCacheAdapter", () => {
     });
 
     it("should handle cache miss with frontmatter", async () => {
-      const frontmatter = { title: "Custom Title" };
-      const result = await adapter.getCachedBundle(testContent, frontmatter);
-
+      const result = await adapter.getCachedBundle(testContent, { title: "Custom Title" });
       expect(result).toBeUndefined();
     });
 
@@ -130,16 +142,13 @@ describe("MDXCacheAdapter", () => {
     });
 
     it("should not cache bundle without compiled code", async () => {
-      const incompleteBundle = {
-        compiledCode: "", // Empty compiled code
-        frontmatter: {},
-        headings: [],
-        nodeMap: new Map(),
-      };
+      await adapter.setCachedBundle(
+        testContent,
+        createBundle({ compiledCode: "" }),
+        "test.mdx",
+      );
 
-      await adapter.setCachedBundle(testContent, incompleteBundle, "test.mdx");
       const cached = await adapter.getCachedBundle(testContent);
-
       expect(cached).toBeUndefined();
     });
   });
@@ -151,7 +160,7 @@ describe("MDXCacheAdapter", () => {
           bundleManifest: {
             enabled: true,
             type: "memory",
-            ttl: 100, // 100ms for testing
+            ttl: 100,
           },
         },
       };
@@ -162,14 +171,7 @@ describe("MDXCacheAdapter", () => {
       });
 
       const content = "# Short TTL Test";
-      const bundle = {
-        compiledCode: "export default function() {}",
-        frontmatter: {},
-        headings: [],
-        nodeMap: new Map(),
-      };
-
-      await shortAdapter.setCachedBundle(content, bundle, "test.mdx");
+      await shortAdapter.setCachedBundle(content, createBundle(), "test.mdx");
 
       const cached1 = await shortAdapter.getCachedBundle(content);
       expect(cached1).toBeDefined();
@@ -187,28 +189,16 @@ describe("MDXCacheAdapter", () => {
       });
 
       const content = "# Production Test";
-      const bundle = {
-        compiledCode: "export default function() {}",
-        frontmatter: {},
-        headings: [],
-        nodeMap: new Map(),
-      };
+      await prodAdapter.setCachedBundle(content, createBundle(), "prod.mdx");
 
-      await prodAdapter.setCachedBundle(content, bundle, "prod.mdx");
       const cached = await prodAdapter.getCachedBundle(content);
-
       expect(cached).toBeDefined();
     });
   });
 
   describe("Cache Invalidation", () => {
     const testContent = "# Test Content";
-    const testBundle = {
-      compiledCode: "export default function() {}",
-      frontmatter: {},
-      headings: [],
-      nodeMap: new Map(),
-    };
+    const testBundle = createBundle();
 
     it("should invalidate specific bundle by content", async () => {
       await adapter.setCachedBundle(testContent, testBundle, "test.mdx");
@@ -224,17 +214,13 @@ describe("MDXCacheAdapter", () => {
 
     it("should invalidate all bundles for a source file", async () => {
       const sourcePath = "/path/to/test.mdx";
-      const content1 = "# Version 1";
-      const content2 = "# Version 2";
-
       const bundle1 = { ...testBundle, compiledCode: "// v1" };
       const bundle2 = { ...testBundle, compiledCode: "// v2" };
 
-      await adapter.setCachedBundle(content1, bundle1, sourcePath);
-      await adapter.setCachedBundle(content2, bundle2, sourcePath);
+      await adapter.setCachedBundle("# Version 1", bundle1, sourcePath);
+      await adapter.setCachedBundle("# Version 2", bundle2, sourcePath);
 
       const count = await adapter.invalidateSource(sourcePath);
-
       expect(count).toBeGreaterThan(0);
     });
 
@@ -255,12 +241,9 @@ describe("MDXCacheAdapter", () => {
 
   describe("Statistics", () => {
     it("should report accurate cache statistics", async () => {
-      const bundle = {
+      const bundle = createBundle({
         compiledCode: "export default function() { return 'test'; }",
-        frontmatter: {},
-        headings: [],
-        nodeMap: new Map(),
-      };
+      });
 
       let stats = await adapter.getStats();
       expect(stats.totalBundles).toBe(0);
@@ -277,16 +260,9 @@ describe("MDXCacheAdapter", () => {
     });
 
     it("should track bundle timestamps", async () => {
-      const bundle = {
-        compiledCode: "export default function() {}",
-        frontmatter: {},
-        headings: [],
-        nodeMap: new Map(),
-      };
-
       const startTime = Date.now();
 
-      await adapter.setCachedBundle("# Test", bundle, "test.mdx");
+      await adapter.setCachedBundle("# Test", createBundle(), "test.mdx");
 
       const stats = await adapter.getStats();
       expect(stats.oldestBundle).toBeGreaterThanOrEqual(startTime);
@@ -314,15 +290,7 @@ describe("MDXCacheAdapter", () => {
       };
       setBundleManifestStore(failingStore);
 
-      const bundle = {
-        compiledCode: "export default function() {}",
-        frontmatter: {},
-        headings: [],
-        nodeMap: new Map(),
-      };
-
-      // Should not throw - just call and await
-      await adapter.setCachedBundle("# Test", bundle, "test.mdx");
+      await adapter.setCachedBundle("# Test", createBundle(), "test.mdx");
     });
 
     it("should handle invalidation errors gracefully", async () => {
@@ -333,7 +301,6 @@ describe("MDXCacheAdapter", () => {
       };
       setBundleManifestStore(failingStore);
 
-      // Should not throw - just call and await
       await adapter.invalidateBundle("# Test");
       await adapter.invalidateSource("/path/to/file");
     });
@@ -359,16 +326,9 @@ describe("MDXCacheAdapter", () => {
       });
 
       const content = "# Dev Test";
-      const _hash = await devAdapter.computeHash(content);
+      await devAdapter.computeHash(content);
 
-      const bundle = {
-        compiledCode: "export default function() {}",
-        frontmatter: {},
-        headings: [],
-        nodeMap: new Map(),
-      };
-
-      await devAdapter.setCachedBundle(content, bundle, "dev.mdx");
+      await devAdapter.setCachedBundle(content, createBundle(), "dev.mdx");
       const cached = await devAdapter.getCachedBundle(content);
 
       expect(cached).toBeDefined();
@@ -381,16 +341,9 @@ describe("MDXCacheAdapter", () => {
       });
 
       const content = "# Prod Test";
-      const bundle = {
-        compiledCode: "export default function() {}",
-        frontmatter: {},
-        headings: [],
-        nodeMap: new Map(),
-      };
+      await prodAdapter.setCachedBundle(content, createBundle(), "prod.mdx");
 
-      await prodAdapter.setCachedBundle(content, bundle, "prod.mdx");
       const cached = await prodAdapter.getCachedBundle(content);
-
       expect(cached).toBeDefined();
     });
 
@@ -406,14 +359,7 @@ describe("MDXCacheAdapter", () => {
       });
 
       const content = "# Shared Content";
-      const bundle = {
-        compiledCode: "export default function() {}",
-        frontmatter: {},
-        headings: [],
-        nodeMap: new Map(),
-      };
-
-      await devAdapter.setCachedBundle(content, bundle, "test.mdx");
+      await devAdapter.setCachedBundle(content, createBundle(), "test.mdx");
 
       const prodCached = await prodAdapter.getCachedBundle(content);
       expect(prodCached).toBeUndefined();
@@ -426,12 +372,11 @@ describe("MDXCacheAdapter", () => {
   describe("Bundle Metadata", () => {
     it("should store bundle with correct metadata", async () => {
       const content = "# Test Metadata";
-      const bundle = {
+      const bundle = createBundle({
         compiledCode: "export default function MDXContent() { return null; }",
         frontmatter: { title: "Test" },
         headings: [{ id: "test", text: "Test", level: 1 }],
-        nodeMap: new Map(),
-      };
+      });
 
       await adapter.setCachedBundle(content, bundle, "/path/to/test.mdx");
 

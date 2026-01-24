@@ -10,24 +10,18 @@
  * @module
  */
 
+const g = globalThis as Record<string, unknown>;
+
 // Disable LRU interval to prevent module-level LRU caches from starting
 // cleanup intervals that leak timers and cause test failures.
-(globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
+g.__vfDisableLruInterval = true;
 
 // Mark test runtime for environment-sensitive code paths.
-(globalThis as Record<string, unknown>).__vfTestEnv = true;
+g.__vfTestEnv = true;
 
 // Mask host env vars that should not affect test outcomes.
-(globalThis as Record<string, unknown>).__vfTestEnvMask = {
-  prefixes: [
-    "VERYFRONT_",
-    "OTEL_",
-    "OAUTH_",
-    "GITHUB_",
-    "OPENAI_",
-    "ANTHROPIC_",
-    "GOOGLE_",
-  ],
+g.__vfTestEnvMask = {
+  prefixes: ["VERYFRONT_", "OTEL_", "OAUTH_", "GITHUB_", "OPENAI_", "ANTHROPIC_", "GOOGLE_"],
 };
 
 /**

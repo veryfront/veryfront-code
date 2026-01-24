@@ -33,116 +33,122 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
  * Main build production orchestrator
  */
 export function buildProduction(options: BuildOptions): Promise<BuildStats> {
-  return withSpan("build.production", async () => {
-    const startTime = Date.now();
+  return withSpan(
+    "build.production",
+    async () => {
+      const startTime = Date.now();
+      const normalizedOptions = normalizeBuildOptions(options);
 
-    // Normalize options
-    const normalizedOptions = normalizeBuildOptions(options);
-
-    // Validate project directory exists (using cross-platform filesystem)
-    try {
-      const fs = createFileSystem();
-      const exists = await fs.exists(normalizedOptions.projectDir);
-      if (!exists) {
-        throw new Error("Directory does not exist");
+      try {
+        const fs = createFileSystem();
+        const exists = await fs.exists(normalizedOptions.projectDir);
+        if (!exists) throw new Error("Directory does not exist");
+      } catch (error) {
+        logger.error(`Project directory check failed: ${error}`);
+        throw toError(
+          createError({
+            type: "config",
+            message: `Invalid project directory: ${normalizedOptions.projectDir} does not exist`,
+          }),
+        );
       }
-    } catch (error) {
-      logger.error(`Project directory check failed: ${error}`);
-      throw toError(createError({
-        type: "config",
-        message: `Invalid project directory: ${normalizedOptions.projectDir} does not exist`,
-      }));
-    }
 
-    logger.info("Starting production build", options);
+      logger.info("Starting production build", options);
 
-    // Initialize build context
-    const context = await withSpan(
-      "build.initializeContext",
-      () => initializeBuildContext(options),
-      {},
-    );
+      const context = await withSpan(
+        "build.initializeContext",
+        () => initializeBuildContext(options),
+        {},
+      );
 
-    // Setup build directories
-    await withSpan("build.setupDirectories", () =>
-      setupBuildDirectories(
-        context.adapter,
-        normalizedOptions.outputDir,
-        normalizedOptions.dryRun,
-      ), {});
+      await withSpan(
+        "build.setupDirectories",
+        () =>
+          setupBuildDirectories(
+            context.adapter,
+            normalizedOptions.outputDir ?? "",
+            normalizedOptions.dryRun ?? false,
+          ),
+        {},
+      );
 
-    // Collect routes
-    const routes = await withSpan("build.collectRoutes", () =>
-      collectAllRoutes(
-        context.adapter,
-        normalizedOptions.projectDir,
-        normalizedOptions.ssg,
-        normalizedOptions.include,
-        normalizedOptions.exclude,
-      ), {});
+      const routes = await withSpan(
+        "build.collectRoutes",
+        () =>
+          collectAllRoutes(
+            context.adapter,
+            normalizedOptions.projectDir,
+            normalizedOptions.ssg ?? true,
+            normalizedOptions.include,
+            normalizedOptions.exclude,
+          ),
+        {},
+      );
 
-    // Run code splitting
-    const splitResult = await withSpan("build.codeSplitting", () =>
-      runCodeSplitting(
-        normalizedOptions.projectDir,
-        normalizedOptions.outputDir,
-        routes.pages,
-        normalizedOptions.enableSplitting,
-        normalizedOptions.dryRun,
-      ), {});
-    context.stats.chunks = splitResult.chunks;
+      const splitResult = await withSpan(
+        "build.codeSplitting",
+        () =>
+          runCodeSplitting(
+            normalizedOptions.projectDir,
+            normalizedOptions.outputDir ?? "",
+            routes.pages,
+            normalizedOptions.enableSplitting ?? true,
+            normalizedOptions.dryRun ?? false,
+          ),
+        {},
+      );
+      context.stats.chunks = splitResult.chunks;
 
-    // Execute build
-    const buildResult = await withSpan(
-      "build.execute",
-      () =>
-        executeBuild(routes.pages, routes.app, {
-          adapter: context.adapter,
-          projectDir: normalizedOptions.projectDir,
-          outputDir: normalizedOptions.outputDir,
-          renderer: context.renderer,
-          config: context.config,
-          enablePrefetch: normalizedOptions.enablePrefetch,
-          chunkManifest: splitResult.manifest,
-          baseUrl: (context.config as { build?: { baseUrl?: string } }).build?.baseUrl || "",
-          dryRun: normalizedOptions.dryRun,
-        }),
-      {},
-    );
+      const buildResult = await withSpan(
+        "build.execute",
+        () =>
+          executeBuild(routes.pages, routes.app, {
+            adapter: context.adapter,
+            projectDir: normalizedOptions.projectDir,
+            outputDir: normalizedOptions.outputDir ?? "",
+            renderer: context.renderer,
+            config: context.config,
+            enablePrefetch: normalizedOptions.enablePrefetch ?? true,
+            chunkManifest: splitResult.manifest,
+            baseUrl: "",
+            dryRun: normalizedOptions.dryRun ?? false,
+          }),
+        {},
+      );
 
-    context.stats.pages = buildResult.pages;
-    context.stats.totalSize = buildResult.totalSize;
+      context.stats.pages = buildResult.pages;
+      context.stats.totalSize = buildResult.totalSize;
 
-    // Generate all outputs
-    await withSpan("build.generateOutputs", () =>
-      generateAllOutputs({
-        adapter: context.adapter,
-        projectDir: normalizedOptions.projectDir,
-        outputDir: normalizedOptions.outputDir,
-        routes: routes.pages,
-        appRoutes: routes.app,
-        stats: context.stats,
-        enableSplitting: normalizedOptions.enableSplitting,
-        enablePrefetch: normalizedOptions.enablePrefetch,
-        enableCompression: normalizedOptions.enableCompression,
-        chunkManifest: splitResult.manifest,
-        dryRun: normalizedOptions.dryRun,
-      }), {});
+      await withSpan(
+        "build.generateOutputs",
+        () =>
+          generateAllOutputs({
+            adapter: context.adapter,
+            projectDir: normalizedOptions.projectDir,
+            outputDir: normalizedOptions.outputDir ?? "",
+            routes: routes.pages,
+            appRoutes: routes.app,
+            stats: context.stats,
+            enableSplitting: normalizedOptions.enableSplitting ?? true,
+            enablePrefetch: normalizedOptions.enablePrefetch ?? true,
+            enableCompression: normalizedOptions.enableCompression ?? true,
+            chunkManifest: splitResult.manifest,
+            dryRun: normalizedOptions.dryRun ?? false,
+          }),
+        {},
+      );
 
-    // Finalize stats
-    context.stats.duration = Date.now() - startTime;
+      context.stats.duration = Date.now() - startTime;
+      logBuildCompletion(context.stats);
 
-    // Log completion
-    logBuildCompletion(context.stats);
+      await performCleanup(context.renderer);
 
-    // Cleanup
-    await performCleanup(context.renderer);
+      context.stats.ssgPaths = buildResult.ssgPaths;
 
-    // Add SSG paths to stats (BuildStats already has ssgPaths as optional field)
-    context.stats.ssgPaths = buildResult.ssgPaths;
-
-    return context.stats;
-  }, { "build.projectDir": options.projectDir });
+      return context.stats;
+    },
+    { "build.projectDir": options.projectDir },
+  );
 }
 
 // Re-export helper functions for testing

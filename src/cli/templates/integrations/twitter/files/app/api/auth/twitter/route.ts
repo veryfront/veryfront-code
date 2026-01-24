@@ -1,9 +1,3 @@
-/**
- * Twitter OAuth Initiation
- */
-
 import { createOAuthInitHandler, memoryTokenStore, twitterConfig } from "veryfront/oauth";
 
-export const GET = createOAuthInitHandler(twitterConfig, {
-  tokenStore: memoryTokenStore,
-});
+export const GET = createOAuthInitHandler(twitterConfig, { tokenStore: memoryTokenStore });

@@ -12,5 +12,4 @@ export interface ErrorSolution {
 }
 
 export type ErrorCatalog = Record<ErrorCodeType, ErrorSolution>;
-
 export type PartialErrorCatalog = Partial<ErrorCatalog>;

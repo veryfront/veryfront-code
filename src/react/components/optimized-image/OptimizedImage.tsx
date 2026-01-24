@@ -21,7 +21,7 @@ export interface OptimizedImageProps {
   onError?: (event: React.SyntheticEvent<HTMLImageElement>) => void;
 }
 
-const DEFAULT_SIZES = [...RESPONSIVE_IMAGE_WIDTHS];
+const DEFAULT_SIZES = RESPONSIVE_IMAGE_WIDTHS;
 const DEFAULT_FORMATS: ("avif" | "webp" | "jpeg")[] = ["avif", "webp", "jpeg"];
 
 export function OptimizedImage({
@@ -41,16 +41,15 @@ export function OptimizedImage({
   onClick,
   onLoad,
   onError,
-}: OptimizedImageProps) {
-  const loadingStrategy = priority ? "eager" : loading || "lazy";
-
+}: OptimizedImageProps): React.JSX.Element {
+  const loadingStrategy = priority ? "eager" : (loading ?? "lazy");
   const originalFormat = getExtension(src);
 
   const imgStyle: React.CSSProperties = {
     ...style,
     ...(placeholder === "blur" && blurDataURL
       ? { backgroundImage: `url(${blurDataURL})`, backgroundSize: "cover" }
-      : {}),
+      : undefined),
   };
 
   return (
@@ -59,13 +58,13 @@ export function OptimizedImage({
         <source
           key={format}
           type={`image/${format}`}
-          srcSet={generateSrcSet(src, format, DEFAULT_SIZES, quality)}
+          srcSet={generateSrcSet(src, format, [...DEFAULT_SIZES], quality)}
           sizes={sizes}
         />
       ))}
 
       <img
-        src={getOptimizedPath(src, originalFormat, width || RESPONSIVE_IMAGE_WIDTH_LG, quality)}
+        src={getOptimizedPath(src, originalFormat, width ?? RESPONSIVE_IMAGE_WIDTH_LG, quality)}
         alt={alt}
         width={width}
         height={height}

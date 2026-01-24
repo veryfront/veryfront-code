@@ -14,7 +14,6 @@ import {
   remarkMdxRemoveParagraphs,
 } from "./plugins.ts";
 
-// Minimal unified-like runner shims to apply our plugins to plain trees
 function runRemark(tree: any, file: any, plugins: any[]): void {
   for (const p of plugins) {
     const plugin = typeof p === "function" ? p() : p;
@@ -47,22 +46,20 @@ describe("plugins", () => {
 
   describe("remarkAddNodeId", () => {
     it("returns a function", () => {
-      const plugin = remarkAddNodeId();
-      assertEquals(typeof plugin, "function");
+      assertEquals(typeof remarkAddNodeId(), "function");
     });
 
     it("accepts options", () => {
-      const pluginWithOptions = remarkAddNodeId({
-        prefix: "test",
-        includePosition: false,
-      });
-      assertEquals(typeof pluginWithOptions, "function");
+      assertEquals(
+        typeof remarkAddNodeId({ prefix: "test", includePosition: false }),
+        "function",
+      );
     });
 
     it("adds node IDs to elements", () => {
       const plugin = remarkAddNodeId({ prefix: "test" });
 
-      const tree = {
+      const tree: any = {
         type: "root",
         children: [
           {
@@ -76,18 +73,16 @@ describe("plugins", () => {
         ],
       };
 
-      plugin(tree as any, {
-        /* empty */
-      });
+      plugin(tree, {});
 
-      const paragraph = tree.children[0] as any;
+      const paragraph = tree.children[0];
       assertExists(paragraph.data);
       assertExists(paragraph.data.hProperties);
       assertEquals(paragraph.data.hProperties["data-node-id"], "test-1");
     });
 
     it("adds ids and counts", () => {
-      const tree = {
+      const tree: any = {
         type: "root",
         children: [
           {
@@ -100,24 +95,26 @@ describe("plugins", () => {
           },
         ],
       };
+
       const file = new VFile();
       runRemark(tree, file, [() => remarkAddNodeId({ prefix: "x" })]);
+
       assertEquals(file.data.nodeCount, 3);
-      const para: any = tree.children[0];
+
+      const para = tree.children[0];
       assert(para.data?.hProperties?.["data-node-id"]?.startsWith("x-"));
     });
   });
 
   describe("remarkMdxHeadings", () => {
     it("returns a function", () => {
-      const plugin = remarkMdxHeadings();
-      assertEquals(typeof plugin, "function");
+      assertEquals(typeof remarkMdxHeadings(), "function");
     });
 
     it("extracts headings from tree", () => {
       const plugin = remarkMdxHeadings();
 
-      const tree = {
+      const tree: any = {
         type: "root",
         children: [
           {
@@ -134,7 +131,7 @@ describe("plugins", () => {
       };
 
       const file = new VFile();
-      plugin(tree as any, file);
+      plugin(tree, file);
 
       const headings = file.data.headings;
       assert(Array.isArray(headings));
@@ -152,8 +149,10 @@ describe("plugins", () => {
           },
         ],
       };
+
       const file = new VFile();
       runRemark(tree, file, [remarkMdxHeadings]);
+
       const headings = file.data.headings;
       assert(Array.isArray(headings));
       assertEquals(headings.length, 1);
@@ -167,13 +166,16 @@ describe("plugins", () => {
         type: "paragraph",
         children: [{ type: "text", value: "Hello" }],
       };
+
       const jsxComponent: any = {
         type: "mdxJsxFlowElement",
         name: "Button",
         children: [para],
       };
+
       const tree: any = { type: "root", children: [jsxComponent] };
       runRemark(tree, {}, [remarkMdxRemoveParagraphs]);
+
       assertEquals(jsxComponent.children[0].type, "text");
       assertEquals(jsxComponent.children[0].value, "Hello");
     });
@@ -181,8 +183,7 @@ describe("plugins", () => {
 
   describe("remarkCodeBlocks", () => {
     it("returns a function", () => {
-      const plugin = remarkCodeBlocks();
-      assertEquals(typeof plugin, "function");
+      assertEquals(typeof remarkCodeBlocks(), "function");
     });
 
     it("annotates language and meta", () => {
@@ -192,8 +193,10 @@ describe("plugins", () => {
         meta: "{1-2}",
         value: "const a=1",
       };
+
       const tree: any = { type: "root", children: [code] };
       runRemark(tree, {}, [remarkCodeBlocks]);
+
       assertEquals(code.data.hProperties.className[0], "language-ts");
       assertEquals(code.data.hProperties["data-line-numbers"], "1-2");
     });
@@ -201,15 +204,13 @@ describe("plugins", () => {
 
   describe("remarkMdxImports", () => {
     it("returns a function", () => {
-      const plugin = remarkMdxImports();
-      assertEquals(typeof plugin, "function");
+      assertEquals(typeof remarkMdxImports(), "function");
     });
   });
 
   describe("rehypePreserveNodeIds", () => {
     it("returns a function", () => {
-      const plugin = rehypePreserveNodeIds();
-      assertEquals(typeof plugin, "function");
+      assertEquals(typeof rehypePreserveNodeIds(), "function");
     });
 
     it("copies data-node-* properties", () => {
@@ -219,16 +220,17 @@ describe("plugins", () => {
         data: { hProperties: { "data-node-start": 1 } },
         properties: {},
       };
+
       const tree: any = { type: "root", children: [el] };
       runRehype(tree, [rehypePreserveNodeIds]);
+
       assertEquals(el.properties["data-node-start"], 1);
     });
   });
 
   describe("rehypeAddClasses", () => {
     it("returns a function", () => {
-      const plugin = rehypeAddClasses();
-      assertEquals(typeof plugin, "function");
+      assertEquals(typeof rehypeAddClasses(), "function");
     });
 
     it("decorates tags with classes", () => {
@@ -239,8 +241,10 @@ describe("plugins", () => {
         tagName: "code",
         properties: { className: ["language-ts"] },
       };
+
       const tree: any = { type: "root", children: [p, h2, code] };
       runRehype(tree, [rehypeAddClasses]);
+
       assert(p.properties.className?.length);
       assert(h2.properties.className?.length);
       assert(
@@ -251,8 +255,7 @@ describe("plugins", () => {
 
   describe("rehypeMdxComponents", () => {
     it("returns a function", () => {
-      const plugin = rehypeMdxComponents();
-      assertEquals(typeof plugin, "function");
+      assertEquals(typeof rehypeMdxComponents(), "function");
     });
 
     it("tags mdx nodes with component name", () => {
@@ -261,8 +264,10 @@ describe("plugins", () => {
         name: "MyX",
         data: { hProperties: {} },
       };
+
       const tree: any = { type: "root", children: [node] };
       runRehype(tree, [rehypeMdxComponents]);
+
       assertEquals(node.data.hProperties["data-mdx-component"], "MyX");
     });
   });

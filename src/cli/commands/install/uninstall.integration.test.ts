@@ -6,6 +6,7 @@ import { runCommand } from "#veryfront/platform/compat/process.ts";
 
 describe("uninstall command integration", () => {
   let tempDir: string;
+  const cliPath = new URL("../../main.ts", import.meta.url).pathname;
 
   beforeEach(async () => {
     tempDir = await makeTempDir({ prefix: "veryfront-uninstall-test-" });
@@ -15,25 +16,27 @@ describe("uninstall command integration", () => {
     await remove(tempDir, { recursive: true });
   });
 
-  async function runInstall(target: string): Promise<{ code: number }> {
-    const cliPath = new URL("../../main.ts", import.meta.url).pathname;
+  async function runCli(
+    command: "install" | "uninstall",
+    target: string,
+  ): Promise<{ code: number; output: string }> {
     const result = await runCommand("deno", {
-      args: ["run", "--allow-all", cliPath, "install", "--target", target],
+      args: ["run", "--allow-all", cliPath, command, "--target", target],
       cwd: tempDir,
       capture: true,
     });
-    return { code: result.code };
+
+    const output = (result.stdout ?? "") + (result.stderr ?? "");
+    return { code: result.code, output };
+  }
+
+  async function runInstall(target: string): Promise<{ code: number }> {
+    const { code } = await runCli("install", target);
+    return { code };
   }
 
   async function runUninstall(target: string): Promise<{ code: number; output: string }> {
-    const cliPath = new URL("../../main.ts", import.meta.url).pathname;
-    const result = await runCommand("deno", {
-      args: ["run", "--allow-all", cliPath, "uninstall", "--target", target],
-      cwd: tempDir,
-      capture: true,
-    });
-    const output = (result.stdout ?? "") + (result.stderr ?? "");
-    return { code: result.code, output };
+    return await runCli("uninstall", target);
   }
 
   describe("cursor", () => {

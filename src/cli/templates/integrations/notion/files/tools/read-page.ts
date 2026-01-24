@@ -1,11 +1,6 @@
 import { tool } from "veryfront/tool";
 import { z } from "zod";
-import {
-  extractPlainText,
-  getPage,
-  getPageContent,
-  getPageTitle,
-} from "../../lib/notion-client.ts";
+import { extractPlainText, getPage, getPageContent, getPageTitle } from "../../lib/notion-client.ts";
 
 export default tool({
   id: "read-page",
@@ -14,19 +9,13 @@ export default tool({
     pageId: z.string().describe("The ID of the Notion page to read"),
   }),
   async execute({ pageId }) {
-    const [page, blocks] = await Promise.all([
-      getPage(pageId),
-      getPageContent(pageId),
-    ]);
-
-    const title = getPageTitle(page);
-    const content = extractPlainText(blocks);
+    const [page, blocks] = await Promise.all([getPage(pageId), getPageContent(pageId)]);
 
     return {
       id: page.id,
-      title,
+      title: getPageTitle(page),
       url: page.url,
-      content,
+      content: extractPlainText(blocks),
       lastEdited: page.last_edited_time,
       createdAt: page.created_time,
     };

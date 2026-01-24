@@ -1,18 +1,10 @@
 /** Sanitize data to prevent XSS and prototype pollution attacks */
 export function sanitizeData(data: unknown): unknown {
-  if (typeof data === "string") {
-    return sanitizeString(data);
-  }
+  if (typeof data === "string") return sanitizeString(data);
+  if (Array.isArray(data)) return data.map(sanitizeData);
+  if (!data || typeof data !== "object") return data;
 
-  if (Array.isArray(data)) {
-    return data.map(sanitizeData);
-  }
-
-  if (data && typeof data === "object") {
-    return sanitizeObject(data as Record<string, unknown>);
-  }
-
-  return data;
+  return sanitizeObject(data as Record<string, unknown>);
 }
 
 function sanitizeString(str: string): string {
@@ -29,11 +21,10 @@ function sanitizeObject(obj: Record<string, unknown>): Record<string, unknown> {
   const sanitized: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(obj)) {
-    // Sanitize keys too (prevent prototype pollution)
     const safeKey = sanitizeKey(key);
-    if (isAllowedKey(safeKey)) {
-      sanitized[safeKey] = sanitizeData(value);
-    }
+    if (!isAllowedKey(safeKey)) continue;
+
+    sanitized[safeKey] = sanitizeData(value);
   }
 
   return sanitized;
@@ -45,7 +36,9 @@ function sanitizeKey(key: string): string {
 
 function isAllowedKey(key: string): boolean {
   const lower = key.toLowerCase();
-  return !lower.includes("__proto__") &&
+  return (
+    !lower.includes("__proto__") &&
     !lower.includes("constructor") &&
-    !lower.includes("prototype");
+    !lower.includes("prototype")
+  );
 }

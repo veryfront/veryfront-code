@@ -9,9 +9,10 @@ export default tool({
   inputSchema: z.object({
     search: z.string().optional().describe("Search query to filter projects by name or path"),
     membership: z.boolean().default(true).describe("Only show projects where user is a member"),
-    orderBy: z.enum(["id", "name", "created_at", "updated_at", "last_activity_at"]).default(
-      "last_activity_at",
-    ).describe("Field to order results by"),
+    orderBy: z
+      .enum(["id", "name", "created_at", "updated_at", "last_activity_at"])
+      .default("last_activity_at")
+      .describe("Field to order results by"),
     sort: z.enum(["asc", "desc"]).default("desc").describe("Sort direction"),
     limit: z.number().min(1).max(100).default(20).describe("Maximum number of results to return"),
   }),
@@ -24,7 +25,20 @@ export default tool({
       perPage: limit,
     });
 
-    if (projects.length === 0) {
+    const mappedProjects = projects.map((project) => ({
+      id: project.id,
+      name: project.name,
+      nameWithNamespace: project.name_with_namespace,
+      path: project.path_with_namespace,
+      description: project.description ?? "No description",
+      visibility: project.visibility,
+      defaultBranch: project.default_branch,
+      webUrl: project.web_url,
+      createdAt: project.created_at,
+      lastActivityAt: project.last_activity_at,
+    }));
+
+    if (mappedProjects.length === 0) {
       return {
         message: "No projects found matching the criteria.",
         count: 0,
@@ -33,19 +47,8 @@ export default tool({
     }
 
     return {
-      count: projects.length,
-      projects: projects.map((project) => ({
-        id: project.id,
-        name: project.name,
-        nameWithNamespace: project.name_with_namespace,
-        path: project.path_with_namespace,
-        description: project.description || "No description",
-        visibility: project.visibility,
-        defaultBranch: project.default_branch,
-        webUrl: project.web_url,
-        createdAt: project.created_at,
-        lastActivityAt: project.last_activity_at,
-      })),
+      count: mappedProjects.length,
+      projects: mappedProjects,
     };
   },
 });

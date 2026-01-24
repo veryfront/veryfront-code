@@ -1,7 +1,7 @@
-/**
+/**************************
  * Client Runtime Generation for Build
  * Handles generation of client-side router and prefetch scripts
- */
+ **************************/
 
 import {
   dirname,
@@ -20,6 +20,7 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 // Try to import pre-bundled client scripts (available in npm builds)
 let CLIENT_ROUTER_BUNDLE: string | undefined;
 let CLIENT_PREFETCH_BUNDLE: string | undefined;
+
 try {
   const templates = await import("./templates.ts");
   CLIENT_ROUTER_BUNDLE = (templates as { CLIENT_ROUTER_BUNDLE?: string }).CLIENT_ROUTER_BUNDLE;
@@ -39,7 +40,6 @@ async function statFile(path: string): Promise<FileStatResult | null> {
     const stat = await fs.stat(path);
     return { isFile: stat.isFile };
   } catch (error: unknown) {
-    // Swallow not-found; rethrow others
     throw error;
   }
 }
@@ -94,13 +94,11 @@ export const hydrate = window.hydrate;
  * Uses pre-bundled version for npm builds, or bundles from source for Deno
  */
 export async function generateClientModule(): Promise<string> {
-  // Use pre-bundled version if available (npm builds)
   if (CLIENT_ROUTER_BUNDLE) {
     logger.debug("Using pre-bundled client router script");
     return CLIENT_ROUTER_BUNDLE;
   }
 
-  // Fall back to bundling from source (Deno development)
   try {
     return await bundleClientEntry("../../rendering/client/router.ts");
   } catch (error) {
@@ -114,7 +112,6 @@ export async function generateClientModule(): Promise<string> {
  * Uses pre-bundled version for npm builds, or bundles from source for Deno
  */
 export async function generateRouterScript(_adapter: RuntimeAdapter): Promise<string> {
-  // Use pre-bundled version if available (npm builds)
   if (CLIENT_ROUTER_BUNDLE) {
     logger.debug("Using pre-bundled client router script");
     return CLIENT_ROUTER_BUNDLE;
@@ -128,7 +125,6 @@ export async function generateRouterScript(_adapter: RuntimeAdapter): Promise<st
  * Uses pre-bundled version for npm builds, or bundles from source for Deno
  */
 export async function generatePrefetchScript(_adapter: RuntimeAdapter): Promise<string> {
-  // Use pre-bundled version if available (npm builds)
   if (CLIENT_PREFETCH_BUNDLE) {
     logger.debug("Using pre-bundled client prefetch script");
     return CLIENT_PREFETCH_BUNDLE;
@@ -179,20 +175,14 @@ function createPathResolverPlugin(): Plugin {
         if (specifier.startsWith(vfSrcPrefix)) {
           const lookupBase = resolve(packageRoot, specifier.slice(vfSrcPrefix.length));
           const resolved = await resolveFromCandidates(lookupBase);
-          if (resolved) {
-            return { path: resolved };
-          }
-          return null;
+          return resolved ? { path: resolved } : null;
         }
 
         if (relativeSpecifier.test(specifier)) {
           const importerDir = determineImporterDir(args);
           const lookupBase = resolve(importerDir, specifier);
           const resolved = await resolveFromCandidates(lookupBase);
-          if (resolved) {
-            return { path: resolved };
-          }
-          return null;
+          return resolved ? { path: resolved } : null;
         }
 
         return { external: true };
@@ -203,61 +193,49 @@ function createPathResolverPlugin(): Plugin {
 
 function determineImporterDir(args: OnResolveArgs): string {
   if (args.resolveDir) {
-    if (isAbsolute(args.resolveDir)) {
-      return args.resolveDir;
-    }
-    return resolve(packageRoot, args.resolveDir);
+    return isAbsolute(args.resolveDir) ? args.resolveDir : resolve(packageRoot, args.resolveDir);
   }
 
-  if (args.importer) {
-    if (args.importer.startsWith("file://")) {
-      return dirname(fromFileUrl(new URL(args.importer)));
-    }
-    if (isAbsolute(args.importer)) {
-      return dirname(args.importer);
-    }
+  if (args.importer?.startsWith("file://")) {
+    return dirname(fromFileUrl(new URL(args.importer)));
+  }
+
+  if (args.importer && isAbsolute(args.importer)) {
+    return dirname(args.importer);
   }
 
   return packageRoot;
 }
 
 async function resolveFromCandidates(basePath: string): Promise<string | null> {
-  const candidates = buildCandidatePaths(basePath);
-
-  for (const candidate of candidates) {
+  for (const candidate of buildCandidatePaths(basePath)) {
     const stat = await statFile(candidate);
-    if (stat && stat.isFile) {
+    if (stat?.isFile) {
       return candidate;
     }
   }
-
   return null;
 }
 
 function buildCandidatePaths(basePath: string): string[] {
   const normalizedBase = stripTrailingSeparator(basePath);
 
-  // If already has a supported extension, only try that exact file
   if (hasSupportedExtension(normalizedBase)) {
     return [normalizedBase];
   }
 
-  // Try adding each extension to the base path (e.g., ./foo -> ./foo.ts, ./foo.tsx, ...)
   const withExtensions = moduleExtensions.map((extension) => `${normalizedBase}${extension}`);
-
-  // Try index files in the directory (e.g., ./foo -> ./foo/index.ts, ./foo/index.tsx, ...)
   const indexCandidates = moduleExtensions.map((extension) =>
     join(normalizedBase, `index${extension}`)
   );
 
-  // Prioritize direct file matches over index files
   return [...withExtensions, ...indexCandidates];
 }
 
 function hasSupportedExtension(filePath: string): boolean {
   const extension = extname(filePath);
   return extension.length > 0 &&
-    moduleExtensions.includes(extension as typeof moduleExtensions[number]);
+    moduleExtensions.includes(extension as (typeof moduleExtensions)[number]);
 }
 
 function stripTrailingSeparator(path: string): string {
@@ -268,19 +246,19 @@ function stripSpecifier(specifier: string): string {
   const queryIndex = specifier.indexOf("?");
   const hashIndex = specifier.indexOf("#");
 
-  // Find the first occurrence of either ? or #
-  let cutIndex: number;
   if (queryIndex === -1 && hashIndex === -1) {
     return specifier;
-  } else if (queryIndex === -1) {
-    cutIndex = hashIndex;
-  } else if (hashIndex === -1) {
-    cutIndex = queryIndex;
-  } else {
-    cutIndex = Math.min(queryIndex, hashIndex);
   }
 
-  return specifier.slice(0, cutIndex);
+  if (queryIndex === -1) {
+    return specifier.slice(0, hashIndex);
+  }
+
+  if (hashIndex === -1) {
+    return specifier.slice(0, queryIndex);
+  }
+
+  return specifier.slice(0, Math.min(queryIndex, hashIndex));
 }
 
 const extensionToLoader: Record<string, "js" | "ts" | "tsx" | "jsx" | "json"> = {
@@ -299,9 +277,8 @@ function createFsLoaderPlugin(): Plugin {
           const contents = await readTextFile(args.path);
           const ext = extname(args.path).toLowerCase();
           const loader = extensionToLoader[ext] ?? "js";
-
           return { contents, loader };
-        } catch (_error) {
+        } catch {
           return null;
         }
       });
@@ -358,7 +335,6 @@ async function bundleClientEntry(entryRelative: string): Promise<string> {
       ],
     });
   } finally {
-    // Only stop esbuild if not in test mode with global initialization
     if (!(globalThis as Record<string, unknown>).__vfTestPreserveEsbuild) {
       try {
         await Promise.resolve(stop());
@@ -370,10 +346,13 @@ async function bundleClientEntry(entryRelative: string): Promise<string> {
 
   const output = result.outputFiles?.[0]?.text;
   if (!output) {
-    throw toError(createError({
-      type: "build",
-      message: `Failed to bundle client entry: ${entryRelative}`,
-    }));
+    throw toError(
+      createError({
+        type: "build",
+        message: `Failed to bundle client entry: ${entryRelative}`,
+      }),
+    );
   }
+
   return output;
 }

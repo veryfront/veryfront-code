@@ -6,13 +6,11 @@ import { isRSCEnabled } from "./feature-flags.ts";
 describe("feature-flags", () => {
   describe("isRSCEnabled", () => {
     it("should return true when config.experimental.rsc is true", () => {
-      const config = { experimental: { rsc: true } };
-      assertEquals(isRSCEnabled(config), true);
+      assertEquals(isRSCEnabled({ experimental: { rsc: true } }), true);
     });
 
     it("should return false when config.experimental.rsc is false", () => {
-      const config = { experimental: { rsc: false } };
-      assertEquals(isRSCEnabled(config), false);
+      assertEquals(isRSCEnabled({ experimental: { rsc: false } }), false);
     });
 
     it("should return true when env experimentalRsc is true", () => {
@@ -32,8 +30,7 @@ describe("feature-flags", () => {
 
     it("should prefer config over env when config is provided", () => {
       const env = createTestRuntimeEnv({ experimentalRsc: true });
-      const config = { experimental: { rsc: false } };
-      assertEquals(isRSCEnabled(config, env), false);
+      assertEquals(isRSCEnabled({ experimental: { rsc: false } }, env), false);
     });
 
     it("should fall back to env when config.experimental is missing", () => {
@@ -43,8 +40,7 @@ describe("feature-flags", () => {
 
     it("should fall back to env when config.experimental.rsc is undefined", () => {
       const env = createTestRuntimeEnv({ experimentalRsc: true });
-      const config = { experimental: {} };
-      assertEquals(isRSCEnabled(config, env), true);
+      assertEquals(isRSCEnabled({ experimental: {} }, env), true);
     });
   });
 });

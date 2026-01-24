@@ -11,45 +11,24 @@ export interface PlatformCapabilities {
   displayName: string;
 }
 
-/** Global interface for Node.js process in platform detection */
-interface GlobalWithNodeProcess {
-  process?: {
-    versions?: {
-      node?: string;
-    };
-  };
-}
-
 export function detectPlatform(): Platform {
-  // Check for Deno
   // @ts-ignore - Deno global may not exist
-  if (typeof Deno !== "undefined" && Deno.version?.deno) {
-    return "deno";
-  }
+  if (typeof Deno !== "undefined" && Deno.version?.deno) return "deno";
 
-  // Check for Bun
   // @ts-ignore - Bun global may not exist
-  if (typeof Bun !== "undefined" && Bun.version) {
-    return "bun";
-  }
+  if (typeof Bun !== "undefined" && Bun.version) return "bun";
 
-  // Check for Cloudflare Workers
   // @ts-ignore - caches global specific to CF Workers
   if (
-    typeof caches !== "undefined" && typeof navigator !== "undefined" &&
+    typeof caches !== "undefined" &&
+    typeof navigator !== "undefined" &&
     navigator.userAgent === "Cloudflare-Workers"
   ) {
     return "cloudflare-workers";
   }
 
-  // Check for Node.js
-  const globalProcess = (globalThis as unknown as GlobalWithNodeProcess).process;
-  if (
-    typeof globalProcess !== "undefined" &&
-    globalProcess.versions?.node
-  ) {
-    return "node";
-  }
+  const globalProcess = (globalThis as { process?: { versions?: { node?: string } } }).process;
+  if (globalProcess?.versions?.node) return "node";
 
   return "unknown";
 }
@@ -108,20 +87,20 @@ const PLATFORM_CAPABILITIES: Record<Platform, PlatformCapabilities> = {
 } as const;
 
 export function getPlatformCapabilities(platform?: Platform): PlatformCapabilities {
-  const detectedPlatform = platform || detectPlatform();
-  return PLATFORM_CAPABILITIES[detectedPlatform] ?? PLATFORM_CAPABILITIES.unknown;
+  return PLATFORM_CAPABILITIES[platform ?? detectPlatform()] ?? PLATFORM_CAPABILITIES.unknown;
 }
 
 export function supportsCapability(capability: keyof PlatformCapabilities): boolean {
   const value = getPlatformCapabilities()[capability];
+
   if (typeof value === "boolean") return value;
   if (typeof value === "number") return value > 0;
+
   return false;
 }
 
 export function getPlatformWarnings(): string[] {
-  const platform = detectPlatform();
-  const capabilities = getPlatformCapabilities(platform);
+  const capabilities = getPlatformCapabilities();
   const warnings: string[] = [];
 
   if (!capabilities.canRunMCPServer) {
@@ -143,9 +122,7 @@ export function getPlatformWarnings(): string[] {
   }
 
   if (!capabilities.hasFileSystem) {
-    warnings.push(
-      `${capabilities.displayName} has no file system access. Avoid file-based tools.`,
-    );
+    warnings.push(`${capabilities.displayName} has no file system access. Avoid file-based tools.`);
   }
 
   return warnings;
@@ -170,7 +147,6 @@ export function validatePlatformCompatibility(
   const errors: string[] = [];
   const warnings: string[] = [];
 
-  // Check max steps (skip check if platform has no limit)
   if (
     config.maxSteps &&
     capabilities.maxAgentSteps !== Infinity &&
@@ -181,30 +157,19 @@ export function validatePlatformCompatibility(
     );
   }
 
-  // Check file system requirement
   if (config.requiresFileSystem && !capabilities.hasFileSystem) {
-    errors.push(
-      `Agent requires file system but ${capabilities.displayName} doesn't support it`,
-    );
+    errors.push(`Agent requires file system but ${capabilities.displayName} doesn't support it`);
   }
 
-  // Check MCP requirement
   if (config.requiresMCP && !capabilities.canRunMCPServer) {
-    errors.push(
-      `Agent requires MCP server but ${capabilities.displayName} cannot run it`,
-    );
+    errors.push(`Agent requires MCP server but ${capabilities.displayName} cannot run it`);
   }
 
-  // Check streaming recommendation
   if (!config.streaming && capabilities.streamingRecommended) {
     warnings.push(
       `Streaming is recommended on ${capabilities.displayName} for better user experience`,
     );
   }
 
-  return {
-    compatible: errors.length === 0,
-    errors,
-    warnings,
-  };
+  return { compatible: errors.length === 0, errors, warnings };
 }

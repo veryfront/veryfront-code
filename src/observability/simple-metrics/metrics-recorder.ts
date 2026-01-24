@@ -8,6 +8,16 @@ import { getObservabilityMetrics } from "./observability-loader.ts";
 import { getOtelInstruments, safeOtelOperation } from "./otel-instruments.ts";
 import type { RSCRequestKind } from "./types.ts";
 
+function recordObservability<T>(
+  fn: (obs: Awaited<ReturnType<typeof getObservabilityMetrics>>) => void,
+): void {
+  void getObservabilityMetrics()
+    .then((obs) => fn(obs))
+    .catch(() => {
+      /* metrics recording failure - non-critical */
+    });
+}
+
 /**
  * Increment request counter
  *
@@ -18,8 +28,10 @@ import type { RSCRequestKind } from "./types.ts";
  */
 export async function incRequest(): Promise<void> {
   state.requests++;
+
   const obs = await getObservabilityMetrics();
-  obs?.recordHttpRequest(); // Use new observability layer (optional)
+  obs?.recordHttpRequest();
+
   const otel = getOtelInstruments();
   await safeOtelOperation(() => otel.requestCounter?.add(1), "incRequest counter add failed");
 }
@@ -64,9 +76,8 @@ export function recordCacheGet(hit: boolean): void {
   if (hit) state.cacheHits++;
   else state.cacheMisses++;
 
-  void getObservabilityMetrics().then((obs) => obs?.recordCacheGet(hit)).catch(() => {
-    /* metrics recording failure - non-critical */
-  });
+  recordObservability((obs) => obs?.recordCacheGet(hit));
+
   const otel = getOtelInstruments();
   void safeOtelOperation(() => {
     otel.cacheGetCounter?.add(1);
@@ -85,9 +96,9 @@ export function recordCacheGet(hit: boolean): void {
  */
 export function recordCacheSet(): void {
   state.cacheSets++;
-  void getObservabilityMetrics().then((obs) => obs?.recordCacheSet()).catch(() => {
-    /* metrics recording failure - non-critical */
-  });
+
+  recordObservability((obs) => obs?.recordCacheSet());
+
   const otel = getOtelInstruments();
   void safeOtelOperation(() => otel.cacheSetCounter?.add(1), "cache set counter add failed");
 }
@@ -103,13 +114,14 @@ export function recordCacheSet(): void {
  * ```
  */
 export function recordCacheInvalidate(n: number): void {
-  state.cacheInvalidations += n | 0;
-  void getObservabilityMetrics().then((obs) => obs?.recordCacheInvalidate(n | 0)).catch(() => {
-    /* metrics recording failure - non-critical */
-  });
+  const count = n | 0;
+  state.cacheInvalidations += count;
+
+  recordObservability((obs) => obs?.recordCacheInvalidate(count));
+
   const otel = getOtelInstruments();
   void safeOtelOperation(
-    () => otel.cacheInvalidateCounter?.add(n | 0),
+    () => otel.cacheInvalidateCounter?.add(count),
     "cache invalidate counter add failed",
   );
 }
@@ -127,13 +139,14 @@ export function recordCacheInvalidate(n: number): void {
 export function recordSSR(durationMs: number): void {
   const d = Math.max(0, Math.floor(durationMs));
   const boundaries = getSSRBoundaries();
+
   let idx = boundaries.findIndex((b) => d <= b);
   if (idx === -1) idx = state._ssrCounts.length - 1;
-  state._ssrCounts[idx]! += 1;
+  const currentCount = state._ssrCounts[idx];
+  if (currentCount !== undefined) state._ssrCounts[idx] = currentCount + 1;
 
-  void getObservabilityMetrics().then((obs) => obs?.recordRender(d)).catch(() => {
-    /* metrics recording failure - non-critical */
-  });
+  recordObservability((obs) => obs?.recordRender(d));
+
   const otel = getOtelInstruments();
   void safeOtelOperation(() => otel.ssrHistogram?.record(d), "ssr histogram record failed");
 }
@@ -151,28 +164,26 @@ export function recordSSR(durationMs: number): void {
 export function recordRSCStreamDuration(durationMs: number): void {
   const boundaries = getSSRBoundaries();
   const d = Math.max(0, Math.floor(durationMs));
-  // Initialize if first use
+
   if (!state.rscStreamHistogram) {
     state.rscStreamHistogram = {
       boundaries: [...boundaries],
       counts: Array.from({ length: boundaries.length + 1 }, () => 0),
     };
   }
+
   let idx = boundaries.findIndex((b) => d <= b);
   if (idx === -1) idx = state.rscStreamHistogram.counts.length - 1;
-  state.rscStreamHistogram.counts[idx]! += 1;
+  const rscCount = state.rscStreamHistogram.counts[idx];
+  if (rscCount !== undefined) state.rscStreamHistogram.counts[idx] = rscCount + 1;
 
-  void getObservabilityMetrics().then((obs) => obs?.recordRSCStream(d)).catch(() => {
-    /* metrics recording failure - non-critical */
-  });
+  recordObservability((obs) => obs?.recordRSCStream(d));
 }
 
 type ObservabilityRSCKind = "manifest" | "page" | "stream" | "action";
 
 function recordObservabilityRSC(obsKind: ObservabilityRSCKind): void {
-  void getObservabilityMetrics().then((obs) => obs?.recordRSCRequest(obsKind)).catch(() => {
-    /* metrics recording failure - non-critical */
-  });
+  recordObservability((obs) => obs?.recordRSCRequest(obsKind));
 }
 
 /** RSC kind to state property and observability kind mapping */
@@ -201,10 +212,8 @@ const RSC_KIND_MAP: Record<
  */
 export function recordRSC(kind: RSCRequestKind): void {
   const mapping = RSC_KIND_MAP[kind];
-  if (mapping) {
-    (state[mapping.prop] as number)++;
-    if (mapping.obs) recordObservabilityRSC(mapping.obs);
-  }
+  state[mapping.prop]++;
+  if (mapping.obs) recordObservabilityRSC(mapping.obs);
 }
 
 /**
@@ -234,11 +243,15 @@ export function recordSecurityHeaders(): void {
 export function recordApiRequest(status: number): void {
   if (status >= 200 && status < 300) {
     state.apiRequests2xx++;
-  } else if (status >= 400 && status < 500) {
-    state.apiRequests4xx++;
-  } else if (status >= 500) {
-    state.apiRequests5xx++;
+    return;
   }
+
+  if (status >= 400 && status < 500) {
+    state.apiRequests4xx++;
+    return;
+  }
+
+  if (status >= 500) state.apiRequests5xx++;
 }
 
 export function recordApiRetry(): void {

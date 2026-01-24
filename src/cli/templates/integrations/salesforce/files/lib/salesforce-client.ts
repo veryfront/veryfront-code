@@ -1,6 +1,5 @@
 import { getAccessToken, getInstanceUrl } from "./token-store.ts";
 
-// Salesforce REST API version
 const API_VERSION = "v59.0";
 
 interface SalesforceQueryResponse<T> {
@@ -96,17 +95,13 @@ interface SalesforceLead {
   [key: string]: any;
 }
 
-async function salesforceFetch<T>(
-  endpoint: string,
-  options: RequestInit = {},
-): Promise<T> {
+async function salesforceFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = await getAccessToken();
-  const instanceUrl = getInstanceUrl();
-
   if (!token) {
     throw new Error("Not authenticated with Salesforce. Please connect your account.");
   }
 
+  const instanceUrl = getInstanceUrl();
   if (!instanceUrl) {
     throw new Error("Salesforce instance URL not found. Please reconnect your account.");
   }
@@ -118,31 +113,51 @@ async function salesforceFetch<T>(
   const response = await fetch(url, {
     ...options,
     headers: {
-      "Authorization": `Bearer ${token}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
       ...options.headers,
     },
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(
-      `Salesforce API error: ${response.status} ${
-        error[0]?.message || error.message || response.statusText
-      }`,
-    );
+    const error = await response.json().catch(() => ({} as any));
+    const message = error?.[0]?.message ?? error?.message ?? response.statusText;
+    throw new Error(`Salesforce API error: ${response.status} ${message}`);
   }
 
   return response.json();
 }
 
-// ============================================================================
-// SOQL QUERY
-// ============================================================================
-
 export function query<T = any>(soql: string): Promise<SalesforceQueryResponse<T>> {
-  const encodedQuery = encodeURIComponent(soql);
-  return salesforceFetch<SalesforceQueryResponse<T>>(`/query?q=${encodedQuery}`);
+  return salesforceFetch<SalesforceQueryResponse<T>>(`/query?q=${encodeURIComponent(soql)}`);
+}
+
+function buildListSoql(params: {
+  object: string;
+  fields: string[];
+  where?: string;
+  limit: number;
+  offset: number;
+}): string {
+  const { object, fields, where, limit, offset } = params;
+  let soql = `SELECT ${fields.join(", ")} FROM ${object}`;
+  if (where) soql += ` WHERE ${where}`;
+  soql += ` ORDER BY LastModifiedDate DESC LIMIT ${limit} OFFSET ${offset}`;
+  return soql;
+}
+
+async function getSingleRecord<T>(params: {
+  object: string;
+  id: string;
+  fields: string[];
+  notFoundMessage: string;
+}): Promise<T> {
+  const { object, id, fields, notFoundMessage } = params;
+  const soql = `SELECT ${fields.join(", ")} FROM ${object} WHERE Id = '${id}'`;
+  const result = await query<T>(soql);
+
+  if (result.totalSize === 0) throw new Error(notFoundMessage);
+  return result.records[0];
 }
 
 // ============================================================================
@@ -154,9 +169,9 @@ export function listAccounts(options?: {
   offset?: number;
   fields?: string[];
 }): Promise<SalesforceQueryResponse<SalesforceAccount>> {
-  const limit = options?.limit || 10;
-  const offset = options?.offset || 0;
-  const fields = options?.fields || [
+  const limit = options?.limit ?? 10;
+  const offset = options?.offset ?? 0;
+  const fields = options?.fields ?? [
     "Id",
     "Name",
     "Type",
@@ -172,17 +187,13 @@ export function listAccounts(options?: {
     "LastModifiedDate",
   ];
 
-  const soql = `SELECT ${
-    fields.join(", ")
-  } FROM Account ORDER BY LastModifiedDate DESC LIMIT ${limit} OFFSET ${offset}`;
-  return query<SalesforceAccount>(soql);
+  return query<SalesforceAccount>(
+    buildListSoql({ object: "Account", fields, limit, offset }),
+  );
 }
 
-export async function getAccount(
-  accountId: string,
-  fields?: string[],
-): Promise<SalesforceAccount> {
-  const selectedFields = fields || [
+export function getAccount(accountId: string, fields?: string[]): Promise<SalesforceAccount> {
+  const selectedFields = fields ?? [
     "Id",
     "Name",
     "Type",
@@ -201,14 +212,12 @@ export async function getAccount(
     "LastModifiedDate",
   ];
 
-  const soql = `SELECT ${selectedFields.join(", ")} FROM Account WHERE Id = '${accountId}'`;
-  const result = await query<SalesforceAccount>(soql);
-
-  if (result.totalSize === 0) {
-    throw new Error(`Account with ID ${accountId} not found`);
-  }
-
-  return result.records[0];
+  return getSingleRecord<SalesforceAccount>({
+    object: "Account",
+    id: accountId,
+    fields: selectedFields,
+    notFoundMessage: `Account with ID ${accountId} not found`,
+  });
 }
 
 export function createAccount(data: {
@@ -243,9 +252,9 @@ export function listContacts(options?: {
   fields?: string[];
   accountId?: string;
 }): Promise<SalesforceQueryResponse<SalesforceContact>> {
-  const limit = options?.limit || 10;
-  const offset = options?.offset || 0;
-  const fields = options?.fields || [
+  const limit = options?.limit ?? 10;
+  const offset = options?.offset ?? 0;
+  const fields = options?.fields ?? [
     "Id",
     "FirstName",
     "LastName",
@@ -261,22 +270,15 @@ export function listContacts(options?: {
     "LastModifiedDate",
   ];
 
-  let soql = `SELECT ${fields.join(", ")} FROM Contact`;
+  const where = options?.accountId ? `AccountId = '${options.accountId}'` : undefined;
 
-  if (options?.accountId) {
-    soql += ` WHERE AccountId = '${options.accountId}'`;
-  }
-
-  soql += ` ORDER BY LastModifiedDate DESC LIMIT ${limit} OFFSET ${offset}`;
-
-  return query<SalesforceContact>(soql);
+  return query<SalesforceContact>(
+    buildListSoql({ object: "Contact", fields, where, limit, offset }),
+  );
 }
 
-export async function getContact(
-  contactId: string,
-  fields?: string[],
-): Promise<SalesforceContact> {
-  const selectedFields = fields || [
+export function getContact(contactId: string, fields?: string[]): Promise<SalesforceContact> {
+  const selectedFields = fields ?? [
     "Id",
     "FirstName",
     "LastName",
@@ -296,14 +298,12 @@ export async function getContact(
     "LastModifiedDate",
   ];
 
-  const soql = `SELECT ${selectedFields.join(", ")} FROM Contact WHERE Id = '${contactId}'`;
-  const result = await query<SalesforceContact>(soql);
-
-  if (result.totalSize === 0) {
-    throw new Error(`Contact with ID ${contactId} not found`);
-  }
-
-  return result.records[0];
+  return getSingleRecord<SalesforceContact>({
+    object: "Contact",
+    id: contactId,
+    fields: selectedFields,
+    notFoundMessage: `Contact with ID ${contactId} not found`,
+  });
 }
 
 export function createContact(data: {
@@ -339,9 +339,9 @@ export function listOpportunities(options?: {
   fields?: string[];
   accountId?: string;
 }): Promise<SalesforceQueryResponse<SalesforceOpportunity>> {
-  const limit = options?.limit || 10;
-  const offset = options?.offset || 0;
-  const fields = options?.fields || [
+  const limit = options?.limit ?? 10;
+  const offset = options?.offset ?? 0;
+  const fields = options?.fields ?? [
     "Id",
     "Name",
     "AccountId",
@@ -358,22 +358,18 @@ export function listOpportunities(options?: {
     "LastModifiedDate",
   ];
 
-  let soql = `SELECT ${fields.join(", ")} FROM Opportunity`;
+  const where = options?.accountId ? `AccountId = '${options.accountId}'` : undefined;
 
-  if (options?.accountId) {
-    soql += ` WHERE AccountId = '${options.accountId}'`;
-  }
-
-  soql += ` ORDER BY LastModifiedDate DESC LIMIT ${limit} OFFSET ${offset}`;
-
-  return query<SalesforceOpportunity>(soql);
+  return query<SalesforceOpportunity>(
+    buildListSoql({ object: "Opportunity", fields, where, limit, offset }),
+  );
 }
 
-export async function getOpportunity(
+export function getOpportunity(
   opportunityId: string,
   fields?: string[],
 ): Promise<SalesforceOpportunity> {
-  const selectedFields = fields || [
+  const selectedFields = fields ?? [
     "Id",
     "Name",
     "AccountId",
@@ -392,14 +388,12 @@ export async function getOpportunity(
     "LastModifiedDate",
   ];
 
-  const soql = `SELECT ${selectedFields.join(", ")} FROM Opportunity WHERE Id = '${opportunityId}'`;
-  const result = await query<SalesforceOpportunity>(soql);
-
-  if (result.totalSize === 0) {
-    throw new Error(`Opportunity with ID ${opportunityId} not found`);
-  }
-
-  return result.records[0];
+  return getSingleRecord<SalesforceOpportunity>({
+    object: "Opportunity",
+    id: opportunityId,
+    fields: selectedFields,
+    notFoundMessage: `Opportunity with ID ${opportunityId} not found`,
+  });
 }
 
 export function createOpportunity(data: {
@@ -431,9 +425,9 @@ export function listLeads(options?: {
   fields?: string[];
   status?: string;
 }): Promise<SalesforceQueryResponse<SalesforceLead>> {
-  const limit = options?.limit || 10;
-  const offset = options?.offset || 0;
-  const fields = options?.fields || [
+  const limit = options?.limit ?? 10;
+  const offset = options?.offset ?? 0;
+  const fields = options?.fields ?? [
     "Id",
     "FirstName",
     "LastName",
@@ -452,15 +446,9 @@ export function listLeads(options?: {
     "LastModifiedDate",
   ];
 
-  let soql = `SELECT ${fields.join(", ")} FROM Lead`;
+  const where = options?.status ? `Status = '${options.status}'` : undefined;
 
-  if (options?.status) {
-    soql += ` WHERE Status = '${options.status}'`;
-  }
-
-  soql += ` ORDER BY LastModifiedDate DESC LIMIT ${limit} OFFSET ${offset}`;
-
-  return query<SalesforceLead>(soql);
+  return query<SalesforceLead>(buildListSoql({ object: "Lead", fields, where, limit, offset }));
 }
 
 export function createLead(data: {
@@ -484,11 +472,7 @@ export function createLead(data: {
   Rating?: string;
   [key: string]: any;
 }): Promise<{ id: string; success: boolean; errors: any[] }> {
-  // Set default status if not provided
-  const leadData = {
-    ...data,
-    Status: data.Status || "Open - Not Contacted",
-  };
+  const leadData = { ...data, Status: data.Status ?? "Open - Not Contacted" };
 
   return salesforceFetch("/sobjects/Lead", {
     method: "POST",
@@ -501,17 +485,13 @@ export function createLead(data: {
 // ============================================================================
 
 export function formatContactName(contact: SalesforceContact): string {
-  const parts = [];
-  if (contact.FirstName) parts.push(contact.FirstName);
-  if (contact.LastName) parts.push(contact.LastName);
-  return parts.length > 0 ? parts.join(" ") : contact.Email || "Unnamed Contact";
+  const parts = [contact.FirstName, contact.LastName].filter(Boolean);
+  return parts.length ? parts.join(" ") : contact.Email ?? "Unnamed Contact";
 }
 
 export function formatLeadName(lead: SalesforceLead): string {
-  const parts = [];
-  if (lead.FirstName) parts.push(lead.FirstName);
-  if (lead.LastName) parts.push(lead.LastName);
-  return parts.length > 0 ? parts.join(" ") : lead.Email || "Unnamed Lead";
+  const parts = [lead.FirstName, lead.LastName].filter(Boolean);
+  return parts.length ? parts.join(" ") : lead.Email ?? "Unnamed Lead";
 }
 
 export function formatAddress(
@@ -521,13 +501,7 @@ export function formatAddress(
   postalCode?: string,
   country?: string,
 ): string {
-  const parts = [];
-  if (street) parts.push(street);
-  if (city) parts.push(city);
-  if (state) parts.push(state);
-  if (postalCode) parts.push(postalCode);
-  if (country) parts.push(country);
-  return parts.join(", ");
+  return [street, city, state, postalCode, country].filter(Boolean).join(", ");
 }
 
 export type {

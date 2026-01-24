@@ -2,8 +2,6 @@ import { tool } from "veryfront/tool";
 import { z } from "zod";
 import { createSheetsClient } from "../../lib/sheets-client.ts";
 
-// Default user ID for demo/dev purposes
-// In production, get from authenticated session
 const DEFAULT_USER_ID = "demo-user";
 
 export default tool({
@@ -11,9 +9,7 @@ export default tool({
   description:
     "Create a new Google Sheets spreadsheet with optional sheet configurations. Returns the new spreadsheet ID and URL.",
   inputSchema: z.object({
-    title: z
-      .string()
-      .describe("Title of the new spreadsheet"),
+    title: z.string().describe("Title of the new spreadsheet"),
     sheets: z
       .array(
         z.object({
@@ -54,18 +50,12 @@ export default tool({
   async execute({ title, sheets, initialData }) {
     const client = createSheetsClient(DEFAULT_USER_ID);
 
-    // Create the spreadsheet
-    const spreadsheet = await client.createSpreadsheet({
-      title,
-      sheets,
-    });
+    const spreadsheet = await client.createSpreadsheet({ title, sheets });
 
-    // Write initial data if provided
     if (initialData) {
-      const range = `${initialData.sheetTitle}!${initialData.range}`;
       await client.writeRange({
         spreadsheetId: spreadsheet.spreadsheetId,
-        range,
+        range: `${initialData.sheetTitle}!${initialData.range}`,
         values: initialData.values,
         valueInputOption: "USER_ENTERED",
       });
@@ -75,10 +65,10 @@ export default tool({
       id: spreadsheet.spreadsheetId,
       title: spreadsheet.properties.title,
       url: spreadsheet.spreadsheetUrl,
-      sheets: spreadsheet.sheets.map((sheet) => ({
-        id: sheet.properties.sheetId,
-        title: sheet.properties.title,
-        index: sheet.properties.index,
+      sheets: spreadsheet.sheets.map(({ properties }) => ({
+        id: properties.sheetId,
+        title: properties.title,
+        index: properties.index,
       })),
     };
   },

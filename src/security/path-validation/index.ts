@@ -14,7 +14,6 @@
  * @module security/path-validation
  */
 
-// Re-export types
 export {
   PathValidationError,
   type ValidationLevel,
@@ -22,7 +21,6 @@ export {
   type ValidationResult,
 } from "./types.ts";
 
-// Re-export normalization utilities
 export {
   isAbsolutePath,
   isWithinDirectory,
@@ -31,16 +29,12 @@ export {
   resolvePathSegments,
 } from "./normalization.ts";
 
-// Re-export validation rules
 export { validatePathBasics } from "./rules.ts";
 
-// Re-export canonical path utilities
 export { getCanonicalPath, validateAllowedDirs } from "./canonical.ts";
 
-// Re-export presets
 export { ValidationPresets } from "./presets.ts";
 
-// Import for internal use
 import { getCanonicalPath, validateAllowedDirs } from "./canonical.ts";
 import {
   isAbsolutePath,
@@ -51,28 +45,29 @@ import {
 import { validatePathBasics } from "./rules.ts";
 import { PathValidationError, type ValidationOptions, type ValidationResult } from "./types.ts";
 
-/**
- * Validate a file path for security
- *
- * This is the main validation function that should be used for all file operations.
- * It implements defense-in-depth with multiple layers of validation.
- *
- * @param path - Path to validate (can be relative or absolute)
- * @param options - Validation options
- * @returns Validation result with canonical path if valid
- *
- * @example
- * ```typescript
- * const result = await validatePath("../../../etc/passwd", {
- *   baseDir: "/project",
- *   allowedDirs: ["app", "pages", "public"],
- * });
- *
- * if (!result.valid) {
- *   console.error(`Invalid path: ${result.error}`);
- * }
- * ```
- */
+function getTargetPath(
+  inputPath: string,
+  baseDir: string,
+  level: ValidationOptions["level"] | undefined,
+  allowAbsolute: boolean,
+): ValidationResult | { targetPath: string } {
+  const normalized = normalizeSeparators(inputPath);
+
+  if (!isAbsolutePath(normalized)) {
+    return { targetPath: joinPaths(baseDir, normalized) };
+  }
+
+  if (!allowAbsolute && level === "strict") {
+    return {
+      valid: false,
+      error: "Absolute paths not allowed in strict mode",
+      code: PathValidationError.ABSOLUTE_PATH_DENIED,
+    };
+  }
+
+  return { targetPath: normalized };
+}
+
 export async function validatePath(
   path: string,
   options: ValidationOptions,
@@ -87,39 +82,18 @@ export async function validatePath(
     allowAbsolute = false,
   } = options;
 
-  // Basic validation
   const basicResult = validatePathBasics(path);
-  if (!basicResult.valid) {
-    return basicResult;
-  }
+  if (!basicResult.valid) return basicResult;
 
-  // Normalize path
-  const normalized = normalizeSeparators(path);
+  const targetResult = getTargetPath(path, baseDir, level, allowAbsolute);
+  if ("valid" in targetResult) return targetResult;
 
-  // Handle absolute paths
-  let targetPath: string;
-  if (isAbsolutePath(normalized)) {
-    if (!allowAbsolute && level === "strict") {
-      return {
-        valid: false,
-        error: "Absolute paths not allowed in strict mode",
-        code: PathValidationError.ABSOLUTE_PATH_DENIED,
-      };
-    }
-    targetPath = normalized;
-  } else {
-    // Relative path - join with base directory
-    targetPath = joinPaths(baseDir, normalized);
-  }
-
-  // Get canonical path (resolve .., symlinks if enabled)
   const { path: canonicalPath, isSymlink } = await getCanonicalPath(
-    targetPath,
+    targetResult.targetPath,
     adapter,
     followSymlinks,
   );
 
-  // In strict mode, reject symlinks
   if (isSymlink && level === "strict") {
     return {
       valid: false,
@@ -128,13 +102,9 @@ export async function validatePath(
     };
   }
 
-  // Validate against allowed directories
   const allowResult = validateAllowedDirs(canonicalPath, baseDir, allowedDirs);
-  if (!allowResult.valid) {
-    return allowResult;
-  }
+  if (!allowResult.valid) return allowResult;
 
-  // Check file existence if requested
   if (checkExists && adapter) {
     try {
       await adapter.fs.stat(canonicalPath);
@@ -147,92 +117,32 @@ export async function validatePath(
     }
   }
 
-  return {
-    valid: true,
-    canonicalPath,
-  };
+  return { valid: true, canonicalPath };
 }
 
-/**
- * Validate a path synchronously (without filesystem access)
- *
- * This is faster but less secure than validatePath() as it cannot
- * resolve symlinks or check file existence. Use for pre-validation
- * before filesystem operations.
- *
- * @param path - Path to validate
- * @param options - Validation options (adapter is ignored)
- * @returns Validation result
- */
 export function validatePathSync(
   path: string,
   options: ValidationOptions,
 ): ValidationResult {
-  const {
-    level = "normal",
-    baseDir,
-    allowedDirs = [],
-    allowAbsolute = false,
-  } = options;
+  const { level = "normal", baseDir, allowedDirs = [], allowAbsolute = false } = options;
 
-  // Basic validation
   const basicResult = validatePathBasics(path);
-  if (!basicResult.valid) {
-    return basicResult;
-  }
+  if (!basicResult.valid) return basicResult;
 
-  // Normalize and resolve path
-  const normalized = normalizeSeparators(path);
+  const targetResult = getTargetPath(path, baseDir, level, allowAbsolute);
+  if ("valid" in targetResult) return targetResult;
 
-  let targetPath: string;
-  if (isAbsolutePath(normalized)) {
-    if (!allowAbsolute && level === "strict") {
-      return {
-        valid: false,
-        error: "Absolute paths not allowed in strict mode",
-        code: PathValidationError.ABSOLUTE_PATH_DENIED,
-      };
-    }
-    targetPath = normalized;
-  } else {
-    targetPath = joinPaths(baseDir, normalized);
-  }
-
-  const canonicalPath = resolvePathSegments(targetPath);
-
-  // Validate against allowed directories
+  const canonicalPath = resolvePathSegments(targetResult.targetPath);
   return validateAllowedDirs(canonicalPath, baseDir, allowedDirs);
 }
 
-/**
- * Create a validation function with preset options
- *
- * Useful for creating validators for specific contexts.
- *
- * @param defaultOptions - Default validation options
- * @returns Validation function
- *
- * @example
- * ```typescript
- * const validateAppPath = createValidator({
- *   baseDir: "/project",
- *   allowedDirs: ["app", "components", "lib"],
- *   level: "strict",
- * });
- *
- * const result = await validateAppPath("app/page.tsx");
- * ```
- */
-export function createValidator(defaultOptions: ValidationOptions) {
-  return (path: string, overrides?: Partial<ValidationOptions>): Promise<ValidationResult> => {
-    return validatePath(path, { ...defaultOptions, ...overrides });
-  };
+export function createValidator(
+  defaultOptions: ValidationOptions,
+): (path: string, overrides?: Partial<ValidationOptions>) => Promise<ValidationResult> {
+  return (path: string, overrides?: Partial<ValidationOptions>): Promise<ValidationResult> =>
+    validatePath(path, { ...defaultOptions, ...overrides });
 }
 
-/**
- * Sanitize a path for safe use in error messages
- * Removes potentially sensitive information
- */
 export function sanitizePathForDisplay(path: string, baseDir: string): string {
   const normalized = normalizeSeparators(path);
   const normalizedBase = normalizeSeparators(baseDir);
@@ -241,7 +151,6 @@ export function sanitizePathForDisplay(path: string, baseDir: string): string {
     return normalized.slice(normalizedBase.length).replace(/^\//, "");
   }
 
-  // For paths outside base, show only filename
   const parts = normalized.split("/");
-  return parts[parts.length - 1] || normalized;
+  return parts.at(-1) || normalized;
 }

@@ -32,7 +32,6 @@ export function getDevStyles(nonce?: string): string {
 
 export function getDevScripts(_hmrPort?: number, nonce?: string): string {
   const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
-  // HMR script detects port at runtime (window.location.port + 1)
   return `
   <script type="module" src="/_veryfront/rsc/client.js"${nonceAttr}></script>
   <script type="module" src="/_veryfront/hmr.js"${nonceAttr}></script>`;
@@ -40,12 +39,11 @@ export function getDevScripts(_hmrPort?: number, nonce?: string): string {
 
 export function getProdScripts(slug: string, nonce?: string): string {
   const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
-  // Use external script src for hydration to avoid CSP issues with inline scripts
+  const encodedSlug = encodeURIComponent(slug);
+
   return `
   <script type="module" src="/_veryfront/rsc/client.js"${nonceAttr}></script>
-  <script type="module" src="/_veryfront/hydrate.js?slug=${
-    encodeURIComponent(slug)
-  }"${nonceAttr}></script>`;
+  <script type="module" src="/_veryfront/hydrate.js?slug=${encodedSlug}"${nonceAttr}></script>`;
 }
 
 export interface StudioScriptOptions {
@@ -59,16 +57,13 @@ export interface StudioScriptOptions {
 
 export function getStudioScripts(options: StudioScriptOptions): string {
   const nonceAttr = options.nonce ? ` nonce="${options.nonce}"` : "";
-  const paramObj: Record<string, string> = {
+
+  const params = new URLSearchParams({
     projectId: options.projectId,
     pageId: options.pageId,
-  };
-  if (options.pagePath) {
-    paramObj.pagePath = options.pagePath;
-  }
-  const params = new URLSearchParams(paramObj).toString();
+    ...(options.pagePath ? { pagePath: options.pagePath } : {}),
+  }).toString();
 
-  // Inject sourceHash as global for Navigator tree sync detection
   const sourceHashScript = options.sourceHash
     ? `<script${nonceAttr}>window.__VERYFRONT_SOURCE_HASH__="${options.sourceHash}";</script>\n  `
     : "";

@@ -8,11 +8,6 @@ export const TOKEN_FILE_PERMISSIONS = 0o600;
 export const CONFIG_DIR_NAME = "veryfront";
 export const TOKEN_FILE_NAME = "token";
 
-/**
- * Get API URL from environment or default.
- *
- * @param env - Optional RuntimeEnv for test isolation
- */
 export function getApiUrl(env: RuntimeEnv = getRuntimeEnv()): string {
-  return env.apiUrl || DEFAULT_API_URL;
+  return env.apiUrl ?? DEFAULT_API_URL;
 }

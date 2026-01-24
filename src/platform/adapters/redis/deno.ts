@@ -1,23 +1,12 @@
-/**
- * Deno Redis Adapter
- *
- * Adapter for the Deno 'redis' module.
- *
- * @module platform/adapters/redis/deno
- */
-
 import type { DenoRedisClient } from "./types.ts";
 import type { RedisAdapter } from "./interface.ts";
 import { arrayToObject } from "./utils.ts";
 
-/**
- * Adapter for Deno 'redis' module
- */
 export class DenoRedisAdapter implements RedisAdapter {
   constructor(private client: DenoRedisClient) {}
 
-  async hset(key: string, fields: Record<string, string>): Promise<number | string> {
-    return await this.client.hset(key, fields);
+  hset(key: string, fields: Record<string, string>): Promise<number | string> {
+    return this.client.hset(key, fields);
   }
 
   async hgetall(key: string): Promise<Record<string, string>> {
@@ -26,52 +15,52 @@ export class DenoRedisAdapter implements RedisAdapter {
     return arrayToObject(res);
   }
 
-  async hdel(key: string, ...fields: string[]): Promise<number> {
-    return await this.client.hdel(key, ...fields);
+  hdel(key: string, ...fields: string[]): Promise<number> {
+    return this.client.hdel(key, ...fields);
   }
 
-  async del(...keys: string[]): Promise<number> {
-    return await this.client.del(...keys);
+  del(...keys: string[]): Promise<number> {
+    return this.client.del(...keys);
   }
 
-  async sadd(key: string, ...members: string[]): Promise<number> {
-    return await this.client.sadd(key, ...members);
+  sadd(key: string, ...members: string[]): Promise<number> {
+    return this.client.sadd(key, ...members);
   }
 
-  async srem(key: string, ...members: string[]): Promise<number> {
-    return await this.client.srem(key, ...members);
+  srem(key: string, ...members: string[]): Promise<number> {
+    return this.client.srem(key, ...members);
   }
 
-  async smembers(key: string): Promise<string[]> {
-    return await this.client.smembers(key);
+  smembers(key: string): Promise<string[]> {
+    return this.client.smembers(key);
   }
 
-  async rpush(key: string, ...values: string[]): Promise<number> {
-    return await this.client.rpush(key, ...values);
+  rpush(key: string, ...values: string[]): Promise<number> {
+    return this.client.rpush(key, ...values);
   }
 
-  async lrange(key: string, start: number, stop: number): Promise<string[]> {
-    return await this.client.lrange(key, start, stop);
+  lrange(key: string, start: number, stop: number): Promise<string[]> {
+    return this.client.lrange(key, start, stop);
   }
 
-  async lindex(key: string, index: number): Promise<string | null> {
-    return await this.client.lindex(key, index);
+  lindex(key: string, index: number): Promise<string | null> {
+    return this.client.lindex(key, index);
   }
 
-  async lset(key: string, index: number, value: string): Promise<string | "OK"> {
-    return await this.client.lset(key, index, value);
+  lset(key: string, index: number, value: string): Promise<string | "OK"> {
+    return this.client.lset(key, index, value);
   }
 
-  async llen(key: string): Promise<number> {
-    return await this.client.llen(key);
+  llen(key: string): Promise<number> {
+    return this.client.llen(key);
   }
 
-  async xadd(key: string, id: string, fields: Record<string, string>): Promise<string> {
-    return await this.client.xadd(key, id, fields);
+  xadd(key: string, id: string, fields: Record<string, string>): Promise<string> {
+    return this.client.xadd(key, id, fields);
   }
 
-  async xgroupCreate(key: string, group: string, id: string, mkstream?: boolean): Promise<string> {
-    return await this.client.xgroupCreate(key, group, id, mkstream);
+  xgroupCreate(key: string, group: string, id: string, mkstream?: boolean): Promise<string> {
+    return this.client.xgroupCreate(key, group, id, mkstream);
   }
 
   async xreadgroup(
@@ -82,9 +71,8 @@ export class DenoRedisAdapter implements RedisAdapter {
   > {
     if (streams.length === 0) return [];
 
-    // Deno redis returns: Array<{ key: string, messages: Array<{ id: string, fieldValues: string[] }> }>
     const res = await this.client.xreadgroup(
-      streams.map((s) => ({ key: s.key, xid: s.xid })),
+      streams.map(({ key, xid }) => ({ key, xid })),
       options,
     );
 
@@ -99,32 +87,32 @@ export class DenoRedisAdapter implements RedisAdapter {
     }));
   }
 
-  async xack(key: string, group: string, ...ids: string[]): Promise<number> {
-    return await this.client.xack(key, group, ...ids);
+  xack(key: string, group: string, ...ids: string[]): Promise<number> {
+    return this.client.xack(key, group, ...ids);
   }
 
-  async keys(pattern: string): Promise<string[]> {
-    return await this.client.keys(pattern);
+  keys(pattern: string): Promise<string[]> {
+    return this.client.keys(pattern);
   }
 
-  async exists(...keys: string[]): Promise<number> {
-    return await this.client.exists(...keys);
+  exists(...keys: string[]): Promise<number> {
+    return this.client.exists(...keys);
   }
 
-  async expire(key: string, seconds: number): Promise<number> {
-    return await this.client.expire(key, seconds);
+  expire(key: string, seconds: number): Promise<number> {
+    return this.client.expire(key, seconds);
   }
 
-  async set(
+  set(
     key: string,
     value: string,
     options?: { nx?: boolean; px?: number; ex?: number },
   ): Promise<string | null> {
-    return await this.client.set(key, value, options);
+    return this.client.set(key, value, options);
   }
 
-  async get(key: string): Promise<string | null> {
-    return await this.client.get(key);
+  get(key: string): Promise<string | null> {
+    return this.client.get(key);
   }
 
   async quit(): Promise<void> {

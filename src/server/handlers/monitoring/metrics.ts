@@ -12,14 +12,12 @@ import { memoryUsage, uptime } from "#veryfront/platform/compat/process.ts";
 export class MetricsHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "MetricsHandler",
-    priority: PRIORITY_HIGH as HandlerPriority, // HIGH priority
-    patterns: [
-      { pattern: "/_metrics", exact: true },
-    ],
+    priority: PRIORITY_HIGH as HandlerPriority,
+    patterns: [{ pattern: "/_metrics", exact: true }],
   };
 
   handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
-    const pathname = new URL(req.url).pathname;
+    const { pathname } = new URL(req.url);
 
     if (pathname !== "/_metrics") {
       return Promise.resolve(this.continue());

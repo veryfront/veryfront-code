@@ -20,8 +20,8 @@ export const PREFETCH_DEFAULT_DELAY_MS = 200;
 export const HTTP_OK = 200;
 export const HTTP_CREATED = 201;
 export const HTTP_NO_CONTENT = 204;
-export const HTTP_NOT_MODIFIED = 304;
 export const HTTP_REDIRECT_FOUND = 302;
+export const HTTP_NOT_MODIFIED = 304;
 
 export const HTTP_BAD_REQUEST = 400;
 export const HTTP_UNAUTHORIZED = 401;
@@ -34,8 +34,8 @@ export const HTTP_URI_TOO_LONG = 414;
 export const HTTP_TOO_MANY_REQUESTS = 429;
 export const HTTP_REQUEST_HEADER_FIELDS_TOO_LARGE = 431;
 
-export const HTTP_SERVER_ERROR = 500;
 export const HTTP_INTERNAL_SERVER_ERROR = 500;
+export const HTTP_SERVER_ERROR = HTTP_INTERNAL_SERVER_ERROR; // Alias for convenience
 export const HTTP_NOT_IMPLEMENTED = 501;
 export const HTTP_BAD_GATEWAY = 502;
 export const HTTP_UNAVAILABLE = 503;

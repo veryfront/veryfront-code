@@ -9,40 +9,46 @@ export function validateCompileParams(
   content: string,
   options: CompileOptions,
 ): void {
-  if (!filePath || typeof filePath !== "string") {
+  if (typeof filePath !== "string" || !filePath) {
     throw new TypeError("filePath must be a non-empty string");
   }
+
   if (typeof content !== "string") {
     throw new TypeError("content must be a string");
   }
-  if (!options || typeof options !== "object") {
+
+  if (typeof options !== "object" || !options) {
     throw new TypeError("options must be an object");
   }
-  if (!options.projectDir || typeof options.projectDir !== "string") {
+
+  if (typeof options.projectDir !== "string" || !options.projectDir) {
     throw new TypeError("options.projectDir must be a non-empty string");
   }
-  if (!options.outputDir || typeof options.outputDir !== "string") {
+
+  if (typeof options.outputDir !== "string" || !options.outputDir) {
     throw new TypeError("options.outputDir must be a non-empty string");
   }
+
   if (options.mode !== "development" && options.mode !== "production") {
     throw new TypeError('options.mode must be either "development" or "production"');
   }
 }
 
 export async function validateFileExists(filePath: string, content: string): Promise<void> {
-  if (!content || content.trim() === "") {
-    try {
-      const exists = await fs.exists(filePath);
-      if (!exists) {
-        throw new Error("file not found");
-      }
-    } catch (_error) {
-      throw toError(createError({
-        type: "build",
-        message: `MDX file not found: ${filePath}`,
-      }));
-    }
+  if (content && content.trim() !== "") return;
+
+  try {
+    if (await fs.exists(filePath)) return;
+  } catch {
+    // fall through to error below
   }
+
+  throw toError(
+    createError({
+      type: "build",
+      message: `MDX file not found: ${filePath}`,
+    }),
+  );
 }
 
 export async function pathExists(path: string): Promise<boolean> {

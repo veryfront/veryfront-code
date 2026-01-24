@@ -7,24 +7,19 @@ export function isInternalLink(target: HTMLAnchorElement): boolean {
   if (!href) return false;
   if (href.startsWith("http") || href.startsWith("mailto:")) return false;
   if (href.startsWith("#")) return false;
-  if (target.getAttribute("target") === "_blank" || target.getAttribute("download")) {
-    return false;
-  }
+  if (target.getAttribute("target") === "_blank" || target.getAttribute("download")) return false;
 
   return true;
 }
 
 export function findAnchorElement(element: HTMLElement | null): HTMLAnchorElement | null {
-  let current = element;
+  let current: HTMLElement | null = element;
+
   while (current && current.tagName !== "A") {
     current = current.parentElement;
   }
 
-  if (!current || !(current instanceof HTMLAnchorElement)) {
-    return null;
-  }
-
-  return current;
+  return current instanceof HTMLAnchorElement ? current : null;
 }
 
 export function updateMetaTags(frontmatter: FrontmatterData): void {
@@ -44,20 +39,24 @@ function updateMetaTag(
   content: string,
 ): void {
   let metaTag = document.querySelector(selector);
+
   if (!metaTag) {
     metaTag = document.createElement("meta");
     metaTag.setAttribute(attributeName, attributeValue);
     document.head.appendChild(metaTag);
   }
+
   metaTag.setAttribute("content", content);
 }
 
 export function executeScripts(container: HTMLElement): void {
   for (const oldScript of container.querySelectorAll("script")) {
     const newScript = document.createElement("script");
+
     for (const { name, value } of oldScript.attributes) {
       newScript.setAttribute(name, value);
     }
+
     newScript.textContent = oldScript.textContent;
     oldScript.parentNode?.replaceChild(newScript, oldScript);
   }
@@ -65,14 +64,16 @@ export function executeScripts(container: HTMLElement): void {
 
 export function applyHeadDirectives(container: HTMLElement): void {
   const nodes = container.querySelectorAll('[data-veryfront-head="1"], vf-head');
-  if (nodes.length > 0) {
-    cleanManagedHeadTags();
-  }
+  if (!nodes.length) return;
+
+  cleanManagedHeadTags();
 
   for (const wrapper of nodes) {
-    const isTemplate = typeof HTMLTemplateElement !== "undefined" &&
-      wrapper instanceof HTMLTemplateElement;
-    const contentSource = isTemplate ? (wrapper as HTMLTemplateElement).content : wrapper;
+    const contentSource =
+      typeof HTMLTemplateElement !== "undefined" && wrapper instanceof HTMLTemplateElement
+        ? wrapper.content
+        : wrapper;
+
     processHeadWrapper(contentSource);
     wrapper.parentElement?.removeChild(wrapper);
   }
@@ -89,18 +90,22 @@ function processHeadWrapper(wrapper: Element | DocumentFragment): void {
     if (!(node instanceof Element)) continue;
 
     const tagName = node.tagName.toLowerCase();
+
     if (tagName === "title") {
       document.title = node.textContent || document.title;
       continue;
     }
 
     const clone = document.createElement(tagName);
+
     for (const { name, value } of node.attributes) {
       clone.setAttribute(name, value);
     }
+
     if (node.textContent && !clone.hasAttribute("src")) {
       clone.textContent = node.textContent;
     }
+
     clone.setAttribute("data-veryfront-managed", "1");
     document.head.appendChild(clone);
   }
@@ -108,13 +113,11 @@ function processHeadWrapper(wrapper: Element | DocumentFragment): void {
 
 export function manageFocus(container: HTMLElement): void {
   try {
-    const focusElement = (container.querySelector("[data-router-focus]") ||
-      container.querySelector("main") ||
-      container.querySelector("h1")) as HTMLElement | null;
+    const focusElement = container.querySelector<HTMLElement>("[data-router-focus]") ||
+      container.querySelector<HTMLElement>("main") ||
+      container.querySelector<HTMLElement>("h1");
 
-    if (focusElement && focusElement instanceof HTMLElement && "focus" in focusElement) {
-      focusElement.focus({ preventScroll: true });
-    }
+    focusElement?.focus?.({ preventScroll: true });
   } catch (error) {
     logger.warn("[Veryfront] focus management failed", error);
   }
@@ -126,10 +129,12 @@ export function extractPageDataFromScript(): PageData | null {
 
   try {
     const content = pageDataScript.textContent;
+
     if (!content) {
       logger.warn("[Veryfront] Page data script has no content");
       return {};
     }
+
     return JSON.parse(content) as PageData;
   } catch (error) {
     logger.error("[Veryfront] Failed to parse page data:", error);
@@ -137,19 +142,13 @@ export function extractPageDataFromScript(): PageData | null {
   }
 }
 
-export function parsePageDataFromHTML(html: string): {
-  content: string;
-  pageData: PageData;
-} {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(html, "text/html");
+export function parsePageDataFromHTML(html: string): { content: string; pageData: PageData } {
+  const doc = new DOMParser().parseFromString(html, "text/html");
 
   const root = doc.getElementById("root");
-  let content = "";
+  const content = root?.innerHTML || "";
 
-  if (root) {
-    content = root.innerHTML || "";
-  } else {
+  if (!root) {
     logger.warn("[Veryfront] No root element found in HTML");
   }
 
@@ -158,11 +157,12 @@ export function parsePageDataFromHTML(html: string): {
 
   if (pageDataScript) {
     try {
-      const content = pageDataScript.textContent;
-      if (!content) {
+      const scriptContent = pageDataScript.textContent;
+
+      if (!scriptContent) {
         logger.warn("[Veryfront] Page data script in HTML has no content");
       } else {
-        pageData = JSON.parse(content) as PageData;
+        pageData = JSON.parse(scriptContent) as PageData;
       }
     } catch (error) {
       logger.error("[Veryfront] Failed to parse page data from HTML:", error);

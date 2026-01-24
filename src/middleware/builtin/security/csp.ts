@@ -8,18 +8,23 @@ export function contentSecurityPolicy(
   return async (_ctx, next) => {
     const res = await next();
     if (!res) return res;
+
     const headers = new Headers(res.headers);
 
     const base = Object.entries(policies)
-      .map(([k, v]) => `${k} ${v}`)
+      .map(([key, value]) => `${key} ${value}`)
       .join("; ");
 
-    const noncePart = options?.nonce ? ` 'nonce-${options.nonce}'` : "";
-    let csp = base.replace(/(script-src)([^;]*)/i, (_m, a, b) => `${a}${b}${noncePart}`);
+    const nonce = options?.nonce;
+    const noncePart = nonce ? ` 'nonce-${nonce}'` : "";
 
-    if (options?.merge) {
-      csp = `${options.merge}; ${csp}`;
-    }
+    let csp = base.replace(
+      /(script-src)([^;]*)/i,
+      (_m, a, b) => `${a}${b}${noncePart}`,
+    );
+
+    const merge = options?.merge;
+    if (merge) csp = `${merge}; ${csp}`;
 
     headers.set("Content-Security-Policy", csp);
     return new Response(res.body, { status: res.status, headers });

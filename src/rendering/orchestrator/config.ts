@@ -41,15 +41,12 @@ export class ConfigurationManager {
       mode: this.mode,
     });
 
-    // Use pre-loaded config if provided (avoids FSAdapter re-loading issues)
-    this.config = this.preloadedConfig ?? await getConfig(this.projectDir, this.adapter);
+    this.config = this.preloadedConfig ?? (await getConfig(this.projectDir, this.adapter));
 
-    // Initialize bundle manifest store
     await initializeBundleManifest(this.config, this.mode, this.adapter);
 
-    // Compute project cache key
     this.projectCacheKey = await handleErrorWithFallback(
-      async () => await computeHash(this.projectDir),
+      () => computeHash(this.projectDir),
       this.projectDir,
       logger,
     );
@@ -61,13 +58,14 @@ export class ConfigurationManager {
   }
 
   getConfig(): VeryfrontConfig {
-    if (!this.config) {
-      throw toError(createError({
+    if (this.config) return this.config;
+
+    throw toError(
+      createError({
         type: "render",
         message: "Configuration not initialized. Call initialize() first.",
-      }));
-    }
-    return this.config;
+      }),
+    );
   }
 
   getProjectCacheKey(): string | null {
@@ -82,9 +80,8 @@ export class ConfigurationManager {
 
     const baseDirFromEnv = this.adapter.env?.get?.("VERYFRONT_CACHE_DIR") ??
       this.adapter.env?.get?.("VF_CACHE_DIR");
-    const configDir = this.config?.cache?.dir;
+    const configDir = this.config.cache?.dir;
 
-    // Return cached result if inputs haven't changed
     if (
       this.cacheBaseDir !== undefined &&
       this.lastEnvCacheValue === baseDirFromEnv &&
@@ -93,10 +90,9 @@ export class ConfigurationManager {
       return this.cacheBaseDir;
     }
 
-    // Recompute and cache
-    const candidate = baseDirFromEnv || configDir;
+    const candidate = baseDirFromEnv ?? configDir;
     const result = candidate
-      ? (isAbsolute(candidate) ? candidate : join(this.projectDir, candidate))
+      ? isAbsolute(candidate) ? candidate : join(this.projectDir, candidate)
       : join(this.projectDir, ".veryfront", "cache");
 
     this.cacheBaseDir = result;

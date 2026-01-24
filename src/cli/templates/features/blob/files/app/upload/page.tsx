@@ -11,26 +11,26 @@ interface FileRef {
   url?: string;
 }
 
-export default function UploadPage() {
+export default function UploadPage(): React.JSX.Element {
   const [files, setFiles] = useState<FileRef[]>([]);
-  const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState("");
+  const [uploading, setUploading] = useState<boolean>(false);
+  const [error, setError] = useState<string>("");
 
   useEffect(() => {
-    loadFiles();
+    void loadFiles();
   }, []);
 
-  async function loadFiles() {
+  async function loadFiles(): Promise<void> {
     try {
       const response = await fetch("/api/upload");
       const data = await response.json();
-      setFiles(data.files || []);
+      setFiles(data.files ?? []);
     } catch (err) {
       console.error("Failed to load files:", err);
     }
   }
 
-  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>): Promise<void> {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -46,9 +46,7 @@ export default function UploadPage() {
         body: formData,
       });
 
-      if (!response.ok) {
-        throw new Error("Upload failed");
-      }
+      if (!response.ok) throw new Error("Upload failed");
 
       await loadFiles();
     } catch (err) {
@@ -58,7 +56,7 @@ export default function UploadPage() {
     }
   }
 
-  async function handleDelete(id: string) {
+  async function handleDelete(id: string): Promise<void> {
     try {
       await fetch(`/api/upload/${id}`, { method: "DELETE" });
       await loadFiles();
@@ -80,11 +78,13 @@ export default function UploadPage() {
         <p className="text-neutral-600 dark:text-neutral-400 mt-1">Upload and manage files</p>
       </div>
 
-      {error && (
-        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 px-4 py-3 rounded-xl text-sm mb-4">
-          {error}
-        </div>
-      )}
+      {error
+        ? (
+          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 px-4 py-3 rounded-xl text-sm mb-4">
+            {error}
+          </div>
+        )
+        : null}
 
       <div className="bg-white dark:bg-neutral-800 p-6 rounded-2xl border border-neutral-200 dark:border-neutral-700 mb-6">
         <label className="block">
@@ -104,9 +104,9 @@ export default function UploadPage() {
               disabled:opacity-50 disabled:cursor-not-allowed"
           />
         </label>
-        {uploading && (
-          <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-2">Uploading...</p>
-        )}
+        {uploading
+          ? <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-2">Uploading...</p>
+          : null}
       </div>
 
       <div className="bg-white dark:bg-neutral-800 rounded-2xl border border-neutral-200 dark:border-neutral-700">
@@ -138,7 +138,7 @@ export default function UploadPage() {
                     <button
                       type="button"
                       onClick={() =>
-                        handleDelete(file.id)}
+                        void handleDelete(file.id)}
                       className="px-3 py-1.5 text-sm bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-lg hover:bg-red-200 dark:hover:bg-red-900/50"
                     >
                       Delete

@@ -1,8 +1,8 @@
 import GithubSlugger from "github-slugger";
 import type { Heading, Root } from "mdast";
-import type { VFile } from "vfile";
 import { toString } from "mdast-util-to-string";
 import { visit } from "unist-util-visit";
+import type { VFile } from "vfile";
 
 interface HeadingEntry {
   text: string;
@@ -10,17 +10,16 @@ interface HeadingEntry {
   level: number;
 }
 
-// Extended heading data to support hProperties (used by mdast-util-to-hast)
 interface HeadingWithHProperties extends Heading {
   data?: Heading["data"] & {
     hProperties?: Record<string, unknown>;
   };
 }
 
-export function remarkMdxHeadings() {
+export function remarkMdxHeadings(): (tree: Root, file: VFile) => void {
   const slugger = new GithubSlugger();
 
-  return (tree: Root, file: VFile) => {
+  return (tree: Root, file: VFile): void => {
     const headings: HeadingEntry[] = [];
 
     slugger.reset();
@@ -33,11 +32,7 @@ export function remarkMdxHeadings() {
       node.data.hProperties ??= {};
       node.data.hProperties.id = id;
 
-      headings.push({
-        text,
-        id,
-        level: node.depth,
-      });
+      headings.push({ text, id, level: node.depth });
     });
 
     file.data.headings = headings;
@@ -105,8 +100,6 @@ export function remarkMdxHeadings() {
       },
     };
 
-    // Insert the headings export at the beginning of the tree
-    // The headingsExport structure is compatible with mdast-util-mdx-jsx's MdxjsEsm type
-    tree.children.unshift(headingsExport as typeof tree.children[number]);
+    tree.children.unshift(headingsExport as (typeof tree.children)[number]);
   };
 }

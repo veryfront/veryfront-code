@@ -25,8 +25,8 @@ export class RSCDevServerHandler {
     this.hydratorHandler = new HydratorHandler();
   }
 
-  async handleManifest(): Promise<Response> {
-    return await this.manifestHandler.handle(this.clientManifest);
+  handleManifest(): Promise<Response> {
+    return this.manifestHandler.handle(this.clientManifest);
   }
 
   async handleRender(
@@ -47,18 +47,18 @@ export class RSCDevServerHandler {
     return this.pageHandler.handle(pathname, searchParams);
   }
 
-  async handleHydratorScript(): Promise<Response> {
-    return await this.hydratorHandler.handle();
+  handleHydratorScript(): Promise<Response> {
+    return this.hydratorHandler.handle();
   }
 
   private async ensureRenderer(): Promise<void> {
-    if (!this.renderer) {
-      this.clientManifest = await buildClientManifest(this.projectDir);
-      this.renderer = new RSCRenderer({
-        clientManifest: this.clientManifest,
-        projectDir: this.projectDir,
-        mode: "development",
-      });
-    }
+    if (this.renderer) return;
+
+    this.clientManifest = await buildClientManifest(this.projectDir);
+    this.renderer = new RSCRenderer({
+      clientManifest: this.clientManifest,
+      projectDir: this.projectDir,
+      mode: "development",
+    });
   }
 }

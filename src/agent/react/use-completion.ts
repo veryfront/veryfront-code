@@ -50,19 +50,14 @@ export interface UseCompletionResult {
 /**
  * useCompletion hook for single text generation
  */
-export function useCompletion(
-  options: UseCompletionOptions,
-): UseCompletionResult {
+export function useCompletion(options: UseCompletionOptions): UseCompletionResult {
   const [completion, setCompletion] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  /**
-   * Complete a prompt
-   */
   const complete = useCallback(
-    async (prompt: string) => {
+    async (prompt: string): Promise<void> => {
       setIsLoading(true);
       setError(null);
       setCompletion("");
@@ -71,55 +66,49 @@ export function useCompletion(
       abortControllerRef.current = abortController;
 
       try {
-        // Call API
         const response = await fetch(options.api, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             ...options.headers,
           },
-          body: JSON.stringify({
-            prompt,
-            ...options.body,
-          }),
+          body: JSON.stringify({ prompt, ...options.body }),
           signal: abortController.signal,
         });
 
         if (!response.ok) {
-          throw toError(createError({
-            type: "agent",
-            message: `API error: ${response.status}`,
-          }));
+          throw toError(
+            createError({
+              type: "agent",
+              message: `API error: ${response.status}`,
+            }),
+          );
         }
 
         options.onResponse?.(response);
 
-        // Handle streaming response
-        if (response.body) {
-          const reader = response.body.getReader();
-          const decoder = new TextDecoder();
-          let accumulatedText = "";
+        const body = response.body;
+        if (!body) return;
 
-          while (true) {
-            const { done, value } = await reader.read();
+        const reader = body.getReader();
+        const decoder = new TextDecoder();
+        let accumulatedText = "";
 
-            if (done) break;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-            const chunk = decoder.decode(value, { stream: true });
-            accumulatedText += chunk;
-            setCompletion(accumulatedText);
-          }
-
-          options.onFinish?.(accumulatedText);
+          accumulatedText += decoder.decode(value, { stream: true });
+          setCompletion(accumulatedText);
         }
+
+        options.onFinish?.(accumulatedText);
       } catch (err) {
-        if (err instanceof Error && err.name === "AbortError") {
-          return;
-        }
+        if (err instanceof Error && err.name === "AbortError") return;
 
-        const error = err instanceof Error ? err : new Error(String(err));
-        setError(error);
-        options.onError?.(error);
+        const nextError = err instanceof Error ? err : new Error(String(err));
+        setError(nextError);
+        options.onError?.(nextError);
       } finally {
         setIsLoading(false);
         abortControllerRef.current = null;
@@ -128,14 +117,9 @@ export function useCompletion(
     [options],
   );
 
-  /**
-   * Stop generation
-   */
-  const stop = useCallback(() => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-    }
+  const stop = useCallback((): void => {
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
     setIsLoading(false);
   }, []);
 

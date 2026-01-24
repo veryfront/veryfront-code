@@ -9,7 +9,10 @@ export default tool({
     listId: z.string().describe("The ID of the list to create the card in"),
     name: z.string().describe("The name/title of the card"),
     desc: z.string().optional().describe("Description or details for the card"),
-    due: z.string().optional().describe("Due date in ISO 8601 format (e.g., 2024-12-31T23:59:59.000Z)"),
+    due: z
+      .string()
+      .optional()
+      .describe("Due date in ISO 8601 format (e.g., 2024-12-31T23:59:59.000Z)"),
     pos: z
       .union([z.string(), z.number()])
       .optional()
@@ -43,11 +46,7 @@ export default tool({
         url: card.url,
         idList: card.idList,
         due: card.due,
-        labels: card.labels.map((label) => ({
-          id: label.id,
-          name: label.name,
-          color: label.color,
-        })),
+        labels: card.labels.map(({ id, name, color }) => ({ id, name, color })),
       },
     };
   },

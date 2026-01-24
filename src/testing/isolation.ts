@@ -21,10 +21,9 @@ type HookRegistration = {
 const installedKey = "__vfTestIsolationInstalled";
 const envOverlayKey = "__vfTestEnvOverlay";
 const denoEnvOverlayKey = "__vfTestDenoEnvOverlay";
-const cleanupTasks = new Set<CleanupTask>();
 const envMaskKey = "__vfTestEnvMask";
+const cleanupTasks = new Set<CleanupTask>();
 
-// Use AsyncLocalStorage for per-test isolation in concurrent environments
 type TestIsolationContext = {
   envSnapshot: Record<string, string> | null;
   globalSnapshot: Map<string, { had: boolean; value: unknown }> | null;
@@ -33,17 +32,13 @@ type TestIsolationContext = {
 let isolationStorage: import("node:async_hooks").AsyncLocalStorage<TestIsolationContext> | null =
   null;
 
-// Fallback for environments without AsyncLocalStorage (single-threaded)
 const fallbackContext: TestIsolationContext = {
   envSnapshot: null,
   globalSnapshot: null,
 };
 
 function getIsolationContext(): TestIsolationContext {
-  if (isolationStorage) {
-    return isolationStorage.getStore() ?? { envSnapshot: null, globalSnapshot: null };
-  }
-  return fallbackContext;
+  return isolationStorage?.getStore() ?? fallbackContext;
 }
 
 const envDeleted = Symbol("vfEnvDeleted");
@@ -106,20 +101,17 @@ const SSR_GLOBAL_KEYS = [
 
 function hasSSRStubGlobals(): boolean {
   const win = (globalThis as Record<string, unknown>).window as Record<string, unknown> | undefined;
-  if (win && typeof win === "object" && win[SSR_STUB_MARKER] === true) {
-    return true;
-  }
+  if (win && typeof win === "object" && win[SSR_STUB_MARKER] === true) return true;
+
   const doc = (globalThis as Record<string, unknown>).document as
     | Record<string, unknown>
     | undefined;
-  if (doc && typeof doc === "object" && doc[SSR_STUB_MARKER] === true) {
-    return true;
-  }
-  return false;
+  return !!(doc && typeof doc === "object" && doc[SSR_STUB_MARKER] === true);
 }
 
 function clearSSRGlobalStubs(): void {
   if (!hasSSRStubGlobals()) return;
+
   for (const key of SSR_GLOBAL_KEYS) {
     try {
       delete (globalThis as Record<string, unknown>)[key];
@@ -137,11 +129,13 @@ type EnvMask = {
 function getEnvMask(): EnvMask | null {
   const mask = (globalThis as Record<string, unknown>)[envMaskKey];
   if (!mask || typeof mask !== "object") return null;
+
   const raw = mask as EnvMask;
   const prefixes = Array.isArray(raw.prefixes)
     ? raw.prefixes.filter((p) => typeof p === "string")
     : undefined;
   const keys = Array.isArray(raw.keys) ? raw.keys.filter((k) => typeof k === "string") : undefined;
+
   if ((!prefixes || prefixes.length === 0) && (!keys || keys.length === 0)) return null;
   return { prefixes, keys };
 }
@@ -149,6 +143,7 @@ function getEnvMask(): EnvMask | null {
 function isMaskedEnvKey(key: string, mask: EnvMask | null): boolean {
   if (!mask) return false;
   if (mask.keys?.includes(key)) return true;
+
   if (mask.prefixes) {
     for (const prefix of mask.prefixes) {
       if (key.startsWith(prefix)) return true;
@@ -166,158 +161,150 @@ function createEnvProxy(
   storage: AsyncLocalStorage<EnvOverlayStore>,
 ): Record<string, string> {
   const hasOwn = (obj: object, key: string) => Object.prototype.hasOwnProperty.call(obj, key);
-  const toAccessorDescriptor = (desc: PropertyDescriptor): PropertyDescriptor => {
-    const next = Object.create(null) as PropertyDescriptor;
-    next.configurable = desc.configurable ?? true;
-    next.enumerable = desc.enumerable ?? true;
-    if ("get" in desc) next.get = desc.get;
-    if ("set" in desc) next.set = desc.set;
-    return next;
-  };
-  const toDataDescriptor = (desc: PropertyDescriptor, value: unknown): PropertyDescriptor => {
-    const next = Object.create(null) as PropertyDescriptor;
-    next.configurable = desc.configurable ?? true;
-    next.enumerable = desc.enumerable ?? true;
-    next.writable = desc.writable ?? true;
-    next.value = value;
-    return next;
-  };
+
+  const toAccessorDescriptor = (desc: PropertyDescriptor): PropertyDescriptor => ({
+    configurable: desc.configurable ?? true,
+    enumerable: desc.enumerable ?? true,
+    get: desc.get,
+    set: desc.set,
+  });
+
+  const toDataDescriptor = (desc: PropertyDescriptor, value: unknown): PropertyDescriptor => ({
+    configurable: desc.configurable ?? true,
+    enumerable: desc.enumerable ?? true,
+    writable: desc.writable ?? true,
+    value,
+  });
+
   const normalizeDescriptor = (
     desc: PropertyDescriptor | undefined,
     valueOverride?: unknown,
   ): PropertyDescriptor | undefined => {
     if (!desc) return undefined;
+
     const hasData = hasOwn(desc, "value") || hasOwn(desc, "writable");
-    if (hasData) {
-      return toDataDescriptor(desc, valueOverride ?? desc.value);
-    }
-    if (hasOwn(desc, "get") || hasOwn(desc, "set")) {
-      return toAccessorDescriptor(desc);
-    }
+    if (hasData) return toDataDescriptor(desc, valueOverride ?? desc.value);
+
+    if (hasOwn(desc, "get") || hasOwn(desc, "set")) return toAccessorDescriptor(desc);
+
     return toDataDescriptor(desc, valueOverride ?? desc.value);
   };
 
   const envMask = getEnvMask();
-  const handler: ProxyHandler<Record<string, string>> = {
+
+  return new Proxy(baseEnv, {
     get(target, prop, receiver) {
-      if (typeof prop !== "string") {
-        return Reflect.get(target, prop, receiver);
-      }
+      if (typeof prop !== "string") return Reflect.get(target, prop, receiver);
+
       const store = getEnvOverlayStore(storage);
       if (store?.has(prop)) {
         const value = store.get(prop);
         return value === envDeleted ? undefined : value;
       }
+
       if (isMaskedEnvKey(prop, envMask)) return undefined;
       return target[prop];
     },
     set(target, prop, value) {
-      if (typeof prop !== "string") {
-        return Reflect.set(target, prop, value);
-      }
+      if (typeof prop !== "string") return Reflect.set(target, prop, value);
+
       const store = getEnvOverlayStore(storage);
       const nextValue = String(value);
+
       if (store) {
         store.set(prop, nextValue);
         return true;
       }
+
       target[prop] = nextValue;
       return true;
     },
     deleteProperty(target, prop) {
-      if (typeof prop !== "string") {
-        return Reflect.deleteProperty(target, prop);
-      }
+      if (typeof prop !== "string") return Reflect.deleteProperty(target, prop);
+
       const store = getEnvOverlayStore(storage);
       if (store) {
         store.set(prop, envDeleted);
         return true;
       }
+
       delete target[prop];
       return true;
     },
     has(target, prop) {
-      if (typeof prop !== "string") {
-        return Reflect.has(target, prop);
-      }
+      if (typeof prop !== "string") return Reflect.has(target, prop);
+
       const store = getEnvOverlayStore(storage);
-      if (store?.has(prop)) {
-        return store.get(prop) !== envDeleted;
-      }
+      if (store?.has(prop)) return store.get(prop) !== envDeleted;
+
       if (isMaskedEnvKey(prop, envMask)) return false;
       return prop in target;
     },
     ownKeys(target) {
       const keys = new Set<string>();
       const symbolKeys: symbol[] = [];
+
       for (const key of Reflect.ownKeys(target)) {
         if (typeof key === "string") {
-          if (!isMaskedEnvKey(key, envMask)) {
-            keys.add(key);
-          }
+          if (!isMaskedEnvKey(key, envMask)) keys.add(key);
         } else {
           symbolKeys.push(key);
         }
       }
+
       const store = getEnvOverlayStore(storage);
       if (store) {
         for (const [key, value] of store.entries()) {
-          if (value === envDeleted) {
-            keys.delete(key);
-          } else {
-            keys.add(key);
-          }
+          if (value === envDeleted) keys.delete(key);
+          else keys.add(key);
         }
       }
+
       return [...keys, ...symbolKeys];
     },
     getOwnPropertyDescriptor(target, prop) {
-      if (typeof prop !== "string") {
-        return Reflect.getOwnPropertyDescriptor(target, prop);
-      }
+      if (typeof prop !== "string") return Reflect.getOwnPropertyDescriptor(target, prop);
+
       const store = getEnvOverlayStore(storage);
       if (store?.has(prop)) {
         const value = store.get(prop);
         if (value === envDeleted) return undefined;
+
         const baseDesc = Reflect.getOwnPropertyDescriptor(target, prop);
         if (baseDesc && (hasOwn(baseDesc, "get") || hasOwn(baseDesc, "set"))) {
-          if (baseDesc.configurable === false) {
-            return normalizeDescriptor(baseDesc);
-          }
+          if (baseDesc.configurable === false) return normalizeDescriptor(baseDesc);
         }
         return normalizeDescriptor(baseDesc ?? {}, value);
       }
+
       if (isMaskedEnvKey(prop, envMask)) {
         const baseDesc = Reflect.getOwnPropertyDescriptor(target, prop);
-        if (baseDesc?.configurable === false) {
-          return normalizeDescriptor(baseDesc);
-        }
+        if (baseDesc?.configurable === false) return normalizeDescriptor(baseDesc);
         return undefined;
       }
+
       return normalizeDescriptor(Reflect.getOwnPropertyDescriptor(target, prop));
     },
     defineProperty(target, prop, descriptor) {
-      if (typeof prop !== "string") {
-        return Reflect.defineProperty(target, prop, descriptor);
-      }
+      if (typeof prop !== "string") return Reflect.defineProperty(target, prop, descriptor);
+
       const store = getEnvOverlayStore(storage);
-      if (store) {
-        if (descriptor && ("get" in descriptor || "set" in descriptor)) {
-          const normalized = normalizeDescriptor(descriptor);
-          return Reflect.defineProperty(target, prop, normalized ?? descriptor);
-        }
-        if (descriptor && "value" in descriptor) {
-          store.set(prop, String(descriptor.value));
-          return true;
-        }
+      if (!store) return Reflect.defineProperty(target, prop, descriptor);
+
+      if (descriptor && ("get" in descriptor || "set" in descriptor)) {
         const normalized = normalizeDescriptor(descriptor);
         return Reflect.defineProperty(target, prop, normalized ?? descriptor);
       }
-      return Reflect.defineProperty(target, prop, descriptor);
-    },
-  };
 
-  return new Proxy(baseEnv, handler);
+      if (descriptor && "value" in descriptor) {
+        store.set(prop, String(descriptor.value));
+        return true;
+      }
+
+      const normalized = normalizeDescriptor(descriptor);
+      return Reflect.defineProperty(target, prop, normalized ?? descriptor);
+    },
+  });
 }
 
 async function ensureDenoEnvOverlay(): Promise<EnvOverlay | null> {
@@ -338,8 +325,8 @@ async function ensureDenoEnvOverlay(): Promise<EnvOverlay | null> {
     const originalDelete = Deno.env.delete.bind(Deno.env);
     const originalToObject = Deno.env.toObject.bind(Deno.env);
 
-    const getStore = () => storage.getStore();
     const envMask = getEnvMask();
+    const getStore = () => storage.getStore();
 
     Deno.env.get = ((key: string): string | undefined => {
       const store = getStore();
@@ -373,20 +360,18 @@ async function ensureDenoEnvOverlay(): Promise<EnvOverlay | null> {
       const base = originalToObject();
       const store = getStore();
       const merged: Record<string, string> = { ...base };
+
       if (envMask) {
         for (const key of Object.keys(merged)) {
-          if (isMaskedEnvKey(key, envMask)) {
-            delete merged[key];
-          }
+          if (isMaskedEnvKey(key, envMask)) delete merged[key];
         }
       }
+
       if (!store) return merged;
+
       for (const [key, value] of store.entries()) {
-        if (value === envDeleted) {
-          delete merged[key];
-        } else {
-          merged[key] = value;
-        }
+        if (value === envDeleted) delete merged[key];
+        else merged[key] = value;
       }
       return merged;
     }) as typeof Deno.env.toObject;
@@ -404,6 +389,7 @@ async function ensureEnvOverlay(): Promise<EnvOverlay | null> {
     const denoOverlay = await ensureDenoEnvOverlay();
     if (denoOverlay) return denoOverlay;
   }
+
   if (!isBun && !isNode) return null;
 
   const globalAny = globalThis as Record<string, unknown>;
@@ -417,7 +403,9 @@ async function ensureEnvOverlay(): Promise<EnvOverlay | null> {
     const asyncHooks = await import("node:async_hooks");
     const storage = new asyncHooks.AsyncLocalStorage<EnvOverlayStore>();
     const proxy = createEnvProxy(processEnv, storage);
+
     (globalThis as { process?: { env: Record<string, string> } }).process!.env = proxy;
+
     const overlay: EnvOverlay = { storage, baseEnv: processEnv };
     globalAny[envOverlayKey] = overlay;
     return overlay;
@@ -436,6 +424,7 @@ function captureEnvSnapshot(): Record<string, string> {
 
 function restoreEnvSnapshot(snapshot: Record<string, string> | null): void {
   if (!snapshot) return;
+
   let current: Record<string, string> = {};
   try {
     current = readEnv();
@@ -444,12 +433,11 @@ function restoreEnvSnapshot(snapshot: Record<string, string> | null): void {
   }
 
   for (const key of Object.keys(current)) {
-    if (!(key in snapshot)) {
-      try {
-        deleteEnv(key);
-      } catch {
-        // ignore env cleanup errors
-      }
+    if (key in snapshot) continue;
+    try {
+      deleteEnv(key);
+    } catch {
+      // ignore env cleanup errors
     }
   }
 
@@ -465,9 +453,10 @@ function restoreEnvSnapshot(snapshot: Record<string, string> | null): void {
 function captureGlobalSnapshot(): Map<string, { had: boolean; value: unknown }> {
   const snapshot = new Map<string, { had: boolean; value: unknown }>();
   for (const key of globalKeys) {
-    const had = Object.prototype.hasOwnProperty.call(globalThis, key);
-    const value = (globalThis as Record<string, unknown>)[key];
-    snapshot.set(key, { had, value });
+    snapshot.set(key, {
+      had: Object.prototype.hasOwnProperty.call(globalThis, key),
+      value: (globalThis as Record<string, unknown>)[key],
+    });
   }
   return snapshot;
 }
@@ -476,13 +465,11 @@ function restoreGlobalSnapshot(
   snapshot: Map<string, { had: boolean; value: unknown }> | null,
 ): void {
   if (!snapshot) return;
+
   for (const [key, entry] of snapshot.entries()) {
     try {
-      if (entry.had) {
-        (globalThis as Record<string, unknown>)[key] = entry.value;
-      } else {
-        delete (globalThis as Record<string, unknown>)[key];
-      }
+      if (entry.had) (globalThis as Record<string, unknown>)[key] = entry.value;
+      else delete (globalThis as Record<string, unknown>)[key];
     } catch {
       // ignore global restore errors
     }
@@ -496,6 +483,7 @@ export function registerTestCleanup(task: CleanupTask): void {
 async function runCleanupTasks(): Promise<void> {
   const tasks = Array.from(cleanupTasks);
   cleanupTasks.clear();
+
   for (const task of tasks) {
     try {
       await task();
@@ -545,13 +533,13 @@ async function runDefaultCleanup(): Promise<void> {
     }
   }
 
-  if (isBun) {
-    try {
-      const { cleanupBundler } = await import("../rendering/cleanup.ts");
-      await cleanupBundler();
-    } catch {
-      // Best-effort cleanup; ignore individual failures.
-    }
+  if (!isBun) return;
+
+  try {
+    const { cleanupBundler } = await import("../rendering/cleanup.ts");
+    await cleanupBundler();
+  } catch {
+    // Best-effort cleanup; ignore individual failures.
   }
 }
 
@@ -573,7 +561,7 @@ async function runSSRTestCleanup(): Promise<void> {
   clearSSRGlobalStubs();
 }
 
-function createTimerTracker() {
+function createTimerTracker(): { install: () => void; clear: () => void } {
   const timeouts = new Set<ReturnType<typeof setTimeout>>();
   const intervals = new Set<ReturnType<typeof setInterval>>();
   const immediates = new Set<unknown>();
@@ -583,12 +571,14 @@ function createTimerTracker() {
   const originalClearTimeout = globalThis.clearTimeout;
   const originalSetInterval = globalThis.setInterval;
   const originalClearInterval = globalThis.clearInterval;
+
   const originalSetImmediate = (globalThis as Record<string, unknown>).setImmediate as
     | ((fn: (...args: unknown[]) => void, ...args: unknown[]) => unknown)
     | undefined;
   const originalClearImmediate = (globalThis as Record<string, unknown>).clearImmediate as
     | ((id: unknown) => void)
     | undefined;
+
   const originalRequestIdleCallback = (globalThis as typeof globalThis & {
     requestIdleCallback?: typeof requestIdleCallback;
   }).requestIdleCallback;
@@ -652,24 +642,16 @@ function createTimerTracker() {
       }
     },
     clear() {
-      for (const id of timeouts) {
-        originalClearTimeout(id as never);
-      }
+      for (const id of timeouts) originalClearTimeout(id as never);
       timeouts.clear();
 
-      for (const id of intervals) {
-        originalClearInterval(id as never);
-      }
+      for (const id of intervals) originalClearInterval(id as never);
       intervals.clear();
 
-      for (const id of immediates) {
-        originalClearImmediate?.(id);
-      }
+      for (const id of immediates) originalClearImmediate?.(id);
       immediates.clear();
 
-      for (const id of idleCallbacks) {
-        originalCancelIdleCallback?.(id);
-      }
+      for (const id of idleCallbacks) originalCancelIdleCallback?.(id);
       idleCallbacks.clear();
     },
   };
@@ -685,7 +667,6 @@ export async function installTestIsolation(hooks: HookRegistration): Promise<voi
 
   const envOverlay = await ensureEnvOverlay();
 
-  // Try to set up AsyncLocalStorage for per-test isolation
   try {
     const asyncHooks = await import("node:async_hooks");
     isolationStorage = new asyncHooks.AsyncLocalStorage<TestIsolationContext>();
@@ -696,18 +677,16 @@ export async function installTestIsolation(hooks: HookRegistration): Promise<voi
 
   hooks.beforeEach?.(async () => {
     await runSSRTestCleanup();
-    // Create a fresh context for this test
+
     const context: TestIsolationContext = isolationStorage
       ? { envSnapshot: null, globalSnapshot: null }
       : fallbackContext;
 
-    if (isolationStorage) isolationStorage.enterWith(context);
+    isolationStorage?.enterWith(context);
 
-    if (envOverlay) {
-      envOverlay.storage.enterWith(new Map());
-    } else {
-      context.envSnapshot = captureEnvSnapshot();
-    }
+    if (envOverlay) envOverlay.storage.enterWith(new Map());
+    else context.envSnapshot = captureEnvSnapshot();
+
     context.globalSnapshot = captureGlobalSnapshot();
   });
 
@@ -718,11 +697,9 @@ export async function installTestIsolation(hooks: HookRegistration): Promise<voi
     await runDefaultCleanup();
     timerTracker.clear();
 
-    if (envOverlay) {
-      envOverlay.storage.enterWith(new Map());
-    } else {
-      restoreEnvSnapshot(context.envSnapshot);
-    }
+    if (envOverlay) envOverlay.storage.enterWith(new Map());
+    else restoreEnvSnapshot(context.envSnapshot);
+
     restoreGlobalSnapshot(context.globalSnapshot);
     await runSSRTestCleanup();
 

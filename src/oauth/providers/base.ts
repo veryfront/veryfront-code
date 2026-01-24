@@ -10,16 +10,14 @@ import type {
 } from "../types.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 
-/**
- * Environment variable reader function type.
- * Allows dependency injection for test isolation.
- */
 export type EnvReader = (key: string) => string | undefined;
 
 function generateRandomString(length: number): string {
   const array = new Uint8Array(length);
   crypto.getRandomValues(array);
-  return Array.from(array, (byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, length);
+  return Array.from(array, (byte) => byte.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, length);
 }
 
 function generateCodeVerifier(): string {
@@ -27,8 +25,7 @@ function generateCodeVerifier(): string {
 }
 
 async function generateCodeChallenge(verifier: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(verifier);
+  const data = new TextEncoder().encode(verifier);
   const hash = await crypto.subtle.digest("SHA-256", data);
   return btoa(String.fromCharCode(...new Uint8Array(hash)))
     .replace(/\+/g, "-")
@@ -46,11 +43,11 @@ export class OAuthProvider {
   }
 
   getClientId(): string | null {
-    return this.envReader(this.config.clientIdEnvVar) || null;
+    return this.envReader(this.config.clientIdEnvVar) ?? null;
   }
 
   getClientSecret(): string | null {
-    return this.envReader(this.config.clientSecretEnvVar) || null;
+    return this.envReader(this.config.clientSecretEnvVar) ?? null;
   }
 
   isConfigured(): boolean {
@@ -61,13 +58,11 @@ export class OAuthProvider {
     options: AuthorizationUrlOptions & { defaultScopes?: string[] } = {},
   ): Promise<{ url: string; state: OAuthState }> {
     const clientId = this.getClientId();
-    if (!clientId) {
-      throw new Error(`${this.config.clientIdEnvVar} not configured`);
-    }
+    if (!clientId) throw new Error(`${this.config.clientIdEnvVar} not configured`);
 
-    const state = options.state || generateRandomString(32);
-    const scopes = options.scopes || options.defaultScopes || [];
-    const redirectUri = options.redirectUri || "";
+    const state = options.state ?? generateRandomString(32);
+    const scopes = options.scopes ?? options.defaultScopes ?? [];
+    const redirectUri = options.redirectUri ?? "";
     const usePkce = options.usePkce !== false;
 
     let codeVerifier: string | undefined;
@@ -83,30 +78,29 @@ export class OAuthProvider {
       redirect_uri: redirectUri,
       response_type: "code",
       state,
-      ...(scopes.length > 0 && { scope: scopes.join(" ") }),
-      ...(codeChallenge && {
-        code_challenge: codeChallenge,
-        code_challenge_method: "S256",
-      }),
+      ...(scopes.length > 0 ? { scope: scopes.join(" ") } : {}),
+      ...(codeChallenge
+        ? {
+          code_challenge: codeChallenge,
+          code_challenge_method: "S256",
+        }
+        : {}),
       ...this.config.additionalAuthParams,
       ...options.additionalParams,
     });
 
-    const oauthState: OAuthState = {
-      state,
-      codeVerifier,
-      redirectUri,
-      scopes,
-      createdAt: Date.now(),
-    };
-
     return {
       url: `${this.config.authorizationUrl}?${params.toString()}`,
-      state: oauthState,
+      state: {
+        state,
+        codeVerifier,
+        redirectUri,
+        scopes,
+        createdAt: Date.now(),
+      },
     };
   }
 
-  /** Build headers for token endpoint requests */
   private buildTokenHeaders(clientId: string, clientSecret: string): Record<string, string> {
     const headers: Record<string, string> = {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -120,27 +114,46 @@ export class OAuthProvider {
     return headers;
   }
 
-  /** Parse token response data into OAuthTokens */
   private parseTokenResponse(
     data: Record<string, unknown>,
     fallbackRefreshToken?: string,
   ): OAuthTokens {
     const mapping = this.config.tokenResponseMapping ?? {};
+
+    const accessToken = data[mapping.accessToken ?? "access_token"] as string;
+    const refreshToken = (data[mapping.refreshToken ?? "refresh_token"] as string | undefined) ??
+      fallbackRefreshToken;
+    const tokenType = data[mapping.tokenType ?? "token_type"] as string;
+    const scope = data[mapping.scope ?? "scope"] as string;
+    const idToken = data.id_token as string | undefined;
+
     const tokens: OAuthTokens = {
-      accessToken: data[mapping.accessToken ?? "access_token"] as string,
-      refreshToken: (data[mapping.refreshToken ?? "refresh_token"] as string) ??
-        fallbackRefreshToken,
-      tokenType: data[mapping.tokenType ?? "token_type"] as string,
-      scope: data[mapping.scope ?? "scope"] as string,
-      idToken: data.id_token as string | undefined,
+      accessToken,
+      refreshToken,
+      tokenType,
+      scope,
+      idToken,
     };
 
     const expiresIn = data[mapping.expiresIn ?? "expires_in"] as number | undefined;
-    if (expiresIn) {
-      tokens.expiresAt = Date.now() + expiresIn * 1000;
-    }
+    if (expiresIn) tokens.expiresAt = Date.now() + expiresIn * 1000;
 
     return tokens;
+  }
+
+  private async postTokenRequest(
+    body: URLSearchParams,
+    clientId: string,
+    clientSecret: string,
+  ): Promise<{ response: Response; data: any }> {
+    const response = await fetch(this.config.tokenUrl, {
+      method: "POST",
+      headers: this.buildTokenHeaders(clientId, clientSecret),
+      body: body.toString(),
+    });
+
+    const data = await response.json();
+    return { response, data };
   }
 
   async exchangeCode(options: TokenExchangeOptions): Promise<TokenExchangeResult> {
@@ -160,22 +173,18 @@ export class OAuthProvider {
       grant_type: "authorization_code",
       code: options.code,
       redirect_uri: options.redirectUri,
-      ...(options.codeVerifier && { code_verifier: options.codeVerifier }),
-      ...(!this.config.useBasicAuth && {
-        client_id: clientId,
-        client_secret: clientSecret,
-      }),
+      ...(options.codeVerifier ? { code_verifier: options.codeVerifier } : {}),
+      ...(!this.config.useBasicAuth
+        ? {
+          client_id: clientId,
+          client_secret: clientSecret,
+        }
+        : {}),
       ...this.config.additionalTokenParams,
     });
 
     try {
-      const response = await fetch(this.config.tokenUrl, {
-        method: "POST",
-        headers: this.buildTokenHeaders(clientId, clientSecret),
-        body: body.toString(),
-      });
-
-      const data = await response.json();
+      const { response, data } = await this.postTokenRequest(body, clientId, clientSecret);
 
       if (!response.ok) {
         return {
@@ -200,29 +209,22 @@ export class OAuthProvider {
     const clientSecret = this.getClientSecret();
 
     if (!clientId || !clientSecret) {
-      return {
-        success: false,
-        error: "OAuth not configured",
-      };
+      return { success: false, error: "OAuth not configured" };
     }
 
     const body = new URLSearchParams({
       grant_type: "refresh_token",
       refresh_token: refreshToken,
-      ...(!this.config.useBasicAuth && {
-        client_id: clientId,
-        client_secret: clientSecret,
-      }),
+      ...(!this.config.useBasicAuth
+        ? {
+          client_id: clientId,
+          client_secret: clientSecret,
+        }
+        : {}),
     });
 
     try {
-      const response = await fetch(this.config.tokenUrl, {
-        method: "POST",
-        headers: this.buildTokenHeaders(clientId, clientSecret),
-        body: body.toString(),
-      });
-
-      const data = await response.json();
+      const { response, data } = await this.postTokenRequest(body, clientId, clientSecret);
 
       if (!response.ok) {
         return {
@@ -243,16 +245,13 @@ export class OAuthProvider {
   }
 
   async revokeToken(token: string): Promise<boolean> {
-    if (!this.config.revocationUrl) {
-      return false;
-    }
+    const revocationUrl = this.config.revocationUrl;
+    if (!revocationUrl) return false;
 
     try {
-      const response = await fetch(this.config.revocationUrl, {
+      const response = await fetch(revocationUrl, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({ token }).toString(),
       });
 
@@ -294,7 +293,6 @@ export class OAuthService extends OAuthProvider {
     const tokens = await this.tokenStore?.getTokens(this.serviceId);
     if (!tokens) return null;
 
-    // Check if token is expired (with 5 min buffer)
     const isExpired = tokens.expiresAt && Date.now() > tokens.expiresAt - 300000;
     if (!isExpired) return tokens.accessToken;
 
@@ -307,14 +305,9 @@ export class OAuthService extends OAuthProvider {
     return result.tokens.accessToken;
   }
 
-  async fetch<T>(
-    endpoint: string,
-    options: RequestInit = {},
-  ): Promise<T> {
+  async fetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const token = await this.getAccessToken();
-    if (!token) {
-      throw new Error(`Not authenticated with ${this.serviceConfig.displayName}`);
-    }
+    if (!token) throw new Error(`Not authenticated with ${this.serviceConfig.displayName}`);
 
     const url = endpoint.startsWith("http") ? endpoint : `${this.apiBaseUrl}${endpoint}`;
 

@@ -19,31 +19,27 @@ class ConditionalBrowserLogger implements BrowserLogger {
   ) {}
 
   debug(message: string, ...args: unknown[]): void {
-    if (this.level <= LogLevel.DEBUG) {
-      console.debug?.(`[${this.prefix}] DEBUG: ${message}`, ...args);
-    }
+    if (this.level > LogLevel.DEBUG) return;
+    console.debug?.(`[${this.prefix}] DEBUG: ${message}`, ...args);
   }
 
   info(message: string, ...args: unknown[]): void {
-    if (this.level <= LogLevel.INFO) {
-      console.log?.(`[${this.prefix}] ${message}`, ...args);
-    }
+    if (this.level > LogLevel.INFO) return;
+    console.log?.(`[${this.prefix}] ${message}`, ...args);
   }
 
   warn(message: string, ...args: unknown[]): void {
-    if (this.level <= LogLevel.WARN) {
-      console.warn?.(`[${this.prefix}] WARN: ${message}`, ...args);
-    }
+    if (this.level > LogLevel.WARN) return;
+    console.warn?.(`[${this.prefix}] WARN: ${message}`, ...args);
   }
 
   error(message: string, ...args: unknown[]): void {
-    if (this.level <= LogLevel.ERROR) {
-      console.error?.(`[${this.prefix}] ERROR: ${message}`, ...args);
-    }
+    if (this.level > LogLevel.ERROR) return;
+    console.error?.(`[${this.prefix}] ERROR: ${message}`, ...args);
   }
 }
 
-interface VeryfrontWindow extends Window {
+interface VeryfrontGlobal {
   __VERYFRONT_DEV__?: boolean;
   __RSC_DEV__?: boolean;
   __VERYFRONT_DEBUG__?: boolean;
@@ -51,18 +47,13 @@ interface VeryfrontWindow extends Window {
 }
 
 function getBrowserLogLevel(): LogLevel {
-  if (typeof window === "undefined") {
-    return LogLevel.WARN;
-  }
+  if (typeof window === "undefined") return LogLevel.WARN;
 
-  const windowObject = window as VeryfrontWindow;
-  const isDevelopment = windowObject.__VERYFRONT_DEV__ || windowObject.__RSC_DEV__;
+  const g = globalThis as unknown as VeryfrontGlobal;
+  const isDevelopment = g.__VERYFRONT_DEV__ || g.__RSC_DEV__;
+  if (!isDevelopment) return LogLevel.WARN;
 
-  if (!isDevelopment) {
-    return LogLevel.WARN;
-  }
-
-  const isDebugEnabled = windowObject.__VERYFRONT_DEBUG__ || windowObject.__RSC_DEBUG__;
+  const isDebugEnabled = g.__VERYFRONT_DEBUG__ || g.__RSC_DEBUG__;
   return isDebugEnabled ? LogLevel.DEBUG : LogLevel.INFO;
 }
 

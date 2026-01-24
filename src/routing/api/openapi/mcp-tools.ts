@@ -8,10 +8,10 @@
  */
 
 import { dynamicTool } from "#veryfront/tool";
-import { z } from "zod";
 import type { Tool } from "#veryfront/tool";
-import type { OpenAPIOperation, OpenAPIParameter, OpenAPISpec } from "./types.ts";
 import { logger } from "#veryfront/utils";
+import { z } from "zod";
+import type { OpenAPIOperation, OpenAPIParameter, OpenAPISpec } from "./types.ts";
 
 const HTTP_METHODS = ["get", "post", "put", "patch", "delete", "head", "options"] as const;
 type HttpMethod = (typeof HTTP_METHODS)[number];
@@ -36,31 +36,10 @@ export interface MCPToolsConfig {
  * Generate MCP tools from an OpenAPI specification.
  *
  * Each API endpoint becomes a callable tool that AI agents can invoke.
- *
- * @param spec - OpenAPI specification
- * @param config - Tool generation configuration
- * @returns Array of generated MCP tools
- *
- * @example
- * ```typescript
- * const spec = await generateOpenAPISpec(router, projectDir, adapter, config);
- * const tools = generateMCPToolsFromSpec(spec, {
- *   baseUrl: "http://localhost:3000",
- *   toolPrefix: "api",
- * });
- *
- * // Tools: api:getUsers, api:getUserById, api:createUser, etc.
- * for (const tool of tools) {
- *   registerTool(tool.id, tool);
- * }
- * ```
  */
-export function generateMCPToolsFromSpec(
-  spec: OpenAPISpec,
-  config: MCPToolsConfig,
-): Tool[] {
+export function generateMCPToolsFromSpec(spec: OpenAPISpec, config: MCPToolsConfig): Tool[] {
   const tools: Tool[] = [];
-  const toolPrefix = config.toolPrefix || "api";
+  const toolPrefix = config.toolPrefix ?? "api";
 
   for (const [path, pathItem] of Object.entries(spec.paths)) {
     if (!pathItem) continue;
@@ -68,23 +47,19 @@ export function generateMCPToolsFromSpec(
     for (const [method, operationValue] of Object.entries(pathItem)) {
       if (!isHttpMethod(method)) continue;
 
-      const operation = operationValue as OpenAPIOperation;
+      const operation = operationValue as OpenAPIOperation | undefined;
       if (!operation) continue;
 
-      const toolId = `${toolPrefix}:${operation.operationId}`;
-      const inputSchema = buildInputSchema(operation);
-
-      const generatedTool = dynamicTool({
-        id: toolId,
-        description: buildToolDescription(operation, method, path),
-        inputSchema,
-        execute: (input) => {
-          return executeAPICall(config, method, path, input as Record<string, unknown>, operation);
-        },
-        mcp: { enabled: true },
-      });
-
-      tools.push(generatedTool);
+      tools.push(
+        dynamicTool({
+          id: `${toolPrefix}:${operation.operationId}`,
+          description: buildToolDescription(operation, method, path),
+          inputSchema: buildInputSchema(operation),
+          execute: (input) =>
+            executeAPICall(config, method, path, input as Record<string, unknown>, operation),
+          mcp: { enabled: true },
+        }),
+      );
     }
   }
 
@@ -92,11 +67,8 @@ export function generateMCPToolsFromSpec(
   return tools;
 }
 
-/**
- * Build a descriptive summary for the tool.
- */
 function buildToolDescription(operation: OpenAPIOperation, method: string, path: string): string {
-  const summary = operation.summary || `${method.toUpperCase()} ${path}`;
+  const summary = operation.summary ?? `${method.toUpperCase()} ${path}`;
   const description = operation.description ? `\n\n${operation.description}` : "";
   const tags = operation.tags?.length ? `\n\nTags: ${operation.tags.join(", ")}` : "";
   const deprecated = operation.deprecated ? "\n\n⚠️ DEPRECATED" : "";
@@ -104,28 +76,18 @@ function buildToolDescription(operation: OpenAPIOperation, method: string, path:
   return `${summary}${description}${tags}${deprecated}`;
 }
 
-/**
- * Build Zod input schema from OpenAPI operation parameters.
- */
 function buildInputSchema(operation: OpenAPIOperation): z.ZodTypeAny {
   const shape: Record<string, z.ZodTypeAny> = {};
-  const requiredFields: string[] = [];
+  const params = operation.parameters ?? [];
 
-  // Process parameters
-  const params = operation.parameters || [];
-
-  // Path parameters
-  for (const param of params.filter((p) => p.in === "path")) {
+  for (const param of params) {
+    if (param.in !== "path") continue;
     const paramSchema = buildParamSchema(param);
     shape[param.name] = param.required ? paramSchema : paramSchema.optional();
-    if (param.required) {
-      requiredFields.push(param.name);
-    }
   }
 
-  // Query parameters as nested object
   const queryParams = params.filter((p) => p.in === "query");
-  if (queryParams.length > 0) {
+  if (queryParams.length) {
     const queryShape: Record<string, z.ZodTypeAny> = {};
     for (const param of queryParams) {
       const paramSchema = buildParamSchema(param);
@@ -134,9 +96,8 @@ function buildInputSchema(operation: OpenAPIOperation): z.ZodTypeAny {
     shape.query = z.object(queryShape).optional().describe("Query parameters");
   }
 
-  // Header parameters as nested object
   const headerParams = params.filter((p) => p.in === "header");
-  if (headerParams.length > 0) {
+  if (headerParams.length) {
     const headerShape: Record<string, z.ZodTypeAny> = {};
     for (const param of headerParams) {
       const paramSchema = buildParamSchema(param);
@@ -145,7 +106,6 @@ function buildInputSchema(operation: OpenAPIOperation): z.ZodTypeAny {
     shape.headers = z.object(headerShape).optional().describe("Request headers");
   }
 
-  // Request body
   if (operation.requestBody) {
     shape.body = z.record(z.unknown()).optional().describe("Request body (JSON)");
   }
@@ -153,17 +113,10 @@ function buildInputSchema(operation: OpenAPIOperation): z.ZodTypeAny {
   return z.object(shape);
 }
 
-/**
- * Build a Zod schema for a single parameter based on its OpenAPI schema.
- */
 function buildParamSchema(param: OpenAPIParameter): z.ZodTypeAny {
   const schema = param.schema;
+  if (!schema) return z.string();
 
-  if (!schema) {
-    return z.string();
-  }
-
-  // Handle basic types
   switch (schema.type) {
     case "integer":
     case "number":
@@ -177,9 +130,6 @@ function buildParamSchema(param: OpenAPIParameter): z.ZodTypeAny {
   }
 }
 
-/**
- * Execute an API call based on tool input.
- */
 async function executeAPICall(
   config: MCPToolsConfig,
   method: string,
@@ -187,76 +137,57 @@ async function executeAPICall(
   input: Record<string, unknown>,
   operation: OpenAPIOperation,
 ): Promise<unknown> {
-  // Build URL with path parameters
   let url = `${config.baseUrl}${path}`;
 
-  // Replace path parameters
-  const params = operation.parameters || [];
-  for (const param of params.filter((p) => p.in === "path")) {
+  const params = operation.parameters ?? [];
+  for (const param of params) {
+    if (param.in !== "path") continue;
+
     const value = input[param.name];
-    if (value !== undefined) {
-      url = url.replace(`{${param.name}}`, encodeURIComponent(String(value)));
-    }
+    if (value === undefined) continue;
+
+    url = url.replace(`{${param.name}}`, encodeURIComponent(String(value)));
   }
 
-  // Add query parameters
   const queryParams = input.query as Record<string, unknown> | undefined;
-  if (queryParams && Object.keys(queryParams).length > 0) {
+  if (queryParams && Object.keys(queryParams).length) {
     const searchParams = new URLSearchParams();
     for (const [key, value] of Object.entries(queryParams)) {
-      if (value !== undefined && value !== null) {
-        searchParams.append(key, String(value));
-      }
+      if (value === undefined || value === null) continue;
+      searchParams.append(key, String(value));
     }
     url += `?${searchParams.toString()}`;
   }
 
-  // Build headers
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...config.headers,
+    ...(input.headers as Record<string, string> | undefined),
   };
 
-  // Add custom headers from input
-  const inputHeaders = input.headers as Record<string, string> | undefined;
-  if (inputHeaders) {
-    Object.assign(headers, inputHeaders);
-  }
-
-  // Build request options
   const requestInit: RequestInit = {
     method: method.toUpperCase(),
     headers,
   };
 
-  // Add body for methods that support it
   if (["post", "put", "patch"].includes(method) && input.body) {
     requestInit.body = JSON.stringify(input.body);
   }
 
-  // Execute request
   logger.debug("[OpenAPI MCP] Executing API call", { method, url });
 
   try {
     const response = await fetch(url, requestInit);
+    const contentType = response.headers.get("content-type") ?? "";
 
-    // Parse response
-    const contentType = response.headers.get("content-type") || "";
+    const data = contentType.includes("application/json")
+      ? await response.json()
+      : await response.text();
 
-    if (contentType.includes("application/json")) {
-      const data = await response.json();
-      return {
-        status: response.status,
-        statusText: response.statusText,
-        data,
-      };
-    }
-
-    const text = await response.text();
     return {
       status: response.status,
       statusText: response.statusText,
-      data: text,
+      data,
     };
   } catch (error) {
     logger.error("[OpenAPI MCP] API call failed", { method, url, error: String(error) });

@@ -10,53 +10,37 @@ import {
   createWorker,
 } from "./index.ts";
 
+function assertExport(value: unknown, type: string): void {
+  assertExists(value);
+  assertEquals(typeof value, type);
+}
+
 describe("runtime/cloudflare/index.ts exports", () => {
-  describe("CloudflareAdapter", () => {
-    it("should export CloudflareAdapter class", () => {
-      assertExists(CloudflareAdapter);
-      assertEquals(typeof CloudflareAdapter, "function");
-    });
+  it("should export CloudflareAdapter class", () => {
+    assertExport(CloudflareAdapter, "function");
   });
 
-  describe("CloudflareEnvironmentAdapter", () => {
-    it("should export CloudflareEnvironmentAdapter class", () => {
-      assertExists(CloudflareEnvironmentAdapter);
-      assertEquals(typeof CloudflareEnvironmentAdapter, "function");
-    });
+  it("should export CloudflareEnvironmentAdapter class", () => {
+    assertExport(CloudflareEnvironmentAdapter, "function");
   });
 
-  describe("CloudflareFileSystemAdapter", () => {
-    it("should export CloudflareFileSystemAdapter class", () => {
-      assertExists(CloudflareFileSystemAdapter);
-      assertEquals(typeof CloudflareFileSystemAdapter, "function");
-    });
+  it("should export CloudflareFileSystemAdapter class", () => {
+    assertExport(CloudflareFileSystemAdapter, "function");
   });
 
-  describe("CloudflareServer", () => {
-    it("should export CloudflareServer class", () => {
-      assertExists(CloudflareServer);
-      assertEquals(typeof CloudflareServer, "function");
-    });
+  it("should export CloudflareServer class", () => {
+    assertExport(CloudflareServer, "function");
   });
 
-  describe("CloudflareServerAdapter", () => {
-    it("should export CloudflareServerAdapter class", () => {
-      assertExists(CloudflareServerAdapter);
-      assertEquals(typeof CloudflareServerAdapter, "function");
-    });
+  it("should export CloudflareServerAdapter class", () => {
+    assertExport(CloudflareServerAdapter, "function");
   });
 
-  describe("CloudflareShellAdapter", () => {
-    it("should export CloudflareShellAdapter class", () => {
-      assertExists(CloudflareShellAdapter);
-      assertEquals(typeof CloudflareShellAdapter, "function");
-    });
+  it("should export CloudflareShellAdapter class", () => {
+    assertExport(CloudflareShellAdapter, "function");
   });
 
-  describe("createWorker", () => {
-    it("should export createWorker function", () => {
-      assertExists(createWorker);
-      assertEquals(typeof createWorker, "function");
-    });
+  it("should export createWorker function", () => {
+    assertExport(createWorker, "function");
   });
 });

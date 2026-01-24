@@ -14,14 +14,7 @@ export default tool({
 
     return {
       success: true,
-      issue: {
-        id: issue.id,
-        shortId: issue.shortId,
-        title: issue.title,
-        status: issue.status,
-        statusDetails: issue.statusDetails,
-        permalink: issue.permalink,
-      },
+      issue,
       message: `Issue ${issue.shortId} has been marked as resolved.`,
     };
   },

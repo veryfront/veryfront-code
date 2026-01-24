@@ -6,12 +6,12 @@ export interface JSXRuntime {
 }
 
 export async function loadJSXRuntime(): Promise<JSXRuntime> {
-  const ReactJsxRuntime = (await import("react/jsx-dev-runtime")) as Record<string, unknown>;
+  const runtime = (await import("react/jsx-dev-runtime")) as Partial<JSXRuntime>;
 
-  const Fragment = ReactJsxRuntime.Fragment;
-  const jsx = (ReactJsxRuntime.jsx || ReactJsxRuntime.jsxDEV) as JSXRuntime["jsx"];
-  const jsxs = (ReactJsxRuntime.jsxs || ReactJsxRuntime.jsxDEV) as JSXRuntime["jsxs"];
-  const jsxDEV = (ReactJsxRuntime.jsxDEV || ReactJsxRuntime.jsx) as JSXRuntime["jsxDEV"];
-
-  return { Fragment, jsx, jsxs, jsxDEV };
+  return {
+    Fragment: runtime.Fragment,
+    jsx: (runtime.jsx ?? runtime.jsxDEV) as JSXRuntime["jsx"],
+    jsxs: (runtime.jsxs ?? runtime.jsxDEV) as JSXRuntime["jsxs"],
+    jsxDEV: (runtime.jsxDEV ?? runtime.jsx) as JSXRuntime["jsxDEV"],
+  };
 }

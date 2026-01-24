@@ -1,4 +1,4 @@
-/**
+/****
  * Shared Error HTML Generator
  *
  * Generates styled error pages for 404, 500, and other HTTP errors.
@@ -22,9 +22,7 @@ export interface ErrorHtmlOptions {
 export function generateErrorHtml(options: ErrorHtmlOptions): string {
   const { statusCode, title, message, pathname, minimal } = options;
 
-  if (minimal) {
-    return generateMinimalErrorHtml(statusCode, title, message, pathname);
-  }
+  if (minimal) return generateMinimalErrorHtml(statusCode, title, message, pathname);
 
   return generateStyledErrorHtml(statusCode, title, message);
 }
@@ -33,11 +31,7 @@ export function generateErrorHtml(options: ErrorHtmlOptions): string {
  * Generate a styled error page with Veryfront design system.
  * Supports light/dark mode based on system preference or class.
  */
-function generateStyledErrorHtml(
-  statusCode: number,
-  title: string,
-  message: string,
-): string {
+function generateStyledErrorHtml(statusCode: number, title: string, message: string): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -110,8 +104,7 @@ function generateMinimalErrorHtml(
   message: string,
   pathname?: string,
 ): string {
-  const pathDisplay = pathname ? ` "${pathname}"` : "";
-  const fullMessage = pathname ? message.replace("{path}", pathDisplay) : message;
+  const fullMessage = pathname ? message.replace("{path}", ` "${pathname}"`) : message;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -144,7 +137,7 @@ export const ErrorPages = {
     generateErrorHtml({
       statusCode: 500,
       title: "Internal Server Error",
-      message: message || "Something went wrong while rendering this page.",
+      message: message ?? "Something went wrong while rendering this page.",
     }),
 
   undeployed: () =>

@@ -1,4 +1,4 @@
-import { join, resolve } from "#veryfront/platform/compat/path/index.ts";
+import { dirname, join } from "#veryfront/platform/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { CompileOptions } from "./types.ts";
 
@@ -12,7 +12,7 @@ export async function writeCompiledFile(
   const relativePath = filePath.replace(options.projectDir, "").replace(/^\//, "");
   const outputPath = join(options.outputDir, relativePath.replace(".mdx", ".js"));
 
-  await fs.mkdir(resolve(outputPath, ".."), { recursive: true });
+  await fs.mkdir(dirname(outputPath), { recursive: true });
   await fs.writeTextFile(outputPath, code);
 
   return outputPath;

@@ -1,9 +1,3 @@
-/**
- * Local File System Blob Storage
- *
- * Stores blobs as files on the local disk
- */
-
 import { dirname, join } from "#veryfront/platform/compat/path-helper.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
@@ -30,47 +24,31 @@ export class LocalBlobStorage implements BlobStorage {
   }
 
   private getMetadataPath(id: string): string {
-    return this.getPath(id) + ".meta.json";
+    return `${this.getPath(id)}.meta.json`;
   }
 
   async put(
     data: string | Uint8Array | Blob | ReadableStream,
     options: StoreBlobOptions = {},
   ): Promise<BlobRef> {
-    const id = options.id || crypto.randomUUID();
+    const id = options.id ?? crypto.randomUUID();
     const filePath = this.getPath(id);
     const metaPath = this.getMetadataPath(id);
 
     await this.fs.mkdir(dirname(filePath), { recursive: true });
 
-    let size = 0;
+    const { bytes, size } = await this.normalizeToBytes(data);
 
-    if (typeof data === "string") {
-      await this.fs.writeTextFile(filePath, data);
-      size = new TextEncoder().encode(data).length;
-    } else if (data instanceof Uint8Array) {
-      await this.fs.writeFile(filePath, data);
-      size = data.length;
-    } else if (data instanceof Blob) {
-      const arr = new Uint8Array(await data.arrayBuffer());
-      await this.fs.writeFile(filePath, arr);
-      size = data.size;
-    } else if (data instanceof ReadableStream) {
-      // Normalize stream to bytes for cross-runtime compatibility
-      const buffer = new Uint8Array(await new Response(data).arrayBuffer());
-      await this.fs.writeFile(filePath, buffer);
-      size = buffer.length;
-    } else {
-      throw new Error("Unsupported data type for LocalBlobStorage");
-    }
+    await this.fs.writeFile(filePath, bytes);
 
     const createdAt = this.now();
     const expiresAt = options.ttl ? new Date(createdAt.getTime() + options.ttl * 1000) : undefined;
+
     const ref: BlobRef = {
       __kind: "blob",
       id,
       size,
-      mimeType: options.mimeType || "application/octet-stream",
+      mimeType: options.mimeType ?? "application/octet-stream",
       createdAt,
       expiresAt,
       metadata: options.metadata,
@@ -82,60 +60,77 @@ export class LocalBlobStorage implements BlobStorage {
     return ref;
   }
 
-  async getStream(id: string): Promise<ReadableStream | null> {
-    try {
-      const bytes = await this.getBytes(id);
-      if (!bytes) return null;
-      // Create a minimal cross-runtime ReadableStream from the bytes
-      return new ReadableStream({
-        start(controller) {
-          controller.enqueue(bytes);
-          controller.close();
-        },
-      });
-    } catch {
-      return null;
+  private async normalizeToBytes(
+    data: string | Uint8Array | Blob | ReadableStream,
+  ): Promise<{ bytes: Uint8Array; size: number }> {
+    if (typeof data === "string") {
+      const bytes = new TextEncoder().encode(data);
+      return { bytes, size: bytes.length };
     }
+
+    if (data instanceof Uint8Array) {
+      return { bytes: data, size: data.length };
+    }
+
+    if (data instanceof Blob) {
+      const bytes = new Uint8Array(await data.arrayBuffer());
+      return { bytes, size: data.size };
+    }
+
+    if (data instanceof ReadableStream) {
+      // Normalize stream to bytes for cross-runtime compatibility
+      const bytes = new Uint8Array(await new Response(data).arrayBuffer());
+      return { bytes, size: bytes.length };
+    }
+
+    throw new Error("Unsupported data type for LocalBlobStorage");
+  }
+
+  async getStream(id: string): Promise<ReadableStream | null> {
+    const bytes = await this.getBytes(id);
+    if (!bytes) return null;
+
+    // Create a minimal cross-runtime ReadableStream from the bytes
+    return new ReadableStream({
+      start(controller) {
+        controller.enqueue(bytes);
+        controller.close();
+      },
+    });
   }
 
   async getText(id: string): Promise<string | null> {
-    const filePath = this.getPath(id);
     try {
-      return await this.fs.readTextFile(filePath);
+      return await this.fs.readTextFile(this.getPath(id));
     } catch {
       return null;
     }
   }
 
   async getBytes(id: string): Promise<Uint8Array | null> {
-    const filePath = this.getPath(id);
     try {
-      return await this.fs.readFile(filePath);
+      return await this.fs.readFile(this.getPath(id));
     } catch {
       return null;
     }
   }
 
   async delete(id: string): Promise<void> {
-    const filePath = this.getPath(id);
-    const metaPath = this.getMetadataPath(id);
     try {
-      await this.fs.remove(filePath);
-      await this.fs.remove(metaPath);
+      await this.fs.remove(this.getPath(id));
+      await this.fs.remove(this.getMetadataPath(id));
     } catch {
       // Ignore if not found
     }
   }
 
   async exists(id: string): Promise<boolean> {
-    const filePath = this.getPath(id);
-    return await this.fs.exists(filePath);
+    return await this.fs.exists(this.getPath(id));
   }
 
   async stat(id: string): Promise<BlobRef | null> {
-    const metaPath = this.getMetadataPath(id);
     try {
-      const json = await this.fs.readTextFile(metaPath);
+      const json = await this.fs.readTextFile(this.getMetadataPath(id));
       const data = JSON.parse(json);
       return {
         ...data,
@@ -152,20 +147,24 @@ export class LocalBlobStorage implements BlobStorage {
    * This method should typically be run periodically by an external process.
    */
   async cleanupExpiredBlobs(): Promise<void> {
+    const now = this.now();
+
     // Iterate over prefixes (00-ff)
     for (let i = 0; i < 256; i++) {
       const prefix = i.toString(16).padStart(2, "0");
       const prefixDir = join(this.rootDir, prefix);
+
       try {
         for await (const entry of this.fs.readDir(prefixDir)) {
-          if (entry.isFile && entry.name.endsWith(".meta.json")) {
-            const id = entry.name.replace(".meta.json", "");
-            const blobRef = await this.stat(id);
-            if (blobRef?.expiresAt && blobRef.expiresAt < this.now()) {
-              logger.debug(`[LocalBlobStorage] Deleting expired blob: ${id}`);
-              await this.delete(id);
-            }
-          }
+          if (!entry.isFile || !entry.name.endsWith(".meta.json")) continue;
+
+          const id = entry.name.replace(".meta.json", "");
+          const blobRef = await this.stat(id);
+
+          if (!blobRef?.expiresAt || blobRef.expiresAt >= now) continue;
+
+          logger.debug(`[LocalBlobStorage] Deleting expired blob: ${id}`);
+          await this.delete(id);
         }
       } catch {
         // Directory not found is fine, skip

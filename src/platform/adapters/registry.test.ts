@@ -10,7 +10,6 @@ import { createMockAdapter } from "./mock.ts";
 import { isBun, isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import type { RuntimeId } from "./base.ts";
 
-// Get the expected runtime based on actual environment
 const expectedRuntime: RuntimeId = isDeno ? "deno" : isNode ? "node" : isBun ? "bun" : "deno";
 
 describe("registry.ts", () => {
@@ -72,30 +71,25 @@ describe("registry.ts", () => {
     });
 
     it("should allow setting custom adapter", async () => {
-      const mockAdapter = createMockAdapter();
-
-      await runtime.set(mockAdapter);
+      await runtime.set(createMockAdapter());
 
       const adapter = await runtime.get();
       assertEquals(adapter.id, "memory");
     });
 
     it("should throw on invalid adapter", async () => {
-      const invalidAdapter = {} as any;
-
       await assertRejects(
-        () => runtime.set(invalidAdapter),
+        () => runtime.set({} as any),
         Error,
         "Invalid adapter",
       );
     });
 
     it("should replace existing adapter", async () => {
-      await runtime.get(); // Initialize with auto-detected
+      await runtime.get();
       assertEquals((await runtime.get()).id, expectedRuntime);
 
-      const mockAdapter = createMockAdapter();
-      await runtime.set(mockAdapter);
+      await runtime.set(createMockAdapter());
 
       assertEquals((await runtime.get()).id, "memory");
     });
@@ -140,12 +134,10 @@ describe("registry.ts", () => {
     });
 
     it("should be independent from main runtime registry", async () => {
-      const mockAdapter = createMockAdapter();
-      await runtime.set(mockAdapter);
+      await runtime.set(createMockAdapter());
 
       const localAdapter = await getLocalAdapter();
 
-      // Main registry has mock, local has real
       assertEquals((await runtime.get()).id, "memory");
       assertEquals(localAdapter.id, expectedRuntime);
     });
@@ -157,8 +149,6 @@ describe("registry.ts", () => {
       await resetLocalAdapter();
       const adapter2 = await getLocalAdapter();
 
-      // They should be from different registry instances
-      // but still be the same singleton adapter
       assertExists(adapter1);
       assertExists(adapter2);
     });
@@ -170,15 +160,10 @@ describe("registry.ts", () => {
     });
 
     it("should handle concurrent get calls", async () => {
-      const results = await Promise.all([
-        runtime.get(),
-        runtime.get(),
-        runtime.get(),
-      ]);
+      const [a, b, c] = await Promise.all([runtime.get(), runtime.get(), runtime.get()]);
 
-      // All should return the same instance
-      assertEquals(results[0], results[1]);
-      assertEquals(results[1], results[2]);
+      assertEquals(a, b);
+      assertEquals(b, c);
     });
   });
 });

@@ -2,6 +2,18 @@ import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "./mock.ts";
 
+function collectDirEntries(
+  iter: AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }>,
+): Promise<{ name: string; isFile: boolean; isDirectory: boolean }[]> {
+  const entries: { name: string; isFile: boolean; isDirectory: boolean }[] = [];
+  return (async () => {
+    for await (const entry of iter) {
+      entries.push({ name: entry.name, isFile: entry.isFile, isDirectory: entry.isDirectory });
+    }
+    return entries;
+  })();
+}
+
 describe("MockAdapter", () => {
   describe("creation", () => {
     it("should create a mock adapter with correct properties", () => {
@@ -39,7 +51,7 @@ describe("MockAdapter", () => {
       const adapter = createMockAdapter();
       adapter.fs.files.set("/test.txt", "hello");
 
-      const bytes = await adapter.fs.readFileBytes!("/test.txt");
+      const bytes = await adapter.fs.readFileBytes?.("/test.txt");
       assertEquals(new TextDecoder().decode(bytes), "hello");
     });
 
@@ -47,7 +59,7 @@ describe("MockAdapter", () => {
       const adapter = createMockAdapter();
 
       await assertRejects(
-        () => adapter.fs.readFileBytes!("/missing.txt"),
+        () => adapter.fs.readFileBytes?.("/missing.txt"),
         Error,
         "File not found: /missing.txt",
       );
@@ -107,10 +119,7 @@ describe("MockAdapter", () => {
       adapter.fs.files.set("/dir/file2.txt", "b");
       adapter.fs.files.set("/dir/subdir/file3.txt", "c");
 
-      const entries: { name: string; isFile: boolean; isDirectory: boolean }[] = [];
-      for await (const entry of adapter.fs.readDir("/dir")) {
-        entries.push({ name: entry.name, isFile: entry.isFile, isDirectory: entry.isDirectory });
-      }
+      const entries = await collectDirEntries(adapter.fs.readDir("/dir"));
 
       assertEquals(entries.length, 3);
       assertEquals(entries.some((e) => e.name === "file1.txt" && e.isFile), true);
@@ -122,11 +131,7 @@ describe("MockAdapter", () => {
       const adapter = createMockAdapter();
       adapter.fs.directories.add("/empty");
 
-      const entries = [];
-      for await (const entry of adapter.fs.readDir("/empty")) {
-        entries.push(entry);
-      }
-
+      const entries = await collectDirEntries(adapter.fs.readDir("/empty"));
       assertEquals(entries.length, 0);
     });
   });
@@ -280,7 +285,7 @@ describe("MockAdapter", () => {
   describe("shutdown", () => {
     it("should resolve without error", async () => {
       const adapter = createMockAdapter();
-      await adapter.shutdown!();
+      await adapter.shutdown?.();
     });
   });
 });

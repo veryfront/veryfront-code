@@ -32,15 +32,12 @@ function rewriteFetchUrlForSSR(url: string): string {
   const serverPort = getSSRServerPort();
   if (!serverPort) return url;
 
-  // Handle relative URLs (e.g., "/api/articles-2")
-  // These need an absolute base URL during SSR
   if (url.startsWith("/")) {
     return `http://localhost:${serverPort}${url}`;
   }
 
   try {
     const parsed = new URL(url);
-    // Rewrite if hostname matches the current project domain (set via setSSRProjectDomain)
     if (isProjectDomain(parsed.hostname)) {
       return `http://localhost:${serverPort}${parsed.pathname}${parsed.search}`;
     }
@@ -62,8 +59,8 @@ function extractUrl(input: RequestInfo | URL): string {
  * Check if a URL is an API endpoint that should be client-only.
  */
 function isClientOnlyApiUrl(url: string): boolean {
-  // Match /api/* paths (both relative and absolute to localhost)
   if (url.startsWith("/api/")) return true;
+
   try {
     const parsed = new URL(url);
     return parsed.hostname === "localhost" && parsed.pathname.startsWith("/api/");
@@ -72,19 +69,13 @@ function isClientOnlyApiUrl(url: string): boolean {
   }
 }
 
-/**
- * Create SSR fetch wrapper that rewrites URLs for local development.
- * In client-only mode, API fetches return never-resolving promises
- * to allow React to render Suspense fallbacks.
- */
 function createSSRFetch(): typeof fetch {
   return (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = extractUrl(input);
     const rewrittenUrl = rewriteFetchUrlForSSR(url);
     const clientOnly = isSSRClientOnlyFetching() && isClientOnlyApiUrl(rewrittenUrl);
 
-    const method = init?.method ??
-      (input instanceof Request ? input.method : "GET");
+    const method = init?.method ?? (input instanceof Request ? input.method : "GET");
     const spanAttributes: Record<string, string | number | boolean> = {
       "http.method": method,
       "http.url": rewrittenUrl,
@@ -108,12 +99,7 @@ function createSSRFetch(): typeof fetch {
     return withSpan(
       SpanNames.HTTP_CLIENT_FETCH,
       async () => {
-        // In client-only mode, API fetches return empty responses during SSR.
-        // React Query will treat this as a successful fetch with empty data.
-        // After hydration, the client will refetch with actual data.
         if (clientOnly) {
-          // Return a mock empty response - this prevents the Invalid URL error
-          // and allows SSR to complete. React Query will refetch client-side.
           const response = new Response(JSON.stringify({ data: [], _ssrSkipped: true }), {
             status: 200,
             headers: { "Content-Type": "application/json" },
@@ -122,18 +108,12 @@ function createSSRFetch(): typeof fetch {
           return response;
         }
 
-        let response: Response;
-        if (rewrittenUrl !== url) {
-          // Create new request with rewritten URL
-          if (typeof input === "string" || input instanceof URL) {
-            response = await originalFetch(rewrittenUrl, init);
-          } else {
-            // Clone request with new URL
-            response = await originalFetch(new Request(rewrittenUrl, input), init);
-          }
-        } else {
-          response = await originalFetch(input, init);
-        }
+        const response =
+          await (rewrittenUrl === url
+            ? originalFetch(input, init)
+            : typeof input === "string" || input instanceof URL
+            ? originalFetch(rewrittenUrl, init)
+            : originalFetch(new Request(rewrittenUrl, input), init));
 
         setActiveSpanAttributes({ "http.status_code": response.status });
         return response;
@@ -143,20 +123,11 @@ function createSSRFetch(): typeof fetch {
   };
 }
 
-/**
- * Enable SSR fetch interception.
- * Replaces globalThis.fetch with a wrapper that rewrites URLs.
- */
 export function enableSSRFetchInterception(): void {
-  const serverPort = getSSRServerPort();
-  if (!serverPort) return;
+  if (!getSSRServerPort()) return;
   (globalThis as Record<string, unknown>).fetch = createSSRFetch();
 }
 
-/**
- * Disable SSR fetch interception.
- * Restores the original fetch.
- */
 export function disableSSRFetchInterception(): void {
   (globalThis as Record<string, unknown>).fetch = originalFetch;
 }

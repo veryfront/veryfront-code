@@ -5,7 +5,9 @@ export function contentType(path: string): string | undefined {
   if (!type) return undefined;
 
   const cs = mime.charset(type);
-  return cs ? `${type}; charset=${cs}` : type;
+  if (!cs) return type;
+
+  return `${type}; charset=${cs}`;
 }
 
 export function extension(type: string): string | undefined {

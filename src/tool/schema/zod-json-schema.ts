@@ -20,15 +20,12 @@ export function zodToJsonSchema(schema: z.ZodTypeAny): JsonSchema {
 
   const details = unwrapSchema(schema);
   const json = convert(details.schema);
-  if (details.nullable) {
-    return { anyOf: [json, { type: "null" }] };
-  }
-  return json;
+
+  return details.nullable ? { anyOf: [json, { type: "null" }] } : json;
 }
 
 export function isOptionalSchema(schema: z.ZodTypeAny): boolean {
-  const { optional } = unwrapSchema(schema);
-  return optional;
+  return unwrapSchema(schema).optional;
 }
 
 function convert(schema: z.ZodTypeAny): JsonSchema {
@@ -43,10 +40,7 @@ function convert(schema: z.ZodTypeAny): JsonSchema {
       return { type: "integer" };
     case ZodFirstPartyTypeKind.ZodLiteral: {
       const literal = (schema as z.ZodLiteral<unknown>)._def.value;
-      return {
-        const: literal,
-        type: getLiteralType(literal),
-      };
+      return { const: literal, type: getLiteralType(literal) };
     }
     case ZodFirstPartyTypeKind.ZodEnum:
       return {
@@ -64,44 +58,35 @@ function convert(schema: z.ZodTypeAny): JsonSchema {
       const properties: Record<string, JsonSchema> = {};
       const required: string[] = [];
 
-      // Access shape - it might be a function (lazy getter) or an object
       const shape = typeof obj._def.shape === "function" ? obj._def.shape() : obj._def.shape;
 
-      for (const [key, value] of Object.entries(shape || {})) {
+      for (const [key, value] of Object.entries(shape ?? {})) {
         const zodSchema = value as z.ZodTypeAny;
         properties[key] = zodToJsonSchema(zodSchema);
-        if (!isOptionalSchema(zodSchema)) {
-          required.push(key);
-        }
+        if (!isOptionalSchema(zodSchema)) required.push(key);
       }
 
       const json: JsonSchema = { type: "object", properties };
-      if (required.length > 0) {
-        json.required = required;
-      }
+      if (required.length) json.required = required;
       return json;
     }
     case ZodFirstPartyTypeKind.ZodArray: {
       const array = schema as z.ZodArray<z.ZodTypeAny>;
-      return {
-        type: "array",
-        items: zodToJsonSchema(array._def.type),
-      };
+      return { type: "array", items: zodToJsonSchema(array._def.type) };
     }
     case ZodFirstPartyTypeKind.ZodTuple: {
       const tuple = schema as z.ZodTuple;
+      const items = tuple._def.items;
       return {
         type: "array",
-        prefixItems: tuple._def.items.map((item) => zodToJsonSchema(item)),
-        minItems: tuple._def.items.length,
-        maxItems: tuple._def.items.length,
+        prefixItems: items.map((item) => zodToJsonSchema(item)),
+        minItems: items.length,
+        maxItems: items.length,
       };
     }
     case ZodFirstPartyTypeKind.ZodUnion: {
       const union = schema as z.ZodUnion<[z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]]>;
-      return {
-        anyOf: union._def.options.map((option) => zodToJsonSchema(option)),
-      };
+      return { anyOf: union._def.options.map((option) => zodToJsonSchema(option)) };
     }
     case ZodFirstPartyTypeKind.ZodDiscriminatedUnion: {
       const union = schema as z.ZodDiscriminatedUnion<string, z.ZodObject<any>[]>;
@@ -118,9 +103,11 @@ function convert(schema: z.ZodTypeAny): JsonSchema {
       const def = schema as z.ZodDefault<z.ZodTypeAny>;
       const inner = zodToJsonSchema(def._def.innerType);
       const defaultValue = def._def.defaultValue();
+
       if (typeof inner === "object" && !("anyOf" in inner)) {
         inner.default = defaultValue;
       }
+
       return inner;
     }
     case ZodFirstPartyTypeKind.ZodLazy:
@@ -132,7 +119,9 @@ function convert(schema: z.ZodTypeAny): JsonSchema {
   }
 }
 
-function unwrapSchema(schema: z.ZodTypeAny) {
+function unwrapSchema(
+  schema: z.ZodTypeAny,
+): { schema: z.ZodTypeAny; nullable: boolean; optional: boolean } {
   let current: z.ZodTypeAny = schema;
   let nullable = false;
   let optional = false;

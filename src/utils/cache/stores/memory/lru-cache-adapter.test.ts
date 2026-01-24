@@ -1,7 +1,7 @@
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
-import { LRUCacheAdapter } from "./lru-cache-adapter.ts";
 import { delay } from "#std/async.ts";
+import { LRUCacheAdapter } from "./lru-cache-adapter.ts";
 
 describe("LRUCacheAdapter", () => {
   let cache: LRUCacheAdapter;
@@ -36,6 +36,7 @@ describe("LRUCacheAdapter", () => {
       cache.set("key1", "value1");
       cache.set("key2", "value2");
       cache.clear();
+
       expect(cache.get("key1")).toBeUndefined();
       expect(cache.get("key2")).toBeUndefined();
       expect(cache.getStats().entries).toBe(0);
@@ -44,6 +45,7 @@ describe("LRUCacheAdapter", () => {
     it("should iterate over keys", () => {
       cache.set("key1", "value1");
       cache.set("key2", "value2");
+
       const keys = Array.from(cache.keys());
       expect(keys).toContain("key1");
       expect(keys).toContain("key2");
@@ -57,7 +59,7 @@ describe("LRUCacheAdapter", () => {
       smallCache.set("a", "1");
       smallCache.set("b", "2");
       smallCache.set("c", "3");
-      smallCache.set("d", "4"); // Should evict "a"
+      smallCache.set("d", "4");
 
       expect(smallCache.get("a")).toBeUndefined();
       expect(smallCache.get("b")).toBe("2");
@@ -72,14 +74,11 @@ describe("LRUCacheAdapter", () => {
       smallCache.set("b", "2");
       smallCache.set("c", "3");
 
-      // Access "a" to move it to front
       smallCache.get("a");
-
-      // Now add "d" - should evict "b" (LRU)
       smallCache.set("d", "4");
 
-      expect(smallCache.get("a")).toBe("1"); // Still exists
-      expect(smallCache.get("b")).toBeUndefined(); // Evicted
+      expect(smallCache.get("a")).toBe("1");
+      expect(smallCache.get("b")).toBeUndefined();
       expect(smallCache.get("c")).toBe("3");
       expect(smallCache.get("d")).toBe("4");
     });
@@ -96,10 +95,7 @@ describe("LRUCacheAdapter", () => {
     });
 
     it("should use default TTL when not specified", () => {
-      const cacheWithTtl = new LRUCacheAdapter({
-        maxEntries: 10,
-        ttlMs: 100,
-      });
+      const cacheWithTtl = new LRUCacheAdapter({ maxEntries: 10, ttlMs: 100 });
 
       cacheWithTtl.set("key", "value");
       expect(cacheWithTtl.get("key")).toBe("value");
@@ -112,8 +108,7 @@ describe("LRUCacheAdapter", () => {
 
       await delay(300);
 
-      const cleaned = cache.cleanupExpired();
-      expect(cleaned).toBe(2);
+      expect(cache.cleanupExpired()).toBe(2);
       expect(cache.get("keep")).toBe("value3");
     });
   });
@@ -134,17 +129,14 @@ describe("LRUCacheAdapter", () => {
       cache.set("key2", "value2", undefined, ["tag-a", "tag-b"]);
       cache.set("key3", "value3", undefined, ["tag-b"]);
 
-      const invalidated = cache.invalidateTag("tag-a");
-
-      expect(invalidated).toBe(2);
+      expect(cache.invalidateTag("tag-a")).toBe(2);
       expect(cache.get("key1")).toBeUndefined();
       expect(cache.get("key2")).toBeUndefined();
-      expect(cache.get("key3")).toBe("value3"); // Only had tag-b
+      expect(cache.get("key3")).toBe("value3");
     });
 
     it("should return 0 when invalidating non-existent tag", () => {
-      const invalidated = cache.invalidateTag("nonexistent");
-      expect(invalidated).toBe(0);
+      expect(cache.invalidateTag("nonexistent")).toBe(0);
     });
   });
 
@@ -160,17 +152,12 @@ describe("LRUCacheAdapter", () => {
     });
 
     it("should evict entries when maxSizeBytes exceeded", () => {
-      const smallCache = new LRUCacheAdapter({
-        maxEntries: 100,
-        maxSizeBytes: 50, // Very small
-      });
+      const smallCache = new LRUCacheAdapter({ maxEntries: 100, maxSizeBytes: 50 });
 
-      smallCache.set("a", "12345678901234567890"); // ~40 bytes
-      smallCache.set("b", "12345678901234567890"); // Should evict "a"
+      smallCache.set("a", "12345678901234567890");
+      smallCache.set("b", "12345678901234567890");
 
-      // Either "a" or "b" should be evicted due to size
-      const stats = smallCache.getStats();
-      expect(stats.sizeBytes).toBeLessThanOrEqual(50);
+      expect(smallCache.getStats().sizeBytes).toBeLessThanOrEqual(50);
     });
   });
 
@@ -192,7 +179,6 @@ describe("LRUCacheAdapter", () => {
   describe("onEvict callback", () => {
     it("should call onEvict when entry is evicted", () => {
       const evicted: Array<{ key: string; value: unknown }> = [];
-
       const callbackCache = new LRUCacheAdapter({
         maxEntries: 2,
         onEvict: (key, value) => {
@@ -202,7 +188,7 @@ describe("LRUCacheAdapter", () => {
 
       callbackCache.set("a", "1");
       callbackCache.set("b", "2");
-      callbackCache.set("c", "3"); // Should evict "a"
+      callbackCache.set("c", "3");
 
       expect(evicted.length).toBe(1);
       expect(evicted[0]?.key).toBe("a");
@@ -211,7 +197,6 @@ describe("LRUCacheAdapter", () => {
 
     it("should call onEvict when entry is deleted", () => {
       const evicted: Array<{ key: string; value: unknown }> = [];
-
       const callbackCache = new LRUCacheAdapter({
         maxEntries: 10,
         onEvict: (key, value) => {
@@ -228,7 +213,6 @@ describe("LRUCacheAdapter", () => {
 
     it("should call onEvict for all entries on clear", () => {
       const evicted: string[] = [];
-
       const callbackCache = new LRUCacheAdapter({
         maxEntries: 10,
         onEvict: (key) => {

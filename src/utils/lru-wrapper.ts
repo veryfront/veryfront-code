@@ -35,17 +35,25 @@ export class LRUCache<K, V> {
     if (shouldDisableInterval()) {
       return;
     }
-    if (this.cleanupTimer) {
-      clearInterval(this.cleanupTimer);
-    }
+
+    this.stopCleanupTimer();
 
     const timer = setInterval(() => {
       this.adapter.cleanupExpired();
     }, this.cleanupIntervalMs);
+
     this.cleanupTimer = timer;
 
     // Unref the timer so it doesn't prevent process exit or cause test leaks
     unrefTimer(timer);
+  }
+
+  private stopCleanupTimer(): void {
+    if (!this.cleanupTimer) {
+      return;
+    }
+    clearInterval(this.cleanupTimer);
+    this.cleanupTimer = undefined;
   }
 
   private toStringKey(key: K): string {
@@ -84,11 +92,7 @@ export class LRUCache<K, V> {
   }
 
   destroy(): void {
-    if (this.cleanupTimer) {
-      clearInterval(this.cleanupTimer);
-      this.cleanupTimer = undefined;
-    }
-
+    this.stopCleanupTimer();
     this.adapter.clear();
   }
 
@@ -101,6 +105,7 @@ function shouldDisableInterval(): boolean {
   if ((globalThis as Record<string, unknown>).__vfDisableLruInterval === true) {
     return true;
   }
+
   try {
     return getDisableLruIntervalEnv();
   } catch {

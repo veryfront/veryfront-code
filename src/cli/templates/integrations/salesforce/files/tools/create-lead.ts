@@ -14,12 +14,16 @@ export default tool({
     phone: z.string().optional().describe("Phone number"),
     mobilePhone: z.string().optional().describe("Mobile phone number"),
     title: z.string().optional().describe("Job title"),
-    status: z.string().optional().describe(
-      'Lead status (e.g., "Open - Not Contacted", "Working - Contacted", "Closed - Converted")',
-    ),
-    leadSource: z.string().optional().describe(
-      'Lead source (e.g., "Web", "Phone Inquiry", "Partner Referral")',
-    ),
+    status: z
+      .string()
+      .optional()
+      .describe(
+        'Lead status (e.g., "Open - Not Contacted", "Working - Contacted", "Closed - Converted")',
+      ),
+    leadSource: z
+      .string()
+      .optional()
+      .describe('Lead source (e.g., "Web", "Phone Inquiry", "Partner Referral")'),
     industry: z.string().optional().describe("Industry"),
     street: z.string().optional().describe("Street address"),
     city: z.string().optional().describe("City"),
@@ -30,47 +34,46 @@ export default tool({
     description: z.string().optional().describe("Description or notes about the lead"),
     rating: z.string().optional().describe('Lead rating (e.g., "Hot", "Warm", "Cold")'),
   }),
-  async execute({
-    lastName,
-    company,
-    firstName,
-    email,
-    phone,
-    mobilePhone,
-    title,
-    status,
-    leadSource,
-    industry,
-    street,
-    city,
-    state,
-    postalCode,
-    country,
-    website,
-    description,
-    rating,
-  }) {
+  async execute(input): Promise<{
+    id: string;
+    name: string;
+    lastName: string;
+    firstName?: string;
+    company: string;
+    email?: string;
+    phone?: string;
+    title?: string;
+    status: string;
+    message: string;
+  }> {
     const leadData: Record<string, any> = {
-      LastName: lastName,
-      Company: company,
+      LastName: input.lastName,
+      Company: input.company,
     };
 
-    if (firstName) leadData.FirstName = firstName;
-    if (email) leadData.Email = email;
-    if (phone) leadData.Phone = phone;
-    if (mobilePhone) leadData.MobilePhone = mobilePhone;
-    if (title) leadData.Title = title;
-    if (status) leadData.Status = status;
-    if (leadSource) leadData.LeadSource = leadSource;
-    if (industry) leadData.Industry = industry;
-    if (street) leadData.Street = street;
-    if (city) leadData.City = city;
-    if (state) leadData.State = state;
-    if (postalCode) leadData.PostalCode = postalCode;
-    if (country) leadData.Country = country;
-    if (website) leadData.Website = website;
-    if (description) leadData.Description = description;
-    if (rating) leadData.Rating = rating;
+    const optionalFields: Array<[keyof typeof input, string]> = [
+      ["firstName", "FirstName"],
+      ["email", "Email"],
+      ["phone", "Phone"],
+      ["mobilePhone", "MobilePhone"],
+      ["title", "Title"],
+      ["status", "Status"],
+      ["leadSource", "LeadSource"],
+      ["industry", "Industry"],
+      ["street", "Street"],
+      ["city", "City"],
+      ["state", "State"],
+      ["postalCode", "PostalCode"],
+      ["country", "Country"],
+      ["website", "Website"],
+      ["description", "Description"],
+      ["rating", "Rating"],
+    ];
+
+    for (const [inputKey, sfKey] of optionalFields) {
+      const value = input[inputKey];
+      if (value) leadData[sfKey] = value;
+    }
 
     const result = await createLead(leadData);
 
@@ -78,24 +81,25 @@ export default tool({
       throw new Error(`Failed to create lead: ${JSON.stringify(result.errors)}`);
     }
 
-    // Create a minimal lead object for formatting the name
     const lead = {
-      FirstName: firstName,
-      LastName: lastName,
-      Email: email,
-    } as any;
+      FirstName: input.firstName,
+      LastName: input.lastName,
+      Email: input.email,
+    };
+
+    const name = formatLeadName(lead);
 
     return {
       id: result.id,
-      name: formatLeadName(lead),
-      lastName,
-      firstName,
-      company,
-      email,
-      phone,
-      title,
-      status: status || "Open - Not Contacted",
-      message: `Successfully created lead: ${formatLeadName(lead)} at ${company}`,
+      name,
+      lastName: input.lastName,
+      firstName: input.firstName,
+      company: input.company,
+      email: input.email,
+      phone: input.phone,
+      title: input.title,
+      status: input.status || "Open - Not Contacted",
+      message: `Successfully created lead: ${name} at ${input.company}`,
     };
   },
 });

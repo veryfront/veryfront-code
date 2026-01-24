@@ -11,9 +11,10 @@ export default tool({
     summary: z.string().describe("Brief summary/title of the issue"),
     issueType: z.string().describe('Type of issue: "Task", "Bug", "Story", "Epic", etc.'),
     description: z.string().optional().describe("Detailed description of the issue"),
-    priority: z.string().optional().describe(
-      'Priority: "Highest", "High", "Medium", "Low", "Lowest"',
-    ),
+    priority: z
+      .string()
+      .optional()
+      .describe('Priority: "Highest", "High", "Medium", "Low", "Lowest"'),
     assigneeId: z.string().optional().describe("Atlassian account ID of the assignee (optional)"),
     labels: z.array(z.string()).optional().describe("Array of labels to add to the issue"),
   }),
@@ -28,19 +29,21 @@ export default tool({
       labels,
     });
 
+    const { fields } = issue;
+
     return {
       key: issue.key,
       id: issue.id,
-      summary: issue.fields.summary,
-      status: issue.fields.status.name,
-      type: issue.fields.issuetype.name,
-      priority: issue.fields.priority?.name,
-      assignee: issue.fields.assignee?.displayName,
+      summary: fields.summary,
+      status: fields.status.name,
+      type: fields.issuetype.name,
+      priority: fields.priority?.name,
+      assignee: fields.assignee?.displayName,
       project: {
-        key: issue.fields.project.key,
-        name: issue.fields.project.name,
+        key: fields.project.key,
+        name: fields.project.name,
       },
-      created: issue.fields.created,
+      created: fields.created,
       message: `Issue ${issue.key} created successfully`,
     };
   },

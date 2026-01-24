@@ -1,24 +1,11 @@
-/**
- * Bootstrap Helper
- *
- * Handles initialization order for FSAdapter and config loading.
- * Solves the chicken-and-egg problem: config determines FSAdapter, but FSAdapter is needed to load config.
- *
- * Solution:
- * 1. Load config from local filesystem first (using base RuntimeAdapter)
- * 2. Check if custom FSAdapter is configured
- * 3. If yes, create enhanced adapter with FSAdapter
- * 4. Reload config using enhanced adapter (in case config itself is remote)
- */
-
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { clearConfigCache, getConfig } from "#veryfront/config";
-import { enhanceAdapterWithFS } from "#veryfront/platform/adapters/fs/integration.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
-import { logger } from "#veryfront/utils";
-import { loadEnv, supportsEnvFiles } from "#veryfront/utils/env-loader.ts";
-import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
+import { clearConfigCache, getConfig } from "#veryfront/config";
 import { getErrorMessage } from "#veryfront/errors/veryfront-error.ts";
+import { enhanceAdapterWithFS } from "#veryfront/platform/adapters/fs/integration.ts";
+import { logger } from "#veryfront/utils";
+import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
+import { loadEnv, supportsEnvFiles } from "#veryfront/utils/env-loader.ts";
 
 export interface BootstrapResult {
   /** Enhanced runtime adapter (with FSAdapter if configured) */
@@ -34,13 +21,6 @@ export interface BootstrapResult {
   fsAdapterType?: string;
 }
 
-/**
- * Bootstrap framework with proper initialization order
- *
- * @param projectDir - Project directory path
- * @param adapter - Base RuntimeAdapter (deno, node, bun, etc.)
- * @returns Bootstrap result with enhanced adapter and config
- */
 export async function bootstrap(
   projectDir: string,
   adapter: RuntimeAdapter,
@@ -50,32 +30,45 @@ export async function bootstrap(
     runtime: adapter.id,
   });
 
-  // Step 0: Load environment variables from .env files (if supported)
   if (supportsEnvFiles()) {
     try {
       await loadEnv({
         cwd: projectDir,
-        override: false, // Don't override existing env vars
+        override: false,
         debug: isDebugEnabled(adapter.env),
       });
     } catch (error) {
-      // Non-fatal error - log but continue
       logger.warn("[Bootstrap] Failed to load .env files", {
         error: getErrorMessage(error),
       });
     }
   }
 
-  // Step 1: Load config using base adapter (local filesystem)
   logger.debug("[Bootstrap] Loading config with base adapter");
   let config = await getConfig(projectDir, adapter);
 
-  // Step 2: Check if custom FSAdapter is configured
   const fsType = config.fs?.type;
-  const needsFSAdapter = fsType && fsType !== "local";
+  const needsFSAdapter = fsType != null && fsType !== "local";
 
   if (!needsFSAdapter) {
     logger.debug("[Bootstrap] Using local filesystem (no FSAdapter needed)");
+    return { adapter, config, usingFSAdapter: false };
+  }
+
+  logger.debug("[Bootstrap] Initializing FSAdapter", { type: fsType });
+  const enhancedAdapter = await enhanceAdapterWithFS(adapter, config, projectDir);
+  const fsAdapterInitialized = enhancedAdapter !== adapter;
+
+  const isProxyMode = config.fs?.veryfront?.proxyMode === true;
+  const isProductionMode = config.fs?.veryfront?.productionMode === true;
+
+  if (!fsAdapterInitialized) {
+    logger.debug("[Bootstrap] Framework initialized successfully", {
+      projectDir,
+      runtime: adapter.id,
+      fsAdapter: "local",
+    });
+
     return {
       adapter,
       config,
@@ -83,60 +76,41 @@ export async function bootstrap(
     };
   }
 
-  // Step 3: Create enhanced adapter with FSAdapter
-  logger.debug("[Bootstrap] Initializing FSAdapter", { type: fsType });
-  const enhancedAdapter = await enhanceAdapterWithFS(adapter, config, projectDir);
-
-  // Check if FSAdapter was actually initialized (enhanceAdapterWithFS returns original adapter on failure)
-  const fsAdapterInitialized = enhancedAdapter !== adapter;
-
-  // Step 4: Reload config using enhanced adapter (only if FSAdapter was initialized)
-  // This allows config file itself to be served from API
-  // Skip in proxy mode - config is always local and FSAdapter requires request context
-  // Skip in production mode - config is local and remote fetch is unnecessary
-  const isProxyMode = config.fs?.veryfront?.proxyMode === true;
-  const isProductionMode = config.fs?.veryfront?.productionMode === true;
-  if (fsAdapterInitialized && !isProxyMode && !isProductionMode) {
-    logger.debug("[Bootstrap] Reloading config with FSAdapter");
-    clearConfigCache();
-    const originalConfig = config;
-    const reloadedConfig = await getConfig(projectDir, enhancedAdapter);
-    // If FSAdapter config returns defaults (no config file in remote project),
-    // keep the original local config. This happens when using veryfront-api
-    // FSAdapter where the project is remote but config is local.
-    const usesDefaultDevConfig = reloadedConfig.dev?.port === 3000 &&
-      reloadedConfig.dev?.host === "localhost" &&
-      !reloadedConfig.dev?.hmr;
-    if (usesDefaultDevConfig && originalConfig.dev) {
-      logger.debug("[Bootstrap] Keeping original config (FSAdapter returned defaults)");
-      config = originalConfig;
-    } else {
-      config = reloadedConfig;
-    }
-  } else if (isProxyMode) {
+  if (isProxyMode) {
     logger.debug("[Bootstrap] Skipping config reload in proxy mode (using local config)");
   } else if (isProductionMode) {
     logger.debug("[Bootstrap] Skipping config reload in production mode (using local config)");
+  } else {
+    logger.debug("[Bootstrap] Reloading config with FSAdapter");
+    clearConfigCache();
+
+    const originalConfig = config;
+    const reloadedConfig = await getConfig(projectDir, enhancedAdapter);
+
+    const usesDefaultDevConfig = reloadedConfig.dev?.port === 3000 &&
+      reloadedConfig.dev?.host === "localhost" &&
+      !reloadedConfig.dev?.hmr;
+
+    config = usesDefaultDevConfig && originalConfig.dev
+      ? (logger.debug("[Bootstrap] Keeping original config (FSAdapter returned defaults)"),
+        originalConfig)
+      : reloadedConfig;
   }
 
-  const finalAdapter = fsAdapterInitialized ? enhancedAdapter : adapter;
   logger.debug("[Bootstrap] Framework initialized successfully", {
     projectDir,
     runtime: adapter.id,
-    fsAdapter: fsAdapterInitialized ? fsType : "local",
+    fsAdapter: fsType,
   });
 
   return {
-    adapter: finalAdapter,
+    adapter: enhancedAdapter,
     config,
-    usingFSAdapter: fsAdapterInitialized,
-    fsAdapterType: fsAdapterInitialized ? fsType : undefined,
+    usingFSAdapter: true,
+    fsAdapterType: fsType,
   };
 }
 
-/**
- * Bootstrap for development mode with additional logging
- */
 export async function bootstrapDev(
   projectDir: string,
   adapter: RuntimeAdapter,
@@ -145,7 +119,6 @@ export async function bootstrapDev(
 
   const result = await bootstrap(projectDir, adapter);
 
-  // Log development-specific info
   if (result.usingFSAdapter) {
     logger.debug("[Bootstrap:Dev] FSAdapter active", {
       type: result.fsAdapterType,
@@ -156,9 +129,6 @@ export async function bootstrapDev(
   return result;
 }
 
-/**
- * Bootstrap for production mode with error handling
- */
 export async function bootstrapProd(
   projectDir: string,
   adapter: RuntimeAdapter,
@@ -179,8 +149,6 @@ export async function bootstrapProd(
     logger.error("[Bootstrap:Prod] Initialization failed", {
       error: getErrorMessage(error),
     });
-
-    // In production, fail fast on bootstrap errors
     throw error;
   }
 }

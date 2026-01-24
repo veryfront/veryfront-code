@@ -9,9 +9,13 @@ export class AgentError extends VeryfrontError {
 
 export class AgentNotFoundError extends VeryfrontError {
   constructor(agentId: string, context?: unknown) {
+    const extraContext = context && typeof context === "object"
+      ? (context as Record<string, unknown>)
+      : undefined;
+
     super(`Agent with ID '${agentId}' not found`, ErrorCode.AGENT_NOT_FOUND, {
       agentId,
-      ...(context as Record<string, unknown> | undefined),
+      ...extraContext,
     });
     this.name = "AgentNotFoundError";
   }

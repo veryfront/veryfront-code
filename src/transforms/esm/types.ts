@@ -6,8 +6,8 @@ export interface TransformOptions {
   jsxImportSource?: string;
   moduleServerUrl?: string;
   vendorBundleHash?: string;
-  ssr?: boolean; // If true, don't rewrite imports for module server (for server-side execution)
-  apiBaseUrl?: string; // Base URL for API (used for cross-project imports)
+  ssr?: boolean;
+  apiBaseUrl?: string;
   studioEmbed?: boolean;
 }
 

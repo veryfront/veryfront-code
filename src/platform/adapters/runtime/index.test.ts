@@ -3,50 +3,50 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 
 describe("runtime/index.ts exports", () => {
   it("should export DenoAdapter", async () => {
-    const { DenoAdapter } = await import("./index.ts");
-    assertExists(DenoAdapter);
-    assertEquals(typeof DenoAdapter, "function");
+    const mod = await import("./index.ts");
+    assertExists(mod.DenoAdapter);
+    assertEquals(typeof mod.DenoAdapter, "function");
   });
 
   it("should export denoAdapter singleton", async () => {
-    const { denoAdapter } = await import("./index.ts");
-    assertExists(denoAdapter);
-    assertEquals(denoAdapter.id, "deno");
+    const mod = await import("./index.ts");
+    assertExists(mod.denoAdapter);
+    assertEquals(mod.denoAdapter.id, "deno");
   });
 
   it("should export NodeAdapter", async () => {
-    const { NodeAdapter } = await import("./index.ts");
-    assertExists(NodeAdapter);
-    assertEquals(typeof NodeAdapter, "function");
+    const mod = await import("./index.ts");
+    assertExists(mod.NodeAdapter);
+    assertEquals(typeof mod.NodeAdapter, "function");
   });
 
   it("should export nodeAdapter singleton", async () => {
-    const { nodeAdapter } = await import("./index.ts");
-    assertExists(nodeAdapter);
-    assertEquals(nodeAdapter.id, "node");
+    const mod = await import("./index.ts");
+    assertExists(mod.nodeAdapter);
+    assertEquals(mod.nodeAdapter.id, "node");
   });
 
   it("should export BunAdapter", async () => {
-    const { BunAdapter } = await import("./index.ts");
-    assertExists(BunAdapter);
-    assertEquals(typeof BunAdapter, "function");
+    const mod = await import("./index.ts");
+    assertExists(mod.BunAdapter);
+    assertEquals(typeof mod.BunAdapter, "function");
   });
 
   it("should export bunAdapter singleton", async () => {
-    const { bunAdapter } = await import("./index.ts");
-    assertExists(bunAdapter);
-    assertEquals(bunAdapter.id, "bun");
+    const mod = await import("./index.ts");
+    assertExists(mod.bunAdapter);
+    assertEquals(mod.bunAdapter.id, "bun");
   });
 
   it("should export CloudflareAdapter class", async () => {
-    const { CloudflareAdapter } = await import("./index.ts");
-    assertExists(CloudflareAdapter);
-    assertEquals(typeof CloudflareAdapter, "function");
+    const mod = await import("./index.ts");
+    assertExists(mod.CloudflareAdapter);
+    assertEquals(typeof mod.CloudflareAdapter, "function");
   });
 
   it("should export NodeBasedShellAdapter", async () => {
-    const { NodeBasedShellAdapter } = await import("./index.ts");
-    assertExists(NodeBasedShellAdapter);
-    assertEquals(typeof NodeBasedShellAdapter, "function");
+    const mod = await import("./index.ts");
+    assertExists(mod.NodeBasedShellAdapter);
+    assertEquals(typeof mod.NodeBasedShellAdapter, "function");
   });
 });

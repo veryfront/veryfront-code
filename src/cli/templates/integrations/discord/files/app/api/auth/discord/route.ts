@@ -1,9 +1,3 @@
-/**
- * Discord OAuth Initiation
- */
-
 import { createOAuthInitHandler, discordConfig, memoryTokenStore } from "veryfront/oauth";
 
-export const GET = createOAuthInitHandler(discordConfig, {
-  tokenStore: memoryTokenStore,
-});
+export const GET = createOAuthInitHandler(discordConfig, { tokenStore: memoryTokenStore });

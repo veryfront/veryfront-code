@@ -1,10 +1,4 @@
-import type {
-  BaseNodeConfig,
-  RetryConfig,
-  WaitNodeConfig,
-  WorkflowContext,
-  WorkflowNode,
-} from "../types.ts";
+import type { BaseNodeConfig, RetryConfig, WorkflowContext, WorkflowNode } from "../types.ts";
 import { validateNodeId } from "./validation.ts";
 
 export interface WaitForApprovalOptions extends Omit<BaseNodeConfig, "checkpoint"> {
@@ -23,22 +17,20 @@ export function waitForApproval(
 ): WorkflowNode {
   validateNodeId(id);
 
-  const config: WaitNodeConfig = {
-    type: "wait",
-    waitType: "approval",
-    message: options.message ?? "Approval required",
-    payload: options.payload,
-    approvers: options.approvers,
-    timeout: options.timeout,
-    // Always checkpoint before waiting
-    checkpoint: true,
-    retry: options.retry,
-    skip: options.skip,
-  };
-
   return {
     id,
-    config,
+    config: {
+      type: "wait",
+      waitType: "approval",
+      message: options.message ?? "Approval required",
+      payload: options.payload,
+      approvers: options.approvers,
+      timeout: options.timeout,
+      // Always checkpoint before waiting
+      checkpoint: true,
+      retry: options.retry,
+      skip: options.skip,
+    },
   };
 }
 
@@ -50,29 +42,24 @@ export interface WaitForEventOptions extends Omit<BaseNodeConfig, "checkpoint"> 
 }
 
 /** Create a wait-for-event node. Pauses until external event is received. */
-export function waitForEvent(
-  id: string,
-  options: WaitForEventOptions,
-): WorkflowNode {
+export function waitForEvent(id: string, options: WaitForEventOptions): WorkflowNode {
   validateNodeId(id);
 
   if (!options.eventName) {
     throw new Error(`waitForEvent "${id}" must specify an eventName`);
   }
 
-  const config: WaitNodeConfig = {
-    type: "wait",
-    waitType: "event",
-    eventName: options.eventName,
-    timeout: options.timeout,
-    checkpoint: true,
-    retry: options.retry,
-    skip: options.skip,
-  };
-
   return {
     id,
-    config,
+    config: {
+      type: "wait",
+      waitType: "event",
+      eventName: options.eventName,
+      timeout: options.timeout,
+      checkpoint: true,
+      retry: options.retry,
+      skip: options.skip,
+    },
   };
 }
 
@@ -80,16 +67,14 @@ export function waitForEvent(
 export function delay(id: string, duration: string | number): WorkflowNode {
   validateNodeId(id);
 
-  const config: WaitNodeConfig = {
-    type: "wait",
-    waitType: "event",
-    eventName: "__delay__",
-    timeout: duration,
-    checkpoint: false,
-  };
-
   return {
     id,
-    config,
+    config: {
+      type: "wait",
+      waitType: "event",
+      eventName: "__delay__",
+      timeout: duration,
+      checkpoint: false,
+    },
   };
 }

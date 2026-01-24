@@ -18,6 +18,21 @@ export function clearLayoutDiscoveryCache(): void {
   layoutDiscoveryCache.clear();
 }
 
+export async function discoverNestedLayouts(
+  pageFilePath: string,
+  rootDir: string,
+  projectDir: string,
+  adapter: RuntimeAdapter,
+): Promise<LayoutItem[]> {
+  const key = simpleHash(pageFilePath, rootDir);
+  const cached = layoutDiscoveryCache.get(key);
+  if (cached) return cached;
+
+  const result = await discoverNestedLayoutsImpl(pageFilePath, rootDir, projectDir, adapter);
+  layoutDiscoveryCache.set(key, result);
+  return result;
+}
+
 async function discoverNestedLayoutsImpl(
   pageFilePath: string,
   rootDir: string,
@@ -27,36 +42,13 @@ async function discoverNestedLayoutsImpl(
   const nestedLayouts: LayoutItem[] = [];
 
   try {
-    let currentDir = dirname(pageFilePath);
-    const candidates: string[] = [];
-
-    while (currentDir.startsWith(rootDir)) {
-      for (const ext of LAYOUT_EXTENSIONS) {
-        candidates.push(join(currentDir, `layout.${ext}`));
-      }
-      const parent = dirname(currentDir);
-      if (parent === currentDir || currentDir === rootDir) break;
-      currentDir = parent;
-    }
-
-    if (!candidates.includes(join(rootDir, "layout.mdx"))) {
-      for (const ext of LAYOUT_EXTENSIONS) {
-        candidates.push(join(rootDir, `layout.${ext}`));
-      }
-    }
-
+    const candidates = collectLayoutCandidates(pageFilePath, rootDir);
     const existing = await resolveExistingFiles(candidates.reverse(), adapter);
 
     logger.debug("Found layout files:", existing);
     addLayoutsFromFiles(existing, nestedLayouts);
 
-    await addMissedAncestorLayouts(
-      pageFilePath,
-      rootDir,
-      existing,
-      nestedLayouts,
-      adapter,
-    );
+    await addMissedAncestorLayouts(pageFilePath, rootDir, existing, nestedLayouts, adapter);
   } catch (e) {
     logger.warn("Nested layout discovery failed", e);
   }
@@ -64,34 +56,34 @@ async function discoverNestedLayoutsImpl(
   return nestedLayouts;
 }
 
-/**
- * Discover nested layouts for a page file.
- * Results are cached for performance - call clearLayoutDiscoveryCache() to reset.
- */
-export async function discoverNestedLayouts(
-  pageFilePath: string,
-  rootDir: string,
-  projectDir: string,
-  adapter: RuntimeAdapter,
-): Promise<LayoutItem[]> {
-  const key = simpleHash(pageFilePath, rootDir);
+function collectLayoutCandidates(pageFilePath: string, rootDir: string): string[] {
+  const candidates: string[] = [];
+  let currentDir = dirname(pageFilePath);
 
-  if (layoutDiscoveryCache.has(key)) {
-    return layoutDiscoveryCache.get(key)!;
+  while (currentDir.startsWith(rootDir)) {
+    for (const ext of LAYOUT_EXTENSIONS) {
+      candidates.push(join(currentDir, `layout.${ext}`));
+    }
+
+    const parent = dirname(currentDir);
+    if (parent === currentDir || currentDir === rootDir) break;
+    currentDir = parent;
   }
 
-  const result = await discoverNestedLayoutsImpl(pageFilePath, rootDir, projectDir, adapter);
-  layoutDiscoveryCache.set(key, result);
-  return result;
+  if (!candidates.includes(join(rootDir, "layout.mdx"))) {
+    for (const ext of LAYOUT_EXTENSIONS) {
+      candidates.push(join(rootDir, `layout.${ext}`));
+    }
+  }
+
+  return candidates;
 }
 
 async function resolveExistingFiles(
   candidates: string[],
   adapter: RuntimeAdapter,
 ): Promise<string[]> {
-  const results = await Promise.allSettled(
-    candidates.map((file) => adapter.fs.stat(file)),
-  );
+  const results = await Promise.allSettled(candidates.map((file) => adapter.fs.stat(file)));
 
   const existing: string[] = [];
   for (let i = 0; i < results.length; i++) {
@@ -100,19 +92,27 @@ async function resolveExistingFiles(
 
     if (result.status === "fulfilled" && result.value.isFile) {
       existing.push(candidates[i]!);
-    } else if (result.status === "rejected") {
+      continue;
+    }
+
+    if (result.status === "rejected") {
       logger.debug("[layout] stat layout candidate failed", result.reason as Error);
     }
   }
+
   return existing;
 }
 
 function addLayoutsFromFiles(files: string[], nestedLayouts: LayoutItem[]): void {
   for (const file of files) {
     const ext = extname(file).toLowerCase();
+
     if (ext === ".mdx" || ext === ".md") {
       nestedLayouts.push({ kind: "mdx", path: file });
-    } else if (ext === ".tsx" || ext === ".jsx" || ext === ".ts" || ext === ".js") {
+      continue;
+    }
+
+    if (ext === ".tsx" || ext === ".jsx" || ext === ".ts" || ext === ".js") {
       logger.debug("Adding TSX layout:", file);
       nestedLayouts.push({
         kind: "tsx",
@@ -147,9 +147,7 @@ async function addMissedAncestorLayouts(
       dir = parent;
     }
 
-    const results = await Promise.allSettled(
-      candidates.map((cand) => adapter.fs.stat(cand)),
-    );
+    const results = await Promise.allSettled(candidates.map((cand) => adapter.fs.stat(cand)));
 
     for (let i = 0; i < results.length; i++) {
       const result = results[i];
@@ -157,20 +155,12 @@ async function addMissedAncestorLayouts(
       if (!result || !cand) continue;
 
       if (result.status === "fulfilled" && result.value.isFile) {
-        const ext = extname(cand).toLowerCase();
-        const kind = (ext === ".mdx" || ext === ".md") ? "mdx" : "tsx";
-        if (kind === "mdx") {
-          nestedLayouts.push({ kind: "mdx", path: cand });
-        } else {
-          nestedLayouts.push({
-            kind: "tsx",
-            component: undefined,
-            componentPath: cand,
-            path: cand,
-          });
-        }
+        addLayoutsFromFiles([cand], nestedLayouts);
         included.add(cand);
-      } else if (result.status === "rejected") {
+        continue;
+      }
+
+      if (result.status === "rejected") {
         logger.debug("[layout] stat nested tsx/jsx layout failed", result.reason as Error);
       }
     }

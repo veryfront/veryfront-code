@@ -50,7 +50,7 @@ export async function instrumentBatch<T>(
   processor: (item: T, index: number) => Promise<void>,
   options?: BatchOptions,
 ): Promise<void> {
-  const batchSize = options?.batchSize || 10;
+  const batchSize = options?.batchSize ?? 10;
   const totalBatches = Math.ceil(items.length / batchSize);
 
   const batchSpan = startSpan(operationName, {
@@ -59,7 +59,7 @@ export async function instrumentBatch<T>(
       "batch.total_items": items.length,
       "batch.size": batchSize,
       "batch.total_batches": totalBatches,
-      ...(options?.attributes || {}),
+      ...(options?.attributes ?? {}),
     },
   });
 
@@ -74,8 +74,8 @@ export async function instrumentBatch<T>(
 
 function createSpan(spanName: string, args: unknown[], options?: InstrumentOptions): Span | null {
   const spanOptions: SpanOptions = {
-    kind: options?.kind || "internal",
-    attributes: options?.attributes?.(args) || {},
+    kind: options?.kind ?? "internal",
+    attributes: options?.attributes?.(args) ?? {},
   };
 
   return startSpan(spanName, spanOptions);
@@ -83,7 +83,7 @@ function createSpan(spanName: string, args: unknown[], options?: InstrumentOptio
 
 function recordDuration(span: Span | null, startTime: number): void {
   const duration = performance.now() - startTime;
-  setSpanAttributes(span, { "duration_ms": Math.floor(duration) });
+  setSpanAttributes(span, { duration_ms: Math.floor(duration) });
 }
 
 async function processBatches<T>(

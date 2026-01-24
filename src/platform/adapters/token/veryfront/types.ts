@@ -72,10 +72,9 @@ export interface VeryfrontTokenConfig {
   };
 }
 
-/**
- * Create verified config from adapter config
- */
-export function createTokenConfig(config: TokenStorageAdapterConfig): VeryfrontTokenConfig {
+function requireVeryfrontConfig(
+  config: TokenStorageAdapterConfig,
+): NonNullable<TokenStorageAdapterConfig["veryfront"]> {
   if (!config.veryfront) {
     throw toError(
       createError({
@@ -85,7 +84,16 @@ export function createTokenConfig(config: TokenStorageAdapterConfig): VeryfrontT
     );
   }
 
-  if (!config.veryfront.apiToken) {
+  return config.veryfront;
+}
+
+/**
+ * Create verified config from adapter config
+ */
+export function createTokenConfig(config: TokenStorageAdapterConfig): VeryfrontTokenConfig {
+  const veryfront = requireVeryfrontConfig(config);
+
+  if (!veryfront.apiToken) {
     throw toError(
       createError({
         type: "config",
@@ -94,7 +102,7 @@ export function createTokenConfig(config: TokenStorageAdapterConfig): VeryfrontT
     );
   }
 
-  if (!config.veryfront.projectSlug) {
+  if (!veryfront.projectSlug) {
     throw toError(
       createError({
         type: "config",
@@ -104,13 +112,13 @@ export function createTokenConfig(config: TokenStorageAdapterConfig): VeryfrontT
   }
 
   return {
-    apiBaseUrl: config.veryfront.baseUrl || "https://api.veryfront.com",
-    apiToken: config.veryfront.apiToken,
-    projectSlug: config.veryfront.projectSlug,
+    apiBaseUrl: veryfront.baseUrl || "https://api.veryfront.com",
+    apiToken: veryfront.apiToken,
+    projectSlug: veryfront.projectSlug,
     retry: {
-      maxRetries: config.veryfront.retry?.maxRetries ?? 3,
-      initialDelay: config.veryfront.retry?.initialDelay ?? 1000,
-      maxDelay: config.veryfront.retry?.maxDelay ?? 10000,
+      maxRetries: veryfront.retry?.maxRetries ?? 3,
+      initialDelay: veryfront.retry?.initialDelay ?? 1000,
+      maxDelay: veryfront.retry?.maxDelay ?? 10000,
     },
   };
 }

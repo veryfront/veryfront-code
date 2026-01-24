@@ -11,12 +11,9 @@ import {
 describe("AI_TOOLS registry", () => {
   it("should have all required tools", () => {
     const ids = AI_TOOLS.map((t) => t.id);
-    assertEquals(ids.includes("cursor"), true);
-    assertEquals(ids.includes("claude-code"), true);
-    assertEquals(ids.includes("skill"), true);
-    assertEquals(ids.includes("copilot"), true);
-    assertEquals(ids.includes("windsurf"), true);
-    assertEquals(ids.includes("agents"), true);
+    for (const id of ["cursor", "claude-code", "skill", "copilot", "windsurf", "agents"]) {
+      assertEquals(ids.includes(id), true);
+    }
   });
 
   it("should have valid fields for all tools", () => {
@@ -34,8 +31,7 @@ describe("AI_TOOLS registry", () => {
 
   it("should have unique IDs", () => {
     const ids = AI_TOOLS.map((t) => t.id);
-    const unique = new Set(ids);
-    assertEquals(ids.length, unique.size);
+    assertEquals(ids.length, new Set(ids).size);
   });
 });
 
@@ -43,8 +39,9 @@ describe("getAllToolIds", () => {
   it("should return all tool IDs", () => {
     const ids = getAllToolIds();
     assertEquals(ids.length, AI_TOOLS.length);
-    assertEquals(ids.includes("cursor"), true);
-    assertEquals(ids.includes("claude-code"), true);
+    for (const id of ["cursor", "claude-code"]) {
+      assertEquals(ids.includes(id), true);
+    }
   });
 });
 
@@ -74,19 +71,15 @@ describe("getToolById", () => {
 
 describe("isValidToolId", () => {
   it("should return true for valid IDs", () => {
-    assertEquals(isValidToolId("cursor"), true);
-    assertEquals(isValidToolId("claude-code"), true);
-    assertEquals(isValidToolId("skill"), true);
-    assertEquals(isValidToolId("copilot"), true);
-    assertEquals(isValidToolId("windsurf"), true);
-    assertEquals(isValidToolId("agents"), true);
+    for (const id of ["cursor", "claude-code", "skill", "copilot", "windsurf", "agents"]) {
+      assertEquals(isValidToolId(id), true);
+    }
   });
 
   it("should return false for invalid IDs", () => {
-    assertEquals(isValidToolId("invalid"), false);
-    assertEquals(isValidToolId(""), false);
-    assertEquals(isValidToolId("CURSOR"), false);
-    assertEquals(isValidToolId("Cursor"), false);
+    for (const id of ["invalid", "", "CURSOR", "Cursor"]) {
+      assertEquals(isValidToolId(id), false);
+    }
   });
 });
 
@@ -115,12 +108,6 @@ describe("getTemplateContent", () => {
   });
 
   it("should throw for invalid tool ID", async () => {
-    let error: Error | null = null;
-    try {
-      await getTemplateContent("invalid");
-    } catch (e) {
-      error = e as Error;
-    }
-    assertEquals(error !== null, true);
+    await assertThrows(() => getTemplateContent("invalid"), Error);
   });
 });
