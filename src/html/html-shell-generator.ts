@@ -191,11 +191,13 @@ async function generateHTMLShellPartsImpl(
 
   const isPreviewMode = options.environment === "preview";
   const skipDevHMR = isPreviewMode;
+  // Error logger endpoint only enabled in local dev (returns 404 in preview/prod)
+  const skipErrorLogger = isPreviewMode;
   // Enable dev scripts for local dev OR preview mode (for HMR support in Studio)
   const useDevScripts = localDev || isPreviewMode;
 
   const modeScripts = useDevScripts
-    ? getDevScripts(meta.slug || "", options.config, params, props, nonce, { skipDevHMR })
+    ? getDevScripts(meta.slug || "", options.config, params, props, nonce, { skipDevHMR, skipErrorLogger })
     : getProdScripts(meta.slug || "", params, props, nonce);
 
   const modeStyles = useDevScripts ? getDevStyles(nonce) : getProductionStyles(nonce);

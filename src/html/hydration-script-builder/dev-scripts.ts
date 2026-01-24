@@ -19,6 +19,8 @@ function generateHMRScript(
 export interface DevScriptsOptions {
   /** Skip hmr.js when preview-hmr.js will be used (proxy mode) */
   skipDevHMR?: boolean;
+  /** Skip error logger when endpoint is not available (preview mode) */
+  skipErrorLogger?: boolean;
 }
 
 export function getDevScripts(
@@ -29,10 +31,16 @@ export function getDevScripts(
   nonce?: string,
   options?: DevScriptsOptions,
 ): string {
-  return [
-    generateDevErrorLoggerScript(nonce),
-    generateDevComponentManifestScript(config, nonce),
-    generateDevClientRendererScript(nonce),
-    generateHMRScript(config, nonce, options?.skipDevHMR),
-  ].join("\n");
+  const scripts: string[] = [];
+
+  // Error logger only works in local dev (endpoint returns 404 in preview/prod)
+  if (!options?.skipErrorLogger) {
+    scripts.push(generateDevErrorLoggerScript(nonce));
+  }
+
+  scripts.push(generateDevComponentManifestScript(config, nonce));
+  scripts.push(generateDevClientRendererScript(nonce));
+  scripts.push(generateHMRScript(config, nonce, options?.skipDevHMR));
+
+  return scripts.join("\n");
 }

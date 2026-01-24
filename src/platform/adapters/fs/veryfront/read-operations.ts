@@ -166,9 +166,11 @@ export class ReadOperations {
       return undefined;
     }
 
-    logger.debug("[ReadOperations] Found content in file list cache (indexed)", {
+    const contentPreview = content.length > 100 ? content.slice(0, 100) + "..." : content;
+    logger.info("[ReadOperations] FILE_LIST_CACHE_HIT - serving from file list cache", {
       path: normalizedPath,
       contentLength: content.length,
+      contentPreview: contentPreview.replace(/\n/g, "\\n"),
     });
 
     return content;
@@ -219,14 +221,26 @@ export class ReadOperations {
 
     const requestCached = getRequestScopedFile(cacheKey);
     if (requestCached) {
-      logger.debug("[ReadOperations] Request-scoped cache hit", { path: normalizedPath, cacheKey });
+      const preview = requestCached.length > 80 ? requestCached.slice(0, 80) + "..." : requestCached;
+      logger.info("[ReadOperations] REQUEST_CACHE_HIT", {
+        path: normalizedPath,
+        cacheKey,
+        contentLength: requestCached.length,
+        preview: preview.replace(/\n/g, "\\n"),
+      });
       return requestCached;
     }
 
     if (isProduction) {
       const cached = await this.cache.getAsync<string>(cacheKey);
       if (cached) {
-        logger.debug("[ReadOperations] Cache hit", { path: normalizedPath, cacheKey });
+        const preview = cached.length > 80 ? cached.slice(0, 80) + "..." : cached;
+        logger.info("[ReadOperations] PERSISTENT_CACHE_HIT", {
+          path: normalizedPath,
+          cacheKey,
+          contentLength: cached.length,
+          preview: preview.replace(/\n/g, "\\n"),
+        });
         setRequestScopedFile(cacheKey, cached);
         return cached;
       }
@@ -414,13 +428,21 @@ export class ReadOperations {
     cacheKey: string,
     shouldCache: boolean,
   ): Promise<string> {
-    logger.debug("[ReadOperations] Fetching draft content", {
+    logger.info("[ReadOperations] API_FETCH_START - fetching draft from API", {
       path: normalizedPath,
       apiPath,
       cacheKey,
     });
 
     const content = await this.client.getFileContent(apiPath);
+
+    const preview = content.length > 80 ? content.slice(0, 80) + "..." : content;
+    logger.info("[ReadOperations] API_FETCH_DONE - got content from API", {
+      path: normalizedPath,
+      contentLength: content.length,
+      preview: preview.replace(/\n/g, "\\n"),
+      willCache: shouldCache,
+    });
 
     if (shouldCache) this.cache.set(cacheKey, content);
     setRequestScopedFile(cacheKey, content);
