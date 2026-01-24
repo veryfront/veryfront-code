@@ -616,6 +616,115 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
     document.documentElement.classList.add(mode);
   }
 
+  // ============ Screenshot Capture ============
+
+  let html2canvasLoaded = false;
+  let html2canvasPromise = null;
+
+  function loadHtml2Canvas() {
+    if (html2canvasLoaded) return Promise.resolve();
+    if (html2canvasPromise) return html2canvasPromise;
+
+    html2canvasPromise = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';
+      script.onload = () => {
+        html2canvasLoaded = true;
+        resolve();
+      };
+      script.onerror = reject;
+      document.head.appendChild(script);
+    });
+
+    return html2canvasPromise;
+  }
+
+  async function captureScreenshot(options) {
+    const { scrollTo, fullPage, quality = 0.8 } = options || {};
+
+    // Save original scroll position to restore later
+    const originalScrollY = window.scrollY;
+
+    try {
+      await loadHtml2Canvas();
+
+      // Scroll if requested
+      if (typeof scrollTo === 'number') {
+        window.scrollTo(0, scrollTo);
+        await new Promise(r => setTimeout(r, 150)); // Wait for render
+      }
+
+      const target = document.body;
+      const canvasOptions = {
+        useCORS: true,
+        // Don't use allowTaint - it causes SecurityError on cross-origin images
+        // With useCORS only, we get partial screenshots instead of hard failures
+        logging: false,
+        scale: window.devicePixelRatio || 1,
+      };
+
+      if (fullPage) {
+        canvasOptions.height = document.documentElement.scrollHeight;
+        canvasOptions.windowHeight = document.documentElement.scrollHeight;
+        canvasOptions.y = 0;
+        window.scrollTo(0, 0);
+        await new Promise(r => setTimeout(r, 100));
+      }
+
+      const canvas = await window.html2canvas(target, canvasOptions);
+      const dataUrl = canvas.toDataURL('image/png', quality);
+
+      // Restore original scroll position
+      window.scrollTo(0, originalScrollY);
+
+      return {
+        success: true,
+        data: dataUrl,
+        width: canvas.width,
+        height: canvas.height,
+        scrollY: window.scrollY,
+        totalHeight: document.documentElement.scrollHeight,
+        viewportHeight: window.innerHeight,
+        url: window.location.href
+      };
+    } catch (error) {
+      // Restore scroll position even on error
+      window.scrollTo(0, originalScrollY);
+      return {
+        success: false,
+        error: error.message || String(error)
+      };
+    }
+  }
+
+  async function captureMultipleSections(sectionCount) {
+    // Save original scroll position to restore after all captures
+    const originalScrollY = window.scrollY;
+    const results = [];
+    const totalHeight = document.documentElement.scrollHeight;
+    const viewportHeight = window.innerHeight;
+    const sections = sectionCount || Math.ceil(totalHeight / viewportHeight);
+
+    try {
+      for (let i = 0; i < sections; i++) {
+        const scrollY = Math.min(i * viewportHeight, totalHeight - viewportHeight);
+        const result = await captureScreenshot({ scrollTo: scrollY });
+        if (result.success) {
+          results.push({
+            ...result,
+            section: i + 1,
+            totalSections: sections
+          });
+        }
+      }
+    } finally {
+      // Restore original scroll position
+      window.scrollTo(0, originalScrollY);
+    }
+
+    return results;
+  }
+
   // ============ Studio Message Handler ============
 
   function handleStudioMessage(event) {
@@ -680,6 +789,29 @@ export function generateStudioBridgeScript(options: StudioBridgeOptions): string
 
       case 'toggleLayout':
         // Layout toggling handled by the renderer
+        break;
+
+      case 'screenshot':
+        (async function() {
+          let result;
+          if (message.multipleSections) {
+            result = await captureMultipleSections(message.sectionCount);
+            postToStudio({
+              action: 'screenshotResult',
+              requestId: message.requestId,
+              multiple: true,
+              results: result
+            });
+          } else {
+            result = await captureScreenshot(message.options);
+            postToStudio({
+              action: 'screenshotResult',
+              requestId: message.requestId,
+              multiple: false,
+              ...result
+            });
+          }
+        })();
         break;
 
       default:
