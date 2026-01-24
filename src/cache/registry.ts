@@ -457,7 +457,7 @@ function getEnvironmentFromKey(key: string, projectId: string): CacheEnvironment
   }
 
   // SSR module cache keys: v{version}:{projectId}:{contentSourceId}:...
-  if (parts[0].startsWith("v") && parts[1] === projectId) {
+  if (parts[0]?.startsWith("v") && parts[1] === projectId && parts[2]) {
     return getEnvironmentFromContentSourceId(parts[2]);
   }
 
@@ -506,28 +506,29 @@ function isKeyForContentSource(
   // Render cache keys: {projectId}:{environment}:{releaseKey}:{version}:...
   if (
     parts[0] === projectId &&
-    (parts[1] === "production" || parts[1] === "preview")
+    (parts[1] === "production" || parts[1] === "preview") &&
+    parts[2]
   ) {
     return candidates.has(parts[2]);
   }
 
   // SSR module cache keys: v{version}:{projectId}:{contentSourceId}:...
-  if (parts[0].startsWith("v") && parts[1] === projectId) {
+  if (parts[0]?.startsWith("v") && parts[1] === projectId && parts[2]) {
     return candidates.has(parts[2]);
   }
 
   // Layout component cache keys: layout:{projectId}:{contentSourceId}:...
-  if (parts[0] === "layout" && parts[1] === projectId) {
+  if (parts[0] === "layout" && parts[1] === projectId && parts[2]) {
     return candidates.has(parts[2]);
   }
 
   // File/dir/stat/list cache keys: {prefix}:{sourceType}:{projectSlug}:{qualifier}:...
   if (parts[0] === "file" || parts[0] === "stat" || parts[0] === "dir" || parts[0] === "files") {
     const sourceType = parts[1];
-    if (sourceType === "branch" || sourceType === "release") {
+    if ((sourceType === "branch" || sourceType === "release") && parts[3]) {
       return candidates.has(parts[3]);
     }
-    if (sourceType === "env") {
+    if (sourceType === "env" && parts[3]) {
       return candidates.has(parts[3]) || candidates.has(parts[4] ?? "");
     }
   }
