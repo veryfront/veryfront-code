@@ -34,6 +34,8 @@ proxy:
   env:
     PORT: "20000"
     RENDERER_URL: "http://veryfront-renderer:80"
+    # Timeout for renderer requests (90 seconds for cold-start SSR)
+    RENDERER_REQUEST_TIMEOUT_MS: "90000"
     # API URL for OAuth token exchange
     # Use internal K8s service for performance (no public internet roundtrip)
     VERYFRONT_API_BASE_URL: "http://veryfront-api:80"
@@ -109,6 +111,9 @@ proxy:
       - websecure
     # Enable sticky sessions (cookie-based session affinity)
     sticky: true
+    # Timeout for Traefik to wait for response from proxy (SSR can take time)
+    responseTimeout: "120s"
+    dialTimeout: "30s"
     # Routes define the matching rules and middlewares
     # Use HostRegexp for wildcard matching, Host for exact matching
     # Priority is set lower than veryfront-api (10000+) and veryfront-studio (10000+)

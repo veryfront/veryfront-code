@@ -51,6 +51,8 @@ const RENDERER_URL = getEnv("RENDERER_URL") || "http://localhost:3001";
 const PORT = parseInt(getEnv("PORT") || "8080");
 const HOST = getEnv("HOST") || "0.0.0.0"; // Default to 0.0.0.0 for Kubernetes
 const WS_CONNECT_TIMEOUT_MS = 30000;
+// Timeout for forwarding requests to renderer (SSR can take time on cold start)
+const RENDERER_REQUEST_TIMEOUT_MS = parseInt(getEnv("RENDERER_REQUEST_TIMEOUT_MS") || "90000");
 
 // Initialize cache and proxy handler
 const cache = await createCacheFromEnv();
@@ -258,23 +260,37 @@ function forwardToRenderer(req: Request): Promise<Response> {
       injectContext(newHeaders);
 
       const rendererUrl = new URL(url.pathname + url.search, RENDERER_URL);
-      const response = await withSpan(
-        ProxySpanNames.HTTP_CLIENT_FETCH,
-        () =>
-          fetch(rendererUrl.toString(), {
-            method: req.method,
-            headers: newHeaders,
-            body: req.body,
-            redirect: "manual",
-          }),
-        {
-          "http.method": req.method,
-          "http.url": rendererUrl.toString(),
-          "http.host": rendererUrl.host,
-          "proxy.target": "renderer",
-          "proxy.project_slug": ctx.projectSlug || "",
-        },
-      );
+
+      // Create abort controller for timeout
+      const abortController = new AbortController();
+      const timeoutId = setTimeout(() => {
+        abortController.abort();
+      }, RENDERER_REQUEST_TIMEOUT_MS);
+
+      let response: Response;
+      try {
+        response = await withSpan(
+          ProxySpanNames.HTTP_CLIENT_FETCH,
+          () =>
+            fetch(rendererUrl.toString(), {
+              method: req.method,
+              headers: newHeaders,
+              body: req.body,
+              redirect: "manual",
+              signal: abortController.signal,
+            }),
+          {
+            "http.method": req.method,
+            "http.url": rendererUrl.toString(),
+            "http.host": rendererUrl.host,
+            "proxy.target": "renderer",
+            "proxy.project_slug": ctx.projectSlug || "",
+            "proxy.timeout_ms": RENDERER_REQUEST_TIMEOUT_MS,
+          },
+        );
+      } finally {
+        clearTimeout(timeoutId);
+      }
 
       const ms = Math.round(performance.now() - startTime);
       reqLogger.info(`${response.status} ${req.method} ${url.pathname}`, { ms });
@@ -288,6 +304,20 @@ function forwardToRenderer(req: Request): Promise<Response> {
       });
     } catch (error) {
       const ms = Math.round(performance.now() - startTime);
+
+      // Handle timeout specifically
+      if (error instanceof Error && error.name === "AbortError") {
+        proxyLogger.error(`504 ${req.method} ${url.pathname}`, {
+          ms,
+          timeoutMs: RENDERER_REQUEST_TIMEOUT_MS,
+        });
+        endSpan(spanInfo?.span, 504, error);
+        return jsonErrorResponse(504, {
+          error: "Gateway Timeout",
+          message: `Renderer request timed out after ${RENDERER_REQUEST_TIMEOUT_MS}ms`,
+        });
+      }
+
       proxyLogger.error(`502 ${req.method} ${url.pathname}`, { ms }, error as Error);
       endSpan(spanInfo?.span, 502, error as Error);
       return jsonErrorResponse(502, {

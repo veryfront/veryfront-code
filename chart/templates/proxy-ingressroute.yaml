@@ -19,6 +19,7 @@ spec:
       services:
         - name: {{ include "veryfront-renderer.proxy.fullname" $ }}
           port: {{ $.Values.proxy.service.port }}
+          serversTransport: {{ include "veryfront-renderer.proxy.fullname" $ }}-transport
           {{- if $.Values.proxy.ingress.sticky }}
           sticky:
             cookie: {}
