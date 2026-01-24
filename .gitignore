@@ -47,3 +47,13 @@ projects/*
 # Playwright test artifacts
 test-results/
 playwright-report/
+
+# Code optimization scripts output
+scripts/batch-simplify/output/*
+!scripts/batch-simplify/output/.gitkeep
+scripts/rlm-optimize/output/*
+!scripts/rlm-optimize/output/.gitkeep
+scripts/rlm-optimize/.venv/
+scripts/code-optimize/output/*
+!scripts/code-optimize/output/.gitkeep
+scripts/code-optimize/.venv/
