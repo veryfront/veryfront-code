@@ -248,8 +248,8 @@ renderer:
   # Scale at 75% (~3GB) to give HPA reaction time before V8 limit
   autoscaling:
     enabled: true
-    minReplicas: 2
-    maxReplicas: 6
+    minReplicas: 4
+    maxReplicas: 10
     # Scale at 75% (~3GB) - before V8 heap limit (3.5GB)
     targetMemoryUtilizationPercentage: 75
     # Also scale on CPU for request-heavy loads
