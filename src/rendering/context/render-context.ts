@@ -54,7 +54,7 @@ export function createRenderContext(
   const projectSlug = ctx.projectSlug ?? ctx.projectId ?? "__single__";
   const releaseKey = environment === "production"
     ? (ctx.releaseId ?? "latest")
-    : (branch ?? "main");
+    : (branch ?? "draft");
   const cachePrefix = buildRenderCachePrefix(projectId, environment, releaseKey);
 
   return {
