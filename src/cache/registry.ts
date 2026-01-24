@@ -131,6 +131,54 @@ class CacheRegistry {
     return totalDeleted;
   }
 
+  /**
+   * Delete cache entries for a specific project and environment.
+   * Use this to invalidate preview without affecting production, or vice versa.
+   */
+  deleteKeysForProjectEnvironment(
+    projectId: string,
+    environment: "production" | "preview",
+  ): number {
+    let totalDeleted = 0;
+
+    for (const store of this.stores.values()) {
+      totalDeleted += store.deleteWhere?.((key) =>
+        isKeyForProjectEnvironment(key, projectId, environment)
+      ) ?? 0;
+    }
+
+    logger.debug("[CacheRegistry] Deleted keys for project environment", {
+      projectId,
+      environment,
+      deleted: totalDeleted,
+    });
+
+    return totalDeleted;
+  }
+
+  /**
+   * Delete cache entries for a specific content source (branch or release).
+   * More granular than environment-based invalidation.
+   */
+  deleteKeysForContentSource(projectId: string, contentSourceId: string): number {
+    let totalDeleted = 0;
+
+    for (const store of this.stores.values()) {
+      totalDeleted += store.deleteWhere?.((key) => {
+        if (!isKeyForProject(key, projectId)) return false;
+        return key.includes(contentSourceId);
+      }) ?? 0;
+    }
+
+    logger.debug("[CacheRegistry] Deleted keys for content source", {
+      projectId,
+      contentSourceId,
+      deleted: totalDeleted,
+    });
+
+    return totalDeleted;
+  }
+
   getStats(): Array<{ name: string; size: number; sampleKeys: string[] }> {
     const stats: Array<{ name: string; size: number; sampleKeys: string[] }> = [];
 
@@ -267,6 +315,79 @@ class CacheRegistry {
       { "cache.project_id": projectId },
     );
   }
+
+  /**
+   * Delete all cache entries for a specific project and environment (memory + Redis).
+   * This is the safe way to invalidate preview without affecting production.
+   */
+  deleteAllKeysForProjectEnvironmentAsync(
+    projectId: string,
+    environment: "production" | "preview",
+  ): Promise<{ memoryDeleted: number; redisDeleted: number }> {
+    return withSpan(
+      SpanNames.CACHE_KEYS_DELETE_ALL_ASYNC,
+      async (span?: Span) => {
+        const memoryDeleted = this.deleteKeysForProjectEnvironment(projectId, environment);
+        const redisDeleted = await this.deleteRedisKeysForProjectEnvironment(projectId, environment);
+
+        span?.setAttribute("cache.memory.deleted", memoryDeleted);
+        span?.setAttribute("cache.redis.deleted", redisDeleted);
+        span?.setAttribute("cache.environment", environment);
+
+        logger.info("[CacheRegistry] Invalidated cache for project environment", {
+          projectId,
+          environment,
+          memoryDeleted,
+          redisDeleted,
+        });
+
+        return { memoryDeleted, redisDeleted };
+      },
+      { "cache.project_id": projectId, "cache.environment": environment },
+    );
+  }
+
+  /**
+   * Delete Redis keys for a specific project and environment.
+   */
+  private deleteRedisKeysForProjectEnvironment(
+    projectId: string,
+    environment: "production" | "preview",
+  ): Promise<number> {
+    if (!isRedisConfigured()) return Promise.resolve(0);
+
+    return withSpan(
+      SpanNames.CACHE_REGISTRY_DELETE_REDIS_KEYS,
+      async (span?: Span) => {
+        try {
+          const client = await getRedisClient();
+          const redisKeys = await this.getRedisKeysForProject(projectId);
+
+          let deleted = 0;
+          for (const keys of redisKeys.values()) {
+            const filteredKeys = keys.filter((key) =>
+              isKeyForProjectEnvironment(key, projectId, environment)
+            );
+            if (!filteredKeys.length) continue;
+            deleted += await client.del(filteredKeys);
+          }
+
+          span?.setAttribute("cache.redis.deleted", deleted);
+          span?.setAttribute("cache.environment", environment);
+          return deleted;
+        } catch (error) {
+          logger.warn("[CacheRegistry] Redis delete for environment failed", {
+            projectId,
+            environment,
+            error,
+          });
+          span?.setAttribute("cache.redis.error", true);
+          return 0;
+        }
+      },
+      { "cache.project_id": projectId, "cache.environment": environment },
+    );
+  }
 }
 
 export function isKeyForProject(key: string, projectId: string): boolean {
@@ -275,6 +396,41 @@ export function isKeyForProject(key: string, projectId: string): boolean {
   if (parts[1] === projectId) return true;
   if (parts[2] === projectId) return true;
   return parts.includes(projectId);
+}
+
+/**
+ * Check if a cache key belongs to a specific project and environment.
+ * Keys are expected to have format: {prefix}:{projectId}:{environment}:...
+ * or {prefix}:{projectId}:{contentSourceId}:...
+ */
+export function isKeyForProjectEnvironment(
+  key: string,
+  projectId: string,
+  environment: "production" | "preview",
+): boolean {
+  if (!isKeyForProject(key, projectId)) return false;
+
+  const parts = key.split(":");
+
+  // Check for explicit environment in key
+  if (parts.includes(environment)) return true;
+
+  // For production, also match keys with release IDs (rel_xxx)
+  if (environment === "production") {
+    return parts.some((p) => p.startsWith("rel_") || p === "latest" || p === "production");
+  }
+
+  // For preview, match branch names or "preview"
+  return parts.some(
+    (p) =>
+      p === "preview" ||
+      p === "main" ||
+      p === "master" ||
+      // Common branch patterns
+      p.startsWith("feature-") ||
+      p.startsWith("fix-") ||
+      p.startsWith("dev-"),
+  );
 }
 
 export function extractProjectIdFromKey(key: string): string | null {

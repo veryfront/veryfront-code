@@ -13,7 +13,7 @@ import {
   type RedisClient,
 } from "#veryfront/utils/redis-client.ts";
 import { buildRedisSSRModuleKey } from "#veryfront/cache";
-import { REDIS_TTL_SECONDS } from "../constants.ts";
+import { getSSRModuleRedisTTL, REDIS_TTL_SECONDS } from "../constants.ts";
 
 let redisEnabled = false;
 let redisClient: RedisClient | null = null;
@@ -108,12 +108,24 @@ export async function getFromRedis(cacheKey: string): Promise<string | null> {
 
 /**
  * Store transformed code in Redis.
+ *
+ * @param cacheKey The cache key
+ * @param code The transformed code
+ * @param options Optional settings
+ * @param options.isProduction Whether this is production mode (affects TTL)
+ * @param options.ttlSeconds Override TTL in seconds
  */
-export async function setInRedis(cacheKey: string, code: string): Promise<void> {
+export async function setInRedis(
+  cacheKey: string,
+  code: string,
+  options?: { isProduction?: boolean; ttlSeconds?: number },
+): Promise<void> {
   if (!redisEnabled || !redisClient) return;
 
+  const ttl = options?.ttlSeconds ?? getSSRModuleRedisTTL(options?.isProduction ?? true);
+
   try {
-    await redisClient.set(redisKey(cacheKey), code, { EX: REDIS_TTL_SECONDS });
+    await redisClient.set(redisKey(cacheKey), code, { EX: ttl });
   } catch (error) {
     logger.debug("[SSR-MODULE-LOADER] Redis set failed", { key: cacheKey, error });
   }

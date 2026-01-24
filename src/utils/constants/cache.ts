@@ -8,18 +8,29 @@ export const MS_PER_MINUTE = SECONDS_PER_MINUTE * MS_PER_SECOND;
 export const MS_PER_HOUR = MINUTES_PER_HOUR * MS_PER_MINUTE;
 export const ONE_DAY_MS = HOURS_PER_DAY * MS_PER_HOUR;
 
-/** Get env var as number with fallback (works in Deno and Node) */
-function getEnvNumber(key: string, fallback: number): number {
+/** Get env var as string (works in Deno and Node) */
+function getEnvString(key: string): string | undefined {
   const g = globalThis as {
     Deno?: { env?: { get?: (k: string) => string | undefined } };
     process?: { env?: Record<string, string | undefined> };
   };
+  return g.Deno?.env?.get?.(key) ?? g.process?.env?.[key];
+}
 
-  const value = g.Deno?.env?.get?.(key) ?? g.process?.env?.[key];
+/** Get env var as number with fallback (works in Deno and Node) */
+function getEnvNumber(key: string, fallback: number): number {
+  const value = getEnvString(key);
   if (value == null) return fallback;
 
   const parsed = Number.parseInt(value, 10);
   return Number.isNaN(parsed) ? fallback : parsed;
+}
+
+/** Check if running in production mode */
+function isProductionMode(): boolean {
+  return getEnvString("PROXY_MODE") === "1" ||
+    getEnvString("NODE_ENV") === "production" ||
+    getEnvString("PRODUCTION_MODE") === "1";
 }
 
 // ============================================================================
@@ -65,6 +76,83 @@ export const BUNDLE_MANIFEST_DEV_TTL_MS = MS_PER_HOUR;
 export const RSC_MANIFEST_CACHE_TTL_MS = 5000;
 
 export const SERVER_ACTION_DEFAULT_TTL_SEC = MINUTES_PER_HOUR * SECONDS_PER_MINUTE;
+
+// ============================================================================
+// DISTRIBUTED CACHE TTL (Redis/API) - Environment-Aware
+// Production uses longer TTLs since release content is immutable.
+// Preview uses shorter TTLs since branch content changes frequently.
+// ============================================================================
+
+/** Distributed cache TTL for SSR modules (seconds) */
+export const DISTRIBUTED_SSR_MODULE_TTL_PRODUCTION_SEC = getEnvNumber(
+  "DISTRIBUTED_SSR_MODULE_TTL_SEC",
+  6 * MINUTES_PER_HOUR * SECONDS_PER_MINUTE, // 6 hours
+);
+export const DISTRIBUTED_SSR_MODULE_TTL_PREVIEW_SEC = getEnvNumber(
+  "DISTRIBUTED_SSR_MODULE_TTL_PREVIEW_SEC",
+  10 * SECONDS_PER_MINUTE, // 10 minutes
+);
+
+/** Distributed cache TTL for transforms (seconds) */
+export const DISTRIBUTED_TRANSFORM_TTL_PRODUCTION_SEC = getEnvNumber(
+  "DISTRIBUTED_TRANSFORM_TTL_SEC",
+  6 * MINUTES_PER_HOUR * SECONDS_PER_MINUTE, // 6 hours
+);
+export const DISTRIBUTED_TRANSFORM_TTL_PREVIEW_SEC = getEnvNumber(
+  "DISTRIBUTED_TRANSFORM_TTL_PREVIEW_SEC",
+  10 * SECONDS_PER_MINUTE, // 10 minutes
+);
+
+/** Distributed cache TTL for file content (seconds) */
+export const DISTRIBUTED_FILE_TTL_PRODUCTION_SEC = getEnvNumber(
+  "DISTRIBUTED_FILE_TTL_SEC",
+  MINUTES_PER_HOUR * SECONDS_PER_MINUTE, // 1 hour
+);
+export const DISTRIBUTED_FILE_TTL_PREVIEW_SEC = getEnvNumber(
+  "DISTRIBUTED_FILE_TTL_PREVIEW_SEC",
+  5 * SECONDS_PER_MINUTE, // 5 minutes
+);
+
+/** Distributed cache TTL for CSS (seconds) */
+export const DISTRIBUTED_CSS_TTL_PRODUCTION_SEC = getEnvNumber(
+  "DISTRIBUTED_CSS_TTL_SEC",
+  6 * MINUTES_PER_HOUR * SECONDS_PER_MINUTE, // 6 hours
+);
+export const DISTRIBUTED_CSS_TTL_PREVIEW_SEC = getEnvNumber(
+  "DISTRIBUTED_CSS_TTL_PREVIEW_SEC",
+  10 * SECONDS_PER_MINUTE, // 10 minutes
+);
+
+/**
+ * Get environment-aware distributed cache TTL.
+ *
+ * @param cacheType The type of cache
+ * @param isProduction Whether this is production mode (release-based)
+ * @returns TTL in seconds
+ */
+export function getDistributedCacheTTL(
+  cacheType: "ssr-module" | "transform" | "file" | "css",
+  isProduction: boolean = isProductionMode(),
+): number {
+  switch (cacheType) {
+    case "ssr-module":
+      return isProduction
+        ? DISTRIBUTED_SSR_MODULE_TTL_PRODUCTION_SEC
+        : DISTRIBUTED_SSR_MODULE_TTL_PREVIEW_SEC;
+    case "transform":
+      return isProduction
+        ? DISTRIBUTED_TRANSFORM_TTL_PRODUCTION_SEC
+        : DISTRIBUTED_TRANSFORM_TTL_PREVIEW_SEC;
+    case "file":
+      return isProduction
+        ? DISTRIBUTED_FILE_TTL_PRODUCTION_SEC
+        : DISTRIBUTED_FILE_TTL_PREVIEW_SEC;
+    case "css":
+      return isProduction
+        ? DISTRIBUTED_CSS_TTL_PRODUCTION_SEC
+        : DISTRIBUTED_CSS_TTL_PREVIEW_SEC;
+  }
+}
 
 // ============================================================================
 // SIZE LIMITS (configurable via env vars for high-traffic scaling)
