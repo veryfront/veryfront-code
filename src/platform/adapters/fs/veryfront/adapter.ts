@@ -411,6 +411,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
           const isPoke = data.type === "poke" || data.type === "entity_updated";
           if (!isPoke) return;
 
+          // Extract branchId from poke to determine environment scope
+          // branchId === null means production (main branch or release)
+          // branchId !== null means preview (specific branch)
+          const pokeBranchId = data.data?.branchId as string | null | undefined;
+
           const timeSinceLastPoke = this.pokeMetrics.lastPokeTime > 0
             ? Date.now() - this.pokeMetrics.lastPokeTime
             : null;
@@ -418,17 +423,45 @@ export class VeryfrontFSAdapter implements FSAdapter {
           this.pokeMetrics.received++;
           this.pokeMetrics.lastPokeTime = Date.now();
 
-          logger.debug("[VeryfrontFSAdapter] POKE RECEIVED - triggering cache invalidation", {
+          // Environment-scoped invalidation: only process pokes relevant to our mode
+          const isProductionMode = this.contentContext?.sourceType !== "branch";
+          const currentBranch = this.contentContext?.branch;
+          const isProductionPoke = pokeBranchId === null || pokeBranchId === undefined;
+
+          logger.debug("[VeryfrontFSAdapter] POKE RECEIVED - checking environment scope", {
             type: data.type,
-            source: data.data?.source,
+            pokeBranchId,
+            isProductionPoke,
+            isProductionMode,
+            currentBranch,
             entityId: data.data?.entityId,
             entityType: data.data?.entityType,
             action: data.data?.action,
-            changedPathsCount: changedPaths?.length || 0,
-            changedPaths: changedPaths || [],
             connectionId: this.wsConnectionId,
             totalPokesReceived: this.pokeMetrics.received,
             timeSinceLastPokeMs: timeSinceLastPoke,
+          });
+
+          // Skip pokes that don't match our environment
+          if (isProductionMode && !isProductionPoke) {
+            logger.debug("[VeryfrontFSAdapter] POKE SKIPPED - preview poke in production mode", {
+              pokeBranchId,
+              sourceType: this.contentContext?.sourceType,
+            });
+            return;
+          }
+
+          if (!isProductionMode && pokeBranchId !== currentBranch) {
+            logger.debug("[VeryfrontFSAdapter] POKE SKIPPED - different branch poke in preview mode", {
+              pokeBranchId,
+              currentBranch,
+            });
+            return;
+          }
+
+          logger.debug("[VeryfrontFSAdapter] POKE ACCEPTED - triggering cache invalidation", {
+            changedPathsCount: changedPaths?.length || 0,
+            changedPaths: changedPaths || [],
           });
 
           if (changedPaths?.length) {

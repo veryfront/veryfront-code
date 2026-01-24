@@ -131,10 +131,7 @@ class CacheRegistry {
     return totalDeleted;
   }
 
-  /**
-   * Delete cache entries for a specific project and environment.
-   * Use this to invalidate preview without affecting production, or vice versa.
-   */
+  /** Delete cache entries for a specific project and environment */
   deleteKeysForProjectEnvironment(
     projectId: string,
     environment: "production" | "preview",
@@ -156,10 +153,7 @@ class CacheRegistry {
     return totalDeleted;
   }
 
-  /**
-   * Delete cache entries for a specific content source (branch or release).
-   * More granular than environment-based invalidation.
-   */
+  /** Delete cache entries for a specific content source (branch or release) */
   deleteKeysForContentSource(projectId: string, contentSourceId: string): number {
     let totalDeleted = 0;
 
@@ -316,10 +310,7 @@ class CacheRegistry {
     );
   }
 
-  /**
-   * Delete all cache entries for a specific project and environment (memory + Redis).
-   * This is the safe way to invalidate preview without affecting production.
-   */
+  /** Delete all cache entries for a specific project and environment (memory + Redis) */
   deleteAllKeysForProjectEnvironmentAsync(
     projectId: string,
     environment: "production" | "preview",
@@ -347,9 +338,6 @@ class CacheRegistry {
     );
   }
 
-  /**
-   * Delete Redis keys for a specific project and environment.
-   */
   private deleteRedisKeysForProjectEnvironment(
     projectId: string,
     environment: "production" | "preview",
@@ -398,11 +386,7 @@ export function isKeyForProject(key: string, projectId: string): boolean {
   return parts.includes(projectId);
 }
 
-/**
- * Check if a cache key belongs to a specific project and environment.
- * Keys are expected to have format: {prefix}:{projectId}:{environment}:...
- * or {prefix}:{projectId}:{contentSourceId}:...
- */
+/** Check if a cache key belongs to a specific project and environment */
 export function isKeyForProjectEnvironment(
   key: string,
   projectId: string,

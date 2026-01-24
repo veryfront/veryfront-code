@@ -1,10 +1,4 @@
-/**
- * Distributed Cache for SSR Modules
- *
- * Redis caching for cross-pod module sharing.
- *
- * @module module-system/react-loader/ssr-module-loader/cache/redis
- */
+/** Redis caching for cross-pod SSR module sharing */
 
 import { rendererLogger as logger } from "#veryfront/utils";
 import {
@@ -13,25 +7,18 @@ import {
   type RedisClient,
 } from "#veryfront/utils/redis-client.ts";
 import { buildRedisSSRModuleKey } from "#veryfront/cache";
-import { getSSRModuleRedisTTL, REDIS_TTL_SECONDS } from "../constants.ts";
+import { getSSRModuleRedisTTL } from "../constants.ts";
 
 let redisEnabled = false;
 let redisClient: RedisClient | null = null;
 let redisInitialized = false;
 let redisInitPromise: Promise<void> | null = null;
 
-/**
- * Generate a Redis key with the standard prefix.
- * Re-exported for backward compatibility.
- */
 export function redisKey(key: string): string {
   return buildRedisSSRModuleKey(key);
 }
 
-/**
- * Initialize distributed caching for SSR modules.
- * Call this at startup if you want to enable cross-pod cache sharing.
- */
+/** Initialize distributed caching for SSR modules */
 export async function initializeSSRDistributedCache(): Promise<boolean> {
   if (redisInitialized) return redisEnabled;
 
@@ -65,9 +52,6 @@ export async function initializeSSRDistributedCache(): Promise<boolean> {
   return redisEnabled;
 }
 
-/**
- * Check if distributed caching is enabled for SSR modules.
- */
 export function isSSRDistributedCacheEnabled(): boolean {
   return redisEnabled && redisClient !== null;
 }
@@ -78,23 +62,14 @@ export const initializeSSRRedisCache = initializeSSRDistributedCache;
 /** @deprecated Use isSSRDistributedCacheEnabled instead */
 export const isSSRRedisCacheEnabled = isSSRDistributedCacheEnabled;
 
-/**
- * Get the current Redis enabled state.
- */
 export function getRedisEnabled(): boolean {
   return redisEnabled;
 }
 
-/**
- * Get the current Redis client (may be null).
- */
 export function getRedisClientInstance(): RedisClient | null {
   return redisClient;
 }
 
-/**
- * Get transformed code from Redis.
- */
 export async function getFromRedis(cacheKey: string): Promise<string | null> {
   if (!redisEnabled || !redisClient) return null;
 
@@ -106,15 +81,7 @@ export async function getFromRedis(cacheKey: string): Promise<string | null> {
   }
 }
 
-/**
- * Store transformed code in Redis.
- *
- * @param cacheKey The cache key
- * @param code The transformed code
- * @param options Optional settings
- * @param options.isProduction Whether this is production mode (affects TTL)
- * @param options.ttlSeconds Override TTL in seconds
- */
+/** Store transformed code in Redis with environment-aware TTL */
 export async function setInRedis(
   cacheKey: string,
   code: string,
