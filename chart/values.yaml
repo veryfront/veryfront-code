@@ -168,9 +168,10 @@ renderer:
     # 0.0.0.0 = all interfaces (required for port-forward)
     BIND_ADDRESS: "0.0.0.0"
     PROXY_MODE: "1"
-    # Max concurrent requests per project (default: 20)
-    # Increased to 50 to handle preview mode burst traffic (30+ module requests)
-    PROJECT_MAX_CONCURRENT: "50"
+    # Max concurrent SSR/API requests per project per pod (default: 20)
+    # Lightweight requests (modules, CSS) are exempt from this limit
+    # With 4 pods: 400 effective concurrent SSR requests per project
+    PROJECT_MAX_CONCURRENT: "100"
     # API URL for domain lookups and other internal API calls
     # Use internal K8s service for performance (no public internet roundtrip)
     VERYFRONT_API_BASE_URL: "http://veryfront-api:80"
