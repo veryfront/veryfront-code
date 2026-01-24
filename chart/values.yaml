@@ -173,6 +173,13 @@ renderer:
     # High limit is safe because SSR is I/O-bound (async file/API calls)
     # With 4 pods: 4000 effective concurrent SSR requests per project
     PROJECT_MAX_CONCURRENT: "1000"
+    # Circuit breaker: trips after N timeouts within failure window
+    # Higher threshold tolerates transient failures without blocking projects
+    # At 1000 concurrent, 20 timeouts = 2% failure rate before tripping
+    PROJECT_CIRCUIT_THRESHOLD: "20"
+    # Circuit breaker reset time: how long circuit stays open
+    # 15s allows quick recovery while still protecting against cascading failures
+    PROJECT_CIRCUIT_RESET_MS: "15000"
     # API URL for domain lookups and other internal API calls
     # Use internal K8s service for performance (no public internet roundtrip)
     VERYFRONT_API_BASE_URL: "http://veryfront-api:80"
