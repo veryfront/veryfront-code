@@ -483,9 +483,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
                 "[VeryfrontFSAdapter] POKE ACCEPTED - branchId-only fallback in preview mode",
                 { pokeBranchId: normalizedBranchId, currentBranch },
               );
-            } else if (currentBranch !== null) {
+            } else if (currentBranch !== null && currentBranch !== "main") {
+              // Unscoped pokes (no branchId/branchName) are for main branch edits.
+              // Skip only if we're on a named branch (not main).
+              // For main preview (currentBranch === "main"), accept unscoped pokes.
               logger.debug(
-                "[VeryfrontFSAdapter] POKE SKIPPED - unscoped poke for preview branch",
+                "[VeryfrontFSAdapter] POKE SKIPPED - unscoped poke for named branch preview",
                 { currentBranch },
               );
               return;
