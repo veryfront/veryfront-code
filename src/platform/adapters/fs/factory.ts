@@ -19,6 +19,7 @@ import {
   clearSnippetCacheForProject,
 } from "../../../rendering/snippet-renderer.ts";
 import { clearRendererCacheForProject, clearRendererCaches } from "../../../rendering/renderer.ts";
+import { invalidateProjectCSS } from "../../../html/styles-builder/tailwind-compiler.ts";
 
 export function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapter> {
   const type = config.type ?? "local";
@@ -52,6 +53,7 @@ export function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapter> {
             clearRouterDetectionCacheForProject,
             clearSnippetCacheForProject,
             clearRendererCacheForProject,
+            clearProjectCSSCache: invalidateProjectCSS,
             triggerReload: (changedPaths, project) =>
               ReloadNotifier.triggerReload(changedPaths, project?.projectSlug),
           },

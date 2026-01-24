@@ -1,6 +1,7 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
+import { scaleMs } from "#veryfront/testing/timing.ts";
 import { MiddlewareContext } from "../../core/context.ts";
 import { MemoryRateLimitStore, rateLimit } from "./rate-limit.ts";
 
@@ -41,7 +42,7 @@ describe("MemoryRateLimitStore", () => {
     });
 
     it("should reset expired entries", async () => {
-      const shortWindow = 50;
+      const shortWindow = scaleMs(50);
       const entry1 = await store.increment("test-key", shortWindow);
       assertEquals(entry1.count, 1);
 

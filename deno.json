@@ -308,7 +308,9 @@
     "batch:status": "deno run -A scripts/batch-simplify/batch-simplify.ts status",
     "batch:errors": "deno run -A scripts/batch-simplify/batch-simplify.ts errors",
     "batch:download": "deno run -A scripts/batch-simplify/batch-simplify.ts download",
-    "batch:apply": "deno run -A scripts/batch-simplify/batch-simplify.ts apply"
+    "batch:apply": "deno run -A scripts/batch-simplify/batch-simplify.ts apply",
+    "rlm:example": "deno run -A scripts/rlm-ts/examples/basic.ts",
+    "rlm:explore": "deno run -A scripts/rlm-ts/apps/explore.ts"
   },
   "lint": {
     "include": [

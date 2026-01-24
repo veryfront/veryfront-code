@@ -1,6 +1,7 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
+import { scaleMs } from "#veryfront/testing/timing.ts";
 import { NavigationHandlers } from "./navigation-handlers.ts";
 import type { NavigationCallbacks } from "./navigation-handlers.ts";
 
@@ -120,12 +121,12 @@ describe("NavigationHandlers", () => {
     });
 
     it("should create NavigationHandlers with custom prefetch delay", () => {
-      const handlers = new NavigationHandlers(500);
+      const handlers = new NavigationHandlers(scaleMs(500));
       assertExists(handlers, "NavigationHandlers with custom delay should be created");
     });
 
     it("should create NavigationHandlers with prefetch options", () => {
-      const handlers = new NavigationHandlers(100, { hover: true, viewport: true });
+      const handlers = new NavigationHandlers(scaleMs(100), { hover: true, viewport: true });
       assertExists(handlers, "NavigationHandlers with prefetch options should be created");
     });
   });
@@ -372,7 +373,7 @@ describe("NavigationHandlers", () => {
   describe("createMouseOverHandler", () => {
     it("should prefetch link on mouseover when hover is enabled", async () => {
       const mocks = setupMocks();
-      const handlers = new NavigationHandlers(50, { hover: true });
+      const handlers = new NavigationHandlers(scaleMs(50), { hover: true });
 
       let prefetchedUrl = "";
       const callbacks: NavigationCallbacks = {
@@ -397,7 +398,7 @@ describe("NavigationHandlers", () => {
 
     it("should ignore mouseover on non-anchor element", async () => {
       const mocks = setupMocks();
-      const handlers = new NavigationHandlers(50, { hover: true });
+      const handlers = new NavigationHandlers(scaleMs(50), { hover: true });
 
       let prefetchCalled = false;
       const callbacks: NavigationCallbacks = {
@@ -422,7 +423,7 @@ describe("NavigationHandlers", () => {
 
     it("should ignore mouseover on external link", async () => {
       const mocks = setupMocks();
-      const handlers = new NavigationHandlers(50, { hover: true });
+      const handlers = new NavigationHandlers(scaleMs(50), { hover: true });
 
       let prefetchCalled = false;
       const callbacks: NavigationCallbacks = {
@@ -447,7 +448,7 @@ describe("NavigationHandlers", () => {
 
     it("should ignore mouseover on hash link", async () => {
       const mocks = setupMocks();
-      const handlers = new NavigationHandlers(50, { hover: true });
+      const handlers = new NavigationHandlers(scaleMs(50), { hover: true });
 
       let prefetchCalled = false;
       const callbacks: NavigationCallbacks = {
@@ -472,7 +473,7 @@ describe("NavigationHandlers", () => {
 
     it("should respect data-prefetch=false attribute", async () => {
       const mocks = setupMocks();
-      const handlers = new NavigationHandlers(50, { hover: true });
+      const handlers = new NavigationHandlers(scaleMs(50), { hover: true });
 
       let prefetchCalled = false;
       const callbacks: NavigationCallbacks = {
@@ -497,7 +498,7 @@ describe("NavigationHandlers", () => {
 
     it("should prefetch when data-prefetch=true even if hover is disabled", async () => {
       const mocks = setupMocks();
-      const handlers = new NavigationHandlers(50, { hover: false });
+      const handlers = new NavigationHandlers(scaleMs(50), { hover: false });
 
       let prefetchedUrl = "";
       const callbacks: NavigationCallbacks = {
@@ -522,7 +523,7 @@ describe("NavigationHandlers", () => {
 
     it("should not prefetch same URL multiple times concurrently", async () => {
       const mocks = setupMocks();
-      const handlers = new NavigationHandlers(100, { hover: true });
+      const handlers = new NavigationHandlers(scaleMs(100), { hover: true });
 
       let prefetchCount = 0;
       const callbacks: NavigationCallbacks = {
@@ -549,7 +550,7 @@ describe("NavigationHandlers", () => {
 
     it("should remove URL from queue after prefetch", async () => {
       const mocks = setupMocks();
-      const handlers = new NavigationHandlers(50, { hover: true });
+      const handlers = new NavigationHandlers(scaleMs(50), { hover: true });
 
       let prefetchCount = 0;
       const callbacks: NavigationCallbacks = {
@@ -694,7 +695,7 @@ describe("NavigationHandlers", () => {
   describe("Clear", () => {
     it("should clear all state", () => {
       const mocks = setupMocks();
-      const handlers = new NavigationHandlers(50, { hover: true });
+      const handlers = new NavigationHandlers(scaleMs(50), { hover: true });
 
       const callbacks: NavigationCallbacks = {
         onNavigate: () => Promise.resolve(),
@@ -717,7 +718,7 @@ describe("NavigationHandlers", () => {
 
     it("should clear prefetch queue", async () => {
       const mocks = setupMocks();
-      const handlers = new NavigationHandlers(100, { hover: true });
+      const handlers = new NavigationHandlers(scaleMs(100), { hover: true });
 
       let prefetchCount = 0;
       const callbacks: NavigationCallbacks = {

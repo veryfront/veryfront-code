@@ -13,7 +13,9 @@ export {
   generateTailwind4CSS,
   generateTailwindCSS,
   getCSSByHash,
+  getProjectCSS,
   hashCSS,
   invalidateCompiler,
+  invalidateProjectCSS,
   type TailwindResult,
 } from "./tailwind-compiler.ts";

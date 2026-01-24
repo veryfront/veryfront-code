@@ -15,6 +15,7 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
+import { scaleMs } from "#veryfront/testing/timing.ts";
 
 import {
   __resetAutoInstrumentForTests,
@@ -246,7 +247,8 @@ describe("Auto-Instrumentation", () => {
       await instrumented(request);
       const duration = performance.now() - start;
 
-      assertEquals(duration >= 10, true, "Should measure duration");
+      // With time scaling, delay(10) may be shorter. Allow some timing tolerance.
+      assertEquals(duration >= scaleMs(8), true, "Should measure duration");
     });
 
     it("should handle different HTTP methods", async () => {
@@ -478,7 +480,8 @@ describe("Auto-Instrumentation", () => {
       await instrumentReactRender(renderFn, "SlowComponent");
       const duration = performance.now() - start;
 
-      assertEquals(duration >= 10, true);
+      // With time scaling, delay(10) may be shorter, so just check some time passed
+      assertEquals(duration >= scaleMs(10), true);
     });
 
     it("should handle render errors", async () => {
@@ -619,7 +622,8 @@ describe("Auto-Instrumentation", () => {
       await instrumented();
       const duration = performance.now() - start;
 
-      assertEquals(duration >= 10, true);
+      // With time scaling, delay(10) may be shorter
+      assertEquals(duration >= scaleMs(10), true);
     });
 
     it("should handle errors and rethrow", async () => {

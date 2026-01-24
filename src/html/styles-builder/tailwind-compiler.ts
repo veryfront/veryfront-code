@@ -1,11 +1,3 @@
-/****
- * Tailwind CSS v4 JIT Compiler
- *
- * Unified compiler using Tailwind's native compile() API.
- * Handles @import, @theme, @plugin directives natively.
- * No custom normalization or hacks - trusts Tailwind completely.
- */
-
 import { compile } from "tailwindcss";
 import { serverLogger as logger } from "#veryfront/utils";
 import { getTailwindCSSUrl } from "#veryfront/utils/constants/cdn.ts";
@@ -17,19 +9,12 @@ import {
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 
-// =============================================================================
-// Types
-// =============================================================================
-
 export interface TailwindResult {
-  /** Generated CSS */
   css: string;
-  /** Error message if compilation failed */
   error?: string;
 }
 
 export interface GenerateOptions {
-  /** Minify output CSS (for production) */
   minify?: boolean;
 }
 
@@ -39,50 +24,67 @@ export interface CSSErrorInfo {
   suggestion: string;
 }
 
-// =============================================================================
-// Caches
-// =============================================================================
-
-/** Cached Tailwind base CSS (fetched once from CDN) */
 let tailwindBaseCSS: string | null = null;
-
-/** Cached compiler instance */
 let compiler: Awaited<ReturnType<typeof compile>> | null = null;
-
-/** Hash of stylesheet used to create current compiler */
 let lastStylesheetHash = "";
 
-/** Cache for loaded plugin modules */
 const pluginCache = new Map<string, unknown>();
-
-/** Track plugin load errors for error overlay */
 const pluginErrors = new Map<string, string>();
 
-/**
- * CSS cache by hash - stores generated CSS for production hashed URLs
- * Uses distributed cache (API/Redis) for cross-pod sharing in production.
- * Falls back to memory-only cache if distributed backend unavailable.
- *
- * Key: CSS hash (8 chars), Value: CSS content
- */
 let cssCache: CacheBackend | null = null;
 let cssCacheInitPromise: Promise<CacheBackend> | null = null;
-const CSS_CACHE_TTL_SECONDS = 3600; // 1 hour TTL for distributed cache
+const CSS_CACHE_TTL_SECONDS = 3600;
 
-/** Local memory cache for fast reads (always available) */
 const localCssCache = new Map<string, string>();
 const LOCAL_CACHE_MAX_SIZE = 100;
 
-// =============================================================================
-// Constants
-// =============================================================================
+// Project-level CSS cache - keyed by projectSlug:stylesheetHash
+const projectCssCache = new Map<string, { css: string; hash: string }>();
 
-/** Default stylesheet when project has none */
+export async function getProjectCSS(
+  projectSlug: string,
+  stylesheet: string | undefined,
+  candidates: Set<string>,
+  options?: GenerateOptions,
+): Promise<{ css: string; hash: string; fromCache: boolean }> {
+  const stylesheetHash = hashString(stylesheet ?? DEFAULT_STYLESHEET);
+  const cacheKey = `${projectSlug}:${stylesheetHash}`;
+
+  const cached = projectCssCache.get(cacheKey);
+  if (cached) {
+    return { css: cached.css, hash: cached.hash, fromCache: true };
+  }
+
+  const result = await generateTailwindCSS(stylesheet, candidates, options);
+
+  if (result.error) {
+    logger.error("[tailwind] Project CSS generation failed", { projectSlug, error: result.error });
+    return { css: result.css, hash: "", fromCache: false };
+  }
+
+  const hash = hashCSS(result.css);
+  projectCssCache.set(cacheKey, { css: result.css, hash });
+  storeInLocalCache(hash, result.css);
+
+  logger.debug("[tailwind] Project CSS generated", {
+    projectSlug,
+    hash,
+    cssLength: result.css.length,
+    candidateCount: candidates.size,
+  });
+
+  return { css: result.css, hash, fromCache: false };
+}
+
+export function invalidateProjectCSS(projectSlug: string): void {
+  for (const key of projectCssCache.keys()) {
+    if (key.startsWith(`${projectSlug}:`)) {
+      projectCssCache.delete(key);
+    }
+  }
+}
+
 const DEFAULT_STYLESHEET = `@import "tailwindcss";`;
-
-// =============================================================================
-// Utilities
-// =============================================================================
 
 function hashString(str: string): string {
   let hash = 0;
@@ -113,10 +115,6 @@ function touchLocalCache(hash: string, css: string): void {
   localCssCache.set(hash, css);
 }
 
-/**
- * Get or initialize the CSS cache backend.
- * Uses distributed cache in production, memory in development.
- */
 function getCssCache(): Promise<CacheBackend> {
   if (cssCache) return Promise.resolve(cssCache);
   if (cssCacheInitPromise) return cssCacheInitPromise;
@@ -136,11 +134,6 @@ function getCssCache(): Promise<CacheBackend> {
   return cssCacheInitPromise;
 }
 
-/**
- * Store CSS in cache for later retrieval by hash.
- * Awaits distributed cache write to ensure CSS is available across pods
- * before returning HTML (prevents cross-pod 404s).
- */
 export async function cacheCSSAsync(css: string): Promise<string> {
   const hash = hashCSS(css);
   storeInLocalCache(hash, css);
@@ -155,22 +148,12 @@ export async function cacheCSSAsync(css: string): Promise<string> {
   return hash;
 }
 
-/**
- * Retrieve CSS from cache by hash (sync version for handler).
- * Checks local memory cache only - for fast synchronous access.
- * Returns undefined if not found (cache miss).
- */
 export function getCSSByHash(hash: string): string | undefined {
   const css = localCssCache.get(hash);
   if (css) touchLocalCache(hash, css);
   return css;
 }
 
-/**
- * Retrieve CSS from cache by hash (async version).
- * Checks local memory first, then falls back to distributed cache.
- * Populates local cache on distributed hit for future fast access.
- */
 export async function getCSSByHashAsync(hash: string): Promise<string | undefined> {
   return await withSpan(
     SpanNames.HTML_GET_CSS_BY_HASH,
@@ -198,17 +181,9 @@ export async function getCSSByHashAsync(hash: string): Promise<string | undefine
   );
 }
 
-/**
- * Clear CSS cache (useful for testing or memory management)
- */
 export function clearCSSCache(): void {
   localCssCache.clear();
-  // Note: distributed cache entries will expire via TTL
 }
-
-// =============================================================================
-// Class Extraction
-// =============================================================================
 
 export function extractCandidates(content: string): string[] {
   const pattern = /[a-zA-Z0-9][a-zA-Z0-9_\-:\/\.\[\]%#,()!'=<>$@{}|*+?;^]+/g;
@@ -233,10 +208,6 @@ export function extractCandidatesFromFiles(
 
   return candidates;
 }
-
-// =============================================================================
-// Plugin Loading
-// =============================================================================
 
 async function loadPlugin(id: string): Promise<unknown> {
   if (pluginCache.has(id)) {
@@ -273,10 +244,6 @@ export function clearPluginCache(id?: string): void {
   pluginCache.clear();
   pluginErrors.clear();
 }
-
-// =============================================================================
-// Compiler
-// =============================================================================
 
 async function getTailwindBaseCSS(): Promise<string> {
   if (tailwindBaseCSS) return tailwindBaseCSS;
@@ -326,10 +293,6 @@ export function invalidateCompiler(): void {
   lastStylesheetHash = "";
 }
 
-// =============================================================================
-// CSS Generation
-// =============================================================================
-
 export async function generateTailwindCSS(
   stylesheet: string | undefined,
   candidates: string[] | Set<string>,
@@ -370,10 +333,6 @@ export async function generateTailwindCSS(
   );
 }
 
-// =============================================================================
-// Error Formatting
-// =============================================================================
-
 export function formatCSSError(error: Error | string): CSSErrorInfo {
   const msg = typeof error === "string" ? error : error.message;
 
@@ -410,28 +369,14 @@ export function formatCSSError(error: Error | string): CSSErrorInfo {
   };
 }
 
-// =============================================================================
-// Exports for backwards compatibility
-// =============================================================================
-
-/**
- * Generate Tailwind CSS from HTML content.
- * Extracts class candidates from HTML and compiles CSS for them.
- *
- * @deprecated Use generateTailwindCSS with explicit candidates instead
- * @param html - Rendered HTML to extract classes from
- * @returns Generated CSS string
- */
+/** @deprecated Use generateTailwindCSS with explicit candidates instead */
 export async function generateTailwind4CSS(html: string): Promise<string> {
   const candidates = extractCandidates(html);
   const result = await generateTailwindCSS(undefined, candidates);
   return result.css;
 }
 
-/**
- * Compile globals.css (backwards compatible wrapper)
- * @deprecated Use generateTailwindCSS instead
- */
+/** @deprecated Use generateTailwindCSS instead */
 export async function compileGlobalsCSS(css: string): Promise<string> {
   const result = await generateTailwindCSS(css, []);
   if (result.error) throw new Error(result.error);

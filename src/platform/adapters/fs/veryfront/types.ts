@@ -152,6 +152,8 @@ export interface InvalidationCallbacks {
   triggerReload?: (changedPaths?: string[], project?: InvalidationProjectContext) => void;
   clearRendererCache?: () => void;
   clearRendererCacheForProject?: (projectId: string) => void;
+  /** Invalidate project-level CSS cache when source files change */
+  clearProjectCSSCache?: (projectSlug: string) => void;
 }
 
 function resolveContentSource(veryfront: NonNullable<FSAdapterConfig["veryfront"]>): ContentSource {

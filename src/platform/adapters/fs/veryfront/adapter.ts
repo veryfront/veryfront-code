@@ -589,6 +589,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
       this.invalidationCallbacks.clearRendererCache?.();
     }
 
+    // Invalidate project CSS cache when source files change
+    if (this.invalidationCallbacks.clearProjectCSSCache && this.projectSlug) {
+      this.invalidationCallbacks.clearProjectCSSCache(this.projectSlug);
+    }
+
     if (this.contentContext?.sourceType === "branch") {
       await this.cache.deleteByPrefixAsync("files:branch:");
       try {
@@ -683,6 +688,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
       this.invalidationCallbacks.clearRendererCacheForProject(projectId);
     } else {
       this.invalidationCallbacks.clearRendererCache?.();
+    }
+
+    // Invalidate project CSS cache on full cache clear
+    if (this.invalidationCallbacks.clearProjectCSSCache && this.projectSlug) {
+      this.invalidationCallbacks.clearProjectCSSCache(this.projectSlug);
     }
 
     const totalFileCount = fileBranchCount + fileReleaseCount + fileEnvCount;

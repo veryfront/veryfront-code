@@ -18,6 +18,7 @@ import {
   generateThemeVariables,
   getDevStyles,
   getProductionStyles,
+  getProjectCSS,
 } from "./styles-builder/index.ts";
 import type { HTMLGenerationOptions } from "./types.ts";
 import {
@@ -131,16 +132,32 @@ async function generateHTMLShellPartsImpl(
   const localDev = options.isLocalDev ?? false;
   const useProductionCSS = !localDev && options.environment === "production";
 
+  // Use projectClasses (extracted from ALL source files) + current page as fallback
   const candidates = new Set<string>(options.projectClasses ?? []);
   if (contentForTailwind) {
     for (const cls of extractCandidates(contentForTailwind)) candidates.add(cls);
   }
 
-  const { css: tailwindCSS, error: tailwindError } = await generateTailwindCSS(
-    stylesheetContent,
-    candidates,
-    { minify: useProductionCSS },
-  );
+  const projectSlug = options.projectId || meta.slug || "default";
+  let tailwindCSS = "";
+  let tailwindError: string | undefined;
+  let cssHash = "";
+
+  if (useProductionCSS && projectSlug !== "default") {
+    const projectCSS = await getProjectCSS(projectSlug, stylesheetContent, candidates, {
+      minify: true,
+    });
+    tailwindCSS = projectCSS.css;
+    cssHash = projectCSS.hash;
+
+    if (!projectCSS.fromCache && tailwindCSS) {
+      await cacheCSSAsync(tailwindCSS);
+    }
+  } else {
+    const result = await generateTailwindCSS(stylesheetContent, candidates, { minify: false });
+    tailwindCSS = result.css;
+    tailwindError = result.error;
+  }
 
   const {
     effectiveTitle,
@@ -187,7 +204,6 @@ async function generateHTMLShellPartsImpl(
   const modeStyles = useDevScripts ? getDevStyles(nonce) : getProductionStyles(nonce);
   const syntaxHighlightTheme = useDevScripts ? "github-dark" : "github";
 
-  const cssHash = tailwindCSS && useProductionCSS ? await cacheCSSAsync(tailwindCSS) : "";
   const modulePreloadHints = generateModulePreloadHints(options);
 
   const hydrationErrorSuppression = !useDevScripts

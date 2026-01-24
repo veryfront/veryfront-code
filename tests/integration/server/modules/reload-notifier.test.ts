@@ -13,11 +13,19 @@
 
 import { assert, assertEquals } from "@veryfront/testing/assert";
 import { afterAll, afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
+import { delay } from "#veryfront/testing/deno-compat.ts";
 import { ReloadNotifier } from "../../../../src/server/reload-notifier.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
-import { delay } from "@std/async";
 
 describe("ReloadNotifier Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
+  beforeEach(() => {
+    ReloadNotifier.reset();
+  });
+
+  afterEach(() => {
+    ReloadNotifier.reset();
+  });
+
   afterAll(async () => {
     await cleanupBundler();
   });

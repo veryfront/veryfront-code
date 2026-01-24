@@ -98,7 +98,8 @@ const env = { ...process.env };
 if (!env.VF_DISABLE_LRU_INTERVAL) env.VF_DISABLE_LRU_INTERVAL = "1";
 if (!env.NODE_ENV) env.NODE_ENV = "production";
 if (!env.LOG_FORMAT) env.LOG_FORMAT = "text";
-if (!env.VF_TEST_TIME_SCALE) env.VF_TEST_TIME_SCALE = "0.25";
+// Don't scale time by default - many tests have timing-sensitive operations
+if (!env.VF_TEST_TIME_SCALE) env.VF_TEST_TIME_SCALE = "1";
 
 function runSingleProcess(explicitFiles) {
   if (explicitFiles && explicitFiles.length === 0) {

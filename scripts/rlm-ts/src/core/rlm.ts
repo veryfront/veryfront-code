@@ -538,12 +538,14 @@ export class RLM {
    */
   private looksLikeCompletion(response: string): boolean {
     const lower = response.toLowerCase();
+    // Only treat as complete if it has explicit completion markers
+    // Do NOT treat arbitrary text ending with "." as complete - that breaks code execution
     return (
-      lower.includes("the answer is") ||
-      lower.includes("in conclusion") ||
-      lower.includes("to summarize") ||
-      lower.includes("therefore") ||
-      response.endsWith(".") && response.length > 100
+      lower.includes("final answer:") ||
+      lower.includes("the final answer is") ||
+      lower.includes("in conclusion, the answer") ||
+      /FINAL\s*\(/i.test(response) ||
+      /FINAL_VAR\s*\(/i.test(response)
     );
   }
 

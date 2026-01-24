@@ -40,11 +40,14 @@ const includePatterns = (process.env.NODE_TEST_INCLUDE || process.env.VF_TEST_IN
   .split(",")
   .map((value) => value.trim())
   .filter(Boolean);
-const excludePatterns = (process.env.NODE_TEST_EXCLUDE || process.env.VF_TEST_EXCLUDE || "")
+// Exclude Deno-specific test files that use Deno.test directly
+const denoOnlyTests = ["src/issues/**", "src/cache/backend.test.ts"];
+const envExcludePatterns = (process.env.NODE_TEST_EXCLUDE || process.env.VF_TEST_EXCLUDE || "")
   .split(",")
   .map((value) => value.trim())
   .filter(Boolean);
-const hasFilters = includePatterns.length > 0 || excludePatterns.length > 0;
+const excludePatterns = [...denoOnlyTests, ...envExcludePatterns];
+const hasFilters = includePatterns.length > 0 || envExcludePatterns.length > 0;
 
 function buildNodeArgs(files, perShardConcurrency) {
   return [
@@ -60,14 +63,14 @@ const env = { ...process.env };
 if (!env.VF_DISABLE_LRU_INTERVAL) env.VF_DISABLE_LRU_INTERVAL = "1";
 if (!env.NODE_ENV) env.NODE_ENV = "production";
 if (!env.LOG_FORMAT) env.LOG_FORMAT = "text";
-if (!env.VF_TEST_TIME_SCALE) env.VF_TEST_TIME_SCALE = "0.25";
+// Don't scale time by default - many tests have timing-sensitive operations
+if (!env.VF_TEST_TIME_SCALE) env.VF_TEST_TIME_SCALE = "1";
 
 async function runShardedTests() {
   const filePatterns = patterns.length > 0 ? patterns : ["src/**/*.test.ts"];
   let files = listTestFiles(filePatterns);
-  if (hasFilters) {
-    files = filterTestFiles(files, { include: includePatterns, exclude: excludePatterns });
-  }
+  // Always filter to exclude Deno-only tests
+  files = filterTestFiles(files, { include: includePatterns, exclude: excludePatterns });
   if (files.length === 0) {
     return hasFilters ? true : null;
   }
@@ -104,18 +107,16 @@ if (shardCount > 1) {
     })
     .catch(() => process.exit(1));
 } else {
-  const needsExplicitFiles = includePatterns.length > 0 || excludePatterns.length > 0;
+  // Always filter to exclude Deno-only tests
   const basePatterns = patterns.length > 0 ? patterns : ["src/**/*.test.ts"];
-  const files = needsExplicitFiles
-    ? filterTestFiles(listTestFiles(basePatterns), {
-      include: includePatterns,
-      exclude: excludePatterns,
-    })
-    : basePatterns;
-  if (Array.isArray(files) && files.length === 0) {
+  const files = filterTestFiles(listTestFiles(basePatterns), {
+    include: includePatterns,
+    exclude: excludePatterns,
+  });
+  if (files.length === 0) {
     process.exit(0);
   }
-  const nodeArgs = buildNodeArgs(Array.isArray(files) ? files : basePatterns, concurrency);
+  const nodeArgs = buildNodeArgs(files, concurrency);
   const child = spawn(process.execPath, nodeArgs, { stdio: "inherit", env });
   child.on("error", (error) => {
     console.error("Failed to start node tests:", error);

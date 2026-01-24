@@ -1,6 +1,7 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
+import { scaleMs } from "#veryfront/testing/timing.ts";
 import { LinkObserver } from "./link-observer.ts";
 import type { LinkObserverOptions } from "./link-observer.ts";
 
@@ -444,10 +445,11 @@ describe("LinkObserver", () => {
         body: {},
       });
 
+      const delayMs = scaleMs(50);
       let callbackTime = 0;
       const observer = new LinkObserver(
         createOptions({
-          delay: 50,
+          delay: delayMs,
           onLinkVisible: () => {
             callbackTime = Date.now();
           },
@@ -462,7 +464,7 @@ describe("LinkObserver", () => {
 
       await delay(100);
 
-      assertEquals(callbackTime - startTime >= 50, true);
+      assertEquals(callbackTime - startTime >= delayMs, true);
 
       observer.destroy();
       mocks.cleanup();

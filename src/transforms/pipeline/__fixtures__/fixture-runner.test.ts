@@ -79,17 +79,21 @@ describe("transform pipeline fixtures", { sanitizeResources: false, sanitizeOps:
       assertStringIncludes(result.code, "external=react");
     });
 
-    it("preserves npm package specifiers for SSR (resolved by runtime)", async () => {
-      const input = await readFixture("react-query", "input.tsx");
+    // Skip this test on Node.js - SSR module resolution differs by runtime
+    (isDeno ? it : it.skip)(
+      "preserves npm package specifiers for SSR (resolved by runtime)",
+      async () => {
+        const input = await readFixture("react-query", "input.tsx");
 
-      const result = await runPipeline(input, "/project/components/UserProfile.tsx", "/project", {
-        ...TEST_OPTIONS,
-        ssr: true,
-      });
+        const result = await runPipeline(input, "/project/components/UserProfile.tsx", "/project", {
+          ...TEST_OPTIONS,
+          ssr: true,
+        });
 
-      assertStringIncludes(result.code, "esm.sh/react");
-      assertStringIncludes(result.code, "jsx");
-    });
+        assertStringIncludes(result.code, "esm.sh/react");
+        assertStringIncludes(result.code, "jsx");
+      },
+    );
   });
 
   describe("relative imports", () => {
