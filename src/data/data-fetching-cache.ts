@@ -19,7 +19,6 @@ export class CacheManager {
     maxEntries: DATA_FETCHING_MAX_ENTRIES,
     ttlMs: isLruIntervalDisabled() ? undefined : DATA_FETCHING_TTL_MS,
   });
-  private cacheKeys = new Set<string>();
 
   get(key: string): CacheEntry | null {
     const entry = this.cache.get(key);
@@ -28,31 +27,27 @@ export class CacheManager {
 
   set(key: string, entry: CacheEntry): void {
     this.cache.set(key, entry);
-    this.cacheKeys.add(key);
   }
 
   delete(key: string): void {
     this.cache.delete(key);
-    this.cacheKeys.delete(key);
   }
 
   clear(): void {
     this.cache.clear();
-    this.cacheKeys.clear();
   }
 
   clearPattern(pattern: string): void {
-    // Collect keys to delete first to avoid modifying Set during iteration
-    // which can cause unpredictable behavior in some JS engines
+    // Use LRU cache's keys() directly - no separate tracking needed
+    // This stays in sync with LRU evictions automatically
     const keysToDelete: string[] = [];
-    for (const key of this.cacheKeys) {
+    for (const key of this.cache.keys()) {
       if (key.includes(pattern)) {
         keysToDelete.push(key);
       }
     }
-    // Delete after iteration is complete
     for (const key of keysToDelete) {
-      this.delete(key);
+      this.cache.delete(key);
     }
   }
 
