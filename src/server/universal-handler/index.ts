@@ -106,6 +106,30 @@ function isMonitoringPath(pathname: string): boolean {
   return MONITORING_PATHS.has(pathname);
 }
 
+/** Lightweight paths that should skip concurrency limiting (modules, static assets) */
+const LIGHTWEIGHT_PATH_PREFIXES = [
+  "/_vf_modules/",
+  "/_veryfront/modules/",
+  "/_veryfront/preview-hmr.js",
+  "/_veryfront/studio-bridge.js",
+  "/_vf/css/",
+  "/_lib_modules/",
+];
+
+/**
+ * Check if request path is lightweight (module requests, static assets).
+ * These paths should skip per-project concurrency limiting because:
+ * 1. They're fast once initialized (no SSR rendering)
+ * 2. Many are requested concurrently during page hydration
+ * 3. They share initialization overhead (one slow init benefits all)
+ */
+function isLightweightPath(pathname: string): boolean {
+  for (const prefix of LIGHTWEIGHT_PATH_PREFIXES) {
+    if (pathname.startsWith(prefix)) return true;
+  }
+  return false;
+}
+
 export interface UniversalHandlerOptions {
   projectDir: string;
   /** When true, expose additional debug logging. */
@@ -288,7 +312,12 @@ export function createVeryfrontHandler(
       requestTracker.start(trackingRequestId, earlyProjectSlug, url.pathname, req.method);
     }
 
-    const isolationCheck = projectIsolation.checkRequest(earlyProjectSlug);
+    // Skip concurrency limiting for lightweight paths (modules, static assets)
+    // These requests are fast once initialized and shouldn't block each other
+    const shouldCheckIsolation = !isLightweightPath(url.pathname);
+    const isolationCheck = shouldCheckIsolation
+      ? projectIsolation.checkRequest(earlyProjectSlug)
+      : { allowed: true };
     if (!isolationCheck.allowed) {
       if (shouldTrackRequest) requestTracker.complete(trackingRequestId, 503, false);
 
@@ -319,7 +348,10 @@ export function createVeryfrontHandler(
       return response;
     }
 
-    projectIsolation.startRequest(earlyProjectSlug);
+    // Only track isolation for heavyweight requests (SSR, API routes)
+    if (shouldCheckIsolation) {
+      projectIsolation.startRequest(earlyProjectSlug);
+    }
 
     try {
       await readyPromise;
@@ -671,7 +703,10 @@ export function createVeryfrontHandler(
         requestTracker.complete(trackingRequestId, response.status, isTimeout);
       }
 
-      projectIsolation.completeRequest(earlyProjectSlug, isTimeout);
+      // Only complete isolation tracking if we started it (heavyweight requests)
+      if (shouldCheckIsolation) {
+        projectIsolation.completeRequest(earlyProjectSlug, isTimeout);
+      }
 
       return response;
     } finally {
