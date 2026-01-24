@@ -33,8 +33,8 @@ async function nodeEnsureDir(dir: string): Promise<void> {
   const { mkdir } = await import("node:fs/promises");
   try {
     await mkdir(dir, { recursive: true });
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
   }
 }
 

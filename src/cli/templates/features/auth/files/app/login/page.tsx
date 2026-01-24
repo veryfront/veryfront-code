@@ -27,8 +27,8 @@ export default function LoginPage(): React.JSX.Element {
       }
 
       globalThis.location.href = "/dashboard";
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to login");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Failed to login");
     } finally {
       setLoading(false);
     }

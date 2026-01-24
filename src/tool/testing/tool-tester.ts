@@ -110,18 +110,18 @@ async function runToolTest(
         error: passed ? undefined : "Custom validation failed",
         executionTime,
       };
-    } catch (err) {
+    } catch (error) {
       return {
         name: testCase.name,
         passed: false,
         result,
-        error: `Validation error: ${err instanceof Error ? err.message : String(err)}`,
+        error: `Validation error: ${error instanceof Error ? error.message : String(error)}`,
         executionTime,
       };
     }
-  } catch (err) {
+  } catch (error) {
     const executionTime = Date.now() - startTime;
-    const errorMessage = err instanceof Error ? err.message : String(err);
+    const errorMessage = error instanceof Error ? error.message : String(error);
 
     if (!testCase.shouldThrow) {
       return {

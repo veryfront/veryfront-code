@@ -52,8 +52,8 @@ export function useWorkflowStart<TInput = unknown>(
         onStart?.(runId);
 
         return runId;
-      } catch (err) {
-        const startError = err instanceof Error ? err : new Error(String(err));
+      } catch (error) {
+        const startError = error instanceof Error ? error : new Error(String(error));
         setError(startError);
         onError?.(startError);
         throw startError;

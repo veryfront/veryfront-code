@@ -155,9 +155,9 @@ export function createVeryfrontHandler(
       config = c;
       return c;
     })
-    .catch((err) => {
+    .catch((error) => {
       logger.warn("[universal] Failed to load config, using defaults", {
-        error: getErrorMessage(err),
+        error: getErrorMessage(error),
       });
       return undefined;
     });
@@ -245,12 +245,12 @@ export function createVeryfrontHandler(
     return undefined;
   }
 
-  const readyPromise = isProxyMode ? Promise.resolve() : apiHandler.initialize().catch((err) => {
+  const readyPromise = isProxyMode ? Promise.resolve() : apiHandler.initialize().catch((error) => {
     logger.error("[universal] API handler initialization failed", {
-      error: getErrorMessage(err),
-      stack: err instanceof Error ? err.stack : undefined,
+      error: getErrorMessage(error),
+      stack: error instanceof Error ? error.stack : undefined,
     });
-    throw err;
+    throw error;
   });
 
   if (isProxyMode) {
@@ -540,11 +540,11 @@ export function createVeryfrontHandler(
               layout: effectiveConfig?.layout,
               router: effectiveConfig?.router,
             });
-          } catch (err) {
+          } catch (error) {
             logger.warn("[universal] Failed to load project config, using defaults", {
               projectSlug,
               projectDir: effectiveProjectDir,
-              error: getErrorMessage(err),
+              error: getErrorMessage(error),
             });
           }
         } else if (isProxyMode && projectSlug) {

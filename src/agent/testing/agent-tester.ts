@@ -133,11 +133,11 @@ async function runTestCase(agent: Agent, testCase: TestCase): Promise<TestResult
       executionTime,
       toolCalls,
     };
-  } catch (err) {
+  } catch (error) {
     return {
       name: testCase.name,
       passed: false,
-      error: err instanceof Error ? err.message : String(err),
+      error: error instanceof Error ? error.message : String(error),
       executionTime: Date.now() - startTime,
       toolCalls: [],
     };
@@ -186,10 +186,10 @@ async function validateTestCase(
     try {
       const passed = await testCase.validate(response);
       if (!passed) return { passed: false, error: "Custom validation failed" };
-    } catch (err) {
+    } catch (error) {
       return {
         passed: false,
-        error: `Custom validation error: ${err instanceof Error ? err.message : String(err)}`,
+        error: `Custom validation error: ${error instanceof Error ? error.message : String(error)}`,
       };
     }
   }

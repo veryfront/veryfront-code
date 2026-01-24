@@ -247,8 +247,8 @@ export class RendererLifecycle {
     const services = this.services;
     if (!services) return;
 
-    services.cacheCoordinator.clearAll().catch((err) => {
-      logger.warn("[Lifecycle] Failed to clear all caches", { error: String(err) });
+    services.cacheCoordinator.clearAll().catch((error) => {
+      logger.warn("[Lifecycle] Failed to clear all caches", { error: String(error) });
     });
     services.virtualModules.clear();
     services.componentRegistry.clear();
@@ -258,8 +258,8 @@ export class RendererLifecycle {
     const services = this.services;
     if (!services) return;
 
-    services.cacheCoordinator.clearSlug(slug).catch((err) => {
-      logger.warn("[Lifecycle] Failed to clear slug cache", { slug, error: String(err) });
+    services.cacheCoordinator.clearSlug(slug).catch((error) => {
+      logger.warn("[Lifecycle] Failed to clear slug cache", { slug, error: String(error) });
     });
   }
 

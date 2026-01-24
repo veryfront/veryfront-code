@@ -37,7 +37,7 @@ function useIntegrationStatus(): { status: Record<string, boolean>; loading: boo
         }
 
         setStatus(statusMap);
-      } catch (err) {
+      } catch (error) {
         console.error("Failed to check service status:", err);
       } finally {
         setLoading(false);

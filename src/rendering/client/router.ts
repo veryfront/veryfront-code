@@ -170,10 +170,10 @@ export class VeryfrontRouter {
       this.handleScrollAfterNavigation();
       this.options.onComplete?.(path);
     } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      logger.error(`[Veryfront] Failed to load SPA page ${path}`, err);
-      this.options.onError?.(err);
-      this.pageTransition.showError(err);
+      const normalizedError = error instanceof Error ? error : new Error(String(error));
+      logger.error(`[Veryfront] Failed to load SPA page ${path}`, normalizedError);
+      this.options.onError?.(normalizedError);
+      this.pageTransition.showError(normalizedError);
     }
   }
 
@@ -213,10 +213,10 @@ export class VeryfrontRouter {
       this.currentPath = path;
       this.options.onComplete?.(path);
     } catch (error) {
-      const err = error as Error;
-      logger.error(`Failed to load ${path}`, err);
-      this.options.onError?.(err);
-      this.pageTransition.showError(err);
+      const normalizedError = error instanceof Error ? error : new Error(String(error));
+      logger.error(`Failed to load ${path}`, normalizedError);
+      this.options.onError?.(normalizedError);
+      this.pageTransition.showError(normalizedError);
     } finally {
       this.pageTransition.setLoadingState(false);
     }

@@ -430,8 +430,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
           logger.debug("[VeryfrontFSAdapter] No changedPaths provided - using full invalidation");
           this.scheduleInvalidation();
-        } catch (err) {
-          logger.debug("[VeryfrontFSAdapter] WebSocket message parse error", { error: err });
+        } catch (error) {
+          logger.debug("[VeryfrontFSAdapter] WebSocket message parse error", { error: error });
         }
       };
 
@@ -794,8 +794,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
     if (this.ws) {
       try {
         this.ws.close();
-      } catch (err) {
-        logger.warn("[VeryfrontFSAdapter] Error closing WebSocket", { error: err });
+      } catch (error) {
+        logger.warn("[VeryfrontFSAdapter] Error closing WebSocket", { error: error });
       }
       this.ws = null;
     }

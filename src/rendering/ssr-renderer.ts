@@ -49,8 +49,8 @@ async function pipeToString(
 
     try {
       pipeFn(passThrough);
-    } catch (err) {
-      reject(err);
+    } catch (error) {
+      reject(error);
     }
   });
 }
@@ -77,8 +77,8 @@ function pipeToReadableStream(
 
       try {
         pipeFn(passThrough);
-      } catch (err) {
-        controller.error(err);
+      } catch (error) {
+        controller.error(error);
       }
     },
   });

@@ -491,9 +491,9 @@ export class SSRModuleLoader {
       }
 
       resolveTransform();
-    } catch (err) {
-      rejectTransform(err instanceof Error ? err : new Error(String(err)));
-      throw err;
+    } catch (error) {
+      rejectTransform(error instanceof Error ? error : new Error(String(error)));
+      throw error;
     } finally {
       globalInProgress.delete(inProgressKey);
     }

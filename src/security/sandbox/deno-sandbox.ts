@@ -48,8 +48,8 @@ export function runInWorker<T = unknown>(code: string, options: SandboxOptions =
         `  let result;` +
         `  try { result = await (async () => {` +
         `    return await (new Function(code))();` +
-        `  })(); } catch (err) {` +
-        `    self.postMessage({ error: String(err && err.message || err) });` +
+        `  })(); } catch (error) {` +
+        `    self.postMessage({ error: String(err && error.message || err) });` +
         `    return;` +
         `  }` +
         `  self.postMessage({ result });` +

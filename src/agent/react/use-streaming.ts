@@ -91,10 +91,10 @@ export function useStreaming(options: UseStreamingOptions): UseStreamingResult {
         }
 
         options.onComplete?.();
-      } catch (err) {
-        if (err instanceof Error && err.name === "AbortError") return;
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") return;
 
-        const nextError = err instanceof Error ? err : new Error(String(err));
+        const nextError = error instanceof Error ? error : new Error(String(error));
         setError(nextError);
         options.onError?.(nextError);
       } finally {

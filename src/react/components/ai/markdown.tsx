@@ -86,9 +86,9 @@ function MermaidDiagram({ code }: { code: string }): React.ReactElement {
         if (cancelled) return;
         setSvg(renderedSvg);
         setError("");
-      } catch (err) {
+      } catch (error) {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : "Failed to render diagram");
+        setError(error instanceof Error ? error.message : "Failed to render diagram");
       }
     }
 

@@ -73,7 +73,7 @@ export async function GET(request: Request): Promise<Response> {
     });
 
     return Response.redirect(`${baseUrl}/?connected=zendesk`, 302);
-  } catch (err) {
+  } catch (error) {
     console.error("Zendesk OAuth error:", err);
     return Response.redirect(`${baseUrl}/?error=zendesk_oauth_failed`, 302);
   }

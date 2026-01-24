@@ -310,7 +310,8 @@
     "batch:download": "deno run -A scripts/batch-simplify/batch-simplify.ts download",
     "batch:apply": "deno run -A scripts/batch-simplify/batch-simplify.ts apply",
     "rlm:example": "deno run -A scripts/rlm-ts/examples/basic.ts",
-    "rlm:explore": "deno run -A scripts/rlm-ts/apps/explore.ts"
+    "rlm:explore": "deno run -A scripts/rlm-ts/apps/explore.ts",
+    "rlm:audit": "deno run -A scripts/rlm-ts/apps/audit.ts"
   },
   "lint": {
     "include": [

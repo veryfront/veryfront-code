@@ -181,8 +181,8 @@ class RendererAdapterImpl implements RendererAdapter {
   }
 
   clearCache(slug?: string): void {
-    this.renderer.clearCache(this.ctx, slug).catch((err) => {
-      logger.warn("[RendererAdapter] Failed to clear cache", { error: String(err), slug });
+    this.renderer.clearCache(this.ctx, slug).catch((error) => {
+      logger.warn("[RendererAdapter] Failed to clear cache", { error: String(error), slug });
     });
   }
 

@@ -146,26 +146,26 @@ export function ErrorsTab(): React.JSX.Element {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card title={`ERRORS (${filteredErrors.length})`} className="max-h-[600px] overflow-y-auto">
           <div className="divide-y">
-            {filteredErrors.map((err) => (
+            {filteredErrors.map((error) => (
               <button
-                key={err.code}
+                key={error.code}
                 type="button"
-                onClick={() => setSelectedError(err)}
+                onClick={() => setSelectedError(error)}
                 className={`w-full px-3 py-2.5 text-left hover:bg-gray-50 transition-colors ${
-                  selectedError?.code === err.code ? "bg-sky-50" : ""
+                  selectedError?.code === error.code ? "bg-sky-50" : ""
                 }`}
               >
                 <div className="flex items-center gap-2">
-                  <code className="text-xs font-bold text-red-600">{err.code}</code>
+                  <code className="text-xs font-bold text-red-600">{error.code}</code>
                   <span
                     className={`px-1.5 py-0.5 text-[10px] font-medium rounded ${
-                      getCategoryClass(err.category)
+                      getCategoryClass(error.category)
                     }`}
                   >
-                    {err.category}
+                    {error.category}
                   </span>
                 </div>
-                <div className="text-sm text-gray-900 mt-1">{err.title}</div>
+                <div className="text-sm text-gray-900 mt-1">{error.title}</div>
               </button>
             ))}
           </div>

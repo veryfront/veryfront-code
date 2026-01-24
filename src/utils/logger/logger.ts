@@ -123,12 +123,12 @@ function getDefaultFormat(
 /**
  * Serialize error object for structured logging.
  */
-function serializeError(err: unknown): LogEntry["error"] | undefined {
-  if (err instanceof Error) {
-    return { name: err.name, message: err.message, stack: err.stack };
+function serializeError(error: unknown): LogEntry["error"] | undefined {
+  if (error instanceof Error) {
+    return { name: error.name, message: error.message, stack: error.stack };
   }
-  if (err == null) return undefined;
-  return { name: "UnknownError", message: String(err) };
+  if (error == null) return undefined;
+  return { name: "UnknownError", message: String(error) };
 }
 
 /**

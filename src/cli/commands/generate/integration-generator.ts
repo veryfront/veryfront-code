@@ -353,7 +353,7 @@ export async function GET(request: Request): Promise<Response> {
     setTokens(data.access_token, data.refresh_token, data.expires_in);
 
     return redirect("/?connected=${config.name}");
-  } catch (err) {
+  } catch (error) {
     console.error("OAuth callback error:", err);
     return redirect("/?error=callback_failed");
   }

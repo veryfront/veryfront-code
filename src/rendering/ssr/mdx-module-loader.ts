@@ -82,8 +82,8 @@ async function loadViaTempFile(
     mdxModuleCache.set(key, module);
     return module;
   } finally {
-    cleanupTempModule(tempModulePath).catch((err) =>
-      logger.debug("[MDX] Failed to cleanup temp module:", err)
+    cleanupTempModule(tempModulePath).catch((error) =>
+      logger.debug("[MDX] Failed to cleanup temp module:", error)
     );
   }
 }

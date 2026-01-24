@@ -48,11 +48,11 @@ export const getRendererScript = () => `
           const basePath = MODULE_SERVER_URL + prefix + '/' + pageSlug;
           try {
             pageModule = await import(basePath + '.js');
-          } catch (err) {
+          } catch (error) {
             // Only try /index.js variant if slug is not already 'index' or ending with '/index'
             // e.g., 'about' -> 'about/index.js', but 'index' should NOT become 'index/index.js'
             if (pageSlug === 'index' || pageSlug.endsWith('/index')) {
-              throw err; // Re-throw original error for index pages
+              throw error; // Re-throw original error for index pages
             }
             pageModule = await import(basePath + '/index.js');
           }

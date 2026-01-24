@@ -128,16 +128,16 @@ export class RenderHandler {
   private createErrorResponse(error: unknown): Response {
     logger.error("[RSC] Render error:", error);
 
-    const err = error instanceof Error ? error : new Error(String(error));
+    const normalizedError = error instanceof Error ? error : new Error(String(error));
 
     return new Response(
       JSON.stringify({
         error: "Render error",
-        message: err.message,
-        stack: this.isLocalDev ? err.stack : undefined,
+        message: normalizedError.message,
+        stack: this.isLocalDev ? normalizedError.stack : undefined,
       }),
       {
-        status: err.message === "Component not found" ? 404 : 500,
+        status: normalizedError.message === "Component not found" ? 404 : 500,
         headers: { "content-type": "application/json" },
       },
     );

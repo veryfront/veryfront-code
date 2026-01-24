@@ -94,10 +94,10 @@ export function useAgent(options: UseAgentOptions): UseAgentResult {
           options.onToolCall?.(tc);
           if (tc.result) options.onToolResult?.(tc, tc.result);
         }
-      } catch (err) {
-        if (err instanceof Error && err.name === "AbortError") return;
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") return;
 
-        const nextError = ensureError(err);
+        const nextError = ensureError(error);
         setError(nextError);
         setStatus("error");
         options.onError?.(nextError);

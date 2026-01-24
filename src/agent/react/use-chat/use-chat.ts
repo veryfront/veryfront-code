@@ -140,10 +140,10 @@ export function useChat(options: UseChatOptions): UseChatResult {
           },
           onToolCall: options.onToolCall,
         });
-      } catch (err) {
-        if (err instanceof Error && err.name === "AbortError") return;
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") return;
 
-        const nextError = ensureError(err);
+        const nextError = ensureError(error);
         setError(nextError);
         options.onError?.(nextError);
       } finally {

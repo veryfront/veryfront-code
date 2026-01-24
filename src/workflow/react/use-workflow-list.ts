@@ -96,8 +96,8 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
         setHasMore(Boolean(nextCursor) || fetchedRuns.length === filter.limit);
         setTotalCount(total);
         setError(null);
-      } catch (err) {
-        setError(err instanceof Error ? err : new Error(String(err)));
+      } catch (error) {
+        setError(error instanceof Error ? error : new Error(String(error)));
       }
     },
     [apiBase, buildQueryString, cursor, filter],

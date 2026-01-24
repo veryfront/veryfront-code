@@ -402,8 +402,8 @@ async function rewriteExternalImports(
       try {
         const pkgJson = JSON.parse(await fs.readTextFile(vfPackageJsonPath));
         exportsMap = pkgJson.exports || {};
-      } catch (err) {
-        logger.debug(`[API] Could not read veryfront package.json: ${err}`);
+      } catch (_error) {
+        logger.debug(`[API] Could not read veryfront package.json: `);
       }
 
       transformed = transformed.replace(

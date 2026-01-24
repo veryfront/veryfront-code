@@ -232,8 +232,8 @@ export async function newCommand(
 
     tui.cleanup();
     exitProcess(0);
-  } catch (err) {
-    tui.setStatus(err instanceof Error ? err.message : String(err), "error");
+  } catch (error) {
+    tui.setStatus(error instanceof Error ? error.message : String(error), "error");
     await new Promise((r) => setTimeout(r, 2000));
     tui.cleanup();
     restore();

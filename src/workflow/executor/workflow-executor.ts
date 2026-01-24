@@ -297,13 +297,13 @@ export class WorkflowExecutor {
       await workflow.onError?.(error, result.context);
       this.config.onError?.(run, error);
     } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      await this.failRun(runId, err, run.context, run.nodeStates);
+      const normalizedError = error instanceof Error ? error : new Error(String(error));
+      await this.failRun(runId, normalizedError, run.context, run.nodeStates);
 
-      await workflow.onError?.(err, run.context);
-      this.config.onError?.(run, err);
+      await workflow.onError?.(normalizedError, run.context);
+      this.config.onError?.(run, normalizedError);
 
-      throw error;
+      throw normalizedError;
     } finally {
       if (useLocking) {
         await this.config.backend.releaseLock!(runId);

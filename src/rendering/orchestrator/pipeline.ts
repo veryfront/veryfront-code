@@ -500,8 +500,8 @@ export class RenderPipeline {
           ...(pageModule ? { pageModule } : {}),
         };
 
-        this.config.cacheCoordinator.persistResult(result, slug).catch((err) => {
-          logger.warn("[RenderPipeline] Cache persist failed", { slug, error: String(err) });
+        this.config.cacheCoordinator.persistResult(result, slug).catch((error) => {
+          logger.warn("[RenderPipeline] Cache persist failed", { slug, error: String(error) });
         });
 
         timing.total = Math.round(performance.now() - pipelineStartTime);

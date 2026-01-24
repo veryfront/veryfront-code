@@ -28,8 +28,8 @@ export class CorsHandler extends BaseHandler {
     try {
       const cfg = await getConfig(ctx.projectDir, ctx.adapter);
       corsConfig = cfg?.security?.cors ?? corsConfig;
-    } catch (err) {
-      this.logDebug("Failed to load CORS config", { error: err }, ctx);
+    } catch (error) {
+      this.logDebug("Failed to load CORS config", { error: error }, ctx);
     }
 
     const response = ResponseBuilder.preflight(req, {
@@ -65,8 +65,8 @@ export class CorsHandler extends BaseHandler {
       methods.push("OPTIONS");
 
       return [...new Set(methods)].join(", ");
-    } catch (err) {
-      this.logDebug("Failed to resolve route for CORS", { error: err, pathname }, ctx);
+    } catch (error) {
+      this.logDebug("Failed to resolve route for CORS", { error: error, pathname }, ctx);
       return CorsHandler.DEFAULT_METHODS;
     }
   }
@@ -80,8 +80,8 @@ export class CorsHandler extends BaseHandler {
     try {
       const st = await ctx.adapter.fs.stat(appRoot);
       if (!st.isDirectory) return null;
-    } catch (err) {
-      this.logDebug("App directory not found", { appRoot, error: err }, ctx);
+    } catch (error) {
+      this.logDebug("App directory not found", { appRoot, error: error }, ctx);
       return null;
     }
 

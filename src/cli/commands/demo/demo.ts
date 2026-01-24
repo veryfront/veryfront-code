@@ -179,8 +179,8 @@ async function demoLogin(preselectedMethod?: AuthMethod): Promise<boolean> {
   let server: Awaited<ReturnType<typeof startCallbackServer>>;
   try {
     server = await startCallbackServer();
-  } catch (err) {
-    console.log("  " + error(`Failed to start server: ${err}`));
+  } catch (e) {
+    console.log("  " + error(`Failed to start server: ${e}`));
     return false;
   }
 
@@ -222,9 +222,9 @@ async function demoLogin(preselectedMethod?: AuthMethod): Promise<boolean> {
     console.log();
     console.log("  " + success("✓") + " Logged in as " + brand(userInfo.email));
     return true;
-  } catch (err) {
+  } catch (e) {
     console.log();
-    console.log("  " + error("✗") + " " + (err instanceof Error ? err.message : String(err)));
+    console.log("  " + error("✗") + " " + (e instanceof Error ? e.message : String(e)));
     return false;
   } finally {
     await server.stop();
@@ -347,8 +347,8 @@ async function executeStepAction(
           quiet: true,
         });
         console.log("  " + success("✓") + " Code pushed");
-      } catch (err) {
-        console.log("  " + error("✗") + " " + (err instanceof Error ? err.message : String(err)));
+      } catch (e) {
+        console.log("  " + error("✗") + " " + (e instanceof Error ? e.message : String(e)));
       }
       break;
     }
@@ -396,8 +396,8 @@ async function executeStepAction(
         console.log("  " + dim("Stopping dev server..."));
         await result.stop();
         await result.done;
-      } catch (err) {
-        console.log("  " + error("✗") + " " + (err instanceof Error ? err.message : String(err)));
+      } catch (e) {
+        console.log("  " + error("✗") + " " + (e instanceof Error ? e.message : String(e)));
       }
 
       await delay(500);
@@ -421,10 +421,10 @@ async function executeStepAction(
 
         const deployedUrl = `https://${(actualProjectSlug ?? projectName)}.veryfront.com`;
         console.log("  " + success("✓") + " Deployed to " + brand(deployedUrl));
-      } catch (err) {
+      } catch (e) {
         console.log(
           "  " + error("✗") + " Deploy failed: " +
-            (err instanceof Error ? err.message : String(err)),
+            (e instanceof Error ? e.message : String(e)),
         );
       }
       break;

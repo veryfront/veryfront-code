@@ -101,8 +101,8 @@ export function getCacheStats(): CacheStats[] {
   for (const [name, getStats] of cacheRegistry) {
     try {
       stats.push(getStats());
-    } catch (err) {
-      logger.warn(`[MemoryProfiler] Failed to get stats for cache ${name}:`, err);
+    } catch (error) {
+      logger.warn(`[MemoryProfiler] Failed to get stats for cache ${name}:`, error);
       stats.push({ name, entries: -1 });
     }
   }

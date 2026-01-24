@@ -488,8 +488,8 @@ export function clearRendererCaches(): void {
     return;
   }
 
-  renderer.clearAllCaches().catch((err) => {
-    logger.warn("[Renderer] Failed to clear caches", { error: String(err) });
+  renderer.clearAllCaches().catch((error) => {
+    logger.warn("[Renderer] Failed to clear caches", { error: String(error) });
   });
 }
 
@@ -504,10 +504,10 @@ export function clearRendererCacheForProject(projectId: string): void {
     return;
   }
 
-  renderer.clearCacheForProject(projectId).catch((err) => {
+  renderer.clearCacheForProject(projectId).catch((error) => {
     logger.warn("[Renderer] Failed to clear project caches", {
       projectId,
-      error: String(err),
+      error: String(error),
     });
   });
 }

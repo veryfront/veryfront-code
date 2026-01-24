@@ -372,8 +372,8 @@ export async function writeStdoutAsync(data: Uint8Array): Promise<number> {
 
   if (hasNodeProcess && nodeProcess!.stdout) {
     return await new Promise((resolve, reject) => {
-      nodeProcess!.stdout.write(data, (err) => {
-        if (err) reject(err);
+      nodeProcess!.stdout.write(data, (error) => {
+        if (error) reject(error);
         else resolve(data.length);
       });
     });

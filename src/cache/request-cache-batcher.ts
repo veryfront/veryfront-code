@@ -111,8 +111,8 @@ async function flushBatch(ctx: RequestCacheContext, backend: CacheBackend): Prom
       request.resolve(value);
     }
   } catch (error) {
-    const err = error instanceof Error ? error : new Error(String(error));
-    for (const request of requests) request.reject(err);
+    const normalizedError = error instanceof Error ? error : new Error(String(error));
+    for (const request of requests) request.reject(normalizedError);
   }
 }
 

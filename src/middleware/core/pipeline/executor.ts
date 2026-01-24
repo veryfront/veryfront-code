@@ -30,13 +30,13 @@ export function executeMiddlewarePipeline(
 
         return response ?? notFoundResponse();
       } catch (error) {
-        const err = ensureError(error);
+        const normalizedError = ensureError(error);
 
         serverLogger.error("Middleware pipeline error:", {
           url: req.url,
           method: req.method,
           error: getErrorMessage(error),
-          stack: err.stack,
+          stack: normalizedError.stack,
         });
 
         const nodeEnv = adapter?.env.get("NODE_ENV") ?? "production";
@@ -47,8 +47,8 @@ export function executeMiddlewarePipeline(
             method: req.method,
             url: req.url,
             ...(nodeEnv === "development" && {
-              message: err.message,
-              stack: err.stack?.split("\n").slice(0, 10),
+              message: normalizedError.message,
+              stack: normalizedError.stack?.split("\n").slice(0, 10),
             }),
           }),
           {

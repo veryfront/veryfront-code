@@ -135,7 +135,7 @@ async function snowflakeFetch<T>(
   const err: SnowflakeError = new Error(errorMessage);
   err.code = errorData.code;
   err.sqlState = errorData.sqlState;
-  throw err;
+  throw error;
 }
 
 async function submitStatement(

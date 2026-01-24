@@ -25,7 +25,7 @@ export default function UploadPage(): React.JSX.Element {
       const response = await fetch("/api/upload");
       const data = await response.json();
       setFiles(data.files ?? []);
-    } catch (err) {
+    } catch (_error) {
       console.error("Failed to load files:", err);
     }
   }
@@ -49,8 +49,8 @@ export default function UploadPage(): React.JSX.Element {
       if (!response.ok) throw new Error("Upload failed");
 
       await loadFiles();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload failed");
+    } catch (_error) {
+      setError(error instanceof Error ? error.message : "Upload failed");
     } finally {
       setUploading(false);
     }
@@ -60,7 +60,7 @@ export default function UploadPage(): React.JSX.Element {
     try {
       await fetch(`/api/upload/${id}`, { method: "DELETE" });
       await loadFiles();
-    } catch (err) {
+    } catch (_error) {
       console.error("Failed to delete file:", err);
     }
   }

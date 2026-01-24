@@ -98,10 +98,10 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
 
       setRun(workflowRun);
       setError(null);
-    } catch (err) {
-      if (err instanceof Error && err.name === "AbortError") return;
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") return;
 
-      const fetchError = err instanceof Error ? err : new Error(String(err));
+      const fetchError = error instanceof Error ? error : new Error(String(error));
       setError(fetchError);
       onError?.(fetchError);
     }
@@ -122,8 +122,8 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
         throw new Error(`Failed to cancel workflow: ${response.status}`);
       }
       await refresh();
-    } catch (err) {
-      const cancelError = err instanceof Error ? err : new Error(String(err));
+    } catch (error) {
+      const cancelError = error instanceof Error ? error : new Error(String(error));
       setError(cancelError);
       throw cancelError;
     }
@@ -138,8 +138,8 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
         throw new Error(`Failed to retry workflow: ${response.status}`);
       }
       await refresh();
-    } catch (err) {
-      const retryError = err instanceof Error ? err : new Error(String(err));
+    } catch (error) {
+      const retryError = error instanceof Error ? error : new Error(String(error));
       setError(retryError);
       throw retryError;
     }

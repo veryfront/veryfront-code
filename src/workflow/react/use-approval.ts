@@ -54,8 +54,8 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
         const data: PendingApproval = await response.json();
         setApproval(data);
         setError(null);
-      } catch (err) {
-        const fetchError = err instanceof Error ? err : new Error(String(err));
+      } catch (error) {
+        const fetchError = error instanceof Error ? error : new Error(String(error));
         setError(fetchError);
         onError?.(fetchError);
       } finally {
@@ -97,8 +97,8 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
         });
 
         onDecision?.(decision);
-      } catch (err) {
-        const submitError = err instanceof Error ? err : new Error(String(err));
+      } catch (error) {
+        const submitError = error instanceof Error ? error : new Error(String(error));
         setError(submitError);
         onError?.(submitError);
         throw submitError;

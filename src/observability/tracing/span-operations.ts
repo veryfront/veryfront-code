@@ -40,8 +40,8 @@ export class SpanOperations {
       }
 
       span.end();
-    } catch (err) {
-      logger.debug("[tracing] Failed to end span", err);
+    } catch (error) {
+      logger.debug("[tracing] Failed to end span", error);
     }
   }
 

@@ -125,10 +125,13 @@ export function handleMDXPage(
             }
           }
         } catch (e) {
-          const err = ensureError(e);
-          logger.warn("generateMetadata threw for MDX page", err);
-          if (err.message.includes("ReferenceError") || err.message.includes("SyntaxError")) {
-            throw err;
+          const normalizedError = ensureError(e);
+          logger.warn("generateMetadata threw for MDX page", normalizedError);
+          if (
+            normalizedError.message.includes("ReferenceError") ||
+            normalizedError.message.includes("SyntaxError")
+          ) {
+            throw normalizedError;
           }
         }
 

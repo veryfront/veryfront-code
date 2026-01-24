@@ -73,9 +73,9 @@ async function nodeLoad(options: LoadOptions = {}): Promise<Record<string, strin
     }
 
     return parsed;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return {};
-    throw err;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+    throw error;
   }
 }
 

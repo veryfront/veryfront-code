@@ -51,11 +51,11 @@ async function supabaseFetch<T>(
     const message =
       error.message ?? `Supabase API error: ${response.status} ${response.statusText}`;
 
-    const err: SupabaseError = new Error(message);
+    const error: SupabaseError = new Error(message);
     err.code = error.code;
     err.details = error.details;
     err.hint = error.hint;
-    throw err;
+    throw error;
   }
 
   const text = await response.text();

@@ -137,11 +137,11 @@ export function createOAuthCallbackHandler(
       const successUrl = new URL(successRedirect, appUrl);
       successUrl.searchParams.set("connected", config.serviceId);
       return Response.redirect(successUrl.toString());
-    } catch (err) {
+    } catch (error) {
       return handleError(
         "callback_error",
         `OAuth callback error for ${config.serviceId}:`,
-        err,
+        error,
       );
     }
   };

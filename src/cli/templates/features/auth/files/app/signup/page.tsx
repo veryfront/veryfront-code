@@ -40,8 +40,8 @@ export default function SignupPage(): React.JSX.Element {
       }
 
       globalThis.location.href = "/dashboard";
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to sign up");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Failed to sign up");
     } finally {
       setLoading(false);
     }

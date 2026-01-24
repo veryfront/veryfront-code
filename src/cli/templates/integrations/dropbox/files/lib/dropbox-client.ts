@@ -96,7 +96,7 @@ async function parseDropboxError(response: Response): Promise<unknown> {
   return response.json().catch(() => ({}));
 }
 
-function throwDropboxError(response: Response, error: any): never {
+function throwDropboxError(response: Response, error: unknown): never {
   throw new Error(
     `Dropbox API error: ${response.status} ${error?.error_summary || response.statusText}`,
   );

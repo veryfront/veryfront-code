@@ -121,8 +121,8 @@ async function loginWithOAuth(provider: "google" | "github" | "microsoft"): Prom
   let server: Awaited<ReturnType<typeof startCallbackServer>>;
   try {
     server = await startCallbackServer();
-  } catch (err) {
-    console.log("  " + error(`Failed to start server: ${err}`));
+  } catch (e) {
+    console.log("  " + error(`Failed to start server: ${e}`));
     return null;
   }
 
@@ -159,9 +159,9 @@ async function loginWithOAuth(provider: "google" | "github" | "microsoft"): Prom
     }
 
     return result.token;
-  } catch (err) {
+  } catch (e) {
     console.log();
-    console.log("  " + error("✗") + " " + (err instanceof Error ? err.message : String(err)));
+    console.log("  " + error("✗") + " " + (e instanceof Error ? e.message : String(e)));
     return null;
   } finally {
     await server.stop();

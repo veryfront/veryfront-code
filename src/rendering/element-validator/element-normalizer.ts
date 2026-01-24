@@ -45,12 +45,12 @@ function performDeepInspection(
       "[VALIDATOR] Deep element tree inspection completed - no invalid objects found in props/children",
     );
   } catch (error) {
-    const err = ensureError(error);
+    const normalizedError = ensureError(error);
     logger.error("[VALIDATOR] Deep inspection failed", {
-      error: err.message,
-      stack: err.stack,
+      error: normalizedError.message,
+      stack: normalizedError.stack,
     });
-    throw err;
+    throw error;
   }
 }
 

@@ -103,8 +103,8 @@ class NodeFileSystem implements FileSystem {
     try {
       await this.fs!.access(path);
       return true;
-    } catch (error: any) {
-      if (error?.code === "ENOENT") return false;
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return false;
       throw error;
     }
   }
@@ -188,7 +188,7 @@ class DenoFileSystem implements FileSystem {
       // @ts-ignore - Deno global
       await Deno.stat(path);
       return true;
-    } catch (error: any) {
+    } catch (error: unknown) {
       // @ts-ignore - Deno global
       if (error instanceof Deno.errors.NotFound) return false;
       throw error;
