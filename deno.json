@@ -301,7 +301,13 @@
     "test:all-runtimes": "deno task test:unit && deno task test:node && deno task test:bun",
     "test:e2e": "npx playwright test --config=tests/e2e/playwright.config.ts",
     "check:circular": "deno run -A jsr:@cunarist/deno-circular-deps src/index.ts",
-    "cli": "deno run --allow-all src/cli/main.ts"
+    "cli": "deno run --allow-all src/cli/main.ts",
+    "batch:estimate": "deno run -A scripts/batch-simplify/batch-simplify.ts estimate",
+    "batch:prepare": "deno run -A scripts/batch-simplify/batch-simplify.ts prepare",
+    "batch:submit": "deno run -A scripts/batch-simplify/batch-simplify.ts submit",
+    "batch:status": "deno run -A scripts/batch-simplify/batch-simplify.ts status",
+    "batch:download": "deno run -A scripts/batch-simplify/batch-simplify.ts download",
+    "batch:apply": "deno run -A scripts/batch-simplify/batch-simplify.ts apply"
   },
   "lint": {
     "include": [
