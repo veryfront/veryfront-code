@@ -101,7 +101,9 @@ class ReloadNotifierImpl {
     let listenerIndex = 0;
     for (const listener of this.listeners) {
       try {
-        logger.info(`[ReloadNotifier] Calling listener ${listenerIndex + 1}/${this.listeners.size}`);
+        logger.info(
+          `[ReloadNotifier] Calling listener ${listenerIndex + 1}/${this.listeners.size}`,
+        );
         listener(changedPaths, projectSlug);
         logger.info(`[ReloadNotifier] Listener ${listenerIndex + 1} completed`);
       } catch (error) {

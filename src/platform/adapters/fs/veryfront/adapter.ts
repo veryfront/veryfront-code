@@ -690,12 +690,15 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     this.pokeMetrics.invalidationsTriggered++;
 
-    logger.info("[VeryfrontFSAdapter] TRIGGERING HMR RELOAD via invalidationCallbacks.triggerReload", {
-      changedPaths,
-      projectSlug: this.projectSlug,
-      projectId: this.client.getProjectId(),
-      hasTriggerReloadCallback: !!this.invalidationCallbacks.triggerReload,
-    });
+    logger.info(
+      "[VeryfrontFSAdapter] TRIGGERING HMR RELOAD via invalidationCallbacks.triggerReload",
+      {
+        changedPaths,
+        projectSlug: this.projectSlug,
+        projectId: this.client.getProjectId(),
+        hasTriggerReloadCallback: !!this.invalidationCallbacks.triggerReload,
+      },
+    );
 
     this.invalidationCallbacks.triggerReload?.(changedPaths, {
       projectSlug: this.projectSlug,
