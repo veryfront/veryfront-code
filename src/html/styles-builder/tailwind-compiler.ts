@@ -120,35 +120,50 @@ export function hashCSS(css: string): string {
 }
 
 /**
- * Store CSS in cache for later retrieval by hash.
- * Called when generating production HTML with hashed CSS URLs.
- * Stores in both local memory (fast) and distributed cache (cross-pod).
+ * Store CSS in cache for later retrieval by hash (sync version).
+ * @deprecated Use cacheCSSAsync() in production to avoid cross-pod 404s
  */
 export function cacheCSS(css: string): string {
   const hash = hashCSS(css);
+  storeInLocalCache(hash, css);
+  // Fire-and-forget to distributed cache (may cause 404s on different pods)
+  getCssCache().then((cache) => {
+    cache.set(hash, css, CSS_CACHE_TTL_SECONDS).catch(() => {});
+  }).catch(() => {});
+  return hash;
+}
 
-  // Always store in local memory for fast subsequent reads
+/**
+ * Store CSS in cache for later retrieval by hash (async version).
+ * MUST be used in production to ensure CSS is available across pods before
+ * returning HTML. The sync version causes 404s when browser requests CSS
+ * from a different pod before the distributed cache write completes.
+ */
+export async function cacheCSSAsync(css: string): Promise<string> {
+  const hash = hashCSS(css);
+  storeInLocalCache(hash, css);
+
+  // Store in distributed cache and WAIT for completion
+  // This ensures CSS is available on all pods before HTML is returned
+  try {
+    const cache = await getCssCache();
+    await cache.set(hash, css, CSS_CACHE_TTL_SECONDS);
+  } catch (error) {
+    logger.debug("[tailwind] Failed to store CSS in distributed cache", { hash, error });
+  }
+
+  return hash;
+}
+
+/** Helper to store CSS in local memory cache with LRU eviction */
+function storeInLocalCache(hash: string, css: string): void {
   if (!localCssCache.has(hash)) {
-    // LRU eviction - remove oldest entries if at capacity
     if (localCssCache.size >= LOCAL_CACHE_MAX_SIZE) {
       const firstKey = localCssCache.keys().next().value;
-      if (firstKey) {
-        localCssCache.delete(firstKey);
-      }
+      if (firstKey) localCssCache.delete(firstKey);
     }
     localCssCache.set(hash, css);
   }
-
-  // Store in distributed cache asynchronously (fire and forget)
-  getCssCache().then((cache) => {
-    cache.set(hash, css, CSS_CACHE_TTL_SECONDS).catch((error) => {
-      logger.debug("[tailwind] Failed to store CSS in distributed cache", { hash, error });
-    });
-  }).catch(() => {
-    // Ignore - local cache is sufficient
-  });
-
-  return hash;
 }
 
 /**

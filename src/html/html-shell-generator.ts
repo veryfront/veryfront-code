@@ -10,7 +10,7 @@ import {
 import { getStudioScripts } from "./dev-scripts.ts";
 import { processMetadata } from "./metadata-builder.ts";
 import {
-  cacheCSS,
+  cacheCSSAsync,
   extractCandidates,
   formatCSSError,
   generateTailwindCSS,
@@ -248,8 +248,8 @@ async function generateHTMLShellPartsImpl(
   const syntaxHighlightTheme = useDevScripts ? "github-dark" : "github";
 
   // Generate Tailwind CSS output - inline for preview/dev, hashed link for production
-  // cacheCSS stores the CSS and returns the hash for later retrieval
-  const cssHash = tailwindCSS && useProductionCSS ? cacheCSS(tailwindCSS) : "";
+  // cacheCSSAsync stores CSS and waits for distributed cache (prevents cross-pod 404s)
+  const cssHash = tailwindCSS && useProductionCSS ? await cacheCSSAsync(tailwindCSS) : "";
 
   // Generate modulepreload hints for page and layout modules (faster cold start)
   const modulePreloadHints = generateModulePreloadHints(options);

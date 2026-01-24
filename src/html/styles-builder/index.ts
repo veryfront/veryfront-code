@@ -7,6 +7,7 @@ export { getProductionStyles } from "./production-styles.ts";
 // Tailwind CSS v4 JIT compiler - unified, native Tailwind
 export {
   cacheCSS,
+  cacheCSSAsync,
   clearCSSCache,
   compileGlobalsCSS,
   type CSSErrorInfo,
