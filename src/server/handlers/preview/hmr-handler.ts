@@ -45,8 +45,13 @@ export class HMRHandler extends BaseHandler {
     if (HMRHandler.initialized) return;
     HMRHandler.initialized = true;
 
-    HMRHandler.reloadUnsubscribe = ReloadNotifier.subscribe((changedPaths, projectSlug) => {
-      invalidateProjectCaches(projectSlug || "preview", changedPaths);
+    HMRHandler.reloadUnsubscribe = ReloadNotifier.subscribe((changedPaths, project) => {
+      const projectSlug = project?.projectSlug ?? "preview";
+      invalidateProjectCaches(projectSlug, changedPaths, {
+        projectId: project?.projectId,
+        environment: project?.environment,
+        branchId: project?.branch ?? undefined,
+      });
       HMRHandler.broadcastUpdate(changedPaths);
     });
 

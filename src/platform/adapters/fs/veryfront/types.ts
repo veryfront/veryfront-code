@@ -138,6 +138,9 @@ export interface InvalidationProjectContext {
   projectId?: string;
   projectSlug?: string;
   projectDir?: string;
+  environment?: "preview" | "production";
+  branch?: string | null;
+  releaseId?: string | null;
 }
 
 export interface InvalidationCallbacks {

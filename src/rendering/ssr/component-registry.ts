@@ -104,6 +104,8 @@ export class ComponentRegistry {
   private vendorBundleHash?: string;
   /** Project ID (UUID) for SSR cache isolation in multi-project mode */
   private projectId?: string;
+  /** Content source identifier for cache isolation (branch or release) */
+  private contentSourceId?: string;
 
   /**
    * Creates a new component registry.
@@ -114,6 +116,7 @@ export class ComponentRegistry {
    * @param moduleServerUrl - Optional URL for module server
    * @param vendorBundleHash - Optional hash for vendor bundle versioning
    * @param projectId - Project ID (UUID) for SSR cache isolation in multi-project mode
+   * @param contentSourceId - Content source identifier for cache isolation
    */
   constructor(
     virtualModules?: VirtualModuleSystem,
@@ -122,6 +125,7 @@ export class ComponentRegistry {
     moduleServerUrl?: string,
     vendorBundleHash?: string,
     projectId?: string,
+    contentSourceId?: string,
   ) {
     this.virtualModules = virtualModules ?? new VirtualModuleSystem();
     this.serverPort = serverPort;
@@ -129,6 +133,7 @@ export class ComponentRegistry {
     this.moduleServerUrl = moduleServerUrl;
     this.vendorBundleHash = vendorBundleHash;
     this.projectId = projectId;
+    this.contentSourceId = contentSourceId;
   }
 
   /**
@@ -321,6 +326,7 @@ export class ComponentRegistry {
     dev: true;
     moduleServerUrl?: string;
     vendorBundleHash?: string;
+    contentSourceId?: string;
   } {
     return {
       // Use the actual project ID (UUID) for SSR cache isolation in multi-project mode
@@ -330,6 +336,7 @@ export class ComponentRegistry {
       dev: true,
       moduleServerUrl: this.moduleServerUrl,
       vendorBundleHash: this.vendorBundleHash,
+      contentSourceId: this.contentSourceId,
     };
   }
 

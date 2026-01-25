@@ -3,7 +3,10 @@ import {
   clearModulePathCache,
   invalidateModulePaths,
 } from "#veryfront/transforms/mdx/esm-module-loader/index.ts";
-import { clearSSRModuleCache } from "#veryfront/modules/react-loader/ssr-module-loader/index.ts";
+import {
+  clearSSRModuleCache,
+  clearSSRModuleCacheForProject,
+} from "#veryfront/modules/react-loader/ssr-module-loader/index.ts";
 import { clearRendererCacheForProject, clearRendererCaches } from "../../rendering/renderer.ts";
 import { clearRouterDetectionCache } from "../../rendering/router-detection.ts";
 import {
@@ -31,9 +34,9 @@ export async function invalidateProjectCaches(
   options?: InvalidationOptions,
 ): Promise<void> {
   const startTime = Date.now();
-  const hasRealProjectSlug = projectSlug !== "preview";
-  const environment = options?.environment;
   const projectId = options?.projectId;
+  const hasRealProjectSlug = projectSlug !== "preview" || !!projectId;
+  const environment = options?.environment;
 
   logger.info("[CacheInvalidation] ▶ Starting cache invalidation", {
     projectSlug,
@@ -55,8 +58,16 @@ export async function invalidateProjectCaches(
     clearModulePathCache();
   }
 
-  logger.debug("[CacheInvalidation] Clearing SSR module cache", { projectSlug });
-  clearSSRModuleCache();
+  logger.debug("[CacheInvalidation] Clearing SSR module cache", {
+    projectSlug,
+    projectId,
+    mode: projectId ? "per-project" : "global",
+  });
+  if (projectId) {
+    clearSSRModuleCacheForProject(projectId);
+  } else {
+    clearSSRModuleCache();
+  }
 
   logger.debug("[CacheInvalidation] Clearing router detection cache", { projectSlug });
   clearRouterDetectionCache();
@@ -76,8 +87,13 @@ export async function invalidateProjectCaches(
     return;
   }
 
-  logger.debug("[CacheInvalidation] Clearing renderer cache (per-project)", { projectSlug });
-  await clearRendererCacheForProject(projectSlug);
+  const rendererProjectKey = projectId ?? projectSlug;
+  logger.debug("[CacheInvalidation] Clearing renderer cache (per-project)", {
+    projectSlug,
+    projectId,
+    rendererProjectKey,
+  });
+  await clearRendererCacheForProject(rendererProjectKey);
 
   logger.debug("[CacheInvalidation] Clearing snippet cache (per-project)", { projectSlug });
   clearSnippetCacheForProject(projectSlug);
@@ -92,6 +108,19 @@ export async function invalidateProjectCaches(
     logger.debug("[CacheInvalidation] Registry caches cleared", {
       projectId,
       environment,
+      keysDeleted: deleted,
+    });
+  }
+
+  if (projectId && options?.branchId) {
+    logger.debug("[CacheInvalidation] Clearing registry caches (content-source)", {
+      projectId,
+      contentSourceId: options.branchId,
+    });
+    const deleted = cacheRegistry.deleteKeysForContentSource(projectId, options.branchId);
+    logger.debug("[CacheInvalidation] Registry caches cleared (content-source)", {
+      projectId,
+      contentSourceId: options.branchId,
       keysDeleted: deleted,
     });
   }

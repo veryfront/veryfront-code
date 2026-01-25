@@ -8,7 +8,7 @@ interface RedisClient {
   disconnect(): Promise<void>;
   get(key: string): Promise<string | null>;
   set(key: string, value: string, options?: { EX?: number }): Promise<string | null>;
-  del(key: string): Promise<number>;
+  del(key: string | string[]): Promise<number>;
   scan(cursor: number, options?: { MATCH?: string; COUNT?: number }): Promise<[number, string[]]>;
   on?(event: string, listener: (...args: unknown[]) => void): void;
 }
@@ -147,6 +147,41 @@ export class RedisCacheStore implements CacheStore {
       logger.warn("[redis] delete failed, using fallback", { key, error });
       this.redisUnavailable = true;
       return this.getFallbackStore().delete(key);
+    }
+  }
+
+  async deleteByPrefix(prefix: string): Promise<number> {
+    const localDeleted = (await this.fallbackStore?.deleteByPrefix?.(prefix)) ?? 0;
+
+    if (this.redisUnavailable && this.enableFallback) {
+      return localDeleted;
+    }
+
+    try {
+      const client = await this.ensureClient();
+      let cursor = 0;
+      const keysToDelete: string[] = [];
+
+      do {
+        const [nextCursor, keys] = await client.scan(cursor, {
+          MATCH: `${this.keyPrefix}${prefix}*`,
+          COUNT: 100,
+        });
+        cursor = nextCursor;
+        if (keys.length) keysToDelete.push(...keys);
+      } while (cursor !== 0);
+
+      if (!keysToDelete.length) return localDeleted;
+
+      const deleteResults = await Promise.all(keysToDelete.map((key) => client.del(key)));
+      const deleted = deleteResults.reduce((sum, count) => sum + count, 0);
+      return localDeleted + deleted;
+    } catch (error) {
+      if (!this.enableFallback) throw error;
+
+      logger.warn("[redis] deleteByPrefix failed, using fallback", { prefix, error });
+      this.redisUnavailable = true;
+      return localDeleted;
     }
   }
 

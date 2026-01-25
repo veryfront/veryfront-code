@@ -51,6 +51,25 @@ export class FilesystemCacheStore implements CacheStore {
     }
   }
 
+  async deleteByPrefix(prefix: string): Promise<number> {
+    const fs = await this.getLocalFS();
+    const encodedPrefix = encodeURIComponent(prefix);
+    let deleted = 0;
+
+    try {
+      for await (const entry of fs.readDir(this.baseDir)) {
+        if (!entry.isFile || !entry.name.endsWith(".json")) continue;
+        if (!entry.name.startsWith(encodedPrefix)) continue;
+        await fs.remove(join(this.baseDir, entry.name));
+        deleted++;
+      }
+    } catch {
+      // ignore missing dir or read errors
+    }
+
+    return deleted;
+  }
+
   async clear(): Promise<void> {
     try {
       const fs = await this.getLocalFS();

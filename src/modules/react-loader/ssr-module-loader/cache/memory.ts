@@ -14,7 +14,7 @@
  */
 
 import { registerCache } from "#veryfront/utils/memory/index.ts";
-import { registerMapCache } from "#veryfront/cache/keys.ts";
+import { isKeyForProject, registerMapCache } from "#veryfront/cache/keys.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { MAX_CONCURRENT_TRANSFORMS, SSR_TMP_DIRS_MAX_ENTRIES } from "../constants.ts";
@@ -101,27 +101,26 @@ export function clearSSRModuleCache(): void {
 }
 
 export function clearSSRModuleCacheForProject(projectId: string): void {
-  const prefix = `${projectId}:`;
   let cleared = 0;
 
   for (const key of globalModuleCache.keys()) {
-    if (!key.startsWith(prefix)) continue;
+    if (!isKeyForProject(key, projectId)) continue;
     globalModuleCache.delete(key);
     cleared++;
   }
 
   for (const key of globalCrossProjectCache.keys()) {
-    if (!key.includes(projectId)) continue;
+    if (!key.includes(projectId) && !isKeyForProject(key, projectId)) continue;
     globalCrossProjectCache.delete(key);
   }
 
   for (const key of globalInProgress.keys()) {
-    if (!key.startsWith(prefix)) continue;
+    if (!isKeyForProject(key, projectId)) continue;
     globalInProgress.delete(key);
   }
 
   for (const key of failedComponents.keys()) {
-    if (!key.startsWith(prefix)) continue;
+    if (!isKeyForProject(key, projectId)) continue;
     failedComponents.delete(key);
   }
 
@@ -132,7 +131,6 @@ export function clearSSRModuleCacheForProject(projectId: string): void {
 
   logger.info("[SSR-MODULE-LOADER] ✓ Project cache cleared", {
     projectId,
-    prefix,
     entriesCleared: cleared,
     remainingModules: globalModuleCache.size,
   });

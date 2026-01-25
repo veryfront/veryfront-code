@@ -57,7 +57,7 @@ export function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapter> {
             clearProjectCSSCache: invalidateProjectCSS,
             clearDomainCache,
             triggerReload: (changedPaths, project) =>
-              ReloadNotifier.triggerReload(changedPaths, project?.projectSlug),
+              ReloadNotifier.triggerReload(changedPaths, project),
           },
         };
 

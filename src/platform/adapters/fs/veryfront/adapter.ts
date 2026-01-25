@@ -719,10 +719,18 @@ export class VeryfrontFSAdapter implements FSAdapter {
       },
     );
 
-    this.invalidationCallbacks.triggerReload?.(changedPaths, {
+    const environment: "preview" | "production" = this.contentContext?.sourceType === "branch"
+      ? "preview"
+      : "production";
+    const projectContext = {
       projectSlug: this.projectSlug,
       projectId: this.client.getProjectId(),
-    });
+      environment,
+      branch: this.contentContext?.branch ?? null,
+      releaseId: this.contentContext?.releaseId ?? null,
+    };
+
+    this.invalidationCallbacks.triggerReload?.(changedPaths, projectContext);
 
     logger.info("[VeryfrontFSAdapter] Selective invalidation complete - HMR triggered", {
       changedPaths,
@@ -841,10 +849,18 @@ export class VeryfrontFSAdapter implements FSAdapter {
       projectId: this.client.getProjectId(),
       hasTriggerReloadCallback: !!this.invalidationCallbacks.triggerReload,
     });
-    this.invalidationCallbacks.triggerReload?.(undefined, {
+    const environment: "preview" | "production" = this.contentContext?.sourceType === "branch"
+      ? "preview"
+      : "production";
+    const projectContext = {
       projectSlug: this.projectSlug,
       projectId: this.client.getProjectId(),
-    });
+      environment,
+      branch: this.contentContext?.branch ?? null,
+      releaseId: this.contentContext?.releaseId ?? null,
+    };
+
+    this.invalidationCallbacks.triggerReload?.(undefined, projectContext);
 
     logger.debug("[VeryfrontFSAdapter] CACHE INVALIDATION COMPLETE", {
       fileCacheCleared: totalFileCount,

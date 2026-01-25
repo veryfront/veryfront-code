@@ -1,7 +1,17 @@
 import { serverLogger as logger } from "#veryfront/utils";
 
-type ReloadListener = (changedPaths?: string[], projectSlug?: string) => void;
+export interface ReloadProjectInfo {
+  projectSlug?: string;
+  projectId?: string;
+  projectDir?: string;
+  environment?: "preview" | "production";
+  branch?: string | null;
+  releaseId?: string | null;
+}
+
+type ReloadListener = (changedPaths?: string[], project?: ReloadProjectInfo) => void;
 type InvalidateListener = () => void;
+type ReloadProjectInput = ReloadProjectInfo | string | undefined;
 
 const DEBOUNCE_MS = 300;
 
@@ -10,7 +20,7 @@ class ReloadNotifierImpl {
   private invalidateListeners = new Set<InvalidateListener>();
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingChangedPaths = new Set<string>();
-  private pendingProjectSlug: string | undefined;
+  private pendingProject?: ReloadProjectInfo;
   private metrics = {
     triggerCalls: 0,
     broadcastsSent: 0,
@@ -27,15 +37,17 @@ class ReloadNotifierImpl {
     return () => this.invalidateListeners.delete(listener);
   }
 
-  triggerReload(changedPaths?: string[], projectSlug?: string): void {
+  triggerReload(changedPaths?: string[], project?: ReloadProjectInput): void {
     this.metrics.triggerCalls++;
     this.metrics.lastTriggerTime = Date.now();
+
+    const projectInfo = normalizeProjectInfo(project);
 
     logger.info("[ReloadNotifier] triggerReload called", {
       invalidateListeners: this.invalidateListeners.size,
       reloadListeners: this.listeners.size,
       changedPaths,
-      projectSlug,
+      project: projectInfo,
       timestamp: new Date().toISOString(),
     });
 
@@ -43,7 +55,7 @@ class ReloadNotifierImpl {
       for (const path of changedPaths) this.pendingChangedPaths.add(path);
     }
 
-    if (projectSlug) this.pendingProjectSlug = projectSlug;
+    if (projectInfo) this.pendingProject = projectInfo;
 
     this.notifyInvalidateListeners();
 
@@ -55,22 +67,22 @@ class ReloadNotifierImpl {
       const paths = this.pendingChangedPaths.size > 0
         ? Array.from(this.pendingChangedPaths)
         : undefined;
-      const slug = this.pendingProjectSlug;
+      const projectInfo = this.pendingProject;
 
       this.pendingChangedPaths.clear();
-      this.pendingProjectSlug = undefined;
+      this.pendingProject = undefined;
 
       logger.info(
         "[ReloadNotifier] Debounce complete, notifying reload listeners",
         {
           listenerCount: this.listeners.size,
           changedPaths: paths,
-          projectSlug: slug,
+          project: projectInfo,
           timestamp: new Date().toISOString(),
         },
       );
 
-      this.notifyListeners(paths, slug);
+      this.notifyListeners(paths, projectInfo);
     }, DEBOUNCE_MS);
   }
 
@@ -88,13 +100,13 @@ class ReloadNotifierImpl {
     }
   }
 
-  private notifyListeners(changedPaths?: string[], projectSlug?: string): void {
+  private notifyListeners(changedPaths?: string[], project?: ReloadProjectInfo): void {
     this.metrics.broadcastsSent++;
 
     logger.info("[ReloadNotifier] Notifying reload listeners", {
       count: this.listeners.size,
       changedPaths,
-      projectSlug,
+      project,
       timestamp: new Date().toISOString(),
     });
 
@@ -104,7 +116,7 @@ class ReloadNotifierImpl {
         logger.info(
           `[ReloadNotifier] Calling listener ${listenerIndex + 1}/${this.listeners.size}`,
         );
-        listener(changedPaths, projectSlug);
+        listener(changedPaths, project);
         logger.info(`[ReloadNotifier] Listener ${listenerIndex + 1} completed`);
       } catch (error) {
         logger.error("[ReloadNotifier] Listener error:", error);
@@ -145,7 +157,7 @@ class ReloadNotifierImpl {
     }
 
     this.pendingChangedPaths.clear();
-    this.pendingProjectSlug = undefined;
+    this.pendingProject = undefined;
     this.metrics = {
       triggerCalls: 0,
       broadcastsSent: 0,
@@ -155,3 +167,9 @@ class ReloadNotifierImpl {
 }
 
 export const ReloadNotifier = new ReloadNotifierImpl();
+
+function normalizeProjectInfo(project?: ReloadProjectInput): ReloadProjectInfo | undefined {
+  if (!project) return undefined;
+  if (typeof project === "string") return { projectSlug: project };
+  return project;
+}

@@ -68,6 +68,22 @@ export class KVCacheStore implements CacheStore {
     await kv.delete(["veryfront", "render", key]);
   }
 
+  async deleteByPrefix(prefix: string): Promise<number> {
+    const kv = await this.ensureKV();
+    if (!kv?.list) return 0;
+
+    let deleted = 0;
+    for await (const entry of kv.list({ prefix: ["veryfront", "render"] })) {
+      const key = entry.key?.[2];
+      if (typeof key !== "string") continue;
+      if (!key.startsWith(prefix)) continue;
+      await kv.delete(entry.key);
+      deleted++;
+    }
+
+    return deleted;
+  }
+
   async clear(): Promise<void> {
     const kv = await this.ensureKV();
     if (!kv?.list) return;

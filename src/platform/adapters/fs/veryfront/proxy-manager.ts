@@ -328,7 +328,7 @@ export class ProxyFSAdapterManager {
         clearRendererCacheForProject,
         clearDomainCache,
         triggerReload: (changedPaths, project) =>
-          ReloadNotifier.triggerReload(changedPaths, project?.projectSlug),
+          ReloadNotifier.triggerReload(changedPaths, project),
       },
     };
 
