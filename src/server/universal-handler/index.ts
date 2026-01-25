@@ -596,7 +596,10 @@ export function createVeryfrontHandler(
           ? proxyEnv
           : reqCtx.mode;
 
-        if (isProxyMode && resolvedEnvironment === "production" && projectSlug && !releaseId) {
+        if (
+          isProxyMode && resolvedEnvironment === "production" && projectSlug && !releaseId &&
+          !isLocalProject
+        ) {
           logger.error("[universal] Missing releaseId in proxy mode (production)", {
             projectSlug,
             projectId,
