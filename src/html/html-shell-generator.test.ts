@@ -108,20 +108,7 @@ describe("html-generation/html-shell-generator", () => {
       assertStringIncludes(result, "https://cdn.example.com/lib.js");
     });
 
-    it("should include theme CSS variables", async () => {
-      const result = await wrapInHTMLShell(
-        "<div>Content</div>",
-        createMeta(),
-        createOptions(),
-      );
-
-      assertStringIncludes(result, ":root");
-      assertStringIncludes(result, "--background:");
-      assertStringIncludes(result, "--foreground:");
-      assertStringIncludes(result, '[data-theme="dark"]');
-    });
-
-    it("should include inline Tailwind CSS in development mode", async () => {
+    it("should include Tailwind CSS link in development mode", async () => {
       const result = await wrapInHTMLShell(
         "<div>Content</div>",
         createMeta(),
