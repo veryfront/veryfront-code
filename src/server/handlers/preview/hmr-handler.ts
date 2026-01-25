@@ -22,11 +22,14 @@ interface HMRClientInfo {
   lastActivity: number;
 }
 
+const PING_INTERVAL_MS = 45000;
+
 export class HMRHandler extends BaseHandler {
   private static clientsMap = new Map<string, HMRClientInfo>();
   private static clients = new Set<WebSocket>(); // Keep for backward compatibility with setupWebSocketHandlers
   private static rateLimiter = new RateLimiter(HMR_MAX_MESSAGES_PER_MINUTE);
   private static reloadUnsubscribe: (() => void) | null = null;
+  private static pingInterval: ReturnType<typeof setInterval> | null = null;
   private static initialized = false;
   private static metrics = {
     broadcastsSent: 0,
@@ -55,7 +58,36 @@ export class HMRHandler extends BaseHandler {
       HMRHandler.broadcastUpdate(changedPaths);
     });
 
-    logger.debug("[HMRHandler] Initialized - listening for reload events");
+    HMRHandler.pingInterval = setInterval(() => {
+      HMRHandler.sendPingToAllClients();
+    }, PING_INTERVAL_MS);
+
+    logger.debug("[HMRHandler] Initialized - listening for reload events", {
+      pingIntervalMs: PING_INTERVAL_MS,
+    });
+  }
+
+  private static sendPingToAllClients(): void {
+    if (HMRHandler.clients.size === 0) return;
+
+    const pingMessage = JSON.stringify({ type: "ping", timestamp: Date.now() });
+    let sentCount = 0;
+
+    for (const client of HMRHandler.clients) {
+      if (client.readyState !== WebSocket.OPEN) continue;
+
+      try {
+        client.send(pingMessage);
+        sentCount++;
+      } catch {
+        // Client will be cleaned up on close event
+      }
+    }
+
+    logger.debug("[HMRHandler] Sent ping to clients", {
+      sentCount,
+      totalClients: HMRHandler.clients.size,
+    });
   }
 
   private static requiresFullReload(path: string): boolean {
@@ -256,6 +288,11 @@ export class HMRHandler extends BaseHandler {
   static shutdown(): void {
     HMRHandler.reloadUnsubscribe?.();
     HMRHandler.reloadUnsubscribe = null;
+
+    if (HMRHandler.pingInterval) {
+      clearInterval(HMRHandler.pingInterval);
+      HMRHandler.pingInterval = null;
+    }
 
     for (const client of HMRHandler.clientsMap.values()) {
       try {
