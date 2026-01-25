@@ -502,11 +502,17 @@ export class VeryfrontFSAdapter implements FSAdapter {
             branch: this.contentContext?.branch,
           });
 
-          // Clear caches IMMEDIATELY (before debounce) so new requests
-          // get fresh content during the debounce window
+          // Clear all in-memory caches IMMEDIATELY (before debounce) so new requests
+          // get fresh data during the debounce window. This handles:
+          // - Domain cache: ensures fresh releaseId for production requests
+          // - File list index: ensures fresh content for file reads
+          // - Stat index: ensures correct exists()/stat() for new/deleted files
+          // - Dir tree: ensures correct readdir() for new/deleted files
           this.invalidationCallbacks.clearDomainCache?.();
           this.readOps.clearFileListIndex();
-          logger.debug("[VeryfrontFSAdapter] Domain cache and file list index cleared immediately on POKE");
+          this.statOps.clearIndex();
+          this.dirOps.clearTree();
+          logger.debug("[VeryfrontFSAdapter] All in-memory caches cleared immediately on POKE");
 
           if (changedPaths?.length) {
             this.scheduleSelectiveInvalidation(changedPaths);
@@ -760,10 +766,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
       this.cache.deleteByPrefixAsync("files:env:"),
     ]);
 
+    // These caches are also cleared immediately on POKE receipt (before debounce).
+    // These calls are redundant safety nets for the full invalidation flow.
     this.statOps.clearIndex();
     this.dirOps.clearTree();
-    // Domain cache is also cleared immediately on POKE receipt (before debounce).
-    // This call is a redundant safety net for the full invalidation flow.
     this.invalidationCallbacks.clearDomainCache?.();
 
     const projectId = this.client.getProjectId();
