@@ -73,6 +73,8 @@ export interface App {
   clearErrors(): void;
   /** Add a log entry to the logs area */
   log(level: "info" | "warn" | "error" | "debug", message: string): void;
+  /** Intercept console output and route to TUI logs */
+  interceptConsole(): () => void;
 }
 
 /**
@@ -592,6 +594,37 @@ export function createApp(config: AppConfig): App {
     },
     log: (level: "info" | "warn" | "error" | "debug", message: string): void => {
       update(addLog(level, message));
+    },
+    interceptConsole: (): (() => void) => {
+      if (!isInteractiveMode) return () => {};
+
+      const origLog = console.log;
+      const origError = console.error;
+      const origWarn = console.warn;
+      const origInfo = console.info;
+
+      const capture = (level: "info" | "warn" | "error" | "debug") => (...args: unknown[]): void => {
+        const msg = args
+          .map((a) => (typeof a === "string" ? a : JSON.stringify(a)))
+          .join(" ")
+          .replace(/\x1b\[[0-9;]*m/g, ""); // Strip ANSI codes
+        if (msg.trim()) {
+          state = addLog(level, msg)(state);
+          render();
+        }
+      };
+
+      console.log = capture("info");
+      console.error = capture("error");
+      console.warn = capture("warn");
+      console.info = capture("info");
+
+      return () => {
+        console.log = origLog;
+        console.error = origError;
+        console.warn = origWarn;
+        console.info = origInfo;
+      };
     },
   };
 }

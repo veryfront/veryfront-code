@@ -281,6 +281,9 @@ async function main(): Promise<void> {
     headless: args.headless,
   });
 
+  // Intercept console output and route to TUI (must be before server ready)
+  const restoreConsole = app.interceptConsole();
+
   // Mark server as ready
   app.setServerReady();
 
@@ -289,6 +292,9 @@ async function main(): Promise<void> {
   const shutdown = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
+
+    // Restore console before shutdown messages
+    restoreConsole();
 
     const inFlightCount = requestTracker.getInFlightCount();
     console.log(`\nShutting down... (${inFlightCount} in-flight requests)`);
