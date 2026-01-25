@@ -104,9 +104,10 @@ describe("ProxyFSAdapterManager", () => {
 
     it("should ignore branch for production mode", () => {
       const manager = createManager();
+      // Production mode requires releaseId
       assertEquals(
-        manager.hasAdapter("project", true, null, "main"),
-        manager.hasAdapter("project", true, null, "feature-x"),
+        manager.hasAdapter("project", true, "rel-123", "main"),
+        manager.hasAdapter("project", true, "rel-123", "feature-x"),
       );
       manager.dispose();
     });

@@ -25,7 +25,9 @@ export class VeryfrontRenderer {
   private projectDir: string;
   private mode: "development" | "production";
   private preloadedConfig?: VeryfrontConfig;
-  private projectId?: string;
+  private projectId: string;
+  private projectSlug: string;
+  private contentSourceId: string;
   private mdxCompiler!: MDXCompiler;
   private layoutOrchestrator!: LayoutOrchestrator;
   private htmlGenerator!: HTMLGenerator;
@@ -39,7 +41,25 @@ export class VeryfrontRenderer {
     this.port = options.port ?? DEFAULT_DASHBOARD_PORT;
     this.moduleServerUrl = options.moduleServerUrl;
     this.preloadedConfig = options.config;
-    this.projectId = options.projectId;
+    // Generate a short projectId if not provided - use hash of projectDir to avoid
+    // issues with long paths being URL-encoded in cache directories
+    this.projectId = options.projectId ?? this.hashProjectDir(options.projectDir);
+    this.projectSlug = options.projectSlug ?? options.projectId ??
+      this.hashProjectDir(options.projectDir);
+    this.contentSourceId = options.contentSourceId ?? "build-static";
+  }
+
+  /** Generate a short hash-based identifier from a path */
+  private hashProjectDir(path: string): string {
+    // Simple hash function to create a short, URL-safe identifier
+    let hash = 0;
+    for (let i = 0; i < path.length; i++) {
+      const char = path.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32-bit integer
+    }
+    // Convert to base36 and make positive
+    return `proj_${Math.abs(hash).toString(36)}`;
   }
 
   initialize(): Promise<void> {
@@ -66,6 +86,7 @@ export class VeryfrontRenderer {
           port: this.port,
           moduleServerUrl: this.moduleServerUrl,
           projectId: this.projectId,
+          contentSourceId: this.contentSourceId,
         });
         this.services = await this.lifecycle.initialize();
 
@@ -93,6 +114,8 @@ export class VeryfrontRenderer {
     this.layoutOrchestrator = new LayoutOrchestrator({
       projectDir,
       projectId: this.projectId,
+      projectSlug: this.projectSlug,
+      contentSourceId: this.contentSourceId,
       adapter,
       config,
       mode,
@@ -131,15 +154,33 @@ export class VeryfrontRenderer {
   }
 
   renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
-    return withSpan("renderer.renderPage", () => this.renderPipeline.renderPage(slug, options), {
-      "renderer.slug": slug,
-    });
+    // Inject instance-level context values into render options
+    const mergedOptions: RenderOptions = {
+      ...options,
+      projectId: options?.projectId ?? this.projectId,
+      projectSlug: options?.projectSlug ?? this.projectSlug,
+      contentSourceId: options?.contentSourceId ?? this.contentSourceId,
+    };
+    return withSpan(
+      "renderer.renderPage",
+      () => this.renderPipeline.renderPage(slug, mergedOptions),
+      {
+        "renderer.slug": slug,
+      },
+    );
   }
 
   resolvePageData(slug: string, options?: RenderOptions): Promise<PageDataResponse> {
+    // Inject instance-level context values into render options
+    const mergedOptions: RenderOptions = {
+      ...options,
+      projectId: options?.projectId ?? this.projectId,
+      projectSlug: options?.projectSlug ?? this.projectSlug,
+      contentSourceId: options?.contentSourceId ?? this.contentSourceId,
+    };
     return withSpan(
       "renderer.resolvePageData",
-      () => this.renderPipeline.resolvePageData(slug, options),
+      () => this.renderPipeline.resolvePageData(slug, mergedOptions),
       { "renderer.slug": slug },
     );
   }

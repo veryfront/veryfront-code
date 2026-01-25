@@ -5,6 +5,7 @@ import type { EnrichedContext } from "../../server/context/enriched-context.ts";
 import {
   buildRenderCacheKey,
   buildRenderCachePrefix,
+  computeContentSourceId,
   parseRenderCacheKey,
 } from "../../cache/keys.ts";
 
@@ -19,6 +20,8 @@ export interface RenderContext {
   adapter: RuntimeAdapter;
   cachePrefix: string;
   environment: RenderEnvironment;
+  /** Content source identifier for cache isolation (e.g., "release-abc123", "preview-main", "local-main") */
+  contentSourceId: string;
   branch?: string | null;
   releaseId?: string;
   proxyToken?: string;
@@ -41,20 +44,32 @@ export function createRenderContext(
     return createRenderContextFromEnriched(ctx.enriched, options);
   }
 
+  // Fallback path: when no enriched context (legacy/edge cases)
+  // Validate required fields - no bandaids
   if (!ctx.config) {
     throw new Error("RenderContext requires config to be pre-loaded");
   }
   if (!ctx.adapter) {
     throw new Error("RenderContext requires adapter");
   }
+  if (!ctx.projectSlug && !ctx.projectId) {
+    throw new Error("RenderContext requires projectSlug or projectId");
+  }
 
   const environment: RenderEnvironment = ctx.requestContext?.mode ?? "preview";
   const branch = ctx.requestContext?.branch ?? null;
-  const projectId = ctx.projectId ?? ctx.projectSlug ?? "__single__";
-  const projectSlug = ctx.projectSlug ?? ctx.projectId ?? "__single__";
-  const releaseKey = environment === "production"
-    ? (ctx.releaseId ?? "latest")
-    : (branch ?? "draft");
+  const projectId = ctx.projectId ?? ctx.projectSlug!;
+  const projectSlug = ctx.projectSlug ?? ctx.projectId!;
+  const isLocalDev = ctx.requestContext?.isLocalDev ?? false;
+
+  // Use shared utility for contentSourceId - this will throw if production without releaseId
+  const contentSourceId = computeContentSourceId(isLocalDev, environment, branch, ctx.releaseId);
+
+  // For local dev, always use branch as releaseKey (no real releases in local dev)
+  // For remote production, use releaseId; for remote preview, use branch
+  const releaseKey = isLocalDev
+    ? (branch ?? "main")
+    : (environment === "production" ? ctx.releaseId! : (branch ?? "main"));
   const cachePrefix = buildRenderCachePrefix(projectId, environment, releaseKey);
 
   return {
@@ -62,10 +77,11 @@ export function createRenderContext(
     projectSlug,
     projectDir: ctx.projectDir,
     config: ctx.config,
-    mode: ctx.requestContext?.isLocalDev ? "development" : "production",
+    mode: isLocalDev ? "development" : "production",
     adapter: ctx.adapter,
     cachePrefix,
     environment,
+    contentSourceId,
     branch,
     releaseId: ctx.releaseId,
     proxyToken: ctx.proxyToken,
@@ -85,6 +101,9 @@ export function createRenderContextFromEnriched(
   if (!enriched.adapter) {
     throw new Error("EnrichedContext is missing required adapter");
   }
+  if (!enriched.contentSourceId) {
+    throw new Error("EnrichedContext is missing required contentSourceId");
+  }
 
   return {
     projectId: enriched.projectId,
@@ -95,6 +114,7 @@ export function createRenderContextFromEnriched(
     adapter: enriched.adapter,
     cachePrefix: enriched.cachePrefix,
     environment: enriched.environment,
+    contentSourceId: enriched.contentSourceId,
     branch: enriched.branch,
     releaseId: enriched.releaseId,
     proxyToken: enriched.token ?? undefined,

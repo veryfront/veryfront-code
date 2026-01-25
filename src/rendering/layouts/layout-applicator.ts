@@ -24,12 +24,9 @@ import { PageContextProvider } from "veryfront/context";
 
 export interface LayoutApplicationOptions {
   projectDir: string;
-  projectId?: string;
-  /** Project slug for HTTP fallback in multi-project mode */
-  projectSlug?: string;
-  /** Content source identifier for cache isolation (branch name or release ID) */
-  contentSourceId?: string;
-  /** Preloaded import map for MDX layout application */
+  projectId: string;
+  projectSlug: string;
+  contentSourceId: string;
   preloadedImportMap?: ImportMapConfig | null;
   adapter: RuntimeAdapter;
   config: VeryfrontConfig;
@@ -37,11 +34,8 @@ export interface LayoutApplicationOptions {
   mergedComponents: MDXComponents;
   mode: "development" | "production";
   moduleServerUrl?: string;
-  /** Request URL for SSR - provides domain for useRouter() */
   requestUrl?: URL;
-  /** Merged frontmatter from pageBundle and entity for PageContextProvider */
   frontmatter?: Record<string, unknown>;
-  /** Headings extracted from MDX content for table of contents/sidebar navigation */
   headings?: Array<{ id: string; text: string; level: number }>;
 }
 
@@ -55,9 +49,9 @@ export class LayoutApplicator {
   private requestUrl?: URL;
   private frontmatter?: Record<string, unknown>;
   private headings?: Array<{ id: string; text: string; level: number }>;
-  private projectId?: string;
-  private projectSlug?: string;
-  private contentSourceId?: string;
+  private projectId: string;
+  private projectSlug: string;
+  private contentSourceId: string;
   private preloadedImportMap?: ImportMapConfig | null;
 
   constructor(options: LayoutApplicationOptions) {
@@ -211,6 +205,7 @@ export class LayoutApplicator {
           layoutDataMap,
           this.projectId,
           this.projectSlug,
+          this.contentSourceId,
         );
       },
       {
@@ -252,6 +247,7 @@ export class LayoutApplicator {
                 projectId: this.projectId ?? this.projectDir,
                 dev: this.mode === "development",
                 moduleServerUrl: this.config?.dev?.moduleServerUrl,
+                contentSourceId: this.contentSourceId,
               },
             );
           }
@@ -314,6 +310,7 @@ export class LayoutApplicator {
           projectId: this.projectId ?? this.projectDir,
           dev: this.mode === "development",
           moduleServerUrl: this.config?.dev?.moduleServerUrl,
+          contentSourceId: this.contentSourceId,
         },
       );
     } catch (error) {
@@ -344,6 +341,7 @@ export class LayoutApplicator {
               this.mode,
               this.adapter,
               this.projectId,
+              this.contentSourceId,
             ),
             tryLoadReservedInDirs(
               searchDirs,
@@ -352,6 +350,7 @@ export class LayoutApplicator {
               this.mode,
               this.adapter,
               this.projectId,
+              this.contentSourceId,
             ),
           ]);
 

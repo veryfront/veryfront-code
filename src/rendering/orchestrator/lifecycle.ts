@@ -29,6 +29,8 @@ export interface LifecycleOptions {
   moduleServerUrl?: string;
   /** Project ID (UUID) for SSR cache isolation in multi-project mode */
   projectId?: string;
+  /** Content source identifier for cache isolation (branch or release) */
+  contentSourceId?: string;
 }
 
 export interface RendererServices {
@@ -50,6 +52,7 @@ export class RendererLifecycle {
   private port: number;
   private moduleServerUrl?: string;
   private projectId?: string;
+  private contentSourceId?: string;
   private services?: RendererServices;
   private adapter!: RuntimeAdapter;
 
@@ -58,6 +61,7 @@ export class RendererLifecycle {
     this.port = options.port;
     this.moduleServerUrl = options.moduleServerUrl;
     this.projectId = options.projectId;
+    this.contentSourceId = options.contentSourceId;
   }
 
   async initialize(): Promise<RendererServices> {
@@ -85,6 +89,7 @@ export class RendererLifecycle {
       this.moduleServerUrl,
       undefined,
       this.projectId,
+      this.contentSourceId,
     );
 
     const renderCacheConfig = config.cache?.render ?? {};

@@ -28,7 +28,12 @@ describe("Proxy Handler", () => {
               id: "proj-123",
               slug: "my-project",
               name: "My Project",
-              environments: [{ id: "env-1", name: "production" }],
+              environments: [{
+                id: "env-1",
+                name: "production",
+                domains: ["example.com"],
+                active_release_id: "rel-123",
+              }],
             });
           }
 
@@ -152,8 +157,9 @@ describe("Proxy Handler", () => {
         },
       });
 
-      const req = new Request("http://my-project.veryfront.com/page", {
-        headers: { host: "my-project.veryfront.com" },
+      // Use preview subdomain to avoid production releaseId requirement
+      const req = new Request("http://my-project.preview.veryfront.com/page", {
+        headers: { host: "my-project.preview.veryfront.com" },
       });
 
       const ctx = await handler.processRequest(req);
@@ -161,6 +167,7 @@ describe("Proxy Handler", () => {
       assertEquals(ctx.projectSlug, "my-project");
       assertEquals(ctx.error, undefined);
       assertEquals(ctx.token, "fallback-token");
+      assertEquals(ctx.environment, "preview");
 
       await handler.close();
     });

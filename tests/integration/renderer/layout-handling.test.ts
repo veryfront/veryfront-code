@@ -697,6 +697,10 @@ describe(
             {},
             cache,
             adapter,
+            undefined, // layoutDataMap
+            context.projectId,
+            context.projectId, // projectSlug
+            "build-static", // contentSourceId
           );
 
           assertExists(result);
@@ -756,6 +760,10 @@ describe(
             {},
             cache,
             adapter,
+            undefined, // layoutDataMap
+            context.projectId,
+            context.projectId, // projectSlug
+            "build-static", // contentSourceId
           );
 
           assertExists(result);
@@ -778,6 +786,10 @@ describe(
             {},
             cache,
             adapter,
+            undefined, // layoutDataMap
+            context.projectId,
+            context.projectId, // projectSlug
+            "build-static", // contentSourceId
           );
 
           // Should return the original element
@@ -814,6 +826,10 @@ describe(
             cache,
             context.projectDir,
             adapter,
+            undefined,
+            context.projectId,
+            context.projectId,
+            "build-static",
           );
 
           assertExists(result);
@@ -851,6 +867,10 @@ describe(
             cache,
             context.projectDir,
             adapter,
+            undefined,
+            context.projectId,
+            context.projectId,
+            "build-static",
           );
 
           assertExists(result);
@@ -873,6 +893,10 @@ describe(
             cache,
             context.projectDir,
             adapter,
+            undefined,
+            context.projectId,
+            context.projectId,
+            "build-static",
           );
 
           assertEquals(result, pageElement);
@@ -927,6 +951,10 @@ describe(
             cache,
             context.projectDir,
             adapter,
+            undefined,
+            context.projectId,
+            context.projectId,
+            "build-static",
           );
 
           assertExists(result);
@@ -965,6 +993,10 @@ describe(
             cache,
             context.projectDir,
             adapter,
+            undefined,
+            context.projectId,
+            context.projectId,
+            "build-static",
           );
 
           assertExists(result);
@@ -1003,6 +1035,10 @@ describe(
             cache,
             context.projectDir,
             adapter,
+            undefined,
+            context.projectId,
+            context.projectId,
+            "build-static",
           );
 
           assertExists(result);
@@ -1072,6 +1108,10 @@ describe(
             cache,
             context.projectDir,
             adapter,
+            undefined, // layoutDataMap
+            context.projectId,
+            context.projectId, // projectSlug
+            "build-static", // contentSourceId
           );
 
           assertExists(result);
@@ -1131,6 +1171,10 @@ describe(
             cache,
             context.projectDir,
             adapter,
+            undefined, // layoutDataMap
+            context.projectId,
+            context.projectId, // projectSlug
+            "build-static", // contentSourceId
           );
 
           assertExists(result);

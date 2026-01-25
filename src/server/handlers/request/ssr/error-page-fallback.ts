@@ -4,6 +4,7 @@ import type { ResponseBuilder } from "#veryfront/security/index.ts";
 import { join as joinPath } from "#veryfront/platform/compat/path/index.ts";
 import { serverLogger as logger } from "#veryfront/utils";
 import { buildErrorPageCacheKey } from "#veryfront/cache";
+import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 import { generateErrorHtml } from "../../../utils/error-html.ts";
 
 type ErrorPageType = "404" | "500" | "_error";
@@ -147,6 +148,14 @@ async function loadErrorComponent(
     "@veryfront/modules/react-loader/component-loader.ts"
   );
 
+  const contentSourceId = ctx.enriched?.contentSourceId ??
+    computeContentSourceId(
+      ctx.requestContext?.isLocalDev ?? false,
+      ctx.resolvedEnvironment ?? ctx.requestContext?.mode ?? "preview",
+      ctx.requestContext?.branch ?? null,
+      ctx.releaseId,
+    );
+
   const Component = await loadComponentFromSource(
     src,
     filePath,
@@ -155,6 +164,7 @@ async function loadErrorComponent(
     {
       projectId: ctx.projectId ?? ctx.projectDir,
       dev: ctx.requestContext?.isLocalDev ?? false,
+      contentSourceId,
     },
   );
 

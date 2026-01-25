@@ -15,11 +15,9 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 export interface LayoutOrchestratorConfig {
   projectDir: string;
-  projectId?: string;
-  /** Project slug for HTTP fallback in multi-project mode */
-  projectSlug?: string;
-  /** Content source identifier for cache isolation (branch name or release ID) */
-  contentSourceId?: string;
+  projectId: string;
+  projectSlug: string;
+  contentSourceId: string;
   adapter: RuntimeAdapter;
   config: VeryfrontConfig;
   mode: "development" | "production";
@@ -51,7 +49,7 @@ export class LayoutOrchestrator {
 
   clearCache(): void {
     this.config.layoutCache.clear();
-    clearSSRModuleCacheForProject(this.config.projectId ?? this.config.projectDir);
+    clearSSRModuleCacheForProject(this.config.projectId);
     clearImportMapCache(this.config.projectDir);
     this._preloadedImportMap = null;
   }

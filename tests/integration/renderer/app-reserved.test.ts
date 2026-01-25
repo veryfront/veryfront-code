@@ -56,13 +56,18 @@ describe(
         assertEquals(typeof ErrorBoundary, "function");
         assertEquals(ErrorBoundary.name, "ErrorBoundary");
 
+        // Cast to access static method (TypeScript doesn't infer static methods from class return types)
+        const ErrorBoundaryClass = ErrorBoundary as typeof ErrorBoundary & {
+          getDerivedStateFromError: (error: Error) => { hasError: boolean; error?: Error };
+        };
+
         // Verify it's a class component with proper static method
-        assertExists(ErrorBoundary.getDerivedStateFromError);
-        assertEquals(typeof ErrorBoundary.getDerivedStateFromError, "function");
+        assertExists(ErrorBoundaryClass.getDerivedStateFromError);
+        assertEquals(typeof ErrorBoundaryClass.getDerivedStateFromError, "function");
 
         // Verify error state handling
         const error = new Error("Test error");
-        const errorState = ErrorBoundary.getDerivedStateFromError(error);
+        const errorState = ErrorBoundaryClass.getDerivedStateFromError(error);
         assertEquals(errorState.hasError, true);
         assertEquals(errorState.error, error);
       });

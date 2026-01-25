@@ -12,7 +12,6 @@ import React from "react";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
-import { getCacheNamespace } from "#veryfront/utils/cache/keys/namespace.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { loadImportMap, transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
@@ -61,12 +60,21 @@ function resolveProjectDir(context: ESMLoaderContext): string {
 async function initializeCacheDir(context: ESMLoaderContext): Promise<string> {
   if (context.esmCacheDir) return context.esmCacheDir;
 
+  if (!context.projectId) {
+    throw new Error(
+      `Missing projectId for MDX ESM cache directory (projectSlug: ${context.projectSlug})`,
+    );
+  }
+  if (!context.contentSourceId) {
+    throw new Error(
+      `Missing contentSourceId for MDX ESM cache directory (project: ${context.projectId})`,
+    );
+  }
+
   const localFs = getLocalFs();
   const baseCacheDir = getMdxEsmCacheDir();
-  const projectKey = context.projectId ? encodeURIComponent(context.projectId) : "default";
-  const sourceKey = context.contentSourceId
-    ? encodeURIComponent(context.contentSourceId)
-    : "default";
+  const projectKey = encodeURIComponent(context.projectId);
+  const sourceKey = encodeURIComponent(context.contentSourceId);
   const persistentCacheDir = join(baseCacheDir, projectKey, sourceKey);
 
   try {
@@ -182,11 +190,17 @@ async function processVfModuleImports(
     return code;
   }
 
+  if (!context.projectId) {
+    throw new Error(
+      `Missing projectId for module fetching (projectSlug: ${context.projectSlug})`,
+    );
+  }
+
   const fetcherContext = createModuleFetcherContext(
     context.esmCacheDir!,
     adapter,
     projectDir,
-    context.projectId ?? "default",
+    context.projectId,
   );
 
   const fetchStart = performance.now();
@@ -449,7 +463,12 @@ async function doLoadModuleESM(
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: transformReactToLocalPaths DONE`, { projectSlug });
 
     const codeHash = hashString(rewritten);
-    const namespace = context.projectId || getCacheNamespace() || "default";
+    if (!context.projectId) {
+      throw new Error(
+        `Missing projectId for MDX module cache (projectSlug: ${context.projectSlug})`,
+      );
+    }
+    const namespace = context.projectId;
     const namespaceKey = encodeURIComponent(namespace);
     const compositeKey = `${namespaceKey}:${codeHash}`;
 

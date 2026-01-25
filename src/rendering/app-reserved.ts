@@ -76,6 +76,7 @@ export async function tryLoadReservedInDirs(
   _mode: "development" | "production",
   adapter: RuntimeAdapter,
   projectId?: string,
+  contentSourceId?: string,
 ): Promise<ReservedComponent | null> {
   const join = (a: string, b: string) => `${a.replace(/\/$/, "")}/${b.replace(/^\//, "")}`;
   const candidateName = RESERVED_COMPONENTS[which];
@@ -91,6 +92,7 @@ export async function tryLoadReservedInDirs(
         const Cmp = await loadComponentFromSource(src, file, projectDir, adapter, {
           projectId: projectId ?? projectDir,
           dev: true,
+          contentSourceId,
         });
         if (typeof Cmp === "function") return Cmp as ReservedComponent;
       } catch {

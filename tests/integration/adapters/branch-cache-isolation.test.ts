@@ -54,14 +54,20 @@ describe("Branch Cache Isolation - Context Verification", () => {
       );
       assertEquals(releaseKey, "proxy:test-project:production:rel_123");
 
-      // Production mode without releaseId uses "latest"
-      const latestKey = buildProxyManagerCacheKey(
-        "test-project",
-        true,
-        null, // no releaseId
-        null,
-      );
-      assertEquals(latestKey, "proxy:test-project:production:latest");
+      // Production mode without releaseId throws an error
+      let threw = false;
+      try {
+        buildProxyManagerCacheKey(
+          "test-project",
+          true,
+          null, // no releaseId - should throw
+          null,
+        );
+      } catch (e) {
+        threw = true;
+        assertEquals((e as Error).message, "Missing releaseId in production for test-project");
+      }
+      assertEquals(threw, true, "Expected error when releaseId is missing in production mode");
     });
   });
 

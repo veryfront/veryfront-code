@@ -40,6 +40,8 @@ export interface SSGOptions {
   config: VeryfrontConfig;
   enablePrefetch: boolean;
   chunkManifest: ChunkManifest | null;
+  /** Content source identifier for cache isolation (defaults to "build-static" for static builds) */
+  contentSourceId?: string;
   baseUrl?: string;
   dryRun?: boolean;
   traceStep?: <T>(name: string, fn: () => Promise<T>) => Promise<T>;
@@ -73,6 +75,7 @@ export async function buildPagesRoutes(
     renderer,
     enablePrefetch,
     chunkManifest,
+    contentSourceId = "build-static",
     baseUrl = "",
     dryRun = false,
     traceStep = defaultTraceStep,
@@ -83,7 +86,10 @@ export async function buildPagesRoutes(
 
   for (const route of routes) {
     try {
-      const result = await traceStep(`page:${route.slug}`, () => renderer.renderPage(route.slug));
+      const result = await traceStep(
+        `page:${route.slug}`,
+        () => renderer.renderPage(route.slug, { contentSourceId }),
+      );
 
       let enhancedHtml = result.html;
 
@@ -163,7 +169,14 @@ export async function buildAppRoutes(
   appRoutes: AppRouteInfo[],
   options: SSGOptions,
 ): Promise<SSGStats> {
-  const { adapter, projectDir, outputDir, dryRun = false, traceStep = defaultTraceStep } = options;
+  const {
+    adapter,
+    projectDir,
+    outputDir,
+    contentSourceId = "build-static",
+    dryRun = false,
+    traceStep = defaultTraceStep,
+  } = options;
 
   const stats: SSGStats = { pages: 0, totalSize: 0, ssgPaths: [] };
   if (appRoutes.length === 0) return stats;
@@ -178,6 +191,7 @@ export async function buildAppRoutes(
           projectDir,
           routePath: route.path,
           pageFile: route.pageFile,
+          contentSourceId,
         }));
 
       const outputPath = getAppRouteOutputPath(outputDir, route.path);

@@ -59,15 +59,18 @@ describe("RenderContext", () => {
       assertEquals(ctx.projectId, "proj_123");
       assertEquals(ctx.projectSlug, "test-project");
       assertEquals(ctx.projectDir, "/projects/test-project");
-      // mode is "development" in test environment (NODE_ENV !== "production")
+      // mode is "development" because isLocalDev=true
       assertEquals(ctx.mode, "development");
       assertEquals(ctx.environment, "production");
       assertEquals(ctx.releaseId, "rel_456");
       assertEquals(ctx.proxyToken, "token_xyz");
-      assertEquals(ctx.cachePrefix, `proj_123:production:rel_456:${VERSION}`);
+      // Local dev uses branch for cache prefix (no real releases in local dev)
+      assertEquals(ctx.cachePrefix, `proj_123:production:main:${VERSION}`);
+      // Local dev uses local-{branch} format
+      assertEquals(ctx.contentSourceId, "local-main");
     });
 
-    it("uses draft for preview environment", () => {
+    it("uses main branch for preview environment", () => {
       const handlerCtx: HandlerContext = {
         projectDir: "/projects/test-project",
         projectId: "proj_123",
@@ -82,10 +85,11 @@ describe("RenderContext", () => {
       const ctx = createRenderContext(handlerCtx);
 
       assertEquals(ctx.environment, "preview");
-      assertEquals(ctx.cachePrefix, `proj_123:preview:draft:${VERSION}`);
+      assertEquals(ctx.cachePrefix, `proj_123:preview:main:${VERSION}`);
+      assertEquals(ctx.contentSourceId, "local-main");
     });
 
-    it("uses __single__ for single-project mode", () => {
+    it("throws without projectSlug or projectId", () => {
       const handlerCtx: HandlerContext = {
         projectDir: "/projects/test-project",
         adapter: mockAdapter as any,
@@ -94,11 +98,11 @@ describe("RenderContext", () => {
         cspUserHeader: null,
       };
 
-      const ctx = createRenderContext(handlerCtx);
-
-      assertEquals(ctx.projectId, "__single__");
-      assertEquals(ctx.projectSlug, "__single__");
-      assertEquals(ctx.cachePrefix, `__single__:preview:draft:${VERSION}`);
+      assertThrows(
+        () => createRenderContext(handlerCtx),
+        Error,
+        "RenderContext requires projectSlug or projectId",
+      );
     });
 
     it("throws without config", () => {
@@ -116,6 +120,26 @@ describe("RenderContext", () => {
         "RenderContext requires config to be pre-loaded",
       );
     });
+
+    it("throws for production without releaseId (remote)", () => {
+      const handlerCtx: HandlerContext = {
+        projectDir: "/projects/test-project",
+        projectId: "proj_123",
+        projectSlug: "test-project",
+        adapter: mockAdapter as any,
+        config: mockConfig as any,
+        securityConfig: null,
+        cspUserHeader: null,
+        requestContext: { mode: "production", slug: "test-project", branch: null, token: "", isLocalDev: false },
+        // Missing releaseId
+      };
+
+      assertThrows(
+        () => createRenderContext(handlerCtx),
+        Error,
+        "Missing releaseId for production contentSourceId",
+      );
+    });
   });
 
   describe("createCacheKey", () => {
@@ -129,6 +153,7 @@ describe("RenderContext", () => {
         adapter: mockAdapter as any,
         cachePrefix: "proj_123:production:rel_456",
         environment: "production",
+        contentSourceId: "release-rel_456",
         releaseId: "rel_456",
       };
 
@@ -146,6 +171,7 @@ describe("RenderContext", () => {
         adapter: mockAdapter as any,
         cachePrefix: "proj_A:production:v1",
         environment: "production",
+        contentSourceId: "release-v1",
         releaseId: "v1",
       };
 
@@ -158,6 +184,7 @@ describe("RenderContext", () => {
         adapter: mockAdapter as any,
         cachePrefix: "proj_B:production:v1",
         environment: "production",
+        contentSourceId: "release-v1",
         releaseId: "v1",
       };
 
@@ -180,12 +207,14 @@ describe("RenderContext", () => {
         adapter: mockAdapter as any,
         cachePrefix: "proj_123:production:v1",
         environment: "production",
+        contentSourceId: "release-v1",
         releaseId: "v1",
       };
 
       const ctxV2: RenderContext = {
         ...ctxV1,
         cachePrefix: "proj_123:production:v2",
+        contentSourceId: "release-v2",
         releaseId: "v2",
       };
 
@@ -226,6 +255,7 @@ describe("RenderContext", () => {
         adapter: mockAdapter as any,
         cachePrefix: "proj_123:production:v1",
         environment: "production",
+        contentSourceId: "release-v1",
         releaseId: "v1",
       };
 
@@ -246,6 +276,7 @@ describe("RenderContext", () => {
         adapter: mockAdapter as any,
         cachePrefix: "proj_A:production:v1",
         environment: "production",
+        contentSourceId: "release-v1",
         releaseId: "v1",
       };
 
@@ -258,6 +289,7 @@ describe("RenderContext", () => {
         adapter: mockAdapter as any,
         cachePrefix: "proj_B:production:v1",
         environment: "production",
+        contentSourceId: "release-v1",
         releaseId: "v1",
       };
 

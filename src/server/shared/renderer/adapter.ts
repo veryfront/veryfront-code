@@ -30,6 +30,7 @@ import type {
 } from "../../../rendering/orchestrator/types.ts";
 import type { MdxBundle } from "#veryfront/types";
 import { APICacheStore } from "../../../rendering/cache/stores/api-store.ts";
+import { computeContentSourceId } from "../../../cache/keys.ts";
 
 export interface RendererAdapter {
   renderPage(slug: string, options?: RenderOptions): Promise<RenderResult>;
@@ -130,14 +131,22 @@ async function createContextFromHandler(ctx: HandlerContext): Promise<RenderCont
   }
 
   const contextStartTime = performance.now();
+  const environment = resolveEnvironment(ctx);
+  const branch = ctx.requestContext?.branch ?? null;
+  const isLocalDev = ctx.requestContext?.isLocalDev ?? false;
+
+  // Use shared utility for contentSourceId (fallback path when no enriched context)
+  const contentSourceId = computeContentSourceId(isLocalDev, environment, branch, ctx.releaseId);
+
   const enriched = buildEnrichedContext({
     projectId: ctx.projectId ?? ctx.projectSlug ?? "__single__",
     projectSlug: ctx.projectSlug ?? ctx.projectId ?? "__single__",
     projectDir: ctx.projectDir,
     token: ctx.proxyToken ?? "",
-    environment: resolveEnvironment(ctx),
-    branch: ctx.requestContext?.branch ?? null,
-    isLocalDev: ctx.requestContext?.isLocalDev ?? false,
+    environment,
+    branch,
+    isLocalDev,
+    contentSourceId,
     parsedDomain: ctx.parsedDomain ?? {
       slug: null,
       branch: null,

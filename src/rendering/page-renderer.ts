@@ -165,6 +165,7 @@ export class PageRenderer {
                   moduleServerUrl: this.moduleServerUrl,
                   projectId: options?.projectId,
                   studioEmbed: options?.studioEmbed,
+                  contentSourceId: options?.contentSourceId,
                 },
               ),
             { "render.component_path": pageInfo.entity.path },

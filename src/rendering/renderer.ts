@@ -80,13 +80,8 @@ function getEnv(name: string): string | undefined {
   return g.Deno?.env?.get(name) ?? g.process?.env?.[name];
 }
 
-function getContentSourceId(ctx: RenderContext): string {
-  if (ctx.environment === "production") {
-    return `release-${ctx.releaseId ?? "latest"}`;
-  }
-  const branch = ctx.branch ?? "main";
-  return `preview-${branch}`;
-}
+// contentSourceId is computed by the proxy and validated in enriched-context.
+// It's passed through the entire pipeline as ctx.contentSourceId.
 
 /**
  * Master timeout for entire render pipeline (must be less than REQUEST_TIMEOUT_MS).
@@ -239,7 +234,7 @@ export class Renderer {
     startTime: number,
   ): Promise<RenderResult> {
     const services = this.createServicesForContext(ctx, options?.colorScheme);
-    const contentSourceId = getContentSourceId(ctx);
+    const contentSourceId = ctx.contentSourceId;
 
     let result: RenderResult;
     try {
@@ -287,7 +282,7 @@ export class Renderer {
       throw new Error("Renderer not initialized. Call initialize() first.");
     }
 
-    const contentSourceId = getContentSourceId(ctx);
+    const contentSourceId = ctx.contentSourceId;
     const services = this.createServicesForContext(ctx);
 
     return services.pipeline.resolvePageData(slug, {
@@ -370,7 +365,7 @@ export class Renderer {
       projectDir: ctx.projectDir,
       projectId: ctx.projectId,
       projectSlug: ctx.projectSlug,
-      contentSourceId: getContentSourceId(ctx),
+      contentSourceId: ctx.contentSourceId,
       adapter: ctx.adapter,
       config: ctx.config,
       mode: ctx.mode,

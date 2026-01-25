@@ -25,6 +25,8 @@ export interface EnrichedContext {
   isLocalDev: boolean;
   mode: RenderMode;
 
+  /** Content source identifier for cache isolation (e.g., "release-abc123", "preview-main", "local-main") */
+  contentSourceId: string;
   releaseId?: string;
   environmentName?: string;
   parsedDomain: ParsedDomain;
@@ -49,6 +51,8 @@ export interface BuildEnrichedContextOptions {
   environment: Environment;
   branch: string | null;
   isLocalDev: boolean;
+  /** Content source identifier for cache isolation - computed by proxy */
+  contentSourceId: string;
   parsedDomain: ParsedDomain;
   adapter: RuntimeAdapter;
   config: VeryfrontConfig;
@@ -62,8 +66,14 @@ export interface BuildEnrichedContextOptions {
 }
 
 export function buildEnrichedContext(options: BuildEnrichedContextOptions): EnrichedContext {
+  // Validate contentSourceId is provided (computed by proxy or fallback path)
+  // The computeContentSourceId() function already validates releaseId requirements
+  if (!options.contentSourceId) {
+    throw new Error(`Missing contentSourceId for ${options.projectSlug}`);
+  }
+
   const releaseKey = options.environment === "production"
-    ? (options.releaseId ?? "latest")
+    ? (options.releaseId ?? "unknown")
     : (options.branch ?? "main");
 
   return {
@@ -77,6 +87,7 @@ export function buildEnrichedContext(options: BuildEnrichedContextOptions): Enri
     isLocalDev: options.isLocalDev,
     mode: options.isLocalDev ? "development" : "production",
 
+    contentSourceId: options.contentSourceId,
     releaseId: options.releaseId,
     environmentName: options.environmentName,
     parsedDomain: options.parsedDomain,

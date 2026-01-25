@@ -91,6 +91,39 @@ export function buildRenderCachePrefix(
   return `${projectId}:${environment}:${releaseKey}:${VERSION}`;
 }
 
+/**
+ * Compute content source identifier for cache isolation.
+ *
+ * This is the SINGLE SOURCE OF TRUTH for contentSourceId computation.
+ * Used by proxy to compute the value, and by fallback paths when proxy header is unavailable.
+ *
+ * @param isLocalDev - Whether this is a local development environment
+ * @param environment - "preview" or "production"
+ * @param branch - Branch name (for preview/local modes)
+ * @param releaseId - Release ID (required for production, ignored for preview/local)
+ * @returns Content source ID string:
+ *   - Local: "local-{branch}"
+ *   - Preview: "preview-{branch}"
+ *   - Production: "release-{releaseId}"
+ */
+export function computeContentSourceId(
+  isLocalDev: boolean,
+  environment: "preview" | "production",
+  branch: string | null | undefined,
+  releaseId: string | null | undefined,
+): string {
+  if (isLocalDev) {
+    return `local-${branch ?? "main"}`;
+  }
+  if (environment === "production") {
+    if (!releaseId) {
+      throw new Error("Missing releaseId for production contentSourceId");
+    }
+    return `release-${releaseId}`;
+  }
+  return `preview-${branch ?? "main"}`;
+}
+
 export function buildRenderCacheKey(cachePrefix: string, contentKey: string): string {
   return `${cachePrefix}:${contentKey}`;
 }
@@ -142,9 +175,17 @@ function buildSourceQualifier(ctx: FileOperationContext): string {
     case "branch":
       return ctx.branch ?? "main";
     case "release":
-      return ctx.releaseId ?? "latest";
+      if (!ctx.releaseId) {
+        throw new Error(`Missing releaseId for release sourceType (project: ${ctx.projectSlug})`);
+      }
+      return ctx.releaseId;
     case "environment":
-      return `${ctx.environmentName}:${ctx.releaseId ?? "unknown"}`;
+      if (!ctx.releaseId) {
+        throw new Error(
+          `Missing releaseId for environment sourceType (project: ${ctx.projectSlug})`,
+        );
+      }
+      return `${ctx.environmentName}:${ctx.releaseId}`;
   }
 }
 
@@ -248,11 +289,9 @@ export function buildLayoutComponentCacheKey(
   projectId: string,
   componentPath: string,
   hash: string,
-  contentSourceId?: string,
+  contentSourceId: string,
 ): string {
-  return `${CacheKeyPrefix.LAYOUT}:${projectId}:${
-    contentSourceId ?? "default"
-  }:${componentPath}:${hash}`;
+  return `${CacheKeyPrefix.LAYOUT}:${projectId}:${contentSourceId}:${componentPath}:${hash}`;
 }
 
 export function buildGitHubContentCacheKey(ref: string, path: string): string {
@@ -294,7 +333,10 @@ export function buildProxyManagerCacheKey(
   branch: string | null,
 ): string {
   const mode = productionMode ? "production" : "preview";
-  const qualifier = productionMode ? (releaseId ?? "latest") : (branch ?? "main");
+  if (productionMode && !releaseId) {
+    throw new Error(`Missing releaseId in production for ${projectSlug}`);
+  }
+  const qualifier = productionMode ? releaseId! : (branch ?? "main");
   return `${CacheKeyPrefix.PROXY}:${projectSlug}:${mode}:${qualifier}`;
 }
 

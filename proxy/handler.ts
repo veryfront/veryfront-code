@@ -19,6 +19,7 @@ import { createFileSystem } from "../src/platform/compat/fs.ts";
 import { cwd } from "../src/platform/compat/process.ts";
 import { join } from "../src/platform/compat/path/index.ts";
 import { injectContext, ProxySpanNames, withSpan } from "./tracing.ts";
+import { computeContentSourceId } from "../src/cache/keys.ts";
 
 /**
  * Domain lookup result from API.
@@ -120,6 +121,7 @@ export interface ProxyContext {
   branchId?: string;
   branchName?: string;
   environment: "preview" | "production";
+  contentSourceId: string;
   localPath?: string;
   host: string;
   parsedDomain: ParsedDomain;
@@ -261,6 +263,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       projectSlug: undefined,
       projectId: undefined,
       environment: scope,
+      contentSourceId: "error",
       localPath: undefined,
       host,
       parsedDomain,
@@ -356,11 +359,31 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       }
     }
 
+    // Error early if remote production but no releaseId
+    if (scope === "production" && projectSlug && !releaseId && !isLocalProject) {
+      logger?.error("Missing releaseId in production", undefined, {
+        projectSlug,
+        projectId,
+        host,
+        environment: scope,
+      });
+      return makeErrorContext(502, `Missing releaseId for production project: ${projectSlug}`, token);
+    }
+
+    // Compute contentSourceId using the single source of truth
+    const contentSourceId = computeContentSourceId(
+      isLocalProject,
+      scope,
+      parsedDomain.branch,
+      releaseId,
+    );
+
     return {
       token,
       projectSlug,
       projectId,
       releaseId,
+      contentSourceId,
       environment: scope,
       localPath,
       host,
@@ -441,6 +464,7 @@ export function injectContextHeaders(req: Request, ctx: ProxyContext): Request {
   if (ctx.token) headers.set("x-token", ctx.token);
   headers.set("x-project-slug", ctx.projectSlug || "");
   headers.set("x-environment", ctx.environment);
+  headers.set("x-content-source-id", ctx.contentSourceId);
   headers.set("x-forwarded-host", ctx.host);
   if (ctx.localPath) headers.set("x-project-path", ctx.localPath);
 

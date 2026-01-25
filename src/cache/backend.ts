@@ -574,8 +574,8 @@ export const CacheBackends = {
   /** Transform cache for compiled code. */
   transform: () => createCacheBackend({ keyPrefix: "transform" }),
 
-  /** File cache for file content. */
-  file: () => createCacheBackend({ keyPrefix: "file" }),
+  /** File cache for file content. Keys already include "file:" prefix from buildFileCacheKeyPrefix. */
+  file: () => createCacheBackend(),
 
   /** Module cache for SSR modules. */
   module: () => createCacheBackend({ keyPrefix: "module" }),

@@ -376,10 +376,15 @@ export class VeryfrontFSAdapter implements FSAdapter {
       }
 
       case "release":
+        if (!this.contentSource.releaseId) {
+          throw new Error(
+            `Missing releaseId for release sourceType (project: ${this.projectSlug})`,
+          );
+        }
         return {
           sourceType: "release",
           projectSlug: this.projectSlug,
-          releaseId: this.contentSource.releaseId ?? "latest",
+          releaseId: this.contentSource.releaseId,
         };
     }
   }

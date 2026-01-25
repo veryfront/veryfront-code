@@ -181,31 +181,36 @@ export class SSRModuleLoader {
   }
 
   private getCacheKey(filePath: string): string {
-    const sourceId = this.options.contentSourceId ?? "default";
+    if (!this.options.contentSourceId) {
+      throw new Error(
+        `Missing contentSourceId for SSR module cache (project: ${this.options.projectId}, file: ${filePath})`,
+      );
+    }
     return buildSSRModuleCacheKey(
       TRANSFORM_CACHE_VERSION,
       this.options.projectId,
-      `${sourceId}:${filePath}`,
+      `${this.options.contentSourceId}:${filePath}`,
     );
   }
 
   private isProductionContentSource(): boolean {
     const sourceId = this.options.contentSourceId;
-    if (sourceId) {
-      if (
-        sourceId.startsWith("preview-") || sourceId === "preview" || sourceId === "preview-draft"
-      ) {
-        return false;
-      }
-      if (
-        sourceId.startsWith("release-") ||
-        sourceId.startsWith("production-") ||
-        sourceId.startsWith("prod-") ||
-        sourceId === "production" ||
-        sourceId === "latest"
-      ) {
-        return true;
-      }
+    if (!sourceId) {
+      return !this.options.dev;
+    }
+
+    if (
+      sourceId.startsWith("preview-") || sourceId === "preview" || sourceId === "preview-draft"
+    ) {
+      return false;
+    }
+    if (
+      sourceId.startsWith("release-") ||
+      sourceId.startsWith("production-") ||
+      sourceId.startsWith("prod-") ||
+      sourceId === "production"
+    ) {
+      return true;
     }
 
     return !this.options.dev;
@@ -656,6 +661,13 @@ export class SSRModuleLoader {
     let projectDir = this.options.projectDir;
     const { projectId, contentSourceId } = this.options;
 
+    if (!projectId) {
+      throw new Error(`Missing projectId for SSR temp directory (projectDir: ${projectDir})`);
+    }
+    if (!contentSourceId) {
+      throw new Error(`Missing contentSourceId for SSR temp directory (project: ${projectId})`);
+    }
+
     if (!projectDir.startsWith("/")) {
       projectDir = join(cwd(), projectDir);
     }
@@ -663,15 +675,15 @@ export class SSRModuleLoader {
     const cacheBaseDir = getCacheBaseDir();
     const baseDir = isAbsolute(cacheBaseDir) ? cacheBaseDir : join(cwd(), cacheBaseDir);
 
-    const cacheKey = `${baseDir}|${buildSSRModuleProjectKey(projectDir, projectId)}|${
-      contentSourceId ?? "default"
-    }`;
+    const cacheKey = `${baseDir}|${
+      buildSSRModuleProjectKey(projectDir, projectId)
+    }|${contentSourceId}`;
 
     const existingDir = globalTmpDirs.get(cacheKey);
     if (existingDir) return existingDir;
 
-    const projectKey = projectId ? this.hashCode(projectId) : "default";
-    const sourceKey = contentSourceId ? this.hashCode(contentSourceId) : "default";
+    const projectKey = this.hashCode(projectId);
+    const sourceKey = this.hashCode(contentSourceId);
     const tmpDir = join(baseDir, "veryfront-ssr", projectKey, sourceKey);
 
     await this.fs.mkdir(tmpDir, { recursive: true });

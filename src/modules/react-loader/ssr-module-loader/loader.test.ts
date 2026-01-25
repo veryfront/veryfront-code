@@ -24,6 +24,7 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const loaderA = new SSRModuleLoader({
         projectDir,
         projectId: "project-a",
+        contentSourceId: "local-main",
         adapter: denoAdapter,
         dev: true,
       });
@@ -31,6 +32,7 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const loaderB = new SSRModuleLoader({
         projectDir,
         projectId: "project-b",
+        contentSourceId: "local-main",
         adapter: denoAdapter,
         dev: true,
       });

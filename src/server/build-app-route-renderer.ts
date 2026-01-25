@@ -24,12 +24,14 @@ async function loadComponent(
   adapter: RuntimeAdapter,
   filePath: string,
   projectDir: string,
+  contentSourceId: string,
 ): Promise<unknown> {
   const src = await adapter.fs.readFile(filePath);
   return loadComponentFromSource(src, filePath, projectDir, adapter, {
     projectId: projectDir,
     dev: false,
     moduleServerUrl: "", // Empty string forces CDN URLs, no module server available
+    contentSourceId,
   });
 }
 
@@ -41,8 +43,9 @@ export async function renderAppRouteToHTML(args: {
   projectDir: string;
   routePath: string;
   pageFile: string;
+  contentSourceId: string;
 }): Promise<string> {
-  const { adapter, projectDir, routePath, pageFile } = args;
+  const { adapter, projectDir, routePath, pageFile, contentSourceId } = args;
 
   const appRoot = join(projectDir, "app");
   const layouts: string[] = [];
@@ -62,7 +65,7 @@ export async function renderAppRouteToHTML(args: {
   // Get React from the project's node_modules to ensure element symbols match
   const React = await getProjectReact();
 
-  const Page = await loadComponent(adapter, pageFile, projectDir);
+  const Page = await loadComponent(adapter, pageFile, projectDir, contentSourceId);
   if (typeof Page !== "function") {
     throw new CompilationError("Invalid page component", { pageFile, type: typeof Page });
   }
@@ -74,7 +77,7 @@ export async function renderAppRouteToHTML(args: {
     if (!layoutPath) continue;
 
     try {
-      const Layout = await loadComponent(adapter, layoutPath, projectDir);
+      const Layout = await loadComponent(adapter, layoutPath, projectDir, contentSourceId);
       if (typeof Layout === "function") {
         element = React.createElement(Layout as ReactComponentLike, { children: element });
       }

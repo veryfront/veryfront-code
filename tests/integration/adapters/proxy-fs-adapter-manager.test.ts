@@ -91,11 +91,20 @@ describe("ProxyFSAdapterManager - Cache Isolation", () => {
     try {
       // These should all be treated as different cache keys:
       // - my-project:preview
-      // - my-project:production:latest
       // - my-project:production:release-1
+      // - my-project:production:release-2
       assert(!manager.hasAdapter("my-project", false, null)); // preview
-      assert(!manager.hasAdapter("my-project", true, null)); // production:latest
       assert(!manager.hasAdapter("my-project", true, "release-1")); // production:release-1
+      assert(!manager.hasAdapter("my-project", true, "release-2")); // production:release-2
+
+      // Production without releaseId should throw
+      let threw = false;
+      try {
+        manager.hasAdapter("my-project", true, null);
+      } catch {
+        threw = true;
+      }
+      assert(threw, "Expected error when releaseId is missing in production mode");
 
       // Verify they're truly independent by checking hasAdapter signature
       // takes productionMode and releaseId into account

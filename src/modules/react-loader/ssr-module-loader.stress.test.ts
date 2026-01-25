@@ -119,6 +119,7 @@ describe("SSRModuleLoader Stress Tests", {
       const loader = new SSRModuleLoader({
         projectDir,
         projectId: "test-concurrent",
+        contentSourceId: "local-main",
         adapter,
         dev: true,
       });
@@ -175,6 +176,7 @@ describe("SSRModuleLoader Stress Tests", {
           new SSRModuleLoader({
             projectDir,
             projectId: "test-deep-deps",
+            contentSourceId: "local-main",
             adapter,
             dev: true,
           }),
@@ -240,6 +242,7 @@ describe("SSRModuleLoader Stress Tests", {
           new SSRModuleLoader({
             projectDir,
             projectId: "test-wide-deps",
+            contentSourceId: "local-main",
             adapter,
             dev: true,
           }),

@@ -69,16 +69,13 @@ export async function loadTSXComponent(
   projectDir: string,
   cache: LayoutComponentCache,
   adapter: RuntimeAdapter,
-  projectId?: string,
-  contentSourceId?: string,
+  projectId: string,
+  contentSourceId: string,
 ): Promise<BundledReact.ComponentType> {
   const source = await adapter.fs.readFile(componentPath);
   const hash = await computeHash(source);
-  const effectiveProjectId = projectId ?? projectDir;
-
-  // Include contentSourceId in cache key for branch/release isolation
   const cacheKey = buildLayoutComponentCacheKey(
-    effectiveProjectId,
+    projectId,
     componentPath,
     hash,
     contentSourceId,
@@ -89,7 +86,7 @@ export async function loadTSXComponent(
 
   const loaded = await loadComponentFromSource(source, componentPath, projectDir, adapter, {
     dev: true,
-    projectId: effectiveProjectId,
+    projectId,
     ssr: true,
     contentSourceId,
   });
@@ -107,24 +104,14 @@ export async function loadTSXComponent(
   return loaded;
 }
 
-/**
- * Load an MDX layout module from a bundle.
- *
- * @param bundle The MDX bundle containing compiled code
- * @param projectDir The project directory
- * @param adapter Runtime adapter for file system access
- * @param projectId Optional project ID for caching
- * @param projectSlug Optional project slug for logging
- * @param contentSourceId Optional content source ID for cache isolation
- * @param preloadedImportMap Optional preloaded import map to avoid reloading
- */
+/** Load an MDX layout module from a bundle. */
 export function loadMDXLayout(
   bundle: MdxBundle,
   projectDir: string,
   adapter: RuntimeAdapter,
-  projectId?: string,
-  projectSlug?: string,
-  contentSourceId?: string,
+  projectId: string,
+  projectSlug: string,
+  contentSourceId: string,
   preloadedImportMap?: ImportMapConfig,
 ): Promise<BundledReact.ComponentType<{ components?: MDXComponents }> | undefined> {
   return withSpan(
@@ -176,26 +163,14 @@ export function loadMDXLayout(
   );
 }
 
-/**
- * Preload an MDX layout module for later use.
- *
- * This is a fire-and-forget operation that loads the module into cache
- * so that subsequent calls to loadMDXLayout will be faster.
- *
- * @param bundle The MDX bundle containing compiled code
- * @param projectDir The project directory
- * @param adapter Runtime adapter for file system access
- * @param projectId Optional project ID for caching
- * @param projectSlug Optional project slug for logging
- * @param contentSourceId Optional content source ID for cache isolation
- */
+/** Preload an MDX layout module into cache for faster subsequent loads. */
 export async function preloadMDXLayoutModule(
   bundle: MdxBundle,
   projectDir: string,
   adapter: RuntimeAdapter,
-  projectId?: string,
-  projectSlug?: string,
-  contentSourceId?: string,
+  projectId: string,
+  projectSlug: string,
+  contentSourceId: string,
 ): Promise<void> {
   // Just call loadMDXLayout - the module loader will cache the result
   await loadMDXLayout(bundle, projectDir, adapter, projectId, projectSlug, contentSourceId);
@@ -207,9 +182,9 @@ export async function applyTSXLayout(
   tsxLayoutModuleCache: LayoutComponentCache,
   projectDir: string,
   adapter: RuntimeAdapter,
-  props?: Record<string, unknown>,
-  projectId?: string,
-  contentSourceId?: string,
+  props: Record<string, unknown> | undefined,
+  projectId: string,
+  contentSourceId: string,
 ): Promise<BundledReact.ReactElement> {
   const start = performance.now();
   logger.debug("[applyTSXLayout] START", { componentPath: item.componentPath, projectId });
@@ -258,9 +233,9 @@ export async function applyMDXLayout(
   projectDir: string,
   mergedComponents: MDXComponents,
   adapter: RuntimeAdapter,
-  projectId?: string,
-  projectSlug?: string,
-  contentSourceId?: string,
+  projectId: string,
+  projectSlug: string,
+  contentSourceId: string,
   preloadedImportMap?: ImportMapConfig,
 ): Promise<BundledReact.ReactElement> {
   const React = await getProjectReact();

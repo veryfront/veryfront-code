@@ -32,6 +32,12 @@ interface ServerOptions {
   signal?: AbortSignal;
   /** Server mode - "development" enables dev-only features like /_veryfront/fs/ */
   mode?: "development" | "production";
+  /** Default project slug when not provided via proxy headers (for tests/local mode) */
+  defaultProjectSlug?: string;
+  /** Default project ID when not provided via proxy headers (for tests/local mode) */
+  defaultProjectId?: string;
+  /** Default environment for standalone mode (preview or production). Defaults to preview for safety. */
+  defaultEnvironment?: "preview" | "production";
 }
 
 export interface ServerHandle {
@@ -48,7 +54,17 @@ export function startUniversalServer(
   return withSpan(
     "server.startUniversalServer",
     async () => {
-      const { projectDir, port, bindAddress = "0.0.0.0", signal, debug, mode } = options;
+      const {
+        projectDir,
+        port,
+        bindAddress = "0.0.0.0",
+        signal,
+        debug,
+        mode,
+        defaultProjectSlug,
+        defaultProjectId,
+        defaultEnvironment,
+      } = options;
       const baseAdapter = options.adapter ?? (await runtime.get());
 
       // Bootstrap framework to initialize FSAdapter if configured
@@ -78,6 +94,9 @@ export function startUniversalServer(
         // When mode is "development", enable dev-only features (e.g., /_veryfront/fs/)
         // Otherwise explicitly disable dev mode (don't rely on NODE_ENV which may not be set in tests)
         envConfig: mode === "development" ? { isLocalDev: true } : { isLocalDev: false },
+        defaultProjectSlug,
+        defaultProjectId,
+        defaultEnvironment,
       });
 
       let resolveListenReady: (() => void) | undefined;

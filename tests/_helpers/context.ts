@@ -117,6 +117,7 @@ export class TestContext {
   private readonly testName: string;
   private tempDir?: string;
   private cacheDir?: string;
+  private _projectId?: string;
   private servers: TestServer[] = [];
   private serverControllers: AbortController[] = [];
   private allocatedPorts: number[] = [];
@@ -152,6 +153,11 @@ export class TestContext {
     // This prevents race conditions when multiple tests write to .cache/veryfront-mdx-esm
     this.cacheDir = await makeTempDir({ prefix: `veryfront_cache_${this.testName}_` });
 
+    // Generate a unique short projectId for cache isolation
+    // Use test name + random suffix to avoid collisions
+    const randomSuffix = Math.random().toString(36).substring(2, 10);
+    this._projectId = `test_${this.testName.replace(/[^a-zA-Z0-9]/g, "_").substring(0, 20)}_${randomSuffix}`;
+
     // NOTE: We intentionally do NOT set VF_CACHE_DIR env var here anymore.
     // Setting a global env var causes race conditions in parallel tests.
     // Instead, we rely entirely on AsyncLocalStorage via runWithCacheDir().
@@ -180,6 +186,17 @@ export class TestContext {
       throw new Error("TestContext not set up. Call setup() first.");
     }
     return this.cacheDir;
+  }
+
+  /**
+   * Gets a unique short projectId for cache isolation
+   * Use this instead of projectDir when a short identifier is needed
+   */
+  get projectId(): string {
+    if (!this._projectId) {
+      throw new Error("TestContext not set up. Call setup() first.");
+    }
+    return this._projectId;
   }
 
   /**
@@ -267,6 +284,9 @@ export class TestContext {
       port,
       bindAddress: hostname,
       signal: controller.signal,
+      // Pass test-specific projectSlug and projectId for cache isolation
+      defaultProjectSlug: this.projectId,
+      defaultProjectId: this.projectId,
     });
 
     // Add to tracked servers

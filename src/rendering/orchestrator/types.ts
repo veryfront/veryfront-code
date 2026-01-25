@@ -15,6 +15,10 @@ export interface RendererOptions {
   config?: VeryfrontConfig;
   /** Project ID (UUID) for SSR cache isolation in multi-project mode */
   projectId?: string;
+  /** Project slug for logging and HTTP fallback */
+  projectSlug?: string;
+  /** Content source identifier for cache isolation (branch or release) */
+  contentSourceId?: string;
   directories?: {
     app?: string;
     pages?: string;

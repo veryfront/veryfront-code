@@ -20,10 +20,10 @@ export function applyLayoutsESM(
   mergedComponents: MDXComponents,
   tsxLayoutModuleCache: LayoutComponentCache,
   adapter: RuntimeAdapter,
-  layoutDataMap?: Map<string, Record<string, unknown>>,
-  projectId?: string,
-  projectSlug?: string,
-  contentSourceId?: string,
+  layoutDataMap: Map<string, Record<string, unknown>> | undefined,
+  projectId: string,
+  projectSlug: string,
+  contentSourceId: string,
   preloadedImportMap?: ImportMapConfig,
 ): Promise<BundledReact.ReactElement> {
   return withSpan(
@@ -146,10 +146,10 @@ export async function applyLayoutsFunctionBody(
   tsxLayoutModuleCache: LayoutComponentCache,
   projectDir: string,
   adapter: RuntimeAdapter,
-  layoutDataMap?: Map<string, Record<string, unknown>>,
-  projectId?: string,
-  _projectSlug?: string,
-  contentSourceId?: string,
+  layoutDataMap: Map<string, Record<string, unknown>> | undefined,
+  projectId: string,
+  _projectSlug: string,
+  contentSourceId: string,
 ): Promise<BundledReact.ReactElement> {
   const React = await getProjectReact();
   let element = pageElement;

@@ -1,6 +1,7 @@
 import type { HandlerContext } from "../../types.ts";
 import type { ResponseBuilder } from "#veryfront/security/index.ts";
 import { join as joinPath } from "#veryfront/platform/compat/path/index.ts";
+import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 
 export async function tryNotFoundFallback(
   req: Request,
@@ -25,6 +26,13 @@ export async function tryNotFoundFallback(
     );
 
     const dirs = await collectAncestorDirs(searchBase, appRoot);
+    const contentSourceId = ctx.enriched?.contentSourceId ??
+      computeContentSourceId(
+        ctx.requestContext?.isLocalDev ?? false,
+        ctx.resolvedEnvironment ?? ctx.requestContext?.mode ?? "preview",
+        ctx.requestContext?.branch ?? null,
+        ctx.releaseId,
+      );
     const NotFoundComp = await tryLoadReservedInDirs(
       dirs,
       "notFound",
@@ -32,6 +40,7 @@ export async function tryNotFoundFallback(
       "production",
       ctx.adapter,
       ctx.projectId,
+      contentSourceId,
     );
 
     if (!NotFoundComp) return null;

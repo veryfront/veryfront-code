@@ -39,6 +39,7 @@ import { getConfig } from "#veryfront/config/loader.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { createRequestContext } from "../context/request-context.ts";
 import { buildEnrichedContext } from "../context/enriched-context.ts";
+import { computeContentSourceId } from "../../cache/keys.ts";
 import { AuthHandler } from "#veryfront/security/http/auth.ts";
 import { CorsHandler } from "../handlers/response/cors.ts";
 import { HealthHandler } from "../handlers/monitoring/health.ts";
@@ -142,6 +143,12 @@ export interface UniversalHandlerOptions {
   localProjects?: Record<string, string>;
   /** Override environment config for isLocalDev (dev server passes { isLocalDev: true }) */
   envConfig?: import("../context/request-context.ts").EnvConfig;
+  /** Default project slug when not provided via proxy headers (for tests/local mode) */
+  defaultProjectSlug?: string;
+  /** Default project ID when not provided via proxy headers (for tests/local mode) */
+  defaultProjectId?: string;
+  /** Default environment for standalone mode (preview or production). Defaults to preview for safety. */
+  defaultEnvironment?: "preview" | "production";
 }
 
 /**
@@ -389,12 +396,14 @@ export function createVeryfrontHandler(
         const parsedDomain = parseProjectDomain(host);
 
         const configuredSlug = config?.fs?.veryfront?.projectSlug;
-        let projectSlug = reqCtx.slug || wsSlugOverride || configuredSlug;
+        let projectSlug = reqCtx.slug || wsSlugOverride || configuredSlug ||
+          opts.defaultProjectSlug;
 
         const proxyToken = reqCtx.token || undefined;
         const proxyReleaseId = req.headers.get("x-release-id") || undefined;
         const proxyProjectId = req.headers.get("x-project-id") || undefined;
-        let projectId: string | undefined = proxyProjectId;
+        const proxyContentSourceId = req.headers.get("x-content-source-id") || undefined;
+        let projectId: string | undefined = proxyProjectId || opts.defaultProjectId;
         let releaseId: string | undefined = proxyReleaseId;
         let environmentName: string | undefined;
 
@@ -601,7 +610,7 @@ export function createVeryfrontHandler(
           });
         }
 
-        const resolvedEnvironment = proxyEnv === "preview" || proxyEnv === "production"
+        let resolvedEnvironment = proxyEnv === "preview" || proxyEnv === "production"
           ? proxyEnv
           : reqCtx.mode;
 
@@ -628,6 +637,42 @@ export function createVeryfrontHandler(
           );
         }
 
+        // In standalone (non-proxy) mode without releaseId, fallback to configured environment
+        // or preview by default. This allows test servers and local development to work.
+        const isStandaloneWithoutRelease = !isProxyMode && resolvedEnvironment === "production" &&
+          !releaseId && !reqCtx.isLocalDev && !isLocalProject;
+
+        if (isStandaloneWithoutRelease) {
+          const fallbackEnv = opts.defaultEnvironment ?? "preview";
+          logger.debug(
+            "[universal] Standalone mode without releaseId, using fallback environment",
+            {
+              projectSlug,
+              resolvedEnvironment,
+              fallbackEnv,
+            },
+          );
+          resolvedEnvironment = fallbackEnv;
+
+          // If falling back to production environment, generate a synthetic releaseId
+          // to satisfy cache key requirements
+          if (fallbackEnv === "production" && !releaseId) {
+            releaseId = "standalone-dev";
+            logger.debug("[universal] Using synthetic releaseId for standalone production mode", {
+              projectSlug,
+              releaseId,
+            });
+          }
+        }
+
+        // Use proxy header if available, otherwise compute using shared utility
+        const contentSourceId = proxyContentSourceId ?? computeContentSourceId(
+          reqCtx.isLocalDev || isLocalProject,
+          resolvedEnvironment,
+          reqCtx.branch,
+          releaseId,
+        );
+
         const enrichedContext = effectiveConfig && projectSlug
           ? buildEnrichedContext({
             projectId: projectId ?? projectSlug,
@@ -636,7 +681,8 @@ export function createVeryfrontHandler(
             token: isLocalProject ? "" : (proxyToken ?? ""),
             environment: resolvedEnvironment,
             branch: reqCtx.branch,
-            isLocalDev: reqCtx.isLocalDev,
+            isLocalDev: reqCtx.isLocalDev || isLocalProject,
+            contentSourceId,
             parsedDomain,
             adapter: effectiveAdapter,
             config: effectiveConfig,
