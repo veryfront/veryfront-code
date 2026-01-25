@@ -255,6 +255,11 @@ function forwardToRenderer(req: Request): Promise<Response> {
       newHeaders.set("x-environment", ctx.environment);
       newHeaders.set("x-forwarded-host", ctx.host);
       if (ctx.localPath) newHeaders.set("x-project-path", ctx.localPath);
+      // Forward project/release context for cache keying
+      if (ctx.projectId) newHeaders.set("x-project-id", ctx.projectId);
+      if (ctx.releaseId) newHeaders.set("x-release-id", ctx.releaseId);
+      if (ctx.branchId) newHeaders.set("x-branch-id", ctx.branchId);
+      if (ctx.branchName) newHeaders.set("x-branch-name", ctx.branchName);
       newHeaders.delete("host");
 
       injectContext(newHeaders);
