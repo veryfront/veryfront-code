@@ -18,7 +18,12 @@ import { PathNormalizer } from "./path-normalizer.ts";
 import { ReadOperations } from "./read-operations.ts";
 import { DirectoryOperations } from "./directory-operations.ts";
 import { StatOperations } from "./stat-operations.ts";
-import { buildFileListCacheKey } from "./cache-keys.ts";
+import {
+  buildDirCacheKeyPrefix,
+  buildFileCacheKeyPrefix,
+  buildFileListCacheKey,
+  buildStatCacheKeyPrefix,
+} from "./cache-keys.ts";
 
 const INVALIDATION_DEBOUNCE_MS = 100;
 const WS_RECONNECT_DELAY_MS = 5000;
@@ -72,8 +77,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
     invalidationsTriggered: 0,
     lastPokeTime: 0,
   };
-  /** Releases with cache deletion in progress - ReadOperations skips persistent cache for these */
-  private pendingReleaseInvalidations = new Set<string>();
+  /** Cache prefixes with deletion in progress - ReadOperations skips persistent cache for these */
+  private pendingPersistentInvalidations = new Set<string>();
 
   /** Content source configuration from config */
   private contentSource: ContentSource;
@@ -131,8 +136,15 @@ export class VeryfrontFSAdapter implements FSAdapter {
         });
         return result;
       },
+      isPersistentCacheInvalidated: (prefix: string) => this.isPersistentCacheInvalidated(prefix),
       isReleaseBeingInvalidated: (releaseId: string) =>
-        this.pendingReleaseInvalidations.has(releaseId),
+        this.isPersistentCacheInvalidated(
+          buildFileCacheKeyPrefix({
+            sourceType: "release",
+            projectSlug: this.projectSlug,
+            releaseId,
+          }),
+        ),
     };
 
     this.statOps = new StatOperations(
@@ -508,6 +520,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
           const normalizedPokeReleaseId =
             typeof pokeReleaseId === "string" && pokeReleaseId.length > 0 ? pokeReleaseId : null;
           const isDeploymentPoke = data.data?.entityType === "deployment";
+          const isPublishPoke = isDeploymentPoke || (isProductionMode && !changedPaths?.length);
+          const pokeEnvironmentName = data.data?.environmentName as string | null | undefined;
+          const normalizedPokeEnvironment =
+            typeof pokeEnvironmentName === "string" && pokeEnvironmentName.length > 0
+              ? pokeEnvironmentName
+              : this.contentContext?.environmentName ??
+                (isProductionMode ? "production" : undefined);
 
           logger.info("[VeryfrontFSAdapter] POKE ACCEPTED - triggering cache invalidation", {
             changedPathsCount: changedPaths?.length || 0,
@@ -515,7 +534,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
             projectSlug: this.projectSlug,
             branch: this.contentContext?.branch,
             isDeploymentPoke,
+            isPublishPoke,
             pokeReleaseId: normalizedPokeReleaseId,
+            pokeEnvironmentName: normalizedPokeEnvironment,
           });
 
           // Clear in-memory caches immediately (before debounce) for fresh data
@@ -525,64 +546,108 @@ export class VeryfrontFSAdapter implements FSAdapter {
           this.dirOps.clearTree();
           logger.debug("[VeryfrontFSAdapter] All in-memory caches cleared immediately on POKE");
 
-          // Clear persistent cache for deployment POKEs to prevent stale hits
-          if (isDeploymentPoke && normalizedPokeReleaseId && this.projectSlug) {
-            const releasePrefix = `file:release:${this.projectSlug}:${normalizedPokeReleaseId}:`;
-            const statReleasePrefix =
-              `stat:release:${this.projectSlug}:${normalizedPokeReleaseId}:`;
-            const dirReleasePrefix = `dir:release:${this.projectSlug}:${normalizedPokeReleaseId}:`;
-            const filesReleasePrefix =
-              `files:release:${this.projectSlug}:${normalizedPokeReleaseId}`;
+          // Clear persistent cache for publish/deployment pokes to prevent stale hits
+          if (isPublishPoke && this.projectSlug) {
+            const deletionPrefixes = new Set<string>();
+            const pendingPrefixes = new Set<string>();
 
-            // Mark as invalidating before deletion, clear after completion
-            this.pendingReleaseInvalidations.add(normalizedPokeReleaseId);
+            const addContextPrefixes = (ctx: ResolvedContentContext): void => {
+              const filePrefix = buildFileCacheKeyPrefix(ctx);
+              const statPrefix = buildStatCacheKeyPrefix(ctx);
+              const dirPrefix = buildDirCacheKeyPrefix(ctx);
+              const filesPrefix = buildFileListCacheKey(ctx);
+
+              deletionPrefixes.add(filePrefix);
+              deletionPrefixes.add(statPrefix);
+              deletionPrefixes.add(dirPrefix);
+              deletionPrefixes.add(filesPrefix);
+              pendingPrefixes.add(filePrefix);
+            };
+
+            const addBroadPrefixes = (sourceType: "release" | "environment"): void => {
+              const sourceKey = sourceType === "release" ? "release" : "env";
+              const base = `${sourceKey}:${this.projectSlug}:`;
+
+              deletionPrefixes.add(`file:${base}`);
+              deletionPrefixes.add(`stat:${base}`);
+              deletionPrefixes.add(`dir:${base}`);
+              deletionPrefixes.add(`files:${base}`);
+              pendingPrefixes.add(`file:${base}`);
+            };
+
+            if (normalizedPokeReleaseId) {
+              addContextPrefixes({
+                sourceType: "release",
+                projectSlug: this.projectSlug,
+                releaseId: normalizedPokeReleaseId,
+              });
+
+              if (normalizedPokeEnvironment) {
+                addContextPrefixes({
+                  sourceType: "environment",
+                  projectSlug: this.projectSlug,
+                  environmentName: normalizedPokeEnvironment,
+                  releaseId: normalizedPokeReleaseId,
+                });
+              }
+            } else {
+              // Fallback: clear all env/release caches for this project
+              addBroadPrefixes("release");
+              addBroadPrefixes("environment");
+            }
+
+            for (const prefix of pendingPrefixes) {
+              this.pendingPersistentInvalidations.add(prefix);
+            }
 
             logger.info(
-              "[VeryfrontFSAdapter] DEPLOYMENT POKE - clearing persistent cache for release",
+              "[VeryfrontFSAdapter] PUBLISH POKE - clearing persistent cache",
               {
-                releaseId: normalizedPokeReleaseId,
                 projectSlug: this.projectSlug,
-                prefixes: [releasePrefix, statReleasePrefix, dirReleasePrefix, filesReleasePrefix],
-                pendingInvalidations: this.pendingReleaseInvalidations.size,
+                releaseId: normalizedPokeReleaseId,
+                environmentName: normalizedPokeEnvironment,
+                deletionPrefixes: Array.from(deletionPrefixes),
+                pendingPrefixes: Array.from(pendingPrefixes),
+                pendingInvalidations: this.pendingPersistentInvalidations.size,
               },
             );
 
             void (async () => {
               try {
-                const [fileCount, statCount, dirCount, filesCount] = await Promise.all([
-                  this.cache.deleteByPrefixAsync(releasePrefix),
-                  this.cache.deleteByPrefixAsync(statReleasePrefix),
-                  this.cache.deleteByPrefixAsync(dirReleasePrefix),
-                  this.cache.deleteByPrefixAsync(filesReleasePrefix),
-                ]);
+                const results = await Promise.all(
+                  Array.from(deletionPrefixes).map((prefix) =>
+                    this.cache.deleteByPrefixAsync(prefix)
+                  ),
+                );
+                const totalDeleted = results.reduce((sum, count) => sum + count, 0);
                 logger.info(
-                  "[VeryfrontFSAdapter] DEPLOYMENT POKE - persistent cache cleared for release",
+                  "[VeryfrontFSAdapter] PUBLISH POKE - persistent cache cleared",
                   {
-                    releaseId: normalizedPokeReleaseId,
                     projectSlug: this.projectSlug,
-                    deletedCounts: {
-                      file: fileCount,
-                      stat: statCount,
-                      dir: dirCount,
-                      files: filesCount,
-                    },
+                    releaseId: normalizedPokeReleaseId,
+                    environmentName: normalizedPokeEnvironment,
+                    totalDeleted,
                   },
                 );
               } catch (error) {
                 logger.warn(
-                  "[VeryfrontFSAdapter] DEPLOYMENT POKE - failed to clear persistent cache",
+                  "[VeryfrontFSAdapter] PUBLISH POKE - failed to clear persistent cache",
                   {
+                    projectSlug: this.projectSlug,
                     releaseId: normalizedPokeReleaseId,
+                    environmentName: normalizedPokeEnvironment,
                     error: error instanceof Error ? error.message : String(error),
                   },
                 );
               } finally {
-                this.pendingReleaseInvalidations.delete(normalizedPokeReleaseId);
+                for (const prefix of pendingPrefixes) {
+                  this.pendingPersistentInvalidations.delete(prefix);
+                }
                 logger.debug(
-                  "[VeryfrontFSAdapter] DEPLOYMENT POKE - release invalidation complete",
+                  "[VeryfrontFSAdapter] PUBLISH POKE - cache invalidation complete",
                   {
-                    releaseId: normalizedPokeReleaseId,
-                    pendingInvalidations: this.pendingReleaseInvalidations.size,
+                    projectSlug: this.projectSlug,
+                    pendingInvalidations: this.pendingPersistentInvalidations.size,
                   },
                 );
               }
@@ -625,6 +690,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
         WS_RECONNECT_DELAY_MS,
       );
     }
+  }
+
+  private isPersistentCacheInvalidated(prefix: string): boolean {
+    for (const pending of this.pendingPersistentInvalidations) {
+      if (prefix.startsWith(pending) || pending.startsWith(prefix)) return true;
+    }
+    return false;
   }
 
   private startHeartbeat(projectId: string): void {

@@ -22,7 +22,9 @@ export interface ContentContextProvider {
       updated_at?: string;
     }> | undefined
   >;
-  /** True if release cache is being deleted - skip persistent cache reads */
+  /** True if cache prefix is being deleted - skip persistent cache reads */
+  isPersistentCacheInvalidated?: (prefix: string) => boolean;
+  /** Back-compat: release-scoped invalidation */
   isReleaseBeingInvalidated?: (releaseId: string) => boolean;
 }
 
@@ -232,16 +234,20 @@ export class ReadOperations {
     }
 
     if (isProduction) {
-      // Skip persistent cache if release is being invalidated (prevents stale reads during deletion)
+      // Skip persistent cache if this prefix is being invalidated (prevents stale reads during deletion)
       const currentReleaseId = ctx?.releaseId;
-      const isBeingInvalidated = currentReleaseId &&
+      const isPrefixInvalidated =
+        this.contextProvider?.isPersistentCacheInvalidated?.(cacheKeyPrefix) ?? false;
+      const isReleaseInvalidated = currentReleaseId &&
         this.contextProvider?.isReleaseBeingInvalidated?.(currentReleaseId);
 
-      if (isBeingInvalidated) {
-        logger.info("[ReadOperations] PERSISTENT_CACHE_SKIPPED - release being invalidated", {
+      if (isPrefixInvalidated || isReleaseInvalidated) {
+        logger.info("[ReadOperations] PERSISTENT_CACHE_SKIPPED - cache invalidation in progress", {
           path: normalizedPath,
           cacheKey,
-          releaseId: currentReleaseId,
+          cacheKeyPrefix,
+          releaseId: currentReleaseId ?? undefined,
+          prefixInvalidated: isPrefixInvalidated,
         });
       } else {
         const cached = await this.cache.getAsync<string>(cacheKey);
