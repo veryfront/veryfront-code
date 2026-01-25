@@ -18,9 +18,8 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
-import { getDenoReactImportMap } from "#veryfront/modules/import-map/default-import-map.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
-import { getReactImportMap, REACT_VERSION } from "./package-registry.ts";
+import { getDenoNpmReactMap, getReactImportMap, REACT_VERSION } from "./package-registry.ts";
 import { parseImports, replaceSpecifiers } from "./lexer.ts";
 import type { CacheBackend } from "#veryfront/cache/backend.ts";
 
@@ -155,7 +154,7 @@ function resolveBareSpecifier(
   // Deno's native npm resolution ensures all modules share the same React instance.
   // See: https://deno.com/blog/not-using-npm-specifiers-doing-it-wrong
   if (isDeno) {
-    const denoReactMap = getDenoReactImportMap();
+    const denoReactMap = getDenoNpmReactMap(reactVersion);
     const denoMatch = denoReactMap[specifier];
     if (denoMatch) return denoMatch;
 

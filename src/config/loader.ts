@@ -7,6 +7,7 @@ import { isBun } from "#veryfront/platform/compat/runtime.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { DEFAULT_CACHE_DIR } from "#veryfront/utils/constants/server.ts";
+import { setReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
 import { buildConfigCacheKey } from "../cache/keys.ts";
 import { DEFAULT_PORT } from "./defaults.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
@@ -195,6 +196,13 @@ function validateAndCacheConfig(userConfig: unknown, cacheKey: string): Veryfron
   validateConfigShape(userConfig);
 
   const merged = mergeConfigs(userConfig as Partial<VeryfrontConfig>);
+
+  // Apply React version from config (sets global default for transforms)
+  if (merged.react?.version) {
+    setReactVersion(merged.react.version);
+    serverLogger.debug("[CONFIG] React version set from config", { version: merged.react.version });
+  }
+
   configCacheByProject.set(cacheKey, { revision: cacheRevision, config: merged });
   return merged;
 }

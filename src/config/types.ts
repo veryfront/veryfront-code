@@ -2,6 +2,11 @@ export interface VeryfrontConfig {
   projectSlug?: string;
   title?: string;
   description?: string;
+  /** React configuration */
+  react?: {
+    /** React version to use (e.g., "18.3.1", "19.1.1"). Defaults to auto-detect from package.json or 19.1.1 */
+    version?: string;
+  };
   directories?: {
     app?: string;
     pages?: string;

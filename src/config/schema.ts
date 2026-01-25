@@ -25,6 +25,13 @@ export const veryfrontConfigSchema = z
     projectSlug: z.string().optional(),
     title: z.string().optional(),
     description: z.string().optional(),
+    react: z
+      .object({
+        /** React version to use (e.g., "18.3.1", "19.1.1"). Defaults to auto-detect from package.json or 19.1.1 */
+        version: z.string().optional(),
+      })
+      .partial()
+      .optional(),
     experimental: z
       .object({
         esmLayouts: z.boolean().optional(),
