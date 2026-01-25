@@ -598,16 +598,19 @@ export function createApp(config: AppConfig): App {
     interceptConsole: (): (() => void) => {
       if (!isInteractiveMode) return () => {};
 
-      const origLog = console.log;
-      const origError = console.error;
-      const origWarn = console.warn;
-      const origInfo = console.info;
+      const orig = {
+        log: console.log,
+        error: console.error,
+        warn: console.warn,
+        info: console.info,
+        debug: console.debug,
+      };
 
       const capture = (level: "info" | "warn" | "error" | "debug") => (...args: unknown[]): void => {
         const msg = args
           .map((a) => (typeof a === "string" ? a : JSON.stringify(a)))
           .join(" ")
-          .replace(/\x1b\[[0-9;]*m/g, ""); // Strip ANSI codes
+          .replace(/\x1b\[[0-9;]*m/g, "");
         if (msg.trim()) {
           state = addLog(level, msg)(state);
           render();
@@ -618,13 +621,9 @@ export function createApp(config: AppConfig): App {
       console.error = capture("error");
       console.warn = capture("warn");
       console.info = capture("info");
+      console.debug = capture("debug");
 
-      return () => {
-        console.log = origLog;
-        console.error = origError;
-        console.warn = origWarn;
-        console.info = origInfo;
-      };
+      return () => Object.assign(console, orig);
     },
   };
 }
