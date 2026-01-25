@@ -490,9 +490,12 @@ document.head.appendChild(errorScript);
 
   let ws = null;
   let reconnectAttempts = 0;
-  const maxReconnectAttempts = 20;
   const baseDelay = 1000; // Start with 1s
   const maxDelay = 30000; // Cap at 30s
+  const pingIntervalMs = 30000; // Keepalive ping every 30s
+  const pongTimeoutMs = 90000; // Reconnect if no pong for 90s
+  let pingIntervalId = null;
+  let lastPongAt = Date.now();
 
   // Exponential backoff with jitter
   function getReconnectDelay() {
@@ -502,14 +505,8 @@ document.head.appendChild(errorScript);
   }
 
   function connect() {
-    if (reconnectAttempts >= maxReconnectAttempts) {
-      console.warn('[Preview HMR] Max reconnection attempts (' + maxReconnectAttempts + ') reached. Live updates disabled.');
-      console.warn('[Preview HMR] Refresh the page to re-enable live updates.');
-      return;
-    }
-
     if (reconnectAttempts > 0) {
-      console.log('[Preview HMR] Reconnecting... (attempt ' + (reconnectAttempts + 1) + '/' + maxReconnectAttempts + ')');
+      console.log('[Preview HMR] Reconnecting... (attempt ' + (reconnectAttempts + 1) + ')');
     }
 
     ws = new WebSocket(wsUrl);
@@ -520,6 +517,24 @@ document.head.appendChild(errorScript);
         console.log('[Preview HMR] Reconnected successfully after ' + reconnectAttempts + ' attempts');
       }
       reconnectAttempts = 0;
+      lastPongAt = Date.now();
+      if (pingIntervalId !== null) {
+        clearInterval(pingIntervalId);
+      }
+      pingIntervalId = setInterval(() => {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        const sincePong = Date.now() - lastPongAt;
+        if (sincePong > pongTimeoutMs) {
+          console.warn('[Preview HMR] Pong timeout (' + sincePong + 'ms), reconnecting...');
+          try { ws.close(); } catch {}
+          return;
+        }
+        try {
+          ws.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
+        } catch (e) {
+          console.warn('[Preview HMR] Failed to send ping:', e && e.message ? e.message : e);
+        }
+      }, pingIntervalMs);
     };
 
     ws.onmessage = (event) => {
@@ -529,6 +544,9 @@ document.head.appendChild(errorScript);
         console.log('[Preview HMR] Parsed message:', JSON.stringify(data, null, 2));
 
         switch (data.type) {
+          case 'pong':
+            lastPongAt = Date.now();
+            break;
           case 'update':
             console.log('[Preview HMR] Handling update for path:', data.path);
             handleUpdate(data);
@@ -558,6 +576,10 @@ document.head.appendChild(errorScript);
     };
 
     ws.onclose = (event) => {
+      if (pingIntervalId !== null) {
+        clearInterval(pingIntervalId);
+        pingIntervalId = null;
+      }
       reconnectAttempts++;
       const delay = getReconnectDelay();
       console.log('[Preview HMR] Connection closed (code: ' + event.code + ', reason: ' + (event.reason || 'none') + ')');

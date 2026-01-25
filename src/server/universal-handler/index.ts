@@ -383,8 +383,10 @@ export function createVeryfrontHandler(
         let projectSlug = reqCtx.slug || wsSlugOverride || configuredSlug;
 
         const proxyToken = reqCtx.token || undefined;
-        let projectId: string | undefined;
-        let releaseId: string | undefined;
+        const proxyReleaseId = req.headers.get("x-release-id") || undefined;
+        const proxyProjectId = req.headers.get("x-project-id") || undefined;
+        let projectId: string | undefined = proxyProjectId;
+        let releaseId: string | undefined = proxyReleaseId;
         let environmentName: string | undefined;
 
         logger.debug("[universal] config state", {
@@ -399,6 +401,8 @@ export function createVeryfrontHandler(
           finalProjectSlug: projectSlug,
           isVeryfrontDomain: parsedDomain.isVeryfrontDomain,
           isLocalDev: reqCtx.isLocalDev,
+          proxyReleaseId,
+          proxyProjectId,
         });
 
         const shouldSkipDomainLookup = isInternalHost(host) || isMonitoringPath(url.pathname);

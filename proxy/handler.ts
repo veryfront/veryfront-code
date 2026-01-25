@@ -28,7 +28,12 @@ interface DomainLookupResult {
   id: string;
   slug: string;
   name: string;
-  environments?: Array<{ id: string; name: string }>;
+  environments?: Array<{
+    id: string;
+    name: string;
+    domains?: string[];
+    active_release_id?: string | null;
+  }>;
 }
 
 /**
@@ -237,6 +242,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     const scope = getScope(parsedDomain.environment);
     let projectSlug = parsedDomain.slug || undefined;
     let projectId: string | undefined;
+    let releaseId: string | undefined;
     const isCustomDomain = !projectSlug && !parsedDomain.isVeryfrontDomain;
 
     const localPath = projectSlug ? await findLocalProject(projectSlug) : undefined;
@@ -301,10 +307,22 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         if (lookupResult) {
           projectSlug = lookupResult.slug;
           projectId = lookupResult.id;
+
+          // Find matching environment for this domain and extract active release
+          const normalizedHost = host.toLowerCase().replace(/:\d+$/, "");
+          const matchingEnv = lookupResult.environments?.find((env) =>
+            env.domains?.some((d) => d.toLowerCase() === normalizedHost)
+          );
+          if (matchingEnv?.active_release_id) {
+            releaseId = matchingEnv.active_release_id;
+          }
+
           logger?.info("Resolved custom domain to project", {
             domain: host,
             projectSlug,
             projectId,
+            releaseId,
+            environmentName: matchingEnv?.name,
           });
         } else {
           logger?.error("Custom domain not found", undefined, { domain: host });
@@ -317,6 +335,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       token,
       projectSlug,
       projectId,
+      releaseId,
       environment: scope,
       localPath,
       host,

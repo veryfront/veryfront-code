@@ -449,14 +449,15 @@ export class VeryfrontFSAdapter implements FSAdapter {
             timeSinceLastPokeMs: timeSinceLastPoke,
           });
 
-          // Skip pokes that don't match our environment
+          // In production mode, we accept branch-scoped pokes too.
+          // Production renders always fetch published content, so clearing caches
+          // on preview edits is safe and avoids stale content after publish.
           if (isProductionMode && !isProductionPoke) {
-            logger.debug("[VeryfrontFSAdapter] POKE SKIPPED - preview poke in production mode", {
+            logger.debug("[VeryfrontFSAdapter] POKE ACCEPTED - branch-scoped poke in production mode", {
               pokeBranchId: normalizedBranchId,
               pokeBranchName: normalizedBranchName,
               sourceType: this.contentContext?.sourceType,
             });
-            return;
           }
 
           if (!isProductionMode) {
