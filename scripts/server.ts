@@ -215,6 +215,21 @@ async function main(): Promise<void> {
 
   await clearModuleCaches();
 
+  const localProjects = await discoverLocalProjects(args.projectPath);
+
+  // Create app early so we can intercept console before server starts
+  const app = createApp({
+    port: args.port,
+    projects: localProjects.projects,
+    examples: localProjects.examples,
+    defaultProject: localProjects.default ?? undefined,
+    mcpPort: args.mcpPort,
+    headless: args.headless,
+  });
+
+  // Intercept console BEFORE creating server (must be early to catch all logs)
+  const restoreConsole = app.interceptConsole();
+
   // Show startup animation (skip in headless mode)
   if (!args.headless) {
     await showStartup([
@@ -223,8 +238,6 @@ async function main(): Promise<void> {
       "Starting server",
     ]);
   }
-
-  const localProjects = await discoverLocalProjects(args.projectPath);
 
   // Import dependencies
   const { createProxyHandler, injectContextHeaders } = await import("../proxy/handler.ts");
@@ -270,19 +283,6 @@ async function main(): Promise<void> {
   const mcpServer = await createMCPServer({
     httpPort: args.mcpPort,
   });
-
-  // Create and start the app
-  const app = createApp({
-    port: args.port,
-    projects: localProjects.projects,
-    examples: localProjects.examples,
-    defaultProject: localProjects.default ?? undefined,
-    mcpPort: args.mcpPort,
-    headless: args.headless,
-  });
-
-  // Intercept console output and route to TUI (must be before server ready)
-  const restoreConsole = app.interceptConsole();
 
   // Mark server as ready
   app.setServerReady();
