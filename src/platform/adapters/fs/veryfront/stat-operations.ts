@@ -5,7 +5,7 @@ import { FileCache } from "../cache/file-cache.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 import { createError, toError } from "#veryfront/errors";
 import type { ContentContextProvider } from "./read-operations.ts";
-import { buildFileListCacheKey, buildStatCacheKeyPrefix } from "./cache-keys.ts";
+import { buildFileCacheKeyPrefix, buildFileListCacheKey, buildStatCacheKeyPrefix } from "./cache-keys.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 const EXTENSION_PRIORITY = [".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"] as const;
@@ -205,8 +205,12 @@ export class StatOperations {
 
   private async getAllFilesRaw(): Promise<ProjectFile[]> {
     const cacheStart = performance.now();
+    const ctx = this.contextProvider?.getContentContext();
+    const cacheKeyPrefix = buildFileCacheKeyPrefix(ctx);
+    const skipPersistentCache =
+      this.contextProvider?.isPersistentCacheInvalidated?.(cacheKeyPrefix) ?? false;
 
-    if (this.contextProvider?.getFileList) {
+    if (!skipPersistentCache && this.contextProvider?.getFileList) {
       const files = await this.contextProvider.getFileList();
       if (files) {
         const cacheMs = Math.round(performance.now() - cacheStart);
@@ -218,10 +222,16 @@ export class StatOperations {
       }
     }
 
-    const ctx = this.contextProvider?.getContentContext();
     const cacheKey = buildFileListCacheKey(ctx);
 
-    const cached = await this.cache.getAsync<ProjectFile[]>(cacheKey);
+    if (skipPersistentCache) {
+      logger.debug("[StatOperations] getAllFilesRaw - skipping persistent cache (invalidation)", {
+        cacheKey,
+        cacheKeyPrefix,
+      });
+    }
+
+    const cached = skipPersistentCache ? undefined : await this.cache.getAsync<ProjectFile[]>(cacheKey);
     const cacheMs = Math.round(performance.now() - cacheStart);
 
     if (cached) {

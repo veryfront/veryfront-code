@@ -327,6 +327,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
         environmentName: this.contentContext.environmentName,
         releaseId: this.contentContext.releaseId,
       });
+
+      // Keep a WebSocket connection in environment mode to receive deployment pokes.
+      // Release mode is immutable, so no need to keep a live connection.
+      if (this.contentContext.sourceType === "environment") {
+        this.connectWebSocket(projectId);
+      }
     } catch (error) {
       this.fileListReadyReject?.(error instanceof Error ? error : new Error(String(error)));
       this.fileListReadyResolve = null;

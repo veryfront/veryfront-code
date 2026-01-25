@@ -206,6 +206,7 @@ export class ReadOperations {
     const cacheKeyPrefix = buildFileCacheKeyPrefix(ctx);
     const cacheKey = `${cacheKeyPrefix}:${normalizedPath}`;
     const isProduction = this.contextProvider?.isProductionMode() ?? false;
+    let skipPersistentCaches = false;
 
     logger.debug("[ReadOperations] fetchContent context", {
       path: normalizedPath,
@@ -241,7 +242,9 @@ export class ReadOperations {
       const isReleaseInvalidated = currentReleaseId &&
         this.contextProvider?.isReleaseBeingInvalidated?.(currentReleaseId);
 
-      if (isPrefixInvalidated || isReleaseInvalidated) {
+      skipPersistentCaches = isPrefixInvalidated || !!isReleaseInvalidated;
+
+      if (skipPersistentCaches) {
         logger.info("[ReadOperations] PERSISTENT_CACHE_SKIPPED - cache invalidation in progress", {
           path: normalizedPath,
           cacheKey,
@@ -265,11 +268,18 @@ export class ReadOperations {
       }
     }
 
-    const fileListContent = await this.getContentFromFileList(normalizedPath);
-    if (fileListContent) {
-      if (isProduction) this.cache.set(cacheKey, fileListContent);
-      setRequestScopedFile(cacheKey, fileListContent);
-      return fileListContent;
+    if (!skipPersistentCaches) {
+      const fileListContent = await this.getContentFromFileList(normalizedPath);
+      if (fileListContent) {
+        if (isProduction) this.cache.set(cacheKey, fileListContent);
+        setRequestScopedFile(cacheKey, fileListContent);
+        return fileListContent;
+      }
+    } else {
+      logger.debug("[ReadOperations] Skipping file list cache due to invalidation", {
+        path: normalizedPath,
+        cacheKeyPrefix,
+      });
     }
 
     this.cleanupStaleInFlightRequests();
