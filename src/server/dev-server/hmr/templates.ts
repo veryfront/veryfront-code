@@ -84,34 +84,20 @@ export function generateHMRClientTemplate(
       console.warn('[HMR] Update message missing path');
       return;
     }
+    // CSS changes: refresh link href
     if (update.path.endsWith('.css')) {
-      updateCSS(update.path);
+      console.log('[HMR] CSS changed, refreshing stylesheet');
+      refreshTailwindCSS();
       return;
     }
     updateJS(update.path);
   }
 
-  function updateCSS(path) {
-    let updated = false;
-    document.querySelectorAll('link[rel="stylesheet"]').forEach((link) => {
-      try {
-        const url = new URL(link.href);
-        if (url.pathname !== path) return;
-
-        const newUrl = new URL(link.href);
-        newUrl.searchParams.set('t', Date.now().toString());
-        link.href = newUrl.toString();
-        updated = true;
-      } catch (error) {
-        console.error('[HMR] Failed to update CSS link:', error);
-      }
-    });
-
-    // Fallback: if CSS is inlined (no matching link found), do full reload
-    if (updated) return;
-
-    console.warn('[HMR] No matching stylesheet link for ' + path + ', reloading page');
-    window.location.reload();
+  function refreshTailwindCSS() {
+    const link = document.getElementById('vf-tailwind-css');
+    if (!link) return;
+    link.href = '/_vf_styles/globals.css?t=' + Date.now();
+    console.log('[HMR] Tailwind CSS link refreshed');
   }
 
   function updateJS(path) {
@@ -123,6 +109,9 @@ export function generateHMRClientTemplate(
       script.onload = () => {
         // Clear component cache to ensure fresh components are loaded
         window.__veryfrontClearComponentCache?.();
+
+        // Refresh Tailwind CSS (JS changes may introduce new classes)
+        refreshTailwindCSS();
 
         // Re-render the page with fresh components
         // This is more reliable than React Refresh for our architecture

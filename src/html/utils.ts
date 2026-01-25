@@ -1,7 +1,6 @@
 import { escapeHTML } from "./html-escape.ts";
 import type { VeryfrontConfig } from "#veryfront/config/types.ts";
 import { REACT_DEFAULT_VERSION, VERYFRONT_VERSION } from "#veryfront/utils/constants/cdn.ts";
-import { getTailwindImportMap } from "#veryfront/transforms/esm/package-registry.ts";
 
 function joinAttributes(attrs: Array<string | false | undefined | null | "">): string {
   return attrs.filter(Boolean).join(" ");
@@ -150,7 +149,6 @@ function buildCdnImportMapFromTemplates(
     "veryfront/components/ai": templates.veryfrontComponentsAi(veryfront),
     "veryfront/primitives": templates.veryfrontPrimitives(veryfront),
     ...(includePlatformUtilities ? PLATFORM_UTILITIES : {}),
-    ...getTailwindImportMap(),
   };
 }
 
@@ -183,7 +181,6 @@ function getSelfHostedImportMap(versions: DetectedVersions): Record<string, stri
     "veryfront/router": PLATFORM_UTILITY_PATHS.router,
     "veryfront/context": PLATFORM_UTILITY_PATHS.context,
     "veryfront/fonts": PLATFORM_UTILITY_PATHS.fonts,
-    ...getTailwindImportMap(),
   };
 }
 
