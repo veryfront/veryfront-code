@@ -26,9 +26,9 @@ import {
 } from "./cache-keys.ts";
 import {
   addPendingInvalidation,
-  removePendingInvalidation,
-  isPrefixBeingInvalidated,
   getPendingInvalidationsCount,
+  isPrefixBeingInvalidated,
+  removePendingInvalidation,
 } from "./invalidation-state.ts";
 
 const INVALIDATION_DEBOUNCE_MS = 100;
