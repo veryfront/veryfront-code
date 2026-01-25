@@ -324,11 +324,12 @@ export class ReadOperations {
     });
 
     try {
-      const content = await this.client.getPublishedFileContent(apiPath);
+      const content = await this.client.getPublishedFileContent(apiPath, releaseId ?? undefined);
 
       logger.debug("[ReadOperations] Fetched published content", {
         path: normalizedPath,
         contentLength: content.length,
+        releaseId,
       });
 
       if (shouldCache) this.cache.set(cacheKey, content);
@@ -348,7 +349,7 @@ export class ReadOperations {
         throw error;
       }
 
-      const fallbackContent = await this.tryFallbackExtensions(apiPath, cacheKey, shouldCache);
+      const fallbackContent = await this.tryFallbackExtensions(apiPath, cacheKey, shouldCache, releaseId);
       if (fallbackContent !== null) return fallbackContent;
 
       logger.debug("[ReadOperations] File not found (expected for optional files)", {
@@ -363,6 +364,7 @@ export class ReadOperations {
     apiPath: string,
     cacheKey: string,
     shouldCache: boolean,
+    releaseId: string | null,
   ): Promise<string | null> {
     const extMatch = apiPath.match(/\.(tsx|ts|jsx|js|mdx|md)$/);
     if (!extMatch) return null;
@@ -401,6 +403,7 @@ export class ReadOperations {
         basePath,
         cacheKey,
         shouldCache,
+        releaseId,
       );
     }
   }
@@ -411,6 +414,7 @@ export class ReadOperations {
     basePath: string,
     cacheKey: string,
     shouldCache: boolean,
+    releaseId: string | null,
   ): Promise<string | null> {
     for (const ext of EXTENSION_PRIORITY) {
       if (ext === originalExt) continue;
@@ -418,7 +422,7 @@ export class ReadOperations {
       const fallbackPath = basePath + ext;
 
       try {
-        const content = await this.client.getPublishedFileContent(fallbackPath);
+        const content = await this.client.getPublishedFileContent(fallbackPath, releaseId ?? undefined);
 
         logger.debug("[ReadOperations] Sequential fallback succeeded", {
           originalPath: apiPath,

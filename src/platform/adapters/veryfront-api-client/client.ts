@@ -449,16 +449,23 @@ export class VeryfrontAPIClient {
     return matches[0] ?? null;
   }
 
-  listPublishedFiles(_projectId?: string, _releaseId?: string) {
-    return this.operations.listAllEnvironmentFiles(this.getProjectSlug()!, "production");
+  listPublishedFiles(_projectId?: string, releaseId?: string) {
+    const projectRef = this.getProjectSlug()!;
+    // Use release endpoint if releaseId provided, otherwise fall back to environment
+    if (releaseId) {
+      return this.operations.listAllReleaseFiles(projectRef, releaseId);
+    }
+    return this.operations.listAllEnvironmentFiles(projectRef, "production");
   }
 
-  async getPublishedFileContent(path: string): Promise<string> {
-    const result = await this.operations.getEnvironmentFile(
-      this.getProjectSlug()!,
-      "production",
-      path,
-    );
+  async getPublishedFileContent(path: string, releaseId?: string): Promise<string> {
+    const projectRef = this.getProjectSlug()!;
+    // Use release endpoint if releaseId provided, otherwise fall back to environment
+    if (releaseId) {
+      const result = await this.operations.getReleaseFile(projectRef, releaseId, path);
+      return result.content;
+    }
+    const result = await this.operations.getEnvironmentFile(projectRef, "production", path);
     return result.content;
   }
 }
