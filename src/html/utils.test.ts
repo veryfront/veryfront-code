@@ -80,14 +80,16 @@ describe("html-generation/utils", () => {
       assert(map["veryfront/fonts"] !== undefined);
     });
 
-    it("should NOT include React (resolved via deno.json for single instance)", () => {
+    it("should include React for SSR consistency", () => {
       const map = getDefaultImportMap().imports;
       assert(map !== undefined);
       if (!map) return;
 
-      assertEquals(map.react, undefined);
-      assertEquals(map["react-dom"], undefined);
-      assertEquals(map["react/jsx-runtime"], undefined);
+      // React is now included in the import map for SSR consistency
+      assert(map.react !== undefined);
+      assert(map["react-dom"] !== undefined);
+      assert(map["react/jsx-runtime"] !== undefined);
+      // Third-party packages are still not included
       assertEquals(map["@tanstack/react-query"], undefined);
       assertEquals(map["next-themes"], undefined);
     });
