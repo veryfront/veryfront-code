@@ -7,7 +7,7 @@
 
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
-import { HTTP_NOT_FOUND, HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
+import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
 import { joinPath } from "#veryfront/utils/path-utils.ts";
 import {
   extractCandidates,
@@ -35,38 +35,30 @@ export class StylesCSSHandler extends BaseHandler {
       const filePath = joinPath(ctx.projectDir, stylesheetPath);
       const responseBuilder = this.createResponseBuilder(ctx).withCache("no-cache");
 
+      // Try to load user's stylesheet, fallback to default Tailwind import
+      let rawCss: string;
       try {
-        // Load stylesheet and extract candidates from ALL source files
-        const [rawCss, candidates] = await Promise.all([
-          ctx.adapter.fs.readFile(filePath),
-          this.extractProjectCandidates(ctx),
-        ]);
-
-        const result = await generateTailwindCSS(rawCss, candidates);
-
-        if (result.error) {
-          logger.error("[StylesCSSHandler] Tailwind error", { error: result.error });
-        }
-
-        logger.debug("[StylesCSSHandler] CSS generated", {
-          candidates: candidates.size,
-          cssLength: result.css.length,
-        });
-
-        return this.respond(
-          responseBuilder.withContentType("text/css; charset=utf-8", result.css, HTTP_OK),
-        );
-      } catch (error) {
-        this.logDebug(`${stylesheetPath} not found`, { error: this.getErrorMessage(error) }, ctx);
-
-        return this.respond(
-          responseBuilder.withContentType(
-            "text/css; charset=utf-8",
-            `/* ${stylesheetPath} not found */`,
-            HTTP_NOT_FOUND,
-          ),
-        );
+        rawCss = await ctx.adapter.fs.readFile(filePath);
+      } catch {
+        rawCss = '@import "tailwindcss";';
+        logger.debug("[StylesCSSHandler] No stylesheet found, using default", { stylesheetPath });
       }
+
+      const candidates = await this.extractProjectCandidates(ctx);
+      const result = await generateTailwindCSS(rawCss, candidates);
+
+      if (result.error) {
+        logger.error("[StylesCSSHandler] Tailwind error", { error: result.error });
+      }
+
+      logger.debug("[StylesCSSHandler] CSS generated", {
+        candidates: candidates.size,
+        cssLength: result.css.length,
+      });
+
+      return this.respond(
+        responseBuilder.withContentType("text/css; charset=utf-8", result.css, HTTP_OK),
+      );
     });
   }
 
