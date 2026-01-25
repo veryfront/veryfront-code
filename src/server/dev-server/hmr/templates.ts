@@ -96,7 +96,7 @@ export function generateHMRClientTemplate(
   function refreshTailwindCSS() {
     const link = document.getElementById('vf-tailwind-css');
     if (!link) return;
-    link.href = '/_vf_styles/globals.css?t=' + Date.now();
+    link.href = '/_vf_styles/styles.css?t=' + Date.now();
     console.log('[HMR] Tailwind CSS link refreshed');
   }
 

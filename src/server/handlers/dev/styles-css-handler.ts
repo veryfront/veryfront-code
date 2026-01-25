@@ -1,7 +1,7 @@
 /**
- * Globals CSS Handler
+ * Styles CSS Handler
  *
- * Serves Tailwind CSS compiled from globals.css + all project source files.
+ * Serves Tailwind CSS compiled from user's stylesheet + all project source files.
  * Extracts candidates from ALL source files to ensure HMR includes new classes.
  */
 
@@ -17,11 +17,11 @@ import { serverLogger as logger } from "#veryfront/utils";
 
 const SOURCE_EXTENSIONS = [".tsx", ".jsx", ".mdx", ".ts", ".js"];
 
-export class GlobalsCSSHandler extends BaseHandler {
+export class StylesCSSHandler extends BaseHandler {
   metadata: HandlerMetadata = {
-    name: "GlobalsCSSHandler",
+    name: "StylesCSSHandler",
     priority: PRIORITY_HIGH_DEV as HandlerPriority,
-    patterns: [{ pattern: "/_vf_styles/globals.css", exact: true, method: "GET" }],
+    patterns: [{ pattern: "/_vf_styles/styles.css", exact: true, method: "GET" }],
     enabled: () => true,
   };
 
@@ -45,10 +45,10 @@ export class GlobalsCSSHandler extends BaseHandler {
         const result = await generateTailwindCSS(rawCss, candidates);
 
         if (result.error) {
-          logger.error("[GlobalsCSSHandler] Tailwind error", { error: result.error });
+          logger.error("[StylesCSSHandler] Tailwind error", { error: result.error });
         }
 
-        logger.debug("[GlobalsCSSHandler] CSS generated", {
+        logger.debug("[StylesCSSHandler] CSS generated", {
           candidates: candidates.size,
           cssLength: result.css.length,
         });

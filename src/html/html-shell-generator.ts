@@ -137,7 +137,7 @@ async function generateHTMLShellPartsImpl(
   const projectSlug = options.projectId || meta.slug || "default";
   let cssHash = "";
 
-  // Only generate CSS for production mode (dev/preview uses link tag to GlobalsCSSHandler)
+  // Only generate CSS for production mode (dev/preview uses link tag to StylesCSSHandler)
   if (useProductionCSS && projectSlug !== "default") {
     const projectCSS = await getProjectCSS(projectSlug, stylesheetContent, candidates, {
       minify: true,
@@ -240,8 +240,7 @@ async function generateHTMLShellPartsImpl(
     tailwindCSSBlock = `<link rel="stylesheet" href="/_vf/css/${cssHash}.css">`;
   } else {
     // Dev/preview: use link tag for HMR cache-busting
-    tailwindCSSBlock =
-      `<link id="vf-tailwind-css" rel="stylesheet" href="/_vf_styles/globals.css">`;
+    tailwindCSSBlock = `<link id="vf-tailwind-css" rel="stylesheet" href="/_vf_styles/styles.css">`;
   }
 
   const start = `<!DOCTYPE html>

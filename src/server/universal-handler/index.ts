@@ -48,7 +48,7 @@ import { MemoryDebugHandler } from "../handlers/monitoring/memory.ts";
 import { DevEndpointsHandler } from "../handlers/dev/endpoints.ts";
 import { DevFileHandler } from "../handlers/dev/files/index.ts";
 import { DebugContextHandler } from "../handlers/dev/debug-context.ts";
-import { GlobalsCSSHandler } from "../handlers/dev/globals-css-handler.ts";
+import { StylesCSSHandler } from "../handlers/dev/styles-css-handler.ts";
 import { StudioEndpointsHandler } from "../handlers/studio/endpoints.ts";
 import { StaticHandler } from "../handlers/request/static.ts";
 import { SnippetHandler } from "../handlers/request/snippet-handler.ts";
@@ -202,7 +202,7 @@ export function createVeryfrontHandler(
     new MemoryDebugHandler(), // Priority: 100 (HIGH, memory profiling endpoints)
     new ClientLogHandler(), // Priority: 200 (HIGH, dev only)
     new DevEndpointsHandler(), // Priority: 300 (HIGH, dev only)
-    new GlobalsCSSHandler(), // Priority: 300 (HIGH, serves globals.css for HMR)
+    new StylesCSSHandler(), // Priority: 300 (HIGH, serves styles.css for HMR)
     new DebugContextHandler(), // Priority: 300 (HIGH, dev only - context debugging)
     new OpenAPIHandler(), // Priority: 300 (HIGH, serves /_openapi.json)
     new OpenAPIDocsHandler(), // Priority: 300 (HIGH, serves /_docs with Scalar UI)
