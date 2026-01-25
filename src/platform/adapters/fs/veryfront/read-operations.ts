@@ -349,7 +349,12 @@ export class ReadOperations {
         throw error;
       }
 
-      const fallbackContent = await this.tryFallbackExtensions(apiPath, cacheKey, shouldCache, releaseId);
+      const fallbackContent = await this.tryFallbackExtensions(
+        apiPath,
+        cacheKey,
+        shouldCache,
+        releaseId,
+      );
       if (fallbackContent !== null) return fallbackContent;
 
       logger.debug("[ReadOperations] File not found (expected for optional files)", {
@@ -422,7 +427,10 @@ export class ReadOperations {
       const fallbackPath = basePath + ext;
 
       try {
-        const content = await this.client.getPublishedFileContent(fallbackPath, releaseId ?? undefined);
+        const content = await this.client.getPublishedFileContent(
+          fallbackPath,
+          releaseId ?? undefined,
+        );
 
         logger.debug("[ReadOperations] Sequential fallback succeeded", {
           originalPath: apiPath,
