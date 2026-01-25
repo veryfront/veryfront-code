@@ -154,6 +154,8 @@ export interface InvalidationCallbacks {
   clearRendererCacheForProject?: (projectId: string) => void | Promise<void>;
   /** Invalidate project-level CSS cache when source files change */
   clearProjectCSSCache?: (projectSlug: string) => void;
+  /** Clear domain lookup cache to refresh release IDs after publishing */
+  clearDomainCache?: () => void;
 }
 
 function resolveContentSource(veryfront: NonNullable<FSAdapterConfig["veryfront"]>): ContentSource {

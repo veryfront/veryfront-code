@@ -20,6 +20,7 @@ import {
 } from "../../../rendering/snippet-renderer.ts";
 import { clearRendererCacheForProject, clearRendererCaches } from "../../../rendering/renderer.ts";
 import { invalidateProjectCSS } from "../../../html/styles-builder/tailwind-compiler.ts";
+import { clearDomainCache } from "../../../server/utils/domain-lookup.ts";
 
 export function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapter> {
   const type = config.type ?? "local";
@@ -54,6 +55,7 @@ export function createFSAdapter(config: FSAdapterConfig): Promise<FSAdapter> {
             clearSnippetCacheForProject,
             clearRendererCacheForProject,
             clearProjectCSSCache: invalidateProjectCSS,
+            clearDomainCache,
             triggerReload: (changedPaths, project) =>
               ReloadNotifier.triggerReload(changedPaths, project?.projectSlug),
           },

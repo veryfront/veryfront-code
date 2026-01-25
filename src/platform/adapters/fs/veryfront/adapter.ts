@@ -754,6 +754,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     this.statOps.clearIndex();
     this.dirOps.clearTree();
+    this.invalidationCallbacks.clearDomainCache?.();
 
     const projectId = this.client.getProjectId();
     const projectDir = this.normalizer.getProjectDir();

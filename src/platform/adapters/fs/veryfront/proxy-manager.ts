@@ -24,6 +24,7 @@ import {
   clearRendererCacheForProject,
   clearRendererCaches,
 } from "../../../../rendering/renderer.ts";
+import { clearDomainCache } from "../../../../server/utils/domain-lookup.ts";
 
 interface ProjectAdapter {
   adapter: VeryfrontFSAdapter;
@@ -325,6 +326,7 @@ export class ProxyFSAdapterManager {
         clearRouterDetectionCacheForProject,
         clearSnippetCacheForProject,
         clearRendererCacheForProject,
+        clearDomainCache,
         triggerReload: (changedPaths, project) =>
           ReloadNotifier.triggerReload(changedPaths, project?.projectSlug),
       },
