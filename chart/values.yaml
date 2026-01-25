@@ -34,6 +34,8 @@ proxy:
   env:
     PORT: "20000"
     RENDERER_URL: "http://veryfront-renderer:80"
+    # Log level: debug, info, warn, error
+    LOG_LEVEL: "info"
     # Timeout for renderer requests (90 seconds for cold-start SSR)
     RENDERER_REQUEST_TIMEOUT_MS: "90000"
     # API URL for OAuth token exchange
@@ -168,6 +170,8 @@ renderer:
     # 0.0.0.0 = all interfaces (required for port-forward)
     BIND_ADDRESS: "0.0.0.0"
     PROXY_MODE: "1"
+    # Log level: debug, info, warn, error
+    LOG_LEVEL: "info"
     # Max concurrent SSR/API requests per project per pod (default: 20)
     # Lightweight requests (modules, CSS) are exempt from this limit
     # High limit is safe because SSR is I/O-bound (async file/API calls)
