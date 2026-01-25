@@ -35,29 +35,57 @@ export function renderInput(input: InputState, _options: InlineInputOptions = {}
   return `${inputLine}\n${hintLine}`;
 }
 
+export interface RenderLogsOptions {
+  maxLines?: number;
+  maxWidth?: number;
+  scroll?: number;
+  expanded?: boolean;
+}
+
 /**
- * Render the logs area
+ * Render the logs area with optional scrolling
  */
-export function renderLogs(logs: LogEntry[], maxLines: number = 5, maxWidth: number = 80): string {
+export function renderLogs(
+  logs: LogEntry[],
+  options: RenderLogsOptions = {},
+): string {
+  const { maxLines = 5, maxWidth = 80, scroll = 0, expanded = false } = options;
+
   if (logs.length === 0) return "";
 
-  const recentLogs = logs.slice(-maxLines);
+  // Calculate visible window
+  const visibleLines = expanded ? Math.max(maxLines, 10) : maxLines;
+  const end = logs.length - scroll;
+  const start = Math.max(0, end - visibleLines);
+  const visibleLogs = logs.slice(start, end);
 
-  return recentLogs
-    .map((log) => {
-      const time = formatTime(log.time);
-      const levelColor = getLevelColor(log.level);
-      const levelPrefix = getLevelPrefix(log.level);
+  const lines = visibleLogs.map((log) => {
+    const time = formatTime(log.time);
+    const levelColor = getLevelColor(log.level);
+    const levelPrefix = getLevelPrefix(log.level);
 
-      // Truncate message if too long
-      const maxMsgLen = maxWidth - 15; // Account for time and level
-      const msg = log.message.length > maxMsgLen
-        ? `${log.message.slice(0, maxMsgLen - 3)}...`
-        : log.message;
+    // Truncate message if too long
+    const maxMsgLen = maxWidth - 15; // Account for time and level
+    const msg = log.message.length > maxMsgLen
+      ? `${log.message.slice(0, maxMsgLen - 3)}...`
+      : log.message;
 
-      return `  ${dim(time)} ${levelColor(levelPrefix)} ${msg}`;
-    })
-    .join("\n");
+    return `  ${dim(time)} ${levelColor(levelPrefix)} ${msg}`;
+  });
+
+  // Add scroll indicator if there are more logs
+  if (expanded && logs.length > visibleLines) {
+    const canScrollUp = start > 0;
+    const canScrollDown = scroll > 0;
+    const scrollHint = [];
+    if (canScrollUp) scrollHint.push("↑");
+    if (canScrollDown) scrollHint.push("↓");
+    if (scrollHint.length > 0) {
+      lines.push(`  ${dim(`[${scrollHint.join(" ")}] ${logs.length} total logs`)}`);
+    }
+  }
+
+  return lines.join("\n");
 }
 
 /**

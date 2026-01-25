@@ -29,12 +29,14 @@ import {
   getActiveSelection,
   goBack,
   navigateTo,
+  scrollLogs,
   setActiveList,
   setExamples,
   setProjects,
   setTemplates,
   startInput,
   type StateUpdater,
+  toggleLogsExpanded,
   updateActiveList,
   updateInputValue,
   updateMCP,
@@ -236,10 +238,15 @@ export function createApp(config: AppConfig): App {
     const parts: string[] = [content];
 
     if (state.logs.length > 0) {
-      const logsHeight = Math.min(5, state.logs.length);
+      const logsHeader = state.logsExpanded ? "▼ Logs" : "▶ Logs";
       parts.push("");
       parts.push(`  ${dim("─".repeat(60))}`);
-      parts.push(renderLogs(state.logs, logsHeight));
+      parts.push(`  ${dim(logsHeader)} ${dim(`(${state.logs.length})`)}  ${dim("l")} ${dim("toggle")}  ${state.logsExpanded ? `${dim("↑↓")} ${dim("scroll")}` : ""}`);
+      parts.push(renderLogs(state.logs, {
+        maxLines: state.logsExpanded ? 15 : 3,
+        scroll: state.logScroll,
+        expanded: state.logsExpanded,
+      }));
     }
 
     if (state.input.active) {
@@ -352,6 +359,24 @@ export function createApp(config: AppConfig): App {
     if (state.view === "help") {
       update(goBack());
       return;
+    }
+
+    // Toggle logs expanded with 'l'
+    if (key === "l" || key === "L") {
+      update(toggleLogsExpanded());
+      return;
+    }
+
+    // When logs are expanded, arrow keys scroll logs instead of list
+    if (state.logsExpanded && state.logs.length > 0) {
+      if (key === "\x1b[A" || key === "k") {
+        update(scrollLogs("up"));
+        return;
+      }
+      if (key === "\x1b[B" || key === "j") {
+        update(scrollLogs("down"));
+        return;
+      }
     }
 
     if (key === "\x1b[A" || key === "k") {

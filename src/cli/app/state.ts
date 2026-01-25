@@ -72,6 +72,8 @@ export interface AppState {
 
   logs: LogEntry[];
   maxLogs: number;
+  logsExpanded: boolean;
+  logScroll: number;
 }
 
 export function createInitialState(): AppState {
@@ -112,6 +114,8 @@ export function createInitialState(): AppState {
     },
     logs: [],
     maxLogs: 100,
+    logsExpanded: false,
+    logScroll: 0,
   };
 }
 
@@ -280,7 +284,32 @@ export function addLog(level: LogEntry["level"], message: string): StateUpdater 
 }
 
 export function clearLogs(): StateUpdater {
-  return (state) => ({ ...state, logs: [] });
+  return (state) => ({ ...state, logs: [], logScroll: 0 });
+}
+
+export function toggleLogsExpanded(): StateUpdater {
+  return (state) => ({
+    ...state,
+    logsExpanded: !state.logsExpanded,
+    logScroll: 0,
+  });
+}
+
+export function scrollLogs(direction: "up" | "down"): StateUpdater {
+  return (state) => {
+    if (!state.logsExpanded) return state;
+
+    const maxScroll = Math.max(0, state.logs.length - 5);
+    let newScroll = state.logScroll;
+
+    if (direction === "up") {
+      newScroll = Math.min(maxScroll, state.logScroll + 1);
+    } else {
+      newScroll = Math.max(0, state.logScroll - 1);
+    }
+
+    return { ...state, logScroll: newScroll };
+  };
 }
 
 function shortenPath(path: string, env: RuntimeEnv = getRuntimeEnv()): string {
