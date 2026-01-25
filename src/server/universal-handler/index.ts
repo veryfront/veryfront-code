@@ -306,10 +306,19 @@ export function createVeryfrontHandler(
     }
 
     const earlyProjectSlug = req.headers.get("x-project-slug") || undefined;
+    const earlyEnv = req.headers.get("x-environment") || undefined;
+    const earlyReleaseId = req.headers.get("x-release-id") || undefined;
 
     const shouldTrackRequest = !isMonitoringPath(url.pathname);
     if (shouldTrackRequest) {
-      requestTracker.start(trackingRequestId, earlyProjectSlug, url.pathname, req.method);
+      requestTracker.start(
+        trackingRequestId,
+        earlyProjectSlug,
+        url.pathname,
+        req.method,
+        earlyEnv || undefined,
+        earlyReleaseId || undefined,
+      );
     }
 
     // Skip concurrency limiting for lightweight paths (modules, static assets)

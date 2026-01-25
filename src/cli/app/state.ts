@@ -40,10 +40,21 @@ export interface InputState {
   onCancel: (() => void) | null;
 }
 
+export interface LogMeta {
+  method?: string;
+  path?: string;
+  status?: number;
+  durationMs?: number;
+  project?: string;
+  env?: string;
+  releaseId?: string;
+}
+
 export interface LogEntry {
   time: Date;
   level: "info" | "warn" | "error" | "debug";
   message: string;
+  meta?: LogMeta;
 }
 
 export interface AppState {
@@ -275,9 +286,9 @@ export function endInput(): StateUpdater {
   });
 }
 
-export function addLog(level: LogEntry["level"], message: string): StateUpdater {
+export function addLog(level: LogEntry["level"], message: string, meta?: LogMeta): StateUpdater {
   return (state) => {
-    const logs = [...state.logs, { time: new Date(), level, message }];
+    const logs = [...state.logs, { time: new Date(), level, message, meta }];
     if (logs.length > state.maxLogs) logs.shift();
     return { ...state, logs };
   };

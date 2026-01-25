@@ -28,6 +28,7 @@ import {
   endInput,
   getActiveSelection,
   goBack,
+  type LogMeta,
   navigateTo,
   scrollLogs,
   setActiveList,
@@ -243,7 +244,11 @@ export function createApp(config: AppConfig): App {
       const logsHeader = state.logsExpanded ? "▼ Logs" : "▶ Logs";
       parts.push("");
       parts.push(`  ${dim("─".repeat(60))}`);
-      parts.push(`  ${dim(logsHeader)} ${dim(`(${state.logs.length})`)}  ${dim("l")} ${dim("toggle")}  ${state.logsExpanded ? `${dim("↑↓")} ${dim("scroll")}` : ""}`);
+      parts.push(
+        `  ${dim(logsHeader)} ${dim(`(${state.logs.length})`)}  ${dim("l")} ${dim("toggle")}  ${
+          state.logsExpanded ? `${dim("↑↓")} ${dim("scroll")}` : ""
+        }`,
+      );
       parts.push(renderLogs(state.logs, {
         maxLines: state.logsExpanded ? 15 : 3,
         scroll: state.logScroll,
@@ -595,7 +600,7 @@ export function createApp(config: AppConfig): App {
     log: (level: "info" | "warn" | "error" | "debug", message: string): void => {
       update(addLog(level, message));
     },
-    interceptConsole: (): (() => void) => {
+    interceptConsole: (): () => void => {
       if (!isInteractiveMode) return () => {};
 
       const orig = {
@@ -606,16 +611,49 @@ export function createApp(config: AppConfig): App {
         debug: console.debug,
       };
 
-      const capture = (level: "info" | "warn" | "error" | "debug") => (...args: unknown[]): void => {
-        const msg = args
-          .map((a) => (typeof a === "string" ? a : JSON.stringify(a)))
-          .join(" ")
-          .replace(/\x1b\[[0-9;]*m/g, "");
-        if (msg.trim()) {
-          state = addLog(level, msg)(state);
-          render();
+      // Parse request log format: "  GET  /path 200 45ms project:env:release"
+      const parseRequestLog = (msg: string): LogMeta | undefined => {
+        // Match: whitespace + METHOD + path + status + duration + optional project:env:release
+        const match = msg.match(
+          /^\s*(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+(\S+)\s+(\d{3})\s+(\d+)ms(?:\s+(\S+))?/,
+        );
+        if (!match) return undefined;
+
+        const [, method, path, status, duration, context] = match;
+        const meta: LogMeta = {
+          method,
+          path,
+          status: parseInt(status!, 10),
+          durationMs: parseInt(duration!, 10),
+        };
+
+        if (context) {
+          // Parse project:env:release or project:env
+          const parts = context.split(":");
+          if (parts[0]) meta.project = parts[0];
+          if (parts[1]) meta.env = parts[1];
+          if (parts[2]) meta.releaseId = parts[2];
         }
+
+        return meta;
       };
+
+      // Regex to strip ANSI escape codes (ESC [ ... m)
+      // deno-lint-ignore no-control-regex
+      const ansiPattern = /\x1b\[[0-9;]*m/g;
+
+      const capture =
+        (level: "info" | "warn" | "error" | "debug") => (...args: unknown[]): void => {
+          const msg = args
+            .map((a) => (typeof a === "string" ? a : JSON.stringify(a)))
+            .join(" ")
+            .replace(ansiPattern, "");
+          if (msg.trim()) {
+            const meta = parseRequestLog(msg);
+            state = addLog(level, msg, meta)(state);
+            render();
+          }
+        };
 
       console.log = capture("info");
       console.error = capture("error");

@@ -54,7 +54,9 @@ export class GCSBlobStorage implements BlobStorage {
       }),
     );
 
-    logger.warn("[GCSBlobStorage] JWT signing requires djwt library - using placeholder (not for production)");
+    logger.warn(
+      "[GCSBlobStorage] JWT signing requires djwt library - using placeholder (not for production)",
+    );
 
     const signature = "PLACEHOLDER_SIGNATURE";
     const jwt = `${jwtHeader}.${jwtClaimSet}.${signature}`;

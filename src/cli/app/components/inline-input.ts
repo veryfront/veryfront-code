@@ -66,13 +66,41 @@ export function renderLogs(
     const levelPrefix = getLevelPrefix(log.level);
 
     if (expanded) {
-      // When expanded, show full message (may wrap to multiple lines)
-      const prefix = `  ${dim(time)} ${levelColor(levelPrefix)} `;
-      const msgLines = wrapText(log.message, maxWidth - 15);
-      lines.push(`${prefix}${msgLines[0] || ""}`);
-      // Indent continuation lines
-      for (let i = 1; i < msgLines.length; i++) {
-        lines.push(`  ${"".padEnd(12)}${msgLines[i]}`);
+      // When expanded, show structured info if available
+      if (log.meta?.method) {
+        // Request log - show all details in clean format
+        const meta = log.meta;
+        const statusColor = getStatusColor(meta.status || 200);
+        const methodStr = (meta.method || "GET").padEnd(7);
+        const pathStr = meta.path || "/";
+        const statusStr = String(meta.status || 200);
+        const durationStr = `${meta.durationMs || 0}ms`.padStart(6);
+
+        // Line 1: time + method + path
+        lines.push(
+          `  ${dim(time)} ${levelColor(levelPrefix)} ${methodStr}${pathStr}`,
+        );
+
+        // Line 2: status + duration + project info
+        const projectInfo: string[] = [];
+        if (meta.project) projectInfo.push(brand(meta.project));
+        if (meta.env) projectInfo.push(dim(meta.env));
+        if (meta.releaseId) projectInfo.push(dim(`#${meta.releaseId.slice(0, 8)}`));
+
+        lines.push(
+          `  ${"".padEnd(12)}${statusColor(statusStr)} ${dim(durationStr)}${
+            projectInfo.length ? `  ${projectInfo.join(" ")}` : ""
+          }`,
+        );
+      } else {
+        // Regular log - show full message (may wrap to multiple lines)
+        const prefix = `  ${dim(time)} ${levelColor(levelPrefix)} `;
+        const msgLines = wrapText(log.message, maxWidth - 15);
+        lines.push(`${prefix}${msgLines[0] || ""}`);
+        // Indent continuation lines
+        for (let i = 1; i < msgLines.length; i++) {
+          lines.push(`  ${"".padEnd(12)}${msgLines[i]}`);
+        }
       }
     } else {
       // When collapsed, truncate
@@ -139,6 +167,16 @@ function getLevelColor(level: LogEntry["level"]): (s: string) => string {
     case "debug":
       return dim;
   }
+}
+
+/**
+ * Get color function for HTTP status code
+ */
+function getStatusColor(status: number): (s: string) => string {
+  if (status >= 500) return (s: string) => `\x1b[31m${s}\x1b[0m`; // red
+  if (status >= 400) return (s: string) => `\x1b[33m${s}\x1b[0m`; // yellow
+  if (status >= 300) return (s: string) => `\x1b[36m${s}\x1b[0m`; // cyan
+  return (s: string) => `\x1b[32m${s}\x1b[0m`; // green
 }
 
 /**
