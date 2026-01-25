@@ -10,6 +10,7 @@ import {
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
+import { minifyCSS } from "#veryfront/build/asset-pipeline/tailwind-processor/css-utils.ts";
 
 export interface TailwindResult {
   css: string;
@@ -363,7 +364,8 @@ export function clearCSSCache(): void {
 }
 
 export function extractCandidates(content: string): string[] {
-  const pattern = /[a-zA-Z0-9][a-zA-Z0-9_\-:\/\.\[\]%#,()!'=<>$@{}|*+?;^]+/g;
+  // Match Tailwind classes including those starting with - (negative values like -translate-x-1/2)
+  const pattern = /-?[a-zA-Z0-9][a-zA-Z0-9_\-:\/\.\[\]%#,()!'=<>$@{}|*+?;^]*/g;
   const matches = content.match(pattern) ?? [];
   return [...new Set(matches)];
 }
@@ -487,7 +489,7 @@ export async function generateTailwindCSS(
         let output = comp.build(candidateArray);
 
         if (options?.minify) {
-          output = output.replace(/\n\s*\n/g, "\n");
+          output = minifyCSS(output);
         }
 
         logger.debug("[tailwind] Generated CSS", {
