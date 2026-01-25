@@ -31,18 +31,8 @@ export class StylesCSSHandler extends BaseHandler {
     }
 
     return await this.withProxyContext(ctx, async () => {
-      const stylesheetPath = ctx.config?.tailwind?.stylesheet || "globals.css";
-      const filePath = joinPath(ctx.projectDir, stylesheetPath);
       const responseBuilder = this.createResponseBuilder(ctx).withCache("no-cache");
-
-      // Try to load user's stylesheet, fallback to default Tailwind import
-      let rawCss: string;
-      try {
-        rawCss = await ctx.adapter.fs.readFile(filePath);
-      } catch {
-        rawCss = '@import "tailwindcss";';
-        logger.debug("[StylesCSSHandler] No stylesheet found, using default", { stylesheetPath });
-      }
+      const rawCss = await this.loadStylesheet(ctx);
 
       const candidates = await this.extractProjectCandidates(ctx);
       const result = await generateTailwindCSS(rawCss, candidates);
@@ -60,6 +50,26 @@ export class StylesCSSHandler extends BaseHandler {
         responseBuilder.withContentType("text/css; charset=utf-8", result.css, HTTP_OK),
       );
     });
+  }
+
+  private async loadStylesheet(ctx: HandlerContext): Promise<string> {
+    const configuredPath = ctx.config?.tailwind?.stylesheet;
+
+    // If user explicitly configured a stylesheet, it must exist
+    if (configuredPath) {
+      const filePath = joinPath(ctx.projectDir, configuredPath);
+      return await ctx.adapter.fs.readFile(filePath);
+    }
+
+    // Try default globals.css
+    const globalsPath = joinPath(ctx.projectDir, "globals.css");
+    try {
+      return await ctx.adapter.fs.readFile(globalsPath);
+    } catch {
+      // No stylesheet found, use default Tailwind import
+      logger.debug("[StylesCSSHandler] No stylesheet found, using default");
+      return '@import "tailwindcss";';
+    }
   }
 
   private async extractProjectCandidates(ctx: HandlerContext): Promise<Set<string>> {
