@@ -680,6 +680,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         const files = await this.client.listAllFiles();
         const cacheKey = buildFileListCacheKey(this.contentContext);
         await this.cache.setAsync(cacheKey, files);
+        this.readOps.clearFileListIndex();
 
         logger.debug("[VeryfrontFSAdapter] Fresh files cached (memory + Redis)", {
           cacheKey,
@@ -806,6 +807,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         const files = await this.client.listAllFiles();
         const cacheKey = buildFileListCacheKey(this.contentContext);
         await this.cache.setAsync(cacheKey, files);
+        this.readOps.clearFileListIndex();
 
         logger.debug("[VeryfrontFSAdapter] FRESH FILES FETCHED", {
           cacheKey,

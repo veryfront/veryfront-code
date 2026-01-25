@@ -71,6 +71,19 @@ export class ReadOperations {
     this.fileListReadyPromise = promise;
   }
 
+  /**
+   * Clear the in-memory file list index.
+   * Called when POKE is received to ensure fresh content is fetched from API.
+   */
+  clearFileListIndex(): void {
+    if (this.fileListIndex) {
+      const size = this.fileListIndex.size;
+      this.fileListIndex = null;
+      this.fileListIndexKey = null;
+      logger.debug("[ReadOperations] Cleared file list index", { entriesCleared: size });
+    }
+  }
+
   private cleanupStaleInFlightRequests(): void {
     const now = Date.now();
     if (now - this.lastCleanupTime < 1000) return;
