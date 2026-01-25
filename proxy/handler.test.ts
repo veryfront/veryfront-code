@@ -172,4 +172,330 @@ describe("Proxy Handler", () => {
       await handler.close();
     });
   });
+
+  describe("protected environments", () => {
+    it("redirects to sign-in for protected custom domain without auth token", async () => {
+      const adapter = await getLocalAdapter();
+      const port = await getFreePort();
+
+      const server = await adapter.serve(
+        (req: Request) => {
+          const url = new URL(req.url);
+
+          if (url.pathname === "/auth/token") {
+            return Response.json({
+              access_token: "test-token",
+              token_type: "Bearer",
+              expires_in: 3600,
+            });
+          }
+
+          if (url.pathname.startsWith("/projects/")) {
+            return Response.json({
+              id: "proj-123",
+              slug: "protected-project",
+              name: "Protected Project",
+              environments: [{
+                id: "env-1",
+                name: "production",
+                domains: ["protected.example.com"],
+                active_release_id: "rel-123",
+                protected: true,
+              }],
+            });
+          }
+
+          return new Response("Not found", { status: 404 });
+        },
+        { port, hostname: "127.0.0.1" },
+      );
+
+      try {
+        const handler = createProxyHandler({
+          config: {
+            apiBaseUrl: `http://127.0.0.1:${port}`,
+            clientId: "test-client",
+            clientSecret: "test-secret",
+            previewClientId: "test-client",
+            previewClientSecret: "test-secret",
+          },
+        });
+
+        const req = new Request("http://protected.example.com/page", {
+          headers: { host: "protected.example.com" },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error?.status, 302);
+        assertEquals(ctx.error?.message, "Authentication required");
+        assertEquals(
+          ctx.error?.redirectUrl,
+          "https://veryfront.com/sign-in?from=http%3A%2F%2Fprotected.example.com%2Fpage",
+        );
+
+        await handler.close();
+      } finally {
+        await server.stop();
+      }
+    });
+
+    it("allows access to protected custom domain with auth token", async () => {
+      const adapter = await getLocalAdapter();
+      const port = await getFreePort();
+
+      const server = await adapter.serve(
+        (req: Request) => {
+          const url = new URL(req.url);
+
+          if (url.pathname === "/auth/token") {
+            return Response.json({
+              access_token: "test-token",
+              token_type: "Bearer",
+              expires_in: 3600,
+            });
+          }
+
+          if (url.pathname.startsWith("/projects/")) {
+            return Response.json({
+              id: "proj-123",
+              slug: "protected-project",
+              name: "Protected Project",
+              environments: [{
+                id: "env-1",
+                name: "production",
+                domains: ["protected.example.com"],
+                active_release_id: "rel-123",
+                protected: true,
+              }],
+            });
+          }
+
+          return new Response("Not found", { status: 404 });
+        },
+        { port, hostname: "127.0.0.1" },
+      );
+
+      try {
+        const handler = createProxyHandler({
+          config: {
+            apiBaseUrl: `http://127.0.0.1:${port}`,
+            clientId: "test-client",
+            clientSecret: "test-secret",
+            previewClientId: "test-client",
+            previewClientSecret: "test-secret",
+          },
+        });
+
+        const req = new Request("http://protected.example.com/page", {
+          headers: {
+            host: "protected.example.com",
+            cookie: "authToken=user-auth-token",
+          },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error, undefined);
+        assertEquals(ctx.projectSlug, "protected-project");
+        assertEquals(ctx.releaseId, "rel-123");
+
+        await handler.close();
+      } finally {
+        await server.stop();
+      }
+    });
+
+    it("redirects to sign-in for protected veryfront domain without auth token", async () => {
+      const adapter = await getLocalAdapter();
+      const port = await getFreePort();
+
+      const server = await adapter.serve(
+        (req: Request) => {
+          const url = new URL(req.url);
+
+          if (url.pathname === "/auth/token") {
+            return Response.json({
+              access_token: "test-token",
+              token_type: "Bearer",
+              expires_in: 3600,
+            });
+          }
+
+          if (url.pathname.startsWith("/projects/")) {
+            return Response.json({
+              id: "proj-123",
+              slug: "protected-project",
+              name: "Protected Project",
+              environments: [{
+                id: "env-1",
+                name: "staging",
+                active_release_id: "rel-123",
+                protected: true,
+              }],
+            });
+          }
+
+          return new Response("Not found", { status: 404 });
+        },
+        { port, hostname: "127.0.0.1" },
+      );
+
+      try {
+        const handler = createProxyHandler({
+          config: {
+            apiBaseUrl: `http://127.0.0.1:${port}`,
+            clientId: "test-client",
+            clientSecret: "test-secret",
+            previewClientId: "test-client",
+            previewClientSecret: "test-secret",
+          },
+        });
+
+        const req = new Request("http://protected-project.staging.veryfront.com/page", {
+          headers: { host: "protected-project.staging.veryfront.com" },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error?.status, 302);
+        assertEquals(ctx.error?.message, "Authentication required");
+        assertEquals(
+          ctx.error?.redirectUrl,
+          "https://veryfront.com/sign-in?from=http%3A%2F%2Fprotected-project.staging.veryfront.com%2Fpage",
+        );
+
+        await handler.close();
+      } finally {
+        await server.stop();
+      }
+    });
+
+    it("allows access to protected veryfront domain with auth token", async () => {
+      const adapter = await getLocalAdapter();
+      const port = await getFreePort();
+
+      const server = await adapter.serve(
+        (req: Request) => {
+          const url = new URL(req.url);
+
+          if (url.pathname === "/auth/token") {
+            return Response.json({
+              access_token: "test-token",
+              token_type: "Bearer",
+              expires_in: 3600,
+            });
+          }
+
+          if (url.pathname.startsWith("/projects/")) {
+            return Response.json({
+              id: "proj-123",
+              slug: "protected-project",
+              name: "Protected Project",
+              environments: [{
+                id: "env-1",
+                name: "staging",
+                active_release_id: "rel-123",
+                protected: true,
+              }],
+            });
+          }
+
+          return new Response("Not found", { status: 404 });
+        },
+        { port, hostname: "127.0.0.1" },
+      );
+
+      try {
+        const handler = createProxyHandler({
+          config: {
+            apiBaseUrl: `http://127.0.0.1:${port}`,
+            clientId: "test-client",
+            clientSecret: "test-secret",
+            previewClientId: "test-client",
+            previewClientSecret: "test-secret",
+          },
+        });
+
+        const req = new Request("http://protected-project.staging.veryfront.com/page", {
+          headers: {
+            host: "protected-project.staging.veryfront.com",
+            cookie: "authToken=user-auth-token",
+          },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error, undefined);
+        assertEquals(ctx.projectSlug, "protected-project");
+        assertEquals(ctx.releaseId, "rel-123");
+
+        await handler.close();
+      } finally {
+        await server.stop();
+      }
+    });
+
+    it("allows access to non-protected environment without auth token", async () => {
+      const adapter = await getLocalAdapter();
+      const port = await getFreePort();
+
+      const server = await adapter.serve(
+        (req: Request) => {
+          const url = new URL(req.url);
+
+          if (url.pathname === "/auth/token") {
+            return Response.json({
+              access_token: "test-token",
+              token_type: "Bearer",
+              expires_in: 3600,
+            });
+          }
+
+          if (url.pathname.startsWith("/projects/")) {
+            return Response.json({
+              id: "proj-123",
+              slug: "public-project",
+              name: "Public Project",
+              environments: [{
+                id: "env-1",
+                name: "production",
+                domains: ["public.example.com"],
+                active_release_id: "rel-123",
+                protected: false,
+              }],
+            });
+          }
+
+          return new Response("Not found", { status: 404 });
+        },
+        { port, hostname: "127.0.0.1" },
+      );
+
+      try {
+        const handler = createProxyHandler({
+          config: {
+            apiBaseUrl: `http://127.0.0.1:${port}`,
+            clientId: "test-client",
+            clientSecret: "test-secret",
+            previewClientId: "test-client",
+            previewClientSecret: "test-secret",
+          },
+        });
+
+        const req = new Request("http://public.example.com/page", {
+          headers: { host: "public.example.com" },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error, undefined);
+        assertEquals(ctx.projectSlug, "public-project");
+
+        await handler.close();
+      } finally {
+        await server.stop();
+      }
+    });
+  });
 });

@@ -241,6 +241,15 @@ function forwardToRenderer(req: Request): Promise<Response> {
         const ms = Math.round(performance.now() - startTime);
         proxyLogger.error(`${ctx.error.status} ${req.method} ${url.pathname}`, { ms, domain: ctx.host });
         endSpan(spanInfo?.span, ctx.error.status);
+
+        // Handle redirect for protected environments
+        if (ctx.error.redirectUrl) {
+          return new Response(null, {
+            status: 302,
+            headers: { Location: ctx.error.redirectUrl },
+          });
+        }
+
         return jsonErrorResponse(ctx.error.status, { error: ctx.error.message, status: ctx.error.status });
       }
 
