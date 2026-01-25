@@ -261,13 +261,6 @@ export class LayoutCollector {
     const fs = this.adapter?.fs;
     const isVeryfrontAPI = !!fs && isExtendedFSAdapter(fs) && fs.isVeryfrontAdapter();
 
-    logger.debug("[LayoutCollector] Checking FS adapter type", {
-      hasAdapter: !!this.adapter,
-      hasFs: !!fs,
-      wrapperName: fs?.constructor?.name,
-      isVeryfrontAPI,
-    });
-
     if (isVeryfrontAPI && fs && isExtendedFSAdapter(fs)) {
       return await this.collectAPILayoutConfiguration(fs.getUnderlyingAdapter());
     }

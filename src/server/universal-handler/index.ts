@@ -646,7 +646,10 @@ export function createVeryfrontHandler(
                   return effectiveAdapter.fs.runWithContext(
                     projectSlug,
                     proxyToken,
-                    () => getConfig(effectiveProjectDir, effectiveAdapter),
+                    () =>
+                      getConfig(effectiveProjectDir, effectiveAdapter, {
+                        cacheKey: projectId || projectSlug,
+                      }),
                     projectId,
                     {
                       productionMode: proxyEnv === "production",
@@ -656,7 +659,9 @@ export function createVeryfrontHandler(
                     },
                   );
                 }
-                return getConfig(effectiveProjectDir, effectiveAdapter);
+                return getConfig(effectiveProjectDir, effectiveAdapter, {
+                  cacheKey: projectId || projectSlug,
+                });
               },
             );
 
