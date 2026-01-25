@@ -24,6 +24,12 @@ import {
   buildFileListCacheKey,
   buildStatCacheKeyPrefix,
 } from "./cache-keys.ts";
+import {
+  addPendingInvalidation,
+  removePendingInvalidation,
+  isPrefixBeingInvalidated,
+  getPendingInvalidationsCount,
+} from "./invalidation-state.ts";
 
 const INVALIDATION_DEBOUNCE_MS = 100;
 const WS_RECONNECT_DELAY_MS = 5000;
@@ -77,8 +83,6 @@ export class VeryfrontFSAdapter implements FSAdapter {
     invalidationsTriggered: 0,
     lastPokeTime: 0,
   };
-  /** Cache prefixes with deletion in progress - ReadOperations skips persistent cache for these */
-  private pendingPersistentInvalidations = new Set<string>();
 
   /** Content source configuration from config */
   private contentSource: ContentSource;
@@ -613,7 +617,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
             }
 
             for (const prefix of pendingPrefixes) {
-              this.pendingPersistentInvalidations.add(prefix);
+              addPendingInvalidation(prefix);
             }
 
             logger.info(
@@ -624,7 +628,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
                 environmentName: normalizedPokeEnvironment,
                 deletionPrefixes: Array.from(deletionPrefixes),
                 pendingPrefixes: Array.from(pendingPrefixes),
-                pendingInvalidations: this.pendingPersistentInvalidations.size,
+                pendingInvalidations: getPendingInvalidationsCount(),
               },
             );
 
@@ -657,13 +661,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
                 );
               } finally {
                 for (const prefix of pendingPrefixes) {
-                  this.pendingPersistentInvalidations.delete(prefix);
+                  removePendingInvalidation(prefix);
                 }
                 logger.debug(
                   "[VeryfrontFSAdapter] PUBLISH POKE - cache invalidation complete",
                   {
                     projectSlug: this.projectSlug,
-                    pendingInvalidations: this.pendingPersistentInvalidations.size,
+                    pendingInvalidations: getPendingInvalidationsCount(),
                   },
                 );
               }
@@ -709,10 +713,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   private isPersistentCacheInvalidated(prefix: string): boolean {
-    for (const pending of this.pendingPersistentInvalidations) {
-      if (prefix.startsWith(pending) || pending.startsWith(prefix)) return true;
-    }
-    return false;
+    return isPrefixBeingInvalidated(prefix);
   }
 
   private startHeartbeat(projectId: string): void {
