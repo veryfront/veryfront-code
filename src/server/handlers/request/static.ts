@@ -164,7 +164,8 @@ export class StaticHandler extends BaseHandler {
 
             const contentType = getContentType(ext);
             const builder = this.createResponseBuilder(ctx);
-            const body = isHead ? null : fileData;
+            // slice() creates a copy with a pure ArrayBuffer (not SharedArrayBuffer)
+            const body: BodyInit | null = isHead ? null : fileData.slice();
 
             const response = builder
               .withCORS(req, ctx.securityConfig?.cors)

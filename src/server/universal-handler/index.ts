@@ -15,6 +15,7 @@ import {
 import { requestTracker } from "./request-tracker.ts";
 import { projectIsolation } from "./project-isolation.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { metrics } from "#veryfront/observability/simple-metrics/index.ts";
 import {
   endServerSpan,
@@ -610,8 +611,11 @@ export function createVeryfrontHandler(
             effectiveConfig = await timeAsync(
               "config:load-proxy-project",
               () => {
-                if (effectiveAdapter.runWithContext) {
-                  return effectiveAdapter.runWithContext(
+                // Access runWithContext via the fs adapter (ExtendedFileSystemAdapter)
+                if (
+                  isExtendedFSAdapter(effectiveAdapter.fs) && effectiveAdapter.fs.runWithContext
+                ) {
+                  return effectiveAdapter.fs.runWithContext(
                     projectSlug,
                     proxyToken,
                     () => getConfig(effectiveProjectDir, effectiveAdapter),
