@@ -453,11 +453,14 @@ export class VeryfrontFSAdapter implements FSAdapter {
           // Production renders always fetch published content, so clearing caches
           // on preview edits is safe and avoids stale content after publish.
           if (isProductionMode && !isProductionPoke) {
-            logger.debug("[VeryfrontFSAdapter] POKE ACCEPTED - branch-scoped poke in production mode", {
-              pokeBranchId: normalizedBranchId,
-              pokeBranchName: normalizedBranchName,
-              sourceType: this.contentContext?.sourceType,
-            });
+            logger.debug(
+              "[VeryfrontFSAdapter] POKE ACCEPTED - branch-scoped poke in production mode",
+              {
+                pokeBranchId: normalizedBranchId,
+                pokeBranchName: normalizedBranchName,
+                sourceType: this.contentContext?.sourceType,
+              },
+            );
           }
 
           if (!isProductionMode) {

@@ -491,7 +491,7 @@ document.head.appendChild(errorScript);
   let ws = null;
   let reconnectAttempts = 0;
   const baseDelay = 1000; // Start with 1s
-  const maxDelay = 30000; // Cap at 30s
+  const maxDelay = 10000; // Cap at 10s
   const pingIntervalMs = 30000; // Keepalive ping every 30s
   const pongTimeoutMs = 90000; // Reconnect if no pong for 90s
   let pingIntervalId = null;
