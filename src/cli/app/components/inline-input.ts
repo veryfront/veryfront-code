@@ -53,27 +53,37 @@ export function renderLogs(
 
   if (logs.length === 0) return "";
 
-  // Calculate visible window
-  const visibleLines = expanded ? Math.max(maxLines, 10) : maxLines;
+  const visibleLines = expanded ? Math.max(maxLines, 15) : maxLines;
   const end = logs.length - scroll;
   const start = Math.max(0, end - visibleLines);
   const visibleLogs = logs.slice(start, end);
 
-  const lines = visibleLogs.map((log) => {
+  const lines: string[] = [];
+
+  for (const log of visibleLogs) {
     const time = formatTime(log.time);
     const levelColor = getLevelColor(log.level);
     const levelPrefix = getLevelPrefix(log.level);
 
-    // Truncate message if too long
-    const maxMsgLen = maxWidth - 15; // Account for time and level
-    const msg = log.message.length > maxMsgLen
-      ? `${log.message.slice(0, maxMsgLen - 3)}...`
-      : log.message;
+    if (expanded) {
+      // When expanded, show full message (may wrap to multiple lines)
+      const prefix = `  ${dim(time)} ${levelColor(levelPrefix)} `;
+      const msgLines = wrapText(log.message, maxWidth - 15);
+      lines.push(`${prefix}${msgLines[0] || ""}`);
+      // Indent continuation lines
+      for (let i = 1; i < msgLines.length; i++) {
+        lines.push(`  ${"".padEnd(12)}${msgLines[i]}`);
+      }
+    } else {
+      // When collapsed, truncate
+      const maxMsgLen = maxWidth - 15;
+      const msg = log.message.length > maxMsgLen
+        ? `${log.message.slice(0, maxMsgLen - 3)}...`
+        : log.message;
+      lines.push(`  ${dim(time)} ${levelColor(levelPrefix)} ${msg}`);
+    }
+  }
 
-    return `  ${dim(time)} ${levelColor(levelPrefix)} ${msg}`;
-  });
-
-  // Add scroll indicator if there are more logs
   if (expanded && logs.length > visibleLines) {
     const canScrollUp = start > 0;
     const canScrollDown = scroll > 0;
@@ -81,11 +91,28 @@ export function renderLogs(
     if (canScrollUp) scrollHint.push("↑");
     if (canScrollDown) scrollHint.push("↓");
     if (scrollHint.length > 0) {
-      lines.push(`  ${dim(`[${scrollHint.join(" ")}] ${logs.length} total logs`)}`);
+      lines.push(`  ${dim(`[${scrollHint.join(" ")}] ${logs.length} total`)}`);
     }
   }
 
   return lines.join("\n");
+}
+
+function wrapText(text: string, maxWidth: number): string[] {
+  if (text.length <= maxWidth) return [text];
+
+  const lines: string[] = [];
+  let remaining = text;
+
+  while (remaining.length > maxWidth) {
+    let breakPoint = remaining.lastIndexOf(" ", maxWidth);
+    if (breakPoint <= 0) breakPoint = maxWidth;
+    lines.push(remaining.slice(0, breakPoint));
+    remaining = remaining.slice(breakPoint).trimStart();
+  }
+
+  if (remaining) lines.push(remaining);
+  return lines;
 }
 
 /**
