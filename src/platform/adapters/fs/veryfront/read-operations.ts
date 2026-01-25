@@ -11,13 +11,7 @@ export interface ContentContextProvider {
   isProductionMode: () => boolean;
   getReleaseId: () => string | null;
   getContentContext: () => ResolvedContentContext | null;
-  /**
-   * Get the cached file list from the adapter's initialization.
-   * This is the single source of truth - StatOperations and DirectoryOperations
-   * should use this instead of fetching their own copy.
-   * Returns undefined if the file list hasn't been fetched yet.
-   * Optional for backward compatibility with tests/mocks.
-   */
+  /** Cached file list from adapter initialization (single source of truth) */
   getFileList?: () => Promise<
     Array<{
       id?: string;
@@ -28,18 +22,13 @@ export interface ContentContextProvider {
       updated_at?: string;
     }> | undefined
   >;
+  /** True if release cache is being deleted - skip persistent cache reads */
+  isReleaseBeingInvalidated?: (releaseId: string) => boolean;
 }
 
-/**
- * Extension priority for file resolution.
- * Used when searching for files without a known extension.
- */
 const EXTENSION_PRIORITY = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"] as const;
 
-/** Maximum time (ms) to keep an in-flight request before cleanup */
 const IN_FLIGHT_REQUEST_TIMEOUT_MS = 15_000;
-
-/** Maximum number of in-flight requests to prevent memory leaks */
 const MAX_IN_FLIGHT_REQUESTS = 100;
 
 interface InFlightEntry {
@@ -71,10 +60,6 @@ export class ReadOperations {
     this.fileListReadyPromise = promise;
   }
 
-  /**
-   * Clear the in-memory file list index.
-   * Called when POKE is received to ensure fresh content is fetched from API.
-   */
   clearFileListIndex(): void {
     if (this.fileListIndex) {
       const size = this.fileListIndex.size;
@@ -247,17 +232,30 @@ export class ReadOperations {
     }
 
     if (isProduction) {
-      const cached = await this.cache.getAsync<string>(cacheKey);
-      if (cached) {
-        const preview = cached.length > 80 ? cached.slice(0, 80) + "..." : cached;
-        logger.info("[ReadOperations] PERSISTENT_CACHE_HIT", {
+      // Skip persistent cache if release is being invalidated (prevents stale reads during deletion)
+      const currentReleaseId = ctx?.releaseId;
+      const isBeingInvalidated = currentReleaseId &&
+        this.contextProvider?.isReleaseBeingInvalidated?.(currentReleaseId);
+
+      if (isBeingInvalidated) {
+        logger.info("[ReadOperations] PERSISTENT_CACHE_SKIPPED - release being invalidated", {
           path: normalizedPath,
           cacheKey,
-          contentLength: cached.length,
-          preview: preview.replace(/\n/g, "\\n"),
+          releaseId: currentReleaseId,
         });
-        setRequestScopedFile(cacheKey, cached);
-        return cached;
+      } else {
+        const cached = await this.cache.getAsync<string>(cacheKey);
+        if (cached) {
+          const preview = cached.length > 80 ? cached.slice(0, 80) + "..." : cached;
+          logger.info("[ReadOperations] PERSISTENT_CACHE_HIT", {
+            path: normalizedPath,
+            cacheKey,
+            contentLength: cached.length,
+            preview: preview.replace(/\n/g, "\\n"),
+          });
+          setRequestScopedFile(cacheKey, cached);
+          return cached;
+        }
       }
     }
 

@@ -72,6 +72,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
     invalidationsTriggered: 0,
     lastPokeTime: 0,
   };
+  /** Releases with cache deletion in progress - ReadOperations skips persistent cache for these */
+  private pendingReleaseInvalidations = new Set<string>();
 
   /** Content source configuration from config */
   private contentSource: ContentSource;
@@ -129,6 +131,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
         });
         return result;
       },
+      isReleaseBeingInvalidated: (releaseId: string) =>
+        this.pendingReleaseInvalidations.has(releaseId),
     };
 
     this.statOps = new StatOperations(
@@ -499,24 +503,91 @@ export class VeryfrontFSAdapter implements FSAdapter {
             }
           }
 
+          // Extract deployment-specific data for targeted cache invalidation
+          const pokeReleaseId = data.data?.releaseId as string | null | undefined;
+          const normalizedPokeReleaseId =
+            typeof pokeReleaseId === "string" && pokeReleaseId.length > 0 ? pokeReleaseId : null;
+          const isDeploymentPoke = data.data?.entityType === "deployment";
+
           logger.info("[VeryfrontFSAdapter] POKE ACCEPTED - triggering cache invalidation", {
             changedPathsCount: changedPaths?.length || 0,
             changedPaths: changedPaths || [],
             projectSlug: this.projectSlug,
             branch: this.contentContext?.branch,
+            isDeploymentPoke,
+            pokeReleaseId: normalizedPokeReleaseId,
           });
 
-          // Clear all in-memory caches IMMEDIATELY (before debounce) so new requests
-          // get fresh data during the debounce window. This handles:
-          // - Domain cache: ensures fresh releaseId for production requests
-          // - File list index: ensures fresh content for file reads
-          // - Stat index: ensures correct exists()/stat() for new/deleted files
-          // - Dir tree: ensures correct readdir() for new/deleted files
+          // Clear in-memory caches immediately (before debounce) for fresh data
           this.invalidationCallbacks.clearDomainCache?.();
           this.readOps.clearFileListIndex();
           this.statOps.clearIndex();
           this.dirOps.clearTree();
           logger.debug("[VeryfrontFSAdapter] All in-memory caches cleared immediately on POKE");
+
+          // Clear persistent cache for deployment POKEs to prevent stale hits
+          if (isDeploymentPoke && normalizedPokeReleaseId && this.projectSlug) {
+            const releasePrefix = `file:release:${this.projectSlug}:${normalizedPokeReleaseId}:`;
+            const statReleasePrefix =
+              `stat:release:${this.projectSlug}:${normalizedPokeReleaseId}:`;
+            const dirReleasePrefix = `dir:release:${this.projectSlug}:${normalizedPokeReleaseId}:`;
+            const filesReleasePrefix =
+              `files:release:${this.projectSlug}:${normalizedPokeReleaseId}`;
+
+            // Mark as invalidating before deletion, clear after completion
+            this.pendingReleaseInvalidations.add(normalizedPokeReleaseId);
+
+            logger.info(
+              "[VeryfrontFSAdapter] DEPLOYMENT POKE - clearing persistent cache for release",
+              {
+                releaseId: normalizedPokeReleaseId,
+                projectSlug: this.projectSlug,
+                prefixes: [releasePrefix, statReleasePrefix, dirReleasePrefix, filesReleasePrefix],
+                pendingInvalidations: this.pendingReleaseInvalidations.size,
+              },
+            );
+
+            void (async () => {
+              try {
+                const [fileCount, statCount, dirCount, filesCount] = await Promise.all([
+                  this.cache.deleteByPrefixAsync(releasePrefix),
+                  this.cache.deleteByPrefixAsync(statReleasePrefix),
+                  this.cache.deleteByPrefixAsync(dirReleasePrefix),
+                  this.cache.deleteByPrefixAsync(filesReleasePrefix),
+                ]);
+                logger.info(
+                  "[VeryfrontFSAdapter] DEPLOYMENT POKE - persistent cache cleared for release",
+                  {
+                    releaseId: normalizedPokeReleaseId,
+                    projectSlug: this.projectSlug,
+                    deletedCounts: {
+                      file: fileCount,
+                      stat: statCount,
+                      dir: dirCount,
+                      files: filesCount,
+                    },
+                  },
+                );
+              } catch (error) {
+                logger.warn(
+                  "[VeryfrontFSAdapter] DEPLOYMENT POKE - failed to clear persistent cache",
+                  {
+                    releaseId: normalizedPokeReleaseId,
+                    error: error instanceof Error ? error.message : String(error),
+                  },
+                );
+              } finally {
+                this.pendingReleaseInvalidations.delete(normalizedPokeReleaseId);
+                logger.debug(
+                  "[VeryfrontFSAdapter] DEPLOYMENT POKE - release invalidation complete",
+                  {
+                    releaseId: normalizedPokeReleaseId,
+                    pendingInvalidations: this.pendingReleaseInvalidations.size,
+                  },
+                );
+              }
+            })();
+          }
 
           if (changedPaths?.length) {
             this.scheduleSelectiveInvalidation(changedPaths);
