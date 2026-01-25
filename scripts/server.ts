@@ -195,7 +195,14 @@ async function discoverLocalProjects(projectPath: string | null): Promise<LocalP
 async function main(): Promise<void> {
   const args = parseArgs();
 
-  // Suppress noisy server logs (only if not explicitly set)
+  // Load .env FIRST so LOG_LEVEL can be set there
+  const hasCredentials = await hasEnvFile();
+  if (hasCredentials) {
+    const { load } = await import("https://deno.land/std@0.220.0/dotenv/mod.ts");
+    await load({ envPath: ".env", examplePath: null, export: true });
+  }
+
+  // Suppress noisy server logs (only if not explicitly set in env or .env)
   // Note: PROXY_MODE is auto-detected by veryfront.config.ts based on OAuth credentials
   if (!Deno.env.get("LOG_LEVEL")) {
     Deno.env.set("LOG_LEVEL", "warn");
@@ -218,18 +225,11 @@ async function main(): Promise<void> {
   }
 
   const localProjects = await discoverLocalProjects(args.projectPath);
-  const hasCredentials = await hasEnvFile();
 
   // Import dependencies
   const { createProxyHandler, injectContextHeaders } = await import("../proxy/handler.ts");
   const { createCacheFromEnv } = await import("../proxy/cache/index.ts");
   const { createDevServer } = await import("../src/server/dev-server.ts");
-
-  // Load .env if available
-  if (hasCredentials) {
-    const { load } = await import("https://deno.land/std@0.220.0/dotenv/mod.ts");
-    await load({ envPath: ".env", examplePath: null, export: true });
-  }
 
   // Create proxy handler - combine projects and examples for routing
   const allProjects = new Map([...localProjects.projects, ...localProjects.examples]);
