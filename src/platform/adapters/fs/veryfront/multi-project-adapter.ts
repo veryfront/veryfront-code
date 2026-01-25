@@ -134,12 +134,13 @@ export class MultiProjectFSAdapter implements FSAdapter {
     const releaseId = context.releaseId ?? null;
     const environmentName = context.environmentName ?? null;
 
-    logger.debug("[MultiProjectFSAdapter] getAdapter START", {
+    logger.info("[MultiProjectFSAdapter] getAdapter RELEASE_ID_CHECK", {
       projectSlug: context.projectSlug,
       productionMode,
       releaseId,
-      branch: context.branch,
       environmentName,
+      branch: context.branch,
+      hasReleaseId: !!releaseId,
     });
 
     const adapter = await this.manager.getAdapter(

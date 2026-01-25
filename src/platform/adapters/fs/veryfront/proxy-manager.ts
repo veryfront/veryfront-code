@@ -148,16 +148,19 @@ export class ProxyFSAdapterManager {
       existing.lastAccessed = Date.now();
       existing.adapter.setRequestToken(token);
 
-      this.assertContextMatches(cacheKey, existing.adapter.getContentContext(), {
+      const existingContext = existing.adapter.getContentContext();
+      logger.info("[ProxyFSAdapterManager] REUSING_CACHED_ADAPTER", {
+        cacheKey,
+        requestedReleaseId: effectiveReleaseId,
+        cachedSourceType: existingContext?.sourceType,
+        cachedReleaseId: existingContext?.releaseId,
+      });
+
+      this.assertContextMatches(cacheKey, existingContext, {
         productionMode: effectiveProductionMode,
         releaseId: effectiveReleaseId,
         environmentName: effectiveEnvironmentName,
         branch: effectiveBranch,
-      });
-
-      logger.debug("[ProxyFSAdapterManager] Reusing cached adapter", {
-        cacheKey,
-        duration: `${(performance.now() - getAdapterStartTime).toFixed(2)}ms`,
       });
 
       return existing.adapter;
@@ -345,14 +348,14 @@ export class ProxyFSAdapterManager {
       context = { sourceType: "branch", projectSlug, branch: branch! };
     }
 
-    logger.debug("[ProxyFSAdapterManager] Setting content context for new adapter", {
+    logger.info("[ProxyFSAdapterManager] CONTENT_CONTEXT_SET", {
       cacheKey,
       projectSlug,
       productionMode,
       releaseId,
       environmentName,
-      branch,
-      context,
+      sourceType: context.sourceType,
+      contextReleaseId: "releaseId" in context ? context.releaseId : "N/A",
     });
 
     adapter.setContentContext(context);
