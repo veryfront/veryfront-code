@@ -66,7 +66,16 @@ export function withCache<T extends FluentMethodsContext>(
   this: T,
   strategy: CacheStrategy,
 ): T {
-  this.headers.set("cache-control", buildCacheControl(strategy));
+  this.headers.set("Cache-Control", buildCacheControl(strategy));
+
+  // Add legacy headers for better browser compatibility when preventing caching
+  const isNoCacheStrategy = strategy === "no-cache" || strategy === "none" ||
+    strategy === "no-store";
+  if (isNoCacheStrategy) {
+    this.headers.set("Pragma", "no-cache");
+    this.headers.set("Expires", "0");
+  }
+
   return this;
 }
 
