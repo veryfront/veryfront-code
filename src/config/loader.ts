@@ -215,8 +215,6 @@ function loadConfigFromVirtualFS(
       const content = await adapter.fs.readFile(configPath);
       const source = typeof content === "string" ? content : new TextDecoder().decode(content);
 
-      serverLogger.debug(`[CONFIG] Loading config from virtual FS: ${configPath}`);
-
       const loader = getEsbuildLoader(configPath);
 
       const transpileResult = await withSpan(
@@ -359,38 +357,12 @@ export function getConfig(
 
       for (const configFile of configFiles) {
         const configPath = join(projectDir, configFile);
-
-        serverLogger.debug("[CONFIG] Checking config file existence", {
-          configFile,
-          configPath,
-          cacheKey: cacheKeyForLog,
-        });
-
-        const existsStart = performance.now();
         const exists = await adapter.fs.exists(configPath);
-        serverLogger.debug("[CONFIG] Config file existence check done", {
-          configFile,
-          exists,
-          duration: `${(performance.now() - existsStart).toFixed(2)}ms`,
-          cacheKey: cacheKeyForLog,
-        });
 
         if (!exists) continue;
 
         try {
-          serverLogger.debug("[CONFIG] Loading config file START", {
-            configFile,
-            configPath,
-            cacheKey: cacheKeyForLog,
-          });
-          const loadStart = performance.now();
           const merged = await loadAndMergeConfig(configPath, effectiveCacheKey, adapter);
-          serverLogger.debug("[CONFIG] Loading config file DONE", {
-            configFile,
-            duration: `${(performance.now() - loadStart).toFixed(2)}ms`,
-            totalDuration: `${(performance.now() - getConfigStartTime).toFixed(2)}ms`,
-            cacheKey: cacheKeyForLog,
-          });
           return merged;
         } catch (error) {
           if (isConfigError(error)) throw error;
