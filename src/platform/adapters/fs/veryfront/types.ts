@@ -150,8 +150,8 @@ export interface InvalidationCallbacks {
   clearSnippetCache?: () => void;
   clearSnippetCacheForProject?: (projectSlug: string) => void;
   triggerReload?: (changedPaths?: string[], project?: InvalidationProjectContext) => void;
-  clearRendererCache?: () => void;
-  clearRendererCacheForProject?: (projectId: string) => void;
+  clearRendererCache?: () => void | Promise<void>;
+  clearRendererCacheForProject?: (projectId: string) => void | Promise<void>;
   /** Invalidate project-level CSS cache when source files change */
   clearProjectCSSCache?: (projectSlug: string) => void;
 }

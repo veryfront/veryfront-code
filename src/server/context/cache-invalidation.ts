@@ -25,11 +25,11 @@ export interface InvalidationOptions {
  * Invalidate project caches with optional environment scoping.
  * When environment is specified, only caches for that environment are invalidated.
  */
-export function invalidateProjectCaches(
+export async function invalidateProjectCaches(
   projectSlug: string,
   changedPaths?: string[],
   options?: InvalidationOptions,
-): void {
+): Promise<void> {
   const startTime = Date.now();
   const hasRealProjectSlug = projectSlug !== "preview";
   const environment = options?.environment;
@@ -66,7 +66,7 @@ export function invalidateProjectCaches(
       projectSlug,
       reason: "projectSlug is 'preview' or undefined",
     });
-    clearRendererCaches();
+    await clearRendererCaches();
     clearSnippetCache();
     logger.info("[CacheInvalidation] ✓ Global cache invalidation complete", {
       projectSlug,
@@ -77,7 +77,7 @@ export function invalidateProjectCaches(
   }
 
   logger.debug("[CacheInvalidation] Clearing renderer cache (per-project)", { projectSlug });
-  clearRendererCacheForProject(projectSlug);
+  await clearRendererCacheForProject(projectSlug);
 
   logger.debug("[CacheInvalidation] Clearing snippet cache (per-project)", { projectSlug });
   clearSnippetCacheForProject(projectSlug);

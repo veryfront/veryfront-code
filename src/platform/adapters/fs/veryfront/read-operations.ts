@@ -221,7 +221,9 @@ export class ReadOperations {
 
     const requestCached = getRequestScopedFile(cacheKey);
     if (requestCached) {
-      const preview = requestCached.length > 80 ? requestCached.slice(0, 80) + "..." : requestCached;
+      const preview = requestCached.length > 80
+        ? requestCached.slice(0, 80) + "..."
+        : requestCached;
       logger.info("[ReadOperations] REQUEST_CACHE_HIT", {
         path: normalizedPath,
         cacheKey,

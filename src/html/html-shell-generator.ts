@@ -197,7 +197,10 @@ async function generateHTMLShellPartsImpl(
   const useDevScripts = localDev || isPreviewMode;
 
   const modeScripts = useDevScripts
-    ? getDevScripts(meta.slug || "", options.config, params, props, nonce, { skipDevHMR, skipErrorLogger })
+    ? getDevScripts(meta.slug || "", options.config, params, props, nonce, {
+      skipDevHMR,
+      skipErrorLogger,
+    })
     : getProdScripts(meta.slug || "", params, props, nonce);
 
   const modeStyles = useDevScripts ? getDevStyles(nonce) : getProductionStyles(nonce);

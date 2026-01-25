@@ -481,7 +481,7 @@ export async function destroyRenderer(): Promise<void> {
  * Safe to call even if renderer is not initialized (no-op).
  * @deprecated Use clearRendererCacheForProject for multi-tenant deployments
  */
-export function clearRendererCaches(): void {
+export async function clearRendererCaches(): Promise<void> {
   logger.debug("[Renderer] clearRendererCaches called (global)", { hasRenderer: !!renderer });
 
   if (!renderer) {
@@ -489,12 +489,10 @@ export function clearRendererCaches(): void {
     return;
   }
 
-  renderer.clearAllCaches().catch((error) => {
-    logger.warn("[Renderer] Failed to clear caches", { error: String(error) });
-  });
+  await renderer.clearAllCaches();
 }
 
-export function clearRendererCacheForProject(projectId: string): void {
+export async function clearRendererCacheForProject(projectId: string): Promise<void> {
   logger.debug("[Renderer] clearRendererCacheForProject called", {
     projectId,
     hasRenderer: !!renderer,
@@ -505,12 +503,7 @@ export function clearRendererCacheForProject(projectId: string): void {
     return;
   }
 
-  renderer.clearCacheForProject(projectId).catch((error) => {
-    logger.warn("[Renderer] Failed to clear project caches", {
-      projectId,
-      error: String(error),
-    });
-  });
+  await renderer.clearCacheForProject(projectId);
 }
 
 export function renderPage(

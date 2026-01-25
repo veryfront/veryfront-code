@@ -662,10 +662,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
       this.invalidationCallbacks.clearSSRModuleCache?.();
     }
 
+    // Await renderer cache clear to prevent race condition with HMR
     if (this.invalidationCallbacks.clearRendererCacheForProject && projectId) {
-      this.invalidationCallbacks.clearRendererCacheForProject(projectId);
+      await this.invalidationCallbacks.clearRendererCacheForProject(projectId);
     } else {
-      this.invalidationCallbacks.clearRendererCache?.();
+      await this.invalidationCallbacks.clearRendererCache?.();
     }
 
     // Invalidate project CSS cache when source files change
@@ -776,10 +777,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
       this.invalidationCallbacks.clearSnippetCache?.();
     }
 
+    // Await renderer cache clear to prevent race condition with HMR
     if (this.invalidationCallbacks.clearRendererCacheForProject && projectId) {
-      this.invalidationCallbacks.clearRendererCacheForProject(projectId);
+      await this.invalidationCallbacks.clearRendererCacheForProject(projectId);
     } else {
-      this.invalidationCallbacks.clearRendererCache?.();
+      await this.invalidationCallbacks.clearRendererCache?.();
     }
 
     // Invalidate project CSS cache on full cache clear
