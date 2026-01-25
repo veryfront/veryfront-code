@@ -748,7 +748,10 @@ describe(
           const tempDir = await makeTempDir({ prefix: "vf_proxy_header_" });
           try {
             await mkdir(`${tempDir}/app`, { recursive: true });
-            await writeTextFile(`${tempDir}/app/page.tsx`, `export default function Page() { return <div>Test</div>; }`);
+            await writeTextFile(
+              `${tempDir}/app/page.tsx`,
+              `export default function Page() { return <div>Test</div>; }`,
+            );
 
             const adapter = await createMockAdapter({});
             const handler = createVeryfrontHandler(tempDir, adapter, {
@@ -798,7 +801,10 @@ describe(
           const tempDir = await makeTempDir({ prefix: "vf_proxy_vf_domain_" });
           try {
             await mkdir(`${tempDir}/app`, { recursive: true });
-            await writeTextFile(`${tempDir}/app/page.tsx`, `export default function Page() { return <div>Test</div>; }`);
+            await writeTextFile(
+              `${tempDir}/app/page.tsx`,
+              `export default function Page() { return <div>Test</div>; }`,
+            );
 
             const adapter = await createMockAdapter({});
             const handler = createVeryfrontHandler(tempDir, adapter, {
@@ -815,7 +821,98 @@ describe(
               }),
             );
 
-            assertEquals(res.status, 200, "Should correctly parse Veryfront domain from x-forwarded-host");
+            assertEquals(
+              res.status,
+              200,
+              "Should correctly parse Veryfront domain from x-forwarded-host",
+            );
+          } finally {
+            await remove(tempDir, { recursive: true });
+          }
+        });
+      },
+    );
+
+    describe(
+      "Monitoring Paths - Kubelet Health Checks",
+      {},
+      () => {
+        it("handles /healthz without proxy headers (kubelet probe)", async () => {
+          const tempDir = await makeTempDir({ prefix: "vf_kubelet_healthz_" });
+          try {
+            // Simulate production environment without proxy headers
+            // This is how kubelet health probes hit the renderer
+            const adapter = await createMockAdapter({
+              PROXY_MODE: "1", // Production proxy mode
+            });
+            const handler = createVeryfrontHandler(tempDir, adapter);
+
+            // Kubelet probe: no x-release-id, no x-environment headers
+            const res = await handler(
+              new Request("http://localhost:8000/healthz"),
+            );
+
+            assertEquals(res.status, 200, "Should handle /healthz without proxy headers");
+          } finally {
+            await remove(tempDir, { recursive: true });
+          }
+        });
+
+        it("handles /_metrics without proxy headers", async () => {
+          const tempDir = await makeTempDir({ prefix: "vf_kubelet_metrics_" });
+          try {
+            const adapter = await createMockAdapter({
+              PROXY_MODE: "1",
+            });
+            const handler = createVeryfrontHandler(tempDir, adapter);
+
+            // Prometheus scrape: no proxy headers
+            const res = await handler(
+              new Request("http://localhost:8000/_metrics"),
+            );
+
+            assertEquals(res.status, 200, "Should handle /_metrics without proxy headers");
+          } finally {
+            await remove(tempDir, { recursive: true });
+          }
+        });
+
+        it("handles /readyz without proxy headers", async () => {
+          const tempDir = await makeTempDir({ prefix: "vf_kubelet_readyz_" });
+          try {
+            const adapter = await createMockAdapter({
+              PROXY_MODE: "1",
+            });
+            const handler = createVeryfrontHandler(tempDir, adapter);
+
+            const res = await handler(
+              new Request("http://localhost:8000/readyz"),
+            );
+
+            // /readyz returns 200 (ready) or 503 (not ready) - both are valid
+            // The key is it should NOT return 500 (error) when proxy headers are missing
+            assert(
+              res.status === 200 || res.status === 503,
+              `Should handle /readyz without throwing (got ${res.status})`,
+            );
+          } finally {
+            await remove(tempDir, { recursive: true });
+          }
+        });
+
+        it("handles /_health without proxy headers", async () => {
+          const tempDir = await makeTempDir({ prefix: "vf_kubelet_health_" });
+          try {
+            const adapter = await createMockAdapter({
+              PROXY_MODE: "1",
+            });
+            const handler = createVeryfrontHandler(tempDir, adapter);
+
+            const res = await handler(
+              new Request("http://localhost:8000/_health"),
+            );
+
+            assertEquals(res.status, 200, "Should handle /_health without proxy headers");
           } finally {
             await remove(tempDir, { recursive: true });
           }

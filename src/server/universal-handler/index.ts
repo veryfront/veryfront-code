@@ -92,7 +92,7 @@ function isInternalHost(host: string): boolean {
 }
 
 /** Monitoring paths that should skip domain lookup */
-const MONITORING_PATHS = new Set(["/healthz", "/readyz", "/_health", "/metrics"]);
+const MONITORING_PATHS = new Set(["/healthz", "/readyz", "/_health", "/_metrics"]);
 
 /** Request timeout in milliseconds (configurable via REQUEST_TIMEOUT_MS env var) */
 const REQUEST_TIMEOUT_MS = getTimeoutFromEnv();
@@ -707,11 +707,11 @@ export function createVeryfrontHandler(
         const contentSourceId = isMonitoringPath(url.pathname)
           ? "monitoring"
           : (proxyContentSourceId ?? computeContentSourceId(
-              reqCtx.isLocalDev || isLocalProject,
-              resolvedEnvironment,
-              reqCtx.branch,
-              releaseId,
-            ));
+            reqCtx.isLocalDev || isLocalProject,
+            resolvedEnvironment,
+            reqCtx.branch,
+            releaseId,
+          ));
 
         const enrichedContext = effectiveConfig && projectSlug
           ? buildEnrichedContext({
