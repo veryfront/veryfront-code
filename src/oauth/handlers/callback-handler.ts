@@ -4,6 +4,7 @@
  * Reusable handler for OAuth callback routes.
  */
 
+import { logger } from "#veryfront/utils";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import { type EnvReader, OAuthService } from "../providers/base.ts";
@@ -84,17 +85,17 @@ export function createOAuthCallbackHandler(
       logMessage?: string,
       logData?: unknown,
     ): Promise<Response> {
-      if (logMessage) console.error(logMessage, logData);
+      if (logMessage) logger.error(logMessage, { data: logData });
       await onError?.(config.serviceId, errorCode);
       return redirectWithError(errorCode);
     }
 
     if (oauthError) {
-      console.error(
-        `OAuth error for ${config.serviceId}:`,
-        oauthError,
-        errorDescription,
-      );
+      logger.error("[OAuth] Callback error", {
+        serviceId: config.serviceId,
+        error: oauthError,
+        description: errorDescription,
+      });
       await onError?.(config.serviceId, oauthError);
       return redirectWithError(oauthError, errorDescription);
     }
@@ -105,7 +106,7 @@ export function createOAuthCallbackHandler(
     if (state) {
       oauthState = await tokenStore.getState(state);
       if (!oauthState) {
-        console.warn(`Invalid or expired state for ${config.serviceId}`);
+        logger.warn("[OAuth] Invalid or expired state", { serviceId: config.serviceId });
         // Continue anyway - some providers don't properly return state
       }
     }

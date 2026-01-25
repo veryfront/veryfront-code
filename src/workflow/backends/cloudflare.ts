@@ -1,3 +1,4 @@
+import { logger } from "#veryfront/utils";
 import type {
   ApprovalDecision,
   Checkpoint,
@@ -34,8 +35,8 @@ export class CloudflareAdapter implements WorkflowBackend {
       ...config,
     };
 
-    console.warn(
-      "[CloudflareAdapter] This is a stub implementation. Full Cloudflare integration requires Workers environment bindings. See: https://developers.cloudflare.com/durable-objects/",
+    logger.warn(
+      "[CloudflareAdapter] Stub implementation - requires Workers environment bindings",
     );
   }
 

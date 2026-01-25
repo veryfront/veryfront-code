@@ -1,3 +1,4 @@
+import { logger } from "#veryfront/utils";
 import type { BlobRef, BlobStorage, StoreBlobOptions } from "./types.ts";
 
 export interface GCSBlobStorageConfig {
@@ -53,10 +54,7 @@ export class GCSBlobStorage implements BlobStorage {
       }),
     );
 
-    console.warn(
-      "[GCSBlobStorage] JWT signing for service account requires a library like `djwt`. " +
-        "Proceeding with a placeholder/manual approach, which is not suitable for production.",
-    );
+    logger.warn("[GCSBlobStorage] JWT signing requires djwt library - using placeholder (not for production)");
 
     const signature = "PLACEHOLDER_SIGNATURE";
     const jwt = `${jwtHeader}.${jwtClaimSet}.${signature}`;
@@ -188,7 +186,7 @@ export class GCSBlobStorage implements BlobStorage {
 
       return response.body;
     } catch (e) {
-      console.error("GCS getStream error:", e);
+      logger.error("[GCSBlobStorage] getStream error", e);
       throw e;
     }
   }

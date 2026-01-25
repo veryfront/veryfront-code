@@ -3,6 +3,7 @@
  * @see https://docs.temporal.io/
  */
 
+import { logger } from "#veryfront/utils";
 import type {
   ApprovalDecision,
   Checkpoint,
@@ -45,11 +46,7 @@ export class TemporalAdapter implements WorkflowBackend {
       ...config,
     };
 
-    console.warn(
-      "[TemporalAdapter] This is a stub implementation. " +
-        "Full Temporal integration requires the Temporal SDK and worker setup. " +
-        "See: https://docs.temporal.io/",
-    );
+    logger.warn("[TemporalAdapter] Stub implementation - requires Temporal SDK and worker setup");
   }
 
   // Run Management

@@ -4,6 +4,7 @@
  * Main orchestrator for executing durable workflows
  **************************/
 
+import { logger } from "#veryfront/utils";
 import type {
   BlobResolver,
   NodeState,
@@ -174,7 +175,7 @@ export class WorkflowExecutor {
     await this.config.backend.createRun(run);
 
     this.executeAsync(run.id).catch((error) => {
-      console.error(`Workflow ${run.id} failed:`, error);
+      logger.error("[WorkflowExecutor] Workflow failed", { runId: run.id }, error);
     });
 
     return this.createHandle<TOutput>(run.id);
@@ -252,9 +253,7 @@ export class WorkflowExecutor {
         );
       }
 
-      if (this.config.debug) {
-        console.log(`[WorkflowExecutor] Acquired lock for run: ${runId}`);
-      }
+      logger.debug("[WorkflowExecutor] Acquired lock for run", { runId });
     }
 
     try {
@@ -307,10 +306,7 @@ export class WorkflowExecutor {
     } finally {
       if (useLocking) {
         await this.config.backend.releaseLock!(runId);
-
-        if (this.config.debug) {
-          console.log(`[WorkflowExecutor] Released lock for run: ${runId}`);
-        }
+        logger.debug("[WorkflowExecutor] Released lock for run", { runId });
       }
     }
   }

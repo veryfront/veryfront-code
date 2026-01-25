@@ -1,3 +1,4 @@
+import { logger } from "#veryfront/utils";
 import { type EnvReader, OAuthService } from "../providers/base.ts";
 import type { AuthorizationUrlOptions, OAuthServiceConfig, TokenStore } from "../types.ts";
 import { memoryTokenStore } from "../token-store/memory.ts";
@@ -54,7 +55,7 @@ export function createOAuthInitHandler(
 
       return Response.redirect(url);
     } catch (error) {
-      console.error(`OAuth init error for ${config.serviceId}:`, error);
+      logger.error("[OAuth] Init error", { serviceId: config.serviceId }, error);
 
       return Response.json(
         {

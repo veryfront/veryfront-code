@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { logger } from "#veryfront/utils";
 
 const CACHE_DIR = join(tmpdir(), "veryfront-module-cache");
 
@@ -62,7 +63,7 @@ async function writeToCache(url: string, content: string): Promise<void> {
     await ensureCacheDir();
     await writeFile(getCachePath(url), content, "utf-8");
   } catch (error) {
-    console.warn(`[http-loader] Failed to cache ${url}:`, error);
+    logger.warn("[http-loader] Failed to cache module", { url, error });
   }
 }
 
@@ -140,5 +141,5 @@ export function initialize(data?: { clearCache?: boolean }): void {
   if (!data?.clearCache) return;
 
   // Could clear cache here if needed
-  console.log("[http-loader] Initialized with cache clearing");
+  logger.debug("[http-loader] Initialized with cache clearing");
 }

@@ -4,6 +4,7 @@
  * High-level API for interacting with workflows
  **************************/
 
+import { logger } from "#veryfront/utils";
 import type {
   PendingApproval,
   RunFilter,
@@ -55,9 +56,7 @@ export class WorkflowClient {
           | undefined;
 
         if (!input) {
-          if (this.debug) {
-            console.log(`[WorkflowClient] No wait config found for node: ${nodeId}`);
-          }
+          logger.debug("[WorkflowClient] No wait config found for node", { nodeId });
           userOnWaiting?.(run, nodeId);
           return;
         }
@@ -76,11 +75,9 @@ export class WorkflowClient {
 
         try {
           await this.approvalManager.createApproval(run, nodeId, waitConfig, run.context);
-          if (this.debug) {
-            console.log(`[WorkflowClient] Created approval for node: ${nodeId}`);
-          }
+          logger.debug("[WorkflowClient] Created approval for node", { nodeId });
         } catch (error) {
-          console.error(`[WorkflowClient] Failed to create approval:`, error);
+          logger.error("[WorkflowClient] Failed to create approval", error);
         }
 
         userOnWaiting?.(run, nodeId);
@@ -99,10 +96,7 @@ export class WorkflowClient {
     const definition = "definition" in workflow ? workflow.definition : workflow;
 
     this.executor.register(definition);
-
-    if (this.debug) {
-      console.log(`[WorkflowClient] Registered workflow: ${definition.id}`);
-    }
+    logger.debug("[WorkflowClient] Registered workflow", { workflowId: definition.id });
   }
 
   registerAll(workflows: Array<Workflow | WorkflowDefinition>): void {
@@ -190,10 +184,7 @@ export class WorkflowClient {
   async destroy(): Promise<void> {
     this.approvalManager.stop();
     await this.backend.destroy();
-
-    if (this.debug) {
-      console.log("[WorkflowClient] Destroyed");
-    }
+    logger.debug("[WorkflowClient] Destroyed");
   }
 }
 

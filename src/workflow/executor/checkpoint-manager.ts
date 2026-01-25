@@ -1,3 +1,4 @@
+import { logger } from "#veryfront/utils";
 import type { Checkpoint, NodeState, WorkflowContext, WorkflowNode } from "../types.ts";
 import { generateId } from "../types.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
@@ -22,10 +23,7 @@ export class CheckpointManager {
   }
 
   async save(runId: string, checkpoint: Checkpoint): Promise<void> {
-    if (this.config.debug) {
-      console.log(`[CheckpointManager] Saving checkpoint ${checkpoint.id} for run ${runId}`);
-    }
-
+    logger.debug("[CheckpointManager] Saving checkpoint", { checkpointId: checkpoint.id, runId });
     await this.config.backend.saveCheckpoint(runId, checkpoint);
   }
 
@@ -140,11 +138,10 @@ export class CheckpointManager {
     const idsToDelete = all.slice(keepCount).map((c) => c.id);
     if (idsToDelete.length === 0) return;
 
-    if (this.config.debug) {
-      console.log(
-        `[CheckpointManager] Cleaning up ${idsToDelete.length} old checkpoints for run ${runId}`,
-      );
-    }
+    logger.debug("[CheckpointManager] Cleaning up old checkpoints", {
+      count: idsToDelete.length,
+      runId,
+    });
 
     const { backend } = this.config;
 

@@ -1,3 +1,4 @@
+import { logger } from "#veryfront/utils";
 import { init, parse } from "es-module-lexer";
 
 let initPromise: Promise<void> | null = null;
@@ -82,9 +83,7 @@ export async function parseImports(code: string): Promise<readonly ImportSpecifi
         })
         .join("\n");
 
-      console.error(
-        `[es-module-lexer] Parse error at line ${line}, column ${col}:\n${context}`,
-      );
+      logger.error("[es-module-lexer] Parse error", { line, col, context });
     }
 
     throw error;

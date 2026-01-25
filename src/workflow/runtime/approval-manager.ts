@@ -1,3 +1,4 @@
+import { logger } from "#veryfront/utils";
 import type {
   ApprovalDecision,
   PendingApproval,
@@ -87,18 +88,14 @@ export class ApprovalManager {
       status: "pending",
     };
 
-    if (this.config.debug) {
-      console.log(
-        `[ApprovalManager] Creating approval ${approval.id} for run ${run.id}`,
-      );
-    }
+    logger.debug("[ApprovalManager] Creating approval", { approvalId: approval.id, runId: run.id });
 
     await this.config.backend.savePendingApproval(run.id, approval);
 
     try {
       await this.config.notifier?.(approval, run);
     } catch (error) {
-      console.error(`[ApprovalManager] Failed to notify approvers:`, error);
+      logger.error("[ApprovalManager] Failed to notify approvers", error);
     }
 
     return {
@@ -136,13 +133,10 @@ export class ApprovalManager {
     approvalId: string,
     decision: ApprovalDecision,
   ): Promise<void> {
-    if (this.config.debug) {
-      console.log(
-        `[ApprovalManager] Processing decision for ${approvalId}: ${
-          decision.approved ? "approved" : "rejected"
-        }`,
-      );
-    }
+    logger.debug("[ApprovalManager] Processing decision", {
+      approvalId,
+      approved: decision.approved,
+    });
 
     const approval = await this.getApproval(runId, approvalId);
     if (!approval) {
@@ -208,7 +202,7 @@ export class ApprovalManager {
       try {
         await this.config.executor.resume(runId);
       } catch (error) {
-        console.error(`[ApprovalManager] Failed to resume workflow:`, error);
+        logger.error("[ApprovalManager] Failed to resume workflow", error);
         throw error;
       }
       return;
@@ -260,9 +254,7 @@ export class ApprovalManager {
   }): Promise<Array<{ runId: string; approval: PendingApproval }>> {
     const list = this.config.backend.listPendingApprovals;
     if (!list) {
-      console.warn(
-        "[ApprovalManager] listPendingApprovals not supported by backend",
-      );
+      logger.warn("[ApprovalManager] listPendingApprovals not supported by backend");
       return Promise.resolve([]);
     }
 
@@ -288,9 +280,7 @@ export class ApprovalManager {
         continue;
       }
 
-      if (this.config.debug) {
-        console.log(`[ApprovalManager] Expiring approval ${approval.id}`);
-      }
+      logger.debug("[ApprovalManager] Expiring approval", { approvalId: approval.id });
 
       await this.config.backend.updateApproval(runId, approval.id, {
         approved: false,
@@ -309,7 +299,7 @@ export class ApprovalManager {
   private startExpirationChecker(): void {
     this.expirationTimer = setInterval(() => {
       this.checkExpiredApprovals().catch((error) => {
-        console.error(`[ApprovalManager] Expiration check failed:`, error);
+        logger.error("[ApprovalManager] Expiration check failed", error);
       });
     }, this.config.expirationCheckInterval);
   }

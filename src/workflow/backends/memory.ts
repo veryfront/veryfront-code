@@ -5,6 +5,7 @@
  * Data is NOT persisted across restarts.
  */
 
+import { logger } from "#veryfront/utils";
 import type {
   ApprovalDecision,
   Checkpoint,
@@ -48,7 +49,7 @@ export class MemoryBackend implements WorkflowBackend {
   // =========================================================================
 
   createRun(run: WorkflowRun): Promise<void> {
-    if (this.config.debug) console.log(`[MemoryBackend] Creating run: ${run.id}`);
+    logger.debug(`[MemoryBackend] Creating run: ${run.id}`);
     this.runs.set(run.id, structuredClone(run));
     return Promise.resolve();
   }
@@ -62,7 +63,7 @@ export class MemoryBackend implements WorkflowBackend {
     const run = this.runs.get(runId);
     if (!run) throw new Error(`Run not found: ${runId}`);
 
-    if (this.config.debug) console.log(`[MemoryBackend] Updating run: ${runId}`, patch);
+    logger.debug(`[MemoryBackend] Updating run: ${runId}`, patch);
 
     const updated: WorkflowRun = {
       ...run,
@@ -123,10 +124,7 @@ export class MemoryBackend implements WorkflowBackend {
   // =========================================================================
 
   saveCheckpoint(runId: string, checkpoint: Checkpoint): Promise<void> {
-    if (this.config.debug) {
-      console.log(`[MemoryBackend] Saving checkpoint: ${checkpoint.id} for run ${runId}`);
-    }
-
+    logger.debug("[MemoryBackend] Saving checkpoint", { checkpointId: checkpoint.id, runId });
     const existing = this.checkpoints.get(runId) ?? [];
     existing.push(structuredClone(checkpoint));
     this.checkpoints.set(runId, existing);
@@ -154,7 +152,7 @@ export class MemoryBackend implements WorkflowBackend {
     if (index === -1) return Promise.resolve();
 
     checkpoints.splice(index, 1);
-    if (this.config.debug) console.log(`[MemoryBackend] Deleted checkpoint: ${checkpointId}`);
+    logger.debug(`[MemoryBackend] Deleted checkpoint: ${checkpointId}`);
     return Promise.resolve();
   }
 
@@ -168,9 +166,7 @@ export class MemoryBackend implements WorkflowBackend {
       checkpoints.filter((c) => !idsToDelete.has(c.id)),
     );
 
-    if (this.config.debug) {
-      console.log(`[MemoryBackend] Deleted ${checkpointIds.length} checkpoints`);
-    }
+    logger.debug("[MemoryBackend] Deleted checkpoints", { count: checkpointIds.length });
     return Promise.resolve();
   }
 
@@ -179,10 +175,7 @@ export class MemoryBackend implements WorkflowBackend {
   // =========================================================================
 
   savePendingApproval(runId: string, approval: PendingApproval): Promise<void> {
-    if (this.config.debug) {
-      console.log(`[MemoryBackend] Saving approval: ${approval.id} for run ${runId}`);
-    }
-
+    logger.debug("[MemoryBackend] Saving approval", { approvalId: approval.id, runId });
     const existing = this.approvals.get(runId) ?? [];
     existing.push(structuredClone(approval));
     this.approvals.set(runId, existing);
@@ -213,10 +206,7 @@ export class MemoryBackend implements WorkflowBackend {
     const approval = approvals.find((a) => a.id === approvalId);
     if (!approval) throw new Error(`Approval not found: ${approvalId}`);
 
-    if (this.config.debug) {
-      console.log(`[MemoryBackend] Updating approval: ${approvalId}`, decision);
-    }
-
+    logger.debug("[MemoryBackend] Updating approval", { approvalId, decision });
     approval.status = decision.approved ? "approved" : "rejected";
     approval.decidedBy = decision.approver;
     approval.decidedAt = new Date();
@@ -269,7 +259,7 @@ export class MemoryBackend implements WorkflowBackend {
       );
     }
 
-    if (this.config.debug) console.log(`[MemoryBackend] Enqueueing job: ${job.runId}`);
+    logger.debug(`[MemoryBackend] Enqueueing job: ${job.runId}`);
 
     const priority = job.priority ?? 0;
     const insertIndex = this.queue.findIndex((j) => (j.priority ?? 0) < priority);
@@ -290,7 +280,7 @@ export class MemoryBackend implements WorkflowBackend {
   }
 
   acknowledge(runId: string): Promise<void> {
-    if (this.config.debug) console.log(`[MemoryBackend] Acknowledging job: ${runId}`);
+    logger.debug(`[MemoryBackend] Acknowledging job: ${runId}`);
     return Promise.resolve();
   }
 
@@ -316,14 +306,14 @@ export class MemoryBackend implements WorkflowBackend {
 
     if (existing && existing.expiresAt > now) return Promise.resolve(false);
 
-    if (this.config.debug) console.log(`[MemoryBackend] Acquiring lock for: ${runId}`);
+    logger.debug(`[MemoryBackend] Acquiring lock for: ${runId}`);
 
     this.locks.set(runId, { lockId: crypto.randomUUID(), expiresAt: now + duration });
     return Promise.resolve(true);
   }
 
   releaseLock(runId: string): Promise<void> {
-    if (this.config.debug) console.log(`[MemoryBackend] Releasing lock for: ${runId}`);
+    logger.debug(`[MemoryBackend] Releasing lock for: ${runId}`);
     this.locks.delete(runId);
     return Promise.resolve();
   }
@@ -348,7 +338,7 @@ export class MemoryBackend implements WorkflowBackend {
   // =========================================================================
 
   initialize(): Promise<void> {
-    if (this.config.debug) console.log("[MemoryBackend] Initialized");
+    logger.debug("[MemoryBackend] Initialized");
     return Promise.resolve();
   }
 
@@ -363,7 +353,7 @@ export class MemoryBackend implements WorkflowBackend {
     this.queue = [];
     this.locks.clear();
 
-    if (this.config.debug) console.log("[MemoryBackend] Destroyed");
+    logger.debug("[MemoryBackend] Destroyed");
     return Promise.resolve();
   }
 
