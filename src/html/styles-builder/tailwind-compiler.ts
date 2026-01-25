@@ -83,7 +83,7 @@ export async function initializeProjectCSSCache(): Promise<boolean> {
     projectCSSInitPromise = (async () => {
       try {
         projectCSSBackend = await CacheBackends.projectCSS();
-        logger.info("[ProjectCSSCache] Initialized", { backend: projectCSSBackend.type });
+        logger.debug("[ProjectCSSCache] Initialized", { backend: projectCSSBackend.type });
       } catch (error) {
         logger.warn("[ProjectCSSCache] Backend init failed, using memory", { error });
         projectCSSBackend = new MemoryCacheBackend(100);

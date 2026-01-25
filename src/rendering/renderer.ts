@@ -165,7 +165,7 @@ export class Renderer {
       await initializeSharedServices(options);
 
       this.initialized = true;
-      logger.info("[Renderer] Initialized", {
+      logger.debug("[Renderer] Initialized", {
         duration: `${(performance.now() - startTime).toFixed(2)}ms`,
       });
     })();

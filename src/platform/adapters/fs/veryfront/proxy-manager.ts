@@ -348,7 +348,7 @@ export class ProxyFSAdapterManager {
       context = { sourceType: "branch", projectSlug, branch: branch! };
     }
 
-    logger.info("[ProxyFSAdapterManager] CONTENT_CONTEXT_SET", {
+    logger.debug("[ProxyFSAdapterManager] CONTENT_CONTEXT_SET", {
       cacheKey,
       projectSlug,
       productionMode,

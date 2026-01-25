@@ -505,7 +505,7 @@ export class RenderPipeline {
         });
 
         timing.total = Math.round(performance.now() - pipelineStartTime);
-        logger.info("[RenderPipeline] Complete", { slug, timing });
+        logger.debug("[RenderPipeline] Complete", { slug, timing });
 
         return result;
       },
