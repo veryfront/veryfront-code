@@ -298,6 +298,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       }
 
       if (isCustomDomain && !projectSlug) {
+        // Custom domain: lookup project by domain
         if (!token) {
           logger?.error("Cannot process custom domain without token", undefined, { domain: host });
           return makeErrorContext(502, `Failed to authenticate for domain: ${host}`, token);
@@ -327,6 +328,30 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         } else {
           logger?.error("Custom domain not found", undefined, { domain: host });
           return makeErrorContext(404, `No project configured for domain: ${host}`, token);
+        }
+      } else if (projectSlug && scope === "production" && token && parsedDomain.environment) {
+        // Veryfront domain in non-preview mode: lookup project by slug to get releaseId
+        // This handles production, staging, and other non-preview environments
+        const lookupResult = await lookupProjectByDomain(projectSlug, config.apiBaseUrl, token, logger);
+        if (lookupResult) {
+          projectId = lookupResult.id;
+
+          // Find environment matching the parsed domain's environment (e.g., "staging", "production")
+          const matchingEnv = lookupResult.environments?.find((env) =>
+            env.name.toLowerCase() === parsedDomain.environment!.toLowerCase()
+          );
+
+          if (matchingEnv?.active_release_id) {
+            releaseId = matchingEnv.active_release_id;
+          }
+
+          logger?.info("Resolved veryfront domain to project", {
+            projectSlug,
+            projectId,
+            releaseId,
+            targetEnvName: parsedDomain.environment,
+            environmentName: matchingEnv?.name,
+          });
         }
       }
     }
