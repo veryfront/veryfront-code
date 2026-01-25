@@ -130,22 +130,35 @@ class RequestTracker {
     if (timedOut) this.totalTimedOut++;
     else this.totalCompleted++;
 
-    // Clean path for display (strip internal prefixes)
-    const displayPath = tracked.path
-      .replace(/^\/_vf_modules\//, "")
-      .replace(/^\/_veryfront\//, "_vf/");
+    // Skip logging internal module requests entirely (too noisy)
+    const isModuleRequest = tracked.path.startsWith("/_vf_modules/") ||
+      tracked.path.startsWith("/_veryfront/");
 
-    // Module requests go to debug, page/API requests go to info
-    const isModuleRequest = tracked.path.startsWith("/_vf_modules/");
-    const logFn = isModuleRequest ? logger.debug.bind(logger) : logger.info.bind(logger);
+    if (isModuleRequest) {
+      // Only log modules at debug level, and only if slow
+      if (durationMs > 100) {
+        logger.debug(`${tracked.method} ${tracked.path} ${statusCode} ${durationMs}ms`);
+      }
+      return;
+    }
 
-    // Compact single-line format: METHOD path → status (duration)
-    const statusIcon = statusCode >= 400 ? "✗" : "→";
-    logFn(`${tracked.method} ${displayPath} ${statusIcon} ${statusCode} (${durationMs}ms)`, {
-      project: tracked.projectSlug,
-      ...(timedOut && { timedOut: true }),
-      ...(this.inFlight.size > 0 && { pending: this.inFlight.size }),
-    });
+    // Clean path for display
+    const displayPath = tracked.path.length > 40
+      ? tracked.path.slice(0, 37) + "..."
+      : tracked.path.padEnd(40);
+
+    // Color codes for terminal
+    const statusColor = statusCode >= 500 ? "\x1b[31m" : // red
+                        statusCode >= 400 ? "\x1b[33m" : // yellow
+                        statusCode >= 300 ? "\x1b[36m" : // cyan
+                        "\x1b[32m"; // green
+    const reset = "\x1b[0m";
+    const dim = "\x1b[2m";
+
+    // Clean now-style format: METHOD path status duration
+    console.log(
+      `  ${dim}${tracked.method.padEnd(4)}${reset} ${displayPath} ${statusColor}${statusCode}${reset} ${dim}${durationMs}ms${reset}`
+    );
   }
 
   getInFlightCount(): number {
