@@ -240,7 +240,8 @@ async function generateHTMLShellPartsImpl(
     tailwindCSSBlock = `<link rel="stylesheet" href="/_vf/css/${cssHash}.css">`;
   } else {
     // Dev/preview: use link tag for HMR cache-busting
-    tailwindCSSBlock = `<link id="vf-tailwind-css" rel="stylesheet" href="/_vf_styles/styles.css">`;
+    tailwindCSSBlock =
+      `<link id="vf-tailwind-css" rel="stylesheet" href="/_vf_styles/styles.css?t=${Date.now()}">`;
   }
 
   const start = `<!DOCTYPE html>
