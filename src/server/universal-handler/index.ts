@@ -492,6 +492,7 @@ export function createVeryfrontHandler(
           parsedDomain.isDraft === false &&
           projectSlug &&
           !releaseId &&
+          !proxyToken && // Skip domain lookup in proxy mode - proxy already provides releaseId
           config?.fs?.veryfront &&
           !shouldSkipDomainLookup
         ) {
@@ -602,12 +603,43 @@ export function createVeryfrontHandler(
               error: getErrorMessage(error),
             });
           }
-        } else if (isProxyMode && projectSlug) {
-          effectiveConfig = undefined;
-          logger.debug("[universal] Proxy mode - will load config via API adapter", {
-            projectSlug,
-            hasToken: !!proxyToken,
-          });
+        } else if (isProxyMode && projectSlug && proxyToken) {
+          // Load config in proxy mode so enrichedContext can be created with correct environment
+          // Must wrap in runWithContext to set project context for MultiProjectFSAdapter
+          try {
+            effectiveConfig = await timeAsync(
+              "config:load-proxy-project",
+              () => {
+                if (effectiveAdapter.runWithContext) {
+                  return effectiveAdapter.runWithContext(
+                    projectSlug,
+                    proxyToken,
+                    () => getConfig(effectiveProjectDir, effectiveAdapter),
+                    projectId,
+                    {
+                      productionMode: proxyEnv === "production",
+                      releaseId,
+                      branch: reqCtx.branch || parsedDomain.branch || null,
+                      environmentName,
+                    },
+                  );
+                }
+                return getConfig(effectiveProjectDir, effectiveAdapter);
+              },
+            );
+
+            logger.debug("[universal] Loaded config in proxy mode", {
+              projectSlug,
+              hasConfig: !!effectiveConfig,
+              layout: effectiveConfig?.layout,
+              router: effectiveConfig?.router,
+            });
+          } catch (error) {
+            logger.warn("[universal] Failed to load proxy config, using defaults", {
+              projectSlug,
+              error: getErrorMessage(error),
+            });
+          }
         }
 
         let resolvedEnvironment = proxyEnv === "preview" || proxyEnv === "production"
