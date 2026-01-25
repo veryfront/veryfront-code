@@ -455,22 +455,6 @@ export const getRouterScript = () => `
         metaDesc?.setAttribute('content', pageData.frontmatter.description);
       }
 
-      // Inject CSS for the new page (ensures styles work without Tailwind CDN)
-      if (pageData.css) {
-        const existingStyle = document.getElementById('veryfront-spa-css');
-        if (existingStyle) {
-          // Update existing style element content
-          existingStyle.textContent = pageData.css;
-        } else {
-          // Create new style element
-          const styleEl = document.createElement('style');
-          styleEl.id = 'veryfront-spa-css';
-          styleEl.textContent = pageData.css;
-          document.head.appendChild(styleEl);
-        }
-        log('Injected CSS for SPA navigation', { cssLength: pageData.css.length });
-      }
-
       // Build the component tree with layouts
       let tree = React.createElement(PageComponent, {
         ...pageData.props,

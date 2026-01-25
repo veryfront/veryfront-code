@@ -215,6 +215,7 @@ async function handleUpdate(update) {
 
 async function updateCSS(path) {
   console.log('[HMR] Updating CSS:', path);
+  let updated = false;
 
   // Try to update linked stylesheets
   document.querySelectorAll('link[rel="stylesheet"]').forEach((link) => {
@@ -225,25 +226,43 @@ async function updateCSS(path) {
         newUrl.searchParams.set('t', Date.now().toString());
         link.href = newUrl.toString();
         console.log('[HMR] CSS link updated:', path);
+        updated = true;
       }
     } catch (error) {
       console.error('[HMR] Failed to update CSS link:', error);
     }
   });
 
-  // Try to update inline Tailwind CSS style tag
-  const tailwindStyle = document.getElementById('vf-tailwind-css');
-  if (tailwindStyle && (path.includes('globals.css') || path.endsWith('.css'))) {
+  // Try to update Tailwind browser CDN style tag (type="text/tailwindcss")
+  const tailwindCDNStyle = document.querySelector('style[type="text/tailwindcss"]');
+  if (tailwindCDNStyle && (path.includes('globals.css') || path.endsWith('.css'))) {
     try {
-      // Fetch fresh compiled CSS from globals endpoint
+      // Fetch raw globals.css content (browser CDN will recompile)
+      const response = await fetch('/_vf_raw/globals.css?t=' + Date.now());
+      if (response.ok) {
+        const newCSS = await response.text();
+        tailwindCDNStyle.textContent = newCSS;
+        console.log('[HMR] Tailwind CDN style updated');
+        updated = true;
+      }
+    } catch (error) {
+      console.error('[HMR] Failed to fetch raw CSS:', error);
+    }
+  }
+
+  // Fallback: legacy inline Tailwind CSS (vf-tailwind-css)
+  const tailwindStyle = document.getElementById('vf-tailwind-css');
+  if (tailwindStyle && !updated && (path.includes('globals.css') || path.endsWith('.css'))) {
+    try {
       const response = await fetch('/_vf_styles/globals.css?t=' + Date.now());
       if (response.ok) {
         const newCSS = await response.text();
         tailwindStyle.textContent = newCSS;
-        console.log('[HMR] Inline Tailwind CSS updated');
+        console.log('[HMR] Legacy inline Tailwind CSS updated');
+        updated = true;
       }
     } catch (error) {
-      console.error('[HMR] Failed to fetch fresh CSS:', error);
+      console.error('[HMR] Failed to fetch compiled CSS:', error);
     }
   }
 
@@ -639,25 +658,42 @@ document.head.appendChild(errorScript);
       }
     }
 
-    // Try to update inline Tailwind CSS style tag
-    const tailwindStyle = document.getElementById('vf-tailwind-css');
-    console.log('[Preview HMR] Tailwind style element found:', !!tailwindStyle);
-    if (tailwindStyle && (path.includes('globals.css') || path.endsWith('.css'))) {
+    // Try to update Tailwind browser CDN style tag (type="text/tailwindcss")
+    const tailwindCDNStyle = document.querySelector('style[type="text/tailwindcss"]');
+    if (tailwindCDNStyle && (path.includes('globals.css') || path.endsWith('.css'))) {
+      console.log('[Preview HMR] Tailwind CDN style element found, fetching raw globals.css');
       try {
-        // Fetch fresh compiled CSS from globals endpoint
-        const cssUrl = '/_vf_styles/globals.css?t=' + Date.now();
-        console.log('[Preview HMR] Fetching fresh CSS from:', cssUrl);
+        // Fetch raw globals.css content (browser CDN will recompile)
+        const cssUrl = '/_vf_raw/globals.css?t=' + Date.now();
+        console.log('[Preview HMR] Fetching raw CSS from:', cssUrl);
         const response = await fetch(cssUrl);
-        console.log('[Preview HMR] CSS fetch response:', response.status, response.statusText);
         if (response.ok) {
           const newCSS = await response.text();
-          console.log('[Preview HMR] CSS fetched, length:', newCSS.length);
-          tailwindStyle.textContent = newCSS;
-          console.log('[Preview HMR] Inline Tailwind CSS updated');
+          console.log('[Preview HMR] Raw CSS fetched, length:', newCSS.length);
+          tailwindCDNStyle.textContent = newCSS;
+          console.log('[Preview HMR] Tailwind CDN style updated - browser will recompile');
           updated = true;
         }
       } catch (error) {
-        console.error('[Preview HMR] Failed to fetch fresh CSS:', error);
+        console.error('[Preview HMR] Failed to fetch raw CSS:', error);
+      }
+    }
+
+    // Fallback: legacy inline Tailwind CSS (vf-tailwind-css)
+    const tailwindStyle = document.getElementById('vf-tailwind-css');
+    if (tailwindStyle && !updated && (path.includes('globals.css') || path.endsWith('.css'))) {
+      console.log('[Preview HMR] Legacy Tailwind style element found');
+      try {
+        const cssUrl = '/_vf_styles/globals.css?t=' + Date.now();
+        const response = await fetch(cssUrl);
+        if (response.ok) {
+          const newCSS = await response.text();
+          tailwindStyle.textContent = newCSS;
+          console.log('[Preview HMR] Legacy inline Tailwind CSS updated');
+          updated = true;
+        }
+      } catch (error) {
+        console.error('[Preview HMR] Failed to fetch compiled CSS:', error);
       }
     }
 

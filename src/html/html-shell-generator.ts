@@ -14,11 +14,14 @@ import {
   extractCandidates,
   formatCSSError,
   generateTailwindCSS,
-  generateThemeVariables,
   getDevStyles,
   getProductionStyles,
   getProjectCSS,
 } from "./styles-builder/index.ts";
+
+// Tailwind v4 browser CDN - handles JIT compilation in the browser
+// https://tailwindcss.com/docs/installation/play-cdn
+const TAILWIND_BROWSER_CDN = "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4";
 import type { HTMLGenerationOptions } from "./types.ts";
 import {
   buildContentAttributes,
@@ -129,7 +132,10 @@ async function generateHTMLShellPartsImpl(
   const stylesheetContent = options.globalCSS;
 
   const localDev = options.isLocalDev ?? false;
+  const isPreview = options.environment === "preview";
   const useProductionCSS = !localDev && options.environment === "production";
+  // Use browser CDN for dev (local + preview) - handles HMR automatically
+  const useBrowserCDN = localDev || isPreview;
 
   // Use projectClasses (extracted from ALL source files) + current page as fallback
   const candidates = new Set<string>(options.projectClasses ?? []);
@@ -142,7 +148,12 @@ async function generateHTMLShellPartsImpl(
   let tailwindError: string | undefined;
   let cssHash = "";
 
-  if (useProductionCSS && projectSlug !== "default") {
+  // In dev mode (local + preview), use browser CDN for instant HMR
+  // In production, pre-compile CSS for performance
+  if (useBrowserCDN) {
+    // Browser CDN handles all Tailwind compilation - no server-side CSS needed
+    tailwindCSS = "";
+  } else if (useProductionCSS && projectSlug !== "default") {
     const projectCSS = await getProjectCSS(projectSlug, stylesheetContent, candidates, {
       minify: true,
     });
@@ -244,24 +255,31 @@ async function generateHTMLShellPartsImpl(
 </script>`
     : "";
 
-  let tailwindCSSBlock = "";
-  if (tailwindCSS) {
-    if (useProductionCSS) {
-      tailwindCSSBlock = `<link rel="stylesheet" href="/_vf/css/${cssHash}.css">`;
-    } else {
-      tailwindCSSBlock = `<style id="vf-tailwind-css"${
+  // Preview: Tailwind browser CDN + user's globals.css
+  // Production: Pre-compiled CSS linked stylesheet
+  let tailwindHeadBlock = "";
+  if (useBrowserCDN) {
+    const cdnScript = `<script src="${TAILWIND_BROWSER_CDN}"${
+      nonce ? ` nonce="${nonce}"` : ""
+    }></script>`;
+    const userStylesheet = stylesheetContent
+      ? `<style type="text/tailwindcss"${
+        nonce ? ` nonce="${nonce}"` : ""
+      }>\n${stylesheetContent}\n  </style>`
+      : "";
+    tailwindHeadBlock = `${cdnScript}\n  ${userStylesheet}`;
+  } else if (tailwindCSS) {
+    tailwindHeadBlock = useProductionCSS
+      ? `<link rel="stylesheet" href="/_vf/css/${cssHash}.css">`
+      : `<style id="vf-tailwind-css"${
         nonce ? ` nonce="${nonce}"` : ""
       }>\n${tailwindCSS}\n  </style>`;
-    }
   }
 
+  // Production only: server-side compilation error (never in preview with browser CDN)
   const tailwindErrorComment = tailwindError
-    ? `<!-- Tailwind CSS Error: ${tailwindError.replace(/-->/g, "- ->")} -->`
+    ? `<!-- Tailwind Error: ${tailwindError.replace(/-->/g, "- ->")} -->`
     : "";
-
-  const themeVariablesBlock = options.globalCSS ? "" : `<style${nonce ? ` nonce="${nonce}"` : ""}>
-${generateThemeVariables()}
-  </style>`;
 
   const start = `<!DOCTYPE html>
 <html ${htmlAttrs}>
@@ -279,12 +297,9 @@ ${generateThemeVariables()}
   <!-- Modulepreload hints for faster cold start -->
   ${modulePreloadHints}
 
-  <!-- Tailwind CSS: Server-side JIT compiled -->
-  ${tailwindCSSBlock}
+  <!-- Tailwind CSS -->
+  ${tailwindHeadBlock}
   ${tailwindErrorComment}
-
-  <!-- CSS Variables for Theming -->
-  ${themeVariablesBlock}
 
   <!-- Syntax highlighting for code blocks -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/${syntaxHighlightTheme}.min.css">
