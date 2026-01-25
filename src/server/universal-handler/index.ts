@@ -702,12 +702,16 @@ export function createVeryfrontHandler(
         }
 
         // Use proxy header if available, otherwise compute using shared utility
-        const contentSourceId = proxyContentSourceId ?? computeContentSourceId(
-          reqCtx.isLocalDev || isLocalProject,
-          resolvedEnvironment,
-          reqCtx.branch,
-          releaseId,
-        );
+        // Skip contentSourceId computation for monitoring paths - they don't need it
+        // and would fail for kubelet health checks that don't have proxy headers
+        const contentSourceId = isMonitoringPath(url.pathname)
+          ? "monitoring"
+          : (proxyContentSourceId ?? computeContentSourceId(
+              reqCtx.isLocalDev || isLocalProject,
+              resolvedEnvironment,
+              reqCtx.branch,
+              releaseId,
+            ));
 
         const enrichedContext = effectiveConfig && projectSlug
           ? buildEnrichedContext({
