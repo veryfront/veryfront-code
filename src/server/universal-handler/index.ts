@@ -596,6 +596,26 @@ export function createVeryfrontHandler(
           ? proxyEnv
           : reqCtx.mode;
 
+        if (isProxyMode && resolvedEnvironment === "production" && projectSlug && !releaseId) {
+          logger.error("[universal] Missing releaseId in proxy mode (production)", {
+            projectSlug,
+            projectId,
+            environmentName,
+            host,
+            proxyEnv,
+            resolvedEnvironment,
+          });
+
+          return new Response(
+            JSON.stringify({
+              error: "Missing releaseId for production request in proxy mode",
+              projectSlug,
+              environment: resolvedEnvironment,
+            }),
+            { status: 502, headers: { "Content-Type": "application/json" } },
+          );
+        }
+
         const enrichedContext = effectiveConfig && projectSlug
           ? buildEnrichedContext({
             projectId: projectId ?? projectSlug,

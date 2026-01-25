@@ -254,8 +254,7 @@ export class FileCache {
           setInRequestCache(key, serialized);
           await backend.set(key, serialized, BACKEND_TTL_SECONDS);
         } catch (error) {
-          logger.debug("[FileCache] Backend set failed, using fallback", { key, error });
-          this.setToFallback(key, entry, size);
+          logger.debug("[FileCache] Backend set failed, skipping fallback", { key, error });
         }
       },
       { "cache.key": key, "cache.backend": backend.type, "cache.size": size },

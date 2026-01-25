@@ -109,7 +109,7 @@ describe("ReadOperations", () => {
     });
 
     it("should skip cache when release is being invalidated", () => {
-      let invalidatedReleases = new Set<string>();
+      const invalidatedReleases = new Set<string>();
 
       const contextProvider = {
         isProductionMode: () => true,
@@ -139,7 +139,7 @@ describe("ReadOperations", () => {
     });
 
     it("should skip cache when prefix is being invalidated", () => {
-      let invalidatedPrefixes = new Set<string>();
+      const invalidatedPrefixes = new Set<string>();
 
       const contextProvider = {
         isProductionMode: () => true,
@@ -199,7 +199,7 @@ describe("ReadOperations", () => {
     });
 
     it("should handle environment-based invalidation", () => {
-      let invalidatedPrefixes = new Set<string>();
+      const invalidatedPrefixes = new Set<string>();
 
       const contextProvider = {
         isProductionMode: () => true,

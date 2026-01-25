@@ -449,23 +449,39 @@ export class VeryfrontAPIClient {
     return matches[0] ?? null;
   }
 
-  listPublishedFiles(_projectId?: string, releaseId?: string) {
+  listPublishedFiles(_projectId?: string, releaseId?: string, environmentName?: string) {
     const projectRef = this.getProjectSlug()!;
-    // Use release endpoint if releaseId provided, otherwise fall back to environment
+    // Use release endpoint if releaseId provided, otherwise use environment when specified
     if (releaseId) {
       return this.operations.listAllReleaseFiles(projectRef, releaseId);
     }
-    return this.operations.listAllEnvironmentFiles(projectRef, "production");
+    if (environmentName) {
+      return this.operations.listAllEnvironmentFiles(projectRef, environmentName);
+    }
+    throw new VeryfrontAPIError(
+      "Cannot list published files without releaseId or environmentName",
+      400,
+    );
   }
 
-  async getPublishedFileContent(path: string, releaseId?: string): Promise<string> {
+  async getPublishedFileContent(
+    path: string,
+    releaseId?: string,
+    environmentName?: string,
+  ): Promise<string> {
     const projectRef = this.getProjectSlug()!;
-    // Use release endpoint if releaseId provided, otherwise fall back to environment
+    // Use release endpoint if releaseId provided, otherwise use environment when specified
     if (releaseId) {
       const result = await this.operations.getReleaseFile(projectRef, releaseId, path);
       return result.content;
     }
-    const result = await this.operations.getEnvironmentFile(projectRef, "production", path);
-    return result.content;
+    if (environmentName) {
+      const result = await this.operations.getEnvironmentFile(projectRef, environmentName, path);
+      return result.content;
+    }
+    throw new VeryfrontAPIError(
+      "Cannot fetch published file without releaseId or environmentName",
+      400,
+    );
   }
 }

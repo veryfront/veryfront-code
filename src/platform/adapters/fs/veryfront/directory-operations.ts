@@ -4,7 +4,11 @@ import type { ProjectFile, VeryfrontAPIClient } from "../../veryfront-api-client
 import { FileCache } from "../cache/file-cache.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 import type { ContentContextProvider } from "./read-operations.ts";
-import { buildDirCacheKeyPrefix, buildFileListCacheKey } from "./cache-keys.ts";
+import {
+  buildDirCacheKeyPrefix,
+  buildFileCacheKeyPrefix,
+  buildFileListCacheKey,
+} from "./cache-keys.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 interface DirNode {
@@ -158,10 +162,16 @@ export class DirectoryOperations {
   private getAllFilesRaw(): Promise<ProjectFile[]> {
     return withSpan("fs.veryfront.getAllFilesRaw", async () => {
       const cacheStart = performance.now();
+      const ctx = this.contextProvider?.getContentContext();
+      const cacheKeyPrefix = buildFileCacheKeyPrefix(ctx);
+      const skipPersistentCache =
+        this.contextProvider?.isPersistentCacheInvalidated?.(cacheKeyPrefix) ?? false;
 
       // Use the adapter's cached file list (single source of truth)
       // This avoids duplicate API calls - the adapter fetches the file list once during init
-      const adapterFiles = await this.contextProvider?.getFileList?.();
+      const adapterFiles = !skipPersistentCache
+        ? await this.contextProvider?.getFileList?.()
+        : undefined;
       if (adapterFiles) {
         const cacheMs = Math.round(performance.now() - cacheStart);
         logger.debug("[DirectoryOperations] getAllFilesRaw - from adapter cache", {
@@ -172,11 +182,19 @@ export class DirectoryOperations {
       }
 
       // Fallback: direct cache lookup (shouldn't normally happen if adapter is initialized)
-      const ctx = this.contextProvider?.getContentContext();
       const cacheKey = buildFileListCacheKey(ctx);
 
       // Use getAsync to support both memory and Redis cache backends
-      const cached = await this.cache.getAsync<ProjectFile[]>(cacheKey);
+      if (skipPersistentCache) {
+        logger.debug("[DirectoryOperations] getAllFilesRaw - skipping persistent cache", {
+          cacheKey,
+          cacheKeyPrefix,
+        });
+      }
+
+      const cached = skipPersistentCache
+        ? undefined
+        : await this.cache.getAsync<ProjectFile[]>(cacheKey);
       const cacheMs = Math.round(performance.now() - cacheStart);
       if (cached) {
         logger.debug("[DirectoryOperations] getAllFilesRaw - fallback cache HIT", {
@@ -200,7 +218,11 @@ export class DirectoryOperations {
       });
 
       const files = isPublished
-        ? await this.client.listPublishedFiles(undefined, ctx?.releaseId ?? undefined)
+        ? await this.client.listPublishedFiles(
+          undefined,
+          ctx?.releaseId ?? undefined,
+          ctx?.environmentName ?? undefined,
+        )
         : await this.client.listAllFiles();
 
       this.cache.set(cacheKey, files);

@@ -130,4 +130,24 @@ describe("VeryfrontAPIClient", () => {
       assertEquals(client.isProxyMode(), false);
     });
   });
+
+  describe("published content guards", () => {
+    it("throws when listPublishedFiles called without releaseId or environmentName", () => {
+      const client = new VeryfrontAPIClient(baseConfig);
+      assertThrows(
+        () => client.listPublishedFiles(undefined, undefined, undefined),
+        VeryfrontAPIError,
+        "Cannot list published files without releaseId or environmentName",
+      );
+    });
+
+    it("rejects when getPublishedFileContent called without releaseId or environmentName", async () => {
+      const client = new VeryfrontAPIClient(baseConfig);
+      await assertRejects(
+        () => client.getPublishedFileContent("pages/index.mdx"),
+        VeryfrontAPIError,
+        "Cannot fetch published file without releaseId or environmentName",
+      );
+    });
+  });
 });

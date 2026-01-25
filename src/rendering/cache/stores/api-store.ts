@@ -1,11 +1,7 @@
 import type { CachePayload, CacheStore } from "../types.ts";
 import { MemoryCacheStore } from "./memory-store.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
-import {
-  type CacheBackend,
-  createCacheBackend,
-  MemoryCacheBackend,
-} from "#veryfront/cache/backend.ts";
+import { type CacheBackend, createCacheBackend } from "#veryfront/cache/backend.ts";
 
 export interface APICacheStoreOptions {
   /** Key prefix for cache entries */
@@ -14,6 +10,8 @@ export interface APICacheStoreOptions {
   ttlSeconds?: number;
   /** Max entries for local memory cache (fast reads) */
   localMaxEntries?: number;
+  /** Disable local memory cache (no in-memory fallback) */
+  enableLocalCache?: boolean;
 }
 
 /**
@@ -41,24 +39,31 @@ interface SerializedCachePayload {
 export class APICacheStore implements CacheStore {
   private backend: CacheBackend | null = null;
   private backendInitPromise: Promise<CacheBackend> | null = null;
-  private readonly localCache: MemoryCacheStore;
+  private readonly localCache: MemoryCacheStore | null;
   private readonly keyPrefix: string;
   private readonly ttlSeconds: number;
+  private readonly enableLocalCache: boolean;
 
   constructor(options: APICacheStoreOptions = {}) {
     this.keyPrefix = options.keyPrefix ?? "render";
     this.ttlSeconds = options.ttlSeconds ?? 3600; // 1 hour default
-    this.localCache = new MemoryCacheStore({
-      maxEntries: options.localMaxEntries ?? 200,
-      ttlMs: this.ttlSeconds * 1000,
-    });
+    this.enableLocalCache = options.enableLocalCache ?? true;
+    this.localCache = this.enableLocalCache
+      ? new MemoryCacheStore({
+        maxEntries: options.localMaxEntries ?? 200,
+        ttlMs: this.ttlSeconds * 1000,
+      })
+      : null;
   }
 
   private getBackend(): Promise<CacheBackend> {
     if (this.backend) return Promise.resolve(this.backend);
     if (this.backendInitPromise) return this.backendInitPromise;
 
-    this.backendInitPromise = createCacheBackend({ keyPrefix: this.keyPrefix })
+    this.backendInitPromise = createCacheBackend({
+      keyPrefix: this.keyPrefix,
+      preferredBackend: "api",
+    })
       .then((backend) => {
         this.backend = backend;
         logger.debug("[APICacheStore] Distributed cache initialized", {
@@ -68,11 +73,11 @@ export class APICacheStore implements CacheStore {
       })
       .catch((error) => {
         logger.warn(
-          "[APICacheStore] Failed to init distributed cache, using memory",
+          "[APICacheStore] Failed to init distributed cache, skipping fallback",
           { error },
         );
-        this.backend = new MemoryCacheBackend(200);
-        return this.backend;
+        this.backend = null;
+        throw error;
       });
 
     return this.backendInitPromise;
@@ -120,8 +125,10 @@ export class APICacheStore implements CacheStore {
   }
 
   async get(key: string): Promise<CachePayload | undefined> {
-    const local = await this.localCache.get(key);
-    if (local) return local;
+    if (this.localCache) {
+      const local = await this.localCache.get(key);
+      if (local) return local;
+    }
 
     try {
       const backend = await this.getBackend();
@@ -129,7 +136,7 @@ export class APICacheStore implements CacheStore {
       if (!json) return undefined;
 
       const payload = this.deserialize(json);
-      await this.localCache.set(key, payload);
+      await this.localCache?.set(key, payload);
       logger.debug("[APICacheStore] Distributed cache hit", { key });
       return payload;
     } catch (error) {
@@ -144,12 +151,12 @@ export class APICacheStore implements CacheStore {
   async set(key: string, value: CachePayload): Promise<void> {
     if (value.result.stream) return;
 
-    await this.localCache.set(key, value);
+    await this.localCache?.set(key, value);
 
     this.getBackend()
       .then((backend) => backend.set(key, this.serialize(value), this.ttlSeconds))
       .catch((error) => {
-        logger.debug("[APICacheStore] Failed to store in distributed cache", {
+        logger.debug("[APICacheStore] Failed to store in distributed cache (no fallback)", {
           key,
           error,
         });
@@ -157,7 +164,7 @@ export class APICacheStore implements CacheStore {
   }
 
   async delete(key: string): Promise<void> {
-    await this.localCache.delete(key);
+    await this.localCache?.delete(key);
 
     try {
       const backend = await this.getBackend();
@@ -171,7 +178,7 @@ export class APICacheStore implements CacheStore {
   }
 
   async deleteByPrefix(prefix: string): Promise<number> {
-    const localDeleted = (await this.localCache.deleteByPrefix?.(prefix)) ?? 0;
+    const localDeleted = (await this.localCache?.deleteByPrefix?.(prefix)) ?? 0;
 
     let distributedDeleted = 0;
     try {
@@ -194,12 +201,12 @@ export class APICacheStore implements CacheStore {
   }
 
   async clear(): Promise<void> {
-    await this.localCache.clear();
+    await this.localCache?.clear();
     logger.debug("[APICacheStore] Local cache cleared");
   }
 
   async destroy(): Promise<void> {
-    await this.localCache.destroy();
+    await this.localCache?.destroy();
     this.backend = null;
     this.backendInitPromise = null;
   }

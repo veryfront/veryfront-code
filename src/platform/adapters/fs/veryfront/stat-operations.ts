@@ -5,7 +5,11 @@ import { FileCache } from "../cache/file-cache.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 import { createError, toError } from "#veryfront/errors";
 import type { ContentContextProvider } from "./read-operations.ts";
-import { buildFileCacheKeyPrefix, buildFileListCacheKey, buildStatCacheKeyPrefix } from "./cache-keys.ts";
+import {
+  buildFileCacheKeyPrefix,
+  buildFileListCacheKey,
+  buildStatCacheKeyPrefix,
+} from "./cache-keys.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 const EXTENSION_PRIORITY = [".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"] as const;
@@ -231,7 +235,9 @@ export class StatOperations {
       });
     }
 
-    const cached = skipPersistentCache ? undefined : await this.cache.getAsync<ProjectFile[]>(cacheKey);
+    const cached = skipPersistentCache
+      ? undefined
+      : await this.cache.getAsync<ProjectFile[]>(cacheKey);
     const cacheMs = Math.round(performance.now() - cacheStart);
 
     if (cached) {
@@ -255,7 +261,11 @@ export class StatOperations {
     });
 
     const files = isPublished
-      ? await this.client.listPublishedFiles(undefined, ctx?.releaseId ?? undefined)
+      ? await this.client.listPublishedFiles(
+        undefined,
+        ctx?.releaseId ?? undefined,
+        ctx?.environmentName ?? undefined,
+      )
       : await this.client.listAllFiles();
 
     this.cache.set(cacheKey, files);

@@ -567,7 +567,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
               deletionPrefixes.add(statPrefix);
               deletionPrefixes.add(dirPrefix);
               deletionPrefixes.add(filesPrefix);
+
+              // Track ALL prefixes as pending to prevent stale reads during async deletion
               pendingPrefixes.add(filePrefix);
+              pendingPrefixes.add(statPrefix);
+              pendingPrefixes.add(dirPrefix);
+              pendingPrefixes.add(filesPrefix);
             };
 
             const addBroadPrefixes = (sourceType: "release" | "environment"): void => {
@@ -578,7 +583,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
               deletionPrefixes.add(`stat:${base}`);
               deletionPrefixes.add(`dir:${base}`);
               deletionPrefixes.add(`files:${base}`);
+
+              // Track ALL prefixes as pending to prevent stale reads during async deletion
               pendingPrefixes.add(`file:${base}`);
+              pendingPrefixes.add(`stat:${base}`);
+              pendingPrefixes.add(`dir:${base}`);
+              pendingPrefixes.add(`files:${base}`);
             };
 
             if (normalizedPokeReleaseId) {

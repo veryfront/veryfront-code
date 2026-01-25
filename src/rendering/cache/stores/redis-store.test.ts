@@ -48,7 +48,7 @@ describe("RedisCacheStore", () => {
       expect(new RedisCacheStore()).toBeDefined();
     });
 
-    it("should enable fallback by default", () => {
+    it("should create store with default options", () => {
       expect(new RedisCacheStore()).toBeDefined();
     });
   });

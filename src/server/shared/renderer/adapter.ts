@@ -70,6 +70,7 @@ async function getOrInitRenderer(): Promise<Renderer> {
         keyPrefix: "render",
         ttlSeconds: renderCacheTtlSeconds,
         localMaxEntries: 200,
+        enableLocalCache: false,
       }),
       ttlMs: renderCacheTtlSeconds * 1000,
     };

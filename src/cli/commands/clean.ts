@@ -145,6 +145,7 @@ function createRenderCacheStore(
       return new RedisCacheStore({
         url: renderConfig.redisUrl,
         keyPrefix: renderConfig.redisKeyPrefix ?? "veryfront:render:",
+        enableFallback: false,
       });
 
     case "memory":

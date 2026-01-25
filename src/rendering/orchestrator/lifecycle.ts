@@ -104,6 +104,7 @@ export class RendererLifecycle {
         cacheStore = new RedisCacheStore({
           url: renderCacheConfig.redisUrl,
           keyPrefix: renderCacheConfig.redisKeyPrefix,
+          enableFallback: false,
         });
         break;
       case "memory":

@@ -37,7 +37,7 @@ export class RedisCacheStore implements CacheStore {
   constructor(options: RedisCacheStoreOptions = {}) {
     this.url = options.url;
     this.keyPrefix = options.keyPrefix ?? "veryfront:render:";
-    this.enableFallback = options.enableFallback ?? true;
+    this.enableFallback = options.enableFallback ?? false;
     this.ttlSeconds = options.ttlSeconds ?? DEFAULT_TTL_SECONDS;
   }
 
@@ -95,6 +95,9 @@ export class RedisCacheStore implements CacheStore {
     if (this.redisUnavailable && this.enableFallback) {
       return this.getFallbackStore().get(key);
     }
+    if (this.redisUnavailable && !this.enableFallback) {
+      return undefined;
+    }
 
     try {
       const client = await this.ensureClient();
@@ -107,7 +110,11 @@ export class RedisCacheStore implements CacheStore {
         return undefined;
       }
     } catch (error) {
-      if (!this.enableFallback) throw error;
+      if (!this.enableFallback) {
+        logger.warn("[redis] get failed, skipping fallback", { key, error });
+        this.redisUnavailable = true;
+        return undefined;
+      }
 
       logger.warn("[redis] get failed, using fallback", { key, error });
       this.redisUnavailable = true;
@@ -119,13 +126,18 @@ export class RedisCacheStore implements CacheStore {
     if (this.redisUnavailable && this.enableFallback) {
       return this.getFallbackStore().set(key, value);
     }
+    if (this.redisUnavailable && !this.enableFallback) return;
 
     try {
       const client = await this.ensureClient();
       // Apply TTL to prevent unbounded Redis growth
       await client.set(this.storageKey(key), JSON.stringify(value), { EX: this.ttlSeconds });
     } catch (error) {
-      if (!this.enableFallback) throw error;
+      if (!this.enableFallback) {
+        logger.warn("[redis] set failed, skipping fallback", { key, error });
+        this.redisUnavailable = true;
+        return;
+      }
 
       logger.warn("[redis] set failed, using fallback", { key, error });
       this.redisUnavailable = true;
@@ -137,12 +149,17 @@ export class RedisCacheStore implements CacheStore {
     if (this.redisUnavailable && this.enableFallback) {
       return this.getFallbackStore().delete(key);
     }
+    if (this.redisUnavailable && !this.enableFallback) return;
 
     try {
       const client = await this.ensureClient();
       await client.del(this.storageKey(key));
     } catch (error) {
-      if (!this.enableFallback) throw error;
+      if (!this.enableFallback) {
+        logger.warn("[redis] delete failed, skipping fallback", { key, error });
+        this.redisUnavailable = true;
+        return;
+      }
 
       logger.warn("[redis] delete failed, using fallback", { key, error });
       this.redisUnavailable = true;
@@ -154,6 +171,9 @@ export class RedisCacheStore implements CacheStore {
     const localDeleted = (await this.fallbackStore?.deleteByPrefix?.(prefix)) ?? 0;
 
     if (this.redisUnavailable && this.enableFallback) {
+      return localDeleted;
+    }
+    if (this.redisUnavailable && !this.enableFallback) {
       return localDeleted;
     }
 
@@ -177,7 +197,11 @@ export class RedisCacheStore implements CacheStore {
       const deleted = deleteResults.reduce((sum, count) => sum + count, 0);
       return localDeleted + deleted;
     } catch (error) {
-      if (!this.enableFallback) throw error;
+      if (!this.enableFallback) {
+        logger.warn("[redis] deleteByPrefix failed, skipping fallback", { prefix, error });
+        this.redisUnavailable = true;
+        return localDeleted;
+      }
 
       logger.warn("[redis] deleteByPrefix failed, using fallback", { prefix, error });
       this.redisUnavailable = true;
@@ -189,6 +213,7 @@ export class RedisCacheStore implements CacheStore {
     await this.fallbackStore?.clear();
 
     if (this.redisUnavailable && this.enableFallback) return;
+    if (this.redisUnavailable && !this.enableFallback) return;
 
     try {
       const client = await this.ensureClient();
@@ -206,7 +231,11 @@ export class RedisCacheStore implements CacheStore {
         }
       } while (cursor !== 0);
     } catch (error) {
-      if (!this.enableFallback) throw error;
+      if (!this.enableFallback) {
+        logger.warn("[redis] clear failed, skipping fallback", { error });
+        this.redisUnavailable = true;
+        return;
+      }
 
       logger.warn("[redis] clear failed", { error });
       this.redisUnavailable = true;

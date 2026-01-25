@@ -311,6 +311,7 @@ export class ReadOperations {
             apiPath,
             cacheKey,
             ctx?.releaseId ?? null,
+            ctx?.environmentName ?? null,
             isProduction,
           );
         }
@@ -329,16 +330,22 @@ export class ReadOperations {
     apiPath: string,
     cacheKey: string,
     releaseId: string | null,
+    environmentName: string | null,
     shouldCache: boolean,
   ): Promise<string> {
     logger.debug("[ReadOperations] Fetching published content", {
       path: normalizedPath,
       apiPath,
       cacheKey,
+      environmentName: environmentName ?? undefined,
     });
 
     try {
-      const content = await this.client.getPublishedFileContent(apiPath, releaseId ?? undefined);
+      const content = await this.client.getPublishedFileContent(
+        apiPath,
+        releaseId ?? undefined,
+        environmentName ?? undefined,
+      );
 
       logger.debug("[ReadOperations] Fetched published content", {
         path: normalizedPath,
@@ -368,6 +375,7 @@ export class ReadOperations {
         cacheKey,
         shouldCache,
         releaseId,
+        environmentName,
       );
       if (fallbackContent !== null) return fallbackContent;
 
@@ -384,6 +392,7 @@ export class ReadOperations {
     cacheKey: string,
     shouldCache: boolean,
     releaseId: string | null,
+    environmentName?: string | null,
   ): Promise<string | null> {
     const extMatch = apiPath.match(/\.(tsx|ts|jsx|js|mdx|md)$/);
     if (!extMatch) return null;
@@ -423,6 +432,7 @@ export class ReadOperations {
         cacheKey,
         shouldCache,
         releaseId,
+        environmentName,
       );
     }
   }
@@ -434,6 +444,7 @@ export class ReadOperations {
     cacheKey: string,
     shouldCache: boolean,
     releaseId: string | null,
+    environmentName?: string | null,
   ): Promise<string | null> {
     for (const ext of EXTENSION_PRIORITY) {
       if (ext === originalExt) continue;
@@ -444,6 +455,7 @@ export class ReadOperations {
         const content = await this.client.getPublishedFileContent(
           fallbackPath,
           releaseId ?? undefined,
+          environmentName ?? undefined,
         );
 
         logger.debug("[ReadOperations] Sequential fallback succeeded", {
