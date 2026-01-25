@@ -363,9 +363,32 @@ export function clearCSSCache(): void {
   localCssCache.clear();
 }
 
+/**
+ * Extract Tailwind CSS v4 class candidates from content.
+ *
+ * Supports all Tailwind v4 features including:
+ * - Basic utilities: mt-4, bg-blue-500
+ * - Negative values: -mt-4, -translate-x-1/2
+ * - Important modifier: !mt-4, !text-red-500
+ * - Responsive/state variants: sm:mt-4, hover:bg-blue, dark:text-white
+ * - Arbitrary values: w-[100px], bg-[#ff0000], bg-[var(--color)]
+ * - Arbitrary properties: [mask-type:alpha], [--my-var:value]
+ * - Arbitrary variants: [&>*]:mt-4, [&:hover]:bg-blue
+ * - Container queries: @container, @lg:flex, @[200px]:grid
+ * - Opacity modifier: bg-black/50
+ * - Fractions: w-1/2
+ * - CSS variable utilities: text-[--my-color], bg-[--theme-bg]
+ * - 3D transforms: rotate-x-45, perspective-500
+ */
 export function extractCandidates(content: string): string[] {
-  // Match Tailwind classes including those starting with - (negative values like -translate-x-1/2)
-  const pattern = /-?[a-zA-Z0-9][a-zA-Z0-9_\-:\/\.\[\]%#,()!'=<>$@{}|*+?;^]*/g;
+  // Pattern breakdown:
+  // - !? - optional important prefix
+  // - -? - optional negative prefix
+  // - @? - optional @ for container queries
+  // - (?:[a-zA-Z0-9]|\[&?) - start with alphanumeric OR [ (with optional & for arbitrary variants)
+  // - [...] - continuation characters including all Tailwind syntax
+  // - ~ for sibling selectors [&~*]
+  const pattern = /!?-?@?(?:[a-zA-Z0-9]|\[&?)[a-zA-Z0-9_\-:\/\.\[\]%#,()!'=<>$@{}|*+?;^~]*/g;
   const matches = content.match(pattern) ?? [];
   return [...new Set(matches)];
 }
