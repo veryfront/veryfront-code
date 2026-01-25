@@ -170,7 +170,7 @@ describe("HMR Runtime Tests", { sanitizeOps: false, sanitizeResources: false }, 
   });
 
   describe("HMR Runtime - CSS Update Handling", () => {
-    it("includes CSS update function", () => {
+    it("includes CSS refresh function", () => {
       const options: HMRRuntimeOptions = {
         port: 3001,
         reactRefresh: false,
@@ -178,11 +178,11 @@ describe("HMR Runtime Tests", { sanitizeOps: false, sanitizeResources: false }, 
 
       const script = generateRuntimeScript(options);
 
-      assert(script.includes("updateCSS"), "Should have updateCSS function");
+      assert(script.includes("refreshTailwindCSS"), "Should have refreshTailwindCSS function");
       assert(script.includes(".css"), "Should check for CSS files");
     });
 
-    it("handles CSS file updates without full reload", () => {
+    it("handles CSS file updates via link refresh", () => {
       const options: HMRRuntimeOptions = {
         port: 3001,
         reactRefresh: false,
@@ -190,8 +190,7 @@ describe("HMR Runtime Tests", { sanitizeOps: false, sanitizeResources: false }, 
 
       const script = generateRuntimeScript(options);
 
-      assert(script.includes("querySelectorAll"), "Should query stylesheet links");
-      assert(script.includes('link[rel="stylesheet"]'), "Should find stylesheet links");
+      assert(script.includes("vf-tailwind-css"), "Should target Tailwind CSS link");
       assert(script.includes("Date.now"), "Should add cache-busting timestamp");
     });
 
@@ -204,7 +203,7 @@ describe("HMR Runtime Tests", { sanitizeOps: false, sanitizeResources: false }, 
       const script = generateRuntimeScript(options);
 
       assert(script.includes("link.href"), "Should update link href");
-      assert(script.includes("searchParams.set"), "Should add query parameter");
+      assert(script.includes("/_vf_styles/styles.css"), "Should use styles endpoint");
     });
   });
 
@@ -373,7 +372,7 @@ describe("HMR Runtime Tests", { sanitizeOps: false, sanitizeResources: false }, 
       assertEquals(openParens, closeParens, "Parentheses should be balanced");
     });
 
-    it("does not include debugging code in production", () => {
+    it("includes appropriate logging for development", () => {
       const options: HMRRuntimeOptions = {
         port: 3001,
         reactRefresh: false,
@@ -381,8 +380,9 @@ describe("HMR Runtime Tests", { sanitizeOps: false, sanitizeResources: false }, 
 
       const script = generateRuntimeScript(options);
 
-      // Should not have console.log for debugging
-      assert(!script.includes("console.log"), "Should not have console.log statements");
+      // HMR is dev-only, so console.log is expected for debugging
+      assert(script.includes("console.log"), "Should have console.log for HMR feedback");
+      assert(script.includes("console.error"), "Should log errors");
     });
 
     it("handles edge cases gracefully", () => {
