@@ -108,7 +108,7 @@ class RequestTracker {
 
     this.inFlight.set(requestId, tracked);
 
-    logger.info("[RequestTracker] Request started", {
+    logger.debug("[RequestTracker] Request started", {
       requestId,
       projectSlug,
       path,
@@ -130,15 +130,21 @@ class RequestTracker {
     if (timedOut) this.totalTimedOut++;
     else this.totalCompleted++;
 
-    logger.info("[RequestTracker] Request completed", {
-      requestId,
-      projectSlug: tracked.projectSlug,
-      path: tracked.path,
-      method: tracked.method,
-      statusCode,
-      durationMs,
-      timedOut,
-      inFlightCount: this.inFlight.size,
+    // Clean path for display (strip internal prefixes)
+    const displayPath = tracked.path
+      .replace(/^\/_vf_modules\//, "")
+      .replace(/^\/_veryfront\//, "_vf/");
+
+    // Module requests go to debug, page/API requests go to info
+    const isModuleRequest = tracked.path.startsWith("/_vf_modules/");
+    const logFn = isModuleRequest ? logger.debug.bind(logger) : logger.info.bind(logger);
+
+    // Compact single-line format: METHOD path → status (duration)
+    const statusIcon = statusCode >= 400 ? "✗" : "→";
+    logFn(`${tracked.method} ${displayPath} ${statusIcon} ${statusCode} (${durationMs}ms)`, {
+      project: tracked.projectSlug,
+      ...(timedOut && { timedOut: true }),
+      ...(this.inFlight.size > 0 && { pending: this.inFlight.size }),
     });
   }
 
