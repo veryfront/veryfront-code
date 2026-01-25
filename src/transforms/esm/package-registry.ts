@@ -68,27 +68,3 @@ export function getReactImportMap(version: string = REACT_VERSION): Record<strin
     "react/": esmSh("react", version, "/"),
   };
 }
-
-/**
- * Get Tailwind CSS import map entries.
- * Pins all tailwindcss imports to a unified version.
- * Uses ?target=es2022 for consistent builds.
- */
-export function getTailwindImportMap(): Record<string, string> {
-  const v = TAILWIND_VERSION;
-
-  // Note: We don't use "tailwindcss/" prefix entry because import map spec requires
-  // URLs to end with "/" when keys end with "/", but query params prevent that.
-  // Instead, we explicitly map all known subpaths.
-  return {
-    tailwindcss: esmSh("tailwindcss", v),
-    "tailwindcss/plugin": esmSh("tailwindcss", v, "/plugin"),
-    "tailwindcss/colors": esmSh("tailwindcss", v, "/colors"),
-    "tailwindcss/defaultTheme": esmSh("tailwindcss", v, "/defaultTheme"),
-    "tailwindcss/lib/util/flattenColorPalette": esmSh(
-      "tailwindcss",
-      v,
-      "/lib/util/flattenColorPalette",
-    ),
-  };
-}

@@ -451,7 +451,7 @@ describe("HMR Server Module Tests", { sanitizeOps: false, sanitizeResources: fal
 
       assertEquals(runtime.includes("reactRefreshEnabled"), true);
       assertEquals(runtime.includes("$RefreshReg$"), true);
-      assertEquals(runtime.includes("updateCSS"), true);
+      assertEquals(runtime.includes("refreshTailwindCSS"), true);
       assertEquals(runtime.includes("window.__veryfrontHMRWebSocket"), true);
     });
 

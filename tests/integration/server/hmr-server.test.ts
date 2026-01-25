@@ -798,7 +798,7 @@ denoOnlyDescribe("HMR Server Tests", { sanitizeOps: false, sanitizeResources: fa
           // Verify runtime includes correct configuration
           assert(content.includes(`HMR_PORT = ${port}`), "Should include correct port");
           assert(content.includes("setupReactRefresh"), "Should include React Refresh setup");
-          assert(content.includes("updateCSS"), "Should include CSS update handler");
+          assert(content.includes("refreshTailwindCSS"), "Should include CSS refresh handler");
           assert(content.includes("updateJS"), "Should include JS update handler");
 
           controller.abort();

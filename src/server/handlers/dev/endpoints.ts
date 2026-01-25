@@ -21,6 +21,13 @@ import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts"
  */
 function getUpdateJSFunction(logPrefix: string): string {
   return `
+  function refreshTailwindCSS() {
+    const link = document.getElementById('vf-tailwind-css');
+    if (!link) return;
+    link.href = '/_vf_styles/styles.css?t=' + Date.now();
+    console.log('${logPrefix} Tailwind CSS link refreshed');
+  }
+
   async function updateJS(path) {
     console.log('${logPrefix} Updating JS module:', path);
 
@@ -39,6 +46,9 @@ function getUpdateJSFunction(logPrefix: string): string {
         window.__veryfrontClearComponentCache();
         console.log('${logPrefix} Component cache cleared');
       }
+
+      // Refresh Tailwind CSS (new classes may be needed from JS changes)
+      refreshTailwindCSS();
 
       // Re-render the page with fresh modules
       // The server will add ?t=timestamp to all imports in the module response
@@ -206,48 +216,13 @@ async function handleUpdate(update) {
     console.warn('[HMR] Update message missing path');
     return;
   }
+  // CSS changes trigger full reload to get fresh Tailwind compilation
   if (update.path.endsWith('.css')) {
-    await updateCSS(update.path);
+    console.log('[HMR] CSS changed, reloading page');
+    notifyStudioAndReload();
     return;
   }
   await updateJS(update.path);
-}
-
-async function updateCSS(path) {
-  console.log('[HMR] Updating CSS:', path);
-
-  // Try to update linked stylesheets
-  document.querySelectorAll('link[rel="stylesheet"]').forEach((link) => {
-    try {
-      const url = new URL(link.href);
-      if (url.pathname === path || url.pathname.includes(path)) {
-        const newUrl = new URL(link.href);
-        newUrl.searchParams.set('t', Date.now().toString());
-        link.href = newUrl.toString();
-        console.log('[HMR] CSS link updated:', path);
-      }
-    } catch (error) {
-      console.error('[HMR] Failed to update CSS link:', error);
-    }
-  });
-
-  // Try to update inline Tailwind CSS style tag
-  const tailwindStyle = document.getElementById('vf-tailwind-css');
-  if (tailwindStyle && (path.includes('globals.css') || path.endsWith('.css'))) {
-    try {
-      // Fetch fresh compiled CSS from globals endpoint
-      const response = await fetch('/_vf_styles/globals.css?t=' + Date.now());
-      if (response.ok) {
-        const newCSS = await response.text();
-        tailwindStyle.textContent = newCSS;
-        console.log('[HMR] Inline Tailwind CSS updated');
-      }
-    } catch (error) {
-      console.error('[HMR] Failed to fetch fresh CSS:', error);
-    }
-  }
-
-  notifyStudio();
 }
 ${getUpdateJSFunction("[HMR]")}
 
@@ -602,11 +577,10 @@ document.head.appendChild(errorScript);
       __veryfrontClearComponentCache: typeof window.__veryfrontClearComponentCache
     });
 
-    // Handle CSS updates without full reload
+    // CSS changes trigger full reload to get fresh Tailwind compilation
     if (update.path.endsWith('.css')) {
-      console.log('[Preview HMR] CSS update detected, calling updateCSS');
-      updateCSS(update.path);
-      notifyStudio();
+      console.log('[Preview HMR] CSS changed, reloading page');
+      notifyStudioAndReload();
       return;
     }
 
@@ -614,60 +588,6 @@ document.head.appendChild(errorScript);
     // This is faster than full page reload and preserves client-side state
     console.log('[Preview HMR] JS update detected, calling updateJS');
     await updateJS(update.path);
-  }
-
-  async function updateCSS(path) {
-    console.log('[Preview HMR] updateCSS called with path:', path);
-    let updated = false;
-
-    // Try to update linked stylesheets
-    const links = document.querySelectorAll('link[rel="stylesheet"]');
-    console.log('[Preview HMR] Found', links.length, 'stylesheet links');
-    for (const link of links) {
-      try {
-        const url = new URL(link.href);
-        console.log('[Preview HMR] Checking stylesheet:', url.pathname);
-        if (url.pathname === path || url.pathname.includes(path)) {
-          const newUrl = new URL(link.href);
-          newUrl.searchParams.set('t', Date.now().toString());
-          link.href = newUrl.toString();
-          console.log('[Preview HMR] CSS link updated:', path, '→', newUrl.toString());
-          updated = true;
-        }
-      } catch (error) {
-        console.error('[Preview HMR] Failed to update CSS link:', error);
-      }
-    }
-
-    // Try to update inline Tailwind CSS style tag
-    const tailwindStyle = document.getElementById('vf-tailwind-css');
-    console.log('[Preview HMR] Tailwind style element found:', !!tailwindStyle);
-    if (tailwindStyle && (path.includes('globals.css') || path.endsWith('.css'))) {
-      try {
-        // Fetch fresh compiled CSS from globals endpoint
-        const cssUrl = '/_vf_styles/globals.css?t=' + Date.now();
-        console.log('[Preview HMR] Fetching fresh CSS from:', cssUrl);
-        const response = await fetch(cssUrl);
-        console.log('[Preview HMR] CSS fetch response:', response.status, response.statusText);
-        if (response.ok) {
-          const newCSS = await response.text();
-          console.log('[Preview HMR] CSS fetched, length:', newCSS.length);
-          tailwindStyle.textContent = newCSS;
-          console.log('[Preview HMR] Inline Tailwind CSS updated');
-          updated = true;
-        }
-      } catch (error) {
-        console.error('[Preview HMR] Failed to fetch fresh CSS:', error);
-      }
-    }
-
-    // Fallback: if nothing was updated, do full reload
-    if (!updated) {
-      console.log('[Preview HMR] No matching stylesheet for ' + path + ', reloading page');
-      notifyStudioAndReload();
-    } else {
-      console.log('[Preview HMR] CSS update complete');
-    }
   }
 ${getUpdateJSFunction("[Preview HMR]")}
 
