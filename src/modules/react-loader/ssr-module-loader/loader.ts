@@ -265,7 +265,7 @@ export class SSRModuleLoader {
 
       const ext = path.match(/\.(tsx?|jsx?|mdx)$/)?.[0] ?? ".tsx";
       const syntheticFilePath = `cross-project/${projectRef}/@/${path}`;
-      const tempPath = await this.getTempPath(syntheticFilePath);
+      const tempPath = await this.getTempPath(syntheticFilePath, contentHash);
       await this.fs.mkdir(tempPath.substring(0, tempPath.lastIndexOf("/")), { recursive: true });
 
       const useSemaphore = MAX_CONCURRENT_TRANSFORMS > 0;
@@ -361,11 +361,12 @@ export class SSRModuleLoader {
     }
 
     const code = source ?? (await this.options.adapter.fs.readFile(filePath));
-
     const contentHash = await this.hashContentAsync(code);
     const contentCacheKey = this.getCacheKey(`${filePath}:${contentHash}`);
     const filePathCacheKey = this.getCacheKey(filePath);
-    const inProgressKey = filePathCacheKey;
+    // Use content hash in inProgressKey to prevent race condition where
+    // different content versions wait for each other's transforms
+    const inProgressKey = contentCacheKey;
 
     const cachedEntry = globalModuleCache.get(contentCacheKey);
     if (cachedEntry) {
@@ -379,7 +380,7 @@ export class SSRModuleLoader {
     if (redisEnabled && redisClient) {
       const redisCode = await getFromRedis(contentCacheKey);
       if (redisCode) {
-        const tempPath = await this.getTempPath(filePath);
+        const tempPath = await this.getTempPath(filePath, contentHash);
         await this.fs.mkdir(tempPath.substring(0, tempPath.lastIndexOf("/")), { recursive: true });
         await this.fs.writeTextFile(tempPath, redisCode);
 
@@ -440,7 +441,12 @@ export class SSRModuleLoader {
       const crossProjectPaths = new Map<string, string>();
       const localFs = createFileSystem();
 
-      await this.processLocalImports(parseResult.imports, filePath, depth, localFs);
+      const localImportPaths = await this.processLocalImports(
+        parseResult.imports,
+        filePath,
+        depth,
+        localFs,
+      );
 
       for (let i = 0; i < parseResult.crossProjectImports.length; i += TRANSFORM_BATCH_SIZE) {
         const batch = parseResult.crossProjectImports.slice(i, i + TRANSFORM_BATCH_SIZE);
@@ -502,7 +508,15 @@ export class SSRModuleLoader {
           transformed = this.rewriteCrossProjectImport(transformed, specifier, tempPath);
         }
 
-        const tempPath = await this.getTempPath(filePath);
+        // Rewrite local imports to use hashed temp paths
+        // This ensures that each content version uses its own cached module
+        transformed = this.rewriteLocalImports(transformed, localImportPaths, filePath);
+
+        // Hash the TRANSFORMED content (after import rewrites) for cache busting
+        // This ensures Deno's module cache is invalidated when dependencies change
+        const transformedHash = await this.hashContentAsync(transformed);
+
+        const tempPath = await this.getTempPath(filePath, transformedHash);
         await this.fs.mkdir(tempPath.substring(0, tempPath.lastIndexOf("/")), { recursive: true });
         await this.fs.writeTextFile(tempPath, transformed);
 
@@ -512,7 +526,8 @@ export class SSRModuleLoader {
           }).catch(() => {});
         }
 
-        const entry: ModuleCacheEntry = { tempPath, contentHash };
+        // Use transformedHash for cache busting in dynamic imports
+        const entry: ModuleCacheEntry = { tempPath, contentHash: transformedHash };
         globalModuleCache.set(contentCacheKey, entry);
         globalModuleCache.set(filePathCacheKey, entry);
       } finally {
@@ -528,22 +543,37 @@ export class SSRModuleLoader {
     }
   }
 
+  /**
+   * Process local imports and return a map of specifier -> hashed temp path
+   * This allows the parent file to have its imports rewritten to the correct hashed paths.
+   */
   private async processLocalImports(
     imports: Array<{ absolutePath: string; specifier: string }>,
     fromFilePath: string,
     depth: number,
     localFs: ReturnType<typeof createFileSystem>,
-  ): Promise<void> {
+  ): Promise<Map<string, string>> {
+    const importPathMap = new Map<string, string>();
+
     for (let i = 0; i < imports.length; i += TRANSFORM_BATCH_SIZE) {
       const batch = imports.slice(i, i + TRANSFORM_BATCH_SIZE);
       await Promise.all(
         batch.map(async (imp) => {
           try {
-            const depSource = imp.absolutePath.startsWith("/")
+            const useLocalFs = imp.absolutePath.startsWith("/");
+            const depSource = useLocalFs
               ? await localFs.readTextFile(imp.absolutePath)
               : await this.options.adapter.fs.readFile(imp.absolutePath);
 
             await this.transformWithDependencies(imp.absolutePath, depSource, depth + 1);
+
+            // After transforming, get the cache entry to find the hashed temp path
+            const depCacheKey = this.getCacheKey(imp.absolutePath);
+            const depEntry = globalModuleCache.get(depCacheKey);
+            if (depEntry) {
+              importPathMap.set(imp.specifier, depEntry.tempPath);
+              importPathMap.set(imp.absolutePath, depEntry.tempPath);
+            }
           } catch (error) {
             this.missingDependencies.push({
               specifier: imp.specifier,
@@ -556,6 +586,8 @@ export class SSRModuleLoader {
         }),
       );
     }
+
+    return importPathMap;
   }
 
   private rewriteCrossProjectImport(
@@ -568,6 +600,145 @@ export class SSRModuleLoader {
     const escapedJsSpecifier = jsSpecifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const pattern = new RegExp(`from\\s+["'](${escapedSpecifier}|${escapedJsSpecifier})["']`, "g");
     return transformed.replace(pattern, `from "file://${tempPath}"`);
+  }
+
+  /**
+   * Rewrite local imports to use hashed temp paths.
+   * This ensures each content version uses its own cached module file.
+   */
+  private rewriteLocalImports(
+    transformed: string,
+    localImportPaths: Map<string, string>,
+    fromFilePath: string,
+  ): string {
+    if (localImportPaths.size === 0) return transformed;
+
+    const projectDir = this.options.projectDir.replace(/\/$/, "");
+    const fromFileDir = fromFilePath.substring(0, fromFilePath.lastIndexOf("/"));
+    const fromRelativeDir = fromFileDir.startsWith(projectDir)
+      ? fromFileDir.substring(projectDir.length + 1)
+      : fromFileDir;
+
+    let result = transformed;
+
+    for (const [specifierOrPath, tempPath] of localImportPaths.entries()) {
+      const patterns = this.buildImportPatterns(specifierOrPath, fromRelativeDir, projectDir);
+
+      for (const pattern of patterns) {
+        const escapedPattern = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const regex = new RegExp(`from\\s+["'](${escapedPattern})["']`, "g");
+        result = result.replace(regex, `from "file://${tempPath}"`);
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Build import patterns for a given specifier to match in transformed code.
+   */
+  private buildImportPatterns(
+    specifierOrPath: string,
+    fromRelativeDir: string,
+    projectDir: string,
+  ): string[] {
+    // Handle @/ alias imports (e.g., @/components/Welcome)
+    if (specifierOrPath.startsWith("@/")) {
+      return this.buildAliasImportPatterns(specifierOrPath, fromRelativeDir);
+    }
+
+    // Handle absolute paths
+    if (specifierOrPath.startsWith("/") || specifierOrPath.startsWith(projectDir)) {
+      return this.buildAbsoluteImportPatterns(specifierOrPath, fromRelativeDir, projectDir);
+    }
+
+    // Handle relative imports (./foo, ../foo)
+    if (specifierOrPath.startsWith("./") || specifierOrPath.startsWith("../")) {
+      return this.buildRelativeImportPatterns(specifierOrPath);
+    }
+
+    return [];
+  }
+
+  private buildAliasImportPatterns(specifier: string, fromRelativeDir: string): string[] {
+    const aliasPath = specifier.substring(2); // Remove @/
+    const depth = fromRelativeDir.split("/").filter(Boolean).length;
+    const relativePrefix = depth === 0 ? "./" : "../".repeat(depth);
+
+    const patterns = [`${relativePrefix}${aliasPath}.js`];
+
+    // Handle paths that already have an extension
+    if (/\.(tsx?|jsx|mdx)$/.test(aliasPath)) {
+      patterns.push(`${relativePrefix}${this.toJsExtension(aliasPath)}`);
+    }
+
+    return patterns;
+  }
+
+  private buildAbsoluteImportPatterns(
+    absolutePath: string,
+    fromRelativeDir: string,
+    projectDir: string,
+  ): string[] {
+    const depRelativePath = absolutePath.startsWith(projectDir)
+      ? absolutePath.substring(projectDir.length + 1)
+      : absolutePath.substring(1);
+
+    const lastSlash = depRelativePath.lastIndexOf("/");
+    const depDir = depRelativePath.substring(0, lastSlash);
+    const depFile = depRelativePath.substring(lastSlash + 1);
+
+    const relativePath = this.computeRelativePath(fromRelativeDir, depDir, depFile);
+    return [this.toJsExtension(relativePath)];
+  }
+
+  private buildRelativeImportPatterns(specifier: string): string[] {
+    const jsPath = this.toJsExtension(specifier);
+    const patterns = [jsPath];
+
+    if (!jsPath.endsWith(".js")) {
+      patterns.push(`${jsPath}.js`);
+    }
+
+    return patterns;
+  }
+
+  /**
+   * Compute relative path from source directory to target file.
+   */
+  private computeRelativePath(fromDir: string, toDir: string, fileName: string): string {
+    const fromParts = fromDir.split("/").filter(Boolean);
+    const toParts = toDir.split("/").filter(Boolean);
+
+    let commonPrefixLen = 0;
+    while (
+      commonPrefixLen < fromParts.length &&
+      commonPrefixLen < toParts.length &&
+      fromParts[commonPrefixLen] === toParts[commonPrefixLen]
+    ) {
+      commonPrefixLen++;
+    }
+
+    const upCount = fromParts.length - commonPrefixLen;
+    const downParts = toParts.slice(commonPrefixLen);
+
+    if (upCount === 0 && downParts.length === 0) {
+      return `./${fileName}`;
+    }
+    if (upCount === 0) {
+      return `./${downParts.join("/")}/${fileName}`;
+    }
+
+    const upPath = "../".repeat(upCount);
+    const downPath = downParts.length > 0 ? `${downParts.join("/")}/` : "";
+    return `${upPath}${downPath}${fileName}`;
+  }
+
+  /**
+   * Convert TypeScript/JSX extension to .js
+   */
+  private toJsExtension(path: string): string {
+    return path.replace(/\.(tsx?|jsx|mdx)$/, ".js");
   }
 
   private async ensureDependenciesExist(
@@ -645,7 +816,7 @@ export class SSRModuleLoader {
     }
   }
 
-  private async getTempPath(filePath: string, _contentHash?: string): Promise<string> {
+  private async getTempPath(filePath: string, contentHash?: string): Promise<string> {
     const tmpDir = await this.ensureTmpDir();
 
     const projectDir = this.options.projectDir.replace(/\/$/, "");
@@ -653,7 +824,10 @@ export class SSRModuleLoader {
       ? filePath.substring(projectDir.length)
       : filePath;
 
-    const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js");
+    // Include content hash in filename to ensure each content version gets a unique file
+    // This prevents Deno's module cache from returning stale modules
+    const hashSuffix = contentHash ? `.${contentHash.slice(0, 8)}` : "";
+    const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, `${hashSuffix}.js`);
     return join(tmpDir, jsPath);
   }
 

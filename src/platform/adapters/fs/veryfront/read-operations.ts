@@ -296,13 +296,21 @@ export class ReadOperations {
       }
     }
 
-    if (!skipPersistentCaches) {
+    // Skip file list cache for preview/branch mode to avoid stale content race conditions
+    // In preview mode, always fetch fresh from API to ensure consistency between SSR and client
+    const isPreviewMode = ctx?.sourceType === "branch";
+    if (!skipPersistentCaches && !isPreviewMode) {
       const fileListContent = await this.getContentFromFileList(normalizedPath);
       if (fileListContent) {
         if (isProduction) this.cache.set(cacheKey, fileListContent);
         setRequestScopedFile(cacheKey, fileListContent);
         return fileListContent;
       }
+    } else if (isPreviewMode) {
+      logger.debug("[ReadOperations] Skipping file list cache for preview mode", {
+        path: normalizedPath,
+        sourceType: ctx?.sourceType,
+      });
     } else {
       logger.debug("[ReadOperations] Skipping file list cache due to invalidation", {
         path: normalizedPath,
