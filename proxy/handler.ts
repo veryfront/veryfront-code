@@ -34,6 +34,7 @@ interface DomainLookupResult {
     name: string;
     domains?: string[];
     active_release_id?: string | null;
+    protected?: boolean;
   }>;
 }
 
@@ -127,7 +128,7 @@ export interface ProxyContext {
   parsedDomain: ParsedDomain;
   isLocalProject: boolean;
   /** Error if request cannot be processed (e.g., custom domain not found) */
-  error?: { status: number; message: string };
+  error?: { status: number; message: string; redirectUrl?: string };
 }
 
 export interface ProxyLogger {
@@ -258,7 +259,12 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       isCustomDomain,
     });
 
-    const makeErrorContext = (status: number, message: string, token?: string): ProxyContext => ({
+    const makeErrorContext = (
+      status: number,
+      message: string,
+      token?: string,
+      redirectUrl?: string,
+    ): ProxyContext => ({
       token,
       projectSlug: undefined,
       projectId: undefined,
@@ -268,20 +274,20 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       host,
       parsedDomain,
       isLocalProject: false,
-      error: { status, message },
+      error: { status, message, redirectUrl },
     });
 
     let token: string | undefined;
+    // Extract user auth token from cookies (used for preview scope and protected env check)
+    const cookieHeader = req.headers.get("cookie") || "";
+    const userToken = extractUserToken(cookieHeader);
 
     if (isLocalProject) {
       logger?.debug("Local project, skipping token fetch", { localPath });
     } else {
-      if (scope === "preview") {
-        const cookieHeader = req.headers.get("cookie") || "";
-        token = extractUserToken(cookieHeader);
-        if (token) {
-          logger?.debug("Using user auth token for preview");
-        }
+      if (scope === "preview" && userToken) {
+        token = userToken;
+        logger?.debug("Using user auth token for preview");
       }
 
       if (!token && config.clientId && config.clientSecret) {
@@ -321,6 +327,18 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
             releaseId = matchingEnv.active_release_id;
           }
 
+          // Check if environment is protected and user is not authenticated
+          if (matchingEnv?.protected && !userToken) {
+            const originalUrl = req.url;
+            const redirectUrl = `https://veryfront.com/sign-in?from=${encodeURIComponent(originalUrl)}`;
+            logger?.info("Protected environment requires authentication", {
+              domain: host,
+              environmentName: matchingEnv.name,
+              redirectUrl,
+            });
+            return makeErrorContext(302, "Authentication required", token, redirectUrl);
+          }
+
           logger?.info("Resolved custom domain to project", {
             domain: host,
             projectSlug,
@@ -346,6 +364,18 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
           if (matchingEnv?.active_release_id) {
             releaseId = matchingEnv.active_release_id;
+          }
+
+          // Check if environment is protected and user is not authenticated
+          if (matchingEnv?.protected && !userToken) {
+            const originalUrl = req.url;
+            const redirectUrl = `https://veryfront.com/sign-in?from=${encodeURIComponent(originalUrl)}`;
+            logger?.info("Protected environment requires authentication", {
+              projectSlug,
+              environmentName: matchingEnv.name,
+              redirectUrl,
+            });
+            return makeErrorContext(302, "Authentication required", token, redirectUrl);
           }
 
           logger?.info("Resolved veryfront domain to project", {
