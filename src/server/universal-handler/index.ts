@@ -442,8 +442,9 @@ export function createVeryfrontHandler(
 
             if (lookupResult) {
               projectSlug = lookupResult.project_slug;
-              projectId = lookupResult.project_id;
-              releaseId = lookupResult.release_id ?? undefined;
+              projectId = projectId || lookupResult.project_id;
+              // Only use lookup result if proxy didn't provide releaseId
+              releaseId = releaseId || lookupResult.release_id || undefined;
               environmentName = lookupResult.environment?.name;
 
               if (!proxyEnv) proxyEnv = getEnvironmentType(lookupResult);
