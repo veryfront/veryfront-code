@@ -144,10 +144,8 @@ export class ContextAwareCacheCoordinator {
 
     const deleted = await this.store.deleteByPrefix(ctx.cachePrefix);
 
-    logger.info("[ContextAwareCache] ✓ Cleared cache for context", {
+    logger.debug("[ContextAwareCache] ✓ Cleared cache for context", {
       projectId: ctx.projectId,
-      environment: ctx.environment,
-      cachePrefix: ctx.cachePrefix,
       entriesDeleted: deleted,
       durationMs: Date.now() - startTime,
     });
@@ -166,9 +164,8 @@ export class ContextAwareCacheCoordinator {
 
     const deleted = await this.store.deleteByPrefix(prefix);
 
-    logger.info("[ContextAwareCache] ✓ Cleared cache for project", {
+    logger.debug("[ContextAwareCache] ✓ Cleared cache for project", {
       projectId,
-      prefix,
       entriesDeleted: deleted,
       durationMs: Date.now() - startTime,
     });

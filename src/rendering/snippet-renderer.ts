@@ -115,25 +115,18 @@ export async function getCompiledSnippetAsync(
  * @deprecated Use clearSnippetCacheForProject for multi-tenant deployments
  */
 export function clearSnippetCache(): void {
-  const startTime = Date.now();
   const entriesCleared = snippetCache.size;
   snippetCache.clear();
-  logger.info("[SnippetRenderer] ✓ Global snippet cache cleared", {
-    entriesCleared,
-    durationMs: Date.now() - startTime,
-  });
+  logger.debug("[SnippetRenderer] ✓ Global snippet cache cleared", { entriesCleared });
 }
 
 export function clearSnippetCacheForProject(projectSlug: string): void {
-  const startTime = Date.now();
   const entriesCleared = snippetCache.size;
   // TODO(#127): Implement per-project snippet clearing once cache entries store projectSlug
   snippetCache.clear();
-  logger.info("[SnippetRenderer] ✓ Snippet cache cleared for project", {
+  logger.debug("[SnippetRenderer] ✓ Snippet cache cleared for project", {
     projectSlug,
     entriesCleared,
-    note: "Currently clears all entries - per-project clearing not yet implemented",
-    durationMs: Date.now() - startTime,
   });
 }
 

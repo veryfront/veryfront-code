@@ -321,22 +321,13 @@ export class Renderer {
    * @deprecated Use clearCacheForProject for multi-tenant deployments
    */
   async clearAllCaches(): Promise<void> {
-    const startTime = Date.now();
-    logger.info("[Renderer] Clearing ALL render caches (global)");
+    logger.debug("[Renderer] Clearing ALL render caches (global)");
     await this.cache.clearAll();
-    logger.info("[Renderer] ✓ All render caches cleared", {
-      durationMs: Date.now() - startTime,
-    });
   }
 
   async clearCacheForProject(projectId: string): Promise<void> {
-    const startTime = Date.now();
-    logger.info("[Renderer] Clearing render cache for project", { projectId });
+    logger.debug("[Renderer] Clearing render cache for project", { projectId });
     await this.cache.clearForProject(projectId);
-    logger.info("[Renderer] ✓ Project render cache cleared", {
-      projectId,
-      durationMs: Date.now() - startTime,
-    });
   }
 
   async destroy(): Promise<void> {

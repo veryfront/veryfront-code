@@ -172,7 +172,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         const result = await this.cache.getAsync<Array<{ path: string; content?: string }>>(
           cacheKey,
         );
-        logger.info("[VeryfrontFSAdapter] getFileListCache lookup", {
+        logger.debug("[VeryfrontFSAdapter] getFileListCache lookup", {
           cacheKey,
           hasResult: !!result,
           resultSize: result?.length ?? 0,

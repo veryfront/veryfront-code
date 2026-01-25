@@ -165,6 +165,12 @@ export class VeryfrontAPIOperations {
       cursor = result.page_info.next ?? undefined;
     } while (cursor);
 
+    logger.debug("[API] listAllBranchFiles DONE", {
+      projectRef,
+      branchName,
+      totalFiles: allFiles.length,
+    });
+
     return allFiles;
   }
 

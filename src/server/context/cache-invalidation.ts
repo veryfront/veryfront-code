@@ -38,12 +38,10 @@ export async function invalidateProjectCaches(
   const hasRealProjectSlug = projectSlug !== "preview" || !!projectId;
   const environment = options?.environment;
 
-  logger.info("[CacheInvalidation] ▶ Starting cache invalidation", {
+  logger.debug("[CacheInvalidation] ▶ Starting cache invalidation", {
     projectSlug,
-    hasRealProjectSlug,
     environment: environment ?? "all",
     changedPaths: changedPaths?.length ?? "all",
-    changedFiles: changedPaths?.slice(0, 5),
     mode: hasRealProjectSlug ? "per-project" : "global",
   });
 
@@ -79,10 +77,9 @@ export async function invalidateProjectCaches(
     });
     await clearRendererCaches();
     clearSnippetCache();
-    logger.info("[CacheInvalidation] ✓ Global cache invalidation complete", {
+    logger.debug("[CacheInvalidation] ✓ Global cache invalidation complete", {
       projectSlug,
       durationMs: Date.now() - startTime,
-      changedPaths: changedPaths?.length ?? "all",
     });
     return;
   }
@@ -125,10 +122,8 @@ export async function invalidateProjectCaches(
     });
   }
 
-  logger.info("[CacheInvalidation] ✓ Per-project cache invalidation complete", {
+  logger.debug("[CacheInvalidation] ✓ Per-project cache invalidation complete", {
     projectSlug,
-    environment: environment ?? "all",
     durationMs: Date.now() - startTime,
-    changedPaths: changedPaths?.length ?? "all",
   });
 }

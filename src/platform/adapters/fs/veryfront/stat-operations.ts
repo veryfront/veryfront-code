@@ -187,7 +187,7 @@ export class StatOperations {
 
     const indexMs = Math.round(performance.now() - indexStart);
     const totalMs = Math.round(performance.now() - buildStart);
-    logger.info("[StatOperations] Index built", {
+    logger.debug("[StatOperations] Index built", {
       files: fileIdx.size,
       directories: dirIdx.size,
       pathMappings: pathMap.size,

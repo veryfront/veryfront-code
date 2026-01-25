@@ -149,7 +149,7 @@ export class ProxyFSAdapterManager {
       existing.adapter.setRequestToken(token);
 
       const existingContext = existing.adapter.getContentContext();
-      logger.info("[ProxyFSAdapterManager] REUSING_CACHED_ADAPTER", {
+      logger.debug("[ProxyFSAdapterManager] REUSING_CACHED_ADAPTER", {
         cacheKey,
         requestedReleaseId: effectiveReleaseId,
         cachedSourceType: existingContext?.sourceType,

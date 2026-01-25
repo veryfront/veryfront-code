@@ -129,7 +129,7 @@ export function clearSSRModuleCacheForProject(projectId: string): void {
     globalTmpDirs.delete(key);
   }
 
-  logger.info("[SSR-MODULE-LOADER] ✓ Project cache cleared", {
+  logger.debug("[SSR-MODULE-LOADER] ✓ Project cache cleared", {
     projectId,
     entriesCleared: cleared,
     remainingModules: globalModuleCache.size,

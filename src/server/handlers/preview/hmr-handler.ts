@@ -100,10 +100,9 @@ export class HMRHandler extends BaseHandler {
     HMRHandler.metrics.broadcastsSent++;
     HMRHandler.metrics.lastBroadcastTime = timestamp;
 
-    logger.info("[HMRHandler] broadcastUpdate called", {
+    logger.debug("[HMRHandler] broadcastUpdate called", {
       changedPaths,
       totalClients: HMRHandler.clientsMap.size,
-      clientIds: Array.from(HMRHandler.clientsMap.keys()),
     });
 
     const needsFullReload = !changedPaths?.length ||
@@ -111,10 +110,8 @@ export class HMRHandler extends BaseHandler {
 
     if (needsFullReload) {
       const message = JSON.stringify({ type: "reload", timestamp });
-      logger.info("[HMRHandler] Broadcasting full reload", {
-        message,
+      logger.debug("[HMRHandler] Broadcasting full reload", {
         reason: changedPaths?.length ? "server-rendered content" : "no paths",
-        changedPaths,
       });
       HMRHandler.broadcastMessage(message);
       HMRHandler.metrics.messagesForwarded++;
@@ -123,12 +120,12 @@ export class HMRHandler extends BaseHandler {
 
     for (const path of changedPaths) {
       const message = JSON.stringify({ type: "update", path, timestamp });
-      logger.info("[HMRHandler] Broadcasting update message", { message, path });
+      logger.debug("[HMRHandler] Broadcasting update message", { path });
       HMRHandler.broadcastMessage(message);
       HMRHandler.metrics.messagesForwarded++;
     }
 
-    logger.info("[HMRHandler] Broadcast update complete", {
+    logger.debug("[HMRHandler] Broadcast update complete", {
       changedPaths: changedPaths.length,
       totalClients: HMRHandler.clientsMap.size,
     });
@@ -155,11 +152,10 @@ export class HMRHandler extends BaseHandler {
       }
     }
 
-    logger.info("[HMRHandler] broadcastMessage complete", {
-      message: message.substring(0, 200),
+    logger.debug("[HMRHandler] broadcastMessage complete", {
       sentCount,
       skippedCount,
-      totalClientsInSet: HMRHandler.clients.size,
+      totalClients: HMRHandler.clients.size,
     });
   }
 

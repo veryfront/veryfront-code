@@ -119,6 +119,17 @@ export class ReadOperations {
       return null;
     }
 
+    const cacheCheckSample = fileList.find((f) =>
+      f.path.includes("Welcome") || f.path.includes("welcome")
+    );
+    logger.debug("[ReadOperations] getOrBuildFileListIndex: got file list from cache", {
+      fileListSize: fileList.length,
+      filesWithContent: fileList.filter((f) => f.content).length,
+      sampleFilePath: cacheCheckSample?.path,
+      sampleContentLength: cacheCheckSample?.content?.length,
+      sampleContentPreview: cacheCheckSample?.content?.slice(0, 200)?.replace(/\n/g, "\\n"),
+    });
+
     const indexKey = `${fileList.length}:${fileList[0]?.path ?? ""}:${
       fileList[fileList.length - 1]?.path ?? ""
     }`;
@@ -134,9 +145,21 @@ export class ReadOperations {
     this.fileListIndex = index;
     this.fileListIndexKey = indexKey;
 
+    const sampleFile = fileList.find((f) =>
+      f.path.includes("Welcome") || f.path.includes("welcome")
+    );
+    const sampleContent = sampleFile?.content;
+    const sampleHash = sampleContent?.slice(0, 100).split("").reduce(
+      (h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0,
+      0,
+    );
     logger.debug("[ReadOperations] Built file list index", {
       fileListSize: fileList.length,
       indexedWithContent: index.size,
+      sampleFilePath: sampleFile?.path,
+      sampleContentLength: sampleContent?.length,
+      sampleContentHash: sampleHash,
+      sampleContentPreview: sampleContent?.slice(0, 200)?.replace(/\n/g, "\\n"),
     });
 
     return index;
@@ -166,10 +189,15 @@ export class ReadOperations {
       return undefined;
     }
 
-    const contentPreview = content.length > 100 ? content.slice(0, 100) + "..." : content;
-    logger.info("[ReadOperations] FILE_LIST_CACHE_HIT - serving from file list cache", {
+    const contentPreview = content.length > 200 ? content.slice(0, 200) + "..." : content;
+    const contentHash = content.slice(0, 100).split("").reduce(
+      (h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0,
+      0,
+    );
+    logger.debug("[ReadOperations] FILE_LIST_CACHE_HIT - serving from file list cache", {
       path: normalizedPath,
       contentLength: content.length,
+      contentHash,
       contentPreview: contentPreview.replace(/\n/g, "\\n"),
     });
 
@@ -225,7 +253,7 @@ export class ReadOperations {
       const preview = requestCached.length > 80
         ? requestCached.slice(0, 80) + "..."
         : requestCached;
-      logger.info("[ReadOperations] REQUEST_CACHE_HIT", {
+      logger.debug("[ReadOperations] REQUEST_CACHE_HIT", {
         path: normalizedPath,
         cacheKey,
         contentLength: requestCached.length,
@@ -256,7 +284,7 @@ export class ReadOperations {
         const cached = await this.cache.getAsync<string>(cacheKey);
         if (cached) {
           const preview = cached.length > 80 ? cached.slice(0, 80) + "..." : cached;
-          logger.info("[ReadOperations] PERSISTENT_CACHE_HIT", {
+          logger.debug("[ReadOperations] PERSISTENT_CACHE_HIT", {
             path: normalizedPath,
             cacheKey,
             contentLength: cached.length,

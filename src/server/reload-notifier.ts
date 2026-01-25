@@ -43,12 +43,11 @@ class ReloadNotifierImpl {
 
     const projectInfo = normalizeProjectInfo(project);
 
-    logger.info("[ReloadNotifier] triggerReload called", {
+    logger.debug("[ReloadNotifier] triggerReload called", {
       invalidateListeners: this.invalidateListeners.size,
       reloadListeners: this.listeners.size,
       changedPaths,
       project: projectInfo,
-      timestamp: new Date().toISOString(),
     });
 
     if (changedPaths?.length) {
@@ -72,13 +71,12 @@ class ReloadNotifierImpl {
       this.pendingChangedPaths.clear();
       this.pendingProject = undefined;
 
-      logger.info(
+      logger.debug(
         "[ReloadNotifier] Debounce complete, notifying reload listeners",
         {
           listenerCount: this.listeners.size,
           changedPaths: paths,
           project: projectInfo,
-          timestamp: new Date().toISOString(),
         },
       );
 
@@ -103,25 +101,18 @@ class ReloadNotifierImpl {
   private notifyListeners(changedPaths?: string[], project?: ReloadProjectInfo): void {
     this.metrics.broadcastsSent++;
 
-    logger.info("[ReloadNotifier] Notifying reload listeners", {
+    logger.debug("[ReloadNotifier] Notifying reload listeners", {
       count: this.listeners.size,
       changedPaths,
       project,
-      timestamp: new Date().toISOString(),
     });
 
-    let listenerIndex = 0;
     for (const listener of this.listeners) {
       try {
-        logger.info(
-          `[ReloadNotifier] Calling listener ${listenerIndex + 1}/${this.listeners.size}`,
-        );
         listener(changedPaths, project);
-        logger.info(`[ReloadNotifier] Listener ${listenerIndex + 1} completed`);
       } catch (error) {
         logger.error("[ReloadNotifier] Listener error:", error);
       }
-      listenerIndex++;
     }
   }
 
