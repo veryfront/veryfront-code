@@ -502,10 +502,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
             branch: this.contentContext?.branch,
           });
 
-          // Clear domain cache IMMEDIATELY (before debounce) so new requests
-          // get fresh releaseId during the debounce window
+          // Clear caches IMMEDIATELY (before debounce) so new requests
+          // get fresh content during the debounce window
           this.invalidationCallbacks.clearDomainCache?.();
-          logger.debug("[VeryfrontFSAdapter] Domain cache cleared immediately on POKE");
+          this.readOps.clearFileListIndex();
+          logger.debug("[VeryfrontFSAdapter] Domain cache and file list index cleared immediately on POKE");
 
           if (changedPaths?.length) {
             this.scheduleSelectiveInvalidation(changedPaths);
@@ -685,6 +686,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
         const files = await this.client.listAllFiles();
         const cacheKey = buildFileListCacheKey(this.contentContext);
         await this.cache.setAsync(cacheKey, files);
+        // File list index is also cleared immediately on POKE receipt (before debounce).
+        // This call is a redundant safety net after fresh files are cached.
         this.readOps.clearFileListIndex();
 
         logger.debug("[VeryfrontFSAdapter] Fresh files cached (memory + Redis)", {
