@@ -92,7 +92,7 @@ function isInternalHost(host: string): boolean {
 }
 
 /** Monitoring paths that should skip domain lookup */
-const MONITORING_PATHS = new Set(["/healthz", "/readyz", "/_health", "/metrics"]);
+const MONITORING_PATHS = new Set(["/healthz", "/readyz", "/_health", "/_metrics"]);
 
 /** Request timeout in milliseconds (configurable via REQUEST_TIMEOUT_MS env var) */
 const REQUEST_TIMEOUT_MS = getTimeoutFromEnv();
@@ -298,8 +298,38 @@ export function createVeryfrontHandler(
     if (perfRequestId) startRequest(perfRequestId);
     const stopTotal = startTimer("total");
 
-    const trackingRequestId = req.headers.get("x-request-id") ?? crypto.randomUUID();
     const url = new URL(req.url);
+
+    // Early return for monitoring paths - skip expensive context building
+    // (domain lookups, project resolution, enriched context, etc.)
+    // Health checks (/healthz, /readyz, /_health) and metrics (/_metrics) need minimal context
+    // but still need auth/security config loaded
+    if (isMonitoringPath(url.pathname)) {
+      try {
+        // Wait for ready and security config to load (needed for auth checks)
+        await readyPromise;
+        if (!isProxyMode) {
+          await securityLoader.ensureLoaded();
+        }
+
+        const minimalCtx: HandlerContext = {
+          projectDir,
+          adapter,
+          securityConfig: securityLoader.getSecurityConfig(),
+          cspUserHeader: securityLoader.getCspUserHeader(),
+          debug: opts.debug,
+          config,
+        };
+
+        const response = await registry.execute(req, minimalCtx);
+        return response ?? new Response("Not Found", { status: 404 });
+      } finally {
+        stopTotal();
+        if (perfRequestId) endRequest(perfRequestId);
+      }
+    }
+
+    const trackingRequestId = req.headers.get("x-request-id") ?? crypto.randomUUID();
 
     const parentContext = extractContext(req.headers);
     const spanInfo = startServerSpan(req.method, url.pathname, parentContext);
@@ -317,17 +347,14 @@ export function createVeryfrontHandler(
     const earlyEnv = req.headers.get("x-environment") || undefined;
     const earlyReleaseId = req.headers.get("x-release-id") || undefined;
 
-    const shouldTrackRequest = !isMonitoringPath(url.pathname);
-    if (shouldTrackRequest) {
-      requestTracker.start(
-        trackingRequestId,
-        earlyProjectSlug,
-        url.pathname,
-        req.method,
-        earlyEnv || undefined,
-        earlyReleaseId || undefined,
-      );
-    }
+    requestTracker.start(
+      trackingRequestId,
+      earlyProjectSlug,
+      url.pathname,
+      req.method,
+      earlyEnv || undefined,
+      earlyReleaseId || undefined,
+    );
 
     // Skip concurrency limiting for lightweight paths (modules, static assets)
     // These requests are fast once initialized and shouldn't block each other
@@ -336,7 +363,7 @@ export function createVeryfrontHandler(
       ? projectIsolation.checkRequest(earlyProjectSlug)
       : { allowed: true };
     if (!isolationCheck.allowed) {
-      if (shouldTrackRequest) requestTracker.complete(trackingRequestId, 503, false);
+      requestTracker.complete(trackingRequestId, 503, false);
 
       const message = isolationCheck.reason === "circuit_open"
         ? `Service temporarily unavailable for project. Retry after ${
@@ -424,7 +451,8 @@ export function createVeryfrontHandler(
           proxyProjectId,
         });
 
-        const shouldSkipDomainLookup = isInternalHost(host) || isMonitoringPath(url.pathname);
+        // Monitoring paths have early return above, so only check for internal hosts
+        const shouldSkipDomainLookup = isInternalHost(host);
 
         if (
           !projectSlug &&
@@ -702,6 +730,7 @@ export function createVeryfrontHandler(
         }
 
         // Use proxy header if available, otherwise compute using shared utility
+        // Note: Monitoring paths have early return above, so they never reach here
         const contentSourceId = proxyContentSourceId ?? computeContentSourceId(
           reqCtx.isLocalDev || isLocalProject,
           resolvedEnvironment,
@@ -767,8 +796,7 @@ export function createVeryfrontHandler(
         return new Response("Internal Server Error", { status: 500 });
       };
 
-      const shouldApplyTimeout = !isMonitoringPath(url.pathname);
-
+      // Note: Monitoring paths have early return above, so timeout always applies here
       let response: Response;
       let error: Error | undefined;
       let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -778,16 +806,12 @@ export function createVeryfrontHandler(
           ? () => withContext(spanInfo.context, executeHandler)
           : executeHandler;
 
-        if (!shouldApplyTimeout) {
-          response = await executeWithContext();
-        } else {
-          response = await Promise.race([
-            executeWithContext(),
-            new Promise<never>((_, reject) => {
-              timeoutId = setTimeout(() => reject(TIMEOUT_SENTINEL), REQUEST_TIMEOUT_MS);
-            }),
-          ]);
-        }
+        response = await Promise.race([
+          executeWithContext(),
+          new Promise<never>((_, reject) => {
+            timeoutId = setTimeout(() => reject(TIMEOUT_SENTINEL), REQUEST_TIMEOUT_MS);
+          }),
+        ]);
       } catch (e) {
         if (e === TIMEOUT_SENTINEL) {
           logger.warn("[universal] Request timed out", {
@@ -818,9 +842,7 @@ export function createVeryfrontHandler(
       endServerSpan(span, response.status, error);
 
       const isTimeout = response.status === HTTP_GATEWAY_TIMEOUT;
-      if (shouldTrackRequest) {
-        requestTracker.complete(trackingRequestId, response.status, isTimeout);
-      }
+      requestTracker.complete(trackingRequestId, response.status, isTimeout);
 
       // Only complete isolation tracking if we started it (heavyweight requests)
       if (shouldCheckIsolation) {
