@@ -79,7 +79,12 @@ export class StylesCSSHandler extends BaseHandler {
       getUnderlyingAdapter?: () => unknown;
     };
 
-    if (typeof wrappedFs.getUnderlyingAdapter !== "function") return candidates;
+    if (typeof wrappedFs.getUnderlyingAdapter !== "function") {
+      logger.warn(
+        "[StylesCSSHandler] FS adapter wrapper missing getUnderlyingAdapter, CSS will have no utility classes",
+      );
+      return candidates;
+    }
 
     const fsAdapter = wrappedFs.getUnderlyingAdapter() as {
       getAllSourceFiles?: () =>
@@ -87,7 +92,12 @@ export class StylesCSSHandler extends BaseHandler {
         | Promise<Array<{ path: string; content?: string }>>;
     };
 
-    if (typeof fsAdapter.getAllSourceFiles !== "function") return candidates;
+    if (typeof fsAdapter.getAllSourceFiles !== "function") {
+      logger.warn(
+        "[StylesCSSHandler] FS adapter missing getAllSourceFiles, CSS will have no utility classes",
+      );
+      return candidates;
+    }
 
     const files = await fsAdapter.getAllSourceFiles();
 
