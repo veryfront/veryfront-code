@@ -502,6 +502,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
             branch: this.contentContext?.branch,
           });
 
+          // Clear domain cache IMMEDIATELY (before debounce) so new requests
+          // get fresh releaseId during the debounce window
+          this.invalidationCallbacks.clearDomainCache?.();
+          logger.debug("[VeryfrontFSAdapter] Domain cache cleared immediately on POKE");
+
           if (changedPaths?.length) {
             this.scheduleSelectiveInvalidation(changedPaths);
             return;
@@ -754,6 +759,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     this.statOps.clearIndex();
     this.dirOps.clearTree();
+    // Domain cache is also cleared immediately on POKE receipt (before debounce).
+    // This call is a redundant safety net for the full invalidation flow.
     this.invalidationCallbacks.clearDomainCache?.();
 
     const projectId = this.client.getProjectId();
