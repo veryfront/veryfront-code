@@ -304,5 +304,17 @@ describe("html-generation/html-shell-generator", () => {
       assert(!result.includes("<script>alert('xss')</script>"));
       assertStringIncludes(result, "&lt;script&gt;");
     });
+
+    it("should include mermaid diagram rendering script", async () => {
+      const result = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta(),
+        createOptions(),
+      );
+
+      assertStringIncludes(result, "Mermaid diagram rendering");
+      assertStringIncludes(result, "mermaid@10/dist/mermaid.esm.min.mjs");
+      assertStringIncludes(result, "mermaid.run()");
+    });
   });
 });
