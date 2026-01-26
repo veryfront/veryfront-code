@@ -40,6 +40,7 @@ import {
   setTemplates,
   startInput,
   type StateUpdater,
+  toggleHelp,
   toggleLogsExpanded,
   updateActiveList,
   updateInputValue,
@@ -931,7 +932,7 @@ export function createApp(config: AppConfig): App {
     }
 
     if (key === "?") {
-      update(navigateTo("help"));
+      update(toggleHelp());
       return;
     }
 

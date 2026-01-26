@@ -27,7 +27,7 @@ export function renderDashboard(state: AppState): string {
 
   if (hasProjects) {
     const isActive = state.activeList === "projects";
-    lines.push(renderSection("Local Projects", state.projects.items.length, isActive));
+    lines.push(renderSection("Projects", state.projects.items.length, isActive));
     lines.push(
       renderList(state.projects, {
         maxWidth: maxListWidth,
@@ -47,7 +47,7 @@ export function renderDashboard(state: AppState): string {
     const end = Math.min(start + visibleCount, state.remote.projects.length);
     const visibleProjects = state.remote.projects.slice(start, end);
 
-    lines.push(renderSection("Remote Projects", state.remote.projects.length, isRemoteActive));
+    lines.push(renderSection("Remote", state.remote.projects.length, isRemoteActive));
 
     if (start > 0) {
       lines.push(`  ${dim("↑ more above")}`);
@@ -130,50 +130,34 @@ function renderBanner(state: AppState): string {
 /**
  * Render a section header
  */
-function renderSection(title: string, count: number, isActive = true): string {
+function renderSection(title: string, _count: number, isActive = true): string {
   const indicator = isActive ? brand("›") : " ";
   const titleText = isActive ? title : dim(title);
-  return `  ${indicator} ${titleText} ${dim(`(${count})`)}`;
+  return `  ${indicator} ${titleText}`;
 }
 
 /**
  * Render the help bar at the bottom
  */
 function renderHelpBar(state: AppState): string {
-  const parts: string[] = [];
-
-  const hasProjects = state.projects.items.length > 0;
-  const hasExamples = state.examples.items.length > 0;
-  const hasRemoteProjects = state.remote.user && state.remote.projects.length > 0;
-
-  // Count sections for tab switching
-  const sectionCount = [hasProjects, hasExamples, hasRemoteProjects].filter(Boolean).length;
-
-  if (sectionCount > 1) {
-    parts.push(dim("tab switch"));
+  // Minimal by default, ? reveals all
+  if (!state.showHelp) {
+    return `  ${dim("↑↓ select  enter open  ? more  q quit")}`;
   }
 
-  parts.push(dim("↑↓ nav"));
-
-  if (hasProjects || hasExamples || hasRemoteProjects) {
-    parts.push(dim("o open"), dim("s studio"), dim("i ide"));
-  }
+  // Expanded help
+  const lines: string[] = [];
+  lines.push(`  ${dim("o")} open  ${dim("s")} studio  ${dim("i")} ide`);
 
   if (!state.remote.user) {
-    parts.push(dim("a login"));
+    lines.push(`  ${dim("n")} new  ${dim("a")} login`);
   } else {
-    // Show context-aware actions based on active list
-    if (state.activeList === "projects") {
-      parts.push(dim("p pull"), dim("u push"));
-    } else if (state.activeList === "remoteProjects") {
-      parts.push(dim("p pull"));
-    }
-    parts.push(dim("n new"), dim("x logout"));
+    lines.push(`  ${dim("n")} new  ${dim("p")} pull  ${dim("u")} push  ${dim("x")} logout`);
   }
 
-  parts.push(dim("? help"), dim("q quit"));
+  lines.push(`  ${dim("? hide  q quit")}`);
 
-  return `  ${parts.join("  ")}`;
+  return lines.join("\n");
 }
 
 /**
@@ -197,16 +181,5 @@ export function renderDashboardBoxed(state: AppState): string {
  * Render empty state when no projects found
  */
 export function renderEmptyState(): string {
-  return [
-    "",
-    `  ${dim("No projects found.")}`,
-    "",
-    `  ${dim("Get started:")}`,
-    `    ${brand("[n]")} Create a new project`,
-    `    ${brand("[t]")} Browse templates`,
-    "",
-    `  ${dim("Or run with a project directory:")}`,
-    `    ${muted("deno task start --project ./my-project")}`,
-    "",
-  ].join("\n");
+  return `\n  ${dim("No projects.")} ${brand("n")} ${dim("to create")}\n`;
 }
