@@ -23,7 +23,7 @@ export function buildContentAttributes(
 ): string {
   return joinAttributes([
     'id="veryfront-content"',
-    !noProse && 'class="vf-prose"',
+    // No default prose class - projects opt-in via their own CSS or frontmatter
     `data-slug="${slug || ""}"`,
     `data-layout="${noLayout ? "none" : "default"}"`,
     ssrHash && `data-ssr-hash="${escapeHTML(ssrHash)}"`,

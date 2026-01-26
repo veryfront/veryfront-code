@@ -157,7 +157,9 @@ async function generateHTMLShellPartsImpl(
   } = processMetadata(meta);
 
   const noLayout = shouldDisableLayout(meta.frontmatter);
-  const noProse = shouldDisableProse(meta.frontmatter);
+  // Only apply prose styles to MDX/markdown content, not TSX pages
+  const isMdxContent = options.pagePath?.match(/\.(mdx?|md)$/i) ?? false;
+  const noProse = !isMdxContent || shouldDisableProse(meta.frontmatter);
 
   const rootAttributes = buildRootAttributes(
     meta.slug || "",
@@ -291,11 +293,13 @@ async function generateHTMLShellPartsImpl(
     : "";
 
   const mermaidScript = `
-  <!-- Mermaid diagram rendering -->
+  <!-- Mermaid diagram rendering (after hydration) -->
   <script type="module"${nonce ? ` nonce="${nonce}"` : ""}>
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
     mermaid.initialize({ startOnLoad: false, theme: 'default' });
-    mermaid.run();
+    const runMermaid = () => { if (!window.__mermaidDone) { window.__mermaidDone = true; mermaid.run(); } };
+    window.__veryfrontHydrationComplete = runMermaid;
+    if (document.getElementById('veryfront-content')?.__reactRoot) runMermaid();
   </script>`;
 
   const end = `</div>

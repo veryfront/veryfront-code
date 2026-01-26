@@ -48,7 +48,6 @@ describe("html-generation/utils", () => {
       const result = buildContentAttributes("test-slug", false, "abc123");
 
       assertStringIncludes(result, 'id="veryfront-content"');
-      assertStringIncludes(result, 'class="vf-prose"');
       assertStringIncludes(result, 'data-slug="test-slug"');
       assertStringIncludes(result, 'data-layout="default"');
       assertStringIncludes(result, 'data-ssr-hash="abc123"');
@@ -69,16 +68,11 @@ describe("html-generation/utils", () => {
       assert(!result.includes("data-ssr-hash"));
     });
 
-    it("should include vf-prose class by default", () => {
+    it("should not include prose class by default", () => {
       const result = buildContentAttributes("test-slug", false);
 
-      assertStringIncludes(result, 'class="vf-prose"');
-    });
-
-    it("should exclude vf-prose class when noProse is true", () => {
-      const result = buildContentAttributes("test-slug", false, undefined, true);
-
-      assert(!result.includes('class="vf-prose"'));
+      // No default prose class - projects opt-in via their own CSS
+      assert(!result.includes('class="prose'));
     });
   });
 
