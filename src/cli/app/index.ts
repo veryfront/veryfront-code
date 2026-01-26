@@ -636,7 +636,7 @@ export function createApp(config: AppConfig): App {
       if (state.activeList === "remoteProjects") {
         const focused = state.remote.projects[state.remote.focusedIndex];
         if (focused) {
-          const url = `https://studio.veryfront.com/${focused.slug}`;
+          const url = `https://veryfront.com/projects/${focused.slug}`;
           await openBrowser(url);
         }
         return;

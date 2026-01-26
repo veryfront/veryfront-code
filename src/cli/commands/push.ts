@@ -298,7 +298,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           cliLogger.info("");
           logInfo(`To merge your changes, open Studio and merge the branch:`);
           cliLogger.info(
-            `  https://studio.veryfront.com/${config.projectSlug}/branches`,
+            `  https://veryfront.com/projects/${config.projectSlug}/branches`,
           );
         }
       }
