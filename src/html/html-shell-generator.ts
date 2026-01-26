@@ -27,6 +27,7 @@ import {
   generateModulePreloadHintsFromManifest,
   getRouteManifest,
 } from "../modules/manifest/route-module-manifest.ts";
+import { getMarkdownSafelistClasses } from "../transforms/md/compiler/markdown-styles.ts";
 
 function pathToModuleUrl(path: string, studioEmbed?: boolean): string {
   if (!path) return "";
@@ -135,10 +136,9 @@ async function generateHTMLShellPartsImpl(
   }
 
   // Safelist: classes added dynamically by markdown compiler
-  candidates.add("prose");
-  candidates.add("dark:prose-invert");
-  candidates.add("mx-auto");
-  candidates.add("p-4");
+  for (const cls of getMarkdownSafelistClasses()) {
+    candidates.add(cls);
+  }
 
   const projectSlug = options.projectId || meta.slug || "default";
   let cssHash = "";

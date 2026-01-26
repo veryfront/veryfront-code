@@ -14,6 +14,7 @@ import {
   generateTailwindCSS,
 } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
 import { serverLogger as logger } from "#veryfront/utils";
+import { getMarkdownSafelistClasses } from "#veryfront/transforms/md/compiler/markdown-styles.ts";
 
 const SOURCE_EXTENSIONS = [".tsx", ".jsx", ".mdx", ".ts", ".js"];
 
@@ -111,10 +112,9 @@ export class StylesCSSHandler extends BaseHandler {
     }
 
     // Safelist: classes added dynamically by markdown compiler
-    candidates.add("prose");
-    candidates.add("dark:prose-invert");
-    candidates.add("mx-auto");
-    candidates.add("p-4");
+    for (const cls of getMarkdownSafelistClasses()) {
+      candidates.add(cls);
+    }
 
     return candidates;
   }

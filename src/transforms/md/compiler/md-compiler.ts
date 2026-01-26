@@ -20,6 +20,7 @@ import type {
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import Slugger from "github-slugger";
+import { getMarkdownWrapperClasses } from "./markdown-styles.ts";
 
 interface ExtractedHeading {
   id: string;
@@ -86,10 +87,7 @@ export function compileMarkdownRuntime(
         });
 
         const escapedHtml = escapeForJsString(html);
-
-        // Check frontmatter for prose: false to disable typography styles
-        const useProse = extractedFrontmatter.prose !== false;
-        const baseClasses = useProse ? "prose dark:prose-invert mx-auto p-4" : "mx-auto p-4";
+        const baseClasses = getMarkdownWrapperClasses(extractedFrontmatter);
 
         const compiledCode = `import { jsx as _jsx } from "react/jsx-runtime";
 export default function MDContent({ components, className, ...props }) {
