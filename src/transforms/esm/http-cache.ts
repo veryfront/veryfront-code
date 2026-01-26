@@ -327,14 +327,15 @@ async function resolveSpecifier(
     if (isDeno) {
       // Rewrite npm:react@* and npm:react-dom@* to use the configured version
       // This ensures consistency when esm.sh returns bundles with hardcoded React versions
+      // Regex matches version (including prereleases like 19.1.0-canary-672f8cf68) up to first /
       const reactVersion = options.reactVersion ?? REACT_VERSION;
-      const npmReactMatch = specifier.match(/^npm:react@[\d.]+(-[a-z0-9.]+)?(.*)$/);
+      const npmReactMatch = specifier.match(/^npm:react@[^/]+(\/.*)?$/);
       if (npmReactMatch) {
-        return `npm:react@${reactVersion}${npmReactMatch[2] ?? ""}`;
+        return `npm:react@${reactVersion}${npmReactMatch[1] ?? ""}`;
       }
-      const npmReactDomMatch = specifier.match(/^npm:react-dom@[\d.]+(-[a-z0-9.]+)?(.*)$/);
+      const npmReactDomMatch = specifier.match(/^npm:react-dom@[^/]+(\/.*)?$/);
       if (npmReactDomMatch) {
-        return `npm:react-dom@${reactVersion}${npmReactDomMatch[2] ?? ""}`;
+        return `npm:react-dom@${reactVersion}${npmReactDomMatch[1] ?? ""}`;
       }
       return specifier; // Let Deno's native npm resolution handle it
     }
