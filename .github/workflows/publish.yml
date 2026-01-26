@@ -141,10 +141,25 @@ jobs:
 
             ## Install
 
+            **Recommended (native binary):**
+            ```bash
+            # macOS/Linux
+            curl -fsSL https://veryfront.com/install.sh | sh
+
+            # Windows (PowerShell)
+            irm https://veryfront.com/install.ps1 | iex
+            ```
+
+            **Homebrew:**
+            ```bash
+            brew install veryfront/tap/veryfront
+            ```
+
+            **npm/bun:**
             ```bash
             npm install -g veryfront
             # or
-            npx veryfront
+            bun add -g veryfront
             ```
 
             ## Binary Downloads
@@ -162,6 +177,8 @@ jobs:
             binaries/veryfront-linux-x64/veryfront-linux-x64
             binaries/veryfront-linux-arm64/veryfront-linux-arm64
             binaries/veryfront-windows-x64.exe/veryfront-windows-x64.exe
+            scripts/install.sh
+            scripts/install.ps1
         env:
           GITHUB_TOKEN: ${{ env.VERYFRONT_RELEASE_TOKEN }}
 
@@ -171,3 +188,61 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  update-homebrew:
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          VERYFRONT_RELEASE_TOKEN: op://VERYFRONT_CI/GITHUB_VERYFRONT_PAT/credential
+
+      - name: Get version from tag
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
+
+      - name: Download binaries and compute SHA256
+        run: |
+          REPO="veryfront/veryfront"
+          for binary in veryfront-macos-arm64 veryfront-macos-x64 veryfront-linux-arm64 veryfront-linux-x64; do
+            echo "Downloading ${binary}..."
+            curl -fsSL "https://github.com/${REPO}/releases/download/v${VERSION}/${binary}" -o "${binary}"
+            SHA=$(sha256sum "${binary}" | cut -d' ' -f1)
+            # Export as env var (replace - with _)
+            VAR_NAME="SHA256_$(echo ${binary} | tr '-' '_' | tr '[:lower:]' '[:upper:]')"
+            echo "${VAR_NAME}=${SHA}" >> $GITHUB_ENV
+            echo "  ${binary}: ${SHA}"
+          done
+
+      - name: Update Homebrew formula
+        run: |
+          # Read template
+          FORMULA=$(cat homebrew/veryfront.rb)
+
+          # Replace placeholders
+          FORMULA="${FORMULA//VERSION_PLACEHOLDER/$VERSION}"
+          FORMULA="${FORMULA//SHA256_MACOS_ARM64_PLACEHOLDER/$SHA256_VERYFRONT_MACOS_ARM64}"
+          FORMULA="${FORMULA//SHA256_MACOS_X64_PLACEHOLDER/$SHA256_VERYFRONT_MACOS_X64}"
+          FORMULA="${FORMULA//SHA256_LINUX_ARM64_PLACEHOLDER/$SHA256_VERYFRONT_LINUX_ARM64}"
+          FORMULA="${FORMULA//SHA256_LINUX_X64_PLACEHOLDER/$SHA256_VERYFRONT_LINUX_X64}"
+
+          echo "$FORMULA" > veryfront.rb
+          cat veryfront.rb
+
+      - name: Clone homebrew-tap and update
+        run: |
+          git clone https://x-access-token:${VERYFRONT_RELEASE_TOKEN}@github.com/veryfront/homebrew-tap.git tap
+          mkdir -p tap/Formula
+          cp veryfront.rb tap/Formula/veryfront.rb
+          cd tap
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add Formula/veryfront.rb
+          git commit -m "Update veryfront to v${VERSION}" || echo "No changes to commit"
+          git push || echo "Push failed - tap repo may not exist yet"
