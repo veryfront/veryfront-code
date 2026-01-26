@@ -158,9 +158,15 @@ export class MarkdownPreviewHandler extends BaseHandler {
         "server",
       );
 
-      // Get color scheme from URL param
-      const colorScheme = url.searchParams.get("color_mode") as "light" | "dark" | null;
-      const theme = colorScheme || "light";
+      // Get color scheme from URL param or client hint
+      const colorModeParam = url.searchParams.get("color_mode")?.toLowerCase();
+      const clientHint = req.headers.get("Sec-CH-Prefers-Color-Scheme")?.replace(/"/g, "").trim()
+        .toLowerCase();
+      const theme = (colorModeParam === "light" || colorModeParam === "dark")
+        ? colorModeParam
+        : (clientHint === "light" || clientHint === "dark")
+        ? clientHint
+        : null;
       const title = (frontmatter.title as string) || filePath;
       const description = (frontmatter.description as string) || "";
 
@@ -177,8 +183,9 @@ export class MarkdownPreviewHandler extends BaseHandler {
         : "";
 
       // Generate simple static HTML (no React hydration, no layouts, no app)
+      const themeAttrs = theme ? ` data-theme="${theme}" style="color-scheme: ${theme};"` : "";
       const html = `<!DOCTYPE html>
-<html lang="en" data-theme="${theme}" style="color-scheme: ${theme};">
+<html lang="en"${themeAttrs}>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -204,19 +211,41 @@ export class MarkdownPreviewHandler extends BaseHandler {
       return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'default';
     }
 
-    function initMermaid() {
+    async function initMermaid() {
       mermaid.initialize({ startOnLoad: false, theme: getMermaidTheme() });
       // Convert code.language-mermaid blocks to mermaid-compatible format
+      // Store original source in data attribute for theme changes
+      const elements = [];
       document.querySelectorAll('code.language-mermaid').forEach((code) => {
         const pre = code.parentElement;
         if (pre?.tagName === 'PRE') {
           const div = document.createElement('pre');
           div.className = 'mermaid';
+          div.dataset.source = code.textContent;
           div.textContent = code.textContent;
+          div.style.visibility = 'hidden';
           pre.replaceWith(div);
+          elements.push(div);
         }
       });
-      mermaid.run();
+      await mermaid.run();
+      elements.forEach((el) => el.style.visibility = '');
+    }
+
+    async function rerenderMermaid() {
+      mermaid.initialize({ startOnLoad: false, theme: getMermaidTheme() });
+      // Hide, restore source, re-render, then show
+      const elements = document.querySelectorAll('.mermaid');
+      elements.forEach((el) => {
+        if (el.dataset.source) {
+          el.style.visibility = 'hidden';
+          el.innerHTML = '';
+          el.textContent = el.dataset.source;
+          el.removeAttribute('data-processed');
+        }
+      });
+      await mermaid.run();
+      elements.forEach((el) => el.style.visibility = '');
     }
 
     // Initial render
@@ -226,18 +255,16 @@ export class MarkdownPreviewHandler extends BaseHandler {
     const observer = new MutationObserver((mutations) => {
       for (const mutation of mutations) {
         if (mutation.attributeName === 'data-theme') {
-          // Re-initialize mermaid with new theme
-          mermaid.initialize({ startOnLoad: false, theme: getMermaidTheme() });
-          // Re-render all mermaid diagrams
-          document.querySelectorAll('.mermaid').forEach((el) => {
-            el.removeAttribute('data-processed');
-          });
-          mermaid.run();
+          rerenderMermaid();
         }
       }
     });
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
   </script>
+
+  <!-- Preview HMR -->
+  <script src="/_veryfront/preview-hmr.js"></script>
 </body>
 </html>`;
 
