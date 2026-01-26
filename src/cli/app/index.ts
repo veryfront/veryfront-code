@@ -24,7 +24,6 @@ import {
   createStartupState,
   incrementFrame,
   renderStartup,
-  setStartupReady,
   setStepActive,
 } from "./views/startup.ts";
 import { openInBrowser, openInIDE, openInStudio, openMCPSettings } from "./actions.ts";
@@ -1430,40 +1429,33 @@ export function createApp(config: AppConfig): App {
 /**
  * Show startup animation with boxed view and shimmer effect
  */
-export async function showStartup(
-  steps: string[],
-  options?: { serverUrl?: string; mcpUrl?: string },
-): Promise<void> {
+export async function showStartup(steps: string[]): Promise<void> {
   const write = (text: string): void => writeStdout(text);
 
   write(screen.altOn + cursor.hide);
 
   let startupState = createStartupState(steps);
 
-  // Show each step with shimmer animation
+  // Show each step with spinning avatar animation
   for (let i = 0; i < steps.length; i++) {
     startupState = setStepActive(startupState, i);
 
-    // Animate shimmer for this step (8 frames at 50ms = 400ms per step)
-    const framesPerStep = 8;
+    // Animate spinning avatar (16 frames at 60ms = ~1s per step for full rotation)
+    const framesPerStep = 16;
     for (let f = 0; f < framesPerStep; f++) {
       write(cursor.moveTo(1, 1) + screen.clearDown + "\n" + renderStartup(startupState));
       startupState = incrementFrame(startupState);
-      await new Promise((r) => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 60));
     }
   }
 
-  // Show ready state with URLs
-  startupState = setStartupReady(
-    startupState,
-    options?.serverUrl || "http://veryfront.me:3000",
-    options?.mcpUrl,
-  );
+  // Mark all steps done - logo fills up and holds before transitioning
+  startupState = setStepActive(startupState, steps.length);
   write(cursor.moveTo(1, 1) + screen.clearDown + "\n" + renderStartup(startupState));
-  await new Promise((r) => setTimeout(r, 300));
+  await new Promise((r) => setTimeout(r, 400));
 
   // Don't exit alternate screen - let app.start() continue in it
-  // This prevents a flash when transitioning to the dashboard
+  // Dashboard takes over directly from here
 }
 
 export type { AppState } from "./state.ts";

@@ -50,7 +50,7 @@ export function renderDashboard(state: AppState): string {
     lines.push(renderSection("Remote", state.remote.projects.length, isRemoteActive));
 
     if (start > 0) {
-      lines.push(`  ${dim("↑ more above")}`);
+      lines.push(`   ${dim("↑")}  ${dim("more above")}`);
     }
 
     visibleProjects.forEach((p, i) => {
@@ -68,7 +68,7 @@ export function renderDashboard(state: AppState): string {
     });
 
     if (end < state.remote.projects.length) {
-      lines.push(`  ${dim("↓ more below")}`);
+      lines.push(`   ${dim("↓")}  ${dim("more below")}`);
     }
     lines.push("");
   }
@@ -99,16 +99,17 @@ function renderBanner(state: AppState): string {
   const termWidth = Math.min(getTerminalWidth() - 4, 80);
   const textLines: string[] = [];
 
+  textLines.push("");
   textLines.push(`${brand("Veryfront Code")} ${dim("is now running")}`);
   textLines.push("");
 
-  // Server URL
-  textLines.push(`${dim("Url")}  ${brand(state.server.url)}`);
-
-  // MCP URL
+  // Server URL and MCP URL - always reserve both lines to prevent jumps
+  textLines.push(`${dim("Url")} ${brand(state.server.url)}`);
   if (state.mcp.enabled && state.mcp.transport === "http") {
     const port = state.mcp.httpPort ?? 9999;
-    textLines.push(`${dim("Mcp")}  ${brand(`http://veryfront.me:${port}/mcp`)}`);
+    textLines.push(`${dim("Mcp")} ${brand(`http://veryfront.me:${port}/mcp`)}`);
+  } else {
+    textLines.push("");
   }
 
   // Errors/warnings on separate line if any
@@ -120,8 +121,8 @@ function renderBanner(state: AppState): string {
     textLines.push(parts.join("  "));
   }
 
-  // Pad to minimum 5 text lines for consistent height with startup view
-  while (textLines.length < 5) {
+  // Pad to 7 text lines (matching avatar height) for consistent title position
+  while (textLines.length < 7) {
     textLines.push("");
   }
 
@@ -134,6 +135,7 @@ function renderBanner(state: AppState): string {
     width: termWidth,
     paddingX: 2,
     paddingY: 1,
+    borderColor: "\x1b[2m", // Dim to match footer
   });
 }
 
@@ -152,7 +154,8 @@ function renderSection(title: string, _count: number, isActive = true): string {
 function renderHelpBar(state: AppState): string {
   // Minimal by default, ? reveals all
   if (!state.showHelp) {
-    return `  ${dim("↑↓ select  enter open  ? more  q quit")}`;
+    const userInfo = state.remote.user ? `  ${dim("-")}  ${brand(state.remote.user.email)}` : "";
+    return `  ${dim("↑↓ select  enter open  ? more  q quit")}${userInfo}`;
   }
 
   // Expanded help
