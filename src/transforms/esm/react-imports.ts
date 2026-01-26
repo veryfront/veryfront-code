@@ -1,7 +1,5 @@
 import { replaceSpecifiers } from "./lexer.ts";
-import { getDenoNpmReactMap, getReactImportMap, REACT_VERSION } from "./package-registry.ts";
-import { isDeno } from "#veryfront/platform/compat/runtime.ts";
-import { getLocalReactPaths } from "#veryfront/platform/compat/react-paths.ts";
+import { getReactImportMap, REACT_VERSION } from "./package-registry.ts";
 
 const srcDir = new URL(".", import.meta.url).pathname.replace(
   /\/(build|src)\/transforms\/esm\/?$/,
@@ -28,12 +26,10 @@ export async function resolveReactImports(
     return replaceSpecifiers(code, (specifier) => reactImports[specifier] ?? null);
   }
 
-  // For Deno SSR: Use npm: specifiers (auto-deduplicated by Deno's npm cache)
-  // For Node/Bun SSR: Use local node_modules paths (auto-deduplicated by Node)
-  // See: https://deno.com/blog/not-using-npm-specifiers-doing-it-wrong
+  // For SSR: Use esm.sh URLs consistently (NO npm: specifiers per plan requirements)
   const ssrImports: Record<string, string> = {
     ...getVeryfrontModulePaths(),
-    ...(isDeno ? getDenoNpmReactMap(reactVersion) : getLocalReactPaths()),
+    ...reactImports,
   };
 
   return replaceSpecifiers(code, (specifier) => ssrImports[specifier] ?? null);

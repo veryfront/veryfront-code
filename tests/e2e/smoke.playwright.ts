@@ -26,13 +26,13 @@ const ENABLED_PROJECTS = [
   "impartial-chandrasekhar-qsohb",
   "immo-price-finder",
   "real-estate-template",
-  "dashboard"
+  "dashboard",
+  "task-manager-template",
+  "ai-assistant-template",
 
   // "tomcode", // RENDERER BUG: SVG components missing `export default` (see docs/E2E_PROJECT_ISSUES.md)
 
   // AI templates:
-  // "ai-assistant-template",
-  // "task-manager-template",
   // "ai-inbox-assistant",
   // "immo-agent-template",
   // "doc-agent-template",
