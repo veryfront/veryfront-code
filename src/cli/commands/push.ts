@@ -28,6 +28,7 @@ import {
 } from "../utils/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { createIgnoreChecker, type IgnoreChecker, loadIgnorePatterns } from "../sync/ignore.ts";
+import { listAllFiles } from "./pull.ts";
 
 /**
  * Push command options
@@ -166,6 +167,43 @@ export async function uploadFiles(
 }
 
 /**
+ * Delete files from the API that no longer exist locally
+ */
+export async function deleteFiles(
+  client: ApiClient,
+  projectSlug: string,
+  branchId: string | null,
+  paths: string[],
+  dryRun: boolean,
+): Promise<{ deleted: number; failed: number }> {
+  let deleted = 0;
+  let failed = 0;
+
+  for (const path of paths) {
+    if (dryRun) {
+      cliLogger.info(`  Would delete: ${path}`);
+      deleted++;
+      continue;
+    }
+
+    try {
+      const encodedPath = encodeURIComponent(path);
+      const url = branchId
+        ? `/projects/${projectSlug}/files/${encodedPath}?branch_id=${branchId}`
+        : `/projects/${projectSlug}/files/${encodedPath}`;
+
+      await client.delete(url);
+      deleted++;
+    } catch (error) {
+      cliLogger.error(`Failed to delete ${path}:`, error);
+      failed++;
+    }
+  }
+
+  return { deleted, failed };
+}
+
+/**
  * Push local files to Veryfront
  * - By default, creates a new auto-generated branch
  * - With --branch=<name>, creates a branch with that name
@@ -202,10 +240,19 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
 
       spinner.update("Scanning local files...");
       const ops = await scanLocalFiles(projectDir, ignoreChecker);
+      const localPaths = new Set(ops.map((op) => op.path));
 
-      if (ops.length === 0) {
+      spinner.update("Fetching remote files...");
+      const client = createApiClient(config);
+      const remoteFiles = await listAllFiles(client, config.projectSlug, { type: "main" });
+      const remotePaths = remoteFiles.map((f) => f.path);
+
+      // Find files to delete (exist remotely but not locally)
+      const toDelete = remotePaths.filter((p) => !localPaths.has(p));
+
+      if (ops.length === 0 && toDelete.length === 0) {
         spinner.stop();
-        if (!quiet) logInfo("No files to push.");
+        if (!quiet) logInfo("No changes to push.");
         return;
       }
 
@@ -215,17 +262,21 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       const isMainBranch = branchName === "main";
 
       if (!quiet) {
+        const parts: string[] = [];
+        if (ops.length > 0) parts.push(`${ops.length} to upload`);
+        if (toDelete.length > 0) parts.push(`${toDelete.length} to delete`);
         cliLogger.info(
-          `\nFound ${ops.length} files to push to ${
-            isMainBranch ? "main" : `branch "${branchName}"`
-          }.`,
+          `\nFound ${parts.join(", ")} for ${isMainBranch ? "main" : `branch "${branchName}"`}.`,
         );
       }
 
       if (!force && !dryRun) {
+        const parts: string[] = [];
+        if (ops.length > 0) parts.push(`upload ${ops.length}`);
+        if (toDelete.length > 0) parts.push(`delete ${toDelete.length}`);
         const confirmMessage = isMainBranch
-          ? `Push ${ops.length} files directly to main?`
-          : `Create branch "${branchName}" and upload ${ops.length} files?`;
+          ? `Push to main (${parts.join(", ")} files)?`
+          : `Create branch "${branchName}" and ${parts.join(", ")} files?`;
 
         const confirmed = await confirmPrompt(confirmMessage, true);
         if (!confirmed) {
@@ -234,16 +285,14 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         }
       }
 
-      const client = createApiClient(config);
-
       if (dryRun) {
-        await uploadFiles(client, config.projectSlug, null, ops, true);
+        if (ops.length > 0) await uploadFiles(client, config.projectSlug, null, ops, true);
+        if (toDelete.length > 0) await deleteFiles(client, config.projectSlug, null, toDelete, true);
         if (!quiet) {
-          logInfo(
-            `Dry run complete. Would upload ${ops.length} files to ${
-              isMainBranch ? "main" : `branch "${branchName}"`
-            }.`,
-          );
+          const parts: string[] = [];
+          if (ops.length > 0) parts.push(`upload ${ops.length}`);
+          if (toDelete.length > 0) parts.push(`delete ${toDelete.length}`);
+          logInfo(`Dry run complete. Would ${parts.join(" and ")} files.`);
         }
         return;
       }
@@ -277,24 +326,32 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         }
       }
 
-      spinner.update("Uploading files...");
-      const result = await uploadFiles(
-        client,
-        config.projectSlug,
-        branchId,
-        ops,
-        false,
-      );
+      let uploadResult = { uploaded: 0, failed: 0 };
+      let deleteResult = { deleted: 0, failed: 0 };
+
+      if (ops.length > 0) {
+        spinner.update("Uploading files...");
+        uploadResult = await uploadFiles(client, config.projectSlug, branchId, ops, false);
+      }
+
+      if (toDelete.length > 0) {
+        spinner.update("Deleting removed files...");
+        deleteResult = await deleteFiles(client, config.projectSlug, branchId, toDelete, false);
+      }
 
       spinner.stop();
 
       if (quiet) return;
 
-      if (result.uploaded > 0) {
+      const successParts: string[] = [];
+      if (uploadResult.uploaded > 0) successParts.push(`${uploadResult.uploaded} uploaded`);
+      if (deleteResult.deleted > 0) successParts.push(`${deleteResult.deleted} deleted`);
+
+      if (successParts.length > 0) {
         if (isMainBranch) {
-          logSuccess(`Pushed ${result.uploaded} files to main.`);
+          logSuccess(`Pushed to main: ${successParts.join(", ")}.`);
         } else {
-          logSuccess(`Pushed ${result.uploaded} files to branch "${branchName}".`);
+          logSuccess(`Pushed to branch "${branchName}": ${successParts.join(", ")}.`);
           cliLogger.info("");
           logInfo(`To merge your changes, open Studio and merge the branch:`);
           cliLogger.info(
@@ -303,8 +360,9 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         }
       }
 
-      if (result.failed > 0) {
-        logWarning(`Failed to upload ${result.failed} files.`);
+      const failedTotal = uploadResult.failed + deleteResult.failed;
+      if (failedTotal > 0) {
+        logWarning(`Failed: ${failedTotal} files.`);
       }
     },
     { "cli.dryRun": options.dryRun ?? false },
