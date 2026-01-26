@@ -40,6 +40,9 @@ await build({
 	// dnt's Node type environment differs significantly from Deno's web-standard types
 	typeCheck: false,
 
+	// Skip npm install - we run it manually with --legacy-peer-deps to avoid peer dep conflicts
+	skipNpmInstall: true,
+
 	// Package metadata
 	shims: {
 		deno: true,
@@ -128,6 +131,19 @@ await build({
 
 	// Post-build steps
 	async postBuild() {
+		// Run npm install with --legacy-peer-deps to avoid peer dep conflicts
+		// (e.g., @ai-sdk/react requires react ~19.1.2 but framework uses 19.1.1)
+		const npmInstall = new Deno.Command("npm", {
+			args: ["install", "--legacy-peer-deps"],
+			cwd: "./npm",
+			stdout: "inherit",
+			stderr: "inherit",
+		});
+		const { code } = await npmInstall.output();
+		if (code !== 0) {
+			throw new Error(`npm install failed with exit code ${code}`);
+		}
+
 		// Fix dnt polyfill bug: process.argv[1] can be undefined in dynamic imports
 		const polyfillPath = "./npm/esm/_dnt.polyfills.js";
 		let polyfillContent = await Deno.readTextFile(polyfillPath);
