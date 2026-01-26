@@ -463,7 +463,11 @@ export async function recoverHttpBundleByHash(hash: string, cacheDir: string): P
       // Strategy 2: URL lookup then re-fetch (fallback for bundles cached before code:{hash} was added)
       const originalUrl = await distributed.get(`hash:${hash}`);
       if (originalUrl) {
-        logger.info("[HTTP-CACHE] Recovering bundle via URL re-fetch", { hash, originalUrl, attempt });
+        logger.info("[HTTP-CACHE] Recovering bundle via URL re-fetch", {
+          hash,
+          originalUrl,
+          attempt,
+        });
         const importMap = { imports: {}, scopes: {} };
         const result = await cacheHttpModule(originalUrl, { cacheDir, importMap });
         if (result) {

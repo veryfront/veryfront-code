@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.0.75",
+  "version": "0.0.76",
   "nodeModulesDir": "auto",
   "exclude": [
     "npm/",
@@ -69,7 +69,6 @@
     "veryfront/react/components/ai": "./src/react/components/ai/index.ts",
     "veryfront/agent/react": "./src/agent/react/index.ts",
     "veryfront/workflow/react": "./src/workflow/react/index.ts",
-
     "#veryfront": "./src/index.ts",
     "#veryfront/agent": "./src/agent/index.ts",
     "#veryfront/agent/react": "./src/agent/react/index.ts",
@@ -112,10 +111,8 @@
     "#veryfront/platform/": "./src/platform/",
     "#veryfront/components": "./src/react/components/index.ts",
     "#veryfront/": "./src/",
-
     "@veryfront": "./src/index.ts",
     "@veryfront/": "./src/",
-
     "@veryfront/agent": "./src/agent/index.ts",
     "@veryfront/agent/react": "./src/agent/react/index.ts",
     "@veryfront/agent/middleware": "./src/agent/middleware/index.ts",
@@ -156,15 +153,12 @@
     "@veryfront/utils": "./src/utils/index.ts",
     "@veryfront/workflow": "./src/workflow/index.ts",
     "@veryfront/workflow/react": "./src/workflow/react/index.ts",
-
     "@veryfront/testing": "./src/testing/index.ts",
     "@veryfront/testing/assert": "./src/testing/assert.ts",
     "@veryfront/testing/bdd": "./src/testing/bdd.ts",
     "@veryfront/testing/deno-compat": "./src/testing/deno-compat.ts",
     "@veryfront/testing/utils": "./src/testing/utils.ts",
-
     "std/": "https://deno.land/std@0.220.0/",
-
     "#std/path": "https://deno.land/std@0.220.0/path/mod.ts",
     "#std/path.ts": "https://deno.land/std@0.220.0/path/mod.ts",
     "#std/assert": "https://deno.land/std@0.220.0/assert/mod.ts",
@@ -187,7 +181,6 @@
     "#std/async.ts": "https://deno.land/std@0.220.0/async/mod.ts",
     "#std/front-matter/yaml": "./src/platform/compat/std/front-matter-yaml.ts",
     "#std/front-matter/yaml.ts": "./src/platform/compat/std/front-matter-yaml.ts",
-
     "@std/path": "https://deno.land/std@0.220.0/path/mod.ts",
     "@std/assert": "https://deno.land/std@0.220.0/assert/mod.ts",
     "@std/dotenv": "https://deno.land/std@0.220.0/dotenv/mod.ts",
@@ -258,7 +251,9 @@
     "strict": true,
     "noImplicitAny": true,
     "noUncheckedIndexedAccess": true,
-    "types": ["npm:@types/react@18.3.27"],
+    "types": [
+      "npm:@types/react@18.3.27"
+    ],
     "lib": [
       "deno.window",
       "dom",
