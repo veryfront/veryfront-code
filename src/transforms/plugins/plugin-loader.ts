@@ -5,26 +5,14 @@ import rehypeHighlight from "rehype-highlight";
 import rehypeSlug from "rehype-slug";
 import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
-import { rehypeMermaid } from "./rehype-mermaid.ts";
-import { rehypeMdxComponents, rehypePreserveNodeIds } from "./rehype-utils.ts";
 import { remarkMdxHeadings } from "./remark-headings.ts";
-import {
-  remarkCodeBlocks,
-  remarkMdxImports,
-  remarkMdxRemoveParagraphs,
-} from "./remark-mdx-utils.ts";
+import { remarkCodeBlocks, remarkMdxRemoveParagraphs } from "./remark-mdx-utils.ts";
 
 export type PluginFunction = (
   tree: MdastRoot | HastRoot,
   file?: unknown,
 ) => void | Promise<void> | ((tree: MdastRoot | HastRoot, file?: unknown) => void);
 
-/**
- * Get remark plugins for MDX processing
- *
- * Note: remarkAddNodeId is disabled to fix hydration mismatch.
- * Browser modules no longer inject positions, so SSR must not inject them either.
- */
 export function getRemarkPlugins(): Pluggable[] {
   return [
     remarkGfm,
@@ -32,19 +20,12 @@ export function getRemarkPlugins(): Pluggable[] {
     remarkMdxHeadings,
     remarkMdxRemoveParagraphs,
     remarkCodeBlocks,
-    remarkMdxImports,
   ];
 }
 
-/**
- * Get rehype plugins for MDX processing
- */
 export function getRehypePlugins(): Pluggable[] {
   return [
-    rehypeMermaid, // Must run before rehypeHighlight
     rehypeHighlight,
     rehypeSlug,
-    rehypePreserveNodeIds,
-    rehypeMdxComponents,
   ];
 }
