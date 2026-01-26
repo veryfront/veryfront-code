@@ -16,6 +16,7 @@ import { extract } from "#std/front-matter/yaml.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { tryNotFoundFallback } from "../request/ssr/not-found-fallback.ts";
+import { generateStudioBridgeScript } from "#veryfront/studio/bridge-template.ts";
 
 // Priority 900: between MEDIUM (600) and LOW/SSR (1000)
 const PRIORITY_MARKDOWN_PREVIEW = 900 as HandlerPriority;
@@ -163,6 +164,18 @@ export class MarkdownPreviewHandler extends BaseHandler {
       const title = (frontmatter.title as string) || filePath;
       const description = (frontmatter.description as string) || "";
 
+      // Check for studio embed mode
+      const studioEmbed = url.searchParams.get("studio_embed") === "true";
+      const studioScript = studioEmbed
+        ? `<script>${
+          generateStudioBridgeScript({
+            projectId: ctx.projectSlug || ctx.projectId || "markdown-preview",
+            pageId: filePath,
+            pagePath: filePath,
+          })
+        }</script>`
+        : "";
+
       // Generate simple static HTML (no React hydration, no layouts, no app)
       const html = `<!DOCTYPE html>
 <html lang="en" data-theme="${theme}" style="color-scheme: ${theme};">
@@ -182,20 +195,48 @@ export class MarkdownPreviewHandler extends BaseHandler {
     ${bundle.rawHtml || ""}
   </article>
 
+  ${studioScript}
+
   <script type="module">
     import mermaid from 'https://esm.sh/mermaid@11';
-    mermaid.initialize({ startOnLoad: false, theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'default' });
-    // Convert code.language-mermaid blocks to mermaid-compatible format
-    document.querySelectorAll('code.language-mermaid').forEach((code) => {
-      const pre = code.parentElement;
-      if (pre?.tagName === 'PRE') {
-        const div = document.createElement('pre');
-        div.className = 'mermaid';
-        div.textContent = code.textContent;
-        pre.replaceWith(div);
+
+    function getMermaidTheme() {
+      return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'default';
+    }
+
+    function initMermaid() {
+      mermaid.initialize({ startOnLoad: false, theme: getMermaidTheme() });
+      // Convert code.language-mermaid blocks to mermaid-compatible format
+      document.querySelectorAll('code.language-mermaid').forEach((code) => {
+        const pre = code.parentElement;
+        if (pre?.tagName === 'PRE') {
+          const div = document.createElement('pre');
+          div.className = 'mermaid';
+          div.textContent = code.textContent;
+          pre.replaceWith(div);
+        }
+      });
+      mermaid.run();
+    }
+
+    // Initial render
+    initMermaid();
+
+    // Re-render mermaid when color mode changes (via Studio bridge)
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.attributeName === 'data-theme') {
+          // Re-initialize mermaid with new theme
+          mermaid.initialize({ startOnLoad: false, theme: getMermaidTheme() });
+          // Re-render all mermaid diagrams
+          document.querySelectorAll('.mermaid').forEach((el) => {
+            el.removeAttribute('data-processed');
+          });
+          mermaid.run();
+        }
       }
     });
-    mermaid.run();
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   </script>
 </body>
 </html>`;
