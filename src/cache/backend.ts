@@ -669,6 +669,9 @@ export const CacheBackends = {
   httpModule: () =>
     createCacheBackend({ keyPrefix: "http-module", circuitBreakerName: "api-cache-http" }),
 
+  /** SSR module cache for React loader (cross-pod sharing). */
+  ssrModule: () => createCacheBackend({ keyPrefix: "ssr-module" }),
+
   /** Project CSS cache for Tailwind CSS output (cross-pod sharing). */
   projectCSS: () => createCacheBackend({ keyPrefix: "project-css" }),
 };

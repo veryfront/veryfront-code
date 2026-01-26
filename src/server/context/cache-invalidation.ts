@@ -3,6 +3,7 @@ import {
   clearModulePathCache,
   invalidateModulePaths,
 } from "#veryfront/transforms/mdx/esm-module-loader/index.ts";
+import { clearModuleCacheForProject } from "#veryfront/cache/module-cache.ts";
 import {
   clearSSRModuleCache,
   clearSSRModuleCacheForProject,
@@ -63,6 +64,9 @@ export async function invalidateProjectCaches(
   });
   if (projectId) {
     clearSSRModuleCacheForProject(projectId);
+    // Also clear the pod-level module cache (used by RenderPipeline)
+    // This was previously missed, causing stale renders despite SSR module cache clearing
+    clearModuleCacheForProject(projectId);
   } else {
     clearSSRModuleCache();
   }
