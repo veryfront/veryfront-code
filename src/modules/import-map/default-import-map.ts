@@ -5,22 +5,19 @@ import {
   getReactImportMap,
 } from "#veryfront/transforms/esm/package-registry.ts";
 
+function ensureTrailingSlash(path: string): string {
+  return path.endsWith("/") ? path : `${path}/`;
+}
+
 function getFrameworkRoot(): string {
   try {
-    const rootPath = new URL("../../..", import.meta.url).pathname;
-    return rootPath.endsWith("/") ? rootPath : `${rootPath}/`;
+    return ensureTrailingSlash(new URL("../../..", import.meta.url).pathname);
   } catch {
     // Fallback for environments where import.meta.url doesn't work correctly
-    // Use cwd() as a reasonable fallback instead of "/" which would create invalid paths
-    if (typeof Deno !== "undefined" && typeof Deno.cwd === "function") {
-      const cwd = Deno.cwd();
-      return cwd.endsWith("/") ? cwd : `${cwd}/`;
-    }
+    const cwd = (typeof Deno !== "undefined" && Deno.cwd?.()) ||
+      (typeof process !== "undefined" && process.cwd?.());
 
-    if (typeof process !== "undefined" && typeof process.cwd === "function") {
-      const cwd = process.cwd();
-      return cwd.endsWith("/") ? cwd : `${cwd}/`;
-    }
+    if (cwd) return ensureTrailingSlash(cwd);
 
     throw new Error(
       "Unable to determine framework root: import.meta.url is unavailable and neither Deno.cwd() nor process.cwd() are supported in this environment.",

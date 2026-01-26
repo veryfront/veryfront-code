@@ -21,10 +21,8 @@ console.log(`\n📦 Building Veryfront v${version} for npm using dnt...\n`);
 await emptyDir("./npm");
 
 // Convert deno.json exports to dnt entry points
-const entryPoints: Array<{ name: string; path: string }> = [];
-for (const [name, path] of Object.entries(denoJson.exports as Record<string, string>)) {
-	entryPoints.push({ name, path });
-}
+const entryPoints = Object.entries(denoJson.exports as Record<string, string>)
+	.map(([name, path]) => ({ name, path }));
 
 await build({
 	entryPoints,
@@ -169,59 +167,30 @@ import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Load dnt polyfills (import.meta shims) before any other imports
 await import('../esm/_dnt.polyfills.js');
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const nativeBinary = join(__dirname, process.platform === 'win32' ? 'veryfront.exe' : 'veryfront');
 
+async function runJsFallback() {
+  const { main } = await import('../esm/src/cli/index.js');
+  await main();
+}
+
 if (existsSync(nativeBinary)) {
   const child = spawn(nativeBinary, process.argv.slice(2), { stdio: 'inherit' });
   child.on('close', (code) => process.exit(code ?? 0));
-  child.on('error', async () => {
-    const { main } = await import('../esm/src/cli/index.js');
-    main().then(() => process.exit(0)).catch(err => { console.error(err); process.exit(1); });
-  });
+  child.on('error', () => runJsFallback().catch(err => { console.error(err); process.exit(1); }));
 } else {
-  const { main } = await import('../esm/src/cli/index.js');
-  main().then(() => process.exit(0)).catch(err => { console.error(err); process.exit(1); });
+  runJsFallback().catch(err => { console.error(err); process.exit(1); });
 }
 `);
 
-		// Copy LICENSE
-		try {
-			await Deno.copyFile("./LICENSE", "./npm/LICENSE");
-		} catch {
-			await Deno.writeTextFile("./npm/LICENSE", `MIT License
+		// Copy LICENSE (generate default if missing)
+		await copyFileOrGenerate("./LICENSE", "./npm/LICENSE", generateMitLicense);
 
-Copyright (c) ${new Date().getFullYear()} Veryfront
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-`);
-		}
-
-		// Copy README
-		try {
-			await Deno.copyFile("./README.md", "./npm/README.md");
-		} catch {
-			// Ignore if no README
-		}
+		// Copy README (optional)
+		await copyFileIfExists("./README.md", "./npm/README.md");
 
 		// Update package.json with bin entry, postinstall, and type
 		const pkgPath = "./npm/package.json";
@@ -245,6 +214,51 @@ async function copyDir(src: string, dest: string): Promise<void> {
 			await Deno.copyFile(srcPath, destPath);
 		}
 	}
+}
+
+async function copyFileIfExists(src: string, dest: string): Promise<void> {
+	try {
+		await Deno.copyFile(src, dest);
+	} catch {
+		// Ignore if file doesn't exist
+	}
+}
+
+async function copyFileOrGenerate(
+	src: string,
+	dest: string,
+	generate: () => string,
+): Promise<void> {
+	try {
+		await Deno.copyFile(src, dest);
+	} catch {
+		await Deno.writeTextFile(dest, generate());
+	}
+}
+
+function generateMitLicense(): string {
+	return `MIT License
+
+Copyright (c) ${new Date().getFullYear()} Veryfront
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+`;
 }
 
 console.log(`

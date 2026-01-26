@@ -63,29 +63,33 @@ async function walkDirectory(
 
     if (!entry.isFile) continue;
 
-    let relativePath = pathHelper.relative(baseDir, entryPath);
+    const relativePath = processRelativePath(
+      pathHelper.relative(baseDir, entryPath),
+    );
 
-    // Strip .template suffix (used to prevent deno compile from analyzing .ts/.tsx files)
-    if (relativePath.endsWith(".template")) {
-      relativePath = relativePath.slice(0, -".template".length);
-    }
-
-    const parts = relativePath.split("/");
-    const fileName = parts[parts.length - 1] ?? "";
-    const mapped = FILE_NAME_MAPPINGS[fileName];
-    if (mapped) {
-      parts[parts.length - 1] = mapped;
-      relativePath = parts.join("/");
-    }
-
-    // Strip @ts-nocheck comment from template files (added to prevent deno compile errors)
-    let content = await fs.readTextFile(entryPath);
-    if (content.startsWith("// @ts-nocheck")) {
-      content = content.replace(/^\/\/ @ts-nocheck[^\n]*\n/, "");
-    }
+    const content = (await fs.readTextFile(entryPath))
+      .replace(/^\/\/ @ts-nocheck[^\n]*\n/, "");
 
     files.push({ path: relativePath, content });
   }
+}
+
+function processRelativePath(relativePath: string): string {
+  // Strip .template suffix (used to prevent deno compile from analyzing .ts/.tsx files)
+  if (relativePath.endsWith(".template")) {
+    relativePath = relativePath.slice(0, -".template".length);
+  }
+
+  // Apply file name mappings for dotfiles (npm strips dotfiles during publish)
+  const parts = relativePath.split("/");
+  const fileName = parts[parts.length - 1] ?? "";
+  const mapped = FILE_NAME_MAPPINGS[fileName];
+  if (mapped) {
+    parts[parts.length - 1] = mapped;
+    return parts.join("/");
+  }
+
+  return relativePath;
 }
 
 export function getTemplateDirectory(templateName: string): string {

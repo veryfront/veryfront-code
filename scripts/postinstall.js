@@ -58,57 +58,37 @@ function downloadBinary(url, dest, maxRedirects = 5) {
   return new Promise((resolve, reject) => {
     function follow(currentUrl, redirectCount) {
       if (redirectCount > maxRedirects) {
-        reject(new Error("Too many redirects"));
-        return;
+        return reject(new Error("Too many redirects"));
       }
 
       https.get(currentUrl, (response) => {
-        const statusCode = response.statusCode || 0;
+        const { statusCode = 0, statusMessage, headers } = response;
 
-        // Handle HTTP redirects (301, 302, 303, 307, 308)
-        if ([301, 302, 303, 307, 308].includes(statusCode)) {
-          const location = response.headers.location;
-          if (typeof location !== "string" || location.length === 0) {
-            response.resume(); // drain to avoid socket/resource leaks
-            reject(new Error("Redirect response missing Location header"));
-            return;
+        // Handle redirects
+        if (statusCode >= 301 && statusCode <= 308 && statusCode !== 304) {
+          response.resume();
+          const location = headers.location;
+          if (!location) {
+            return reject(new Error("Redirect response missing Location header"));
           }
-
-          let redirectUrl;
           try {
-            redirectUrl = new URL(location, currentUrl).toString();
+            return follow(new URL(location, currentUrl).toString(), redirectCount + 1);
           } catch {
-            response.resume();
-            reject(new Error(`Invalid redirect URL: ${location}`));
-            return;
+            return reject(new Error(`Invalid redirect URL: ${location}`));
           }
-
-          response.resume(); // drain before following redirect
-          follow(redirectUrl, redirectCount + 1);
-          return;
         }
 
         if (statusCode !== 200) {
           response.resume();
-          reject(new Error(`Failed to download: ${statusCode} ${response.statusMessage}`));
-          return;
+          return reject(new Error(`Failed to download: ${statusCode} ${statusMessage}`));
         }
 
         const file = createWriteStream(dest);
         response.pipe(file);
-        file.on('finish', () => {
-          file.close();
-          resolve();
-        });
+        file.on('finish', () => { file.close(); resolve(); });
         file.on("error", (err) => {
-          // Wrap unlink in try/catch to avoid masking the original error
-          try {
-            if (existsSync(dest)) {
-              unlinkSync(dest);
-            }
-          } catch (cleanupErr) {
-            console.warn("   Warning: Failed to clean up partial download:", cleanupErr.message);
-          }
+          try { if (existsSync(dest)) unlinkSync(dest); }
+          catch (e) { console.warn("   Warning: Failed to clean up partial download:", e.message); }
           reject(err);
         });
       }).on('error', reject);
