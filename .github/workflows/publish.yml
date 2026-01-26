@@ -115,7 +115,7 @@ jobs:
 
       - name: Publish to npm
         working-directory: npm
-        run: npm publish --access public --provenance
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
 
