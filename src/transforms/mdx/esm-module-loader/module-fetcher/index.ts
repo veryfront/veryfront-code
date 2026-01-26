@@ -684,7 +684,7 @@ export function createModuleFetcherContext(
   adapter: RuntimeAdapter,
   projectDir: string,
   projectId: string,
-  options?: { isLocalDev?: boolean; projectSlug?: string },
+  options?: { isLocalDev?: boolean; projectSlug?: string; reactVersion?: string },
 ): ModuleFetcherContext {
   return {
     esmCacheDir,
