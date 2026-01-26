@@ -1,5 +1,5 @@
 import { computeShortContentHash } from "../esm/transform-utils.ts";
-import { REACT_VERSION } from "../esm/package-registry.ts";
+import { getReactVersion } from "../esm/package-registry.ts";
 import type {
   TransformContext,
   TransformOptions,
@@ -7,21 +7,13 @@ import type {
   TransformTarget,
 } from "./types.ts";
 
-async function detectProjectReactVersion(projectDir: string): Promise<string> {
-  try {
-    const content = await Deno.readTextFile(`${projectDir}/package.json`);
-    const pkg = JSON.parse(content) as {
-      dependencies?: Record<string, string>;
-      devDependencies?: Record<string, string>;
-    };
-
-    const reactVersion = { ...pkg.dependencies, ...pkg.devDependencies }?.react;
-    if (reactVersion) return reactVersion.replace(/^[\^~]/, "");
-  } catch {
-    // Project doesn't have package.json or no React dependency
-  }
-
-  return REACT_VERSION;
+/**
+ * Get React version for transforms.
+ * Uses the centralized version from package-registry (set by project config).
+ * This ensures all transforms use the same React version as deno.json import map.
+ */
+function getProjectReactVersion(): string {
+  return getReactVersion();
 }
 
 function buildContext(
@@ -63,9 +55,7 @@ export async function createTransformContext(
 ): Promise<TransformContext> {
   const [contentHash, reactVersion] = await Promise.all([
     computeShortContentHash(source),
-    options.reactVersion
-      ? Promise.resolve(options.reactVersion)
-      : detectProjectReactVersion(projectDir),
+    Promise.resolve(options.reactVersion ?? getProjectReactVersion()),
   ]);
 
   return buildContext(source, filePath, projectDir, contentHash, options, reactVersion);
@@ -84,7 +74,7 @@ export function createTransformContextSync(
     projectDir,
     contentHash,
     options,
-    options.reactVersion ?? REACT_VERSION,
+    options.reactVersion ?? getReactVersion(),
   );
 }
 
