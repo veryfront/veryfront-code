@@ -278,10 +278,12 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
   await fs.writeTextFile(cachePath, code);
 
   if (distributed) {
-    // Store both the code and the hash→URL reverse mapping for recovery
+    // Store code by URL, by hash (for direct recovery), and URL mapping (for debugging)
+    // Storing code by hash enables recovery without needing URL lookup
     const hash = simpleHash(normalizedUrl);
     Promise.all([
       distributed.set(normalizedUrl, code, DISTRIBUTED_CACHE_TTL_SECONDS),
+      distributed.set(`code:${hash}`, code, DISTRIBUTED_CACHE_TTL_SECONDS),
       distributed.set(`hash:${hash}`, normalizedUrl, DISTRIBUTED_CACHE_TTL_SECONDS),
     ]).catch((error) => {
       logger.debug("[HTTP-CACHE] Distributed cache set failed", { url: normalizedUrl, error });
@@ -396,9 +398,13 @@ export async function cacheModuleToLocal(url: string, cacheDir: string): Promise
 }
 
 /**
- * Recover a missing HTTP bundle by looking up the original URL from the hash.
+ * Recover a missing HTTP bundle by looking up the code directly from the hash.
  * Used for cross-pod recovery when a file:// path points to a bundle that
  * exists in distributed cache but not on the local filesystem.
+ *
+ * Recovery strategy (in order of preference):
+ * 1. Direct code lookup by hash (code:{hash}) - fastest, most reliable
+ * 2. URL lookup then re-fetch (hash:{hash} → URL → fetch) - fallback
  *
  * @param hash - The hash from the bundle filename (e.g., "974671618" from "http-974671618.mjs")
  * @param cacheDir - The cache directory path
@@ -411,25 +417,34 @@ export async function recoverHttpBundleByHash(hash: string, cacheDir: string): P
     return false;
   }
 
+  const absoluteCacheDir = ensureAbsoluteDir(cacheDir);
+  const cachePath = join(absoluteCacheDir, `http-${hash}.mjs`);
+  const fs = createFileSystem();
+
   try {
-    // Look up original URL from hash
-    const originalUrl = await distributed.get(`hash:${hash}`);
-    if (!originalUrl) {
-      logger.debug("[HTTP-CACHE] No URL mapping found for hash", { hash });
-      return false;
-    }
-
-    logger.info("[HTTP-CACHE] Recovering missing HTTP bundle", { hash, originalUrl });
-
-    // Re-cache the module (will fetch from distributed cache or network)
-    const importMap = { imports: {}, scopes: {} };
-    const result = await cacheHttpModule(originalUrl, { cacheDir, importMap });
-
-    if (result) {
-      logger.info("[HTTP-CACHE] Bundle recovery successful", { hash, path: result });
+    // Strategy 1: Direct code lookup by hash (preferred - no URL needed)
+    const cachedCode = await distributed.get(`code:${hash}`);
+    if (cachedCode) {
+      logger.info("[HTTP-CACHE] Recovering bundle via direct code lookup", { hash });
+      await fs.mkdir(absoluteCacheDir, { recursive: true });
+      await fs.writeTextFile(cachePath, cachedCode);
+      logger.info("[HTTP-CACHE] Bundle recovery successful (direct)", { hash, path: cachePath });
       return true;
     }
 
+    // Strategy 2: URL lookup then re-fetch (fallback for bundles cached before code:{hash} was added)
+    const originalUrl = await distributed.get(`hash:${hash}`);
+    if (originalUrl) {
+      logger.info("[HTTP-CACHE] Recovering bundle via URL re-fetch", { hash, originalUrl });
+      const importMap = { imports: {}, scopes: {} };
+      const result = await cacheHttpModule(originalUrl, { cacheDir, importMap });
+      if (result) {
+        logger.info("[HTTP-CACHE] Bundle recovery successful (re-fetch)", { hash, path: result });
+        return true;
+      }
+    }
+
+    logger.debug("[HTTP-CACHE] No recovery data found for hash", { hash });
     return false;
   } catch (error) {
     logger.error("[HTTP-CACHE] Bundle recovery failed", { hash, error });

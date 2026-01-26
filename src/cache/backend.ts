@@ -321,11 +321,7 @@ export class ApiCacheBackend implements CacheBackend {
   private keyPrefix: string;
   private timeoutMs: number;
   private env?: RuntimeEnv;
-  private circuitBreaker = getCircuitBreaker("api-cache", {
-    failureThreshold: 10,
-    resetTimeoutMs: 15000,
-    successThreshold: 2,
-  });
+  private circuitBreaker;
 
   constructor(options: {
     apiBaseUrl?: string;
@@ -333,6 +329,8 @@ export class ApiCacheBackend implements CacheBackend {
     timeoutMs?: number;
     /** Optional RuntimeEnv for test isolation */
     env?: RuntimeEnv;
+    /** Circuit breaker name - allows isolation between different cache types */
+    circuitBreakerName?: string;
   } = {}) {
     this.env = options.env;
     this.apiBaseUrl = options.apiBaseUrl ??
@@ -340,6 +338,15 @@ export class ApiCacheBackend implements CacheBackend {
       "https://api.veryfront.com";
     this.keyPrefix = options.keyPrefix ?? "";
     this.timeoutMs = options.timeoutMs ?? 10000;
+
+    // Use separate circuit breakers for different cache types to prevent
+    // cascade failures from blocking critical recovery operations
+    const breakerName = options.circuitBreakerName ?? "api-cache";
+    this.circuitBreaker = getCircuitBreaker(breakerName, {
+      failureThreshold: 10,
+      resetTimeoutMs: 15000,
+      successThreshold: 2,
+    });
   }
 
   private prefixKey(key: string): string {
@@ -510,6 +517,8 @@ export interface CacheBackendConfig {
   apiBaseUrl?: string;
   /** Optional RuntimeEnv for test isolation */
   env?: RuntimeEnv;
+  /** Circuit breaker name for API backend isolation */
+  circuitBreakerName?: string;
 }
 
 /** Check if API cache backend is available (production environment with API URL). */
@@ -534,7 +543,14 @@ export function isApiCacheAvailable(env?: RuntimeEnv): boolean {
  * Preference: API (production) > Redis (local/OSS) > Memory (fallback)
  */
 export function createCacheBackend(config: CacheBackendConfig = {}): Promise<CacheBackend> {
-  const { keyPrefix = "", memoryMaxEntries = 500, preferredBackend, apiBaseUrl, env } = config;
+  const {
+    keyPrefix = "",
+    memoryMaxEntries = 500,
+    preferredBackend,
+    apiBaseUrl,
+    env,
+    circuitBreakerName,
+  } = config;
 
   return withSpan(
     SpanNames.CACHE_BACKEND_CREATE,
@@ -544,7 +560,7 @@ export function createCacheBackend(config: CacheBackendConfig = {}): Promise<Cac
       if (shouldUseApi) {
         logger.debug("[CacheBackend] Using API backend (centralized cache)");
         span?.setAttribute("cache.backend.type", "api");
-        return new ApiCacheBackend({ keyPrefix, apiBaseUrl, env });
+        return new ApiCacheBackend({ keyPrefix, apiBaseUrl, env, circuitBreakerName });
       }
 
       const shouldUseRedis = preferredBackend === "redis" ||
@@ -586,8 +602,10 @@ export const CacheBackends = {
   /** User KV store - always uses API backend. */
   userKv: () => createCacheBackend({ keyPrefix: "kv", preferredBackend: "api" }),
 
-  /** HTTP module cache for ESM.sh modules (cross-pod sharing). */
-  httpModule: () => createCacheBackend({ keyPrefix: "http-module" }),
+  /** HTTP module cache for ESM.sh modules (cross-pod sharing).
+   * Uses separate circuit breaker to prevent cascade failures from blocking recovery. */
+  httpModule: () =>
+    createCacheBackend({ keyPrefix: "http-module", circuitBreakerName: "api-cache-http" }),
 
   /** Project CSS cache for Tailwind CSS output (cross-pod sharing). */
   projectCSS: () => createCacheBackend({ keyPrefix: "project-css" }),
