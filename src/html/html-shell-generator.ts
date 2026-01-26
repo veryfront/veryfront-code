@@ -289,11 +289,12 @@ async function generateHTMLShellPartsImpl(
     : "";
 
   const mermaidScript = `
-  <!-- Mermaid diagram rendering (after page load) -->
+  <!-- Mermaid diagram rendering -->
   <script type="module"${nonce ? ` nonce="${nonce}"` : ""}>
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
     mermaid.initialize({ startOnLoad: false, theme: 'default' });
-    window.addEventListener('load', () => mermaid.run());
+    if (document.readyState === 'complete') mermaid.run();
+    else window.addEventListener('load', () => mermaid.run());
   </script>`;
 
   const end = `</div>
