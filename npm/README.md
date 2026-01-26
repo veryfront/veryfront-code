@@ -21,39 +21,20 @@ npx veryfront
 
 One command. Zero config. Just build.
 
-## Project Structure
+## Structure
 
 ```
-my-app/
-├── app/                     # App Router (pages & APIs)
-│   ├── chat/page.tsx
-│   └── api/chat/route.ts
-├── agents/                  # AI agents
-├── tools/                   # MCP tools
-├── workflows/               # Durable workflows
-├── prompts/                 # Prompt templates
-└── resources/               # MCP resources
+app/       → pages & APIs
+agents/    → AI agents
+tools/     → MCP tools
+workflows/ → durable workflows
 ```
 
-All directories are auto-discovered.
+Auto-discovered.
 
-## Documentation
+## Links
 
-- [Getting Started](https://veryfront.com/docs/framework)
-- [Agents](https://veryfront.com/docs/framework/agents)
-- [Tools](https://veryfront.com/docs/framework/tools)
-- [Workflows](https://veryfront.com/docs/framework/workflows)
-- [MCP Server](https://veryfront.com/docs/framework/mcp)
-
-## Community
-
-- [Discord](https://discord.gg/veryfront)
-- [X](https://x.com/veryfrontdev)
-- [GitHub Discussions](https://github.com/veryfront/veryfront/discussions)
-
-## Contributing
-
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
+[Docs](https://veryfront.com/docs/framework) · [Discord](https://discord.gg/veryfront) · [X](https://x.com/veryfrontdev)
 
 ## License
 
