@@ -127,8 +127,8 @@ const rgb = (r: number, g: number, b: number) => (text: string) => applyColor(te
 const bgRgb = (r: number, g: number, b: number) => (text: string) =>
   applyColor(text, r, g, b, true);
 
-export const brand = rgb(0, 163, 244);
-export const brandBg = bgRgb(0, 163, 244);
+export const brand = rgb(252, 143, 93);
+export const brandBg = bgRgb(252, 143, 93);
 
 export const success = rgb(34, 197, 94);
 export const error = rgb(239, 68, 68);

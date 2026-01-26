@@ -8,7 +8,7 @@ const LOGO_FALLBACK = "             "; // Logo width ~13 chars
 
 function renderMiniLogo(): string[] {
   const useColor = shouldUseColor();
-  const litColor = useColor ? "\x1b[38;2;0;163;244m" : "";
+  const litColor = useColor ? "\x1b[38;2;252;143;93m" : "";
   const offColor = useColor ? "\x1b[38;5;240m" : "";
 
   return AGENT_FACE.map((row) =>

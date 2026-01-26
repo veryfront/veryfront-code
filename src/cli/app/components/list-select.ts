@@ -163,7 +163,9 @@ export function renderList<T>(
       }
     }
 
-    parts.push(truncate(item.label, labelWidth));
+    // Dim label when not focused
+    const label = truncate(item.label, labelWidth);
+    parts.push(isSelected ? label : dim(label));
 
     if (item.meta) {
       const labelLen = visibleLength(parts.join(""));

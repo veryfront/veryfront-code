@@ -23,10 +23,11 @@ export function renderDashboard(state: AppState): string {
 
   const hasProjects = state.projects.items.length > 0;
   const hasExamples = state.examples.items.length > 0;
+  const hasRemoteProjects = state.remote.user && state.remote.projects.length > 0;
 
   if (hasProjects) {
     const isActive = state.activeList === "projects";
-    lines.push(renderSection("Your Projects", state.projects.items.length, isActive));
+    lines.push(renderSection("Local Projects", state.projects.items.length, isActive));
     lines.push(
       renderList(state.projects, {
         maxWidth: maxListWidth,
@@ -36,6 +37,40 @@ export function renderDashboard(state: AppState): string {
       }),
       "",
     );
+  }
+
+  // Remote projects (when logged in)
+  if (hasRemoteProjects) {
+    const isRemoteActive = state.activeList === "remoteProjects";
+    const visibleCount = 5;
+    const start = state.remote.scrollOffset;
+    const end = Math.min(start + visibleCount, state.remote.projects.length);
+    const visibleProjects = state.remote.projects.slice(start, end);
+
+    lines.push(renderSection("Remote Projects", state.remote.projects.length, isRemoteActive));
+
+    if (start > 0) {
+      lines.push(`  ${dim("↑ more above")}`);
+    }
+
+    visibleProjects.forEach((p, i) => {
+      const actualIndex = start + i;
+      const isFocused = isRemoteActive && actualIndex === state.remote.focusedIndex;
+      const cursor = isFocused ? brand("›") : " ";
+      // Show number 1-9 or letter a-z for 10+
+      const displayNum = actualIndex + 1;
+      const shortcut = displayNum <= 9
+        ? String(displayNum)
+        : String.fromCharCode(96 + displayNum - 9); // 10='a', 11='b', etc.
+      const num = isFocused ? brand(`[${shortcut}]`) : dim(`[${shortcut}]`);
+      const label = isFocused ? p.slug : dim(p.slug);
+      lines.push(`${cursor} ${num} ${label}`);
+    });
+
+    if (end < state.remote.projects.length) {
+      lines.push(`  ${dim("↓ more below")}`);
+    }
+    lines.push("");
   }
 
   if (hasExamples) {
@@ -87,7 +122,7 @@ function renderBanner(state: AppState): string {
   }
 
   return getAgentFaceWithText(textLines, {
-    litColor: "\x1b[38;2;0;163;244m", // Veryfront brand blue
+    litColor: "\x1b[38;2;252;143;93m", // Veryfront brand orange
   });
 }
 
@@ -106,20 +141,33 @@ function renderSection(title: string, count: number, isActive = true): string {
 function renderHelpBar(state: AppState): string {
   const parts: string[] = [];
 
-  parts.push(`${dim("↑↓")} nav`);
-
   const hasProjects = state.projects.items.length > 0;
   const hasExamples = state.examples.items.length > 0;
+  const hasRemoteProjects = state.remote.user && state.remote.projects.length > 0;
 
-  if (hasProjects && hasExamples) {
-    parts.push(`${dim("tab")} switch`);
+  // Count sections for tab switching
+  const sectionCount = [hasProjects, hasExamples, hasRemoteProjects].filter(Boolean).length;
+
+  if (sectionCount > 1) {
+    parts.push(dim("tab switch"));
   }
 
-  if (hasProjects || hasExamples) {
-    parts.push(`${dim("o")} open`, `${dim("s")} studio`, `${dim("i")} ide`);
+  parts.push(dim("↑↓ nav"));
+
+  if (hasProjects || hasExamples || hasRemoteProjects) {
+    parts.push(dim("o open"), dim("s studio"), dim("i ide"));
   }
 
-  parts.push(`${dim("n")} new`, `${dim("?")} help`, `${dim("q")} quit`);
+  if (!state.remote.user) {
+    parts.push(dim("a login"));
+  } else {
+    if (hasRemoteProjects) {
+      parts.push(dim("p pull"), dim("u push"));
+    }
+    parts.push(dim("x logout"));
+  }
+
+  parts.push(dim("q quit"));
 
   return `  ${parts.join("  ")}`;
 }
@@ -134,7 +182,7 @@ export function renderDashboardBoxed(state: AppState): string {
   return box(content, {
     style: "rounded",
     title: "Veryfront",
-    titleColor: "\x1b[38;2;0;163;244m",
+    titleColor: "\x1b[38;2;252;143;93m",
     width: termWidth,
     paddingX: 1,
     paddingY: 0,

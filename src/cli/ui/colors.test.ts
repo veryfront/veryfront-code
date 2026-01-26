@@ -51,12 +51,12 @@ describe("colors", () => {
     it("wraps text with ANSI escape codes", () => {
       const result = brand("test");
       assertStringIncludes(result, "test");
-      assertStringIncludes(result, "\x1b[38;2;0;163;244m");
+      assertStringIncludes(result, "\x1b[38;2;252;143;93m");
       assertStringIncludes(result, "\x1b[0m");
     });
 
     it("returns empty string for empty input", () => {
-      assertEquals(brand(""), "\x1b[38;2;0;163;244m\x1b[0m");
+      assertEquals(brand(""), "\x1b[38;2;252;143;93m\x1b[0m");
     });
   });
 

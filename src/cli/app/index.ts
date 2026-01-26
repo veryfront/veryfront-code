@@ -13,6 +13,7 @@ import {
   isStdoutTTY,
   writeStdout,
 } from "#veryfront/platform/compat/process.ts";
+import { join } from "#veryfront/platform/compat/path/index.ts";
 import { getStdinReader, setRawMode } from "#veryfront/platform/compat/stdin.ts";
 import { cursor, screen, SPINNER_FRAMES } from "../ui/ansi.ts";
 import { brand, dim, success } from "../ui/colors.ts";
@@ -41,9 +42,16 @@ import {
   updateActiveList,
   updateInputValue,
   updateMCP,
+  updateRemote,
   updateServer,
 } from "./state.ts";
 import { handleInputKey, renderInput, renderLogs } from "./components/inline-input.ts";
+import { login, logout, validateToken } from "../auth/login.ts";
+import { readToken } from "../auth/token-store.ts";
+import { openBrowser } from "../auth/browser.ts";
+import { fetchRemoteProjects } from "../sync/index.ts";
+import { pullCommand } from "../commands/pull.ts";
+import { pushCommand } from "../commands/push.ts";
 
 export interface AppConfig {
   port: number;
@@ -118,6 +126,25 @@ export function createApp(config: AppConfig): App {
     transport: config.mcpPort ? "http" : null,
     httpPort: config.mcpPort,
   })(state);
+
+  // Check for existing auth (async, updates state when ready)
+  void (async () => {
+    try {
+      const token = await readToken();
+      if (token) {
+        const user = await validateToken(token);
+        if (user) {
+          const result = await fetchRemoteProjects();
+          state = updateRemote({
+            user,
+            projects: result.projects.map((p) => ({ id: p.id, name: p.name, slug: p.slug })),
+          })(state);
+        }
+      }
+    } catch {
+      // Auth check failed - non-fatal
+    }
+  })();
 
   const write = (text: string): void => writeStdout(text);
 
@@ -216,6 +243,28 @@ export function createApp(config: AppConfig): App {
     ].join("\n");
   }
 
+  function renderAuthView(): string {
+    const providers = ["Google", "GitHub", "Microsoft"];
+    const lines = [
+      "",
+      `  ${brand("Login to Veryfront")}`,
+      "",
+      `  ${dim("Choose authentication provider:")}`,
+      "",
+    ];
+
+    providers.forEach((p, i) => {
+      const isFocused = i === state.authProviderIndex;
+      const cursor = isFocused ? brand("›") : " ";
+      const num = isFocused ? brand(`[${i + 1}]`) : dim(`[${i + 1}]`);
+      const label = isFocused ? p : dim(p);
+      lines.push(`${cursor} ${num} ${label}`);
+    });
+
+    lines.push("", `  ${dim("↑↓ nav  enter select  esc back")}`, "");
+    return lines.join("\n");
+  }
+
   function render(): void {
     let content: string;
 
@@ -230,6 +279,9 @@ export function createApp(config: AppConfig): App {
         break;
       case "templates":
         content = renderTemplatesView();
+        break;
+      case "auth":
+        content = renderAuthView();
         break;
       case "help":
         content = renderHelpView();
@@ -363,6 +415,11 @@ export function createApp(config: AppConfig): App {
       return;
     }
 
+    if (state.view === "auth") {
+      await handleAuthKey(key);
+      return;
+    }
+
     if (state.view === "help") {
       update(goBack());
       return;
@@ -387,73 +444,219 @@ export function createApp(config: AppConfig): App {
     }
 
     if (key === "\x1b[A" || key === "k") {
-      update(updateActiveList((list) => moveUp(list)));
+      if (state.activeList === "remoteProjects") {
+        const total = state.remote.projects.length;
+        const visibleCount = 5;
+        const newIndex = state.remote.focusedIndex > 0 ? state.remote.focusedIndex - 1 : total - 1;
+        // Adjust scroll offset
+        let scrollOffset = state.remote.scrollOffset;
+        if (newIndex < scrollOffset) {
+          scrollOffset = newIndex;
+        } else if (newIndex === total - 1) {
+          // Wrapped to bottom
+          scrollOffset = Math.max(0, total - visibleCount);
+        }
+        update(updateRemote({ focusedIndex: newIndex, scrollOffset }));
+      } else {
+        update(updateActiveList((list) => moveUp(list)));
+      }
       return;
     }
 
     if (key === "\x1b[B" || key === "j") {
-      update(updateActiveList((list) => moveDown(list, 5)));
+      if (state.activeList === "remoteProjects") {
+        const total = state.remote.projects.length;
+        const visibleCount = 5;
+        const newIndex = state.remote.focusedIndex < total - 1 ? state.remote.focusedIndex + 1 : 0;
+        // Adjust scroll offset
+        let scrollOffset = state.remote.scrollOffset;
+        if (newIndex === 0) {
+          // Wrapped to top
+          scrollOffset = 0;
+        } else if (newIndex >= scrollOffset + visibleCount) {
+          scrollOffset = newIndex - visibleCount + 1;
+        }
+        update(updateRemote({ focusedIndex: newIndex, scrollOffset }));
+      } else {
+        update(updateActiveList((list) => moveDown(list, 5)));
+      }
       return;
     }
 
     if (key === "\t") {
       const hasProjects = state.projects.items.length > 0;
       const hasExamples = state.examples.items.length > 0;
-      if (hasProjects && hasExamples) {
-        update(setActiveList(state.activeList === "projects" ? "examples" : "projects"));
+      const hasRemoteProjects = state.remote.user && state.remote.projects.length > 0;
+
+      // Build list of available sections in display order
+      const sections: Array<"projects" | "remoteProjects" | "examples"> = [];
+      if (hasProjects) sections.push("projects");
+      if (hasRemoteProjects) sections.push("remoteProjects");
+      if (hasExamples) sections.push("examples");
+
+      if (sections.length > 1) {
+        const currentIndex = sections.indexOf(state.activeList as typeof sections[number]);
+        const nextIndex = (currentIndex + 1) % sections.length;
+        const nextSection = sections[nextIndex];
+        if (nextSection) update(setActiveList(nextSection));
       }
       return;
     }
 
-    const projectCount = state.projects.items.length;
-    const totalCount = projectCount + state.examples.items.length;
-    let itemNum = 0;
-
-    if (key >= "1" && key <= "9") {
-      itemNum = parseInt(key, 10);
-    } else if (key >= "a" && key <= "z") {
-      const letterNum = key.charCodeAt(0) - 96 + 9; // a=10, b=11, ...
-      if (letterNum <= totalCount) itemNum = letterNum;
+    // Number keys for remote project - update focusedIndex (Enter triggers pull)
+    if (key >= "1" && key <= "9" && state.activeList === "remoteProjects") {
+      const num = parseInt(key, 10);
+      const total = state.remote.projects.length;
+      if (num <= total) {
+        const newIndex = num - 1;
+        const visibleCount = 5;
+        let scrollOffset = state.remote.scrollOffset;
+        if (newIndex < scrollOffset) {
+          scrollOffset = newIndex;
+        } else if (newIndex >= scrollOffset + visibleCount) {
+          scrollOffset = newIndex - visibleCount + 1;
+        }
+        update(updateRemote({ focusedIndex: newIndex, scrollOffset }));
+      }
+      return;
     }
 
-    if (itemNum > 0 && itemNum <= totalCount) {
-      if (itemNum <= projectCount) {
-        state = setActiveList("projects")(state);
-        state = { ...state, projects: selectByNumber(state.projects, itemNum) };
+    // Letter keys for remote project items 10+ (a=10, b=11, etc.)
+    // Exclude p (pull), u (push), j/k (vim nav) shortcuts
+    if (
+      key >= "a" && key <= "z" && key !== "j" && key !== "k" && key !== "p" && key !== "u" &&
+      state.activeList === "remoteProjects"
+    ) {
+      const num = key.charCodeAt(0) - 96 + 9; // a=10, b=11, etc.
+      const total = state.remote.projects.length;
+      if (num <= total) {
+        const newIndex = num - 1;
+        const visibleCount = 5;
+        let scrollOffset = state.remote.scrollOffset;
+        if (newIndex < scrollOffset) {
+          scrollOffset = newIndex;
+        } else if (newIndex >= scrollOffset + visibleCount) {
+          scrollOffset = newIndex - visibleCount + 1;
+        }
+        update(updateRemote({ focusedIndex: newIndex, scrollOffset }));
+      }
+      return;
+    }
+
+    // Auth: login
+    if (key === "a" && !state.remote.user) {
+      update(navigateTo("auth"));
+      return;
+    }
+
+    // Auth: logout
+    if (key === "x" && state.remote.user) {
+      await logout();
+      update(updateRemote({ user: null, projects: [], focusedIndex: 0, scrollOffset: 0 }));
+      update(addLog("info", "Logged out"));
+      return;
+    }
+
+    // Number keys select from active list (1-9) - skip for remoteProjects (handled above)
+    if (key >= "1" && key <= "9" && state.activeList !== "remoteProjects") {
+      const num = parseInt(key, 10);
+      const activeList = state[state.activeList];
+      if (num <= activeList.items.length) {
+        state = { ...state, [state.activeList]: selectByNumber(activeList, num) };
         render();
-        const selected = state.projects.items[itemNum - 1];
+        const selected = activeList.items[num - 1];
         if (selected?.data) await openInBrowser(selected.data, state.server.port);
         return;
       }
+    }
 
-      state = setActiveList("examples")(state);
-      const exampleNum = itemNum - projectCount;
-      state = { ...state, examples: selectByNumber(state.examples, exampleNum) };
-      render();
-      const selected = state.examples.items[exampleNum - 1];
-      if (selected?.data) await openInBrowser(selected.data, state.server.port);
-      return;
+    // Letter keys only work when examples focused (a=1, b=2, etc.)
+    // Exclude j/k (vim nav) shortcuts
+    if (key >= "a" && key <= "z" && key !== "j" && key !== "k" && state.activeList === "examples") {
+      const num = key.charCodeAt(0) - 96; // a=1, b=2, ...
+      if (num <= state.examples.items.length) {
+        state = { ...state, examples: selectByNumber(state.examples, num) };
+        render();
+        const selected = state.examples.items[num - 1];
+        if (selected?.data) await openInBrowser(selected.data, state.server.port);
+        return;
+      }
     }
 
     if (key === "\r" || key === "\n") {
+      // Enter on remote projects: pull
+      if (state.activeList === "remoteProjects") {
+        const focused = state.remote.projects[state.remote.focusedIndex];
+        if (focused) {
+          const projectDir = join(cwd(), "projects", focused.slug);
+          update(addLog("info", `Pulling to projects/${focused.slug}/...`));
+          render();
+          try {
+            await pullCommand({
+              projectSlug: focused.slug,
+              projectDir,
+              force: true,
+              quiet: true,
+            });
+            update(addLog("info", `Pulled to projects/${focused.slug}/`));
+          } catch (err) {
+            update(
+              addLog("error", `Pull failed: ${err instanceof Error ? err.message : String(err)}`),
+            );
+          }
+          render();
+        }
+        return;
+      }
+      // Enter on local projects/examples: open in browser
       const selected = getActiveSelection(state);
       if (selected?.data) await openInBrowser(selected.data, state.server.port);
       return;
     }
 
     if (key === "o") {
+      // Open focused remote project in local dev server
+      if (state.activeList === "remoteProjects") {
+        const focused = state.remote.projects[state.remote.focusedIndex];
+        if (focused) {
+          const url = `http://${focused.slug}.lvh.me:${state.server.port}`;
+          await openBrowser(url);
+        }
+        return;
+      }
+      // Otherwise open local project in browser
       const selected = getActiveSelection(state);
       if (selected?.data) await openInBrowser(selected.data, state.server.port);
       return;
     }
 
     if (key === "s") {
+      // Open focused remote project in Studio
+      if (state.activeList === "remoteProjects") {
+        const focused = state.remote.projects[state.remote.focusedIndex];
+        if (focused) {
+          const url = `https://studio.veryfront.com/${focused.slug}`;
+          await openBrowser(url);
+        }
+        return;
+      }
+      // Otherwise open local project in Studio
       const selected = getActiveSelection(state);
       if (selected?.data) await openInStudio(selected.data);
       return;
     }
 
     if (key === "i") {
+      // Open focused remote project's local directory in IDE
+      if (state.activeList === "remoteProjects") {
+        const focused = state.remote.projects[state.remote.focusedIndex];
+        if (focused) {
+          const projectDir = join(cwd(), "projects", focused.slug);
+          await openInIDE({ slug: focused.slug, path: projectDir, type: "local" });
+        }
+        return;
+      }
+      // Otherwise open local project in IDE
       const selected = getActiveSelection(state);
       if (selected?.data) await openInIDE(selected.data);
       return;
@@ -478,6 +681,52 @@ export function createApp(config: AppConfig): App {
             (result.success ? "Opened MCP settings" : "Failed to open MCP settings"),
         ),
       );
+      return;
+    }
+
+    // Pull focused remote project
+    if (key === "p" && state.activeList === "remoteProjects") {
+      const focused = state.remote.projects[state.remote.focusedIndex];
+      if (focused) {
+        const projectDir = join(cwd(), "projects", focused.slug);
+        update(addLog("info", `Pulling to projects/${focused.slug}/...`));
+        render();
+        try {
+          await pullCommand({
+            projectSlug: focused.slug,
+            projectDir,
+            force: true,
+            quiet: true,
+          });
+          update(addLog("info", `Pulled to projects/${focused.slug}/`));
+        } catch (err) {
+          update(
+            addLog("error", `Pull failed: ${err instanceof Error ? err.message : String(err)}`),
+          );
+        }
+        render();
+      }
+      return;
+    }
+
+    // Push focused remote project
+    if (key === "u" && state.activeList === "remoteProjects") {
+      const focused = state.remote.projects[state.remote.focusedIndex];
+      if (focused) {
+        const projectDir = join(cwd(), "projects", focused.slug);
+        update(addLog("info", `Pushing projects/${focused.slug}/...`));
+        render();
+        try {
+          await pushCommand({ projectSlug: focused.slug, projectDir, force: true, quiet: true });
+          update(addLog("info", `Pushed projects/${focused.slug}/ — merge in Studio`));
+        } catch (err) {
+          update(
+            addLog("error", `Push failed: ${err instanceof Error ? err.message : String(err)}`),
+          );
+        }
+        render();
+      }
+      return;
     }
   }
 
@@ -555,6 +804,57 @@ export function createApp(config: AppConfig): App {
 
     if (key === "3") {
       promptForProjectName("minimal", () => render());
+    }
+  }
+
+  async function handleAuthKey(key: string): Promise<void> {
+    const providerList: Array<"google" | "github" | "microsoft"> = [
+      "google",
+      "github",
+      "microsoft",
+    ];
+
+    // Arrow navigation
+    if (key === "\x1b[A" || key === "k") {
+      state = {
+        ...state,
+        authProviderIndex: state.authProviderIndex > 0 ? state.authProviderIndex - 1 : 2,
+      };
+      render();
+      return;
+    }
+    if (key === "\x1b[B" || key === "j") {
+      state = {
+        ...state,
+        authProviderIndex: state.authProviderIndex < 2 ? state.authProviderIndex + 1 : 0,
+      };
+      render();
+      return;
+    }
+
+    // Number keys to select directly
+    if (key >= "1" && key <= "3") {
+      state = { ...state, authProviderIndex: parseInt(key, 10) - 1 };
+      render();
+      return;
+    }
+
+    // Enter to confirm selection
+    if (key === "\r" || key === "\n") {
+      const provider = providerList[state.authProviderIndex];
+      update(addLog("info", `Opening browser for ${provider} login...`));
+      update(navigateTo("dashboard"));
+
+      const user = await login(provider);
+      if (user) {
+        const result = await fetchRemoteProjects();
+        update(updateRemote({
+          user,
+          projects: result.projects.map((p) => ({ id: p.id, name: p.name, slug: p.slug })),
+        }));
+        update(addLog("info", `Logged in as ${user.email}`));
+      }
+      render();
     }
   }
 

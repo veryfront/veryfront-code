@@ -234,6 +234,17 @@ interface Spinner {
   update: (message: string) => void;
 }
 
+/**
+ * Create a no-op spinner that does nothing (for quiet mode)
+ */
+export function createNoopSpinner(): Spinner {
+  return {
+    start() {},
+    stop() {},
+    update() {},
+  };
+}
+
 export function createSpinner(message: string): Spinner {
   let frameIndex = 0;
   let intervalId: ReturnType<typeof setInterval> | null = null;

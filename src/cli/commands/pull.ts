@@ -17,7 +17,14 @@ import {
   resolveConfig,
   type ResolvedConfig,
 } from "../shared/config.ts";
-import { confirmPrompt, createSpinner, logInfo, logSuccess, logWarning } from "../utils/index.ts";
+import {
+  confirmPrompt,
+  createNoopSpinner,
+  createSpinner,
+  logInfo,
+  logSuccess,
+  logWarning,
+} from "../utils/index.ts";
 import { getApiTokenEnv } from "#veryfront/config/env.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
@@ -50,6 +57,8 @@ export interface PullOptions {
   force?: boolean;
   /** Dry run - show what would be written without writing */
   dryRun?: boolean;
+  /** Quiet mode - suppress spinner/progress output */
+  quiet?: boolean;
 }
 
 /**
@@ -124,7 +133,6 @@ export function buildFilesListUrl(projectSlug: string, source: PullSource): stri
     case "branch":
       return `/projects/${projectSlug}/branches/${encodeURIComponent(source.name)}/files`;
     case "main":
-    default:
       return `/projects/${projectSlug}/files`;
   }
 }
@@ -179,7 +187,6 @@ export function buildFileContentUrl(projectSlug: string, path: string, source: P
         encodeURIComponent(source.name)
       }/files/${encodedPath}`;
     case "main":
-    default:
       return `/projects/${projectSlug}/files/${encodedPath}`;
   }
 }
@@ -268,7 +275,6 @@ function formatPullSource(source: PullSource): string {
     case "branch":
       return `branch: ${source.name}`;
     case "main":
-    default:
       return "main";
   }
 }
@@ -280,9 +286,12 @@ async function pullSingleProject(
   force: boolean,
   dryRun: boolean,
   config: ResolvedConfig,
+  quiet = false,
 ): Promise<{ written: number; skipped: number }> {
   const sourceLabel = formatPullSource(source);
-  const spinner = createSpinner(`Fetching files from ${projectSlug} (${sourceLabel})...`);
+  const spinner = quiet
+    ? createNoopSpinner()
+    : createSpinner(`Fetching files from ${projectSlug} (${sourceLabel})...`);
   spinner.start();
 
   const client = createApiClient({ ...config, projectSlug });
@@ -295,7 +304,7 @@ async function pullSingleProject(
   }
 
   if (files.length === 0) {
-    logInfo(`No files to pull from ${projectSlug}.`);
+    if (!quiet) logInfo(`No files to pull from ${projectSlug}.`);
     return { written: 0, skipped: 0 };
   }
 
@@ -304,15 +313,17 @@ async function pullSingleProject(
       try {
         return { path: validateFilePath(file.path, projectDir), relativePath: file.path };
       } catch (error) {
-        cliLogger.warn(`Skipping invalid file path: ${file.path}`, error);
+        if (!quiet) cliLogger.warn(`Skipping invalid file path: ${file.path}`, error);
         return null;
       }
     })
     .filter((op): op is WriteOp => op !== null);
 
-  cliLogger.info(
-    `\nFound ${files.length} files to ${dryRun ? "pull" : "write"} from ${projectSlug}.`,
-  );
+  if (!quiet) {
+    cliLogger.info(
+      `\nFound ${files.length} files to ${dryRun ? "pull" : "write"} from ${projectSlug}.`,
+    );
+  }
 
   if (!force && !dryRun) {
     const confirmed = await confirmPrompt(
@@ -332,11 +343,13 @@ async function pullSingleProject(
 
   spinner.stop();
 
-  if (dryRun) {
-    logInfo(`Dry run complete for ${projectSlug}. Would write ${result.written} files.`);
-  } else {
-    logSuccess(`Pulled ${result.written} files from ${projectSlug} (${sourceLabel}).`);
-    if (result.skipped > 0) logWarning(`Skipped ${result.skipped} files due to errors.`);
+  if (!quiet) {
+    if (dryRun) {
+      logInfo(`Dry run complete for ${projectSlug}. Would write ${result.written} files.`);
+    } else {
+      logSuccess(`Pulled ${result.written} files from ${projectSlug} (${sourceLabel}).`);
+      if (result.skipped > 0) logWarning(`Skipped ${result.skipped} files due to errors.`);
+    }
   }
 
   return result;
@@ -357,9 +370,10 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
         projectDir = cwd(),
         force = false,
         dryRun = false,
+        quiet = false,
       } = options;
 
-      const spinner = createSpinner("Resolving configuration...");
+      const spinner = quiet ? createNoopSpinner() : createSpinner("Resolving configuration...");
       spinner.start();
 
       const configFile = await readConfigFile(projectDir);
@@ -400,7 +414,7 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
 
           if (!dryRun) await fs.mkdir(targetDir, { recursive: true });
 
-          cliLogger.info(`\n--- Pulling ${project} into ${targetDir} ---`);
+          if (!quiet) cliLogger.info(`\n--- Pulling ${project} into ${targetDir} ---`);
 
           try {
             const result = await pullSingleProject(
@@ -410,6 +424,7 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
               force,
               dryRun,
               config,
+              quiet,
             );
             totalWritten += result.written;
             totalSkipped += result.skipped;
@@ -419,19 +434,21 @@ export function pullCommand(options: PullOptions = {}): Promise<void> {
           }
         }
 
-        cliLogger.info("");
-        if (dryRun) {
-          logInfo(
-            `Dry run complete. Would write ${totalWritten} files total across ${projects.length} projects.`,
-          );
-        } else {
-          logSuccess(`Pulled ${totalWritten} files total across ${projects.length} projects.`);
-          if (totalSkipped > 0) logWarning(`Skipped ${totalSkipped} files due to errors.`);
+        if (!quiet) {
+          cliLogger.info("");
+          if (dryRun) {
+            logInfo(
+              `Dry run complete. Would write ${totalWritten} files total across ${projects.length} projects.`,
+            );
+          } else {
+            logSuccess(`Pulled ${totalWritten} files total across ${projects.length} projects.`);
+            if (totalSkipped > 0) logWarning(`Skipped ${totalSkipped} files due to errors.`);
+          }
         }
         return;
       }
 
-      await pullSingleProject(config.projectSlug, projectDir, source, force, dryRun, config);
+      await pullSingleProject(config.projectSlug, projectDir, source, force, dryRun, config, quiet);
     },
     { "cli.dryRun": options.dryRun ?? false, "cli.source_type": source.type },
   );

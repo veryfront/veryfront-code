@@ -2,36 +2,40 @@
  * Dot Matrix Display for CLI
  *
  * Renders a 7x7 dot matrix with animation support.
- * Used for the Veryfront agent face in CLI experiences.
+ * Used for the Veryfront Code logo in CLI experiences.
  */
 
-// The Veryfront agent face pattern (1 = lit, 0 = off)
-// Closed loop: top (2,3,4), right side (5), bottom (4,3,2), left side (1)
+// The Veryfront Code logo pattern (1 = lit, 0 = off)
+// VF monogram: upper-left block + lower-right block, connected at middle
 export const AGENT_FACE: number[][] = [
   [0, 0, 0, 0, 0, 0, 0],
-  [0, 0, 1, 1, 1, 0, 0],
-  [0, 1, 0, 0, 0, 1, 0],
-  [0, 1, 0, 0, 0, 1, 0],
-  [0, 1, 0, 0, 0, 1, 0],
-  [0, 0, 1, 1, 1, 0, 0],
+  [0, 1, 1, 1, 0, 0, 0],
+  [0, 1, 1, 1, 0, 0, 0],
+  [0, 1, 1, 0, 1, 1, 0],
+  [0, 0, 0, 1, 1, 1, 0],
+  [0, 0, 0, 1, 1, 1, 0],
   [0, 0, 0, 0, 0, 0, 0],
 ];
 
-// Positions of the logo dots in clockwise order for snake animation
-// Forms a closed loop that the snake can traverse
+// Positions of the logo dots for snake animation
+// Traces the VF shape: upper-left block → lower-right block
 export const V_LOGO_POSITIONS: [number, number][] = [
-  [1, 2], // top left
-  [1, 3], // top center
-  [1, 4], // top right
-  [2, 5], // right side top
-  [3, 5], // right side middle
-  [4, 5], // right side bottom
-  [5, 4], // bottom right
-  [5, 3], // bottom center
-  [5, 2], // bottom left
-  [4, 1], // left side bottom
-  [3, 1], // left side middle
-  [2, 1], // left side top
+  [1, 1],
+  [1, 2],
+  [1, 3], // top row of upper block
+  [2, 1],
+  [2, 2],
+  [2, 3], // middle row of upper block
+  [3, 1],
+  [3, 2], // left side of connection row
+  [3, 4],
+  [3, 5], // right side of connection row
+  [4, 3],
+  [4, 4],
+  [4, 5], // top row of lower block
+  [5, 3],
+  [5, 4],
+  [5, 5], // bottom row of lower block
 ];
 
 export interface DotMatrixOptions {

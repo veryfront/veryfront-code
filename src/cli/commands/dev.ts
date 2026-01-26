@@ -13,11 +13,16 @@ import { runAIConfigValidation } from "../discovery/config-validator.ts";
 import { discoverAll } from "../discovery/index.ts";
 import { exitProcess, registerTerminationSignals } from "../utils/index.ts";
 import { banner } from "../ui/components/banner.ts";
-import { brand, dim, success } from "../ui/colors.ts";
+import { brand, dim, error as errorColor, success } from "../ui/colors.ts";
 import { createKeyboardHandler, type KeyboardHandler } from "../ui/keyboard.ts";
 import { openBrowser } from "../auth/browser.ts";
 import { createMCPServer, type MCPDevServer } from "../mcp/server.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { login, type UserInfo, validateToken } from "../auth/login.ts";
+import { readToken } from "../auth/token-store.ts";
+import { fetchRemoteProjects, type RemoteProject } from "../sync/index.ts";
+import { pullCommand } from "./pull.ts";
+import { pushCommand } from "./push.ts";
 
 export interface DevOptions {
   port: number;
@@ -91,6 +96,11 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       let devServer: Awaited<ReturnType<typeof createDevServer>> | null = null;
       let mcpServer: MCPDevServer | null = null;
 
+      // Sync state
+      let user: UserInfo | null = null;
+      let projects: RemoteProject[] = [];
+      let selectedProject: RemoteProject | null = null;
+
       try {
         devServer = await createDevServer({
           port: finalPort,
@@ -121,8 +131,31 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         // MCP server failed to start - non-fatal, continue without it
       }
 
+      // Check for existing auth
+      try {
+        const token = await readToken();
+        if (token) {
+          user = await validateToken(token);
+          if (user) {
+            const result = await fetchRemoteProjects();
+            projects = result.projects;
+          }
+        }
+      } catch {
+        // Auth check failed - non-fatal
+      }
+
       let keyboardHandler: KeyboardHandler | null = null;
       let shuttingDown = false;
+
+      async function runSyncAction(action: () => Promise<void>, successMsg: string): Promise<void> {
+        try {
+          await action();
+          console.log(`  ${success("✓")} ${successMsg}`);
+        } catch (err) {
+          console.log(`  ${errorColor("✗")} ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
 
       async function shutdown(): Promise<void> {
         if (shuttingDown) {
@@ -170,17 +203,26 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
           }),
         );
         console.log();
-        console.log(`  ${success("✓")} Server ready`);
+        console.log(`  ${success("✓")} Server ready at ${brand(serverUrl)}`);
         if (mcpServer) {
-          console.log(
-            `  ${success("✓")} MCP ready ${dim(`(coding agents can connect to port ${mcpPort})`)}`,
-          );
+          console.log(`  ${success("✓")} MCP ready at ${brand(`localhost:${mcpPort}`)}`);
         }
         console.log();
-        console.log(`  ${dim("Shortcuts:")}`);
-        console.log(`    ${brand("o")}  ${dim("open in browser")}`);
-        console.log(`    ${brand("c")}  ${dim("clear console")}`);
-        console.log(`    ${brand("q")}  ${dim("quit")}`);
+
+        // Context-aware next step hint
+        if (!user) {
+          console.log(`  ${dim("To sync with Veryfront: press")} ${brand("a")} ${dim("to login")}`);
+        } else if (projects.length > 0) {
+          console.log(`  ${success("✓")} Logged in as ${user.email}`);
+          console.log(
+            `  ${dim("Press")} ${brand("s")} ${dim("to select a project, then")} ${brand("p")} ${
+              dim("to pull")
+            }`,
+          );
+        } else {
+          console.log(`  ${success("✓")} Logged in as ${user.email}`);
+          console.log(`  ${dim("Press")} ${brand("s")} ${dim("to see your projects")}`);
+        }
         console.log();
 
         if (!demoMode) {
@@ -188,7 +230,77 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             onOpen: () => void openBrowser(serverUrl),
             onClear: () => console.clear(),
             onQuit: () => void shutdown(),
+            onAuth: async () => {
+              if (user) {
+                console.log(
+                  `  ${dim("Logged in as")} ${user.email} ${dim("— press s to select project")}`,
+                );
+                return;
+              }
+              console.log(`  ${dim("Opening browser...")}`);
+              const result = await login();
+              if (result) {
+                user = result;
+                const projectResult = await fetchRemoteProjects();
+                projects = projectResult.projects;
+                console.log(
+                  `  ${success("✓")} ${user.email} ${dim(`— ${projects.length} projects`)}`,
+                );
+              }
+            },
+            onSync: () => {
+              if (!user) {
+                console.log(`  ${dim("Press")} ${brand("a")} ${dim("to login")}`);
+                return;
+              }
+              if (projects.length === 0) {
+                console.log(`  ${dim("No projects")}`);
+                return;
+              }
+              projects.forEach((p, i) => {
+                const active = selectedProject?.id === p.id;
+                console.log(
+                  `  ${active ? success("●") : dim("○")} ${brand(String(i + 1))} ${p.name}`,
+                );
+              });
+            },
+            onNumber: async (n) => {
+              const project = projects[n - 1];
+              if (!project) return;
+              selectedProject = project;
+              console.log(`  ${success("●")} ${project.name} ${dim("— pulling...")}`);
+              await runSyncAction(
+                () =>
+                  pullCommand({ projectSlug: project.slug, projectDir, force: true, quiet: true }),
+                `Ready ${dim("— p pull / u push")}`,
+              );
+            },
+            onPull: async () => {
+              const project = selectedProject;
+              if (!project) {
+                console.log(`  ${dim("Press s to select project")}`);
+                return;
+              }
+              console.log(`  ${dim("Pulling...")}`);
+              await runSyncAction(
+                () =>
+                  pullCommand({ projectSlug: project.slug, projectDir, force: true, quiet: true }),
+                "Pulled",
+              );
+            },
+            onPush: async () => {
+              if (!selectedProject) {
+                console.log(`  ${dim("Press s to select project")}`);
+                return;
+              }
+              console.log(`  ${dim("Pushing...")}`);
+              await runSyncAction(
+                () => pushCommand({ projectDir, force: true, quiet: true }),
+                `Pushed ${dim("— merge in Studio")}`,
+              );
+            },
           });
+
           keyboardHandler.start();
         }
       }

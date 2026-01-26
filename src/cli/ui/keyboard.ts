@@ -24,6 +24,16 @@ export interface KeyboardOptions {
   onQuit?: () => void;
   /** Handler for number keys 1-9 */
   onNumber?: (n: number) => void;
+  /** Handler for 'a' key - auth/login */
+  onAuth?: () => void;
+  /** Handler for 's' key - show projects */
+  onSync?: () => void;
+  /** Handler for 'l' key - toggle logs */
+  onLogs?: () => void;
+  /** Handler for 'p' key - pull */
+  onPull?: () => void;
+  /** Handler for 'u' key - push */
+  onPush?: () => void;
 }
 
 /**
@@ -44,6 +54,21 @@ function handleKeyPress(key: string, options: KeyboardOptions): void {
       return;
     case "q":
       options.onQuit?.();
+      return;
+    case "a":
+      options.onAuth?.();
+      return;
+    case "s":
+      options.onSync?.();
+      return;
+    case "l":
+      options.onLogs?.();
+      return;
+    case "p":
+      options.onPull?.();
+      return;
+    case "u":
+      options.onPush?.();
       return;
   }
 }

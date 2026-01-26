@@ -7,6 +7,7 @@ export type AppView =
   | "project-detail"
   | "new-project"
   | "templates"
+  | "auth"
   | "help";
 
 export interface ProjectInfo {
@@ -29,6 +30,15 @@ export interface MCPStatus {
   connected: boolean;
   clientName?: string;
   httpPort?: number;
+}
+
+export interface RemoteState {
+  user: { email: string; name?: string } | null;
+  projects: Array<{ id: string; name: string; slug: string }>;
+  /** Currently focused index in remote projects list */
+  focusedIndex: number;
+  /** Scroll offset for remote projects list */
+  scrollOffset: number;
 }
 
 export interface InputState {
@@ -63,12 +73,13 @@ export interface AppState {
 
   server: ServerStatus;
   mcp: MCPStatus;
+  remote: RemoteState;
 
   projects: ListSelectState<ProjectInfo>;
   examples: ListSelectState<ProjectInfo>;
   templates: ListSelectState<ProjectInfo>;
 
-  activeList: "projects" | "examples" | "templates";
+  activeList: "projects" | "examples" | "templates" | "remoteProjects";
   selectedProject: ProjectInfo | null;
 
   wizard: {
@@ -85,6 +96,9 @@ export interface AppState {
   maxLogs: number;
   logsExpanded: boolean;
   logScroll: number;
+
+  /** Auth provider selection index (0=Google, 1=GitHub, 2=Microsoft) */
+  authProviderIndex: number;
 }
 
 export function createInitialState(): AppState {
@@ -102,6 +116,12 @@ export function createInitialState(): AppState {
       enabled: false,
       transport: null,
       connected: false,
+    },
+    remote: {
+      user: null,
+      projects: [],
+      focusedIndex: 0,
+      scrollOffset: 0,
     },
     projects: createListState([]),
     examples: createListState([]),
@@ -127,6 +147,7 @@ export function createInitialState(): AppState {
     maxLogs: 100,
     logsExpanded: false,
     logScroll: 0,
+    authProviderIndex: 0,
   };
 }
 
@@ -188,6 +209,10 @@ export function updateMCP(update: Partial<MCPStatus>): StateUpdater {
   return (state) => ({ ...state, mcp: { ...state.mcp, ...update } });
 }
 
+export function updateRemote(update: Partial<RemoteState>): StateUpdater {
+  return (state) => ({ ...state, remote: { ...state.remote, ...update } });
+}
+
 export function navigateTo(view: AppView): StateUpdater {
   return (state) => ({ ...state, view, previousView: state.view });
 }
@@ -201,7 +226,7 @@ export function goBack(): StateUpdater {
 }
 
 export function setActiveList(
-  list: "projects" | "examples" | "templates",
+  list: "projects" | "examples" | "templates" | "remoteProjects",
 ): StateUpdater {
   return (state) => ({ ...state, activeList: list });
 }
@@ -211,6 +236,8 @@ export function updateActiveList(
 ): StateUpdater {
   return (state) => {
     const key = state.activeList;
+    // remoteProjects is not a ListSelectState, skip update
+    if (key === "remoteProjects") return state;
     return { ...state, [key]: updater(state[key]) };
   };
 }
@@ -332,6 +359,8 @@ function shortenPath(path: string, env: RuntimeEnv = getRuntimeEnv()): string {
 export function getActiveSelection(
   state: AppState,
 ): ListItem<ProjectInfo> | undefined {
+  // remoteProjects is not a ListSelectState
+  if (state.activeList === "remoteProjects") return undefined;
   const list = state[state.activeList];
   return list.items[list.selectedIndex];
 }

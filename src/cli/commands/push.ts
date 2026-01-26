@@ -19,6 +19,7 @@ import {
 } from "../shared/config.ts";
 import {
   confirmPrompt,
+  createNoopSpinner,
   createSpinner,
   logError,
   logInfo,
@@ -26,11 +27,14 @@ import {
   logWarning,
 } from "../utils/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { createIgnoreChecker, type IgnoreChecker, loadIgnorePatterns } from "../sync/ignore.ts";
 
 /**
  * Push command options
  */
 export interface PushOptions {
+  /** Project slug to push to (overrides config) */
+  projectSlug?: string;
   /** Project directory (defaults to cwd) */
   projectDir?: string;
   /** Branch name to create (auto-generated if not provided) */
@@ -62,35 +66,39 @@ export interface BranchResponse {
 }
 
 /**
- * Scan local project for files to upload
+ * Scan local project for files to upload using .vfignore patterns
  */
-async function scanLocalFiles(projectDir: string): Promise<UploadOp[]> {
+async function scanLocalFiles(
+  projectDir: string,
+  ignoreChecker: IgnoreChecker,
+): Promise<UploadOp[]> {
   const fs = createFileSystem();
   const ops: UploadOp[] = [];
-  const excludeDirs = new Set(["node_modules", ".git", ".veryfront", ".deno"]);
-  const excludeFiles = new Set([
-    "deno.json",
-    "deno.lock",
-    "package.json",
-    "package-lock.json",
-  ]);
 
   async function walk(currentDir: string): Promise<void> {
     const entries = await fs.readDir(currentDir);
 
     for await (const entry of entries) {
       const entryPath = join(currentDir, entry.name);
+      const relativePath = relative(projectDir, entryPath);
+
+      // Check if path should be ignored
+      if (ignoreChecker.isIgnored(relativePath)) {
+        continue;
+      }
 
       if (entry.isDirectory) {
-        if (excludeDirs.has(entry.name) || entry.name.startsWith(".")) continue;
         await walk(entryPath);
         continue;
       }
 
-      if (entry.name.startsWith(".") || excludeFiles.has(entry.name)) continue;
+      // Only include supported file extensions
+      if (!ignoreChecker.isSupportedExtension(entry.name)) {
+        continue;
+      }
 
       const content = await fs.readTextFile(entryPath);
-      ops.push({ path: relative(projectDir, entryPath), content });
+      ops.push({ path: relativePath, content });
     }
   }
 
@@ -157,14 +165,6 @@ export async function uploadFiles(
   return { uploaded, failed };
 }
 
-function createNoopSpinner(): {
-  start: () => void;
-  stop: () => void;
-  update: (_msg: string) => void;
-} {
-  return { start: () => {}, stop: () => {}, update: (_msg: string) => {} };
-}
-
 /**
  * Push local files to Veryfront
  * - By default, creates a new auto-generated branch
@@ -176,6 +176,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
     "cli.command.push",
     async () => {
       const {
+        projectSlug: slugOverride,
         projectDir = cwd(),
         branch,
         force = false,
@@ -189,13 +190,18 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       let config: ResolvedConfig;
       try {
         config = await resolveConfig(projectDir);
+        if (slugOverride) config = { ...config, projectSlug: slugOverride };
       } catch (error) {
         spinner.stop();
         throw error;
       }
 
+      spinner.update("Loading ignore patterns...");
+      const ignorePatterns = await loadIgnorePatterns(projectDir);
+      const ignoreChecker = createIgnoreChecker(ignorePatterns);
+
       spinner.update("Scanning local files...");
-      const ops = await scanLocalFiles(projectDir);
+      const ops = await scanLocalFiles(projectDir, ignoreChecker);
 
       if (ops.length === 0) {
         spinner.stop();
