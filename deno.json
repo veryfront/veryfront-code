@@ -264,8 +264,7 @@
   },
   "tasks": {
     "setup": "deno run --allow-all scripts/setup.ts",
-    "start": "deno run --allow-all scripts/server.ts",
-    "start:clean": "rm -rf .cache/ && deno run --allow-all scripts/server.ts",
+    "start": "rm -rf .cache/ && deno run --allow-all scripts/server.ts",
     "start:headless": "deno run --allow-all scripts/server.ts --headless",
     "proxy": "deno run --allow-net --allow-env --allow-read proxy/main.ts",
     "renderer": "deno run --allow-all --unstable-net --unstable-worker-options src/cli/main.ts dev",
