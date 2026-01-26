@@ -710,6 +710,26 @@ export function createApp(config: AppConfig): App {
       return;
     }
 
+    // Pull local project from remote (sync)
+    if (key === "p" && state.activeList === "projects") {
+      const selected = state.projects.items[state.projects.selectedIndex];
+      if (selected?.data) {
+        const { slug, path: projectDir } = selected.data;
+        update(addLog("info", `Pulling ${slug}...`));
+        render();
+        try {
+          await pullCommand({ projectSlug: slug, projectDir, force: true, quiet: true });
+          update(addLog("info", `Pulled ${slug}`));
+        } catch (err) {
+          update(
+            addLog("error", `Pull failed: ${err instanceof Error ? err.message : String(err)}`),
+          );
+        }
+        render();
+      }
+      return;
+    }
+
     // Push local project
     if (key === "u" && state.activeList === "projects") {
       const selected = state.projects.items[state.projects.selectedIndex];

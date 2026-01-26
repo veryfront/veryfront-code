@@ -163,7 +163,7 @@ function renderHelpBar(state: AppState): string {
   } else {
     // Show context-aware actions based on active list
     if (state.activeList === "projects") {
-      parts.push(dim("u push"));
+      parts.push(dim("p pull"), dim("u push"));
     } else if (state.activeList === "remoteProjects") {
       parts.push(dim("p pull"));
     }
