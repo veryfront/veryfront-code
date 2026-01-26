@@ -14,6 +14,8 @@ import {
   generateTailwindCSS,
 } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
 import { serverLogger as logger } from "#veryfront/utils";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { join } from "#veryfront/platform/compat/path/index.ts";
 
 const SOURCE_EXTENSIONS = [".tsx", ".jsx", ".mdx", ".ts", ".js"];
 
@@ -115,10 +117,11 @@ body::before {
     };
 
     if (typeof wrappedFs.getUnderlyingAdapter !== "function") {
-      logger.warn(
-        "[StylesCSSHandler] FS adapter wrapper missing getUnderlyingAdapter, CSS will have no utility classes",
+      // Fallback: scan local files directly for local development
+      logger.debug(
+        "[StylesCSSHandler] No FS adapter wrapper, falling back to local file scanning",
       );
-      return candidates;
+      return await this.scanLocalFiles(ctx.projectDir, ctx);
     }
 
     const fsAdapter = wrappedFs.getUnderlyingAdapter() as {
@@ -128,10 +131,11 @@ body::before {
     };
 
     if (typeof fsAdapter.getAllSourceFiles !== "function") {
-      logger.warn(
-        "[StylesCSSHandler] FS adapter missing getAllSourceFiles, CSS will have no utility classes",
+      // Fallback: scan local files directly for local development
+      logger.debug(
+        "[StylesCSSHandler] FS adapter missing getAllSourceFiles, falling back to local file scanning",
       );
-      return candidates;
+      return await this.scanLocalFiles(ctx.projectDir, ctx);
     }
 
     const files = await fsAdapter.getAllSourceFiles();
@@ -143,6 +147,61 @@ body::before {
       for (const cls of extractCandidates(file.content)) {
         candidates.add(cls);
       }
+    }
+
+    return candidates;
+  }
+
+  /**
+   * Fallback: scan local files for Tailwind candidates when no FS adapter is available.
+   * Used in local development mode where projects are read directly from disk.
+   */
+  private async scanLocalFiles(projectDir: string, ctx: HandlerContext): Promise<Set<string>> {
+    const candidates = new Set<string>();
+    const fs = createFileSystem();
+    const SKIP_DIRS = new Set(["node_modules", ".cache", ".git", "dist", "build", ".vscode"]);
+
+    const scanDir = async (dir: string): Promise<void> => {
+      try {
+        for await (const entry of fs.readDir(dir)) {
+          const fullPath = join(dir, entry.name);
+
+          if (entry.isDirectory) {
+            if (!SKIP_DIRS.has(entry.name)) {
+              await scanDir(fullPath);
+            }
+            continue;
+          }
+
+          if (!entry.isFile) continue;
+          if (!SOURCE_EXTENSIONS.some((ext) => entry.name.endsWith(ext))) continue;
+
+          try {
+            const content = await ctx.adapter.fs.readFile(fullPath);
+            for (const cls of extractCandidates(content)) {
+              candidates.add(cls);
+            }
+          } catch {
+            // Skip files that can't be read
+          }
+        }
+      } catch {
+        // Skip directories that can't be read
+      }
+    };
+
+    try {
+      await scanDir(projectDir);
+
+      logger.debug("[StylesCSSHandler] Local file scan complete", {
+        projectDir,
+        candidates: candidates.size,
+      });
+    } catch (error) {
+      logger.warn("[StylesCSSHandler] Failed to scan local files", {
+        projectDir,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
 
     return candidates;
