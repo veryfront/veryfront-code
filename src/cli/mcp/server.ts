@@ -155,8 +155,9 @@ export class MCPDevServer {
 
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers":
+          "Content-Type, Accept, mcp-protocol-version, mcp-session-id",
       };
 
       if (isAllowedOrigin && origin) headers["Access-Control-Allow-Origin"] = origin;
