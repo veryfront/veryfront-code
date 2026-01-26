@@ -46,8 +46,9 @@ export const REACT_VERSION = DEFAULT_REACT_VERSION;
  * v9: Align ssr-import-rewriter to use npm: specifiers for Deno SSR
  * v10: Fix import regex to match minified code (from"..." without whitespace)
  * v11: Add HTTP bundle hash→URL mapping for cross-pod recovery
+ * v12: Store HTTP bundle code by hash for direct recovery (code:{hash})
  */
-export const TRANSFORM_CACHE_VERSION = 11;
+export const TRANSFORM_CACHE_VERSION = 12;
 
 function esmSh(pkg: string, version: string, path = "", query = "target=es2022"): string {
   return `https://esm.sh/${pkg}@${version}${path}?${query}`;
