@@ -207,7 +207,7 @@ if (existsSync(nativeBinary)) {
 		const pkgPath = "./npm/package.json";
 		const pkg = JSON.parse(await Deno.readTextFile(pkgPath));
 		pkg.type = "module"; // Required for ESM imports without warnings
-		pkg.bin = { veryfront: "./bin/veryfront.js" };
+		pkg.bin = { veryfront: "bin/veryfront.js" };
 		pkg.files = ["esm", "script", "src", "bin", "scripts", "LICENSE", "README.md"];
 		pkg.scripts = { postinstall: "node scripts/postinstall.js" };
 		await Deno.writeTextFile(pkgPath, JSON.stringify(pkg, null, 2));
