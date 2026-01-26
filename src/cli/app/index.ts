@@ -572,8 +572,8 @@ export function createApp(config: AppConfig): App {
     }
 
     // Letter keys only work when examples focused (a=1, b=2, etc.)
-    // Exclude j/k (vim nav) shortcuts
-    if (key >= "a" && key <= "z" && key !== "j" && key !== "k" && state.activeList === "examples") {
+    // Exclude j/k (vim nav), p/u (pull/push) shortcuts
+    if (key >= "a" && key <= "z" && key !== "j" && key !== "k" && key !== "p" && key !== "u" && state.activeList === "examples") {
       const num = key.charCodeAt(0) - 96; // a=1, b=2, ...
       if (num <= state.examples.items.length) {
         state = { ...state, examples: selectByNumber(state.examples, num) };
@@ -710,16 +710,16 @@ export function createApp(config: AppConfig): App {
       return;
     }
 
-    // Push focused remote project
-    if (key === "u" && state.activeList === "remoteProjects") {
-      const focused = state.remote.projects[state.remote.focusedIndex];
-      if (focused) {
-        const projectDir = join(cwd(), "projects", focused.slug);
-        update(addLog("info", `Pushing projects/${focused.slug}/...`));
+    // Push local project
+    if (key === "u" && state.activeList === "projects") {
+      const selected = state.projects.items[state.projects.selectedIndex];
+      if (selected?.data) {
+        const { slug, path: projectDir } = selected.data;
+        update(addLog("info", `Pushing ${slug}...`));
         render();
         try {
-          await pushCommand({ projectSlug: focused.slug, projectDir, force: true, quiet: true });
-          update(addLog("info", `Pushed projects/${focused.slug}/ — merge in Studio`));
+          await pushCommand({ projectSlug: slug, projectDir, force: true, quiet: true });
+          update(addLog("info", `Pushed ${slug} — merge in Studio`));
         } catch (err) {
           update(
             addLog("error", `Push failed: ${err instanceof Error ? err.message : String(err)}`),
