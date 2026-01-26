@@ -17,6 +17,7 @@ import type {
   CompilationTarget,
   MdxRuntimeBundle,
 } from "../../mdx/compiler/types.ts";
+import { isMarkdownPreview as checkMarkdownPreview } from "../utils.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import Slugger from "github-slugger";
@@ -89,11 +90,10 @@ export function compileMarkdownRuntime(
 
         // Use GitHub-style wrapper for standalone markdown files (not in pages/ or app/)
         // unless prose: false in frontmatter
-        const isInPagesDir = filePath?.includes("/pages/") || filePath?.includes("/app/");
-        const isMarkdownPreview = !isInPagesDir && extractedFrontmatter?.prose !== false;
+        const isPreview = checkMarkdownPreview(filePath, extractedFrontmatter);
 
         // Note: destructure params/components to prevent them from spreading to DOM
-        const compiledCode = isMarkdownPreview
+        const compiledCode = isPreview
           ? `import { jsx as _jsx } from "react/jsx-runtime";
 export default function MDContent({ components, params, ...props }) {
   return _jsx("div", {

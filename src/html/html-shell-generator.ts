@@ -23,6 +23,7 @@ import {
   buildRootAttributes,
   shouldDisableLayout,
 } from "./utils.ts";
+import { isMarkdownPreview as checkMarkdownPreview } from "../transforms/md/utils.ts";
 import {
   generateModulePreloadHintsFromManifest,
   getRouteManifest,
@@ -249,11 +250,9 @@ async function generateHTMLShellPartsImpl(
 
   // Markdown preview mode: .md files in preview/local dev with prose !== false
   // Only applies to standalone markdown files (not in pages/ or app/)
-  const isInPagesDir = options.pagePath?.includes("/pages/") || options.pagePath?.includes("/app/");
   const isMarkdownPreview = (localDev || isPreviewMode) &&
     options.pageType === "md" &&
-    !isInPagesDir &&
-    options.frontmatter?.prose !== false;
+    checkMarkdownPreview(options.pagePath, options.frontmatter);
 
   const markdownPreviewStyles = isMarkdownPreview
     ? `<!-- GitHub Markdown Preview Styles -->
