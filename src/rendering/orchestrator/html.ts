@@ -309,6 +309,7 @@ export class HTMLGenerator {
       headings: context.pageBundle.headings,
       projectClasses,
       isLocalDev: this.config.mode === "development",
+      noHmr: context.options?.noHmr,
     };
   }
 

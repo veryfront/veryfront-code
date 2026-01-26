@@ -43,6 +43,8 @@ export interface HTMLGenerationOptions {
   projectClasses?: Set<string>;
   /** Whether running in local development mode */
   isLocalDev?: boolean;
+  /** Disable HMR scripts (for embedded iframes where WebSocket is unwanted) */
+  noHmr?: boolean;
 }
 
 export interface HydrationData {

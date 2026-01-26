@@ -62,6 +62,8 @@ export interface RenderOptions {
   contentSourceId?: string;
   /** Skip cache check in pipeline (cache already checked by Renderer) */
   skipCacheCheck?: boolean;
+  /** Disable HMR scripts (for embedded iframes where WebSocket is unwanted) */
+  noHmr?: boolean;
 }
 
 export interface RenderContext {
