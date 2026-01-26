@@ -161,8 +161,11 @@ function renderHelpBar(state: AppState): string {
   if (!state.remote.user) {
     parts.push(dim("a login"));
   } else {
-    if (hasRemoteProjects) {
-      parts.push(dim("p pull"), dim("u push"));
+    // Show context-aware actions based on active list
+    if (state.activeList === "projects") {
+      parts.push(dim("u push"));
+    } else if (state.activeList === "remoteProjects") {
+      parts.push(dim("p pull"));
     }
     parts.push(dim("x logout"));
   }
