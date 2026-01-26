@@ -22,6 +22,7 @@ import {
   buildImportMapJson,
   buildRootAttributes,
   shouldDisableLayout,
+  shouldDisableProse,
 } from "./utils.ts";
 import {
   generateModulePreloadHintsFromManifest,
@@ -156,6 +157,7 @@ async function generateHTMLShellPartsImpl(
   } = processMetadata(meta);
 
   const noLayout = shouldDisableLayout(meta.frontmatter);
+  const noProse = shouldDisableProse(meta.frontmatter);
 
   const rootAttributes = buildRootAttributes(
     meta.slug || "",
@@ -163,7 +165,7 @@ async function generateHTMLShellPartsImpl(
     noLayout,
   );
 
-  const contentAttributes = buildContentAttributes(meta.slug || "", noLayout, meta.ssrHash);
+  const contentAttributes = buildContentAttributes(meta.slug || "", noLayout, meta.ssrHash, noProse);
 
   const importMapJson = await buildImportMapJson({
     projectDir: options.projectDir,

@@ -5,6 +5,7 @@ import {
   buildImportMapJson,
   buildRootAttributes,
   shouldDisableLayout,
+  shouldDisableProse,
 } from "./utils.ts";
 import { getDefaultImportMap } from "#veryfront/modules/import-map/default-import-map.ts";
 
@@ -47,6 +48,7 @@ describe("html-generation/utils", () => {
       const result = buildContentAttributes("test-slug", false, "abc123");
 
       assertStringIncludes(result, 'id="veryfront-content"');
+      assertStringIncludes(result, 'class="vf-prose"');
       assertStringIncludes(result, 'data-slug="test-slug"');
       assertStringIncludes(result, 'data-layout="default"');
       assertStringIncludes(result, 'data-ssr-hash="abc123"');
@@ -65,6 +67,18 @@ describe("html-generation/utils", () => {
       const result = buildContentAttributes("test-slug", false);
 
       assert(!result.includes("data-ssr-hash"));
+    });
+
+    it("should include vf-prose class by default", () => {
+      const result = buildContentAttributes("test-slug", false);
+
+      assertStringIncludes(result, 'class="vf-prose"');
+    });
+
+    it("should exclude vf-prose class when noProse is true", () => {
+      const result = buildContentAttributes("test-slug", false, undefined, true);
+
+      assert(!result.includes('class="vf-prose"'));
     });
   });
 
@@ -142,6 +156,28 @@ describe("html-generation/utils", () => {
 
     it("should return false when layout is a string path", () => {
       assertEquals(shouldDisableLayout({ layout: "custom-layout" }), false);
+    });
+  });
+
+  describe("shouldDisableProse", () => {
+    it("should return true when prose is false (boolean)", () => {
+      assertEquals(shouldDisableProse({ prose: false }), true);
+    });
+
+    it("should return true when prose is 'false' (string)", () => {
+      assertEquals(shouldDisableProse({ prose: "false" }), true);
+    });
+
+    it("should return false when prose is true", () => {
+      assertEquals(shouldDisableProse({ prose: true }), false);
+    });
+
+    it("should return false when prose is not specified", () => {
+      assertEquals(shouldDisableProse({}), false);
+    });
+
+    it("should return false when frontmatter is undefined", () => {
+      assertEquals(shouldDisableProse(undefined), false);
     });
   });
 });

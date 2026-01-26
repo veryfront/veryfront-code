@@ -1,9 +1,10 @@
 /**
  * Base styles for markdown/MDX content.
+ * Applied to .vf-prose elements. Opt out with `prose: false` in frontmatter.
  * Prepended to user stylesheet, so users can override.
  */
 export const MDX_BASE_STYLES = `
-#veryfront-content {
+.vf-prose {
   p { @apply mb-4; }
   h1 { @apply text-4xl font-bold mb-8 mt-12; }
   h2 { @apply text-3xl font-bold mb-6 mt-10; }

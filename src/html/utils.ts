@@ -19,9 +19,11 @@ export function buildContentAttributes(
   slug: string,
   noLayout: boolean,
   ssrHash?: string,
+  noProse?: boolean,
 ): string {
   return joinAttributes([
     'id="veryfront-content"',
+    !noProse && 'class="vf-prose"',
     `data-slug="${slug || ""}"`,
     `data-layout="${noLayout ? "none" : "default"}"`,
     ssrHash && `data-ssr-hash="${escapeHTML(ssrHash)}"`,
@@ -278,4 +280,8 @@ export function buildImportMapJsonSync(importMap?: Record<string, string>): stri
 
 export function shouldDisableLayout(frontmatter?: Record<string, unknown>): boolean {
   return frontmatter?.layout === false || frontmatter?.layout === "false";
+}
+
+export function shouldDisableProse(frontmatter?: Record<string, unknown>): boolean {
+  return frontmatter?.prose === false || frontmatter?.prose === "false";
 }
