@@ -137,8 +137,7 @@ export function renderList<T>(
 
   const numberWidth = showNumbers ? 4 : 0; // " [1] "
   const cursorWidth = 2; // "› " or "  "
-  const metaSpace = 20; // Space for meta info
-  const labelWidth = maxWidth - numberWidth - cursorWidth - metaSpace;
+  const prefixWidth = numberWidth + cursorWidth;
 
   for (let i = 0; i < visibleItems.length; i++) {
     const item = visibleItems[i];
@@ -163,15 +162,31 @@ export function renderList<T>(
       }
     }
 
-    // Dim label when not focused
-    const label = truncate(item.label, labelWidth);
-    parts.push(isSelected ? label : dim(label));
+    // Render label, then use remaining space for meta
+    const labelText = item.label;
+    const availableForContent = maxWidth - prefixWidth;
 
     if (item.meta) {
-      const labelLen = visibleLength(parts.join(""));
-      const metaLen = visibleLength(item.meta);
-      const padding = Math.max(1, maxWidth - labelLen - metaLen);
-      parts.push(" ".repeat(padding), dim(truncate(item.meta, metaSpace)));
+      // Split space between label and meta dynamically
+      const metaText = item.meta;
+      const totalNeeded = labelText.length + 1 + metaText.length; // 1 for space
+
+      if (totalNeeded <= availableForContent) {
+        // Both fit - no truncation needed
+        parts.push(isSelected ? labelText : dim(labelText));
+        const padding = availableForContent - labelText.length - metaText.length;
+        parts.push(" ".repeat(Math.max(1, padding)), dim(metaText));
+      } else {
+        // Need to truncate - prioritize label, give rest to meta
+        const labelMax = Math.min(labelText.length, Math.floor(availableForContent * 0.4));
+        const metaMax = availableForContent - labelMax - 1;
+        const label = truncate(labelText, labelMax);
+        parts.push(isSelected ? label : dim(label));
+        parts.push(" ", dim(truncate(metaText, metaMax)));
+      }
+    } else {
+      const label = truncate(labelText, availableForContent);
+      parts.push(isSelected ? label : dim(label));
     }
 
     lines.push(parts.join(""));

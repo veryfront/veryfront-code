@@ -1,6 +1,7 @@
 import type { ListItem, ListSelectState } from "./components/list-select.ts";
 import { createListState } from "./components/list-select.ts";
 import { getRuntimeEnv, type RuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { cwd } from "#veryfront/platform/compat/process.ts";
 
 export type AppView =
   | "dashboard"
@@ -351,9 +352,22 @@ export function scrollLogs(direction: "up" | "down"): StateUpdater {
 }
 
 function shortenPath(path: string, env: RuntimeEnv = getRuntimeEnv()): string {
+  // Prefer relative path to cwd
+  const currentDir = cwd();
+  if (path.startsWith(currentDir + "/")) {
+    return "./" + path.slice(currentDir.length + 1);
+  }
+  if (path === currentDir) {
+    return "./";
+  }
+
+  // Fall back to ~ for home
   const home = env.homeDir ?? "";
-  if (!home || !path.startsWith(home)) return path;
-  return `~${path.slice(home.length)}`;
+  if (home && path.startsWith(home)) {
+    return `~${path.slice(home.length)}`;
+  }
+
+  return path;
 }
 
 export function getActiveSelection(
