@@ -16,7 +16,6 @@ import {
   isNotFoundError,
 } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/platform/compat/path-helper.ts";
-import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import type { TemplateFile } from "./types.ts";
 
 /**
@@ -82,9 +81,11 @@ async function walkDirectory(
 export function getTemplateDirectory(templateName: string): string {
   const moduleUrl = new URL(".", import.meta.url);
 
+  // Always use "files" directory - this is where templates are stored
+  // in both Deno source and npm build
   if (moduleUrl.protocol !== "file:") {
     const base = moduleUrl.href;
-    return pathHelper.join(base, isDeno ? "files" : "templates", templateName);
+    return pathHelper.join(base, "files", templateName);
   }
 
   let moduleDir = moduleUrl.pathname;
@@ -96,7 +97,7 @@ export function getTemplateDirectory(templateName: string): string {
     moduleDir = moduleDir.slice(1);
   }
 
-  return pathHelper.join(moduleDir, isDeno ? "files" : "templates", templateName);
+  return pathHelper.join(moduleDir, "files", templateName);
 }
 
 export async function templateDirectoryExists(templateName: string): Promise<boolean> {

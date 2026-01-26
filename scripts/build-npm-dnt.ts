@@ -141,9 +141,9 @@ await build({
 		await Deno.mkdir("./npm/scripts", { recursive: true });
 		await Deno.copyFile("./scripts/postinstall.js", "./npm/scripts/postinstall.js");
 
-		// Copy templates
-		await copyDir("./src/cli/templates/files", "./npm/esm/cli/templates/files");
-		await copyDir("./src/cli/templates/integrations", "./npm/esm/cli/templates/integrations");
+		// Copy templates (relative to where loader.js is: esm/src/cli/templates/)
+		await copyDir("./src/cli/templates/files", "./npm/esm/src/cli/templates/files");
+		await copyDir("./src/cli/templates/integrations", "./npm/esm/src/cli/templates/integrations");
 
 		// Create bin wrapper
 		await Deno.mkdir("./npm/bin", { recursive: true });
@@ -207,9 +207,10 @@ SOFTWARE.
 			// Ignore if no README
 		}
 
-		// Update package.json with bin entry and postinstall
+		// Update package.json with bin entry, postinstall, and type
 		const pkgPath = "./npm/package.json";
 		const pkg = JSON.parse(await Deno.readTextFile(pkgPath));
+		pkg.type = "module"; // Required for ESM imports without warnings
 		pkg.bin = { veryfront: "./bin/veryfront.js" };
 		pkg.files = ["esm", "script", "src", "bin", "scripts", "LICENSE", "README.md"];
 		pkg.scripts = { postinstall: "node scripts/postinstall.js" };
