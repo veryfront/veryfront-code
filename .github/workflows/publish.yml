@@ -40,7 +40,7 @@ jobs:
           deno-version: lts
 
       - name: Build binary
-        run: deno compile --allow-all --unstable-net --target ${{ matrix.target }} --output ${{ matrix.name }} src/cli/main.ts
+        run: deno compile --allow-all --unstable-net --include=src/cli/templates/files --include=src/cli/templates/integrations --target ${{ matrix.target }} --output ${{ matrix.name }} src/cli/main.ts
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4

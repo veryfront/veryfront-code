@@ -65,6 +65,11 @@ async function walkDirectory(
 
     let relativePath = pathHelper.relative(baseDir, entryPath);
 
+    // Strip .template suffix (used to prevent deno compile from analyzing .ts/.tsx files)
+    if (relativePath.endsWith(".template")) {
+      relativePath = relativePath.slice(0, -".template".length);
+    }
+
     const parts = relativePath.split("/");
     const fileName = parts[parts.length - 1] ?? "";
     const mapped = FILE_NAME_MAPPINGS[fileName];
@@ -73,7 +78,12 @@ async function walkDirectory(
       relativePath = parts.join("/");
     }
 
-    const content = await fs.readTextFile(entryPath);
+    // Strip @ts-nocheck comment from template files (added to prevent deno compile errors)
+    let content = await fs.readTextFile(entryPath);
+    if (content.startsWith("// @ts-nocheck")) {
+      content = content.replace(/^\/\/ @ts-nocheck[^\n]*\n/, "");
+    }
+
     files.push({ path: relativePath, content });
   }
 }
