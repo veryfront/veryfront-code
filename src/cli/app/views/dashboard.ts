@@ -105,12 +105,13 @@ function renderBanner(state: AppState): string {
   textLines.push(`  ${brand(state.server.url)}`);
 
   if (state.mcp.enabled) {
-    let mcpInfo = "stdio";
+    textLines.push(`${mcpDot} ${dim("MCP")}`);
     if (state.mcp.transport === "http") {
       const port = state.mcp.httpPort ?? 9999;
-      mcpInfo = brand(`http://localhost:${port}/mcp`);
+      textLines.push(`  ${brand(`http://veryfront.me:${port}/mcp`)}`);
+    } else {
+      textLines.push(`  ${dim("stdio")}`);
     }
-    textLines.push(`${mcpDot} ${dim("MCP")} ${mcpInfo}`);
   }
 
   const { errors, warnings } = state.server;

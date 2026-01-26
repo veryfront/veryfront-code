@@ -664,7 +664,7 @@ export const COMMANDS: CommandRegistry = {
       "  • stdio: Run 'veryfront mcp' for stdin/stdout communication",
       "",
       "Claude Code setup (~/.claude.json):",
-      '  "mcpServers": { "veryfront": { "url": "http://localhost:9999/mcp" } }',
+      '  "mcpServers": { "veryfront": { "url": "http://veryfront.me:9999/mcp" } }',
       "",
       "Available tools:",
       "  • vf_list_local_projects  - Discover projects on filesystem",

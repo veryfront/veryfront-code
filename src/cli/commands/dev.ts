@@ -198,14 +198,16 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             info: {
               url: serverUrl,
               ...(projectSlug ? { project: projectSlug } : {}),
-              ...(mcpServer ? { mcp: `http://localhost:${mcpPort}/mcp` } : {}),
+              ...(mcpServer ? { mcp: `http://veryfront.me:${mcpPort}/mcp` } : {}),
             },
           }),
         );
         console.log();
         console.log(`  ${success("✓")} Server ready at ${brand(serverUrl)}`);
         if (mcpServer) {
-          console.log(`  ${success("✓")} MCP ready at ${brand(`http://localhost:${mcpPort}/mcp`)}`);
+          console.log(
+            `  ${success("✓")} MCP ready at ${brand(`http://veryfront.me:${mcpPort}/mcp`)}`,
+          );
         }
         console.log();
 

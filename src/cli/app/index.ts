@@ -442,7 +442,7 @@ export function createApp(config: AppConfig): App {
       lines.push(`    ${dim('"mcpServers": {')}`);
       lines.push(`    ${dim('  "veryfront": {')}`);
       lines.push(`    ${dim('    "type": "url",')}`);
-      lines.push(`    ${dim(`    "url": "http://localhost:${state.mcp.httpPort}/mcp"`)}`);
+      lines.push(`    ${dim(`    "url": "http://veryfront.me:${state.mcp.httpPort}/mcp"`)}`);
       lines.push(`    ${dim("  }")}`);
       lines.push(`    ${dim("}")}`);
       lines.push("");
@@ -1316,7 +1316,7 @@ export function createApp(config: AppConfig): App {
 
     if (!isInteractiveMode) {
       console.log(`Server running on http://veryfront.me:${config.port}`);
-      if (config.mcpPort) console.log(`MCP available at http://localhost:${config.mcpPort}/mcp`);
+      if (config.mcpPort) console.log(`MCP available at http://veryfront.me:${config.mcpPort}/mcp`);
       return;
     }
 
