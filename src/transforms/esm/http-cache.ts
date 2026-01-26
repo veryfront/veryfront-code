@@ -416,6 +416,11 @@ export async function cacheModuleToLocal(url: string, cacheDir: string): Promise
   return cached ? `file://${cached}` : url;
 }
 
+/** Max retry attempts for recovery */
+const RECOVERY_MAX_RETRIES = 3;
+/** Delay between retries in ms */
+const RECOVERY_RETRY_DELAY_MS = 500;
+
 /**
  * Recover a missing HTTP bundle by looking up the code directly from the hash.
  * Used for cross-pod recovery when a file:// path points to a bundle that
@@ -424,6 +429,9 @@ export async function cacheModuleToLocal(url: string, cacheDir: string): Promise
  * Recovery strategy (in order of preference):
  * 1. Direct code lookup by hash (code:{hash}) - fastest, most reliable
  * 2. URL lookup then re-fetch (hash:{hash} → URL → fetch) - fallback
+ *
+ * Retries with delay to handle timing issues where backfill from another
+ * pod might not have completed yet.
  *
  * @param hash - The hash from the bundle filename (e.g., "974671618" from "http-974671618.mjs")
  * @param cacheDir - The cache directory path
@@ -440,33 +448,43 @@ export async function recoverHttpBundleByHash(hash: string, cacheDir: string): P
   const cachePath = join(absoluteCacheDir, `http-${hash}.mjs`);
   const fs = createFileSystem();
 
-  try {
-    // Strategy 1: Direct code lookup by hash (preferred - no URL needed)
-    const cachedCode = await distributed.get(`code:${hash}`);
-    if (cachedCode) {
-      logger.info("[HTTP-CACHE] Recovering bundle via direct code lookup", { hash });
-      await fs.mkdir(absoluteCacheDir, { recursive: true });
-      await fs.writeTextFile(cachePath, cachedCode);
-      logger.info("[HTTP-CACHE] Bundle recovery successful (direct)", { hash, path: cachePath });
-      return true;
-    }
-
-    // Strategy 2: URL lookup then re-fetch (fallback for bundles cached before code:{hash} was added)
-    const originalUrl = await distributed.get(`hash:${hash}`);
-    if (originalUrl) {
-      logger.info("[HTTP-CACHE] Recovering bundle via URL re-fetch", { hash, originalUrl });
-      const importMap = { imports: {}, scopes: {} };
-      const result = await cacheHttpModule(originalUrl, { cacheDir, importMap });
-      if (result) {
-        logger.info("[HTTP-CACHE] Bundle recovery successful (re-fetch)", { hash, path: result });
+  for (let attempt = 1; attempt <= RECOVERY_MAX_RETRIES; attempt++) {
+    try {
+      // Strategy 1: Direct code lookup by hash (preferred - no URL needed)
+      const cachedCode = await distributed.get(`code:${hash}`);
+      if (cachedCode) {
+        logger.info("[HTTP-CACHE] Recovering bundle via direct code lookup", { hash, attempt });
+        await fs.mkdir(absoluteCacheDir, { recursive: true });
+        await fs.writeTextFile(cachePath, cachedCode);
+        logger.info("[HTTP-CACHE] Bundle recovery successful (direct)", { hash, path: cachePath });
         return true;
       }
-    }
 
-    logger.debug("[HTTP-CACHE] No recovery data found for hash", { hash });
-    return false;
-  } catch (error) {
-    logger.error("[HTTP-CACHE] Bundle recovery failed", { hash, error });
-    return false;
+      // Strategy 2: URL lookup then re-fetch (fallback for bundles cached before code:{hash} was added)
+      const originalUrl = await distributed.get(`hash:${hash}`);
+      if (originalUrl) {
+        logger.info("[HTTP-CACHE] Recovering bundle via URL re-fetch", { hash, originalUrl, attempt });
+        const importMap = { imports: {}, scopes: {} };
+        const result = await cacheHttpModule(originalUrl, { cacheDir, importMap });
+        if (result) {
+          logger.info("[HTTP-CACHE] Bundle recovery successful (re-fetch)", { hash, path: result });
+          return true;
+        }
+      }
+
+      // No data found, retry after delay (another pod might be backfilling)
+      if (attempt < RECOVERY_MAX_RETRIES) {
+        logger.debug("[HTTP-CACHE] Recovery data not found, retrying", { hash, attempt });
+        await new Promise((resolve) => setTimeout(resolve, RECOVERY_RETRY_DELAY_MS));
+      }
+    } catch (error) {
+      logger.error("[HTTP-CACHE] Bundle recovery attempt failed", { hash, attempt, error });
+      if (attempt < RECOVERY_MAX_RETRIES) {
+        await new Promise((resolve) => setTimeout(resolve, RECOVERY_RETRY_DELAY_MS));
+      }
+    }
   }
+
+  logger.debug("[HTTP-CACHE] All recovery attempts exhausted", { hash });
+  return false;
 }
