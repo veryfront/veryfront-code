@@ -81,7 +81,6 @@ export function renderDashboard(state: AppState): string {
         maxWidth: maxListWidth,
         visibleCount: 5,
         showNumbers: true,
-        numberOffset: state.projects.items.length,
         showSelection: isActive,
       }),
       "",
