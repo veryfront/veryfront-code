@@ -21,9 +21,10 @@ export class ProjectsHandler extends BaseHandler {
     enabled: (ctx) => {
       const isVeryfrontDomain = ctx.parsedDomain?.isVeryfrontDomain === true;
       const hasNoSlug = !ctx.projectSlug;
-      const isProxyMode = ctx.config?.fs?.veryfront?.proxyMode === true;
 
-      return isVeryfrontDomain && hasNoSlug && isProxyMode;
+      // Enable for veryfront domains without a project slug
+      // Works in both proxy mode and local multi-project mode
+      return isVeryfrontDomain && hasNoSlug;
     },
   };
 

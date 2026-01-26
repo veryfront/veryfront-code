@@ -13,7 +13,7 @@
  */
 
 import { TokenManager, type TokenScope } from "./token-manager.ts";
-import { parseProjectDomain, type ParsedDomain } from "../src/server/utils/domain-parser.ts";
+import { type ParsedDomain, parseProjectDomain } from "../src/server/utils/domain-parser.ts";
 import type { TokenCache } from "./cache/types.ts";
 import { createFileSystem } from "../src/platform/compat/fs.ts";
 import { cwd } from "../src/platform/compat/process.ts";
@@ -207,7 +207,10 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         if (hasApp || hasPages || hasComponents) {
           // Cache for future requests
           localProjects[slug] = projectPath;
-          logger?.debug("Dynamically discovered local project", { slug, projectPath });
+          logger?.debug("Dynamically discovered local project", {
+            slug,
+            projectPath,
+          });
           return projectPath;
         }
       } catch {
@@ -234,8 +237,12 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
    */
   function validateConfig(): string[] {
     const missing: string[] = [];
-    if (!config.clientId) missing.push("API_CLIENT_ID_VERYFRONT_RENDERER_PROXY");
-    if (!config.clientSecret) missing.push("API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY");
+    if (!config.clientId) {
+      missing.push("API_CLIENT_ID_VERYFRONT_RENDERER_PROXY");
+    }
+    if (!config.clientSecret) {
+      missing.push("API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY");
+    }
     return missing;
   }
 
@@ -247,6 +254,22 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     let projectId: string | undefined;
     let releaseId: string | undefined;
     const isCustomDomain = !projectSlug && !parsedDomain.isVeryfrontDomain;
+
+    // Handle veryfront domain without project slug (e.g., veryfront.me:8080)
+    // Return a no-project context so the projects page can be served
+    if (!projectSlug && parsedDomain.isVeryfrontDomain && !isCustomDomain) {
+      return {
+        token: undefined,
+        projectSlug: undefined,
+        projectId: undefined,
+        environment: "preview",
+        contentSourceId: "no-project",
+        localPath: undefined,
+        host,
+        parsedDomain,
+        isLocalProject: false,
+      };
+    }
 
     const localPath = projectSlug ? await findLocalProject(projectSlug) : undefined;
     const isLocalProject = !!localPath;
@@ -294,9 +317,16 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         const customDomain = !projectSlug ? host : undefined;
         if (projectSlug || customDomain) {
           try {
-            token = await tokenManager.getToken(scope, projectSlug, customDomain);
+            token = await tokenManager.getToken(
+              scope,
+              projectSlug,
+              customDomain,
+            );
           } catch (error) {
-            logger?.error("Token fetch failed", error as Error, { projectSlug, customDomain });
+            logger?.error("Token fetch failed", error as Error, {
+              projectSlug,
+              customDomain,
+            });
           }
         }
       }
@@ -309,11 +339,24 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       if (isCustomDomain && !projectSlug) {
         // Custom domain: lookup project by domain
         if (!token) {
-          logger?.error("Cannot process custom domain without token", undefined, { domain: host });
-          return makeErrorContext(502, `Failed to authenticate for domain: ${host}`, token);
+          logger?.error(
+            "Cannot process custom domain without token",
+            undefined,
+            { domain: host },
+          );
+          return makeErrorContext(
+            502,
+            `Failed to authenticate for domain: ${host}`,
+            token,
+          );
         }
 
-        const lookupResult = await lookupProjectByDomain(host, config.apiBaseUrl, token, logger);
+        const lookupResult = await lookupProjectByDomain(
+          host,
+          config.apiBaseUrl,
+          token,
+          logger,
+        );
         if (lookupResult) {
           projectSlug = lookupResult.slug;
           projectId = lookupResult.id;
@@ -330,13 +373,20 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           // Check if environment is protected and user is not authenticated
           if (matchingEnv?.protected && !userToken) {
             const originalUrl = req.url;
-            const redirectUrl = `https://veryfront.com/sign-in?from=${encodeURIComponent(originalUrl)}`;
+            const redirectUrl = `https://veryfront.com/sign-in?from=${
+              encodeURIComponent(originalUrl)
+            }`;
             logger?.info("Protected environment requires authentication", {
               domain: host,
               environmentName: matchingEnv.name,
               redirectUrl,
             });
-            return makeErrorContext(302, "Authentication required", token, redirectUrl);
+            return makeErrorContext(
+              302,
+              "Authentication required",
+              token,
+              redirectUrl,
+            );
           }
 
           logger?.info("Resolved custom domain to project", {
@@ -348,12 +398,24 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           });
         } else {
           logger?.error("Custom domain not found", undefined, { domain: host });
-          return makeErrorContext(404, `No project configured for domain: ${host}`, token);
+          return makeErrorContext(
+            404,
+            `No project configured for domain: ${host}`,
+            token,
+          );
         }
-      } else if (projectSlug && scope === "production" && token && parsedDomain.environment) {
+      } else if (
+        projectSlug && scope === "production" && token &&
+        parsedDomain.environment
+      ) {
         // Veryfront domain in non-preview mode: lookup project by slug to get releaseId
         // This handles production, staging, and other non-preview environments
-        const lookupResult = await lookupProjectByDomain(projectSlug, config.apiBaseUrl, token, logger);
+        const lookupResult = await lookupProjectByDomain(
+          projectSlug,
+          config.apiBaseUrl,
+          token,
+          logger,
+        );
         if (lookupResult) {
           projectId = lookupResult.id;
 
@@ -369,13 +431,20 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           // Check if environment is protected and user is not authenticated
           if (matchingEnv?.protected && !userToken) {
             const originalUrl = req.url;
-            const redirectUrl = `https://veryfront.com/sign-in?from=${encodeURIComponent(originalUrl)}`;
+            const redirectUrl = `https://veryfront.com/sign-in?from=${
+              encodeURIComponent(originalUrl)
+            }`;
             logger?.info("Protected environment requires authentication", {
               projectSlug,
               environmentName: matchingEnv.name,
               redirectUrl,
             });
-            return makeErrorContext(302, "Authentication required", token, redirectUrl);
+            return makeErrorContext(
+              302,
+              "Authentication required",
+              token,
+              redirectUrl,
+            );
           }
 
           logger?.info("Resolved veryfront domain to project", {
@@ -390,14 +459,20 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     }
 
     // Error early if remote production but no releaseId
-    if (scope === "production" && projectSlug && !releaseId && !isLocalProject) {
+    if (
+      scope === "production" && projectSlug && !releaseId && !isLocalProject
+    ) {
       logger?.error("Missing releaseId in production", undefined, {
         projectSlug,
         projectId,
         host,
         environment: scope,
       });
-      return makeErrorContext(502, `Missing releaseId for production project: ${projectSlug}`, token);
+      return makeErrorContext(
+        502,
+        `Missing releaseId for production project: ${projectSlug}`,
+        token,
+      );
     }
 
     // Compute contentSourceId using the single source of truth
@@ -445,7 +520,10 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         try {
           return await tokenManager.getToken(scope, projectSlug, customDomain);
         } catch (error) {
-          logger?.error("Token fetch failed for API", error as Error, { projectSlug, customDomain });
+          logger?.error("Token fetch failed for API", error as Error, {
+            projectSlug,
+            customDomain,
+          });
         }
       }
     }
