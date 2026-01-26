@@ -276,6 +276,10 @@ export class HTMLGenerator {
       this.config.projectDir,
     );
 
+    // Determine pageType from file extension
+    const fileExtension = context.pageInfo.entity.path.split(".").pop()?.toLowerCase();
+    const pageType = fileExtension as "mdx" | "md" | "tsx" | "jsx" | "ts" | "js" | undefined;
+
     const sourceHash = context.options?.studioEmbed && context.pageInfo.entity.content
       ? computeSourceHash(context.pageInfo.entity.content)
       : undefined;
@@ -291,6 +295,7 @@ export class HTMLGenerator {
       })),
       appPath: appComponentPath,
       pagePath,
+      pageType,
       nonce: context.options?.nonce,
       globalCSS,
       frontmatter: mergedFrontmatter,
@@ -303,6 +308,7 @@ export class HTMLGenerator {
       environment: context.options?.environment,
       headings: context.pageBundle.headings,
       projectClasses,
+      isLocalDev: this.config.mode === "development",
     };
   }
 

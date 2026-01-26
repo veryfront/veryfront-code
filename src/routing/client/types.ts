@@ -29,7 +29,7 @@ export interface LayoutInfo {
 export interface SpaPageData {
   slug: string;
   pagePath: string;
-  pageType: "mdx" | "tsx" | "jsx" | "ts" | "js";
+  pageType: "mdx" | "md" | "tsx" | "jsx" | "ts" | "js";
   layouts: LayoutInfo[];
   providers: string[];
   frontmatter: Record<string, unknown>;

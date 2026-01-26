@@ -39,6 +39,40 @@ export class StylesCSSHandler extends BaseHandler {
 
       if (result.error) {
         logger.error("[StylesCSSHandler] Tailwind error", { error: result.error });
+        // Surface error in CSS so developers can see it
+        const errorCSS = `/*
+  ╔══════════════════════════════════════════════════════════════╗
+  ║  TAILWIND CSS COMPILATION ERROR                               ║
+  ╠══════════════════════════════════════════════════════════════╣
+  ║  ${result.error.replace(/\n/g, "\n  ║  ")}
+  ╚══════════════════════════════════════════════════════════════╝
+*/
+
+body::before {
+  content: "CSS Error: ${result.error.replace(/"/g, '\\"').replace(/\n/g, " ")}";
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: 16px;
+  background: #dc2626;
+  color: white;
+  font-family: monospace;
+  font-size: 14px;
+  z-index: 99999;
+  white-space: pre-wrap;
+}
+`;
+        return this.respond(
+          responseBuilder.withContentType("text/css; charset=utf-8", errorCSS, HTTP_OK),
+        );
+      }
+
+      // Warn if CSS is unexpectedly empty (no error but no output)
+      if (!result.css && candidates.size > 0) {
+        logger.warn("[StylesCSSHandler] CSS is empty despite having candidates", {
+          candidates: candidates.size,
+        });
       }
 
       logger.debug("[StylesCSSHandler] CSS generated", {

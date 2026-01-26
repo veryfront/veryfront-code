@@ -10,7 +10,7 @@ export interface HydrationDataStructure {
   layouts: HydrationLayout[];
   appPath?: string;
   pagePath?: string;
-  pageType?: "mdx" | "tsx" | "jsx" | "ts" | "js";
+  pageType?: "mdx" | "md" | "tsx" | "jsx" | "ts" | "js";
   frontmatter?: Record<string, unknown>;
   layoutProps?: Record<string, Record<string, unknown>>;
   /**

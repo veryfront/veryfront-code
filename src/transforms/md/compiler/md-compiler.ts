@@ -3,7 +3,7 @@ import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
 import remarkFrontmatter from "remark-frontmatter";
 import remarkRehype from "remark-rehype";
-import rehypeHighlight from "rehype-highlight";
+import rehypeStarryNight from "rehype-starry-night";
 import rehypeSlug from "rehype-slug";
 import rehypeStringify from "rehype-stringify";
 import { visit } from "unist-util-visit";
@@ -72,7 +72,7 @@ export function compileMarkdownRuntime(
           .use(remarkFrontmatter)
           .use(remarkExtractHeadings, headings)
           .use(remarkRehype, { allowDangerousHtml: true })
-          .use(rehypeHighlight, { detect: true, ignoreMissing: true })
+          .use(rehypeStarryNight)
           .use(rehypeSlug)
           .use(rehypeStringify, { allowDangerousHtml: true });
 
@@ -87,10 +87,24 @@ export function compileMarkdownRuntime(
 
         const escapedHtml = escapeForJsString(html);
 
-        const compiledCode = `import { jsx as _jsx } from "react/jsx-runtime";
-export default function MDContent({ components, className, ...props }) {
+        // Use GitHub-style wrapper for standalone markdown files (not in pages/ or app/)
+        // unless prose: false in frontmatter
+        const isInPagesDir = filePath?.includes("/pages/") || filePath?.includes("/app/");
+        const isMarkdownPreview = !isInPagesDir && extractedFrontmatter?.prose !== false;
+
+        // Note: destructure params/components to prevent them from spreading to DOM
+        const compiledCode = isMarkdownPreview
+          ? `import { jsx as _jsx } from "react/jsx-runtime";
+export default function MDContent({ components, params, ...props }) {
   return _jsx("div", {
-    ...props,
+    className: "markdown-body",
+    dangerouslySetInnerHTML: { __html: \`${escapedHtml}\` }
+  });
+}
+`
+          : `import { jsx as _jsx } from "react/jsx-runtime";
+export default function MDContent({ components, params, className, ...props }) {
+  return _jsx("div", {
     className,
     dangerouslySetInnerHTML: { __html: \`${escapedHtml}\` }
   });
@@ -103,6 +117,7 @@ export default function MDContent({ components, className, ...props }) {
           globals: {},
           headings,
           nodeMap: new Map(),
+          rawHtml: html,
         };
       } catch (error) {
         logger.error("[MD Compiler] Compilation failed:", {
