@@ -5,10 +5,28 @@ import {
   getReactImportMap,
 } from "#veryfront/transforms/esm/package-registry.ts";
 
-const FRAMEWORK_ROOT = new URL("../../..", import.meta.url).pathname;
+function ensureTrailingSlash(path: string): string {
+  return path.endsWith("/") ? path : `${path}/`;
+}
+
+function getFrameworkRoot(): string {
+  try {
+    return ensureTrailingSlash(new URL("../../..", import.meta.url).pathname);
+  } catch {
+    // Fallback for environments where import.meta.url doesn't work correctly
+    const cwd = (typeof Deno !== "undefined" && Deno.cwd?.()) ||
+      (typeof process !== "undefined" && process.cwd?.());
+
+    if (cwd) return ensureTrailingSlash(cwd);
+
+    throw new Error(
+      "Unable to determine framework root: import.meta.url is unavailable and neither Deno.cwd() nor process.cwd() are supported in this environment.",
+    );
+  }
+}
 
 function getVeryfrontSsrImportMap(): Record<string, string> {
-  const srcPath = `file://${FRAMEWORK_ROOT}src`;
+  const srcPath = `file://${getFrameworkRoot()}src`;
   const head = `${srcPath}/react/components/Head.tsx`;
   const router = `${srcPath}/react/router/index.ts`;
   const context = `${srcPath}/react/context/index.ts`;

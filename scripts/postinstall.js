@@ -31,9 +31,11 @@ const platformKey = `${platform}-${arch}`;
 const binaryName = binaryMap[platformKey];
 
 if (!binaryName) {
-  console.error(`❌ Unsupported platform: ${platform}-${arch}`);
-  console.error('Supported platforms:', Object.keys(binaryMap).join(', '));
-  process.exit(1);
+  // Non-fatal: allow JS fallback for unsupported platforms
+  console.warn(`⚠️  No pre-built binary for platform: ${platform}-${arch}`);
+  console.warn('   Supported platforms:', Object.keys(binaryMap).join(', '));
+  console.warn('   Falling back to bundled JavaScript CLI (slower startup)');
+  process.exit(0);
 }
 
 const binDir = join(__dirname, "..", "bin");
@@ -52,35 +54,47 @@ console.log('📦 Installing Veryfront CLI...');
 console.log(`   Platform: ${platform}-${arch}`);
 console.log(`   Version: ${version}`);
 
-function downloadBinary(url, dest) {
+function downloadBinary(url, dest, maxRedirects = 5) {
   return new Promise((resolve, reject) => {
-    const file = createWriteStream(dest);
-
-    https.get(url, (response) => {
-      if (response.statusCode === 302 || response.statusCode === 301) {
-        // Follow redirect
-        https.get(response.headers.location, (redirectResponse) => {
-          redirectResponse.pipe(file);
-          file.on('finish', () => {
-            file.close();
-            resolve();
-          });
-        }).on('error', reject);
-      } else if (response.statusCode === 200) {
-        response.pipe(file);
-        file.on('finish', () => {
-          file.close();
-          resolve();
-        });
-      } else {
-        reject(new Error(`Failed to download: ${response.statusCode} ${response.statusMessage}`));
+    function follow(currentUrl, redirectCount) {
+      if (redirectCount > maxRedirects) {
+        return reject(new Error("Too many redirects"));
       }
-    }).on('error', reject);
 
-    file.on("error", (err) => {
-      unlinkSync(dest);
-      reject(err);
-    });
+      https.get(currentUrl, (response) => {
+        const { statusCode = 0, statusMessage, headers } = response;
+
+        // Handle redirects
+        if (statusCode >= 301 && statusCode <= 308 && statusCode !== 304) {
+          response.resume();
+          const location = headers.location;
+          if (!location) {
+            return reject(new Error("Redirect response missing Location header"));
+          }
+          try {
+            return follow(new URL(location, currentUrl).toString(), redirectCount + 1);
+          } catch {
+            return reject(new Error(`Invalid redirect URL: ${location}`));
+          }
+        }
+
+        if (statusCode !== 200) {
+          response.resume();
+          return reject(new Error(`Failed to download: ${statusCode} ${statusMessage}`));
+        }
+
+        const file = createWriteStream(dest);
+        response.pipe(file);
+        file.on('finish', () => { file.close(); resolve(); });
+        file.on("error", (err) => {
+          try { if (existsSync(dest)) unlinkSync(dest); }
+          catch (e) { console.warn("   Warning: Failed to clean up partial download:", e.message); }
+          reject(err);
+        });
+      }).on('error', reject);
+    }
+
+    follow(url, 0);
   });
 }
 
@@ -100,12 +114,12 @@ async function install() {
     console.log('   npx veryfront create my-app');
 
   } catch (error) {
-    console.error("❌ Installation failed:", error.message);
-    console.error("\n📝 Manual installation:");
-    console.error('   1. Download the binary from GitHub releases');
-    console.error('   2. Place it in your PATH as "veryfront"');
-    console.error(`   3. URL: ${url}`);
-    process.exit(1);
+    // Graceful fallback - bundled JS CLI will be used instead
+    console.warn("⚠️  Binary download failed:", error.message);
+    console.warn("   Falling back to bundled JavaScript CLI (slower startup)");
+    console.warn(`   Binary URL: ${url}`);
+    // Don't exit with error - let npm install succeed
+    // The bundled JS CLI in bin/veryfront.js will work as fallback
   }
 }
 

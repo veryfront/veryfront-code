@@ -22,7 +22,7 @@ export interface AgentStreamResult {
   }): Response;
 }
 
-function createAgentStreamResult(stream: ReadableStream): AgentStreamResult {
+function createAgentStreamResult(stream: ReadableStream<Uint8Array>): AgentStreamResult {
   return {
     toDataStreamResponse(options): Response {
       return new Response(stream, {
@@ -125,9 +125,10 @@ export function agent(config: AgentConfig): Agent {
       return withSpan(
         "agent.factory.respond",
         async () => {
-          const body = await request.json();
+          const body: { messages?: Message[]; context?: Record<string, unknown> } = await request
+            .json();
           const messages = body.messages ?? [];
-          const stream = await runtime.stream(messages, body.context);
+          const stream: ReadableStream<Uint8Array> = await runtime.stream(messages, body.context);
 
           return new Response(stream, { headers: STREAMING_HEADERS });
         },

@@ -145,7 +145,7 @@ export abstract class BaseProvider implements Provider {
     return this.transformResponse(parseResult.data);
   }
 
-  async stream(request: CompletionRequest): Promise<ReadableStream> {
+  async stream(request: CompletionRequest): Promise<ReadableStream<Uint8Array>> {
     const response = await this.postChatCompletions(
       this.transformRequest({ ...request, stream: true }),
     );
@@ -160,7 +160,7 @@ export abstract class BaseProvider implements Provider {
     );
   }
 
-  protected transformStream(stream: ReadableStream): ReadableStream {
+  protected transformStream(stream: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
     const reader = stream.getReader();
     const decoder = new TextDecoder();
     const encoder = new TextEncoder();
@@ -174,7 +174,7 @@ export abstract class BaseProvider implements Provider {
       }
     >();
 
-    return new ReadableStream({
+    return new ReadableStream<Uint8Array>({
       async start(controller) {
         try {
           while (true) {

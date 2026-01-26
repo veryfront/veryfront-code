@@ -70,5 +70,5 @@ export interface CompletionResponse {
 export interface Provider {
   name: string;
   complete(request: CompletionRequest): Promise<CompletionResponse>;
-  stream(request: CompletionRequest): Promise<ReadableStream>;
+  stream(request: CompletionRequest): Promise<ReadableStream<Uint8Array>>;
 }

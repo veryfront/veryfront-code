@@ -27,7 +27,7 @@ export async function handleActionRequest(
   const { id, args } = parseResult;
 
   try {
-    const { rscActionGuard } = await import("../../rsc/server-action-guard.ts");
+    const { rscActionGuard } = await import("#veryfront/rendering/rsc/server-action-guard.ts");
     if (typeof rscActionGuard === "function") {
       const ok = await rscActionGuard(req, { id, args });
       if (!ok) return jsonErrorResponse(HttpStatus.FORBIDDEN, "unauthorized");

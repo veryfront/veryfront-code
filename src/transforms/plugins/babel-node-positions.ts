@@ -10,8 +10,25 @@ import * as traverseModule from "@babel/traverse";
 import * as generateModule from "@babel/generator";
 import * as t from "@babel/types";
 
-type TraverseFunction = typeof traverseModule.default;
-type GenerateFunction = typeof generateModule.default;
+// Local type definitions for Babel traverse/generate (they don't bundle types)
+interface BabelNodePath<T = t.Node> {
+  node: T;
+  parent: t.Node;
+  parentPath: BabelNodePath | null;
+  scope: unknown;
+  type: string;
+  skip(): void;
+  stop(): void;
+}
+
+interface BabelGeneratorResult {
+  code: string;
+  map?: unknown;
+}
+
+// deno-lint-ignore no-explicit-any
+type TraverseFunction = (ast: t.Node, opts: Record<string, unknown>) => void;
+type GenerateFunction = (ast: t.Node, opts?: Record<string, unknown>) => BabelGeneratorResult;
 
 interface ModuleWithDefault<T> {
   default: T | { default: T };
@@ -29,8 +46,6 @@ function resolveDefaultExport<T>(mod: unknown): T {
 
 const traverse: TraverseFunction = resolveDefaultExport<TraverseFunction>(traverseModule);
 const generate: GenerateFunction = resolveDefaultExport<GenerateFunction>(generateModule);
-
-type NodePath<T> = traverseModule.NodePath<T>;
 
 const SKIPPED_ELEMENTS = new Set([
   "html",
@@ -128,7 +143,7 @@ export function injectNodePositions(source: string, _options: TransformOptions):
 
     traverse(ast, {
       JSXElement: {
-        enter(path: NodePath<t.JSXElement>) {
+        enter(path: BabelNodePath<t.JSXElement>) {
           const openingElement = path.node.openingElement;
           const elementName = getElementName(openingElement);
 

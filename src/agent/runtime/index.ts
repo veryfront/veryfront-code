@@ -117,7 +117,7 @@ export class AgentRuntime {
       onToolCall?: (toolCall: ToolCall) => void;
       onChunk?: (chunk: string) => void;
     },
-  ): Promise<ReadableStream> {
+  ): Promise<ReadableStream<Uint8Array>> {
     for (const msg of messages) await this.memory.add(msg);
 
     const memoryMessages = await this.memory.getMessages();
@@ -128,7 +128,7 @@ export class AgentRuntime {
     const toolContext = { agentId: this.id, ...context };
     const textPartId = generateId("text");
 
-    return new ReadableStream({
+    return new ReadableStream<Uint8Array>({
       start: async (controller) => {
         try {
           this.status = "streaming";

@@ -13,7 +13,7 @@ export interface SSROptions {
 
 export interface SSRResult {
   html?: string;
-  stream?: ReadableStream;
+  stream?: ReadableStream<Uint8Array>;
   pipe?: (writable: NodeJS.WritableStream) => void;
   abort?: () => void;
 }

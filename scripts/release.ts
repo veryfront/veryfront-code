@@ -11,19 +11,6 @@
  *   deno task release patch --dry-run
  */
 
-/**
- * Release script for Veryfront
- *
- * Usage:
- *   deno task release [version] [flags]
- *
- * Examples:
- *   deno task release patch
- *   deno task release minor
- *   deno task release 1.2.3
- *   deno task release patch --dry-run
- */
-
 import { createFileSystem } from "../src/platform/compat/fs.ts";
 import { exit, getArgs } from "../src/platform/compat/process.ts";
 import { promptUser } from "../src/cli/utils/index.ts";
@@ -130,27 +117,27 @@ async function runCommand(cmd: string[], cwd?: string) {
   }
 }
 
-async function getNewVersion(
-	currentVersion: string,
-	type: string,
-): Promise<string> {
+function getNewVersion(currentVersion: string, type: string): string {
 	const parts = currentVersion.split(".").map(Number);
 	if (parts.length !== 3 || parts.some(isNaN)) {
 		throw new Error(`Invalid current version format: ${currentVersion}`);
 	}
 	const [major, minor, patch] = parts as [number, number, number];
 
-	if (type === "major") return `${major + 1}.0.0`;
-	if (type === "minor") return `${major}.${minor + 1}.0`;
-	if (type === "patch") return `${major}.${minor}.${patch + 1}`;
-
-	// Validate specific version
-	if (/^\d+\.\d+\.\d+$/.test(type)) {
-		return type;
+	switch (type) {
+		case "major":
+			return `${major + 1}.0.0`;
+		case "minor":
+			return `${major}.${minor + 1}.0`;
+		case "patch":
+			return `${major}.${minor}.${patch + 1}`;
+		default:
+			if (/^\d+\.\d+\.\d+$/.test(type)) {
+				return type;
+			}
+			console.error(`Invalid version argument: ${type}`);
+			exit(1);
 	}
-
-	console.error(`Invalid version argument: ${type}`);
-	exit(1);
 }
 
 async function updateExampleVersions(newVersion: string) {
@@ -266,7 +253,7 @@ async function runRelease() {
 	const currentVersion = denoJson.version;
 
 	console.log(`Current version: ${currentVersion}`);
-	const newVersion = await getNewVersion(currentVersion, versionArg!);
+	const newVersion = getNewVersion(currentVersion, versionArg!);
 	console.log(`Target version:  ${newVersion}`);
 
 	if (DRY_RUN) {
@@ -301,7 +288,7 @@ async function runRelease() {
 	// 2.6 Update templates
 	await updateTemplates(newVersion);
 
-	// 3. Build npm package
+	// 3. Build npm package (for local verification only, CI will rebuild)
 	if (!args["no-build"]) {
 		console.log("\n📦 Building npm package...");
 		// @ts-ignore - Deno global
@@ -309,18 +296,25 @@ async function runRelease() {
 		await runCommand(["deno", "task", "build:npm"]);
 	}
 
-	// 4. Publish to npm
+	// 4. Git commit, tag, and push (CI will handle npm publish + binary upload)
+	console.log("\n📦 Committing and tagging release...");
+	await runCommand(["git", "add", "."]);
+	await runCommand(["git", "commit", "-m", `Release v${newVersion}`]);
+	await runCommand(["git", "tag", `v${newVersion}`]);
+
 	if (!args["no-publish"]) {
 		if (DRY_RUN) {
-			console.log("\n🚀 [DRY RUN] Would publish to npm");
+			console.log("\n🚀 [DRY RUN] Would push to GitHub (triggers CI publish)");
 		} else {
-			const response = await promptUser("\n🚀 Publish to npm? [y/N]");
-			const shouldPublish = args.yes || response?.toLowerCase() === "y";
-			if (shouldPublish) {
-				await runCommand(["npm", "publish"], getPath().resolve("npm"));
-				console.log(`\n✅ Successfully published veryfront@${newVersion}`);
+			const response = await promptUser("\n🚀 Push to GitHub? This will trigger CI to publish npm + binaries. [y/N]");
+			const shouldPush = args.yes || response?.toLowerCase() === "y";
+			if (shouldPush) {
+				await runCommand(["git", "push"]);
+				await runCommand(["git", "push", "--tags"]);
+				console.log(`\n✅ Pushed v${newVersion} - CI will publish npm package and binaries`);
 			} else {
-				console.log("\nSkipping publish.");
+				console.log("\nSkipping push. Run manually:");
+				console.log(`  git push && git push --tags`);
 			}
 		}
 	}

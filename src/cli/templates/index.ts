@@ -6,11 +6,7 @@
  * to inline string templates.
  */
 
-import {
-  getTemplateDirectory,
-  loadTemplateFromDirectory,
-  templateDirectoryExists,
-} from "./loader.ts";
+import { loadTemplateFromDirectory, templateDirectoryExists } from "./loader.ts";
 import type {
   EnvVarConfig,
   FeatureConfig,
@@ -90,8 +86,7 @@ export async function getTemplate(name: TemplateName): Promise<TemplateFile[] | 
     return null;
   }
 
-  const templateDir = getTemplateDirectory(name);
-  const files = await loadTemplateFromDirectory(templateDir);
+  const files = await loadTemplateFromDirectory(name);
 
   return files.length > 0 ? files : null;
 }

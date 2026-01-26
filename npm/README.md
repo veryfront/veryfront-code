@@ -1,170 +1,59 @@
 # Veryfront
 
+[![npm version](https://img.shields.io/npm/v/veryfront.svg)](https://www.npmjs.com/package/veryfront)
 [![CI/CD](https://github.com/veryfront/veryfront-renderer/actions/workflows/ci.yml/badge.svg)](https://github.com/veryfront/veryfront-renderer/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-Veryfront is a **zero-config React framework** for building **agentic applications**. Automatically discovers agents, tools, and routes through file-based conventions.
+The all-in-one React framework for building AI-powered applications and agents.
 
+## Features
+
+- **Zero config** — Auto-discovery from file structure
+- **Multi-runtime** — Deno, Node.js, Bun, Cloudflare Workers
+- **Full-stack React** — SSR, SSG, ISR, streaming
+- **MCP built-in** — Model Context Protocol server
+- **Production-ready** — Rate limiting, caching, observability
+
+## Quick Start
+
+```bash
+npx veryfront demo
+```
 
 ## Project Structure
 
 ```
-my-ai-app/
-├── .env
-├── app/
+my-app/
+├── app/                     # App Router (pages & APIs)
 │   ├── chat/page.tsx
 │   └── api/chat/route.ts
-└── ai/
-    ├── agents/assistant.ts         # Auto-registered
-    ├── tools/calculator.ts         # Auto-discovered
-    └── resources/users/profile.ts  # MCP resources
+├── agents/                  # AI agents
+├── tools/                   # MCP tools
+├── workflows/               # Durable workflows
+├── prompts/                 # Prompt templates
+└── resources/               # MCP resources
 ```
 
-The `ai/` directory auto-enables AI features. No config required.
-
----
-
-## Quick Start
-
-**1. Install**
-```bash
-deno add npm:veryfront npm:ai npm:zod
-```
-
-**2. Create an agent**
-
-`ai/agents/assistant.ts`:
-```typescript
-import { agent } from 'veryfront/agent';
-
-export default agent({
-  model: 'openai/gpt-4',
-  system: 'You are a helpful assistant.',
-  tools: { calculator: true },
-});
-```
-
-**3. Add a tool**
-
-`ai/tools/calculator.ts`:
-```typescript
-import { tool } from 'veryfront/tool';
-import { z } from 'zod';
-
-export default tool({
-  description: 'Perform calculations',
-  inputSchema: z.object({ expression: z.string() }),
-  execute: async ({ expression }) => ({ result: eval(expression) }),
-});
-```
-
-**4. Create the API endpoint**
-
-`app/api/chat/route.ts`:
-```typescript
-import { agents } from '../../../ai/agents';
-
-export async function POST(req: Request) {
-  return agents.assistant.respond(req);
-}
-```
-
-**5. Add the UI**
-
-`app/chat/page.tsx`:
-```tsx
-'use client';
-import { Chat } from 'veryfront/react';
-import { useChat } from 'veryfront/agent/react';
-
-export default function ChatPage() {
-  return <Chat {...useChat({ api: '/api/chat' })} />;
-}
-```
-
-**6. Run**
-```bash
-echo "OPENAI_API_KEY=sk-..." > .env
-deno task dev
-```
-
-Visit `localhost:3000/chat` - your agent can now use the calculator tool.
-
----
-
-## UI Customization
-
-**Styled components** (production-ready):
-```tsx
-import { Chat } from 'veryfront/react';
-```
-
-**Primitives** (bring your own styles):
-```tsx
-import { ChatContainer, MessageList, MessageItem } from 'veryfront/react/primitives';
-```
-
-**Headless hooks** (total control):
-```tsx
-import { useChat } from 'veryfront/agent/react';
-```
-
----
-
-## Model Context Protocol
-
-MCP exposes your tools and resources to external AI applications. Enabled by default when `ai/` directory exists.
-
-**Add a resource:**
-
-`ai/resources/users/profile.ts`:
-```typescript
-import { resource } from 'veryfront/resource';
-import { z } from 'zod';
-
-export default resource({
-  description: 'Get user profile',
-  paramsSchema: z.object({ userId: z.string() }),
-  async load({ userId }) {
-    return await db.users.findUnique({ where: { id: userId } });
-  },
-});
-```
-
-**Run MCP server:**
-```bash
-deno task dev --mcp  # Port 3001 by default
-```
-
----
-
-## Features
-
-- **Zero config** - Auto-discovery from file structure
-- **Multi-runtime** - Deno, Node.js, Bun, Cloudflare Workers
-- **Full-stack React** - SSR, SSG, ISR, JIT rendering
-- **Remote imports** - Use `https://esm.sh/pkg` directly, no node_modules needed
-- **MCP built-in** - Model Context Protocol server
-- **Production-ready** - Rate limiting, caching, cost tracking, security
-
----
+All directories are auto-discovered.
 
 ## Documentation
 
-See [veryfront.com/docs](https://veryfront.com/docs/framework) for complete documentation.
+- [Getting Started](https://veryfront.com/docs/framework)
+- [Agents](https://veryfront.com/docs/framework/agents)
+- [Tools](https://veryfront.com/docs/framework/tools)
+- [Workflows](https://veryfront.com/docs/framework/workflows)
+- [MCP Server](https://veryfront.com/docs/framework/mcp)
 
----
+## Community
 
-## Examples
+- [Discord](https://discord.gg/veryfront)
+- [X](https://x.com/veryfrontdev)
+- [GitHub Discussions](https://github.com/veryfront/veryfront/discussions)
 
-```bash
-cd examples/agent-basic
-deno run --allow-all demo.ts
-```
+## Contributing
 
-See [examples/](./examples/) for more.
-
----
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
 
 ## License
 
-MIT - see [LICENSE](./LICENSE)
+MIT
