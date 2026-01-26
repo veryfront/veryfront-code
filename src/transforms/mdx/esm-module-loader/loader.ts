@@ -16,7 +16,7 @@ import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { loadImportMap, transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/index.ts";
-import { cacheHttpImportsToLocal } from "../../esm/http-cache.ts";
+import { cacheHttpImportsToLocal, recoverHttpBundleByHash } from "../../esm/http-cache.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { replaceSpecifiers } from "../../esm/lexer.ts";
 import { setupSSRGlobals } from "../../../rendering/ssr-globals.ts";
@@ -380,6 +380,51 @@ async function cacheHttpImports(code: string, importMap: ImportMapConfig): Promi
   return await cacheHttpImportsToLocal(code, { cacheDir: getHttpBundleCacheDir(), importMap });
 }
 
+/**
+ * Extract HTTP bundle hash from a "Module not found" error message.
+ * Matches patterns like: file:///app/.cache/veryfront-http-bundle/http-974671618.mjs
+ */
+function extractHttpBundleHash(errorMessage: string): string | null {
+  const match = errorMessage.match(/veryfront-http-bundle\/http-([a-f0-9]+)\.mjs/i);
+  return match?.[1] ?? null;
+}
+
+/**
+ * Import a module with automatic recovery for missing HTTP bundles.
+ * If the import fails due to a missing HTTP bundle (cross-pod cache miss),
+ * attempts to recover the bundle from distributed cache and retry.
+ */
+async function importWithHttpBundleRecovery(
+  fileUrl: string,
+): Promise<Record<string, unknown> & { __vfLayout?: React.ComponentType }> {
+  try {
+    return await import(fileUrl);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+
+    // Check if this is a missing HTTP bundle error
+    const hash = extractHttpBundleHash(errorMessage);
+    if (!hash) {
+      throw error; // Not an HTTP bundle error, rethrow
+    }
+
+    logger.info(`${LOG_PREFIX_MDX_LOADER} Attempting HTTP bundle recovery`, { hash, fileUrl });
+
+    // Attempt recovery from distributed cache
+    const cacheDir = getHttpBundleCacheDir();
+    const recovered = await recoverHttpBundleByHash(hash, cacheDir);
+
+    if (!recovered) {
+      logger.error(`${LOG_PREFIX_MDX_LOADER} HTTP bundle recovery failed`, { hash });
+      throw error;
+    }
+
+    // Retry the import after recovery
+    logger.info(`${LOG_PREFIX_MDX_LOADER} Retrying import after bundle recovery`, { hash });
+    return await import(fileUrl);
+  }
+}
+
 export async function loadModuleESM(
   compiledProgramCode: string,
   context: ESMLoaderContext,
@@ -535,10 +580,7 @@ async function doLoadModuleESM(
 
     const mod = await withSpan(
       SpanNames.MDX_DYNAMIC_IMPORT,
-      () =>
-        import(`file://${filePath}?v=${codeHash}`) as Promise<
-          Record<string, unknown> & { __vfLayout?: React.ComponentType }
-        >,
+      () => importWithHttpBundleRecovery(`file://${filePath}?v=${codeHash}`),
       { "mdx.file_path": filePath.split("/").pop() || filePath },
     );
 

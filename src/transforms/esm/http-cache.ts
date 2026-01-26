@@ -278,7 +278,12 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
   await fs.writeTextFile(cachePath, code);
 
   if (distributed) {
-    distributed.set(normalizedUrl, code, DISTRIBUTED_CACHE_TTL_SECONDS).catch((error) => {
+    // Store both the code and the hash→URL reverse mapping for recovery
+    const hash = simpleHash(normalizedUrl);
+    Promise.all([
+      distributed.set(normalizedUrl, code, DISTRIBUTED_CACHE_TTL_SECONDS),
+      distributed.set(`hash:${hash}`, normalizedUrl, DISTRIBUTED_CACHE_TTL_SECONDS),
+    ]).catch((error) => {
       logger.debug("[HTTP-CACHE] Distributed cache set failed", { url: normalizedUrl, error });
     });
   }
@@ -388,4 +393,46 @@ export async function cacheModuleToLocal(url: string, cacheDir: string): Promise
   const cached = await cacheHttpModule(url, { cacheDir, importMap });
 
   return cached ? `file://${cached}` : url;
+}
+
+/**
+ * Recover a missing HTTP bundle by looking up the original URL from the hash.
+ * Used for cross-pod recovery when a file:// path points to a bundle that
+ * exists in distributed cache but not on the local filesystem.
+ *
+ * @param hash - The hash from the bundle filename (e.g., "974671618" from "http-974671618.mjs")
+ * @param cacheDir - The cache directory path
+ * @returns true if recovery succeeded, false otherwise
+ */
+export async function recoverHttpBundleByHash(hash: string, cacheDir: string): Promise<boolean> {
+  const distributed = await getDistributedCache();
+  if (!distributed) {
+    logger.debug("[HTTP-CACHE] No distributed cache for recovery");
+    return false;
+  }
+
+  try {
+    // Look up original URL from hash
+    const originalUrl = await distributed.get(`hash:${hash}`);
+    if (!originalUrl) {
+      logger.debug("[HTTP-CACHE] No URL mapping found for hash", { hash });
+      return false;
+    }
+
+    logger.info("[HTTP-CACHE] Recovering missing HTTP bundle", { hash, originalUrl });
+
+    // Re-cache the module (will fetch from distributed cache or network)
+    const importMap = { imports: {}, scopes: {} };
+    const result = await cacheHttpModule(originalUrl, { cacheDir, importMap });
+
+    if (result) {
+      logger.info("[HTTP-CACHE] Bundle recovery successful", { hash, path: result });
+      return true;
+    }
+
+    return false;
+  } catch (error) {
+    logger.error("[HTTP-CACHE] Bundle recovery failed", { hash, error });
+    return false;
+  }
 }
