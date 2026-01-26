@@ -101,6 +101,7 @@ function renderBanner(state: AppState): string {
 
   const textLines: string[] = [];
 
+  textLines.push(`${brand("Veryfront Code")}`);
   textLines.push(`${serverDot} ${dim("Server running")}`);
   textLines.push(`  ${brand(state.server.url)}`);
 
