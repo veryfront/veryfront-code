@@ -230,6 +230,7 @@ renderer:
     httpGet:
       path: /readyz
       port: 20000
+    initialDelaySeconds: 10
     periodSeconds: 10
     timeoutSeconds: 5
 
