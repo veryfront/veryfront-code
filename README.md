@@ -51,6 +51,12 @@ All directories are auto-discovered.
 - [X](https://x.com/veryfrontdev)
 - [GitHub Discussions](https://github.com/veryfront/veryfront/discussions)
 
+## Releasing
+
+```bash
+deno task release
+```
+
 ## Contributing
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
