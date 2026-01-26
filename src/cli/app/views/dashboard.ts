@@ -27,7 +27,7 @@ export function renderDashboard(state: AppState): string {
 
   if (hasProjects) {
     const isActive = state.activeList === "projects";
-    lines.push(renderSection("Projects", state.projects.items.length, isActive));
+    lines.push(renderSection("Local", state.projects.items.length, isActive));
     lines.push(
       renderList(state.projects, {
         maxWidth: maxListWidth,
