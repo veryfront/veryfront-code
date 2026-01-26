@@ -287,7 +287,9 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
 
       if (dryRun) {
         if (ops.length > 0) await uploadFiles(client, config.projectSlug, null, ops, true);
-        if (toDelete.length > 0) await deleteFiles(client, config.projectSlug, null, toDelete, true);
+        if (toDelete.length > 0) {
+          await deleteFiles(client, config.projectSlug, null, toDelete, true);
+        }
         if (!quiet) {
           const parts: string[] = [];
           if (ops.length > 0) parts.push(`upload ${ops.length}`);

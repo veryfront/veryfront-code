@@ -607,7 +607,10 @@ export function createApp(config: AppConfig): App {
 
     // Letter keys only work when examples focused (a=1, b=2, etc.)
     // Exclude j/k (vim nav), p/u (pull/push) shortcuts
-    if (key >= "a" && key <= "z" && key !== "j" && key !== "k" && key !== "p" && key !== "u" && state.activeList === "examples") {
+    if (
+      key >= "a" && key <= "z" && key !== "j" && key !== "k" && key !== "p" && key !== "u" &&
+      state.activeList === "examples"
+    ) {
       const num = key.charCodeAt(0) - 96; // a=1, b=2, ...
       if (num <= state.examples.items.length) {
         state = { ...state, examples: selectByNumber(state.examples, num) };
