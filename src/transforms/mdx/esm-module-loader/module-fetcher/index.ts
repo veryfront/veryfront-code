@@ -14,11 +14,9 @@
 
 import { join, posix } from "#std/path.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
-import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import type { CacheBackend } from "#veryfront/cache/backend.ts";
 import { transformToESM } from "../../../esm-transform.ts";
 import { TRANSFORM_CACHE_VERSION } from "../../../esm/package-registry.ts";
 import { ensureHttpBundlesExist } from "../../../esm/http-cache.ts";
@@ -35,47 +33,11 @@ import { hashString } from "../utils/hash.ts";
 import { createStubModule } from "../utils/stub-module.ts";
 import { resolveModuleFile } from "../resolution/file-finder.ts";
 import { recordSSRModules } from "../../../../modules/manifest/route-module-manifest.ts";
+import { getDistributedTransformBackend } from "#veryfront/transforms/esm/transform-cache.ts";
 import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
-
-/**
- * Distributed transform cache for cross-pod sharing.
- * Caches transformed module code in Redis/API so other pods don't need to re-transform.
- */
-let distributedTransformCache: CacheBackend | null | undefined;
-const distributedCacheInit = new Singleflight<CacheBackend | null>();
 
 /** TTL for cached transforms (uses centralized config) */
 const TRANSFORM_CACHE_TTL_SECONDS = TRANSFORM_DISTRIBUTED_TTL_SEC;
-
-function getDistributedTransformCache(): Promise<CacheBackend | null> {
-  if (distributedTransformCache !== undefined) return Promise.resolve(distributedTransformCache);
-
-  return distributedCacheInit.do("init", async () => {
-    try {
-      const { CacheBackends } = await import("#veryfront/cache/backend.ts");
-      const backend = await CacheBackends.transform();
-
-      // Only use distributed cache if API or Redis (not memory - that's per-process)
-      if (backend.type === "memory") {
-        distributedTransformCache = null;
-        logger.debug(`${LOG_PREFIX_MDX_LOADER} No distributed transform cache (memory only)`);
-        return null;
-      }
-
-      distributedTransformCache = backend;
-      logger.debug(`${LOG_PREFIX_MDX_LOADER} Distributed transform cache initialized`, {
-        type: backend.type,
-      });
-      return backend;
-    } catch (error) {
-      logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to init distributed transform cache`, {
-        error,
-      });
-      distributedTransformCache = null;
-      return null;
-    }
-  });
-}
 
 /**
  * Build cache key for transformed module.
@@ -552,7 +514,7 @@ async function doFetchAndCacheModule(
     const transformCacheKey = getTransformCacheKey(projectId, normalizedPath, contentHash);
 
     let moduleCode: string | null = null;
-    const distributedCache = await getDistributedTransformCache();
+    const distributedCache = await getDistributedTransformBackend();
 
     if (distributedCache) {
       try {

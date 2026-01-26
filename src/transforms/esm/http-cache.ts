@@ -12,7 +12,6 @@ import { isAbsolute, join } from "#veryfront/platform/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { simpleHash } from "#veryfront/utils/hash-utils.ts";
-import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
@@ -21,39 +20,20 @@ import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { getDenoNpmReactMap, getReactImportMap, REACT_VERSION } from "./package-registry.ts";
 import { parseImports, replaceSpecifiers } from "./lexer.ts";
-import type { CacheBackend } from "#veryfront/cache/backend.ts";
+import { CacheBackends, createDistributedCacheAccessor } from "#veryfront/cache/backend.ts";
+import {
+  HTTP_MODULE_CACHE_MAX_ENTRIES,
+  HTTP_MODULE_DISTRIBUTED_TTL_SEC,
+} from "#veryfront/utils/constants/cache.ts";
 
 /** Lazy-loaded distributed cache backend for cross-pod sharing */
-let distributedCache: CacheBackend | null | undefined;
-const distributedCacheInit = new Singleflight<CacheBackend | null>();
+const getDistributedCache = createDistributedCacheAccessor(
+  () => CacheBackends.httpModule(),
+  "HTTP-CACHE",
+);
 
-function getDistributedCache(): Promise<CacheBackend | null> {
-  if (distributedCache !== undefined) return Promise.resolve(distributedCache);
-
-  return distributedCacheInit.do("init", async () => {
-    try {
-      const { CacheBackends } = await import("#veryfront/cache/backend.ts");
-      const backend = await CacheBackends.httpModule();
-
-      if (backend.type === "memory") {
-        distributedCache = null;
-        logger.debug("[HTTP-CACHE] No distributed cache available (memory only)");
-        return null;
-      }
-
-      distributedCache = backend;
-      logger.debug("[HTTP-CACHE] Distributed cache initialized", { type: backend.type });
-      return backend;
-    } catch (error) {
-      logger.debug("[HTTP-CACHE] Failed to initialize distributed cache", { error });
-      distributedCache = null;
-      return null;
-    }
-  });
-}
-
-/** TTL for cached modules in distributed cache (24 hours) */
-const DISTRIBUTED_CACHE_TTL_SECONDS = 86400;
+/** TTL for cached modules in distributed cache (uses centralized config) */
+const DISTRIBUTED_CACHE_TTL_SECONDS = HTTP_MODULE_DISTRIBUTED_TTL_SEC;
 
 type CacheOptions = {
   cacheDir: string;
@@ -62,7 +42,7 @@ type CacheOptions = {
   reactVersion?: string;
 };
 
-const cachedPaths = new LRUCache<string, string>({ maxEntries: 2000 });
+const cachedPaths = new LRUCache<string, string>({ maxEntries: HTTP_MODULE_CACHE_MAX_ENTRIES });
 const processingStack = new Set<string>();
 
 function ensureAbsoluteDir(path: string): string {

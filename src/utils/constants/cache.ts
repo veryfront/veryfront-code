@@ -12,7 +12,12 @@ function getEnvString(key: string): string | undefined {
     Deno?: { env?: { get?: (k: string) => string | undefined } };
     process?: { env?: Record<string, string | undefined> };
   };
-  return g.Deno?.env?.get?.(key) ?? g.process?.env?.[key];
+  try {
+    return g.Deno?.env?.get?.(key) ?? g.process?.env?.[key];
+  } catch {
+    // Gracefully handle missing --allow-env permission in Deno
+    return undefined;
+  }
 }
 
 function getEnvNumber(key: string, fallback: number): number {
@@ -156,4 +161,19 @@ export const HTTP_MODULE_DISTRIBUTED_TTL_SEC = getEnvNumber(
 export const TRANSFORM_DISTRIBUTED_TTL_SEC = getEnvNumber(
   "TRANSFORM_DISTRIBUTED_TTL_SEC",
   HOURS_PER_DAY * MINUTES_PER_HOUR * SECONDS_PER_MINUTE, // 24 hours (86400)
+);
+
+// Pod-level module cache (shared across all RenderPipeline instances)
+// These caches map module paths to transformed temp file paths
+export const MODULE_CACHE_MAX_ENTRIES = getEnvNumber("MODULE_CACHE_MAX_ENTRIES", 10000);
+export const MODULE_CACHE_TTL_MS = getEnvNumber(
+  "MODULE_CACHE_TTL_MS",
+  5 * MS_PER_MINUTE, // 5 minutes - short enough to pick up changes, long enough to cache
+);
+
+// ESM cache for external module mappings
+export const ESM_CACHE_MAX_ENTRIES = getEnvNumber("ESM_CACHE_MAX_ENTRIES", 5000);
+export const ESM_CACHE_TTL_MS = getEnvNumber(
+  "ESM_CACHE_TTL_MS",
+  10 * MS_PER_MINUTE, // 10 minutes - external modules change less frequently
 );

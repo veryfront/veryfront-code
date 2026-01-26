@@ -585,6 +585,68 @@ export function createCacheBackend(config: CacheBackendConfig = {}): Promise<Cac
   );
 }
 
+/**
+ * Check if a cache backend supports distributed (cross-pod) caching.
+ *
+ * Use this instead of checking `backend.type === "memory"` directly,
+ * which is a leaky abstraction that exposes implementation details.
+ */
+export function isDistributedBackend(backend: CacheBackend): boolean {
+  return backend.type !== "memory";
+}
+
+/**
+ * Create a lazy-initialized distributed cache accessor.
+ *
+ * This encapsulates the common pattern of:
+ * 1. Lazy-init a cache backend via Singleflight
+ * 2. Skip if memory-only (not useful for cross-pod sharing)
+ * 3. Return null if init fails
+ *
+ * @param factory - Function that creates the cache backend
+ * @param name - Log prefix for debug messages
+ * @returns A function that returns the distributed cache backend or null
+ */
+export function createDistributedCacheAccessor(
+  factory: () => Promise<CacheBackend>,
+  name: string,
+): () => Promise<CacheBackend | null> {
+  let backend: CacheBackend | null | undefined;
+  const singleflight = new (class {
+    private promise: Promise<CacheBackend | null> | null = null;
+    do(fn: () => Promise<CacheBackend | null>): Promise<CacheBackend | null> {
+      if (!this.promise) {
+        this.promise = fn().finally(() => {
+          this.promise = null;
+        });
+      }
+      return this.promise;
+    }
+  })();
+
+  return () => {
+    if (backend !== undefined) return Promise.resolve(backend);
+
+    return singleflight.do(async () => {
+      try {
+        const b = await factory();
+        if (!isDistributedBackend(b)) {
+          backend = null;
+          logger.debug(`[${name}] No distributed cache available (memory only)`);
+          return null;
+        }
+        backend = b;
+        logger.debug(`[${name}] Distributed cache initialized`, { type: b.type });
+        return b;
+      } catch (error) {
+        logger.debug(`[${name}] Failed to initialize distributed cache`, { error });
+        backend = null;
+        return null;
+      }
+    });
+  };
+}
+
 /** Convenience wrappers for common cache patterns. */
 export const CacheBackends = {
   /** Transform cache for compiled code. */

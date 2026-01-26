@@ -156,6 +156,59 @@ export function destroyTransformCache(): void {
   localFallback.clear();
 }
 
+/**
+ * Get the underlying distributed cache backend.
+ *
+ * This is exposed for callers that need direct access to the distributed
+ * cache (e.g., MDX module-fetcher that stores raw code strings instead of
+ * TransformCacheEntry JSON). Ensures initialization happens only once.
+ *
+ * Returns null if distributed cache is not available (memory-only mode).
+ */
+export async function getDistributedTransformBackend(): Promise<CacheBackend | null> {
+  await initializeTransformCache();
+  if (!cacheBackend || cacheBackend.type === "memory") return null;
+  return cacheBackend;
+}
+
+/**
+ * Get a cached transform or compute it if not found.
+ *
+ * This is the preferred way to use the transform cache - it handles:
+ * - Cache lookup (distributed first, then local fallback)
+ * - Compute on miss
+ * - Cache storage on compute
+ *
+ * @param key - Cache key (use generateCacheKey to build it)
+ * @param computeFn - Function to compute the transform if not cached
+ * @param ttlSeconds - TTL for the cached entry
+ * @returns The cached or computed code
+ */
+export async function getOrComputeTransform(
+  key: string,
+  computeFn: () => Promise<string>,
+  ttlSeconds: number = DEFAULT_TTL_SECONDS,
+): Promise<string> {
+  // Try to get from cache first
+  const cached = await getCachedTransformAsync(key);
+  if (cached) {
+    logger.debug("[TransformCache] Cache hit", { key });
+    return cached.code;
+  }
+
+  // Compute on miss
+  logger.debug("[TransformCache] Cache miss, computing", { key });
+  const code = await computeFn();
+
+  // Store in cache (fire-and-forget for performance)
+  const hash = String(Date.now()); // Simple hash for now
+  setCachedTransformAsync(key, code, hash, ttlSeconds).catch((error) => {
+    logger.debug("[TransformCache] Failed to cache computed transform", { key, error });
+  });
+
+  return code;
+}
+
 export function getTransformCacheStats(): {
   fallbackEntries: number;
   maxFallbackEntries: number;
