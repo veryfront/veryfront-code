@@ -19,6 +19,7 @@ export interface RedisRateLimitOptions {
 
 export class RedisRateLimitStore implements RateLimitStore {
   private client: RedisClient | null = null;
+  private clientPromise: Promise<RedisClient> | null = null;
   private readonly url?: string;
   private readonly keyPrefix: string;
 
@@ -27,9 +28,15 @@ export class RedisRateLimitStore implements RateLimitStore {
     this.keyPrefix = options.keyPrefix ?? "veryfront:ratelimit:";
   }
 
-  private async ensureClient(): Promise<RedisClient> {
-    if (this.client) return this.client;
+  private ensureClient(): Promise<RedisClient> {
+    if (this.client) return Promise.resolve(this.client);
+    if (this.clientPromise) return this.clientPromise;
 
+    this.clientPromise = this.connectClient();
+    return this.clientPromise;
+  }
+
+  private async connectClient(): Promise<RedisClient> {
     let createClient: ((options: { url?: string }) => RedisClient) | undefined;
 
     try {
@@ -37,6 +44,7 @@ export class RedisRateLimitStore implements RateLimitStore {
       const mod = await import(redisClientModule);
       createClient = mod.createClient as (options: { url?: string }) => RedisClient;
     } catch {
+      this.clientPromise = null;
       throw toError(
         createError({
           type: "config",
@@ -46,15 +54,20 @@ export class RedisRateLimitStore implements RateLimitStore {
       );
     }
 
-    const client = createClient({ url: this.url });
+    try {
+      const client = createClient({ url: this.url });
 
-    client.on?.("error", (err: unknown) => {
-      logger.error("[redis-ratelimit] client error", err);
-    });
+      client.on?.("error", (err: unknown) => {
+        logger.error("[redis-ratelimit] client error", err);
+      });
 
-    await client.connect();
-    this.client = client;
-    return client;
+      await client.connect();
+      this.client = client;
+      return client;
+    } catch (error) {
+      this.clientPromise = null;
+      throw error;
+    }
   }
 
   private storageKey(key: string): string {

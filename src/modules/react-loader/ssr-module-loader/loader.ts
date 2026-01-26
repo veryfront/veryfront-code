@@ -661,7 +661,9 @@ export class SSRModuleLoader {
         if (isSSRDistributedCacheEnabled()) {
           setInRedis(contentCacheKey, transformed, {
             isProduction: this.isProductionContentSource(),
-          }).catch(() => {});
+          }).catch((error) => {
+            logger.debug("[SSR-MODULE-LOADER] Distributed cache set failed", { key: contentCacheKey, error });
+          });
         }
 
         // Use transformedHash for cache busting in dynamic imports

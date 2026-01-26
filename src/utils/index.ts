@@ -12,7 +12,6 @@ export {
   getContentHash,
   shortHash,
   simpleHash,
-  simpleHash as numericHash,
 } from "./hash-utils.ts";
 
 export { MemoCache, memoize, memoizeAsync, simpleHash as memoizeHash } from "./memoize.ts";

@@ -82,6 +82,9 @@ export function handleProjectsUI(req: Request): Promise<Response | null> {
     "server.dev.projectsUI.handle",
     async () => {
       const relativePath = pathname.replace("/_projects/ui/", "").replace(/\.js$/, "");
+      if (relativePath.includes("..")) {
+        return new Response("Invalid path", { status: 400, headers: { "Content-Type": "text/plain" } });
+      }
       const uiDir = getUiDirectory();
 
       const module = await readUiSource(uiDir, relativePath);
