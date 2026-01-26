@@ -572,7 +572,9 @@ async function doLoadModuleESM(
       const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
       if (failed.length > 0) {
         throw new Error(
-          `Failed to recover ${failed.length} HTTP bundle(s) from distributed cache: ${failed.join(", ")}`,
+          `Failed to recover ${failed.length} HTTP bundle(s) from distributed cache: ${
+            failed.join(", ")
+          }`,
         );
       }
     }

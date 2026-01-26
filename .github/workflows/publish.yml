@@ -54,7 +54,7 @@ jobs:
 
   publish:
     needs: build-binaries
-    runs-on: veryfront-k8s-runners
+    runs-on: ubuntu-latest  # Required for npm provenance (OIDC)
     permissions:
       contents: write
       id-token: write
@@ -115,7 +115,7 @@ jobs:
 
       - name: Publish to npm
         working-directory: npm
-        run: npm publish --access public
+        run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
 

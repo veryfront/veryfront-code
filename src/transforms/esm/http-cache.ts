@@ -492,7 +492,7 @@ export async function ensureHttpBundlesExist(
   if (bundlePaths.length === 0) return [];
 
   const fs = createFileSystem();
-  const absoluteCacheDir = ensureAbsoluteDir(cacheDir);
+  const _absoluteCacheDir = ensureAbsoluteDir(cacheDir);
 
   // Check which bundles exist locally
   const existenceChecks = await Promise.all(
