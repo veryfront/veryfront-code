@@ -13,7 +13,7 @@ export interface HTMLGenerationOptions {
   nestedLayouts?: Array<{ kind: string; path?: string; componentPath?: string }>;
   appPath?: string;
   pagePath?: string;
-  pageType?: "mdx" | "tsx" | "jsx" | "ts" | "js";
+  pageType?: "mdx" | "md" | "tsx" | "jsx" | "ts" | "js";
   nonce?: string;
   /** Project directory for resolving package versions */
   projectDir?: string;
@@ -43,6 +43,8 @@ export interface HTMLGenerationOptions {
   projectClasses?: Set<string>;
   /** Whether running in local development mode */
   isLocalDev?: boolean;
+  /** Disable HMR scripts (for embedded iframes where WebSocket is unwanted) */
+  noHmr?: boolean;
 }
 
 export interface HydrationData {

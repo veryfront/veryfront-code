@@ -18,7 +18,8 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
-import { getReactImportMap, REACT_VERSION } from "./package-registry.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { getDenoNpmReactMap, getReactImportMap, REACT_VERSION } from "./package-registry.ts";
 import { parseImports, replaceSpecifiers } from "./lexer.ts";
 import type { CacheBackend } from "#veryfront/cache/backend.ts";
 
@@ -76,10 +77,9 @@ function isHttpUrl(specifier: string): boolean {
  * Check if a URL is for React core packages.
  *
  * Previously, React modules were NOT cached to prevent multiple React instances.
- * Now with shared React facades (src/react/shared-*.ts), all code uses the same
- * cached React instance, so this check always returns false to enable caching.
- *
- * @see src/react/shared-react.ts - Cross-runtime React facade
+ * Now with npm: specifiers for Deno (which auto-deduplicate) and consistent
+ * esm.sh URLs with external=react for other runtimes, all code uses the same
+ * React instance.
  */
 function isReactCoreUrl(_url: string): boolean {
   return false;
@@ -114,24 +114,18 @@ function normalizeEsmShUrl(url: URL): void {
   }
 
   const pathname = url.pathname.replace(/^\/+/, "");
-  const isReactCore = pathname.startsWith("react@") || pathname.startsWith("react/") ||
-    pathname.startsWith("react-dom@") || pathname.startsWith("react-dom/");
+  // Only skip external for BASE React package (react@version), not subpaths.
+  // React subpaths (jsx-runtime, etc.) and react-dom need external=react.
+  const isBaseReact = /^react@[\d.]+(?:\?|$)/.test(pathname);
+  if (isBaseReact) return;
 
-  if (isReactCore) return;
-
+  // Add external=react to ensure all packages use the same React instance.
+  // Note: We use external=react only, NOT external=react,react-dom because
+  // externalizing react-dom breaks its internal imports.
   const existing = url.searchParams.get("external");
   const externals = existing ? existing.split(",") : [];
-  let needsUpdate = false;
-
   if (!externals.includes("react")) {
     externals.push("react");
-    needsUpdate = true;
-  }
-  if (!externals.includes("react-dom")) {
-    externals.push("react-dom");
-    needsUpdate = true;
-  }
-  if (needsUpdate) {
     url.searchParams.set("external", externals.join(","));
   }
 }
@@ -156,18 +150,38 @@ function resolveBareSpecifier(
   importMap: ImportMapConfig,
   reactVersion: string = REACT_VERSION,
 ): string {
+  // For Deno SSR: Resolve React to npm: specifiers for automatic deduplication.
+  // Deno's native npm resolution ensures all modules share the same React instance.
+  // See: https://deno.com/blog/not-using-npm-specifiers-doing-it-wrong
+  if (isDeno) {
+    const denoReactMap = getDenoNpmReactMap(reactVersion);
+    const denoMatch = denoReactMap[specifier];
+    if (denoMatch) return denoMatch;
+
+    // For unknown react/* or react-dom/* subpaths, construct npm: specifiers
+    if (specifier.startsWith("react/") && !specifier.startsWith("react-dom")) {
+      const subpath = specifier.slice("react/".length);
+      return `npm:react@${reactVersion}/${subpath}`;
+    }
+    if (specifier.startsWith("react-dom/")) {
+      const subpath = specifier.slice("react-dom/".length);
+      return `npm:react-dom@${reactVersion}/${subpath}`;
+    }
+  }
+
+  // For non-Deno runtimes: Use esm.sh URLs with consistent versioning.
   const reactMap = getReactImportMap(reactVersion);
   const reactMapped = reactMap[specifier];
   if (reactMapped) return reactMapped;
 
   if (specifier.startsWith("react/")) {
     const subpath = specifier.slice("react/".length);
-    return `https://esm.sh/react@${reactVersion}/${subpath}?target=es2022`;
+    return `https://esm.sh/react@${reactVersion}/${subpath}?external=react&target=es2022`;
   }
 
   if (specifier.startsWith("react-dom/")) {
     const subpath = specifier.slice("react-dom/".length);
-    return `https://esm.sh/react-dom@${reactVersion}/${subpath}?target=es2022`;
+    return `https://esm.sh/react-dom@${reactVersion}/${subpath}?external=react&target=es2022`;
   }
 
   const mapped = resolveImport(specifier, importMap);
@@ -280,7 +294,12 @@ async function resolveSpecifier(
 ): Promise<string | null> {
   if (isExternalScheme(specifier) || isInternalBare(specifier)) return null;
 
+  // For Deno: Keep npm: specifiers as-is (Deno resolves them natively with auto-dedup)
+  // For other runtimes: Convert to esm.sh and cache locally
   if (specifier.startsWith("npm:")) {
+    if (isDeno) {
+      return specifier; // Let Deno's native npm resolution handle it
+    }
     const cached = await cacheHttpModule(toEsmShUrlFromNpm(specifier), options);
     return cached ? `file://${cached}` : null;
   }

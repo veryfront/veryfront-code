@@ -323,7 +323,8 @@ describe(
           const server = await context.createProductionServer();
 
           // Act
-          const response = await fetch(`http://127.0.0.1:${server.port}/pages/test`);
+          // URL /test maps to pages/test.mdx (pages/ is the routing root, not part of URL)
+          const response = await fetch(`http://127.0.0.1:${server.port}/test`);
           const html = await response.text();
 
           // Assert

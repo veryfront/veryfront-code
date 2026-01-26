@@ -1,5 +1,6 @@
+import { getDenoNpmReactMap, getReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
-import { getReactImportMap, REACT_VERSION } from "#veryfront/transforms/esm/package-registry.ts";
+import { getLocalReactPaths } from "#veryfront/platform/compat/react-paths.ts";
 
 export interface SSRRewriteOptions {
   /** Project slug for multi-project routing */
@@ -10,6 +11,8 @@ export interface SSRRewriteOptions {
   cacheBuster?: number;
   /** Cross-project reference (e.g., "demo@0.0") for @/ path rewrites */
   crossProjectRef?: string;
+  /** React version to use for import rewrites */
+  reactVersion?: string;
 }
 
 function shouldKeepBareSpecifier(specifier: string): boolean {
@@ -25,41 +28,52 @@ function shouldKeepBareSpecifier(specifier: string): boolean {
 
   if (specifier.startsWith("@/")) return true;
 
-  if (specifier === "react" || specifier.startsWith("react/")) return true;
-  if (specifier === "react-dom" || specifier.startsWith("react-dom/")) return true;
+  // React imports are handled by resolveReactForRuntime - don't keep as bare specifiers
+  // This ensures SSR modules use explicit URLs for React, avoiding multiple instances
 
   if (specifier.startsWith("veryfront/")) return true;
 
   return false;
 }
 
-function resolveReactForRuntime(specifier: string): string | null {
-  if (isDeno) return null;
+function resolveReactForRuntime(specifier: string, version?: string): string | null {
+  // Always rewrite React imports to explicit specifiers for SSR modules.
+  // Dynamic imports from temp files don't have access to deno.json import map,
+  // so we must use explicit specifiers to ensure a single React instance.
+  // For Deno: use npm: specifiers (auto-deduplicated by Deno's npm cache)
+  // For Node/Bun: use local node_modules paths
+  const reactMap = isDeno ? getDenoNpmReactMap(version) : getLocalReactPaths();
 
-  const reactMap = getReactImportMap();
   const mapped = reactMap[specifier];
   if (mapped) return mapped;
 
+  // Handle React subpath imports not in the map
+  const v = version ?? getReactVersion();
   if (specifier.startsWith("react/")) {
     const subpath = specifier.slice("react/".length);
-    return `https://esm.sh/react@${REACT_VERSION}/${subpath}?target=es2022`;
+    return isDeno ? `npm:react@${v}/${subpath}` : `react/${subpath}`;
   }
 
   if (specifier.startsWith("react-dom/")) {
     const subpath = specifier.slice("react-dom/".length);
-    return `https://esm.sh/react-dom@${REACT_VERSION}/${subpath}?target=es2022`;
+    return isDeno ? `npm:react-dom@${v}/${subpath}` : `react-dom/${subpath}`;
   }
 
   return null;
 }
 
-function rewriteBareImports(code: string): string {
+function rewriteBareImports(code: string, version?: string): string {
+  const v = version ?? getReactVersion();
   return code.replace(/from\s+["']([^"'./][^"']*)["']/g, (_match, specifier: string) => {
-    const reactUrl = resolveReactForRuntime(specifier);
+    const reactUrl = resolveReactForRuntime(specifier, v);
     if (reactUrl) return `from "${reactUrl}"`;
     if (shouldKeepBareSpecifier(specifier)) return `from "${specifier}"`;
 
-    return `from "https://esm.sh/${specifier}?deps=react@${REACT_VERSION},react-dom@${REACT_VERSION}&target=es2022"`;
+    // For third-party packages: Deno uses npm: specifiers, Node/Bun use esm.sh
+    if (isDeno) {
+      return `from "npm:${specifier}"`;
+    }
+    return `from "https://esm.sh/${specifier}?deps=react@${v},react-dom@${v}&target=es2022"`;
   });
 }
 
@@ -92,7 +106,7 @@ function rewriteRelativeImports(code: string, options: SSRRewriteOptions): strin
 }
 
 export function applySSRImportRewrites(code: string, options: SSRRewriteOptions = {}): string {
-  let result = rewriteBareImports(code);
+  let result = rewriteBareImports(code, options.reactVersion);
   result = rewritePathAliases(result, options);
   result = rewriteRelativeImports(result, options);
   return result;

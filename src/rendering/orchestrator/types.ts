@@ -62,6 +62,8 @@ export interface RenderOptions {
   contentSourceId?: string;
   /** Skip cache check in pipeline (cache already checked by Renderer) */
   skipCacheCheck?: boolean;
+  /** Disable HMR scripts (for embedded iframes where WebSocket is unwanted) */
+  noHmr?: boolean;
 }
 
 export interface RenderContext {
@@ -73,7 +75,7 @@ export interface RenderContext {
 export interface PageDataResponse {
   slug: string;
   pagePath: string;
-  pageType: "mdx" | "tsx" | "jsx" | "ts" | "js";
+  pageType: "mdx" | "md" | "tsx" | "jsx" | "ts" | "js";
   layouts: Array<{ kind: "mdx" | "tsx"; path: string }>;
   providers: string[];
   frontmatter: Record<string, unknown>;

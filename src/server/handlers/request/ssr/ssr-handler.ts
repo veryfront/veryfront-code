@@ -221,6 +221,10 @@ export class SSRHandler extends BaseHandler {
           const { scheme: colorScheme, fromParam: colorSchemeFromParam } =
             getColorSchemeFromRequest(req, url);
 
+          // Check for noHmr query param (used by embedded iframes to disable WebSocket)
+          const noHmr = url.searchParams.get("noHmr") === "1" ||
+            url.searchParams.get("no_hmr") === "1";
+
           const preRenderHeap = getHeapStats();
           if (preRenderHeap.heapUsedPercent > 30) {
             _logger.debug("[SSR] Pre-render memory", {
@@ -258,6 +262,7 @@ export class SSRHandler extends BaseHandler {
               colorSchemeFromParam,
               environment: ctx.requestContext?.mode,
               projectSlug: ctx.projectSlug,
+              noHmr,
             }));
 
           _logger.debug("[SSR] renderer.renderPage DONE", {

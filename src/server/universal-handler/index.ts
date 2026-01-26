@@ -63,6 +63,7 @@ import { ApiHandlerWrapper } from "../handlers/request/api/index.ts";
 import { SSRHandler } from "../handlers/request/ssr/index.ts";
 import { NotFoundHandler } from "../handlers/response/not-found.ts";
 import { HMRHandler } from "../handlers/preview/hmr-handler.ts";
+import { MarkdownPreviewHandler } from "../handlers/preview/markdown-preview-handler.ts";
 import { OpenAPIHandler } from "../handlers/request/openapi-handler.ts";
 import { OpenAPIDocsHandler } from "../handlers/request/openapi-docs-handler.ts";
 import { DevDashboardHandler } from "../handlers/dev/dashboard/index.ts";
@@ -237,6 +238,7 @@ export function createVeryfrontHandler(
     new RSCHandler(), // Priority: 600 (MEDIUM, runs before static to expose RSC endpoints)
     new ModuleHandler(), // Priority: 600 (MEDIUM)
     apiHandler, // Priority: 700 (MEDIUM)
+    new MarkdownPreviewHandler(), // Priority: 900 (preview/dev only - serves .md files with GitHub styling)
     new SSRHandler(), // Priority: 1000 (LOW)
     new NotFoundHandler(), // Priority: 10000 (FALLBACK)
   ]);

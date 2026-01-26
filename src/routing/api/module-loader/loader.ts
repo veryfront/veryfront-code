@@ -374,7 +374,7 @@ async function rewriteExternalImports(
       for (const pkg of externalPackagesToResolve) {
         const escapedPkg = pkg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-        const staticImportRegex = new RegExp(`from\\s+["']${escapedPkg}["']`, "g");
+        const staticImportRegex = new RegExp(`from\\s*["']${escapedPkg}["']`, "g");
         const dynamicImportRegex = new RegExp(`import\\s*\\(\\s*["']${escapedPkg}["']\\s*\\)`, "g");
 
         const needsStatic = staticImportRegex.test(transformed);

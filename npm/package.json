@@ -28,6 +28,9 @@
     ".": {
       "import": "./esm/src/index.js"
     },
+    "./cli": {
+      "import": "./esm/src/cli/main.js"
+    },
     "./server": {
       "import": "./esm/src/server/index.js"
     },
@@ -187,6 +190,7 @@
     "esbuild": "0.20.2",
     "github-slugger": "2.0.0",
     "gray-matter": "4.0.3",
+    "lightningcss": "1.22.0",
     "mdast-util-to-string": "4.0.0",
     "mime-types": "2.1.35",
     "mri": "^1.2.0",
@@ -198,6 +202,7 @@
     "remark-gfm": "4.0.1",
     "remark-parse": "11.0.0",
     "remark-rehype": "11.1.1",
+    "sharp": "0.33.0",
     "tailwindcss": "4.1.8",
     "unified": "11.0.5",
     "unist-util-visit": "5.0.0",
@@ -219,6 +224,7 @@
     "@types/mime-types": "^2.1.0"
   },
   "_generatedBy": "dnt@dev",
+  "type": "module",
   "bin": {
     "veryfront": "./bin/veryfront.js"
   },

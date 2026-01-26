@@ -39,9 +39,14 @@ interface ErrorBoundaryProps {
   children?: BundledReact.ReactNode;
 }
 
+// Use a more flexible type that works with both npm: and esm.sh React imports
+type ReactLike = {
+  createElement: typeof BundledReact.createElement;
+};
+
 export function createErrorBoundary(
   ErrorComponent: ReservedComponent,
-  ReactLib: typeof BundledReact = BundledReact,
+  ReactLib: ReactLike = BundledReact,
 ): typeof BundledReact.Component<ErrorBoundaryProps, ErrorBoundaryState> {
   return class ErrorBoundary
     extends BundledReact.Component<ErrorBoundaryProps, ErrorBoundaryState> {

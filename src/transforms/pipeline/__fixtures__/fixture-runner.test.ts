@@ -46,7 +46,7 @@ describe("transform pipeline fixtures", { sanitizeResources: false, sanitizeOps:
       assertEquals(result.code.includes('from "react"'), false);
     });
 
-    it("resolves React for SSR (HTTP URLs on Deno, file:// on Node/Bun)", async () => {
+    it("resolves React for SSR (npm: on Deno, file:// on Node/Bun)", async () => {
       const input = await readFixture("react-only", "input.tsx");
 
       const result = await runPipeline(input, "/project/components/Counter.tsx", "/project", {
@@ -57,7 +57,8 @@ describe("transform pipeline fixtures", { sanitizeResources: false, sanitizeOps:
       assertStringIncludes(result.code, "jsx");
 
       if (isDeno) {
-        assertStringIncludes(result.code, "esm.sh/react");
+        // Deno SSR uses npm: specifiers for automatic deduplication
+        assertStringIncludes(result.code, "npm:react@");
       } else {
         assertStringIncludes(result.code, "file://");
       }
@@ -81,7 +82,7 @@ describe("transform pipeline fixtures", { sanitizeResources: false, sanitizeOps:
 
     // Skip this test on Node.js - SSR module resolution differs by runtime
     (isDeno ? it : it.skip)(
-      "preserves npm package specifiers for SSR (resolved by runtime)",
+      "resolves React to npm: specifiers for SSR (Deno only)",
       async () => {
         const input = await readFixture("react-query", "input.tsx");
 
@@ -90,7 +91,8 @@ describe("transform pipeline fixtures", { sanitizeResources: false, sanitizeOps:
           ssr: true,
         });
 
-        assertStringIncludes(result.code, "esm.sh/react");
+        // Deno SSR uses npm: specifiers for React
+        assertStringIncludes(result.code, "npm:react@");
         assertStringIncludes(result.code, "jsx");
       },
     );

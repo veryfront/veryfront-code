@@ -598,7 +598,7 @@ export class SSRModuleLoader {
     const jsSpecifier = specifier.replace(/\.(tsx?|jsx|mdx)$/, ".js");
     const escapedSpecifier = specifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const escapedJsSpecifier = jsSpecifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const pattern = new RegExp(`from\\s+["'](${escapedSpecifier}|${escapedJsSpecifier})["']`, "g");
+    const pattern = new RegExp(`from\\s*["'](${escapedSpecifier}|${escapedJsSpecifier})["']`, "g");
     return transformed.replace(pattern, `from "file://${tempPath}"`);
   }
 
@@ -626,7 +626,7 @@ export class SSRModuleLoader {
 
       for (const pattern of patterns) {
         const escapedPattern = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const regex = new RegExp(`from\\s+["'](${escapedPattern})["']`, "g");
+        const regex = new RegExp(`from\\s*["'](${escapedPattern})["']`, "g");
         result = result.replace(regex, `from "file://${tempPath}"`);
       }
     }

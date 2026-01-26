@@ -11,6 +11,7 @@
  ********************************************************************************/
 
 import { VERSION } from "#veryfront/utils/version.ts";
+import { TRANSFORM_CACHE_VERSION } from "#veryfront/transforms/esm/package-registry.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import type { Span } from "@opentelemetry/api";
@@ -264,7 +265,7 @@ export function buildTransformCacheKey(
 ): string {
   const ssrKey = ssr ? "ssr" : "browser";
   const studioKey = studioEmbed ? ":studio" : "";
-  return `${filePath}:${contentHash}:${ssrKey}${studioKey}`;
+  return `v${TRANSFORM_CACHE_VERSION}:${filePath}:${contentHash}:${ssrKey}${studioKey}`;
 }
 
 export function buildContentHashCacheKey(

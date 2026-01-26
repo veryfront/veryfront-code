@@ -41,6 +41,21 @@ const CSS_CACHE_TTL_SECONDS = 3600;
 const localCssCache = new Map<string, string>();
 const LOCAL_CACHE_MAX_SIZE = 100;
 
+/**
+ * CSS inputs cache - stores the inputs needed to regenerate CSS.
+ * Keyed by CSS hash, stores candidates and stylesheet for JIT regeneration.
+ * This allows any pod to regenerate CSS without fetching all project files.
+ */
+interface CSSInputsCacheEntry {
+  candidates: string[];
+  stylesheet: string;
+}
+
+let cssInputsCache: CacheBackend | null = null;
+let cssInputsCacheInitPromise: Promise<CacheBackend> | null = null;
+const localCssInputsCache = new Map<string, CSSInputsCacheEntry>();
+const LOCAL_CSS_INPUTS_CACHE_MAX = 50;
+
 // Project-level CSS cache - uses distributed backend (API/Redis)
 const PROJECT_CSS_CACHE_TTL_SECONDS = CSS_CACHE_TTL_SECONDS;
 const PROJECT_CSS_LOCAL_FALLBACK_MAX = 50;
@@ -189,6 +204,10 @@ export async function getProjectCSS(
   // Also store in per-hash cache for getCSSByHash lookups
   setProjectCSSLocalFallback(cacheKey, entry);
   await cacheCSSAsync(result.css, hash);
+
+  // Store CSS inputs for JIT regeneration (allows any pod to regenerate)
+  const resolvedStylesheet = stylesheet ?? DEFAULT_STYLESHEET;
+  await storeCSSInputsAsync(hash, candidates, resolvedStylesheet);
 
   logger.debug("[tailwind] Project CSS generated", {
     projectSlug,
@@ -362,6 +381,149 @@ export async function getCSSByHashAsync(hash: string): Promise<string | undefine
 
 export function clearCSSCache(): void {
   localCssCache.clear();
+  localCssInputsCache.clear();
+}
+
+// ============================================================================
+// CSS Inputs Cache - for JIT regeneration
+// ============================================================================
+
+function getCssInputsCache(): Promise<CacheBackend> {
+  if (cssInputsCache) return Promise.resolve(cssInputsCache);
+  if (cssInputsCacheInitPromise) return cssInputsCacheInitPromise;
+
+  cssInputsCacheInitPromise = createCacheBackend({ keyPrefix: "css-inputs" })
+    .then((backend) => {
+      cssInputsCache = backend;
+      logger.debug("[tailwind] CSS inputs cache initialized", { type: backend.type });
+      return backend;
+    })
+    .catch((error) => {
+      logger.warn("[tailwind] Failed to initialize CSS inputs cache, using memory", { error });
+      cssInputsCache = new MemoryCacheBackend(LOCAL_CSS_INPUTS_CACHE_MAX);
+      return cssInputsCache;
+    });
+
+  return cssInputsCacheInitPromise;
+}
+
+function storeInLocalCssInputsCache(hash: string, entry: CSSInputsCacheEntry): void {
+  if (localCssInputsCache.has(hash)) return;
+
+  if (localCssInputsCache.size >= LOCAL_CSS_INPUTS_CACHE_MAX) {
+    const firstKey = localCssInputsCache.keys().next().value as string | undefined;
+    if (firstKey) localCssInputsCache.delete(firstKey);
+  }
+
+  localCssInputsCache.set(hash, entry);
+}
+
+/**
+ * Store CSS generation inputs alongside the CSS for JIT regeneration.
+ * This allows any pod to regenerate CSS without fetching all project files.
+ */
+async function storeCSSInputsAsync(
+  hash: string,
+  candidates: string[] | Set<string>,
+  stylesheet: string,
+): Promise<void> {
+  const candidatesArray = Array.isArray(candidates) ? candidates : [...candidates];
+  const entry: CSSInputsCacheEntry = { candidates: candidatesArray, stylesheet };
+
+  storeInLocalCssInputsCache(hash, entry);
+
+  try {
+    const cache = await getCssInputsCache();
+    await cache.set(hash, JSON.stringify(entry), CSS_CACHE_TTL_SECONDS);
+  } catch (error) {
+    logger.debug("[tailwind] Failed to store CSS inputs in distributed cache", { hash, error });
+  }
+}
+
+/**
+ * Get CSS generation inputs by hash for JIT regeneration.
+ */
+async function getCSSInputsByHash(hash: string): Promise<CSSInputsCacheEntry | undefined> {
+  // Try local cache first
+  const local = localCssInputsCache.get(hash);
+  if (local) return local;
+
+  // Try distributed cache
+  try {
+    const cache = await getCssInputsCache();
+    const raw = await cache.get(hash);
+    if (!raw) return undefined;
+
+    const entry = JSON.parse(raw) as CSSInputsCacheEntry;
+    storeInLocalCssInputsCache(hash, entry);
+    logger.debug("[tailwind] CSS inputs cache hit from distributed cache", { hash });
+    return entry;
+  } catch (error) {
+    logger.debug("[tailwind] Failed to read CSS inputs from distributed cache", { hash, error });
+    return undefined;
+  }
+}
+
+/**
+ * Regenerate CSS by hash using cached inputs.
+ * This is the JIT regeneration path - any pod can regenerate without fetching files.
+ *
+ * @param expectedHash - The CSS hash to regenerate
+ * @returns The regenerated CSS if inputs are cached and hash matches, undefined otherwise
+ */
+export async function regenerateCSSByHash(expectedHash: string): Promise<string | undefined> {
+  return await withSpan(
+    SpanNames.HTML_REGENERATE_CSS_BY_HASH,
+    async () => {
+      // Get cached inputs
+      const inputs = await getCSSInputsByHash(expectedHash);
+      if (!inputs) {
+        logger.debug("[tailwind] Cannot regenerate CSS - no cached inputs", { hash: expectedHash });
+        return undefined;
+      }
+
+      // Regenerate CSS from cached inputs
+      const result = await generateTailwindCSS(inputs.stylesheet, inputs.candidates, {
+        minify: true,
+      });
+
+      if (result.error) {
+        logger.warn("[tailwind] CSS regeneration failed", {
+          hash: expectedHash,
+          error: result.error,
+        });
+        return undefined;
+      }
+
+      // Verify hash matches (protects against stale inputs)
+      const regeneratedHash = hashCSS(result.css);
+      if (regeneratedHash !== expectedHash) {
+        logger.debug("[tailwind] CSS regeneration hash mismatch", {
+          expected: expectedHash,
+          got: regeneratedHash,
+        });
+        return undefined;
+      }
+
+      // Store regenerated CSS in cache
+      storeInLocalCache(regeneratedHash, result.css);
+      try {
+        const cache = await getCssCache();
+        await cache.set(regeneratedHash, result.css, CSS_CACHE_TTL_SECONDS);
+      } catch {
+        // Ignore cache write failure - we have the CSS
+      }
+
+      logger.info("[tailwind] CSS regenerated via JIT", {
+        hash: expectedHash,
+        cssLength: result.css.length,
+        candidateCount: inputs.candidates.length,
+      });
+
+      return result.css;
+    },
+    { "css.hash": expectedHash },
+  );
 }
 
 /**

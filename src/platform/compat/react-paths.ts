@@ -9,6 +9,9 @@
  * @module
  */
 
+// Bun global type declaration for cross-runtime compatibility
+declare const Bun: { resolveSync?: (specifier: string, dir: string) => string } | undefined;
+
 import { pathToFileURL } from "node:url";
 import { isBun, isDeno, isNode } from "./runtime.ts";
 import { cwd } from "./process.ts";
@@ -25,8 +28,7 @@ const REACT_SPECIFIERS = [
 ] as const;
 
 function hasBunResolveSync(): boolean {
-  // deno-lint-ignore no-explicit-any
-  return typeof Bun !== "undefined" && typeof (Bun as any).resolveSync === "function";
+  return typeof Bun !== "undefined" && typeof Bun?.resolveSync === "function";
 }
 
 type ImportMetaWithResolve = ImportMeta & {
@@ -54,9 +56,8 @@ function resolveWithImportMeta(specifier: string, parentUrl: string): string | n
 
 function resolveReactSpecifier(specifier: string): string | undefined {
   try {
-    if (isBun && hasBunResolveSync()) {
-      // deno-lint-ignore no-explicit-any
-      const resolved = (Bun as any).resolveSync(specifier, cwd());
+    if (isBun && hasBunResolveSync() && Bun?.resolveSync) {
+      const resolved = Bun.resolveSync(specifier, cwd());
       return `file://${resolved}`;
     }
 

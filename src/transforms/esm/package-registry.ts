@@ -5,8 +5,31 @@
  * SSR resolves to esm.sh URLs (then cached to file://), browser uses esm.sh URLs.
  */
 
-export const REACT_VERSION = "19.1.1";
+/** Default React version - used when not specified in project config */
+export const DEFAULT_REACT_VERSION = "19.1.1";
 export const TAILWIND_VERSION = "4.1.8";
+
+/** Cached React version from project config */
+let configuredReactVersion: string | null = null;
+
+/**
+ * Set the React version from project configuration.
+ * Call this during project initialization if a custom version is specified.
+ */
+export function setReactVersion(version: string): void {
+  configuredReactVersion = version;
+}
+
+/**
+ * Get the current React version.
+ * Returns configured version if set, otherwise the default.
+ */
+export function getReactVersion(): string {
+  return configuredReactVersion ?? DEFAULT_REACT_VERSION;
+}
+
+/** @deprecated Use DEFAULT_REACT_VERSION or getReactVersion() */
+export const REACT_VERSION = DEFAULT_REACT_VERSION;
 
 /**
  * Transform cache version - bump when transform logic changes.
@@ -15,8 +38,15 @@ export const TAILWIND_VERSION = "4.1.8";
  *
  * v2: Skip ssr-http-cache on Deno for cross-pod compatibility
  * v3: Use HTTP imports in shared React modules on Deno
+ * v4: Enable ssr-http-cache for Deno; resolve React to shared-*.ts files
+ * v5: Use npm: specifiers for Deno SSR (auto-dedup, no shared-*.ts needed)
+ * v6: Update all shared-*.ts files to use npm: specifiers
+ * v7: Keep npm: specifiers for Deno in http-cache (don't convert to esm.sh)
+ * v8: Remove shared-*.ts files; use npm: specifiers directly in deno.json
+ * v9: Align ssr-import-rewriter to use npm: specifiers for Deno SSR
+ * v10: Fix import regex to match minified code (from"..." without whitespace)
  */
-export const TRANSFORM_CACHE_VERSION = 3;
+export const TRANSFORM_CACHE_VERSION = 10;
 
 function esmSh(pkg: string, version: string, path = "", query = "target=es2022"): string {
   return `https://esm.sh/${pkg}@${version}${path}?${query}`;
@@ -38,16 +68,20 @@ export function getEsmShUrl(pkg: string, version: string, external?: readonly st
  * Used by both SSR and browser for full-stack consistency.
  * Uses ?target=es2022 to ensure identical builds (esm.sh auto-detects target otherwise).
  *
- * @param version - React version to use (defaults to REACT_VERSION)
+ * All React sub-packages must use external=react to share the same React instance.
+ * This ensures jsx-runtime, react-dom, and third-party packages all use one React.
+ *
+ * @param version - React version to use (defaults to configured or DEFAULT_REACT_VERSION)
  */
-export function getReactUrls(version: string = REACT_VERSION): Record<string, string> {
+export function getReactUrls(version?: string): Record<string, string> {
+  const v = version ?? getReactVersion();
   return {
-    react: esmSh("react", version),
-    "react-dom": esmSh("react-dom", version),
-    "react-dom/client": esmSh("react-dom", version, "/client"),
-    "react-dom/server": esmSh("react-dom", version, "/server"),
-    "react/jsx-runtime": esmSh("react", version, "/jsx-runtime"),
-    "react/jsx-dev-runtime": esmSh("react", version, "/jsx-dev-runtime"),
+    react: esmSh("react", v),
+    "react-dom": esmSh("react-dom", v, "", "external=react&target=es2022"),
+    "react-dom/client": esmSh("react-dom", v, "/client", "external=react&target=es2022"),
+    "react-dom/server": esmSh("react-dom", v, "/server", "external=react&target=es2022"),
+    "react/jsx-runtime": esmSh("react", v, "/jsx-runtime", "external=react&target=es2022"),
+    "react/jsx-dev-runtime": esmSh("react", v, "/jsx-dev-runtime", "external=react&target=es2022"),
   };
 }
 
@@ -59,12 +93,37 @@ export function getReactUrls(version: string = REACT_VERSION): Record<string, st
  * Works in Deno, Node, and Bun since esm.sh URLs are standard HTTPS imports.
  * Uses ?target=es2022 to ensure identical builds across all runtimes.
  *
+ * @param version - React version to use (defaults to configured or DEFAULT_REACT_VERSION)
+ */
+export function getReactImportMap(version?: string): Record<string, string> {
+  const v = version ?? getReactVersion();
+  return {
+    ...getReactUrls(v),
+    // Prefix match for any react/* subpath imports
+    "react/": esmSh("react", v, "/", "external=react&target=es2022"),
+  };
+}
+
+/**
+ * Get React npm specifiers for Deno SSR.
+ * Uses npm: protocol which Deno handles natively with automatic deduplication.
+ * See: https://deno.com/blog/not-using-npm-specifiers-doing-it-wrong
+ *
+ * Benefits over esm.sh:
+ * - Automatic semantic version deduplication (like Node's node_modules)
+ * - No manual external= flags or shared-*.ts wrapper files needed
+ * - Native support in Deno 2+
+ *
  * @param version - React version to use (defaults to REACT_VERSION)
  */
-export function getReactImportMap(version: string = REACT_VERSION): Record<string, string> {
+export function getDenoNpmReactMap(version?: string): Record<string, string> {
+  const v = version ?? getReactVersion();
   return {
-    ...getReactUrls(version),
-    // Prefix match for any react/* subpath imports
-    "react/": esmSh("react", version, "/"),
+    "react": `npm:react@${v}`,
+    "react-dom": `npm:react-dom@${v}`,
+    "react-dom/client": `npm:react-dom@${v}/client`,
+    "react-dom/server": `npm:react-dom@${v}/server`,
+    "react/jsx-runtime": `npm:react@${v}/jsx-runtime`,
+    "react/jsx-dev-runtime": `npm:react@${v}/jsx-dev-runtime`,
   };
 }
