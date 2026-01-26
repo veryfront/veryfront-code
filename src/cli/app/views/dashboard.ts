@@ -5,7 +5,7 @@
  */
 
 import { box } from "../../ui/box.ts";
-import { brand, dim, error, muted, success } from "../../ui/colors.ts";
+import { brand, dim, error, muted } from "../../ui/colors.ts";
 import { getTerminalWidth } from "../../ui/layout.ts";
 import { getAgentFaceWithText } from "../../ui/dot-matrix.ts";
 import { renderList } from "../components/list-select.ts";
@@ -93,28 +93,25 @@ export function renderDashboard(state: AppState): string {
 }
 
 /**
- * Render the banner with agent face and server info
+ * Render the banner with agent face and server info inside a box
  */
 function renderBanner(state: AppState): string {
-  const serverDot = state.server.running ? success("●") : error("●");
-  const mcpDot = state.mcp.enabled ? success("●") : dim("○");
-
+  const termWidth = Math.min(getTerminalWidth() - 4, 80);
   const textLines: string[] = [];
 
-  textLines.push(`${brand("Veryfront Code")}`);
-  textLines.push(`${serverDot} ${dim("Server running")}`);
-  textLines.push(`  ${brand(state.server.url)}`);
+  textLines.push(`${brand("Veryfront Code")} ${dim("is now running")}`);
+  textLines.push("");
 
-  if (state.mcp.enabled) {
-    textLines.push(`${mcpDot} ${dim("MCP")}`);
-    if (state.mcp.transport === "http") {
-      const port = state.mcp.httpPort ?? 9999;
-      textLines.push(`  ${brand(`http://veryfront.me:${port}/mcp`)}`);
-    } else {
-      textLines.push(`  ${dim("stdio")}`);
-    }
+  // Server URL
+  textLines.push(`${dim("Url")}  ${brand(state.server.url)}`);
+
+  // MCP URL
+  if (state.mcp.enabled && state.mcp.transport === "http") {
+    const port = state.mcp.httpPort ?? 9999;
+    textLines.push(`${dim("Mcp")}  ${brand(`http://veryfront.me:${port}/mcp`)}`);
   }
 
+  // Errors/warnings on separate line if any
   const { errors, warnings } = state.server;
   if (errors > 0 || warnings > 0) {
     const parts: string[] = [];
@@ -123,8 +120,20 @@ function renderBanner(state: AppState): string {
     textLines.push(parts.join("  "));
   }
 
-  return getAgentFaceWithText(textLines, {
+  // Pad to minimum 5 text lines for consistent height with startup view
+  while (textLines.length < 5) {
+    textLines.push("");
+  }
+
+  const content = getAgentFaceWithText(textLines, {
     litColor: "\x1b[38;2;252;143;93m", // Veryfront brand orange
+  });
+
+  return box(content, {
+    style: "rounded",
+    width: termWidth,
+    paddingX: 2,
+    paddingY: 1,
   });
 }
 

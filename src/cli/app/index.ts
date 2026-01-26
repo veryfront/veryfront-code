@@ -17,9 +17,16 @@ import { join } from "#veryfront/platform/compat/path/index.ts";
 import { getRuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import { getStdinReader, setRawMode } from "#veryfront/platform/compat/stdin.ts";
 import { cursor, screen, SPINNER_FRAMES } from "../ui/ansi.ts";
-import { brand, dim, success } from "../ui/colors.ts";
+import { brand, dim } from "../ui/colors.ts";
 import { moveDown, moveUp, selectByNumber } from "./components/list-select.ts";
 import { renderDashboard, renderEmptyState } from "./views/dashboard.ts";
+import {
+  createStartupState,
+  incrementFrame,
+  renderStartup,
+  setStartupReady,
+  setStepActive,
+} from "./views/startup.ts";
 import { openInBrowser, openInIDE, openInStudio, openMCPSettings } from "./actions.ts";
 import { initCommand } from "../commands/init/init-command.ts";
 import type { InitTemplate } from "../commands/init/types.ts";
@@ -1421,43 +1428,38 @@ export function createApp(config: AppConfig): App {
 }
 
 /**
- * Show startup animation
+ * Show startup animation with boxed view and shimmer effect
  */
-export async function showStartup(steps: string[]): Promise<void> {
+export async function showStartup(
+  steps: string[],
+  options?: { serverUrl?: string; mcpUrl?: string },
+): Promise<void> {
   const write = (text: string): void => writeStdout(text);
 
   write(screen.altOn + cursor.hide);
 
+  let startupState = createStartupState(steps);
+
+  // Show each step with shimmer animation
   for (let i = 0; i < steps.length; i++) {
-    const step = steps[i]!;
-    const completed = steps.slice(0, i).map((s) => `  ${success("✓")} ${dim(s)}`);
-    const current = `  ${brand("●")} ${step}`;
-    const pending = steps.slice(i + 1).map((s) => `  ${dim("○")} ${dim(s)}`);
+    startupState = setStepActive(startupState, i);
 
-    const content = [
-      "",
-      `  ${brand("Veryfront")} ${dim("starting...")}`,
-      "",
-      ...completed,
-      current,
-      ...pending,
-      "",
-    ].join("\n");
-
-    write(cursor.moveTo(1, 1) + screen.clearDown + content);
-    await new Promise((r) => setTimeout(r, 200));
+    // Animate shimmer for this step (8 frames at 50ms = 400ms per step)
+    const framesPerStep = 8;
+    for (let f = 0; f < framesPerStep; f++) {
+      write(cursor.moveTo(1, 1) + screen.clearDown + "\n" + renderStartup(startupState));
+      startupState = incrementFrame(startupState);
+      await new Promise((r) => setTimeout(r, 50));
+    }
   }
 
-  const allComplete = steps.map((s) => `  ${success("✓")} ${dim(s)}`);
-  const finalContent = [
-    "",
-    `  ${brand("Veryfront")} ${success("ready")}`,
-    "",
-    ...allComplete,
-    "",
-  ].join("\n");
-
-  write(cursor.moveTo(1, 1) + screen.clearDown + finalContent);
+  // Show ready state with URLs
+  startupState = setStartupReady(
+    startupState,
+    options?.serverUrl || "http://veryfront.me:3000",
+    options?.mcpUrl,
+  );
+  write(cursor.moveTo(1, 1) + screen.clearDown + "\n" + renderStartup(startupState));
   await new Promise((r) => setTimeout(r, 300));
 
   // Don't exit alternate screen - let app.start() continue in it
