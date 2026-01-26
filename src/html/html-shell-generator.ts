@@ -134,9 +134,11 @@ async function generateHTMLShellPartsImpl(
     for (const cls of extractCandidates(contentForTailwind)) candidates.add(cls);
   }
 
-  // Safelist: prose classes for markdown compiler (requires @tailwindcss/typography)
+  // Safelist: classes added dynamically by markdown compiler
   candidates.add("prose");
   candidates.add("dark:prose-invert");
+  candidates.add("mx-auto");
+  candidates.add("p-4");
 
   const projectSlug = options.projectId || meta.slug || "default";
   let cssHash = "";
