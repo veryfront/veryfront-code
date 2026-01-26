@@ -212,22 +212,23 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
   if (await exists(cachePath)) {
     cachedPaths.set(cacheKey, cachePath);
 
-    // Ensure code:{hash} exists in distributed cache for cross-pod recovery
+    // Synchronously ensure code:{hash} exists in distributed cache for cross-pod recovery
     // This backfills bundles created before code:{hash} storage was added
+    // Synchronous to guarantee data is stored before other pods need it
     const distributed = await getDistributedCache();
     if (distributed) {
       const hash = simpleHash(normalizedUrl);
-      distributed.get(`code:${hash}`).then(async (existing) => {
-        if (!existing) {
-          try {
-            const code = await fs.readTextFile(cachePath);
-            distributed.set(`code:${hash}`, code, DISTRIBUTED_CACHE_TTL_SECONDS).catch(() => {});
-            logger.debug("[HTTP-CACHE] Backfilled code:{hash} for existing bundle", { hash });
-          } catch {
-            // Ignore read errors
-          }
+      try {
+        const hasCode = await distributed.get(`code:${hash}`);
+        if (!hasCode) {
+          const code = await fs.readTextFile(cachePath);
+          await distributed.set(`code:${hash}`, code, DISTRIBUTED_CACHE_TTL_SECONDS);
+          logger.info("[HTTP-CACHE] Backfilled code:{hash} for existing bundle", { hash });
         }
-      }).catch(() => {});
+      } catch (error) {
+        // Log but don't fail - backfill is best-effort
+        logger.debug("[HTTP-CACHE] Backfill failed, continuing", { hash, error });
+      }
     }
 
     return cachePath;
@@ -416,11 +417,6 @@ export async function cacheModuleToLocal(url: string, cacheDir: string): Promise
   return cached ? `file://${cached}` : url;
 }
 
-/** Max retry attempts for recovery */
-const RECOVERY_MAX_RETRIES = 3;
-/** Delay between retries in ms */
-const RECOVERY_RETRY_DELAY_MS = 500;
-
 /**
  * Recover a missing HTTP bundle by looking up the code directly from the hash.
  * Used for cross-pod recovery when a file:// path points to a bundle that
@@ -429,9 +425,6 @@ const RECOVERY_RETRY_DELAY_MS = 500;
  * Recovery strategy (in order of preference):
  * 1. Direct code lookup by hash (code:{hash}) - fastest, most reliable
  * 2. URL lookup then re-fetch (hash:{hash} → URL → fetch) - fallback
- *
- * Retries with delay to handle timing issues where backfill from another
- * pod might not have completed yet.
  *
  * @param hash - The hash from the bundle filename (e.g., "974671618" from "http-974671618.mjs")
  * @param cacheDir - The cache directory path
@@ -448,47 +441,132 @@ export async function recoverHttpBundleByHash(hash: string, cacheDir: string): P
   const cachePath = join(absoluteCacheDir, `http-${hash}.mjs`);
   const fs = createFileSystem();
 
-  for (let attempt = 1; attempt <= RECOVERY_MAX_RETRIES; attempt++) {
-    try {
-      // Strategy 1: Direct code lookup by hash (preferred - no URL needed)
-      const cachedCode = await distributed.get(`code:${hash}`);
-      if (cachedCode) {
-        logger.info("[HTTP-CACHE] Recovering bundle via direct code lookup", { hash, attempt });
-        await fs.mkdir(absoluteCacheDir, { recursive: true });
-        await fs.writeTextFile(cachePath, cachedCode);
-        logger.info("[HTTP-CACHE] Bundle recovery successful (direct)", { hash, path: cachePath });
+  try {
+    // Strategy 1: Direct code lookup by hash (preferred - no URL needed)
+    const cachedCode = await distributed.get(`code:${hash}`);
+    if (cachedCode) {
+      logger.info("[HTTP-CACHE] Recovering bundle via direct code lookup", { hash });
+      await fs.mkdir(absoluteCacheDir, { recursive: true });
+      await fs.writeTextFile(cachePath, cachedCode);
+      logger.info("[HTTP-CACHE] Bundle recovery successful (direct)", { hash, path: cachePath });
+      return true;
+    }
+
+    // Strategy 2: URL lookup then re-fetch (fallback for bundles cached before code:{hash} was added)
+    const originalUrl = await distributed.get(`hash:${hash}`);
+    if (originalUrl) {
+      logger.info("[HTTP-CACHE] Recovering bundle via URL re-fetch", { hash, originalUrl });
+      const importMap = { imports: {}, scopes: {} };
+      const result = await cacheHttpModule(originalUrl, { cacheDir, importMap });
+      if (result) {
+        logger.info("[HTTP-CACHE] Bundle recovery successful (re-fetch)", { hash, path: result });
         return true;
       }
-
-      // Strategy 2: URL lookup then re-fetch (fallback for bundles cached before code:{hash} was added)
-      const originalUrl = await distributed.get(`hash:${hash}`);
-      if (originalUrl) {
-        logger.info("[HTTP-CACHE] Recovering bundle via URL re-fetch", {
-          hash,
-          originalUrl,
-          attempt,
-        });
-        const importMap = { imports: {}, scopes: {} };
-        const result = await cacheHttpModule(originalUrl, { cacheDir, importMap });
-        if (result) {
-          logger.info("[HTTP-CACHE] Bundle recovery successful (re-fetch)", { hash, path: result });
-          return true;
-        }
-      }
-
-      // No data found, retry after delay (another pod might be backfilling)
-      if (attempt < RECOVERY_MAX_RETRIES) {
-        logger.debug("[HTTP-CACHE] Recovery data not found, retrying", { hash, attempt });
-        await new Promise((resolve) => setTimeout(resolve, RECOVERY_RETRY_DELAY_MS));
-      }
-    } catch (error) {
-      logger.error("[HTTP-CACHE] Bundle recovery attempt failed", { hash, attempt, error });
-      if (attempt < RECOVERY_MAX_RETRIES) {
-        await new Promise((resolve) => setTimeout(resolve, RECOVERY_RETRY_DELAY_MS));
-      }
     }
+
+    logger.debug("[HTTP-CACHE] No recovery data found for hash", { hash });
+    return false;
+  } catch (error) {
+    logger.error("[HTTP-CACHE] Bundle recovery failed", { hash, error });
+    return false;
+  }
+}
+
+/**
+ * Ensure all HTTP bundles exist locally before import.
+ * Proactively fetches missing bundles from distributed cache.
+ *
+ * This is the preferred approach over fail-then-recover:
+ * - Check first, don't wait for import to fail
+ * - Batch fetch for efficiency
+ * - Clear error messages if bundles not available
+ *
+ * @param bundlePaths - Array of {path, hash} for bundles to check
+ * @param cacheDir - Cache directory for HTTP bundles
+ * @returns Array of hashes that could not be recovered
+ */
+export async function ensureHttpBundlesExist(
+  bundlePaths: Array<{ path: string; hash: string }>,
+  cacheDir: string,
+): Promise<string[]> {
+  if (bundlePaths.length === 0) return [];
+
+  const fs = createFileSystem();
+  const absoluteCacheDir = ensureAbsoluteDir(cacheDir);
+
+  // Check which bundles exist locally
+  const existenceChecks = await Promise.all(
+    bundlePaths.map(async ({ path, hash }) => ({
+      path,
+      hash,
+      exists: await exists(path),
+    })),
+  );
+
+  const missing = existenceChecks.filter((b) => !b.exists);
+  if (missing.length === 0) {
+    logger.debug("[HTTP-CACHE] All bundles exist locally", { count: bundlePaths.length });
+    return [];
   }
 
-  logger.debug("[HTTP-CACHE] All recovery attempts exhausted", { hash });
-  return false;
+  logger.info("[HTTP-CACHE] Fetching missing bundles from distributed cache", {
+    missing: missing.length,
+    total: bundlePaths.length,
+  });
+
+  const distributed = await getDistributedCache();
+  if (!distributed) {
+    logger.error("[HTTP-CACHE] No distributed cache available for bundle recovery");
+    return missing.map((m) => m.hash);
+  }
+
+  // Batch fetch from distributed cache
+  const codeKeys = missing.map((m) => `code:${m.hash}`);
+  let codes: Map<string, string | null>;
+
+  try {
+    if (distributed.getBatch) {
+      codes = await distributed.getBatch(codeKeys);
+    } else {
+      // Fallback to individual gets
+      const results = await Promise.all(
+        codeKeys.map(async (key) => [key, await distributed.get(key)] as const),
+      );
+      codes = new Map(results);
+    }
+  } catch (error) {
+    logger.error("[HTTP-CACHE] Batch fetch from distributed cache failed", { error });
+    return missing.map((m) => m.hash);
+  }
+
+  // Write fetched bundles to disk
+  const failed: string[] = [];
+  await Promise.all(
+    missing.map(async ({ path, hash }) => {
+      const code = codes.get(`code:${hash}`);
+      if (!code) {
+        logger.warn("[HTTP-CACHE] Bundle not found in distributed cache", { hash });
+        failed.push(hash);
+        return;
+      }
+
+      try {
+        const dir = path.substring(0, path.lastIndexOf("/"));
+        await fs.mkdir(dir, { recursive: true });
+        await fs.writeTextFile(path, code);
+        logger.debug("[HTTP-CACHE] Wrote bundle to disk", { hash, path });
+      } catch (error) {
+        logger.error("[HTTP-CACHE] Failed to write bundle to disk", { hash, error });
+        failed.push(hash);
+      }
+    }),
+  );
+
+  if (failed.length > 0) {
+    logger.warn("[HTTP-CACHE] Some bundles could not be recovered", { failed });
+  } else {
+    logger.info("[HTTP-CACHE] All missing bundles recovered", { count: missing.length });
+  }
+
+  return failed;
 }

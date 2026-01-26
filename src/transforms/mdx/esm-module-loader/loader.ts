@@ -16,7 +16,7 @@ import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { loadImportMap, transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/index.ts";
-import { cacheHttpImportsToLocal, recoverHttpBundleByHash } from "../../esm/http-cache.ts";
+import { cacheHttpImportsToLocal, ensureHttpBundlesExist } from "../../esm/http-cache.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { replaceSpecifiers } from "../../esm/lexer.ts";
 import { setupSSRGlobals } from "../../../rendering/ssr-globals.ts";
@@ -380,49 +380,31 @@ async function cacheHttpImports(code: string, importMap: ImportMapConfig): Promi
   return await cacheHttpImportsToLocal(code, { cacheDir: getHttpBundleCacheDir(), importMap });
 }
 
-/**
- * Extract HTTP bundle hash from a "Module not found" error message.
- * Matches patterns like: file:///app/.cache/veryfront-http-bundle/http-974671618.mjs
- */
-function extractHttpBundleHash(errorMessage: string): string | null {
-  const match = errorMessage.match(/veryfront-http-bundle\/http-([a-f0-9]+)\.mjs/i);
-  return match?.[1] ?? null;
-}
+/** Pattern to extract HTTP bundle paths from code */
+const HTTP_BUNDLE_PATTERN = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
 
 /**
- * Import a module with automatic recovery for missing HTTP bundles.
- * If the import fails due to a missing HTTP bundle (cross-pod cache miss),
- * attempts to recover the bundle from distributed cache and retry.
+ * Extract all HTTP bundle paths and hashes from code.
+ * Returns array of {path, hash} for proactive bundle checking.
  */
-async function importWithHttpBundleRecovery(
-  fileUrl: string,
-): Promise<Record<string, unknown> & { __vfLayout?: React.ComponentType }> {
-  try {
-    return await import(fileUrl);
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
+function extractHttpBundlePaths(code: string): Array<{ path: string; hash: string }> {
+  const bundles: Array<{ path: string; hash: string }> = [];
+  const seen = new Set<string>();
 
-    // Check if this is a missing HTTP bundle error
-    const hash = extractHttpBundleHash(errorMessage);
-    if (!hash) {
-      throw error; // Not an HTTP bundle error, rethrow
+  let match;
+  while ((match = HTTP_BUNDLE_PATTERN.exec(code)) !== null) {
+    const path = match[1] as string;
+    const hash = match[2] as string;
+    if (!seen.has(hash)) {
+      seen.add(hash);
+      bundles.push({ path, hash });
     }
-
-    logger.info(`${LOG_PREFIX_MDX_LOADER} Attempting HTTP bundle recovery`, { hash, fileUrl });
-
-    // Attempt recovery from distributed cache
-    const cacheDir = getHttpBundleCacheDir();
-    const recovered = await recoverHttpBundleByHash(hash, cacheDir);
-
-    if (!recovered) {
-      logger.error(`${LOG_PREFIX_MDX_LOADER} HTTP bundle recovery failed`, { hash });
-      throw error;
-    }
-
-    // Retry the import after recovery
-    logger.info(`${LOG_PREFIX_MDX_LOADER} Retrying import after bundle recovery`, { hash });
-    return await import(fileUrl);
   }
+
+  // Reset regex state
+  HTTP_BUNDLE_PATTERN.lastIndex = 0;
+
+  return bundles;
 }
 
 export async function loadModuleESM(
@@ -578,11 +560,28 @@ async function doLoadModuleESM(
 
     setupSSRGlobals();
 
+    // Proactively ensure all HTTP bundles exist before import
+    // This is more reliable than fail-then-recover: check first, don't wait for import to fail
+    const bundlePaths = extractHttpBundlePaths(rewritten);
+    if (bundlePaths.length > 0) {
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} Checking HTTP bundles`, {
+        count: bundlePaths.length,
+        projectSlug,
+      });
+      const cacheDir = getHttpBundleCacheDir();
+      const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
+      if (failed.length > 0) {
+        throw new Error(
+          `Failed to recover ${failed.length} HTTP bundle(s) from distributed cache: ${failed.join(", ")}`,
+        );
+      }
+    }
+
     const mod = await withSpan(
       SpanNames.MDX_DYNAMIC_IMPORT,
-      () => importWithHttpBundleRecovery(`file://${filePath}?v=${codeHash}`),
+      () => import(`file://${filePath}?v=${codeHash}`),
       { "mdx.file_path": filePath.split("/").pop() || filePath },
-    );
+    ) as Record<string, unknown> & { __vfLayout?: React.ComponentType };
 
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Step: dynamic import DONE`, {
       projectSlug,
