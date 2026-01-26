@@ -307,7 +307,18 @@ async function generateHTMLShellPartsImpl(
   const mermaidScript = isMarkdownPreview
     ? `<script type="module"${nonce ? ` nonce="${nonce}"` : ""}>
 import mermaid from 'https://esm.sh/mermaid@11';
-mermaid.initialize({ startOnLoad: true, theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'default' });
+mermaid.initialize({ startOnLoad: false, theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'default' });
+// Convert code.language-mermaid blocks to mermaid-compatible format
+document.querySelectorAll('code.language-mermaid').forEach((code, i) => {
+  const pre = code.parentElement;
+  if (pre?.tagName === 'PRE') {
+    const div = document.createElement('pre');
+    div.className = 'mermaid';
+    div.textContent = code.textContent;
+    pre.replaceWith(div);
+  }
+});
+mermaid.run();
 </script>`
     : "";
 
