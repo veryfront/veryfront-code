@@ -168,11 +168,17 @@ function handleWebSocketUpgrade(req: Request): Response {
 
     rendererSocket.onerror = (event) => {
       clearConnectTimeout();
-      proxyLogger.error("[WebSocket] Renderer connection error", {
+      const errorMessage = event instanceof ErrorEvent ? event.message : "Unknown error";
+      // Renderer disconnections (EOF, connection reset) are expected during pod scaling
+      const isExpectedDisconnect = errorMessage.includes("EOF") ||
+        errorMessage.includes("connection reset") ||
+        errorMessage.includes("ECONNRESET");
+      const logFn = isExpectedDisconnect ? proxyLogger.debug : proxyLogger.error;
+      logFn("[WebSocket] Renderer connection error", {
         projectSlug,
         environment: scope,
         targetUrl: targetUrl.toString(),
-        error: event instanceof ErrorEvent ? event.message : "Unknown error",
+        error: errorMessage,
       });
     };
 
@@ -197,8 +203,16 @@ function handleWebSocketUpgrade(req: Request): Response {
 
   clientSocket.onerror = (event) => {
     clearConnectTimeout();
-    proxyLogger.error("[WebSocket] Client connection error", {
-      error: event instanceof ErrorEvent ? event.message : "Unknown error",
+    const errorMessage = event instanceof ErrorEvent ? event.message : "Unknown error";
+    // Client disconnections (EOF, connection reset) are expected operational events
+    const isExpectedDisconnect = errorMessage.includes("EOF") ||
+      errorMessage.includes("connection reset") ||
+      errorMessage.includes("ECONNRESET");
+    const logFn = isExpectedDisconnect ? proxyLogger.debug : proxyLogger.error;
+    logFn("[WebSocket] Client connection error", {
+      error: errorMessage,
+      projectSlug,
+      environment: scope,
     });
   };
 
