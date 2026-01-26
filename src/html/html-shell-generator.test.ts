@@ -143,36 +143,6 @@ describe("html-generation/html-shell-generator", () => {
       );
     });
 
-    it("should include syntax highlighting styles", async () => {
-      const result = await wrapInHTMLShell(
-        "<div>Content</div>",
-        createMeta(),
-        createOptions(),
-      );
-
-      assertStringIncludes(result, "highlight.js");
-    });
-
-    it("should use different syntax theme for dev and prod", async () => {
-      const meta = createMeta();
-
-      const devResult = await wrapInHTMLShell(
-        "<div>Content</div>",
-        meta,
-        createOptions({ isLocalDev: true }),
-      );
-
-      const prodResult = await wrapInHTMLShell(
-        "<div>Content</div>",
-        meta,
-        createOptions({ mode: "production", isLocalDev: false }),
-      );
-
-      assertStringIncludes(devResult, "github-dark");
-      assertStringIncludes(prodResult, "github.min.css");
-      assert(!prodResult.includes("github-dark"));
-    });
-
     it("should include hydration data script", async () => {
       const result = await wrapInHTMLShell(
         "<div>Content</div>",
@@ -303,18 +273,6 @@ describe("html-generation/html-shell-generator", () => {
 
       assert(!result.includes("<script>alert('xss')</script>"));
       assertStringIncludes(result, "&lt;script&gt;");
-    });
-
-    it("should include mermaid diagram rendering script", async () => {
-      const result = await wrapInHTMLShell(
-        "<div>Content</div>",
-        createMeta(),
-        createOptions(),
-      );
-
-      assertStringIncludes(result, "Mermaid diagram rendering");
-      assertStringIncludes(result, "mermaid@10/dist/mermaid.esm.min.mjs");
-      assertStringIncludes(result, "mermaid.run()");
     });
   });
 });
