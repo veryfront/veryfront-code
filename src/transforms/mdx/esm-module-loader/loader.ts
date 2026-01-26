@@ -401,10 +401,22 @@ async function importWithHttpBundleRecovery(
     return await import(fileUrl);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorName = error instanceof Error ? error.name : "Unknown";
+    const errorStack = error instanceof Error ? error.stack : undefined;
+
+    logger.warn(`${LOG_PREFIX_MDX_LOADER} Import failed, checking for HTTP bundle recovery`, {
+      fileUrl,
+      errorName,
+      errorMessage: errorMessage.substring(0, 500),
+      hasVerfrontHttpBundle: errorMessage.includes("veryfront-http-bundle"),
+    });
 
     // Check if this is a missing HTTP bundle error
     const hash = extractHttpBundleHash(errorMessage);
     if (!hash) {
+      logger.debug(`${LOG_PREFIX_MDX_LOADER} No HTTP bundle hash found in error, rethrowing`, {
+        errorMessage: errorMessage.substring(0, 200),
+      });
       throw error; // Not an HTTP bundle error, rethrow
     }
 
