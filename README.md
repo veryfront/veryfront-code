@@ -21,27 +21,4 @@ npx veryfront
 
 One command. Zero config. Just build.
 
-## Structure
-
-```
-app/       → pages & APIs
-agents/    → AI agents
-tools/     → MCP tools
-workflows/ → durable workflows
-```
-
-Auto-discovered.
-
-## Links
-
-[Docs](https://veryfront.com/docs/framework) · [Discord](https://discord.gg/veryfront) · [X](https://x.com/veryfrontdev)
-
-## Release
-
-```bash
-deno task release
-```
-
-## License
-
-MIT
+[Docs](https://veryfront.com/docs/framework) · [Discord](https://discord.gg/veryfront) · [X](https://x.com/veryfrontdev) · MIT

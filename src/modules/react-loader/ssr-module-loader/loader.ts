@@ -169,7 +169,8 @@ export class SSRModuleLoader {
                   hash,
                   file: filePath.slice(-40),
                   cacheDir,
-                  hint: "Bundle may have expired from Redis (24h TTL) while transform was still cached",
+                  hint:
+                    "Bundle may have expired from Redis (24h TTL) while transform was still cached",
                 });
                 throw importError;
               }
