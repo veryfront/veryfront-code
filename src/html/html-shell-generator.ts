@@ -22,7 +22,6 @@ import {
   buildImportMapJson,
   buildRootAttributes,
   shouldDisableLayout,
-  shouldDisableProse,
 } from "./utils.ts";
 import {
   generateModulePreloadHintsFromManifest,
@@ -157,9 +156,6 @@ async function generateHTMLShellPartsImpl(
   } = processMetadata(meta);
 
   const noLayout = shouldDisableLayout(meta.frontmatter);
-  // Only apply prose styles to MDX/markdown content, not TSX pages
-  const isMdxContent = options.pagePath?.match(/\.(mdx?|md)$/i) ?? false;
-  const noProse = !isMdxContent || shouldDisableProse(meta.frontmatter);
 
   const rootAttributes = buildRootAttributes(
     meta.slug || "",
@@ -167,7 +163,11 @@ async function generateHTMLShellPartsImpl(
     noLayout,
   );
 
-  const contentAttributes = buildContentAttributes(meta.slug || "", noLayout, meta.ssrHash, noProse);
+  const contentAttributes = buildContentAttributes(
+    meta.slug || "",
+    noLayout,
+    meta.ssrHash,
+  );
 
   const importMapJson = await buildImportMapJson({
     projectDir: options.projectDir,

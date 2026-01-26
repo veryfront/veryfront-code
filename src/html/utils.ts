@@ -19,7 +19,6 @@ export function buildContentAttributes(
   slug: string,
   noLayout: boolean,
   ssrHash?: string,
-  noProse?: boolean,
 ): string {
   return joinAttributes([
     'id="veryfront-content"',
