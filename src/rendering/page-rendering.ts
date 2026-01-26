@@ -5,7 +5,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { EntityInfo, MdxBundle, MDXComponents, MDXModule, PageBundle } from "#veryfront/types";
 import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import { getProjectReact } from "#veryfront/react";
-import { compileMDXRuntime } from "#veryfront/transforms/mdx/compiler/index.ts";
+import { compileContent } from "#veryfront/transforms/mdx/compiler/index.ts";
 import { ensureError, getErrorMessage } from "../errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
@@ -45,15 +45,13 @@ export function handleMDXPage(
       const frontmatter = pageInfo.entity.frontmatter;
       const fmArg = frontmatter && Object.keys(frontmatter).length > 0 ? frontmatter : undefined;
 
-      const ssrBundle = await compileMDXRuntime(
+      const ssrBundle = await compileContent(
         "development",
         projectDir,
         pageInfo.entity.content,
         fmArg,
         pageInfo.entity.path,
         "server",
-        undefined,
-        { studioEmbed: options?.studioEmbed },
       );
 
       const pageBundle = ssrBundle as PageBundle;
@@ -63,15 +61,13 @@ export function handleMDXPage(
         if (options?.precompiledModule) {
           pageBundle.clientModuleCode = options.precompiledModule;
         } else {
-          const browserBundle = await compileMDXRuntime(
+          const browserBundle = await compileContent(
             "development",
             projectDir,
             pageInfo.entity.content,
             fmArg,
             pageInfo.entity.path,
             "browser",
-            undefined,
-            { studioEmbed: options?.studioEmbed },
           );
           pageBundle.clientModuleCode = browserBundle.compiledCode;
         }

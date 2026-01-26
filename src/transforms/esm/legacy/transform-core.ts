@@ -14,7 +14,7 @@ import { rewriteBareImports, rewriteVendorImports } from "../import-rewriter.ts"
 import { bundleHttpImports } from "../http-bundler.ts";
 import type { TransformOptions } from "../types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { compileMDXRuntime } from "../../mdx/compiler/mdx-compiler.ts";
+import { compileContent } from "../../mdx/compiler/index.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import {
@@ -45,14 +45,14 @@ export async function transformToESM(
   if (cached) return cached.code;
 
   let transformSource = source;
-  const isMdx = filePath.endsWith(".mdx");
+  const isMarkdownOrMdx = filePath.endsWith(".mdx") || filePath.endsWith(".md");
 
-  if (isMdx) {
+  if (isMarkdownOrMdx) {
     const mdxStart = performance.now();
     const mdxTarget = ssr ? "server" : "browser";
     const mdxBaseUrl = ssr ? undefined : moduleServerUrl;
 
-    const mdxResult = await compileMDXRuntime(
+    const mdxResult = await compileContent(
       dev ? "development" : "production",
       projectDir,
       source,
@@ -93,7 +93,7 @@ export async function transformToESM(
       filePath,
       loader,
       sourceLength: transformSource.length,
-      isMdx,
+      isMarkdownOrMdx,
       error: transformError instanceof Error ? transformError.message : String(transformError),
     });
     logger.error("[ESM-TRANSFORM] Source preview (first 10 lines):\n" + sourcePreview);
