@@ -7,10 +7,24 @@ import {
 
 function getFrameworkRoot(): string {
   try {
-    return new URL("../../..", import.meta.url).pathname;
+    const rootPath = new URL("../../..", import.meta.url).pathname;
+    return rootPath.endsWith("/") ? rootPath : `${rootPath}/`;
   } catch {
     // Fallback for environments where import.meta.url doesn't work correctly
-    return "/";
+    // Use cwd() as a reasonable fallback instead of "/" which would create invalid paths
+    if (typeof Deno !== "undefined" && typeof Deno.cwd === "function") {
+      const cwd = Deno.cwd();
+      return cwd.endsWith("/") ? cwd : `${cwd}/`;
+    }
+
+    if (typeof process !== "undefined" && typeof process.cwd === "function") {
+      const cwd = process.cwd();
+      return cwd.endsWith("/") ? cwd : `${cwd}/`;
+    }
+
+    throw new Error(
+      "Unable to determine framework root: import.meta.url is unavailable and neither Deno.cwd() nor process.cwd() are supported in this environment.",
+    );
   }
 }
 

@@ -31,9 +31,11 @@ const platformKey = `${platform}-${arch}`;
 const binaryName = binaryMap[platformKey];
 
 if (!binaryName) {
-  console.error(`❌ Unsupported platform: ${platform}-${arch}`);
-  console.error('Supported platforms:', Object.keys(binaryMap).join(', '));
-  process.exit(1);
+  // Non-fatal: allow JS fallback for unsupported platforms
+  console.warn(`⚠️  No pre-built binary for platform: ${platform}-${arch}`);
+  console.warn('   Supported platforms:', Object.keys(binaryMap).join(', '));
+  console.warn('   Falling back to bundled JavaScript CLI (slower startup)');
+  process.exit(0);
 }
 
 const binDir = join(__dirname, "..", "bin");
@@ -61,13 +63,34 @@ function downloadBinary(url, dest, maxRedirects = 5) {
       }
 
       https.get(currentUrl, (response) => {
-        if (response.statusCode === 302 || response.statusCode === 301) {
-          follow(response.headers.location, redirectCount + 1);
+        const statusCode = response.statusCode || 0;
+
+        // Handle HTTP redirects (301, 302, 303, 307, 308)
+        if ([301, 302, 303, 307, 308].includes(statusCode)) {
+          const location = response.headers.location;
+          if (typeof location !== "string" || location.length === 0) {
+            response.resume(); // drain to avoid socket/resource leaks
+            reject(new Error("Redirect response missing Location header"));
+            return;
+          }
+
+          let redirectUrl;
+          try {
+            redirectUrl = new URL(location, currentUrl).toString();
+          } catch {
+            response.resume();
+            reject(new Error(`Invalid redirect URL: ${location}`));
+            return;
+          }
+
+          response.resume(); // drain before following redirect
+          follow(redirectUrl, redirectCount + 1);
           return;
         }
 
-        if (response.statusCode !== 200) {
-          reject(new Error(`Failed to download: ${response.statusCode} ${response.statusMessage}`));
+        if (statusCode !== 200) {
+          response.resume();
+          reject(new Error(`Failed to download: ${statusCode} ${response.statusMessage}`));
           return;
         }
 
@@ -78,7 +101,14 @@ function downloadBinary(url, dest, maxRedirects = 5) {
           resolve();
         });
         file.on("error", (err) => {
-          unlinkSync(dest);
+          // Wrap unlink in try/catch to avoid masking the original error
+          try {
+            if (existsSync(dest)) {
+              unlinkSync(dest);
+            }
+          } catch (cleanupErr) {
+            console.warn("   Warning: Failed to clean up partial download:", cleanupErr.message);
+          }
           reject(err);
         });
       }).on('error', reject);

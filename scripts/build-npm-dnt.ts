@@ -76,7 +76,7 @@ await build({
 		},
 		"npm:@types/hast@3.0.3": {
 			name: "@types/hast",
-			version: "^4.0.3",
+			version: "^3.0.3",
 		},
 		"npm:@types/unist@3.0.2": {
 			name: "@types/unist",
