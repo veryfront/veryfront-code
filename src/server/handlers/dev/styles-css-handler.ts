@@ -14,7 +14,6 @@ import {
   generateTailwindCSS,
 } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
 import { serverLogger as logger } from "#veryfront/utils";
-import { getMarkdownSafelistClasses } from "#veryfront/transforms/md/compiler/markdown-styles.ts";
 
 const SOURCE_EXTENSIONS = [".tsx", ".jsx", ".mdx", ".ts", ".js"];
 
@@ -69,7 +68,8 @@ export class StylesCSSHandler extends BaseHandler {
     } catch {
       // No stylesheet found, use default Tailwind import
       logger.debug("[StylesCSSHandler] No stylesheet found, using default");
-      return '@import "tailwindcss";';
+      return `@import "tailwindcss";
+@custom-variant dark (&:is(.dark, [data-theme="dark"]) *, &:is(.dark, [data-theme="dark"]));`;
     }
   }
 
@@ -109,11 +109,6 @@ export class StylesCSSHandler extends BaseHandler {
       for (const cls of extractCandidates(file.content)) {
         candidates.add(cls);
       }
-    }
-
-    // Safelist: classes added dynamically by markdown compiler
-    for (const cls of getMarkdownSafelistClasses()) {
-      candidates.add(cls);
     }
 
     return candidates;

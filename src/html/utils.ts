@@ -22,7 +22,6 @@ export function buildContentAttributes(
 ): string {
   return joinAttributes([
     'id="veryfront-content"',
-    // No default prose class - projects opt-in via their own CSS or frontmatter
     `data-slug="${slug || ""}"`,
     `data-layout="${noLayout ? "none" : "default"}"`,
     ssrHash && `data-ssr-hash="${escapeHTML(ssrHash)}"`,
@@ -279,8 +278,4 @@ export function buildImportMapJsonSync(importMap?: Record<string, string>): stri
 
 export function shouldDisableLayout(frontmatter?: Record<string, unknown>): boolean {
   return frontmatter?.layout === false || frontmatter?.layout === "false";
-}
-
-export function shouldDisableProse(frontmatter?: Record<string, unknown>): boolean {
-  return frontmatter?.prose === false || frontmatter?.prose === "false";
 }

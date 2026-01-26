@@ -27,7 +27,6 @@ import {
   generateModulePreloadHintsFromManifest,
   getRouteManifest,
 } from "../modules/manifest/route-module-manifest.ts";
-import { getMarkdownSafelistClasses } from "../transforms/md/compiler/markdown-styles.ts";
 
 function pathToModuleUrl(path: string, studioEmbed?: boolean): string {
   if (!path) return "";
@@ -133,11 +132,6 @@ async function generateHTMLShellPartsImpl(
   const candidates = new Set<string>(options.projectClasses ?? []);
   if (contentForTailwind) {
     for (const cls of extractCandidates(contentForTailwind)) candidates.add(cls);
-  }
-
-  // Safelist: classes added dynamically by markdown compiler
-  for (const cls of getMarkdownSafelistClasses()) {
-    candidates.add(cls);
   }
 
   const projectSlug = options.projectId || meta.slug || "default";

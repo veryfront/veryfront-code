@@ -259,7 +259,8 @@ function pruneProjectCSSLocalFallback(): void {
   }
 }
 
-const DEFAULT_STYLESHEET = `@import "tailwindcss";`;
+const DEFAULT_STYLESHEET = `@import "tailwindcss";
+@custom-variant dark (&:is(.dark, [data-theme="dark"]) *, &:is(.dark, [data-theme="dark"]));`;
 
 function hashString(str: string): string {
   let hash = 0;
