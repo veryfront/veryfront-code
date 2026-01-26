@@ -249,7 +249,7 @@ async function rewriteDiscoveryImports(
 
     const rewritePackageImports = async (input: string, pkg: string): Promise<string> => {
       const escapedPkg = pkg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const staticImportRegex = new RegExp(`from\\s+["']${escapedPkg}["']`, "g");
+      const staticImportRegex = new RegExp(`from\\s*["']${escapedPkg}["']`, "g");
       const dynamicImportRegex = new RegExp(`import\\s*\\(\\s*["']${escapedPkg}["']\\s*\\)`, "g");
 
       if (!staticImportRegex.test(input) && !dynamicImportRegex.test(input)) return input;
