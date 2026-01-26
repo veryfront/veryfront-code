@@ -1,4 +1,7 @@
 export * from "./backend.js";
+export * from "./multi-tier.js";
+export * from "./module-cache.js";
+export * from "./hash.js";
 
 export {
   type CacheKeyContext,

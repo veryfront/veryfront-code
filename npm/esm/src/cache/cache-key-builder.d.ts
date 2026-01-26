@@ -21,8 +21,4 @@ export declare function getProjectScopedKey(prefix: string, resourceKey: string)
 export declare function getProjectScopedKeyAlways(prefix: string, resourceKey: string): string | null;
 export declare function extractCacheKeyContext(handlerCtx: HandlerContext): CacheKeyContext;
 export type { MultiProjectRequestContextType as MultiProjectRequestContext };
-/**
- * @deprecated Use tryGetCacheKeyContext() which auto-detects context
- */
-export declare function extractCacheKeyContextFromRequestContext(reqCtx: MultiProjectRequestContextType): CacheKeyContext;
 //# sourceMappingURL=cache-key-builder.d.ts.map

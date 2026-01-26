@@ -1,5 +1,6 @@
 import { serverLogger as logger } from "../../utils/index.js";
 import { clearModulePathCache, invalidateModulePaths, } from "../../transforms/mdx/esm-module-loader/index.js";
+import { clearModuleCacheForProject } from "../../cache/module-cache.js";
 import { clearSSRModuleCache, clearSSRModuleCacheForProject, } from "../../modules/react-loader/ssr-module-loader/index.js";
 import { clearRendererCacheForProject, clearRendererCaches } from "../../rendering/renderer.js";
 import { clearRouterDetectionCache } from "../../rendering/router-detection.js";
@@ -38,6 +39,9 @@ export async function invalidateProjectCaches(projectSlug, changedPaths, options
     });
     if (projectId) {
         clearSSRModuleCacheForProject(projectId);
+        // Also clear the pod-level module cache (used by RenderPipeline)
+        // This was previously missed, causing stale renders despite SSR module cache clearing
+        clearModuleCacheForProject(projectId);
     }
     else {
         clearSSRModuleCache();

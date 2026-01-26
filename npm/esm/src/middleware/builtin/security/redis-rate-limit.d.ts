@@ -5,10 +5,12 @@ export interface RedisRateLimitOptions {
 }
 export declare class RedisRateLimitStore implements RateLimitStore {
     private client;
+    private clientPromise;
     private readonly url?;
     private readonly keyPrefix;
     constructor(options?: RedisRateLimitOptions);
     private ensureClient;
+    private connectClient;
     private storageKey;
     increment(key: string, windowMs: number): Promise<RateLimitEntry>;
     reset(key: string): Promise<void>;

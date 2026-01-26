@@ -1,4 +1,18 @@
+/**
+ * Module Loader Cache Utilities
+ *
+ * Provides hash generation and cache factory functions.
+ * Module caches are now pod-level singletons (see src/cache/module-cache.ts)
+ * to ensure caches persist across requests within the same pod.
+ *
+ * @module rendering/orchestrator/module-loader/cache
+ */
+
+// Re-export pod-level cache factories
 import * as dntShim from "../../../../_dnt.shims.js";
+
+export { createEsmCache, createModuleCache } from "../../../cache/module-cache.js";
+
 const HEX_CHARS = "0123456789abcdef";
 
 export async function generateHash(str: string): Promise<string> {
@@ -12,12 +26,4 @@ export async function generateHash(str: string): Promise<string> {
     hex += HEX_CHARS.charAt(byte >> 4) + HEX_CHARS.charAt(byte & 0xf);
   }
   return hex;
-}
-
-export function createModuleCache(): Map<string, string> {
-  return new Map();
-}
-
-export function createEsmCache(): Map<string, string> {
-  return new Map();
 }

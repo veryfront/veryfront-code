@@ -12,7 +12,6 @@ import { isAbsolute, join } from "../../platform/compat/path/index.js";
 import { cwd } from "../../platform/compat/process.js";
 import { rendererLogger as logger } from "../../utils/index.js";
 import { simpleHash } from "../../utils/hash-utils.js";
-import { Singleflight } from "../../utils/singleflight.js";
 import { LRUCache } from "../../utils/lru-wrapper.js";
 import { withSpan } from "../../observability/tracing/otlp-setup.js";
 import { SpanNames } from "../../observability/tracing/span-names.js";
@@ -20,35 +19,13 @@ import { resolveImport } from "../../modules/import-map/resolver.js";
 import { isDeno } from "../../platform/compat/runtime.js";
 import { getDenoNpmReactMap, getReactImportMap, REACT_VERSION } from "./package-registry.js";
 import { parseImports, replaceSpecifiers } from "./lexer.js";
+import { CacheBackends, createDistributedCacheAccessor } from "../../cache/backend.js";
+import { HTTP_MODULE_CACHE_MAX_ENTRIES, HTTP_MODULE_DISTRIBUTED_TTL_SEC, } from "../../utils/constants/cache.js";
 /** Lazy-loaded distributed cache backend for cross-pod sharing */
-let distributedCache;
-const distributedCacheInit = new Singleflight();
-function getDistributedCache() {
-    if (distributedCache !== undefined)
-        return Promise.resolve(distributedCache);
-    return distributedCacheInit.do("init", async () => {
-        try {
-            const { CacheBackends } = await import("../../cache/backend.js");
-            const backend = await CacheBackends.httpModule();
-            if (backend.type === "memory") {
-                distributedCache = null;
-                logger.debug("[HTTP-CACHE] No distributed cache available (memory only)");
-                return null;
-            }
-            distributedCache = backend;
-            logger.debug("[HTTP-CACHE] Distributed cache initialized", { type: backend.type });
-            return backend;
-        }
-        catch (error) {
-            logger.debug("[HTTP-CACHE] Failed to initialize distributed cache", { error });
-            distributedCache = null;
-            return null;
-        }
-    });
-}
-/** TTL for cached modules in distributed cache (24 hours) */
-const DISTRIBUTED_CACHE_TTL_SECONDS = 86400;
-const cachedPaths = new LRUCache({ maxEntries: 2000 });
+const getDistributedCache = createDistributedCacheAccessor(() => CacheBackends.httpModule(), "HTTP-CACHE");
+/** TTL for cached modules in distributed cache (uses centralized config) */
+const DISTRIBUTED_CACHE_TTL_SECONDS = HTTP_MODULE_DISTRIBUTED_TTL_SEC;
+const cachedPaths = new LRUCache({ maxEntries: HTTP_MODULE_CACHE_MAX_ENTRIES });
 const processingStack = new Set();
 function ensureAbsoluteDir(path) {
     return isAbsolute(path) ? path : join(cwd(), path);
@@ -247,16 +224,22 @@ async function cacheHttpModule(url, options) {
     await fs.mkdir(cacheDir, { recursive: true });
     await fs.writeTextFile(cachePath, code);
     if (distributed) {
-        // Store code by URL, by hash (for direct recovery), and URL mapping (for debugging)
-        // Storing code by hash enables recovery without needing URL lookup
+        // Store code by URL, by hash (for direct recovery), and URL mapping (for debugging).
+        // Storing code by hash enables recovery without needing URL lookup.
+        // IMPORTANT: await the writes so other pods can recover this bundle immediately.
+        // Without await, a transform referencing this bundle could reach Redis before
+        // the bundle code does, causing ensureHttpBundlesExist on another pod to miss.
         const hash = simpleHash(normalizedUrl);
-        Promise.all([
-            distributed.set(normalizedUrl, code, DISTRIBUTED_CACHE_TTL_SECONDS),
-            distributed.set(`code:${hash}`, code, DISTRIBUTED_CACHE_TTL_SECONDS),
-            distributed.set(`hash:${hash}`, normalizedUrl, DISTRIBUTED_CACHE_TTL_SECONDS),
-        ]).catch((error) => {
+        try {
+            await Promise.all([
+                distributed.set(normalizedUrl, code, DISTRIBUTED_CACHE_TTL_SECONDS),
+                distributed.set(`code:${hash}`, code, DISTRIBUTED_CACHE_TTL_SECONDS),
+                distributed.set(`hash:${hash}`, normalizedUrl, DISTRIBUTED_CACHE_TTL_SECONDS),
+            ]);
+        }
+        catch (error) {
             logger.debug("[HTTP-CACHE] Distributed cache set failed", { url: normalizedUrl, error });
-        });
+        }
     }
     cachedPaths.set(cacheKey, cachePath);
     return cachePath;
@@ -365,6 +348,26 @@ export async function recoverHttpBundleByHash(hash, cacheDir) {
             await fs.mkdir(absoluteCacheDir, { recursive: true });
             await fs.writeTextFile(cachePath, cachedCode);
             logger.info("[HTTP-CACHE] Bundle recovery successful (direct)", { hash, path: cachePath });
+            // Proactively recover transitive deps so the import retry doesn't
+            // fail again with a different missing bundle.
+            const BUNDLE_RE = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
+            const transitiveDeps = [];
+            let m;
+            while ((m = BUNDLE_RE.exec(cachedCode)) !== null) {
+                const tHash = m[2];
+                if (tHash !== hash) {
+                    transitiveDeps.push({
+                        path: join(absoluteCacheDir, `http-${tHash}.mjs`),
+                        hash: tHash,
+                    });
+                }
+            }
+            if (transitiveDeps.length > 0) {
+                logger.info("[HTTP-CACHE] Recovering transitive deps from last-resort recovery", {
+                    count: transitiveDeps.length,
+                });
+                await ensureHttpBundlesExist(transitiveDeps, cacheDir);
+            }
             return true;
         }
         // Strategy 2: URL lookup then re-fetch (fallback for bundles cached before code:{hash} was added)
@@ -403,69 +406,118 @@ export async function ensureHttpBundlesExist(bundlePaths, cacheDir) {
     if (bundlePaths.length === 0)
         return [];
     const fs = createFileSystem();
-    const _absoluteCacheDir = ensureAbsoluteDir(cacheDir);
-    // Check which bundles exist locally
-    const existenceChecks = await Promise.all(bundlePaths.map(async ({ path, hash }) => ({
-        path,
-        hash,
-        exists: await exists(path),
-    })));
-    const missing = existenceChecks.filter((b) => !b.exists);
-    if (missing.length === 0) {
-        logger.debug("[HTTP-CACHE] All bundles exist locally", { count: bundlePaths.length });
-        return [];
-    }
-    logger.info("[HTTP-CACHE] Fetching missing bundles from distributed cache", {
-        missing: missing.length,
-        total: bundlePaths.length,
-    });
-    const distributed = await getDistributedCache();
-    if (!distributed) {
-        logger.error("[HTTP-CACHE] No distributed cache available for bundle recovery");
-        return missing.map((m) => m.hash);
-    }
-    // Batch fetch from distributed cache
-    const codeKeys = missing.map((m) => `code:${m.hash}`);
-    let codes;
-    try {
-        if (distributed.getBatch) {
-            codes = await distributed.getBatch(codeKeys);
+    const absoluteCacheDir = ensureAbsoluteDir(cacheDir);
+    // Use [a-f0-9]+ to match both hex and decimal hashes consistently
+    const BUNDLE_RE = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
+    const extractBundleRefs = (code) => {
+        const refs = [];
+        const dedup = new Set();
+        let match;
+        while ((match = BUNDLE_RE.exec(code)) !== null) {
+            const hash = match[2];
+            if (!dedup.has(hash)) {
+                dedup.add(hash);
+                refs.push({ hash });
+            }
         }
-        else {
-            // Fallback to individual gets
-            const results = await Promise.all(codeKeys.map(async (key) => [key, await distributed.get(key)]));
-            codes = new Map(results);
+        BUNDLE_RE.lastIndex = 0;
+        return refs;
+    };
+    const pending = bundlePaths.map((b) => ({ hash: b.hash }));
+    const seen = new Set();
+    const failed = new Set();
+    while (pending.length > 0) {
+        const batch = pending.splice(0, pending.length).filter((b) => !seen.has(b.hash));
+        if (batch.length === 0)
+            break;
+        for (const item of batch) {
+            seen.add(item.hash);
         }
-    }
-    catch (error) {
-        logger.error("[HTTP-CACHE] Batch fetch from distributed cache failed", { error });
-        return missing.map((m) => m.hash);
-    }
-    // Write fetched bundles to disk
-    const failed = [];
-    await Promise.all(missing.map(async ({ path, hash }) => {
-        const code = codes.get(`code:${hash}`);
-        if (!code) {
-            logger.warn("[HTTP-CACHE] Bundle not found in distributed cache", { hash });
-            failed.push(hash);
-            return;
+        // Check which bundles exist locally using canonical paths derived from
+        // cacheDir + hash. Don't trust caller-provided paths — they may reference
+        // a different pod's absolute directory.
+        const existenceChecks = await Promise.all(batch.map(async ({ hash }) => ({
+            hash,
+            canonicalPath: join(absoluteCacheDir, `http-${hash}.mjs`),
+            exists: await exists(join(absoluteCacheDir, `http-${hash}.mjs`)),
+        })));
+        const missing = existenceChecks.filter((b) => !b.exists);
+        if (missing.length === 0)
+            continue;
+        logger.info("[HTTP-CACHE] Fetching missing bundles from distributed cache", {
+            missing: missing.length,
+            total: batch.length,
+        });
+        const distributed = await getDistributedCache();
+        if (!distributed) {
+            logger.error("[HTTP-CACHE] No distributed cache available for bundle recovery");
+            for (const m of missing)
+                failed.add(m.hash);
+            continue;
         }
+        // Batch fetch from distributed cache
+        const codeKeys = missing.map((m) => `code:${m.hash}`);
+        let codes;
         try {
-            const dir = path.substring(0, path.lastIndexOf("/"));
-            await fs.mkdir(dir, { recursive: true });
-            await fs.writeTextFile(path, code);
-            logger.debug("[HTTP-CACHE] Wrote bundle to disk", { hash, path });
+            if (distributed.getBatch) {
+                codes = await distributed.getBatch(codeKeys);
+            }
+            else {
+                const results = await Promise.all(codeKeys.map(async (key) => [key, await distributed.get(key)]));
+                codes = new Map(results);
+            }
         }
         catch (error) {
-            logger.error("[HTTP-CACHE] Failed to write bundle to disk", { hash, error });
-            failed.push(hash);
+            logger.error("[HTTP-CACHE] Batch fetch from distributed cache failed", { error });
+            for (const m of missing)
+                failed.add(m.hash);
+            continue;
         }
-    }));
-    if (failed.length > 0) {
-        logger.warn("[HTTP-CACHE] Some bundles could not be recovered", { failed });
+        // Write fetched bundles to disk using canonical paths and scan for transitive deps
+        await Promise.all(missing.map(async ({ hash, canonicalPath }) => {
+            const code = codes.get(`code:${hash}`);
+            if (!code) {
+                // Try single-bundle recovery as last resort
+                const recovered = await recoverHttpBundleByHash(hash, absoluteCacheDir);
+                if (!recovered) {
+                    failed.add(hash);
+                }
+                else {
+                    // Read the recovered bundle to scan for transitive deps
+                    try {
+                        const recoveredCode = await fs.readTextFile(canonicalPath);
+                        for (const ref of extractBundleRefs(recoveredCode)) {
+                            if (!seen.has(ref.hash))
+                                pending.push(ref);
+                        }
+                    }
+                    catch { /* ignore read errors for dep scanning */ }
+                }
+                return;
+            }
+            try {
+                await fs.mkdir(absoluteCacheDir, { recursive: true });
+                await fs.writeTextFile(canonicalPath, code);
+                logger.debug("[HTTP-CACHE] Wrote bundle to disk", { hash, path: canonicalPath });
+                // Scan recovered code for transitive HTTP bundle dependencies.
+                // HTTP bundles import other bundles (e.g., esm.sh packages depending
+                // on other packages). Without this, Pod B recovers only the top-level
+                // bundle and gets "Module not found" for transitive deps at import time.
+                for (const ref of extractBundleRefs(code)) {
+                    if (!seen.has(ref.hash))
+                        pending.push(ref);
+                }
+            }
+            catch (error) {
+                logger.error("[HTTP-CACHE] Failed to write bundle to disk", { hash, error });
+                failed.add(hash);
+            }
+        }));
     }
-    else {
-        logger.info("[HTTP-CACHE] All missing bundles recovered", { count: missing.length });
+    if (failed.size > 0) {
+        logger.warn("[HTTP-CACHE] Some bundles could not be recovered", {
+            failed: Array.from(failed),
+        });
     }
-    return failed;
+    return Array.from(failed);
 }

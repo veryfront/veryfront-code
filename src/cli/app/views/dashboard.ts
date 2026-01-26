@@ -185,7 +185,7 @@ export function renderDashboardBoxed(state: AppState): string {
 
   return box(content, {
     style: "rounded",
-    title: "Veryfront",
+    title: "Veryfront Code",
     titleColor: "\x1b[38;2;252;143;93m",
     width: termWidth,
     paddingX: 1,

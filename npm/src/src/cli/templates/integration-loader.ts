@@ -195,14 +195,9 @@ export async function loadIntegration(
   const config = await loadIntegrationConfig(integrationName);
   if (!config) return null;
 
-  const filesDir = pathHelper.join(
-    getIntegrationDirectory(integrationName),
-    "files",
-  );
-
   return {
     config,
-    files: await loadTemplateFromDirectory(filesDir),
+    files: await loadTemplateFromDirectory(`integration:${integrationName}`),
   };
 }
 
@@ -317,8 +312,7 @@ export async function getAvailablePrompts(
  * These include setup guide page and status API
  */
 export function loadIntegrationBaseFilesFromDirectory(): Promise<TemplateFile[]> {
-  const filesDir = pathHelper.join(getIntegrationDirectory("_base"), "files");
-  return loadTemplateFromDirectory(filesDir);
+  return loadTemplateFromDirectory("integration:_base");
 }
 
 /**

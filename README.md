@@ -1,4 +1,4 @@
-# Veryfront
+# Veryfront Code
 
 The simplest way to build AI-powered apps.
 
@@ -8,7 +8,7 @@ npx veryfront
 
 ```
   ○ ○ ○ ○ ○ ○ ○
-  ○ ● ● ● ○ ○ ○   Veryfront is now running
+  ○ ● ● ● ○ ○ ○   Veryfront Code is running
   ○ ● ● ● ○ ○ ○
   ○ ● ● ○ ● ● ○   Url  http://veryfront.me:3000
   ○ ○ ○ ● ● ● ○   Mcp  http://veryfront.me:3002/mcp

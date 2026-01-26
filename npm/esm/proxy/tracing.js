@@ -1,0 +1,194 @@
+/**
+ * OpenTelemetry OTLP tracing for proxy.
+ * Env: OTEL_TRACES_ENABLED, OTEL_SERVICE_NAME, OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_HEADERS
+ */
+import * as dntShim from "../_dnt.shims.js";
+// Inline cross-runtime getEnv to avoid dependency on src/platform/compat (not copied in Docker)
+function getEnv(key) {
+    // Deno
+    if (typeof dntShim.Deno !== "undefined" && dntShim.Deno.env?.get) {
+        return dntShim.Deno.env.get(key);
+    }
+    // Node.js / Bun
+    const nodeProcess = dntShim.dntGlobalThis.process;
+    return nodeProcess?.env?.[key];
+}
+let initialized = false;
+let tracerProvider = null;
+let tracer = null;
+function parseHeaders(headerString) {
+    if (!headerString)
+        return {};
+    const headers = {};
+    for (const part of headerString.split(",")) {
+        const [key, ...valueParts] = part.split("=");
+        if (key && valueParts.length > 0) {
+            headers[key.trim()] = valueParts.join("=").trim();
+        }
+    }
+    return headers;
+}
+function getConfig() {
+    return {
+        enabled: getEnv("OTEL_TRACES_ENABLED") === "true",
+        serviceName: getEnv("OTEL_SERVICE_NAME") || "veryfront-proxy",
+        endpoint: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT") || "",
+        headers: parseHeaders(getEnv("OTEL_EXPORTER_OTLP_HEADERS")),
+    };
+}
+let traceApi = null;
+let propagationApi = null;
+async function loadApis() {
+    if (traceApi)
+        return;
+    traceApi = await import("@opentelemetry/api");
+    propagationApi = await import("@opentelemetry/core");
+}
+export async function initializeOTLP() {
+    if (initialized)
+        return;
+    const config = getConfig();
+    if (!config.enabled) {
+        initialized = true;
+        return;
+    }
+    if (!config.endpoint) {
+        console.warn("[otel] No endpoint configured");
+        initialized = true;
+        return;
+    }
+    try {
+        const { trace } = await import("@opentelemetry/api");
+        const { BasicTracerProvider, BatchSpanProcessor } = await import("@opentelemetry/sdk-trace-base");
+        const { OTLPTraceExporter } = await import("@opentelemetry/exporter-trace-otlp-http");
+        const { Resource } = await import("@opentelemetry/resources");
+        const { ATTR_SERVICE_NAME } = await import("@opentelemetry/semantic-conventions");
+        const resource = new Resource({ [ATTR_SERVICE_NAME]: config.serviceName });
+        const exporter = new OTLPTraceExporter({
+            url: `${config.endpoint}/v1/traces`,
+            headers: config.headers,
+        });
+        const provider = new BasicTracerProvider({ resource });
+        provider.addSpanProcessor(new BatchSpanProcessor(exporter));
+        provider.register();
+        tracerProvider = provider;
+        tracer = trace.getTracer(config.serviceName);
+        initialized = true;
+        await loadApis();
+        console.log("[otel] Initialized", {
+            serviceName: config.serviceName,
+            endpoint: config.endpoint,
+        });
+    }
+    catch (error) {
+        console.error("[otel] Init failed", { error });
+        initialized = true;
+    }
+}
+export async function shutdownOTLP() {
+    if (tracerProvider) {
+        try {
+            await tracerProvider.shutdown();
+            console.log("[otel] Shutdown complete");
+        }
+        catch (error) {
+            console.warn("[otel] Shutdown error", { error });
+        }
+    }
+}
+export function isOTLPEnabled() {
+    return initialized && tracerProvider !== null;
+}
+export function extractContext(headers) {
+    if (!traceApi || !propagationApi)
+        return undefined;
+    const carrier = {};
+    headers.forEach((v, k) => (carrier[k.toLowerCase()] = v));
+    return new propagationApi.W3CTraceContextPropagator().extract(traceApi.context.active(), carrier, traceApi.defaultTextMapGetter);
+}
+export function injectContext(headers) {
+    if (!traceApi || !propagationApi)
+        return;
+    const carrier = {};
+    new propagationApi.W3CTraceContextPropagator().inject(traceApi.context.active(), carrier, traceApi.defaultTextMapSetter);
+    Object.entries(carrier).forEach(([k, v]) => headers.set(k, v));
+}
+export function startServerSpan(method, path, parentContext) {
+    if (!traceApi || !tracer)
+        return null;
+    const ctx = parentContext || traceApi.context.active();
+    const span = tracer.startSpan(`${method} ${path}`, { kind: traceApi.SpanKind.SERVER }, ctx);
+    return { span, context: traceApi.trace.setSpan(ctx, span) };
+}
+export function endSpan(span, statusCode, error) {
+    if (!span || !traceApi)
+        return;
+    span.setAttribute("http.status_code", statusCode);
+    if (error) {
+        span.setStatus({ code: traceApi.SpanStatusCode.ERROR, message: error.message });
+        span.recordException(error);
+    }
+    else if (statusCode >= 400) {
+        span.setStatus({ code: traceApi.SpanStatusCode.ERROR });
+    }
+    span.end();
+}
+export function withContext(spanContext, fn) {
+    if (!traceApi)
+        return fn();
+    return traceApi.context.with(spanContext, fn);
+}
+export function getTraceContext() {
+    if (!traceApi)
+        return {};
+    const span = traceApi.trace.getSpan(traceApi.context.active());
+    if (!span)
+        return {};
+    const ctx = span.spanContext();
+    return { traceId: ctx.traceId, spanId: ctx.spanId };
+}
+/**
+ * Span names for proxy tracing.
+ */
+export const ProxySpanNames = {
+    PROXY_REQUEST: "proxy.request",
+    PROXY_PROCESS: "proxy.process",
+    PROXY_TOKEN_FETCH: "proxy.token_fetch",
+    PROXY_DOMAIN_LOOKUP: "proxy.domain_lookup",
+    OAUTH_TOKEN_REQUEST: "oauth.token_request",
+    HTTP_CLIENT_FETCH: "http.client.fetch",
+};
+/**
+ * Execute an async function within a tracing span.
+ * If tracing is disabled, executes the function directly.
+ */
+export async function withSpan(name, fn, attributes) {
+    if (!traceApi || !tracer) {
+        return await fn();
+    }
+    const parentContext = traceApi.context.active();
+    const span = tracer.startSpan(name, {
+        kind: traceApi.SpanKind.INTERNAL,
+        attributes,
+    }, parentContext);
+    const spanContext = traceApi.trace.setSpan(parentContext, span);
+    try {
+        const result = await traceApi.context.with(spanContext, fn);
+        span.setStatus({ code: traceApi.SpanStatusCode.OK });
+        return result;
+    }
+    catch (error) {
+        span.setStatus({
+            code: traceApi.SpanStatusCode.ERROR,
+            message: error instanceof Error ? error.message : String(error),
+        });
+        if (error instanceof Error) {
+            span.recordException(error);
+        }
+        throw error;
+    }
+    finally {
+        span.end();
+    }
+}
+export { initializeOTLP as initializeOTLPWithApis };

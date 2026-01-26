@@ -119,12 +119,3 @@ export function extractCacheKeyContext(handlerCtx: HandlerContext): CacheKeyCont
 }
 
 export type { MultiProjectRequestContextType as MultiProjectRequestContext };
-
-/**
- * @deprecated Use tryGetCacheKeyContext() which auto-detects context
- */
-export function extractCacheKeyContextFromRequestContext(
-  reqCtx: MultiProjectRequestContextType,
-): CacheKeyContext {
-  return extractCacheKeyContextFromMultiProjectContext(reqCtx);
-}

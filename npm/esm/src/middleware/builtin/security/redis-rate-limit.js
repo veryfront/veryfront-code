@@ -2,15 +2,22 @@ import { createError, toError } from "../../../errors/veryfront-error.js";
 import { serverLogger as logger } from "../../../utils/index.js";
 export class RedisRateLimitStore {
     client = null;
+    clientPromise = null;
     url;
     keyPrefix;
     constructor(options = {}) {
         this.url = options.url;
         this.keyPrefix = options.keyPrefix ?? "veryfront:ratelimit:";
     }
-    async ensureClient() {
+    ensureClient() {
         if (this.client)
-            return this.client;
+            return Promise.resolve(this.client);
+        if (this.clientPromise)
+            return this.clientPromise;
+        this.clientPromise = this.connectClient();
+        return this.clientPromise;
+    }
+    async connectClient() {
         let createClient;
         try {
             const redisClientModule = ["npm:@redis/client", "@1.5.8"].join("");
@@ -18,18 +25,25 @@ export class RedisRateLimitStore {
             createClient = mod.createClient;
         }
         catch {
+            this.clientPromise = null;
             throw toError(createError({
                 type: "config",
                 message: "Redis rate limit store requires npm:@redis/client. Install dependencies or use MemoryRateLimitStore.",
             }));
         }
-        const client = createClient({ url: this.url });
-        client.on?.("error", (err) => {
-            logger.error("[redis-ratelimit] client error", err);
-        });
-        await client.connect();
-        this.client = client;
-        return client;
+        try {
+            const client = createClient({ url: this.url });
+            client.on?.("error", (err) => {
+                logger.error("[redis-ratelimit] client error", err);
+            });
+            await client.connect();
+            this.client = client;
+            return client;
+        }
+        catch (error) {
+            this.clientPromise = null;
+            throw error;
+        }
     }
     storageKey(key) {
         return `${this.keyPrefix}${key}`;

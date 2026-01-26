@@ -24,7 +24,7 @@ import { mergeCommand, parseMergeArgs } from "../commands/merge.js";
 import { deployCommand, parseDeployArgs } from "../commands/deploy.js";
 import { parseUpArgs, upCommand } from "../commands/up.js";
 import { newCommand, parseNewArgs } from "../commands/new.js";
-import { promptProjectName, showMainMenu } from "../commands/main.js";
+import { promptProjectName } from "../commands/main.js";
 import { issuesCommand } from "../commands/issues.js";
 import { login, logout, whoami } from "../auth/index.js";
 import { COMMANDS } from "../help/command-definitions.js";
@@ -41,7 +41,7 @@ import { handleBuildCommand } from "./build-handler.js";
 import { handleDevCommand } from "./dev-handler.js";
 import { handleGenerateCommand } from "./generate-handler.js";
 import { handleStudioCommand } from "./studio-handler.js";
-import { createMCPServer } from "../mcp/server.js";
+import { handleStartCommand } from "./start-handler.js";
 import type { ParsedArgs } from "./types.js";
 import type { InitTemplate } from "../commands/init/types.js";
 import type { IntegrationName } from "../templates/types.js";
@@ -437,11 +437,10 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
       }
 
       case "mcp": {
-        const server = await createMCPServer({ stdio: true });
-        await new Promise(() => {
-          /* never resolve - stdio loop runs until stdin closes */
-        });
-        await server.stop();
+        const { createMCPServer } = await import("../mcp/server.js");
+        const mcpServer = await createMCPServer({ stdio: true });
+        await new Promise(() => {});
+        await mcpServer.stop();
         break;
       }
 
@@ -454,40 +453,10 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
         exitProcess(0);
         return;
 
-      case undefined: {
-        const action = await showMainMenu();
-
-        switch (action) {
-          case "new": {
-            const name = await promptProjectName();
-            if (name) {
-              await newCommand(name, {});
-            }
-            break;
-          }
-          case "dev":
-            await handleDevCommand(args);
-            break;
-          case "deploy": {
-            const result = parseDeployArgs(args);
-            if (result.success) {
-              await deployCommand(result.data);
-            }
-            break;
-          }
-          case "login":
-            await login();
-            break;
-          case "help":
-            showHelp();
-            break;
-          case "exit":
-          case null:
-            exitProcess(0);
-            break;
-        }
+      case undefined:
+        // Default: run full TUI dashboard (like `deno task start`)
+        await handleStartCommand(args);
         break;
-      }
 
       default:
         cliLogger.error(`Unknown command: ${command}\n`);

@@ -51,4 +51,8 @@ export declare const REVALIDATION_TIMEOUT_MS: number;
 export declare const HTTP_MODULE_CACHE_MAX_ENTRIES: number;
 export declare const HTTP_MODULE_DISTRIBUTED_TTL_SEC: number;
 export declare const TRANSFORM_DISTRIBUTED_TTL_SEC: number;
+export declare const MODULE_CACHE_MAX_ENTRIES: number;
+export declare const MODULE_CACHE_TTL_MS: number;
+export declare const ESM_CACHE_MAX_ENTRIES: number;
+export declare const ESM_CACHE_TTL_MS: number;
 //# sourceMappingURL=cache.d.ts.map

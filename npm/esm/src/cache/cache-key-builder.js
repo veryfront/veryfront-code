@@ -76,9 +76,3 @@ export function extractCacheKeyContext(handlerCtx) {
         : (handlerCtx.parsedDomain?.branch || "main");
     return { projectId, mode, versionId };
 }
-/**
- * @deprecated Use tryGetCacheKeyContext() which auto-detects context
- */
-export function extractCacheKeyContextFromRequestContext(reqCtx) {
-    return extractCacheKeyContextFromMultiProjectContext(reqCtx);
-}

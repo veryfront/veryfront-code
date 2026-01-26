@@ -3,7 +3,7 @@ export * from "./logger/index.js";
 export * from "./constants/index.js";
 export { VERSION } from "./version.js";
 export * from "./paths.js";
-export { type BundleCode as HashBundleCode, computeCodeHash, computeContentHash, computeHash, getContentHash, shortHash, simpleHash, simpleHash as numericHash, } from "./hash-utils.js";
+export { type BundleCode as HashBundleCode, computeCodeHash, computeContentHash, computeHash, getContentHash, shortHash, simpleHash, } from "./hash-utils.js";
 export { MemoCache, memoize, memoizeAsync, simpleHash as memoizeHash } from "./memoize.js";
 export * from "./path-utils.js";
 export * from "./format-utils.js";

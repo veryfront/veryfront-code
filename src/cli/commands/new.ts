@@ -152,7 +152,7 @@ export async function newCommand(
     return;
   }
 
-  const tui = createTui({ title: "Veryfront", showLogs: true });
+  const tui = createTui({ title: "Veryfront Code", showLogs: true });
   const restore = interceptConsole(tui);
 
   const localUrl = `http://${name}.veryfront.me:${port}`;

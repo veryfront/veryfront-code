@@ -80,6 +80,8 @@ export declare const SpanNames: {
     readonly CACHE_REGISTRY_DELETE_REDIS_KEYS: "cache.registry.delete_redis_keys";
     readonly CACHE_KEYS_GET_ALL_ASYNC: "cache.keys.get_all_async";
     readonly CACHE_KEYS_DELETE_ALL_ASYNC: "cache.keys.delete_all_async";
+    readonly CACHE_MULTI_TIER_GET: "cache.multi_tier.get";
+    readonly CACHE_MULTI_TIER_SET: "cache.multi_tier.set";
     readonly HTML_GENERATE_SHELL_PARTS: "html.generate_shell_parts";
     readonly HTML_WRAP_IN_SHELL: "html.wrap_in_shell";
     readonly HTML_GENERATE_TAILWIND_CSS: "html.generate_tailwind_css";

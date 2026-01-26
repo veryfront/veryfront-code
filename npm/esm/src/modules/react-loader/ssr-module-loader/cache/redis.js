@@ -1,79 +1,67 @@
 /** Redis caching for cross-pod SSR module sharing */
 import { rendererLogger as logger } from "../../../../utils/index.js";
-import { getRedisClient, isRedisConfigured, } from "../../../../utils/redis-client.js";
 import { buildRedisSSRModuleKey } from "../../../../cache/index.js";
 import { getSSRModuleRedisTTL } from "../constants.js";
-let redisEnabled = false;
-let redisClient = null;
-let redisInitialized = false;
-let redisInitPromise = null;
+import { CacheBackends, createDistributedCacheAccessor } from "../../../../cache/backend.js";
+/** Lazy-loaded distributed cache backend for cross-pod sharing */
+const getDistributedCache = createDistributedCacheAccessor(() => CacheBackends.ssrModule(), "SSR-MODULE-LOADER");
+/**
+ * @deprecated Legacy key builder. CacheBackend handles prefixing internally.
+ * Used only for backward compatibility if needed.
+ */
 export function redisKey(key) {
     return buildRedisSSRModuleKey(key);
 }
 /** Initialize distributed caching for SSR modules */
 export async function initializeSSRDistributedCache() {
-    if (redisInitialized)
-        return redisEnabled;
-    if (redisInitPromise) {
-        await redisInitPromise;
-        return redisEnabled;
-    }
-    redisInitPromise = (async () => {
-        if (!isRedisConfigured()) {
-            logger.debug("[SSR-MODULE-LOADER] Redis not configured, using memory cache");
-            redisInitialized = true;
-            return;
-        }
-        try {
-            redisClient = await getRedisClient();
-            redisEnabled = true;
-            logger.debug("[SSR-MODULE-LOADER] Redis cache enabled");
-        }
-        catch (error) {
-            logger.warn("[SSR-MODULE-LOADER] Redis unavailable, falling back to memory cache", { error });
-            redisEnabled = false;
-        }
-        finally {
-            redisInitialized = true;
-        }
-    })();
-    await redisInitPromise;
-    redisInitPromise = null;
-    return redisEnabled;
+    const backend = await getDistributedCache();
+    return backend !== null;
 }
+/** Check if distributed caching is enabled for SSR modules */
 export function isSSRDistributedCacheEnabled() {
-    return redisEnabled && redisClient !== null;
+    // We can't synchronously check if backend is initialized without accessing the promise
+    // But we can check if we *should* be enabled based on env via CacheBackend utils
+    // For now, this returns true because it's used as a guard for get/set calls
+    // which themselves are async and handle missing backends gracefully.
+    return true;
 }
 /** @deprecated Use initializeSSRDistributedCache instead */
 export const initializeSSRRedisCache = initializeSSRDistributedCache;
 /** @deprecated Use isSSRDistributedCacheEnabled instead */
 export const isSSRRedisCacheEnabled = isSSRDistributedCacheEnabled;
+/** @deprecated Use isSSRDistributedCacheEnabled instead */
 export function getRedisEnabled() {
-    return redisEnabled;
+    return isSSRDistributedCacheEnabled();
 }
+/**
+ * @deprecated Direct Redis client access is deprecated. Use CacheBackend abstraction.
+ * Returns null to force use of CacheBackend path in updated consumers.
+ */
 export function getRedisClientInstance() {
-    return redisClient;
+    return null;
 }
 export async function getFromRedis(cacheKey) {
-    if (!redisEnabled || !redisClient)
+    const backend = await getDistributedCache();
+    if (!backend)
         return null;
     try {
-        return await redisClient.get(redisKey(cacheKey));
+        return await backend.get(cacheKey);
     }
     catch (error) {
-        logger.debug("[SSR-MODULE-LOADER] Redis get failed", { key: cacheKey, error });
+        logger.debug("[SSR-MODULE-LOADER] Distributed cache get failed", { key: cacheKey, error });
         return null;
     }
 }
 /** Store transformed code in Redis with environment-aware TTL */
 export async function setInRedis(cacheKey, code, options) {
-    if (!redisEnabled || !redisClient)
+    const backend = await getDistributedCache();
+    if (!backend)
         return;
     const ttl = options?.ttlSeconds ?? getSSRModuleRedisTTL(options?.isProduction ?? true);
     try {
-        await redisClient.set(redisKey(cacheKey), code, { EX: ttl });
+        await backend.set(cacheKey, code, ttl);
     }
     catch (error) {
-        logger.debug("[SSR-MODULE-LOADER] Redis set failed", { key: cacheKey, error });
+        logger.debug("[SSR-MODULE-LOADER] Distributed cache set failed", { key: cacheKey, error });
     }
 }

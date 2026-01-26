@@ -1,24 +1,25 @@
-# Veryfront
+# Veryfront Code
 
-[![npm version](https://img.shields.io/npm/v/veryfront.svg)](https://www.npmjs.com/package/veryfront)
-[![CI/CD](https://github.com/veryfront/veryfront-renderer/actions/workflows/ci.yml/badge.svg)](https://github.com/veryfront/veryfront-renderer/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-
-The all-in-one React framework for building AI-powered applications and agents.
-
-## Features
-
-- **Zero config** — Auto-discovery from file structure
-- **Multi-runtime** — Deno, Node.js, Bun, Cloudflare Workers
-- **Full-stack React** — SSR, SSG, ISR, streaming
-- **MCP built-in** — Model Context Protocol server
-- **Production-ready** — Rate limiting, caching, observability
-
-## Quick Start
+The simplest way to build AI-powered apps.
 
 ```bash
-npx veryfront demo
+npx veryfront
 ```
+
+```
+  ○ ○ ○ ○ ○ ○ ○
+  ○ ● ● ● ○ ○ ○   Veryfront Code is running
+  ○ ● ● ● ○ ○ ○
+  ○ ● ● ○ ● ● ○   Url  http://veryfront.me:3000
+  ○ ○ ○ ● ● ● ○   Mcp  http://veryfront.me:3002/mcp
+  ○ ○ ○ ● ● ● ○
+  ○ ○ ○ ○ ○ ○ ○
+
+  ✓ Server ready
+  ✓ MCP ready
+```
+
+One command. Zero config. Just build.
 
 ## Project Structure
 

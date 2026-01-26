@@ -221,7 +221,9 @@ export class FileCache {
       const serialized = JSON.stringify(entry);
       // Update request-scoped cache so subsequent reads in same request see the new value
       setInRequestCache(key, serialized);
-      backend.set(key, serialized, BACKEND_TTL_SECONDS).catch(() => {});
+      backend.set(key, serialized, BACKEND_TTL_SECONDS).catch((error) => {
+        logger.debug("[FileCache] Backend set failed", { key, error });
+      });
       return;
     }
 
@@ -308,7 +310,9 @@ export class FileCache {
 
     // Fire-and-forget backend deletion
     // Note: prefix already includes "file:" from buildFileCacheKeyPrefix, don't add it again
-    cacheBackend?.delByPattern?.(`${prefix}*`).catch(() => {});
+    cacheBackend?.delByPattern?.(`${prefix}*`).catch((error) => {
+      logger.debug("[FileCache] Backend invalidation failed", { prefix, error });
+    });
 
     return count;
   }
@@ -346,7 +350,9 @@ export class FileCache {
 
     // Fire-and-forget backend deletion
     // Note: prefix already includes "file:" from buildFileCacheKeyPrefix, don't add it again
-    cacheBackend?.delByPattern?.(`${prefix}*:${suffix}`).catch(() => {});
+    cacheBackend?.delByPattern?.(`${prefix}*:${suffix}`).catch((error) => {
+      logger.debug("[FileCache] Backend invalidation failed", { prefix, suffix, error });
+    });
 
     return count;
   }

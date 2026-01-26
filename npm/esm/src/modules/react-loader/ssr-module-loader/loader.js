@@ -21,8 +21,34 @@ import { SpanNames } from "../../../observability/tracing/span-names.js";
 import { extractComponent } from "../extract-component.js";
 import { CIRCUIT_BREAKER_RESET_MS, CIRCUIT_BREAKER_THRESHOLD, IN_PROGRESS_WAIT_TIMEOUT_MS, MAX_CONCURRENT_TRANSFORMS, MAX_TRANSFORM_DEPTH, TRANSFORM_ACQUIRE_TIMEOUT_MS, TRANSFORM_BATCH_SIZE, } from "./constants.js";
 import { withTimeoutThrow } from "../../../rendering/utils/stream-utils.js";
-import { failedComponents, getFromRedis, getRedisClientInstance, getRedisEnabled, globalCrossProjectCache, globalInProgress, globalModuleCache, globalTmpDirs, setInRedis, transformSemaphore, } from "./cache/index.js";
-import { getCacheBaseDir } from "../../../utils/cache-dir.js";
+import { failedComponents, getFromRedis, globalCrossProjectCache, globalInProgress, globalModuleCache, globalTmpDirs, isSSRDistributedCacheEnabled, setInRedis, transformSemaphore, } from "./cache/index.js";
+import { getCacheBaseDir, getHttpBundleCacheDir } from "../../../utils/cache-dir.js";
+import { ensureHttpBundlesExist } from "../../../transforms/esm/http-cache.js";
+import { LRUCache } from "../../../utils/lru-wrapper.js";
+/** Pattern to match HTTP bundle file:// paths in transformed code */
+const HTTP_BUNDLE_PATTERN = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
+/** Extract HTTP bundle paths from transformed code for proactive recovery */
+function extractHttpBundlePaths(code) {
+    const bundles = [];
+    const seen = new Set();
+    let match;
+    while ((match = HTTP_BUNDLE_PATTERN.exec(code)) !== null) {
+        const path = match[1];
+        const hash = match[2];
+        if (!seen.has(hash)) {
+            seen.add(hash);
+            bundles.push({ path, hash });
+        }
+    }
+    HTTP_BUNDLE_PATTERN.lastIndex = 0;
+    return bundles;
+}
+/**
+ * Track modules whose HTTP bundles have been verified, keyed by tempPath:contentHash.
+ * Bounded LRU to prevent unbounded memory growth in long-running pods.
+ * Keying by contentHash ensures verification is re-done when content changes at the same path.
+ */
+const verifiedHttpBundlePaths = new LRUCache({ maxEntries: 2000 });
 /**
  * SSR Module Loader with Redis Support.
  *
@@ -59,7 +85,37 @@ export class SSRModuleLoader {
                         context: { file: filePath, phase: "transform" },
                     }));
                 }
-                const mod = await withSpan(SpanNames.SSR_DYNAMIC_IMPORT, () => import(`file://${cacheEntry.tempPath}?v=${cacheEntry.contentHash}`), { "ssr.file": fileName });
+                let mod;
+                try {
+                    mod = await withSpan(SpanNames.SSR_DYNAMIC_IMPORT, () => import(`file://${cacheEntry.tempPath}?v=${cacheEntry.contentHash}`), { "ssr.file": fileName });
+                }
+                catch (importError) {
+                    // If import fails due to missing HTTP bundle, try to recover and retry once
+                    const errorMsg = importError instanceof Error
+                        ? importError.message
+                        : String(importError);
+                    const bundleMatch = errorMsg.match(/veryfront-http-bundle\/http-([a-f0-9]+)\.mjs/);
+                    if (bundleMatch) {
+                        const hash = bundleMatch[1];
+                        logger.warn("[SSR-MODULE-LOADER] Import failed due to missing HTTP bundle, attempting recovery", {
+                            file: filePath.slice(-40),
+                            hash,
+                        });
+                        const { recoverHttpBundleByHash } = await import("../../../transforms/esm/http-cache.js");
+                        const cacheDir = getHttpBundleCacheDir();
+                        const recovered = await recoverHttpBundleByHash(hash, cacheDir);
+                        if (recovered) {
+                            logger.info("[SSR-MODULE-LOADER] HTTP bundle recovered, retrying import", { hash });
+                            mod = await import(`file://${cacheEntry.tempPath}?v=${cacheEntry.contentHash}&retry=1`);
+                        }
+                        else {
+                            throw importError;
+                        }
+                    }
+                    else {
+                        throw importError;
+                    }
+                }
                 failedComponents.delete(circuitKey);
                 return extractComponent(mod, filePath);
             }
@@ -247,24 +303,79 @@ export class SSRModuleLoader {
         const inProgressKey = contentCacheKey;
         const cachedEntry = globalModuleCache.get(contentCacheKey);
         if (cachedEntry) {
-            globalModuleCache.set(filePathCacheKey, cachedEntry);
-            await this.ensureDependenciesExist(code, filePath, depth);
-            return;
-        }
-        const redisEnabled = getRedisEnabled();
-        const redisClient = getRedisClientInstance();
-        if (redisEnabled && redisClient) {
-            const redisCode = await getFromRedis(contentCacheKey);
-            if (redisCode) {
-                const tempPath = await this.getTempPath(filePath, contentHash);
-                await this.fs.mkdir(tempPath.substring(0, tempPath.lastIndexOf("/")), { recursive: true });
-                await this.fs.writeTextFile(tempPath, redisCode);
-                const entry = { tempPath, contentHash };
-                globalModuleCache.set(contentCacheKey, entry);
-                globalModuleCache.set(filePathCacheKey, entry);
-                logger.debug("[SSR-MODULE-LOADER] Redis cache hit", { file: filePath.slice(-40) });
+            // Verify HTTP bundles exist for in-memory cached transforms (once per path+content)
+            const verifyKey = `${cachedEntry.tempPath}:${cachedEntry.contentHash}`;
+            if (!verifiedHttpBundlePaths.get(verifyKey)) {
+                try {
+                    const cachedCode = await this.fs.readTextFile(cachedEntry.tempPath);
+                    const bundlePaths = extractHttpBundlePaths(cachedCode);
+                    if (bundlePaths.length > 0) {
+                        const cacheDir = getHttpBundleCacheDir();
+                        const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
+                        if (failed.length > 0) {
+                            logger.warn("[SSR-MODULE-LOADER] In-memory cached module has unrecoverable HTTP bundles, re-transforming", {
+                                file: filePath.slice(-40),
+                                failed,
+                            });
+                            globalModuleCache.delete(contentCacheKey);
+                            globalModuleCache.delete(filePathCacheKey);
+                            // Fall through to Redis or fresh transform
+                        }
+                        else {
+                            verifiedHttpBundlePaths.set(verifyKey, true);
+                        }
+                    }
+                    else {
+                        verifiedHttpBundlePaths.set(verifyKey, true);
+                    }
+                }
+                catch {
+                    // File doesn't exist or unreadable, invalidate cache
+                    globalModuleCache.delete(contentCacheKey);
+                    globalModuleCache.delete(filePathCacheKey);
+                }
+            }
+            // Re-check after potential invalidation
+            if (globalModuleCache.has(contentCacheKey)) {
+                globalModuleCache.set(filePathCacheKey, cachedEntry);
                 await this.ensureDependenciesExist(code, filePath, depth);
                 return;
+            }
+        }
+        if (isSSRDistributedCacheEnabled()) {
+            const redisCode = await getFromRedis(contentCacheKey);
+            if (redisCode) {
+                // Proactively ensure HTTP bundles exist before using cached transform.
+                // The cached code may reference file:// paths to HTTP bundles that were
+                // created on a different pod and may not exist locally.
+                let httpBundlesOk = true;
+                const bundlePaths = extractHttpBundlePaths(redisCode);
+                if (bundlePaths.length > 0) {
+                    const cacheDir = getHttpBundleCacheDir();
+                    const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
+                    if (failed.length > 0) {
+                        logger.warn("[SSR-MODULE-LOADER] Redis cached code has unrecoverable HTTP bundles, re-transforming", {
+                            file: filePath.slice(-40),
+                            failed,
+                        });
+                        httpBundlesOk = false;
+                    }
+                }
+                if (httpBundlesOk) {
+                    const tempPath = await this.getTempPath(filePath, contentHash);
+                    await this.fs.mkdir(tempPath.substring(0, tempPath.lastIndexOf("/")), {
+                        recursive: true,
+                    });
+                    await this.fs.writeTextFile(tempPath, redisCode);
+                    verifiedHttpBundlePaths.set(`${tempPath}:${contentHash}`, true);
+                    const entry = { tempPath, contentHash };
+                    globalModuleCache.set(contentCacheKey, entry);
+                    globalModuleCache.set(filePathCacheKey, entry);
+                    logger.debug("[SSR-MODULE-LOADER] Redis cache hit", { file: filePath.slice(-40) });
+                    await this.ensureDependenciesExist(code, filePath, depth);
+                    return;
+                }
+                // Fall through to re-transform, which will create HTTP bundles locally
             }
         }
         const existingTransform = globalInProgress.get(inProgressKey);
@@ -337,16 +448,33 @@ export class SSRModuleLoader {
                 // Rewrite local imports to use hashed temp paths
                 // This ensures that each content version uses its own cached module
                 transformed = this.rewriteLocalImports(transformed, localImportPaths, filePath);
+                // Ensure HTTP bundles exist for this transform (handles nested bundle deps)
+                const bundlePaths = extractHttpBundlePaths(transformed);
+                if (bundlePaths.length > 0) {
+                    const cacheDir = getHttpBundleCacheDir();
+                    const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
+                    if (failed.length > 0) {
+                        logger.warn("[SSR-MODULE-LOADER] Some HTTP bundles could not be recovered", {
+                            file: filePath.slice(-40),
+                            failed,
+                        });
+                    }
+                }
                 // Hash the TRANSFORMED content (after import rewrites) for cache busting
                 // This ensures Deno's module cache is invalidated when dependencies change
                 const transformedHash = await this.hashContentAsync(transformed);
                 const tempPath = await this.getTempPath(filePath, transformedHash);
                 await this.fs.mkdir(tempPath.substring(0, tempPath.lastIndexOf("/")), { recursive: true });
                 await this.fs.writeTextFile(tempPath, transformed);
-                if (redisEnabled && redisClient) {
+                if (isSSRDistributedCacheEnabled()) {
                     setInRedis(contentCacheKey, transformed, {
                         isProduction: this.isProductionContentSource(),
-                    }).catch(() => { });
+                    }).catch((error) => {
+                        logger.debug("[SSR-MODULE-LOADER] Distributed cache set failed", {
+                            key: contentCacheKey,
+                            error,
+                        });
+                    });
                 }
                 // Use transformedHash for cache busting in dynamic imports
                 const entry = { tempPath, contentHash: transformedHash };

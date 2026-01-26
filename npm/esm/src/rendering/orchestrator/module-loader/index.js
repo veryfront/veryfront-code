@@ -6,69 +6,41 @@
  * @module rendering/orchestrator/module-loader
  */
 import { parallelMap, rendererLogger as logger } from "../../../utils/index.js";
-import { Singleflight } from "../../../utils/singleflight.js";
 import { getLocalAdapter } from "../../../platform/adapters/registry.js";
 import { generateHash } from "./cache.js";
 import { findLocalLibFile, findSourceFile } from "../file-resolver/index.js";
 import { transformToESM } from "../../../transforms/esm-transform.js";
 import { getProjectTmpDir } from "../../../modules/react-loader/index.js";
-import { TRANSFORM_CACHE_VERSION } from "../../../transforms/esm/package-registry.js";
+import { generateCacheKey as generateTransformCacheKey, getOrComputeTransform, initializeTransformCache, setCachedTransformAsync, } from "../../../transforms/esm/transform-cache.js";
+import { hashString } from "../../../cache/hash.js";
+import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "../../../utils/constants/cache.js";
+import { ensureHttpBundlesExist } from "../../../transforms/esm/http-cache.js";
+import { getHttpBundleCacheDir } from "../../../utils/cache-dir.js";
 // Re-export utilities
 export { createEsmCache, createModuleCache, generateHash } from "./cache.js";
 export { fetchEsmModule, rewriteEsmPaths } from "./esm-rewriter.js";
+/** Pattern to match HTTP bundle file:// paths in transformed code */
+const HTTP_BUNDLE_PATTERN = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
+/** Extract HTTP bundle paths from transformed code for proactive recovery */
+function extractHttpBundlePaths(code) {
+    const bundles = [];
+    const seen = new Set();
+    let match;
+    while ((match = HTTP_BUNDLE_PATTERN.exec(code)) !== null) {
+        const path = match[1];
+        const hash = match[2];
+        if (!seen.has(hash)) {
+            seen.add(hash);
+            bundles.push({ path, hash });
+        }
+    }
+    HTTP_BUNDLE_PATTERN.lastIndex = 0;
+    return bundles;
+}
 /** Cache for created directories to avoid repeated mkdir calls */
 const createdDirs = new Set();
-/**
- * Distributed transform cache for cross-pod sharing.
- * Caches transformed module code in Redis/API so other pods don't need to re-transform.
- */
-let distributedTransformCache;
-const distributedCacheInit = new Singleflight();
-/** TTL for cached transforms (24 hours) */
-const TRANSFORM_CACHE_TTL_SECONDS = 86400;
-function getDistributedTransformCache() {
-    if (distributedTransformCache !== undefined) {
-        return Promise.resolve(distributedTransformCache);
-    }
-    return distributedCacheInit.do("init", async () => {
-        try {
-            const { CacheBackends } = await import("../../../cache/backend.js");
-            const backend = await CacheBackends.transform();
-            // Only use distributed cache if API or Redis (not memory - that's per-process)
-            if (backend.type === "memory") {
-                distributedTransformCache = null;
-                logger.debug("[ModuleLoader] No distributed transform cache (memory only)");
-                return null;
-            }
-            distributedTransformCache = backend;
-            logger.debug("[ModuleLoader] Distributed transform cache initialized", {
-                type: backend.type,
-            });
-            return backend;
-        }
-        catch (error) {
-            logger.debug("[ModuleLoader] Failed to init distributed transform cache", { error });
-            distributedTransformCache = null;
-            return null;
-        }
-    });
-}
-/**
- * Build cache key for transformed module.
- * Includes content hash so cache invalidates when source changes.
- */
-function getTransformCacheKey(projectId, filePath, contentHash) {
-    return `v${TRANSFORM_CACHE_VERSION}:${projectId}:${filePath}:${contentHash}`;
-}
-/** Simple string hash for cache keys */
-function hashString(str) {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-        hash = ((hash << 5) - hash) + str.charCodeAt(i);
-        hash &= hash;
-    }
-    return Math.abs(hash).toString(36);
-}
+/** TTL for cached transforms (uses centralized config) */
+const TRANSFORM_CACHE_TTL_SECONDS = TRANSFORM_DISTRIBUTED_TTL_SEC;
 function getModuleCacheKey(filePath, projectId, projectDir) {
     return `${projectId ?? projectDir ?? "default"}:${filePath}`;
 }
@@ -154,35 +126,41 @@ export async function transformModuleWithDeps(filePath, tmpDir, localAdapter, co
     }
     const contentHash = hashString(fileContent);
     const effectiveProjectId = projectId ?? projectDir;
-    const transformCacheKey = getTransformCacheKey(effectiveProjectId, filePath, contentHash);
-    let transformedCode = null;
-    const distributedCache = await getDistributedTransformCache();
-    if (distributedCache) {
-        try {
-            const cached = await distributedCache.get(transformCacheKey);
-            if (cached) {
-                transformedCode = cached;
-                logger.debug("[ModuleLoader] Distributed transform cache HIT", {
-                    filePath,
-                    cacheKey: transformCacheKey,
-                });
-            }
-        }
-        catch (error) {
-            logger.debug("[ModuleLoader] Distributed cache get failed", { filePath, error });
-        }
-    }
-    if (!transformedCode) {
-        transformedCode = await transformToESM(fileContent, filePath, projectDir, adapter, {
+    const scopedPath = `${effectiveProjectId}:${filePath}`;
+    const transformCacheKey = generateTransformCacheKey(scopedPath, contentHash, true); // ssr=true
+    // Initialize transform cache (lazy, only once per pod)
+    await initializeTransformCache();
+    // Use consolidated transform cache with getOrCompute pattern
+    let transformedCode = await getOrComputeTransform(transformCacheKey, () => {
+        logger.debug("[ModuleLoader] Transform cache miss, transforming", { filePath });
+        return transformToESM(fileContent, filePath, projectDir, adapter, {
             projectId: effectiveProjectId,
             dev: mode === "development",
             ssr: true,
         });
-        if (distributedCache) {
-            distributedCache
-                .set(transformCacheKey, transformedCode, TRANSFORM_CACHE_TTL_SECONDS)
-                .catch((error) => {
-                logger.debug("[ModuleLoader] Distributed cache set failed", { filePath, error });
+    }, TRANSFORM_CACHE_TTL_SECONDS);
+    // Proactively ensure HTTP bundles exist before writing the module.
+    // Cached transforms from a different pod may reference file:// paths
+    // to HTTP bundles that don't exist locally.
+    const bundlePaths = extractHttpBundlePaths(transformedCode);
+    if (bundlePaths.length > 0) {
+        const cacheDir = getHttpBundleCacheDir();
+        const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
+        if (failed.length > 0) {
+            logger.warn("[ModuleLoader] HTTP bundle recovery failed, re-transforming", {
+                filePath,
+                failed,
+            });
+            transformedCode = await transformToESM(fileContent, filePath, projectDir, adapter, {
+                projectId: effectiveProjectId,
+                dev: mode === "development",
+                ssr: true,
+            });
+            setCachedTransformAsync(transformCacheKey, transformedCode, contentHash, TRANSFORM_CACHE_TTL_SECONDS).catch((error) => {
+                logger.debug("[ModuleLoader] Failed to update transform cache after re-transform", {
+                    filePath,
+                    error,
+                });
             });
         }
     }
@@ -219,6 +197,23 @@ export async function loadModule(filePath, config) {
         return await import(moduleUrl);
     }
     catch (error) {
+        // If import fails due to missing HTTP bundle, try to recover and retry once
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        const bundleMatch = errorMsg.match(/veryfront-http-bundle\/http-([a-f0-9]+)\.mjs/);
+        if (bundleMatch) {
+            const hash = bundleMatch[1];
+            logger.warn("[ModuleLoader] Import failed due to missing HTTP bundle, attempting recovery", {
+                filePath,
+                hash,
+            });
+            const { recoverHttpBundleByHash } = await import("../../../transforms/esm/http-cache.js");
+            const cacheDir = getHttpBundleCacheDir();
+            const recovered = await recoverHttpBundleByHash(hash, cacheDir);
+            if (recovered) {
+                logger.info("[ModuleLoader] HTTP bundle recovered, retrying import", { hash });
+                return await import(`file://${tempFilePath}?t=${Date.now()}&retry=1`);
+            }
+        }
         logger.error("[ModuleLoader] Failed to import module:", {
             filePath,
             tempFilePath,

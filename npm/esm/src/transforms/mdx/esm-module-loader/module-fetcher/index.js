@@ -14,7 +14,6 @@
 import * as dntShim from "../../../../../_dnt.shims.js";
 import { join, posix } from "../../../../../deps/deno.land/std@0.220.0/path/mod.js";
 import { rendererLogger as logger } from "../../../../utils/index.js";
-import { Singleflight } from "../../../../utils/singleflight.js";
 import { withSpan } from "../../../../observability/tracing/otlp-setup.js";
 import { SpanNames } from "../../../../observability/tracing/span-names.js";
 import { transformToESM } from "../../../esm-transform.js";
@@ -27,43 +26,10 @@ import { hashString } from "../utils/hash.js";
 import { createStubModule } from "../utils/stub-module.js";
 import { resolveModuleFile } from "../resolution/file-finder.js";
 import { recordSSRModules } from "../../../../modules/manifest/route-module-manifest.js";
+import { getDistributedTransformBackend } from "../../../esm/transform-cache.js";
 import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "../../../../utils/constants/cache.js";
-/**
- * Distributed transform cache for cross-pod sharing.
- * Caches transformed module code in Redis/API so other pods don't need to re-transform.
- */
-let distributedTransformCache;
-const distributedCacheInit = new Singleflight();
 /** TTL for cached transforms (uses centralized config) */
 const TRANSFORM_CACHE_TTL_SECONDS = TRANSFORM_DISTRIBUTED_TTL_SEC;
-function getDistributedTransformCache() {
-    if (distributedTransformCache !== undefined)
-        return Promise.resolve(distributedTransformCache);
-    return distributedCacheInit.do("init", async () => {
-        try {
-            const { CacheBackends } = await import("../../../../cache/backend.js");
-            const backend = await CacheBackends.transform();
-            // Only use distributed cache if API or Redis (not memory - that's per-process)
-            if (backend.type === "memory") {
-                distributedTransformCache = null;
-                logger.debug(`${LOG_PREFIX_MDX_LOADER} No distributed transform cache (memory only)`);
-                return null;
-            }
-            distributedTransformCache = backend;
-            logger.debug(`${LOG_PREFIX_MDX_LOADER} Distributed transform cache initialized`, {
-                type: backend.type,
-            });
-            return backend;
-        }
-        catch (error) {
-            logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to init distributed transform cache`, {
-                error,
-            });
-            distributedTransformCache = null;
-            return null;
-        }
-    });
-}
 /**
  * Build cache key for transformed module.
  * Includes content hash so cache invalidates when source changes.
@@ -415,7 +381,7 @@ async function doFetchAndCacheModule(normalizedPath, context, fetchAndCacheModul
         const contentHash = hashString(sourceCode);
         const transformCacheKey = getTransformCacheKey(projectId, normalizedPath, contentHash);
         let moduleCode = null;
-        const distributedCache = await getDistributedTransformCache();
+        const distributedCache = await getDistributedTransformBackend();
         if (distributedCache) {
             try {
                 const cached = await distributedCache.get(transformCacheKey);

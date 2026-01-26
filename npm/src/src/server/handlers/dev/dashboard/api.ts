@@ -360,6 +360,7 @@ async function handleListFiles(req: dntShim.Request, ctx: HandlerContext): Promi
   if (!projectDir) return errorResponse("No project directory configured", 500);
 
   const relativePath = new URL(req.url).searchParams.get("path") || "";
+  if (relativePath.includes("..")) return errorResponse("Invalid path", 400);
   const fullPath = relativePath ? `${projectDir}/${relativePath}` : projectDir;
 
   try {
@@ -394,6 +395,7 @@ async function handleReadFileContent(req: dntShim.Request, ctx: HandlerContext):
 
   const relativePath = new URL(req.url).searchParams.get("path") || "";
   if (!relativePath) return errorResponse("path parameter is required", 400);
+  if (relativePath.includes("..")) return errorResponse("Invalid path", 400);
 
   try {
     const content = await adapter.fs.readFile(`${projectDir}/${relativePath}`);

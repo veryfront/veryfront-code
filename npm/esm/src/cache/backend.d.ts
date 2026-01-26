@@ -121,6 +121,26 @@ export declare function isApiCacheAvailable(env?: RuntimeEnv): boolean;
  * Preference: API (production) > Redis (local/OSS) > Memory (fallback)
  */
 export declare function createCacheBackend(config?: CacheBackendConfig): Promise<CacheBackend>;
+/**
+ * Check if a cache backend supports distributed (cross-pod) caching.
+ *
+ * Use this instead of checking `backend.type === "memory"` directly,
+ * which is a leaky abstraction that exposes implementation details.
+ */
+export declare function isDistributedBackend(backend: CacheBackend): boolean;
+/**
+ * Create a lazy-initialized distributed cache accessor.
+ *
+ * This encapsulates the common pattern of:
+ * 1. Lazy-init a cache backend via Singleflight
+ * 2. Skip if memory-only (not useful for cross-pod sharing)
+ * 3. Return null if init fails
+ *
+ * @param factory - Function that creates the cache backend
+ * @param name - Log prefix for debug messages
+ * @returns A function that returns the distributed cache backend or null
+ */
+export declare function createDistributedCacheAccessor(factory: () => Promise<CacheBackend>, name: string): () => Promise<CacheBackend | null>;
 /** Convenience wrappers for common cache patterns. */
 export declare const CacheBackends: {
     /** Transform cache for compiled code. */
@@ -136,6 +156,8 @@ export declare const CacheBackends: {
     /** HTTP module cache for ESM.sh modules (cross-pod sharing).
      * Uses separate circuit breaker to prevent cascade failures from blocking recovery. */
     httpModule: () => Promise<CacheBackend>;
+    /** SSR module cache for React loader (cross-pod sharing). */
+    ssrModule: () => Promise<CacheBackend>;
     /** Project CSS cache for Tailwind CSS output (cross-pod sharing). */
     projectCSS: () => Promise<CacheBackend>;
 };

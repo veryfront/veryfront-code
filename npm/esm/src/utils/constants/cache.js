@@ -8,7 +8,13 @@ export const MS_PER_HOUR = MINUTES_PER_HOUR * MS_PER_MINUTE;
 export const ONE_DAY_MS = HOURS_PER_DAY * MS_PER_HOUR;
 function getEnvString(key) {
     const g = dntShim.dntGlobalThis;
-    return g.Deno?.env?.get?.(key) ?? g.process?.env?.[key];
+    try {
+        return g.Deno?.env?.get?.(key) ?? g.process?.env?.[key];
+    }
+    catch {
+        // Gracefully handle missing --allow-env permission in Deno
+        return undefined;
+    }
 }
 function getEnvNumber(key, fallback) {
     const value = getEnvString(key);
@@ -95,3 +101,10 @@ export const HTTP_MODULE_DISTRIBUTED_TTL_SEC = getEnvNumber("HTTP_MODULE_DISTRIB
 // Transform cache for module compilation
 // Same TTL as HTTP module cache since transforms are tied to content hashes
 export const TRANSFORM_DISTRIBUTED_TTL_SEC = getEnvNumber("TRANSFORM_DISTRIBUTED_TTL_SEC", HOURS_PER_DAY * MINUTES_PER_HOUR * SECONDS_PER_MINUTE);
+// Pod-level module cache (shared across all RenderPipeline instances)
+// These caches map module paths to transformed temp file paths
+export const MODULE_CACHE_MAX_ENTRIES = getEnvNumber("MODULE_CACHE_MAX_ENTRIES", 10000);
+export const MODULE_CACHE_TTL_MS = getEnvNumber("MODULE_CACHE_TTL_MS", 5 * MS_PER_MINUTE);
+// ESM cache for external module mappings
+export const ESM_CACHE_MAX_ENTRIES = getEnvNumber("ESM_CACHE_MAX_ENTRIES", 5000);
+export const ESM_CACHE_TTL_MS = getEnvNumber("ESM_CACHE_TTL_MS", 10 * MS_PER_MINUTE);

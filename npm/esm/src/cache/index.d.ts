@@ -1,4 +1,7 @@
 export * from "./backend.js";
+export * from "./multi-tier.js";
+export * from "./module-cache.js";
+export * from "./hash.js";
 export { type CacheKeyContext, extractCacheKeyContext, getContentHashKey, getCurrentCacheKeyContext, getProjectScopedKey, getProjectScopedKeyAlways, type MultiProjectRequestContext, runWithCacheKeyContext, tryGetCacheKeyContext, } from "./cache-key-builder.js";
 export { buildComponentCacheKey, buildConfigCacheKey, buildContentHashCacheKey, buildDirCacheKeyPrefix, buildErrorPageCacheKey, buildFileCacheKeyPrefix, buildFileListCacheKey, buildFileOperationCacheKey, buildGitHubBytesCacheKey, buildGitHubContentCacheKey, buildGitHubDirCacheKey, buildGitHubResolveCacheKey, buildGitHubStatCacheKey, buildGitHubTreeCacheKey, buildLayoutComponentCacheKey, buildModuleResolveCacheKey, buildModuleTransformCacheKey, buildProxyManagerCacheKey, buildRedisFileCacheKey, buildRedisSSRModuleKey, buildRedisTransformKey, buildRenderCacheKey, buildRenderCachePrefix, buildSSRModuleCacheKey, buildSSRModuleProjectKey, buildStatCacheKeyPrefix, buildTransformCacheKey, CacheKeyPrefix, cacheRegistry, createCacheKeyFilter, deleteAllKeysForProject, deleteAllKeysForProjectAsync, type FileOperationContext, type FileSourceType, getAllKeysForProject, getAllKeysForProjectAsync, getCacheKeyVersion, parseRenderCacheKey, } from "./keys.js";
 export { type CacheStore, extractProjectIdFromKey, isKeyForProject, LRUCacheStore, MapCacheStore, registerLRUCache, registerMapCache, } from "./registry.js";
