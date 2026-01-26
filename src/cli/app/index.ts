@@ -576,7 +576,7 @@ export function createApp(config: AppConfig): App {
     if (!isInteractiveMode) return;
 
     write(cursor.moveTo(1, 1) + screen.clearDown);
-    write(parts.join("\n"));
+    write("\n" + parts.join("\n"));
   }
 
   function update(updater: StateUpdater): void {
