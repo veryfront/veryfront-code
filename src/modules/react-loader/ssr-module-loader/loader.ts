@@ -6,13 +6,12 @@
  * @module module-system/react-loader/ssr-module-loader/loader
  */
 
-import { isAbsolute, join } from "#veryfront/platform/compat/path/index.ts";
-import { cwd } from "#veryfront/platform/compat/process.ts";
+import { join } from "#veryfront/platform/compat/path/index.ts";
 import type * as React from "react";
 import { transformToESM } from "#veryfront/transforms/esm/index.ts";
 import type { TransformOptions } from "#veryfront/transforms/esm/types.ts";
 import { TRANSFORM_CACHE_VERSION } from "#veryfront/transforms/esm/package-registry.ts";
-import { buildSSRModuleCacheKey, buildSSRModuleProjectKey } from "../../../cache/keys.ts";
+import { buildSSRModuleCacheKey } from "../../../cache/keys.ts";
 import {
   type CrossProjectImport,
   type MissingImport,
@@ -21,6 +20,7 @@ import {
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
+import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
 import { injectContext, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
@@ -48,7 +48,8 @@ import {
   transformSemaphore,
 } from "./cache/index.ts";
 import type { ModuleCacheEntry, SSRModuleLoaderOptions } from "./types.ts";
-import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
+import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { lookupMdxEsmCache } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 
 /**
  * SSR Module Loader with Redis Support.
@@ -389,6 +390,29 @@ export class SSRModuleLoader {
         globalModuleCache.set(filePathCacheKey, entry);
 
         logger.debug("[SSR-MODULE-LOADER] Redis cache hit", { file: filePath.slice(-40) });
+
+        await this.ensureDependenciesExist(code, filePath, depth);
+        return;
+      }
+    }
+
+    // Check MDX-ESM cache to share modules with MDX loader and avoid duplicate React contexts
+    if (this.options.projectId && this.options.contentSourceId) {
+      const baseCacheDir = getMdxEsmCacheDir();
+      const projectKey = encodeURIComponent(this.options.projectId);
+      const sourceKey = encodeURIComponent(this.options.contentSourceId);
+      const mdxCacheDir = join(baseCacheDir, projectKey, sourceKey);
+
+      const mdxCachedPath = await lookupMdxEsmCache(filePath, mdxCacheDir, this.options.projectDir);
+      if (mdxCachedPath) {
+        const entry: ModuleCacheEntry = { tempPath: mdxCachedPath, contentHash };
+        globalModuleCache.set(contentCacheKey, entry);
+        globalModuleCache.set(filePathCacheKey, entry);
+
+        logger.debug("[SSR-MODULE-LOADER] Reusing MDX-ESM cache", {
+          file: filePath.slice(-40),
+          cachedPath: mdxCachedPath.slice(-60),
+        });
 
         await this.ensureDependenciesExist(code, filePath, depth);
         return;
@@ -783,25 +807,11 @@ export class SSRModuleLoader {
   }
 
   /**
-   * Fast sync hash for small strings (project IDs, etc.)
-   * Use hashContentAsync for large file content.
-   */
-  private hashCode(str: string): string {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-      const char = str.charCodeAt(i);
-      hash = (hash << 5) - hash + char;
-      hash = hash & hash;
-    }
-    return Math.abs(hash).toString(16);
-  }
-
-  /**
    * Async hash for large content using Web Crypto API.
-   * Doesn't block event loop for large files.
+   * Falls back to sync hash for small files.
    */
   private async hashContentAsync(content: string): Promise<string> {
-    if (content.length < 10000) return this.hashCode(content);
+    if (content.length < 10000) return hashCodeHex(content);
 
     try {
       const data = new TextEncoder().encode(content);
@@ -812,7 +822,7 @@ export class SSRModuleLoader {
         .map((b) => b.toString(16).padStart(2, "0"))
         .join("");
     } catch {
-      return this.hashCode(content);
+      return hashCodeHex(content);
     }
   }
 
@@ -832,33 +842,28 @@ export class SSRModuleLoader {
   }
 
   private async ensureTmpDir(): Promise<string> {
-    let projectDir = this.options.projectDir;
     const { projectId, contentSourceId } = this.options;
 
     if (!projectId) {
-      throw new Error(`Missing projectId for SSR temp directory (projectDir: ${projectDir})`);
+      throw new Error(
+        `Missing projectId for SSR temp directory (projectDir: ${this.options.projectDir})`,
+      );
     }
     if (!contentSourceId) {
       throw new Error(`Missing contentSourceId for SSR temp directory (project: ${projectId})`);
     }
 
-    if (!projectDir.startsWith("/")) {
-      projectDir = join(cwd(), projectDir);
-    }
-
-    const cacheBaseDir = getCacheBaseDir();
-    const baseDir = isAbsolute(cacheBaseDir) ? cacheBaseDir : join(cwd(), cacheBaseDir);
-
-    const cacheKey = `${baseDir}|${
-      buildSSRModuleProjectKey(projectDir, projectId)
-    }|${contentSourceId}`;
+    // Use the same cache directory as MDX-ESM loader to share module instances.
+    // This prevents issues like React context being created twice in separate files.
+    const baseCacheDir = getMdxEsmCacheDir();
+    const projectKey = encodeURIComponent(projectId);
+    const sourceKey = encodeURIComponent(contentSourceId);
+    const cacheKey = `${baseCacheDir}|${projectKey}|${sourceKey}`;
 
     const existingDir = globalTmpDirs.get(cacheKey);
     if (existingDir) return existingDir;
 
-    const projectKey = this.hashCode(projectId);
-    const sourceKey = this.hashCode(contentSourceId);
-    const tmpDir = join(baseDir, "veryfront-ssr", projectKey, sourceKey);
+    const tmpDir = join(baseCacheDir, projectKey, sourceKey);
 
     await this.fs.mkdir(tmpDir, { recursive: true });
     globalTmpDirs.set(cacheKey, tmpDir);
