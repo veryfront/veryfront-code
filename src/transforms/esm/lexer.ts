@@ -123,7 +123,20 @@ export async function replaceSpecifiers(
 
     if (!replacement || replacement === originalSpecifier) continue;
 
-    result = result.substring(0, imp.s) + replacement + result.substring(imp.e);
+    // For dynamic imports with string literals, es-module-lexer's s/e include the quotes.
+    // We need to preserve the quote style when replacing.
+    const isDynamic = imp.d > -1;
+    if (isDynamic) {
+      const quote = result[imp.s];
+      if (quote === '"' || quote === "'" || quote === "`") {
+        result = result.substring(0, imp.s) + quote + replacement + quote + result.substring(imp.e);
+      } else {
+        // Dynamic import with expression, not string literal - shouldn't happen if n is defined
+        result = result.substring(0, imp.s) + replacement + result.substring(imp.e);
+      }
+    } else {
+      result = result.substring(0, imp.s) + replacement + result.substring(imp.e);
+    }
   }
 
   return unmaskHttpUrls(result, urlMap);
