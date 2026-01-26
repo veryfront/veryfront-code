@@ -472,7 +472,6 @@ function handleGetBuild(): Response {
     { name: "rehypeShiki", description: "Syntax highlighting with Shiki" },
     { name: "rehypeSlug", description: "Add IDs to headings" },
     { name: "rehypeAutolinkHeadings", description: "Add links to headings" },
-    { name: "rehypeAddClasses", description: "Add classes to elements" },
     { name: "rehypeExternalLinks", description: "Process external links" },
   ];
 

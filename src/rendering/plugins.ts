@@ -1,6 +1,5 @@
 export { getRehypePlugins, getRemarkPlugins } from "#veryfront/transforms/plugins/plugin-loader.ts";
 export {
-  rehypeAddClasses,
   rehypeMdxComponents,
   rehypePreserveNodeIds,
 } from "#veryfront/transforms/plugins/rehype-utils.ts";

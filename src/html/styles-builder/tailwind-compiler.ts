@@ -11,6 +11,7 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { minifyCSS } from "#veryfront/build/asset-pipeline/tailwind-processor/css-utils.ts";
+import { MDX_BASE_STYLES } from "./mdx-base-styles.ts";
 
 export interface TailwindResult {
   css: string;
@@ -505,7 +506,9 @@ export async function generateTailwindCSS(
   return await withSpan(
     SpanNames.HTML_GENERATE_TAILWIND_CSS,
     async () => {
-      const css = stylesheet ?? DEFAULT_STYLESHEET;
+      // Prepend MDX base styles to user stylesheet for markdown/MDX element styling
+      const userStylesheet = stylesheet ?? DEFAULT_STYLESHEET;
+      const css = MDX_BASE_STYLES + "\n" + userStylesheet;
 
       try {
         const comp = await getCompiler(css);

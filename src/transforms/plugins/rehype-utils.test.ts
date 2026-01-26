@@ -1,6 +1,6 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { rehypeAddClasses, rehypeMdxComponents, rehypePreserveNodeIds } from "./rehype-utils.ts";
+import { rehypeMdxComponents, rehypePreserveNodeIds } from "./rehype-utils.ts";
 import type { Element, Root } from "hast";
 
 // deno-lint-ignore no-explicit-any
@@ -36,16 +36,6 @@ function runPreserveNodeIdsTest(
   rehypePreserveNodeIds()(tree);
 
   assertEquals(element.properties?.[attribute], value);
-}
-
-function runAddClassesTest(tagName: string, expected: string): void {
-  const element = createElement(tagName);
-  const tree = createTree(element);
-
-  rehypeAddClasses()(tree);
-
-  const classes = element.properties?.className as string[];
-  assertEquals(classes[0], expected);
 }
 
 describe("rehype-utils", () => {
@@ -136,114 +126,6 @@ describe("rehype-utils", () => {
 
       assertEquals(outer.properties?.["data-node-id"], "outer-456");
       assertEquals(inner.properties?.["data-node-id"], "inner-123");
-    });
-  });
-
-  describe("rehypeAddClasses", () => {
-    it("adds classes to paragraph", () => {
-      const element = createElement("p");
-      const tree = createTree(element);
-
-      rehypeAddClasses()(tree);
-
-      assertExists(element.properties?.className);
-      assertEquals((element.properties?.className as string[]).includes("mb-4"), true);
-    });
-
-    it("adds classes to h1", () => {
-      runAddClassesTest("h1", "text-4xl font-bold mb-8 mt-12");
-    });
-
-    it("adds classes to h2", () => {
-      runAddClassesTest("h2", "text-3xl font-bold mb-6 mt-10");
-    });
-
-    it("adds classes to h3", () => {
-      runAddClassesTest("h3", "text-2xl font-bold mb-4 mt-8");
-    });
-
-    it("adds classes to anchor", () => {
-      runAddClassesTest("a", "text-blue-600 hover:text-blue-800 underline");
-    });
-
-    it("adds classes to inline code", () => {
-      runAddClassesTest("code", "px-1 py-0.5 bg-gray-100 text-gray-900 rounded text-sm");
-    });
-
-    it("adds classes to code block", () => {
-      const element = createElement("code", { className: ["language-javascript"] });
-      const tree = createTree(element);
-
-      rehypeAddClasses()(tree);
-
-      const classes = element.properties?.className as string[];
-      assertEquals(classes.includes("language-javascript"), true);
-      assertEquals(classes[1], "block p-4 bg-gray-900 text-gray-100 rounded-lg overflow-x-auto");
-    });
-
-    it("adds classes to blockquote", () => {
-      runAddClassesTest("blockquote", "border-l-4 border-gray-300 pl-4 italic");
-    });
-
-    it("adds classes to ul", () => {
-      runAddClassesTest("ul", "list-disc list-inside mb-4");
-    });
-
-    it("adds classes to ol", () => {
-      runAddClassesTest("ol", "list-decimal list-inside mb-4");
-    });
-
-    it("adds classes to li", () => {
-      const element = createElement("li");
-      const tree = createTree(element);
-
-      rehypeAddClasses()(tree);
-
-      const classes = element.properties?.className as string[];
-      assertEquals(classes.includes("mb-2"), true);
-    });
-
-    it("converts string className to array", () => {
-      const element = createElement("p", { className: "existing-class" });
-      const tree = createTree(element);
-
-      rehypeAddClasses()(tree);
-
-      const classes = element.properties?.className as string[];
-      assertEquals(Array.isArray(classes), true);
-      assertEquals(classes.includes("existing-class"), true);
-      assertEquals(classes.includes("mb-4"), true);
-    });
-
-    it("preserves existing array className", () => {
-      const element = createElement("p", { className: ["existing-class"] });
-      const tree = createTree(element);
-
-      rehypeAddClasses()(tree);
-
-      const classes = element.properties?.className as string[];
-      assertEquals(classes.includes("existing-class"), true);
-      assertEquals(classes.includes("mb-4"), true);
-    });
-
-    it("ignores unknown elements", () => {
-      const element = createElement("div");
-      const tree = createTree(element);
-
-      rehypeAddClasses()(tree);
-
-      assertEquals(element.properties?.className, undefined);
-    });
-
-    it("handles nested elements", () => {
-      const inner = createElement("code");
-      const outer = createElement("p", {}, [inner]);
-      const tree = createTree(outer);
-
-      rehypeAddClasses()(tree);
-
-      assertEquals(((outer.properties?.className as string[]) || []).includes("mb-4"), true);
-      assertExists(inner.properties?.className);
     });
   });
 
