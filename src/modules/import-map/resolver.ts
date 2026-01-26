@@ -63,7 +63,21 @@ export function resolveImport(
       const mapping = scopedImports?.[esmShPackage] ?? importMap.imports?.[esmShPackage];
       if (mapping) {
         const subpath = extractEsmShSubpath(specifier);
-        return subpath ? mapping + subpath : mapping;
+        if (!subpath) return mapping;
+
+        // If mapping target is a file path (not HTTP URL or npm: specifier), look for explicit subpath mapping
+        // e.g., "react" → local file but "react/jsx-runtime" → different local file
+        // npm: specifiers are URL-like and should have subpaths appended
+        const isFilePath = !mapping.startsWith("http://") && !mapping.startsWith("https://") &&
+          !mapping.startsWith("npm:");
+        if (isFilePath) {
+          const fullKey = esmShPackage + subpath; // e.g., "react/jsx-runtime"
+          const subpathMapping = scopedImports?.[fullKey] ?? importMap.imports?.[fullKey];
+          // Use explicit subpath mapping if available, otherwise fall back to base mapping
+          return subpathMapping ?? mapping;
+        }
+
+        return mapping + subpath;
       }
     }
   }

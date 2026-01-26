@@ -14,7 +14,8 @@ import {
  */
 export function ensureValidChild(
   child: BundledReact.ReactNode,
-  _React: typeof BundledReact,
+  // React parameter is kept for API compatibility but unused (uses isReactElement instead)
+  _React?: unknown,
 ): BundledReact.ReactNode {
   if (isReactElement(child)) {
     logger.debug("[ensureValidChild] Valid React element", {

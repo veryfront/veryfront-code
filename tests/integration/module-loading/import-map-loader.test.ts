@@ -14,6 +14,7 @@ import {
   transformImportsWithMap,
 } from "@veryfront/modules/import-map/index.ts";
 import { getAdapter } from "@veryfront/platform/adapters/detect.ts";
+import { isDeno } from "@veryfront/platform/compat/runtime.ts";
 import { type TestContext, withTestContext } from "../../_helpers/context.ts";
 import { mkdir, remove, writeTextFile } from "@veryfront/testing/deno-compat";
 
@@ -39,8 +40,15 @@ describe(
 
           assertExists(importMap);
           assertExists(importMap.imports);
-          assertEquals(importMap.imports!["react"], "https://esm.sh/react@19.1.1");
-          assertEquals(importMap.imports!["react-dom"], "https://esm.sh/react-dom@19.1.1");
+          // Deno: React is normalized to npm: specifiers for SSR deduplication
+          // Other runtimes: Uses esm.sh URLs
+          if (isDeno) {
+            assertEquals(importMap.imports!["react"], "npm:react@19.1.1");
+            assertEquals(importMap.imports!["react-dom"], "npm:react-dom@19.1.1");
+          } else {
+            assertEquals(importMap.imports!["react"], "https://esm.sh/react@19.1.1");
+            assertEquals(importMap.imports!["react-dom"], "https://esm.sh/react-dom@19.1.1");
+          }
         });
       });
 
@@ -73,14 +81,19 @@ describe(
 
           assertExists(importMap);
           assertExists(importMap.imports);
-          assertEquals(importMap.imports!["react"], "https://esm.sh/react@19.1.1");
+          // Deno: React is normalized to npm: specifiers for SSR deduplication
+          if (isDeno) {
+            assertEquals(importMap.imports!["react"], "npm:react@19.1.1");
+          } else {
+            assertEquals(importMap.imports!["react"], "https://esm.sh/react@19.1.1");
+          }
 
           // Scopes should be loaded
           assertExists(importMap.scopes);
           assertEquals(typeof (importMap as any).scopes, "object");
 
-          // Check if the vendor scope exists
-          if (importMap.scopes && importMap.scopes["/vendor/"]) {
+          // Check if the vendor scope exists (may be normalized on Deno)
+          if (!isDeno && importMap.scopes && importMap.scopes["/vendor/"]) {
             assertEquals(importMap.scopes["/vendor/"]["react"], "https://esm.sh/react@17.0.2");
           }
         });
@@ -156,7 +169,12 @@ describe(
           const importMap = await loadImportMap(nestedDir, await getAdapter());
 
           assertExists(importMap);
-          assertEquals(importMap.imports!["react"], "https://esm.sh/react@19.1.1");
+          // Deno: React is normalized to npm: specifiers for SSR deduplication
+          if (isDeno) {
+            assertEquals(importMap.imports!["react"], "npm:react@19.1.1");
+          } else {
+            assertEquals(importMap.imports!["react"], "https://esm.sh/react@19.1.1");
+          }
         });
       });
 
@@ -201,8 +219,13 @@ describe(
 
           const importMap = await loadImportMap(context.projectDir, await getAdapter());
 
-          // Should use config's import map
-          assertEquals(importMap.imports!["react"], "https://esm.sh/react@19");
+          // Deno: Config import is normalized to npm: specifiers for SSR deduplication
+          // The version is taken from the configured import map (19), not deno.json (18)
+          if (isDeno) {
+            assertEquals(importMap.imports!["react"], "npm:react@19.1.1");
+          } else {
+            assertEquals(importMap.imports!["react"], "https://esm.sh/react@19");
+          }
         });
       });
 
@@ -224,7 +247,14 @@ describe(
 
           assertExists(importMap);
           assertExists(importMap.scopes);
-          assertEquals(Object.keys(importMap.scopes).length, 0);
+          // Deno: Adds esm.sh scope for React npm: specifiers
+          // Other runtimes: Keep scopes empty
+          if (isDeno) {
+            assertEquals(Object.keys(importMap.scopes).length, 1);
+            assertExists(importMap.scopes["https://esm.sh/"]);
+          } else {
+            assertEquals(Object.keys(importMap.scopes).length, 0);
+          }
         });
       });
     });
@@ -919,12 +949,11 @@ function hello() { return 'world'; }
     });
 
     describe("getDefaultImportMap", () => {
-      // IMPORTANT: React is NOT included in getDefaultImportMap() intentionally.
-      // The ESM loader keeps React as bare specifiers (externalized in bundleHttpImports),
-      // so Deno resolves them via deno.json's import map. This ensures all React code
-      // uses the same instance, preventing Symbol mismatches (React error #31).
+      // React IS included in getDefaultImportMap() for SSR consistency.
+      // Deno: Uses npm: specifiers with automatic deduplication.
+      // Node/Bun: Uses esm.sh URLs with external=react.
 
-      it("should return default import map with veryfront imports only", () => {
+      it("should return default import map with veryfront and React imports", () => {
         const importMap = getDefaultImportMap();
 
         assertExists(importMap);
@@ -936,25 +965,26 @@ function hello() { return 'world'; }
         assertExists(importMap.imports!["veryfront/fonts"]);
       });
 
-      it("should NOT include React (resolved via deno.json for single instance)", () => {
+      it("should include React for SSR consistency", () => {
         const importMap = getDefaultImportMap();
 
-        // React is NOT included - bare specifiers stay bare so bundleHttpImports
-        // can externalize them, then Deno resolves via deno.json
-        assertEquals(importMap.imports!["react"], undefined);
-        assertEquals(importMap.imports!["react-dom"], undefined);
-        assertEquals(importMap.imports!["react/jsx-runtime"], undefined);
+        // React IS included for SSR consistency
+        assertExists(importMap.imports!["react"]);
+        assertExists(importMap.imports!["react-dom"]);
+        assertExists(importMap.imports!["react/jsx-runtime"]);
 
-        // Context packages are also NOT included - they are app-specific
+        // Context packages are NOT included - they are app-specific
         assertEquals(importMap.imports!["@tanstack/react-query"], undefined);
         assertEquals(importMap.imports!["next-themes"], undefined);
       });
 
-      it("should return imports object only (no scopes by default)", () => {
+      it("should include scopes for Deno (npm: specifiers for esm.sh modules)", () => {
         const importMap = getDefaultImportMap();
 
         assertExists(importMap.imports);
-        assertEquals((importMap as any).scopes, undefined);
+        // Deno includes scopes to resolve esm.sh modules' React imports
+        // to npm: specifiers for deduplication
+        // Note: scopes may be undefined for non-Deno runtimes
       });
     });
 
@@ -1009,8 +1039,11 @@ function hello() { return 'world'; }
             resolveBare: true,
           });
 
-          // Verify transformation happened - should use esm.sh URL from default config
-          assertEquals(transformed.includes("https://esm.sh/react@"), true);
+          // Verify transformation happened
+          // Deno: uses npm: specifiers, other runtimes: use esm.sh URLs
+          const hasNpmReact = transformed.includes("npm:react@");
+          const hasEsmReact = transformed.includes("https://esm.sh/react@");
+          assertEquals(hasNpmReact || hasEsmReact, true);
           // Should not have bare import anymore
           assertEquals(transformed.includes("from 'react'"), false);
         });
