@@ -164,11 +164,11 @@ if (existsSync(nativeBinary)) {
   child.on('close', (code) => process.exit(code ?? 0));
   child.on('error', async () => {
     const { main } = await import('../esm/src/cli/index.js');
-    main().catch(err => { console.error(err); process.exit(1); });
+    main().then(() => process.exit(0)).catch(err => { console.error(err); process.exit(1); });
   });
 } else {
   const { main } = await import('../esm/src/cli/index.js');
-  main().catch(err => { console.error(err); process.exit(1); });
+  main().then(() => process.exit(0)).catch(err => { console.error(err); process.exit(1); });
 }
 `);
 
