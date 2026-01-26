@@ -142,3 +142,18 @@ export const CLEANUP_INTERVAL_MULTIPLIER = 2;
 export const MAX_CONCURRENT_REVALIDATIONS = getEnvNumber("MAX_CONCURRENT_REVALIDATIONS", 32);
 export const MAX_CONCURRENT_HTTP_FETCHES = getEnvNumber("MAX_CONCURRENT_HTTP_FETCHES", 50);
 export const REVALIDATION_TIMEOUT_MS = getEnvNumber("REVALIDATION_TIMEOUT_MS", 15000);
+
+// HTTP module cache (esm.sh, CDN bundles)
+// These bundles are immutable once fetched, so long TTLs are safe
+export const HTTP_MODULE_CACHE_MAX_ENTRIES = getEnvNumber("HTTP_MODULE_CACHE_MAX_ENTRIES", 2000);
+export const HTTP_MODULE_DISTRIBUTED_TTL_SEC = getEnvNumber(
+  "HTTP_MODULE_DISTRIBUTED_TTL_SEC",
+  HOURS_PER_DAY * MINUTES_PER_HOUR * SECONDS_PER_MINUTE, // 24 hours (86400)
+);
+
+// Transform cache for module compilation
+// Same TTL as HTTP module cache since transforms are tied to content hashes
+export const TRANSFORM_DISTRIBUTED_TTL_SEC = getEnvNumber(
+  "TRANSFORM_DISTRIBUTED_TTL_SEC",
+  HOURS_PER_DAY * MINUTES_PER_HOUR * SECONDS_PER_MINUTE, // 24 hours (86400)
+);
