@@ -230,6 +230,25 @@ logcli query '{namespace="veryfront-production", container="renderer"} |= "error
 | `veryfront.config.ts`     | Framework configuration        |
 | `chart/values.yaml`       | Kubernetes deployment config   |
 
+## Releasing Veryfront Code
+
+```bash
+# 1. Bump version in deno.json
+sed -i '' 's/"version": "X.X.X"/"version": "X.X.Y"/' deno.json
+
+# 2. Commit and push
+git add deno.json && git commit -m "chore: bump version to X.X.Y" && git push
+
+# 3. Tag and push (triggers CI)
+git tag vX.X.Y && git push origin vX.X.Y
+```
+
+CI automatically:
+- Builds binaries (Linux, macOS, Windows)
+- Publishes to npm
+- Creates GitHub release
+- Updates Homebrew
+
 ## MCP Skills
 
 | Skill | Purpose |
