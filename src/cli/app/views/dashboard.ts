@@ -87,7 +87,7 @@ export function renderDashboard(state: AppState): string {
     );
   }
 
-  lines.push(renderHelpBar(state, termWidth));
+  lines.push(renderHelpBar(state));
 
   return lines.join("\n");
 }
@@ -151,17 +151,15 @@ function renderSection(title: string, _count: number, isActive = true): string {
 /**
  * Render the help bar at the bottom
  */
-function renderHelpBar(state: AppState, width: number): string {
-  const divider = dim("─".repeat(width));
-
+function renderHelpBar(state: AppState): string {
   // Minimal by default, ? reveals all
   if (!state.showHelp) {
     const userInfo = state.remote.user ? `  ${dim("-")}  ${brand(state.remote.user.email)}` : "";
-    return `${divider}\n  ${dim("↑↓ select  enter open  ? more  q quit")}${userInfo}`;
+    return `  ${dim("↑↓ select  enter open  ? more  q quit")}${userInfo}`;
   }
 
   // Expanded help
-  const lines: string[] = [divider];
+  const lines: string[] = [];
   lines.push(`  ${dim("o")} open  ${dim("s")} studio  ${dim("i")} ide`);
 
   if (!state.remote.user) {
