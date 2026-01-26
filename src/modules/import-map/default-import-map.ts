@@ -1,9 +1,16 @@
 import type { ImportMapConfig } from "./types.ts";
 
-const FRAMEWORK_ROOT = new URL("../../..", import.meta.url).pathname;
+function getFrameworkRoot(): string {
+  try {
+    return new URL("../../..", import.meta.url).pathname;
+  } catch {
+    // Fallback for environments where import.meta.url doesn't work correctly
+    return "/";
+  }
+}
 
 function getVeryfrontSsrImportMap(): Record<string, string> {
-  const srcPath = `file://${FRAMEWORK_ROOT}src`;
+  const srcPath = `file://${getFrameworkRoot()}src`;
   const head = `${srcPath}/react/components/Head.tsx`;
   const router = `${srcPath}/react/router/index.ts`;
   const context = `${srcPath}/react/context/index.ts`;

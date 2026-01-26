@@ -37,23 +37,24 @@ function parseValue(value: string): string | number | boolean {
   return value;
 }
 
+function toStringArray(value: string | string[] | undefined): string[] {
+  if (!value) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+function getBooleanKeys(value: string | string[] | boolean | undefined): string[] {
+  if (value === true || !value) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
 function nodeParse(args: string[], options: ParseOptions = {}): Args {
   const result: Args = { _: [] };
 
   const alias = options.alias ?? {};
   const defaults = options.default ?? {};
 
-  const booleans = new Set(
-    options.boolean === true
-      ? []
-      : typeof options.boolean === "string"
-      ? [options.boolean]
-      : options.boolean ?? [],
-  );
-
-  const strings = new Set(
-    typeof options.string === "string" ? [options.string] : options.string ?? [],
-  );
+  const booleans = new Set(getBooleanKeys(options.boolean));
+  const strings = new Set(toStringArray(options.string));
 
   const aliasMap: Record<string, string> = {};
   const aliasGroups: Record<string, string[]> = {};
@@ -68,11 +69,7 @@ function nodeParse(args: string[], options: ParseOptions = {}): Args {
     for (const a of aliasList) aliasGroups[a] = group;
   }
 
-  const collectKeys = new Set(
-    options.collect
-      ? typeof options.collect === "string" ? [options.collect] : options.collect
-      : [],
-  );
+  const collectKeys = new Set(toStringArray(options.collect));
 
   function setWithAliases(key: string, value: unknown): void {
     const keysToSet = aliasGroups[key] ?? [key];
@@ -94,9 +91,7 @@ function nodeParse(args: string[], options: ParseOptions = {}): Args {
     result[key] = value;
   }
 
-  const negatables = options.negatable
-    ? typeof options.negatable === "string" ? [options.negatable] : options.negatable
-    : undefined;
+  const negatables = toStringArray(options.negatable);
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -121,7 +116,7 @@ function nodeParse(args: string[], options: ParseOptions = {}): Args {
       const key = arg.slice(2);
       const realKey = aliasMap[key] ?? key;
 
-      if (key.startsWith("no-") && negatables) {
+      if (key.startsWith("no-") && negatables.length > 0) {
         const baseKey = key.slice(3);
         if (negatables.includes(baseKey)) {
           setWithAliases(baseKey, false);

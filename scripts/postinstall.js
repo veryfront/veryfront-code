@@ -52,35 +52,39 @@ console.log('📦 Installing Veryfront CLI...');
 console.log(`   Platform: ${platform}-${arch}`);
 console.log(`   Version: ${version}`);
 
-function downloadBinary(url, dest) {
+function downloadBinary(url, dest, maxRedirects = 5) {
   return new Promise((resolve, reject) => {
-    const file = createWriteStream(dest);
+    function follow(currentUrl, redirectCount) {
+      if (redirectCount > maxRedirects) {
+        reject(new Error("Too many redirects"));
+        return;
+      }
 
-    https.get(url, (response) => {
-      if (response.statusCode === 302 || response.statusCode === 301) {
-        // Follow redirect
-        https.get(response.headers.location, (redirectResponse) => {
-          redirectResponse.pipe(file);
-          file.on('finish', () => {
-            file.close();
-            resolve();
-          });
-        }).on('error', reject);
-      } else if (response.statusCode === 200) {
+      https.get(currentUrl, (response) => {
+        if (response.statusCode === 302 || response.statusCode === 301) {
+          follow(response.headers.location, redirectCount + 1);
+          return;
+        }
+
+        if (response.statusCode !== 200) {
+          reject(new Error(`Failed to download: ${response.statusCode} ${response.statusMessage}`));
+          return;
+        }
+
+        const file = createWriteStream(dest);
         response.pipe(file);
         file.on('finish', () => {
           file.close();
           resolve();
         });
-      } else {
-        reject(new Error(`Failed to download: ${response.statusCode} ${response.statusMessage}`));
-      }
-    }).on('error', reject);
+        file.on("error", (err) => {
+          unlinkSync(dest);
+          reject(err);
+        });
+      }).on('error', reject);
+    }
 
-    file.on("error", (err) => {
-      unlinkSync(dest);
-      reject(err);
-    });
+    follow(url, 0);
   });
 }
 
@@ -100,12 +104,12 @@ async function install() {
     console.log('   npx veryfront create my-app');
 
   } catch (error) {
-    console.error("❌ Installation failed:", error.message);
-    console.error("\n📝 Manual installation:");
-    console.error('   1. Download the binary from GitHub releases');
-    console.error('   2. Place it in your PATH as "veryfront"');
-    console.error(`   3. URL: ${url}`);
-    process.exit(1);
+    // Graceful fallback - bundled JS CLI will be used instead
+    console.warn("⚠️  Binary download failed:", error.message);
+    console.warn("   Falling back to bundled JavaScript CLI (slower startup)");
+    console.warn(`   Binary URL: ${url}`);
+    // Don't exit with error - let npm install succeed
+    // The bundled JS CLI in bin/veryfront.js will work as fallback
   }
 }
 

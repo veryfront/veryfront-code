@@ -12,9 +12,6 @@
  */
 
 import { isBun, isDeno, isNode } from "../platform/compat/runtime.ts";
-import { cacheModuleToLocal } from "../transforms/esm/http-cache.ts";
-import { getReactUrls } from "../transforms/esm/package-registry.ts";
-import { getHttpBundleCacheDir } from "../utils/cache-dir.ts";
 
 import type * as ReactTypes from "https://esm.sh/@types/react@18.3.27";
 
@@ -30,24 +27,33 @@ function getDefaultExport<T>(mod: T): T {
 async function loadReact(): Promise<ReactType> {
   if (reactCache) return reactCache;
 
-  if ((isNode || isBun) && !isDeno) {
+  // For Node/Bun: use native npm React package
+  if (isNode || isBun) {
     try {
-      const nativeReact = await import("react");
+      // Use indirect import to avoid dnt transformation
+      const reactPkg = "react";
+      const nativeReact = await import(/* @vite-ignore */ reactPkg);
       reactCache = getDefaultExport(nativeReact) as ReactType;
       return reactCache;
     } catch {
-      // Fall through to esm.sh caching
+      // Fall through to esm.sh
     }
   }
 
-  const reactUrl = getReactUrls().react!;
-
+  // For Deno: use esm.sh directly
   if (isDeno) {
+    const { getReactUrls } = await import("../transforms/esm/package-registry.ts");
+    const reactUrl = getReactUrls().react!;
     const httpReact = await import(reactUrl);
     reactCache = getDefaultExport(httpReact) as ReactType;
     return reactCache;
   }
 
+  // Fallback: cache esm.sh module locally
+  const { cacheModuleToLocal } = await import("../transforms/esm/http-cache.ts");
+  const { getReactUrls } = await import("../transforms/esm/package-registry.ts");
+  const { getHttpBundleCacheDir } = await import("../utils/cache-dir.ts");
+  const reactUrl = getReactUrls().react!;
   const cacheDir = getHttpBundleCacheDir();
   const cachedPath = await cacheModuleToLocal(reactUrl, cacheDir);
   const cachedReact = await import(cachedPath);

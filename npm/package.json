@@ -2,117 +2,6 @@
   "name": "veryfront",
   "version": "0.0.75",
   "description": "Zero-config React meta-framework for building agentic AI applications",
-  "type": "module",
-  "main": "./dist/index.js",
-  "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "bin": {
-    "veryfront": "./bin/veryfront.js"
-  },
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    },
-    "./components": {
-      "types": "./dist/components.d.ts",
-      "import": "./dist/components.js"
-    },
-    "./data": {
-      "types": "./dist/data.d.ts",
-      "import": "./dist/data.js"
-    },
-    "./config": {
-      "types": "./dist/config.d.ts",
-      "import": "./dist/config.js"
-    },
-    "./agent": {
-      "types": "./dist/agent/index.d.ts",
-      "import": "./dist/agent/index.js"
-    },
-    "./agent/react": {
-      "types": "./dist/agent/react.d.ts",
-      "import": "./dist/agent/react.js"
-    },
-    "./agent/middleware": {
-      "types": "./dist/agent/middleware.d.ts",
-      "import": "./dist/agent/middleware.js"
-    },
-    "./tool": {
-      "types": "./dist/tool/index.d.ts",
-      "import": "./dist/tool/index.js"
-    },
-    "./workflow": {
-      "types": "./dist/workflow/index.d.ts",
-      "import": "./dist/workflow/index.js"
-    },
-    "./workflow/react": {
-      "types": "./dist/workflow/react.d.ts",
-      "import": "./dist/workflow/react.js"
-    },
-    "./prompt": {
-      "types": "./dist/prompt/index.d.ts",
-      "import": "./dist/prompt/index.js"
-    },
-    "./resource": {
-      "types": "./dist/resource/index.d.ts",
-      "import": "./dist/resource/index.js"
-    },
-    "./mcp": {
-      "types": "./dist/mcp/index.d.ts",
-      "import": "./dist/mcp/index.js"
-    },
-    "./provider": {
-      "types": "./dist/provider/index.d.ts",
-      "import": "./dist/provider/index.js"
-    },
-    "./primitives": {
-      "types": "./dist/primitives.d.ts",
-      "import": "./dist/primitives.js"
-    },
-    "./components/ai": {
-      "types": "./dist/components/ai.d.ts",
-      "import": "./dist/components/ai.js"
-    },
-    "./oauth": {
-      "types": "./dist/oauth/index.d.ts",
-      "import": "./dist/oauth/index.js"
-    },
-    "./oauth/providers": {
-      "types": "./dist/oauth/providers.d.ts",
-      "import": "./dist/oauth/providers.js"
-    },
-    "./oauth/handlers": {
-      "types": "./dist/oauth/handlers.d.ts",
-      "import": "./dist/oauth/handlers.js"
-    },
-    "./oauth/token-store": {
-      "types": "./dist/oauth/token-store.d.ts",
-      "import": "./dist/oauth/token-store.js"
-    },
-    "./head": {
-      "types": "./dist/head.d.ts",
-      "import": "./dist/head.js"
-    },
-    "./router": {
-      "types": "./dist/router.d.ts",
-      "import": "./dist/router.js"
-    },
-    "./context": {
-      "types": "./dist/context.d.ts",
-      "import": "./dist/context.js"
-    },
-    "./fonts": {
-      "types": "./dist/fonts.d.ts",
-      "import": "./dist/fonts.js"
-    }
-  },
-  "files": [
-    "bin",
-    "dist",
-    "README.md",
-    "LICENSE"
-  ],
   "keywords": [
     "react",
     "framework",
@@ -120,72 +9,226 @@
     "agents",
     "mcp",
     "llm",
-    "anthropic",
-    "openai",
     "ssr",
     "rsc",
-    "server-components",
     "typescript"
   ],
-  "license": "MIT",
   "author": "Veryfront",
+  "homepage": "https://veryfront.com",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/veryfront/veryfront.git"
   },
+  "license": "MIT",
   "bugs": {
     "url": "https://github.com/veryfront/veryfront/issues"
   },
-  "homepage": "https://veryfront.com",
+  "module": "./esm/src/index.js",
+  "exports": {
+    ".": {
+      "import": "./esm/src/index.js"
+    },
+    "./server": {
+      "import": "./esm/src/server/index.js"
+    },
+    "./middleware": {
+      "import": "./esm/src/middleware/index.js"
+    },
+    "./head": {
+      "import": "./esm/src/react/components/Head.js"
+    },
+    "./router": {
+      "import": "./esm/src/react/router/index.js"
+    },
+    "./context": {
+      "import": "./esm/src/react/context/index.js"
+    },
+    "./fonts": {
+      "import": "./esm/src/react/fonts/index.js"
+    },
+    "./react": {
+      "import": "./esm/src/react/index.js"
+    },
+    "./react/components": {
+      "import": "./esm/src/react/components/index.js"
+    },
+    "./react/components/ai": {
+      "import": "./esm/src/react/components/ai/index.js"
+    },
+    "./react/primitives": {
+      "import": "./esm/src/react/primitives/index.js"
+    },
+    "./react/context": {
+      "import": "./esm/src/react/context/index.js"
+    },
+    "./react/router": {
+      "import": "./esm/src/react/router/index.js"
+    },
+    "./react/fonts": {
+      "import": "./esm/src/react/fonts/index.js"
+    },
+    "./react/head": {
+      "import": "./esm/src/react/components/Head.js"
+    },
+    "./data": {
+      "import": "./esm/src/data/index.js"
+    },
+    "./config": {
+      "import": "./esm/src/config/index.js"
+    },
+    "./platform": {
+      "import": "./esm/src/platform/index.js"
+    },
+    "./tool": {
+      "import": "./esm/src/tool/index.js"
+    },
+    "./tool/schema": {
+      "import": "./esm/src/tool/schema/index.js"
+    },
+    "./tool/testing": {
+      "import": "./esm/src/tool/testing/index.js"
+    },
+    "./provider": {
+      "import": "./esm/src/provider/index.js"
+    },
+    "./provider/adapters": {
+      "import": "./esm/src/provider/adapters/index.js"
+    },
+    "./agent": {
+      "import": "./esm/src/agent/index.js"
+    },
+    "./agent/react": {
+      "import": "./esm/src/agent/react/index.js"
+    },
+    "./agent/react/client": {
+      "import": "./esm/src/agent/react/client.js"
+    },
+    "./agent/memory": {
+      "import": "./esm/src/agent/memory/index.js"
+    },
+    "./agent/composition": {
+      "import": "./esm/src/agent/composition/index.js"
+    },
+    "./agent/middleware": {
+      "import": "./esm/src/agent/middleware/index.js"
+    },
+    "./agent/testing": {
+      "import": "./esm/src/agent/testing/index.js"
+    },
+    "./agent/debug": {
+      "import": "./esm/src/agent/debug/index.js"
+    },
+    "./workflow": {
+      "import": "./esm/src/workflow/index.js"
+    },
+    "./workflow/react": {
+      "import": "./esm/src/workflow/react/index.js"
+    },
+    "./prompt": {
+      "import": "./esm/src/prompt/index.js"
+    },
+    "./resource": {
+      "import": "./esm/src/resource/index.js"
+    },
+    "./mcp": {
+      "import": "./esm/src/mcp/index.js"
+    },
+    "./oauth": {
+      "import": "./esm/src/oauth/index.js"
+    },
+    "./oauth/providers": {
+      "import": "./esm/src/oauth/providers/index.js"
+    },
+    "./oauth/handlers": {
+      "import": "./esm/src/oauth/handlers/index.js"
+    },
+    "./oauth/token-store": {
+      "import": "./esm/src/oauth/token-store/index.js"
+    },
+    "./embeddings": {
+      "import": "./esm/src/embeddings/index.js"
+    }
+  },
+  "scripts": {
+    "postinstall": "node scripts/postinstall.js"
+  },
   "engines": {
     "node": ">=18.0.0"
   },
-  "peerDependencies": {
-    "react": "^17.0.0 || ^18.0.0 || ^19.0.0",
-    "react-dom": "^17.0.0 || ^18.0.0 || ^19.0.0",
-    "zod": "^3.22.0",
-    "ai": "5.0.76"
-  },
   "peerDependenciesMeta": {
-    "zod": {
-      "optional": false
+    "ws": {
+      "optional": true
     },
-    "ai": {
-      "optional": false
+    "better-sqlite3": {
+      "optional": true
     }
   },
   "dependencies": {
-    "@ai-sdk/openai": "2.0.1",
-    "@ai-sdk/anthropic": "2.0.1",
-    "@ai-sdk/react": "2.0.1",
-    "@opentelemetry/api": "^1.9.0",
-    "@opentelemetry/core": "^1.30.0",
-    "esbuild": "^0.20.0",
-    "@mdx-js/mdx": "^3.0.0",
-    "@mdx-js/react": "^3.0.0",
-    "mime-types": "^2.1.35",
-    "unified": "^11.0.0",
-    "remark-gfm": "^4.0.0",
-    "remark-frontmatter": "^5.0.0",
-    "rehype-highlight": "^7.0.0",
-    "rehype-slug": "^6.0.0",
-    "github-slugger": "^2.0.0",
-    "picocolors": "^1.1.0",
+    "@ai-sdk/react": "3.0.35",
+    "@aws-sdk/client-s3": "3.490.0",
+    "@babel/generator": "7.26.3",
+    "@babel/parser": "7.26.3",
+    "@babel/traverse": "7.26.3",
+    "@babel/types": "7.26.3",
+    "@mdx-js/mdx": "3.0.0",
+    "@opentelemetry/api": "1",
+    "@opentelemetry/context-async-hooks": "1",
+    "@opentelemetry/core": "1",
+    "@opentelemetry/exporter-trace-otlp-http": "0.57",
+    "@opentelemetry/resources": "1",
+    "@opentelemetry/sdk-trace-base": "1",
+    "@opentelemetry/semantic-conventions": "1",
+    "@types/hast": "3.0.3",
+    "@types/mdast": "4.0.3",
+    "@types/react": "18.3.27",
+    "@types/react-dom": "18.3.7",
+    "@types/unist": "3.0.2",
+    "es-module-lexer": "1.5.0",
+    "esbuild": "0.20.2",
+    "github-slugger": "2.0.0",
+    "gray-matter": "4.0.3",
+    "mdast-util-to-string": "4.0.0",
+    "mime-types": "2.1.35",
     "mri": "^1.2.0",
-    "yaml": "^2.3.0",
-    "js-yaml": "^4.1.0",
-    "gray-matter": "^4.0.3",
-    "ws": "^8.18.0",
-    "lightningcss": "^1.22.0",
-    "@unocss/core": "^0.59.0",
-    "@unocss/preset-wind": "^0.59.0",
-    "glob": "^11.0.0",
-    "es-module-lexer": "^1.5.0"
+    "picocolors": "^1.1.0",
+    "rehype-highlight": "7.0.2",
+    "rehype-slug": "6.0.0",
+    "rehype-stringify": "10.0.1",
+    "remark-frontmatter": "5.0.0",
+    "remark-gfm": "4.0.1",
+    "remark-parse": "11.0.0",
+    "remark-rehype": "11.1.1",
+    "tailwindcss": "4.1.8",
+    "unified": "11.0.5",
+    "unist-util-visit": "5.0.0",
+    "vfile": "6.0.1",
+    "zod": "3.25.76",
+    "@deno/shim-deno": "~0.18.0",
+    "@deno/shim-crypto": "~0.3.1",
+    "@deno/shim-timers": "~0.1.0",
+    "undici": "^6.0.0"
+  },
+  "peerDependencies": {
+    "ws": ">=8.0.0",
+    "better-sqlite3": ">=9.0.0"
   },
   "devDependencies": {
-    "@types/react": "^18.2.0",
-    "@types/react-dom": "^18.2.0",
-    "@types/node": "^20.0.0",
-    "typescript": "^5.0.0"
-  }
+    "@types/node": "^20.9.0",
+    "@types/ws": "^8.5.0",
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/mime-types": "^2.1.0"
+  },
+  "_generatedBy": "dnt@dev",
+  "bin": {
+    "veryfront": "./bin/veryfront.js"
+  },
+  "files": [
+    "esm",
+    "script",
+    "src",
+    "bin",
+    "scripts",
+    "LICENSE",
+    "README.md"
+  ]
 }

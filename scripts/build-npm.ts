@@ -15,18 +15,13 @@
  */
 
 import * as esbuild from "esbuild/mod.js";
-import { createFileSystem, FileSystem } from "../src/platform/compat/fs.ts";
+import { createFileSystem } from "../src/platform/compat/fs.ts";
 import * as pathHelper from "../src/platform/compat/path-helper.ts";
 import { getEnv } from "../src/platform/compat/process.ts";
 
-// Helper to get fs functions (prioritizing the compat layer)
-const getFs = (): FileSystem => {
-  return createFileSystem();
-};
-
 const __dirname = pathHelper.dirname(pathHelper.fromFileUrl(import.meta.url));
 const PROJECT_ROOT = pathHelper.resolve(__dirname, "..");
-const fs = getFs();
+const fs = createFileSystem();
 
 const denoJson = JSON.parse(await fs.readTextFile("./deno.json"));
 const version = getEnv("VERYFRONT_VERSION") || denoJson.version || "0.0.6";
@@ -811,12 +806,13 @@ try {
 			"glob",
 		],
 		jsx: "automatic",
-					jsxImportSource: "react",
-				});
-				const stat = await fs.stat(pathHelper.join(OUT_DIR, "dist", "cli.js"));
-				console.log(
-					`  ✓ Built CLI bundle: ${(stat.size / 1024).toFixed(1)} KB (single file)`,
-				);} catch (error) {
+		jsxImportSource: "react",
+	});
+	const stat = await fs.stat(pathHelper.join(OUT_DIR, "dist", "cli.js"));
+	console.log(
+		`  ✓ Built CLI bundle: ${(stat.size / 1024).toFixed(1)} KB (single file)`,
+	);
+} catch (error) {
 	console.error("  ❌ Failed to build CLI bundle:", error);
 }
 
@@ -1515,7 +1511,10 @@ const packageJson = {
 			import: "./dist/fonts.js",
 		},
 	},
-	files: ["bin", "dist", "README.md", "LICENSE"],
+	scripts: {
+		postinstall: "node scripts/postinstall.js",
+	},
+	files: ["bin", "dist", "scripts", "README.md", "LICENSE"],
 	keywords: [
 		"react",
 		"framework",
@@ -1596,12 +1595,33 @@ await fs.writeTextFile(
 console.log("📄 Creating CLI bin wrapper...");
 await fs.mkdir(pathHelper.join(OUT_DIR, "bin"), { recursive: true });
 const cliBinContent = `#!/usr/bin/env node
-// CLI entry point - calls main() from the bundled CLI
-import { main } from '../dist/cli.js';
-main().catch(err => {
-  console.error(err);
-  process.exit(1);
-});
+// CLI entry point
+// Prefers native binary if available (faster), falls back to bundled JS
+import { existsSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const nativeBinary = join(__dirname, process.platform === 'win32' ? 'veryfront.exe' : 'veryfront');
+
+if (existsSync(nativeBinary)) {
+  // Use native binary (fast)
+  const child = spawn(nativeBinary, process.argv.slice(2), {
+    stdio: 'inherit',
+    env: process.env,
+  });
+  child.on('close', (code) => process.exit(code ?? 0));
+  child.on('error', async () => {
+    // If native binary fails to execute, fall back to JS
+    const { main } = await import('../dist/cli.js');
+    main().catch(err => { console.error(err); process.exit(1); });
+  });
+} else {
+  // Fall back to bundled JS CLI (slower startup)
+  const { main } = await import('../dist/cli.js');
+  main().catch(err => { console.error(err); process.exit(1); });
+}
 `;
 const binPath = pathHelper.join(OUT_DIR, "bin", "veryfront.js");
 await fs.writeTextFile(binPath, cliBinContent);
@@ -1666,6 +1686,19 @@ try {
   console.log(`  ✓ Copied integration files: ${integrationDirs.join(", ")}`);
 } catch (e) {
   console.log("  ⚠ Failed to copy integrations:", e);
+}
+
+console.log("📄 Copying postinstall script...");
+await fs.mkdir(pathHelper.join(OUT_DIR, "scripts"), { recursive: true });
+try {
+  // @ts-ignore - Deno global
+  await Deno.copyFile(
+    pathHelper.join(PROJECT_ROOT, "scripts/postinstall.js"),
+    pathHelper.join(OUT_DIR, "scripts/postinstall.js")
+  );
+  console.log("  ✓ Copied postinstall.js");
+} catch (e) {
+  console.log("  ⚠ Failed to copy postinstall.js:", e);
 }
 
 console.log("📄 Copying additional files...");

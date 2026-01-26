@@ -2,7 +2,7 @@ import type { PageWithData, StaticPathsResult } from "./types.ts";
 import { serverLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
-import type { Span } from "npm:@opentelemetry/api@1.9.0";
+import type { Span } from "@opentelemetry/api";
 
 export class StaticPathsFetcher {
   fetch(pageModule: PageWithData): Promise<StaticPathsResult | null> {
