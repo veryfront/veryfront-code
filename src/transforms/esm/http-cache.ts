@@ -32,9 +32,6 @@ const getDistributedCache = createDistributedCacheAccessor(
   "HTTP-CACHE",
 );
 
-/** TTL for cached modules in distributed cache (uses centralized config) */
-const DISTRIBUTED_CACHE_TTL_SECONDS = HTTP_MODULE_DISTRIBUTED_TTL_SEC;
-
 type CacheOptions = {
   cacheDir: string;
   importMap: ImportMapConfig;
@@ -44,6 +41,12 @@ type CacheOptions = {
 
 const cachedPaths = new LRUCache<string, string>({ maxEntries: HTTP_MODULE_CACHE_MAX_ENTRIES });
 const processingStack = new Set<string>();
+
+/** Tracks last TTL refresh per hash. Refresh every 4h to keep 20h+ remaining (24h total). */
+const lastDistributedRefresh = new LRUCache<string, number>({
+  maxEntries: HTTP_MODULE_CACHE_MAX_ENTRIES,
+});
+const DISTRIBUTED_REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
 function ensureAbsoluteDir(path: string): string {
   return isAbsolute(path) ? path : join(cwd(), path);
@@ -192,22 +195,28 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
   if (await exists(cachePath)) {
     cachedPaths.set(cacheKey, cachePath);
 
-    // Synchronously ensure code:{hash} exists in distributed cache for cross-pod recovery
-    // This backfills bundles created before code:{hash} storage was added
-    // Synchronous to guarantee data is stored before other pods need it
+    // Refresh distributed cache TTL so bundles outlive transforms that reference them.
+    // Without this, bundles expire (24h) while SSR transforms (6h) are still valid.
     const distributed = await getDistributedCache();
     if (distributed) {
       const hash = simpleHash(normalizedUrl);
-      try {
-        const hasCode = await distributed.get(`code:${hash}`);
-        if (!hasCode) {
+      const hashStr = String(hash);
+      const now = Date.now();
+      const lastRefresh = lastDistributedRefresh.get(hashStr);
+      const needsRefresh = !lastRefresh || (now - lastRefresh > DISTRIBUTED_REFRESH_INTERVAL_MS);
+
+      if (needsRefresh) {
+        try {
           const code = await fs.readTextFile(cachePath);
-          await distributed.set(`code:${hash}`, code, DISTRIBUTED_CACHE_TTL_SECONDS);
-          logger.info("[HTTP-CACHE] Backfilled code:{hash} for existing bundle", { hash });
+          await Promise.all([
+            distributed.set(`code:${hash}`, code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
+            distributed.set(`hash:${hash}`, normalizedUrl, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
+          ]);
+          lastDistributedRefresh.set(hashStr, now);
+          logger.debug("[HTTP-CACHE] Refreshed distributed cache TTL", { hash });
+        } catch (error) {
+          logger.debug("[HTTP-CACHE] Distributed cache refresh failed", { hash, error });
         }
-      } catch (error) {
-        // Log but don't fail - backfill is best-effort
-        logger.debug("[HTTP-CACHE] Backfill failed, continuing", { hash, error });
       }
     }
 
@@ -286,9 +295,9 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
     const hash = simpleHash(normalizedUrl);
     try {
       await Promise.all([
-        distributed.set(normalizedUrl, code, DISTRIBUTED_CACHE_TTL_SECONDS),
-        distributed.set(`code:${hash}`, code, DISTRIBUTED_CACHE_TTL_SECONDS),
-        distributed.set(`hash:${hash}`, normalizedUrl, DISTRIBUTED_CACHE_TTL_SECONDS),
+        distributed.set(normalizedUrl, code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
+        distributed.set(`code:${hash}`, code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
+        distributed.set(`hash:${hash}`, normalizedUrl, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
       ]);
     } catch (error) {
       logger.debug("[HTTP-CACHE] Distributed cache set failed", { url: normalizedUrl, error });
