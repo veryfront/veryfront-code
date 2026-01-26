@@ -662,7 +662,10 @@ export class SSRModuleLoader {
           setInRedis(contentCacheKey, transformed, {
             isProduction: this.isProductionContentSource(),
           }).catch((error) => {
-            logger.debug("[SSR-MODULE-LOADER] Distributed cache set failed", { key: contentCacheKey, error });
+            logger.debug("[SSR-MODULE-LOADER] Distributed cache set failed", {
+              key: contentCacheKey,
+              error,
+            });
           });
         }
 
