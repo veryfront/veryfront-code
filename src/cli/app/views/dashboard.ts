@@ -107,7 +107,8 @@ function renderBanner(state: AppState): string {
   if (state.mcp.enabled) {
     let mcpInfo = "stdio";
     if (state.mcp.transport === "http") {
-      mcpInfo = `port ${brand(String(state.mcp.httpPort ?? 9999))}`;
+      const port = state.mcp.httpPort ?? 9999;
+      mcpInfo = brand(`http://localhost:${port}/mcp`);
     }
     textLines.push(`${mcpDot} ${dim("MCP")} ${mcpInfo}`);
   }

@@ -145,12 +145,13 @@ export class MCPDevServer {
     const handler = async (req: Request): Promise<Response> => {
       const url = new URL(req.url);
 
-      // CORS headers - restrict to localhost origins for security
+      // CORS headers - allow localhost and veryfront dev domains
       const origin = req.headers.get("Origin") ?? "";
-      const isLocalhost = origin === "" ||
+      const isAllowedOrigin = origin === "" ||
         origin.startsWith("http://localhost") ||
         origin.startsWith("http://127.0.0.1") ||
-        origin.startsWith("http://lvh.me");
+        origin.startsWith("http://lvh.me") ||
+        origin.startsWith("http://veryfront.me");
 
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
@@ -158,7 +159,7 @@ export class MCPDevServer {
         "Access-Control-Allow-Headers": "Content-Type",
       };
 
-      if (isLocalhost && origin) headers["Access-Control-Allow-Origin"] = origin;
+      if (isAllowedOrigin && origin) headers["Access-Control-Allow-Origin"] = origin;
 
       if (req.method === "OPTIONS") return new Response(null, { status: 204, headers });
 
