@@ -1146,7 +1146,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   async getAllSourceFiles(): Promise<Array<{ path: string; content?: string }>> {
     if (!this.contentContext) {
-      logger.warn("[VeryfrontFSAdapter] getAllSourceFiles called without contentContext", {
+      logger.debug("[VeryfrontFSAdapter] getAllSourceFiles called without contentContext", {
         initialized: this.initialized,
         projectSlug: this.projectSlug,
       });
@@ -1157,7 +1157,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     const files = await this.cache.getAsync<Array<{ path: string; content?: string }>>(cacheKey);
 
     if (!files?.length) {
-      logger.warn("[VeryfrontFSAdapter] getAllSourceFiles cache miss or empty", {
+      logger.debug("[VeryfrontFSAdapter] getAllSourceFiles cache miss or empty", {
         cacheKey,
         initialized: this.initialized,
         hasFiles: !!files,
