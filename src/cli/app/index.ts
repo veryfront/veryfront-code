@@ -846,16 +846,19 @@ export function createApp(config: AppConfig): App {
       update(addLog("info", `Opening browser for ${provider} login...`));
       update(navigateTo("dashboard"));
 
-      const user = await login(provider);
-      if (user) {
-        const result = await fetchRemoteProjects();
-        update(updateRemote({
-          user,
-          projects: result.projects.map((p) => ({ id: p.id, name: p.name, slug: p.slug })),
-        }));
-        update(addLog("info", `Logged in as ${user.email}`));
-      }
-      render();
+      // Run login in background to keep TUI responsive
+      void (async () => {
+        const user = await login(provider);
+        if (user) {
+          const result = await fetchRemoteProjects();
+          update(updateRemote({
+            user,
+            projects: result.projects.map((p) => ({ id: p.id, name: p.name, slug: p.slug })),
+          }));
+          update(addLog("info", `Logged in as ${user.email}`));
+        }
+        render();
+      })();
     }
   }
 
