@@ -12,8 +12,6 @@ import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } 
 import { serverLogger as logger } from "#veryfront/utils";
 import { HTTP_OK } from "#veryfront/utils/constants/index.ts";
 import { compileMarkdownRuntime } from "#veryfront/transforms/md/compiler/md-compiler.ts";
-import { generateHTMLShellParts } from "#veryfront/html";
-import type { MDXFrontmatter } from "#veryfront/types";
 import { extract } from "#std/front-matter/yaml.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
@@ -159,39 +157,48 @@ export class MarkdownPreviewHandler extends BaseHandler {
         "server",
       );
 
-      // Wrap in div to match client-side MDContent (class added by MDContent)
-      const bodyContent = `<div class="markdown-body">${bundle.rawHtml || ""}</div>`;
-
-      // Get color scheme
+      // Get color scheme from URL param
       const colorScheme = url.searchParams.get("color_mode") as "light" | "dark" | null;
+      const theme = colorScheme || "light";
+      const title = (frontmatter.title as string) || filePath;
+      const description = (frontmatter.description as string) || "";
 
-      // Generate HTML shell
-      const { start, end } = await generateHTMLShellParts(
-        {
-          title: frontmatter.title as string || filePath,
-          description: frontmatter.description as string || "",
-          slug: filePath,
-          frontmatter: bundle.frontmatter as MDXFrontmatter,
-          ssrHash: "",
-        },
-        {
-          mode: "development",
-          config: ctx.config ?? {},
-          projectDir: ctx.projectDir,
-          pagePath: filePath,
-          pageType: "md",
-          frontmatter: bundle.frontmatter as MDXFrontmatter,
-          environment: ctx.requestContext?.mode === "preview" ? "preview" : undefined,
-          isLocalDev: ctx.requestContext?.isLocalDev ?? false,
-          colorScheme: colorScheme || "light",
-          colorSchemeFromParam: !!colorScheme,
-        },
-        {},
-        {},
-        bodyContent,
-      );
+      // Generate simple static HTML (no React hydration, no layouts, no app)
+      const html = `<!DOCTYPE html>
+<html lang="en" data-theme="${theme}" style="color-scheme: ${theme};">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  ${description ? `<meta name="description" content="${description}">` : ""}
+  <title>${title}</title>
 
-      const html = `${start}${bodyContent}${end}`;
+  <!-- GitHub Markdown Preview Styles -->
+  <link rel="stylesheet" href="https://cdn.veryfront.com/styles/github-markdown.min.css">
+  <link rel="stylesheet" href="https://cdn.veryfront.com/styles/github-syntax-highlighting.min.css">
+  <link rel="stylesheet" href="https://cdn.veryfront.com/styles/mermaid.min.css">
+</head>
+<body>
+  <article class="markdown-body" id="markdown-body">
+    ${bundle.rawHtml || ""}
+  </article>
+
+  <script type="module">
+    import mermaid from 'https://esm.sh/mermaid@11';
+    mermaid.initialize({ startOnLoad: false, theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'default' });
+    // Convert code.language-mermaid blocks to mermaid-compatible format
+    document.querySelectorAll('code.language-mermaid').forEach((code) => {
+      const pre = code.parentElement;
+      if (pre?.tagName === 'PRE') {
+        const div = document.createElement('pre');
+        div.className = 'mermaid';
+        div.textContent = code.textContent;
+        pre.replaceWith(div);
+      }
+    });
+    mermaid.run();
+  </script>
+</body>
+</html>`;
 
       const responseBuilder = this.createResponseBuilder(ctx)
         .withCache("no-cache")
