@@ -522,9 +522,10 @@ export function createApp(config: AppConfig): App {
     }
 
     // Letter keys for remote project items 10+ (a=10, b=11, etc.)
-    // Exclude p (pull), u (push), j/k (vim nav) shortcuts
+    // Exclude p (pull), u (push), j/k (vim nav), o/s/i (open actions) shortcuts
     if (
       key >= "a" && key <= "z" && key !== "j" && key !== "k" && key !== "p" && key !== "u" &&
+      key !== "o" && key !== "s" && key !== "i" &&
       state.activeList === "remoteProjects"
     ) {
       const num = key.charCodeAt(0) - 96 + 9; // a=10, b=11, etc.
