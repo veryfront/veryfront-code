@@ -270,6 +270,7 @@
   "tasks": {
     "setup": "deno run --allow-all scripts/setup.ts",
     "start": "deno run --allow-all scripts/server.ts",
+    "start:clean": "rm -rf .cache/ && deno run --allow-all scripts/server.ts",
     "start:headless": "deno run --allow-all scripts/server.ts --headless",
     "proxy": "deno run --allow-net --allow-env --allow-read proxy/main.ts",
     "renderer": "deno run --allow-all --unstable-net --unstable-worker-options src/cli/main.ts dev",
@@ -286,6 +287,7 @@
     "test:coverage:integration": "rm -rf coverage && VF_DISABLE_LRU_INTERVAL=1 NODE_ENV=production LOG_FORMAT=text deno test --no-check --parallel --fail-fast --allow-all --coverage=coverage tests --unstable-worker-options --unstable-net || exit 1",
     "coverage:report": "deno coverage coverage --include=src/ --exclude=tests --exclude=src/**/*_test.ts --exclude=src/**/*_test.tsx --exclude=src/**/*.test.ts --exclude=src/**/*.test.tsx --lcov > coverage/lcov.info && deno run --allow-read scripts/check-coverage.ts 80",
     "coverage:html": "deno coverage coverage --include=src/ --exclude=tests --exclude=src/**/*_test.ts --exclude=src/**/*_test.tsx --exclude=src/**/*.test.ts --exclude=src/**/*.test.tsx --html",
+    "clean": "rm -rf .cache/",
     "lint": "DENO_NO_PACKAGE_JSON=1 deno lint src/",
     "fmt": "deno fmt src/",
     "fmt:check": "deno fmt --check src/",
