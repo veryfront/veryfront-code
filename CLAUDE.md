@@ -233,12 +233,10 @@ logcli query '{namespace="veryfront-production", container="renderer"} |= "error
 ## Releasing Veryfront Code
 
 ```bash
-deno task release patch   # 0.0.84 → 0.0.85
-deno task release minor   # 0.0.84 → 0.1.0
-deno task release 1.0.0   # explicit version
+deno task release
 ```
 
-One command. Runs tests, bumps version, commits, tags, pushes. CI publishes to npm + Homebrew.
+Defaults to patch. Use `minor`, `major`, or `1.0.0` for other versions.
 
 ## MCP Skills
 

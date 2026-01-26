@@ -2,13 +2,9 @@
  * Release script for Veryfront
  *
  * Usage:
- *   deno task release [version] [flags]
- *
- * Examples:
- *   deno task release patch
+ *   deno task release          # patch (default)
  *   deno task release minor
  *   deno task release 1.2.3
- *   deno task release patch --dry-run
  */
 
 import { createFileSystem } from "../src/platform/compat/fs.ts";
@@ -334,14 +330,7 @@ async function main() {
 		alias: { d: "dry-run", y: "yes" },
 	});
 
-	versionArg = args._[0]?.toString() ?? null;
-
-	if (!versionArg) {
-		console.error(
-			"Error: Please provide a version argument (patch, minor, major, or specific version)",
-		);
-		exit(1);
-	}
+	versionArg = args._[0]?.toString() ?? "patch";
 
 	DRY_RUN = Boolean(args["dry-run"]);
 
