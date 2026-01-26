@@ -155,7 +155,7 @@ export async function newCommand(
   const tui = createTui({ title: "Veryfront", showLogs: true });
   const restore = interceptConsole(tui);
 
-  const localUrl = `http://${name}.lvh.me:${port}`;
+  const localUrl = `http://${name}.veryfront.me:${port}`;
   const prodUrl = `https://${slug}.veryfront.com`;
 
   tui.setInfo({

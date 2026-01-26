@@ -317,7 +317,7 @@ export function createApp(config: AppConfig): App {
 
   state = updateServer({
     port: config.port,
-    url: `http://lvh.me:${config.port}`,
+    url: `http://veryfront.me:${config.port}`,
   })(state);
 
   state = updateMCP({
@@ -881,7 +881,7 @@ export function createApp(config: AppConfig): App {
       if (state.activeList === "remoteProjects") {
         const focused = state.remote.projects[state.remote.focusedIndex];
         if (focused) {
-          const url = `http://${focused.slug}.lvh.me:${state.server.port}`;
+          const url = `http://${focused.slug}.veryfront.me:${state.server.port}`;
           await openBrowser(url);
         }
         return;
@@ -1315,7 +1315,7 @@ export function createApp(config: AppConfig): App {
     running = true;
 
     if (!isInteractiveMode) {
-      console.log(`Server running on http://lvh.me:${config.port}`);
+      console.log(`Server running on http://veryfront.me:${config.port}`);
       if (config.mcpPort) console.log(`MCP available at http://localhost:${config.mcpPort}/mcp`);
       return;
     }

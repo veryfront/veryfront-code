@@ -158,7 +158,7 @@ export function createVfGetStatus(
 
       return Promise.resolve({
         running: true,
-        url: `http://lvh.me:${port}`,
+        url: `http://veryfront.me:${port}`,
         port,
         errorCount: counts.compile + counts.runtime + counts.bundle,
         warningCount: logs.query({ level: "warn" }).length,

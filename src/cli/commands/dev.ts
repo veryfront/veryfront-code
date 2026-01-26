@@ -188,7 +188,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       registerTerminationSignals(() => void shutdown());
 
       if (!isProxyMode) {
-        const serverUrl = `http://lvh.me:${finalPort}`;
+        const serverUrl = `http://veryfront.me:${finalPort}`;
 
         console.log();
         console.log(

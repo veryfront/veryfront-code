@@ -111,7 +111,7 @@ export function createInitialState(): AppState {
     previousView: null,
     server: {
       running: false,
-      url: "http://lvh.me:8080",
+      url: "http://veryfront.me:8080",
       port: 8080,
       errors: 0,
       warnings: 0,

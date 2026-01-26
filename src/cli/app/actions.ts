@@ -67,7 +67,7 @@ async function runCommandLocal(cmd: string, args: string[]): Promise<boolean> {
 }
 
 export async function openInBrowser(project: ProjectInfo, port: number): Promise<ActionResult> {
-  const url = `http://${project.slug}.lvh.me:${port}`;
+  const url = `http://${project.slug}.veryfront.me:${port}`;
 
   try {
     await openBrowser(url);
