@@ -1,4 +1,3 @@
-import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { getReactImportMap, REACT_VERSION } from "#veryfront/transforms/esm/package-registry.ts";
 
 export interface SSRRewriteOptions {
@@ -25,8 +24,8 @@ function shouldKeepBareSpecifier(specifier: string): boolean {
 
   if (specifier.startsWith("@/")) return true;
 
-  if (specifier === "react" || specifier.startsWith("react/")) return true;
-  if (specifier === "react-dom" || specifier.startsWith("react-dom/")) return true;
+  // React imports are handled by resolveReactForRuntime - don't keep as bare specifiers
+  // This ensures SSR modules use explicit URLs for React, avoiding multiple instances
 
   if (specifier.startsWith("veryfront/")) return true;
 
@@ -34,8 +33,9 @@ function shouldKeepBareSpecifier(specifier: string): boolean {
 }
 
 function resolveReactForRuntime(specifier: string): string | null {
-  if (isDeno) return null;
-
+  // Always rewrite React imports to explicit URLs for SSR modules.
+  // Dynamic imports from temp files don't have access to deno.json import map,
+  // so we must use explicit URLs to ensure a single React instance.
   const reactMap = getReactImportMap();
   const mapped = reactMap[specifier];
   if (mapped) return mapped;
