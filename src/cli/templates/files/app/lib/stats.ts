@@ -1,0 +1,39 @@
+interface Stats {
+  totalUsers: number;
+  activeToday: number;
+  revenue: number;
+  growth: number;
+}
+
+interface RecentActivityItem {
+  id: string;
+  type: string;
+  description: string;
+  timestamp: Date;
+}
+
+export async function getStats(userId: string): Promise<Stats> {
+  return {
+    totalUsers: 1234,
+    activeToday: 89,
+    revenue: 54321,
+    growth: 12.5,
+  };
+}
+
+export async function getRecentActivity(userId: string): Promise<RecentActivityItem[]> {
+  return [
+    {
+      id: "1",
+      type: "user_signup",
+      description: "New user registered",
+      timestamp: new Date(Date.now() - 1000 * 60 * 5),
+    },
+    {
+      id: "2",
+      type: "payment",
+      description: "Payment received",
+      timestamp: new Date(Date.now() - 1000 * 60 * 30),
+    },
+  ];
+}

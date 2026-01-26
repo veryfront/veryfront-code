@@ -18,6 +18,18 @@ const version = Deno.env.get("VERYFRONT_VERSION") || denoJson.version || "0.0.75
 
 console.log(`\n📦 Building Veryfront v${version} for npm using dnt...\n`);
 
+// Generate templates manifest before build
+console.log("📝 Generating templates manifest...");
+const genManifest = new Deno.Command("deno", {
+	args: ["run", "-A", "scripts/generate-templates-manifest.ts"],
+	stdout: "inherit",
+	stderr: "inherit",
+});
+const { code: manifestCode } = await genManifest.output();
+if (manifestCode !== 0) {
+	throw new Error("Failed to generate templates manifest");
+}
+
 await emptyDir("./npm");
 
 // Convert deno.json exports to dnt entry points
@@ -155,9 +167,8 @@ await build({
 		await Deno.mkdir("./npm/scripts", { recursive: true });
 		await Deno.copyFile("./scripts/postinstall.js", "./npm/scripts/postinstall.js");
 
-		// Copy templates (relative to where loader.js is: esm/src/cli/templates/)
-		await copyDir("./src/cli/templates/files", "./npm/esm/src/cli/templates/files");
-		await copyDir("./src/cli/templates/integrations", "./npm/esm/src/cli/templates/integrations");
+		// Note: Templates are now embedded in manifest.json which is bundled by dnt
+		// No need to copy template files separately
 
 		// Create bin wrapper
 		await Deno.mkdir("./npm/bin", { recursive: true });
@@ -202,19 +213,6 @@ if (existsSync(nativeBinary)) {
 		await Deno.writeTextFile(pkgPath, JSON.stringify(pkg, null, 2));
 	},
 });
-
-async function copyDir(src: string, dest: string): Promise<void> {
-	await Deno.mkdir(dest, { recursive: true });
-	for await (const entry of Deno.readDir(src)) {
-		const srcPath = `${src}/${entry.name}`;
-		const destPath = `${dest}/${entry.name}`;
-		if (entry.isDirectory) {
-			await copyDir(srcPath, destPath);
-		} else if (entry.isFile) {
-			await Deno.copyFile(srcPath, destPath);
-		}
-	}
-}
 
 async function copyFileIfExists(src: string, dest: string): Promise<void> {
 	try {

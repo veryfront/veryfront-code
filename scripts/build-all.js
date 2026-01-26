@@ -60,7 +60,7 @@ for (const { name, target, output } of targets) {
   try {
     console.log(`📦 Building ${name}...`);
     execSync(
-      `deno compile --allow-all --unstable-net --include=src/cli/templates/files --include=src/cli/templates/integrations --target ${target} --output ${outputPath} src/cli/main.ts`,
+      `deno compile --allow-all --unstable-net --target ${target} --output ${outputPath} src/cli/main.ts`,
       { stdio: "inherit" },
     );
 

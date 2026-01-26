@@ -1,126 +1,64 @@
 /**
- * Directory-based template loader
+ * Template loader using JSON manifest.
  *
- * Loads templates from actual file directories instead of inline strings.
- * Uses cross-runtime platform abstractions for filesystem operations.
- * Benefits:
- * - IDE support (syntax highlighting, linting, formatting)
- * - Easier to maintain and test templates
- * - No escaping issues with template literals
- * - Can use real file extensions (.tsx, .mdx, etc.)
+ * Templates are compiled to a JSON manifest at build time, which allows
+ * them to be embedded in compiled binaries without deno compile trying
+ * to analyze them as TypeScript modules.
  */
 
-import {
-  createFileSystem,
-  type FileSystem,
-  isNotFoundError,
-} from "#veryfront/platform/compat/fs.ts";
-import * as pathHelper from "#veryfront/platform/compat/path-helper.ts";
 import type { TemplateFile } from "./types.ts";
+import manifest from "./manifest.json" with { type: "json" };
 
-/**
- * Special file name mappings for npm publishing compatibility.
- * npm strips dotfiles during publish, so we use underscore prefixes.
- */
-const FILE_NAME_MAPPINGS: Record<string, string> = {
-  _gitignore: ".gitignore",
-  _env: ".env",
-  "_env.example": ".env.example",
-  _npmrc: ".npmrc",
-  "_eslintrc.json": ".eslintrc.json",
-  _prettierrc: ".prettierrc",
-};
+interface TemplateManifest {
+  version: number;
+  templates: Record<string, { files: Record<string, string> }>;
+}
 
-export async function loadTemplateFromDirectory(
-  templateDir: string,
+const typedManifest = manifest as TemplateManifest;
+
+export function loadTemplateFromDirectory(
+  templateName: string,
 ): Promise<TemplateFile[]> {
-  const files: TemplateFile[] = [];
-  const fs = createFileSystem();
+  const entry = typedManifest.templates[templateName];
+  if (!entry) return Promise.resolve([]);
 
-  try {
-    await walkDirectory(templateDir, templateDir, files, fs);
-  } catch (error) {
-    if (isNotFoundError(error)) return [];
-    throw error;
-  }
+  const files = Object.entries(entry.files)
+    .map(([path, content]) => ({ path, content }))
+    .sort((a, b) => a.path.localeCompare(b.path));
 
-  return files.sort((a, b) => a.path.localeCompare(b.path));
-}
-
-async function walkDirectory(
-  baseDir: string,
-  currentDir: string,
-  files: TemplateFile[],
-  fs: FileSystem,
-): Promise<void> {
-  for await (const entry of fs.readDir(currentDir)) {
-    const entryPath = pathHelper.join(currentDir, entry.name);
-
-    if (entry.isDirectory) {
-      await walkDirectory(baseDir, entryPath, files, fs);
-      continue;
-    }
-
-    if (!entry.isFile) continue;
-
-    const relativePath = processRelativePath(
-      pathHelper.relative(baseDir, entryPath),
-    );
-
-    const content = (await fs.readTextFile(entryPath))
-      .replace(/^\/\/ @ts-nocheck[^\n]*\n/, "");
-
-    files.push({ path: relativePath, content });
-  }
-}
-
-function processRelativePath(relativePath: string): string {
-  // Strip .template suffix (used to prevent deno compile from analyzing .ts/.tsx files)
-  if (relativePath.endsWith(".template")) {
-    relativePath = relativePath.slice(0, -".template".length);
-  }
-
-  // Apply file name mappings for dotfiles (npm strips dotfiles during publish)
-  const parts = relativePath.split("/");
-  const fileName = parts[parts.length - 1] ?? "";
-  const mapped = FILE_NAME_MAPPINGS[fileName];
-  if (mapped) {
-    parts[parts.length - 1] = mapped;
-    return parts.join("/");
-  }
-
-  return relativePath;
+  return Promise.resolve(files);
 }
 
 export function getTemplateDirectory(templateName: string): string {
-  const moduleUrl = new URL(".", import.meta.url);
-
-  // Always use "files" directory - this is where templates are stored
-  // in both Deno source and npm build
-  if (moduleUrl.protocol !== "file:") {
-    const base = moduleUrl.href;
-    return pathHelper.join(base, "files", templateName);
-  }
-
-  let moduleDir = moduleUrl.pathname;
-  if (
-    typeof process !== "undefined" &&
-    process.platform === "win32" &&
-    moduleDir.startsWith("/")
-  ) {
-    moduleDir = moduleDir.slice(1);
-  }
-
-  return pathHelper.join(moduleDir, "files", templateName);
+  // For compatibility - returns a virtual path since templates are in manifest
+  return `manifest://${templateName}`;
 }
 
-export async function templateDirectoryExists(templateName: string): Promise<boolean> {
-  const templateDir = getTemplateDirectory(templateName);
-  const fs = createFileSystem();
+export function templateDirectoryExists(
+  templateName: string,
+): Promise<boolean> {
+  return Promise.resolve(templateName in typedManifest.templates);
+}
 
-  try {
-    return (await fs.stat(templateDir)).isDirectory;
-  } catch {
-    return false;
-  }
+export function getIntegrationTemplate(
+  integrationName: string,
+): TemplateFile[] | null {
+  const entry = typedManifest.templates[`integration:${integrationName}`];
+  if (!entry) return null;
+
+  return Object.entries(entry.files)
+    .map(([path, content]) => ({ path, content }))
+    .sort((a, b) => a.path.localeCompare(b.path));
+}
+
+export function listTemplates(): string[] {
+  return Object.keys(typedManifest.templates).filter(
+    (name) => !name.startsWith("integration:"),
+  );
+}
+
+export function listIntegrations(): string[] {
+  return Object.keys(typedManifest.templates)
+    .filter((name) => name.startsWith("integration:"))
+    .map((name) => name.replace("integration:", ""));
 }
