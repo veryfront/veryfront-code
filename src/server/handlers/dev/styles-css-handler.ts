@@ -68,7 +68,8 @@ export class StylesCSSHandler extends BaseHandler {
     } catch {
       // No stylesheet found, use default Tailwind import
       logger.debug("[StylesCSSHandler] No stylesheet found, using default");
-      return '@import "tailwindcss";';
+      return `@import "tailwindcss";
+@custom-variant dark (&:is(.dark, [data-theme="dark"]) *, &:is(.dark, [data-theme="dark"]));`;
     }
   }
 

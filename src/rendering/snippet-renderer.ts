@@ -178,11 +178,11 @@ export function renderSnippet(
       });
 
       try {
-        const { compileMDXRuntime } = await import(
+        const { compileContent } = await import(
           "@veryfront/transforms/mdx/compiler/index.ts"
         );
 
-        const bundle = await compileMDXRuntime(
+        const bundle = await compileContent(
           options.mode,
           options.projectDir,
           mdxContent,

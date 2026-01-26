@@ -55,20 +55,16 @@ export class MDXCompiler {
     frontmatter?: Record<string, unknown>,
     filePath?: string,
   ): Promise<MDXCompileResult> {
-    const { compileMDXRuntime } = await import("#veryfront/transforms/mdx/compiler/index.ts");
+    const { compileContent } = await import("#veryfront/transforms/mdx/compiler/index.ts");
 
     try {
-      // Node positions for Studio Navigator are injected via rehype plugin
-      // inside compileMDXRuntime when studioEmbed is true
-      const bundle = (await compileMDXRuntime(
+      const bundle = (await compileContent(
         this.config.mode,
         this.config.projectDir,
         content,
         frontmatter,
         filePath,
-        "server", // SSR target
-        undefined, // baseUrl
-        { studioEmbed: this.config.studioEmbed },
+        "server",
       )) as MDXCompileResult;
 
       await withSpan(

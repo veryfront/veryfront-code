@@ -37,14 +37,14 @@ describe("plugin-loader", () => {
       const plugins = await getRemarkPlugins();
 
       assertPluginArray(plugins);
-      assertEquals(plugins.length >= 6, true);
+      assertEquals(plugins.length >= 5, true);
     });
 
     it("handles missing config gracefully", async () => {
       const plugins = await getRemarkPlugins();
 
       assertPluginArray(plugins);
-      assertEquals(plugins.length >= 6, true);
+      assertEquals(plugins.length >= 5, true);
     });
 
     it("handles invalid config path", async () => {
@@ -93,7 +93,7 @@ describe("plugin-loader", () => {
         const plugins = await getRemarkPlugins();
 
         assertPluginArray(plugins);
-        assertEquals(plugins.length >= 6, true);
+        assertEquals(plugins.length >= 5, true);
       } finally {
         await remove(tempDir, { recursive: true });
       }
@@ -126,14 +126,14 @@ describe("plugin-loader", () => {
       const plugins = await getRehypePlugins();
 
       assertPluginArray(plugins);
-      assertEquals(plugins.length >= 5, true);
+      assertEquals(plugins.length >= 2, true);
     });
 
     it("handles missing config gracefully", async () => {
       const plugins = await getRehypePlugins();
 
       assertPluginArray(plugins);
-      assertEquals(plugins.length >= 5, true);
+      assertEquals(plugins.length >= 2, true);
     });
 
     it("handles invalid config path", async () => {

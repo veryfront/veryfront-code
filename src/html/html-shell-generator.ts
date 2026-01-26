@@ -199,7 +199,6 @@ async function generateHTMLShellPartsImpl(
     : getProdScripts(meta.slug || "", params, props, nonce);
 
   const modeStyles = useDevScripts ? getDevStyles(nonce) : getProductionStyles(nonce);
-  const syntaxHighlightTheme = useDevScripts ? "github-dark" : "github";
 
   const modulePreloadHints = generateModulePreloadHints(options);
 
@@ -267,8 +266,6 @@ async function generateHTMLShellPartsImpl(
   <!-- Tailwind CSS: Server-side JIT compiled -->
   ${tailwindCSSBlock}
 
-  <!-- Syntax highlighting for code blocks -->
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/${syntaxHighlightTheme}.min.css">
   ${linkTags}
   ${styleTags}
   ${modeStyles}
@@ -292,16 +289,6 @@ async function generateHTMLShellPartsImpl(
     ? `<script src="/_veryfront/preview-hmr.js"${nonce ? ` nonce="${nonce}"` : ""}></script>`
     : "";
 
-  const mermaidScript = `
-  <!-- Mermaid diagram rendering (after hydration) -->
-  <script type="module"${nonce ? ` nonce="${nonce}"` : ""}>
-    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-    mermaid.initialize({ startOnLoad: false, theme: 'default' });
-    const runMermaid = () => { if (!window.__mermaidDone) { window.__mermaidDone = true; mermaid.run(); } };
-    window.__veryfrontHydrationComplete = runMermaid;
-    if (document.getElementById('veryfront-content')?.__reactRoot) runMermaid();
-  </script>`;
-
   const end = `</div>
   </div>
   <div id="veryfront-portals"></div>
@@ -315,7 +302,6 @@ async function generateHTMLShellPartsImpl(
   ${modeScripts}
   ${studioScripts}
   ${previewHMRScript}
-  ${mermaidScript}
 </body>
 </html>`;
 

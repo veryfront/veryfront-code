@@ -31,5 +31,4 @@ export {
   buildImportMapJson,
   buildRootAttributes,
   shouldDisableLayout,
-  shouldDisableProse,
 } from "./utils.ts";

@@ -1,4 +1,4 @@
-import { compileMDXRuntime } from "../../mdx/compiler/mdx-compiler.ts";
+import { compileContent } from "../../mdx/compiler/index.ts";
 import { isMDX, isSSR } from "../context.ts";
 import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
 
@@ -12,7 +12,7 @@ export const parsePlugin: TransformPlugin = {
     const mdxTarget = ssr ? "server" : "browser";
     const mdxBaseUrl = ssr ? undefined : ctx.moduleServerUrl;
 
-    const result = await compileMDXRuntime(
+    const result = await compileContent(
       ctx.dev ? "development" : "production",
       ctx.projectDir,
       ctx.code,
@@ -20,7 +20,6 @@ export const parsePlugin: TransformPlugin = {
       ctx.filePath,
       mdxTarget,
       mdxBaseUrl,
-      { studioEmbed: ctx.studioEmbed },
     );
 
     if (result.frontmatter) ctx.metadata.set("frontmatter", result.frontmatter);
