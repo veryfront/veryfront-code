@@ -289,10 +289,15 @@ async function generateHTMLShellPartsImpl(
     : "";
 
   const mermaidScript = `
-  <!-- Mermaid diagram rendering -->
+  <!-- Mermaid diagram rendering (deferred until browser idle) -->
   <script type="module"${nonce ? ` nonce="${nonce}"` : ""}>
-    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-    mermaid.initialize({ startOnLoad: true, theme: 'default' });
+    const initMermaid = async () => {
+      if (!document.querySelector('.mermaid:not([data-processed])')) return;
+      const mermaid = await import('https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs');
+      mermaid.default.initialize({ startOnLoad: false, theme: 'default' });
+      await mermaid.default.run();
+    };
+    requestIdleCallback?.(initMermaid) ?? setTimeout(initMermaid, 0);
   </script>`;
 
   const end = `</div>
