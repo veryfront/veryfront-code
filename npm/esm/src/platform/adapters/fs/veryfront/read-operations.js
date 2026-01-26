@@ -1,0 +1,386 @@
+import { logger } from "../../../../utils/index.js";
+import { withSpan } from "../../../../observability/tracing/otlp-setup.js";
+import { buildFileCacheKeyPrefix } from "./cache-keys.js";
+import { getRequestScopedFile, setRequestScopedFile } from "./multi-project-adapter.js";
+const EXTENSION_PRIORITY = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"];
+const IN_FLIGHT_REQUEST_TIMEOUT_MS = 15_000;
+const MAX_IN_FLIGHT_REQUESTS = 100;
+export class ReadOperations {
+    client;
+    cache;
+    normalizer;
+    contextProvider;
+    getOriginalApiPath;
+    getFileListCache;
+    inFlightRequests = new Map();
+    lastCleanupTime = 0;
+    fileListIndex = null;
+    fileListIndexKey = null;
+    fileListReadyPromise = null;
+    constructor(client, cache, normalizer, contextProvider, getOriginalApiPath, getFileListCache) {
+        this.client = client;
+        this.cache = cache;
+        this.normalizer = normalizer;
+        this.contextProvider = contextProvider;
+        this.getOriginalApiPath = getOriginalApiPath;
+        this.getFileListCache = getFileListCache;
+    }
+    setFileListReadyPromise(promise) {
+        this.fileListReadyPromise = promise;
+    }
+    clearFileListIndex() {
+        if (this.fileListIndex) {
+            const size = this.fileListIndex.size;
+            this.fileListIndex = null;
+            this.fileListIndexKey = null;
+            logger.debug("[ReadOperations] Cleared file list index", { entriesCleared: size });
+        }
+    }
+    cleanupStaleInFlightRequests() {
+        const now = Date.now();
+        if (now - this.lastCleanupTime < 1000)
+            return;
+        this.lastCleanupTime = now;
+        let cleanedCount = 0;
+        for (const [key, entry] of this.inFlightRequests) {
+            if (now - entry.startedAt > IN_FLIGHT_REQUEST_TIMEOUT_MS) {
+                this.inFlightRequests.delete(key);
+                cleanedCount++;
+            }
+        }
+        if (this.inFlightRequests.size > MAX_IN_FLIGHT_REQUESTS) {
+            const entries = [...this.inFlightRequests.entries()].sort((a, b) => a[1].startedAt - b[1].startedAt);
+            const toRemove = entries.slice(0, this.inFlightRequests.size - MAX_IN_FLIGHT_REQUESTS);
+            for (const [key] of toRemove) {
+                this.inFlightRequests.delete(key);
+                cleanedCount++;
+            }
+        }
+        if (cleanedCount > 0) {
+            logger.warn("[ReadOperations] Cleaned up in-flight requests", {
+                cleanedCount,
+                remainingCount: this.inFlightRequests.size,
+            });
+        }
+    }
+    async getOrBuildFileListIndex() {
+        if (!this.getFileListCache) {
+            logger.debug("[ReadOperations] getOrBuildFileListIndex: no getFileListCache function");
+            return null;
+        }
+        const fileList = await this.getFileListCache();
+        if (!fileList) {
+            logger.debug("[ReadOperations] getOrBuildFileListIndex: getFileListCache returned null/undefined");
+            return null;
+        }
+        const cacheCheckSample = fileList.find((f) => f.path.includes("Welcome") || f.path.includes("welcome"));
+        logger.debug("[ReadOperations] getOrBuildFileListIndex: got file list from cache", {
+            fileListSize: fileList.length,
+            filesWithContent: fileList.filter((f) => f.content).length,
+            sampleFilePath: cacheCheckSample?.path,
+            sampleContentLength: cacheCheckSample?.content?.length,
+            sampleContentPreview: cacheCheckSample?.content?.slice(0, 200)?.replace(/\n/g, "\\n"),
+        });
+        const indexKey = `${fileList.length}:${fileList[0]?.path ?? ""}:${fileList[fileList.length - 1]?.path ?? ""}`;
+        if (this.fileListIndex && this.fileListIndexKey === indexKey) {
+            return this.fileListIndex;
+        }
+        const index = new Map();
+        for (const file of fileList) {
+            if (file.content)
+                index.set(file.path, file.content);
+        }
+        this.fileListIndex = index;
+        this.fileListIndexKey = indexKey;
+        const sampleFile = fileList.find((f) => f.path.includes("Welcome") || f.path.includes("welcome"));
+        const sampleContent = sampleFile?.content;
+        const sampleHash = sampleContent?.slice(0, 100).split("").reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0);
+        logger.debug("[ReadOperations] Built file list index", {
+            fileListSize: fileList.length,
+            indexedWithContent: index.size,
+            sampleFilePath: sampleFile?.path,
+            sampleContentLength: sampleContent?.length,
+            sampleContentHash: sampleHash,
+            sampleContentPreview: sampleContent?.slice(0, 200)?.replace(/\n/g, "\\n"),
+        });
+        return index;
+    }
+    async getContentFromFileList(normalizedPath) {
+        if (this.fileListReadyPromise) {
+            try {
+                await this.fileListReadyPromise;
+            }
+            catch {
+                logger.debug("[ReadOperations] File list initialization failed, will fetch individually");
+            }
+        }
+        const index = await this.getOrBuildFileListIndex();
+        if (!index) {
+            logger.debug("[ReadOperations] No file list cache available");
+            return undefined;
+        }
+        const content = index.get(normalizedPath);
+        if (!content) {
+            logger.debug("[ReadOperations] Content not in file list index", {
+                path: normalizedPath,
+                indexSize: index.size,
+            });
+            return undefined;
+        }
+        const contentPreview = content.length > 200 ? content.slice(0, 200) + "..." : content;
+        const contentHash = content.slice(0, 100).split("").reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0);
+        logger.debug("[ReadOperations] FILE_LIST_CACHE_HIT - serving from file list cache", {
+            path: normalizedPath,
+            contentLength: content.length,
+            contentHash,
+            contentPreview: contentPreview.replace(/\n/g, "\\n"),
+        });
+        return content;
+    }
+    readFile(path) {
+        return withSpan("fs.veryfront.readFile", async () => {
+            const normalizedPath = this.normalizer.normalize(path);
+            const content = await this.fetchContent(normalizedPath);
+            return new TextEncoder().encode(content);
+        }, { "fs.path": path });
+    }
+    readTextFile(path) {
+        return withSpan("fs.veryfront.readTextFile", () => {
+            const normalizedPath = this.normalizer.normalize(path);
+            logger.debug("[ReadOperations] readTextFile called", { path, normalizedPath });
+            return this.fetchContent(normalizedPath);
+        }, { "fs.path": path });
+    }
+    async fetchContent(normalizedPath) {
+        const ctx = this.contextProvider?.getContentContext();
+        const apiPath = this.getOriginalApiPath?.(normalizedPath) ?? normalizedPath;
+        const cacheKeyPrefix = buildFileCacheKeyPrefix(ctx);
+        const cacheKey = `${cacheKeyPrefix}:${normalizedPath}`;
+        const isProduction = this.contextProvider?.isProductionMode() ?? false;
+        let skipPersistentCaches = false;
+        logger.debug("[ReadOperations] fetchContent context", {
+            path: normalizedPath,
+            hasContextProvider: !!this.contextProvider,
+            hasContext: !!ctx,
+            sourceType: ctx?.sourceType,
+            projectSlug: ctx?.projectSlug,
+            branch: ctx?.branch,
+            releaseId: ctx?.releaseId,
+            cacheKeyPrefix,
+            isProduction,
+        });
+        const requestCached = getRequestScopedFile(cacheKey);
+        if (requestCached) {
+            const preview = requestCached.length > 80
+                ? requestCached.slice(0, 80) + "..."
+                : requestCached;
+            logger.debug("[ReadOperations] REQUEST_CACHE_HIT", {
+                path: normalizedPath,
+                cacheKey,
+                contentLength: requestCached.length,
+                preview: preview.replace(/\n/g, "\\n"),
+            });
+            return requestCached;
+        }
+        if (isProduction) {
+            // Skip persistent cache if this prefix is being invalidated (prevents stale reads during deletion)
+            const currentReleaseId = ctx?.releaseId;
+            const isPrefixInvalidated = this.contextProvider?.isPersistentCacheInvalidated?.(cacheKeyPrefix) ?? false;
+            const isReleaseInvalidated = currentReleaseId &&
+                this.contextProvider?.isReleaseBeingInvalidated?.(currentReleaseId);
+            skipPersistentCaches = isPrefixInvalidated || !!isReleaseInvalidated;
+            if (skipPersistentCaches) {
+                logger.info("[ReadOperations] PERSISTENT_CACHE_SKIPPED - cache invalidation in progress", {
+                    path: normalizedPath,
+                    cacheKey,
+                    cacheKeyPrefix,
+                    releaseId: currentReleaseId ?? undefined,
+                    prefixInvalidated: isPrefixInvalidated,
+                });
+            }
+            else {
+                const cached = await this.cache.getAsync(cacheKey);
+                if (cached) {
+                    const preview = cached.length > 80 ? cached.slice(0, 80) + "..." : cached;
+                    logger.debug("[ReadOperations] PERSISTENT_CACHE_HIT", {
+                        path: normalizedPath,
+                        cacheKey,
+                        contentLength: cached.length,
+                        preview: preview.replace(/\n/g, "\\n"),
+                    });
+                    setRequestScopedFile(cacheKey, cached);
+                    return cached;
+                }
+            }
+        }
+        // Skip file list cache for preview/branch mode to avoid stale content race conditions
+        // In preview mode, always fetch fresh from API to ensure consistency between SSR and client
+        const isPreviewMode = ctx?.sourceType === "branch";
+        if (!skipPersistentCaches && !isPreviewMode) {
+            const fileListContent = await this.getContentFromFileList(normalizedPath);
+            if (fileListContent) {
+                if (isProduction)
+                    this.cache.set(cacheKey, fileListContent);
+                setRequestScopedFile(cacheKey, fileListContent);
+                return fileListContent;
+            }
+        }
+        else if (isPreviewMode) {
+            logger.debug("[ReadOperations] Skipping file list cache for preview mode", {
+                path: normalizedPath,
+                sourceType: ctx?.sourceType,
+            });
+        }
+        else {
+            logger.debug("[ReadOperations] Skipping file list cache due to invalidation", {
+                path: normalizedPath,
+                cacheKeyPrefix,
+            });
+        }
+        this.cleanupStaleInFlightRequests();
+        const existingEntry = this.inFlightRequests.get(cacheKey);
+        if (existingEntry) {
+            logger.debug("[ReadOperations] Deduplicating request - joining existing fetch", {
+                path: normalizedPath,
+                cacheKey,
+                ageMs: Date.now() - existingEntry.startedAt,
+            });
+            return existingEntry.promise;
+        }
+        const isPublished = ctx?.sourceType !== "branch";
+        logger.debug("[ReadOperations] fetchContent decision", {
+            path: normalizedPath,
+            isPublished,
+            willFetch: isPublished ? "published (environment)" : "draft (branch)",
+            sourceType: ctx?.sourceType ?? "null/undefined",
+        });
+        const fetchPromise = (async () => {
+            try {
+                if (isPublished) {
+                    return await this.fetchPublishedContent(normalizedPath, apiPath, cacheKey, ctx?.releaseId ?? null, ctx?.environmentName ?? null, isProduction);
+                }
+                return await this.fetchDraftContent(normalizedPath, apiPath, cacheKey, isProduction);
+            }
+            finally {
+                this.inFlightRequests.delete(cacheKey);
+            }
+        })();
+        this.inFlightRequests.set(cacheKey, { promise: fetchPromise, startedAt: Date.now() });
+        return fetchPromise;
+    }
+    async fetchPublishedContent(normalizedPath, apiPath, cacheKey, releaseId, environmentName, shouldCache) {
+        logger.debug("[ReadOperations] Fetching published content", {
+            path: normalizedPath,
+            apiPath,
+            cacheKey,
+            environmentName: environmentName ?? undefined,
+        });
+        try {
+            const content = await this.client.getPublishedFileContent(apiPath, releaseId ?? undefined, environmentName ?? undefined);
+            logger.debug("[ReadOperations] Fetched published content", {
+                path: normalizedPath,
+                contentLength: content.length,
+                releaseId,
+            });
+            if (shouldCache)
+                this.cache.set(cacheKey, content);
+            setRequestScopedFile(cacheKey, content);
+            return content;
+        }
+        catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            const is404Error = errorMessage.includes("404") || errorMessage.includes("Not Found");
+            if (!is404Error) {
+                logger.error("[ReadOperations] Failed to fetch published content", {
+                    path: normalizedPath,
+                    apiPath,
+                    releaseId,
+                    error: errorMessage,
+                });
+                throw error;
+            }
+            const fallbackContent = await this.tryFallbackExtensions(apiPath, cacheKey, shouldCache, releaseId, environmentName);
+            if (fallbackContent !== null)
+                return fallbackContent;
+            logger.debug("[ReadOperations] File not found (expected for optional files)", {
+                path: normalizedPath,
+                apiPath,
+            });
+            throw error;
+        }
+    }
+    async tryFallbackExtensions(apiPath, cacheKey, shouldCache, releaseId, environmentName) {
+        const extMatch = apiPath.match(/\.(tsx|ts|jsx|js|mdx|md)$/);
+        if (!extMatch)
+            return null;
+        const originalExt = extMatch[0];
+        const basePath = apiPath.slice(0, -originalExt.length);
+        logger.debug("[ReadOperations] Searching for file with pattern", {
+            originalPath: apiPath,
+            pattern: `${basePath}.*`,
+        });
+        try {
+            const result = await this.client.resolveFileWithExtension(basePath, [...EXTENSION_PRIORITY]);
+            if (!result)
+                return null;
+            logger.debug("[ReadOperations] Pattern search found file", {
+                originalPath: apiPath,
+                foundPath: result.path,
+                contentLength: result.content.length,
+            });
+            if (shouldCache)
+                this.cache.set(cacheKey, result.content);
+            setRequestScopedFile(cacheKey, result.content);
+            return result.content;
+        }
+        catch (error) {
+            logger.debug("[ReadOperations] Pattern search failed, trying sequential fallback", {
+                originalPath: apiPath,
+                error: error instanceof Error ? error.message : String(error),
+            });
+            return this.tryFallbackExtensionsSequential(apiPath, originalExt, basePath, cacheKey, shouldCache, releaseId, environmentName);
+        }
+    }
+    async tryFallbackExtensionsSequential(apiPath, originalExt, basePath, cacheKey, shouldCache, releaseId, environmentName) {
+        for (const ext of EXTENSION_PRIORITY) {
+            if (ext === originalExt)
+                continue;
+            const fallbackPath = basePath + ext;
+            try {
+                const content = await this.client.getPublishedFileContent(fallbackPath, releaseId ?? undefined, environmentName ?? undefined);
+                logger.debug("[ReadOperations] Sequential fallback succeeded", {
+                    originalPath: apiPath,
+                    fallbackPath,
+                    contentLength: content.length,
+                });
+                if (shouldCache)
+                    this.cache.set(cacheKey, content);
+                setRequestScopedFile(cacheKey, content);
+                return content;
+            }
+            catch {
+                // continue
+            }
+        }
+        return null;
+    }
+    async fetchDraftContent(normalizedPath, apiPath, cacheKey, shouldCache) {
+        logger.info("[ReadOperations] API_FETCH_START - fetching draft from API", {
+            path: normalizedPath,
+            apiPath,
+            cacheKey,
+        });
+        const content = await this.client.getFileContent(apiPath);
+        const preview = content.length > 80 ? content.slice(0, 80) + "..." : content;
+        logger.info("[ReadOperations] API_FETCH_DONE - got content from API", {
+            path: normalizedPath,
+            contentLength: content.length,
+            preview: preview.replace(/\n/g, "\\n"),
+            willCache: shouldCache,
+        });
+        if (shouldCache)
+            this.cache.set(cacheKey, content);
+        setRequestScopedFile(cacheKey, content);
+        return content;
+    }
+}

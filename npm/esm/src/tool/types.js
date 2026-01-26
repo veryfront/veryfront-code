@@ -1,0 +1,4 @@
+/****
+ * Tool type definitions
+ */
+export {};

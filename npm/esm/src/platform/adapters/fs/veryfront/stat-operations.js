@@ -1,0 +1,380 @@
+import { logger } from "../../../../utils/index.js";
+import { createError, toError } from "../../../../errors/index.js";
+import { buildFileCacheKeyPrefix, buildFileListCacheKey, buildStatCacheKeyPrefix, } from "./cache-keys.js";
+import { withSpan } from "../../../../observability/tracing/otlp-setup.js";
+const EXTENSION_PRIORITY = [".mdx", ".md", ".tsx", ".jsx", ".ts", ".js"];
+const NOT_FOUND_SENTINEL = "__NOT_FOUND__";
+const FRAMEWORK_PREFIXES = ["exports/", "react/", "veryfront/"];
+export class StatOperations {
+    client;
+    cache;
+    normalizer;
+    contextProvider;
+    fileIndex = null;
+    directoryIndex = null;
+    buildingIndex = null;
+    indexBuildLockResolver = null;
+    indexBuildLockPromise = null;
+    pathMapping = new Map();
+    apiSearchFailures = 0;
+    apiSearchDisabledUntil = 0;
+    constructor(client, cache, normalizer, contextProvider) {
+        this.client = client;
+        this.cache = cache;
+        this.normalizer = normalizer;
+        this.contextProvider = contextProvider;
+    }
+    stat(path) {
+        return withSpan("fs.veryfront.stat", async () => {
+            const normalizedPath = this.normalizer.normalize(path);
+            const ctx = this.contextProvider?.getContentContext();
+            const cacheKey = `${buildStatCacheKeyPrefix(ctx)}:${normalizedPath}`;
+            logger.debug("[StatOperations] stat called", { path, normalizedPath, cacheKey });
+            await this.ensureIndexBuilt();
+            const fileIdx = this.fileIndex;
+            const dirIdx = this.directoryIndex;
+            if (!fileIdx || !dirIdx) {
+                logger.debug("[StatOperations] stat - no index available", { normalizedPath });
+                throw toError(createError({
+                    type: "file",
+                    message: `Index not available for: ${normalizedPath}`,
+                }));
+            }
+            const file = fileIdx.get(normalizedPath);
+            if (file) {
+                logger.debug("[StatOperations] stat found file", { normalizedPath });
+                return {
+                    size: file.size,
+                    mtime: new Date(file.updated_at),
+                    isDirectory: false,
+                    isFile: true,
+                    isSymlink: false,
+                };
+            }
+            if (dirIdx.has(normalizedPath)) {
+                logger.debug("[StatOperations] stat found directory", { normalizedPath });
+                return {
+                    size: 0,
+                    mtime: new Date(),
+                    isDirectory: true,
+                    isFile: false,
+                    isSymlink: false,
+                };
+            }
+            logger.debug("[StatOperations] stat file not found (not in index)", {
+                normalizedPath,
+                indexSize: fileIdx.size,
+            });
+            throw toError(createError({
+                type: "file",
+                message: `File not found: ${normalizedPath}`,
+            }));
+        }, { "fs.path": path });
+    }
+    async ensureIndexBuilt() {
+        if (this.fileIndex && this.directoryIndex) {
+            logger.debug("[StatOperations] ensureIndexBuilt - index already built");
+            return;
+        }
+        if (this.buildingIndex) {
+            logger.debug("[StatOperations] ensureIndexBuilt - waiting for concurrent build");
+            const waitStart = performance.now();
+            await this.buildingIndex;
+            logger.debug("[StatOperations] ensureIndexBuilt - concurrent build done", {
+                waitMs: Math.round(performance.now() - waitStart),
+            });
+            return;
+        }
+        if (this.indexBuildLockPromise) {
+            logger.debug("[StatOperations] ensureIndexBuilt - waiting for lock");
+            await this.indexBuildLockPromise;
+            if (this.buildingIndex)
+                await this.buildingIndex;
+            return;
+        }
+        this.indexBuildLockPromise = new Promise((resolve) => {
+            this.indexBuildLockResolver = resolve;
+        });
+        try {
+            if (this.fileIndex && this.directoryIndex)
+                return;
+            this.buildingIndex = this.buildIndex();
+            await this.buildingIndex;
+        }
+        finally {
+            this.buildingIndex = null;
+            this.indexBuildLockResolver?.();
+            this.indexBuildLockResolver = null;
+            this.indexBuildLockPromise = null;
+        }
+    }
+    async buildIndex() {
+        const buildStart = performance.now();
+        logger.debug("[StatOperations] buildIndex START");
+        const fetchStart = performance.now();
+        const allFiles = await this.getAllFilesRaw();
+        const fetchMs = Math.round(performance.now() - fetchStart);
+        logger.debug("[StatOperations] buildIndex - getAllFilesRaw done", {
+            fetchMs,
+            fileCount: allFiles.length,
+        });
+        const indexStart = performance.now();
+        const fileIdx = new Map();
+        const dirIdx = new Set();
+        const pathMap = new Map();
+        for (const file of allFiles) {
+            let normalizedPath = file.path;
+            if (file.path.endsWith("/")) {
+                const ext = file.type === "page" ? ".mdx" : ".tsx";
+                normalizedPath = file.path.replace(/\/+$/, "") + "/index" + ext;
+                pathMap.set(normalizedPath, file.path);
+                logger.debug("[StatOperations] Normalized trailing slash path", {
+                    original: file.path,
+                    normalized: normalizedPath,
+                });
+            }
+            fileIdx.set(normalizedPath, file);
+            const parts = normalizedPath.split("/");
+            let current = "";
+            for (let i = 0; i < parts.length - 1; i++) {
+                const part = parts[i];
+                if (!part)
+                    continue;
+                current = current ? `${current}/${part}` : part;
+                dirIdx.add(current);
+            }
+        }
+        this.fileIndex = fileIdx;
+        this.directoryIndex = dirIdx;
+        this.pathMapping = pathMap;
+        const indexMs = Math.round(performance.now() - indexStart);
+        const totalMs = Math.round(performance.now() - buildStart);
+        logger.debug("[StatOperations] Index built", {
+            files: fileIdx.size,
+            directories: dirIdx.size,
+            pathMappings: pathMap.size,
+            fetchMs,
+            indexMs,
+            totalMs,
+        });
+    }
+    clearIndex() {
+        this.fileIndex = null;
+        this.directoryIndex = null;
+        this.pathMapping.clear();
+    }
+    getOriginalApiPath(normalizedPath) {
+        return this.pathMapping.get(normalizedPath) ?? normalizedPath;
+    }
+    async getAllFilesRaw() {
+        const cacheStart = performance.now();
+        const ctx = this.contextProvider?.getContentContext();
+        const cacheKeyPrefix = buildFileCacheKeyPrefix(ctx);
+        const skipPersistentCache = this.contextProvider?.isPersistentCacheInvalidated?.(cacheKeyPrefix) ?? false;
+        if (!skipPersistentCache && this.contextProvider?.getFileList) {
+            const files = await this.contextProvider.getFileList();
+            if (files) {
+                const cacheMs = Math.round(performance.now() - cacheStart);
+                logger.debug("[StatOperations] getAllFilesRaw - from adapter cache", {
+                    cacheMs,
+                    fileCount: files.length,
+                });
+                return files;
+            }
+        }
+        const cacheKey = buildFileListCacheKey(ctx);
+        if (skipPersistentCache) {
+            logger.debug("[StatOperations] getAllFilesRaw - skipping persistent cache (invalidation)", {
+                cacheKey,
+                cacheKeyPrefix,
+            });
+        }
+        const cached = skipPersistentCache
+            ? undefined
+            : await this.cache.getAsync(cacheKey);
+        const cacheMs = Math.round(performance.now() - cacheStart);
+        if (cached) {
+            logger.debug("[StatOperations] getAllFilesRaw - fallback cache HIT", {
+                cacheKey,
+                cacheMs,
+                fileCount: cached.length,
+            });
+            return cached;
+        }
+        logger.warn("[StatOperations] getAllFilesRaw - cache MISS, fetching from API", {
+            cacheKey,
+            cacheMs,
+        });
+        const isPublished = ctx?.sourceType !== "branch";
+        logger.debug("[StatOperations] Fetching files from API", {
+            sourceType: ctx?.sourceType,
+            cacheKey,
+        });
+        const files = isPublished
+            ? await this.client.listPublishedFiles(undefined, ctx?.releaseId ?? undefined, ctx?.environmentName ?? undefined)
+            : await this.client.listAllFiles();
+        this.cache.set(cacheKey, files);
+        return files;
+    }
+    async exists(path) {
+        const normalizedPath = this.normalizer.normalize(path);
+        try {
+            await this.stat(normalizedPath);
+            return true;
+        }
+        catch {
+            return false;
+        }
+    }
+    async resolveFile(basePath) {
+        const resolveStart = performance.now();
+        const normalizedPath = this.normalizer.normalize(basePath);
+        const ctx = this.contextProvider?.getContentContext();
+        const cacheKey = `${buildStatCacheKeyPrefix(ctx)}:resolve:${normalizedPath}`;
+        logger.debug("[StatOperations] resolveFile called", {
+            basePath,
+            normalizedPath,
+            cacheKey,
+        });
+        const indexStart = performance.now();
+        await this.ensureIndexBuilt();
+        const indexMs = Math.round(performance.now() - indexStart);
+        const fileIdx = this.fileIndex;
+        if (!fileIdx) {
+            logger.debug("[StatOperations] resolveFile - no file index", { indexMs });
+            return null;
+        }
+        if (fileIdx.has(normalizedPath)) {
+            const totalMs = Math.round(performance.now() - resolveStart);
+            logger.debug("[StatOperations] resolveFile exact match found", {
+                normalizedPath,
+                indexMs,
+                totalMs,
+            });
+            return normalizedPath;
+        }
+        const hasExtension = EXTENSION_PRIORITY.some((ext) => normalizedPath.endsWith(ext));
+        const pathWithoutExt = hasExtension
+            ? normalizedPath.replace(/\.(mdx|md|tsx|jsx|ts|js)$/, "")
+            : normalizedPath;
+        for (const ext of EXTENSION_PRIORITY) {
+            const pathWithExt = pathWithoutExt + ext;
+            if (!fileIdx.has(pathWithExt))
+                continue;
+            const totalMs = Math.round(performance.now() - resolveStart);
+            logger.debug("[StatOperations] resolveFile found with extension", {
+                pathWithExt,
+                indexMs,
+                totalMs,
+            });
+            return pathWithExt;
+        }
+        if (!pathWithoutExt.startsWith("pages/")) {
+            const pagesPath = `pages/${pathWithoutExt}`;
+            for (const ext of EXTENSION_PRIORITY) {
+                const pathWithExt = pagesPath + ext;
+                if (!fileIdx.has(pathWithExt))
+                    continue;
+                const totalMs = Math.round(performance.now() - resolveStart);
+                logger.debug("[StatOperations] resolveFile found with pages prefix", {
+                    pathWithExt,
+                    indexMs,
+                    totalMs,
+                });
+                return pathWithExt;
+            }
+        }
+        for (const ext of EXTENSION_PRIORITY) {
+            const indexPath = `${pathWithoutExt}/index${ext}`;
+            if (!fileIdx.has(indexPath))
+                continue;
+            const totalMs = Math.round(performance.now() - resolveStart);
+            logger.debug("[StatOperations] resolveFile found index file", {
+                indexPath,
+                indexMs,
+                totalMs,
+            });
+            return indexPath;
+        }
+        if (FRAMEWORK_PREFIXES.some((prefix) => normalizedPath.startsWith(prefix))) {
+            logger.debug("[StatOperations] Skipping API search for framework path", { normalizedPath });
+            return null;
+        }
+        if (this.contextProvider?.getFileList) {
+            const totalMs = Math.round(performance.now() - resolveStart);
+            logger.debug("[StatOperations] resolveFile not found (complete index, skipping API search)", {
+                normalizedPath,
+                pathWithoutExt,
+                indexSize: fileIdx.size,
+                indexMs,
+                totalMs,
+            });
+            return null;
+        }
+        if (Date.now() < this.apiSearchDisabledUntil) {
+            logger.warn("[StatOperations] API search circuit breaker open, skipping", { normalizedPath });
+            return null;
+        }
+        const cacheCheckStart = performance.now();
+        const cached = await this.cache.getAsync(cacheKey);
+        const cacheCheckMs = Math.round(performance.now() - cacheCheckStart);
+        if (cached === NOT_FOUND_SENTINEL) {
+            logger.debug("[StatOperations] resolveFile cached negative result", {
+                normalizedPath,
+                cacheCheckMs,
+            });
+            return null;
+        }
+        if (cached !== undefined) {
+            logger.debug("[StatOperations] resolveFile cache hit (unexpected)", {
+                normalizedPath,
+                cached,
+                cacheCheckMs,
+            });
+            return cached;
+        }
+        const searchPattern = `${pathWithoutExt}.*`;
+        logger.debug("[StatOperations] Searching for file via API", {
+            pattern: searchPattern,
+            normalizedPath,
+            cacheCheckMs,
+        });
+        try {
+            const matches = await this.client.searchFiles(searchPattern);
+            this.apiSearchFailures = 0;
+            logger.debug("[StatOperations] API search result", {
+                pattern: searchPattern,
+                matchCount: matches.length,
+                matches: matches.map((m) => m.path).slice(0, 5),
+            });
+            if (matches.length > 0) {
+                matches.sort((a, b) => {
+                    const extA = EXTENSION_PRIORITY.findIndex((ext) => a.path.endsWith(ext));
+                    const extB = EXTENSION_PRIORITY.findIndex((ext) => b.path.endsWith(ext));
+                    return (extA === -1 ? 99 : extA) - (extB === -1 ? 99 : extB);
+                });
+                const first = matches[0];
+                if (first) {
+                    logger.debug("[StatOperations] resolveFile found via API search", { path: first.path });
+                    this.cache.set(cacheKey, first.path);
+                    return first.path;
+                }
+            }
+        }
+        catch (error) {
+            this.apiSearchFailures++;
+            if (this.apiSearchFailures >= 5) {
+                this.apiSearchDisabledUntil = Date.now() + 30000;
+                this.apiSearchFailures = 0;
+                logger.warn("[StatOperations] API search circuit breaker tripped", { failures: 5 });
+            }
+            logger.error("[StatOperations] API pattern search failed", { pattern: searchPattern, error });
+        }
+        logger.debug("[StatOperations] resolveFile not found after API search", {
+            normalizedPath,
+            pathWithoutExt,
+        });
+        this.cache.set(cacheKey, NOT_FOUND_SENTINEL);
+        return null;
+    }
+}

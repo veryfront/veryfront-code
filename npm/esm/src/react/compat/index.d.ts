@@ -1,0 +1,5 @@
+export { createReactVersionSwitcher, detectReactVersionFromConfig, generateAllReactConfigs, generateReactVersionConfig, getReactImports, REACT_CONFIGS, type ReactVersion, type ReactVersionConfig, } from "./config-generator.js";
+export { type CompatHooks, compatHooks, CompatHooksProvider, type FormStatus, type OptimisticStateAction, SuspenseCompat, useCompatHooks, useDeferredValueCompat, useFormStatusCompat, useIdCompat, useOptimisticCompat, useTransitionCompat, } from "./hooks-adapter.js";
+export { createSSRResponse, getProjectReact, renderToStaticMarkupAdapter, renderToStreamAdapter, renderToStringAdapter, type SSROptions, type SSRResult, } from "./ssr-adapter/index.js";
+export { checkVersionCompatibility, clearProjectVersionCache, detectReactVersion, getReactVersionInfo, getReactVersionInfoForProject, getRecommendedSSRMethod, hasFeature, type ReactFeatures, type ReactVersionInfo, } from "./version-detector/index.js";
+//# sourceMappingURL=index.d.ts.map

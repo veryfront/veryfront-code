@@ -1,0 +1,1 @@
+{"version":3,"file":"preflight.d.ts","sourceRoot":"","sources":["../../../../../src/src/security/http/cors/preflight.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,OAAO,MAAM,2BAA2B,CAAC;AACrD,OAAO,KAAK,EAAE,oBAAoB,EAAE,MAAM,YAAY,CAAC;AAYvD,wBAAgB,mBAAmB,CAAC,OAAO,EAAE,oBAAoB,GAAG,OAAO,CAAC,OAAO,CAAC,QAAQ,CAAC,CA+D5F;AAED,wBAAgB,kBAAkB,CAAC,OAAO,EAAE,OAAO,CAAC,OAAO,GAAG,OAAO,CAMpE"}

@@ -1,0 +1,1 @@
+{"version":3,"file":"request-adapter.d.ts","sourceRoot":"","sources":["../../../../../src/src/platform/compat/http/request-adapter.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,OAAO,MAAM,2BAA2B,CAAC;AACrD,OAAO,KAAK,EAAE,mBAAmB,EAAE,MAAM,iBAAiB,CAAC;AAE3D,wBAAgB,8BAA8B,CAC5C,GAAG,EAAE,mBAAmB,EACxB,GAAG,EAAE,MAAM,GACV,OAAO,CAAC,OAAO,CAQjB"}

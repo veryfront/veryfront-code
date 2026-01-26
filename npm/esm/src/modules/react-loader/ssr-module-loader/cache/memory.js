@@ -1,0 +1,109 @@
+/**
+ * Memory Cache for SSR Modules - Redis-First Architecture
+ *
+ * Optimized for ephemeral pods with limited memory.
+ *
+ * Strategy:
+ * - Redis: Primary storage for transformed code (shared across pods)
+ * - Memory: Small LRU cache for temp file path tracking only
+ *
+ * The actual transformed code lives in Redis and temp files.
+ * Memory only stores { tempPath, contentHash } pointers.
+ *
+ * @module module-system/react-loader/ssr-module-loader/cache/memory
+ */
+import { registerCache } from "../../../../utils/memory/index.js";
+import { isKeyForProject, registerMapCache } from "../../../../cache/keys.js";
+import { rendererLogger as logger } from "../../../../utils/index.js";
+import { LRUCache } from "../../../../utils/lru-wrapper.js";
+import { MAX_CONCURRENT_TRANSFORMS, SSR_TMP_DIRS_MAX_ENTRIES } from "../constants.js";
+import { Semaphore } from "../concurrency/semaphore.js";
+/** Maximum entries for temp path tracking (small, just pointers) */
+const TEMP_PATH_CACHE_MAX_ENTRIES = 500;
+export const globalModuleCache = new LRUCache({
+    maxEntries: TEMP_PATH_CACHE_MAX_ENTRIES,
+});
+export const globalCrossProjectCache = new LRUCache({
+    maxEntries: TEMP_PATH_CACHE_MAX_ENTRIES,
+});
+export const globalInProgress = new Map();
+export const globalTmpDirs = new LRUCache({
+    maxEntries: SSR_TMP_DIRS_MAX_ENTRIES,
+});
+export const failedComponents = new Map();
+export const transformSemaphore = new Semaphore(MAX_CONCURRENT_TRANSFORMS);
+registerCache("ssr-module-cache", () => ({
+    name: "ssr-module-cache",
+    entries: globalModuleCache.size,
+    maxEntries: TEMP_PATH_CACHE_MAX_ENTRIES,
+    mode: "redis-primary-lru-paths",
+}));
+registerCache("ssr-tmp-dirs", () => ({
+    name: "ssr-tmp-dirs",
+    entries: globalTmpDirs.size,
+    maxEntries: SSR_TMP_DIRS_MAX_ENTRIES,
+}));
+registerCache("ssr-transform-semaphore", () => ({
+    name: "ssr-transform-semaphore",
+    entries: MAX_CONCURRENT_TRANSFORMS - transformSemaphore.available,
+    maxEntries: MAX_CONCURRENT_TRANSFORMS,
+    waiting: transformSemaphore.waiting,
+}));
+function createCacheRegistryWrapper(cache) {
+    return {
+        keys: () => cache.keys(),
+        get size() {
+            return cache.size;
+        },
+        delete: (key) => cache.delete(key),
+    };
+}
+registerMapCache("ssr-module-cache", createCacheRegistryWrapper(globalModuleCache));
+registerMapCache("ssr-cross-project-cache", createCacheRegistryWrapper(globalCrossProjectCache));
+registerMapCache("ssr-tmp-dirs", createCacheRegistryWrapper(globalTmpDirs));
+registerMapCache("ssr-in-progress", globalInProgress);
+registerMapCache("ssr-failed-components", failedComponents);
+export function clearSSRModuleCache() {
+    const moduleCount = globalModuleCache.size;
+    const failedCount = failedComponents.size;
+    globalModuleCache.clear();
+    failedComponents.clear();
+    logger.info("[SSR-MODULE-LOADER] ✓ Global cache cleared", {
+        modulesCleared: moduleCount,
+        failedComponentsCleared: failedCount,
+    });
+}
+export function clearSSRModuleCacheForProject(projectId) {
+    let cleared = 0;
+    for (const key of globalModuleCache.keys()) {
+        if (!isKeyForProject(key, projectId))
+            continue;
+        globalModuleCache.delete(key);
+        cleared++;
+    }
+    for (const key of globalCrossProjectCache.keys()) {
+        if (!key.includes(projectId) && !isKeyForProject(key, projectId))
+            continue;
+        globalCrossProjectCache.delete(key);
+    }
+    for (const key of globalInProgress.keys()) {
+        if (!isKeyForProject(key, projectId))
+            continue;
+        globalInProgress.delete(key);
+    }
+    for (const key of failedComponents.keys()) {
+        if (!isKeyForProject(key, projectId))
+            continue;
+        failedComponents.delete(key);
+    }
+    for (const key of globalTmpDirs.keys()) {
+        if (!key.includes(`:${projectId}`))
+            continue;
+        globalTmpDirs.delete(key);
+    }
+    logger.debug("[SSR-MODULE-LOADER] ✓ Project cache cleared", {
+        projectId,
+        entriesCleared: cleared,
+        remainingModules: globalModuleCache.size,
+    });
+}

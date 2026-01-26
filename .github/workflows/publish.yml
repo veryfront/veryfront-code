@@ -69,7 +69,7 @@ jobs:
           export-env: true
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          NPM_TOKEN: op://VERYFRONT_CI/NPM_TOKEN/password
+          NPM_TOKEN: op://VERYFRONT_CI/NPM_TOKEN_VERYFRONT/password
           VERYFRONT_RELEASE_TOKEN: op://VERYFRONT_CI/GITHUB_VERYFRONT_PAT/credential
 
       - name: Validate tag matches deno.json version

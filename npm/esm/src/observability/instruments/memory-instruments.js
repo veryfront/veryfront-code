@@ -1,0 +1,49 @@
+import { getMemoryUsage } from "../metrics/config.js";
+import { getV8FlagsEnv } from "../../config/env.js";
+const V8_HEAP_LIMIT_MB = (() => {
+    const match = getV8FlagsEnv().match(/--max-old-space-size=(\d+)/);
+    return match?.[1] ? parseInt(match[1], 10) : 5120; // Default from values.yaml
+})();
+function addMemoryCallback(gauge, observe) {
+    gauge.addCallback((result) => {
+        const memoryUsage = getMemoryUsage();
+        if (!memoryUsage)
+            return;
+        observe(result, memoryUsage);
+    });
+}
+export function createMemoryInstruments(meter, config) {
+    const memoryUsageGauge = meter.createObservableGauge(`${config.prefix}.memory.usage`, {
+        description: "Memory usage (RSS)",
+        unit: "bytes",
+    });
+    addMemoryCallback(memoryUsageGauge, (result, memoryUsage) => {
+        result.observe(memoryUsage.rss);
+    });
+    const heapUsageGauge = meter.createObservableGauge(`${config.prefix}.memory.heap`, {
+        description: "V8 heap memory used",
+        unit: "bytes",
+    });
+    addMemoryCallback(heapUsageGauge, (result, memoryUsage) => {
+        result.observe(memoryUsage.heapUsed);
+    });
+    const heapTotalGauge = meter.createObservableGauge(`${config.prefix}.memory.heap_total`, {
+        description: "V8 heap memory allocated",
+        unit: "bytes",
+    });
+    addMemoryCallback(heapTotalGauge, (result, memoryUsage) => {
+        result.observe(memoryUsage.heapTotal);
+    });
+    // Heap utilization as percentage of configured limit
+    // This is the key metric for autoscaling decisions
+    const heapPercentGauge = meter.createObservableGauge(`${config.prefix}.memory.heap_percent`, {
+        description: "V8 heap usage as percentage of configured limit",
+        unit: "percent",
+    });
+    addMemoryCallback(heapPercentGauge, (result, memoryUsage) => {
+        const heapUsedMB = memoryUsage.heapUsed / (1024 * 1024);
+        const percent = (heapUsedMB / V8_HEAP_LIMIT_MB) * 100;
+        result.observe(Math.round(percent * 100) / 100);
+    });
+    return { memoryUsageGauge, heapUsageGauge, heapTotalGauge, heapPercentGauge };
+}

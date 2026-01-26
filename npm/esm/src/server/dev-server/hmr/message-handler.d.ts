@@ -1,0 +1,7 @@
+/**
+ * HMR Message Handler
+ * Message type definitions and handling logic for HMR runtime
+ * Types re-exported from @veryfront/types for backward compatibility
+ */
+export type { HMRConnectedMessage, HMRMessage, HMRMessageType, HMRReloadMessage, HMRUpdateMessage, } from "../../../types/hmr.js";
+//# sourceMappingURL=message-handler.d.ts.map

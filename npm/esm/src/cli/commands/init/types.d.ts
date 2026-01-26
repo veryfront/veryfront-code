@@ -1,0 +1,15 @@
+import type { FeatureName, IntegrationName } from "../../templates/types.js";
+export type InitTemplate = "ai" | "app" | "blog" | "docs" | "minimal";
+export type EnvValues = Record<string, string>;
+export interface InitOptions {
+    name?: string;
+    template?: InitTemplate;
+    skipInstall?: boolean;
+    skipEnvPrompt?: boolean;
+    features?: FeatureName[];
+    integrations?: IntegrationName[];
+    env?: EnvValues;
+    /** Suppress output messages */
+    quiet?: boolean;
+}
+//# sourceMappingURL=types.d.ts.map

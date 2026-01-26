@@ -1,0 +1,10 @@
+export declare const HASH_ALGORITHM_SHA256 = "SHA-256";
+export declare const HASH_ALGORITHM_SHA1 = "SHA-1";
+export declare const HASH_ALGORITHM_MD5 = "MD5";
+export declare const SHA256_HEX_LENGTH = 64;
+export declare const SHA1_HEX_LENGTH = 40;
+export declare const MD5_HEX_LENGTH = 32;
+export declare const FNV1A_PRIME_32 = 16777619;
+/** CSP nonce length (16 bytes = 128 bits) */
+export declare const CSP_NONCE_LENGTH_BYTES = 16;
+//# sourceMappingURL=crypto.d.ts.map

@@ -1,0 +1,1 @@
+{"version":3,"file":"middleware.d.ts","sourceRoot":"","sources":["../../../../../src/src/security/http/cors/middleware.ts"],"names":[],"mappings":"AACA,OAAO,KAAK,EAAW,iBAAiB,EAAE,MAAM,mCAAmC,CAAC;AACpF,OAAO,KAAK,EAAE,UAAU,EAAE,MAAM,YAAY,CAAC;AAM7C,wBAAgB,IAAI,CAAC,MAAM,CAAC,EAAE,OAAO,GAAG,UAAU,GAAG,iBAAiB,CA0BrE;AAED,wBAAgB,UAAU,CAAC,MAAM,GAAE,MAAY,GAAG,iBAAiB,CAMlE"}

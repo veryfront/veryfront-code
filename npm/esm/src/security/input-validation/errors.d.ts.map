@@ -1,0 +1,1 @@
+{"version":3,"file":"errors.d.ts","sourceRoot":"","sources":["../../../../src/src/security/input-validation/errors.ts"],"names":[],"mappings":"AAAA,qBAAa,eAAgB,SAAQ,KAAK;IACxC,SAAgB,OAAO,CAAC,EAAE,OAAO,CAAC;gBAEtB,OAAO,EAAE,MAAM,EAAE,OAAO,CAAC,EAAE,OAAO;CAK/C"}

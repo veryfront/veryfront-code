@@ -1,0 +1,1 @@
+{"version":3,"file":"analyze-chunks.d.ts","sourceRoot":"","sources":["../../../../src/src/cli/commands/analyze-chunks.ts"],"names":[],"mappings":"AAQA,MAAM,WAAW,oBAAoB;IACnC,UAAU,EAAE,MAAM,CAAC;IACnB,MAAM,CAAC,EAAE,MAAM,CAAC;CACjB;AAED,wBAAsB,oBAAoB,CACxC,OAAO,EAAE,oBAAoB,GAC5B,OAAO,CAAC,IAAI,CAAC,CAyEf"}

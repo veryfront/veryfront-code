@@ -1,0 +1,1 @@
+{"version":3,"file":"google.d.ts","sourceRoot":"","sources":["../../../../src/src/oauth/providers/google.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,kBAAkB,EAAE,MAAM,aAAa,CAAC;AAiBtD,eAAO,MAAM,WAAW,EAAE,kBAWzB,CAAC;AAEF,eAAO,MAAM,cAAc,EAAE,kBAS5B,CAAC;AAEF,eAAO,MAAM,YAAY,EAAE,kBAS1B,CAAC;AAEF,eAAO,MAAM,WAAW,EAAE,kBASzB,CAAC;AAEF,eAAO,MAAM,cAAc;;;;;CAKjB,CAAC"}

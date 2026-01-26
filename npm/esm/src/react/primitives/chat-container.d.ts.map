@@ -1,0 +1,1 @@
+{"version":3,"file":"chat-container.d.ts","sourceRoot":"","sources":["../../../../src/src/react/primitives/chat-container.tsx"],"names":[],"mappings":"AAAA,OAAO,KAAK,KAAK,MAAM,OAAO,CAAC;AAE/B,MAAM,WAAW,kBAAmB,SAAQ,KAAK,CAAC,cAAc,CAAC,cAAc,CAAC;IAC9E,QAAQ,EAAE,KAAK,CAAC,SAAS,CAAC;CAC3B;AAED,eAAO,MAAM,aAAa,2FAQzB,CAAC"}

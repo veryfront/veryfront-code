@@ -1,0 +1,1 @@
+{"version":3,"file":"cors-handler.d.ts","sourceRoot":"","sources":["../../../../../src/src/security/http/middleware/cors-handler.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,OAAO,MAAM,2BAA2B,CAAC;AACrD,OAAO,KAAK,EAAE,cAAc,EAAE,MAAM,YAAY,CAAC;AAGjD,wBAAgB,OAAO,CACrB,OAAO,EAAE,OAAO,CAAC,OAAO,EACxB,GAAG,EAAE,OAAO,CAAC,OAAO,EACpB,cAAc,EAAE,cAAc,GAAG,IAAI,GACpC,IAAI,CAWN"}

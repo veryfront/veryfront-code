@@ -1,0 +1,97 @@
+import { VERSION } from "../../utils/index.js";
+import type { CommandHelp, CommandOption } from "./types.js";
+import { bold, brand, dim, muted, shouldUseColor } from "../ui/colors.js";
+import { AGENT_FACE } from "../ui/dot-matrix.js";
+
+const RESET = "\x1b[0m";
+const LOGO_FALLBACK = "             "; // Logo width ~13 chars
+
+function renderMiniLogo(): string[] {
+  const useColor = shouldUseColor();
+  const litColor = useColor ? "\x1b[38;2;252;143;93m" : "";
+  const offColor = useColor ? "\x1b[38;5;240m" : "";
+
+  return AGENT_FACE.map((row) =>
+    row
+      .map((dot) => `${dot === 1 ? litColor : offColor}${dot === 1 ? "●" : "○"}${RESET}`)
+      .join(" ")
+  );
+}
+
+export function formatHeader(): string {
+  const logoLines = renderMiniLogo();
+  const textLines = [
+    "",
+    `${bold(brand("veryfront"))} ${dim(`v${VERSION}`)}`,
+    dim("A Deno-first React framework"),
+    "",
+    "",
+    "",
+    "",
+  ];
+
+  const maxHeight = Math.max(logoLines.length, textLines.length);
+  const output: string[] = [""];
+
+  for (let i = 0; i < maxHeight; i++) {
+    const logoLine = logoLines[i] ?? LOGO_FALLBACK;
+    const textLine = textLines[i] ?? "";
+    output.push(`  ${logoLine}   ${textLine}`);
+  }
+
+  return output.join("\n");
+}
+
+export function formatCommandName(name: string, paddingLength: number): string {
+  return brand(name.padEnd(paddingLength + 2));
+}
+
+export function formatDescription(description: string): string {
+  return muted(description);
+}
+
+export function formatUsage(usage: string): string {
+  return `  ${bold("Usage:")} ${usage}`;
+}
+
+export function formatOptionFlag(flag: string, paddingLength: number): string {
+  return flag.padEnd(paddingLength + 2);
+}
+
+export function formatOption(option: CommandOption, paddingLength: number): string {
+  const defaultStr = option.default ? dim(` (default: ${option.default})`) : "";
+  return `    ${formatOptionFlag(option.flag, paddingLength)} ${
+    muted(option.description)
+  }${defaultStr}`;
+}
+
+export function formatExample(example: string): string {
+  return `    ${dim("$")} ${example}`;
+}
+
+export function formatSectionHeader(title: string): string {
+  return bold(`${title}:`);
+}
+
+export function formatCommandHeader(commandName: string): string {
+  return `\n  ${bold(brand(`veryfront ${commandName}`))}`;
+}
+
+export function formatAsciiLogo(): string {
+  return `
+${dim("────────────────────────────────────────")}
+  ${bold(brand("veryfront"))}  ${dim("React meta-framework")}
+${dim("────────────────────────────────────────")}
+`;
+}
+
+export function calculateMaxLength(items: Array<{ length: number }>): number {
+  return Math.max(...items.map((item) => item.length));
+}
+
+export function formatCommandList(commands: CommandHelp[]): string[] {
+  const maxLength = calculateMaxLength(commands.map((c) => ({ length: c.name.length })));
+  return commands.map(
+    (cmd) => `    ${formatCommandName(cmd.name, maxLength)} ${formatDescription(cmd.description)}`,
+  );
+}

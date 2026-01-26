@@ -1,0 +1,23 @@
+export declare const ESM_CDN_BASE = "https://esm.sh";
+export declare const JSDELIVR_CDN_BASE = "https://cdn.jsdelivr.net";
+export declare const DENO_STD_BASE = "https://deno.land";
+export declare const REACT_VERSION_17 = "17.0.2";
+export declare const REACT_VERSION_18_2 = "18.2.0";
+export declare const REACT_VERSION_18_3 = "18.3.1";
+export declare const REACT_VERSION_19_RC = "19.0.0-rc.0";
+export declare const REACT_VERSION_19 = "19.1.1";
+export declare const REACT_DEFAULT_VERSION = "19.1.1";
+export declare function getReactCDNUrl(version?: string): string;
+export declare function getReactDOMCDNUrl(version?: string): string;
+export declare function getReactDOMClientCDNUrl(version?: string): string;
+export declare function getReactDOMServerCDNUrl(version?: string): string;
+export declare function getReactJSXRuntimeCDNUrl(version?: string): string;
+export declare function getReactJSXDevRuntimeCDNUrl(version?: string): string;
+export declare function getReactImportMap(version?: string): Record<string, string>;
+export declare const DEFAULT_ALLOWED_CDN_HOSTS: string[];
+export declare const DENO_STD_VERSION = "0.220.0";
+export declare function getDenoStdNodeBase(): string;
+export declare const TAILWIND_VERSION = "4.1.8";
+export declare function getTailwindCSSUrl(): string;
+export { VERSION as VERYFRONT_VERSION } from "../version.js";
+//# sourceMappingURL=cdn.d.ts.map

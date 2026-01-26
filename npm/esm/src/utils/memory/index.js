@@ -1,0 +1,1 @@
+export { checkMemoryPressure, clearAllCaches, forceGC, getCacheStats, getHeapStats, getMemorySnapshot, registerCache, setHeapWarningThreshold, startMemoryMonitoring, stopMemoryMonitoring, unregisterCache, } from "./profiler.js";

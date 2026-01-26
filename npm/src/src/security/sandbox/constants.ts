@@ -1,0 +1,8 @@
+export const HTTP_STATUS_NO_CONTENT = 204;
+export const HTTP_STATUS_FORBIDDEN = 403;
+export const HTTP_STATUS_TOO_MANY_REQUESTS = 429;
+
+export const DEFAULT_RATE_LIMIT_REQUESTS = 100;
+export const DEFAULT_RATE_LIMIT_WINDOW_MS = 60_000; // 60 seconds
+
+export const DEFAULT_SANDBOX_TIMEOUT_MS = 5000;

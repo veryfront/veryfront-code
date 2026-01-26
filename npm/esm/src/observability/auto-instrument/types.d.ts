@@ -1,0 +1,39 @@
+import type { RuntimeAdapter } from "../../platform/adapters/base.js";
+export type AttributeValue = string | number | boolean;
+export interface TracingConfig {
+    enabled: boolean;
+    exporter?: "jaeger" | "zipkin" | "otlp" | "console";
+    endpoint?: string;
+    serviceName?: string;
+}
+export interface MetricsConfig {
+    enabled: boolean;
+    exporter?: "prometheus" | "otlp" | "console";
+    endpoint?: string;
+    prefix?: string;
+}
+export interface AutoInstrumentConfig {
+    tracing?: TracingConfig;
+    metrics?: MetricsConfig;
+    instrumentHttp?: boolean;
+    instrumentFetch?: boolean;
+    instrumentReact?: boolean;
+    captureErrors?: boolean;
+}
+export interface InstrumentationContext {
+    config: AutoInstrumentConfig;
+    adapter?: RuntimeAdapter;
+    initialized: boolean;
+}
+export type SpanAttributes = Record<string, AttributeValue>;
+export interface InstrumentOptions {
+    attributes?: (args: unknown[]) => SpanAttributes;
+    kind?: "internal" | "server" | "client" | "producer" | "consumer";
+}
+export interface BatchOptions {
+    batchSize?: number;
+    attributes?: SpanAttributes;
+}
+export type ErrorAttributes = Record<string, AttributeValue>;
+export type HttpAttributes = Record<string, AttributeValue>;
+//# sourceMappingURL=types.d.ts.map

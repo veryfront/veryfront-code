@@ -1,0 +1,1 @@
+{"version":3,"file":"microsoft.d.ts","sourceRoot":"","sources":["../../../../src/src/oauth/providers/microsoft.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,kBAAkB,EAAE,MAAM,aAAa,CAAC;AAiBtD,eAAO,MAAM,aAAa,EAAE,kBAc3B,CAAC;AAEF,eAAO,MAAM,WAAW,EAAE,kBAczB,CAAC;AAEF,eAAO,MAAM,gBAAgB,EAAE,kBAa9B,CAAC;AAEF,eAAO,MAAM,cAAc,EAAE,kBAa5B,CAAC;AAEF,eAAO,MAAM,iBAAiB;;;;;CAKpB,CAAC"}

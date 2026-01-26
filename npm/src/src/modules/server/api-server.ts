@@ -1,0 +1,57 @@
+import * as dntShim from "../../../_dnt.shims.js";
+import { serverLogger as logger } from "../../utils/index.js";
+
+export interface PageRenderResult {
+  html: string;
+  frontmatter: Record<string, unknown>;
+  headings?: Array<{ depth: number; text: string; id?: string }>;
+}
+
+export interface PageRendererLike {
+  renderPage: (slug: string) => Promise<PageRenderResult>;
+}
+
+export interface APIServerOptions {
+  renderer: PageRendererLike;
+}
+
+export class APIServer {
+  constructor(private options: APIServerOptions) {}
+
+  async handleRequest(pathname: string): Promise<dntShim.Response | null> {
+    if (!pathname.startsWith("/_veryfront/data/")) return null;
+
+    const slug = pathname.replace("/_veryfront/data/", "").replace(".json", "");
+
+    try {
+      const result = await this.options.renderer.renderPage(slug || "index");
+
+      return new dntShim.Response(
+        JSON.stringify({
+          slug,
+          frontmatter: result.frontmatter,
+          headings: result.headings,
+          html: result.html,
+        }),
+        {
+          headers: {
+            "content-type": "application/json",
+            "cache-control": "no-cache",
+          },
+        },
+      );
+    } catch (error) {
+      logger.error(`Error rendering page data for ${slug}:`, error);
+
+      return new dntShim.Response(
+        JSON.stringify({
+          error: error instanceof Error ? error.message : String(error),
+        }),
+        {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }
+  }
+}

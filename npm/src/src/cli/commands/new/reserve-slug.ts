@@ -1,0 +1,117 @@
+/**
+ * Reserve project slug on the Veryfront API
+ *
+ * Handles slug conflicts by auto-incrementing (e.g., my-app-2)
+ *
+ * @module cli/commands/new/reserve-slug
+ */
+import * as dntShim from "../../../../_dnt.shims.js";
+
+
+import { getRuntimeEnv, type RuntimeEnv } from "../../../config/runtime-env.js";
+
+export interface ReserveResult {
+  slug: string;
+  projectId: string;
+  created: boolean;
+}
+
+interface ApiError {
+  message?: string;
+}
+
+interface CreateProjectResult {
+  success: boolean;
+  projectId?: string;
+  isSlugTaken?: boolean;
+  error?: string;
+}
+
+const MAX_SLUG_ATTEMPTS = 10;
+
+function getApiUrl(env: RuntimeEnv = getRuntimeEnv()): string {
+  return env.apiUrl ?? "https://api.veryfront.com";
+}
+
+export async function reserveProjectSlug(
+  slug: string,
+  token: string,
+  env: RuntimeEnv = getRuntimeEnv(),
+): Promise<ReserveResult> {
+  let currentSlug = slug;
+
+  for (let attempt = 1; attempt <= MAX_SLUG_ATTEMPTS; attempt++) {
+    const result = await tryCreateProject(currentSlug, token, env);
+
+    if (result.success) {
+      return {
+        slug: currentSlug,
+        projectId: result.projectId as string,
+        created: true,
+      };
+    }
+
+    if (!result.isSlugTaken) {
+      throw new Error(result.error ?? "Failed to create project");
+    }
+
+    currentSlug = `${slug}-${attempt + 1}`;
+  }
+
+  throw new Error(`Could not find available slug after ${MAX_SLUG_ATTEMPTS} attempts`);
+}
+
+async function tryCreateProject(
+  slug: string,
+  token: string,
+  env: RuntimeEnv = getRuntimeEnv(),
+): Promise<CreateProjectResult> {
+  try {
+    const response = await dntShim.fetch(`${getApiUrl(env)}/projects`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({ slug, name: slug }),
+    });
+
+    if (response.ok) {
+      const data = (await response.json()) as { id: string };
+      return { success: true, projectId: data.id };
+    }
+
+    if (response.status === 409) {
+      return { success: false, isSlugTaken: true };
+    }
+
+    const error = (await response.json().catch(() => ({}))) as ApiError;
+    return {
+      success: false,
+      error: error.message ?? `HTTP ${response.status}`,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+export async function isSlugAvailable(
+  slug: string,
+  token: string,
+  env: RuntimeEnv = getRuntimeEnv(),
+): Promise<boolean> {
+  try {
+    const response = await dntShim.fetch(`${getApiUrl(env)}/projects/${slug}`, {
+      method: "HEAD",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    return response.status === 404;
+  } catch {
+    return true;
+  }
+}

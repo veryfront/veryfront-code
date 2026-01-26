@@ -1,0 +1,28 @@
+import * as dntShim from "../../../_dnt.shims.js";
+import type { RuntimeAdapter } from "../../platform/adapters/base.js";
+import { tracingManager } from "./manager.js";
+import type { Context, Span, SpanOptions, TracingConfig } from "./types.js";
+export type { Context, Span, SpanOptions, TracingConfig } from "./types.js";
+export { loadConfig } from "./config.js";
+export { SpanOperations } from "./span-operations.js";
+export { ContextPropagation } from "./context-propagation.js";
+export { SpanNames } from "./span-names.js";
+export declare function initTracing(config?: Partial<TracingConfig>, adapter?: RuntimeAdapter): Promise<void>;
+export declare function isTracingEnabled(): boolean;
+export declare function isTracingDegraded(): boolean;
+export declare function shutdownTracing(): void;
+export declare function getTracingState(): ReturnType<typeof tracingManager.getState>;
+export declare function startSpan(name: string, options?: SpanOptions): Span | null;
+export declare function endSpan(span: Span | null, error?: Error): void;
+export declare function setSpanAttributes(span: Span | null, attributes: Record<string, string | number | boolean>): void;
+export declare function addSpanEvent(span: Span | null, name: string, attributes?: Record<string, string | number | boolean>): void;
+export declare function createChildSpan(parentSpan: Span | null, name: string, options?: SpanOptions): Span | null;
+export declare function extractContext(headers: dntShim.Headers): Context | undefined;
+export declare function injectContext(context: Context, headers: dntShim.Headers): void;
+export declare function getActiveContext(): Context | undefined;
+export declare function withActiveSpan<T>(span: Span | null, fn: () => Promise<T>): Promise<T>;
+export declare function withSpan<T>(name: string, fn: (span: Span | null) => Promise<T>, options?: SpanOptions): Promise<T>;
+export declare function withSpanSync<T>(name: string, fn: (span: Span | null) => T, options?: SpanOptions): T;
+export { tracingManager } from "./manager.js";
+export { TracingManager } from "./manager.js";
+//# sourceMappingURL=index.d.ts.map

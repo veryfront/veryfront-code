@@ -1,0 +1,1 @@
+{"version":3,"file":"compatibility-checker.d.ts","sourceRoot":"","sources":["../../../../../src/src/react/compat/version-detector/compatibility-checker.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,wBAAwB,EAAE,aAAa,EAAE,SAAS,EAAE,MAAM,YAAY,CAAC;AAoBrF,wBAAgB,yBAAyB,CACvC,gBAAgB,EAAE,KAAK,CAAC,MAAM,aAAa,CAAC,GAC3C,wBAAwB,CAyB1B;AAED,wBAAgB,uBAAuB,IAAI,SAAS,CAMnD"}

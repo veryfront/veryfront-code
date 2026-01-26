@@ -1,0 +1,16 @@
+/***************
+ * Retry settings
+ ***************/
+export const DEFAULT_RETRY_MAX_ATTEMPTS = 3;
+export const DEFAULT_RETRY_INITIAL_DELAY_MS = 100;
+export const DEFAULT_RETRY_MAX_DELAY_MS = 5000;
+export const DEFAULT_RETRY_BACKOFF_MULTIPLIER = 2;
+export const API_RETRY_MAX_ATTEMPTS = 3;
+export const API_RETRY_INITIAL_DELAY_MS = 1000;
+export const API_RETRY_MAX_DELAY_MS = 10000;
+export const FS_RETRY_MAX_ATTEMPTS = 3;
+export const FS_RETRY_INITIAL_DELAY_MS = 1000;
+export const FS_RETRY_MAX_DELAY_MS = 10000;
+export const WS_RECONNECT_MAX_ATTEMPTS = 5;
+export const WS_RECONNECT_INITIAL_DELAY_MS = 1000;
+export const WS_RECONNECT_MAX_DELAY_MS = 30000;

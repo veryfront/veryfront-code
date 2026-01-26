@@ -1,0 +1,1 @@
+{"version":3,"file":"esm-transform.d.ts","sourceRoot":"","sources":["../../../src/src/transforms/esm-transform.ts"],"names":[],"mappings":"AAAA,YAAY,EAAE,gBAAgB,EAAE,gBAAgB,EAAE,MAAM,gBAAgB,CAAC;AACzE,OAAO,EACL,kBAAkB,EAClB,kBAAkB,EAClB,uBAAuB,EACvB,iBAAiB,EACjB,cAAc,EACd,kBAAkB,EAClB,mBAAmB,EACnB,sBAAsB,EACtB,kBAAkB,EAClB,oBAAoB,EACpB,cAAc,GACf,MAAM,gBAAgB,CAAC"}

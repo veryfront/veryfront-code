@@ -1,0 +1,1 @@
+{"version":3,"file":"splitter.d.ts","sourceRoot":"","sources":["../../../../../src/src/build/bundler/code-splitter/splitter.ts"],"names":[],"mappings":"AAIA,OAAO,KAAK,EAAa,YAAY,EAAE,WAAW,EAAE,MAAM,YAAY,CAAC;AAOvE,qBAAa,YAAY;IACvB,OAAO,CAAC,OAAO,CAAe;gBAElB,OAAO,EAAE,YAAY;IAIjC,KAAK,IAAI,OAAO,CAAC,WAAW,CAAC;YA8Cf,cAAc;IAsB5B,OAAO,CAAC,kBAAkB;IAO1B,OAAO,CAAC,aAAa;CAKtB"}

@@ -1,0 +1,1 @@
+{"version":3,"file":"mdx-processor.d.ts","sourceRoot":"","sources":["../../../../../src/src/build/compiler/mdx-compiler/mdx-processor.ts"],"names":[],"mappings":"AAEA,OAAO,KAAK,EAAE,cAAc,EAAE,MAAM,YAAY,CAAC;AAIjD,MAAM,WAAW,YAAY;IAC3B,IAAI,EAAE,MAAM,CAAC;IACb,OAAO,EAAE,MAAM,EAAE,CAAC;CACnB;AAED,wBAAsB,UAAU,CAC9B,OAAO,EAAE,MAAM,EACf,OAAO,EAAE,cAAc,GACtB,OAAO,CAAC,YAAY,CAAC,CAkBvB"}

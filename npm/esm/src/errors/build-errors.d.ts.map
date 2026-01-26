@@ -1,0 +1,1 @@
+{"version":3,"file":"build-errors.d.ts","sourceRoot":"","sources":["../../../src/src/errors/build-errors.ts"],"names":[],"mappings":"AAAA,OAAO,EAAa,cAAc,EAAE,MAAM,YAAY,CAAC;AAEvD,qBAAa,UAAW,SAAQ,cAAc;gBAChC,OAAO,EAAE,MAAM,EAAE,OAAO,CAAC,EAAE,OAAO;CAI/C;AAED,qBAAa,gBAAiB,SAAQ,cAAc;gBACtC,OAAO,EAAE,MAAM,EAAE,OAAO,CAAC,EAAE,OAAO;CAI/C"}

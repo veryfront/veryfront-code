@@ -1,0 +1,1 @@
+{"version":3,"file":"types.d.ts","sourceRoot":"","sources":["../../../../src/src/routing/slug-mapper/types.ts"],"names":[],"mappings":"AAAA,MAAM,WAAW,WAAW;IAC1B,CAAC,GAAG,EAAE,MAAM,GAAG,MAAM,GAAG,MAAM,EAAE,CAAC;CAClC;AAED,MAAM,WAAW,cAAc;IAC7B,SAAS,EAAE,MAAM,EAAE,CAAC;IACpB,WAAW,EAAE,MAAM,EAAE,CAAC;CACvB"}

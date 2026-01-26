@@ -1,0 +1,1 @@
+{"version":3,"file":"path-normalizer.d.ts","sourceRoot":"","sources":["../../../../../../src/src/platform/adapters/fs/veryfront/path-normalizer.ts"],"names":[],"mappings":"AAEA,qBAAa,cAAc;IACb,OAAO,CAAC,QAAQ,CAAC,UAAU,CAAC;gBAAX,UAAU,CAAC,EAAE,MAAM,YAAA;IAEhD,aAAa,IAAI,MAAM,GAAG,SAAS;IAInC,SAAS,CAAC,IAAI,EAAE,MAAM,GAAG,MAAM;CA4BhC"}
