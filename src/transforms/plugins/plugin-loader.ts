@@ -6,7 +6,7 @@ import rehypeSlug from "rehype-slug";
 import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
 import { rehypeMermaid } from "./rehype-mermaid.ts";
-import { rehypeAddClasses, rehypeMdxComponents, rehypePreserveNodeIds } from "./rehype-utils.ts";
+import { rehypeMdxComponents, rehypePreserveNodeIds } from "./rehype-utils.ts";
 import { remarkMdxHeadings } from "./remark-headings.ts";
 import {
   remarkCodeBlocks,
@@ -45,7 +45,6 @@ export function getRehypePlugins(): Pluggable[] {
     rehypeHighlight,
     rehypeSlug,
     rehypePreserveNodeIds,
-    rehypeAddClasses,
     rehypeMdxComponents,
   ];
 }

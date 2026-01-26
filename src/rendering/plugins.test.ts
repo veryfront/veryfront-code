@@ -4,7 +4,6 @@ import { VFile } from "vfile";
 import {
   getRehypePlugins,
   getRemarkPlugins,
-  rehypeAddClasses,
   rehypeMdxComponents,
   rehypePreserveNodeIds,
   remarkAddNodeId,
@@ -37,7 +36,6 @@ describe("plugins", () => {
       assertExists(remarkCodeBlocks);
       assertExists(remarkMdxImports);
       assertExists(rehypePreserveNodeIds);
-      assertExists(rehypeAddClasses);
       assertExists(rehypeMdxComponents);
       assertExists(getRemarkPlugins);
       assertExists(getRehypePlugins);
@@ -225,31 +223,6 @@ describe("plugins", () => {
       runRehype(tree, [rehypePreserveNodeIds]);
 
       assertEquals(el.properties["data-node-start"], 1);
-    });
-  });
-
-  describe("rehypeAddClasses", () => {
-    it("returns a function", () => {
-      assertEquals(typeof rehypeAddClasses(), "function");
-    });
-
-    it("decorates tags with classes", () => {
-      const p: any = { type: "element", tagName: "p", properties: {} };
-      const h2: any = { type: "element", tagName: "h2", properties: {} };
-      const code: any = {
-        type: "element",
-        tagName: "code",
-        properties: { className: ["language-ts"] },
-      };
-
-      const tree: any = { type: "root", children: [p, h2, code] };
-      runRehype(tree, [rehypeAddClasses]);
-
-      assert(p.properties.className?.length);
-      assert(h2.properties.className?.length);
-      assert(
-        code.properties.className?.some((c: string) => c.includes("bg-gray-")),
-      );
     });
   });
 

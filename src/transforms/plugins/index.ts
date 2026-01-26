@@ -1,5 +1,5 @@
 export { getRehypePlugins, getRemarkPlugins } from "./plugin-loader.ts";
-export { rehypeAddClasses, rehypeMdxComponents, rehypePreserveNodeIds } from "./rehype-utils.ts";
+export { rehypeMdxComponents, rehypePreserveNodeIds } from "./rehype-utils.ts";
 export { remarkMdxHeadings } from "./remark-headings.ts";
 export {
   remarkCodeBlocks,
