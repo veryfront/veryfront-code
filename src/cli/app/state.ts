@@ -100,6 +100,8 @@ export interface AppState {
 
   /** Auth provider selection index (0=Google, 1=GitHub, 2=Microsoft) */
   authProviderIndex: number;
+  /** New project option index (0=template, 1=example, 2=scratch) */
+  newProjectIndex: number;
 }
 
 export function createInitialState(): AppState {
@@ -149,6 +151,7 @@ export function createInitialState(): AppState {
     logsExpanded: false,
     logScroll: 0,
     authProviderIndex: 0,
+    newProjectIndex: 0,
   };
 }
 
@@ -279,14 +282,15 @@ export function startInput(
   prompt: string,
   onSubmit: (value: string) => void,
   onCancel?: () => void,
+  initialValue?: string,
 ): StateUpdater {
   return (state) => ({
     ...state,
     input: {
       active: true,
       prompt,
-      value: "",
-      cursorPos: 0,
+      value: initialValue ?? "",
+      cursorPos: initialValue?.length ?? 0,
       onSubmit,
       onCancel: onCancel ?? null,
     },

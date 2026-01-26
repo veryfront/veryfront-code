@@ -6,7 +6,7 @@
  */
 
 import { brand, dim } from "../../ui/colors.ts";
-import { truncate, visibleLength } from "../../ui/layout.ts";
+import { truncate } from "../../ui/layout.ts";
 
 export interface ListItem<T = unknown> {
   /** Unique identifier */

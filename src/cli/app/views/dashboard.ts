@@ -166,10 +166,10 @@ function renderHelpBar(state: AppState): string {
     } else if (state.activeList === "remoteProjects") {
       parts.push(dim("p pull"));
     }
-    parts.push(dim("x logout"));
+    parts.push(dim("n new"), dim("x logout"));
   }
 
-  parts.push(dim("q quit"));
+  parts.push(dim("? help"), dim("q quit"));
 
   return `  ${parts.join("  ")}`;
 }

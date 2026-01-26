@@ -14,6 +14,7 @@ import {
   writeStdout,
 } from "#veryfront/platform/compat/process.ts";
 import { join } from "#veryfront/platform/compat/path/index.ts";
+import { getRuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import { getStdinReader, setRawMode } from "#veryfront/platform/compat/stdin.ts";
 import { cursor, screen, SPINNER_FRAMES } from "../ui/ansi.ts";
 import { brand, dim, success } from "../ui/colors.ts";
@@ -84,6 +85,15 @@ export interface App {
   log(level: "info" | "warn" | "error" | "debug", message: string): void;
   /** Intercept console output and route to TUI logs */
   interceptConsole(): () => void;
+}
+
+function generateRandomSlug(): string {
+  const adjectives = ["swift", "bright", "calm", "bold", "keen"];
+  const nouns = ["river", "cloud", "spark", "wave", "stone"];
+  const adj = adjectives[Math.floor(Math.random() * adjectives.length)];
+  const noun = nouns[Math.floor(Math.random() * nouns.length)];
+  const suffix = Math.random().toString(36).slice(2, 6);
+  return `${adj}-${noun}-${suffix}`;
 }
 
 /**
@@ -233,22 +243,36 @@ export function createApp(config: AppConfig): App {
   }
 
   function renderNewProjectView(): string {
-    return [
+    const options = [
+      { label: "From template", desc: "Start with a pre-built template" },
+      { label: "From example", desc: "Copy an example project" },
+      { label: "From scratch", desc: "Empty project" },
+    ];
+
+    const lines = [
       "",
       `  ${brand("New Project")}`,
       "",
       `  ${dim("Choose how to start:")}`,
       "",
-      `    ${brand("[1]")} From template     ${dim("Start with a pre-built template")}`,
-      `    ${brand("[2]")} From example      ${dim("Copy an example project")}`,
-      `    ${brand("[3]")} From scratch      ${dim("Empty project")}`,
+    ];
+
+    options.forEach((opt, i) => {
+      const isFocused = i === state.newProjectIndex;
+      const cursor = isFocused ? brand("›") : " ";
+      const num = isFocused ? brand(`[${i + 1}]`) : dim(`[${i + 1}]`);
+      const label = isFocused ? opt.label : dim(opt.label);
+      const desc = dim(opt.desc);
+      lines.push(`  ${cursor} ${num} ${label}  ${desc}`);
+    });
+
+    lines.push(
       "",
-      `  ${dim("Or use the CLI:")}`,
-      `    ${dim("deno task init my-project --template app")}`,
+      `  ${dim("↑↓ nav  enter select  esc back")}`,
       "",
-      `  ${dim("Press")} ${brand("Esc")} ${dim("to go back")}`,
-      "",
-    ].join("\n");
+    );
+
+    return lines.join("\n");
   }
 
   function renderAuthView(): string {
@@ -408,6 +432,8 @@ export function createApp(config: AppConfig): App {
       exit(0);
     }
 
+    // Handle Escape key (but not escape sequences like arrow keys)
+    // Escape alone is \x1b, arrow keys are \x1b[A, \x1b[B, etc.
     if (key === "\x1b") {
       if (state.view !== "dashboard") update(goBack());
       return;
@@ -424,7 +450,7 @@ export function createApp(config: AppConfig): App {
     }
 
     if (state.view === "auth") {
-      await handleAuthKey(key);
+      handleAuthKey(key);
       return;
     }
 
@@ -672,6 +698,7 @@ export function createApp(config: AppConfig): App {
     }
 
     if (key === "n") {
+      state = { ...state, newProjectIndex: 0 };
       update(navigateTo("new-project"));
       return;
     }
@@ -760,14 +787,46 @@ export function createApp(config: AppConfig): App {
   }
 
   async function createProject(projectName: string, template: InitTemplate): Promise<void> {
-    const projectPath = `${cwd()}/projects/${projectName}`;
-
     try {
-      state = addLog("info", `Creating project "${projectName}"...`)(state);
+      state = addLog("info", `Creating project...`)(state);
       render();
 
+      const token = await readToken();
+      if (!token) {
+        state = addLog("error", "Not authenticated. Press 'a' to login.")(state);
+        return;
+      }
+
+      // Normalize slug: lowercase, alphanumeric and hyphens only
+      const normalizedSlug = projectName.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
+      // Use slug as name (capitalize first letter of each word)
+      const name = normalizedSlug
+        .split("-")
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(" ");
+
+      const apiUrl = getRuntimeEnv().apiUrl || "https://api.veryfront.com";
+      const response = await fetch(`${apiUrl}/projects`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({ slug: normalizedSlug, name }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        const msg = (error as { message?: string }).message || `HTTP ${response.status}`;
+        throw new Error(msg);
+      }
+
+      const { slug } = await response.json() as { slug: string };
+      const projectPath = `${cwd()}/projects/${slug}`;
+
       await initCommand({
-        name: `projects/${projectName}`,
+        name: `projects/${slug}`,
         template,
         skipInstall: true,
         skipEnvPrompt: true,
@@ -778,16 +837,24 @@ export function createApp(config: AppConfig): App {
         slug: item.data!.slug,
         path: item.data!.path,
       }));
-      currentProjects.push({ slug: projectName, path: projectPath });
+      currentProjects.push({ slug, path: projectPath });
 
-      state = setProjects(currentProjects.map(({ slug, path }) => ({ slug, path })))(state);
-      state = addLog("info", `Project "${projectName}" created`)(state);
+      state = setProjects(currentProjects)(state);
+
+      // Refresh remote projects list to include the new project
+      const result = await fetchRemoteProjects();
+      state = updateRemote({
+        projects: result.projects.map((p) => ({ id: p.id, name: p.name, slug: p.slug })),
+      })(state);
+
+      state = addLog("info", `Created ${slug}`)(state);
     } catch (error) {
-      state = addLog("error", `Failed to create project: ${error}`)(state);
+      state = addLog("error", `Failed: ${error}`)(state);
     }
   }
 
   function promptForProjectName(template: InitTemplate, onCancel: () => void): void {
+    const suggested = generateRandomSlug();
     state = startInput(
       "Project name",
       async (name: string) => {
@@ -796,6 +863,7 @@ export function createApp(config: AppConfig): App {
         render();
       },
       onCancel,
+      suggested,
     )(state);
     render();
   }
@@ -820,23 +888,49 @@ export function createApp(config: AppConfig): App {
   }
 
   function handleNewProjectKey(key: string): void {
-    if (key === "1") {
-      update(navigateTo("templates"));
+    // Arrow navigation
+    if (key === "\x1b[A" || key === "k") {
+      state = {
+        ...state,
+        newProjectIndex: state.newProjectIndex > 0 ? state.newProjectIndex - 1 : 2,
+      };
+      render();
+      return;
+    }
+    if (key === "\x1b[B" || key === "j") {
+      state = {
+        ...state,
+        newProjectIndex: state.newProjectIndex < 2 ? state.newProjectIndex + 1 : 0,
+      };
+      render();
       return;
     }
 
-    if (key === "2") {
-      update(setActiveList("examples"));
-      update(navigateTo("dashboard"));
-      return;
+    // Number keys to select directly
+    if (key >= "1" && key <= "3") {
+      state = { ...state, newProjectIndex: parseInt(key, 10) - 1 };
+      render();
+      // Fall through to execute the selection
     }
 
-    if (key === "3") {
-      promptForProjectName("minimal", () => render());
+    // Enter to confirm selection (or after number key press)
+    if (key === "\r" || key === "\n" || (key >= "1" && key <= "3")) {
+      switch (state.newProjectIndex) {
+        case 0:
+          update(navigateTo("templates"));
+          break;
+        case 1:
+          update(setActiveList("examples"));
+          update(navigateTo("dashboard"));
+          break;
+        case 2:
+          promptForProjectName("minimal", () => render());
+          break;
+      }
     }
   }
 
-  async function handleAuthKey(key: string): Promise<void> {
+  function handleAuthKey(key: string): void {
     const providerList: Array<"google" | "github" | "microsoft"> = [
       "google",
       "github",
