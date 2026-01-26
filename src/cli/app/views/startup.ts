@@ -6,9 +6,12 @@
  */
 
 import { box } from "../../ui/box.ts";
-import { brand, dim, shimmer, success } from "../../ui/colors.ts";
+import { brand, dim, shimmer } from "../../ui/colors.ts";
+
+// Dim orange for completed steps - matches the trailing dots in spinning animation
+const dimOrange = (text: string) => `\x1b[38;2;180;100;65m${text}\x1b[0m`;
 import { getTerminalWidth } from "../../ui/layout.ts";
-import { getAgentFaceWithText } from "../../ui/dot-matrix.ts";
+import { getAgentFaceWithText, getSpinningAgentFace } from "../../ui/dot-matrix.ts";
 
 export interface StartupStep {
   label: string;
@@ -32,46 +35,53 @@ export function renderStartup(state: StartupState): string {
   const textLines: string[] = [];
 
   if (state.ready) {
-    // Running state
+    // Running state - always reserve space for both URL lines to prevent jumps
+    textLines.push("");
     textLines.push(`${brand("Veryfront Code")} ${dim("is now running")}`);
     textLines.push("");
-    if (state.serverUrl) {
-      textLines.push(`${dim("Url")}  ${brand(state.serverUrl)}`);
-    }
-    if (state.mcpUrl) {
-      textLines.push(`${dim("Mcp")}  ${brand(state.mcpUrl)}`);
-    }
+    textLines.push(state.serverUrl ? `${dim("Url")} ${brand(state.serverUrl)}` : "");
+    textLines.push(state.mcpUrl ? `${dim("Mcp")} ${brand(state.mcpUrl)}` : "");
   } else {
-    // Loading state
+    // Loading state - match ready state layout
+    textLines.push("");
     textLines.push(`${brand("Veryfront Code")} ${dim("starting...")}`);
     textLines.push("");
 
     for (const step of state.steps) {
       if (step.status === "done") {
-        textLines.push(`${success("●")} ${dim(step.label)}`);
+        // Completed: dim orange (fades into background, coherent with avatar)
+        textLines.push(`${dimOrange("●")} ${dimOrange(step.label)}`);
       } else if (step.status === "active") {
-        // Apply shimmer effect to active step
+        // Active: bright orange dot with shimmer text
         textLines.push(`${brand("●")} ${shimmer(step.label, state.frame)}`);
       } else {
+        // Pending: gray empty circle
         textLines.push(`${dim("○")} ${dim(step.label)}`);
       }
     }
   }
 
-  // Pad to minimum 5 text lines for consistent height
-  while (textLines.length < 5) {
+  // Pad to 7 text lines (matching avatar height) for consistent title position
+  while (textLines.length < 7) {
     textLines.push("");
   }
 
-  const content = getAgentFaceWithText(textLines, {
-    litColor: "\x1b[38;2;252;143;93m", // Veryfront brand orange
-  });
+  // Use spinning avatar during loading, static when ready or all steps done
+  const allStepsDone = state.steps.every((s) => s.status === "done");
+  const content = state.ready || allStepsDone
+    ? getAgentFaceWithText(textLines, {
+      litColor: "\x1b[38;2;252;143;93m", // Veryfront brand orange
+    })
+    : getSpinningAgentFace(textLines, state.frame, {
+      litColor: "\x1b[38;2;252;143;93m", // Veryfront brand orange
+    });
 
   return box(content, {
     style: "rounded",
     width: termWidth,
     paddingX: 2,
     paddingY: 1,
+    borderColor: "\x1b[2m", // Dim to match footer
   });
 }
 
