@@ -21,6 +21,8 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { CacheBackend } from "#veryfront/cache/backend.ts";
 import { transformToESM } from "../../../esm-transform.ts";
 import { TRANSFORM_CACHE_VERSION } from "../../../esm/package-registry.ts";
+import { ensureHttpBundlesExist } from "../../../esm/http-cache.ts";
+import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import {
   LOG_PREFIX_MDX_LOADER,
   RELATIVE_IMPORT_PATTERN,
@@ -33,6 +35,7 @@ import { hashString } from "../utils/hash.ts";
 import { createStubModule } from "../utils/stub-module.ts";
 import { resolveModuleFile } from "../resolution/file-finder.ts";
 import { recordSSRModules } from "../../../../modules/manifest/route-module-manifest.ts";
+import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 
 /**
  * Distributed transform cache for cross-pod sharing.
@@ -41,8 +44,8 @@ import { recordSSRModules } from "../../../../modules/manifest/route-module-mani
 let distributedTransformCache: CacheBackend | null | undefined;
 const distributedCacheInit = new Singleflight<CacheBackend | null>();
 
-/** TTL for cached transforms (24 hours) */
-const TRANSFORM_CACHE_TTL_SECONDS = 86400;
+/** TTL for cached transforms (uses centralized config) */
+const TRANSFORM_CACHE_TTL_SECONDS = TRANSFORM_DISTRIBUTED_TTL_SEC;
 
 function getDistributedTransformCache(): Promise<CacheBackend | null> {
   if (distributedTransformCache !== undefined) return Promise.resolve(distributedTransformCache);
@@ -110,6 +113,33 @@ function rewriteVeryfrontImports(code: string): string {
 
 function getVersionedPathCacheKey(normalizedPath: string): string {
   return `v${TRANSFORM_CACHE_VERSION}:${normalizedPath}`;
+}
+
+/** Pattern to extract HTTP bundle paths from code (file:// paths to veryfront-http-bundle) */
+const HTTP_BUNDLE_PATTERN = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
+
+/**
+ * Extract HTTP bundle paths and hashes from module code.
+ * Used to proactively ensure bundles exist before caching/importing.
+ */
+function extractHttpBundlePaths(code: string): Array<{ path: string; hash: string }> {
+  const bundles: Array<{ path: string; hash: string }> = [];
+  const seen = new Set<string>();
+
+  let match;
+  while ((match = HTTP_BUNDLE_PATTERN.exec(code)) !== null) {
+    const path = match[1] as string;
+    const hash = match[2] as string;
+    if (!seen.has(hash)) {
+      seen.add(hash);
+      bundles.push({ path, hash });
+    }
+  }
+
+  // Reset regex state
+  HTTP_BUNDLE_PATTERN.lastIndex = 0;
+
+  return bundles;
 }
 
 /**
@@ -468,8 +498,31 @@ async function doFetchAndCacheModule(
     try {
       const stat = await getLocalFs().stat(cachedPath);
       if (stat?.isFile) {
-        recordModuleToSession(normalizedPath);
-        return cachedPath;
+        // Verify HTTP bundles in cached module exist before returning
+        // The cached module may reference file:// paths to HTTP bundles that
+        // were created on a different pod and may not exist locally
+        const cachedCode = await getLocalFs().readTextFile(cachedPath);
+        const bundlePaths = extractHttpBundlePaths(cachedCode);
+        if (bundlePaths.length > 0) {
+          const cacheDir = getHttpBundleCacheDir();
+          const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
+          if (failed.length > 0) {
+            logger.warn(`${LOG_PREFIX_MDX_LOADER} Cached module has missing HTTP bundles`, {
+              normalizedPath,
+              cachedPath,
+              failed,
+            });
+            // Invalidate this cache entry - HTTP bundles can't be recovered
+            pathCache.delete(versionedKey);
+            // Continue to re-transform
+          } else {
+            recordModuleToSession(normalizedPath);
+            return cachedPath;
+          }
+        } else {
+          recordModuleToSession(normalizedPath);
+          return cachedPath;
+        }
       }
     } catch {
       // Cache entry is stale, remove it
@@ -511,6 +564,23 @@ async function doFetchAndCacheModule(
             normalizedPath,
             cacheKey: transformCacheKey,
           });
+
+          // CRITICAL: Proactively ensure HTTP bundles exist before using cached code
+          // The cached code may have file:// paths to HTTP bundles that were created
+          // on a different pod. Fetch any missing bundles from distributed cache now.
+          const bundlePaths = extractHttpBundlePaths(cached);
+          if (bundlePaths.length > 0) {
+            const cacheDir = getHttpBundleCacheDir();
+            const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
+            if (failed.length > 0) {
+              logger.warn(`${LOG_PREFIX_MDX_LOADER} Some HTTP bundles could not be recovered`, {
+                normalizedPath,
+                failed,
+              });
+              // Don't use cached code if bundles can't be recovered - will re-transform
+              moduleCode = null;
+            }
+          }
         }
       } catch (error) {
         logger.debug(`${LOG_PREFIX_MDX_LOADER} Distributed cache get failed`, {
