@@ -1,7 +1,4 @@
-import {
-  getDenoNpmReactMap,
-  getReactVersion,
-} from "#veryfront/transforms/esm/package-registry.ts";
+import { getDenoNpmReactMap, getReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { getLocalReactPaths } from "#veryfront/platform/compat/react-paths.ts";
 
@@ -45,9 +42,7 @@ function resolveReactForRuntime(specifier: string, version?: string): string | n
   // so we must use explicit specifiers to ensure a single React instance.
   // For Deno: use npm: specifiers (auto-deduplicated by Deno's npm cache)
   // For Node/Bun: use local node_modules paths
-  const reactMap = isDeno
-    ? getDenoNpmReactMap(version)
-    : getLocalReactPaths();
+  const reactMap = isDeno ? getDenoNpmReactMap(version) : getLocalReactPaths();
 
   const mapped = reactMap[specifier];
   if (mapped) return mapped;
