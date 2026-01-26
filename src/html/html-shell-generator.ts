@@ -134,6 +134,11 @@ async function generateHTMLShellPartsImpl(
     for (const cls of extractCandidates(contentForTailwind)) candidates.add(cls);
   }
 
+  // Safelist: classes added dynamically by internal transforms (e.g., markdown compiler)
+  // These are safe to include even without @tailwindcss/typography - they'll be no-ops
+  candidates.add("prose");
+  candidates.add("dark:prose-invert");
+
   const projectSlug = options.projectId || meta.slug || "default";
   let cssHash = "";
 

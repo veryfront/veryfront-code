@@ -110,6 +110,10 @@ export class StylesCSSHandler extends BaseHandler {
       }
     }
 
+    // Safelist: classes added dynamically by internal transforms (e.g., markdown compiler)
+    candidates.add("prose");
+    candidates.add("dark:prose-invert");
+
     return candidates;
   }
 }
