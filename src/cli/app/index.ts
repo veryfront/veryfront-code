@@ -32,6 +32,7 @@ import {
   goBack,
   type LogMeta,
   navigateTo,
+  type ProjectInfo,
   scrollLogs,
   setActiveList,
   setExamples,
@@ -85,6 +86,24 @@ export interface App {
   log(level: "info" | "warn" | "error" | "debug", message: string): void;
   /** Intercept console output and route to TUI logs */
   interceptConsole(): () => void;
+}
+
+async function copyDirectory(src: string, dest: string): Promise<void> {
+  const fs = await import("#veryfront/platform/compat/fs.ts");
+  const pathMod = await import("#veryfront/platform/compat/path/index.ts");
+  const filesystem = fs.createFileSystem();
+
+  await filesystem.mkdir(dest, { recursive: true });
+  for await (const entry of filesystem.readDir(src)) {
+    const srcPath = pathMod.join(src, entry.name);
+    const destPath = pathMod.join(dest, entry.name);
+    if (entry.isDirectory) {
+      await copyDirectory(srcPath, destPath);
+    } else {
+      const content = await filesystem.readFile(srcPath);
+      await filesystem.writeFile(destPath, content);
+    }
+  }
 }
 
 function generateRandomSlug(): string {
@@ -355,6 +374,33 @@ export function createApp(config: AppConfig): App {
     return lines.join("\n");
   }
 
+  function renderExamplesView(): string {
+    const lines = [
+      "",
+      `  ${brand("Examples")}`,
+      "",
+      `  ${dim("Create a new project from an example:")}`,
+      "",
+    ];
+
+    state.examples.items.forEach((item, i) => {
+      const selected = i === state.examples.selectedIndex;
+      const prefix = selected ? brand("›") : " ";
+      const label = selected ? brand(item.label) : item.label;
+      lines.push(`  ${prefix} ${label}  ${dim(item.description || "")}`);
+    });
+
+    lines.push("");
+    lines.push(
+      `  ${dim("Press")} ${brand("Enter")} ${dim("to create  •")} ${brand("Esc")} ${
+        dim("to go back")
+      }`,
+    );
+    lines.push("");
+
+    return lines.join("\n");
+  }
+
   function renderHelpView(): string {
     const lines = [
       "",
@@ -481,6 +527,9 @@ export function createApp(config: AppConfig): App {
         break;
       case "templates":
         content = renderTemplatesView();
+        break;
+      case "examples":
+        content = renderExamplesView();
         break;
       case "auth":
         content = renderAuthView();
@@ -611,6 +660,11 @@ export function createApp(config: AppConfig): App {
 
     if (state.view === "templates") {
       handleTemplatesKey(key);
+      return;
+    }
+
+    if (state.view === "examples") {
+      handleExamplesKey(key);
       return;
     }
 
@@ -1060,6 +1114,107 @@ export function createApp(config: AppConfig): App {
     }
   }
 
+  function handleExamplesKey(key: string): void {
+    if (key === "\x1b[A" || key === "k") {
+      state = { ...state, examples: moveUp(state.examples) };
+      render();
+      return;
+    }
+
+    if (key === "\x1b[B" || key === "j") {
+      state = { ...state, examples: moveDown(state.examples, state.examples.items.length) };
+      render();
+      return;
+    }
+
+    if (key === "\r" || key === "\n") {
+      const selected = state.examples.items[state.examples.selectedIndex];
+      if (selected?.data) {
+        promptForExampleProject(selected.data, () => render());
+      }
+    }
+  }
+
+  function promptForExampleProject(example: ProjectInfo, onCancel: () => void): void {
+    const suggested = generateRandomSlug();
+    state = startInput(
+      "Project name",
+      async (name: string) => {
+        if (name.trim()) await createProjectFromExample(name.trim(), example);
+        state = navigateTo("dashboard")(state);
+        render();
+      },
+      onCancel,
+      suggested,
+    )(state);
+    render();
+  }
+
+  async function createProjectFromExample(
+    projectName: string,
+    example: ProjectInfo,
+  ): Promise<void> {
+    try {
+      state = addLog("info", `Creating project from ${example.slug}...`)(state);
+      render();
+
+      const token = await readToken();
+      if (!token) {
+        state = addLog("error", "Not authenticated. Press 'a' to login.")(state);
+        return;
+      }
+
+      // Normalize slug
+      const normalizedSlug = projectName.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
+      const name = normalizedSlug
+        .split("-")
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(" ");
+
+      // Create project in API
+      const apiUrl = getRuntimeEnv().apiUrl || "https://api.veryfront.com";
+      const response = await fetch(`${apiUrl}/projects`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({ slug: normalizedSlug, name }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        const msg = (error as { message?: string }).message || `HTTP ${response.status}`;
+        throw new Error(msg);
+      }
+
+      const { slug } = await response.json() as { slug: string };
+      const projectPath = `${cwd()}/projects/${slug}`;
+
+      // Copy example files to new project
+      await copyDirectory(example.path, projectPath);
+
+      // Update local projects list
+      const currentProjects = state.projects.items.map((item) => ({
+        slug: item.data!.slug,
+        path: item.data!.path,
+      }));
+      currentProjects.push({ slug, path: projectPath });
+      state = setProjects(currentProjects)(state);
+
+      // Refresh remote projects
+      const result = await fetchRemoteProjects();
+      state = updateRemote({
+        projects: result.projects.map((p) => ({ id: p.id, name: p.name, slug: p.slug })),
+      })(state);
+
+      state = addLog("info", `Created ${slug} from ${example.slug}`)(state);
+    } catch (error) {
+      state = addLog("error", `Failed: ${error}`)(state);
+    }
+  }
+
   function handleNewProjectKey(key: string): void {
     // Arrow navigation
     if (key === "\x1b[A" || key === "k") {
@@ -1093,8 +1248,7 @@ export function createApp(config: AppConfig): App {
           update(navigateTo("templates"));
           break;
         case 1:
-          update(setActiveList("examples"));
-          update(navigateTo("dashboard"));
+          update(navigateTo("examples"));
           break;
         case 2:
           promptForProjectName("minimal", () => render());

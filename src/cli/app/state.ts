@@ -8,6 +8,7 @@ export type AppView =
   | "project-detail"
   | "new-project"
   | "templates"
+  | "examples"
   | "auth"
   | "help";
 
