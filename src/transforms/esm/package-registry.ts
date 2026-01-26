@@ -43,8 +43,9 @@ export const REACT_VERSION = DEFAULT_REACT_VERSION;
  * v6: Update all shared-*.ts files to use npm: specifiers
  * v7: Keep npm: specifiers for Deno in http-cache (don't convert to esm.sh)
  * v8: Remove shared-*.ts files; use npm: specifiers directly in deno.json
+ * v9: Align ssr-import-rewriter to use npm: specifiers for Deno SSR
  */
-export const TRANSFORM_CACHE_VERSION = 8;
+export const TRANSFORM_CACHE_VERSION = 9;
 
 function esmSh(pkg: string, version: string, path = "", query = "target=es2022"): string {
   return `https://esm.sh/${pkg}@${version}${path}?${query}`;
