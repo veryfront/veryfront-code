@@ -6,6 +6,7 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getProjectTmpDir } from "./temp-directory.ts";
 import type { ComponentMap, ComponentSource, LoadComponentOptions } from "./types.ts";
+import { DEFAULT_REACT_VERSION } from "#veryfront/transforms/esm/package-registry.ts";
 
 type TransformedComponent = { name: string; code: string };
 
@@ -21,8 +22,9 @@ export function loadComponentsUnified(
       const projectId = options?.projectId ?? projectDir;
       const dev = options?.dev ?? true;
       const moduleServerUrl = options?.moduleServerUrl;
+      const reactVersion = options?.reactVersion;
 
-      const transformOpts: TransformOptions = { projectId, dev, moduleServerUrl };
+      const transformOpts: TransformOptions = { projectId, dev, moduleServerUrl, reactVersion };
       const transformedComponents = await transformAllComponents(
         components,
         projectDir,
@@ -38,7 +40,7 @@ export function loadComponentsUnified(
       try {
         await writeComponentFiles(tmpDir, transformedComponents, adapter);
 
-        const entryCode = generateEntryPoint(transformedComponents);
+        const entryCode = generateEntryPoint(transformedComponents, reactVersion);
         await adapter.fs.writeFile(join(tmpDir, "entry.js"), entryCode);
 
         return await importUnifiedComponents(tmpDir, transformedComponents);
@@ -74,7 +76,8 @@ async function writeComponentFiles(
   );
 }
 
-function generateEntryPoint(components: TransformedComponent[]): string {
+function generateEntryPoint(components: TransformedComponent[], reactVersion?: string): string {
+  const version = reactVersion ?? DEFAULT_REACT_VERSION;
   const imports = components
     .map((comp) => `import { default as ${comp.name} } from './${comp.name}.js'`)
     .join("\n");
@@ -82,7 +85,7 @@ function generateEntryPoint(components: TransformedComponent[]): string {
   const exports = components.map((comp) => comp.name).join(", ");
 
   return `
-    import * as React from 'https://esm.sh/react@18.3.1?target=es2022'
+    import * as React from 'https://esm.sh/react@${version}?target=es2022'
     ${imports}
 
     export { ${exports} }

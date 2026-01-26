@@ -10,36 +10,45 @@ export const REACT_VERSION_19 = "19.1.1";
 
 export const REACT_DEFAULT_VERSION = REACT_VERSION_19;
 
-function getReactBase(version: string = REACT_DEFAULT_VERSION): string {
-  return `${ESM_CDN_BASE}/react@${version}`;
-}
-
-function getReactDOMBase(version: string = REACT_DEFAULT_VERSION): string {
-  return `${ESM_CDN_BASE}/react-dom@${version}`;
+/**
+ * esm.sh URL builder with consistent query params.
+ *
+ * For React packages (react-dom, jsx-runtime), we only need external=react:
+ * - react-dom depends on react → external=react makes it import "react" as bare specifier
+ * - react-dom doesn't need external=react-dom because it IS react-dom
+ * - jsx-runtime depends on react core → external=react
+ *
+ * Third-party packages (e.g., @tanstack/react-query) need external=react,react-dom
+ * because they may depend on BOTH. That's handled by bundleHttpImports() separately.
+ */
+function esmSh(pkg: string, version: string, path = "", external = false): string {
+  const params = ["target=es2022"];
+  if (external) params.push("external=react");
+  return `${ESM_CDN_BASE}/${pkg}@${version}${path}?${params.join("&")}`;
 }
 
 export function getReactCDNUrl(version: string = REACT_DEFAULT_VERSION): string {
-  return getReactBase(version);
+  return esmSh("react", version);
 }
 
 export function getReactDOMCDNUrl(version: string = REACT_DEFAULT_VERSION): string {
-  return getReactDOMBase(version);
+  return esmSh("react-dom", version, "", true);
 }
 
 export function getReactDOMClientCDNUrl(version: string = REACT_DEFAULT_VERSION): string {
-  return `${getReactDOMBase(version)}/client`;
+  return esmSh("react-dom", version, "/client", true);
 }
 
 export function getReactDOMServerCDNUrl(version: string = REACT_DEFAULT_VERSION): string {
-  return `${getReactDOMBase(version)}/server`;
+  return esmSh("react-dom", version, "/server", true);
 }
 
 export function getReactJSXRuntimeCDNUrl(version: string = REACT_DEFAULT_VERSION): string {
-  return `${getReactBase(version)}/jsx-runtime`;
+  return esmSh("react", version, "/jsx-runtime", true);
 }
 
 export function getReactJSXDevRuntimeCDNUrl(version: string = REACT_DEFAULT_VERSION): string {
-  return `${getReactBase(version)}/jsx-dev-runtime`;
+  return esmSh("react", version, "/jsx-dev-runtime", true);
 }
 
 export function getReactImportMap(version: string = REACT_DEFAULT_VERSION): Record<string, string> {

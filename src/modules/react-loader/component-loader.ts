@@ -34,6 +34,7 @@ export function loadComponentFromSource(
           adapter,
           dev,
           contentSourceId: options?.contentSourceId,
+          reactVersion: options?.reactVersion,
         });
         return loader.loadModule(filePath, source);
       }
@@ -44,6 +45,7 @@ export function loadComponentFromSource(
         moduleServerUrl: options?.moduleServerUrl ?? "/_vf_modules",
         vendorBundleHash: options?.vendorBundleHash,
         ssr: false,
+        reactVersion: options?.reactVersion,
       };
 
       const transformedCode = await transformToESM(

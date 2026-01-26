@@ -9,6 +9,8 @@ export interface TransformOptions {
   ssr?: boolean;
   apiBaseUrl?: string;
   studioEmbed?: boolean;
+  /** React version for transforms (from project config, defaults to DEFAULT_REACT_VERSION) */
+  reactVersion?: string;
 }
 
 export interface TransformContext {

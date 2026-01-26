@@ -9,23 +9,35 @@
 export const DEFAULT_REACT_VERSION = "19.1.1";
 export const TAILWIND_VERSION = "4.1.8";
 
-/** Cached React version from project config */
-let configuredReactVersion: string | null = null;
-
 /**
- * Set the React version from project configuration.
- * Call this during project initialization if a custom version is specified.
+ * Validate React version format (semver: X.Y.Z).
+ * Returns true if valid, false otherwise.
  */
-export function setReactVersion(version: string): void {
-  configuredReactVersion = version;
+export function isValidReactVersion(version: string): boolean {
+  return /^\d+\.\d+\.\d+$/.test(version);
 }
 
 /**
- * Get the current React version.
- * Returns configured version if set, otherwise the default.
+ * Validate and normalize React version.
+ * Returns the version if valid, or DEFAULT_REACT_VERSION if invalid.
+ * Logs a warning if the version is invalid.
+ */
+export function normalizeReactVersion(version: string | undefined): string {
+  if (!version) return DEFAULT_REACT_VERSION;
+  if (isValidReactVersion(version)) return version;
+  console.warn(
+    `[VERYFRONT] Invalid React version format "${version}" (expected X.Y.Z). Using default: ${DEFAULT_REACT_VERSION}`,
+  );
+  return DEFAULT_REACT_VERSION;
+}
+
+/**
+ * @deprecated Global React version is no longer supported.
+ * Use config.react.version passed through TransformOptions instead.
+ * This function now always returns DEFAULT_REACT_VERSION.
  */
 export function getReactVersion(): string {
-  return configuredReactVersion ?? DEFAULT_REACT_VERSION;
+  return DEFAULT_REACT_VERSION;
 }
 
 /** @deprecated Use DEFAULT_REACT_VERSION or getReactVersion() */
