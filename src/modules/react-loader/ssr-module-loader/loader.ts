@@ -631,6 +631,22 @@ export class SSRModuleLoader {
         // This ensures that each content version uses its own cached module
         transformed = this.rewriteLocalImports(transformed, localImportPaths, filePath);
 
+        // Ensure HTTP bundles exist for this transform (handles nested bundle deps)
+        const bundlePaths = extractHttpBundlePaths(transformed);
+        if (bundlePaths.length > 0) {
+          const cacheDir = getHttpBundleCacheDir();
+          const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
+          if (failed.length > 0) {
+            logger.warn(
+              "[SSR-MODULE-LOADER] Some HTTP bundles could not be recovered",
+              {
+                file: filePath.slice(-40),
+                failed,
+              },
+            );
+          }
+        }
+
         // Hash the TRANSFORMED content (after import rewrites) for cache busting
         // This ensures Deno's module cache is invalidated when dependencies change
         const transformedHash = await this.hashContentAsync(transformed);

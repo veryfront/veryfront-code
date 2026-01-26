@@ -429,6 +429,28 @@ export async function recoverHttpBundleByHash(hash: string, cacheDir: string): P
       await fs.mkdir(absoluteCacheDir, { recursive: true });
       await fs.writeTextFile(cachePath, cachedCode);
       logger.info("[HTTP-CACHE] Bundle recovery successful (direct)", { hash, path: cachePath });
+
+      // Proactively recover transitive deps so the import retry doesn't
+      // fail again with a different missing bundle.
+      const BUNDLE_RE = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
+      const transitiveDeps: Array<{ path: string; hash: string }> = [];
+      let m;
+      while ((m = BUNDLE_RE.exec(cachedCode)) !== null) {
+        const tHash = m[2]!;
+        if (tHash !== hash) {
+          transitiveDeps.push({
+            path: join(absoluteCacheDir, `http-${tHash}.mjs`),
+            hash: tHash,
+          });
+        }
+      }
+      if (transitiveDeps.length > 0) {
+        logger.info("[HTTP-CACHE] Recovering transitive deps from last-resort recovery", {
+          count: transitiveDeps.length,
+        });
+        await ensureHttpBundlesExist(transitiveDeps, cacheDir);
+      }
+
       return true;
     }
 
@@ -472,81 +494,129 @@ export async function ensureHttpBundlesExist(
   if (bundlePaths.length === 0) return [];
 
   const fs = createFileSystem();
-  const _absoluteCacheDir = ensureAbsoluteDir(cacheDir);
+  const absoluteCacheDir = ensureAbsoluteDir(cacheDir);
 
-  // Check which bundles exist locally
-  const existenceChecks = await Promise.all(
-    bundlePaths.map(async ({ path, hash }) => ({
-      path,
-      hash,
-      exists: await exists(path),
-    })),
-  );
+  // Use [a-f0-9]+ to match both hex and decimal hashes consistently
+  const BUNDLE_RE = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
 
-  const missing = existenceChecks.filter((b) => !b.exists);
-  if (missing.length === 0) {
-    logger.debug("[HTTP-CACHE] All bundles exist locally", { count: bundlePaths.length });
-    return [];
-  }
-
-  logger.info("[HTTP-CACHE] Fetching missing bundles from distributed cache", {
-    missing: missing.length,
-    total: bundlePaths.length,
-  });
-
-  const distributed = await getDistributedCache();
-  if (!distributed) {
-    logger.error("[HTTP-CACHE] No distributed cache available for bundle recovery");
-    return missing.map((m) => m.hash);
-  }
-
-  // Batch fetch from distributed cache
-  const codeKeys = missing.map((m) => `code:${m.hash}`);
-  let codes: Map<string, string | null>;
-
-  try {
-    if (distributed.getBatch) {
-      codes = await distributed.getBatch(codeKeys);
-    } else {
-      // Fallback to individual gets
-      const results = await Promise.all(
-        codeKeys.map(async (key) => [key, await distributed.get(key)] as const),
-      );
-      codes = new Map(results);
+  const extractBundleRefs = (code: string): Array<{ hash: string }> => {
+    const refs: Array<{ hash: string }> = [];
+    const dedup = new Set<string>();
+    let match;
+    while ((match = BUNDLE_RE.exec(code)) !== null) {
+      const hash = match[2] as string;
+      if (!dedup.has(hash)) {
+        dedup.add(hash);
+        refs.push({ hash });
+      }
     }
-  } catch (error) {
-    logger.error("[HTTP-CACHE] Batch fetch from distributed cache failed", { error });
-    return missing.map((m) => m.hash);
+    BUNDLE_RE.lastIndex = 0;
+    return refs;
+  };
+
+  const pending: Array<{ hash: string }> = bundlePaths.map((b) => ({ hash: b.hash }));
+  const seen = new Set<string>();
+  const failed = new Set<string>();
+
+  while (pending.length > 0) {
+    const batch = pending.splice(0, pending.length).filter((b) => !seen.has(b.hash));
+    if (batch.length === 0) break;
+
+    for (const item of batch) {
+      seen.add(item.hash);
+    }
+
+    // Check which bundles exist locally using canonical paths derived from
+    // cacheDir + hash. Don't trust caller-provided paths — they may reference
+    // a different pod's absolute directory.
+    const existenceChecks = await Promise.all(
+      batch.map(async ({ hash }) => ({
+        hash,
+        canonicalPath: join(absoluteCacheDir, `http-${hash}.mjs`),
+        exists: await exists(join(absoluteCacheDir, `http-${hash}.mjs`)),
+      })),
+    );
+
+    const missing = existenceChecks.filter((b) => !b.exists);
+    if (missing.length === 0) continue;
+
+    logger.info("[HTTP-CACHE] Fetching missing bundles from distributed cache", {
+      missing: missing.length,
+      total: batch.length,
+    });
+
+    const distributed = await getDistributedCache();
+    if (!distributed) {
+      logger.error("[HTTP-CACHE] No distributed cache available for bundle recovery");
+      for (const m of missing) failed.add(m.hash);
+      continue;
+    }
+
+    // Batch fetch from distributed cache
+    const codeKeys = missing.map((m) => `code:${m.hash}`);
+    let codes: Map<string, string | null>;
+
+    try {
+      if (distributed.getBatch) {
+        codes = await distributed.getBatch(codeKeys);
+      } else {
+        const results = await Promise.all(
+          codeKeys.map(async (key) => [key, await distributed.get(key)] as const),
+        );
+        codes = new Map(results);
+      }
+    } catch (error) {
+      logger.error("[HTTP-CACHE] Batch fetch from distributed cache failed", { error });
+      for (const m of missing) failed.add(m.hash);
+      continue;
+    }
+
+    // Write fetched bundles to disk using canonical paths and scan for transitive deps
+    await Promise.all(
+      missing.map(async ({ hash, canonicalPath }) => {
+        const code = codes.get(`code:${hash}`);
+        if (!code) {
+          // Try single-bundle recovery as last resort
+          const recovered = await recoverHttpBundleByHash(hash, absoluteCacheDir);
+          if (!recovered) {
+            failed.add(hash);
+          } else {
+            // Read the recovered bundle to scan for transitive deps
+            try {
+              const recoveredCode = await fs.readTextFile(canonicalPath);
+              for (const ref of extractBundleRefs(recoveredCode)) {
+                if (!seen.has(ref.hash)) pending.push(ref);
+              }
+            } catch { /* ignore read errors for dep scanning */ }
+          }
+          return;
+        }
+
+        try {
+          await fs.mkdir(absoluteCacheDir, { recursive: true });
+          await fs.writeTextFile(canonicalPath, code);
+          logger.debug("[HTTP-CACHE] Wrote bundle to disk", { hash, path: canonicalPath });
+
+          // Scan recovered code for transitive HTTP bundle dependencies.
+          // HTTP bundles import other bundles (e.g., esm.sh packages depending
+          // on other packages). Without this, Pod B recovers only the top-level
+          // bundle and gets "Module not found" for transitive deps at import time.
+          for (const ref of extractBundleRefs(code)) {
+            if (!seen.has(ref.hash)) pending.push(ref);
+          }
+        } catch (error) {
+          logger.error("[HTTP-CACHE] Failed to write bundle to disk", { hash, error });
+          failed.add(hash);
+        }
+      }),
+    );
   }
 
-  // Write fetched bundles to disk
-  const failed: string[] = [];
-  await Promise.all(
-    missing.map(async ({ path, hash }) => {
-      const code = codes.get(`code:${hash}`);
-      if (!code) {
-        logger.warn("[HTTP-CACHE] Bundle not found in distributed cache", { hash });
-        failed.push(hash);
-        return;
-      }
-
-      try {
-        const dir = path.substring(0, path.lastIndexOf("/"));
-        await fs.mkdir(dir, { recursive: true });
-        await fs.writeTextFile(path, code);
-        logger.debug("[HTTP-CACHE] Wrote bundle to disk", { hash, path });
-      } catch (error) {
-        logger.error("[HTTP-CACHE] Failed to write bundle to disk", { hash, error });
-        failed.push(hash);
-      }
-    }),
-  );
-
-  if (failed.length > 0) {
-    logger.warn("[HTTP-CACHE] Some bundles could not be recovered", { failed });
-  } else {
-    logger.info("[HTTP-CACHE] All missing bundles recovered", { count: missing.length });
+  if (failed.size > 0) {
+    logger.warn("[HTTP-CACHE] Some bundles could not be recovered", {
+      failed: Array.from(failed),
+    });
   }
 
-  return failed;
+  return Array.from(failed);
 }

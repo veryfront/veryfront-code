@@ -66,11 +66,11 @@ interface ExplorationResult {
 // =============================================================================
 
 const CONFIG = {
-  model: "gpt-4o",
-  maxIterations: 8, // Enough for most explorations
-  maxFileContent: 10000, // chars per file read
+  model: "gpt-5.2",
+  maxIterations: 100,
+  maxFileContent: 50000, // chars per file read
   srcDir: "src",
-  timeout: 120000, // 2 minutes
+  timeout: 600000, // 10 minutes
 };
 
 // =============================================================================
@@ -383,13 +383,17 @@ function buildSystemPrompt(): string {
 AVAILABLE TOOLS:
 ${toolDescriptions}
 
-CRITICAL: You MUST call final_answer once you have enough information to answer the question.
-Do not continue exploring indefinitely - 3-5 steps should usually be enough.
+CRITICAL: You MUST call final_answer once you have THOROUGHLY explored all relevant code paths.
+Be EXHAUSTIVE - read complete files, trace all call sites, and follow imports to their implementations.
+Do NOT call final_answer until you have read ALL relevant source files in full.
+If a file was truncated, read the remaining sections before concluding.
 
 PROCESS:
 1. Search for relevant files
-2. Read key files to understand the implementation
-3. Call final_answer with a complete answer
+2. Read key files COMPLETELY (use startLine/endLine to paginate large files)
+3. Follow imports and trace function calls to their implementations
+4. Check for ALL callers of key functions using get_usages
+5. Only call final_answer when you have a COMPLETE picture with specific code references
 
 OUTPUT FORMAT (strict JSON):
 {
@@ -416,7 +420,7 @@ async function callLLM(
       model: CONFIG.model,
       messages,
       temperature: 0,
-      max_tokens: 4096,
+      max_completion_tokens: 16384,
       response_format: { type: "json_object" },
     }),
   });
