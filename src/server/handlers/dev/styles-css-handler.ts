@@ -110,11 +110,9 @@ export class StylesCSSHandler extends BaseHandler {
       }
     }
 
-    // Safelist: classes added dynamically by internal transforms (e.g., markdown compiler)
+    // Safelist: prose classes for markdown compiler (requires @tailwindcss/typography)
     candidates.add("prose");
     candidates.add("dark:prose-invert");
-    candidates.add("mx-auto");
-    candidates.add("py-8");
 
     return candidates;
   }

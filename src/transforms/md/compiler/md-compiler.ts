@@ -89,7 +89,7 @@ export function compileMarkdownRuntime(
 
         // Check frontmatter for prose: false to disable typography styles
         const useProse = extractedFrontmatter.prose !== false;
-        const baseClasses = useProse ? "prose dark:prose-invert mx-auto py-8" : "mx-auto py-8";
+        const baseClasses = useProse ? "prose dark:prose-invert mx-auto p-4" : "mx-auto p-4";
 
         const compiledCode = `import { jsx as _jsx } from "react/jsx-runtime";
 export default function MDContent({ components, className, ...props }) {
