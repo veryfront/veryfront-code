@@ -103,6 +103,7 @@ export const SpanNames = {
   HTML_WRAP_IN_SHELL: "html.wrap_in_shell",
   HTML_GENERATE_TAILWIND_CSS: "html.generate_tailwind_css",
   HTML_GET_CSS_BY_HASH: "html.get_css_by_hash",
+  HTML_REGENERATE_CSS_BY_HASH: "html.regenerate_css_by_hash",
 
   SHARED_SERVICES_INIT: "shared.services.init",
 } as const;
