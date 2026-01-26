@@ -20,7 +20,10 @@ async function loadReactDOMClient(): Promise<ReactDOMClientType> {
 
   if (isNode || isBun) {
     try {
-      reactDOMClientCache = (await import("react-dom/client")) as ReactDOMClientType;
+      // Use indirect import to avoid dnt transformation
+      const reactDomClientPkg = "react-dom/client";
+      reactDOMClientCache =
+        (await import(/* @vite-ignore */ reactDomClientPkg)) as ReactDOMClientType;
       return reactDOMClientCache;
     } catch {
       // Fall through to esm.sh caching

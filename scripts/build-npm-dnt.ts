@@ -23,9 +23,6 @@ await emptyDir("./npm");
 // Convert deno.json exports to dnt entry points
 const entryPoints: Array<{ name: string; path: string }> = [];
 for (const [name, path] of Object.entries(denoJson.exports as Record<string, string>)) {
-	// Skip CLI - it needs special handling
-	if (name === "./cli") continue;
-
 	entryPoints.push({ name, path });
 }
 
@@ -156,6 +153,9 @@ import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// Load dnt polyfills (import.meta shims) before any other imports
+await import('../esm/_dnt.polyfills.js');
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const nativeBinary = join(__dirname, process.platform === 'win32' ? 'veryfront.exe' : 'veryfront');
 
@@ -163,11 +163,11 @@ if (existsSync(nativeBinary)) {
   const child = spawn(nativeBinary, process.argv.slice(2), { stdio: 'inherit' });
   child.on('close', (code) => process.exit(code ?? 0));
   child.on('error', async () => {
-    const { main } = await import('../esm/cli/main.js');
+    const { main } = await import('../esm/src/cli/index.js');
     main().catch(err => { console.error(err); process.exit(1); });
   });
 } else {
-  const { main } = await import('../esm/cli/main.js');
+  const { main } = await import('../esm/src/cli/index.js');
   main().catch(err => { console.error(err); process.exit(1); });
 }
 `);
