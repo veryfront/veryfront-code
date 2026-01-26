@@ -254,6 +254,16 @@ renderer:
     enabled: true
     topologyKey: kubernetes.io/hostname
 
+  # Deployment strategy - use maxUnavailable instead of maxSurge to avoid
+  # exceeding namespace CPU quota during rolling deployments.
+  # With maxSurge=0, Kubernetes terminates old pods before creating new ones,
+  # preventing the scenario where total resource limits exceed the quota.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+
   # Horizontal Pod Autoscaler - scales based on memory/CPU usage
   # Memory-based scaling is critical for the renderer to avoid OOM crashes
   #
