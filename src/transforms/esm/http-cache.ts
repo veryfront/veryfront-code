@@ -321,10 +321,21 @@ async function resolveSpecifier(
 ): Promise<string | null> {
   if (isExternalScheme(specifier) || isInternalBare(specifier)) return null;
 
-  // For Deno: Keep npm: specifiers as-is (Deno resolves them natively with auto-dedup)
+  // For Deno: Keep npm: specifiers but ensure React uses the correct version.
   // For other runtimes: Convert to esm.sh and cache locally
   if (specifier.startsWith("npm:")) {
     if (isDeno) {
+      // Rewrite npm:react@* and npm:react-dom@* to use the configured version
+      // This ensures consistency when esm.sh returns bundles with hardcoded React versions
+      const reactVersion = options.reactVersion ?? REACT_VERSION;
+      const npmReactMatch = specifier.match(/^npm:react@[\d.]+(-[a-z0-9.]+)?(.*)$/);
+      if (npmReactMatch) {
+        return `npm:react@${reactVersion}${npmReactMatch[2] ?? ""}`;
+      }
+      const npmReactDomMatch = specifier.match(/^npm:react-dom@[\d.]+(-[a-z0-9.]+)?(.*)$/);
+      if (npmReactDomMatch) {
+        return `npm:react-dom@${reactVersion}${npmReactDomMatch[2] ?? ""}`;
+      }
       return specifier; // Let Deno's native npm resolution handle it
     }
     const cached = await cacheHttpModule(toEsmShUrlFromNpm(specifier), options);
