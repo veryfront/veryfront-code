@@ -278,16 +278,21 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
   await fs.writeTextFile(cachePath, code);
 
   if (distributed) {
-    // Store code by URL, by hash (for direct recovery), and URL mapping (for debugging)
-    // Storing code by hash enables recovery without needing URL lookup
+    // Store code by URL, by hash (for direct recovery), and URL mapping (for debugging).
+    // Storing code by hash enables recovery without needing URL lookup.
+    // IMPORTANT: await the writes so other pods can recover this bundle immediately.
+    // Without await, a transform referencing this bundle could reach Redis before
+    // the bundle code does, causing ensureHttpBundlesExist on another pod to miss.
     const hash = simpleHash(normalizedUrl);
-    Promise.all([
-      distributed.set(normalizedUrl, code, DISTRIBUTED_CACHE_TTL_SECONDS),
-      distributed.set(`code:${hash}`, code, DISTRIBUTED_CACHE_TTL_SECONDS),
-      distributed.set(`hash:${hash}`, normalizedUrl, DISTRIBUTED_CACHE_TTL_SECONDS),
-    ]).catch((error) => {
+    try {
+      await Promise.all([
+        distributed.set(normalizedUrl, code, DISTRIBUTED_CACHE_TTL_SECONDS),
+        distributed.set(`code:${hash}`, code, DISTRIBUTED_CACHE_TTL_SECONDS),
+        distributed.set(`hash:${hash}`, normalizedUrl, DISTRIBUTED_CACHE_TTL_SECONDS),
+      ]);
+    } catch (error) {
       logger.debug("[HTTP-CACHE] Distributed cache set failed", { url: normalizedUrl, error });
-    });
+    }
   }
 
   cachedPaths.set(cacheKey, cachePath);

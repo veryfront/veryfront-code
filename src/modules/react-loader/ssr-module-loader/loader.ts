@@ -38,18 +38,18 @@ import { withTimeoutThrow } from "#veryfront/rendering/utils/stream-utils.ts";
 import {
   failedComponents,
   getFromRedis,
-  getRedisClientInstance,
-  getRedisEnabled,
   globalCrossProjectCache,
   globalInProgress,
   globalModuleCache,
   globalTmpDirs,
+  isSSRDistributedCacheEnabled,
   setInRedis,
   transformSemaphore,
 } from "./cache/index.ts";
 import type { ModuleCacheEntry, SSRModuleLoaderOptions } from "./types.ts";
 import { getCacheBaseDir, getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { ensureHttpBundlesExist } from "#veryfront/transforms/esm/http-cache.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 
 /** Pattern to match HTTP bundle file:// paths in transformed code */
 const HTTP_BUNDLE_PATTERN = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
@@ -71,8 +71,12 @@ function extractHttpBundlePaths(code: string): Array<{ path: string; hash: strin
   return bundles;
 }
 
-/** Track temp paths that have been verified for HTTP bundles to avoid redundant I/O */
-const verifiedHttpBundlePaths = new Set<string>();
+/**
+ * Track modules whose HTTP bundles have been verified, keyed by tempPath:contentHash.
+ * Bounded LRU to prevent unbounded memory growth in long-running pods.
+ * Keying by contentHash ensures verification is re-done when content changes at the same path.
+ */
+const verifiedHttpBundlePaths = new LRUCache<string, true>({ maxEntries: 2000 });
 
 /**
  * SSR Module Loader with Redis Support.
@@ -428,8 +432,9 @@ export class SSRModuleLoader {
 
     const cachedEntry = globalModuleCache.get(contentCacheKey);
     if (cachedEntry) {
-      // Verify HTTP bundles exist for in-memory cached transforms (once per path)
-      if (!verifiedHttpBundlePaths.has(cachedEntry.tempPath)) {
+      // Verify HTTP bundles exist for in-memory cached transforms (once per path+content)
+      const verifyKey = `${cachedEntry.tempPath}:${cachedEntry.contentHash}`;
+      if (!verifiedHttpBundlePaths.get(verifyKey)) {
         try {
           const cachedCode = await this.fs.readTextFile(cachedEntry.tempPath);
           const bundlePaths = extractHttpBundlePaths(cachedCode);
@@ -448,10 +453,10 @@ export class SSRModuleLoader {
               globalModuleCache.delete(filePathCacheKey);
               // Fall through to Redis or fresh transform
             } else {
-              verifiedHttpBundlePaths.add(cachedEntry.tempPath);
+              verifiedHttpBundlePaths.set(verifyKey, true);
             }
           } else {
-            verifiedHttpBundlePaths.add(cachedEntry.tempPath);
+            verifiedHttpBundlePaths.set(verifyKey, true);
           }
         } catch {
           // File doesn't exist or unreadable, invalidate cache
@@ -468,9 +473,7 @@ export class SSRModuleLoader {
       }
     }
 
-    const redisEnabled = getRedisEnabled();
-    const redisClient = getRedisClientInstance();
-    if (redisEnabled && redisClient) {
+    if (isSSRDistributedCacheEnabled()) {
       const redisCode = await getFromRedis(contentCacheKey);
       if (redisCode) {
         // Proactively ensure HTTP bundles exist before using cached transform.
@@ -499,7 +502,7 @@ export class SSRModuleLoader {
             recursive: true,
           });
           await this.fs.writeTextFile(tempPath, redisCode);
-          verifiedHttpBundlePaths.add(tempPath);
+          verifiedHttpBundlePaths.set(`${tempPath}:${contentHash}`, true);
 
           const entry: ModuleCacheEntry = { tempPath, contentHash };
           globalModuleCache.set(contentCacheKey, entry);
@@ -655,7 +658,7 @@ export class SSRModuleLoader {
         await this.fs.mkdir(tempPath.substring(0, tempPath.lastIndexOf("/")), { recursive: true });
         await this.fs.writeTextFile(tempPath, transformed);
 
-        if (redisEnabled && redisClient) {
+        if (isSSRDistributedCacheEnabled()) {
           setInRedis(contentCacheKey, transformed, {
             isProduction: this.isProductionContentSource(),
           }).catch(() => {});
