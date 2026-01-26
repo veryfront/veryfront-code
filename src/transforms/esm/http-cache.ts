@@ -211,6 +211,25 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
 
   if (await exists(cachePath)) {
     cachedPaths.set(cacheKey, cachePath);
+
+    // Ensure code:{hash} exists in distributed cache for cross-pod recovery
+    // This backfills bundles created before code:{hash} storage was added
+    const distributed = await getDistributedCache();
+    if (distributed) {
+      const hash = simpleHash(normalizedUrl);
+      distributed.get(`code:${hash}`).then(async (existing) => {
+        if (!existing) {
+          try {
+            const code = await fs.readTextFile(cachePath);
+            distributed.set(`code:${hash}`, code, DISTRIBUTED_CACHE_TTL_SECONDS).catch(() => {});
+            logger.debug("[HTTP-CACHE] Backfilled code:{hash} for existing bundle", { hash });
+          } catch {
+            // Ignore read errors
+          }
+        }
+      }).catch(() => {});
+    }
+
     return cachePath;
   }
 
