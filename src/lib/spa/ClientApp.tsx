@@ -7,7 +7,7 @@ import { getCachedComponent, loadComponent, preloadComponent } from "./component
 export interface PageDataResponse {
   slug: string;
   pagePath: string;
-  pageType: "mdx" | "tsx" | "jsx" | "ts" | "js";
+  pageType: "mdx" | "md" | "tsx" | "jsx" | "ts" | "js";
   layouts: LayoutInfo[];
   providers: string[];
   frontmatter: Record<string, unknown>;

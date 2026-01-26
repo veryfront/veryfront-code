@@ -23,6 +23,7 @@ import {
   buildRootAttributes,
   shouldDisableLayout,
 } from "./utils.ts";
+import { isMarkdownPreview as checkMarkdownPreview } from "../transforms/md/utils.ts";
 import {
   generateModulePreloadHintsFromManifest,
   getRouteManifest,
@@ -247,6 +248,19 @@ async function generateHTMLShellPartsImpl(
       `<link id="vf-tailwind-css" rel="stylesheet" href="/_vf_styles/styles.css?t=${Date.now()}">`;
   }
 
+  // Markdown preview mode: .md files in preview/local dev with prose !== false
+  // Only applies to standalone markdown files (not in pages/ or app/)
+  const isMarkdownPreview = (localDev || isPreviewMode) &&
+    options.pageType === "md" &&
+    checkMarkdownPreview(options.pagePath, options.frontmatter);
+
+  const markdownPreviewStyles = isMarkdownPreview
+    ? `<!-- GitHub Markdown Preview Styles -->
+  <link rel="stylesheet" href="https://cdn.veryfront.com/styles/github-markdown.min.css">
+  <link rel="stylesheet" href="https://cdn.veryfront.com/styles/github-syntax-highlighting.min.css">
+  <link rel="stylesheet" href="https://cdn.veryfront.com/styles/mermaid.min.css">`
+    : "";
+
   const start = `<!DOCTYPE html>
 <html ${htmlAttrs}>
 <head>
@@ -265,6 +279,7 @@ async function generateHTMLShellPartsImpl(
 
   <!-- Tailwind CSS: Server-side JIT compiled -->
   ${tailwindCSSBlock}
+  ${markdownPreviewStyles}
 
   ${linkTags}
   ${styleTags}
@@ -289,6 +304,24 @@ async function generateHTMLShellPartsImpl(
     ? `<script src="/_veryfront/preview-hmr.js"${nonce ? ` nonce="${nonce}"` : ""}></script>`
     : "";
 
+  const mermaidScript = isMarkdownPreview
+    ? `<script type="module"${nonce ? ` nonce="${nonce}"` : ""}>
+import mermaid from 'https://esm.sh/mermaid@11';
+mermaid.initialize({ startOnLoad: false, theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'default' });
+// Convert code.language-mermaid blocks to mermaid-compatible format
+document.querySelectorAll('code.language-mermaid').forEach((code, i) => {
+  const pre = code.parentElement;
+  if (pre?.tagName === 'PRE') {
+    const div = document.createElement('pre');
+    div.className = 'mermaid';
+    div.textContent = code.textContent;
+    pre.replaceWith(div);
+  }
+});
+mermaid.run();
+</script>`
+    : "";
+
   const end = `</div>
   </div>
   <div id="veryfront-portals"></div>
@@ -302,6 +335,7 @@ async function generateHTMLShellPartsImpl(
   ${modeScripts}
   ${studioScripts}
   ${previewHMRScript}
+  ${mermaidScript}
 </body>
 </html>`;
 

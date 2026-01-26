@@ -149,9 +149,14 @@ async function findLocalProjects(baseDirs: string[]): Promise<Map<string, string
   return projects;
 }
 
-// Clear module caches on startup
+// Clear all local caches on startup to prevent stale cache issues
 async function clearModuleCaches(): Promise<void> {
-  const cacheDirs = [".cache/veryfront-mdx-esm", ".cache/veryfront-modules"];
+  const cacheDirs = [
+    ".cache/veryfront-mdx-esm",
+    ".cache/veryfront-modules",
+    ".cache/veryfront-ssr",
+    ".cache/veryfront-http-bundle",
+  ];
   for (const dir of cacheDirs) {
     try {
       await Deno.remove(dir, { recursive: true });

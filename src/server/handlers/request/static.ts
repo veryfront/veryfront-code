@@ -327,6 +327,10 @@ export class StaticHandler extends BaseHandler {
     if (pathname.includes("/.veryfront/") || pathname.startsWith("/.veryfront")) {
       return false;
     }
+    // Don't treat .md files as asset requests - they should go through to MarkdownPreviewHandler
+    if (pathname.endsWith(".md")) {
+      return false;
+    }
     return pathname.includes(".") || pathname.startsWith("/_veryfront/");
   }
 }

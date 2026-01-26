@@ -10,6 +10,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { withFallback } from "#veryfront/platform/adapters/fallback-wrapper.ts";
 import { parallelMap } from "#veryfront/utils/parallel.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { logger } from "#veryfront/utils";
 
 const entityInfoScope = createErrorScope("getEntityInfo");
 const fs = createFileSystem();
@@ -149,31 +150,49 @@ export async function getEntityBySlug(
       const isVeryfrontRoute = slug.startsWith(".veryfront/") || slug === ".veryfront";
       const resolveFile = adapter?.fs.resolveFile;
 
-      if (resolveFile) {
-        const basePaths = [
-          pathHelper.join(projectDir, "pages", slug),
-          pathHelper.join(projectDir, slug),
-        ];
+      logger.debug("[getEntityBySlug] START", {
+        slug,
+        projectDir,
+        isVeryfrontRoute,
+        hasResolveFile: !!resolveFile,
+      });
 
+      if (resolveFile) {
+        // Only check pages/ directory for routes (root files are not routable)
+        const basePaths = [pathHelper.join(projectDir, "pages", slug)];
+
+        // .veryfront routes can be at root level
         if (isVeryfrontRoute) {
           basePaths.unshift(pathHelper.join(projectDir, slug));
         }
 
         if (slug === "index" || slug === "") {
-          basePaths.unshift(
-            pathHelper.join(projectDir, "pages", "index"),
-            pathHelper.join(projectDir, "index"),
-          );
+          basePaths.unshift(pathHelper.join(projectDir, "pages", "index"));
         }
+
+        logger.debug("[getEntityBySlug] Checking paths (resolveFile branch)", {
+          slug,
+          basePaths,
+        });
 
         const pathResults = await parallelMap(basePaths, async (basePath) => {
           const resolvedPath = await resolveFile.call(adapter.fs, basePath);
+          logger.debug("[getEntityBySlug] resolveFile result", {
+            basePath,
+            resolvedPath,
+          });
           if (!resolvedPath) return null;
           return await getEntityInfo(resolvedPath, adapter);
         });
 
         for (const info of pathResults) {
-          if (info?.entity.isPage) return info;
+          if (info?.entity.isPage) {
+            logger.debug("[getEntityBySlug] Found page via resolveFile", {
+              slug,
+              path: info.entity.path,
+            });
+            return info;
+          }
         }
 
         const slugParts = slug.split("/");
@@ -220,9 +239,11 @@ export async function getEntityBySlug(
           }
         }
 
+        logger.debug("[getEntityBySlug] No page found via resolveFile branch", { slug });
         return null;
       }
 
+      // Only check pages/ directory for routes (root files are not routable)
       const possiblePaths = [
         pathHelper.join(projectDir, "pages", `${slug}.mdx`),
         pathHelper.join(projectDir, "pages", `${slug}.md`),
@@ -234,12 +255,9 @@ export async function getEntityBySlug(
         pathHelper.join(projectDir, "pages", `${slug}/index.tsx`),
         pathHelper.join(projectDir, "pages", `${slug}/index.jsx`),
         pathHelper.join(projectDir, "pages", `${slug}/index.ts`),
-        pathHelper.join(projectDir, `${slug}.mdx`),
-        pathHelper.join(projectDir, `${slug}.md`),
-        pathHelper.join(projectDir, `${slug}.tsx`),
-        pathHelper.join(projectDir, `${slug}.ts`),
       ];
 
+      // .veryfront routes can be at root level
       if (isVeryfrontRoute) {
         possiblePaths.unshift(
           pathHelper.join(projectDir, `${slug}.mdx`),
@@ -255,10 +273,6 @@ export async function getEntityBySlug(
           pathHelper.join(projectDir, "pages", "index.md"),
           pathHelper.join(projectDir, "pages", "index.tsx"),
           pathHelper.join(projectDir, "pages", "index.ts"),
-          pathHelper.join(projectDir, "index.mdx"),
-          pathHelper.join(projectDir, "index.md"),
-          pathHelper.join(projectDir, "index.tsx"),
-          pathHelper.join(projectDir, "index.ts"),
         );
       }
 

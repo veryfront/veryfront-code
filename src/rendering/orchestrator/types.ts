@@ -73,7 +73,7 @@ export interface RenderContext {
 export interface PageDataResponse {
   slug: string;
   pagePath: string;
-  pageType: "mdx" | "tsx" | "jsx" | "ts" | "js";
+  pageType: "mdx" | "md" | "tsx" | "jsx" | "ts" | "js";
   layouts: Array<{ kind: "mdx" | "tsx"; path: string }>;
   providers: string[];
   frontmatter: Record<string, unknown>;
