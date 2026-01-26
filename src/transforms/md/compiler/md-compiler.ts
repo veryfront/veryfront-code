@@ -87,11 +87,15 @@ export function compileMarkdownRuntime(
 
         const escapedHtml = escapeForJsString(html);
 
+        // Check frontmatter for prose: false to disable typography styles
+        const useProse = extractedFrontmatter.prose !== false;
+        const baseClasses = useProse ? "prose dark:prose-invert mx-auto py-8" : "mx-auto py-8";
+
         const compiledCode = `import { jsx as _jsx } from "react/jsx-runtime";
 export default function MDContent({ components, className, ...props }) {
   return _jsx("div", {
     ...props,
-    className: className ? \`prose dark:prose-invert \${className}\` : "prose dark:prose-invert",
+    className: className ? \`${baseClasses} \${className}\` : "${baseClasses}",
     dangerouslySetInnerHTML: { __html: \`${escapedHtml}\` }
   });
 }

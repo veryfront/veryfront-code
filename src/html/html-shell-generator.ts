@@ -138,6 +138,8 @@ async function generateHTMLShellPartsImpl(
   // These are safe to include even without @tailwindcss/typography - they'll be no-ops
   candidates.add("prose");
   candidates.add("dark:prose-invert");
+  candidates.add("mx-auto");
+  candidates.add("py-8");
 
   const projectSlug = options.projectId || meta.slug || "default";
   let cssHash = "";
