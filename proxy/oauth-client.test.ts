@@ -18,7 +18,7 @@ describe("OAuth Client", () => {
             timeoutMs: 100,
           }),
         Error,
-        "timed out"
+        "timed out",
       );
     });
 
@@ -42,7 +42,7 @@ describe("OAuth Client", () => {
               clientSecret: "test",
             }),
           Error,
-          "401"
+          "401",
         );
       } finally {
         await server.stop();

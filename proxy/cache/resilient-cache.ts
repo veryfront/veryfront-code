@@ -64,7 +64,7 @@ export class ResilientCache implements TokenCache {
     this.failureCount++;
     logger.warn(
       `[ResilientCache] Primary cache error (${this.failureCount}/${FAILURE_THRESHOLD}):`,
-      { error: error instanceof Error ? error.message : error }
+      { error: error instanceof Error ? error.message : error },
     );
 
     if (this.failureCount >= FAILURE_THRESHOLD && !this.usingFallback) {

@@ -73,9 +73,7 @@ export async function fetchOAuthToken(
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError") {
           throw new Error(
-            `OAuth token request timed out after ${
-              config.timeoutMs ?? DEFAULT_TIMEOUT_MS
-            }ms`,
+            `OAuth token request timed out after ${config.timeoutMs ?? DEFAULT_TIMEOUT_MS}ms`,
           );
         }
         throw error;

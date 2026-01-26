@@ -3,11 +3,7 @@
  * Env: OTEL_TRACES_ENABLED, OTEL_SERVICE_NAME, OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_HEADERS
  */
 
-import type {
-  Context,
-  Span,
-  Tracer,
-} from "@opentelemetry/api";
+import type { Context, Span, Tracer } from "@opentelemetry/api";
 
 // Inline cross-runtime getEnv to avoid dependency on src/platform/compat (not copied in Docker)
 function getEnv(key: string): string | undefined {
@@ -79,7 +75,9 @@ export async function initializeOTLP(): Promise<void> {
 
   try {
     const { trace } = await import("@opentelemetry/api");
-    const { BasicTracerProvider, BatchSpanProcessor } = await import("@opentelemetry/sdk-trace-base");
+    const { BasicTracerProvider, BatchSpanProcessor } = await import(
+      "@opentelemetry/sdk-trace-base"
+    );
     const { OTLPTraceExporter } = await import("@opentelemetry/exporter-trace-otlp-http");
     const { Resource } = await import("@opentelemetry/resources");
     const { ATTR_SERVICE_NAME } = await import("@opentelemetry/semantic-conventions");
@@ -100,7 +98,10 @@ export async function initializeOTLP(): Promise<void> {
 
     await loadApis();
 
-    console.log("[otel] Initialized", { serviceName: config.serviceName, endpoint: config.endpoint });
+    console.log("[otel] Initialized", {
+      serviceName: config.serviceName,
+      endpoint: config.endpoint,
+    });
   } catch (error) {
     console.error("[otel] Init failed", { error });
     initialized = true;
@@ -129,7 +130,7 @@ export function extractContext(headers: Headers): Context | undefined {
   return new propagationApi.W3CTraceContextPropagator().extract(
     traceApi.context.active(),
     carrier,
-    traceApi.defaultTextMapGetter
+    traceApi.defaultTextMapGetter,
   );
 }
 
@@ -139,7 +140,7 @@ export function injectContext(headers: Headers): void {
   new propagationApi.W3CTraceContextPropagator().inject(
     traceApi.context.active(),
     carrier,
-    traceApi.defaultTextMapSetter
+    traceApi.defaultTextMapSetter,
   );
   Object.entries(carrier).forEach(([k, v]) => headers.set(k, v));
 }
@@ -147,7 +148,7 @@ export function injectContext(headers: Headers): void {
 export function startServerSpan(
   method: string,
   path: string,
-  parentContext?: Context
+  parentContext?: Context,
 ): { span: Span; context: Context } | null {
   if (!traceApi || !tracer) return null;
   const ctx = parentContext || traceApi.context.active();

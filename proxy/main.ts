@@ -42,9 +42,7 @@ const config: ProxyConfig = {
   // Preview uses same service account (scopes determine access)
   previewClientId: getEnv("API_CLIENT_ID_VERYFRONT_RENDERER_PROXY") || "",
   previewClientSecret: getEnv("API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY") || "",
-  localProjects: getEnv("LOCAL_PROJECTS")
-    ? JSON.parse(getEnv("LOCAL_PROJECTS")!)
-    : {},
+  localProjects: getEnv("LOCAL_PROJECTS") ? JSON.parse(getEnv("LOCAL_PROJECTS")!) : {},
 };
 
 const RENDERER_URL = getEnv("RENDERER_URL") || "http://localhost:3001";
@@ -239,7 +237,10 @@ function forwardToRenderer(req: Request): Promise<Response> {
 
       if (ctx.error) {
         const ms = Math.round(performance.now() - startTime);
-        proxyLogger.error(`${ctx.error.status} ${req.method} ${url.pathname}`, { ms, domain: ctx.host });
+        proxyLogger.error(`${ctx.error.status} ${req.method} ${url.pathname}`, {
+          ms,
+          domain: ctx.host,
+        });
         endSpan(spanInfo?.span, ctx.error.status);
 
         // Handle redirect for protected environments
@@ -250,7 +251,10 @@ function forwardToRenderer(req: Request): Promise<Response> {
           });
         }
 
-        return jsonErrorResponse(ctx.error.status, { error: ctx.error.message, status: ctx.error.status });
+        return jsonErrorResponse(ctx.error.status, {
+          error: ctx.error.message,
+          status: ctx.error.status,
+        });
       }
 
       const reqLogger = proxyLogger.child({
@@ -382,9 +386,7 @@ async function handleApiProxy(req: Request): Promise<Response> {
             Accept: "application/json",
             "Content-Type": req.headers.get("Content-Type") || "application/json",
           },
-          body: req.method !== "GET" && req.method !== "HEAD"
-            ? req.body
-            : undefined,
+          body: req.method !== "GET" && req.method !== "HEAD" ? req.body : undefined,
         }),
       {
         "http.method": req.method,
