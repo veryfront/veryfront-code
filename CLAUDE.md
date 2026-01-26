@@ -233,21 +233,12 @@ logcli query '{namespace="veryfront-production", container="renderer"} |= "error
 ## Releasing Veryfront Code
 
 ```bash
-# 1. Bump version in deno.json
-sed -i '' 's/"version": "X.X.X"/"version": "X.X.Y"/' deno.json
-
-# 2. Commit and push
-git add deno.json && git commit -m "chore: bump version to X.X.Y" && git push
-
-# 3. Tag and push (triggers CI)
-git tag vX.X.Y && git push origin vX.X.Y
+deno task release patch   # 0.0.84 → 0.0.85
+deno task release minor   # 0.0.84 → 0.1.0
+deno task release 1.0.0   # explicit version
 ```
 
-CI automatically:
-- Builds binaries (Linux, macOS, Windows)
-- Publishes to npm
-- Creates GitHub release
-- Updates Homebrew
+One command. Runs tests, bumps version, commits, tags, pushes. CI publishes to npm + Homebrew.
 
 ## MCP Skills
 
