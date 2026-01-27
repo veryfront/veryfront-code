@@ -17,6 +17,13 @@ export interface ComponentPageResult {
   pageBundle: PageBundle;
 }
 
+/**
+ * Cache for transformed component hydration bundles.
+ * Keys are content-addressed: `component:${projectId}:${filePath}:${sha256(source)}`.
+ * Safe for multi-tenant use (project-scoped + content-hashed).
+ * Evicted when exceeding MAX_COMPONENT_CACHE_SIZE to prevent unbounded memory growth.
+ */
+const MAX_COMPONENT_CACHE_SIZE = 5000;
 const componentHydrationCache = new Map<string, string>();
 
 /**
@@ -157,6 +164,13 @@ async function bundleComponentForClient(
       reactVersion,
     });
 
+    if (componentHydrationCache.size >= MAX_COMPONENT_CACHE_SIZE) {
+      logger.debug("[ComponentHandling] Cache size limit reached, clearing", {
+        size: componentHydrationCache.size,
+        limit: MAX_COMPONENT_CACHE_SIZE,
+      });
+      componentHydrationCache.clear();
+    }
     componentHydrationCache.set(cacheKey, transformed);
     return transformed;
   } catch (error) {

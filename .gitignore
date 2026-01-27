@@ -25,6 +25,10 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
+
+# Auto-generated claude-mem context files (subdirectory only; root CLAUDE.md is human-authored)
+**/CLAUDE.md
+!/CLAUDE.md
 __test_project__/
 
 # Dependencies

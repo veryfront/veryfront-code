@@ -20,10 +20,7 @@ import {
   clearSnippetCache,
   clearSnippetCacheForProject,
 } from "../../../../rendering/snippet-renderer.ts";
-import {
-  clearRendererCacheForProject,
-  clearRendererCaches,
-} from "../../../../rendering/renderer.ts";
+import { clearRendererCacheForProject } from "../../../../rendering/renderer.ts";
 import { clearDomainCache } from "../../../../server/utils/domain-lookup.ts";
 
 interface ProjectAdapter {
@@ -324,7 +321,6 @@ export class ProxyFSAdapterManager {
         clearModulePathCache,
         invalidateModulePaths,
         clearSnippetCache,
-        clearRendererCache: clearRendererCaches,
         clearSSRModuleCacheForProject,
         clearRouterDetectionCacheForProject,
         clearSnippetCacheForProject,
