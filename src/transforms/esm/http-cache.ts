@@ -134,10 +134,6 @@ function normalizeHttpUrl(raw: string): string {
   }
 }
 
-function toEsmShUrlFromNpm(specifier: string): string {
-  return `https://esm.sh/${specifier.slice(4)}`;
-}
-
 function resolveBareSpecifier(
   specifier: string,
   importMap: ImportMapConfig,
@@ -308,13 +304,18 @@ async function resolveSpecifier(
   if (isExternalScheme(specifier) || isInternalBare(specifier)) return null;
 
   // For Deno: Keep npm: specifiers as-is (Deno resolves them natively with auto-dedup)
-  // For other runtimes: Convert to esm.sh and cache locally
+  // For other runtimes: Convert to esm.sh and cache locally (or return bare specifier for React)
   if (specifier.startsWith("npm:")) {
     if (isDeno) {
       return specifier; // Let Deno's native npm resolution handle it
     }
-    const cached = await cacheHttpModule(toEsmShUrlFromNpm(specifier), options);
-    return cached ? `file://${cached}` : null;
+    const bareSpecifier = specifier.slice(4); // Remove "npm:" prefix
+    const esmShUrl = `https://esm.sh/${bareSpecifier}`;
+    const cached = await cacheHttpModule(esmShUrl, options);
+    // For React packages, cacheHttpModule returns null to prevent multiple instances.
+    // Return the bare specifier so transformReactToLocalPaths can resolve it to a local file:// path.
+    // For non-React packages, return the cached file:// path.
+    return cached ? `file://${cached}` : bareSpecifier;
   }
 
   if (isHttpUrl(specifier)) {
