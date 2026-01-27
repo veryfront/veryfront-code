@@ -29,16 +29,14 @@ export async function resolveReactImports(
   }
 
   // For SSR: Handle React imports differently per runtime.
-  // - Node.js: Keep React as bare specifiers (e.g., "react/jsx-runtime").
-  //   Node.js handles CJS/ESM interop automatically when resolving bare specifiers.
-  //   Using file:// URLs or esm.sh URLs doesn't work for React's CJS modules.
+  // - Node.js: Use esm.sh URLs, which will be cached to disk by cacheHttpImportsToLocal.
+  //   The cached bundles are ESM-compatible and can be imported via file:// URLs.
+  //   Bare specifiers don't work because React isn't in the cache directory's node_modules.
   // - Deno: Use esm.sh URLs (Deno supports HTTP imports natively).
   // - Bun: Use local file:// paths (Bun handles CJS/ESM interop with file:// URLs).
   const localReactPaths = getLocalReactPaths();
-  const ssrReactImports = isDeno
-    ? reactImports // esm.sh URLs for Deno
-    : isNode
-    ? {} // Keep bare specifiers for Node.js (no rewrite)
+  const ssrReactImports = isDeno || isNode
+    ? reactImports // esm.sh URLs for Deno and Node.js (Node.js will cache them)
     : { ...reactImports, ...localReactPaths }; // file:// paths for Bun
 
   const ssrImports: Record<string, string> = {

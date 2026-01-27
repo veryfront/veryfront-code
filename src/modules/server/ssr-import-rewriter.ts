@@ -1,6 +1,6 @@
 import { getReactImportMap, getReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
 import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
-import { getLocalReactPaths, isReactSpecifier } from "#veryfront/platform/compat/react-paths.ts";
+import { getLocalReactPaths } from "#veryfront/platform/compat/react-paths.ts";
 
 export interface SSRRewriteOptions {
   /** Project slug for multi-project routing */
@@ -33,11 +33,8 @@ function shouldKeepBareSpecifier(specifier: string): boolean {
 
   if (specifier.startsWith("@/")) return true;
 
-  // On Node.js, keep React as bare specifiers for CJS/ESM interop.
-  // Node.js handles this automatically when resolving bare specifiers.
-  if (isNode && isReactSpecifier(specifier)) {
-    return true;
-  }
+  // React imports are handled by resolveReactForRuntime - don't keep as bare specifiers.
+  // On Node.js, esm.sh URLs will be cached to disk by cacheHttpImportsToLocal.
 
   if (specifier.startsWith("veryfront/")) return true;
 
@@ -45,13 +42,6 @@ function shouldKeepBareSpecifier(specifier: string): boolean {
 }
 
 function resolveReactForRuntime(specifier: string, version?: string): string | null {
-  // For Node.js: Keep React as bare specifiers (e.g., "react/jsx-runtime").
-  // Node.js handles CJS/ESM interop automatically when resolving bare specifiers.
-  // Using file:// URLs or esm.sh URLs doesn't work for React's CJS modules.
-  if (isNode && isReactSpecifier(specifier)) {
-    return null; // Keep as bare specifier
-  }
-
   // For Bun: Use local React paths from veryfront's node_modules.
   // Bun handles CJS/ESM interop correctly with file:// URLs.
   if (!isDeno && !isNode) {
@@ -61,7 +51,9 @@ function resolveReactForRuntime(specifier: string, version?: string): string | n
     // If not found in local paths, fall through to esm.sh for subpath imports
   }
 
-  // For Deno or subpath imports not in local paths, use esm.sh URLs
+  // For Deno: Use esm.sh URLs (Deno supports HTTP imports natively).
+  // For Node.js: Use esm.sh URLs which will be cached to disk by cacheHttpImportsToLocal.
+  // The cached bundles are ESM-compatible and can be imported via file:// URLs.
   const v = version ?? getReactVersion();
   const reactMap = getReactImportMap(v);
 

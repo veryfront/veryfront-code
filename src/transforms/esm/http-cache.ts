@@ -164,8 +164,12 @@ function resolveBareSpecifier(
 async function cacheHttpModule(url: string, options: CacheOptions): Promise<string | null> {
   const normalizedUrl = normalizeHttpUrl(url);
 
-  if (isReactCoreUrl(normalizedUrl)) {
-    logger.debug("[HTTP-CACHE] Skipping React core module (prevents multiple instances)", {
+  // For Deno: Skip React core modules (prevents multiple instances).
+  // All packages use external=react and import from the same esm.sh URL.
+  // For Node.js: Must cache React to disk because Node.js can't import HTTP URLs.
+  // The cached esm.sh bundles are ESM-compatible and work with dynamic import().
+  if (isDeno && isReactCoreUrl(normalizedUrl)) {
+    logger.debug("[HTTP-CACHE] Skipping React core module for Deno (prevents multiple instances)", {
       url: normalizedUrl,
     });
     return null;
@@ -339,9 +343,9 @@ async function resolveSpecifier(
 
     const resolved = new URL(specifier, baseUrl).toString();
 
-    // For React core URLs: return the full esm.sh URL (not cached, to prevent multiple instances)
-    // This transforms relative paths like "/react-dom?..." to "https://esm.sh/react-dom?..."
-    if (isReactCoreUrl(resolved)) {
+    // For Deno: Return the full esm.sh URL for React core (not cached, to prevent multiple instances).
+    // For Node.js: Cache React like other modules (Node.js can't import HTTP URLs).
+    if (isDeno && isReactCoreUrl(resolved)) {
       return normalizeHttpUrl(resolved);
     }
 
