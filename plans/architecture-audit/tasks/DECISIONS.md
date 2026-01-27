@@ -212,7 +212,7 @@ interface UnifiedFSAdapter {
 
 ## D009: React Version Strategy
 
-**Status: OPEN**
+**Status: DECIDED**
 **Blocks: Task 008**
 
 ### Question
@@ -224,9 +224,19 @@ How do we handle different React versions across projects?
 | **A: Version from package.json** | Explicit | Requires parsing |
 | **B: Version from import map** | Already have | May not specify version |
 | **C: Detect from esm.sh URL** | Automatic | Fragile |
+| **D: Version from veryfront.config** | Explicit, single source of truth | New config field |
 
 ### Decision
-- [ ] Option chosen: ___
+- [x] **Option D: `veryfront.config.react.version`**
+
+```typescript
+// veryfront.config.ts
+export default {
+  react: {
+    version: "18.3.1"
+  }
+}
+```
 
 ---
 
