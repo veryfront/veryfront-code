@@ -2,6 +2,12 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import { join } from "#veryfront/platform/compat/path/index.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { getReactUrls } from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  REACT_VERSION_17,
+  REACT_VERSION_18_2,
+  REACT_VERSION_19_RC,
+} from "#veryfront/utils/constants/cdn.ts";
 
 export type ReactVersion = "17" | "18" | "19";
 
@@ -20,38 +26,18 @@ export interface ReactVersionSwitcher {
 export const REACT_CONFIGS: Record<ReactVersion, ReactVersionConfig> = {
   "17": {
     version: "17",
-    exact: "17.0.2",
-    imports: {
-      react: "https://esm.sh/react@17.0.2",
-      "react-dom": "https://esm.sh/react-dom@17.0.2",
-      "react-dom/server": "https://esm.sh/react-dom@17.0.2/server",
-      "react/jsx-runtime": "https://esm.sh/react@17.0.2/jsx-runtime",
-      "react/jsx-dev-runtime": "https://esm.sh/react@17.0.2/jsx-dev-runtime",
-    },
+    exact: REACT_VERSION_17,
+    imports: getReactUrls(REACT_VERSION_17),
   },
   "18": {
     version: "18",
-    exact: "18.2.0",
-    imports: {
-      react: "https://esm.sh/react@18.2.0",
-      "react-dom": "https://esm.sh/react-dom@18.2.0",
-      "react-dom/server": "https://esm.sh/react-dom@18.2.0/server",
-      "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
-      "react/jsx-runtime": "https://esm.sh/react@18.2.0/jsx-runtime",
-      "react/jsx-dev-runtime": "https://esm.sh/react@18.2.0/jsx-dev-runtime",
-    },
+    exact: REACT_VERSION_18_2,
+    imports: getReactUrls(REACT_VERSION_18_2),
   },
   "19": {
     version: "19",
-    exact: "19.0.0-rc.0",
-    imports: {
-      react: "https://esm.sh/react@19.0.0-rc.0",
-      "react-dom": "https://esm.sh/react-dom@19.0.0-rc.0",
-      "react-dom/server": "https://esm.sh/react-dom@19.0.0-rc.0/server",
-      "react-dom/client": "https://esm.sh/react-dom@19.0.0-rc.0/client",
-      "react/jsx-runtime": "https://esm.sh/react@19.0.0-rc.0/jsx-runtime",
-      "react/jsx-dev-runtime": "https://esm.sh/react@19.0.0-rc.0/jsx-dev-runtime",
-    },
+    exact: REACT_VERSION_19_RC,
+    imports: getReactUrls(REACT_VERSION_19_RC),
   },
 };
 

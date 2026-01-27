@@ -8,6 +8,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getProjectReact, renderToStringAdapter } from "#veryfront/react";
 import { loadComponentFromSource } from "#veryfront/modules/react-loader/index.ts";
 import { CompilationError } from "#veryfront/errors/index.ts";
+import { DEFAULT_REACT_VERSION, getReactUrls } from "#veryfront/transforms/esm/package-registry.ts";
 
 type ReactComponentLike = import("react").ComponentType<{ children?: import("react").ReactNode }>;
 
@@ -44,8 +45,9 @@ export async function renderAppRouteToHTML(args: {
   routePath: string;
   pageFile: string;
   contentSourceId: string;
+  reactVersion?: string;
 }): Promise<string> {
-  const { adapter, projectDir, routePath, pageFile, contentSourceId } = args;
+  const { adapter, projectDir, routePath, pageFile, contentSourceId, reactVersion } = args;
 
   const appRoot = join(projectDir, "app");
   const layouts: string[] = [];
@@ -101,15 +103,7 @@ export async function renderAppRouteToHTML(args: {
 
   <!-- Import map for React dependencies -->
   <script type="importmap">
-  {
-    "imports": {
-      "react": "https://esm.sh/react@18.3.1",
-      "react-dom": "https://esm.sh/react-dom@18.3.1",
-      "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
-      "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
-      "react/jsx-dev-runtime": "https://esm.sh/react@18.3.1/jsx-dev-runtime"
-    }
-  }
+  ${JSON.stringify({ imports: getReactUrls(reactVersion ?? DEFAULT_REACT_VERSION) }, null, 4)}
   </script>
 
   <!-- Basic styles -->

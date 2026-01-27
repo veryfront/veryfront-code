@@ -24,7 +24,7 @@ export const resolveBarePlugin: TransformPlugin = {
       return rewriteVendorImports(ctx.code, ctx.moduleServerUrl, ctx.vendorBundleHash);
     }
 
-    return rewriteBareImports(ctx.code, ctx.moduleServerUrl);
+    return rewriteBareImports(ctx.code, ctx.moduleServerUrl, ctx.reactVersion);
   },
 };
 
