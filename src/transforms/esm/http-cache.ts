@@ -232,11 +232,23 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
       // URLs contain invalid characters like @, ?, =, &, etc.
       const cachedCode = await distributed.get(`url:${hash}`);
       if (cachedCode) {
-        logger.debug("[HTTP-CACHE] Distributed cache hit", { url: normalizedUrl, hash });
-        await fs.mkdir(cacheDir, { recursive: true });
-        await fs.writeTextFile(cachePath, cachedCode);
-        cachedPaths.set(cacheKey, cachePath);
-        return cachePath;
+        // Validate that the cached content is valid JavaScript, not compressed/gzipped.
+        // esm.sh sometimes stores gzip-encoded bundles with "gz:" prefix that need
+        // special decoding. If we see such content in the cache, skip and re-fetch.
+        if (cachedCode.startsWith("gz:") || cachedCode.startsWith("gzip:")) {
+          logger.warn("[HTTP-CACHE] Cached code is gzip-encoded, skipping and will re-fetch", {
+            url: normalizedUrl,
+            hash,
+            preview: cachedCode.substring(0, 50),
+          });
+          // Fall through to network fetch
+        } else {
+          logger.debug("[HTTP-CACHE] Distributed cache hit", { url: normalizedUrl, hash });
+          await fs.mkdir(cacheDir, { recursive: true });
+          await fs.writeTextFile(cachePath, cachedCode);
+          cachedPaths.set(cacheKey, cachePath);
+          return cachePath;
+        }
       }
     } catch (error) {
       logger.debug("[HTTP-CACHE] Distributed cache get failed", { url: normalizedUrl, error });
@@ -628,6 +640,20 @@ export async function ensureHttpBundlesExist(
                 if (!seen.has(ref.hash)) pending.push(ref);
               }
             } catch { /* ignore read errors for dep scanning */ }
+          }
+          return;
+        }
+
+        // Validate that the cached content is valid JavaScript, not compressed/gzipped.
+        // esm.sh sometimes stores gzip-encoded bundles with "gz:" prefix. Skip and fallback.
+        if (code.startsWith("gz:") || code.startsWith("gzip:")) {
+          logger.warn("[HTTP-CACHE] Batch-fetched code is gzip-encoded, trying single recovery", {
+            hash,
+            preview: code.substring(0, 50),
+          });
+          const recovered = await recoverHttpBundleByHash(hash, absoluteCacheDir);
+          if (!recovered) {
+            failed.add(hash);
           }
           return;
         }
