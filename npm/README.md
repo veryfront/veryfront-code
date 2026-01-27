@@ -1,6 +1,6 @@
 # Veryfront Code
 
-The simplest way to build AI-powered apps.
+The simplest way to build AI-powered apps. One command. Zero config. Just build.
 
 ```bash
 npx veryfront
@@ -19,7 +19,3 @@ npx veryfront
 │                                                          │
 ╰──────────────────────────────────────────────────────────╯
 ```
-
-One command. Zero config. Just build.
-
-[Docs](https://veryfront.com/docs/framework) · [Discord](https://discord.gg/veryfront) · [X](https://x.com/veryfrontdev) · MIT
