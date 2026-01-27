@@ -121,7 +121,7 @@ await build({
 	package: {
 		name: "veryfront",
 		version,
-		description: "Zero-config React meta-framework for building agentic AI applications",
+		description: "The simplest way to build AI-powered apps",
 		license: "MIT",
 		author: "Veryfront",
 		repository: {
