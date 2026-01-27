@@ -306,7 +306,7 @@ export function onGlobalError(
  * Unreference a timer to prevent it from keeping the process alive
  */
 export function unrefTimer(timerId: ReturnType<typeof setInterval>): void {
-  if (IS_DENO) {
+  if (IS_DENO && typeof Deno.unrefTimer === "function") {
     Deno.unrefTimer(timerId as number);
     return;
   }
