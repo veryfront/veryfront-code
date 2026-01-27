@@ -7,6 +7,7 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #657 | 4:49 PM | 🔴 | PRD v3.0 - Simplified Architecture with HTTP Pull Model | ~785 |
 | #636 | 4:40 PM | 🔴 | PRD Terminology Fix - veryfront Command | ~252 |
 | #632 | 4:35 PM | 🔴 | PRD v2.0 Finalized - Standalone MCP Subcommand Architecture | ~869 |
 </claude-mem-context>
