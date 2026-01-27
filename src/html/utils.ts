@@ -97,8 +97,8 @@ interface CdnUrlTemplates {
 const CDN_URL_TEMPLATES: Record<CdnProvider, CdnUrlTemplates> = {
   "esm.sh": {
     react: (v) => `https://esm.sh/react@${v}?target=es2022`,
-    reactDom: (v) => `https://esm.sh/react-dom@${v}?target=es2022`,
-    reactDomClient: (v) => `https://esm.sh/react-dom@${v}/client?target=es2022`,
+    reactDom: (v) => `https://esm.sh/react-dom@${v}?external=react&target=es2022`,
+    reactDomClient: (v) => `https://esm.sh/react-dom@${v}/client?external=react&target=es2022`,
     jsxRuntime: (v) => `https://esm.sh/react@${v}/jsx-runtime?target=es2022`,
     jsxDevRuntime: (v) => `https://esm.sh/react@${v}/jsx-dev-runtime?target=es2022`,
     veryfrontAgentReact: (v) =>

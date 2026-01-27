@@ -51,9 +51,11 @@ function normalizeVersionedSpecifier(specifier: string): string {
 
 const REACT_IMPORT_MAP: Record<string, string> = {
   react: `https://esm.sh/react@${REACT_DEFAULT_VERSION}?target=es2022`,
-  "react-dom": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}?target=es2022`,
-  "react-dom/client": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/client?target=es2022`,
-  "react-dom/server": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/server?target=es2022`,
+  "react-dom": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}?external=react&target=es2022`,
+  "react-dom/client":
+    `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/client?external=react&target=es2022`,
+  "react-dom/server":
+    `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/server?external=react&target=es2022`,
   "react/jsx-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-runtime?target=es2022`,
   "react/jsx-dev-runtime":
     `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-dev-runtime?target=es2022`,
