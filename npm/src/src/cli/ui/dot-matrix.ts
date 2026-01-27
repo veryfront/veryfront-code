@@ -76,6 +76,14 @@ const COMPACT_OPTIONS: Partial<DotMatrixOptions> = {
 
 const RESET = "\x1b[0m";
 
+// Colors for spinning animation - shades of orange
+const SPIN_COLORS = {
+  bright: "\x1b[38;2;255;165;120m", // Bright orange (leading edge, toned down)
+  orange: "\x1b[38;2;252;143;93m", // Brand orange
+  mid: "\x1b[38;2;200;110;70m", // Mid orange (trailing)
+  dim: "\x1b[38;2;140;80;50m", // Dim orange/brown
+};
+
 function resolveOptions(options: DotMatrixOptions): Required<DotMatrixOptions> {
   if (options.compact) return { ...DEFAULT_OPTIONS, ...COMPACT_OPTIONS, ...options };
   return { ...DEFAULT_OPTIONS, ...options };
@@ -92,12 +100,65 @@ function renderPattern(pattern: number[][], opts: Required<DotMatrixOptions>): s
   });
 }
 
+/**
+ * Render the pattern with a spinning blade effect
+ * The blade sweeps across the lit dots, creating orange → purple gradient
+ */
+function renderSpinningPattern(
+  pattern: number[][],
+  frame: number,
+  opts: Required<DotMatrixOptions>,
+): string[] {
+  const centerRow = 3;
+  const centerCol = 3;
+  const totalFrames = 16; // Full rotation in 16 frames
+  const bladeAngle = ((frame % totalFrames) / totalFrames) * Math.PI * 2;
+
+  return pattern.map((row, rowIdx) => {
+    const dots = row.map((dot, colIdx) => {
+      if (dot !== 1) {
+        return `${opts.offColor}${opts.offChar}${RESET}`;
+      }
+
+      // Calculate angle from center to this dot
+      const dy = rowIdx - centerRow;
+      const dx = colIdx - centerCol;
+      let dotAngle = Math.atan2(dy, dx);
+      if (dotAngle < 0) dotAngle += Math.PI * 2;
+
+      // Calculate angular distance from the blade
+      let angleDiff = dotAngle - bladeAngle;
+      if (angleDiff < 0) angleDiff += Math.PI * 2;
+      if (angleDiff > Math.PI) angleDiff = Math.PI * 2 - angleDiff;
+
+      // Color based on angular distance from blade
+      const normalizedDiff = angleDiff / Math.PI; // 0 = at blade, 1 = opposite
+      let color: string;
+      if (normalizedDiff < 0.15) {
+        color = SPIN_COLORS.bright; // Leading edge - brightest orange
+      } else if (normalizedDiff < 0.35) {
+        color = SPIN_COLORS.orange; // Near blade - brand orange
+      } else if (normalizedDiff < 0.6) {
+        color = SPIN_COLORS.mid; // Trailing - mid orange
+      } else {
+        color = SPIN_COLORS.dim; // Far from blade - dim orange
+      }
+
+      return `${color}${opts.litChar}${RESET}`;
+    });
+    return opts.prefix + dots.join(opts.spacing);
+  });
+}
+
 function renderPatternWithText(
   pattern: number[][],
   textLines: string[],
   opts: Required<DotMatrixOptions>,
+  spinFrame?: number,
 ): string {
-  const faceLines = renderPattern(pattern, opts);
+  const faceLines = spinFrame !== undefined
+    ? renderSpinningPattern(pattern, spinFrame, opts)
+    : renderPattern(pattern, opts);
 
   const faceHeight = faceLines.length;
   const startLine = Math.floor((faceHeight - textLines.length) / 2);
@@ -162,6 +223,21 @@ export function getAgentFaceWithText(
   options: DotMatrixOptions = {},
 ): string {
   return renderPatternWithText(AGENT_FACE, textLines, resolveOptions(options));
+}
+
+/**
+ * Get the agent face with spinning blade animation
+ * Orange and purple dots rotate around the logo
+ * @param textLines Text to show next to the face
+ * @param frame Animation frame (0-15 for full rotation)
+ * @param options Dot matrix options
+ */
+export function getSpinningAgentFace(
+  textLines: string[],
+  frame: number,
+  options: DotMatrixOptions = {},
+): string {
+  return renderPatternWithText(AGENT_FACE, textLines, resolveOptions(options), frame);
 }
 
 /**

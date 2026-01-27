@@ -49,6 +49,7 @@ export function createInitialState() {
         logScroll: 0,
         authProviderIndex: 0,
         newProjectIndex: 0,
+        showHelp: false,
     };
 }
 export function setProjects(projects) {
@@ -191,6 +192,9 @@ export function toggleLogsExpanded() {
         logsExpanded: !state.logsExpanded,
         logScroll: 0,
     });
+}
+export function toggleHelp() {
+    return (state) => ({ ...state, showHelp: !state.showHelp });
 }
 export function scrollLogs(direction) {
     return (state) => {

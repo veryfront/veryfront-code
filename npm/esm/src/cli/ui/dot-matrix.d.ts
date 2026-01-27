@@ -49,6 +49,14 @@ export declare function getAgentFace(options?: DotMatrixOptions): string;
  */
 export declare function getAgentFaceWithText(textLines: string[], options?: DotMatrixOptions): string;
 /**
+ * Get the agent face with spinning blade animation
+ * Orange and purple dots rotate around the logo
+ * @param textLines Text to show next to the face
+ * @param frame Animation frame (0-15 for full rotation)
+ * @param options Dot matrix options
+ */
+export declare function getSpinningAgentFace(textLines: string[], frame: number, options?: DotMatrixOptions): string;
+/**
  * Animated dot matrix display with spinner support
  */
 export declare class AnimatedDotMatrix {

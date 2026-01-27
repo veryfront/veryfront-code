@@ -170,47 +170,62 @@ export async function routeCommand(args) {
                 break;
             case "preview":
             case "serve": {
-                showLogo();
-                const { runtime } = await import("../../platform/adapters/detect.js");
-                const adapter = await runtime.get();
-                const { startUniversalServer } = await import("../../server/production-server.js");
-                const projectDir = cwd();
+                const mode = (args.mode || args.m || "renderer");
                 const port = args.port ?? DEFAULT_DEV_SERVER_PORT;
                 const bindAddress = String(args.hostname || args.host || "0.0.0.0");
-                const debug = Boolean(args.debug);
-                const shutdownController = new AbortController();
-                const server = await startUniversalServer({
-                    projectDir,
-                    port,
-                    bindAddress,
-                    debug,
-                    adapter,
-                    signal: shutdownController.signal,
-                });
-                await server.ready;
-                let shuttingDown = false;
-                const shutdown = async (signal) => {
-                    if (shuttingDown)
-                        return;
-                    shuttingDown = true;
-                    cliLogger.info(`Received ${signal}, shutting down production server...`);
-                    try {
-                        shutdownController.abort();
-                        await server.stop();
-                    }
-                    catch (error) {
-                        cliLogger.warn("Error while shutting down production server:", error);
-                    }
-                    finally {
-                        exitProcess(0);
-                    }
-                };
-                registerTerminationSignals((signal) => {
-                    void shutdown(signal);
-                });
-                await new Promise(() => {
-                    /* never resolve */
-                });
+                if (mode === "proxy") {
+                    // Proxy-only mode: run OAuth token proxy
+                    showLogo();
+                    cliLogger.info(`Starting proxy server on ${bindAddress}:${port}`);
+                    // Set environment variables for proxy
+                    const { setEnv } = await import("../../platform/compat/process.js");
+                    setEnv("PORT", String(port));
+                    setEnv("HOST", bindAddress);
+                    // Import and run proxy main
+                    await import("../../../proxy/main.js");
+                }
+                else if (mode === "renderer" || mode === "combined") {
+                    // Renderer mode: run SSR production server
+                    showLogo();
+                    const { runtime } = await import("../../platform/adapters/detect.js");
+                    const adapter = await runtime.get();
+                    const { startUniversalServer } = await import("../../server/production-server.js");
+                    const projectDir = cwd();
+                    const debug = Boolean(args.debug);
+                    const shutdownController = new AbortController();
+                    const server = await startUniversalServer({
+                        projectDir,
+                        port,
+                        bindAddress,
+                        debug,
+                        adapter,
+                        signal: shutdownController.signal,
+                    });
+                    await server.ready;
+                    let shuttingDown = false;
+                    const shutdown = async (signal) => {
+                        if (shuttingDown)
+                            return;
+                        shuttingDown = true;
+                        cliLogger.info(`Received ${signal}, shutting down production server...`);
+                        try {
+                            shutdownController.abort();
+                            await server.stop();
+                        }
+                        catch (error) {
+                            cliLogger.warn("Error while shutting down production server:", error);
+                        }
+                        finally {
+                            exitProcess(0);
+                        }
+                    };
+                    registerTerminationSignals((signal) => {
+                        void shutdown(signal);
+                    });
+                    await new Promise(() => {
+                        /* never resolve */
+                    });
+                }
                 break;
             }
             case "doctor":

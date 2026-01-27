@@ -16,6 +16,7 @@ export interface BuildCommandArgs {
 export interface GenerateCommandArgs {
     _: (string | number)[];
 }
+export type ServerMode = "combined" | "proxy" | "renderer";
 export interface ParsedArgs {
     _: (string | number)[];
     port?: number;
@@ -39,6 +40,9 @@ export interface ParsedArgs {
     j?: boolean;
     with?: string[];
     w?: string[];
+    /** Server mode: combined (default), proxy, or renderer */
+    mode?: ServerMode;
+    m?: ServerMode;
     [key: string]: unknown;
 }
 //# sourceMappingURL=types.d.ts.map

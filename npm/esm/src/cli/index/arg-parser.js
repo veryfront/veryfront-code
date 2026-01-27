@@ -75,6 +75,7 @@ export function parseCliArgs(args) {
             t: "template",
             j: "json",
             w: "with",
+            m: "mode",
         },
         default: { port: DEFAULT_PORT },
     });

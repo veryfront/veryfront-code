@@ -35,7 +35,7 @@ export interface App {
  */
 export declare function createApp(config: AppConfig): App;
 /**
- * Show startup animation
+ * Show startup animation with boxed view and shimmer effect
  */
 export declare function showStartup(steps: string[]): Promise<void>;
 export type { AppState } from "./state.js";

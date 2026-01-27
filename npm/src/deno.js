@@ -1,6 +1,6 @@
 export default {
   "name": "veryfront",
-  "version": "0.0.83",
+  "version": "0.0.88",
   "nodeModulesDir": "auto",
   "exclude": [
     "npm/",

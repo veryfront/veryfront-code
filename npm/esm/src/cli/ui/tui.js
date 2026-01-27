@@ -106,7 +106,7 @@ function stopSpinner() {
     spinnerInterval = null;
 }
 export function createTui(cfg = {}) {
-    config = { title: "Veryfront", showLogs: true, ...cfg };
+    config = { title: "Veryfront Code", showLogs: true, ...cfg };
     state = {
         status: "Initializing...",
         statusType: "loading",

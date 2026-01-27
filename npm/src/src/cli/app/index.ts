@@ -19,9 +19,16 @@ import { join } from "../../platform/compat/path/index.js";
 import { getRuntimeEnv } from "../../config/runtime-env.js";
 import { getStdinReader, setRawMode } from "../../platform/compat/stdin.js";
 import { cursor, screen, SPINNER_FRAMES } from "../ui/ansi.js";
-import { brand, dim, success } from "../ui/colors.js";
+import { brand, dim } from "../ui/colors.js";
+import { getTerminalWidth } from "../ui/layout.js";
 import { moveDown, moveUp, selectByNumber } from "./components/list-select.js";
 import { renderDashboard, renderEmptyState } from "./views/dashboard.js";
+import {
+  createStartupState,
+  incrementFrame,
+  renderStartup,
+  setStepActive,
+} from "./views/startup.js";
 import { openInBrowser, openInIDE, openInStudio, openMCPSettings } from "./actions.js";
 import { initCommand } from "../commands/init/init-command.js";
 import type { InitTemplate } from "../commands/init/types.js";
@@ -42,6 +49,7 @@ import {
   setTemplates,
   startInput,
   type StateUpdater,
+  toggleHelp,
   toggleLogsExpanded,
   updateActiveList,
   updateInputValue,
@@ -545,10 +553,13 @@ export function createApp(config: AppConfig): App {
 
     const parts: string[] = [content];
 
+    // Divider width matches the box in dashboard
+    const dividerWidth = Math.min(getTerminalWidth() - 4, 80);
+
     if (state.logs.length > 0) {
       const logsHeader = state.logsExpanded ? "▼ Logs" : "▶ Logs";
       parts.push("");
-      parts.push(`  ${dim("─".repeat(60))}`);
+      parts.push(dim("─".repeat(dividerWidth)));
       parts.push(
         `  ${dim(logsHeader)} ${dim(`(${state.logs.length})`)}  ${dim("l")} ${dim("toggle")}  ${
           state.logsExpanded ? `${dim("↑↓")} ${dim("scroll")}` : ""
@@ -563,14 +574,14 @@ export function createApp(config: AppConfig): App {
 
     if (state.input.active) {
       parts.push("");
-      parts.push(`  ${dim("─".repeat(60))}`);
+      parts.push(dim("─".repeat(dividerWidth)));
       parts.push(renderInput(state.input));
     }
 
     if (!isInteractiveMode) return;
 
     write(cursor.moveTo(1, 1) + screen.clearDown);
-    write(parts.join("\n"));
+    write("\n" + parts.join("\n"));
   }
 
   function update(updater: StateUpdater): void {
@@ -933,7 +944,7 @@ export function createApp(config: AppConfig): App {
     }
 
     if (key === "?") {
-      update(navigateTo("help"));
+      update(toggleHelp());
       return;
     }
 
@@ -1422,47 +1433,35 @@ export function createApp(config: AppConfig): App {
 }
 
 /**
- * Show startup animation
+ * Show startup animation with boxed view and shimmer effect
  */
 export async function showStartup(steps: string[]): Promise<void> {
   const write = (text: string): void => writeStdout(text);
 
   write(screen.altOn + cursor.hide);
 
+  let startupState = createStartupState(steps);
+
+  // Show each step with spinning avatar animation
   for (let i = 0; i < steps.length; i++) {
-    const step = steps[i]!;
-    const completed = steps.slice(0, i).map((s) => `  ${success("✓")} ${dim(s)}`);
-    const current = `  ${brand("●")} ${step}`;
-    const pending = steps.slice(i + 1).map((s) => `  ${dim("○")} ${dim(s)}`);
+    startupState = setStepActive(startupState, i);
 
-    const content = [
-      "",
-      `  ${brand("Veryfront")} ${dim("starting...")}`,
-      "",
-      ...completed,
-      current,
-      ...pending,
-      "",
-    ].join("\n");
-
-    write(cursor.moveTo(1, 1) + screen.clearDown + content);
-    await new Promise((r) => dntShim.setTimeout(r, 200));
+    // Animate spinning avatar (16 frames at 60ms = ~1s per step for full rotation)
+    const framesPerStep = 16;
+    for (let f = 0; f < framesPerStep; f++) {
+      write(cursor.moveTo(1, 1) + screen.clearDown + "\n" + renderStartup(startupState));
+      startupState = incrementFrame(startupState);
+      await new Promise((r) => dntShim.setTimeout(r, 60));
+    }
   }
 
-  const allComplete = steps.map((s) => `  ${success("✓")} ${dim(s)}`);
-  const finalContent = [
-    "",
-    `  ${brand("Veryfront")} ${success("ready")}`,
-    "",
-    ...allComplete,
-    "",
-  ].join("\n");
-
-  write(cursor.moveTo(1, 1) + screen.clearDown + finalContent);
-  await new Promise((r) => dntShim.setTimeout(r, 300));
+  // Mark all steps done - logo fills up and holds before transitioning
+  startupState = setStepActive(startupState, steps.length);
+  write(cursor.moveTo(1, 1) + screen.clearDown + "\n" + renderStartup(startupState));
+  await new Promise((r) => dntShim.setTimeout(r, 400));
 
   // Don't exit alternate screen - let app.start() continue in it
-  // This prevents a flash when transitioning to the dashboard
+  // Dashboard takes over directly from here
 }
 
 export type { AppState } from "./state.js";

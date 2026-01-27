@@ -103,6 +103,8 @@ export interface AppState {
   authProviderIndex: number;
   /** New project option index (0=template, 1=example, 2=scratch) */
   newProjectIndex: number;
+  /** Show expanded help */
+  showHelp: boolean;
 }
 
 export function createInitialState(): AppState {
@@ -153,6 +155,7 @@ export function createInitialState(): AppState {
     logScroll: 0,
     authProviderIndex: 0,
     newProjectIndex: 0,
+    showHelp: false,
   };
 }
 
@@ -337,6 +340,10 @@ export function toggleLogsExpanded(): StateUpdater {
     logsExpanded: !state.logsExpanded,
     logScroll: 0,
   });
+}
+
+export function toggleHelp(): StateUpdater {
+  return (state) => ({ ...state, showHelp: !state.showHelp });
 }
 
 export function scrollLogs(direction: "up" | "down"): StateUpdater {

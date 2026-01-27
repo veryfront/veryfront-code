@@ -149,7 +149,7 @@ export function createTui(cfg: TuiConfig = {}): {
   cleanup: () => void;
   render: () => void;
 } {
-  config = { title: "Veryfront", showLogs: true, ...cfg };
+  config = { title: "Veryfront Code", showLogs: true, ...cfg };
   state = {
     status: "Initializing...",
     statusType: "loading",

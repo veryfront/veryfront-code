@@ -84,6 +84,8 @@ export interface AppState {
     authProviderIndex: number;
     /** New project option index (0=template, 1=example, 2=scratch) */
     newProjectIndex: number;
+    /** Show expanded help */
+    showHelp: boolean;
 }
 export declare function createInitialState(): AppState;
 export type StateUpdater = (state: AppState) => AppState;
@@ -117,6 +119,7 @@ export declare function endInput(): StateUpdater;
 export declare function addLog(level: LogEntry["level"], message: string, meta?: LogMeta): StateUpdater;
 export declare function clearLogs(): StateUpdater;
 export declare function toggleLogsExpanded(): StateUpdater;
+export declare function toggleHelp(): StateUpdater;
 export declare function scrollLogs(direction: "up" | "down"): StateUpdater;
 export declare function getActiveSelection(state: AppState): ListItem<ProjectInfo> | undefined;
 //# sourceMappingURL=state.d.ts.map

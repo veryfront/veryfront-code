@@ -157,8 +157,8 @@ export function devCommand(options) {
             const serverUrl = `http://veryfront.me:${finalPort}`;
             console.log();
             console.log(banner({
-                title: "Veryfront",
-                subtitle: "is now running",
+                title: "Veryfront Code",
+                subtitle: "is running",
                 info: {
                     url: serverUrl,
                     ...(projectSlug ? { project: projectSlug } : {}),

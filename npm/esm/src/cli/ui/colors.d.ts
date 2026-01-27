@@ -20,4 +20,12 @@ export declare const successBold: (text: string) => string;
 export declare const errorBold: (text: string) => string;
 export { RESET as reset };
 export declare function animatedMatrix(frame: number): string;
+/**
+ * Apply shimmer effect to text - creates a wave of brightness moving across
+ * @param text The text to shimmer
+ * @param frame Current animation frame (increments over time)
+ * @param waveWidth Width of the bright wave (default: 3 characters)
+ * @returns Text with shimmer effect applied
+ */
+export declare function shimmer(text: string, frame: number, waveWidth?: number): string;
 //# sourceMappingURL=colors.d.ts.map

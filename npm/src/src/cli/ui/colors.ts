@@ -157,3 +157,40 @@ export function animatedMatrix(frame: number): string {
   const state = MATRIX_STATES[frame % MATRIX_STATES.length] ?? ["●", "○", "○"];
   return state.map((dot) => (dot === "●" ? brand(dot) : muted(dot))).join("");
 }
+
+/**
+ * Apply shimmer effect to text - creates a wave of brightness moving across
+ * @param text The text to shimmer
+ * @param frame Current animation frame (increments over time)
+ * @param waveWidth Width of the bright wave (default: 3 characters)
+ * @returns Text with shimmer effect applied
+ */
+export function shimmer(text: string, frame: number, waveWidth = 3): string {
+  // Brand orange gradient: bright → normal → dim
+  const bright = (char: string) => applyColor(char, 255, 180, 140, false); // Brighter orange
+  const normal = (char: string) => applyColor(char, 252, 143, 93, false); // Brand orange
+  const dimmed = (char: string) => applyColor(char, 180, 100, 65, false); // Dimmer orange
+
+  const len = text.length;
+  const wavePos = frame % (len + waveWidth * 2);
+
+  let result = "";
+  for (let i = 0; i < len; i++) {
+    const char = text[i]!;
+    const distFromWave = i - (wavePos - waveWidth);
+
+    if (distFromWave >= 0 && distFromWave < waveWidth) {
+      // In the bright wave
+      const intensity = 1 - Math.abs(distFromWave - waveWidth / 2) / (waveWidth / 2);
+      if (intensity > 0.6) {
+        result += bright(char);
+      } else {
+        result += normal(char);
+      }
+    } else {
+      result += dimmed(char);
+    }
+  }
+
+  return result;
+}

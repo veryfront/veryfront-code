@@ -123,9 +123,9 @@ export function renderList(state, options = {}) {
         }
     }
     if (start > 0)
-        lines.unshift(`  ${dim("↑ more above")}`);
+        lines.unshift(`   ${dim("↑")}  ${dim("more above")}`);
     if (end < state.items.length)
-        lines.push(`  ${dim("↓ more below")}`);
+        lines.push(`   ${dim("↓")}  ${dim("more below")}`);
     return lines.join("\n");
 }
 /**

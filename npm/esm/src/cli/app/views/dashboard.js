@@ -4,7 +4,7 @@
  * Main view showing server status, projects, and quick actions.
  */
 import { box } from "../../ui/box.js";
-import { brand, dim, error, muted, success } from "../../ui/colors.js";
+import { brand, dim, error, muted } from "../../ui/colors.js";
 import { getTerminalWidth } from "../../ui/layout.js";
 import { getAgentFaceWithText } from "../../ui/dot-matrix.js";
 import { renderList } from "../components/list-select.js";
@@ -21,7 +21,7 @@ export function renderDashboard(state) {
     const hasRemoteProjects = state.remote.user && state.remote.projects.length > 0;
     if (hasProjects) {
         const isActive = state.activeList === "projects";
-        lines.push(renderSection("Local Projects", state.projects.items.length, isActive));
+        lines.push(renderSection("Local", state.projects.items.length, isActive));
         lines.push(renderList(state.projects, {
             maxWidth: maxListWidth,
             visibleCount: 5,
@@ -36,9 +36,9 @@ export function renderDashboard(state) {
         const start = state.remote.scrollOffset;
         const end = Math.min(start + visibleCount, state.remote.projects.length);
         const visibleProjects = state.remote.projects.slice(start, end);
-        lines.push(renderSection("Remote Projects", state.remote.projects.length, isRemoteActive));
+        lines.push(renderSection("Remote", state.remote.projects.length, isRemoteActive));
         if (start > 0) {
-            lines.push(`  ${dim("↑ more above")}`);
+            lines.push(`   ${dim("↑")}  ${dim("more above")}`);
         }
         visibleProjects.forEach((p, i) => {
             const actualIndex = start + i;
@@ -54,7 +54,7 @@ export function renderDashboard(state) {
             lines.push(`${cursor} ${num} ${label}`);
         });
         if (end < state.remote.projects.length) {
-            lines.push(`  ${dim("↓ more below")}`);
+            lines.push(`   ${dim("↓")}  ${dim("more below")}`);
         }
         lines.push("");
     }
@@ -72,24 +72,24 @@ export function renderDashboard(state) {
     return lines.join("\n");
 }
 /**
- * Render the banner with agent face and server info
+ * Render the banner with agent face and server info inside a box
  */
 function renderBanner(state) {
-    const serverDot = state.server.running ? success("●") : error("●");
-    const mcpDot = state.mcp.enabled ? success("●") : dim("○");
+    const termWidth = Math.min(getTerminalWidth() - 4, 80);
     const textLines = [];
-    textLines.push(`${serverDot} ${dim("Server running")}`);
-    textLines.push(`  ${brand(state.server.url)}`);
-    if (state.mcp.enabled) {
-        textLines.push(`${mcpDot} ${dim("MCP")}`);
-        if (state.mcp.transport === "http") {
-            const port = state.mcp.httpPort ?? 9999;
-            textLines.push(`  ${brand(`http://veryfront.me:${port}/mcp`)}`);
-        }
-        else {
-            textLines.push(`  ${dim("stdio")}`);
-        }
+    textLines.push("");
+    textLines.push(`${brand("Veryfront Code")} ${dim("is now running")}`);
+    textLines.push("");
+    // Server URL and MCP URL - always reserve both lines to prevent jumps
+    textLines.push(`${dim("Url")} ${brand(state.server.url)}`);
+    if (state.mcp.enabled && state.mcp.transport === "http") {
+        const port = state.mcp.httpPort ?? 9999;
+        textLines.push(`${dim("Mcp")} ${brand(`http://veryfront.me:${port}/mcp`)}`);
     }
+    else {
+        textLines.push("");
+    }
+    // Errors/warnings on separate line if any
     const { errors, warnings } = state.server;
     if (errors > 0 || warnings > 0) {
         const parts = [];
@@ -99,50 +99,49 @@ function renderBanner(state) {
             parts.push(muted(`${warnings} warnings`));
         textLines.push(parts.join("  "));
     }
-    return getAgentFaceWithText(textLines, {
+    // Pad to 7 text lines (matching avatar height) for consistent title position
+    while (textLines.length < 7) {
+        textLines.push("");
+    }
+    const content = getAgentFaceWithText(textLines, {
         litColor: "\x1b[38;2;252;143;93m", // Veryfront brand orange
+    });
+    return box(content, {
+        style: "rounded",
+        width: termWidth,
+        paddingX: 2,
+        paddingY: 1,
+        borderColor: "\x1b[2m", // Dim to match footer
     });
 }
 /**
  * Render a section header
  */
-function renderSection(title, count, isActive = true) {
+function renderSection(title, _count, isActive = true) {
     const indicator = isActive ? brand("›") : " ";
     const titleText = isActive ? title : dim(title);
-    return `  ${indicator} ${titleText} ${dim(`(${count})`)}`;
+    return `  ${indicator} ${titleText}`;
 }
 /**
  * Render the help bar at the bottom
  */
 function renderHelpBar(state) {
-    const parts = [];
-    const hasProjects = state.projects.items.length > 0;
-    const hasExamples = state.examples.items.length > 0;
-    const hasRemoteProjects = state.remote.user && state.remote.projects.length > 0;
-    // Count sections for tab switching
-    const sectionCount = [hasProjects, hasExamples, hasRemoteProjects].filter(Boolean).length;
-    if (sectionCount > 1) {
-        parts.push(dim("tab switch"));
+    // Minimal by default, ? reveals all
+    if (!state.showHelp) {
+        const userInfo = state.remote.user ? `  ${dim("-")}  ${brand(state.remote.user.email)}` : "";
+        return `  ${dim("↑↓ select  enter open  ? more  q quit")}${userInfo}`;
     }
-    parts.push(dim("↑↓ nav"));
-    if (hasProjects || hasExamples || hasRemoteProjects) {
-        parts.push(dim("o open"), dim("s studio"), dim("i ide"));
-    }
+    // Expanded help
+    const lines = [];
+    lines.push(`  ${dim("o")} open  ${dim("s")} studio  ${dim("i")} ide`);
     if (!state.remote.user) {
-        parts.push(dim("a login"));
+        lines.push(`  ${dim("n")} new  ${dim("a")} login`);
     }
     else {
-        // Show context-aware actions based on active list
-        if (state.activeList === "projects") {
-            parts.push(dim("p pull"), dim("u push"));
-        }
-        else if (state.activeList === "remoteProjects") {
-            parts.push(dim("p pull"));
-        }
-        parts.push(dim("n new"), dim("x logout"));
+        lines.push(`  ${dim("n")} new  ${dim("p")} pull  ${dim("u")} push  ${dim("x")} logout`);
     }
-    parts.push(dim("? help"), dim("q quit"));
-    return `  ${parts.join("  ")}`;
+    lines.push(`  ${dim("? hide  q quit")}`);
+    return lines.join("\n");
 }
 /**
  * Render a boxed dashboard (alternative style)
@@ -152,7 +151,7 @@ export function renderDashboardBoxed(state) {
     const content = renderDashboard(state);
     return box(content, {
         style: "rounded",
-        title: "Veryfront",
+        title: "Veryfront Code",
         titleColor: "\x1b[38;2;252;143;93m",
         width: termWidth,
         paddingX: 1,
@@ -163,16 +162,5 @@ export function renderDashboardBoxed(state) {
  * Render empty state when no projects found
  */
 export function renderEmptyState() {
-    return [
-        "",
-        `  ${dim("No projects found.")}`,
-        "",
-        `  ${dim("Get started:")}`,
-        `    ${brand("[n]")} Create a new project`,
-        `    ${brand("[t]")} Browse templates`,
-        "",
-        `  ${dim("Or run with a project directory:")}`,
-        `    ${muted("deno task start --project ./my-project")}`,
-        "",
-    ].join("\n");
+    return `\n  ${dim("No projects.")} ${brand("n")} ${dim("to create")}\n`;
 }

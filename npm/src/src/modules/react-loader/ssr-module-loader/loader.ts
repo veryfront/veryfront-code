@@ -143,24 +143,37 @@ export class SSRModuleLoader {
             const bundleMatch = errorMsg.match(/veryfront-http-bundle\/http-([a-f0-9]+)\.mjs/);
             if (bundleMatch) {
               const hash = bundleMatch[1]!;
-              logger.warn(
-                "[SSR-MODULE-LOADER] Import failed due to missing HTTP bundle, attempting recovery",
-                {
-                  file: filePath.slice(-40),
-                  hash,
-                },
-              );
+              const cacheDir = getHttpBundleCacheDir();
+
+              logger.error("[SSR-MODULE-LOADER] Missing HTTP bundle after ensureHttpBundlesExist", {
+                file: filePath.slice(-40),
+                hash,
+                tempPath: cacheEntry.tempPath,
+                contentHash: cacheEntry.contentHash,
+                cacheDir,
+                expectedPath: `${cacheDir}/http-${hash}.mjs`,
+              });
+
               const { recoverHttpBundleByHash } = await import(
                 "../../../transforms/esm/http-cache.js"
               );
-              const cacheDir = getHttpBundleCacheDir();
               const recovered = await recoverHttpBundleByHash(hash, cacheDir);
               if (recovered) {
-                logger.info("[SSR-MODULE-LOADER] HTTP bundle recovered, retrying import", { hash });
+                logger.info("[SSR-MODULE-LOADER] HTTP bundle recovered, retrying import", {
+                  hash,
+                  file: filePath.slice(-40),
+                });
                 mod = await import(
                   `file://${cacheEntry.tempPath}?v=${cacheEntry.contentHash}&retry=1`
                 ) as Record<string, unknown>;
               } else {
+                logger.error("[SSR-MODULE-LOADER] HTTP bundle recovery failed", {
+                  hash,
+                  file: filePath.slice(-40),
+                  cacheDir,
+                  hint:
+                    "Bundle may have expired from Redis (24h TTL) while transform was still cached",
+                });
                 throw importError;
               }
             } else {
@@ -444,13 +457,13 @@ export class SSRModuleLoader {
             const cacheDir = getHttpBundleCacheDir();
             const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
             if (failed.length > 0) {
-              logger.warn(
-                "[SSR-MODULE-LOADER] In-memory cached module has unrecoverable HTTP bundles, re-transforming",
-                {
-                  file: filePath.slice(-40),
-                  failed,
-                },
-              );
+              logger.warn("[SSR-MODULE-LOADER] Unrecoverable HTTP bundles, re-transforming", {
+                file: filePath.slice(-40),
+                failed,
+                totalBundles: bundlePaths.length,
+                cacheDir,
+                source: "memory-cache",
+              });
               globalModuleCache.delete(contentCacheKey);
               globalModuleCache.delete(filePathCacheKey);
               // Fall through to Redis or fresh transform
@@ -487,13 +500,13 @@ export class SSRModuleLoader {
           const cacheDir = getHttpBundleCacheDir();
           const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
           if (failed.length > 0) {
-            logger.warn(
-              "[SSR-MODULE-LOADER] Redis cached code has unrecoverable HTTP bundles, re-transforming",
-              {
-                file: filePath.slice(-40),
-                failed,
-              },
-            );
+            logger.warn("[SSR-MODULE-LOADER] Unrecoverable HTTP bundles, re-transforming", {
+              file: filePath.slice(-40),
+              failed,
+              totalBundles: bundlePaths.length,
+              cacheDir,
+              source: "redis-cache",
+            });
             httpBundlesOk = false;
           }
         }
@@ -642,13 +655,13 @@ export class SSRModuleLoader {
           const cacheDir = getHttpBundleCacheDir();
           const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
           if (failed.length > 0) {
-            logger.warn(
-              "[SSR-MODULE-LOADER] Some HTTP bundles could not be recovered",
-              {
-                file: filePath.slice(-40),
-                failed,
-              },
-            );
+            logger.warn("[SSR-MODULE-LOADER] Unrecoverable HTTP bundles", {
+              file: filePath.slice(-40),
+              failed,
+              totalBundles: bundlePaths.length,
+              cacheDir,
+              source: "fresh-transform",
+            });
           }
         }
 

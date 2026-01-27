@@ -1,4 +1,9 @@
-export declare const originalFetch: any;
+/**
+ * SSR Context State
+ * @module rendering/ssr-globals/context
+ */
+import * as dntShim from "../../../_dnt.shims.js";
+export declare const originalFetch: typeof dntShim.fetch;
 export declare function isSSRGlobalsActive(): boolean;
 export declare function markSSRGlobalsInitialized(): void;
 export declare function getSSRServerPort(): number | null;
