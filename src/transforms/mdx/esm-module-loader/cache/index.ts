@@ -185,12 +185,14 @@ function toMdxEsmCacheKey(filePath: string, projectDir?: string): string {
  * @param filePath - Project-relative file path like "lib/ChatContext.tsx"
  * @param cacheDir - The MDX-ESM cache directory for this project/contentSource
  * @param projectDir - Project directory to strip from absolute paths
- * @returns The cached file path if found, null otherwise
+ * @param contentHash - Optional content hash to validate cached file freshness
+ * @returns The cached file path if found and valid, null otherwise
  */
 export async function lookupMdxEsmCache(
   filePath: string,
   cacheDir: string,
   projectDir?: string,
+  contentHash?: string,
 ): Promise<string | null> {
   const cache = await getModulePathCache(cacheDir);
   const cacheKey = toMdxEsmCacheKey(filePath, projectDir);
@@ -203,12 +205,28 @@ export async function lookupMdxEsmCache(
   // Verify the cached file still exists
   try {
     const stat = await getLocalFs().stat(cachedPath);
-    if (stat?.isFile) {
-      logger.debug(
-        `${LOG_PREFIX_MDX_LOADER} SSR reusing MDX-ESM cache: ${filePath} -> ${cachedPath}`,
-      );
-      return cachedPath;
+    if (!stat?.isFile) {
+      cache.delete(cacheKey);
+      return null;
     }
+
+    // If contentHash provided, validate the cached file contains matching hash
+    // The cached filename includes the content hash (e.g., module.abc123.js)
+    if (contentHash) {
+      const filename = cachedPath.split("/").pop() ?? "";
+      if (!filename.includes(contentHash.slice(0, 8))) {
+        logger.debug(
+          `${LOG_PREFIX_MDX_LOADER} Cache hash mismatch, invalidating: ${filePath}`,
+        );
+        cache.delete(cacheKey);
+        return null;
+      }
+    }
+
+    logger.debug(
+      `${LOG_PREFIX_MDX_LOADER} SSR reusing MDX-ESM cache: ${filePath} -> ${cachedPath}`,
+    );
+    return cachedPath;
   } catch {
     // File no longer exists, remove stale entry
     cache.delete(cacheKey);

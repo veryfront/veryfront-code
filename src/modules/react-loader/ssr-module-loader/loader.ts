@@ -541,7 +541,12 @@ export class SSRModuleLoader {
       const sourceKey = encodeURIComponent(this.options.contentSourceId);
       const mdxCacheDir = join(baseCacheDir, projectKey, sourceKey);
 
-      const mdxCachedPath = await lookupMdxEsmCache(filePath, mdxCacheDir, this.options.projectDir);
+      const mdxCachedPath = await lookupMdxEsmCache(
+        filePath,
+        mdxCacheDir,
+        this.options.projectDir,
+        contentHash,
+      );
       if (mdxCachedPath) {
         const entry: ModuleCacheEntry = { tempPath: mdxCachedPath, contentHash };
         globalModuleCache.set(contentCacheKey, entry);

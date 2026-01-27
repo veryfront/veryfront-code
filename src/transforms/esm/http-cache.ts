@@ -10,6 +10,7 @@
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { isAbsolute, join } from "#veryfront/platform/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { simpleHash } from "#veryfront/utils/hash-utils.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
