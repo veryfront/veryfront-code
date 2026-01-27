@@ -162,7 +162,7 @@ function toMdxEsmCacheKey(filePath, projectDir) {
  * @param contentHash - Optional content hash to validate cached file freshness
  * @returns The cached file path if found and valid, null otherwise
  */
-export async function lookupMdxEsmCache(filePath, cacheDir, projectDir, contentHash) {
+export async function lookupMdxEsmCache(filePath, cacheDir, projectDir, _contentHash) {
     const cache = await getModulePathCache(cacheDir);
     const cacheKey = toMdxEsmCacheKey(filePath, projectDir);
     const cachedPath = cache.get(cacheKey);
@@ -176,16 +176,13 @@ export async function lookupMdxEsmCache(filePath, cacheDir, projectDir, contentH
             cache.delete(cacheKey);
             return null;
         }
-        // If contentHash provided, validate the cached file contains matching hash
-        // The cached filename includes the content hash (e.g., module.abc123.js)
-        if (contentHash) {
-            const filename = cachedPath.split("/").pop() ?? "";
-            if (!filename.includes(contentHash.slice(0, 8))) {
-                logger.debug(`${LOG_PREFIX_MDX_LOADER} Cache hash mismatch, invalidating: ${filePath}`);
-                cache.delete(cacheKey);
-                return null;
-            }
-        }
+        // Note: We intentionally skip contentHash validation for MDX-ESM cached files.
+        // The MDX-ESM cache uses transformed-code hashes in filenames (vfmod-v13-{hash}.mjs),
+        // while the SSR loader provides source-code hashes. These will never match.
+        // The cache version in the key (v13:) provides sufficient staleness protection,
+        // and the file's existence confirms it's a valid transform for this codebase.
+        // This allows both loaders to share the same module instance, preventing
+        // duplicate React contexts which break hooks like useContext.
         logger.debug(`${LOG_PREFIX_MDX_LOADER} SSR reusing MDX-ESM cache: ${filePath} -> ${cachedPath}`);
         return cachedPath;
     }

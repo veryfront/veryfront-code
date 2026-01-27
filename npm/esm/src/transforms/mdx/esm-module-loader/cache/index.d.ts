@@ -48,5 +48,5 @@ export declare function clearESMDiskCache(): Promise<void>;
  * @param contentHash - Optional content hash to validate cached file freshness
  * @returns The cached file path if found and valid, null otherwise
  */
-export declare function lookupMdxEsmCache(filePath: string, cacheDir: string, projectDir?: string, contentHash?: string): Promise<string | null>;
+export declare function lookupMdxEsmCache(filePath: string, cacheDir: string, projectDir?: string, _contentHash?: string): Promise<string | null>;
 //# sourceMappingURL=index.d.ts.map

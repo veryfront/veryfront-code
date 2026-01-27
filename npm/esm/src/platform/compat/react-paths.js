@@ -24,21 +24,6 @@ const REACT_SPECIFIERS = [
 function hasBunResolveSync() {
     return typeof Bun !== "undefined" && typeof Bun?.resolveSync === "function";
 }
-const IMPORT_META_RESOLVE_ERROR = "ImportMetaResolveUnavailable";
-function resolveWithImportMeta(specifier, parentUrl) {
-    const metaResolve = globalThis[Symbol.for("import-meta-ponyfill-esmodule")](import.meta).resolve;
-    if (typeof metaResolve !== "function") {
-        const error = new Error("import.meta.resolve is required for Node ESM resolution (Node >= 22).");
-        error.name = IMPORT_META_RESOLVE_ERROR;
-        throw error;
-    }
-    try {
-        return metaResolve(specifier, parentUrl);
-    }
-    catch {
-        return null;
-    }
-}
 function resolveReactSpecifier(specifier) {
     try {
         if (isBun && hasBunResolveSync() && Bun?.resolveSync) {
@@ -60,7 +45,12 @@ function resolveReactSpecifier(specifier) {
     return undefined;
 }
 export function getLocalReactPaths() {
-    if (isDeno)
+    // On Deno, return empty - use esm.sh URLs instead (handled elsewhere).
+    // On Node.js, return empty - keep React as bare specifiers and let Node.js
+    // handle CJS/ESM interop naturally. Using file:// URLs for React's CJS
+    // modules doesn't work because Node.js can't import CJS via file:// in ESM.
+    // Bun handles this correctly, so we only resolve paths for Bun.
+    if (isDeno || isNode)
         return {};
     if (localReactPathsCache)
         return localReactPathsCache;

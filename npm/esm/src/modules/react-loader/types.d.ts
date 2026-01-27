@@ -1,6 +1,8 @@
 import type * as React from "react";
 export interface LoadComponentOptions {
     projectId?: string;
+    /** Project slug for cache directory (human-readable name) */
+    projectSlug?: string;
     dev?: boolean;
     moduleServerUrl?: string;
     vendorBundleHash?: string;

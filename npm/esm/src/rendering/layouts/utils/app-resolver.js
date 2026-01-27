@@ -6,6 +6,12 @@ function isValidComponentPath(path) {
     return VALID_EXTENSIONS.includes(ext);
 }
 export async function resolveAppComponentPath(projectDir, adapter, config) {
+    console.log("[AppResolver] Starting resolution", {
+        projectDir,
+        hasAdapter: !!adapter,
+        hasConfig: !!config,
+        configApp: config?.app,
+    });
     logger.debug("[AppResolver] Starting resolution", {
         projectDir,
         hasAdapter: !!adapter,
@@ -35,12 +41,15 @@ export async function resolveAppComponentPath(projectDir, adapter, config) {
     for (const ext of VALID_EXTENSIONS) {
         const appPath = join(projectDir, `components/app.${ext}`);
         const exists = await adapter.fs.exists(appPath);
+        console.log("[AppResolver] Checking default path", { appPath, exists });
         logger.debug("[AppResolver] Checking default path", { appPath, exists });
         if (exists) {
+            console.log("[AppResolver] Found app component via discovery", { path: appPath });
             logger.debug("[AppResolver] Found app component via discovery", { path: appPath });
             return appPath;
         }
     }
+    console.log("[AppResolver] No app component found");
     logger.debug("[AppResolver] No app component found");
     return null;
 }

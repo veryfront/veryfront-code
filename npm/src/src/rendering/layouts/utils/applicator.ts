@@ -87,6 +87,7 @@ export function applyLayoutsESM(
                   adapter,
                   props,
                   projectId,
+                  projectSlug,
                   contentSourceId,
                 ),
               {
@@ -148,7 +149,7 @@ export async function applyLayoutsFunctionBody(
   adapter: RuntimeAdapter,
   layoutDataMap: Map<string, Record<string, unknown>> | undefined,
   projectId: string,
-  _projectSlug: string,
+  projectSlug: string,
   contentSourceId: string,
 ): Promise<BundledReact.ReactElement> {
   const React = await getProjectReact();
@@ -190,6 +191,7 @@ export async function applyLayoutsFunctionBody(
         tsxLayoutModuleCache,
         adapter,
         projectId,
+        projectSlug,
         contentSourceId,
       );
 

@@ -1,5 +1,7 @@
 import { replaceSpecifiers } from "./lexer.js";
 import { getReactImportMap, REACT_VERSION } from "./package-registry.js";
+import { getLocalReactPaths } from "../../platform/compat/react-paths.js";
+import { isDeno, isNode } from "../../platform/compat/runtime.js";
 const srcDir = new URL(".", globalThis[Symbol.for("import-meta-ponyfill-esmodule")](import.meta).url).pathname.replace(/\/(build|src)\/transforms\/esm\/?$/, "");
 function getVeryfrontModulePaths() {
     return {
@@ -14,10 +16,19 @@ export async function resolveReactImports(code, forSSR = false, reactVersion = R
     if (!forSSR) {
         return replaceSpecifiers(code, (specifier) => reactImports[specifier] ?? null);
     }
-    // For SSR: Use esm.sh URLs consistently (NO npm: specifiers per plan requirements)
+    // For SSR: Handle React imports differently per runtime.
+    // - Node.js: Use esm.sh URLs, which will be cached to disk by cacheHttpImportsToLocal.
+    //   The cached bundles are ESM-compatible and can be imported via file:// URLs.
+    //   Bare specifiers don't work because React isn't in the cache directory's node_modules.
+    // - Deno: Use esm.sh URLs (Deno supports HTTP imports natively).
+    // - Bun: Use local file:// paths (Bun handles CJS/ESM interop with file:// URLs).
+    const localReactPaths = getLocalReactPaths();
+    const ssrReactImports = isDeno || isNode
+        ? reactImports // esm.sh URLs for Deno and Node.js (Node.js will cache them)
+        : { ...reactImports, ...localReactPaths }; // file:// paths for Bun
     const ssrImports = {
         ...getVeryfrontModulePaths(),
-        ...reactImports,
+        ...ssrReactImports,
     };
     return replaceSpecifiers(code, (specifier) => ssrImports[specifier] ?? null);
 }

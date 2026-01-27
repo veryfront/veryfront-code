@@ -123,6 +123,7 @@ export class LayoutOrchestrator {
               this.config.layoutCache,
               this.config.adapter,
               this.config.projectId,
+              this.config.projectSlug,
               this.config.contentSourceId,
             )
               .then(() => ({ type: "tsx", path: componentPath, success: true }))

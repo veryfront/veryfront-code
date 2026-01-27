@@ -11,6 +11,8 @@ import type { RuntimeAdapter } from "../../../platform/adapters/base.js";
 export interface SSRModuleLoaderOptions {
   projectDir: string;
   projectId: string;
+  /** Project slug for cache directory (human-readable name) */
+  projectSlug?: string;
   adapter: RuntimeAdapter;
   dev: boolean;
   apiBaseUrl?: string;

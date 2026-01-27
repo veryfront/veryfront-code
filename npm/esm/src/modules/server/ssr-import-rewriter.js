@@ -1,5 +1,6 @@
 import { getReactImportMap, getReactVersion } from "../../transforms/esm/package-registry.js";
-import { isDeno } from "../../platform/compat/runtime.js";
+import { isDeno, isNode } from "../../platform/compat/runtime.js";
+import { getLocalReactPaths } from "../../platform/compat/react-paths.js";
 function shouldKeepBareSpecifier(specifier) {
     // npm: specifiers are only supported in Deno, not Node.js
     // In Node.js, we need to convert them to esm.sh URLs (handled in rewriteBareImports)
@@ -14,15 +15,25 @@ function shouldKeepBareSpecifier(specifier) {
     }
     if (specifier.startsWith("@/"))
         return true;
-    // React imports are handled by resolveReactForRuntime - don't keep as bare specifiers
-    // This ensures SSR modules use explicit URLs for React, avoiding multiple instances
+    // React imports are handled by resolveReactForRuntime - don't keep as bare specifiers.
+    // On Node.js, esm.sh URLs will be cached to disk by cacheHttpImportsToLocal.
     if (specifier.startsWith("veryfront/"))
         return true;
     return false;
 }
 function resolveReactForRuntime(specifier, version) {
-    // Always rewrite React imports to esm.sh URLs for SSR modules.
-    // NO npm: specifiers - use esm.sh URLs only for consistent React instance.
+    // For Bun: Use local React paths from veryfront's node_modules.
+    // Bun handles CJS/ESM interop correctly with file:// URLs.
+    if (!isDeno && !isNode) {
+        const localPaths = getLocalReactPaths();
+        const localPath = localPaths[specifier];
+        if (localPath)
+            return localPath;
+        // If not found in local paths, fall through to esm.sh for subpath imports
+    }
+    // For Deno: Use esm.sh URLs (Deno supports HTTP imports natively).
+    // For Node.js: Use esm.sh URLs which will be cached to disk by cacheHttpImportsToLocal.
+    // The cached bundles are ESM-compatible and can be imported via file:// URLs.
     const v = version ?? getReactVersion();
     const reactMap = getReactImportMap(v);
     const mapped = reactMap[specifier];

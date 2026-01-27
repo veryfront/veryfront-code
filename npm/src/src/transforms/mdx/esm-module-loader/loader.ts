@@ -17,6 +17,7 @@ import { Singleflight } from "../../../utils/singleflight.js";
 import { loadImportMap, transformImportsWithMap } from "../../../modules/import-map/index.js";
 import type { ImportMapConfig } from "../../../modules/import-map/index.js";
 import { cacheHttpImportsToLocal, ensureHttpBundlesExist } from "../../esm/http-cache.js";
+import { TRANSFORM_CACHE_VERSION } from "../../esm/package-registry.js";
 import { isDeno } from "../../../platform/compat/runtime.js";
 import { replaceSpecifiers } from "../../esm/lexer.js";
 import { setupSSRGlobals } from "../../../rendering/ssr-globals.js";
@@ -73,6 +74,7 @@ async function initializeCacheDir(context: ESMLoaderContext): Promise<string> {
 
   const localFs = getLocalFs();
   const baseCacheDir = getMdxEsmCacheDir();
+  // Use projectId consistently for stable cache keys (won't change if slug is renamed)
   const projectKey = encodeURIComponent(context.projectId);
   const sourceKey = encodeURIComponent(context.contentSourceId);
   const persistentCacheDir = join(baseCacheDir, projectKey, sourceKey);
@@ -300,7 +302,7 @@ async function transformJsxImports(
   const transformResults = await Promise.all(
     importsToProcess.map(async ({ fullMatch, importClause, filePath, ext }) => {
       try {
-        const transformedFileName = `jsx-${hashString(filePath)}.mjs`;
+        const transformedFileName = `jsx-v${TRANSFORM_CACHE_VERSION}-${hashString(filePath)}.mjs`;
         const transformedPath = join(esmCacheDir, transformedFileName);
 
         try {

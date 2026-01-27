@@ -45,7 +45,7 @@ class InMemoryLayoutComponentCache {
 export function createLayoutComponentCache(maxEntries = TSX_LAYOUT_MAX_ENTRIES) {
     return new InMemoryLayoutComponentCache(maxEntries);
 }
-export async function loadTSXComponent(componentPath, projectDir, cache, adapter, projectId, contentSourceId) {
+export async function loadTSXComponent(componentPath, projectDir, cache, adapter, projectId, projectSlug, contentSourceId) {
     const source = await adapter.fs.readFile(componentPath);
     const hash = await computeHash(source);
     const cacheKey = buildLayoutComponentCacheKey(projectId, componentPath, hash, contentSourceId);
@@ -55,6 +55,7 @@ export async function loadTSXComponent(componentPath, projectDir, cache, adapter
     const loaded = await loadComponentFromSource(source, componentPath, projectDir, adapter, {
         dev: true,
         projectId,
+        projectSlug,
         ssr: true,
         contentSourceId,
     });
@@ -107,14 +108,18 @@ export async function preloadMDXLayoutModule(bundle, projectDir, adapter, projec
     // Just call loadMDXLayout - the module loader will cache the result
     await loadMDXLayout(bundle, projectDir, adapter, projectId, projectSlug, contentSourceId);
 }
-export async function applyTSXLayout(element, item, tsxLayoutModuleCache, projectDir, adapter, props, projectId, contentSourceId) {
+export async function applyTSXLayout(element, item, tsxLayoutModuleCache, projectDir, adapter, props, projectId, projectSlug, contentSourceId) {
     const start = performance.now();
-    logger.debug("[applyTSXLayout] START", { componentPath: item.componentPath, projectId });
+    logger.debug("[applyTSXLayout] START", {
+        componentPath: item.componentPath,
+        projectId,
+        projectSlug,
+    });
     const React = await getProjectReact();
     try {
         logger.debug("[applyTSXLayout] loadTSXComponent START", { componentPath: item.componentPath });
         const loadStart = performance.now();
-        const LayoutComponent = await loadTSXComponent(item.componentPath, projectDir, tsxLayoutModuleCache, adapter, projectId, contentSourceId);
+        const LayoutComponent = await loadTSXComponent(item.componentPath, projectDir, tsxLayoutModuleCache, adapter, projectId, projectSlug, contentSourceId);
         logger.debug("[applyTSXLayout] loadTSXComponent DONE", {
             componentPath: item.componentPath,
             duration: `${(performance.now() - loadStart).toFixed(2)}ms`,

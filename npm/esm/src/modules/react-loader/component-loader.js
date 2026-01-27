@@ -16,6 +16,7 @@ export function loadComponentFromSource(source, filePath, projectDir, adapter, o
             const loader = new SSRModuleLoader({
                 projectDir,
                 projectId,
+                projectSlug: options?.projectSlug,
                 adapter,
                 dev,
                 contentSourceId: options?.contentSourceId,

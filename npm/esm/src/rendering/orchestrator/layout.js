@@ -64,7 +64,7 @@ export class LayoutOrchestrator {
             // 2. Preload TSX layouts
             for (const layout of tsxLayouts) {
                 const componentPath = layout.componentPath;
-                preloadPromises.push(loadTSXComponent(componentPath, this.config.projectDir, this.config.layoutCache, this.config.adapter, this.config.projectId, this.config.contentSourceId)
+                preloadPromises.push(loadTSXComponent(componentPath, this.config.projectDir, this.config.layoutCache, this.config.adapter, this.config.projectId, this.config.projectSlug, this.config.contentSourceId)
                     .then(() => ({ type: "tsx", path: componentPath, success: true }))
                     .catch((error) => {
                     logger.warn("[LayoutOrchestrator] Failed to preload TSX layout (will retry during apply)", {

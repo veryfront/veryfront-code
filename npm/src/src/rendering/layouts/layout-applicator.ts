@@ -246,6 +246,7 @@ export class LayoutApplicator {
               this.adapter,
               {
                 projectId: this.projectId ?? this.projectDir,
+                projectSlug: this.projectSlug,
                 dev: this.mode === "development",
                 moduleServerUrl: this.config?.dev?.moduleServerUrl,
                 contentSourceId: this.contentSourceId,
@@ -253,7 +254,9 @@ export class LayoutApplicator {
             );
           }
 
-          if (!App) return pageElement;
+          if (!App) {
+            return pageElement;
+          }
 
           const React = await getProjectReact();
           logger.debug("Wrapped page with App component");
@@ -307,6 +310,7 @@ export class LayoutApplicator {
         this.adapter,
         {
           projectId: this.projectId ?? this.projectDir,
+          projectSlug: this.projectSlug,
           dev: this.mode === "development",
           moduleServerUrl: this.config?.dev?.moduleServerUrl,
           contentSourceId: this.contentSourceId,

@@ -135,13 +135,15 @@ export class LayoutApplicator {
                     const { loadComponentFromSource } = await import("../../modules/react-loader/index.js");
                     App = await loadComponentFromSource(appSource, appPath, this.projectDir, this.adapter, {
                         projectId: this.projectId ?? this.projectDir,
+                        projectSlug: this.projectSlug,
                         dev: this.mode === "development",
                         moduleServerUrl: this.config?.dev?.moduleServerUrl,
                         contentSourceId: this.contentSourceId,
                     });
                 }
-                if (!App)
+                if (!App) {
                     return pageElement;
+                }
                 const React = await getProjectReact();
                 logger.debug("Wrapped page with App component");
                 return React.createElement(App, { children: pageElement });
@@ -178,6 +180,7 @@ export class LayoutApplicator {
             const { loadComponentFromSource } = await import("../../modules/react-loader/index.js");
             return await loadComponentFromSource(String(compiled), appPath.replace(/\.mdx?$/, ".jsx"), this.projectDir, this.adapter, {
                 projectId: this.projectId ?? this.projectDir,
+                projectSlug: this.projectSlug,
                 dev: this.mode === "development",
                 moduleServerUrl: this.config?.dev?.moduleServerUrl,
                 contentSourceId: this.contentSourceId,

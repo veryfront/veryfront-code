@@ -36,7 +36,7 @@ export function applyLayoutsESM(pageElement, layoutBundle, nestedLayouts, projec
                 }
                 if (item.kind === "tsx") {
                     const props = item.componentPath ? layoutDataMap?.get(item.componentPath) : undefined;
-                    element = await withSpan(SpanNames.LAYOUT_APPLY_TSX, () => applyTSXLayout(element, item, tsxLayoutModuleCache, projectDir, adapter, props, projectId, contentSourceId), {
+                    element = await withSpan(SpanNames.LAYOUT_APPLY_TSX, () => applyTSXLayout(element, item, tsxLayoutModuleCache, projectDir, adapter, props, projectId, projectSlug, contentSourceId), {
                         "layout.index": i,
                         "layout.kind": "tsx",
                         "layout.path": item.componentPath || item.path || "",
@@ -63,7 +63,7 @@ export function applyLayoutsESM(pageElement, layoutBundle, nestedLayouts, projec
         "layout.project_slug": projectSlug || "",
     });
 }
-export async function applyLayoutsFunctionBody(pageElement, layoutBundle, nestedLayouts, mergedComponents, tsxLayoutModuleCache, projectDir, adapter, layoutDataMap, projectId, _projectSlug, contentSourceId) {
+export async function applyLayoutsFunctionBody(pageElement, layoutBundle, nestedLayouts, mergedComponents, tsxLayoutModuleCache, projectDir, adapter, layoutDataMap, projectId, projectSlug, contentSourceId) {
     const React = await getProjectReact();
     let element = pageElement;
     logger.debug("Using function-body wrapping for layouts");
@@ -93,7 +93,7 @@ export async function applyLayoutsFunctionBody(pageElement, layoutBundle, nested
         if (item.kind !== "tsx" || !item.componentPath)
             continue;
         try {
-            const LayoutComponent = await loadTSXComponent(item.componentPath, projectDir, tsxLayoutModuleCache, adapter, projectId, contentSourceId);
+            const LayoutComponent = await loadTSXComponent(item.componentPath, projectDir, tsxLayoutModuleCache, adapter, projectId, projectSlug, contentSourceId);
             const child = ensureValidChild(element, React);
             logger.debug("Applying TSX layout:", {
                 layoutName: LayoutComponent.name || "Anonymous",
