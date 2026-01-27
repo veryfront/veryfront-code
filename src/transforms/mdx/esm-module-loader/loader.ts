@@ -203,7 +203,14 @@ async function processVfModuleImports(
     adapter,
     projectDir,
     context.projectId,
-    { reactVersion: context.reactVersion },
+    {
+      reactVersion: context.reactVersion,
+      projectSlug: context.projectSlug,
+      logger: logger.child({
+        project_id: context.projectId,
+        project_slug: context.projectSlug,
+      }),
+    },
   );
 
   const fetchStart = performance.now();

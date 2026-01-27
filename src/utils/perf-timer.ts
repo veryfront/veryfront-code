@@ -6,6 +6,7 @@
  */
 
 import { isPerfEnabledEnv } from "#veryfront/config/env.ts";
+import { serverLogger } from "#veryfront/utils";
 
 interface TimingEntry {
   label: string;
@@ -69,9 +70,6 @@ export function endRequest(requestId: string): void {
   const total = entries.find((e) => e.label === "total")?.durationMs ??
     sorted.reduce((sum, e) => sum + (e.durationMs ?? 0), 0);
 
-  console.log(`\n[PERF] Request ${requestId} - Total: ${total.toFixed(1)}ms`);
-  console.log("─".repeat(60));
-
   const roots = sorted.filter((e) => !e.parent);
   const children = new Map<string, TimingEntry[]>();
 
@@ -82,28 +80,36 @@ export function endRequest(requestId: string): void {
     children.set(entry.parent, list);
   }
 
+  const breakdown: Record<string, unknown>[] = [];
   for (const entry of roots) {
     const duration = entry.durationMs ?? 0;
     const pct = ((duration / total) * 100).toFixed(1);
-    console.log(`  ${entry.label}: ${entry.durationMs?.toFixed(1)}ms (${pct}%)`);
+    const item: Record<string, unknown> = {
+      label: entry.label,
+      durationMs: Number(entry.durationMs?.toFixed(1)),
+      pct,
+    };
 
     const childList = children.get(entry.label);
-    if (!childList) continue;
-
-    for (const child of childList.slice(0, 5)) {
-      const childDuration = child.durationMs ?? 0;
-      const childPct = ((childDuration / total) * 100).toFixed(1);
-      console.log(
-        `    └─ ${child.label}: ${child.durationMs?.toFixed(1)}ms (${childPct}%)`,
-      );
+    if (childList) {
+      item.children = childList.slice(0, 5).map((child) => ({
+        label: child.label,
+        durationMs: Number(child.durationMs?.toFixed(1)),
+        pct: ((child.durationMs ?? 0) / total * 100).toFixed(1),
+      }));
+      if (childList.length > 5) {
+        item.childrenOmitted = childList.length - 5;
+      }
     }
 
-    if (childList.length > 5) {
-      console.log(`    └─ ... and ${childList.length - 5} more`);
-    }
+    breakdown.push(item);
   }
 
-  console.log("─".repeat(60));
+  serverLogger.debug(`[PERF] Request ${requestId}`, {
+    requestId,
+    totalMs: Number(total.toFixed(1)),
+    breakdown,
+  });
 
   timings.delete(requestId);
   currentRequestId = null;

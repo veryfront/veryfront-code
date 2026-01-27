@@ -5,6 +5,8 @@
  * SSR resolves to esm.sh URLs (then cached to file://), browser uses esm.sh URLs.
  */
 
+import { rendererLogger } from "#veryfront/utils";
+
 /** Default React version - used when not specified in project config */
 export const DEFAULT_REACT_VERSION = "19.1.1";
 export const TAILWIND_VERSION = "4.1.8";
@@ -25,8 +27,8 @@ export function isValidReactVersion(version: string): boolean {
 export function normalizeReactVersion(version: string | undefined): string {
   if (!version) return DEFAULT_REACT_VERSION;
   if (isValidReactVersion(version)) return version;
-  console.warn(
-    `[VERYFRONT] Invalid React version format "${version}" (expected X.Y.Z). Using default: ${DEFAULT_REACT_VERSION}`,
+  rendererLogger.warn(
+    `Invalid React version format "${version}" (expected X.Y.Z). Using default: ${DEFAULT_REACT_VERSION}`,
   );
   return DEFAULT_REACT_VERSION;
 }

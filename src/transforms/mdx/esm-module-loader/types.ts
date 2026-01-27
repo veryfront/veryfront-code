@@ -1,5 +1,6 @@
 import type { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { Logger } from "#veryfront/utils/logger/logger.ts";
 import type { MDXModule } from "../types.ts";
 
 export interface ESMLoaderContext {
@@ -55,6 +56,8 @@ export interface ModuleFetcherContext {
   inFlightModules?: Map<string, Promise<string | null>>;
   /** React version for transforms (from project config) */
   reactVersion?: string;
+  /** Logger with request-scoped context (project_id, project_slug, requestId, etc.) */
+  logger?: Logger;
 }
 
 export interface JSXTransform {
