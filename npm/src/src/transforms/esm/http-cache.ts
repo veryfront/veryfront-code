@@ -456,33 +456,44 @@ export async function recoverHttpBundleByHash(hash: string, cacheDir: string): P
     // Strategy 1: Direct code lookup by hash (preferred - no URL needed)
     const cachedCode = await distributed.get(`code:${hash}`);
     if (cachedCode) {
-      logger.info("[HTTP-CACHE] Recovering bundle via direct code lookup", { hash });
-      await fs.mkdir(absoluteCacheDir, { recursive: true });
-      await fs.writeTextFile(cachePath, cachedCode);
-      logger.info("[HTTP-CACHE] Bundle recovery successful (direct)", { hash, path: cachePath });
-
-      // Proactively recover transitive deps so the import retry doesn't
-      // fail again with a different missing bundle.
-      const BUNDLE_RE = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
-      const transitiveDeps: Array<{ path: string; hash: string }> = [];
-      let m;
-      while ((m = BUNDLE_RE.exec(cachedCode)) !== null) {
-        const tHash = m[2]!;
-        if (tHash !== hash) {
-          transitiveDeps.push({
-            path: join(absoluteCacheDir, `http-${tHash}.mjs`),
-            hash: tHash,
-          });
-        }
-      }
-      if (transitiveDeps.length > 0) {
-        logger.info("[HTTP-CACHE] Recovering transitive deps from last-resort recovery", {
-          count: transitiveDeps.length,
+      // Validate that the cached content is valid JavaScript, not compressed/gzipped.
+      // esm.sh sometimes stores gzip-encoded bundles with "gz:" prefix that need
+      // special decoding. If we see such content in the cache, skip it and re-fetch.
+      if (cachedCode.startsWith("gz:") || cachedCode.startsWith("gzip:")) {
+        logger.warn("[HTTP-CACHE] Cached code is gzip-encoded, skipping and will re-fetch", {
+          hash,
+          preview: cachedCode.substring(0, 50),
         });
-        await ensureHttpBundlesExist(transitiveDeps, cacheDir);
-      }
+        // Fall through to Strategy 2 (URL re-fetch)
+      } else {
+        logger.info("[HTTP-CACHE] Recovering bundle via direct code lookup", { hash });
+        await fs.mkdir(absoluteCacheDir, { recursive: true });
+        await fs.writeTextFile(cachePath, cachedCode);
+        logger.info("[HTTP-CACHE] Bundle recovery successful (direct)", { hash, path: cachePath });
 
-      return true;
+        // Proactively recover transitive deps so the import retry doesn't
+        // fail again with a different missing bundle.
+        const BUNDLE_RE = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
+        const transitiveDeps: Array<{ path: string; hash: string }> = [];
+        let m;
+        while ((m = BUNDLE_RE.exec(cachedCode)) !== null) {
+          const tHash = m[2]!;
+          if (tHash !== hash) {
+            transitiveDeps.push({
+              path: join(absoluteCacheDir, `http-${tHash}.mjs`),
+              hash: tHash,
+            });
+          }
+        }
+        if (transitiveDeps.length > 0) {
+          logger.info("[HTTP-CACHE] Recovering transitive deps from last-resort recovery", {
+            count: transitiveDeps.length,
+          });
+          await ensureHttpBundlesExist(transitiveDeps, cacheDir);
+        }
+
+        return true;
+      }
     }
 
     // Strategy 2: URL lookup then re-fetch (fallback for bundles cached before code:{hash} was added)
