@@ -50,10 +50,6 @@ function normalizeVersionedSpecifier(specifier: string): string {
   return specifier.replace(/@[\d^~x][\d.x^~-]*(?=\/|$)/, "");
 }
 
-// Use centralized React import map from package-registry.ts to ensure URL consistency
-// Any URL mismatch between SSR and browser causes multiple React instances -> hooks fail
-const REACT_IMPORT_MAP: Record<string, string> = getReactImportMap(REACT_DEFAULT_VERSION);
-
 function shouldSkipRewrite(specifier: string): boolean {
   return (
     specifier.startsWith("http://") ||
@@ -67,12 +63,19 @@ function shouldSkipRewrite(specifier: string): boolean {
   );
 }
 
-export function rewriteBareImports(code: string, _moduleServerUrl?: string): Promise<string> {
+export function rewriteBareImports(
+  code: string,
+  _moduleServerUrl?: string,
+  reactVersion?: string,
+): Promise<string> {
+  // Get React import map for the specified version (uses centralized URL builder)
+  const reactImportMap = getReactImportMap(reactVersion ?? REACT_DEFAULT_VERSION);
+
   return withSpan(
     "transforms.esm.rewriteBareImports",
     () =>
       replaceSpecifiers(code, (specifier) => {
-        const mapped = REACT_IMPORT_MAP[specifier];
+        const mapped = reactImportMap[specifier];
         if (mapped) return mapped;
 
         if (shouldSkipRewrite(specifier)) return null;
