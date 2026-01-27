@@ -12,7 +12,8 @@
 // Bun global type declaration for cross-runtime compatibility
 declare const Bun: { resolveSync?: (specifier: string, dir: string) => string } | undefined;
 
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { dirname } from "node:path";
 import { isBun, isDeno, isNode } from "./runtime.ts";
 import { cwd } from "./process.ts";
 
@@ -62,7 +63,11 @@ function resolveReactSpecifier(specifier: string): string | undefined {
     }
 
     if (isNode) {
-      const parentUrl = pathToFileURL(`${cwd()}/`).href;
+      // Use import.meta.url (this module's location) as the parent URL.
+      // This ensures React is resolved from veryfront's node_modules,
+      // not from the cwd which may not have React installed.
+      const thisModuleDir = dirname(fileURLToPath(import.meta.url));
+      const parentUrl = pathToFileURL(`${thisModuleDir}/`).href;
       return resolveWithImportMeta(specifier, parentUrl) ?? undefined;
     }
   } catch (error) {
