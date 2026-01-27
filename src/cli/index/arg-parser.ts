@@ -95,6 +95,7 @@ export function parseCliArgs(args: string[]): ParsedArgs {
       t: "template",
       j: "json",
       w: "with",
+      m: "mode",
     },
     default: { port: DEFAULT_PORT },
   }) as ParsedArgs;

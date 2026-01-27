@@ -204,51 +204,68 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
 
       case "preview":
       case "serve": {
-        showLogo();
-
-        const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
-        const adapter = await runtime.get();
-        const { startUniversalServer } = await import("#veryfront/server/production-server.ts");
-
-        const projectDir = cwd();
+        const mode = (args.mode || args.m || "renderer") as "combined" | "proxy" | "renderer";
         const port = args.port ?? DEFAULT_DEV_SERVER_PORT;
         const bindAddress = String(args.hostname || args.host || "0.0.0.0");
-        const debug = Boolean(args.debug);
-        const shutdownController = new AbortController();
 
-        const server = await startUniversalServer({
-          projectDir,
-          port,
-          bindAddress,
-          debug,
-          adapter,
-          signal: shutdownController.signal,
-        });
-        await server.ready;
+        if (mode === "proxy") {
+          // Proxy-only mode: run OAuth token proxy
+          showLogo();
+          cliLogger.info(`Starting proxy server on ${bindAddress}:${port}`);
 
-        let shuttingDown = false;
-        const shutdown = async (signal: "SIGINT" | "SIGTERM"): Promise<void> => {
-          if (shuttingDown) return;
-          shuttingDown = true;
+          // Set environment variables for proxy
+          const { setEnv } = await import("#veryfront/platform/compat/process.ts");
+          setEnv("PORT", String(port));
+          setEnv("HOST", bindAddress);
 
-          cliLogger.info(`Received ${signal}, shutting down production server...`);
-          try {
-            shutdownController.abort();
-            await server.stop();
-          } catch (error) {
-            cliLogger.warn("Error while shutting down production server:", error);
-          } finally {
-            exitProcess(0);
-          }
-        };
+          // Import and run proxy main
+          await import("../../../proxy/main.ts");
+        } else if (mode === "renderer" || mode === "combined") {
+          // Renderer mode: run SSR production server
+          showLogo();
 
-        registerTerminationSignals((signal) => {
-          void shutdown(signal);
-        });
+          const { runtime } = await import("#veryfront/platform/adapters/detect.ts");
+          const adapter = await runtime.get();
+          const { startUniversalServer } = await import("#veryfront/server/production-server.ts");
 
-        await new Promise(() => {
-          /* never resolve */
-        });
+          const projectDir = cwd();
+          const debug = Boolean(args.debug);
+          const shutdownController = new AbortController();
+
+          const server = await startUniversalServer({
+            projectDir,
+            port,
+            bindAddress,
+            debug,
+            adapter,
+            signal: shutdownController.signal,
+          });
+          await server.ready;
+
+          let shuttingDown = false;
+          const shutdown = async (signal: "SIGINT" | "SIGTERM"): Promise<void> => {
+            if (shuttingDown) return;
+            shuttingDown = true;
+
+            cliLogger.info(`Received ${signal}, shutting down production server...`);
+            try {
+              shutdownController.abort();
+              await server.stop();
+            } catch (error) {
+              cliLogger.warn("Error while shutting down production server:", error);
+            } finally {
+              exitProcess(0);
+            }
+          };
+
+          registerTerminationSignals((signal) => {
+            void shutdown(signal);
+          });
+
+          await new Promise(() => {
+            /* never resolve */
+          });
+        }
         break;
       }
 
