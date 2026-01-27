@@ -14,6 +14,7 @@ import {
   type FileSystem,
   isNotFoundError,
 } from "#veryfront/platform/compat/fs.ts";
+import { TRANSFORM_CACHE_VERSION } from "../../../esm/package-registry.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 
 // Local filesystem for cache operations (not project's FSAdapter which may be remote/read-only)
@@ -149,4 +150,87 @@ export async function clearESMDiskCache(): Promise<void> {
       logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to clear ESM disk cache`, error);
     }
   }
+}
+
+/**
+ * Convert a project-relative file path to MDX-ESM cache key format.
+ *
+ * @param filePath - Project-relative path like "lib/ChatContext.tsx" or absolute path
+ * @param projectDir - Project directory to strip from absolute paths
+ * @returns Cache key like "v10:_vf_modules/lib/ChatContext.js"
+ */
+function toMdxEsmCacheKey(filePath: string, projectDir?: string): string {
+  // Strip project directory prefix if present
+  let relativePath = filePath;
+  if (projectDir && filePath.startsWith(projectDir)) {
+    relativePath = filePath.slice(projectDir.length).replace(/^\/+/, "");
+  }
+  // Strip leading slashes
+  relativePath = relativePath.replace(/^\/+/, "");
+
+  // Convert extension to .js
+  const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js");
+
+  // Build the versioned key in MDX-ESM format
+  return `v${TRANSFORM_CACHE_VERSION}:_vf_modules/${jsPath}`;
+}
+
+/**
+ * Look up a module in the MDX-ESM cache.
+ *
+ * This allows other loaders (like SSR loader) to reuse modules that
+ * MDX-ESM has already transformed and cached, preventing duplicate
+ * module instances (which breaks React context, etc.).
+ *
+ * @param filePath - Project-relative file path like "lib/ChatContext.tsx"
+ * @param cacheDir - The MDX-ESM cache directory for this project/contentSource
+ * @param projectDir - Project directory to strip from absolute paths
+ * @param contentHash - Optional content hash to validate cached file freshness
+ * @returns The cached file path if found and valid, null otherwise
+ */
+export async function lookupMdxEsmCache(
+  filePath: string,
+  cacheDir: string,
+  projectDir?: string,
+  contentHash?: string,
+): Promise<string | null> {
+  const cache = await getModulePathCache(cacheDir);
+  const cacheKey = toMdxEsmCacheKey(filePath, projectDir);
+
+  const cachedPath = cache.get(cacheKey);
+  if (!cachedPath) {
+    return null;
+  }
+
+  // Verify the cached file still exists
+  try {
+    const stat = await getLocalFs().stat(cachedPath);
+    if (!stat?.isFile) {
+      cache.delete(cacheKey);
+      return null;
+    }
+
+    // If contentHash provided, validate the cached file contains matching hash
+    // The cached filename includes the content hash (e.g., module.abc123.js)
+    if (contentHash) {
+      const filename = cachedPath.split("/").pop() ?? "";
+      if (!filename.includes(contentHash.slice(0, 8))) {
+        logger.debug(
+          `${LOG_PREFIX_MDX_LOADER} Cache hash mismatch, invalidating: ${filePath}`,
+        );
+        cache.delete(cacheKey);
+        return null;
+      }
+    }
+
+    logger.debug(
+      `${LOG_PREFIX_MDX_LOADER} SSR reusing MDX-ESM cache: ${filePath} -> ${cachedPath}`,
+    );
+    return cachedPath;
+  } catch {
+    // File no longer exists, remove stale entry
+    cache.delete(cacheKey);
+  }
+
+  return null;
 }

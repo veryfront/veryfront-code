@@ -64,15 +64,25 @@ export async function processElement(
   clientManifest: Map<string, ClientComponentMeta>,
   clientRefs: Map<string, string>,
 ): Promise<RSCNode> {
-  const { type, props } = element;
+  const { type } = element;
+  // Cast props for React 19 compatibility (props is unknown in R19 types)
+  const props = element.props as Record<string, unknown>;
 
   if (type === React.Fragment) {
-    const children = await renderChildren(props.children, clientManifest, clientRefs);
+    const children = await renderChildren(
+      props.children as React.ReactNode,
+      clientManifest,
+      clientRefs,
+    );
     return { type: "fragment", children };
   }
 
   if (typeof type === "string") {
-    const processedChildren = await renderChildren(props.children, clientManifest, clientRefs);
+    const processedChildren = await renderChildren(
+      props.children as React.ReactNode,
+      clientManifest,
+      clientRefs,
+    );
 
     if (processedChildren.every((child) => child.type === "html")) {
       const html = await renderToStringAdapter(element);

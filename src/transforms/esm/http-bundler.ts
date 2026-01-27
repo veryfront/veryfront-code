@@ -154,46 +154,136 @@ export function createHTTPPlugin(): Plugin {
 }
 
 /**
- * Ensure esm.sh URLs have ?external=react for SSR.
- * This makes them import React as a bare specifier, which deno.json resolves.
+ * Ensure esm.sh URLs have external=react,react-dom for SSR.
+ * This makes them import React as bare specifiers, which the import map resolves.
  *
  * Uses two esm.sh features:
- * - `external=react` - Don't bundle React, let import map resolve it
+ * - `external=react,react-dom` - Don't bundle React/ReactDOM, let import map resolve them
  * - `deps=react@X,react-dom@X` - Pin dependency versions to prevent mismatches
+ *
+ * Logic for external handling:
+ * 1. If no `external=` param → add `external=react,react-dom`
+ * 2. If `external=X` exists but no `react` → append `,react,react-dom`
+ * 3. If has `react` but no `react-dom` → append `,react-dom`
+ * 4. If has both `react` AND `react-dom` → leave alone
+ *
+ * @param code - Source code to process
+ * @param _cacheDir - Unused (kept for API compatibility)
+ * @param hash - Hash for logging
+ * @param reactVersion - React version for deps param (defaults to REACT_VERSION)
  */
 export function bundleHttpImports(
   code: string,
   _cacheDir: string,
   hash: string,
+  reactVersion?: string,
 ): string | Promise<string> {
   const has = hasHttpImports(code);
   logger.debug(`${LOG_PREFIX} Check: hasHttp=${has}, hash=${hash.slice(0, 8)}`);
   if (!has) return code;
 
+  const version = reactVersion ?? REACT_VERSION;
+
   return replaceSpecifiers(code, (specifier) => {
+    // Handle relative esm.sh paths like "/react-dom?target=es2022" or "/hoist-non-react-statics@..."
+    // These are returned by esm.sh stub modules and need to be converted to full URLs
+    if (specifier.startsWith("/") && !specifier.startsWith("//")) {
+      const fullUrl = `https://esm.sh${specifier}`;
+      // Recursively process as full URL (will add external params if needed)
+      const isReactPackage = /^\/react(-dom)?(@|\/|\?|$)/.test(specifier);
+      if (isReactPackage) {
+        // React packages - just ensure target and return full URL
+        if (!specifier.includes("target=")) {
+          const joiner = specifier.includes("?") ? "&" : "?";
+          return `${fullUrl}${joiner}target=es2022`;
+        }
+        return fullUrl;
+      }
+      // Non-React packages - add external params
+      const params: string[] = [];
+      if (!specifier.includes("target=")) params.push("target=es2022");
+      if (!specifier.includes("external=")) params.push("external=react,react-dom");
+      if (!specifier.includes("deps=")) params.push(`deps=react@${version},react-dom@${version}`);
+      if (params.length === 0) return fullUrl;
+      const joiner = specifier.includes("?") ? "&" : "?";
+      return `${fullUrl}${joiner}${params.join("&")}`;
+    }
+
     const isEsmSh = specifier.startsWith("https://esm.sh/") ||
       specifier.startsWith("http://esm.sh/");
     const isVfEsm = specifier.startsWith("https://esm.veryfront.com/");
     if (!isEsmSh && !isVfEsm) return null;
 
+    // Don't modify React/ReactDOM package URLs themselves
     const isReactPackage = /\/react(-dom)?(@|\/|$)/.test(specifier);
+    if (isReactPackage) {
+      // Just ensure target is set for React packages
+      if (!specifier.includes("target=")) {
+        const joiner = specifier.includes("?") ? "&" : "?";
+        return `${specifier}${joiner}target=es2022`;
+      }
+      return null;
+    }
 
+    // For non-React packages: ensure external=react,react-dom and deps
     const params: string[] = [];
 
     if (!specifier.includes("target=")) {
       params.push("target=es2022");
     }
 
-    // Only add external and deps to non-React packages
-    // Use external=react to not bundle React (let import map resolve it)
-    // Use deps=react@X,react-dom@X to pin dependency versions
-    if (!isReactPackage) {
-      if (!specifier.includes("external=react")) {
-        params.push("external=react");
+    // Handle external param - ensure both react AND react-dom are externalized
+    const hasExternal = specifier.includes("external=");
+    const hasReactExternal = specifier.includes("external=react") ||
+      /external=[^&]*\breact\b/.test(specifier);
+    const hasReactDomExternal = /external=[^&]*react-dom/.test(specifier);
+
+    if (!hasExternal) {
+      // No external param - add both
+      params.push("external=react,react-dom");
+    } else if (!hasReactExternal) {
+      // Has external but no react - append react,react-dom
+      // This requires modifying existing param, so we'll use URL parsing
+      try {
+        const url = new URL(specifier);
+        const existing = url.searchParams.get("external") || "";
+        url.searchParams.set("external", `${existing},react,react-dom`);
+        // Return full modified URL and skip other param additions
+        if (!specifier.includes("target=")) {
+          url.searchParams.set("target", "es2022");
+        }
+        if (!specifier.includes("deps=")) {
+          url.searchParams.set("deps", `react@${version},react-dom@${version}`);
+        }
+        logger.debug(`${LOG_PREFIX} ${specifier} -> ${url.toString()}`);
+        return url.toString();
+      } catch {
+        // Fallback: just add as new param (may create duplicate)
+        params.push("external=react,react-dom");
       }
-      if (!specifier.includes("deps=")) {
-        params.push(`deps=react@${REACT_VERSION},react-dom@${REACT_VERSION}`);
+    } else if (!hasReactDomExternal) {
+      // Has react but not react-dom - append react-dom
+      try {
+        const url = new URL(specifier);
+        const existing = url.searchParams.get("external") || "";
+        url.searchParams.set("external", `${existing},react-dom`);
+        if (!specifier.includes("target=")) {
+          url.searchParams.set("target", "es2022");
+        }
+        if (!specifier.includes("deps=")) {
+          url.searchParams.set("deps", `react@${version},react-dom@${version}`);
+        }
+        logger.debug(`${LOG_PREFIX} ${specifier} -> ${url.toString()}`);
+        return url.toString();
+      } catch {
+        // Fallback
+        params.push("external=react-dom");
       }
+    }
+    // else: has both react and react-dom - no external changes needed
+
+    if (!specifier.includes("deps=")) {
+      params.push(`deps=react@${version},react-dom@${version}`);
     }
 
     if (params.length === 0) return null;

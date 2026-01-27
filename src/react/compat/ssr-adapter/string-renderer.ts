@@ -31,7 +31,7 @@ export async function renderToStringAdapter(
       const stream = await withSpan(
         SpanNames.SSR_REACT_RENDER_TO_STREAM,
         () =>
-          server.renderToReadableStream(element, {
+          server.renderToReadableStream!(element, {
             onError: (error: unknown) => {
               logger.error("SSR renderToReadableStream error", error);
               options.onError?.(error as Error);
@@ -48,7 +48,7 @@ export async function renderToStringAdapter(
   try {
     return (await withSpan(
       SpanNames.SSR_REACT_RENDER_TO_STRING,
-      () => server.renderToString(element),
+      () => Promise.resolve(server.renderToString(element)),
       { "ssr.method": "renderToString" },
     )) as string;
   } catch (error) {

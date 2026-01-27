@@ -46,7 +46,7 @@ export class SSROrchestrator {
   ): Promise<SSRRenderingResult> {
     logger.debug("[SSROrchestrator] performSSRRendering called", {
       elementType: getElementTypeName(pageElement),
-      hasChildren: !!pageElement?.props?.children,
+      hasChildren: !!(pageElement?.props as Record<string, unknown>)?.children,
     });
 
     const validatedElement = this.config.elementValidator.ensureValidReactElement(

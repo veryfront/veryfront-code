@@ -201,6 +201,7 @@ async function processVfModuleImports(
     adapter,
     projectDir,
     context.projectId,
+    { reactVersion: context.reactVersion },
   );
 
   const fetchStart = performance.now();

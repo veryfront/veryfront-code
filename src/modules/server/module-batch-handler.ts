@@ -48,6 +48,8 @@ export interface BatchHandlerOptions {
    * When not set, users can import from any directory in the project.
    */
   allowedImportDirs?: string[];
+  /** React version for transforms (from project config) */
+  reactVersion?: string;
 }
 
 /** Maximum number of modules that can be batched in one request */
@@ -101,6 +103,7 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
         branch,
         dev = false,
         allowedImportDirs,
+        reactVersion,
       } = options;
 
       const projectKey = projectId || projectSlug || "default";
@@ -146,6 +149,7 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
               projectSlug,
               branch,
               projectId,
+              reactVersion,
             });
 
             const transformDurationMs = performance.now() - moduleStart;
@@ -245,6 +249,7 @@ async function loadAndTransformModule(
     projectSlug?: string;
     branch?: string | null;
     projectId?: string;
+    reactVersion?: string;
   },
 ): Promise<string | null> {
   const basePath = modulePath.replace(/\.js$/, "");
@@ -293,12 +298,14 @@ async function transformModule(
     projectSlug?: string;
     branch?: string | null;
     projectId?: string;
+    reactVersion?: string;
   },
 ): Promise<string> {
   let code = await transformToESM(source, sourceFile, projectDir, adapter, {
     projectId: options.projectId ?? projectDir,
     dev: options.dev,
     ssr: options.ssr,
+    reactVersion: options.reactVersion,
   });
 
   if (options.ssr) {

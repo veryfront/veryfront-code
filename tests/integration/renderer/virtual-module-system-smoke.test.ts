@@ -1,7 +1,6 @@
 import { assertEquals, assertStringIncludes } from "@veryfront/testing/assert";
 import { describe, it } from "@veryfront/testing/bdd";
 import { getAdapter } from "@veryfront/platform";
-import { isDeno } from "@veryfront/platform/compat/runtime.ts";
 import { VirtualModuleSystem } from "../../../src/rendering/virtual-module-system.ts";
 
 describe(
@@ -42,21 +41,12 @@ export default function TestComponent() {
       assertEquals(response?.status, 200, "Response should be successful");
 
       const content = await response?.text();
-      // Deno uses npm: specifiers for React, other runtimes use esm.sh URLs
-      if (isDeno) {
-        assertStringIncludes(
-          content ?? "",
-          "npm:react@",
-          "Module should have transformed React import to npm: specifier (Deno)",
-        );
-      } else {
-        assertEquals(
-          content?.includes("https://esm.sh/react@19.1.1") ||
-            content?.includes("https://esm.sh/react@18."),
-          true,
-          "Module should have transformed React import to esm.sh URL",
-        );
-      }
+      // All runtimes use esm.sh URLs for React
+      assertStringIncludes(
+        content ?? "",
+        "https://esm.sh/react@",
+        "Module should have transformed React import to esm.sh URL",
+      );
     });
 
     it("should handle non-virtual requests", async () => {
@@ -90,26 +80,17 @@ export default function Component() {
       const response = await vms.handleRequest(request);
       const content = await response?.text();
 
-      // Deno: jsx-runtime is resolved to npm: specifier
-      // Other runtimes: jsx-runtime is converted back to bare specifier (for browser import map)
-      if (isDeno) {
-        assertStringIncludes(
-          content ?? "",
-          "npm:react@",
-          "JSX runtime import should use npm: specifier (Deno)",
-        );
-        assertStringIncludes(
-          content ?? "",
-          "jsx-runtime",
-          "Should include jsx-runtime path",
-        );
-      } else {
-        assertStringIncludes(
-          content ?? "",
-          'from "react/jsx-runtime"',
-          "JSX runtime import should be bare specifier (resolved by browser import map)",
-        );
-      }
+      // All runtimes use esm.sh URLs for React (including jsx-runtime)
+      assertStringIncludes(
+        content ?? "",
+        "https://esm.sh/react@",
+        "React import should use esm.sh URL",
+      );
+      assertStringIncludes(
+        content ?? "",
+        "jsx-runtime",
+        "Should include jsx-runtime path",
+      );
     });
   },
 );

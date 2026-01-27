@@ -10,6 +10,7 @@
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { isAbsolute, join } from "#veryfront/platform/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { simpleHash } from "#veryfront/utils/hash-utils.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
@@ -17,8 +18,7 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
-import { isDeno } from "#veryfront/platform/compat/runtime.ts";
-import { getDenoNpmReactMap, getReactImportMap, REACT_VERSION } from "./package-registry.ts";
+import { getReactImportMap, REACT_VERSION } from "./package-registry.ts";
 import { parseImports, replaceSpecifiers } from "./lexer.ts";
 import { CacheBackends, createDistributedCacheAccessor } from "#veryfront/cache/backend.ts";
 import {
@@ -59,13 +59,23 @@ function isHttpUrl(specifier: string): boolean {
 /**
  * Check if a URL is for React core packages.
  *
- * Previously, React modules were NOT cached to prevent multiple React instances.
- * Now with npm: specifiers for Deno (which auto-deduplicate) and consistent
- * esm.sh URLs with external=react for other runtimes, all code uses the same
- * React instance.
+ * React core modules (react, react-dom) must NOT be cached/bundled.
+ * Instead, all packages use external=react and import from the same esm.sh URL.
+ * This prevents multiple React instances which causes "useContext is null" errors.
  */
-function isReactCoreUrl(_url: string): boolean {
-  return false;
+function isReactCoreUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (!parsed.hostname.includes("esm.sh")) return false;
+
+    // Extract package name from esm.sh pathname
+    // Formats: /react@version, /v150/react@version, /stable/react@version
+    const pathname = parsed.pathname.replace(/^\/(v\d+|stable)\//, "/");
+    const match = pathname.match(/^\/(react|react-dom)(@[\d.]+)?(?:\/|$|\?)/);
+    return match !== null;
+  } catch {
+    return false;
+  }
 }
 
 function isExternalScheme(specifier: string): boolean {
@@ -133,26 +143,8 @@ function resolveBareSpecifier(
   importMap: ImportMapConfig,
   reactVersion: string = REACT_VERSION,
 ): string {
-  // For Deno SSR: Resolve React to npm: specifiers for automatic deduplication.
-  // Deno's native npm resolution ensures all modules share the same React instance.
-  // See: https://deno.com/blog/not-using-npm-specifiers-doing-it-wrong
-  if (isDeno) {
-    const denoReactMap = getDenoNpmReactMap(reactVersion);
-    const denoMatch = denoReactMap[specifier];
-    if (denoMatch) return denoMatch;
-
-    // For unknown react/* or react-dom/* subpaths, construct npm: specifiers
-    if (specifier.startsWith("react/") && !specifier.startsWith("react-dom")) {
-      const subpath = specifier.slice("react/".length);
-      return `npm:react@${reactVersion}/${subpath}`;
-    }
-    if (specifier.startsWith("react-dom/")) {
-      const subpath = specifier.slice("react-dom/".length);
-      return `npm:react-dom@${reactVersion}/${subpath}`;
-    }
-  }
-
-  // For non-Deno runtimes: Use esm.sh URLs with consistent versioning.
+  // Use esm.sh URLs for React - NO npm: specifiers per plan requirements.
+  // All packages use external=react to share the same React instance.
   const reactMap = getReactImportMap(reactVersion);
   const reactMapped = reactMap[specifier];
   if (reactMapped) return reactMapped;
@@ -334,6 +326,13 @@ async function resolveSpecifier(
     if (!baseUrl || !isHttpUrl(baseUrl)) return null;
 
     const resolved = new URL(specifier, baseUrl).toString();
+
+    // For React core URLs: return the full esm.sh URL (not cached, to prevent multiple instances)
+    // This transforms relative paths like "/react-dom?..." to "https://esm.sh/react-dom?..."
+    if (isReactCoreUrl(resolved)) {
+      return normalizeHttpUrl(resolved);
+    }
+
     const cached = await cacheHttpModule(resolved, options);
     return cached ? `file://${cached}` : null;
   }

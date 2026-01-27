@@ -1,9 +1,5 @@
 import type { ImportMapConfig } from "./types.ts";
-import { isDeno } from "#veryfront/platform/compat/runtime.ts";
-import {
-  getDenoNpmReactMap,
-  getReactImportMap,
-} from "#veryfront/transforms/esm/package-registry.ts";
+import { getReactImportMap } from "#veryfront/transforms/esm/package-registry.ts";
 
 function ensureTrailingSlash(path: string): string {
   return path.endsWith("/") ? path : `${path}/`;
@@ -45,32 +41,14 @@ function getVeryfrontSsrImportMap(): Record<string, string> {
 }
 
 /**
- * Get React import map for SSR in Deno.
- * Uses npm: specifiers which Deno handles natively with automatic deduplication.
- * See: https://deno.com/blog/not-using-npm-specifiers-doing-it-wrong
- *
- * This replaces the previous shared-*.ts approach which required manual re-exports.
- */
-export function getDenoReactImportMap(): Record<string, string> {
-  return getDenoNpmReactMap();
-}
-
-/**
  * Get the default import map for SSR transforms.
- *
- * For Deno SSR: Uses npm: specifiers with automatic deduplication.
- * For other runtimes: Uses esm.sh URLs with external=react.
+ * Uses esm.sh URLs consistently (NO npm: specifiers per plan requirements).
  */
 export function getDefaultImportMap(): ImportMapConfig {
-  const reactMap = isDeno ? getDenoReactImportMap() : getReactImportMap();
+  const reactMap = getReactImportMap();
   const veryfrontMap = getVeryfrontSsrImportMap();
-
-  // For Deno SSR, add scopes so that esm.sh modules with external=react
-  // resolve their bare `react` imports to npm: specifiers.
-  const scopes = isDeno ? { "https://esm.sh/": getDenoReactImportMap() } : undefined;
 
   return {
     imports: { ...veryfrontMap, ...reactMap },
-    scopes,
   };
 }

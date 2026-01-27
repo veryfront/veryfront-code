@@ -9,6 +9,8 @@ export interface LoadComponentOptions {
   ssr?: boolean;
   /** Content source ID for cache isolation (branch name or release ID) */
   contentSourceId?: string;
+  /** React version for transforms (from project config) */
+  reactVersion?: string;
 }
 
 export interface ComponentSource {

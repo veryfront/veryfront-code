@@ -45,6 +45,8 @@ export interface ModuleServerOptions {
    * When not set, users can import from any directory in the project.
    */
   allowedImportDirs?: string[];
+  /** React version for transforms (from project config) */
+  reactVersion?: string;
 }
 
 /** Serve transformed module at /_vf_modules/* path */
@@ -63,6 +65,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         dev = true,
         projectUUID,
         allowedImportDirs,
+        reactVersion,
       } = options;
 
       const effectiveProjectId = projectUUID ?? projectId;
@@ -139,7 +142,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             `_snippets/${hash}.tsx`,
             projectDir,
             adapter,
-            { projectId: effectiveProjectId, dev, ssr: isSSR },
+            { projectId: effectiveProjectId, dev, ssr: isSSR, reactVersion },
           );
 
           if (isSSR && transformedCode) {
@@ -228,6 +231,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             dev,
             ssr: isSSR,
             moduleServerUrl: `http://${url.host}`,
+            reactVersion,
           });
 
           if (isSSR && code) {
@@ -306,6 +310,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             dev,
             ssr: isSSR,
             studioEmbed,
+            reactVersion,
           };
 
           code = await transformToESM(source, sourceFile, projectDir, adapter, transformOpts);

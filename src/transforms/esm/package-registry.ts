@@ -9,23 +9,35 @@
 export const DEFAULT_REACT_VERSION = "19.1.1";
 export const TAILWIND_VERSION = "4.1.8";
 
-/** Cached React version from project config */
-let configuredReactVersion: string | null = null;
-
 /**
- * Set the React version from project configuration.
- * Call this during project initialization if a custom version is specified.
+ * Validate React version format (semver: X.Y.Z).
+ * Returns true if valid, false otherwise.
  */
-export function setReactVersion(version: string): void {
-  configuredReactVersion = version;
+export function isValidReactVersion(version: string): boolean {
+  return /^\d+\.\d+\.\d+$/.test(version);
 }
 
 /**
- * Get the current React version.
- * Returns configured version if set, otherwise the default.
+ * Validate and normalize React version.
+ * Returns the version if valid, or DEFAULT_REACT_VERSION if invalid.
+ * Logs a warning if the version is invalid.
+ */
+export function normalizeReactVersion(version: string | undefined): string {
+  if (!version) return DEFAULT_REACT_VERSION;
+  if (isValidReactVersion(version)) return version;
+  console.warn(
+    `[VERYFRONT] Invalid React version format "${version}" (expected X.Y.Z). Using default: ${DEFAULT_REACT_VERSION}`,
+  );
+  return DEFAULT_REACT_VERSION;
+}
+
+/**
+ * @deprecated Global React version is no longer supported.
+ * Use config.react.version passed through TransformOptions instead.
+ * This function now always returns DEFAULT_REACT_VERSION.
  */
 export function getReactVersion(): string {
-  return configuredReactVersion ?? DEFAULT_REACT_VERSION;
+  return DEFAULT_REACT_VERSION;
 }
 
 /** @deprecated Use DEFAULT_REACT_VERSION or getReactVersion() */
@@ -107,25 +119,20 @@ export function getReactImportMap(version?: string): Record<string, string> {
 }
 
 /**
- * Get React npm specifiers for Deno SSR.
- * Uses npm: protocol which Deno handles natively with automatic deduplication.
- * See: https://deno.com/blog/not-using-npm-specifiers-doing-it-wrong
- *
- * Benefits over esm.sh:
- * - Automatic semantic version deduplication (like Node's node_modules)
- * - No manual external= flags or shared-*.ts wrapper files needed
- * - Native support in Deno 2+
+ * Get React esm.sh URLs for Deno SSR.
+ * Uses esm.sh for both SSR and browser to ensure identical React instances.
+ * All sub-packages use external=react to share the same React instance.
  *
  * @param version - React version to use (defaults to REACT_VERSION)
  */
 export function getDenoNpmReactMap(version?: string): Record<string, string> {
   const v = version ?? getReactVersion();
   return {
-    "react": `npm:react@${v}`,
-    "react-dom": `npm:react-dom@${v}`,
-    "react-dom/client": `npm:react-dom@${v}/client`,
-    "react-dom/server": `npm:react-dom@${v}/server`,
-    "react/jsx-runtime": `npm:react@${v}/jsx-runtime`,
-    "react/jsx-dev-runtime": `npm:react@${v}/jsx-dev-runtime`,
+    "react": esmSh("react", v),
+    "react-dom": esmSh("react-dom", v, "", "external=react&target=es2022"),
+    "react-dom/client": esmSh("react-dom", v, "/client", "external=react&target=es2022"),
+    "react-dom/server": esmSh("react-dom", v, "/server", "external=react&target=es2022"),
+    "react/jsx-runtime": esmSh("react", v, "/jsx-runtime", "external=react&target=es2022"),
+    "react/jsx-dev-runtime": esmSh("react", v, "/jsx-dev-runtime", "external=react&target=es2022"),
   };
 }
