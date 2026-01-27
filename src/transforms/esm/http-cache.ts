@@ -32,6 +32,17 @@ const getDistributedCache = createDistributedCacheAccessor(
   "HTTP-CACHE",
 );
 
+/**
+ * HTTP bundle cache version. Increment to invalidate all cached bundles.
+ * v1: Initial version (polluted with gzip content from old esm.sh responses)
+ * v2: Clean slate after gzip pollution fix
+ */
+const HTTP_BUNDLE_VERSION = 2;
+
+/** Generate versioned cache key for HTTP bundles */
+const distributedKey = (prefix: string, hash: string | number) =>
+  `v${HTTP_BUNDLE_VERSION}:${prefix}:${hash}`;
+
 type CacheOptions = {
   cacheDir: string;
   importMap: ImportMapConfig;
@@ -201,9 +212,13 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
         try {
           const code = await fs.readTextFile(cachePath);
           await Promise.all([
-            distributed.set(`url:${hash}`, code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
-            distributed.set(`code:${hash}`, code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
-            distributed.set(`hash:${hash}`, normalizedUrl, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
+            distributed.set(distributedKey("url", hash), code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
+            distributed.set(distributedKey("code", hash), code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
+            distributed.set(
+              distributedKey("hash", hash),
+              normalizedUrl,
+              HTTP_MODULE_DISTRIBUTED_TTL_SEC,
+            ),
           ]);
           lastDistributedRefresh.set(hashStr, now);
           logger.debug("[HTTP-CACHE] Refreshed distributed cache TTL", { hash });
@@ -230,7 +245,7 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
       // Use hash-based key instead of raw URL to comply with API cache key constraints.
       // API cache keys only allow: alphanumeric, underscore, colon, dot, asterisk, hyphen, slash.
       // URLs contain invalid characters like @, ?, =, &, etc.
-      const cachedCode = await distributed.get(`url:${hash}`);
+      const cachedCode = await distributed.get(distributedKey("url", hash));
       if (cachedCode) {
         // Validate that the cached content is valid JavaScript, not compressed/gzipped.
         // esm.sh sometimes stores gzip-encoded bundles with "gz:" prefix that need
@@ -310,9 +325,13 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
     // the bundle code does, causing ensureHttpBundlesExist on another pod to miss.
     try {
       await Promise.all([
-        distributed.set(`url:${hash}`, code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
-        distributed.set(`code:${hash}`, code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
-        distributed.set(`hash:${hash}`, normalizedUrl, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
+        distributed.set(distributedKey("url", hash), code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
+        distributed.set(distributedKey("code", hash), code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
+        distributed.set(
+          distributedKey("hash", hash),
+          normalizedUrl,
+          HTTP_MODULE_DISTRIBUTED_TTL_SEC,
+        ),
       ]);
     } catch (error) {
       logger.debug("[HTTP-CACHE] Distributed cache set failed", { url: normalizedUrl, error });
@@ -464,7 +483,7 @@ export async function recoverHttpBundleByHash(hash: string, cacheDir: string): P
 
   try {
     // Strategy 1: Direct code lookup by hash (preferred - no URL needed)
-    const cachedCode = await distributed.get(`code:${hash}`);
+    const cachedCode = await distributed.get(distributedKey("code", hash));
     if (cachedCode) {
       // Validate that the cached content is valid JavaScript, not compressed/gzipped.
       // esm.sh sometimes stores gzip-encoded bundles with "gz:" prefix that need
@@ -507,7 +526,7 @@ export async function recoverHttpBundleByHash(hash: string, cacheDir: string): P
     }
 
     // Strategy 2: URL lookup then re-fetch (fallback for bundles cached before code:{hash} was added)
-    const originalUrl = await distributed.get(`hash:${hash}`);
+    const originalUrl = await distributed.get(distributedKey("hash", hash));
     if (originalUrl) {
       logger.info("[HTTP-CACHE] Recovering bundle via URL re-fetch", { hash, originalUrl });
       const importMap = { imports: {}, scopes: {} };
@@ -605,7 +624,7 @@ export async function ensureHttpBundlesExist(
     }
 
     // Batch fetch from distributed cache
-    const codeKeys = missing.map((m) => `code:${m.hash}`);
+    const codeKeys = missing.map((m) => distributedKey("code", m.hash));
     let codes: Map<string, string | null>;
 
     try {
@@ -626,7 +645,7 @@ export async function ensureHttpBundlesExist(
     // Write fetched bundles to disk using canonical paths and scan for transitive deps
     await Promise.all(
       missing.map(async ({ hash, canonicalPath }) => {
-        const code = codes.get(`code:${hash}`);
+        const code = codes.get(distributedKey("code", hash));
         if (!code) {
           // Try single-bundle recovery as last resort
           const recovered = await recoverHttpBundleByHash(hash, absoluteCacheDir);
