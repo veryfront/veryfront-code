@@ -2,6 +2,7 @@ import { parseImports, replaceSpecifiers, rewriteImports } from "./lexer.ts";
 import { REACT_DEFAULT_VERSION, TAILWIND_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { getReactImportMap } from "./package-registry.ts";
 
 export function addHMRTimestamps(code: string, timestamp: string | number): Promise<string> {
   return withSpan(
@@ -49,17 +50,9 @@ function normalizeVersionedSpecifier(specifier: string): string {
   return specifier.replace(/@[\d^~x][\d.x^~-]*(?=\/|$)/, "");
 }
 
-const REACT_IMPORT_MAP: Record<string, string> = {
-  react: `https://esm.sh/react@${REACT_DEFAULT_VERSION}?target=es2022`,
-  "react-dom": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}?external=react&target=es2022`,
-  "react-dom/client":
-    `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/client?external=react&target=es2022`,
-  "react-dom/server":
-    `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/server?external=react&target=es2022`,
-  "react/jsx-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-runtime?target=es2022`,
-  "react/jsx-dev-runtime":
-    `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-dev-runtime?target=es2022`,
-};
+// Use centralized React import map from package-registry.ts to ensure URL consistency
+// Any URL mismatch between SSR and browser causes multiple React instances -> hooks fail
+const REACT_IMPORT_MAP: Record<string, string> = getReactImportMap(REACT_DEFAULT_VERSION);
 
 function shouldSkipRewrite(specifier: string): boolean {
   return (

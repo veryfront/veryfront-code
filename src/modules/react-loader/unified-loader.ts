@@ -6,7 +6,10 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getProjectTmpDir } from "./temp-directory.ts";
 import type { ComponentMap, ComponentSource, LoadComponentOptions } from "./types.ts";
-import { DEFAULT_REACT_VERSION } from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  DEFAULT_REACT_VERSION,
+  getReactImportMap,
+} from "#veryfront/transforms/esm/package-registry.ts";
 
 type TransformedComponent = { name: string; code: string };
 
@@ -78,6 +81,8 @@ async function writeComponentFiles(
 
 function generateEntryPoint(components: TransformedComponent[], reactVersion?: string): string {
   const version = reactVersion ?? DEFAULT_REACT_VERSION;
+  // Use centralized React URL from package-registry to ensure consistency
+  const reactUrl = getReactImportMap(version).react;
   const imports = components
     .map((comp) => `import { default as ${comp.name} } from './${comp.name}.js'`)
     .join("\n");
@@ -85,7 +90,7 @@ function generateEntryPoint(components: TransformedComponent[], reactVersion?: s
   const exports = components.map((comp) => comp.name).join(", ");
 
   return `
-    import * as React from 'https://esm.sh/react@${version}?target=es2022'
+    import * as React from '${reactUrl}'
     ${imports}
 
     export { ${exports} }

@@ -63,10 +63,14 @@ export const REACT_VERSION = DEFAULT_REACT_VERSION;
 export const TRANSFORM_CACHE_VERSION = 12;
 
 /** csstype version - must match deno.json for type consistency */
-const CSSTYPE_VERSION = "3.2.3";
+export const CSSTYPE_VERSION = "3.2.3";
 
-/** Build esm.sh URL with deps=csstype for React packages (ensures type consistency) */
-function esmShReact(pkg: string, version: string, path = "", external = false): string {
+/**
+ * Build esm.sh URL with deps=csstype for React packages (ensures type consistency).
+ * CRITICAL: This is the single source of truth for React URLs. All other files
+ * (html/utils.ts, import-rewriter.ts, etc.) must use this or getReactImportMap().
+ */
+export function esmShReact(pkg: string, version: string, path = "", external = false): string {
   const params = external
     ? [`external=react`, `target=es2022`, `deps=csstype@${CSSTYPE_VERSION}`]
     : [`target=es2022`, `deps=csstype@${CSSTYPE_VERSION}`];
