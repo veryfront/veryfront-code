@@ -69,12 +69,20 @@ export async function processElement(
   const props = element.props as Record<string, unknown>;
 
   if (type === React.Fragment) {
-    const children = await renderChildren(props.children, clientManifest, clientRefs);
+    const children = await renderChildren(
+      props.children as React.ReactNode,
+      clientManifest,
+      clientRefs,
+    );
     return { type: "fragment", children };
   }
 
   if (typeof type === "string") {
-    const processedChildren = await renderChildren(props.children, clientManifest, clientRefs);
+    const processedChildren = await renderChildren(
+      props.children as React.ReactNode,
+      clientManifest,
+      clientRefs,
+    );
 
     if (processedChildren.every((child) => child.type === "html")) {
       const html = await renderToStringAdapter(element);

@@ -144,7 +144,7 @@ function renderToPipeableStreamImpl(
     }, SSR_TIMEOUT_MS);
 
     try {
-      const { pipe, abort } = server.renderToPipeableStream(element, {
+      const { pipe, abort } = server.renderToPipeableStream!(element, {
         bootstrapScripts: options.bootstrapScripts,
         bootstrapModules: options.bootstrapModules,
         identifierPrefix: options.identifierPrefix,
