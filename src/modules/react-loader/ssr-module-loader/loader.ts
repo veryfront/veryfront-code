@@ -537,8 +537,8 @@ export class SSRModuleLoader {
     // Check MDX-ESM cache to share modules with MDX loader and avoid duplicate React contexts
     if (this.options.projectId && this.options.contentSourceId) {
       const baseCacheDir = getMdxEsmCacheDir();
-      const projectKey = encodeURIComponent(this.options.projectId);
-      const sourceKey = encodeURIComponent(this.options.contentSourceId);
+      const projectKey = hashCodeHex(this.options.projectId);
+      const sourceKey = hashCodeHex(this.options.contentSourceId);
       const mdxCacheDir = join(baseCacheDir, projectKey, sourceKey);
 
       const mdxCachedPath = await lookupMdxEsmCache(
@@ -1021,8 +1021,8 @@ export class SSRModuleLoader {
     // Use the same cache directory as MDX-ESM loader to share module instances.
     // This prevents issues like React context being created twice in separate files.
     const baseCacheDir = getMdxEsmCacheDir();
-    const projectKey = encodeURIComponent(projectId);
-    const sourceKey = encodeURIComponent(contentSourceId);
+    const projectKey = hashCodeHex(projectId);
+    const sourceKey = hashCodeHex(contentSourceId);
     const cacheKey = `${baseCacheDir}|${projectKey}|${sourceKey}`;
 
     const existingDir = globalTmpDirs.get(cacheKey);
