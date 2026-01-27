@@ -454,10 +454,15 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
       }
 
       case "mcp": {
-        const { createMCPServer } = await import("../mcp/server.ts");
-        const mcpServer = await createMCPServer({ stdio: true });
+        // args.port defaults to DEFAULT_PORT (3000) from the CLI parser.
+        // The standalone MCP targets the dev server at 8080. Only override
+        // if the user explicitly passed --port.
+        const { DEFAULT_PORT } = await import("#veryfront/config/defaults.ts");
+        const port = args.port !== DEFAULT_PORT ? Number(args.port) : undefined;
+        const { createStandaloneMCPServer } = await import("../mcp/standalone.ts");
+        const mcpServer = createStandaloneMCPServer({ port });
         await new Promise(() => {});
-        await mcpServer.stop();
+        mcpServer.stop();
         break;
       }
 

@@ -15,6 +15,9 @@ import { ERROR_CATALOG } from "#veryfront/errors/catalog/index.ts";
 import { TransformStage } from "#veryfront/transforms/pipeline/types.ts";
 import { isRSCEnabled } from "#veryfront/utils/feature-flags.ts";
 import { getRuntimeEnv } from "#veryfront/config/runtime-env.ts";
+import { getErrorCollector } from "../../../../cli/mcp/error-collector.ts";
+import { getLogBuffer } from "../../../../cli/mcp/log-buffer.ts";
+import { ReloadNotifier } from "../../../reload-notifier.ts";
 import type { HandlerContext } from "../../types.ts";
 
 const JSON_HEADERS = {
@@ -90,6 +93,10 @@ export function handleDashboardAPI(
         return handleGetErrors();
       case "/_dev/api/config":
         return handleGetConfig(ctx);
+      case "/_dev/api/live-errors":
+        return handleLiveErrors(req);
+      case "/_dev/api/live-logs":
+        return handleLiveLogs(req);
       default:
         return null;
     }
@@ -97,6 +104,8 @@ export function handleDashboardAPI(
 
   if (req.method === "POST") {
     switch (pathname) {
+      case "/_dev/api/hmr-trigger":
+        return handleHmrTrigger(req);
       case "/_dev/api/execute-tool":
         return handleExecuteTool(req);
       case "/_dev/api/read-resource":
@@ -534,6 +543,73 @@ function handleGetErrors(): Response {
     count: errors.length,
     timestamp: new Date().toISOString(),
   });
+}
+
+function handleLiveErrors(req: Request): Response {
+  const url = new URL(req.url);
+  const type = url.searchParams.get("type") ?? undefined;
+  const collector = getErrorCollector();
+
+  const filter = type
+    ? { type: type as import("../../../../cli/mcp/error-collector.ts").ErrorType }
+    : undefined;
+
+  const errors = collector.getAll(filter);
+  return jsonResponse({
+    errors,
+    count: errors.length,
+    countByType: collector.countByType(),
+    timestamp: new Date().toISOString(),
+  });
+}
+
+function handleLiveLogs(req: Request): Response {
+  const url = new URL(req.url);
+  const level = url.searchParams.get("level") ?? undefined;
+  const source = url.searchParams.get("source") ?? undefined;
+  const pattern = url.searchParams.get("pattern") ?? undefined;
+  const limit = url.searchParams.get("limit");
+  const since = url.searchParams.get("since");
+
+  const buffer = getLogBuffer();
+  const entries = buffer.query({
+    level: level as import("../../../../cli/mcp/log-buffer.ts").LogLevel | undefined,
+    source: source ?? undefined,
+    pattern: pattern ?? undefined,
+    limit: limit ? parseInt(limit, 10) : undefined,
+    since: since ? parseInt(since, 10) : undefined,
+  });
+
+  return jsonResponse({
+    logs: entries,
+    count: entries.length,
+    countByLevel: buffer.countByLevel(),
+    timestamp: new Date().toISOString(),
+  });
+}
+
+async function handleHmrTrigger(req: Request): Promise<Response> {
+  try {
+    const body = await req.json().catch(() => ({})) as { path?: string };
+    const changedPaths = body.path ? [body.path] : undefined;
+
+    const listenerCount = ReloadNotifier.getListenerCount();
+    if (listenerCount === 0) {
+      return jsonResponse({
+        success: false,
+        error: "No HMR listeners connected. Is a browser open?",
+      });
+    }
+
+    ReloadNotifier.triggerReload(changedPaths);
+    return jsonResponse({
+      success: true,
+      listeners: listenerCount,
+      metrics: ReloadNotifier.getMetrics(),
+    });
+  } catch (error) {
+    return errorResponse(getErrorMessage(error));
+  }
 }
 
 function handleGetConfig(ctx: HandlerContext): Response {
