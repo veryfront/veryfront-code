@@ -927,8 +927,7 @@ function hello() { return 'world'; }
 
     describe("getDefaultImportMap", () => {
       // React IS included in getDefaultImportMap() for SSR consistency.
-      // Deno: Uses npm: specifiers with automatic deduplication.
-      // Node/Bun: Uses esm.sh URLs with external=react.
+      // All runtimes use esm.sh URLs with external=react.
 
       it("should return default import map with veryfront and React imports", () => {
         const importMap = getDefaultImportMap();
@@ -955,13 +954,12 @@ function hello() { return 'world'; }
         assertEquals(importMap.imports!["next-themes"], undefined);
       });
 
-      it("should include scopes for Deno (npm: specifiers for esm.sh modules)", () => {
+      it("should provide consistent import map across all runtimes", () => {
         const importMap = getDefaultImportMap();
 
         assertExists(importMap.imports);
-        // Deno includes scopes to resolve esm.sh modules' React imports
-        // to npm: specifiers for deduplication
-        // Note: scopes may be undefined for non-Deno runtimes
+        // All runtimes use esm.sh URLs for React
+        // No special scopes needed for deduplication
       });
     });
 
@@ -1017,11 +1015,9 @@ function hello() { return 'world'; }
             resolveBare: true,
           });
 
-          // Verify transformation happened
-          // Deno: uses npm: specifiers, other runtimes: use esm.sh URLs
-          const hasNpmReact = transformed.includes("npm:react@");
+          // Verify transformation happened - all runtimes now use esm.sh URLs
           const hasEsmReact = transformed.includes("https://esm.sh/react@");
-          assertEquals(hasNpmReact || hasEsmReact, true);
+          assertEquals(hasEsmReact, true);
           // Should not have bare import anymore
           assertEquals(transformed.includes("from 'react'"), false);
         });
