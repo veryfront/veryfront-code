@@ -60,8 +60,9 @@ export const REACT_VERSION = DEFAULT_REACT_VERSION;
  * v11: Add HTTP bundle hash→URL mapping for cross-pod recovery
  * v12: Store HTTP bundle code by hash for direct recovery (code:{hash})
  * v13: Fix npm: specifiers for Node.js (convert to esm.sh or local React)
+ * v14: Fix SSR pipeline to use local React paths on Node.js (not esm.sh URLs)
  */
-export const TRANSFORM_CACHE_VERSION = 13;
+export const TRANSFORM_CACHE_VERSION = 14;
 
 /** csstype version - must match deno.json for type consistency */
 export const CSSTYPE_VERSION = "3.2.3";

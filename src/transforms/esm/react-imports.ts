@@ -1,5 +1,7 @@
 import { replaceSpecifiers } from "./lexer.ts";
 import { getReactImportMap, REACT_VERSION } from "./package-registry.ts";
+import { getLocalReactPaths } from "#veryfront/platform/compat/react-paths.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 
 const srcDir = new URL(".", import.meta.url).pathname.replace(
   /\/(build|src)\/transforms\/esm\/?$/,
@@ -26,10 +28,15 @@ export async function resolveReactImports(
     return replaceSpecifiers(code, (specifier) => reactImports[specifier] ?? null);
   }
 
-  // For SSR: Use esm.sh URLs consistently (NO npm: specifiers per plan requirements)
+  // For SSR: On Node.js/Bun, use local React paths from veryfront's node_modules.
+  // On Deno, use esm.sh URLs (Deno supports HTTP imports natively).
+  // This ensures the same React instance is used by both user code and react-dom-server.
+  const localReactPaths = getLocalReactPaths();
+  const ssrReactImports = isDeno ? reactImports : { ...reactImports, ...localReactPaths };
+
   const ssrImports: Record<string, string> = {
     ...getVeryfrontModulePaths(),
-    ...reactImports,
+    ...ssrReactImports,
   };
 
   return replaceSpecifiers(code, (specifier) => ssrImports[specifier] ?? null);
