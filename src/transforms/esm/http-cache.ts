@@ -197,6 +197,7 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
         try {
           const code = await fs.readTextFile(cachePath);
           await Promise.all([
+            distributed.set(`url:${hash}`, code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
             distributed.set(`code:${hash}`, code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
             distributed.set(`hash:${hash}`, normalizedUrl, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
           ]);
@@ -219,11 +220,15 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
   }
 
   const distributed = await getDistributedCache();
+  const hash = simpleHash(normalizedUrl);
   if (distributed) {
     try {
-      const cachedCode = await distributed.get(normalizedUrl);
+      // Use hash-based key instead of raw URL to comply with API cache key constraints.
+      // API cache keys only allow: alphanumeric, underscore, colon, dot, asterisk, hyphen, slash.
+      // URLs contain invalid characters like @, ?, =, &, etc.
+      const cachedCode = await distributed.get(`url:${hash}`);
       if (cachedCode) {
-        logger.debug("[HTTP-CACHE] Distributed cache hit", { url: normalizedUrl });
+        logger.debug("[HTTP-CACHE] Distributed cache hit", { url: normalizedUrl, hash });
         await fs.mkdir(cacheDir, { recursive: true });
         await fs.writeTextFile(cachePath, cachedCode);
         cachedPaths.set(cacheKey, cachePath);
@@ -275,15 +280,21 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
   await fs.writeTextFile(cachePath, code);
 
   if (distributed) {
-    // Store code by URL, by hash (for direct recovery), and URL mapping (for debugging).
-    // Storing code by hash enables recovery without needing URL lookup.
+    // Store code by hash-based keys to comply with API cache key constraints.
+    // API cache keys only allow: alphanumeric, underscore, colon, dot, asterisk, hyphen, slash.
+    // URLs contain invalid characters (@, ?, =, &, etc.) so we use hashes instead.
+    //
+    // Keys stored:
+    // - url:{hash}  - primary lookup key (replaces raw URL)
+    // - code:{hash} - direct code recovery by hash
+    // - hash:{hash} - URL mapping for debugging
+    //
     // IMPORTANT: await the writes so other pods can recover this bundle immediately.
     // Without await, a transform referencing this bundle could reach Redis before
     // the bundle code does, causing ensureHttpBundlesExist on another pod to miss.
-    const hash = simpleHash(normalizedUrl);
     try {
       await Promise.all([
-        distributed.set(normalizedUrl, code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
+        distributed.set(`url:${hash}`, code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
         distributed.set(`code:${hash}`, code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
         distributed.set(`hash:${hash}`, normalizedUrl, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
       ]);
