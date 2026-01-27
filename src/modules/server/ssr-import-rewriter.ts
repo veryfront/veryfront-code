@@ -1,5 +1,6 @@
 import { getReactImportMap, getReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { getLocalReactPaths } from "#veryfront/platform/compat/react-paths.ts";
 
 export interface SSRRewriteOptions {
   /** Project slug for multi-project routing */
@@ -41,8 +42,16 @@ function shouldKeepBareSpecifier(specifier: string): boolean {
 }
 
 function resolveReactForRuntime(specifier: string, version?: string): string | null {
-  // Always rewrite React imports to esm.sh URLs for SSR modules.
-  // NO npm: specifiers - use esm.sh URLs only for consistent React instance.
+  // On Node.js/Bun, use local React paths from veryfront's node_modules.
+  // On Deno, use esm.sh URLs (Deno supports HTTP imports natively).
+  if (!isDeno) {
+    const localPaths = getLocalReactPaths();
+    const localPath = localPaths[specifier];
+    if (localPath) return localPath;
+    // If not found in local paths, fall through to esm.sh for subpath imports
+  }
+
+  // For Deno or subpath imports not in local paths, use esm.sh URLs
   const v = version ?? getReactVersion();
   const reactMap = getReactImportMap(v);
 
