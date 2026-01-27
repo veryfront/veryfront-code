@@ -10,6 +10,7 @@
 | [001.4](./001.4-layout-cache-no-project-scope.md) | 🔴 CRITICAL | Layout Cache Without Project Scoping - memory leak, cross-project pollution |
 | [001.5](./001.5-config-middleware-loading-divergence.md) | 🟠 HIGH | Config/Middleware Loading Divergence - esbuild vs native import |
 | [001.6](./001.6-css-cache-key-divergence.md) | 🟠 HIGH | CSS Cache Key Divergence - `projectUpdatedAt` only for API adapter |
+| [001.7](./001.7-unified-adapter-rfc.md) | 📋 RFC | Unified Adapter Architecture - One interface, one code path |
 
 ## Problem Statement
 
