@@ -230,6 +230,36 @@ logcli query '{namespace="veryfront-production", container="renderer"} |= "error
 | `veryfront.config.ts`     | Framework configuration        |
 | `chart/values.yaml`       | Kubernetes deployment config   |
 
+## Troubleshooting Production 500 Errors
+
+**Step 1: Always reproduce locally first** (fastest path to root cause):
+```bash
+# Use production cache - this reproduces cross-environment cache issues
+./scripts/debug-production.sh <project-slug>
+
+# Or manually:
+VERYFRONT_API_BASE_URL=https://api.veryfront.com PROXY_MODE=1 deno task start
+```
+
+**Step 2: Categorize the error**:
+| Error Pattern | Category | Fix |
+|---------------|----------|-----|
+| `Module not found "file://..."` | Cache path mismatch | Clear project cache |
+| `Transform failed` | Transform error | Check user code syntax |
+| `timeout` / `stuck` | Performance | Restart pods |
+
+**Step 3: Clear cache if needed**:
+```bash
+# Clear one project's cache
+curl -X DELETE "https://api.veryfront.com/internal/cache/project/{projectId}/transforms" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+
+# Nuclear option - restart pods
+kubectl rollout restart deployment/veryfront-renderer -n veryfront-production
+```
+
+See `docs/troubleshooting-500-errors.md` for full guide.
+
 ## Releasing Veryfront Code
 
 ```bash
