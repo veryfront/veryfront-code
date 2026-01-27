@@ -514,14 +514,19 @@ export class SSRModuleLoader {
         }
 
         if (httpBundlesOk) {
-          const tempPath = await this.getTempPath(filePath, contentHash);
+          // CRITICAL: Use transformedHash (hash of the transformed code) for temp path,
+          // NOT contentHash (hash of source). Other modules importing this file use
+          // transformedHash in their import paths (set during fresh transform at line 703).
+          // Using contentHash here would create a path mismatch and "Module not found" errors.
+          const transformedHash = await this.hashContentAsync(redisCode);
+          const tempPath = await this.getTempPath(filePath, transformedHash);
           await this.fs.mkdir(tempPath.substring(0, tempPath.lastIndexOf("/")), {
             recursive: true,
           });
           await this.fs.writeTextFile(tempPath, redisCode);
-          verifiedHttpBundlePaths.set(`${tempPath}:${contentHash}`, true);
+          verifiedHttpBundlePaths.set(`${tempPath}:${transformedHash}`, true);
 
-          const entry: ModuleCacheEntry = { tempPath, contentHash };
+          const entry: ModuleCacheEntry = { tempPath, contentHash: transformedHash };
           globalModuleCache.set(contentCacheKey, entry);
           globalModuleCache.set(filePathCacheKey, entry);
 
