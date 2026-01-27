@@ -1,7 +1,7 @@
 # Veryfront Code TUI Demo
 # Run with: vhs demo.tape
 
-Output demo.gif
+Output docs/demo.gif
 
 Set FontSize 28
 Set Width 1920
@@ -12,9 +12,21 @@ Set TypingSpeed 75ms
 Set Shell "bash"
 Env PS1 "\[\033[38;2;252;143;93m\]> \[\033[0m\]"
 
+# Clear npx cache first (hidden)
+Hide
+Type "rm -rf ~/.npm/_npx 2>/dev/null; clear"
+Enter
+Sleep 500ms
+Show
+
 # Start recording
 Type "npx veryfront"
 Sleep 500ms
+Enter
+
+# Confirm npx install prompt
+Sleep 2s
+Type "y"
 Enter
 
 # Wait for startup animation (spinning avatar + loading steps)
