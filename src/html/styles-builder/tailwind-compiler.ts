@@ -581,7 +581,8 @@ async function loadPlugin(id: string): Promise<unknown> {
     return pluginCache.get(id);
   }
 
-  const isDeno = typeof (globalThis as { Deno?: unknown }).Deno !== "undefined";
+  // Use the proper isDeno check that distinguishes between real Deno and dnt shim
+  const { isDeno } = await import("#veryfront/platform/compat/runtime.ts");
 
   try {
     let mod: unknown;

@@ -1,6 +1,6 @@
 import type { ImportMapConfig } from "./types.ts";
 import { getReactImportMap } from "#veryfront/transforms/esm/package-registry.ts";
-import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { isDeno as isRealDeno } from "#veryfront/platform/compat/runtime.ts";
 
 function ensureTrailingSlash(path: string): string {
   return path.endsWith("/") ? path : `${path}/`;
@@ -27,8 +27,8 @@ function getVeryfrontSsrImportMap(): Record<string, string> {
 
   // In Deno source, files have .tsx/.ts extensions
   // In npm package (Node.js/Bun), dnt transforms to .js
-  const tsxExt = isDeno ? ".tsx" : ".js";
-  const tsExt = isDeno ? ".ts" : ".js";
+  const tsxExt = isRealDeno ? ".tsx" : ".js";
+  const tsExt = isRealDeno ? ".ts" : ".js";
 
   const head = `${srcPath}/react/components/Head${tsxExt}`;
   const router = `${srcPath}/react/router/index${tsExt}`;
