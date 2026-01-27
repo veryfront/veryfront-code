@@ -59,8 +59,9 @@ export const REACT_VERSION = DEFAULT_REACT_VERSION;
  * v10: Fix import regex to match minified code (from"..." without whitespace)
  * v11: Add HTTP bundle hash→URL mapping for cross-pod recovery
  * v12: Store HTTP bundle code by hash for direct recovery (code:{hash})
+ * v13: Fix npm: specifiers for Node.js (convert to esm.sh or local React)
  */
-export const TRANSFORM_CACHE_VERSION = 12;
+export const TRANSFORM_CACHE_VERSION = 13;
 
 /** csstype version - must match deno.json for type consistency */
 export const CSSTYPE_VERSION = "3.2.3";
