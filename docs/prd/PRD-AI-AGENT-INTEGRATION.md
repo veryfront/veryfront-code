@@ -11,7 +11,7 @@
 
 Make the Veryfront MCP server work without the dev server running, and package it as a Claude Code plugin.
 
-1. **`veryfront mcp`** -- Standalone CLI subcommand. Starts the MCP server over stdio. Works without `veryfront dev`. Decoupled process.
+1. **`veryfront mcp`** -- Standalone CLI subcommand. Starts the MCP server over stdio. Works without `veryfront`. Decoupled process.
 
 2. **Claude Code plugin** -- Skills (conventions, flywheel), MCP config, and project detection. Distributed via Git marketplace.
 
@@ -35,7 +35,7 @@ Make the Veryfront MCP server work without the dev server running, and package i
 
 ## 2. Problem
 
-The Veryfront MCP server only starts when the dev server is running (`veryfront dev`). When it's not, agents show `x failed` and lose all Veryfront tools.
+The Veryfront MCP server only starts when the dev server is running (`veryfront`). When it's not, agents show `x failed` and lose all Veryfront tools.
 
 ---
 
@@ -45,7 +45,7 @@ The Veryfront MCP server only starts when the dev server is running (`veryfront 
 |-----------|-------|--------|
 | MCP Server (`src/cli/mcp/server.ts`) | 25+ (project context, routes, scaffold, errors, logs, HMR, flywheel) | Coupled to dev server |
 | Skills (`src/cli/mcp/skills/`) | Veryfront conventions, flywheel workflow | Loaded via MCP prompts |
-| Dev Dashboard (`src/server/handlers/dev/dashboard/api.ts`) | 15+ REST endpoints (stats, metrics, memory, config, build) | Available during `veryfront dev` |
+| Dev Dashboard (`src/server/handlers/dev/dashboard/api.ts`) | 15+ REST endpoints (stats, metrics, memory, config, build) | Available during `veryfront` |
 
 ---
 
@@ -53,14 +53,14 @@ The Veryfront MCP server only starts when the dev server is running (`veryfront 
 
 ### 4.1 `veryfront mcp` subcommand
 
-Starts the MCP server over stdio. Standalone process. Does NOT require `veryfront dev`.
+Starts the MCP server over stdio. Standalone process. Does NOT require `veryfront`.
 
 ```bash
 # Agent spawns this (via plugin or manual config):
 veryfront mcp
 
 # User separately runs (optional):
-veryfront dev
+veryfront
 ```
 
 Two processes. No conflicts. No shared state.
@@ -87,7 +87,7 @@ Two processes. No conflicts. No shared state.
 
 | Tool | Fallback |
 |------|----------|
-| `vf_get_errors` | "Dev server not running. Start with: veryfront dev" |
+| `vf_get_errors` | "Dev server not running. Start with: veryfront" |
 | `vf_get_logs` | Same |
 | `vf_get_flywheel_status` | Same |
 | `vf_preview_route` | Same |
@@ -196,7 +196,7 @@ args = ["mcp"]
 ## 6. Architecture
 
 ```
-Process 1: veryfront dev          Process 2: veryfront mcp
+Process 1: veryfront              Process 2: veryfront mcp
 (user starts manually)            (agent spawns via plugin)
 
 ┌─────────────────────┐           ┌─────────────────────┐
@@ -261,7 +261,7 @@ Process 1: veryfront dev          Process 2: veryfront mcp
 | Plugin installs in Claude Code | `/plugin install veryfront` works, tools appear |
 | Dev-dependent tools degrade gracefully | Returns helpful message, doesn't crash |
 | Dev-dependent tools work when dev server runs | Probes and proxies correctly |
-| No conflicts with `veryfront dev` | Both run simultaneously |
+| No conflicts with `veryfront` | Both run simultaneously |
 
 ---
 
