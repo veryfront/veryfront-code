@@ -1,6 +1,6 @@
 import { getReactImportMap, getReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
-import { isDeno } from "#veryfront/platform/compat/runtime.ts";
-import { getLocalReactPaths } from "#veryfront/platform/compat/react-paths.ts";
+import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
+import { getLocalReactPaths, isReactSpecifier } from "#veryfront/platform/compat/react-paths.ts";
 
 export interface SSRRewriteOptions {
   /** Project slug for multi-project routing */
@@ -33,8 +33,11 @@ function shouldKeepBareSpecifier(specifier: string): boolean {
 
   if (specifier.startsWith("@/")) return true;
 
-  // React imports are handled by resolveReactForRuntime - don't keep as bare specifiers
-  // This ensures SSR modules use explicit URLs for React, avoiding multiple instances
+  // On Node.js, keep React as bare specifiers for CJS/ESM interop.
+  // Node.js handles this automatically when resolving bare specifiers.
+  if (isNode && isReactSpecifier(specifier)) {
+    return true;
+  }
 
   if (specifier.startsWith("veryfront/")) return true;
 
@@ -42,9 +45,16 @@ function shouldKeepBareSpecifier(specifier: string): boolean {
 }
 
 function resolveReactForRuntime(specifier: string, version?: string): string | null {
-  // On Node.js/Bun, use local React paths from veryfront's node_modules.
-  // On Deno, use esm.sh URLs (Deno supports HTTP imports natively).
-  if (!isDeno) {
+  // For Node.js: Keep React as bare specifiers (e.g., "react/jsx-runtime").
+  // Node.js handles CJS/ESM interop automatically when resolving bare specifiers.
+  // Using file:// URLs or esm.sh URLs doesn't work for React's CJS modules.
+  if (isNode && isReactSpecifier(specifier)) {
+    return null; // Keep as bare specifier
+  }
+
+  // For Bun: Use local React paths from veryfront's node_modules.
+  // Bun handles CJS/ESM interop correctly with file:// URLs.
+  if (!isDeno && !isNode) {
     const localPaths = getLocalReactPaths();
     const localPath = localPaths[specifier];
     if (localPath) return localPath;

@@ -1,7 +1,7 @@
 import { replaceSpecifiers } from "./lexer.ts";
 import { getReactImportMap, REACT_VERSION } from "./package-registry.ts";
 import { getLocalReactPaths } from "#veryfront/platform/compat/react-paths.ts";
-import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 
 const srcDir = new URL(".", import.meta.url).pathname.replace(
   /\/(build|src)\/transforms\/esm\/?$/,
@@ -28,11 +28,18 @@ export async function resolveReactImports(
     return replaceSpecifiers(code, (specifier) => reactImports[specifier] ?? null);
   }
 
-  // For SSR: On Node.js/Bun, use local React paths from veryfront's node_modules.
-  // On Deno, use esm.sh URLs (Deno supports HTTP imports natively).
-  // This ensures the same React instance is used by both user code and react-dom-server.
+  // For SSR: Handle React imports differently per runtime.
+  // - Node.js: Keep React as bare specifiers (e.g., "react/jsx-runtime").
+  //   Node.js handles CJS/ESM interop automatically when resolving bare specifiers.
+  //   Using file:// URLs or esm.sh URLs doesn't work for React's CJS modules.
+  // - Deno: Use esm.sh URLs (Deno supports HTTP imports natively).
+  // - Bun: Use local file:// paths (Bun handles CJS/ESM interop with file:// URLs).
   const localReactPaths = getLocalReactPaths();
-  const ssrReactImports = isDeno ? reactImports : { ...reactImports, ...localReactPaths };
+  const ssrReactImports = isDeno
+    ? reactImports // esm.sh URLs for Deno
+    : isNode
+    ? {} // Keep bare specifiers for Node.js (no rewrite)
+    : { ...reactImports, ...localReactPaths }; // file:// paths for Bun
 
   const ssrImports: Record<string, string> = {
     ...getVeryfrontModulePaths(),

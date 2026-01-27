@@ -55,7 +55,12 @@ function resolveReactSpecifier(specifier: string): string | undefined {
 }
 
 export function getLocalReactPaths(): Record<string, string> {
-  if (isDeno) return {};
+  // On Deno, return empty - use esm.sh URLs instead (handled elsewhere).
+  // On Node.js, return empty - keep React as bare specifiers and let Node.js
+  // handle CJS/ESM interop naturally. Using file:// URLs for React's CJS
+  // modules doesn't work because Node.js can't import CJS via file:// in ESM.
+  // Bun handles this correctly, so we only resolve paths for Bun.
+  if (isDeno || isNode) return {};
   if (localReactPathsCache) return localReactPathsCache;
 
   const paths: Record<string, string> = {};
