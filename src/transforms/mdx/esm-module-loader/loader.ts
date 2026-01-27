@@ -10,6 +10,7 @@
 import { join } from "#std/path.ts";
 import React from "react";
 import { rendererLogger as logger } from "#veryfront/utils";
+import { getErrorCollector } from "#veryfront/cli/mcp/error-collector.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
@@ -622,6 +623,11 @@ async function doLoadModuleESM(
     return result;
   } catch (error) {
     logger.error(`${LOG_PREFIX_MDX_RENDERER} MDX ESM load failed:`, error);
+
+    // Capture compile error for MCP flywheel
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    getErrorCollector().addCompileError(errorMsg, context.projectSlug || "mdx");
+
     throw error;
   }
 }

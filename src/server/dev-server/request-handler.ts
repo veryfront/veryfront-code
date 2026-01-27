@@ -14,6 +14,8 @@ import type { HMRServer } from "./hmr-server.ts";
 import { createResponseBuilder } from "#veryfront/security/index.ts";
 import { resetApiHandler } from "../handlers/request/api/pages-api-handler.ts";
 import { clearLayoutDiscoveryCache } from "#veryfront/rendering/layouts/index.ts";
+import { getErrorCollector } from "#veryfront/cli/mcp/error-collector.ts";
+import { getLogBuffer } from "#veryfront/cli/mcp/log-buffer.ts";
 
 export class RequestHandler {
   private universalHandler?: (req: Request) => Promise<Response>;
@@ -29,6 +31,7 @@ export class RequestHandler {
 
   async handleRequest(req: Request): Promise<Response> {
     const url = new URL(req.url);
+    const start = performance.now();
     logger.debug(`Request: ${req.method} ${url.pathname}`);
 
     const healthResponse = this.handleHealthCheck(url.pathname);
@@ -38,12 +41,30 @@ export class RequestHandler {
 
     try {
       const devResponse = this.handleDevEndpoint(req, url.pathname);
-      if (devResponse) return devResponse;
+      if (devResponse) {
+        this.logRequest(req.method, url.pathname, devResponse.status, start);
+        return devResponse;
+      }
 
-      return await this.handleApplicationRequest(req);
+      const response = await this.handleApplicationRequest(req);
+      this.logRequest(req.method, url.pathname, response.status, start);
+      return response;
     } catch (error) {
+      this.logRequest(req.method, url.pathname, HTTP_SERVER_ERROR, start);
       return this.handleServerError(error);
     }
+  }
+
+  private logRequest(method: string, pathname: string, status: number, start: number): void {
+    // Skip internal endpoints to reduce noise
+    if (pathname.startsWith("/_dev/") || pathname.startsWith("/_veryfront/")) return;
+
+    const duration = Math.round(performance.now() - start);
+    getLogBuffer().info(
+      `${method} ${pathname} → ${status} (${duration}ms)`,
+      "http",
+      { method, path: pathname, status, duration },
+    );
   }
 
   private handleHealthCheck(pathname: string): Response | null {
@@ -163,10 +184,18 @@ export class RequestHandler {
   private handleServerError(error: unknown): Response {
     logger.error("Server error:", error);
 
+    // Capture error for MCP flywheel
+    const err = error as Error;
+    getErrorCollector().addRuntimeError(
+      err.message,
+      err.stack,
+      { source: "request-handler" },
+    );
+
     return new Response(
       ErrorOverlay.createHTML({
         type: "runtime",
-        error: error as Error,
+        error: err,
       }),
       {
         status: HTTP_SERVER_ERROR,

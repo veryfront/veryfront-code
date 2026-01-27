@@ -46,6 +46,7 @@ import { shouldUseNoCacheHeadersFromHandler } from "../../../context/enriched-co
 import { ErrorPages } from "../../../utils/error-html.ts";
 import { ErrorOverlay } from "../../../dev-server/error-overlay/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { getErrorCollector } from "#veryfront/cli/mcp/error-collector.ts";
 
 /**
  * Determine if request should serve production (released) content.
@@ -438,6 +439,12 @@ export class SSRHandler extends BaseHandler {
             !isHead &&
             (ctx.requestContext?.isLocalDev || ctx.requestContext?.mode === "preview")
           ) {
+            // Capture error for MCP flywheel
+            getErrorCollector().addRuntimeError(
+              errorObj.message,
+              errorObj.stack,
+              { source: "ssr-handler", url: req.url, slug },
+            );
             const body = ErrorOverlay.createHTML({ error: errorObj, type: "runtime" });
             return this.respond(
               builder

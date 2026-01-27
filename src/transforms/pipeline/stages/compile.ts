@@ -6,6 +6,7 @@
 
 import * as esbuild from "esbuild";
 import { rendererLogger as logger } from "#veryfront/utils";
+import { getErrorCollector } from "#veryfront/cli/mcp/error-collector.ts";
 import { getLoaderFromPath } from "../../esm/transform-utils.ts";
 import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
 
@@ -62,6 +63,9 @@ export const compilePlugin: TransformPlugin = {
         error: errorMsg,
       });
       logger.error("[ESM-TRANSFORM] Source preview (first 10 lines):\n" + sourcePreview);
+
+      // Capture compile error for MCP flywheel
+      getErrorCollector().addCompileError(errorMsg, ctx.filePath);
 
       throw new Error(`ESM transform failed for ${ctx.filePath} (loader: ${loader}): ${errorMsg}`);
     }
