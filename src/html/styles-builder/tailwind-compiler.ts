@@ -33,6 +33,17 @@ let lastStylesheetHash = "";
 
 const pluginCache = new Map<string, unknown>();
 const pluginErrors = new Map<string, string>();
+const pluginErrorTimestamps = new Map<string, number>();
+
+// Plugin error cache TTL - errors expire after 5 minutes to allow retry
+const PLUGIN_ERROR_TTL_MS = 5 * 60 * 1000;
+
+// CDN fallback providers for plugin loading
+const CDN_PROVIDERS = [
+  "https://esm.sh",
+  "https://cdn.jsdelivr.net/npm",
+  "https://unpkg.com",
+] as const;
 
 let cssCache: CacheBackend | null = null;
 let cssCacheInitPromise: Promise<CacheBackend> | null = null;
@@ -574,30 +585,104 @@ export function extractCandidatesFromFiles(
   return candidates;
 }
 
+/**
+ * Check if a cached plugin error has expired and should be retried.
+ */
+function isPluginErrorExpired(id: string): boolean {
+  const timestamp = pluginErrorTimestamps.get(id);
+  if (!timestamp) return true;
+  return Date.now() - timestamp >= PLUGIN_ERROR_TTL_MS;
+}
+
+/**
+ * Clear expired plugin errors from the cache.
+ * This allows automatic recovery when external CDNs recover from outages.
+ */
+function clearExpiredPluginError(id: string): void {
+  if (isPluginErrorExpired(id)) {
+    pluginErrors.delete(id);
+    pluginErrorTimestamps.delete(id);
+  }
+}
+
+/**
+ * Try to load a plugin from a specific CDN.
+ * Returns the loaded module or throws an error.
+ */
+async function loadPluginFromCDN(id: string, cdnBase: string): Promise<unknown> {
+  const url = `${cdnBase}/${id}`;
+  logger.debug("[tailwind] Trying CDN for plugin", { id, cdn: cdnBase });
+  const mod = await import(url);
+  return (mod as { default?: unknown }).default ?? mod;
+}
+
+/**
+ * Load a plugin with retry logic and CDN fallback.
+ * Tries multiple CDN providers if the primary one fails.
+ */
+async function loadPluginWithFallback(id: string, maxRetries: number = 2): Promise<unknown> {
+  const errors: string[] = [];
+
+  for (const cdn of CDN_PROVIDERS) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const plugin = await loadPluginFromCDN(id, cdn);
+        logger.debug("[tailwind] Plugin loaded successfully", { id, cdn, attempt });
+        return plugin;
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        errors.push(`${cdn} (attempt ${attempt}): ${errorMsg}`);
+        logger.debug("[tailwind] CDN attempt failed", { id, cdn, attempt, error: errorMsg });
+
+        // Wait before retry with exponential backoff (500ms, 1000ms)
+        if (attempt < maxRetries) {
+          const delay = Math.pow(2, attempt - 1) * 500;
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+      }
+    }
+  }
+
+  // All CDNs and retries failed
+  throw new Error(`All CDN providers failed for plugin "${id}": ${errors.join("; ")}`);
+}
+
 async function loadPlugin(id: string): Promise<unknown> {
+  // Check if we have a cached successful result
   if (pluginCache.has(id)) {
+    const cachedValue = pluginCache.get(id);
+    // Check for cached error (but respect TTL)
     const errorMsg = pluginErrors.get(id);
-    if (errorMsg) throw new Error(errorMsg);
-    return pluginCache.get(id);
+    if (errorMsg) {
+      // If error has expired, clear it and retry
+      if (isPluginErrorExpired(id)) {
+        clearExpiredPluginError(id);
+        pluginCache.delete(id);
+        logger.debug("[tailwind] Plugin error expired, retrying", { id });
+      } else {
+        throw new Error(errorMsg);
+      }
+    } else {
+      return cachedValue;
+    }
   }
 
   // Use the proper isDeno check that distinguishes between real Deno and dnt shim
   const { isDeno } = await import("#veryfront/platform/compat/runtime.ts");
 
   try {
-    let mod: unknown;
+    let plugin: unknown;
 
     if (isDeno) {
-      // Deno supports HTTP imports natively
-      const url = `https://esm.sh/${id}`;
-      logger.debug("[tailwind] Loading plugin via esm.sh", { id, url });
-      mod = await import(url);
+      // Deno supports HTTP imports natively - use fallback mechanism with multiple CDNs
+      plugin = await loadPluginWithFallback(id);
     } else {
       // Node.js: Try to import from node_modules
       // First try the bare specifier, then fall back to global node_modules
       logger.debug("[tailwind] Loading plugin from node_modules", { id });
       try {
-        mod = await import(id);
+        const mod = await import(id);
+        plugin = (mod as { default?: unknown }).default ?? mod;
       } catch {
         // Plugin not installed - this is expected for most user projects
         // Log at debug level since it's not an error, just a missing optional plugin
@@ -607,7 +692,6 @@ async function loadPlugin(id: string): Promise<unknown> {
       }
     }
 
-    const plugin = (mod as { default?: unknown }).default ?? mod;
     pluginCache.set(id, plugin);
     return plugin;
   } catch (error) {
@@ -616,6 +700,7 @@ async function loadPlugin(id: string): Promise<unknown> {
     }`;
     logger.warn(`[tailwind] ${errorMsg}`);
     pluginErrors.set(id, errorMsg);
+    pluginErrorTimestamps.set(id, Date.now());
     throw new Error(errorMsg);
   }
 }
@@ -624,11 +709,13 @@ export function clearPluginCache(id?: string): void {
   if (id) {
     pluginCache.delete(id);
     pluginErrors.delete(id);
+    pluginErrorTimestamps.delete(id);
     return;
   }
 
   pluginCache.clear();
   pluginErrors.clear();
+  pluginErrorTimestamps.clear();
 }
 
 async function getTailwindBaseCSS(): Promise<string> {
