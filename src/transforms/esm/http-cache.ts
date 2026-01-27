@@ -33,15 +33,12 @@ const getDistributedCache = createDistributedCacheAccessor(
 );
 
 /**
- * HTTP bundle cache version. Increment to invalidate all cached bundles.
- * v1: Initial version (polluted with gzip content from old esm.sh responses)
- * v2: Clean slate after gzip pollution fix
+ * Generate cache key for HTTP bundles.
+ * Uses simple prefix:hash format. Cache invalidation is handled by:
+ * - hasIncompatibleFilePaths() for path compatibility
+ * - gzip detection for corrupted content
  */
-const HTTP_BUNDLE_VERSION = 2;
-
-/** Generate versioned cache key for HTTP bundles */
-const distributedKey = (prefix: string, hash: string | number) =>
-  `v${HTTP_BUNDLE_VERSION}:${prefix}:${hash}`;
+const distributedKey = (prefix: string, hash: string | number) => `${prefix}:${hash}`;
 
 /**
  * Check if cached HTTP bundle code has file:// paths from a different environment.
