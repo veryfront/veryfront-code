@@ -10,6 +10,19 @@ The veryfront-renderer codebase contains **12+ distinct HTTP client implementati
 
 ---
 
+## Sub-Analyses
+
+| Document | Issue | Severity | Multi-Tenancy Risk |
+|----------|-------|----------|-------------------|
+| [012.0 - RFC](./012.0-http-clients-rfc.md) | Unified HTTP Client Architecture | - | Solution |
+| [012.1 - Missing Timeouts](./012.1-missing-timeouts.md) | 6/8 clients have no timeout | HIGH | Resource exhaustion |
+| [012.2 - Retry Duplication](./012.2-retry-duplication.md) | 3 different retry implementations | MEDIUM | Inconsistent behavior |
+| [012.3 - Module Cache Isolation](./012.3-module-cache-isolation.md) | Pod-level LRU caches | LOW | Safe (content-addressed) |
+| [012.4 - Domain Cache](./012.4-domain-cache-unbounded.md) | Domain lookup cache analysis | LOW | Bounded, safe |
+| [012.5 - No Circuit Breaker](./012.5-no-circuit-breaker.md) | External service failures cascade | MEDIUM | All tenants affected |
+
+---
+
 ## Inventory: All HTTP Fetching Locations
 
 ### 1. Core API Clients

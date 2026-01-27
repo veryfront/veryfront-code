@@ -8,6 +8,20 @@ The `BundleMetadata.meta.depsHash` field is **DEFINED but NEVER USED** in cache 
 
 ---
 
+## Sub-Analyses
+
+| Document | Severity | Issue |
+|----------|----------|-------|
+| [004.0 - RFC](./004.0-dependency-tracking-rfc.md) | - | Content-Addressed Dependency Tracking |
+| [004.1](./004.1-transform-cache-no-deps-hash.md) | CRITICAL | Transform cache keys missing dependency hash |
+| [004.2](./004.2-unused-depshash-infrastructure.md) | MEDIUM | Unused depsHash infrastructure |
+| [004.3](./004.3-mdx-import-tracking-gap.md) | HIGH | MDX import tracking gap |
+| [004.4](./004.4-npm-esm-package-version-drift.md) | HIGH | npm/esm.sh package version drift |
+| [004.5](./004.5-ssr-module-loader-staleness.md) | HIGH | SSR module loader cache staleness |
+| [004.6](./004.6-config-changes-not-invalidating.md) | MEDIUM | Config changes not invalidating transforms |
+
+---
+
 ## 1. The Problem
 
 ### Current Cache Key Format

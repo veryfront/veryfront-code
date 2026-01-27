@@ -1,5 +1,21 @@
 # Chapter 009: Timeout Handling Inconsistencies
 
+## Executive Summary
+
+The veryfront-renderer has **80+ timeout-related values across 40+ files** with no coherent architecture. In a multi-tenant environment where one pod serves many projects, this creates cascading failure modes where one project's slow operation can block all other projects.
+
+## Sub-Analyses
+
+| Document | Severity | Issue |
+|----------|----------|-------|
+| [009.0 - Timeout Handling RFC](./009.0-timeout-handling-rfc.md) | - | Complete solution architecture |
+| [009.1 - Global Semaphores](./009.1-global-semaphores-no-project-isolation.md) | CRITICAL | Shared semaphores allow one project to starve others |
+| [009.2 - Fetch Without Timeout](./009.2-fetch-calls-without-timeout.md) | CRITICAL | 7+ fetch() calls can hang indefinitely |
+| [009.3 - Hierarchy Violations](./009.3-timeout-hierarchy-violations.md) | HIGH | Child timeouts equal or exceed parent timeouts |
+| [009.4 - In-Flight Map Leaks](./009.4-in-flight-maps-no-timeout-cleanup.md) | HIGH | Request tracking maps grow unbounded |
+| [009.5 - Hardcoded Values](./009.5-hardcoded-timeout-values.md) | MEDIUM | Magic numbers scattered across codebase |
+| [009.6 - Duplicate Definitions](./009.6-duplicate-timeout-definitions.md) | MEDIUM | Same constant with different values |
+
 ## Problem Statement
 
 The veryfront-renderer codebase has **dozens of timeout values scattered across 50+ files** with:

@@ -6,6 +6,19 @@ The veryfront-renderer codebase contains **7 separate import rewriting implement
 
 ---
 
+## Sub-Analyses
+
+| Document | Severity | Issue |
+|----------|----------|-------|
+| [011.0 - Import Rewriting RFC](./011.0-import-rewriting-rfc.md) | -- | Unified strategy proposal |
+| [011.1 - Global Warning State Pollution](./011.1-global-warning-state-pollution.md) | HIGH | `unversionedImportsWarned` Set leaks between tenants |
+| [011.2 - SSR/Browser Resolution Divergence](./011.2-ssr-browser-resolution-divergence.md) | HIGH | Same import resolves to different URLs |
+| [011.3 - Regex vs Lexer Inconsistencies](./011.3-regex-vs-lexer-inconsistencies.md) | MEDIUM | Multi-line imports, dynamic imports handled differently |
+| [011.4 - Multiple Parsing Passes](./011.4-multiple-parsing-passes.md) | MEDIUM | 4+ parse passes per module, 74% overhead |
+| [011.5 - Import Map Resolution Gaps](./011.5-import-map-resolution-gaps.md) | MEDIUM | Scoped prefix matching, bare specifier defaults |
+
+---
+
 ## The Problem
 
 Import rewriting is a critical concern in a meta-framework that must transform user code for:

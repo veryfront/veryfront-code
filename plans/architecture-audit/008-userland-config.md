@@ -4,6 +4,20 @@ This document provides a comprehensive reference of all user-configurable option
 
 ---
 
+## Architecture Issues Identified
+
+| Issue | Severity | Document |
+|-------|----------|----------|
+| Global config cache shared across projects | HIGH | [008.1](./008.1-global-config-cache-pollution.md) |
+| Unsafe config code execution via import() | CRITICAL | [008.2](./008.2-unsafe-config-execution.md) |
+| Temp file race conditions during config load | MEDIUM | [008.3](./008.3-temp-file-race-condition.md) |
+| Incomplete HMR cache invalidation | HIGH | [008.4](./008.4-hmr-cache-invalidation-incomplete.md) |
+| Config schema validation gaps | MEDIUM | [008.5](./008.5-config-schema-validation-gaps.md) |
+
+**RFC:** [008.0 - Request-Scoped Configuration](./008.0-userland-config-rfc.md)
+
+---
+
 ## Table of Contents
 
 1. [Configuration Sources Overview](#configuration-sources-overview)

@@ -10,6 +10,22 @@ The veryfront-renderer codebase contains **critical global state issues** that c
 
 ---
 
+## Sub-Analyses
+
+| Document | Issue | Severity | Status |
+|----------|-------|----------|--------|
+| [002.0-request-scoped-state-rfc.md](002.0-request-scoped-state-rfc.md) | RFC: AsyncLocalStorage Migration Plan | - | RFC |
+| [002.1-head-collector-leakage.md](002.1-head-collector-leakage.md) | Head Collector SSR Metadata Leakage | CRITICAL | Analysis |
+| [002.2-ssr-globals-context-leakage.md](002.2-ssr-globals-context-leakage.md) | SSR Globals Domain/State Leakage | CRITICAL | Analysis |
+| [002.3-react-cache-version-mismatch.md](002.3-react-cache-version-mismatch.md) | React Module Cache Version Mismatch | CRITICAL | Analysis |
+| [002.4-semaphore-starvation.md](002.4-semaphore-starvation.md) | Global Semaphores Resource Starvation | HIGH | Analysis |
+| [002.5-ai-registry-leakage.md](002.5-ai-registry-leakage.md) | AI Registries Cross-Project Leakage | HIGH | Analysis |
+| [002.6-in-progress-deadlock.md](002.6-in-progress-deadlock.md) | In-Progress Transforms Deadlock Risk | HIGH | Analysis |
+| [002.7-failed-components-collision.md](002.7-failed-components-collision.md) | Failed Components Error State Collision | HIGH | Analysis |
+| [002.8-tailwind-compiler-state.md](002.8-tailwind-compiler-state.md) | Tailwind Compiler Shared State | MEDIUM | Analysis |
+
+---
+
 ## Table of Contents
 
 1. [Critical Issues](#critical-issues)

@@ -12,6 +12,19 @@ These axes interact in complex ways, creating multiple behavior divergences that
 
 ---
 
+## Sub-Analyses
+
+| Document | Severity | Description | Multi-Tenant Impact |
+|----------|----------|-------------|---------------------|
+| [014.0-deployment-modes-rfc.md](./014.0-deployment-modes-rfc.md) | RFC | Unified ModeResolver architecture | Foundation for all fixes |
+| [014.1-node-env-missing.md](./014.1-node-env-missing.md) | HIGH | Missing NODE_ENV defaults to development | All projects get dev behavior |
+| [014.2-missing-release-id.md](./014.2-missing-release-id.md) | HIGH | Production without releaseId returns 502 | Production projects fail |
+| [014.3-combined-split-divergence.md](./014.3-combined-split-divergence.md) | MEDIUM | Combined vs split mode behavior differs | Different behavior per mode |
+| [014.4-cache-ttl-misclassification.md](./014.4-cache-ttl-misclassification.md) | MEDIUM | Wrong TTL selection (36x difference) | Cache efficiency degraded |
+| [014.5-header-domain-conflicts.md](./014.5-header-domain-conflicts.md) | MEDIUM | Header/domain precedence undefined | Wrong environment selected |
+
+---
+
 ## Table of Contents
 
 1. [Mode Classification](#1-mode-classification)

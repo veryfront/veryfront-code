@@ -1,5 +1,26 @@
 # Chapter 7: Config Format Normalization
 
+## Summary
+
+Config values accept multiple formats with scattered normalization logic. This creates inconsistent behavior and multi-tenancy risks from shared mutable state.
+
+**RFC:** [007.0 - Config Normalization RFC](./007.0-config-normalization-rfc.md)
+
+## Sub-Analyses
+
+| Document | Issue | Severity |
+|----------|-------|----------|
+| [007.0](./007.0-config-normalization-rfc.md) | RFC - Config Normalization Layer | -- |
+| [007.1](./007.1-router-format-mismatch.md) | Router Format Mismatch (`"app"` vs `"app-router"`) | MEDIUM |
+| [007.2](./007.2-cors-schema-runtime-mismatch.md) | CORS Schema vs Runtime Type Mismatch | HIGH |
+| [007.3](./007.3-default-config-shared-reference.md) | DEFAULT_CONFIG Shared Reference Risk | HIGH |
+| [007.4](./007.4-layout-tristate-inconsistency.md) | Layout Config Tri-State Inconsistency | MEDIUM |
+| [007.5](./007.5-cache-enabled-type-confusion.md) | Cache Config enabled/type Confusion | MEDIUM |
+| [007.6](./007.6-security-config-cors-default-mutation.md) | Security Config CORS Default Mutation | HIGH |
+| [007.7](./007.7-runtime-config-global-singleton.md) | Runtime Config Global Singleton | CRITICAL |
+
+---
+
 ## The Problem
 
 The veryfront-renderer codebase has config options that accept the **same conceptual value** in **different formats** depending on where they are used. This creates:

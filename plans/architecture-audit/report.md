@@ -12,6 +12,48 @@ Each combination can exhibit different behavior, making bugs that "work locally 
 
 ---
 
+## 🔴 SECURITY CRITICAL
+
+**[008.2 - Unsafe Config Execution](./008.2-unsafe-config-execution.md)** - User `veryfront.config.ts` executes with FULL renderer permissions. A malicious config can exfiltrate secrets, read files, and affect other tenants.
+
+---
+
+## 🏗️ Core Architecture Principle
+
+**Singleton Renderer + AsyncLocalStorage for Request Isolation**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     SINGLETON RENDERER                          │
+│                  (one process, all projects)                    │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│   Request A (project-alpha)    Request B (project-beta)         │
+│          │                            │                         │
+│          ▼                            ▼                         │
+│   ┌─────────────────┐         ┌─────────────────┐              │
+│   │ AsyncLocalStorage│         │ AsyncLocalStorage│              │
+│   │ context: alpha   │         │ context: beta    │              │
+│   │ - headCollector  │         │ - headCollector  │              │
+│   │ - ssrContext     │         │ - ssrContext     │              │
+│   │ - runtimeConfig  │         │ - runtimeConfig  │              │
+│   └─────────────────┘         └─────────────────┘              │
+│                                                                 │
+│   SHARED (safe):              ISOLATED (per-request):           │
+│   - Content-addressed caches  - Head collector state            │
+│   - HTTP connection pools     - SSR context/domain              │
+│   - Read-only config          - Runtime config                  │
+│   - Module registry           - Error collector                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Why this pattern:**
+- **Singleton renderer** - Performance (no per-request process overhead)
+- **AsyncLocalStorage** - Correctness (request isolation without code changes)
+- **Content-addressed caches shared** - Same input = same output, safe to share
+
+---
+
 ## 🎯 MUST HAVES (Non-Negotiable Requirements)
 
 These five requirements define the target state. **All architectural decisions must align with these.**
@@ -30,6 +72,7 @@ These five requirements define the target state. **All architectural decisions m
 - No cross-project contamination
 - One broken project CANNOT take down others
 - Each project operates in complete isolation
+- **Solution: AsyncLocalStorage for all request-scoped state**
 
 ### 3. Local Dev Mirrors Remote
 **Local development in preview and production mode must mirror remote exactly.**
@@ -44,6 +87,7 @@ These five requirements define the target state. **All architectural decisions m
 - Same config loading
 - Same middleware behavior
 - Single code path for all adapters
+- **Solution: Unified adapter interface ([001.0 RFC](./001.0-unified-adapter-rfc.md))**
 
 ### 5. Cache Consistency
 **Same behavior when cached and uncached.**
@@ -51,6 +95,7 @@ These five requirements define the target state. **All architectural decisions m
 - No stale cache bugs
 - No "clear cache to fix" workarounds
 - Deterministic output regardless of cache state
+- **Solution: Include dependency hash in cache keys ([004.0 RFC](./004.0-dependency-tracking-rfc.md))**
 
 ---
 
@@ -118,40 +163,42 @@ App Router nested layouts **work locally but break in production** because the A
 
 ---
 
-## Chapters
+## Chapters & RFCs
 
 ### Core Divergence Issues
 
-| # | Chapter | Concern | Risk | Files |
-|---|---------|---------|------|-------|
-| [001](./001-adapter-divergence.md) | File Adapter Divergence | Different behavior across Local/API/GitHub adapters | **CRITICAL** | ~15 |
-| [002](./002-global-state.md) | Global State & Multi-Tenant | Cross-project contamination risks | **CRITICAL** | ~12 |
-| [003](./003-cache-behavior.md) | Cache Hit vs Miss Behavior | Code paths differ when cached vs fresh | **HIGH** | ~20 |
-| [004](./004-bundle-dependencies.md) | Bundle Dependency Tracking | Stale bundles when deps change | **HIGH** | ~8 |
-| [005](./005-router-divergence.md) | App Router vs Pages Router | Parallel implementations with subtle differences | **MEDIUM** | ~10 |
-| [006](./006-runtime-conditionals.md) | Runtime Conditional Branching | 84 files with Deno/Node/Bun checks | **MEDIUM** | ~84 |
+| # | Chapter | RFC | Risk | Key Issue |
+|---|---------|-----|------|-----------|
+| [001](./001-adapter-divergence.md) | File Adapter Divergence | [001.0](./001.0-unified-adapter-rfc.md) | **CRITICAL** | Layout discovery differs by adapter |
+| [002](./002-global-state.md) | Global State & Multi-Tenant | [002.0](./002.0-request-scoped-state-rfc.md) | **CRITICAL** | 15+ globals leak between projects |
+| [003](./003-cache-behavior.md) | Cache Hit vs Miss | [003.0](./003.0-cache-consistency-rfc.md) | **HIGH** | Cache hit skips validation |
+| [004](./004-bundle-dependencies.md) | Bundle Dependencies | [004.0](./004.0-dependency-tracking-rfc.md) | **HIGH** | Cache keys miss dep changes |
+| [005](./005-router-divergence.md) | Router Divergence | [005.0](./005.0-router-unification-rfc.md) | **MEDIUM** | App/Pages Router differ |
+| [006](./006-runtime-conditionals.md) | Runtime Conditionals | [006.0](./006.0-environment-detection-rfc.md) | **MEDIUM** | 84 files with runtime checks |
 
 ### Configuration & Input Handling
 
-| # | Chapter | Concern | Risk | Files |
-|---|---------|---------|------|-------|
-| [007](./007-config-normalization.md) | Config Format Normalization | Multiple formats for same option | **LOW** | ~5 |
-| [008](./008-userland-config.md) | Userland Config Code Paths | User options that change execution | **HIGH** | ~30 |
+| # | Chapter | RFC | Risk | Key Issue |
+|---|---------|-----|------|-----------|
+| [007](./007-config-normalization.md) | Config Normalization | [007.0](./007.0-config-normalization-rfc.md) | **CRITICAL** | Global singleton config |
+| [008](./008-userland-config.md) | Userland Config | [008.0](./008.0-userland-config-rfc.md) | **🔴 CRITICAL** | [008.2](./008.2-unsafe-config-execution.md): Arbitrary code execution |
 
 ### Implementation Fragmentation
 
-| # | Chapter | Concern | Risk | Files |
-|---|---------|---------|------|-------|
-| [009](./009-timeout-handling.md) | Timeout Handling | 100+ hardcoded timeout values | **MEDIUM** | ~25 |
-| [010](./010-error-handling.md) | Error Handling & Silent Failures | 150+ silent catch blocks | **HIGH** | ~50 |
-| [011](./011-import-rewriting.md) | Import Rewriting | 7 implementations (~1,038 lines) | **MEDIUM** | 7 |
-| [012](./012-http-clients.md) | HTTP Client Implementations | 12+ HTTP clients with different retry/timeout | **MEDIUM** | ~12 |
+| # | Chapter | RFC | Risk | Key Issue |
+|---|---------|-----|------|-----------|
+| [009](./009-timeout-handling.md) | Timeout Handling | [009.0](./009.0-timeout-handling-rfc.md) | **CRITICAL** | Global semaphores block all projects |
+| [010](./010-error-handling.md) | Error Handling | [010.0](./010.0-error-handling-rfc.md) | **HIGH** | Global failedComponents leaks |
+| [011](./011-import-rewriting.md) | Import Rewriting | [011.0](./011.0-import-rewriting-rfc.md) | **HIGH** | SSR/browser resolution differs |
+| [012](./012-http-clients.md) | HTTP Clients | [012.0](./012.0-http-clients-rfc.md) | **HIGH** | 6/8 clients missing timeouts |
 
-### Caching Infrastructure
+### Infrastructure
 
-| # | Chapter | Concern | Risk | Files |
-|---|---------|---------|------|-------|
-| [013](./013-cache-key-patterns.md) | Cache Key Patterns & Storage | 18+ cache systems, inconsistent keys | **HIGH** | ~20 |
+| # | Chapter | RFC | Risk | Key Issue |
+|---|---------|-----|------|-----------|
+| [013](./013-cache-key-patterns.md) | Cache Key Patterns | [013.0](./013.0-cache-key-patterns-rfc.md) | **MEDIUM** | Agent cache missing projectId |
+| [014](./014-deployment-modes.md) | Deployment Modes | [014.0](./014.0-deployment-modes-rfc.md) | **HIGH** | Combined/split mode diverge |
+| [015](./015-testability.md) | Testability | [015.0](./015.0-testability-rfc.md) | **HIGH** | No multi-tenant test utilities |
 
 ---
 
@@ -243,16 +290,20 @@ After addressing these issues:
 
 ## Chapter Index
 
-1. [001 - File Adapter Divergence](./001-adapter-divergence.md)
-2. [002 - Global State & Multi-Tenant Isolation](./002-global-state.md)
-3. [003 - Cache Hit vs Miss Behavior](./003-cache-behavior.md)
-4. [004 - Bundle Dependency Tracking](./004-bundle-dependencies.md)
-5. [005 - App Router vs Pages Router](./005-router-divergence.md)
-6. [006 - Runtime Conditional Branching](./006-runtime-conditionals.md)
-7. [007 - Config Format Normalization](./007-config-normalization.md)
-8. [008 - Userland Config Code Paths](./008-userland-config.md)
-9. [009 - Timeout Handling](./009-timeout-handling.md)
-10. [010 - Error Handling & Silent Failures](./010-error-handling.md)
-11. [011 - Import Rewriting Implementations](./011-import-rewriting.md)
-12. [012 - HTTP Client Implementations](./012-http-clients.md)
-13. [013 - Cache Key Patterns & Storage](./013-cache-key-patterns.md)
+| # | Chapter | RFC | Sub-Docs |
+|---|---------|-----|----------|
+| 001 | [Adapter Divergence](./001-adapter-divergence.md) | [001.0](./001.0-unified-adapter-rfc.md) | [001.1](./001.1-layout-bug-critical.md), [001.2](./001.2-unsafe-type-casting.md), [001.3](./001.3-duplicated-isvirtualfilesystem.md), [001.4](./001.4-layout-cache-no-project-scope.md), [001.5](./001.5-config-middleware-loading-divergence.md), [001.6](./001.6-css-cache-key-divergence.md) |
+| 002 | [Global State](./002-global-state.md) | [002.0](./002.0-request-scoped-state-rfc.md) | [002.1](./002.1-head-collector-leakage.md), [002.2](./002.2-ssr-globals-context-leakage.md), [002.3](./002.3-react-cache-version-mismatch.md), [002.4](./002.4-semaphore-starvation.md), [002.5](./002.5-ai-registry-leakage.md), [002.6](./002.6-in-progress-deadlock.md), [002.7](./002.7-failed-components-collision.md), [002.8](./002.8-tailwind-compiler-state.md) |
+| 003 | [Cache Behavior](./003-cache-behavior.md) | [003.0](./003.0-cache-consistency-rfc.md) | [003.1](./003.1-ssr-module-path-mismatch.md), [003.2](./003.2-http-bundle-ttl-mismatch.md), [003.3](./003.3-multitenancy-cache-isolation.md), [003.4](./003.4-cache-hit-validation-skipped.md) |
+| 004 | [Bundle Dependencies](./004-bundle-dependencies.md) | [004.0](./004.0-dependency-tracking-rfc.md) | [004.1](./004.1-transform-cache-no-deps-hash.md), [004.2](./004.2-unused-depshash-infrastructure.md), [004.3](./004.3-mdx-import-tracking-gap.md), [004.4](./004.4-npm-esm-package-version-drift.md), [004.5](./004.5-ssr-module-loader-staleness.md), [004.6](./004.6-config-changes-not-invalidating.md) |
+| 005 | [Router Divergence](./005-router-divergence.md) | [005.0](./005.0-router-unification-rfc.md) | [005.1](./005.1-global-router-detection-cache.md), [005.2](./005.2-ssg-getallpages-missing-app-router.md), [005.3](./005.3-duplicated-route-params-extraction.md), [005.4](./005.4-layout-collector-router-branching.md), [005.5](./005.5-dynamic-route-handling-inconsistency.md) |
+| 006 | [Runtime Conditionals](./006-runtime-conditionals.md) | [006.0](./006.0-environment-detection-rfc.md) | [006.1](./006.1-ssr-detection-inconsistencies.md), [006.2](./006.2-redundant-runtime-detection.md), [006.3](./006.3-module-loading-conditionals.md) |
+| 007 | [Config Normalization](./007-config-normalization.md) | [007.0](./007.0-config-normalization-rfc.md) | [007.1](./007.1-router-format-mismatch.md), [007.2](./007.2-cors-schema-runtime-mismatch.md), [007.3](./007.3-default-config-shared-reference.md), [007.4](./007.4-layout-tristate-inconsistency.md), [007.5](./007.5-cache-enabled-type-confusion.md), [007.6](./007.6-security-config-cors-default-mutation.md), [007.7](./007.7-runtime-config-global-singleton.md) |
+| 008 | [Userland Config](./008-userland-config.md) | [008.0](./008.0-userland-config-rfc.md) | [008.1](./008.1-global-config-cache-pollution.md), **[008.2](./008.2-unsafe-config-execution.md)** 🔴, [008.3](./008.3-temp-file-race-condition.md), [008.4](./008.4-hmr-cache-invalidation-incomplete.md), [008.5](./008.5-config-schema-validation-gaps.md) |
+| 009 | [Timeout Handling](./009-timeout-handling.md) | [009.0](./009.0-timeout-handling-rfc.md) | [009.1](./009.1-global-semaphores-no-project-isolation.md), [009.2](./009.2-fetch-calls-without-timeout.md), [009.3](./009.3-timeout-hierarchy-violations.md), [009.4](./009.4-in-flight-maps-no-timeout-cleanup.md), [009.5](./009.5-hardcoded-timeout-values.md), [009.6](./009.6-duplicate-timeout-definitions.md) |
+| 010 | [Error Handling](./010-error-handling.md) | [010.0](./010.0-error-handling-rfc.md) | [010.1](./010.1-failed-components-global-state.md), [010.2](./010.2-global-error-collector.md), [010.3](./010.3-dual-veryfront-error-definitions.md), [010.4](./010.4-witherrorcontext-silent-failures.md), [010.5](./010.5-wraperror-stack-trace-loss.md), [010.6](./010.6-inconsistent-500-responses.md) |
+| 011 | [Import Rewriting](./011-import-rewriting.md) | [011.0](./011.0-import-rewriting-rfc.md) | [011.1](./011.1-global-warning-state-pollution.md), [011.2](./011.2-ssr-browser-resolution-divergence.md), [011.3](./011.3-regex-vs-lexer-inconsistencies.md), [011.4](./011.4-multiple-parsing-passes.md), [011.5](./011.5-import-map-resolution-gaps.md) |
+| 012 | [HTTP Clients](./012-http-clients.md) | [012.0](./012.0-http-clients-rfc.md) | [012.1](./012.1-missing-timeouts.md), [012.2](./012.2-retry-duplication.md), [012.3](./012.3-module-cache-isolation.md), [012.4](./012.4-domain-cache-unbounded.md), [012.5](./012.5-no-circuit-breaker.md) |
+| 013 | [Cache Key Patterns](./013-cache-key-patterns.md) | [013.0](./013.0-cache-key-patterns-rfc.md) | [013.1](./013.1-content-addressed-vs-identity-caching.md), [013.2](./013.2-agent-cache-project-isolation.md), [013.3](./013.3-key-format-standardization.md) |
+| 014 | [Deployment Modes](./014-deployment-modes.md) | [014.0](./014.0-deployment-modes-rfc.md) | [014.1](./014.1-node-env-missing.md), [014.2](./014.2-missing-release-id.md), [014.3](./014.3-combined-split-divergence.md), [014.4](./014.4-cache-ttl-misclassification.md), [014.5](./014.5-header-domain-conflicts.md) |
+| 015 | [Testability](./015-testability.md) | [015.0](./015.0-testability-rfc.md) | [015.1](./015.1-global-state-test-isolation.md), [015.2](./015.2-missing-multi-tenant-test-utilities.md), [015.3](./015.3-test-determinism-issues.md), [015.4](./015.4-cross-adapter-test-coverage-gaps.md), [015.5](./015.5-ci-test-integration-gaps.md) |

@@ -18,6 +18,18 @@ This asymmetry means bugs only surface on cache misses (cold starts, pod restart
 
 ---
 
+## Sub-Analyses
+
+| Document | Issue | Severity |
+|----------|-------|----------|
+| [003.0 - Cache Consistency RFC](./003.0-cache-consistency-rfc.md) | Unified solution architecture | RFC |
+| [003.1 - SSR Module Path Mismatch](./003.1-ssr-module-path-mismatch.md) | Cross-pod file:// paths break | CRITICAL |
+| [003.2 - HTTP Bundle TTL Mismatch](./003.2-http-bundle-ttl-mismatch.md) | Transforms outlive dependencies | HIGH |
+| [003.3 - Multi-tenancy Cache Isolation](./003.3-multitenancy-cache-isolation.md) | Cross-project data leakage | CRITICAL |
+| [003.4 - Cache Hit Validation Skipped](./003.4-cache-hit-validation-skipped.md) | Stale content served | HIGH |
+
+---
+
 ## Cache Systems Inventory
 
 | Cache System | Location | Key Format | TTL (Prod) | TTL (Preview) |

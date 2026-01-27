@@ -6,6 +6,17 @@ The veryfront-renderer codebase contains **249 runtime conditional occurrences**
 
 ---
 
+## Sub-Analyses
+
+| Document | Severity | Focus |
+|----------|----------|-------|
+| [006.0 - Environment Detection RFC](./006.0-environment-detection-rfc.md) | RFC | Unified environment detection architecture |
+| [006.1 - SSR Detection Inconsistencies](./006.1-ssr-detection-inconsistencies.md) | HIGH | 5 different SSR/browser detection patterns that can disagree |
+| [006.2 - Redundant Runtime Detection](./006.2-redundant-runtime-detection.md) | MEDIUM | 45 files with isDeno/isNode outside platform layer |
+| [006.3 - Module Loading Conditionals](./006.3-module-loading-conditionals.md) | HIGH | Runtime-specific import strategies causing React instance issues |
+
+---
+
 ## 1. The Problem
 
 ### 1.1 Current State
@@ -882,3 +893,17 @@ src/platform/compat/std/*.ts
 The veryfront-renderer has a well-designed platform abstraction layer, but runtime detection has leaked into business logic. The solution is not to rewrite the adapter pattern, but to **extend it** to cover the missing capabilities (module loading, testing, optional dependencies) and **migrate** the scattered runtime checks to use the adapter's capabilities interface.
 
 The key insight is that code should ask "what can this runtime do?" via `adapter.capabilities` rather than "which runtime is this?" via `isDeno`/`isNode`/`isBun`. This shifts from identity-based branching to capability-based branching, which is more maintainable and extensible.
+
+---
+
+## 11. Detailed Sub-Analyses
+
+For implementation details, code examples, and specific file changes, see:
+
+- **[006.0 - Environment Detection RFC](./006.0-environment-detection-rfc.md)**: The unified architecture for environment detection, including request-scoped `RenderContext` and migration from global state.
+
+- **[006.1 - SSR Detection Inconsistencies](./006.1-ssr-detection-inconsistencies.md)**: Analysis of the 5 different SSR/browser detection patterns (`typeof window`, `__VERYFRONT_SSR__`, module-level constants) and how they disagree when SSR globals stub the window object.
+
+- **[006.2 - Redundant Runtime Detection](./006.2-redundant-runtime-detection.md)**: Inventory of 45 files with `isDeno`/`isNode` checks outside the platform layer, with prioritized refactoring plan.
+
+- **[006.3 - Module Loading Conditionals](./006.3-module-loading-conditionals.md)**: Analysis of runtime-specific import strategies (esm.sh vs npm packages) causing multi-React instance bugs and cache key mismatches.

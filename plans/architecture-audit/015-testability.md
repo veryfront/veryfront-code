@@ -15,6 +15,19 @@ The veryfront-renderer codebase has **significant testing gaps** in critical are
 
 ---
 
+## Sub-Analyses
+
+| Document | Severity | Summary |
+|----------|----------|---------|
+| **[015.0 - Testability RFC](./015.0-testability-rfc.md)** | RFC | Comprehensive test infrastructure architecture |
+| **[015.1 - Global State Test Isolation](./015.1-global-state-test-isolation.md)** | HIGH | Module-level state prevents test isolation |
+| **[015.2 - Missing Multi-Tenant Test Utilities](./015.2-missing-multi-tenant-test-utilities.md)** | HIGH | No utilities for concurrent isolation testing |
+| **[015.3 - Test Determinism Issues](./015.3-test-determinism-issues.md)** | MEDIUM | Date.now/Math.random cause flaky tests |
+| **[015.4 - Cross-Adapter Test Coverage Gaps](./015.4-cross-adapter-test-coverage-gaps.md)** | HIGH | Only Local adapter tested, API/GitHub untested |
+| **[015.5 - CI/CD Test Integration Gaps](./015.5-ci-test-integration-gaps.md)** | MEDIUM | Missing test tiers and stress tests in CI |
+
+---
+
 ## Table of Contents
 
 1. [Current Test Coverage Analysis](#1-current-test-coverage-analysis)

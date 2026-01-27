@@ -13,6 +13,20 @@ The veryfront-renderer codebase has **multiple parallel error systems** that hav
 
 ---
 
+## Sub-Analyses
+
+| Document | Severity | Issue |
+|----------|----------|-------|
+| **[010.0 - Error Handling RFC](./010.0-error-handling-rfc.md)** | RFC | Unified error handling architecture proposal |
+| **[010.1 - Global failedComponents](./010.1-failed-components-global-state.md)** | CRITICAL | Circuit breaker error state leaks between projects |
+| **[010.2 - Global Error Collector](./010.2-global-error-collector.md)** | HIGH | MCP error collector shared across projects |
+| **[010.3 - Dual VeryfrontError](./010.3-dual-veryfront-error-definitions.md)** | HIGH | Two incompatible types with same name |
+| **[010.4 - withErrorContext](./010.4-witherrorcontext-silent-failures.md)** | HIGH | Silent failure pattern hides production issues |
+| **[010.5 - wrapError Stack Loss](./010.5-wraperror-stack-trace-loss.md)** | MEDIUM | Original stack trace lost in Error.cause |
+| **[010.6 - Inconsistent 500s](./010.6-inconsistent-500-responses.md)** | MEDIUM | Different error response formats across handlers |
+
+---
+
 ## 1. Error Systems Inventory
 
 The codebase contains **three parallel error systems**:

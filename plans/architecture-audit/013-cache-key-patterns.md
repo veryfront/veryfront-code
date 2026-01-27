@@ -4,6 +4,24 @@
 
 The veryfront-renderer uses a multi-tier caching architecture spanning memory, disk, Redis/API, and request-scoped caches. There are **18+ distinct cache systems** with varying key formats, TTLs, and storage backends. This document catalogs every cache system, identifies inconsistencies, and highlights potential issues.
 
+## Sub-Analyses
+
+| Document | Topic | Priority |
+|----------|-------|----------|
+| [013.0 RFC](./013.0-cache-key-patterns-rfc.md) | Unified cache key architecture proposal | - |
+| [013.1](./013.1-content-addressed-vs-identity-caching.md) | Content-addressed vs identity-based caching | P3 |
+| [013.2](./013.2-agent-cache-project-isolation.md) | Agent cache missing project isolation (BUG) | P2 |
+| [013.3](./013.3-key-format-standardization.md) | Key format standardization | P3 |
+
+## Key Findings
+
+| Issue | Severity | Location | Description |
+|-------|----------|----------|-------------|
+| Agent cache cross-project leakage | Medium | `src/agent/middleware/cache/cache.ts:204` | Cache key uses only input hash, no projectId |
+| Transform cache no projectId | None (by design) | `src/cache/keys.ts:260-269` | Content-addressed caching is intentional and safe |
+| Separator inconsistency | Low | Various | `::` vs `:` vs `-` separators |
+| Missing version prefix | Low | File/Data caches | Some caches lack framework version |
+
 ## Master Cache Table
 
 | Cache Name | Key Format | Storage | TTL | Project Scoped |
@@ -466,48 +484,55 @@ export const CacheKeyPrefix = {
 
 ## Issues and Risks
 
+> **Note**: Detailed analysis of each issue is available in the sub-documents linked above.
+
 ### 1. Key Collision Risks
 
-**CRITICAL: Transform Cache Not Project-Scoped**
+**Transform Cache Not Project-Scoped** - [See 013.1](./013.1-content-addressed-vs-identity-caching.md)
 
 The transform cache key format is:
 ```
 v{version}:{filePath}:{contentHash}:{ssr|browser}[:studio]
 ```
 
-This does NOT include project ID. If two projects have the same file path with the same content hash, they would share the same cache entry. This is intentional (content-addressed caching) but could cause issues if:
-- Different projects need different transforms for the same content
-- Environment-specific transforms are needed
+This does NOT include project ID. If two projects have the same file path with the same content hash, they would share the same cache entry. **This is intentional and SAFE** because:
+- Content-addressed caching: same source = same output
+- Content hash ensures cache miss when code changes
+- Significantly improves cache hit rates for shared patterns
 
-**Mitigation**: The content hash should be different if the content differs. However, if transforms depend on project configuration, this could be a bug source.
+**Status**: No fix needed. See [013.1](./013.1-content-addressed-vs-identity-caching.md) for full analysis.
 
 ---
 
-### 2. Missing Project Scoping
+### 2. Missing Project Scoping - AGENT CACHE BUG
 
-The following caches are NOT project-scoped and could cause cross-project contamination:
+**[P2] Agent Cache Missing Project Context** - [See 013.2](./013.2-agent-cache-project-isolation.md)
 
 | Cache | Risk Level | Notes |
 |-------|------------|-------|
-| Transform Cache | Medium | Content-hash based, but no project isolation |
-| HTTP Module Cache | Low | URL-hash based, typically same for all projects |
-| Agent Cache | Medium | Input-hash only, no project context |
-| React Version Cache | High (by design) | Uses projectDir as key |
+| Transform Cache | None | Content-addressed, sharing is correct |
+| HTTP Module Cache | None | URL-hash based, same for all projects |
+| **Agent Cache** | **Medium** | **Input-hash only, no project context - BUG** |
+| React Version Cache | None | Uses projectDir as key |
+
+**Action Required**: Fix agent cache to include projectId in key.
 
 ---
 
-### 3. Inconsistent Key Formats
+### 3. Inconsistent Key Formats - [See 013.3](./013.3-key-format-standardization.md)
 
 **Different Separator Styles**:
-- Some use `:` (file:env:project:qualifier)
-- Some use `::` (pathname::params in data fetching)
-- Some use `-` (theme-light, release-{id})
+- Most use `:` (file:env:project:qualifier)
+- Data fetching uses `::` (pathname::params) - historical
+- Theme suffix uses `-` (theme-light) - API constraint
 
 **Version Inclusion Inconsistency**:
 - Render cache includes `VERSION`
 - Transform cache uses `TRANSFORM_CACHE_VERSION`
 - File cache does NOT include version
 - SSR module uses `v{version}` prefix
+
+**Status**: Low priority. Document but do not change.
 
 ---
 
