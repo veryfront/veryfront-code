@@ -185,6 +185,30 @@ export function bundleHttpImports(
   const version = reactVersion ?? REACT_VERSION;
 
   return replaceSpecifiers(code, (specifier) => {
+    // Handle relative esm.sh paths like "/react-dom?target=es2022" or "/hoist-non-react-statics@..."
+    // These are returned by esm.sh stub modules and need to be converted to full URLs
+    if (specifier.startsWith("/") && !specifier.startsWith("//")) {
+      const fullUrl = `https://esm.sh${specifier}`;
+      // Recursively process as full URL (will add external params if needed)
+      const isReactPackage = /^\/react(-dom)?(@|\/|\?|$)/.test(specifier);
+      if (isReactPackage) {
+        // React packages - just ensure target and return full URL
+        if (!specifier.includes("target=")) {
+          const joiner = specifier.includes("?") ? "&" : "?";
+          return `${fullUrl}${joiner}target=es2022`;
+        }
+        return fullUrl;
+      }
+      // Non-React packages - add external params
+      const params: string[] = [];
+      if (!specifier.includes("target=")) params.push("target=es2022");
+      if (!specifier.includes("external=")) params.push("external=react,react-dom");
+      if (!specifier.includes("deps=")) params.push(`deps=react@${version},react-dom@${version}`);
+      if (params.length === 0) return fullUrl;
+      const joiner = specifier.includes("?") ? "&" : "?";
+      return `${fullUrl}${joiner}${params.join("&")}`;
+    }
+
     const isEsmSh = specifier.startsWith("https://esm.sh/") ||
       specifier.startsWith("http://esm.sh/");
     const isVfEsm = specifier.startsWith("https://esm.veryfront.com/");

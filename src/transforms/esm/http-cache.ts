@@ -325,6 +325,13 @@ async function resolveSpecifier(
     if (!baseUrl || !isHttpUrl(baseUrl)) return null;
 
     const resolved = new URL(specifier, baseUrl).toString();
+
+    // For React core URLs: return the full esm.sh URL (not cached, to prevent multiple instances)
+    // This transforms relative paths like "/react-dom?..." to "https://esm.sh/react-dom?..."
+    if (isReactCoreUrl(resolved)) {
+      return normalizeHttpUrl(resolved);
+    }
+
     const cached = await cacheHttpModule(resolved, options);
     return cached ? `file://${cached}` : null;
   }
