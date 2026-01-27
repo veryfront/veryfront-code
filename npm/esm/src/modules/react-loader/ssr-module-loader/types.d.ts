@@ -14,6 +14,8 @@ export interface SSRModuleLoaderOptions {
     apiBaseUrl?: string;
     /** Content source ID for cache isolation (branch name or release ID) */
     contentSourceId?: string;
+    /** React version for transforms (defaults to DEFAULT_REACT_VERSION) */
+    reactVersion?: string;
 }
 export interface ModuleCacheEntry {
     tempPath: string;

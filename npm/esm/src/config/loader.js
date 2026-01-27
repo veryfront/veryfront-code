@@ -6,7 +6,8 @@ import { isBun } from "../platform/compat/runtime.js";
 import { serverLogger } from "../utils/logger/logger.js";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "../utils/constants/cdn.js";
 import { DEFAULT_CACHE_DIR } from "../utils/constants/server.js";
-import { setReactVersion } from "../transforms/esm/package-registry.js";
+// React version is now passed per-request via TransformOptions.reactVersion
+// No longer using global singleton: import { setReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
 import { buildConfigCacheKey } from "../cache/keys.js";
 import { DEFAULT_PORT } from "./defaults.js";
 import { createFileSystem } from "../platform/compat/fs.js";
@@ -174,10 +175,10 @@ function validateAndCacheConfig(userConfig, cacheKey) {
     validateCorsConfig(userConfig);
     validateConfigShape(userConfig);
     const merged = mergeConfigs(userConfig);
-    // Apply React version from config (sets global default for transforms)
+    // React version is now passed per-request via TransformOptions.reactVersion
+    // Config stores it at merged.react.version, accessed wherever needed
     if (merged.react?.version) {
-        setReactVersion(merged.react.version);
-        serverLogger.debug("[CONFIG] React version set from config", { version: merged.react.version });
+        serverLogger.debug("[CONFIG] React version from config", { version: merged.react.version });
     }
     configCacheByProject.set(cacheKey, { revision: cacheRevision, config: merged });
     return merged;

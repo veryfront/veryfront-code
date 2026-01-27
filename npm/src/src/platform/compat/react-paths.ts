@@ -13,6 +13,7 @@
 declare const Bun: { resolveSync?: (specifier: string, dir: string) => string } | undefined;
 
 import { pathToFileURL } from "node:url";
+import { createRequire } from "node:module";
 import { isBun, isDeno, isNode } from "./runtime.js";
 import { cwd } from "./process.js";
 
@@ -62,13 +63,15 @@ function resolveReactSpecifier(specifier: string): string | undefined {
     }
 
     if (isNode) {
-      const parentUrl = pathToFileURL(`${cwd()}/`).href;
-      return resolveWithImportMeta(specifier, parentUrl) ?? undefined;
+      // Use createRequire to resolve React from veryfront's node_modules.
+      // import.meta.resolve's parentUrl argument doesn't work correctly in Node.js,
+      // so we use createRequire which properly resolves from the specified path.
+      const require = createRequire(import.meta.url);
+      const resolved = require.resolve(specifier);
+      return pathToFileURL(resolved).href;
     }
-  } catch (error) {
-    if (error instanceof Error && error.name === IMPORT_META_RESOLVE_ERROR) {
-      throw error;
-    }
+  } catch {
+    // Resolution failed, return undefined
   }
 
   return undefined;

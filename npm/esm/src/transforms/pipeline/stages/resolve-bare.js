@@ -18,7 +18,7 @@ export const resolveBarePlugin = {
         if (ctx.moduleServerUrl && ctx.vendorBundleHash) {
             return rewriteVendorImports(ctx.code, ctx.moduleServerUrl, ctx.vendorBundleHash);
         }
-        return rewriteBareImports(ctx.code, ctx.moduleServerUrl);
+        return rewriteBareImports(ctx.code, ctx.moduleServerUrl, ctx.reactVersion);
     },
 };
 export default resolveBarePlugin;

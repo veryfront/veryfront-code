@@ -109,11 +109,42 @@ export function waitForKeypress() {
 const CTRL_C = 0x03;
 const ENTER_CR = 0x0d;
 const ENTER_LF = 0x0a;
+const ESC = "\x1b";
+const ESC_TIMEOUT_MS = 50;
 /**
- * Wait for Enter key or Ctrl+C.
- * Returns true if Enter was pressed (continue), false if Ctrl+C (exit).
- * Works in both Deno and Node.js.
+ * Create an escape sequence buffer.
+ * @param onTimeout Called when a standalone Escape key times out
  */
+export function createEscapeBuffer(onTimeout) {
+    let pending = "";
+    let timeoutId = null;
+    function clear() {
+        if (timeoutId) {
+            clearTimeout(timeoutId);
+            timeoutId = null;
+        }
+        pending = "";
+    }
+    function push(input) {
+        if (pending) {
+            const result = pending + input;
+            clear();
+            return result;
+        }
+        if (input === ESC) {
+            pending = input;
+            timeoutId = dntShim.setTimeout(() => {
+                const key = pending;
+                clear();
+                if (key)
+                    onTimeout(key);
+            }, ESC_TIMEOUT_MS);
+            return null;
+        }
+        return input;
+    }
+    return { push, clear };
+}
 export function waitForEnterOrExit() {
     return new Promise((resolve) => {
         if (typeof dntShim.Deno !== "undefined" && dntShim.Deno.stdin) {

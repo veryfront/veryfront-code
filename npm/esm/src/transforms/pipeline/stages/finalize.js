@@ -8,7 +8,7 @@ export const finalizePlugin = {
     async transform(ctx) {
         if (!isSSR(ctx))
             return ctx.code;
-        const result = bundleHttpImports(ctx.code, getHttpBundleCacheDir(), ctx.contentHash);
+        const result = bundleHttpImports(ctx.code, getHttpBundleCacheDir(), ctx.contentHash, ctx.reactVersion);
         return result instanceof Promise ? await result : result;
     },
 };

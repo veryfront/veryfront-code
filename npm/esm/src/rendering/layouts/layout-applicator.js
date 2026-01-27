@@ -126,6 +126,7 @@ export class LayoutApplicator {
                 logger.debug("Loading App component from", appPath);
                 const appSource = await this.adapter.fs.readFile(appPath);
                 const isMdx = appPath.endsWith(".mdx") || appPath.endsWith(".md");
+                // deno-lint-ignore no-explicit-any
                 let App;
                 if (isMdx) {
                     App = await this.loadMdxAppComponent(appSource, appPath);
@@ -153,6 +154,7 @@ export class LayoutApplicator {
             "layout.project_dir": this.projectDir,
         });
     }
+    // deno-lint-ignore no-explicit-any
     async loadMdxAppComponent(source, appPath) {
         try {
             const { compile } = await import("@mdx-js/mdx");

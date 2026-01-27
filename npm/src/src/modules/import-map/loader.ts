@@ -3,15 +3,16 @@ import { dirname, join } from "../../platform/compat/path/index.js";
 import type { RuntimeAdapter } from "../../platform/adapters/base.js";
 import { getConfig } from "../../config/index.js";
 import type { ImportMapConfig } from "./types.js";
-import { getDefaultImportMap, getDenoReactImportMap } from "./default-import-map.js";
+import { getDefaultImportMap } from "./default-import-map.js";
 import { mergeImportMaps } from "./merger.js";
 import { withSpan } from "../../observability/tracing/otlp-setup.js";
-import { isDeno } from "../../platform/compat/runtime.js";
+import { getReactImportMap } from "../../transforms/esm/package-registry.js";
 
 function normalizeImportMapForRuntime(importMap: ImportMapConfig): ImportMapConfig {
   const normalizeValue = (value: string): string => {
     if (!value.startsWith("npm:")) return value;
 
+    // Convert npm: specifiers to esm.sh URLs (should not happen with new code)
     const spec = value.slice(4);
     const [base, query] = spec.split("?");
     const url = `https://esm.sh/${base}`;
@@ -23,7 +24,7 @@ function normalizeImportMapForRuntime(importMap: ImportMapConfig): ImportMapConf
     ? Object.fromEntries(Object.entries(importMap.imports).map(([k, v]) => [k, normalizeValue(v)]))
     : undefined;
 
-  let scopes = importMap.scopes
+  const scopes = importMap.scopes
     ? Object.fromEntries(
       Object.entries(importMap.scopes).map(([scope, mappings]) => [
         scope,
@@ -34,29 +35,12 @@ function normalizeImportMapForRuntime(importMap: ImportMapConfig): ImportMapConf
     )
     : undefined;
 
-  // CRITICAL: For Deno SSR, always use shared-*.ts files for React.
-  // Project configs may have esm.sh URLs which would create multiple React instances.
   // Override React mappings AFTER all other processing to ensure single instance.
-  // Also remove any "react/" prefix match since we have explicit mappings.
-  if (isDeno && imports) {
-    const reactMap = getDenoReactImportMap();
-    // Remove any esm.sh "react/" prefix mapping that would break subpath resolution
+  // Remove any "react/" prefix match since we have explicit mappings.
+  if (imports) {
+    const reactMap = getReactImportMap();
     delete imports["react/"];
     imports = { ...imports, ...reactMap };
-  }
-
-  // For Deno SSR, ensure esm.sh scope has React mappings to shared-*.ts files.
-  // This is critical because esm.sh modules with external=react have bare `react`
-  // imports that need to resolve to our shared React instance.
-  if (isDeno) {
-    const reactMap = getDenoReactImportMap();
-    const esmShScope = scopes?.["https://esm.sh/"] ?? {};
-    // Remove any "react/" prefix match from scope as well
-    delete esmShScope["react/"];
-    scopes = {
-      ...scopes,
-      "https://esm.sh/": { ...esmShScope, ...reactMap },
-    };
   }
 
   return { imports, scopes };

@@ -20,5 +20,6 @@ export declare function fetchAndCacheModule(modulePath: string, context: ModuleF
 export declare function createModuleFetcherContext(esmCacheDir: string, adapter: RuntimeAdapter, projectDir: string, projectId: string, options?: {
     isLocalDev?: boolean;
     projectSlug?: string;
+    reactVersion?: string;
 }): ModuleFetcherContext;
 //# sourceMappingURL=index.d.ts.map

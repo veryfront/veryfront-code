@@ -6,15 +6,15 @@
  * @module module-system/react-loader/ssr-module-loader/loader
  */
 import * as dntShim from "../../../../_dnt.shims.js";
-import { isAbsolute, join } from "../../../platform/compat/path/index.js";
-import { cwd } from "../../../platform/compat/process.js";
+import { join } from "../../../platform/compat/path/index.js";
 import { transformToESM } from "../../../transforms/esm/index.js";
 import { TRANSFORM_CACHE_VERSION } from "../../../transforms/esm/package-registry.js";
-import { buildSSRModuleCacheKey, buildSSRModuleProjectKey } from "../../../cache/keys.js";
+import { buildSSRModuleCacheKey } from "../../../cache/keys.js";
 import { parseLocalImports, } from "../../../transforms/esm/import-parser.js";
 import { createFileSystem } from "../../../platform/compat/fs.js";
 import { createError, toError } from "../../../errors/veryfront-error.js";
 import { rendererLogger as logger } from "../../../utils/index.js";
+import { hashCodeHex } from "../../../utils/hash-utils.js";
 import { getApiBaseUrlEnv } from "../../../config/env.js";
 import { injectContext, withSpan } from "../../../observability/tracing/otlp-setup.js";
 import { SpanNames } from "../../../observability/tracing/span-names.js";
@@ -22,7 +22,8 @@ import { extractComponent } from "../extract-component.js";
 import { CIRCUIT_BREAKER_RESET_MS, CIRCUIT_BREAKER_THRESHOLD, IN_PROGRESS_WAIT_TIMEOUT_MS, MAX_CONCURRENT_TRANSFORMS, MAX_TRANSFORM_DEPTH, TRANSFORM_ACQUIRE_TIMEOUT_MS, TRANSFORM_BATCH_SIZE, } from "./constants.js";
 import { withTimeoutThrow } from "../../../rendering/utils/stream-utils.js";
 import { failedComponents, getFromRedis, globalCrossProjectCache, globalInProgress, globalModuleCache, globalTmpDirs, isSSRDistributedCacheEnabled, setInRedis, transformSemaphore, } from "./cache/index.js";
-import { getCacheBaseDir, getHttpBundleCacheDir } from "../../../utils/cache-dir.js";
+import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "../../../utils/cache-dir.js";
+import { lookupMdxEsmCache } from "../../../transforms/mdx/esm-module-loader/cache/index.js";
 import { ensureHttpBundlesExist } from "../../../transforms/esm/http-cache.js";
 import { LRUCache } from "../../../utils/lru-wrapper.js";
 /** Pattern to match HTTP bundle file:// paths in transformed code */
@@ -190,7 +191,9 @@ export class SSRModuleLoader {
         if (!this.options.contentSourceId) {
             throw new Error(`Missing contentSourceId for SSR module cache (project: ${this.options.projectId}, file: ${filePath})`);
         }
-        return buildSSRModuleCacheKey(TRANSFORM_CACHE_VERSION, this.options.projectId, `${this.options.contentSourceId}:${filePath}`);
+        // Include reactVersion in cache key to ensure different versions don't share cached modules
+        const reactVersion = this.options.reactVersion ?? "default";
+        return buildSSRModuleCacheKey(TRANSFORM_CACHE_VERSION, this.options.projectId, `${this.options.contentSourceId}:${reactVersion}:${filePath}`);
     }
     isProductionContentSource() {
         const sourceId = this.options.contentSourceId;
@@ -259,6 +262,7 @@ export class SSRModuleLoader {
                     dev: this.options.dev,
                     ssr: true,
                     apiBaseUrl: this.options.apiBaseUrl,
+                    reactVersion: this.options.reactVersion,
                 };
                 const filePathWithExt = syntheticFilePath.endsWith(ext)
                     ? syntheticFilePath
@@ -397,6 +401,25 @@ export class SSRModuleLoader {
                 // Fall through to re-transform, which will create HTTP bundles locally
             }
         }
+        // Check MDX-ESM cache to share modules with MDX loader and avoid duplicate React contexts
+        if (this.options.projectId && this.options.contentSourceId) {
+            const baseCacheDir = getMdxEsmCacheDir();
+            const projectKey = hashCodeHex(this.options.projectId);
+            const sourceKey = hashCodeHex(this.options.contentSourceId);
+            const mdxCacheDir = join(baseCacheDir, projectKey, sourceKey);
+            const mdxCachedPath = await lookupMdxEsmCache(filePath, mdxCacheDir, this.options.projectDir, contentHash);
+            if (mdxCachedPath) {
+                const entry = { tempPath: mdxCachedPath, contentHash };
+                globalModuleCache.set(contentCacheKey, entry);
+                globalModuleCache.set(filePathCacheKey, entry);
+                logger.debug("[SSR-MODULE-LOADER] Reusing MDX-ESM cache", {
+                    file: filePath.slice(-40),
+                    cachedPath: mdxCachedPath.slice(-60),
+                });
+                await this.ensureDependenciesExist(code, filePath, depth);
+                return;
+            }
+        }
         const existingTransform = globalInProgress.get(inProgressKey);
         if (existingTransform) {
             try {
@@ -459,6 +482,7 @@ export class SSRModuleLoader {
                     dev: this.options.dev,
                     ssr: true,
                     apiBaseUrl: this.options.apiBaseUrl,
+                    reactVersion: this.options.reactVersion,
                 };
                 let transformed = await withSpan(SpanNames.SSR_TRANSFORM_SINGLE, () => transformToESM(code, filePath, this.options.projectDir, this.options.adapter, transformOpts), { "ssr.file": filePath.split("/").pop() || filePath });
                 for (const [specifier, tempPath] of crossProjectPaths.entries()) {
@@ -684,25 +708,12 @@ export class SSRModuleLoader {
         }
     }
     /**
-     * Fast sync hash for small strings (project IDs, etc.)
-     * Use hashContentAsync for large file content.
-     */
-    hashCode(str) {
-        let hash = 0;
-        for (let i = 0; i < str.length; i++) {
-            const char = str.charCodeAt(i);
-            hash = (hash << 5) - hash + char;
-            hash = hash & hash;
-        }
-        return Math.abs(hash).toString(16);
-    }
-    /**
      * Async hash for large content using Web Crypto API.
-     * Doesn't block event loop for large files.
+     * Falls back to sync hash for small files.
      */
     async hashContentAsync(content) {
         if (content.length < 10000)
-            return this.hashCode(content);
+            return hashCodeHex(content);
         try {
             const data = new TextEncoder().encode(content);
             const hashBuffer = await dntShim.crypto.subtle.digest("SHA-256", data);
@@ -713,7 +724,7 @@ export class SSRModuleLoader {
                 .join("");
         }
         catch {
-            return this.hashCode(content);
+            return hashCodeHex(content);
         }
     }
     async getTempPath(filePath, contentHash) {
@@ -729,26 +740,23 @@ export class SSRModuleLoader {
         return join(tmpDir, jsPath);
     }
     async ensureTmpDir() {
-        let projectDir = this.options.projectDir;
         const { projectId, contentSourceId } = this.options;
         if (!projectId) {
-            throw new Error(`Missing projectId for SSR temp directory (projectDir: ${projectDir})`);
+            throw new Error(`Missing projectId for SSR temp directory (projectDir: ${this.options.projectDir})`);
         }
         if (!contentSourceId) {
             throw new Error(`Missing contentSourceId for SSR temp directory (project: ${projectId})`);
         }
-        if (!projectDir.startsWith("/")) {
-            projectDir = join(cwd(), projectDir);
-        }
-        const cacheBaseDir = getCacheBaseDir();
-        const baseDir = isAbsolute(cacheBaseDir) ? cacheBaseDir : join(cwd(), cacheBaseDir);
-        const cacheKey = `${baseDir}|${buildSSRModuleProjectKey(projectDir, projectId)}|${contentSourceId}`;
+        // Use the same cache directory as MDX-ESM loader to share module instances.
+        // This prevents issues like React context being created twice in separate files.
+        const baseCacheDir = getMdxEsmCacheDir();
+        const projectKey = hashCodeHex(projectId);
+        const sourceKey = hashCodeHex(contentSourceId);
+        const cacheKey = `${baseCacheDir}|${projectKey}|${sourceKey}`;
         const existingDir = globalTmpDirs.get(cacheKey);
         if (existingDir)
             return existingDir;
-        const projectKey = this.hashCode(projectId);
-        const sourceKey = this.hashCode(contentSourceId);
-        const tmpDir = join(baseDir, "veryfront-ssr", projectKey, sourceKey);
+        const tmpDir = join(baseCacheDir, projectKey, sourceKey);
         await this.fs.mkdir(tmpDir, { recursive: true });
         globalTmpDirs.set(cacheKey, tmpDir);
         return tmpDir;

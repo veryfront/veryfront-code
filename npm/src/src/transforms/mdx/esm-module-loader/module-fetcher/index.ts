@@ -568,6 +568,7 @@ async function doFetchAndCacheModule(
           projectId,
           dev: true,
           ssr: true,
+          reactVersion: context.reactVersion,
         });
       } catch (transformError) {
         logger.error(`${LOG_PREFIX_MDX_LOADER} Transform failed for module`, {
@@ -685,7 +686,7 @@ export function createModuleFetcherContext(
   adapter: RuntimeAdapter,
   projectDir: string,
   projectId: string,
-  options?: { isLocalDev?: boolean; projectSlug?: string },
+  options?: { isLocalDev?: boolean; projectSlug?: string; reactVersion?: string },
 ): ModuleFetcherContext {
   return {
     esmCacheDir,

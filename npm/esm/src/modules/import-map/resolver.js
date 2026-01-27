@@ -46,21 +46,25 @@ export function resolveImport(specifier, importMap, scope) {
     if (isEsmShUrl(specifier)) {
         const esmShPackage = extractEsmShPackage(specifier);
         if (esmShPackage) {
+            const subpath = extractEsmShSubpath(specifier);
+            // Always check for explicit subpath mapping first (e.g., "react/jsx-runtime")
+            // This takes priority over appending subpath to base package mapping
+            if (subpath) {
+                const fullKey = esmShPackage + subpath; // e.g., "react/jsx-runtime"
+                const subpathMapping = scopedImports?.[fullKey] ?? importMap.imports?.[fullKey];
+                if (subpathMapping)
+                    return subpathMapping;
+            }
             const mapping = scopedImports?.[esmShPackage] ?? importMap.imports?.[esmShPackage];
             if (mapping) {
-                const subpath = extractEsmShSubpath(specifier);
                 if (!subpath)
                     return mapping;
-                // If mapping target is a file path (not HTTP URL or npm: specifier), look for explicit subpath mapping
-                // e.g., "react" → local file but "react/jsx-runtime" → different local file
-                // npm: specifiers are URL-like and should have subpaths appended
+                // If mapping target is a file path (not HTTP URL or npm: specifier),
+                // fall back to base mapping since explicit subpath wasn't found above
                 const isFilePath = !mapping.startsWith("http://") && !mapping.startsWith("https://") &&
                     !mapping.startsWith("npm:");
                 if (isFilePath) {
-                    const fullKey = esmShPackage + subpath; // e.g., "react/jsx-runtime"
-                    const subpathMapping = scopedImports?.[fullKey] ?? importMap.imports?.[fullKey];
-                    // Use explicit subpath mapping if available, otherwise fall back to base mapping
-                    return subpathMapping ?? mapping;
+                    return mapping;
                 }
                 return mapping + subpath;
             }

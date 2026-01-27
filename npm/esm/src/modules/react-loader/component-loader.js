@@ -19,6 +19,7 @@ export function loadComponentFromSource(source, filePath, projectDir, adapter, o
                 adapter,
                 dev,
                 contentSourceId: options?.contentSourceId,
+                reactVersion: options?.reactVersion,
             });
             return loader.loadModule(filePath, source);
         }
@@ -28,6 +29,7 @@ export function loadComponentFromSource(source, filePath, projectDir, adapter, o
             moduleServerUrl: options?.moduleServerUrl ?? "/_vf_modules",
             vendorBundleHash: options?.vendorBundleHash,
             ssr: false,
+            reactVersion: options?.reactVersion,
         };
         const transformedCode = await transformToESM(source, filePath, projectDir, adapter, transformOpts);
         const tmpDir = await getProjectTmpDir(projectId);

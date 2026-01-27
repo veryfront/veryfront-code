@@ -40,6 +40,8 @@ export async function handleComponentPage(
     studioEmbed?: boolean;
     /** Content source ID for cache isolation (branch name or release ID) */
     contentSourceId?: string;
+    /** React version for transforms (from project config) */
+    reactVersion?: string;
   },
 ): Promise<ComponentPageResult> {
   try {
@@ -59,6 +61,7 @@ export async function handleComponentPage(
         adapter,
         options?.moduleServerUrl,
         options?.projectId,
+        options?.reactVersion,
       )) ??
       undefined;
 
@@ -74,6 +77,7 @@ export async function handleComponentPage(
         moduleServerUrl: options?.moduleServerUrl,
         ssr: true,
         contentSourceId: options?.contentSourceId,
+        reactVersion: options?.reactVersion,
       },
     );
 
@@ -138,6 +142,7 @@ async function bundleComponentForClient(
   adapter: RuntimeAdapter,
   moduleServerUrl?: string,
   projectId?: string,
+  reactVersion?: string,
 ): Promise<string | null> {
   try {
     const contentHash = await generateContentHash(source);
@@ -151,6 +156,7 @@ async function bundleComponentForClient(
       dev: true,
       jsxImportSource: "react",
       moduleServerUrl,
+      reactVersion,
     });
 
     componentHydrationCache.set(cacheKey, transformed);

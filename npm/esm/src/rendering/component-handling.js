@@ -20,7 +20,7 @@ export async function handleComponentPage(pageInfo, slug, projectDir, _component
             ? injectNodePositions(rawFileContent, { filePath: pageInfo.entity.path })
             : rawFileContent;
         const clientModuleCode = options?.cachedClientModule ??
-            (await bundleComponentForClient(fileContent, pageInfo.entity.path, projectDir, adapter, options?.moduleServerUrl, options?.projectId)) ??
+            (await bundleComponentForClient(fileContent, pageInfo.entity.path, projectDir, adapter, options?.moduleServerUrl, options?.projectId, options?.reactVersion)) ??
             undefined;
         const { loadComponentFromSource } = await import("../modules/react-loader/index.js");
         const PageComponent = await loadComponentFromSource(fileContent, pageInfo.entity.path, projectDir, adapter, {
@@ -29,6 +29,7 @@ export async function handleComponentPage(pageInfo, slug, projectDir, _component
             moduleServerUrl: options?.moduleServerUrl,
             ssr: true,
             contentSourceId: options?.contentSourceId,
+            reactVersion: options?.reactVersion,
         });
         if (!PageComponent) {
             throw toError(createError({
@@ -68,7 +69,7 @@ async function generateContentHash(str) {
     }
     return hex;
 }
-async function bundleComponentForClient(source, filePath, projectDir, adapter, moduleServerUrl, projectId) {
+async function bundleComponentForClient(source, filePath, projectDir, adapter, moduleServerUrl, projectId, reactVersion) {
     try {
         const contentHash = await generateContentHash(source);
         const cacheKey = buildComponentCacheKey(projectId ?? projectDir, filePath, contentHash);
@@ -81,6 +82,7 @@ async function bundleComponentForClient(source, filePath, projectDir, adapter, m
             dev: true,
             jsxImportSource: "react",
             moduleServerUrl,
+            reactVersion,
         });
         componentHydrationCache.set(cacheKey, transformed);
         return transformed;

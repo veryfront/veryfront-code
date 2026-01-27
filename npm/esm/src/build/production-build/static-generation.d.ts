@@ -40,6 +40,8 @@ export interface SSGOptions {
     baseUrl?: string;
     dryRun?: boolean;
     traceStep?: <T>(name: string, fn: () => Promise<T>) => Promise<T>;
+    /** React version for import map generation */
+    reactVersion?: string;
 }
 export declare function buildPagesRoutes(routes: RouteInfo[], options: SSGOptions): Promise<SSGStats>;
 export declare function buildAppRoutes(appRoutes: AppRouteInfo[], options: SSGOptions): Promise<SSGStats>;

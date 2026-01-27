@@ -29,6 +29,8 @@ export interface BatchHandlerOptions {
      * When not set, users can import from any directory in the project.
      */
     allowedImportDirs?: string[];
+    /** React version for transforms (from project config) */
+    reactVersion?: string;
 }
 /**
  * Handle a batch module request

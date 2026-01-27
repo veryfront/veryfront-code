@@ -582,12 +582,33 @@ async function loadPlugin(id: string): Promise<unknown> {
     return pluginCache.get(id);
   }
 
-  const url = `https://esm.sh/${id}`;
+  // Use the proper isDeno check that distinguishes between real Deno and dnt shim
+  const { isDeno } = await import("../../platform/compat/runtime.js");
 
   try {
-    logger.debug("[tailwind] Loading plugin", { id, url });
-    const mod = await import(url);
-    const plugin = mod.default ?? mod;
+    let mod: unknown;
+
+    if (isDeno) {
+      // Deno supports HTTP imports natively
+      const url = `https://esm.sh/${id}`;
+      logger.debug("[tailwind] Loading plugin via esm.sh", { id, url });
+      mod = await import(url);
+    } else {
+      // Node.js: Try to import from node_modules
+      // First try the bare specifier, then fall back to global node_modules
+      logger.debug("[tailwind] Loading plugin from node_modules", { id });
+      try {
+        mod = await import(id);
+      } catch {
+        // Plugin not installed - this is expected for most user projects
+        // Log at debug level since it's not an error, just a missing optional plugin
+        logger.debug("[tailwind] Plugin not installed", { id });
+        pluginCache.set(id, null);
+        return null;
+      }
+    }
+
+    const plugin = (mod as { default?: unknown }).default ?? mod;
     pluginCache.set(id, plugin);
     return plugin;
   } catch (error) {
@@ -645,8 +666,10 @@ async function getCompiler(stylesheet: string): Promise<Awaited<ReturnType<typeo
     },
     loadModule: async (id: string) => {
       const plugin = await loadPlugin(id);
+      // If plugin is null (not installed in Node.js), return empty module to prevent crash
+      // The stylesheet will compile but plugin-specific features won't work
       // deno-lint-ignore no-explicit-any
-      return { module: plugin as any, base: "/", path: "/" };
+      return { module: (plugin ?? {}) as any, base: "/", path: "/" };
     },
   });
 

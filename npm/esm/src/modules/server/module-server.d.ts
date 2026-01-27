@@ -23,6 +23,8 @@ export interface ModuleServerOptions {
      * When not set, users can import from any directory in the project.
      */
     allowedImportDirs?: string[];
+    /** React version for transforms (from project config) */
+    reactVersion?: string;
 }
 /** Serve transformed module at /_vf_modules/* path */
 export declare function serveModule(req: dntShim.Request, options: ModuleServerOptions): Promise<dntShim.Response>;

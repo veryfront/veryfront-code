@@ -167,6 +167,7 @@ export class RenderPipeline {
         }
         setupSSRGlobals();
         this.moduleLoaderConfig.projectId = projectId;
+        this.moduleLoaderConfig.contentSourceId = options?.contentSourceId;
         if (this.config.mode === "development") {
             clearSSRModuleCacheForProject(projectId);
         }
@@ -321,6 +322,7 @@ export class RenderPipeline {
         setupSSRGlobals();
         const projectId = options?.projectId ?? this.config.projectDir;
         this.moduleLoaderConfig.projectId = projectId;
+        this.moduleLoaderConfig.contentSourceId = options?.contentSourceId;
         if (this.config.mode === "development") {
             clearSSRModuleCacheForProject(projectId);
         }

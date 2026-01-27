@@ -11,5 +11,6 @@ export declare function renderAppRouteToHTML(args: {
     routePath: string;
     pageFile: string;
     contentSourceId: string;
+    reactVersion?: string;
 }): Promise<string>;
 //# sourceMappingURL=build-app-route-renderer.d.ts.map

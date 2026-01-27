@@ -35,4 +35,18 @@ export declare function invalidateModulePaths(changedPaths: string[]): void;
  * Called when files are updated via Studio to ensure fresh content is served.
  */
 export declare function clearESMDiskCache(): Promise<void>;
+/**
+ * Look up a module in the MDX-ESM cache.
+ *
+ * This allows other loaders (like SSR loader) to reuse modules that
+ * MDX-ESM has already transformed and cached, preventing duplicate
+ * module instances (which breaks React context, etc.).
+ *
+ * @param filePath - Project-relative file path like "lib/ChatContext.tsx"
+ * @param cacheDir - The MDX-ESM cache directory for this project/contentSource
+ * @param projectDir - Project directory to strip from absolute paths
+ * @param contentHash - Optional content hash to validate cached file freshness
+ * @returns The cached file path if found and valid, null otherwise
+ */
+export declare function lookupMdxEsmCache(filePath: string, cacheDir: string, projectDir?: string, contentHash?: string): Promise<string | null>;
 //# sourceMappingURL=index.d.ts.map

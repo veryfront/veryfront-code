@@ -45,6 +45,8 @@ export interface SSGOptions {
   baseUrl?: string;
   dryRun?: boolean;
   traceStep?: <T>(name: string, fn: () => Promise<T>) => Promise<T>;
+  /** React version for import map generation */
+  reactVersion?: string;
 }
 
 function getOutputPath(outputDir: string, slug: string): string {
@@ -176,6 +178,7 @@ export async function buildAppRoutes(
     contentSourceId = "build-static",
     dryRun = false,
     traceStep = defaultTraceStep,
+    reactVersion,
   } = options;
 
   const stats: SSGStats = { pages: 0, totalSize: 0, ssgPaths: [] };
@@ -192,6 +195,7 @@ export async function buildAppRoutes(
           routePath: route.path,
           pageFile: route.pageFile,
           contentSourceId,
+          reactVersion,
         }));
 
       const outputPath = getAppRouteOutputPath(outputDir, route.path);

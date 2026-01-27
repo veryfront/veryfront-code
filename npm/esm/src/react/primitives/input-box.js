@@ -7,9 +7,13 @@ export const InputBox = React.forwardRef(({ className, value, onChange, onSubmit
         onSubmit();
     };
     if (multiline) {
-        return (React.createElement("textarea", { ref: ref, className: className, value: value, onChange: onChange, onKeyDown: handleKeyDown, "data-input-box": "", "data-multiline": "true", rows: 3, ...props }));
+        return (React.createElement("textarea", { 
+            // deno-lint-ignore no-explicit-any
+            ref: ref, className: className, value: value, onChange: onChange, onKeyDown: handleKeyDown, "data-input-box": "", "data-multiline": "true", rows: 3, ...props }));
     }
-    return (React.createElement("input", { ref: ref, type: "text", className: className, value: value, onChange: onChange, onKeyDown: handleKeyDown, "data-input-box": "", ...props }));
+    return (React.createElement("input", { 
+        // deno-lint-ignore no-explicit-any
+        ref: ref, type: "text", className: className, value: value, onChange: onChange, onKeyDown: handleKeyDown, "data-input-box": "", ...props }));
 });
 InputBox.displayName = "InputBox";
 function SubmitIcon() {

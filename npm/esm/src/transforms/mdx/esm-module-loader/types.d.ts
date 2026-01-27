@@ -9,6 +9,8 @@ export interface ESMLoaderContext {
     projectDir?: string;
     projectSlug?: string;
     contentSourceId?: string;
+    /** React version for transforms (from project config) */
+    reactVersion?: string;
 }
 export interface FSAdapter {
     readFile(path: string): Promise<string | Uint8Array>;
@@ -49,6 +51,8 @@ export interface ModuleFetcherContext {
      * This prevents infinite recursion when A imports B which imports A.
      */
     inFlightModules?: Map<string, Promise<string | null>>;
+    /** React version for transforms (from project config) */
+    reactVersion?: string;
 }
 export interface JSXTransform {
     original: string;

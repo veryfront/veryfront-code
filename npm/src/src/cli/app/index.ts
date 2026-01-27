@@ -17,7 +17,11 @@ import {
 } from "../../platform/compat/process.js";
 import { join } from "../../platform/compat/path/index.js";
 import { getRuntimeEnv } from "../../config/runtime-env.js";
-import { getStdinReader, setRawMode } from "../../platform/compat/stdin.js";
+import {
+  createEscapeBuffer,
+  getStdinReader,
+  setRawMode,
+} from "../../platform/compat/stdin.js";
 import { cursor, screen, SPINNER_FRAMES } from "../ui/ansi.js";
 import { brand, dim } from "../ui/colors.js";
 import { getTerminalWidth } from "../ui/layout.js";
@@ -612,14 +616,19 @@ export function createApp(config: AppConfig): App {
     const reader = getStdinReader();
     const decoder = new TextDecoder();
 
+    // Buffer escape sequences (arrow keys like \x1b[A may arrive as separate reads)
+    const escapeBuffer = createEscapeBuffer((key) => handleKey(key));
+
     try {
       while (running) {
         const { value, done } = await reader.read();
         if (done) break;
 
-        await handleKey(decoder.decode(value));
+        const key = escapeBuffer.push(decoder.decode(value));
+        if (key) await handleKey(key);
       }
     } finally {
+      escapeBuffer.clear();
       reader.releaseLock();
       try {
         setRawMode(false);

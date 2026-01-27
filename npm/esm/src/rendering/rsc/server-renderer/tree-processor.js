@@ -42,7 +42,9 @@ export async function renderTree(Component, props, clientManifest, clientRefs) {
 }
 /** Processes a React element into RSC node representation */
 export async function processElement(element, clientManifest, clientRefs) {
-    const { type, props } = element;
+    const { type } = element;
+    // Cast props for React 19 compatibility (props is unknown in R19 types)
+    const props = element.props;
     if (type === React.Fragment) {
         const children = await renderChildren(props.children, clientManifest, clientRefs);
         return { type: "fragment", children };

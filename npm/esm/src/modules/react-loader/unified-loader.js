@@ -3,12 +3,14 @@ import { transformToESM } from "../../transforms/esm/index.js";
 import { rendererLogger as logger } from "../../utils/index.js";
 import { withSpan } from "../../observability/tracing/otlp-setup.js";
 import { getProjectTmpDir } from "./temp-directory.js";
+import { DEFAULT_REACT_VERSION, getReactImportMap, } from "../../transforms/esm/package-registry.js";
 export function loadComponentsUnified(components, projectDir, adapter, options) {
     return withSpan("modules.loadComponentsUnified", async () => {
         const projectId = options?.projectId ?? projectDir;
         const dev = options?.dev ?? true;
         const moduleServerUrl = options?.moduleServerUrl;
-        const transformOpts = { projectId, dev, moduleServerUrl };
+        const reactVersion = options?.reactVersion;
+        const transformOpts = { projectId, dev, moduleServerUrl, reactVersion };
         const transformedComponents = await transformAllComponents(components, projectDir, adapter, transformOpts);
         const baseTmp = await getProjectTmpDir(projectId);
         const uniqueTmp = `unified-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -16,7 +18,7 @@ export function loadComponentsUnified(components, projectDir, adapter, options) 
         await adapter.fs.mkdir(tmpDir, { recursive: true });
         try {
             await writeComponentFiles(tmpDir, transformedComponents, adapter);
-            const entryCode = generateEntryPoint(transformedComponents);
+            const entryCode = generateEntryPoint(transformedComponents, reactVersion);
             await adapter.fs.writeFile(join(tmpDir, "entry.js"), entryCode);
             return await importUnifiedComponents(tmpDir, transformedComponents);
         }
@@ -34,13 +36,16 @@ function transformAllComponents(components, projectDir, adapter, transformOpts) 
 async function writeComponentFiles(tmpDir, components, adapter) {
     await Promise.all(components.map((comp) => adapter.fs.writeFile(join(tmpDir, `${comp.name}.js`), comp.code)));
 }
-function generateEntryPoint(components) {
+function generateEntryPoint(components, reactVersion) {
+    const version = reactVersion ?? DEFAULT_REACT_VERSION;
+    // Use centralized React URL from package-registry to ensure consistency
+    const reactUrl = getReactImportMap(version).react;
     const imports = components
         .map((comp) => `import { default as ${comp.name} } from './${comp.name}.js'`)
         .join("\n");
     const exports = components.map((comp) => comp.name).join(", ");
     return `
-    import * as React from 'https://esm.sh/react@18.3.1?target=es2022'
+    import * as React from '${reactUrl}'
     ${imports}
 
     export { ${exports} }

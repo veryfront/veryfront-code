@@ -1,6 +1,6 @@
 import * as dntShim from "../../../_dnt.shims.js";
-import { isDeno } from "../../platform/compat/runtime.js";
-import { getDenoNpmReactMap, getReactImportMap, } from "../../transforms/esm/package-registry.js";
+import { getReactImportMap } from "../../transforms/esm/package-registry.js";
+import { isDeno as isRealDeno } from "../../platform/compat/runtime.js";
 function ensureTrailingSlash(path) {
     return path.endsWith("/") ? path : `${path}/`;
 }
@@ -19,10 +19,14 @@ function getFrameworkRoot() {
 }
 function getVeryfrontSsrImportMap() {
     const srcPath = `file://${getFrameworkRoot()}src`;
-    const head = `${srcPath}/react/components/Head.tsx`;
-    const router = `${srcPath}/react/router/index.ts`;
-    const context = `${srcPath}/react/context/index.ts`;
-    const fonts = `${srcPath}/react/fonts/index.ts`;
+    // In Deno source, files have .tsx/.ts extensions
+    // In npm package (Node.js/Bun), dnt transforms to .js
+    const tsxExt = isRealDeno ? ".tsx" : ".js";
+    const tsExt = isRealDeno ? ".ts" : ".js";
+    const head = `${srcPath}/react/components/Head${tsxExt}`;
+    const router = `${srcPath}/react/router/index${tsExt}`;
+    const context = `${srcPath}/react/context/index${tsExt}`;
+    const fonts = `${srcPath}/react/fonts/index${tsExt}`;
     return {
         "veryfront/head": head,
         "veryfront/router": router,
@@ -35,29 +39,13 @@ function getVeryfrontSsrImportMap() {
     };
 }
 /**
- * Get React import map for SSR in Deno.
- * Uses npm: specifiers which Deno handles natively with automatic deduplication.
- * See: https://deno.com/blog/not-using-npm-specifiers-doing-it-wrong
- *
- * This replaces the previous shared-*.ts approach which required manual re-exports.
- */
-export function getDenoReactImportMap() {
-    return getDenoNpmReactMap();
-}
-/**
  * Get the default import map for SSR transforms.
- *
- * For Deno SSR: Uses npm: specifiers with automatic deduplication.
- * For other runtimes: Uses esm.sh URLs with external=react.
+ * Uses esm.sh URLs consistently (NO npm: specifiers per plan requirements).
  */
 export function getDefaultImportMap() {
-    const reactMap = isDeno ? getDenoReactImportMap() : getReactImportMap();
+    const reactMap = getReactImportMap();
     const veryfrontMap = getVeryfrontSsrImportMap();
-    // For Deno SSR, add scopes so that esm.sh modules with external=react
-    // resolve their bare `react` imports to npm: specifiers.
-    const scopes = isDeno ? { "https://esm.sh/": getDenoReactImportMap() } : undefined;
     return {
         imports: { ...veryfrontMap, ...reactMap },
-        scopes,
     };
 }

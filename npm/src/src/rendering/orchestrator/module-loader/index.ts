@@ -9,8 +9,7 @@
 import { parallelMap, rendererLogger as logger } from "../../../utils/index.js";
 import type { RuntimeAdapter } from "../../../platform/adapters/base.js";
 import { getLocalAdapter } from "../../../platform/adapters/registry.js";
-import { generateHash } from "./cache.js";
-import { findLocalLibFile, findSourceFile } from "../file-resolver/index.js";
+import { findSourceFile } from "../file-resolver/index.js";
 import { transformToESM } from "../../../transforms/esm-transform.js";
 import { getProjectTmpDir } from "../../../modules/react-loader/index.js";
 import {
@@ -19,10 +18,17 @@ import {
   initializeTransformCache,
   setCachedTransformAsync,
 } from "../../../transforms/esm/transform-cache.js";
-import { hashString } from "../../../cache/hash.js";
 import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "../../../utils/constants/cache.js";
 import { ensureHttpBundlesExist } from "../../../transforms/esm/http-cache.js";
-import { getHttpBundleCacheDir } from "../../../utils/cache-dir.js";
+import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "../../../utils/cache-dir.js";
+import { join } from "../../../platform/compat/path/index.js";
+import { hashCodeHex } from "../../../utils/hash-utils.js";
+import { TRANSFORM_CACHE_VERSION } from "../../../transforms/esm/package-registry.js";
+import {
+  getModulePathCache,
+  lookupMdxEsmCache,
+  saveModulePathCache,
+} from "../../../transforms/mdx/esm-module-loader/cache/index.js";
 
 // Re-export utilities
 export { createEsmCache, createModuleCache, generateHash } from "./cache.js";
@@ -57,10 +63,13 @@ const TRANSFORM_CACHE_TTL_SECONDS = TRANSFORM_DISTRIBUTED_TTL_SEC;
 export interface ModuleLoaderConfig {
   projectDir: string;
   projectId?: string;
+  contentSourceId?: string;
   adapter: RuntimeAdapter;
   mode: "development" | "production";
   moduleCache: Map<string, string>;
   esmCache: Map<string, string>;
+  /** React version for transforms (from project config) */
+  reactVersion?: string;
 }
 
 function getModuleCacheKey(filePath: string, projectId?: string, projectDir?: string): string {
@@ -97,19 +106,14 @@ async function resolveAliasImport(
   imp: AliasImport,
   projectDir: string,
   adapter: RuntimeAdapter,
-  localAdapter: RuntimeAdapter,
+  _localAdapter: RuntimeAdapter,
 ): Promise<ResolvedDep> {
   const relativePath = imp.path.substring(2); // Remove @/ prefix
 
-  if (relativePath.startsWith("lib/")) {
-    const depFilePath = await findLocalLibFile(relativePath, localAdapter);
-    return { ...imp, relativePath, depFilePath, isLocalLib: true };
-  }
-
-  let depFilePath = await findSourceFile(relativePath, projectDir, adapter);
-  if (!depFilePath) {
-    depFilePath = await findSourceFile(`components/${relativePath}`, projectDir, adapter);
-  }
+  // @/ alias always resolves to project directory
+  // Try exact path first, then components/ subdirectory
+  const depFilePath = await findSourceFile(relativePath, projectDir, adapter) ??
+    await findSourceFile(`components/${relativePath}`, projectDir, adapter);
 
   return { ...imp, relativePath, depFilePath, isLocalLib: false };
 }
@@ -131,11 +135,25 @@ export async function transformModuleWithDeps(
   config: ModuleLoaderConfig,
   useLocalAdapter = false,
 ): Promise<string> {
-  const { moduleCache, projectDir, projectId, adapter, mode } = config;
+  const { moduleCache, projectDir, projectId, contentSourceId, adapter, mode } = config;
   const cacheKey = getModuleCacheKey(filePath, projectId, projectDir);
 
   const cachedPath = moduleCache.get(cacheKey);
   if (cachedPath) return cachedPath;
+
+  // Check MDX-ESM cache to share modules with SSR loader (prevents duplicate React contexts)
+  if (projectId && contentSourceId) {
+    const baseCacheDir = getMdxEsmCacheDir();
+    const projectKey = encodeURIComponent(projectId);
+    const sourceKey = encodeURIComponent(contentSourceId);
+    const mdxCacheDir = join(baseCacheDir, projectKey, sourceKey);
+
+    const mdxCachedPath = await lookupMdxEsmCache(filePath, mdxCacheDir, projectDir);
+    if (mdxCachedPath) {
+      moduleCache.set(cacheKey, mdxCachedPath);
+      return mdxCachedPath;
+    }
+  }
 
   const readAdapter = useLocalAdapter ? localAdapter : adapter;
   let fileContent = decodeFileContent(await readAdapter.fs.readFile(filePath));
@@ -193,7 +211,7 @@ export async function transformModuleWithDeps(
     });
   }
 
-  const contentHash = hashString(fileContent);
+  const contentHash = hashCodeHex(fileContent);
   const effectiveProjectId = projectId ?? projectDir;
   const scopedPath = `${effectiveProjectId}:${filePath}`;
   const transformCacheKey = generateTransformCacheKey(scopedPath, contentHash, true); // ssr=true
@@ -210,6 +228,7 @@ export async function transformModuleWithDeps(
         projectId: effectiveProjectId,
         dev: mode === "development",
         ssr: true,
+        reactVersion: config.reactVersion,
       });
     },
     TRANSFORM_CACHE_TTL_SECONDS,
@@ -231,6 +250,7 @@ export async function transformModuleWithDeps(
         projectId: effectiveProjectId,
         dev: mode === "development",
         ssr: true,
+        reactVersion: config.reactVersion,
       });
       setCachedTransformAsync(
         transformCacheKey,
@@ -246,10 +266,19 @@ export async function transformModuleWithDeps(
     }
   }
 
-  const hash = await generateHash(filePath);
-  const tempFilePath = `${tmpDir}/mod-${hash}.js`;
+  // Use TRANSFORMED hash for filename (matches SSR loader behavior)
+  const transformedHash = hashCodeHex(transformedCode).slice(0, 8);
 
-  await ensureDir(localAdapter, tmpDir);
+  const relativePath = filePath.startsWith(projectDir)
+    ? filePath.slice(projectDir.length).replace(/^\/+/, "")
+    : filePath.replace(/^\/+/, "");
+
+  const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, `.${transformedHash}.js`);
+  const tempFilePath = join(tmpDir, jsPath);
+
+  // Ensure directory exists (might be nested like lib/ or components/)
+  const tempDir = tempFilePath.substring(0, tempFilePath.lastIndexOf("/"));
+  await ensureDir(localAdapter, tempDir);
 
   try {
     await localAdapter.fs.writeFile(tempFilePath, transformedCode);
@@ -262,8 +291,50 @@ export async function transformModuleWithDeps(
     throw error;
   }
 
+  // Register in MDX-ESM cache index so other loaders can find this module
+  if (contentSourceId) {
+    const normalizedPath = `_vf_modules/${relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js")}`;
+    const mdxCacheKey = `v${TRANSFORM_CACHE_VERSION}:${normalizedPath}`;
+    const cache = await getModulePathCache(tmpDir);
+    cache.set(mdxCacheKey, tempFilePath);
+    // Persist to disk so MDX loader can find it
+    saveModulePathCache(tmpDir).catch((err) => {
+      logger.debug("[ModuleLoader] Failed to save module cache", { error: String(err) });
+    });
+    logger.debug("[ModuleLoader] Registered module in MDX-ESM cache", {
+      file: filePath.slice(-40),
+      mdxCacheKey,
+      tempFilePath: tempFilePath.slice(-60),
+    });
+  }
+
   moduleCache.set(cacheKey, tempFilePath);
   return tempFilePath;
+}
+
+/**
+ * Get the cache directory for module transforms.
+ * Uses MDX-ESM cache when contentSourceId is available, otherwise falls back to project tmp dir.
+ * This ensures modules are shared between orchestrator and MDX loader to prevent duplicate contexts.
+ */
+async function getModuleCacheDir(config: ModuleLoaderConfig): Promise<string> {
+  const { projectId, contentSourceId, projectDir } = config;
+
+  if (projectId && contentSourceId) {
+    const baseCacheDir = getMdxEsmCacheDir();
+    const projectKey = encodeURIComponent(projectId);
+    const sourceKey = encodeURIComponent(contentSourceId);
+    const cacheDir = join(baseCacheDir, projectKey, sourceKey);
+
+    // Ensure directory exists
+    const { createFileSystem } = await import("../../../platform/compat/fs.js");
+    await createFileSystem().mkdir(cacheDir, { recursive: true });
+
+    return cacheDir;
+  }
+
+  // Fallback for cases without contentSourceId
+  return getProjectTmpDir(projectId ?? projectDir);
 }
 
 /**
@@ -274,7 +345,7 @@ export async function transformModuleWithDeps(
  * @returns The loaded module
  */
 export async function loadModule(filePath: string, config: ModuleLoaderConfig): Promise<any> {
-  const tmpDir = await getProjectTmpDir(config.projectId ?? config.projectDir);
+  const tmpDir = await getModuleCacheDir(config);
   const localAdapter = await getLocalAdapter();
 
   const tempFilePath = await transformModuleWithDeps(filePath, tmpDir, localAdapter, config);

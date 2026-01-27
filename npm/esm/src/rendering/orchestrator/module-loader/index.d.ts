@@ -11,10 +11,13 @@ export { fetchEsmModule, rewriteEsmPaths } from "./esm-rewriter.js";
 export interface ModuleLoaderConfig {
     projectDir: string;
     projectId?: string;
+    contentSourceId?: string;
     adapter: RuntimeAdapter;
     mode: "development" | "production";
     moduleCache: Map<string, string>;
     esmCache: Map<string, string>;
+    /** React version for transforms (from project config) */
+    reactVersion?: string;
 }
 /**
  * Transform a module and all its @/ dependencies.

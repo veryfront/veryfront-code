@@ -247,7 +247,6 @@ declare namespace _default {
     let tasks: {
         setup: string;
         start: string;
-        "start:clean": string;
         "start:headless": string;
         proxy: string;
         renderer: string;

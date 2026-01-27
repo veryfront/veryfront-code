@@ -80,7 +80,7 @@ ${clientStyles}
     return stats;
 }
 export async function buildAppRoutes(appRoutes, options) {
-    const { adapter, projectDir, outputDir, contentSourceId = "build-static", dryRun = false, traceStep = defaultTraceStep, } = options;
+    const { adapter, projectDir, outputDir, contentSourceId = "build-static", dryRun = false, traceStep = defaultTraceStep, reactVersion, } = options;
     const stats = { pages: 0, totalSize: 0, ssgPaths: [] };
     if (appRoutes.length === 0)
         return stats;
@@ -93,6 +93,7 @@ export async function buildAppRoutes(appRoutes, options) {
                 routePath: route.path,
                 pageFile: route.pageFile,
                 contentSourceId,
+                reactVersion,
             }));
             const outputPath = getAppRouteOutputPath(outputDir, route.path);
             if (!dryRun) {

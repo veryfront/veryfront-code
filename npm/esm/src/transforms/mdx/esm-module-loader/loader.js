@@ -151,7 +151,7 @@ async function processVfModuleImports(code, imports, context, projectDir) {
     if (!context.projectId) {
         throw new Error(`Missing projectId for module fetching (projectSlug: ${context.projectSlug})`);
     }
-    const fetcherContext = createModuleFetcherContext(context.esmCacheDir, adapter, projectDir, context.projectId);
+    const fetcherContext = createModuleFetcherContext(context.esmCacheDir, adapter, projectDir, context.projectId, { reactVersion: context.reactVersion });
     const fetchStart = performance.now();
     const results = await Promise.all(imports.map(async ({ original, path }, index) => {
         return await withSpan(SpanNames.MDX_FETCH_MODULE, async () => {

@@ -61,7 +61,7 @@ export function handleModuleBatch(req, options) {
                 headers: { "Content-Type": "text/plain" },
             });
         }
-        const { projectDir, adapter, projectSlug, projectId, branch, dev = false, allowedImportDirs, } = options;
+        const { projectDir, adapter, projectSlug, projectId, branch, dev = false, allowedImportDirs, reactVersion, } = options;
         const projectKey = projectId || projectSlug || "default";
         const userAgent = req.headers.get("user-agent") ?? "";
         const isSSR = url.searchParams.get("ssr") === "true" || userAgent.startsWith("Deno/");
@@ -98,6 +98,7 @@ export function handleModuleBatch(req, options) {
                     projectSlug,
                     branch,
                     projectId,
+                    reactVersion,
                 });
                 const transformDurationMs = performance.now() - moduleStart;
                 if (!code) {
@@ -207,6 +208,7 @@ async function transformModule(source, sourceFile, projectDir, adapter, options)
         projectId: options.projectId ?? projectDir,
         dev: options.dev,
         ssr: options.ssr,
+        reactVersion: options.reactVersion,
     });
     if (options.ssr) {
         code = applySSRImportRewrites(code, {

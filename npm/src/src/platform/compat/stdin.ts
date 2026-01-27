@@ -150,6 +150,57 @@ const ENTER_LF = 0x0a;
  * Returns true if Enter was pressed (continue), false if Ctrl+C (exit).
  * Works in both Deno and Node.js.
  */
+/**
+ * Buffer for escape sequences that may arrive in separate reads.
+ * Arrow keys (\x1b[A) can arrive as "\x1b" then "[A" - this combines them.
+ */
+export interface EscapeBuffer {
+  push(input: string): string | null;
+  clear(): void;
+}
+
+const ESC = "\x1b";
+const ESC_TIMEOUT_MS = 50;
+
+/**
+ * Create an escape sequence buffer.
+ * @param onTimeout Called when a standalone Escape key times out
+ */
+export function createEscapeBuffer(onTimeout: (key: string) => void): EscapeBuffer {
+  let pending = "";
+  let timeoutId: ReturnType<typeof dntShim.setTimeout> | null = null;
+
+  function clear(): void {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      timeoutId = null;
+    }
+    pending = "";
+  }
+
+  function push(input: string): string | null {
+    if (pending) {
+      const result = pending + input;
+      clear();
+      return result;
+    }
+
+    if (input === ESC) {
+      pending = input;
+      timeoutId = dntShim.setTimeout(() => {
+        const key = pending;
+        clear();
+        if (key) onTimeout(key);
+      }, ESC_TIMEOUT_MS);
+      return null;
+    }
+
+    return input;
+  }
+
+  return { push, clear };
+}
+
 export function waitForEnterOrExit(): Promise<boolean> {
   return new Promise((resolve) => {
     if (typeof dntShim.Deno !== "undefined" && dntShim.Deno.stdin) {

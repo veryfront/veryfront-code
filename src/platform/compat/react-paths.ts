@@ -12,8 +12,8 @@
 // Bun global type declaration for cross-runtime compatibility
 declare const Bun: { resolveSync?: (specifier: string, dir: string) => string } | undefined;
 
-import { fileURLToPath, pathToFileURL } from "node:url";
-import { dirname } from "node:path";
+import { pathToFileURL } from "node:url";
+import { createRequire } from "node:module";
 import { isBun, isDeno, isNode } from "./runtime.ts";
 import { cwd } from "./process.ts";
 
@@ -32,29 +32,6 @@ function hasBunResolveSync(): boolean {
   return typeof Bun !== "undefined" && typeof Bun?.resolveSync === "function";
 }
 
-type ImportMetaWithResolve = ImportMeta & {
-  resolve?: (specifier: string, parent?: string) => string;
-};
-
-const IMPORT_META_RESOLVE_ERROR = "ImportMetaResolveUnavailable";
-
-function resolveWithImportMeta(specifier: string, parentUrl: string): string | null {
-  const metaResolve = (import.meta as ImportMetaWithResolve).resolve;
-  if (typeof metaResolve !== "function") {
-    const error = new Error(
-      "import.meta.resolve is required for Node ESM resolution (Node >= 22).",
-    );
-    error.name = IMPORT_META_RESOLVE_ERROR;
-    throw error;
-  }
-
-  try {
-    return metaResolve(specifier, parentUrl);
-  } catch {
-    return null;
-  }
-}
-
 function resolveReactSpecifier(specifier: string): string | undefined {
   try {
     if (isBun && hasBunResolveSync() && Bun?.resolveSync) {
@@ -63,17 +40,15 @@ function resolveReactSpecifier(specifier: string): string | undefined {
     }
 
     if (isNode) {
-      // Use import.meta.url (this module's location) as the parent URL.
-      // This ensures React is resolved from veryfront's node_modules,
-      // not from the cwd which may not have React installed.
-      const thisModuleDir = dirname(fileURLToPath(import.meta.url));
-      const parentUrl = pathToFileURL(`${thisModuleDir}/`).href;
-      return resolveWithImportMeta(specifier, parentUrl) ?? undefined;
+      // Use createRequire to resolve React from veryfront's node_modules.
+      // import.meta.resolve's parentUrl argument doesn't work correctly in Node.js,
+      // so we use createRequire which properly resolves from the specified path.
+      const require = createRequire(import.meta.url);
+      const resolved = require.resolve(specifier);
+      return pathToFileURL(resolved).href;
     }
-  } catch (error) {
-    if (error instanceof Error && error.name === IMPORT_META_RESOLVE_ERROR) {
-      throw error;
-    }
+  } catch {
+    // Resolution failed, return undefined
   }
 
   return undefined;

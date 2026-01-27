@@ -21,6 +21,10 @@ export function simpleHash(str) {
     }
     return Math.abs(hash);
 }
+/** Hash string to hex (base 16) - used for module filenames */
+export function hashCodeHex(str) {
+    return simpleHash(str).toString(16);
+}
 export async function shortHash(content) {
     const fullHash = await computeHash(content);
     return fullHash.slice(0, 8);

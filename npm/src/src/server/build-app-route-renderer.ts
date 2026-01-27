@@ -8,6 +8,7 @@ import type { RuntimeAdapter } from "../platform/adapters/base.js";
 import { getProjectReact, renderToStringAdapter } from "../react/index.js";
 import { loadComponentFromSource } from "../modules/react-loader/index.js";
 import { CompilationError } from "../errors/index.js";
+import { DEFAULT_REACT_VERSION, getReactUrls } from "../transforms/esm/package-registry.js";
 
 type ReactComponentLike = import("react").ComponentType<{ children?: import("react").ReactNode }>;
 
@@ -44,8 +45,9 @@ export async function renderAppRouteToHTML(args: {
   routePath: string;
   pageFile: string;
   contentSourceId: string;
+  reactVersion?: string;
 }): Promise<string> {
-  const { adapter, projectDir, routePath, pageFile, contentSourceId } = args;
+  const { adapter, projectDir, routePath, pageFile, contentSourceId, reactVersion } = args;
 
   const appRoot = join(projectDir, "app");
   const layouts: string[] = [];
@@ -101,15 +103,7 @@ export async function renderAppRouteToHTML(args: {
 
   <!-- Import map for React dependencies -->
   <script type="importmap">
-  {
-    "imports": {
-      "react": "https://esm.sh/react@18.3.1",
-      "react-dom": "https://esm.sh/react-dom@18.3.1",
-      "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
-      "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
-      "react/jsx-dev-runtime": "https://esm.sh/react@18.3.1/jsx-dev-runtime"
-    }
-  }
+  ${JSON.stringify({ imports: getReactUrls(reactVersion ?? DEFAULT_REACT_VERSION) }, null, 4)}
   </script>
 
   <!-- Basic styles -->

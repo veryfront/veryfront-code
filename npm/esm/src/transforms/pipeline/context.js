@@ -1,17 +1,11 @@
-import * as dntShim from "../../../_dnt.shims.js";
 import { computeShortContentHash } from "../esm/transform-utils.js";
 import { REACT_VERSION } from "../esm/package-registry.js";
-async function detectProjectReactVersion(projectDir) {
-    try {
-        const content = await dntShim.Deno.readTextFile(`${projectDir}/package.json`);
-        const pkg = JSON.parse(content);
-        const reactVersion = { ...pkg.dependencies, ...pkg.devDependencies }?.react;
-        if (reactVersion)
-            return reactVersion.replace(/^[\^~]/, "");
-    }
-    catch {
-        // Project doesn't have package.json or no React dependency
-    }
+/**
+ * Get React version for transforms.
+ * Uses REACT_VERSION constant - the centralized version from package-registry.
+ * Prefer passing reactVersion through TransformOptions for per-project versions.
+ */
+function getDefaultReactVersion() {
     return REACT_VERSION;
 }
 function buildContext(source, filePath, projectDir, contentHash, options, reactVersion) {
@@ -39,9 +33,7 @@ function buildContext(source, filePath, projectDir, contentHash, options, reactV
 export async function createTransformContext(source, filePath, projectDir, options) {
     const [contentHash, reactVersion] = await Promise.all([
         computeShortContentHash(source),
-        options.reactVersion
-            ? Promise.resolve(options.reactVersion)
-            : detectProjectReactVersion(projectDir),
+        Promise.resolve(options.reactVersion ?? getDefaultReactVersion()),
     ]);
     return buildContext(source, filePath, projectDir, contentHash, options, reactVersion);
 }

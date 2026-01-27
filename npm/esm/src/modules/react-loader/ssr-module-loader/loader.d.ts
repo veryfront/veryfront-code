@@ -54,13 +54,8 @@ export declare class SSRModuleLoader {
     private toJsExtension;
     private ensureDependenciesExist;
     /**
-     * Fast sync hash for small strings (project IDs, etc.)
-     * Use hashContentAsync for large file content.
-     */
-    private hashCode;
-    /**
      * Async hash for large content using Web Crypto API.
-     * Doesn't block event loop for large files.
+     * Falls back to sync hash for small files.
      */
     private hashContentAsync;
     private getTempPath;

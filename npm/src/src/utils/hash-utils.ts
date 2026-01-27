@@ -34,6 +34,11 @@ export function simpleHash(str: string): number {
   return Math.abs(hash);
 }
 
+/** Hash string to hex (base 16) - used for module filenames */
+export function hashCodeHex(str: string): string {
+  return simpleHash(str).toString(16);
+}
+
 export async function shortHash(content: string): Promise<string> {
   const fullHash = await computeHash(content);
   return fullHash.slice(0, 8);

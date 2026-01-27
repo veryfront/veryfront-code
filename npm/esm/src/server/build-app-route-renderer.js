@@ -6,6 +6,7 @@ import { join } from "../platform/compat/path/index.js";
 import { getProjectReact, renderToStringAdapter } from "../react/index.js";
 import { loadComponentFromSource } from "../modules/react-loader/index.js";
 import { CompilationError } from "../errors/index.js";
+import { DEFAULT_REACT_VERSION, getReactUrls } from "../transforms/esm/package-registry.js";
 async function fileExists(adapter, filePath) {
     try {
         const st = await adapter.fs.stat(filePath);
@@ -28,7 +29,7 @@ async function loadComponent(adapter, filePath, projectDir, contentSourceId) {
  * Render an App Router route to HTML
  */
 export async function renderAppRouteToHTML(args) {
-    const { adapter, projectDir, routePath, pageFile, contentSourceId } = args;
+    const { adapter, projectDir, routePath, pageFile, contentSourceId, reactVersion } = args;
     const appRoot = join(projectDir, "app");
     const layouts = [];
     const rootLayout = join(appRoot, "layout.tsx");
@@ -74,15 +75,7 @@ export async function renderAppRouteToHTML(args) {
 
   <!-- Import map for React dependencies -->
   <script type="importmap">
-  {
-    "imports": {
-      "react": "https://esm.sh/react@18.3.1",
-      "react-dom": "https://esm.sh/react-dom@18.3.1",
-      "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
-      "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
-      "react/jsx-dev-runtime": "https://esm.sh/react@18.3.1/jsx-dev-runtime"
-    }
-  }
+  ${JSON.stringify({ imports: getReactUrls(reactVersion ?? DEFAULT_REACT_VERSION) }, null, 4)}
   </script>
 
   <!-- Basic styles -->

@@ -27,5 +27,18 @@ export declare function waitForKeypress(): Promise<void>;
  * Returns true if Enter was pressed (continue), false if Ctrl+C (exit).
  * Works in both Deno and Node.js.
  */
+/**
+ * Buffer for escape sequences that may arrive in separate reads.
+ * Arrow keys (\x1b[A) can arrive as "\x1b" then "[A" - this combines them.
+ */
+export interface EscapeBuffer {
+    push(input: string): string | null;
+    clear(): void;
+}
+/**
+ * Create an escape sequence buffer.
+ * @param onTimeout Called when a standalone Escape key times out
+ */
+export declare function createEscapeBuffer(onTimeout: (key: string) => void): EscapeBuffer;
 export declare function waitForEnterOrExit(): Promise<boolean>;
 //# sourceMappingURL=stdin.d.ts.map

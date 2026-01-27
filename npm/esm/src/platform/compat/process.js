@@ -281,7 +281,7 @@ export function onGlobalError(onError) {
  * Unreference a timer to prevent it from keeping the process alive
  */
 export function unrefTimer(timerId) {
-    if (IS_DENO) {
+    if (IS_DENO && typeof dntShim.Deno.unrefTimer === "function") {
         dntShim.Deno.unrefTimer(timerId);
         return;
     }

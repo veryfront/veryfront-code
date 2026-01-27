@@ -24,7 +24,7 @@ export function serveModule(req, options) {
     const url = new URL(req.url);
     return withSpan("modules.serve", async () => {
         const startTime = performance.now();
-        const { projectId, projectDir, adapter, dev = true, projectUUID, allowedImportDirs, } = options;
+        const { projectId, projectDir, adapter, dev = true, projectUUID, allowedImportDirs, reactVersion, } = options;
         const effectiveProjectId = projectUUID ?? projectId;
         const method = req.method.toUpperCase();
         const isHeadRequest = method === "HEAD";
@@ -83,7 +83,7 @@ export function serveModule(req, options) {
                 codeLength: snippetCode.length,
             });
             try {
-                let transformedCode = await transformToESM(snippetCode, `_snippets/${hash}.tsx`, projectDir, adapter, { projectId: effectiveProjectId, dev, ssr: isSSR });
+                let transformedCode = await transformToESM(snippetCode, `_snippets/${hash}.tsx`, projectDir, adapter, { projectId: effectiveProjectId, dev, ssr: isSSR, reactVersion });
                 if (isSSR && transformedCode) {
                     transformedCode = applySSRImportRewrites(transformedCode, {
                         projectSlug: snippetProjectSlug,
@@ -151,6 +151,7 @@ export function serveModule(req, options) {
                     dev,
                     ssr: isSSR,
                     moduleServerUrl: `http://${url.host}`,
+                    reactVersion,
                 });
                 if (isSSR && code) {
                     code = applySSRImportRewrites(code, { crossProjectRef: projectRef });
@@ -218,6 +219,7 @@ export function serveModule(req, options) {
                     dev,
                     ssr: isSSR,
                     studioEmbed,
+                    reactVersion,
                 };
                 code = await transformToESM(source, sourceFile, projectDir, adapter, transformOpts);
                 if (isSSR && code) {

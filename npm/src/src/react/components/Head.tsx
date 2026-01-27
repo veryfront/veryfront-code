@@ -17,7 +17,9 @@ export function Head({ children }: { children: React.ReactNode }): React.ReactEl
     React.Children.forEach(children, (child) => {
       if (!React.isValidElement(child)) return;
 
-      const { type, props } = child;
+      const { type } = child;
+      // Cast props to Record for React 19 compatibility (props is unknown in R19 types)
+      const props = child.props as Record<string, unknown>;
       if (typeof type !== "string" || type === "body") return;
 
       if (type === "title") {
@@ -62,7 +64,9 @@ export function Head({ children }: { children: React.ReactNode }): React.ReactEl
     React.Children.forEach(children, (child) => {
       if (!React.isValidElement(child)) return;
 
-      const { type, props } = child;
+      const { type } = child;
+      // Cast props to Record for React 19 compatibility (props is unknown in R19 types)
+      const props = child.props as Record<string, unknown>;
       if (typeof type !== "string" || type === "body") return;
 
       if (type === "title") {

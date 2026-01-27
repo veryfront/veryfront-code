@@ -10,14 +10,14 @@ import * as dntShim from "../../../_dnt.shims.js";
 import { createFileSystem, exists } from "../../platform/compat/fs.js";
 import { isAbsolute, join } from "../../platform/compat/path/index.js";
 import { cwd } from "../../platform/compat/process.js";
+import { isDeno } from "../../platform/compat/runtime.js";
 import { rendererLogger as logger } from "../../utils/index.js";
 import { simpleHash } from "../../utils/hash-utils.js";
 import { LRUCache } from "../../utils/lru-wrapper.js";
 import { withSpan } from "../../observability/tracing/otlp-setup.js";
 import { SpanNames } from "../../observability/tracing/span-names.js";
 import { resolveImport } from "../../modules/import-map/resolver.js";
-import { isDeno } from "../../platform/compat/runtime.js";
-import { getDenoNpmReactMap, getReactImportMap, REACT_VERSION } from "./package-registry.js";
+import { getReactImportMap, REACT_VERSION } from "./package-registry.js";
 import { parseImports, replaceSpecifiers } from "./lexer.js";
 import { CacheBackends, createDistributedCacheAccessor } from "../../cache/backend.js";
 import { HTTP_MODULE_CACHE_MAX_ENTRIES, HTTP_MODULE_DISTRIBUTED_TTL_SEC, } from "../../utils/constants/cache.js";
@@ -39,13 +39,24 @@ function isHttpUrl(specifier) {
 /**
  * Check if a URL is for React core packages.
  *
- * Previously, React modules were NOT cached to prevent multiple React instances.
- * Now with npm: specifiers for Deno (which auto-deduplicate) and consistent
- * esm.sh URLs with external=react for other runtimes, all code uses the same
- * React instance.
+ * React core modules (react, react-dom) must NOT be cached/bundled.
+ * Instead, all packages use external=react and import from the same esm.sh URL.
+ * This prevents multiple React instances which causes "useContext is null" errors.
  */
-function isReactCoreUrl(_url) {
-    return false;
+function isReactCoreUrl(url) {
+    try {
+        const parsed = new URL(url);
+        if (!parsed.hostname.includes("esm.sh"))
+            return false;
+        // Extract package name from esm.sh pathname
+        // Formats: /react@version, /v150/react@version, /stable/react@version
+        const pathname = parsed.pathname.replace(/^\/(v\d+|stable)\//, "/");
+        const match = pathname.match(/^\/(react|react-dom)(@[\d.]+)?(?:\/|$|\?)/);
+        return match !== null;
+    }
+    catch {
+        return false;
+    }
 }
 function isExternalScheme(specifier) {
     return specifier.startsWith("node:") ||
@@ -97,29 +108,9 @@ function normalizeHttpUrl(raw) {
         return raw;
     }
 }
-function toEsmShUrlFromNpm(specifier) {
-    return `https://esm.sh/${specifier.slice(4)}`;
-}
 function resolveBareSpecifier(specifier, importMap, reactVersion = REACT_VERSION) {
-    // For Deno SSR: Resolve React to npm: specifiers for automatic deduplication.
-    // Deno's native npm resolution ensures all modules share the same React instance.
-    // See: https://deno.com/blog/not-using-npm-specifiers-doing-it-wrong
-    if (isDeno) {
-        const denoReactMap = getDenoNpmReactMap(reactVersion);
-        const denoMatch = denoReactMap[specifier];
-        if (denoMatch)
-            return denoMatch;
-        // For unknown react/* or react-dom/* subpaths, construct npm: specifiers
-        if (specifier.startsWith("react/") && !specifier.startsWith("react-dom")) {
-            const subpath = specifier.slice("react/".length);
-            return `npm:react@${reactVersion}/${subpath}`;
-        }
-        if (specifier.startsWith("react-dom/")) {
-            const subpath = specifier.slice("react-dom/".length);
-            return `npm:react-dom@${reactVersion}/${subpath}`;
-        }
-    }
-    // For non-Deno runtimes: Use esm.sh URLs with consistent versioning.
+    // Use esm.sh URLs for React - NO npm: specifiers per plan requirements.
+    // All packages use external=react to share the same React instance.
     const reactMap = getReactImportMap(reactVersion);
     const reactMapped = reactMap[specifier];
     if (reactMapped)
@@ -167,6 +158,7 @@ async function cacheHttpModule(url, options) {
                 try {
                     const code = await fs.readTextFile(cachePath);
                     await Promise.all([
+                        distributed.set(`url:${hash}`, code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
                         distributed.set(`code:${hash}`, code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
                         distributed.set(`hash:${hash}`, normalizedUrl, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
                     ]);
@@ -187,11 +179,15 @@ async function cacheHttpModule(url, options) {
         return cachePath;
     }
     const distributed = await getDistributedCache();
+    const hash = simpleHash(normalizedUrl);
     if (distributed) {
         try {
-            const cachedCode = await distributed.get(normalizedUrl);
+            // Use hash-based key instead of raw URL to comply with API cache key constraints.
+            // API cache keys only allow: alphanumeric, underscore, colon, dot, asterisk, hyphen, slash.
+            // URLs contain invalid characters like @, ?, =, &, etc.
+            const cachedCode = await distributed.get(`url:${hash}`);
             if (cachedCode) {
-                logger.debug("[HTTP-CACHE] Distributed cache hit", { url: normalizedUrl });
+                logger.debug("[HTTP-CACHE] Distributed cache hit", { url: normalizedUrl, hash });
                 await fs.mkdir(cacheDir, { recursive: true });
                 await fs.writeTextFile(cachePath, cachedCode);
                 cachedPaths.set(cacheKey, cachePath);
@@ -232,15 +228,21 @@ async function cacheHttpModule(url, options) {
     await fs.mkdir(cacheDir, { recursive: true });
     await fs.writeTextFile(cachePath, code);
     if (distributed) {
-        // Store code by URL, by hash (for direct recovery), and URL mapping (for debugging).
-        // Storing code by hash enables recovery without needing URL lookup.
+        // Store code by hash-based keys to comply with API cache key constraints.
+        // API cache keys only allow: alphanumeric, underscore, colon, dot, asterisk, hyphen, slash.
+        // URLs contain invalid characters (@, ?, =, &, etc.) so we use hashes instead.
+        //
+        // Keys stored:
+        // - url:{hash}  - primary lookup key (replaces raw URL)
+        // - code:{hash} - direct code recovery by hash
+        // - hash:{hash} - URL mapping for debugging
+        //
         // IMPORTANT: await the writes so other pods can recover this bundle immediately.
         // Without await, a transform referencing this bundle could reach Redis before
         // the bundle code does, causing ensureHttpBundlesExist on another pod to miss.
-        const hash = simpleHash(normalizedUrl);
         try {
             await Promise.all([
-                distributed.set(normalizedUrl, code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
+                distributed.set(`url:${hash}`, code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
                 distributed.set(`code:${hash}`, code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
                 distributed.set(`hash:${hash}`, normalizedUrl, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
             ]);
@@ -256,13 +258,18 @@ async function resolveSpecifier(specifier, baseUrl, options) {
     if (isExternalScheme(specifier) || isInternalBare(specifier))
         return null;
     // For Deno: Keep npm: specifiers as-is (Deno resolves them natively with auto-dedup)
-    // For other runtimes: Convert to esm.sh and cache locally
+    // For other runtimes: Convert to esm.sh and cache locally (or return bare specifier for React)
     if (specifier.startsWith("npm:")) {
         if (isDeno) {
             return specifier; // Let Deno's native npm resolution handle it
         }
-        const cached = await cacheHttpModule(toEsmShUrlFromNpm(specifier), options);
-        return cached ? `file://${cached}` : null;
+        const bareSpecifier = specifier.slice(4); // Remove "npm:" prefix
+        const esmShUrl = `https://esm.sh/${bareSpecifier}`;
+        const cached = await cacheHttpModule(esmShUrl, options);
+        // For React packages, cacheHttpModule returns null to prevent multiple instances.
+        // Return the bare specifier so transformReactToLocalPaths can resolve it to a local file:// path.
+        // For non-React packages, return the cached file:// path.
+        return cached ? `file://${cached}` : bareSpecifier;
     }
     if (isHttpUrl(specifier)) {
         const cached = await cacheHttpModule(specifier, options);
@@ -272,6 +279,11 @@ async function resolveSpecifier(specifier, baseUrl, options) {
         if (!baseUrl || !isHttpUrl(baseUrl))
             return null;
         const resolved = new URL(specifier, baseUrl).toString();
+        // For React core URLs: return the full esm.sh URL (not cached, to prevent multiple instances)
+        // This transforms relative paths like "/react-dom?..." to "https://esm.sh/react-dom?..."
+        if (isReactCoreUrl(resolved)) {
+            return normalizeHttpUrl(resolved);
+        }
         const cached = await cacheHttpModule(resolved, options);
         return cached ? `file://${cached}` : null;
     }

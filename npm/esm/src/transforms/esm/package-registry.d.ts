@@ -8,13 +8,20 @@
 export declare const DEFAULT_REACT_VERSION = "19.1.1";
 export declare const TAILWIND_VERSION = "4.1.8";
 /**
- * Set the React version from project configuration.
- * Call this during project initialization if a custom version is specified.
+ * Validate React version format (semver: X.Y.Z).
+ * Returns true if valid, false otherwise.
  */
-export declare function setReactVersion(version: string): void;
+export declare function isValidReactVersion(version: string): boolean;
 /**
- * Get the current React version.
- * Returns configured version if set, otherwise the default.
+ * Validate and normalize React version.
+ * Returns the version if valid, or DEFAULT_REACT_VERSION if invalid.
+ * Logs a warning if the version is invalid.
+ */
+export declare function normalizeReactVersion(version: string | undefined): string;
+/**
+ * @deprecated Global React version is no longer supported.
+ * Use config.react.version passed through TransformOptions instead.
+ * This function now always returns DEFAULT_REACT_VERSION.
  */
 export declare function getReactVersion(): string;
 /** @deprecated Use DEFAULT_REACT_VERSION or getReactVersion() */
@@ -35,8 +42,17 @@ export declare const REACT_VERSION = "19.1.1";
  * v10: Fix import regex to match minified code (from"..." without whitespace)
  * v11: Add HTTP bundle hash→URL mapping for cross-pod recovery
  * v12: Store HTTP bundle code by hash for direct recovery (code:{hash})
+ * v13: Fix npm: specifiers for Node.js (convert to esm.sh or local React)
  */
-export declare const TRANSFORM_CACHE_VERSION = 12;
+export declare const TRANSFORM_CACHE_VERSION = 13;
+/** csstype version - must match deno.json for type consistency */
+export declare const CSSTYPE_VERSION = "3.2.3";
+/**
+ * Build esm.sh URL with deps=csstype for React packages (ensures type consistency).
+ * CRITICAL: This is the single source of truth for React URLs. All other files
+ * (html/utils.ts, import-rewriter.ts, etc.) must use this or getReactImportMap().
+ */
+export declare function esmShReact(pkg: string, version: string, path?: string, external?: boolean): string;
 /**
  * Generate esm.sh URL for browser.
  * Uses ?external= so browser import map provides React (ensures single instance).
@@ -66,14 +82,9 @@ export declare function getReactUrls(version?: string): Record<string, string>;
  */
 export declare function getReactImportMap(version?: string): Record<string, string>;
 /**
- * Get React npm specifiers for Deno SSR.
- * Uses npm: protocol which Deno handles natively with automatic deduplication.
- * See: https://deno.com/blog/not-using-npm-specifiers-doing-it-wrong
- *
- * Benefits over esm.sh:
- * - Automatic semantic version deduplication (like Node's node_modules)
- * - No manual external= flags or shared-*.ts wrapper files needed
- * - Native support in Deno 2+
+ * Get React esm.sh URLs for Deno SSR.
+ * Uses esm.sh for both SSR and browser to ensure identical React instances.
+ * All sub-packages use external=react to share the same React instance.
  *
  * @param version - React version to use (defaults to REACT_VERSION)
  */

@@ -1,5 +1,6 @@
 import { escapeHTML } from "./html-escape.js";
 import { REACT_DEFAULT_VERSION, VERYFRONT_VERSION } from "../utils/constants/cdn.js";
+import { esmShReact } from "../transforms/esm/package-registry.js";
 function joinAttributes(attrs) {
     return attrs.filter(Boolean).join(" ");
 }
@@ -61,11 +62,13 @@ const PLATFORM_UTILITIES = {
 };
 const CDN_URL_TEMPLATES = {
     "esm.sh": {
-        react: (v) => `https://esm.sh/react@${v}?target=es2022`,
-        reactDom: (v) => `https://esm.sh/react-dom@${v}?target=es2022`,
-        reactDomClient: (v) => `https://esm.sh/react-dom@${v}/client?target=es2022`,
-        jsxRuntime: (v) => `https://esm.sh/react@${v}/jsx-runtime?target=es2022`,
-        jsxDevRuntime: (v) => `https://esm.sh/react@${v}/jsx-dev-runtime?target=es2022`,
+        // Use centralized esmShReact() helper from package-registry.ts to ensure URL consistency
+        // Any URL mismatch causes esm.sh to serve different modules -> multiple React instances -> hooks fail
+        react: (v) => esmShReact("react", v),
+        reactDom: (v) => esmShReact("react-dom", v, "", true),
+        reactDomClient: (v) => esmShReact("react-dom", v, "/client", true),
+        jsxRuntime: (v) => esmShReact("react", v, "/jsx-runtime", true),
+        jsxDevRuntime: (v) => esmShReact("react", v, "/jsx-dev-runtime", true),
         veryfrontAgentReact: (v) => `https://esm.sh/veryfront@${v}/agent/react?external=react,react-dom&target=es2022`,
         veryfrontComponentsAi: (v) => `https://esm.sh/veryfront@${v}/components/ai?external=react,react-dom&target=es2022`,
         veryfrontPrimitives: (v) => `https://esm.sh/veryfront@${v}/primitives?external=react,react-dom&target=es2022`,

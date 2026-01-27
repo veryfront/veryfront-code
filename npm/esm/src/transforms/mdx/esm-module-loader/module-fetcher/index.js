@@ -430,6 +430,7 @@ async function doFetchAndCacheModule(normalizedPath, context, fetchAndCacheModul
                     projectId,
                     dev: true,
                     ssr: true,
+                    reactVersion: context.reactVersion,
                 });
             }
             catch (transformError) {

@@ -141,7 +141,7 @@ export function injectNodePositions(source: string, _options: TransformOptions):
 
     let nodeCounter = 0;
 
-    traverse(ast, {
+    traverse(ast as t.Node, {
       JSXElement: {
         enter(path: BabelNodePath<t.JSXElement>) {
           const openingElement = path.node.openingElement;
@@ -184,7 +184,7 @@ export function injectNodePositions(source: string, _options: TransformOptions):
       },
     });
 
-    const output = generate(ast, {
+    const output = generate(ast as t.Node, {
       retainLines: true,
       compact: false,
     });

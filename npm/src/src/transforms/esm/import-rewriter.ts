@@ -2,6 +2,7 @@ import { parseImports, replaceSpecifiers, rewriteImports } from "./lexer.js";
 import { REACT_DEFAULT_VERSION, TAILWIND_VERSION } from "../../utils/constants/cdn.js";
 import { rendererLogger as logger } from "../../utils/index.js";
 import { withSpan } from "../../observability/tracing/otlp-setup.js";
+import { getReactImportMap } from "./package-registry.js";
 
 export function addHMRTimestamps(code: string, timestamp: string | number): Promise<string> {
   return withSpan(
@@ -49,16 +50,6 @@ function normalizeVersionedSpecifier(specifier: string): string {
   return specifier.replace(/@[\d^~x][\d.x^~-]*(?=\/|$)/, "");
 }
 
-const REACT_IMPORT_MAP: Record<string, string> = {
-  react: `https://esm.sh/react@${REACT_DEFAULT_VERSION}?target=es2022`,
-  "react-dom": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}?target=es2022`,
-  "react-dom/client": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/client?target=es2022`,
-  "react-dom/server": `https://esm.sh/react-dom@${REACT_DEFAULT_VERSION}/server?target=es2022`,
-  "react/jsx-runtime": `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-runtime?target=es2022`,
-  "react/jsx-dev-runtime":
-    `https://esm.sh/react@${REACT_DEFAULT_VERSION}/jsx-dev-runtime?target=es2022`,
-};
-
 function shouldSkipRewrite(specifier: string): boolean {
   return (
     specifier.startsWith("http://") ||
@@ -72,12 +63,19 @@ function shouldSkipRewrite(specifier: string): boolean {
   );
 }
 
-export function rewriteBareImports(code: string, _moduleServerUrl?: string): Promise<string> {
+export function rewriteBareImports(
+  code: string,
+  _moduleServerUrl?: string,
+  reactVersion?: string,
+): Promise<string> {
+  // Get React import map for the specified version (uses centralized URL builder)
+  const reactImportMap = getReactImportMap(reactVersion ?? REACT_DEFAULT_VERSION);
+
   return withSpan(
     "transforms.esm.rewriteBareImports",
     () =>
       replaceSpecifiers(code, (specifier) => {
-        const mapped = REACT_IMPORT_MAP[specifier];
+        const mapped = reactImportMap[specifier];
         if (mapped) return mapped;
 
         if (shouldSkipRewrite(specifier)) return null;

@@ -7,40 +7,20 @@ export const REACT_VERSION_18_3 = "18.3.1";
 export const REACT_VERSION_19_RC = "19.0.0-rc.0";
 export const REACT_VERSION_19 = "19.1.1";
 export const REACT_DEFAULT_VERSION = REACT_VERSION_19;
-function getReactBase(version = REACT_DEFAULT_VERSION) {
-    return `${ESM_CDN_BASE}/react@${version}`;
-}
-function getReactDOMBase(version = REACT_DEFAULT_VERSION) {
-    return `${ESM_CDN_BASE}/react-dom@${version}`;
-}
-export function getReactCDNUrl(version = REACT_DEFAULT_VERSION) {
-    return getReactBase(version);
-}
-export function getReactDOMCDNUrl(version = REACT_DEFAULT_VERSION) {
-    return getReactDOMBase(version);
-}
-export function getReactDOMClientCDNUrl(version = REACT_DEFAULT_VERSION) {
-    return `${getReactDOMBase(version)}/client`;
-}
-export function getReactDOMServerCDNUrl(version = REACT_DEFAULT_VERSION) {
-    return `${getReactDOMBase(version)}/server`;
-}
-export function getReactJSXRuntimeCDNUrl(version = REACT_DEFAULT_VERSION) {
-    return `${getReactBase(version)}/jsx-runtime`;
-}
-export function getReactJSXDevRuntimeCDNUrl(version = REACT_DEFAULT_VERSION) {
-    return `${getReactBase(version)}/jsx-dev-runtime`;
-}
-export function getReactImportMap(version = REACT_DEFAULT_VERSION) {
-    return {
-        react: getReactCDNUrl(version),
-        "react-dom": getReactDOMCDNUrl(version),
-        "react-dom/client": getReactDOMClientCDNUrl(version),
-        "react-dom/server": getReactDOMServerCDNUrl(version),
-        "react/jsx-runtime": getReactJSXRuntimeCDNUrl(version),
-        "react/jsx-dev-runtime": getReactJSXDevRuntimeCDNUrl(version),
-    };
-}
+// Re-export from package-registry.ts - the SINGLE SOURCE OF TRUTH for React URLs.
+// This ensures all React URLs include deps=csstype and match exactly.
+// DO NOT add duplicate URL builders here - use package-registry.ts instead.
+import * as ReactRegistry from "../../transforms/esm/package-registry.js";
+export const esmShReact = ReactRegistry.esmShReact;
+export const getReactImportMap = ReactRegistry.getReactImportMap;
+export const getReactUrls = ReactRegistry.getReactUrls;
+// Named getters for convenience - delegate to ReactRegistry
+export const getReactCDNUrl = (version = REACT_DEFAULT_VERSION) => ReactRegistry.getReactUrls(version).react;
+export const getReactDOMCDNUrl = (version = REACT_DEFAULT_VERSION) => ReactRegistry.getReactUrls(version)["react-dom"];
+export const getReactDOMClientCDNUrl = (version = REACT_DEFAULT_VERSION) => ReactRegistry.getReactUrls(version)["react-dom/client"];
+export const getReactDOMServerCDNUrl = (version = REACT_DEFAULT_VERSION) => ReactRegistry.getReactUrls(version)["react-dom/server"];
+export const getReactJSXRuntimeCDNUrl = (version = REACT_DEFAULT_VERSION) => ReactRegistry.getReactUrls(version)["react/jsx-runtime"];
+export const getReactJSXDevRuntimeCDNUrl = (version = REACT_DEFAULT_VERSION) => ReactRegistry.getReactUrls(version)["react/jsx-dev-runtime"];
 export const DEFAULT_ALLOWED_CDN_HOSTS = [ESM_CDN_BASE, DENO_STD_BASE];
 export const DENO_STD_VERSION = "0.220.0";
 export function getDenoStdNodeBase() {

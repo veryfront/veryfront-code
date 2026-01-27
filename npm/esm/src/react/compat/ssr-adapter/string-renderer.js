@@ -32,7 +32,7 @@ export async function renderToStringAdapter(element, options = {}) {
         }
     }
     try {
-        return (await withSpan(SpanNames.SSR_REACT_RENDER_TO_STRING, () => server.renderToString(element), { "ssr.method": "renderToString" }));
+        return (await withSpan(SpanNames.SSR_REACT_RENDER_TO_STRING, () => Promise.resolve(server.renderToString(element)), { "ssr.method": "renderToString" }));
     }
     catch (error) {
         logger.error("SSR renderToString failed", error);
