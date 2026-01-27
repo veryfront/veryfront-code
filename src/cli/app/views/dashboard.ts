@@ -87,8 +87,6 @@ export function renderDashboard(state: AppState): string {
     );
   }
 
-  // Footer divider aligned with box border (no indent)
-  lines.push(dim("─".repeat(termWidth)));
   lines.push(renderHelpBar(state));
 
   return lines.join("\n");

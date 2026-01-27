@@ -18,6 +18,7 @@ import { getRuntimeEnv } from "#veryfront/config/runtime-env.ts";
 import { getStdinReader, setRawMode } from "#veryfront/platform/compat/stdin.ts";
 import { cursor, screen, SPINNER_FRAMES } from "../ui/ansi.ts";
 import { brand, dim } from "../ui/colors.ts";
+import { getTerminalWidth } from "../ui/layout.ts";
 import { moveDown, moveUp, selectByNumber } from "./components/list-select.ts";
 import { renderDashboard, renderEmptyState } from "./views/dashboard.ts";
 import {
@@ -550,10 +551,13 @@ export function createApp(config: AppConfig): App {
 
     const parts: string[] = [content];
 
+    // Divider width matches the box in dashboard
+    const dividerWidth = Math.min(getTerminalWidth() - 4, 80);
+
     if (state.logs.length > 0) {
       const logsHeader = state.logsExpanded ? "▼ Logs" : "▶ Logs";
       parts.push("");
-      parts.push(`  ${dim("─".repeat(60))}`);
+      parts.push(dim("─".repeat(dividerWidth)));
       parts.push(
         `  ${dim(logsHeader)} ${dim(`(${state.logs.length})`)}  ${dim("l")} ${dim("toggle")}  ${
           state.logsExpanded ? `${dim("↑↓")} ${dim("scroll")}` : ""
@@ -568,7 +572,7 @@ export function createApp(config: AppConfig): App {
 
     if (state.input.active) {
       parts.push("");
-      parts.push(`  ${dim("─".repeat(60))}`);
+      parts.push(dim("─".repeat(dividerWidth)));
       parts.push(renderInput(state.input));
     }
 
