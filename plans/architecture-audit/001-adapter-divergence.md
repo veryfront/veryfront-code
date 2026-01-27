@@ -1,5 +1,16 @@
 # Chapter 001: File Adapter Divergence
 
+## Detailed Sub-Analyses
+
+| Document | Severity | Title |
+|----------|----------|-------|
+| [001.1](./001.1-layout-bug-critical.md) | 🔴 CRITICAL | The Layout Bug - App Router nested layouts ignored in production |
+| [001.2](./001.2-unsafe-type-casting.md) | 🟠 HIGH | Unsafe Type Casting - `as unknown as { ... }` patterns |
+| [001.3](./001.3-duplicated-isvirtualfilesystem.md) | 🟡 MEDIUM | Duplicated `isVirtualFilesystem()` - 3 different implementations |
+| [001.4](./001.4-layout-cache-no-project-scope.md) | 🔴 CRITICAL | Layout Cache Without Project Scoping - memory leak, cross-project pollution |
+| [001.5](./001.5-config-middleware-loading-divergence.md) | 🟠 HIGH | Config/Middleware Loading Divergence - esbuild vs native import |
+| [001.6](./001.6-css-cache-key-divergence.md) | 🟠 HIGH | CSS Cache Key Divergence - `projectUpdatedAt` only for API adapter |
+
 ## Problem Statement
 
 The veryfront-renderer codebase has four different filesystem adapters that behave differently in subtle but critical ways:
