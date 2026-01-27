@@ -269,6 +269,129 @@ await verifyConcurrentIsolation(
 
 ---
 
+## D011: Path Validation Strategy
+
+**Status: OPEN**
+**Blocks: Task 043**
+
+### Question
+How should path traversal validation be implemented?
+
+### Options
+| Option | Pros | Cons |
+|--------|------|------|
+| **A: Centralized utility** | Single implementation, consistent | All adapters must call it |
+| **B: Per-adapter** | Adapter-specific handling | Duplication, inconsistency risk |
+| **C: Middleware** | Automatic for all requests | May miss internal calls |
+
+### Decision
+- [ ] Option chosen: ___
+- [ ] Implementation details: ___
+
+---
+
+## D012: Cache Eviction Strategy
+
+**Status: OPEN**
+**Blocks: Tasks 053, 054**
+
+### Question
+What eviction strategy should caches use?
+
+### Options
+| Option | Pros | Cons |
+|--------|------|------|
+| **A: LRU (Least Recently Used)** | Good hit rate, simple | Size-blind |
+| **B: TTL (Time-Based)** | Freshness guarantee | Poor hit rate for hot items |
+| **C: LRU + TTL hybrid** | Best of both | More complex |
+| **D: Size-based (memory budget)** | Memory predictable | May evict hot items |
+
+### Recommendation
+**Option C: LRU + TTL hybrid** - Use LRU for eviction order, TTL for staleness.
+
+### Decision
+- [ ] Strategy chosen: ___
+- [ ] TTL values: ___
+- [ ] LRU limits: ___
+
+---
+
+## D013: Cache Size Limits
+
+**Status: OPEN**
+**Blocks: Tasks 053, 054**
+
+### Question
+How should cache size limits be configured?
+
+### Options
+| Option | Description |
+|--------|-------------|
+| **A: Per-cache limits** | Each cache has own max entries/size |
+| **B: Global memory budget** | All caches share total memory limit |
+| **C: Both** | Per-cache minimums + global ceiling |
+
+### Proposed Limits (Option A)
+| Cache | Max Entries | Max Size |
+|-------|-------------|----------|
+| Module | 5,000 | 500MB |
+| Transform | 10,000 | 1GB |
+| Render | 1,000 | 200MB |
+
+### Decision
+- [ ] Approach chosen: ___
+- [ ] Limits defined: ___
+
+---
+
+## D014: Naming Convention Standard
+
+**Status: OPEN**
+**Blocks: Task 057**
+
+### Question
+What naming conventions should the codebase follow?
+
+### Categories to Decide
+| Category | Proposed Standard |
+|----------|-------------------|
+| Handler vs Middleware | `middleware` for processing, `handler` for terminal |
+| ctx vs context | `ctx` for params, full name for types |
+| Project identifiers | Always `projectId` or `projectSlug` |
+| Booleans | `is`, `has`, `should`, `can` prefix |
+| Async functions | No `Async` suffix |
+
+### Decision
+- [ ] Standards approved
+- [ ] Modifications: ___
+
+---
+
+## D015: Large File Decomposition Strategy
+
+**Status: OPEN**
+**Blocks: Task 056**
+
+### Question
+How should large files (>1000 LOC) be decomposed?
+
+### Options
+| Option | Pros | Cons |
+|--------|------|------|
+| **A: Big bang** | Consistent structure | High risk, many conflicts |
+| **B: Incremental (one per sprint)** | Manageable changes | Takes longer |
+| **C: Opportunistic** | Low overhead | May never complete |
+| **D: Leave as-is** | No disruption | Tech debt remains |
+
+### Recommendation
+**Option B: Incremental** - One file per sprint, starting with lowest-coupling.
+
+### Decision
+- [ ] Approach chosen: ___
+- [ ] Priority order: ___
+
+---
+
 ## How to Decide
 
 1. **Review** the options above

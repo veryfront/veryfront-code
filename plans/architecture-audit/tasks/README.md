@@ -2,7 +2,7 @@
 
 ## Before You Start
 
-**[DECISIONS.md](./DECISIONS.md)** - 10 architectural decisions need sign-off before implementation.
+**[DECISIONS.md](./DECISIONS.md)** - 15 architectural decisions need sign-off before implementation.
 
 | Decision | Status | Blocks |
 |----------|--------|--------|
@@ -16,6 +16,11 @@
 | D008 Adapter Interface | PROPOSED | Task 016 |
 | D009 React Version Strategy | DECIDED | Task 008 |
 | D010 Test Utility API | OPEN | Task 032 |
+| D011 Path Validation Strategy | OPEN | Task 043 |
+| D012 Cache Eviction Strategy | OPEN | Tasks 053, 054 |
+| D013 Cache Size Limits | OPEN | Tasks 053, 054 |
+| D014 Naming Convention | OPEN | Task 057 |
+| D015 File Decomposition | OPEN | Task 056 |
 
 ---
 
@@ -26,6 +31,9 @@ P0: SECURITY & FOUNDATION (do first, blocks everything)
 ┌─────────────────────────────────────────────────────────┐
 │  001 Sandbox Config ─────────────────────────────────┐  │
 │  026 Caching Strategy ◄──────────────────────────────┤  │
+│  040 Timing-Safe Compare (NEW - SECURITY) ◄──────────┤  │
+│  041 innerHTML Sanitization (NEW - SECURITY) ◄───────┤  │
+│  042 Sandbox Function Restriction (NEW - SECURITY) ◄─┤  │
 │                                                      │  │
 │  002 Request Context ◄───────────────────────────────┤  │
 │       │                                              │  │
@@ -46,9 +54,13 @@ P1: MULTI-TENANT STABILITY (depends on P0)
 │  028 In-Flight Deduplication                            │
 │  029 Error Collector (depends on 002)                   │
 │  035 Fetch Timeout Coverage                             │
+│  043 Path Traversal Validation (NEW)                    │
+│  044 JSON.parse Safety (NEW)                            │
+│  045 Memoize In-Flight Dedup (NEW)                      │
+│  046 Regex State Isolation (NEW)                        │
 └─────────────────────────────────────────────────────────┘
 
-P2: CACHE CORRECTNESS (can parallel with P1)
+P2: CACHE CORRECTNESS & MEMORY (can parallel with P1)
 ┌─────────────────────────────────────────────────────────┐
 │  011 Transform Cache Deps Hash                          │
 │  012 Cache Hit Validation                               │
@@ -61,6 +73,13 @@ P2: CACHE CORRECTNESS (can parallel with P1)
 │  034 Config Schema Validation                           │
 │  036 Dependency Tracking Complete (depends on 011)      │
 │  038 Agent Cache Isolation (depends on 027)             │
+│  047 Lazy Singleton Mutex (NEW)                         │
+│  048 Rate Limit Atomic (NEW)                            │
+│  049 Config Reload Atomic (NEW)                         │
+│  050 HMR Client Cleanup (NEW)                           │
+│  051 WebSocket Timer Cleanup (NEW)                      │
+│  053 Module Cache LRU (NEW)                             │
+│  054 Transform Cache LRU (NEW)                          │
 └─────────────────────────────────────────────────────────┘
 
 P3: ADAPTER PARITY (depends on P0, can parallel P1/P2)
@@ -74,6 +93,7 @@ P3: ADAPTER PARITY (depends on P0, can parallel P1/P2)
 │                                                         │
 │  020 Router Detection Cache                             │
 │  037 Router Param Unification                           │
+│  052 Event Listener Cleanup (NEW)                       │
 └─────────────────────────────────────────────────────────┘
 
 P4: CODE CONSOLIDATION (lowest priority, do last)
@@ -83,10 +103,15 @@ P4: CODE CONSOLIDATION (lowest priority, do last)
 │  023 Timeout Centralization                             │
 │  024 Error Handling                                     │
 │  025 Environment Detection                              │
+│  055 Path Utils Consolidation (NEW)                     │
+│  056 Large File Decomposition (NEW)                     │
+│  057 Naming Conventions (NEW)                           │
 └─────────────────────────────────────────────────────────┘
 ```
 
 ## Task Index
+
+### Original Tasks (001-039)
 
 | # | Task | Priority | Depends | Docs |
 |---|------|----------|---------|------|
@@ -104,71 +129,93 @@ P4: CODE CONSOLIDATION (lowest priority, do last)
 | [012](./012-cache-hit-validation.md) | Cache Hit Validation | P2 | - | [003.4](../003.4-cache-hit-validation-skipped.md) |
 | [013](./013-ssr-module-path-consistency.md) | SSR Module Path Consistency | P2 | - | [003.1](../003.1-ssr-module-path-mismatch.md) |
 | [014](./014-config-change-invalidation.md) | Config Change Invalidation | P2 | - | [008.4](../008.4-hmr-cache-invalidation-incomplete.md), [004.6](../004.6-config-changes-not-invalidating.md) |
-| [015](./015-http-bundle-ttl-fix.md) | HTTP Bundle TTL Fix | P2 | - | [003.2](../003.2-http-bundle-ttl-mismatch.md), [014.4](../014.4-cache-ttl-misclassification.md) |
+| [015](./015-http-bundle-ttl-fix.md) | HTTP Bundle TTL Fix | P2 | - | [003.2](../003.2-http-bundle-ttl-mismatch.md) |
 | [016](./016-unified-adapter-interface.md) | Unified Adapter Interface | P3 | - | [001.0](../001.0-unified-adapter-rfc.md) |
 | [017](./017-layout-discovery-unify.md) | Layout Discovery Unify | P3 | 016 | [001.1](../001.1-layout-bug-critical.md) |
 | [018](./018-config-middleware-parity.md) | Config/Middleware Parity | P3 | 016 | [001.5](../001.5-config-middleware-loading-divergence.md) |
 | [019](./019-css-cache-key-fix.md) | CSS Cache Key Fix | P3 | - | [001.6](../001.6-css-cache-key-divergence.md) |
 | [020](./020-router-detection-cache-fix.md) | Router Detection Cache Fix | P3 | - | [005.1](../005.1-global-router-detection-cache.md) |
-| [021](./021-import-rewriter-unify.md) | Import Rewriter Unify | P4 | - | [011.0](../011.0-import-rewriting-rfc.md), [011.1-5](../011.1-global-warning-state-pollution.md) |
-| [022](./022-http-client-consolidate.md) | HTTP Client Consolidate | P4 | - | [012.0](../012.0-http-clients-rfc.md), [012.1-5](../012.1-missing-timeouts.md) |
-| [023](./023-timeout-centralization.md) | Timeout Centralization | P4 | - | [009.0](../009.0-timeout-handling-rfc.md), [009.3](../009.3-timeout-hierarchy-violations.md), [009.5-6](../009.5-hardcoded-timeout-values.md) |
-| [024](./024-error-handling-patterns.md) | Error Handling Patterns | P4 | - | [010.0](../010.0-error-handling-rfc.md), [010.3-6](../010.3-dual-veryfront-error-definitions.md) |
-| [025](./025-environment-detection-unify.md) | Environment Detection | P4 | - | [006.0](../006.0-environment-detection-rfc.md), [006.1-3](../006.1-ssr-detection-inconsistencies.md) |
-| [026](./026-caching-strategy.md) | Caching Strategy | P0 | - | [003.0](../003.0-cache-consistency-rfc.md), [013.1](../013.1-content-addressed-vs-identity-caching.md) |
-| [027](./027-cache-key-standard.md) | Cache Key Standard | P1 | 026 | [013.0](../013.0-cache-key-patterns-rfc.md), [013.3](../013.3-key-format-standardization.md) |
-| [028](./028-in-flight-deduplication.md) | In-Flight Deduplication | P1 | - | [002.6](../002.6-in-progress-deadlock.md), [009.4](../009.4-in-flight-maps-no-timeout-cleanup.md) |
+| [021](./021-import-rewriter-unify.md) | Import Rewriter Unify | P4 | - | [011.0](../011.0-import-rewriting-rfc.md) |
+| [022](./022-http-client-consolidate.md) | HTTP Client Consolidate | P4 | - | [012.0](../012.0-http-clients-rfc.md) |
+| [023](./023-timeout-centralization.md) | Timeout Centralization | P4 | - | [009.0](../009.0-timeout-handling-rfc.md) |
+| [024](./024-error-handling-patterns.md) | Error Handling Patterns | P4 | - | [010.0](../010.0-error-handling-rfc.md) |
+| [025](./025-environment-detection-unify.md) | Environment Detection | P4 | - | [006.0](../006.0-environment-detection-rfc.md) |
+| [026](./026-caching-strategy.md) | Caching Strategy | P0 | - | [003.0](../003.0-cache-consistency-rfc.md) |
+| [027](./027-cache-key-standard.md) | Cache Key Standard | P1 | 026 | [013.0](../013.0-cache-key-patterns-rfc.md) |
+| [028](./028-in-flight-deduplication.md) | In-Flight Deduplication | P1 | - | [002.6](../002.6-in-progress-deadlock.md) |
 | [029](./029-error-collector-isolation.md) | Error Collector Isolation | P1 | 002 | [010.2](../010.2-global-error-collector.md) |
-| [030](./030-ssg-app-router-support.md) | SSG App Router Support | P2 | - | [005.2](../005.2-ssg-getallpages-missing-app-router.md), [005.5](../005.5-dynamic-route-handling-inconsistency.md) |
-| [031](./031-deployment-mode-consistency.md) | Deployment Mode Consistency | P2 | - | [014.0](../014.0-deployment-modes-rfc.md), [014.1-3](../014.1-node-env-missing.md), [014.5](../014.5-header-domain-conflicts.md) |
-| [032](./032-multi-tenant-test-utils.md) | Multi-Tenant Test Utils | P2 | - | [015.0](../015.0-testability-rfc.md), [015.1-5](../015.1-global-state-test-isolation.md) |
-| [033](./033-type-safety-adapter-checks.md) | Type Safety & Adapter Checks | P3 | 016 | [001.2](../001.2-unsafe-type-casting.md), [001.3](../001.3-duplicated-isvirtualfilesystem.md), [001.4](../001.4-layout-cache-no-project-scope.md) |
-| [034](./034-config-schema-validation.md) | Config Schema Validation | P2 | - | [007.1-6](../007.1-router-format-mismatch.md), [008.5](../008.5-config-schema-validation-gaps.md) |
+| [030](./030-ssg-app-router-support.md) | SSG App Router Support | P2 | - | [005.2](../005.2-ssg-getallpages-missing-app-router.md) |
+| [031](./031-deployment-mode-consistency.md) | Deployment Mode Consistency | P2 | - | [014.0](../014.0-deployment-modes-rfc.md) |
+| [032](./032-multi-tenant-test-utils.md) | Multi-Tenant Test Utils | P2 | - | [015.0](../015.0-testability-rfc.md) |
+| [033](./033-type-safety-adapter-checks.md) | Type Safety & Adapter Checks | P3 | 016 | [001.2](../001.2-unsafe-type-casting.md) |
+| [034](./034-config-schema-validation.md) | Config Schema Validation | P2 | - | [007.1-6](../007.1-router-format-mismatch.md) |
 | [035](./035-fetch-timeout-coverage.md) | Fetch Timeout Coverage | P1 | 023 | [009.2](../009.2-fetch-calls-without-timeout.md) |
 | [036](./036-dependency-tracking-complete.md) | Dependency Tracking Complete | P2 | 011 | [004.2-5](../004.2-unused-depshash-infrastructure.md) |
-| [037](./037-router-param-unification.md) | Router Param Unification | P3 | - | [005.3](../005.3-duplicated-route-params-extraction.md), [005.4](../005.4-layout-collector-router-branching.md) |
+| [037](./037-router-param-unification.md) | Router Param Unification | P3 | - | [005.3](../005.3-duplicated-route-params-extraction.md) |
 | [038](./038-agent-cache-isolation.md) | Agent Cache Isolation | P2 | 027 | [013.2](../013.2-agent-cache-project-isolation.md) |
 | [039](./039-tailwind-cache-environment-scope.md) | Tailwind Cache Environment Scope | P1 | - | [002.9](../002.9-tailwind-cache-environment-scope.md) |
 
+### Gap Analysis Tasks (040-057)
+
+| # | Task | Priority | Category | Docs |
+|---|------|----------|----------|------|
+| [040](./040-timing-safe-compare.md) | Timing-Safe Compare | P0 | Security | [016.1](../016.1-timing-attack.md) |
+| [041](./041-innerhtml-sanitization.md) | innerHTML Sanitization | P0 | Security | [016.2](../016.2-innerhtml-sanitization.md) |
+| [042](./042-sandbox-function-restriction.md) | Sandbox Function Restriction | P0 | Security | [016.3](../016.3-sandbox-escape.md) |
+| [043](./043-path-traversal-validation.md) | Path Traversal Validation | P1 | Security | [016.4](../016.4-path-traversal.md) |
+| [044](./044-json-parse-safety.md) | JSON.parse Safety | P1 | Security | [016.5](../016.5-json-parse-validation.md) |
+| [045](./045-memoize-inflight-dedup.md) | Memoize In-Flight Dedup | P1 | Race Condition | [017.1](../017.1-cache-stampede.md) |
+| [046](./046-regex-state-isolation.md) | Regex State Isolation | P1 | Race Condition | [017.2](../017.2-global-regex-state.md) |
+| [047](./047-lazy-singleton-mutex.md) | Lazy Singleton Mutex | P2 | Race Condition | [017.3](../017.3-lazy-singleton-locking.md) |
+| [048](./048-rate-limit-atomic.md) | Rate Limit Atomic | P2 | Race Condition | [017.4](../017.4-rate-limit-atomicity.md) |
+| [049](./049-config-reload-atomic.md) | Config Reload Atomic | P2 | Race Condition | [017.5](../017.5-config-reload-race.md) |
+| [050](./050-hmr-client-cleanup.md) | HMR Client Cleanup | P2 | Memory Leak | [018.1](../018.1-hmr-client-map.md) |
+| [051](./051-websocket-timer-cleanup.md) | WebSocket Timer Cleanup | P2 | Memory Leak | [018.2](../018.2-websocket-timer-cleanup.md) |
+| [052](./052-event-listener-cleanup.md) | Event Listener Cleanup | P3 | Memory Leak | [018.3](../018.3-event-listener-cleanup.md) |
+| [053](./053-module-cache-lru.md) | Module Cache LRU | P2 | Memory Leak | [018.4](../018.4-module-cache-bounds.md) |
+| [054](./054-transform-cache-lru.md) | Transform Cache LRU | P2 | Memory Leak | [018.5](../018.5-transform-cache-eviction.md) |
+| [055](./055-path-utils-consolidation.md) | Path Utils Consolidation | P4 | Code Quality | [019.1](../019.1-getextension-duplication.md), [019.2](../019.2-normalizepath-duplication.md) |
+| [056](./056-large-file-decomposition.md) | Large File Decomposition | P4 | Code Quality | [019.4](../019.4-file-complexity.md) |
+| [057](./057-naming-conventions.md) | Naming Conventions | P4 | Code Quality | [019.5](../019.5-naming-inconsistencies.md) |
+
 ## Priority Definitions
 
-| Priority | Meaning | Timeline |
-|----------|---------|----------|
-| **P0** | Security critical / Foundation | Week 1 |
-| **P1** | Multi-tenant stability | Week 2-3 |
-| **P2** | Cache correctness / Stale data | Week 3-4 |
-| **P3** | Adapter parity / DX | Week 4-6 |
-| **P4** | Code consolidation / Maintenance | Week 6+ |
+| Priority | Meaning | Focus |
+|----------|---------|-------|
+| **P0** | Security critical / Foundation | Immediate |
+| **P1** | Multi-tenant stability | Sprint 1-2 |
+| **P2** | Cache correctness / Memory | Sprint 2-3 |
+| **P3** | Adapter parity / DX | Sprint 3-4 |
+| **P4** | Code consolidation | Ongoing |
 
 ## Quick Start
 
 Start with these in order:
-1. **001** - Sandbox config (security critical)
-2. **026** - Caching strategy (defines patterns)
-3. **002** - Request context (enables 003-005, 007, 009, 029)
-4. **006** - Semaphores (immediate stability)
-5. **035** - Fetch timeouts (no hanging requests)
-6. **011** - Deps hash (stale bundles)
-7. **016** - Adapter interface (enables 017-018, 033)
+1. **040, 041, 042** - Security critical (timing attack, XSS, RCE)
+2. **001** - Sandbox config (security foundation)
+3. **026** - Caching strategy (defines patterns)
+4. **002** - Request context (enables 003-005, 007, 009, 029)
+5. **045, 046** - Race conditions (stampede, regex)
+6. **053, 054** - Memory (cache LRU)
 
-## Total: 38 Tasks
+## Total: 57 Tasks
 
 | Priority | Count | Focus |
 |----------|-------|-------|
-| P0 | 6 | Security, Foundation |
-| P1 | 9 | Multi-tenant stability |
-| P2 | 12 | Cache correctness, Testing |
-| P3 | 6 | Adapter parity |
-| P4 | 5 | Code consolidation |
+| P0 | 9 | Security, Foundation |
+| P1 | 13 | Multi-tenant stability, Race conditions |
+| P2 | 18 | Cache correctness, Memory, Testing |
+| P3 | 9 | Adapter parity |
+| P4 | 8 | Code consolidation |
 
 ## Coverage Mapping
 
-All 15 chapters and 87 sub-documents covered:
+All 19 chapters covered:
 
 | Chapter | Sub-Docs | Tasks |
 |---------|----------|-------|
 | 001 Adapter | 001.0-001.6 | 016, 017, 018, 019, 033 |
-| 002 Global State | 002.0-002.8 | 002, 003, 004, 005, 006, 007, 008, 009, 010, 028 |
+| 002 Global State | 002.0-002.9 | 002, 003, 004, 005, 006, 007, 008, 009, 010, 028, 039 |
 | 003 Cache | 003.0-003.4 | 012, 013, 015, 026 |
 | 004 Dependencies | 004.0-004.6 | 011, 014, 036 |
 | 005 Router | 005.0-005.5 | 020, 030, 037 |
@@ -182,35 +229,18 @@ All 15 chapters and 87 sub-documents covered:
 | 013 Cache Keys | 013.0-013.3 | 026, 027, 038 |
 | 014 Deployment | 014.0-014.5 | 015, 031 |
 | 015 Testability | 015.0-015.5 | 032 |
+| **016 Security** | 016.1-016.5 | **040, 041, 042, 043, 044** |
+| **017 Race Conditions** | 017.1-017.5 | **045, 046, 047, 048, 049** |
+| **018 Memory Leaks** | 018.1-018.5 | **050, 051, 052, 053, 054** |
+| **019 Code Quality** | 019.1-019.5 | **055, 056, 057** |
 
-## Sub-Document to Task Map
+## Gap Analysis Summary
 
-| Doc | Task | Doc | Task | Doc | Task |
-|-----|------|-----|------|-----|------|
-| 001.0 | 016 | 005.4 | 037 | 010.2 | 029 |
-| 001.1 | 017 | 005.5 | 030 | 010.3-6 | 024 |
-| 001.2 | 033 | 006.0-3 | 025 | 011.0-5 | 021 |
-| 001.3 | 033 | 007.0 | 034 | 012.0-5 | 022 |
-| 001.4 | 033 | 007.1-6 | 034 | 013.0 | 027 |
-| 001.5 | 018 | 007.7 | 005 | 013.1 | 026 |
-| 001.6 | 019 | 008.0 | 001 | 013.2 | 038 |
-| 002.0 | 002 | 008.1 | 014 | 013.3 | 027 |
-| 002.1 | 003 | 008.2 | 001 | 014.0-3 | 031 |
-| 002.2 | 004 | 008.3 | 014 | 014.4 | 015 |
-| 002.3 | 008 | 008.4 | 014 | 014.5 | 031 |
-| 002.4 | 006 | 008.5 | 034 | 015.0-5 | 032 |
-| 002.5 | 009 | 009.0 | 023 | | |
-| 002.6 | 028 | 009.1 | 006 | | |
-| 002.7 | 007 | 009.2 | 035 | | |
-| 002.8 | 010 | 009.3-6 | 023 | | |
-| 003.0 | 026 | 009.4 | 028 | | |
-| 003.1 | 013 | 010.0 | 024 | | |
-| 003.2 | 015 | 010.1 | 007 | | |
-| 003.3 | 026 | | | | |
-| 003.4 | 012 | | | | |
-| 004.0-1 | 011 | | | | |
-| 004.2-5 | 036 | | | | |
-| 004.6 | 014 | | | | |
-| 005.0-1 | 020 | | | | |
-| 005.2 | 030 | | | | |
-| 005.3 | 037 | | | | |
+Tasks 040-057 address gaps discovered during comprehensive codebase analysis:
+
+| Category | Issues | Tasks | Priority |
+|----------|--------|-------|----------|
+| Security | 5 vulnerabilities | 040-044 | P0-P1 |
+| Race Conditions | 5 critical | 045-049 | P1-P2 |
+| Memory Leaks | 5 patterns | 050-054 | P2-P3 |
+| Code Quality | 3 areas | 055-057 | P4 |
