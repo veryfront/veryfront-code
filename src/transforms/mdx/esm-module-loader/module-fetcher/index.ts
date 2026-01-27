@@ -20,7 +20,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { transformToESM } from "../../../esm-transform.ts";
 import { TRANSFORM_CACHE_VERSION } from "../../../esm/package-registry.ts";
 import { ensureHttpBundlesExist } from "../../../esm/http-cache.ts";
-import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import {
   LOG_PREFIX_MDX_LOADER,
   RELATIVE_IMPORT_PATTERN,
@@ -35,6 +35,7 @@ import { resolveModuleFile } from "../resolution/file-finder.ts";
 import { recordSSRModules } from "../../../../modules/manifest/route-module-manifest.ts";
 import { getDistributedTransformBackend } from "#veryfront/transforms/esm/transform-cache.ts";
 import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
+import { FRAMEWORK_ROOT } from "../constants.ts";
 
 /** TTL for cached transforms (uses centralized config) */
 const TRANSFORM_CACHE_TTL_SECONDS = TRANSFORM_DISTRIBUTED_TTL_SEC;
@@ -79,6 +80,87 @@ function getVersionedPathCacheKey(normalizedPath: string): string {
 
 /** Pattern to extract HTTP bundle paths from code (file:// paths to veryfront-http-bundle) */
 const HTTP_BUNDLE_PATTERN = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
+
+/**
+ * Check if cached code has file:// paths that are incompatible with this environment.
+ * Returns true if the cached code should be invalidated (has paths from a different environment).
+ *
+ * Checks for:
+ * 1. Framework source paths (file:///app/src/...) that don't match FRAMEWORK_ROOT
+ * 2. HTTP bundle cache paths (file:///app/.cache/veryfront-http-bundle/...) that don't match local cache dir
+ * 3. MDX ESM cache paths (file:///app/.cache/veryfront-mdx-esm/...) that don't match local cache dir
+ *
+ * IMPORTANT: This function creates a new RegExp on each call to avoid race conditions
+ * when multiple modules are processed concurrently. Using a shared global regex with
+ * the 'g' flag would cause interleaved exec() calls to skip paths.
+ */
+async function hasIncompatibleFrameworkPaths(code: string): Promise<boolean> {
+  const localHttpCacheDir = getHttpBundleCacheDir();
+  const localMdxCacheDir = getMdxEsmCacheDir();
+  const localFs = getLocalFs();
+
+  // Create a NEW regex for each call to avoid race conditions with concurrent calls.
+  // Global regexes maintain lastIndex state that can interleave between concurrent calls.
+  const allFilePathsPattern = /file:\/\/([^"'\s]+)/gi;
+
+  // Extract all file:// paths from the code
+  const allPaths: string[] = [];
+  let match;
+  while ((match = allFilePathsPattern.exec(code)) !== null) {
+    allPaths.push(match[1] as string);
+  }
+
+  for (const path of allPaths) {
+    // Check HTTP bundle cache paths
+    if (path.includes("veryfront-http-bundle")) {
+      if (!path.startsWith(localHttpCacheDir)) {
+        logger.debug(`${LOG_PREFIX_MDX_LOADER} HTTP bundle path from different environment`, {
+          path,
+          expectedDir: localHttpCacheDir,
+        });
+        return true;
+      }
+      continue;
+    }
+
+    // Check MDX ESM cache paths (vfmod files)
+    if (path.includes("veryfront-mdx-esm")) {
+      if (!path.startsWith(localMdxCacheDir)) {
+        logger.debug(`${LOG_PREFIX_MDX_LOADER} MDX cache path from different environment`, {
+          path,
+          expectedDir: localMdxCacheDir,
+        });
+        return true;
+      }
+      continue;
+    }
+
+    // Check framework source paths (paths to /src/ that aren't cache paths)
+    if (path.includes("/src/") && !path.includes(".cache")) {
+      if (!path.startsWith(FRAMEWORK_ROOT)) {
+        logger.debug(`${LOG_PREFIX_MDX_LOADER} Framework path from different environment`, {
+          path,
+          expectedRoot: FRAMEWORK_ROOT,
+        });
+        return true;
+      }
+
+      // Also verify the file actually exists
+      try {
+        const stat = await localFs.stat(path);
+        if (!stat?.isFile) {
+          logger.debug(`${LOG_PREFIX_MDX_LOADER} Framework path does not exist`, { path });
+          return true;
+        }
+      } catch {
+        logger.debug(`${LOG_PREFIX_MDX_LOADER} Framework path not accessible`, { path });
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
 
 /**
  * Extract HTTP bundle paths and hashes from module code.
@@ -477,10 +559,36 @@ async function doFetchAndCacheModule(
             // Invalidate this cache entry - HTTP bundles can't be recovered
             pathCache.delete(versionedKey);
             // Continue to re-transform
+          } else if (await hasIncompatibleFrameworkPaths(cachedCode)) {
+            // Framework paths from different environment - invalidate and re-transform
+            logger.warn(`${LOG_PREFIX_MDX_LOADER} Cached module has incompatible framework paths`, {
+              normalizedPath,
+              cachedPath,
+              frameworkRoot: FRAMEWORK_ROOT,
+            });
+            pathCache.delete(versionedKey);
+            // Delete the stale file so it gets recreated
+            try {
+              await getLocalFs().remove(cachedPath);
+            } catch { /* ignore removal errors */ }
+            // Continue to re-transform
           } else {
             recordModuleToSession(normalizedPath);
             return cachedPath;
           }
+        } else if (await hasIncompatibleFrameworkPaths(cachedCode)) {
+          // Framework paths from different environment - invalidate and re-transform
+          logger.warn(`${LOG_PREFIX_MDX_LOADER} Cached module has incompatible framework paths`, {
+            normalizedPath,
+            cachedPath,
+            frameworkRoot: FRAMEWORK_ROOT,
+          });
+          pathCache.delete(versionedKey);
+          // Delete the stale file so it gets recreated
+          try {
+            await getLocalFs().remove(cachedPath);
+          } catch { /* ignore removal errors */ }
+          // Continue to re-transform
         } else {
           recordModuleToSession(normalizedPath);
           return cachedPath;
@@ -542,6 +650,19 @@ async function doFetchAndCacheModule(
               // Don't use cached code if bundles can't be recovered - will re-transform
               moduleCode = null;
             }
+          }
+
+          // CRITICAL: Check for framework source paths from a different environment.
+          // Distributed cache may contain transforms with file:// paths to framework
+          // source files that are specific to the environment where the transform ran
+          // (e.g., /app/src/... in production vs /Users/.../veryfront-renderer/src/... locally).
+          // If paths don't match our FRAMEWORK_ROOT, invalidate cache and re-transform.
+          if (moduleCode && await hasIncompatibleFrameworkPaths(cached)) {
+            logger.warn(`${LOG_PREFIX_MDX_LOADER} Cached code has incompatible framework paths`, {
+              normalizedPath,
+              frameworkRoot: FRAMEWORK_ROOT,
+            });
+            moduleCode = null;
           }
         }
       } catch (error) {

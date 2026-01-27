@@ -43,6 +43,42 @@ const HTTP_BUNDLE_VERSION = 2;
 const distributedKey = (prefix: string, hash: string | number) =>
   `v${HTTP_BUNDLE_VERSION}:${prefix}:${hash}`;
 
+/**
+ * Check if cached HTTP bundle code has file:// paths from a different environment.
+ * Returns true if the code should be rejected (has incompatible paths).
+ *
+ * HTTP bundles contain file:// paths to other cached bundles. These paths are
+ * environment-specific (e.g., /app/.cache/... in production vs local paths on dev).
+ * If the paths don't match our local cache directory, the cached code is stale.
+ *
+ * IMPORTANT: This function creates a new RegExp on each call to avoid race conditions
+ * when multiple modules are processed concurrently. Using a shared global regex with
+ * the 'g' flag would cause interleaved exec() calls to skip paths.
+ */
+function hasIncompatibleFilePaths(code: string, localCacheDir: string): boolean {
+  // Create a NEW regex for each call to avoid race conditions with concurrent calls.
+  // Global regexes maintain lastIndex state that can interleave between concurrent calls.
+  const filePathPattern = /file:\/\/([^"'\s]+)/gi;
+
+  // Extract all file:// paths
+  let match;
+  while ((match = filePathPattern.exec(code)) !== null) {
+    const path = match[1] as string;
+    // Check if this path is for an HTTP bundle (veryfront-http-bundle directory)
+    if (path.includes("veryfront-http-bundle")) {
+      // The path should start with our local cache directory
+      if (!path.startsWith(localCacheDir)) {
+        logger.debug("[HTTP-CACHE] Bundle has incompatible file path from different environment", {
+          path,
+          expectedDir: localCacheDir,
+        });
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 type CacheOptions = {
   cacheDir: string;
   importMap: ImportMapConfig;
@@ -255,6 +291,15 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
             url: normalizedUrl,
             hash,
             preview: cachedCode.substring(0, 50),
+          });
+          // Fall through to network fetch
+        } else if (hasIncompatibleFilePaths(cachedCode, cacheDir)) {
+          // Cached bundle has file:// paths from a different environment (e.g., /app/...)
+          // Skip the cached code and re-fetch from network to get correct local paths
+          logger.warn("[HTTP-CACHE] Cached code has incompatible file paths, will re-fetch", {
+            url: normalizedUrl,
+            hash,
+            localCacheDir: cacheDir,
           });
           // Fall through to network fetch
         } else {
@@ -494,6 +539,13 @@ export async function recoverHttpBundleByHash(hash: string, cacheDir: string): P
           preview: cachedCode.substring(0, 50),
         });
         // Fall through to Strategy 2 (URL re-fetch)
+      } else if (hasIncompatibleFilePaths(cachedCode, absoluteCacheDir)) {
+        // Cached bundle has file:// paths from a different environment
+        logger.warn("[HTTP-CACHE] Cached code has incompatible file paths, will re-fetch", {
+          hash,
+          localCacheDir: absoluteCacheDir,
+        });
+        // Fall through to Strategy 2 (URL re-fetch)
       } else {
         logger.info("[HTTP-CACHE] Recovering bundle via direct code lookup", { hash });
         await fs.mkdir(absoluteCacheDir, { recursive: true });
@@ -670,6 +722,22 @@ export async function ensureHttpBundlesExist(
             hash,
             preview: code.substring(0, 50),
           });
+          const recovered = await recoverHttpBundleByHash(hash, absoluteCacheDir);
+          if (!recovered) {
+            failed.add(hash);
+          }
+          return;
+        }
+
+        // Check for file:// paths from a different environment
+        if (hasIncompatibleFilePaths(code, absoluteCacheDir)) {
+          logger.warn(
+            "[HTTP-CACHE] Batch-fetched code has incompatible file paths, trying single recovery",
+            {
+              hash,
+              localCacheDir: absoluteCacheDir,
+            },
+          );
           const recovered = await recoverHttpBundleByHash(hash, absoluteCacheDir);
           if (!recovered) {
             failed.add(hash);
