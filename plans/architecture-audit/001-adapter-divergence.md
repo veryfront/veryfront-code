@@ -4,7 +4,7 @@
 
 | Document | Severity | Title |
 |----------|----------|-------|
-| [001.7](./001.7-unified-adapter-rfc.md) | 📋 RFC | Unified Adapter Architecture - One interface, one code path |
+| [001.0](./001.0-unified-adapter-rfc.md) | 📋 RFC | Unified Adapter Architecture - One interface, one code path |
 | [001.1](./001.1-layout-bug-critical.md) | 🔴 CRITICAL | The Layout Bug - App Router nested layouts ignored in production |
 | [001.2](./001.2-unsafe-type-casting.md) | 🟠 HIGH | Unsafe Type Casting - `as unknown as { ... }` patterns |
 | [001.3](./001.3-duplicated-isvirtualfilesystem.md) | 🟡 MEDIUM | Duplicated `isVirtualFilesystem()` - 3 different implementations |
