@@ -8,8 +8,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getProjectReact, renderToStringAdapter } from "#veryfront/react";
 import { loadComponentFromSource } from "#veryfront/modules/react-loader/index.ts";
 import { CompilationError } from "#veryfront/errors/index.ts";
-import { getReactUrls } from "#veryfront/transforms/esm/package-registry.ts";
-import { REACT_VERSION_18_3 } from "#veryfront/utils/constants/cdn.ts";
+import { DEFAULT_REACT_VERSION, getReactUrls } from "#veryfront/transforms/esm/package-registry.ts";
 
 type ReactComponentLike = import("react").ComponentType<{ children?: import("react").ReactNode }>;
 
@@ -46,8 +45,9 @@ export async function renderAppRouteToHTML(args: {
   routePath: string;
   pageFile: string;
   contentSourceId: string;
+  reactVersion?: string;
 }): Promise<string> {
-  const { adapter, projectDir, routePath, pageFile, contentSourceId } = args;
+  const { adapter, projectDir, routePath, pageFile, contentSourceId, reactVersion } = args;
 
   const appRoot = join(projectDir, "app");
   const layouts: string[] = [];
@@ -103,7 +103,7 @@ export async function renderAppRouteToHTML(args: {
 
   <!-- Import map for React dependencies -->
   <script type="importmap">
-  ${JSON.stringify({ imports: getReactUrls(REACT_VERSION_18_3) }, null, 4)}
+  ${JSON.stringify({ imports: getReactUrls(reactVersion ?? DEFAULT_REACT_VERSION) }, null, 4)}
   </script>
 
   <!-- Basic styles -->

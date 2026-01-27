@@ -2,6 +2,7 @@ import { join } from "#veryfront/platform/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { cwd, exit, getArgs } from "#veryfront/platform/compat/process.ts";
 import { getVeryfrontVersion } from "#veryfront/config/env.ts";
+import { DEFAULT_REACT_VERSION, getReactUrls } from "#veryfront/transforms/esm/package-registry.ts";
 
 const VERSION = getVeryfrontVersion() ?? "0.0.0-dev";
 
@@ -83,9 +84,7 @@ async function initCommand(name: string, template: string = "minimal"): Promise<
     imports: {
       veryfront: `npm:veryfront@^${VERSION}`,
       "veryfront/": `npm:veryfront@^${VERSION}/`,
-      react: "https://esm.sh/react@18.3.1",
-      "react-dom": "https://esm.sh/react-dom@18.3.1",
-      "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
+      ...getReactUrls(DEFAULT_REACT_VERSION),
     },
     compilerOptions: {
       jsx: "react-jsx",
