@@ -66,6 +66,7 @@ import { openBrowser } from "../auth/browser.ts";
 import { fetchRemoteProjects } from "../sync/index.ts";
 import { pullCommand } from "../commands/pull.ts";
 import { pushCommand } from "../commands/push.ts";
+import { getLogBuffer } from "../mcp/log-buffer.ts";
 
 export interface AppConfig {
   port: number;
@@ -1415,6 +1416,10 @@ export function createApp(config: AppConfig): App {
       // deno-lint-ignore no-control-regex
       const ansiPattern = /\x1b\[[0-9;]*m/g;
 
+      // Feed LogBuffer so the Dashboard API (/_dev/api/live-logs) can serve entries
+      // to the standalone MCP process
+      const logBuffer = getLogBuffer();
+
       const capture =
         (level: "info" | "warn" | "error" | "debug") => (...args: unknown[]): void => {
           const msg = args
@@ -1424,6 +1429,7 @@ export function createApp(config: AppConfig): App {
           if (msg.trim()) {
             const meta = parseRequestLog(msg);
             state = addLog(level, msg, meta)(state);
+            logBuffer.append({ level, message: msg, source: "console" });
             render();
           }
         };
