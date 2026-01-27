@@ -1,4 +1,5 @@
 import { getReactImportMap, getReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 
 export interface SSRRewriteOptions {
   /** Project slug for multi-project routing */
@@ -14,8 +15,13 @@ export interface SSRRewriteOptions {
 }
 
 function shouldKeepBareSpecifier(specifier: string): boolean {
+  // npm: specifiers are only supported in Deno, not Node.js
+  // In Node.js, we need to convert them to esm.sh URLs (handled in rewriteBareImports)
+  if (specifier.startsWith("npm:")) {
+    return isDeno;
+  }
+
   if (
-    specifier.startsWith("npm:") ||
     specifier.startsWith("http://") ||
     specifier.startsWith("https://") ||
     specifier.startsWith("file://") ||
@@ -60,12 +66,15 @@ function resolveReactForRuntime(specifier: string, version?: string): string | n
 function rewriteBareImports(code: string, version?: string): string {
   const v = version ?? getReactVersion();
   return code.replace(/from\s+["']([^"'./][^"']*)["']/g, (_match, specifier: string) => {
-    const reactUrl = resolveReactForRuntime(specifier, v);
+    // Strip npm: prefix for resolution (npm: is Deno-specific)
+    const bareSpecifier = specifier.startsWith("npm:") ? specifier.slice(4) : specifier;
+
+    const reactUrl = resolveReactForRuntime(bareSpecifier, v);
     if (reactUrl) return `from "${reactUrl}"`;
     if (shouldKeepBareSpecifier(specifier)) return `from "${specifier}"`;
 
     // For third-party packages: Use esm.sh with external=react
-    return `from "https://esm.sh/${specifier}?external=react&target=es2022"`;
+    return `from "https://esm.sh/${bareSpecifier}?external=react&target=es2022"`;
   });
 }
 
