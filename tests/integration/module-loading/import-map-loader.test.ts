@@ -40,10 +40,10 @@ describe(
           assertExists(importMap);
           assertExists(importMap.imports);
           // All runtimes: Uses esm.sh URLs for React
-          assertEquals(importMap.imports!["react"], "https://esm.sh/react@19.1.1?target=es2022");
+          assertEquals(importMap.imports!["react"], "https://esm.sh/react@19.1.1?target=es2022&deps=csstype@3.2.3");
           assertEquals(
             importMap.imports!["react-dom"],
-            "https://esm.sh/react-dom@19.1.1?external=react&target=es2022",
+            "https://esm.sh/react-dom@19.1.1?external=react&target=es2022&deps=csstype@3.2.3",
           );
         });
       });
@@ -78,7 +78,7 @@ describe(
           assertExists(importMap);
           assertExists(importMap.imports);
           // All runtimes: Uses esm.sh URLs for React
-          assertEquals(importMap.imports!["react"], "https://esm.sh/react@19.1.1?target=es2022");
+          assertEquals(importMap.imports!["react"], "https://esm.sh/react@19.1.1?target=es2022&deps=csstype@3.2.3");
 
           // Scopes should be loaded
           assertExists(importMap.scopes);
@@ -162,7 +162,7 @@ describe(
 
           assertExists(importMap);
           // All runtimes: Uses esm.sh URLs for React
-          assertEquals(importMap.imports!["react"], "https://esm.sh/react@19.1.1?target=es2022");
+          assertEquals(importMap.imports!["react"], "https://esm.sh/react@19.1.1?target=es2022&deps=csstype@3.2.3");
         });
       });
 
@@ -208,7 +208,7 @@ describe(
           const importMap = await loadImportMap(context.projectDir, await getAdapter());
 
           // Config import map (react@19) is normalized to default React version (19.1.1)
-          assertEquals(importMap.imports!["react"], "https://esm.sh/react@19.1.1?target=es2022");
+          assertEquals(importMap.imports!["react"], "https://esm.sh/react@19.1.1?target=es2022&deps=csstype@3.2.3");
         });
       });
 

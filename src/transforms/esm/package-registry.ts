@@ -62,8 +62,15 @@ export const REACT_VERSION = DEFAULT_REACT_VERSION;
  */
 export const TRANSFORM_CACHE_VERSION = 12;
 
-function esmSh(pkg: string, version: string, path = "", query = "target=es2022"): string {
-  return `https://esm.sh/${pkg}@${version}${path}?${query}`;
+/** csstype version - must match deno.json for type consistency */
+const CSSTYPE_VERSION = "3.2.3";
+
+/** Build esm.sh URL with deps=csstype for React packages (ensures type consistency) */
+function esmShReact(pkg: string, version: string, path = "", external = false): string {
+  const params = external
+    ? [`external=react`, `target=es2022`, `deps=csstype@${CSSTYPE_VERSION}`]
+    : [`target=es2022`, `deps=csstype@${CSSTYPE_VERSION}`];
+  return `https://esm.sh/${pkg}@${version}${path}?${params.join("&")}`;
 }
 
 /**
@@ -90,12 +97,12 @@ export function getEsmShUrl(pkg: string, version: string, external?: readonly st
 export function getReactUrls(version?: string): Record<string, string> {
   const v = version ?? getReactVersion();
   return {
-    react: esmSh("react", v),
-    "react-dom": esmSh("react-dom", v, "", "external=react&target=es2022"),
-    "react-dom/client": esmSh("react-dom", v, "/client", "external=react&target=es2022"),
-    "react-dom/server": esmSh("react-dom", v, "/server", "external=react&target=es2022"),
-    "react/jsx-runtime": esmSh("react", v, "/jsx-runtime", "external=react&target=es2022"),
-    "react/jsx-dev-runtime": esmSh("react", v, "/jsx-dev-runtime", "external=react&target=es2022"),
+    react: esmShReact("react", v),
+    "react-dom": esmShReact("react-dom", v, "", true),
+    "react-dom/client": esmShReact("react-dom", v, "/client", true),
+    "react-dom/server": esmShReact("react-dom", v, "/server", true),
+    "react/jsx-runtime": esmShReact("react", v, "/jsx-runtime", true),
+    "react/jsx-dev-runtime": esmShReact("react", v, "/jsx-dev-runtime", true),
   };
 }
 
@@ -114,7 +121,7 @@ export function getReactImportMap(version?: string): Record<string, string> {
   return {
     ...getReactUrls(v),
     // Prefix match for any react/* subpath imports
-    "react/": esmSh("react", v, "/", "external=react&target=es2022"),
+    "react/": esmShReact("react", v, "/", true),
   };
 }
 
@@ -128,11 +135,11 @@ export function getReactImportMap(version?: string): Record<string, string> {
 export function getDenoNpmReactMap(version?: string): Record<string, string> {
   const v = version ?? getReactVersion();
   return {
-    "react": esmSh("react", v),
-    "react-dom": esmSh("react-dom", v, "", "external=react&target=es2022"),
-    "react-dom/client": esmSh("react-dom", v, "/client", "external=react&target=es2022"),
-    "react-dom/server": esmSh("react-dom", v, "/server", "external=react&target=es2022"),
-    "react/jsx-runtime": esmSh("react", v, "/jsx-runtime", "external=react&target=es2022"),
-    "react/jsx-dev-runtime": esmSh("react", v, "/jsx-dev-runtime", "external=react&target=es2022"),
+    "react": esmShReact("react", v),
+    "react-dom": esmShReact("react-dom", v, "", true),
+    "react-dom/client": esmShReact("react-dom", v, "/client", true),
+    "react-dom/server": esmShReact("react-dom", v, "/server", true),
+    "react/jsx-runtime": esmShReact("react", v, "/jsx-runtime", true),
+    "react/jsx-dev-runtime": esmShReact("react", v, "/jsx-dev-runtime", true),
   };
 }
