@@ -95,6 +95,31 @@ function isInternalBare(specifier: string): boolean {
     specifier.startsWith("@std/");
 }
 
+/**
+ * Check if content appears to be gzip-encoded instead of valid JavaScript.
+ *
+ * The distributed cache may sometimes return gzip-compressed content that wasn't
+ * properly decompressed. This can happen due to:
+ * - API cache backend returning compressed responses
+ * - Network middleware applying compression that isn't decoded
+ * - Cross-pod cache retrieval issues
+ *
+ * Gzip content typically starts with:
+ * - "gz:" prefix (custom encoding marker)
+ * - "H4sI" (base64-encoded gzip magic bytes: 0x1f 0x8b)
+ *
+ * @param content - The content to validate
+ * @returns true if content appears to be gzip-encoded (invalid for .mjs)
+ */
+function isGzipEncodedContent(content: string): boolean {
+  if (!content || content.length < 4) return false;
+
+  // Check for common gzip indicators
+  // "gz:" is a custom prefix sometimes used to mark gzip content
+  // "H4sI" is the base64 encoding of gzip magic bytes (0x1f 0x8b 0x08)
+  return content.startsWith("gz:") || content.startsWith("H4sI");
+}
+
 function normalizeEsmShUrl(url: URL): void {
   if (url.hostname !== "esm.sh") return;
 
@@ -232,11 +257,22 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
       // URLs contain invalid characters like @, ?, =, &, etc.
       const cachedCode = await distributed.get(`url:${hash}`);
       if (cachedCode) {
-        logger.debug("[HTTP-CACHE] Distributed cache hit", { url: normalizedUrl, hash });
-        await fs.mkdir(cacheDir, { recursive: true });
-        await fs.writeTextFile(cachePath, cachedCode);
-        cachedPaths.set(cacheKey, cachePath);
-        return cachePath;
+        // Validate that cached content is valid JavaScript, not gzip-encoded data.
+        // See: https://github.com/veryfront/veryfront-renderer/issues/180
+        if (isGzipEncodedContent(cachedCode)) {
+          logger.warn("[HTTP-CACHE] Distributed cache returned gzip-encoded content, skipping", {
+            url: normalizedUrl,
+            hash,
+            contentPreview: cachedCode.slice(0, 50),
+          });
+          // Fall through to network fetch instead of writing invalid content
+        } else {
+          logger.debug("[HTTP-CACHE] Distributed cache hit", { url: normalizedUrl, hash });
+          await fs.mkdir(cacheDir, { recursive: true });
+          await fs.writeTextFile(cachePath, cachedCode);
+          cachedPaths.set(cacheKey, cachePath);
+          return cachePath;
+        }
       }
     } catch (error) {
       logger.debug("[HTTP-CACHE] Distributed cache get failed", { url: normalizedUrl, error });
@@ -454,33 +490,43 @@ export async function recoverHttpBundleByHash(hash: string, cacheDir: string): P
     // Strategy 1: Direct code lookup by hash (preferred - no URL needed)
     const cachedCode = await distributed.get(`code:${hash}`);
     if (cachedCode) {
-      logger.info("[HTTP-CACHE] Recovering bundle via direct code lookup", { hash });
-      await fs.mkdir(absoluteCacheDir, { recursive: true });
-      await fs.writeTextFile(cachePath, cachedCode);
-      logger.info("[HTTP-CACHE] Bundle recovery successful (direct)", { hash, path: cachePath });
-
-      // Proactively recover transitive deps so the import retry doesn't
-      // fail again with a different missing bundle.
-      const BUNDLE_RE = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
-      const transitiveDeps: Array<{ path: string; hash: string }> = [];
-      let m;
-      while ((m = BUNDLE_RE.exec(cachedCode)) !== null) {
-        const tHash = m[2]!;
-        if (tHash !== hash) {
-          transitiveDeps.push({
-            path: join(absoluteCacheDir, `http-${tHash}.mjs`),
-            hash: tHash,
-          });
-        }
-      }
-      if (transitiveDeps.length > 0) {
-        logger.info("[HTTP-CACHE] Recovering transitive deps from last-resort recovery", {
-          count: transitiveDeps.length,
+      // Validate that cached content is valid JavaScript, not gzip-encoded data.
+      // See: https://github.com/veryfront/veryfront-renderer/issues/180
+      if (isGzipEncodedContent(cachedCode)) {
+        logger.warn("[HTTP-CACHE] Recovery received gzip-encoded content, skipping direct lookup", {
+          hash,
+          contentPreview: cachedCode.slice(0, 50),
         });
-        await ensureHttpBundlesExist(transitiveDeps, cacheDir);
-      }
+        // Fall through to Strategy 2 (URL re-fetch)
+      } else {
+        logger.info("[HTTP-CACHE] Recovering bundle via direct code lookup", { hash });
+        await fs.mkdir(absoluteCacheDir, { recursive: true });
+        await fs.writeTextFile(cachePath, cachedCode);
+        logger.info("[HTTP-CACHE] Bundle recovery successful (direct)", { hash, path: cachePath });
 
-      return true;
+        // Proactively recover transitive deps so the import retry doesn't
+        // fail again with a different missing bundle.
+        const BUNDLE_RE = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
+        const transitiveDeps: Array<{ path: string; hash: string }> = [];
+        let m;
+        while ((m = BUNDLE_RE.exec(cachedCode)) !== null) {
+          const tHash = m[2]!;
+          if (tHash !== hash) {
+            transitiveDeps.push({
+              path: join(absoluteCacheDir, `http-${tHash}.mjs`),
+              hash: tHash,
+            });
+          }
+        }
+        if (transitiveDeps.length > 0) {
+          logger.info("[HTTP-CACHE] Recovering transitive deps from last-resort recovery", {
+            count: transitiveDeps.length,
+          });
+          await ensureHttpBundlesExist(transitiveDeps, cacheDir);
+        }
+
+        return true;
+      }
     }
 
     // Strategy 2: URL lookup then re-fetch (fallback for bundles cached before code:{hash} was added)
@@ -617,6 +663,21 @@ export async function ensureHttpBundlesExist(
                 if (!seen.has(ref.hash)) pending.push(ref);
               }
             } catch { /* ignore read errors for dep scanning */ }
+          }
+          return;
+        }
+
+        // Validate that cached content is valid JavaScript, not gzip-encoded data.
+        // See: https://github.com/veryfront/veryfront-renderer/issues/180
+        if (isGzipEncodedContent(code)) {
+          logger.warn("[HTTP-CACHE] Batch recovery received gzip-encoded content", {
+            hash,
+            contentPreview: code.slice(0, 50),
+          });
+          // Try single-bundle recovery which will use URL re-fetch as fallback
+          const recovered = await recoverHttpBundleByHash(hash, absoluteCacheDir);
+          if (!recovered) {
+            failed.add(hash);
           }
           return;
         }
