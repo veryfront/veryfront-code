@@ -48,6 +48,59 @@ const lastDistributedRefresh = new LRUCache<string, number>({
 });
 const DISTRIBUTED_REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
+/**
+ * Validates that content appears to be valid JavaScript/ESM module code.
+ * Detects common corruption patterns like base64/gzip data that could be
+ * stored due to content-encoding issues or cache corruption.
+ *
+ * @param code - The content to validate
+ * @returns true if the content appears to be valid JS, false otherwise
+ */
+export function isValidJavaScriptContent(code: string): boolean {
+  if (!code || code.length === 0) return false;
+
+  // Check for gzip magic bytes (often appears as "gz:" prefix in our logs)
+  if (code.startsWith("gz:") || code.startsWith("\x1f\x8b")) {
+    return false;
+  }
+
+  // Check for base64-encoded content (long strings of alphanumeric chars without JS syntax)
+  // Valid JS should have syntax characters like {, }, (, ), ;, etc.
+  const first500 = code.substring(0, 500);
+  const hasSyntaxChars = /[{}();=]/.test(first500);
+  const looksLikeBase64 = /^[A-Za-z0-9+/=]{100,}$/.test(first500.replace(/\s/g, ""));
+
+  if (looksLikeBase64 && !hasSyntaxChars) {
+    return false;
+  }
+
+  // Basic check: valid ESM should typically start with common patterns
+  const trimmed = code.trimStart();
+  const validStarts = [
+    "//", // comment
+    "/*", // block comment
+    '"use', // "use strict"
+    "'use", // 'use strict'
+    "import", // import statement
+    "export", // export statement
+    "const", // const declaration
+    "let", // let declaration
+    "var", // var declaration
+    "function", // function declaration
+    "class", // class declaration
+    "async", // async function
+    "(", // IIFE or expression
+    "{", // object or block
+  ];
+
+  const startsWithValid = validStarts.some((start) => trimmed.startsWith(start));
+  if (!startsWithValid && !hasSyntaxChars) {
+    return false;
+  }
+
+  return true;
+}
+
 function ensureAbsoluteDir(path: string): string {
   return isAbsolute(path) ? path : join(cwd(), path);
 }
@@ -185,34 +238,49 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
   const fs = createFileSystem();
 
   if (await exists(cachePath)) {
-    cachedPaths.set(cacheKey, cachePath);
+    // Validate local cache content before using
+    try {
+      const localCode = await fs.readTextFile(cachePath);
+      if (!isValidJavaScriptContent(localCode)) {
+        logger.warn("[HTTP-CACHE] Corrupted local cache file, deleting and re-fetching", {
+          path: cachePath,
+          contentPreview: localCode.substring(0, 100),
+        });
+        await fs.remove?.(cachePath).catch(() => {});
+        // Fall through to re-fetch
+      } else {
+        cachedPaths.set(cacheKey, cachePath);
 
-    // Refresh distributed cache TTL so bundles outlive transforms that reference them.
-    // Without this, bundles expire (24h) while SSR transforms (6h) are still valid.
-    const distributed = await getDistributedCache();
-    if (distributed) {
-      const hash = simpleHash(normalizedUrl);
-      const hashStr = String(hash);
-      const now = Date.now();
-      const lastRefresh = lastDistributedRefresh.get(hashStr);
-      const needsRefresh = !lastRefresh || (now - lastRefresh > DISTRIBUTED_REFRESH_INTERVAL_MS);
+        // Refresh distributed cache TTL so bundles outlive transforms that reference them.
+        // Without this, bundles expire (24h) while SSR transforms (6h) are still valid.
+        const distributed = await getDistributedCache();
+        if (distributed) {
+          const hash = simpleHash(normalizedUrl);
+          const hashStr = String(hash);
+          const now = Date.now();
+          const lastRefresh = lastDistributedRefresh.get(hashStr);
+          const needsRefresh = !lastRefresh || (now - lastRefresh > DISTRIBUTED_REFRESH_INTERVAL_MS);
 
-      if (needsRefresh) {
-        try {
-          const code = await fs.readTextFile(cachePath);
-          await Promise.all([
-            distributed.set(`code:${hash}`, code, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
-            distributed.set(`hash:${hash}`, normalizedUrl, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
-          ]);
-          lastDistributedRefresh.set(hashStr, now);
-          logger.debug("[HTTP-CACHE] Refreshed distributed cache TTL", { hash });
-        } catch (error) {
-          logger.debug("[HTTP-CACHE] Distributed cache refresh failed", { hash, error });
+          if (needsRefresh) {
+            try {
+              await Promise.all([
+                distributed.set(`code:${hash}`, localCode, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
+                distributed.set(`hash:${hash}`, normalizedUrl, HTTP_MODULE_DISTRIBUTED_TTL_SEC),
+              ]);
+              lastDistributedRefresh.set(hashStr, now);
+              logger.debug("[HTTP-CACHE] Refreshed distributed cache TTL", { hash });
+            } catch (error) {
+              logger.debug("[HTTP-CACHE] Distributed cache refresh failed", { hash, error });
+            }
+          }
         }
-      }
-    }
 
-    return cachePath;
+        return cachePath;
+      }
+    } catch (error) {
+      logger.debug("[HTTP-CACHE] Failed to read local cache file", { path: cachePath, error });
+      // Fall through to re-fetch
+    }
   }
 
   if (processingStack.has(normalizedUrl)) {
@@ -227,11 +295,25 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
     try {
       const cachedCode = await distributed.get(normalizedUrl);
       if (cachedCode) {
-        logger.debug("[HTTP-CACHE] Distributed cache hit", { url: normalizedUrl });
-        await fs.mkdir(cacheDir, { recursive: true });
-        await fs.writeTextFile(cachePath, cachedCode);
-        cachedPaths.set(cacheKey, cachePath);
-        return cachePath;
+        // Validate cached content before using
+        if (!isValidJavaScriptContent(cachedCode)) {
+          logger.warn("[HTTP-CACHE] Corrupted content in distributed cache, will re-fetch", {
+            url: normalizedUrl,
+            contentPreview: cachedCode.substring(0, 100),
+          });
+          // Delete corrupted entry
+          try {
+            await distributed.delete?.(normalizedUrl);
+            const hash = simpleHash(normalizedUrl);
+            await distributed.delete?.(`code:${hash}`);
+          } catch { /* ignore delete errors */ }
+        } else {
+          logger.debug("[HTTP-CACHE] Distributed cache hit", { url: normalizedUrl });
+          await fs.mkdir(cacheDir, { recursive: true });
+          await fs.writeTextFile(cachePath, cachedCode);
+          cachedPaths.set(cacheKey, cachePath);
+          return cachePath;
+        }
       }
     } catch (error) {
       logger.debug("[HTTP-CACHE] Distributed cache get failed", { url: normalizedUrl, error });
@@ -267,6 +349,17 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
   }
 
   let code = await response.text();
+
+  // Validate fetched content before processing
+  if (!isValidJavaScriptContent(code)) {
+    logger.error("[HTTP-CACHE] Fetched content appears corrupted or compressed", {
+      url: normalizedUrl,
+      contentPreview: code.substring(0, 100),
+      contentLength: code.length,
+      contentEncoding: response.headers.get("content-encoding"),
+    });
+    throw new Error(`Fetched content from ${normalizedUrl} appears corrupted or compressed`);
+  }
 
   processingStack.add(normalizedUrl);
   try {
@@ -602,6 +695,21 @@ export async function ensureHttpBundlesExist(
               }
             } catch { /* ignore read errors for dep scanning */ }
           }
+          return;
+        }
+
+        // Validate content before writing to prevent corrupted bundles
+        if (!isValidJavaScriptContent(code)) {
+          logger.error("[HTTP-CACHE] Corrupted bundle content from distributed cache", {
+            hash,
+            contentPreview: code.substring(0, 100),
+            contentLength: code.length,
+          });
+          // Delete corrupted entry from distributed cache to prevent future issues
+          try {
+            await distributed.delete?.(`code:${hash}`);
+          } catch { /* ignore delete errors */ }
+          failed.add(hash);
           return;
         }
 

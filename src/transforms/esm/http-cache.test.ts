@@ -4,7 +4,7 @@ import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import { makeTempDir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
-import { ensureHttpBundlesExist } from "./http-cache.ts";
+import { ensureHttpBundlesExist, isValidJavaScriptContent } from "./http-cache.ts";
 
 /** Duplicated from http-cache.ts for isolated unit testing of the pattern. */
 const BUNDLE_RE = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
@@ -222,6 +222,76 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       } finally {
         await cleanupTempDir();
       }
+    });
+  });
+
+  describe("isValidJavaScriptContent", () => {
+    it("returns false for empty content", () => {
+      assertEquals(isValidJavaScriptContent(""), false);
+      assertEquals(isValidJavaScriptContent(null as unknown as string), false);
+      assertEquals(isValidJavaScriptContent(undefined as unknown as string), false);
+    });
+
+    it("returns false for gzip-prefixed content", () => {
+      assertEquals(isValidJavaScriptContent("gz:H4sIAAAAAAAAA9V9a3PjNpbo9/0V..."), false);
+    });
+
+    it("returns false for gzip magic bytes", () => {
+      assertEquals(isValidJavaScriptContent("\x1f\x8bsome compressed data"), false);
+    });
+
+    it("returns false for base64-like content without JS syntax", () => {
+      const base64Content = "EWCywNRqfIyaIfSVOss+2FYfTQ0shWI5ECSdlRZf33BSXZsZ24N7bEj+HMO8OH1NvzEdqC2eXoYqTwyV".repeat(5);
+      assertEquals(isValidJavaScriptContent(base64Content), false);
+    });
+
+    it("returns true for valid import statements", () => {
+      assertEquals(isValidJavaScriptContent('import foo from "bar";'), true);
+      assertEquals(isValidJavaScriptContent("import { a, b } from './module';"), true);
+    });
+
+    it("returns true for valid export statements", () => {
+      assertEquals(isValidJavaScriptContent("export const foo = 1;"), true);
+      assertEquals(isValidJavaScriptContent("export default function() {}"), true);
+    });
+
+    it("returns true for valid function declarations", () => {
+      assertEquals(isValidJavaScriptContent("function foo() { return 1; }"), true);
+      assertEquals(isValidJavaScriptContent("async function bar() { await fetch(); }"), true);
+    });
+
+    it("returns true for valid const/let/var declarations", () => {
+      assertEquals(isValidJavaScriptContent("const x = 1;"), true);
+      assertEquals(isValidJavaScriptContent("let y = 2;"), true);
+      assertEquals(isValidJavaScriptContent("var z = 3;"), true);
+    });
+
+    it("returns true for valid class declarations", () => {
+      assertEquals(isValidJavaScriptContent("class Foo { constructor() {} }"), true);
+    });
+
+    it("returns true for content starting with comments", () => {
+      assertEquals(isValidJavaScriptContent("// comment\nconst x = 1;"), true);
+      assertEquals(isValidJavaScriptContent("/* block */\nexport default {};"), true);
+    });
+
+    it("returns true for use strict", () => {
+      assertEquals(isValidJavaScriptContent('"use strict";\nconst x = 1;'), true);
+      assertEquals(isValidJavaScriptContent("'use strict';\nconst x = 1;"), true);
+    });
+
+    it("returns true for IIFE patterns", () => {
+      assertEquals(isValidJavaScriptContent("(function() { return 1; })();"), true);
+      assertEquals(isValidJavaScriptContent("(() => 1)();"), true);
+    });
+
+    it("returns true for object/block patterns", () => {
+      assertEquals(isValidJavaScriptContent("{ const x = 1; }"), true);
+    });
+
+    it("returns true for content with JS syntax chars even with unusual start", () => {
+      // Content that doesn't start with common patterns but has JS syntax
+      assertEquals(isValidJavaScriptContent("_internal = function() {};"), true);
     });
   });
 });
