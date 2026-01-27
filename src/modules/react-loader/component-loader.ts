@@ -31,6 +31,7 @@ export function loadComponentFromSource(
         const loader = new SSRModuleLoader({
           projectDir,
           projectId,
+          projectSlug: options?.projectSlug,
           adapter,
           dev,
           contentSourceId: options?.contentSourceId,

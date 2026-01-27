@@ -74,7 +74,9 @@ async function initializeCacheDir(context: ESMLoaderContext): Promise<string> {
 
   const localFs = getLocalFs();
   const baseCacheDir = getMdxEsmCacheDir();
-  const projectKey = encodeURIComponent(context.projectId);
+  // Use projectSlug when available to match SSRModuleLoader's directory structure
+  // This ensures all modules for a project share the same cache directory
+  const projectKey = encodeURIComponent(context.projectSlug || context.projectId);
   const sourceKey = encodeURIComponent(context.contentSourceId);
   const persistentCacheDir = join(baseCacheDir, projectKey, sourceKey);
 
