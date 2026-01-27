@@ -14,7 +14,7 @@
 | D006 Timeout Hierarchy | PROPOSED | Task 023 |
 | D007 Error Response Format | OPEN | Task 024 |
 | D008 Adapter Interface | PROPOSED | Task 016 |
-| D009 React Version Strategy | OPEN | Task 008 |
+| D009 React Version Strategy | DECIDED | Task 008 |
 | D010 Test Utility API | OPEN | Task 032 |
 
 ---
@@ -41,6 +41,7 @@ P1: MULTI-TENANT STABILITY (depends on P0)
 │  008 React Cache by Version                             │
 │  009 AI Registry (depends on 002)                       │
 │  010 Tailwind Compiler                                  │
+│  039 Tailwind Cache Environment Scope                   │
 │  027 Cache Key Standard (depends on 026)                │
 │  028 In-Flight Deduplication                            │
 │  029 Error Collector (depends on 002)                   │
@@ -127,6 +128,7 @@ P4: CODE CONSOLIDATION (lowest priority, do last)
 | [036](./036-dependency-tracking-complete.md) | Dependency Tracking Complete | P2 | 011 | [004.2-5](../004.2-unused-depshash-infrastructure.md) |
 | [037](./037-router-param-unification.md) | Router Param Unification | P3 | - | [005.3](../005.3-duplicated-route-params-extraction.md), [005.4](../005.4-layout-collector-router-branching.md) |
 | [038](./038-agent-cache-isolation.md) | Agent Cache Isolation | P2 | 027 | [013.2](../013.2-agent-cache-project-isolation.md) |
+| [039](./039-tailwind-cache-environment-scope.md) | Tailwind Cache Environment Scope | P1 | - | [002.9](../002.9-tailwind-cache-environment-scope.md) |
 
 ## Priority Definitions
 

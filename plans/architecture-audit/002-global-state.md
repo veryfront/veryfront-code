@@ -23,6 +23,7 @@ The veryfront-renderer codebase contains **critical global state issues** that c
 | [002.6-in-progress-deadlock.md](002.6-in-progress-deadlock.md) | In-Progress Transforms Deadlock Risk | HIGH | Analysis |
 | [002.7-failed-components-collision.md](002.7-failed-components-collision.md) | Failed Components Error State Collision | HIGH | Analysis |
 | [002.8-tailwind-compiler-state.md](002.8-tailwind-compiler-state.md) | Tailwind Compiler Shared State | MEDIUM | Analysis |
+| [002.9-tailwind-cache-environment-scope.md](002.9-tailwind-cache-environment-scope.md) | Tailwind CSS Cache Missing Environment | HIGH | Analysis |
 
 ---
 
