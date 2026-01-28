@@ -28,11 +28,22 @@ export interface CSSErrorInfo {
 }
 
 let tailwindBaseCSS: string | null = null;
-let compiler: Awaited<ReturnType<typeof compile>> | null = null;
-let lastStylesheetHash = "";
 
-const pluginCache = new Map<string, unknown>();
-const pluginErrors = new Map<string, string>();
+/**
+ * LRU cache for Tailwind compilers, keyed by stylesheet hash.
+ * Prevents race conditions when multiple concurrent requests use different stylesheets.
+ * Each entry stores the compiler and its associated plugin state.
+ */
+interface CompilerCacheEntry {
+  compiler: Awaited<ReturnType<typeof compile>>;
+  createdAt: number;
+  pluginCache: Map<string, unknown>;
+  pluginErrors: Map<string, string>;
+}
+
+const compilerCache = new Map<string, CompilerCacheEntry>();
+const MAX_CACHED_COMPILERS = 10;
+
 
 let cssCache: CacheBackend | null = null;
 let cssCacheInitPromise: Promise<CacheBackend> | null = null;
@@ -76,6 +87,12 @@ registerCache("project-css-cache", () => ({
   entries: projectCSSLocalFallback.size,
   maxEntries: PROJECT_CSS_LOCAL_FALLBACK_MAX,
   backend: projectCSSBackend?.type ?? "uninitialized",
+}));
+
+registerCache("tailwind-compiler-cache", () => ({
+  name: "tailwind-compiler-cache",
+  entries: compilerCache.size,
+  maxEntries: MAX_CACHED_COMPILERS,
 }));
 
 interface ProjectCSSCacheEntry {
@@ -574,7 +591,11 @@ export function extractCandidatesFromFiles(
   return candidates;
 }
 
-async function loadPlugin(id: string): Promise<unknown> {
+async function loadPlugin(
+  id: string,
+  pluginCache: Map<string, unknown>,
+  pluginErrors: Map<string, string>,
+): Promise<unknown> {
   if (pluginCache.has(id)) {
     const errorMsg = pluginErrors.get(id);
     if (errorMsg) throw new Error(errorMsg);
@@ -622,13 +643,19 @@ async function loadPlugin(id: string): Promise<unknown> {
 
 export function clearPluginCache(id?: string): void {
   if (id) {
-    pluginCache.delete(id);
-    pluginErrors.delete(id);
+    // Clear specific plugin from all compiler caches
+    for (const entry of compilerCache.values()) {
+      entry.pluginCache.delete(id);
+      entry.pluginErrors.delete(id);
+    }
     return;
   }
 
-  pluginCache.clear();
-  pluginErrors.clear();
+  // Clear all plugin caches
+  for (const entry of compilerCache.values()) {
+    entry.pluginCache.clear();
+    entry.pluginErrors.clear();
+  }
 }
 
 async function getTailwindBaseCSS(): Promise<string> {
@@ -648,13 +675,23 @@ async function getTailwindBaseCSS(): Promise<string> {
 
 async function getCompiler(stylesheet: string): Promise<Awaited<ReturnType<typeof compile>>> {
   const hash = hashString(stylesheet);
-  if (compiler && hash === lastStylesheetHash) return compiler;
+
+  // Check LRU cache
+  const cached = compilerCache.get(hash);
+  if (cached) {
+    logger.debug("[tailwind] Compiler cache hit", { hash });
+    return cached.compiler;
+  }
 
   logger.debug("[tailwind] Creating new compiler", { hash });
 
   const tailwindBase = await getTailwindBaseCSS();
 
-  compiler = await compile(stylesheet, {
+  // Create new plugin caches for this stylesheet
+  const pluginCache = new Map<string, unknown>();
+  const pluginErrors = new Map<string, string>();
+
+  const newCompiler = await compile(stylesheet, {
     base: "/",
     loadStylesheet: (id: string) => {
       if (id === "tailwindcss") {
@@ -664,7 +701,7 @@ async function getCompiler(stylesheet: string): Promise<Awaited<ReturnType<typeo
       return Promise.resolve({ content: "", base: "/", path: "/" });
     },
     loadModule: async (id: string) => {
-      const plugin = await loadPlugin(id);
+      const plugin = await loadPlugin(id, pluginCache, pluginErrors);
       // If plugin is null (not installed in Node.js), return empty module to prevent crash
       // The stylesheet will compile but plugin-specific features won't work
       // deno-lint-ignore no-explicit-any
@@ -672,13 +709,56 @@ async function getCompiler(stylesheet: string): Promise<Awaited<ReturnType<typeo
     },
   });
 
-  lastStylesheetHash = hash;
-  return compiler;
+  // Evict oldest entry if at capacity
+  if (compilerCache.size >= MAX_CACHED_COMPILERS) {
+    let oldestKey: string | null = null;
+    let oldestTime = Infinity;
+    for (const [key, entry] of compilerCache) {
+      if (entry.createdAt < oldestTime) {
+        oldestTime = entry.createdAt;
+        oldestKey = key;
+      }
+    }
+    if (oldestKey) {
+      compilerCache.delete(oldestKey);
+      logger.debug("[tailwind] Evicted oldest compiler from cache", { hash: oldestKey });
+    }
+  }
+
+  // Store in cache
+  compilerCache.set(hash, {
+    compiler: newCompiler,
+    createdAt: Date.now(),
+    pluginCache,
+    pluginErrors,
+  });
+
+  return newCompiler;
 }
 
 export function invalidateCompiler(): void {
-  compiler = null;
-  lastStylesheetHash = "";
+  compilerCache.clear();
+  logger.debug("[tailwind] All compilers invalidated");
+}
+
+/**
+ * Get compiler cache statistics for monitoring.
+ */
+export function getCompilerCacheStats(): {
+  size: number;
+  maxSize: number;
+  entries: Array<{ hash: string; createdAt: number; pluginCount: number }>;
+} {
+  const entries = Array.from(compilerCache.entries()).map(([hash, entry]) => ({
+    hash,
+    createdAt: entry.createdAt,
+    pluginCount: entry.pluginCache.size,
+  }));
+  return {
+    size: compilerCache.size,
+    maxSize: MAX_CACHED_COMPILERS,
+    entries,
+  };
 }
 
 export async function generateTailwindCSS(
