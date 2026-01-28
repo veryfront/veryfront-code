@@ -1,7 +1,6 @@
 import { join } from "#veryfront/platform/compat/path-helper.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import type { EntityInfo, LayoutItem, MdxBundle } from "#veryfront/types";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { getLayoutEntity } from "#veryfront/types/entities/getEntityInfo.ts";
@@ -13,10 +12,6 @@ import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 
 function getLayoutKind(path: string): "mdx" | "tsx" {
   return path.endsWith(".mdx") || path.endsWith(".md") ? "mdx" : "tsx";
-}
-
-function isValidLayoutPath(layout: string): boolean {
-  return /\.(tsx|jsx|ts|js|mdx|md)$/.test(layout);
 }
 
 /**
@@ -297,71 +292,24 @@ export class LayoutCollector {
     const pageFilePath = pageInfo.entity.path;
     const useAppRouter = await detectAppRouter(this.projectDir, this.config, this.adapter);
 
-    const fs = this.adapter?.fs;
-    const isVeryfrontAPI = !!fs && isExtendedFSAdapter(fs) && fs.isVeryfrontAdapter();
-
-    if (isVeryfrontAPI && fs && isExtendedFSAdapter(fs)) {
-      return await this.collectAPILayoutConfiguration(fs.getUnderlyingAdapter());
-    }
-
-    return await this.collectFilesystemLayouts(pageFilePath, useAppRouter);
+    // Unified path for ALL adapters - discoverNestedLayouts uses adapter.fs.stat()
+    // which works for both filesystem and API adapters
+    return await this.collectLayoutsUnified(pageFilePath, useAppRouter);
   }
 
-  private async collectAPILayoutConfiguration(wrappedAdapter: unknown): Promise<LayoutItem[]> {
-    const configLayout = this.config?.layout;
-
-    if (configLayout === false) {
-      logger.debug("[LayoutCollector] Layout disabled via config.layout: false");
-      return [];
-    }
-
-    const checker: FileExistenceChecker = {
-      exists: (path: string) =>
-        (wrappedAdapter as { exists: (path: string) => Promise<boolean> }).exists.call(
-          wrappedAdapter,
-          path,
-        ),
-    };
-
-    if (configLayout && isValidLayoutPath(configLayout)) {
-      const layoutPath = configLayout.startsWith("/") || configLayout.startsWith(this.projectDir)
-        ? configLayout
-        : join(this.projectDir, configLayout);
-
-      const layoutExists = await checker.exists(layoutPath);
-
-      logger.debug("[LayoutCollector] Checking config layout", {
-        configLayout,
-        layoutPath,
-        exists: layoutExists,
-      });
-
-      if (!layoutExists) {
-        throw new Error(
-          `Layout file not found: "${configLayout}" (resolved to "${layoutPath}"). ` +
-            `Check your veryfront.config.ts 'layout' setting.`,
-        );
-      }
-
-      return [await this.createLayoutItemWithBundle(layoutPath)];
-    }
-
-    if (!configLayout) {
-      const layoutPath = await discoverComponentsLayoutPath(this.projectDir, checker);
-      if (layoutPath) {
-        logger.debug("[LayoutCollector] Added default components layout", { layoutPath });
-        return [createLayoutItem(layoutPath)];
-      }
-    }
-
-    return [];
-  }
-
-  private async collectFilesystemLayouts(
+  private async collectLayoutsUnified(
     pageFilePath: string,
     useAppRouter: boolean,
   ): Promise<LayoutItem[]> {
     const rootDir = useAppRouter ? join(this.projectDir, "app") : join(this.projectDir, "pages");
+
+    logger.debug("[LayoutCollector] collectLayoutsUnified", {
+      pageFilePath,
+      useAppRouter,
+      rootDir,
+      projectDir: this.projectDir,
+    });
+
     const nestedLayouts = await discoverNestedLayouts(
       pageFilePath,
       rootDir,
@@ -371,10 +319,14 @@ export class LayoutCollector {
 
     // If nested layouts found, use them
     if (nestedLayouts.length > 0) {
+      logger.debug("[LayoutCollector] Found nested layouts", {
+        count: nestedLayouts.length,
+        paths: nestedLayouts.map((l) => l.path),
+      });
       return nestedLayouts;
     }
 
-    // Fallback: check components/layout.* (consistent with API adapter behavior)
+    // Fallback: check components/layout.*
     return await this.checkComponentsLayoutFallback();
   }
 
