@@ -127,3 +127,29 @@ jobs:
         run: |
           VF_DISABLE_LRU_INTERVAL=1 NODE_ENV=production LOG_FORMAT=text ${{ matrix.command }}
         continue-on-error: true  # Tests may not pass yet on all runtimes
+
+  # ============================================
+  # TRIGGER STAGING DEPLOYMENT
+  # Only runs on push to main after tests pass
+  # ============================================
+
+  trigger-staging:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [format, lint, typecheck, unit-tests, integration-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          VERYFRONT_RELEASE_TOKEN: op://VERYFRONT_CI/GITHUB_VERYFRONT_PAT/credential
+
+      - name: Trigger veryfront-cloud-renderer staging deployment
+        run: |
+          curl -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ env.VERYFRONT_RELEASE_TOKEN }}" \
+            https://api.github.com/repos/veryfront/veryfront-cloud-renderer/dispatches \
+            -d '{"event_type":"deploy-staging","client_payload":{"sha":"${{ github.sha }}"}}'
