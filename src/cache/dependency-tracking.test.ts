@@ -12,7 +12,8 @@ describe("Dependency tracking cache invalidation", () => {
     it("should produce different hash when dependency content changes", async () => {
       const helperV1 = "export function helper() { return 'v1'; }\n";
       const helperV2 = "export function helper() { return 'v2'; }\n";
-      const mainCode = `import { helper } from "./helper.ts";\nexport default function() { return helper(); }\n`;
+      const mainCode =
+        `import { helper } from "./helper.ts";\nexport default function() { return helper(); }\n`;
 
       const files1 = new Map<string, string>([
         ["/project/pages/index.js", mainCode], // entry normalized to .js
@@ -46,7 +47,8 @@ describe("Dependency tracking cache invalidation", () => {
     });
 
     it("should produce same hash when unrelated file changes", async () => {
-      const mainCode = `import { helper } from "./helper.ts";\nexport default function() { return helper(); }\n`;
+      const mainCode =
+        `import { helper } from "./helper.ts";\nexport default function() { return helper(); }\n`;
       const helperCode = "export function helper() { return 'stable'; }\n";
 
       const getContent = (p: string) => {
@@ -65,8 +67,10 @@ describe("Dependency tracking cache invalidation", () => {
     });
 
     it("should detect transitive dependency changes", async () => {
-      const mainCode = `import { format } from "./formatter.ts";\nexport default function() { return format(); }\n`;
-      const formatterCode = `import { utils } from "./utils.ts";\nexport function format() { return utils(); }\n`;
+      const mainCode =
+        `import { format } from "./formatter.ts";\nexport default function() { return format(); }\n`;
+      const formatterCode =
+        `import { utils } from "./utils.ts";\nexport function format() { return utils(); }\n`;
       const utilsV1 = "export function utils() { return 'v1'; }\n";
       const utilsV2 = "export function utils() { return 'v2'; }\n";
 

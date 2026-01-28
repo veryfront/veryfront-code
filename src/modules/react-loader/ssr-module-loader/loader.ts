@@ -12,6 +12,7 @@ import { transformToESM } from "#veryfront/transforms/esm/index.ts";
 import type { TransformOptions } from "#veryfront/transforms/esm/types.ts";
 import { TRANSFORM_CACHE_VERSION } from "#veryfront/transforms/esm/package-registry.ts";
 import { buildSSRModuleCacheKey } from "../../../cache/keys.ts";
+import { computeConfigHashSync } from "../../../cache/config-hash.ts";
 import {
   type CrossProjectImport,
   type MissingImport,
@@ -114,8 +115,20 @@ const verifiedHttpBundlePaths = new LRUCache<string, true>({ maxEntries: 2000 })
 export class SSRModuleLoader {
   private fs = createFileSystem();
   private missingDependencies: MissingImport[] = [];
+  private cachedConfigHash: string | undefined;
 
   constructor(private options: SSRModuleLoaderOptions) {}
+
+  /** Lazily compute config hash once per loader instance. */
+  private getConfigHash(): string {
+    if (!this.cachedConfigHash) {
+      this.cachedConfigHash = computeConfigHashSync({
+        reactVersion: this.options.reactVersion,
+        dev: this.options.dev,
+      });
+    }
+    return this.cachedConfigHash;
+  }
 
   /**
    * Load and transform a module for SSR.
@@ -288,12 +301,13 @@ export class SSRModuleLoader {
         `Missing contentSourceId for SSR module cache (project: ${this.options.projectId}, file: ${filePath})`,
       );
     }
-    // Include reactVersion in cache key to ensure different versions don't share cached modules
+    // Include reactVersion and config hash to ensure different configs don't share cached modules
     const reactVersion = this.options.reactVersion ?? "default";
+    const configHash = this.getConfigHash();
     return buildSSRModuleCacheKey(
       TRANSFORM_CACHE_VERSION,
       this.options.projectId,
-      `${this.options.contentSourceId}:${reactVersion}:${filePath}`,
+      `${this.options.contentSourceId}:${reactVersion}:${configHash}:${filePath}`,
     );
   }
 

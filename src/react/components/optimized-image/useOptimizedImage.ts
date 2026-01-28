@@ -23,7 +23,12 @@ export function useOptimizedImage(
     type: `image/${format}`,
   }));
 
-  const fallback = getOptimizedPath(src, getImageExtension(src), RESPONSIVE_IMAGE_WIDTH_LG, quality);
+  const fallback = getOptimizedPath(
+    src,
+    getImageExtension(src),
+    RESPONSIVE_IMAGE_WIDTH_LG,
+    quality,
+  );
 
   return { sources, fallback };
 }

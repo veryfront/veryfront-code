@@ -67,12 +67,12 @@ export function runPipeline(
       // Compute dependency hash when file reader is available
       const depsHash = options.readFile
         ? await computeDepsHash(filePath, options.readFile, projectDir).catch((err) => {
-            logger.debug("[PIPELINE] depsHash computation failed, skipping", {
-              file: filePath.slice(-60),
-              error: err instanceof Error ? err.message : String(err),
-            });
-            return undefined;
-          })
+          logger.debug("[PIPELINE] depsHash computation failed, skipping", {
+            file: filePath.slice(-60),
+            error: err instanceof Error ? err.message : String(err),
+          });
+          return undefined;
+        })
         : undefined;
 
       const cacheKey = generateCacheKey(
@@ -160,12 +160,10 @@ export async function transformToESM(
   }
 
   // Extract readFile from adapter for dependency tracking
-  const enrichedOptions = options.readFile
-    ? options
-    : {
-        ...options,
-        readFile: extractReadFile(adapter),
-      };
+  const enrichedOptions = options.readFile ? options : {
+    ...options,
+    readFile: extractReadFile(adapter),
+  };
 
   const { code } = await runPipeline(source, filePath, projectDir, enrichedOptions);
   return code;
