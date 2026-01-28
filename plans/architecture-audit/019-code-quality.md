@@ -4,24 +4,28 @@
 
 Code quality issues discovered during gap analysis that increase maintenance burden and bug risk.
 
-## Risk Summary
+## Status: ✅ VALIDATED & PARTIALLY RESOLVED (2026-01-28)
 
-| Category | Count | Impact |
+## Risk Summary (Updated)
+
+| Category | Count | Status |
 |----------|-------|--------|
-| Duplicated functions | 4+ implementations | Bug fix in one, not others |
-| Large files | 5 files >1000 LOC | Hard to navigate/test |
-| Naming inconsistency | 15 categories | Cognitive load |
-| Cache key patterns | 30+ variants | No standardization |
+| Duplicated getExtension() | 6 → 1 canonical | ✅ RESOLVED |
+| Duplicated normalizePath() | 5+ → 1 inline replaced | ⚠️ PARTIAL |
+| Duplicated isVirtualFilesystem() | 2 → 1 shared | ✅ RESOLVED |
+| Cache key patterns | 7 adhoc remaining | ⚠️ DEFERRED (working correctly) |
+| Large files | 7 files >1000 LOC | ⚠️ DEFERRED (cohesive) |
+| Naming inconsistency | 5% deviation | ⚠️ DEFERRED (95%+ consistent) |
 
 ## Sub-Analyses
 
-| Doc | Issue | Scope |
-|-----|-------|-------|
-| [019.1](./019.1-getextension-duplication.md) | getExtension() 4x | 4 implementations |
-| [019.2](./019.2-normalizepath-duplication.md) | normalizePath() 5x | 5+ implementations |
-| [019.3](./019.3-cache-key-patterns.md) | Cache Key Builder 30x | 30+ patterns |
-| [019.4](./019.4-file-complexity.md) | Files >1000 LOC | 5 files |
-| [019.5](./019.5-naming-inconsistencies.md) | Naming Conflicts | 15 categories |
+| Doc | Issue | Status |
+|-----|-------|--------|
+| [019.1](./019.1-getextension-duplication.md) | getExtension() 6 impls | ✅ RESOLVED — consolidated to path-utils.ts |
+| [019.2](./019.2-normalizepath-duplication.md) | normalizePath() 5+ impls | ⚠️ PARTIAL — 1 inline replaced, rest serve distinct purposes |
+| [019.3](./019.3-cache-key-patterns.md) | Cache Key Builder | ⚠️ DEFERRED — central builder already exists |
+| [019.4](./019.4-file-complexity.md) | Files >1000 LOC | ⚠️ DEFERRED — files are cohesive |
+| [019.5](./019.5-naming-inconsistencies.md) | Naming Conflicts | ⚠️ DEFERRED — 95%+ consistent |
 
 ## Duplication Analysis
 

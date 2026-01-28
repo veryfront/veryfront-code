@@ -56,6 +56,22 @@ All HIGH/CRITICAL issues resolved. P2 items completed 2026-01-28.
 | 010.3: VeryfrontError Consolidation | ~5 days | ✅ Completed - Renamed type to VeryfrontErrorData |
 | Silent catch cleanup | ~3 days | ✅ Completed - Added SILENT comments to 16 empty catch blocks |
 
+### P4 - Code Quality ✅ ASSESSED
+
+| Issue | Status |
+|-------|--------|
+| 019.1: getExtension() duplication | ✅ RESOLVED — 6 impls consolidated to `path-utils.ts` |
+| 019.2: normalizePath() duplication | ⚠️ PARTIAL — 1 inline replaced, rest serve distinct purposes |
+| 001.3: isVirtualFilesystem() duplication | ✅ RESOLVED — unified to `wrapper.ts` |
+| 001.5: Config/middleware predicate divergence | ⚠️ PARTIAL — predicate fixed, loading paths by-design |
+| 019.3: Cache key patterns | ⚠️ DEFERRED — central builder already exists |
+| 019.4: File complexity (>1000 LOC) | ⚠️ DEFERRED — files are cohesive |
+| 019.5: Naming inconsistencies | ⚠️ DEFERRED — 95%+ consistent |
+| 001.2: Unsafe type casting | ⚠️ DEFERRED — 379 usages, most with runtime guards |
+| 001.6: CSS cache key divergence | ⚠️ DEFERRED — by-design adapter differences |
+| 015.1-015.4: Test infrastructure | ⚠️ DEFERRED — isolation already exists, enhancements are roadmap items |
+| 011.3-011.5: Import rewriting tech debt | ⚠️ DEFERRED — P2 unification plan documented |
+
 ## Chapter Status
 
 | Chapter | Topic | Status | Critical | High | Medium | Progress |
@@ -114,9 +130,9 @@ All HIGH/CRITICAL issues resolved. P2 items completed 2026-01-28.
 |----|-------|----------|-----------|--------|
 | 001.1 | Layout Bug - Nested layouts | CRITICAL | ✅ CRITICAL | **FIXED** (60972782) |
 | 001.2 | Unsafe Type Casting | HIGH | ⚠️ MEDIUM | Most have runtime guards |
-| 001.3 | Duplicated isVirtualFilesystem | HIGH | ⚠️ MEDIUM | 2 implementations |
+| 001.3 | Duplicated isVirtualFilesystem | HIGH | ✅ RESOLVED | **FIXED** — unified to shared `isVirtualFilesystem()` in wrapper.ts |
 | 001.4 | Layout Cache No Scope | CRITICAL | ⚠️ HIGH | **FIXED** (60972782) |
-| 001.5 | Config/Middleware Divergence | HIGH | ⚠️ MEDIUM | Predicate divergence only |
+| 001.5 | Config/Middleware Divergence | HIGH | ⚠️ PARTIAL | Predicate fixed (001.3); loading path divergence is by-design |
 | 001.6 | CSS Cache Key Divergence | MEDIUM | ⚠️ MEDIUM | Local FS uses static key |
 
 ## Chapter 003 Validation Summary
@@ -267,13 +283,13 @@ All HIGH/CRITICAL issues resolved. P2 items completed 2026-01-28.
 
 | ID | Issue | Original | Validated | Action |
 |----|-------|----------|-----------|--------|
-| 019.1 | getExtension() Duplication | P4 | P4 | Refactoring opportunity |
-| 019.2 | normalizePath() Duplication | P4 | P4 | Refactoring opportunity |
-| 019.3 | Cache Key Patterns | P4 | P4 | Partially addressed by cache key standardization |
-| 019.4 | File Complexity (>1000 LOC) | P4 | P4 | Refactoring opportunity |
-| 019.5 | Naming Inconsistencies | P4 | P4 | Refactoring opportunity |
+| 019.1 | getExtension() Duplication | P4 | ✅ RESOLVED | Consolidated 6 impls → `getExtension()` + `getExtensionName()` in path-utils |
+| 019.2 | normalizePath() Duplication | P4 | ⚠️ PARTIAL | 1 inline replaced; security/platform impls serve distinct purposes |
+| 019.3 | Cache Key Patterns | P4 | ⚠️ DEFERRED | Central builder already exists; 7 adhoc patterns work correctly |
+| 019.4 | File Complexity (>1000 LOC) | P4 | ⚠️ DEFERRED | 7 files identified but all cohesive — splitting adds indirection |
+| 019.5 | Naming Inconsistencies | P4 | ⚠️ DEFERRED | 95%+ consistent; not worth a sweep |
 
-**Note**: All P4 code quality items. No bugs or security issues — only maintenance burden reduction opportunities.
+**Note**: 019.1 fully resolved. 019.2 partially resolved. 019.3-019.5 assessed and deferred — low ROI.
 
 ## Validation Reports
 
@@ -307,6 +323,9 @@ All HIGH/CRITICAL issues resolved. P2 items completed 2026-01-28.
 | 016.5 | JSON.parse - Protected unguarded parse calls | 42126bcf | 2026-01-28 |
 | 017.1 | Cache Stampede - In-flight promise deduplication in memoize | pending | 2026-01-28 |
 | 017.2 | Global Regex - Per-call regex creation in extractBundleRefs | pending | 2026-01-28 |
+| 001.3 | isVirtualFilesystem - Unified to shared function in wrapper.ts | pending | 2026-01-28 |
+| 001.5 | Config/middleware predicate - Fixed via 001.3 unification | pending | 2026-01-28 |
+| 019.1 | getExtension() - Consolidated 6 impls to path-utils.ts | pending | 2026-01-28 |
 
 ---
 
