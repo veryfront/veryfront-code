@@ -1,5 +1,6 @@
 import type { ComponentProps } from "#veryfront/types";
 import { resolveRelativePath } from "#veryfront/modules/react-loader/path-resolver.ts";
+import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 import type { HTMLGenerationOptions } from "../types.ts";
 import type { HydrationDataStructure } from "./types.ts";
 
@@ -17,7 +18,8 @@ const PAGE_TYPE_EXTENSIONS = new Set(["mdx", "tsx", "jsx", "ts", "js"] as const)
 type PageType = "mdx" | "tsx" | "jsx" | "ts" | "js";
 
 function inferPageType(pagePath?: string): PageType | undefined {
-  const ext = pagePath?.split(".").pop()?.toLowerCase();
+  if (!pagePath) return undefined;
+  const ext = getExtensionName(pagePath);
   if (!ext) return undefined;
 
   return PAGE_TYPE_EXTENSIONS.has(ext as PageType) ? (ext as PageType) : undefined;

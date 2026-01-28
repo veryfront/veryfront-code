@@ -2,7 +2,7 @@ import type { VeryfrontConfig } from "./types.ts";
 import { findUnknownTopLevelKeys, validateVeryfrontConfig } from "./schema.ts";
 import { dirname, extname, join } from "#veryfront/platform/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import { isVirtualFilesystem } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { isBun } from "#veryfront/platform/compat/runtime.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
@@ -182,24 +182,7 @@ function mergeConfigs(userConfig: Partial<VeryfrontConfig>): VeryfrontConfig {
   return merged;
 }
 
-// Virtual filesystem adapters that require special config loading
-const VIRTUAL_FS_ADAPTERS = new Set([
-  "VeryfrontFSAdapter",
-  "MultiProjectFSAdapter",
-  "GitHubFSAdapter",
-]);
-
-/**
- * Check if the adapter is using a virtual filesystem (e.g., Veryfront API, GitHub)
- */
-function isVirtualFilesystem(adapter: RuntimeAdapter): boolean {
-  const fs = adapter?.fs;
-  if (!fs || typeof fs !== "object") return false;
-  if (!isExtendedFSAdapter(fs)) return false;
-
-  if (fs.isVeryfrontAdapter()) return true;
-  return VIRTUAL_FS_ADAPTERS.has(fs.getAdapterType());
-}
+// isVirtualFilesystem is now imported from the shared wrapper module
 
 /**
  * Validate config and cache it.
@@ -296,7 +279,7 @@ async function loadAndMergeConfig(
   cacheKey: string,
   adapter: RuntimeAdapter,
 ): Promise<VeryfrontConfig> {
-  if (isVirtualFilesystem(adapter)) {
+  if (isVirtualFilesystem(adapter.fs)) {
     return loadConfigFromVirtualFS(configPath, cacheKey, adapter);
   }
 
@@ -356,7 +339,7 @@ export function getConfig(
   return withSpan(
     SpanNames.CONFIG_LOAD,
     async () => {
-      const isVirtualFS = isVirtualFilesystem(adapter);
+      const isVirtualFS = isVirtualFilesystem(adapter.fs);
       const effectiveCacheKey = buildConfigCacheKey(
         isVirtualFS && options?.cacheKey ? options.cacheKey : projectDir,
         isVirtualFS && !!options?.cacheKey,

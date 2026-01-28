@@ -1,5 +1,5 @@
 import { RESPONSIVE_IMAGE_WIDTH_LG, RESPONSIVE_IMAGE_WIDTHS } from "#veryfront/utils";
-import { generateSrcSet, getExtension, getOptimizedPath } from "./helpers.ts";
+import { generateSrcSet, getImageExtension, getOptimizedPath } from "./helpers.ts";
 
 const DEFAULT_SIZES = [...RESPONSIVE_IMAGE_WIDTHS];
 const DEFAULT_FORMATS: Array<"avif" | "webp" | "jpeg"> = ["avif", "webp", "jpeg"];
@@ -23,7 +23,7 @@ export function useOptimizedImage(
     type: `image/${format}`,
   }));
 
-  const fallback = getOptimizedPath(src, getExtension(src), RESPONSIVE_IMAGE_WIDTH_LG, quality);
+  const fallback = getOptimizedPath(src, getImageExtension(src), RESPONSIVE_IMAGE_WIDTH_LG, quality);
 
   return { sources, fallback };
 }

@@ -3,7 +3,7 @@ import { MiddlewarePipeline } from "#veryfront/middleware/core/pipeline/index.ts
 import { cors } from "#veryfront/security";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import { isVirtualFilesystem } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { dirname, join } from "#veryfront/platform/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
@@ -79,11 +79,7 @@ export function createRequestLoggerMiddleware(): MiddlewareFunction {
   };
 }
 
-function isVirtualFilesystem(adapter: RuntimeAdapter): boolean {
-  const fs = adapter?.fs;
-  if (!fs || typeof fs !== "object") return false;
-  return isExtendedFSAdapter(fs) && fs.isVeryfrontAdapter();
-}
+// isVirtualFilesystem is now imported from the shared wrapper module
 
 async function loadMiddlewareFile(
   projectDir: string,
@@ -98,7 +94,7 @@ async function loadMiddlewareFile(
     try {
       logger.debug(`[MIDDLEWARE] Loading ${middlewareFile}`);
 
-      if (isVirtualFilesystem(adapter)) {
+      if (isVirtualFilesystem(adapter.fs)) {
         return await loadMiddlewareFromVirtualFS(middlewarePath, adapter);
       }
 

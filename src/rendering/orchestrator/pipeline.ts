@@ -15,6 +15,7 @@
  */
 
 import { rendererLogger as logger } from "#veryfront/utils";
+import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 import { createBuildVersion } from "#veryfront/utils/version.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
@@ -286,7 +287,7 @@ export class RenderPipeline {
         let dataFetchingProps: Record<string, unknown> | undefined;
         const layoutDataMap = new Map<string, Record<string, unknown>>();
 
-        const fileExtension = pageInfo.entity.path.split(".").pop()!.toLowerCase();
+        const fileExtension = getExtensionName(pageInfo.entity.path);
         const isComponentPage = ["tsx", "jsx", "ts", "js"].includes(fileExtension);
         const isInPagesDir = pageInfo.entity.path.includes("/pages/");
         const isInAppDir = pageInfo.entity.path.includes("/app/");
@@ -538,7 +539,7 @@ export class RenderPipeline {
       : await this.config.layoutOrchestrator.collectLayouts(pageInfo);
 
     const pagePath = extractRelativePathShared(pageInfo.entity.path, this.config.projectDir);
-    const fileExtension = pageInfo.entity.path.split(".").pop()!.toLowerCase();
+    const fileExtension = getExtensionName(pageInfo.entity.path);
     const pageType = fileExtension as PageDataResponse["pageType"];
     const isComponentPage = ["tsx", "jsx", "ts", "js"].includes(fileExtension);
     const isInPagesDir = pageInfo.entity.path.includes("/pages/");

@@ -1,5 +1,6 @@
 import * as BundledReact from "react";
 import { rendererLogger as logger } from "#veryfront/utils";
+import { normalizePath } from "#veryfront/utils/path-utils.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
 type ReservedComponent = BundledReact.ComponentType<{ error?: Error; reset?: () => void }>;
@@ -11,7 +12,7 @@ export const RESERVED_COMPONENTS = {
 };
 
 export function collectAncestorDirs(segmentDir: string, appRootDir: string): string[] {
-  const normalize = (p: string) => p.replace(/\\+/g, "/").replace(/\/\.+\//g, "/");
+  const normalize = (p: string) => normalizePath(p);
   const getDirname = (p: string) => normalize(p).replace(/\/?[^/]+\/?$/, "");
 
   const dirs: string[] = [];

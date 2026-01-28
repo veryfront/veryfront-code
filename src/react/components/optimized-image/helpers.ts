@@ -20,6 +20,12 @@ export function generateSrcSet(
     .join(", ");
 }
 
-export function getExtension(src: string): string {
-  return src.match(/\.([^.]+)$/)?.[1]?.toLowerCase() ?? "jpeg";
+import { getExtensionName } from "../../../utils/path-utils.ts";
+
+/**
+ * Get image file extension, defaulting to "jpeg" if none found.
+ */
+export function getImageExtension(src: string): string {
+  const ext = getExtensionName(src);
+  return ext || "jpeg";
 }

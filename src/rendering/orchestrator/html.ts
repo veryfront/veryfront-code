@@ -1,4 +1,5 @@
 import { join } from "#veryfront/platform/compat/path-helper.ts";
+import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { HTMLGenerationOptions } from "#veryfront/html";
 import {
@@ -277,7 +278,7 @@ export class HTMLGenerator {
     );
 
     // Determine pageType from file extension
-    const fileExtension = context.pageInfo.entity.path.split(".").pop()?.toLowerCase();
+    const fileExtension = getExtensionName(context.pageInfo.entity.path);
     const pageType = fileExtension as "mdx" | "md" | "tsx" | "jsx" | "ts" | "js" | undefined;
 
     const sourceHash = context.options?.studioEmbed && context.pageInfo.entity.content
