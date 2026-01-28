@@ -6,6 +6,8 @@ import {
 import { rendererLogger as logger } from "#veryfront/utils";
 import { createTransformContext, formatTimingLog, recordStageTiming } from "./context.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { computeConfigHash } from "../../cache/config-hash.ts";
+import { computeDepsHash } from "../../cache/dependency-graph.ts";
 import type {
   PipelineConfig,
   TransformOptions,
@@ -54,11 +56,31 @@ export function runPipeline(
       const ctx = await createTransformContext(source, filePath, projectDir, options);
       ctx.debug = config?.debug ?? false;
 
+      // Compute config hash (cheap, no I/O)
+      const configHash = await computeConfigHash({
+        reactVersion: ctx.reactVersion,
+        jsxImportSource: ctx.jsxImportSource,
+        studioEmbed: ctx.studioEmbed,
+        dev: ctx.dev,
+      });
+
+      // Compute dependency hash when file reader is available
+      const depsHash = options.readFile
+        ? await computeDepsHash(filePath, options.readFile, projectDir).catch((err) => {
+            logger.debug("[PIPELINE] depsHash computation failed, skipping", {
+              file: filePath.slice(-60),
+              error: err instanceof Error ? err.message : String(err),
+            });
+            return undefined;
+          })
+        : undefined;
+
       const cacheKey = generateCacheKey(
         filePath,
         ctx.contentHash,
         options.ssr ?? false,
         options.studioEmbed ?? false,
+        { depsHash, configHash, projectId: options.projectId },
       );
 
       const cached = await getCachedTransformAsync(cacheKey);
@@ -130,15 +152,29 @@ export async function transformToESM(
   source: string,
   filePath: string,
   projectDir: string,
-  _adapter: unknown,
+  adapter: unknown,
   options: TransformOptions,
 ): Promise<string> {
   if (filePath.endsWith(".css") || filePath.endsWith(".json")) {
     return source;
   }
 
-  const { code } = await runPipeline(source, filePath, projectDir, options);
+  // Extract readFile from adapter for dependency tracking
+  const enrichedOptions = options.readFile
+    ? options
+    : {
+        ...options,
+        readFile: extractReadFile(adapter),
+      };
+
+  const { code } = await runPipeline(source, filePath, projectDir, enrichedOptions);
   return code;
+}
+
+/** Extract readFile from adapter if available, for dependency hash computation. */
+function extractReadFile(adapter: unknown): ((path: string) => Promise<string>) | undefined {
+  const a = adapter as { fs?: { readFile?: (path: string) => Promise<string> } } | null;
+  return typeof a?.fs?.readFile === "function" ? (p: string) => a.fs!.readFile!(p) : undefined;
 }
 
 export function getDefaultPlugins(ssr: boolean): TransformPlugin[] {
