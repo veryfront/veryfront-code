@@ -4,6 +4,98 @@ Complete trace of a user request through every layer, cache, and adapter.
 
 ---
 
+## Quick Visual (Mermaid)
+
+```mermaid
+flowchart TB
+    subgraph USER["👤 User Request"]
+        REQ["GET https://myapp.veryfront.com/dashboard"]
+    end
+
+    subgraph PROXY["1️⃣ PROXY"]
+        direction TB
+        P1["Extract project from domain"]
+        P2["Get OAuth token"]
+        P3["Forward to renderer"]
+
+        P1 --> P2 --> P3
+
+        PC1[("🔴 domainCache<br/>Map, no eviction")]
+        PC2[("🔴 tokenCache<br/>Redis/Memory")]
+
+        P1 -.-> PC1
+        P2 -.-> PC2
+    end
+
+    subgraph RENDERER["2️⃣ RENDERER"]
+        direction TB
+
+        subgraph INIT["Init"]
+            R1["Create request context<br/>(AsyncLocalStorage)"]
+            R2["Select file adapter"]
+            R3["Load config"]
+        end
+
+        subgraph ROUTE["Route Resolution"]
+            R4["Detect router type"]
+            R5["Match route pattern"]
+            R6["Discover layouts"]
+        end
+
+        subgraph LOAD["Component Loading"]
+            R7["Load page component"]
+            R8["Transform pipeline"]
+            R9["Load HTTP modules"]
+        end
+
+        subgraph STYLE["Styling"]
+            R10["Compile Tailwind CSS"]
+        end
+
+        subgraph RENDER["Rendering"]
+            R11["SSR render"]
+            R12["Inject CSS + hydration"]
+        end
+
+        INIT --> ROUTE --> LOAD --> STYLE --> RENDER
+
+        RC1[("🟡 configCache<br/>Map")]
+        RC2[("🟡 routerCache<br/>LRU 100")]
+        RC3[("🔴 layoutCache<br/>Map, no eviction")]
+        RC4[("🟢 moduleCache<br/>LRU 500")]
+        RC5[("🟢 transformCache<br/>Distributed")]
+        RC6[("🟢 cssCache<br/>Distributed")]
+        RC7[("🟢 renderCache<br/>Distributed")]
+
+        R3 -.-> RC1
+        R4 -.-> RC2
+        R6 -.-> RC3
+        R7 -.-> RC4
+        R8 -.-> RC5
+        R10 -.-> RC6
+        R11 -.-> RC7
+    end
+
+    subgraph RESPONSE["📄 Response"]
+        RES["HTML + CSS + JS"]
+    end
+
+    REQ --> PROXY
+    PROXY --> RENDERER
+    RENDERER --> RES
+
+    style PC1 fill:#ffcccc
+    style RC3 fill:#ffcccc
+    style RC4 fill:#ccffcc
+    style RC5 fill:#ccffcc
+    style RC6 fill:#ccffcc
+    style RC7 fill:#ccffcc
+```
+
+**Legend:** 🔴 No eviction (memory leak risk) | 🟡 LRU (bounded) | 🟢 Distributed + TTL (proper eviction)
+
+---
+
 ## High-Level Overview
 
 ```
