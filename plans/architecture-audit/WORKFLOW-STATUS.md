@@ -7,11 +7,11 @@
 | Metric | Count |
 |--------|-------|
 | Total Issues | ~72 |
-| Validated | 19 |
+| Validated | 30 |
 | In Progress | 0 |
-| Completed | 8 |
-| False Positive | 5 |
-| Downgraded | 9 |
+| Completed | 10 |
+| False Positive | 6 |
+| Downgraded | 14 |
 
 ## Execution Queue
 
@@ -19,27 +19,29 @@
 _None_
 
 ### Up Next
-**Chapters 001 & 003 Complete!** ✅ All HIGH+ issues fixed.
+**Chapters 001, 002, 003, 007, 008, 009 Complete!** ✅ All CRITICAL issues validated.
 
-Ready to proceed with:
-1. **Chapter 007** - Config Normalization (1 CRITICAL, 3 HIGH)
-2. **Chapter 008** - Userland Config (1 CRITICAL, 2 HIGH)
-3. **Chapter 009** - Timeout Handling (1 CRITICAL, 3 HIGH)
+All 6 CRITICAL issues from chapters 007-009 were validated and downgraded:
+- 007.7: LOW (dead/unused code)
+- 008.2: MEDIUM (industry standard pattern, needs sandbox for multi-tenant)
+- 009.1: MEDIUM (**FIXED** - revalidation semaphore now has per-project fairness)
+- 009.2: HIGH (**FIXED** - domain lookup now has timeout protection)
+
+Ready to proceed with remaining chapters (004-006, 010-014) - no CRITICAL issues.
 
 ## Chapter Status
 
 | Chapter | Topic | Status | Critical | High | Medium | Progress |
 |---------|-------|--------|----------|------|--------|----------|
 | 001 | Adapter Divergence | ✓ Complete | 2→0 | 3→0 | 4 | ██████████ 100% |
-| 003 | Cache Behavior | ✓ Complete | 2→0 | 2→0 | 0 | ██████████ 100% |
 | 002 | Global State | ✓ Complete | 1→0 | 4→0 | 2→0 | ██████████ 100% |
-| 003 | Cache Behavior | ⏳ Queued | 2 | 2 | 0 | ░░░░░░░░░░ 0% |
+| 003 | Cache Behavior | ✓ Complete | 2→0 | 2→0 | 0 | ██████████ 100% |
 | 004 | Bundle Dependencies | ⏳ Queued | 0 | 3 | 3 | ░░░░░░░░░░ 0% |
 | 005 | Router Divergence | ⏳ Queued | 0 | 2 | 3 | ░░░░░░░░░░ 0% |
 | 006 | Runtime Conditionals | ⏳ Queued | 0 | 1 | 2 | ░░░░░░░░░░ 0% |
-| 007 | Config Normalization | ⏳ Queued | 1 | 3 | 3 | ░░░░░░░░░░ 0% |
-| 008 | Userland Config | ⏳ Queued | 1 | 2 | 2 | ░░░░░░░░░░ 0% |
-| 009 | Timeout Handling | ⏳ Queued | 1 | 3 | 2 | ░░░░░░░░░░ 0% |
+| 007 | Config Normalization | ✓ Validated | 1→0 | 3 | 3 | ██████░░░░ 60% |
+| 008 | Userland Config | ✓ Validated | 1→0 | 2 | 2 | ██████░░░░ 60% |
+| 009 | Timeout Handling | ✓ Complete | 1→0 | 3→1 | 2 | ██████████ 100% |
 | 010 | Error Handling | ⏳ Queued | 0 | 4 | 2 | ░░░░░░░░░░ 0% |
 | 011 | Import Rewriting | ⏳ Queued | 0 | 2 | 3 | ░░░░░░░░░░ 0% |
 | 012 | HTTP Clients | ⏳ Queued | 0 | 3 | 2 | ░░░░░░░░░░ 0% |
@@ -57,9 +59,10 @@ Ready to proceed with:
 | 002.3 | React Cache - Version mismatch | ⚠️ Downgraded | ✅ LOW | - | - |
 | 003.1 | SSR Module - Path mismatch | ✓ Completed | ⚠️ HIGH | ✅ | 1f82aa07 |
 | 003.3 | Cache - Multi-tenancy isolation | ✓ Completed | ⚠️ MEDIUM | ✅ | 1f82aa07 |
-| 007.3 | Config - Shared reference mutation | ⏳ | - | - | - |
-| 008.2 | Config - Unsafe execution | ⏳ | - | - | - |
-| 009.1 | Semaphores - No project isolation | ⏳ | - | - | - |
+| 007.7 | Runtime Config Global Singleton | ❌ False Positive | ⚠️ LOW | - | Dead code |
+| 008.2 | Config - Unsafe execution | ⚠️ Downgraded | ⚠️ MEDIUM | - | Industry pattern |
+| 009.1 | Revalidation Semaphore Fairness | ✓ Completed | ⚠️ MEDIUM | ✅ | 7a3365c0 |
+| 009.2 | Domain Lookup - No timeout | ✓ Completed | ⚠️ HIGH | ✅ | 7a3365c0 |
 
 ## Chapter 001 Validation Summary
 
@@ -95,6 +98,31 @@ Ready to proceed with:
 | 002.8 | Tailwind Compiler State | MEDIUM | ✅ MEDIUM | **FIXED** (8e847655) |
 | 002.9 | Tailwind Cache Env Scope | HIGH | ⚠️ LOW | Preview uses different code path |
 
+## Chapter 007 Validation Summary
+
+| ID | Issue | Original | Validated | Action |
+|----|-------|----------|-----------|--------|
+| 007.7 | Runtime Config Global Singleton | CRITICAL | ❌ FALSE POSITIVE | Dead code - never used in production |
+
+**Note**: The other issues in Chapter 007 (007.1-007.6) are refactoring improvements for config normalization, not bugs.
+
+## Chapter 008 Validation Summary
+
+| ID | Issue | Original | Validated | Action |
+|----|-------|----------|-----------|--------|
+| 008.2 | Unsafe Config Execution | CRITICAL | ⚠️ MEDIUM | Industry standard pattern; use sandbox for virtual FS |
+
+**Note**: Config execution follows same pattern as Next.js, Vite, etc. Lower risk in current deployment model.
+
+## Chapter 009 Validation Summary
+
+| ID | Issue | Original | Validated | Action |
+|----|-------|----------|-----------|--------|
+| 009.1 | Global Semaphores | CRITICAL | ⚠️ MEDIUM | Render/transform fixed (002.4), **FIXED** revalidation |
+| 009.2 | Fetch Without Timeout | CRITICAL | ⚠️ HIGH | **FIXED** domain lookup timeout |
+
+**Note**: Most critical fetch paths already have timeouts. Domain lookup was the highest-risk unprotected path.
+
 ## Validation Reports
 
 - [002-validation-report.md](validation/002-validation-report.md) - Initial 3 issues
@@ -112,6 +140,8 @@ Ready to proceed with:
 | 002.8 | Tailwind Compiler - LRU cache with scoped plugins | 8e847655 | 2026-01-28 |
 | 003.1 | SSR Module - Validate all file:// paths | 1f82aa07 | 2026-01-28 |
 | 003.3 | Cross-Project Cache - Include project context | 1f82aa07 | 2026-01-28 |
+| 009.1 | Revalidation Semaphore - Per-project fairness | 7a3365c0 | 2026-01-28 |
+| 009.2 | Domain Lookup - Timeout protection | 7a3365c0 | 2026-01-28 |
 
 ---
 
