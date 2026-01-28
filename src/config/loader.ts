@@ -122,7 +122,9 @@ function validateConfigShape(userConfig: unknown): void {
 
   const unknown = findUnknownTopLevelKeys(userConfig as Record<string, unknown>);
   if (unknown.length > 0) {
-    serverLogger.warn(`Unknown config keys: ${unknown.join(", ")}. These will be ignored.`);
+    throw new ConfigValidationError(
+      `Unknown config keys: ${unknown.join(", ")}. Check for typos in veryfront.config.`,
+    );
   }
 }
 

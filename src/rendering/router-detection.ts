@@ -18,9 +18,6 @@ import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 // Re-export from app-route-resolver for backward compatibility
 export { getAppRouteEntity } from "./app-route-resolver.ts";
 
-// Re-export from route-params-extractor for backward compatibility
-export { extractAppRouteParams, extractPagesRouteParams } from "./route-params-extractor.ts";
-
 const routerDetectionCache = new LRUCache<string, boolean>({
   maxEntries: 200,
   ttlMs: 60_000,

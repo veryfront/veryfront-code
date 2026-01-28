@@ -9,11 +9,11 @@
 | Total Issues | ~92 |
 | Validated | 92 |
 | In Progress | 0 |
-| Completed | 30 |
+| Completed | 34 |
 | False Positive | 9 |
 | Downgraded | 30 |
 | Already Mitigated | 5 |
-| Tech Debt (P2-P4) | ~20 |
+| Tech Debt (P2-P4) | ~4 deferred |
 
 ## Execution Queue
 

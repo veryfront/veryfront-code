@@ -146,12 +146,12 @@ P4: CODE CONSOLIDATION (lowest priority, do last)
 | [029](./029-error-collector-isolation.md) | Error Collector Isolation | P1 | ⚠️ Downgraded — dev tooling only | [010.2](../010.2-global-error-collector.md) |
 | [030](./030-ssg-app-router-support.md) | SSG App Router Support | P2 | ✅ Fixed (34ab1029) | [005.2](../005.2-ssg-getallpages-missing-app-router.md) |
 | [031](./031-deployment-mode-consistency.md) | Deployment Mode Consistency | P2 | ✅ Fixed (d7b53ac0) | [014.0](../014.0-deployment-modes-rfc.md) |
-| [032](./032-multi-tenant-test-utils.md) | Multi-Tenant Test Utils | P2 | Deferred — test infra roadmap | [015.0](../015.0-testability-rfc.md) |
+| [032](./032-multi-tenant-test-utils.md) | Multi-Tenant Test Utils | P2 | ✅ Done — withTenants + assertIsolated helpers | [015.0](../015.0-testability-rfc.md) |
 | [033](./033-type-safety-adapter-checks.md) | Type Safety & Adapter Checks | P3 | ⚠️ Deferred — most have runtime guards | [001.2](../001.2-unsafe-type-casting.md) |
-| [034](./034-config-schema-validation.md) | Config Schema Validation | P2 | ⚠️ Deferred — low priority | [007.1-6](../007.1-router-format-mismatch.md) |
+| [034](./034-config-schema-validation.md) | Config Schema Validation | P2 | ✅ Fixed — unknown keys now throw | [007.1-6](../007.1-router-format-mismatch.md) |
 | [035](./035-fetch-timeout-coverage.md) | Fetch Timeout Coverage | P1 | ✅ Fixed (7a3365c0, d7b53ac0) | [009.2](../009.2-fetch-calls-without-timeout.md) |
 | [036](./036-dependency-tracking-complete.md) | Dependency Tracking Complete | P2 | ✅ Fixed (7629b537) | [004.2-5](../004.2-unused-depshash-infrastructure.md) |
-| [037](./037-router-param-unification.md) | Router Param Unification | P3 | ⚠️ Deferred — low priority | [005.3](../005.3-duplicated-route-params-extraction.md) |
+| [037](./037-router-param-unification.md) | Router Param Unification | P3 | ✅ Closed — dead code deleted | [005.3](../005.3-duplicated-route-params-extraction.md) |
 | [038](./038-agent-cache-isolation.md) | Agent Cache Isolation | P2 | ✅ Fixed (d7b53ac0) | [013.2](../013.2-agent-cache-project-isolation.md) |
 | [039](./039-tailwind-cache-environment-scope.md) | Tailwind Cache Environment Scope | P1 | ⚠️ Downgraded — preview uses different path | [002.9](../002.9-tailwind-cache-environment-scope.md) |
 
@@ -176,7 +176,7 @@ P4: CODE CONSOLIDATION (lowest priority, do last)
 | [054](./054-transform-cache-lru.md) | Transform Cache LRU | P2 | ✅ Mitigated — LRU 500 + TTL | [018.5](../018.5-transform-cache-eviction.md) |
 | [055](./055-path-utils-consolidation.md) | Path Utils Consolidation | P4 | ✅ Fixed (6fbf6ba9) | [019.1](../019.1-getextension-duplication.md) |
 | [056](./056-large-file-decomposition.md) | Large File Decomposition | P4 | ⚠️ Deferred — files are cohesive | [019.4](../019.4-file-complexity.md) |
-| [057](./057-naming-conventions.md) | Naming Conventions | P4 | ⚠️ Deferred — 95%+ consistent | [019.5](../019.5-naming-inconsistencies.md) |
+| [057](./057-naming-conventions.md) | Naming Conventions | P4 | ✅ Closed — 95%+ consistent, enforce via review | [019.5](../019.5-naming-inconsistencies.md) |
 
 ## Priority Definitions
 
@@ -193,21 +193,19 @@ P4: CODE CONSOLIDATION (lowest priority, do last)
 All P0/P1 security and stability issues are resolved. Remaining items are deferred code quality improvements with no production impact.
 
 ### Outstanding deferred work (optional, low priority)
-1. **016** - Unified adapter interface (P3 architectural refactor)
+1. **016** - Unified adapter interface (P3 architectural refactor, ~3 weeks)
 2. **022** - HTTP client consolidation (P4 code quality)
 3. **023** - Timeout centralization (P4 code quality)
-4. **032** - Multi-tenant test utilities (P2 test infra)
-5. **056** - Large file decomposition (P4 code quality)
-6. **057** - Naming conventions (P4 code quality)
+4. **056** - Large file decomposition (P4, advanced-tools.ts 2K LOC)
 
 ## Total: 57 Tasks
 
 | Category | Count |
 |----------|-------|
-| ✅ Fixed / Done | 30 |
+| ✅ Fixed / Done / Closed | 34 |
 | ❌ False positive | 5 |
-| ⚠️ Downgraded / Deferred | 17 |
-| Deferred (code consolidation) | 5 |
+| ⚠️ Downgraded / Deferred | 14 |
+| Deferred (code consolidation) | 4 |
 | **Total** | **57** |
 
 ## Coverage Mapping
