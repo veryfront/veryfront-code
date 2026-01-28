@@ -245,10 +245,13 @@ async function generateHTMLShellPartsImpl(
     tailwindCSSBlock = `<link rel="stylesheet" href="/_vf/css/${cssHash}.css">`;
   } else if (useProductionCSS && !cssHash) {
     // CSS generation failed — log error prominently and omit link to avoid /_vf/css/.css 404
-    serverLogger.error("[HTML] Tailwind CSS hash is empty — CSS link omitted. CSS generation likely failed.", {
-      projectSlug,
-      environment: options.environment,
-    });
+    serverLogger.error(
+      "[HTML] Tailwind CSS hash is empty — CSS link omitted. CSS generation likely failed.",
+      {
+        projectSlug,
+        environment: options.environment,
+      },
+    );
   } else {
     // Dev/preview: use link tag for HMR cache-busting
     tailwindCSSBlock =

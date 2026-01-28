@@ -30,7 +30,7 @@ describe("Config validation", () => {
     });
   });
 
-  it("warns for unknown top-level keys", async () => {
+  it("rejects unknown top-level keys", async () => {
     await withTestContext("config-unknown-keys", async (context) => {
       const adapter = await getAdapter();
       // Remove the default config created by TestContext
@@ -44,20 +44,11 @@ describe("Config validation", () => {
       } as const`,
       );
 
-      // Capture console.warn temporarily
-      const origWarn = console.warn;
-      let warned = false;
-      console.warn = (...args: unknown[]) => {
-        warned = true;
-        origWarn.apply(console, args as any);
-      };
-
-      const cfg = await getConfig(context.projectDir, adapter);
-      console.warn = origWarn;
-      if (!warned) throw new Error("expected unknown key warning");
-      if (cfg.router !== "pages") {
-        throw new Error("router should pass validation");
-      }
+      await assertRejects(
+        () => getConfig(context.projectDir, adapter),
+        Error,
+        "Unknown config keys: notARealKey",
+      );
 
       clearConfigCache();
     });

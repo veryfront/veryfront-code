@@ -972,7 +972,7 @@ describe("bootstrap - Error Handling", () => {
     }
   });
 
-  it("should handle circular config references", async () => {
+  it("should reject circular config with unknown keys", async () => {
     const adapter = await getAdapter();
     const projectDir = await createTempDir("circular_ref");
 
@@ -985,16 +985,17 @@ describe("bootstrap - Error Handling", () => {
          export default config;`,
       );
 
-      const result = await bootstrap(projectDir, adapter);
-
-      assertExists(result);
-      assertEquals(result.config.title, "Circular");
+      await assertRejects(
+        () => bootstrap(projectDir, adapter),
+        Error,
+        "Unknown config keys: self",
+      );
     } finally {
       await cleanupTempDir(projectDir);
     }
   });
 
-  it("should handle config with functions", async () => {
+  it("should reject config with unknown function keys", async () => {
     const adapter = await getAdapter();
     const projectDir = await createTempDir("functions");
 
@@ -1008,10 +1009,11 @@ describe("bootstrap - Error Handling", () => {
         };`,
       );
 
-      const result = await bootstrap(projectDir, adapter);
-
-      assertExists(result);
-      assertEquals(result.config.title, "Functions");
+      await assertRejects(
+        () => bootstrap(projectDir, adapter),
+        Error,
+        "Unknown config keys: onBuild",
+      );
     } finally {
       await cleanupTempDir(projectDir);
     }
@@ -1241,7 +1243,7 @@ describe("bootstrap - Edge Cases", () => {
           description: 'All keys',
           experimental: { esmLayouts: true },
           router: 'app',
-          defaultLayout: './layout.tsx',
+          layout: './layout.tsx',
           theme: { colors: { primary: '#000' } },
           build: { outDir: 'dist', trailingSlash: false },
           cache: { dir: '.cache' },

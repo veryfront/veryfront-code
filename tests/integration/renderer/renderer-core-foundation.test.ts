@@ -66,7 +66,7 @@ describe(
             `export default {
               title: "Custom Config Test",
               description: "Custom description",
-              defaultLayout: "main"
+              layout: "main"
             };`,
           );
 
@@ -242,7 +242,7 @@ layout: main
 
           await writeTextFile(
             join(context.projectDir, "veryfront.config.js"),
-            `export default { defaultLayout: "main" };`,
+            `export default { layout: "main" };`,
           );
 
           await mkdir(join(context.projectDir, "layouts"), { recursive: true });

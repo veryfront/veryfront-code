@@ -67,8 +67,12 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest("export default null;");
 
       try {
-        const config = await getConfig(projectDir, adapter);
-        assertExists(config);
+        // null export results in { default: null } which has unknown key "default"
+        await assertRejects(
+          () => getConfig(projectDir, adapter),
+          Error,
+          "Unknown config keys",
+        );
       } finally {
         await cleanup();
         clearConfigCache();
@@ -79,8 +83,12 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest("export default undefined;");
 
       try {
-        const config = await getConfig(projectDir, adapter);
-        assertExists(config);
+        // undefined export results in { default: undefined } which has unknown key "default"
+        await assertRejects(
+          () => getConfig(projectDir, adapter),
+          Error,
+          "Unknown config keys",
+        );
       } finally {
         await cleanup();
         clearConfigCache();
@@ -245,7 +253,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
   });
 
   describe("Unknown config keys", () => {
-    it("should warn about unknown top-level keys", async () => {
+    it("should reject unknown top-level keys", async () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest(`
         export default {
           title: 'My App',
@@ -256,17 +264,18 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       `);
 
       try {
-        // Should load but warn about unknown keys
-        const config = await getConfig(projectDir, adapter);
-        assertExists(config);
-        assertEquals(config.title, "My App");
+        await assertRejects(
+          () => getConfig(projectDir, adapter),
+          Error,
+          "Unknown config keys",
+        );
       } finally {
         await cleanup();
         clearConfigCache();
       }
     });
 
-    it("should handle config with only unknown keys", async () => {
+    it("should reject config with only unknown keys", async () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest(`
         export default {
           unknownKey1: 'value',
@@ -275,10 +284,11 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       `);
 
       try {
-        const config = await getConfig(projectDir, adapter);
-        assertExists(config);
-        // Should have defaults
-        assertExists(config.title);
+        await assertRejects(
+          () => getConfig(projectDir, adapter),
+          Error,
+          "Unknown config keys",
+        );
       } finally {
         await cleanup();
         clearConfigCache();
@@ -540,7 +550,7 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       }
     });
 
-    it("should handle config with circular references", async () => {
+    it("should reject config with circular references containing unknown keys", async () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest(`
         const config = { title: 'Circular' };
         config.self = config;
@@ -548,15 +558,18 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       `);
 
       try {
-        const config = await getConfig(projectDir, adapter);
-        assertExists(config);
+        await assertRejects(
+          () => getConfig(projectDir, adapter),
+          Error,
+          "Unknown config keys: self",
+        );
       } finally {
         await cleanup();
         clearConfigCache();
       }
     });
 
-    it("should handle config with functions", async () => {
+    it("should reject config with unknown function keys", async () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest(`
         export default {
           title: 'Functions',
@@ -568,8 +581,11 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       `);
 
       try {
-        const config = await getConfig(projectDir, adapter);
-        assertExists(config);
+        await assertRejects(
+          () => getConfig(projectDir, adapter),
+          Error,
+          "Unknown config keys",
+        );
       } finally {
         await cleanup();
         clearConfigCache();
@@ -649,14 +665,14 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       }
     });
 
-    it("should handle TS config with type errors", async () => {
+    it("should reject TS config with unknown keys", async () => {
       const { projectDir, adapter, cleanup } = await setupConfigTest(
         [
           {
             content: `
         const config = {
           title: 'TS',
-          port: 'should-be-number' // Type error
+          port: 'should-be-number'
         };
         export default config;
       `,
@@ -666,8 +682,11 @@ describe("Config Loader - Edge Cases and Error Handling", () => {
       );
 
       try {
-        const config = await getConfig(projectDir, adapter);
-        assertExists(config);
+        await assertRejects(
+          () => getConfig(projectDir, adapter),
+          Error,
+          "Unknown config keys: port",
+        );
       } finally {
         await cleanup();
         clearConfigCache();

@@ -1,7 +1,7 @@
 // Disable LRU intervals during testing to prevent resource leaks
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 
-import { assertEquals } from "@veryfront/testing/assert";
+import { assertEquals, assertRejects } from "@veryfront/testing/assert";
 import { describe, it } from "@veryfront/testing/bdd";
 import { getAdapter } from "@veryfront/platform";
 import { clearConfigCache, getConfig, type VeryfrontConfig } from "@veryfront/config";
@@ -116,7 +116,7 @@ describe("config/loader", () => {
     });
   });
 
-  it("warns about unknown keys", async () => {
+  it("rejects unknown keys", async () => {
     await withTestContext("config-unknown-keys", async (context) => {
       // Remove the default config created by TestContext
       await remove(`${context.projectDir}/veryfront.config.js`);
@@ -128,22 +128,12 @@ describe("config/loader", () => {
       );
       clearConfigCache();
 
-      // Capture console.warn
-      const warnings: string[] = [];
-      const originalWarn = console.warn;
-      console.warn = (msg: string) => warnings.push(msg);
-
-      try {
-        const adapter = await getAdapter();
-        const cfg = await getConfig(context.projectDir, adapter);
-        assertEquals(cfg.title, "Test");
-        assertEquals(warnings.length > 0, true);
-        assertEquals(warnings[0]?.includes("Unknown config keys"), true);
-        assertEquals(warnings[0]?.includes("unknownKey"), true);
-        assertEquals(warnings[0]?.includes("anotherUnknown"), true);
-      } finally {
-        console.warn = originalWarn;
-      }
+      const adapter = await getAdapter();
+      await assertRejects(
+        () => getConfig(context.projectDir, adapter),
+        Error,
+        "Unknown config keys: unknownKey, anotherUnknown",
+      );
     });
   });
 

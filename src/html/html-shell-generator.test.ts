@@ -143,6 +143,33 @@ describe("html-generation/html-shell-generator", () => {
       );
     });
 
+    it("should not emit /_vf/css/.css when CSS hash is empty", async () => {
+      // Bug regression: when Tailwind compilation fails, cssHash is ""
+      // and the old code emitted <link href="/_vf/css/.css"> which 404s.
+      // Trigger empty hash by using projectId "default" (skips CSS generation).
+      const result = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta({ slug: "default" }),
+        createOptions({
+          mode: "production",
+          environment: "production",
+          isLocalDev: false,
+          projectId: "default",
+        }),
+      );
+
+      // Must NOT contain the broken empty-hash CSS link
+      assert(
+        !result.includes('href="/_vf/css/.css"'),
+        "Should not emit /_vf/css/.css with empty hash",
+      );
+      // Should still have the Tailwind CSS comment section
+      assertStringIncludes(
+        result,
+        "<!-- Tailwind CSS: Server-side JIT compiled -->",
+      );
+    });
+
     it("should include hydration data script", async () => {
       const result = await wrapInHTMLShell(
         "<div>Content</div>",
