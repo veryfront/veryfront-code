@@ -7,11 +7,12 @@
 | Metric | Count |
 |--------|-------|
 | Total Issues | ~72 |
-| Validated | 41 |
+| Validated | 44 |
 | In Progress | 0 |
-| Completed | 23 |
+| Completed | 24 |
 | False Positive | 7 |
 | Downgraded | 16 |
+| Tech Debt (P2/P3) | ~25 |
 
 ## Execution Queue
 
@@ -24,6 +25,7 @@ _None_
 Chapters complete: 001, 002, 003, 005, 006, 007, 009, 010, 011, 012, 013, 014
 
 Recent fixes:
+- 010.3: **QUICK FIX** - Improved toError() stack trace capture (5af5ff4c)
 - 011.1: **FIXED** - Scoped unversioned import warnings by project (af121bea)
 - 006.1: **FIXED** - Unified SSR detection to prevent hydration mismatches (1926ff65)
 - 007.3: **FIXED** - Fresh defaults per-request prevents config contamination (5c33cc85)
@@ -33,10 +35,23 @@ Recent fixes:
 - 013.2: **FIXED** - Agent cache project isolation (d7b53ac0)
 - 014.1: **FIXED** - NODE_ENV startup validation (d7b53ac0)
 
-Remaining work (all MEDIUM/LOW - code quality refactorings):
-- 004: Bundle Dependencies - P2 tech debt (depsHash infrastructure exists but not connected)
-- 011.2-011.5: Import rewriting unification - P2 tech debt (230 lines duplication)
-- 010.3: Dual VeryfrontError unification - P3 tech debt (94 files, major refactor)
+## Tech Debt Backlog (P2/P3)
+
+All HIGH/CRITICAL issues resolved. Remaining items are code quality improvements:
+
+### P2 - Medium Priority (Future Sprints)
+
+| Issue | Effort | Description |
+|-------|--------|-------------|
+| 004: Dependency Tracking | ~14 days | Connect depsHash to transform cache keys (RFC exists) |
+| 011.2-011.5: Import Unification | ~10 days | Unified import rewriter with strategy pattern (RFC exists) |
+
+### P3 - Low Priority (Opportunistic)
+
+| Issue | Effort | Description |
+|-------|--------|-------------|
+| 010.3: VeryfrontError Consolidation | ~5 days | Rename type to VeryfrontErrorData, update 92 files |
+| Silent catch cleanup | ~3 days | Add `// SILENT:` comments to 150+ empty catch blocks |
 
 ## Chapter Status
 
@@ -212,6 +227,7 @@ Remaining work (all MEDIUM/LOW - code quality refactorings):
 | 011.1 | Import Rewriter - Per-project warning scoping | af121bea | 2026-01-28 |
 | 006.1 | SSR Detection - Unified isServerEnvironment/isBrowserEnvironment | 1926ff65 | 2026-01-28 |
 | 007.3 | Config Loader - Fresh defaults per-request | 5c33cc85 | 2026-01-28 |
+| 010.3 | toError() - Stack trace capture at call site | 5af5ff4c | 2026-01-28 |
 
 ---
 
