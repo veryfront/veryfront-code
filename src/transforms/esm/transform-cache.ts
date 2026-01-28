@@ -84,7 +84,14 @@ export async function getCachedTransformAsync(
   if (cacheBackend) {
     try {
       const raw = await cacheBackend.get(key);
-      if (raw) return JSON.parse(raw) as TransformCacheEntry;
+      if (raw) {
+        const entry = JSON.parse(raw) as TransformCacheEntry;
+        if (!entry.code) {
+          logger.warn("[TransformCache] Cache entry has empty code, discarding", { key });
+          return undefined;
+        }
+        return entry;
+      }
     } catch (error) {
       logger.debug("[TransformCache] Backend get failed", { key, error });
     }
@@ -220,7 +227,8 @@ export async function getOrComputeTransform(
   const code = await computeFn();
 
   // Store in cache (fire-and-forget for performance)
-  const hash = String(Date.now()); // Simple hash for now
+  // Use content length + timestamp as hash for integrity tracking
+  const hash = `${code.length}:${Date.now()}`;
   setCachedTransformAsync(key, code, hash, ttlSeconds).catch((error) => {
     logger.debug("[TransformCache] Failed to cache computed transform", { key, error });
   });
