@@ -6,13 +6,14 @@
 
 | Metric | Count |
 |--------|-------|
-| Total Issues | ~77 |
-| Validated | 49 |
+| Total Issues | ~92 |
+| Validated | 92 |
 | In Progress | 0 |
-| Completed | 25 |
+| Completed | 28 |
 | False Positive | 9 |
-| Downgraded | 18 |
-| Tech Debt (P2/P3) | ~25 |
+| Downgraded | 30 |
+| Already Mitigated | 5 |
+| Tech Debt (P2-P4) | ~20 |
 
 ## Execution Queue
 
@@ -22,7 +23,7 @@ _None_
 ### Up Next
 **All HIGH priority issues resolved!** ✅
 
-Chapters complete: 001, 002, 003, 004, 005, 006, 007, 008, 009, 010, 011, 012, 013, 014, 016
+Chapters complete: 001-019 (all chapters)
 
 Recent fixes:
 - 016.1: **FIXED** - Constant-time auth token comparison (eafa78c1)
@@ -73,7 +74,11 @@ All HIGH/CRITICAL issues resolved. P2 items completed 2026-01-28.
 | 012 | HTTP Clients | ✓ Complete | 0 | 3→0 | 2 | ██████████ 100% |
 | 013 | Cache Key Patterns | ✓ Complete | 0 | 2→0 | 1 | ██████████ 100% |
 | 014 | Deployment Modes | ✓ Complete | 0 | 1→0 | 1+ | ██████████ 100% |
+| 015 | Testability | ✓ Validated | 0 | 3 | 2 | ██████████ 100% |
 | 016 | Security Gaps | ✓ Complete | 0 | 1→0 | 2→0 | ██████████ 100% |
+| 017 | Race Conditions | ✓ Complete | 0 | 1→0 | 2 | ██████████ 100% |
+| 018 | Memory Leaks | ✓ Complete | 0 | 0 | 1 | ██████████ 100% |
+| 019 | Code Quality | ✓ Validated | 0 | 0 | 5 | ██████████ 100% |
 
 ## CRITICAL Issues Tracker
 
@@ -100,6 +105,8 @@ All HIGH/CRITICAL issues resolved. P2 items completed 2026-01-28.
 | 016.3 | Sandbox Escape via Function() | ⚠️ Downgraded | ⚠️ LOW | - | Worker sandboxed |
 | 016.4 | Path Traversal in Adapters | ❌ False Positive | ❌ N/A | - | SecureFs exists |
 | 016.5 | Unvalidated JSON.parse() | ⚠️ Downgraded | ⚠️ LOW | ✅ | 2 calls fixed |
+| 017.1 | Memoize Cache Stampede | ✓ Completed | ✅ HIGH | ✅ | In-flight dedup |
+| 017.2 | Global Regex /g State | ✓ Completed | ⚠️ MEDIUM | ✅ | Per-call regex |
 
 ## Chapter 001 Validation Summary
 
@@ -220,6 +227,54 @@ All HIGH/CRITICAL issues resolved. P2 items completed 2026-01-28.
 
 **Note**: The AI-generated audit significantly overstated these issues. Only 016.1 was a genuine HIGH vulnerability. The codebase already had comprehensive security infrastructure (SecureFs, html-sanitizer, Worker sandbox) that the audit failed to account for.
 
+## Chapter 015 Validation Summary
+
+| ID | Issue | Original | Validated | Action |
+|----|-------|----------|-----------|--------|
+| 015.1 | Global State Test Isolation | HIGH | ⚠️ MEDIUM | Test infrastructure recommendation |
+| 015.2 | Missing Multi-Tenant Test Utils | HIGH | ⚠️ MEDIUM | Test infrastructure recommendation |
+| 015.3 | Test Determinism Issues | MEDIUM | ⚠️ LOW | Best practice recommendation |
+| 015.4 | Cross-Adapter Test Coverage | HIGH | ⚠️ MEDIUM | Test infrastructure recommendation |
+| 015.5 | CI Test Integration Gaps | MEDIUM | ⚠️ LOW | CI/CD improvement recommendation |
+
+**Note**: Chapter 015 is a testing roadmap — no code bugs, only test infrastructure recommendations for future work.
+
+## Chapter 017 Validation Summary
+
+| ID | Issue | Original | Validated | Action |
+|----|-------|----------|-----------|--------|
+| 017.1 | Memoize Cache Stampede | HIGH | ✅ HIGH | **FIXED** - Added in-flight promise deduplication |
+| 017.2 | Global Regex /g State | HIGH | ⚠️ MEDIUM | **FIXED** - Create regex per call in extractBundleRefs |
+| 017.3 | Lazy Singleton No Lock | HIGH | ⚠️ LOW | 3/4 patterns already have promise dedup; OTLP init-once is low risk |
+| 017.4 | Rate Limit Counter Race | MEDIUM | ⚠️ LOW | JS single-threaded; non-atomic increment benign in practice |
+| 017.5 | Config Reload Race | MEDIUM | ⚠️ LOW | Config loaded fresh, not mutated; worst case: one stale request |
+
+**Note**: Only 017.1 was a real production concern — thundering herd on memoize cache miss. Fixed with in-flight promise deduplication.
+
+## Chapter 018 Validation Summary
+
+| ID | Issue | Original | Validated | Action |
+|----|-------|----------|-----------|--------|
+| 018.1 | HMR Client Map Unbounded | HIGH | ✅ MITIGATED | Cleanup on disconnect exists |
+| 018.2 | WebSocket Timer Leaks | HIGH | ✅ MITIGATED | clearInterval on shutdown exists |
+| 018.3 | Event Listener Accumulation | MEDIUM | ⚠️ LOW | WebSocket GC handles listener cleanup |
+| 018.4 | Module Cache No Eviction | HIGH | ✅ MITIGATED | LRU cache with 10K entry limit + 5min TTL |
+| 018.5 | Transform Cache No Eviction | HIGH | ✅ MITIGATED | LRU pruning at 500 entries + TTL |
+
+**Note**: All memory leak concerns are already mitigated. Module and transform caches use LRU with entry limits and TTL. HMR/WebSocket resources are cleaned up on disconnect/shutdown.
+
+## Chapter 019 Validation Summary
+
+| ID | Issue | Original | Validated | Action |
+|----|-------|----------|-----------|--------|
+| 019.1 | getExtension() Duplication | P4 | P4 | Refactoring opportunity |
+| 019.2 | normalizePath() Duplication | P4 | P4 | Refactoring opportunity |
+| 019.3 | Cache Key Patterns | P4 | P4 | Partially addressed by cache key standardization |
+| 019.4 | File Complexity (>1000 LOC) | P4 | P4 | Refactoring opportunity |
+| 019.5 | Naming Inconsistencies | P4 | P4 | Refactoring opportunity |
+
+**Note**: All P4 code quality items. No bugs or security issues — only maintenance burden reduction opportunities.
+
 ## Validation Reports
 
 - [002-validation-report.md](validation/002-validation-report.md) - Initial 3 issues
@@ -249,6 +304,9 @@ All HIGH/CRITICAL issues resolved. P2 items completed 2026-01-28.
 | 007.3 | Config Loader - Fresh defaults per-request | 5c33cc85 | 2026-01-28 |
 | 010.3 | toError() - Stack trace capture at call site | 5af5ff4c | 2026-01-28 |
 | 016.1 | Timing Attack - constantTimeEqual for all auth comparisons | eafa78c1 | 2026-01-28 |
+| 016.5 | JSON.parse - Protected unguarded parse calls | 42126bcf | 2026-01-28 |
+| 017.1 | Cache Stampede - In-flight promise deduplication in memoize | pending | 2026-01-28 |
+| 017.2 | Global Regex - Per-call regex creation in extractBundleRefs | pending | 2026-01-28 |
 
 ---
 
