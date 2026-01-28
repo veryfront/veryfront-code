@@ -6,7 +6,7 @@
 
 import type { MCPTool } from "./tools.ts";
 
-import { vfGetSkills, vfGetSkillReference } from "./tools/skill-tools.ts";
+import { vfGetSkillReference, vfGetSkills } from "./tools/skill-tools.ts";
 import {
   vfCreateProject,
   vfListExamples,
