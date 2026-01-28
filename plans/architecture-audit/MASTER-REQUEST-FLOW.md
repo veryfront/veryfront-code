@@ -134,6 +134,75 @@ flowchart TB
 
 ---
 
+## ⚠️ Problems in the Flow
+
+### 🔴 CRITICAL - Security & Multi-Tenant Isolation
+
+| Step | Problem | Impact | Location |
+|------|---------|--------|----------|
+| 2.3 Config | **User config executes with FULL permissions** | Malicious config can exfiltrate secrets, read files, affect other tenants | `loader.ts` |
+| 4.2 Transform | **transformCache key missing projectId** | Project A's transform can be served to Project B | `cache/keys.ts:260` |
+| 4.2 Transform | **globalInProgress Map has no timeout** | Hanging transform deadlocks ALL projects waiting for same module | `memory.ts:35` |
+| 4.4 Circuit | **failedComponents Map no eviction** | Grows unbounded, error state persists indefinitely | `memory.ts:41` |
+| 6.1 SSR | **headCollector is GLOBAL state** | `<title>`, `<meta>` from Project A can leak to Project B | SSR context |
+
+### 🟠 HIGH - "Works Locally, Breaks in Production"
+
+| Step | Problem | Impact | Location |
+|------|---------|--------|----------|
+| 3.3 Layout | **API adapter missing walkDirectory()** | Nested layouts (`app/dashboard/layout.tsx`) not discovered in prod | `VeryfrontAPIAdapter` |
+| 4.2 Transform | **Absolute paths stored in Redis** | `/tmp/vf-ssr-xxx/page.mjs` fails on different pod | `loader.ts` |
+| 5.1 CSS | **pluginCache keyed by name, not version** | Different projects need different plugin versions | `tailwind/plugins.ts` |
+| 5.1 CSS | **pluginErrors is GLOBAL** | Plugin error in Project A blocks Project B | `tailwind/plugins.ts` |
+| 5.1 CSS | **compiler singleton per stylesheet hash** | Hash collision = wrong compiler for project | `tailwind/compiler.ts` |
+
+### 🟡 MEDIUM - Memory Leaks & Performance
+
+| Step | Problem | Impact | Location |
+|------|---------|--------|----------|
+| 1.1 Domain | **domainCache no eviction** | Memory grows with unique domains | `proxy/handler.ts` |
+| 2.3 Config | **DEFAULT_CONFIG shared object** | Nested mutations can pollute default config | `loader.ts:26` |
+| 3.1 Router | **routerDetectionCache uses path not projectId** | Multi-tenant pollution possible | `router-detection.ts` |
+| 3.3 Layout | **layoutDiscoveryCache no eviction** | Memory grows with unique project paths | `layout-collector.ts` |
+| 4.2 Transform | **transformSemaphore GLOBAL (10 max)** | One heavy project starves all others | `memory.ts:43` |
+| 5.1 CSS | **localCssCache no eviction** | Memory grows unbounded | CSS compiler |
+| 6.1 SSR | **renderSemaphore GLOBAL (20 max)** | One heavy project starves all others | SSR renderer |
+
+### 🟣 RACE CONDITIONS & CONCURRENCY
+
+| Step | Problem | Impact | Location |
+|------|---------|--------|----------|
+| 4.2 Transform | **No lock on temp file writes** | Concurrent transforms can corrupt same temp file | `loader.ts` |
+| 4.2 Transform | **Cache stampede on cold start** | 100 requests for same page = 100 transforms | No debounce |
+| 4.2 Transform | **globalInProgress race condition** | Check-then-set is not atomic | `memory.ts:35` |
+| 4.3 HTTP | **Concurrent fetches to esm.sh** | Same package fetched multiple times in parallel | `module-fetcher.ts` |
+| 5.1 CSS | **Tailwind scan during file changes** | Scan can read partially written files | CSS compiler |
+| 6.1 SSR | **renderCache write race** | Two pods can compute and write same key | Distributed cache |
+
+### 🔵 BUGS - Incorrect Behavior
+
+| Step | Problem | Impact | Location |
+|------|---------|--------|----------|
+| 3.2 Route | **getAllPages() misses App Router** | SSG silently skips ALL app/ pages | `page-resolver.ts:89` |
+| 3.2 Route | **Build skips App Router dynamic routes** | `/app/[id]/page.tsx` not included in build | `build-routes.ts:92` |
+| 3.2 Route | **Two router implementations diverge** | App Router vs Pages Router have different param extraction | `route-params-extractor.ts` |
+| 4.2 Transform | **MDX cache no dependency tracking** | Component change doesn't invalidate MDX that imports it | MDX transform |
+| 4.3 HTTP | **esm.sh externals changed mid-cache** | Old cached modules use `external=react,react-dom`, new use `external=react` → two React instances | `http-bundler.ts` |
+| 2.3 Config | **Import map loaded at module init** | `getDefaultImportMapForConfig()` called ONCE, not per-request | `loader.ts:89` |
+
+### 🟤 ADDITIONAL MULTI-TENANT ISOLATION FAILURES
+
+| Step | Problem | Impact | Location |
+|------|---------|--------|----------|
+| 2.1 Context | **AsyncLocalStorage not always propagated** | Some async boundaries lose request context | Various |
+| 4.1 Module | **globalCrossProjectCache shared** | Corrupted module affects ALL projects | `memory.ts:31` |
+| 4.1 Module | **Module registry is GLOBAL** | `import()` caches modules across projects | Deno runtime |
+| 6.1 SSR | **SSR domain/context is GLOBAL** | Can leak between concurrent requests | SSR context |
+| 6.1 SSR | **Error boundary state GLOBAL** | Error in Project A can trigger boundary for Project B | React SSR |
+| ALL | **Console.log interleaved** | Logs from different projects mixed together | stdout |
+
+---
+
 ## Data Sources (On Cache Miss)
 
 ```mermaid
@@ -318,6 +387,9 @@ flowchart LR
 │  │   environment: "production",                                        │    │
 │  │   requestId: "req-123",                                             │    │
 │  │ }                                                                    │    │
+│  │                                                                      │    │
+│  │ ⚠️ PROBLEM: ALS context can be lost across some async boundaries    │    │
+│  │ ⚠️ PROBLEM: Not all code paths check for context presence           │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -395,7 +467,21 @@ flowchart LR
 │  │          4. Dynamic import temp file                                │    │
 │  │          5. Delete temp file                                        │    │
 │  │                                                                      │    │
-│  │  ⚠️ SECURITY: Config executes with full renderer permissions!       │    │
+│  │  ╔═══════════════════════════════════════════════════════════════╗  │    │
+│  │  ║ 🔴 CRITICAL SECURITY ISSUE                                     ║  │    │
+│  │  ║                                                                 ║  │    │
+│  │  ║ User veryfront.config.ts executes with FULL renderer perms!    ║  │    │
+│  │  ║                                                                 ║  │    │
+│  │  ║ A malicious config can:                                        ║  │    │
+│  │  ║ • Read environment variables (API keys, secrets)               ║  │    │
+│  │  ║ • Access file system (read other project files)                ║  │    │
+│  │  ║ • Make network requests (exfiltrate data)                      ║  │    │
+│  │  ║ • Modify global state (affect other tenants)                   ║  │    │
+│  │  ║ • Import malicious npm packages                                ║  │    │
+│  │  ╚═══════════════════════════════════════════════════════════════╝  │    │
+│  │                                                                      │    │
+│  │  ⚠️ PROBLEM: DEFAULT_CONFIG is shared mutable object               │    │
+│  │  ⚠️ PROBLEM: Import map loaded ONCE at module init, not per-request│    │
 │  │                                                                      │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 │                                                                              │
@@ -465,6 +551,15 @@ flowchart LR
 │  │                                                                      │    │
 │  │  Both: Uses adapter.exists() for each candidate path                │    │
 │  │        Each exists() call may hit file cache                        │    │
+│  │                                                                      │    │
+│  │  ╔═══════════════════════════════════════════════════════════════╗  │    │
+│  │  ║ 🟠 BUG: getAllPages() misses App Router pages entirely!       ║  │    │
+│  │  ║ SSG silently skips ALL app/ directory pages                   ║  │    │
+│  │  ║ See: page-resolver.ts:89-113                                  ║  │    │
+│  │  ╚═══════════════════════════════════════════════════════════════╝  │    │
+│  │                                                                      │    │
+│  │  ⚠️ PROBLEM: Two router implementations with different param logic │    │
+│  │  ⚠️ PROBLEM: Build system skips App Router dynamic routes          │    │
 │  │                                                                      │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 │                                                                              │
@@ -564,6 +659,7 @@ flowchart LR
 │  │ SEMAPHORE: transformSemaphore (Global, 10 concurrent max)           │    │
 │  │ ⚠️ SHARED across ALL projects!                                      │    │
 │  │ ⚠️ One heavy project can starve others                              │    │
+│  │ ⚠️ No per-project fairness - first-come-first-served                │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 │                                                                              │
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
@@ -571,7 +667,16 @@ flowchart LR
 │  │ Key: contentCacheKey                                                │    │
 │  │ Value: Promise<void>                                                │    │
 │  │ ⚠️ Hanging transform can deadlock other requests                    │    │
+│  │ ⚠️ No timeout - hangs forever if transform never resolves           │    │
+│  │ ⚠️ Check-then-set race condition (not atomic)                       │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
+│                                                                              │
+│  ╔═══════════════════════════════════════════════════════════════════╗      │
+│  ║ 🟣 RACE CONDITIONS                                                 ║      │
+│  ║ • Cache stampede: 100 requests for same page = 100 transforms     ║      │
+│  ║ • No lock on temp file writes - concurrent corruption possible    ║      │
+│  ║ • Concurrent fetches to esm.sh for same package                   ║      │
+│  ╚═══════════════════════════════════════════════════════════════════╝      │
 │                                                                              │
 │  Pipeline stages:                                                           │
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
@@ -657,6 +762,16 @@ flowchart LR
 │                                                                              │
 │  Local file cache location:                                                 │
 │  └─ .cache/veryfront-http-modules/{url-hash}.mjs                           │
+│                                                                              │
+│  ╔═══════════════════════════════════════════════════════════════════╗      │
+│  ║ 🟠 BUG: esm.sh externals config changed mid-cache                 ║      │
+│  ║                                                                   ║      │
+│  ║ OLD cached: external=react,react-dom → path /X-ZXJlYWN0LHJlYWN0/ ║      │
+│  ║ NEW cached: external=react           → path /X-ZXJlYWN0/         ║      │
+│  ║                                                                   ║      │
+│  ║ Result: TWO React instances loaded → broken context/hooks!        ║      │
+│  ║ Error: "No QueryClient set" or hooks don't work                   ║      │
+│  ╚═══════════════════════════════════════════════════════════════════╝      │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
@@ -791,11 +906,16 @@ flowchart LR
 │  │                                                                      │    │
 │  │  3. RENDER TO STRING                                                │    │
 │  │     ReactDOMServer.renderToString(tree)                            │    │
-│  │     ┌─────────────────────────────────────────────────────────┐     │    │
-│  │     │ STATE: headCollector (should be per-request via ALS)    │     │    │
-│  │     │ Collects: <title>, <meta>, <link> tags                  │     │    │
-│  │     │ ⚠️ Currently global - can leak between projects!        │     │    │
-│  │     └─────────────────────────────────────────────────────────┘     │    │
+│  │                                                                      │    │
+│  │     ╔═══════════════════════════════════════════════════════════╗   │    │
+│  │     ║ 🔴 MULTI-TENANT ISOLATION FAILURES                        ║   │    │
+│  │     ║                                                            ║   │    │
+│  │     ║ headCollector: GLOBAL - <title>/<meta> leak between proj  ║   │    │
+│  │     ║ SSR context:   GLOBAL - domain/config can leak            ║   │    │
+│  │     ║ Error boundary: GLOBAL - error in A triggers for B        ║   │    │
+│  │     ║ Module registry: GLOBAL - import() cached across projects ║   │    │
+│  │     ║ Console.log: Interleaved - logs from A/B mixed together   ║   │    │
+│  │     ╚═══════════════════════════════════════════════════════════╝   │    │
 │  │                                                                      │    │
 │  │  4. INJECT HEAD TAGS                                                │    │
 │  │     Add collected head tags to HTML                                │    │
