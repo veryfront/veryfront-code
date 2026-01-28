@@ -2,6 +2,9 @@ import { logger } from "#veryfront/utils";
 import { injectContext } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { TokenStorageError, type VeryfrontTokenConfig } from "./types.ts";
 
+/** Default timeout for token storage API requests (30 seconds) */
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+
 export class TokenStorageAPIClient {
   private config: VeryfrontTokenConfig;
 
@@ -174,14 +177,18 @@ export class TokenStorageAPIClient {
 
   private async fetchWithRetry(url: string, init: RequestInit): Promise<Response> {
     const { maxRetries, initialDelay, maxDelay } = this.config.retry;
+    const timeoutMs = this.config.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     let lastError: Error | undefined;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
       try {
         const headers = new Headers(init.headers);
         injectContext(headers);
 
-        const response = await fetch(url, { ...init, headers });
+        const response = await fetch(url, { ...init, headers, signal: controller.signal });
 
         if (response.status >= 400 && response.status < 500 && response.status !== 429) {
           return response;
@@ -195,6 +202,16 @@ export class TokenStorageAPIClient {
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
 
+        // Check if this was a timeout
+        const isTimeout = error instanceof Error && error.name === "AbortError";
+        if (isTimeout) {
+          logger.warn("[TokenStorageAPIClient] Request timed out", {
+            url: url.replace(/token=[^&]+/, "token=***"),
+            timeoutMs,
+            attempt: attempt + 1,
+          });
+        }
+
         if (attempt >= maxRetries) {
           break;
         }
@@ -206,9 +223,12 @@ export class TokenStorageAPIClient {
           maxRetries,
           delay,
           error: lastError.message,
+          timeout: isTimeout,
         });
 
         await new Promise<void>((resolve) => setTimeout(resolve, delay));
+      } finally {
+        clearTimeout(timeoutId);
       }
     }
 

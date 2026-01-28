@@ -7,9 +7,9 @@
 | Metric | Count |
 |--------|-------|
 | Total Issues | ~72 |
-| Validated | 33 |
+| Validated | 36 |
 | In Progress | 0 |
-| Completed | 10 |
+| Completed | 13 |
 | False Positive | 7 |
 | Downgraded | 16 |
 
@@ -44,9 +44,9 @@ Ready to proceed with remaining chapters (004-006, 010-014) - no CRITICAL issues
 | 009 | Timeout Handling | ✓ Complete | 1→0 | 3→1 | 2 | ██████████ 100% |
 | 010 | Error Handling | ✓ Validated | 0 | 4→2 | 2 | ██████░░░░ 60% |
 | 011 | Import Rewriting | ⏳ Queued | 0 | 2 | 3 | ░░░░░░░░░░ 0% |
-| 012 | HTTP Clients | ⏳ Queued | 0 | 3 | 2 | ░░░░░░░░░░ 0% |
-| 013 | Cache Key Patterns | ⏳ Queued | 0 | 2 | 1 | ░░░░░░░░░░ 0% |
-| 014 | Deployment Modes | ⏳ Queued | 0 | 1 | 1+ | ░░░░░░░░░░ 0% |
+| 012 | HTTP Clients | 🔧 In Progress | 0 | 3→1 | 2 | ████░░░░░░ 40% |
+| 013 | Cache Key Patterns | ✓ Complete | 0 | 2→0 | 1 | ██████████ 100% |
+| 014 | Deployment Modes | 🔧 In Progress | 0 | 1→0 | 1+ | ██████░░░░ 60% |
 
 ## CRITICAL Issues Tracker
 
@@ -63,6 +63,9 @@ Ready to proceed with remaining chapters (004-006, 010-014) - no CRITICAL issues
 | 008.2 | Config - Unsafe execution | ⚠️ Downgraded | ⚠️ MEDIUM | - | Industry pattern |
 | 009.1 | Revalidation Semaphore Fairness | ✓ Completed | ⚠️ MEDIUM | ✅ | 7a3365c0 |
 | 009.2 | Domain Lookup - No timeout | ✓ Completed | ⚠️ HIGH | ✅ | 7a3365c0 |
+| 012.1 | HTTP Client Timeouts (Partial) | ✓ Completed | ⚠️ HIGH | ✅ | (pending) |
+| 013.2 | Agent Cache Project Isolation | ✓ Completed | ⚠️ HIGH | ✅ | (pending) |
+| 014.1 | NODE_ENV Startup Validation | ✓ Completed | ⚠️ HIGH | ✅ | (pending) |
 
 ## Chapter 001 Validation Summary
 
@@ -159,6 +162,9 @@ Ready to proceed with remaining chapters (004-006, 010-014) - no CRITICAL issues
 | 003.3 | Cross-Project Cache - Include project context | 1f82aa07 | 2026-01-28 |
 | 009.1 | Revalidation Semaphore - Per-project fairness | 7a3365c0 | 2026-01-28 |
 | 009.2 | Domain Lookup - Timeout protection | 7a3365c0 | 2026-01-28 |
+| 012.1 | HTTP Client Timeouts (Veryfront API, Token Storage) | (pending) | 2026-01-28 |
+| 013.2 | Agent Cache - Project isolation (projectId in cache key) | (pending) | 2026-01-28 |
+| 014.1 | NODE_ENV - Startup validation in proxy mode | (pending) | 2026-01-28 |
 
 ---
 

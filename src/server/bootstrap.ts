@@ -6,6 +6,7 @@ import { enhanceAdapterWithFS } from "#veryfront/platform/adapters/fs/integratio
 import { logger } from "#veryfront/utils";
 import { isDebugEnabled } from "#veryfront/utils/constants/env.ts";
 import { loadEnv, supportsEnvFiles } from "#veryfront/utils/env-loader.ts";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
 
 export interface BootstrapResult {
   /** Enhanced runtime adapter (with FSAdapter if configured) */
@@ -135,6 +136,10 @@ export async function bootstrapProd(
 ): Promise<BootstrapResult> {
   logger.debug("[Bootstrap:Prod] Starting production mode initialization");
 
+  // Validate NODE_ENV in proxy mode to prevent dev behavior in production
+  // @see plans/architecture-audit/014.1-node-env-missing.md
+  validateProductionEnvironment(adapter);
+
   try {
     const result = await bootstrap(projectDir, adapter);
 
@@ -151,4 +156,44 @@ export async function bootstrapProd(
     });
     throw error;
   }
+}
+
+/**
+ * Validates that critical environment variables are set correctly in production.
+ * This prevents dev behavior from accidentally being enabled in production pods.
+ *
+ * @see plans/architecture-audit/014.1-node-env-missing.md
+ */
+function validateProductionEnvironment(_adapter: RuntimeAdapter): void {
+  const nodeEnv = getEnv("NODE_ENV") ?? getEnv("DENO_ENV");
+  const proxyMode = getEnv("PROXY_MODE");
+
+  // In proxy mode (deployed pods), NODE_ENV must be explicitly set to production
+  if (proxyMode === "1") {
+    if (!nodeEnv) {
+      logger.error(
+        "[Bootstrap:Prod] CRITICAL: NODE_ENV is not set in proxy mode. " +
+          "This will cause isLocalDev=true, enabling dev features in production. " +
+          "Set NODE_ENV=production in your pod configuration.",
+      );
+      throw new Error(
+        "NODE_ENV must be set to 'production' when running in proxy mode (PROXY_MODE=1)",
+      );
+    }
+
+    if (nodeEnv !== "production") {
+      logger.warn(
+        "[Bootstrap:Prod] NODE_ENV is set to '%s' in proxy mode. " +
+          "Expected 'production'. This may enable dev features.",
+        nodeEnv,
+      );
+    }
+  }
+
+  // Log effective configuration for debugging
+  logger.debug("[Bootstrap:Prod] Environment configuration", {
+    nodeEnv: nodeEnv ?? "(unset, defaults to development)",
+    proxyMode: proxyMode ?? "0",
+    isLocalDev: nodeEnv !== "production",
+  });
 }
