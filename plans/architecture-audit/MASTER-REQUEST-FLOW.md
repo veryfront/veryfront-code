@@ -74,7 +74,7 @@ flowchart TB
         RC6[("🟢 transformCache<br/>Distributed API/Redis<br/>⚠️ no projectId in key!")]
 
         %% HTTP module caches
-        RC7[("🟡 cachedPaths<br/>LRU 500 entries<br/>URL → local file")]
+        RC7[("🟡 cachedPaths<br/>LRU 500 entries<br/>URL to local file")]
         RC8[("🟢 httpModuleCache<br/>Distributed API/Redis<br/>shared across projects ✓")]
 
         %% CSS caches
