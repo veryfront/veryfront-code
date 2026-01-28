@@ -56,12 +56,6 @@ export function isDistributedCacheEnabled(): boolean {
   return cacheBackend?.type !== "memory" && cacheBackend !== null;
 }
 
-/** @deprecated Use initializeTransformCache instead */
-export const initializeRedisCache = initializeTransformCache;
-
-/** @deprecated Use isDistributedCacheEnabled instead */
-export const isRedisCacheEnabled = isDistributedCacheEnabled;
-
 export interface CacheKeyOptions {
   depsHash?: string;
   configHash?: string;

@@ -30,6 +30,7 @@ export function addHMRTimestamps(code: string, timestamp: string | number): Prom
  * Key format: `${projectId}:${specifier}` for project-scoped deduplication.
  * @see plans/architecture-audit/011.1-global-warning-state-pollution.md
  */
+const MAX_WARNED_ENTRIES = 10_000;
 const unversionedImportsWarned = new Set<string>();
 
 function hasVersionSpecifier(specifier: string): boolean {
@@ -40,6 +41,9 @@ function warnUnversionedImport(specifier: string, projectId?: string): void {
   // Scope warnings by project to prevent cross-tenant warning suppression
   const key = projectId ? `${projectId}:${specifier}` : specifier;
   if (unversionedImportsWarned.has(key)) return;
+  if (unversionedImportsWarned.size >= MAX_WARNED_ENTRIES) {
+    unversionedImportsWarned.clear();
+  }
   unversionedImportsWarned.add(key);
 
   const isScoped = specifier.startsWith("@");
