@@ -23,6 +23,7 @@ import {
   buildRootAttributes,
   shouldDisableLayout,
 } from "./utils.ts";
+import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { isMarkdownPreview as checkMarkdownPreview } from "../transforms/md/utils.ts";
 import {
   generateModulePreloadHintsFromManifest,
@@ -240,8 +241,14 @@ async function generateHTMLShellPartsImpl(
     : "";
 
   let tailwindCSSBlock = "";
-  if (useProductionCSS) {
+  if (useProductionCSS && cssHash) {
     tailwindCSSBlock = `<link rel="stylesheet" href="/_vf/css/${cssHash}.css">`;
+  } else if (useProductionCSS && !cssHash) {
+    // CSS generation failed — log error prominently and omit link to avoid /_vf/css/.css 404
+    serverLogger.error("[HTML] Tailwind CSS hash is empty — CSS link omitted. CSS generation likely failed.", {
+      projectSlug,
+      environment: options.environment,
+    });
   } else {
     // Dev/preview: use link tag for HMR cache-busting
     tailwindCSSBlock =
