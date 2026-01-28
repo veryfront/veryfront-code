@@ -37,21 +37,21 @@ Recent fixes:
 
 ## Tech Debt Backlog (P2/P3)
 
-All HIGH/CRITICAL issues resolved. Remaining items are code quality improvements:
+All HIGH/CRITICAL issues resolved. P2 items completed 2026-01-28.
 
-### P2 - Medium Priority (Future Sprints)
+### P2 - Medium Priority ✅ COMPLETED
 
-| Issue | Effort | Description |
-|-------|--------|-------------|
-| 004: Dependency Tracking | ~14 days | Connect depsHash to transform cache keys (RFC exists) |
-| 011.2-011.5: Import Unification | ~10 days | Unified import rewriter with strategy pattern (RFC exists) |
+| Issue | Effort | Status |
+|-------|--------|--------|
+| 004: Dependency Tracking | ~14 days | ✅ Completed - depsHash/configHash in cache keys |
+| 011.2-011.5: Import Unification | ~10 days | ✅ Completed - Strategy pattern with 8 strategies |
 
-### P3 - Low Priority (Opportunistic)
+### P3 - Low Priority ✅ COMPLETED
 
-| Issue | Effort | Description |
-|-------|--------|-------------|
-| 010.3: VeryfrontError Consolidation | ~5 days | Rename type to VeryfrontErrorData, update 92 files |
-| Silent catch cleanup | ~3 days | Add `// SILENT:` comments to 150+ empty catch blocks |
+| Issue | Effort | Status |
+|-------|--------|--------|
+| 010.3: VeryfrontError Consolidation | ~5 days | ✅ Completed - Renamed type to VeryfrontErrorData |
+| Silent catch cleanup | ~3 days | ✅ Completed - Added SILENT comments to 16 empty catch blocks |
 
 ## Chapter Status
 
@@ -60,7 +60,7 @@ All HIGH/CRITICAL issues resolved. Remaining items are code quality improvements
 | 001 | Adapter Divergence | ✓ Complete | 2→0 | 3→0 | 4 | ██████████ 100% |
 | 002 | Global State | ✓ Complete | 1→0 | 4→0 | 2→0 | ██████████ 100% |
 | 003 | Cache Behavior | ✓ Complete | 2→0 | 2→0 | 0 | ██████████ 100% |
-| 004 | Bundle Dependencies | ✓ Validated | 0 | 3→2 | 3 | ██████░░░░ 60% |
+| 004 | Bundle Dependencies | ✓ Complete | 0 | 3→0 | 3 | ██████████ 100% |
 | 005 | Router Divergence | ✓ Complete | 0 | 2→0 | 3 | ██████████ 100% |
 | 006 | Runtime Conditionals | ✓ Complete | 0 | 1→0 | 2 | ██████████ 100% |
 | 007 | Config Normalization | ✓ Complete | 1→0 | 3→2 | 3 | ██████████ 100% |
