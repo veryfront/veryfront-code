@@ -75,9 +75,90 @@ Complete inventory of all caches in the veryfront-renderer codebase.
 
 ---
 
-## Distributed Caches (Redis/API)
+## Distributed Cache Backends Explained
 
-These are shared across all pods via Redis or the Veryfront API.
+The renderer supports 3 cache backends with automatic fallback:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    BACKEND SELECTION (API > Redis > Memory)                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │ 1. API BACKEND (Veryfront Cloud - Production)                       │    │
+│  │    ─────────────────────────────────────────────                    │    │
+│  │    The Veryfront API itself provides a cache-as-a-service endpoint  │    │
+│  │                                                                      │    │
+│  │    URL: https://api.veryfront.com/projects/{slug}/cache/*           │    │
+│  │                                                                      │    │
+│  │    ✓ Project-scoped by design (slug in URL path)                    │    │
+│  │    ✓ Centralized across ALL pods/regions globally                   │    │
+│  │    ✓ Managed by Veryfront (no Redis to maintain)                    │    │
+│  │    ✓ Circuit breaker for graceful degradation                       │    │
+│  │                                                                      │    │
+│  │    Renderer ──HTTP──▶ POST /projects/my-app/cache/get               │    │
+│  │                       POST /projects/my-app/cache/set               │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                              │                                               │
+│                      (fallback if API unavailable)                           │
+│                              ▼                                               │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │ 2. REDIS BACKEND (Self-hosted / OSS deployments)                    │    │
+│  │    ───────────────────────────────────────────                      │    │
+│  │    Direct Redis connection for self-hosted Veryfront                │    │
+│  │                                                                      │    │
+│  │    URL: redis://localhost:6379 (or REDIS_URL env var)               │    │
+│  │                                                                      │    │
+│  │    ✓ Shared across pods in same Kubernetes cluster                  │    │
+│  │    ✗ You must manage Redis yourself                                 │    │
+│  │    ⚠️ Keys need manual projectId prefixing for multi-tenant         │    │
+│  │                                                                      │    │
+│  │    Renderer ──Redis──▶ GET vf:transform:page.tsx:abc123             │    │
+│  │                        SET vf:ssr-module:proj:file:hash             │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                              │                                               │
+│                      (fallback if Redis unavailable)                         │
+│                              ▼                                               │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │ 3. MEMORY BACKEND (Local Dev / Fallback)                            │    │
+│  │    ─────────────────────────────────────                            │    │
+│  │    In-process LRU cache, no external dependencies                   │    │
+│  │                                                                      │    │
+│  │    ✗ NOT shared between pods (each pod has its own)                 │    │
+│  │    ✗ Lost on pod restart                                            │    │
+│  │    ✓ No network latency                                             │    │
+│  │    ✓ Works offline / no setup required                              │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Backend Selection Logic (cache/backend.ts:545)
+
+```typescript
+// Preference: API (production) > Redis (self-hosted) > Memory (fallback)
+if (isApiCacheAvailable()) {
+  return new ApiCacheBackend();   // → api.veryfront.com/projects/{slug}/cache
+}
+if (isRedisConfigured()) {
+  return new RedisCacheBackend(); // → Redis at REDIS_URL
+}
+return new MemoryCacheBackend();  // → In-process LRU
+```
+
+### When Each Backend is Used
+
+| Backend | Environment | Multi-Tenant Isolation |
+|---------|-------------|------------------------|
+| **API** | Veryfront Cloud (production) | ✓ Built-in (project slug in URL) |
+| **Redis** | Self-hosted / OSS | ⚠️ Depends on key format |
+| **Memory** | Local dev, fallback | N/A (single process) |
+
+---
+
+## Distributed Caches (API/Redis)
+
+These caches use the distributed backend (API or Redis depending on environment).
 
 | Cache | Key Prefix | File | Purpose | Has projectId? |
 |-------|------------|------|---------|----------------|
