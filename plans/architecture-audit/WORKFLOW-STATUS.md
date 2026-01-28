@@ -6,12 +6,12 @@
 
 | Metric | Count |
 |--------|-------|
-| Total Issues | ~72 |
-| Validated | 44 |
+| Total Issues | ~77 |
+| Validated | 49 |
 | In Progress | 0 |
-| Completed | 24 |
-| False Positive | 7 |
-| Downgraded | 16 |
+| Completed | 25 |
+| False Positive | 9 |
+| Downgraded | 18 |
 | Tech Debt (P2/P3) | ~25 |
 
 ## Execution Queue
@@ -22,9 +22,11 @@ _None_
 ### Up Next
 **All HIGH priority issues resolved!** ✅
 
-Chapters complete: 001, 002, 003, 005, 006, 007, 009, 010, 011, 012, 013, 014
+Chapters complete: 001, 002, 003, 004, 005, 006, 007, 008, 009, 010, 011, 012, 013, 014, 016
 
 Recent fixes:
+- 016.1: **FIXED** - Constant-time auth token comparison (eafa78c1)
+- 016.5: **FIXED** - Protected unguarded JSON.parse calls
 - 010.3: **QUICK FIX** - Improved toError() stack trace capture (5af5ff4c)
 - 011.1: **FIXED** - Scoped unversioned import warnings by project (af121bea)
 - 006.1: **FIXED** - Unified SSR detection to prevent hydration mismatches (1926ff65)
@@ -71,6 +73,7 @@ All HIGH/CRITICAL issues resolved. P2 items completed 2026-01-28.
 | 012 | HTTP Clients | ✓ Complete | 0 | 3→0 | 2 | ██████████ 100% |
 | 013 | Cache Key Patterns | ✓ Complete | 0 | 2→0 | 1 | ██████████ 100% |
 | 014 | Deployment Modes | ✓ Complete | 0 | 1→0 | 1+ | ██████████ 100% |
+| 016 | Security Gaps | ✓ Complete | 0 | 1→0 | 2→0 | ██████████ 100% |
 
 ## CRITICAL Issues Tracker
 
@@ -92,6 +95,11 @@ All HIGH/CRITICAL issues resolved. P2 items completed 2026-01-28.
 | 012.1 | HTTP Client Timeouts (Partial) | ✓ Completed | ⚠️ HIGH | ✅ | d7b53ac0 |
 | 013.2 | Agent Cache Project Isolation | ✓ Completed | ⚠️ HIGH | ✅ | d7b53ac0 |
 | 014.1 | NODE_ENV Startup Validation | ✓ Completed | ⚠️ HIGH | ✅ | d7b53ac0 |
+| 016.1 | Timing Attack in Auth | ✓ Completed | ✅ HIGH | ✅ | eafa78c1 |
+| 016.2 | innerHTML Without Sanitization | ❌ False Positive | ❌ N/A | - | Sanitizer exists |
+| 016.3 | Sandbox Escape via Function() | ⚠️ Downgraded | ⚠️ LOW | - | Worker sandboxed |
+| 016.4 | Path Traversal in Adapters | ❌ False Positive | ❌ N/A | - | SecureFs exists |
+| 016.5 | Unvalidated JSON.parse() | ⚠️ Downgraded | ⚠️ LOW | ✅ | 2 calls fixed |
 
 ## Chapter 001 Validation Summary
 
@@ -200,6 +208,18 @@ All HIGH/CRITICAL issues resolved. P2 items completed 2026-01-28.
 
 **Note**: 007.3 fixed cross-tenant config contamination by creating fresh defaults per-request.
 
+## Chapter 016 Validation Summary
+
+| ID | Issue | Original | Validated | Action |
+|----|-------|----------|-----------|--------|
+| 016.1 | Timing Attack in Auth | HIGH | ✅ HIGH | **FIXED** (eafa78c1) - constantTimeEqual utility |
+| 016.2 | innerHTML Without Sanitization | HIGH | ❌ FALSE POSITIVE | File doesn't use innerHTML; html-sanitizer.ts exists |
+| 016.3 | Sandbox Escape via Function() | HIGH | ⚠️ LOW | Worker permissions: "none" already sandboxes code |
+| 016.4 | Path Traversal in Adapters | MEDIUM | ❌ FALSE POSITIVE | SecureFs with multi-layer path validation exists |
+| 016.5 | Unvalidated JSON.parse() | MEDIUM | ⚠️ LOW | 85% already protected; 2 remaining calls fixed |
+
+**Note**: The AI-generated audit significantly overstated these issues. Only 016.1 was a genuine HIGH vulnerability. The codebase already had comprehensive security infrastructure (SecureFs, html-sanitizer, Worker sandbox) that the audit failed to account for.
+
 ## Validation Reports
 
 - [002-validation-report.md](validation/002-validation-report.md) - Initial 3 issues
@@ -228,6 +248,7 @@ All HIGH/CRITICAL issues resolved. P2 items completed 2026-01-28.
 | 006.1 | SSR Detection - Unified isServerEnvironment/isBrowserEnvironment | 1926ff65 | 2026-01-28 |
 | 007.3 | Config Loader - Fresh defaults per-request | 5c33cc85 | 2026-01-28 |
 | 010.3 | toError() - Stack trace capture at call site | 5af5ff4c | 2026-01-28 |
+| 016.1 | Timing Attack - constantTimeEqual for all auth comparisons | eafa78c1 | 2026-01-28 |
 
 ---
 

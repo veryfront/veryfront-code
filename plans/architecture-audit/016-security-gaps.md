@@ -4,22 +4,23 @@
 
 Security vulnerabilities discovered during gap analysis that are NOT covered by existing tasks 001-039.
 
-## Risk Summary
+## Risk Summary (Updated)
 
-| Severity | Count | Immediate Action |
-|----------|-------|------------------|
-| HIGH | 3 | Block deployment |
-| MEDIUM | 2 | Fix within sprint |
+| Severity | Count | Status |
+|----------|-------|--------|
+| HIGH | 1 | ✅ Fixed (016.1) |
+| FALSE POSITIVE | 2 | ❌ 016.2, 016.4 |
+| DOWNGRADED | 2 | ⚠️ 016.3 (LOW), 016.5 (LOW) |
 
 ## Sub-Analyses
 
-| Doc | Issue | Severity | Location |
-|-----|-------|----------|----------|
-| [016.1](./016.1-timing-attack.md) | Timing Attack in Auth | HIGH | `src/security/http/auth.ts:104-124` |
-| [016.2](./016.2-innerhtml-sanitization.md) | innerHTML Without Sanitization | HIGH | `src/ai/tools/advanced-tools.ts` |
-| [016.3](./016.3-sandbox-escape.md) | Sandbox Escape via Function() | HIGH | `src/security/sandbox/deno-sandbox.ts:46-56` |
-| [016.4](./016.4-path-traversal.md) | Path Traversal in Adapters | MEDIUM | FS adapter operations |
-| [016.5](./016.5-json-parse-validation.md) | Unvalidated JSON.parse() | MEDIUM | 40+ locations |
+| Doc | Issue | Original | Validated | Status |
+|-----|-------|----------|-----------|--------|
+| [016.1](./016.1-timing-attack.md) | Timing Attack in Auth | HIGH | ✅ HIGH | **FIXED** (eafa78c1) |
+| [016.2](./016.2-innerhtml-sanitization.md) | innerHTML Without Sanitization | HIGH | ❌ FALSE POSITIVE | File doesn't use innerHTML; sanitizer exists |
+| [016.3](./016.3-sandbox-escape.md) | Sandbox Escape via Function() | HIGH | ⚠️ LOW | Worker permissions: "none" already sandboxes |
+| [016.4](./016.4-path-traversal.md) | Path Traversal in Adapters | MEDIUM | ❌ FALSE POSITIVE | SecureFs with multi-layer validation exists |
+| [016.5](./016.5-json-parse-validation.md) | Unvalidated JSON.parse() | MEDIUM | ⚠️ LOW | 85% already protected; 2 remaining fixed |
 
 ## Impact Matrix
 
