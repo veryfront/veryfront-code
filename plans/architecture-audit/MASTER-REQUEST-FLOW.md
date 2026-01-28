@@ -20,8 +20,8 @@ flowchart TB
 
         P1 --> P2 --> P3
 
-        PC1[("🔴 domainCache<br/>Map, no eviction")]
-        PC2[("🔴 tokenCache<br/>Redis/Memory")]
+        PC1[("🔴 domainCache<br/>Simple Map<br/>⚠️ no eviction")]
+        PC2[("🟢 tokenCache<br/>Redis/Memory<br/>TTL: token expiry")]
 
         P1 -.-> PC1
         P2 -.-> PC2
@@ -44,8 +44,8 @@ flowchart TB
 
         subgraph LOAD["Component Loading"]
             R7["Load page component"]
-            R8["Transform pipeline"]
-            R9["Load HTTP modules"]
+            R8["Transform pipeline<br/>(esbuild)"]
+            R9["Load npm packages<br/>(from esm.sh)"]
         end
 
         subgraph STYLE["Styling"]
@@ -53,27 +53,56 @@ flowchart TB
         end
 
         subgraph RENDER["Rendering"]
-            R11["SSR render"]
+            R11["SSR render<br/>(ReactDOMServer)"]
             R12["Inject CSS + hydration"]
         end
 
         INIT --> ROUTE --> LOAD --> STYLE --> RENDER
 
-        RC1[("🟡 configCache<br/>Map")]
-        RC2[("🟡 routerCache<br/>LRU 100")]
-        RC3[("🔴 layoutCache<br/>Map, no eviction")]
-        RC4[("🟢 moduleCache<br/>LRU 500")]
-        RC5[("🟢 transformCache<br/>Distributed")]
-        RC6[("🟢 cssCache<br/>Distributed")]
-        RC7[("🟢 renderCache<br/>Distributed")]
+        %% Init caches
+        RC0[("🟢 fileCache<br/>Distributed API/Redis<br/>TTL: 60s")]
+        RC1[("🔴 configCache<br/>Simple Map<br/>⚠️ revision-based")]
 
+        %% Route caches
+        RC2[("🟡 routerCache<br/>LRU 100 entries")]
+        RC2b[("🟡 routeCache<br/>LRU 256 entries")]
+        RC3[("🔴 layoutCache<br/>Simple Map<br/>⚠️ no eviction")]
+
+        %% Component caches
+        RC4[("🟡 globalModuleCache<br/>LRU 500 entries<br/>in-memory")]
+        RC5[("🟢 ssrModuleCache<br/>Distributed API/Redis<br/>TTL-based")]
+        RC6[("🟢 transformCache<br/>Distributed API/Redis<br/>⚠️ no projectId in key!")]
+
+        %% HTTP module caches
+        RC7[("🟡 cachedPaths<br/>LRU 500 entries<br/>URL → local file")]
+        RC8[("🟢 httpModuleCache<br/>Distributed API/Redis<br/>shared across projects ✓")]
+
+        %% CSS caches
+        RC9[("🟢 projectCssCache<br/>Distributed API/Redis<br/>project-scoped ✓")]
+        RC9b[("🔴 localCssCache<br/>Simple Map<br/>⚠️ no eviction")]
+
+        %% Render cache
+        RC10[("🟢 renderCache<br/>Distributed API/Redis<br/>project-scoped ✓")]
+
+        %% Semaphores (global)
+        SEM1[/"⚡ transformSemaphore<br/>Global: 10 max<br/>⚠️ shared all projects"/]
+        SEM2[/"⚡ renderSemaphore<br/>Global: 20 max<br/>⚠️ shared all projects"/]
+
+        R2 -.-> RC0
         R3 -.-> RC1
         R4 -.-> RC2
+        R5 -.-> RC2b
         R6 -.-> RC3
         R7 -.-> RC4
-        R8 -.-> RC5
-        R10 -.-> RC6
-        R11 -.-> RC7
+        R7 -.-> RC5
+        R8 -.-> RC6
+        R8 -.-> SEM1
+        R9 -.-> RC7
+        R9 -.-> RC8
+        R10 -.-> RC9
+        R10 -.-> RC9b
+        R11 -.-> RC10
+        R11 -.-> SEM2
     end
 
     subgraph RESPONSE["📄 Response"]
@@ -84,15 +113,78 @@ flowchart TB
     PROXY --> RENDERER
     RENDERER --> RES
 
+    %% Color coding
     style PC1 fill:#ffcccc
+    style RC1 fill:#ffcccc
     style RC3 fill:#ffcccc
-    style RC4 fill:#ccffcc
-    style RC5 fill:#ccffcc
-    style RC6 fill:#ccffcc
-    style RC7 fill:#ccffcc
+    style RC6 fill:#ffffcc
+    style RC9b fill:#ffcccc
+    style SEM1 fill:#ffdddd
+    style SEM2 fill:#ffdddd
 ```
 
-**Legend:** 🔴 No eviction (memory leak risk) | 🟡 LRU (bounded) | 🟢 Distributed + TTL (proper eviction)
+**Legend:**
+| Symbol | Type | Eviction | Risk |
+|--------|------|----------|------|
+| 🔴 | Simple Map | None | Memory leak, cross-project pollution |
+| 🟡 | LRU | Size-based | Bounded, safe |
+| 🟢 | Distributed (API/Redis) | TTL-based | Proper eviction |
+| ⚡ | Semaphore | N/A | Global starvation risk |
+| 🌐 | External Data Source | N/A | Network latency |
+
+---
+
+## Data Sources (On Cache Miss)
+
+```mermaid
+flowchart LR
+    subgraph CACHES["Cache Layer"]
+        C1[("tokenCache")]
+        C2[("fileCache")]
+        C3[("httpModuleCache")]
+        C4[("transformCache")]
+        C5[("cssCache")]
+        C6[("renderCache")]
+    end
+
+    subgraph SOURCES["🌐 External Data Sources"]
+        S1["🔐 api.veryfront.com/oauth/token<br/>OAuth token endpoint"]
+        S2["📁 api.veryfront.com/projects/{slug}/files/*<br/>Project files (draft/released)"]
+        S3["📦 esm.sh/{package}@{version}<br/>NPM packages as ESM"]
+        S4["⚙️ esbuild transform<br/>TSX/MDX → JS (CPU-bound)"]
+        S5["🎨 Tailwind compiler<br/>Generate CSS (CPU-bound)"]
+        S6["⚛️ ReactDOMServer.renderToString<br/>SSR render (CPU-bound)"]
+    end
+
+    C1 -->|MISS| S1
+    C2 -->|MISS| S2
+    C3 -->|MISS| S3
+    C4 -->|MISS| S4
+    C5 -->|MISS| S5
+    C6 -->|MISS| S6
+
+    style S1 fill:#e6f3ff
+    style S2 fill:#e6f3ff
+    style S3 fill:#e6f3ff
+    style S4 fill:#fff3e6
+    style S5 fill:#fff3e6
+    style S6 fill:#fff3e6
+```
+
+| Cache | On Miss → Source | Latency |
+|-------|------------------|---------|
+| `tokenCache` | `POST api.veryfront.com/oauth/token` | ~50ms |
+| `fileCache` | `GET api.veryfront.com/projects/{slug}/files/{path}` | ~30-100ms |
+| `httpModuleCache` | `GET esm.sh/{package}@{version}` | ~100-500ms |
+| `transformCache` | esbuild transform (TSX/MDX → JS) | ~20-100ms |
+| `cssCache` | Tailwind compiler scan + generate | ~50-200ms |
+| `renderCache` | ReactDOMServer.renderToString() | ~20-100ms |
+
+**Cache Types Explained:**
+- **Distributed API**: `api.veryfront.com/projects/{slug}/cache/*` - cache-as-a-service
+- **Distributed Redis**: Self-hosted Redis instance
+- **LRU**: Least Recently Used with max entry count
+- **Simple Map**: `new Map()` with no eviction strategy
 
 ---
 
