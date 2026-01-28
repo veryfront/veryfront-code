@@ -257,15 +257,44 @@ export function buildRedisTransformKey(key: string): string {
   return `${CacheKeyPrefix.TRANSFORM}${key}`;
 }
 
+export interface TransformCacheKeyOptions {
+  filePath: string;
+  contentHash: string;
+  ssr?: boolean;
+  studioEmbed?: boolean;
+  /** Hash of transitive dependencies (for invalidation when deps change) */
+  depsHash?: string;
+  /** Hash of transform-affecting config (for invalidation when config changes) */
+  configHash?: string;
+  /** Project ID for multi-tenant isolation */
+  projectId?: string;
+}
+
+/**
+ * Build a transform cache key with full dependency tracking.
+ *
+ * Key format: v{VERSION}:{projectId}:{filePath}:{contentHash}:{depsHash}:{configHash}:{target}
+ *
+ * @param options - Cache key options
+ */
 export function buildTransformCacheKey(
   filePath: string,
   contentHash: string,
   ssr: boolean = false,
   studioEmbed: boolean = false,
+  options?: {
+    depsHash?: string;
+    configHash?: string;
+    projectId?: string;
+  },
 ): string {
-  const ssrKey = ssr ? "ssr" : "browser";
+  const target = ssr ? "ssr" : "browser";
   const studioKey = studioEmbed ? ":studio" : "";
-  return `v${TRANSFORM_CACHE_VERSION}:${filePath}:${contentHash}:${ssrKey}${studioKey}`;
+  const depsKey = options?.depsHash ? `:deps=${options.depsHash.slice(0, 8)}` : "";
+  const configKey = options?.configHash ? `:cfg=${options.configHash.slice(0, 8)}` : "";
+  const projectKey = options?.projectId ? `${options.projectId}:` : "";
+
+  return `v${TRANSFORM_CACHE_VERSION}:${projectKey}${filePath}:${contentHash}:${target}${studioKey}${depsKey}${configKey}`;
 }
 
 export function buildContentHashCacheKey(

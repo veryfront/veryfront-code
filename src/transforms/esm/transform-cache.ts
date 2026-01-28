@@ -60,13 +60,20 @@ export const initializeRedisCache = initializeTransformCache;
 /** @deprecated Use isDistributedCacheEnabled instead */
 export const isRedisCacheEnabled = isDistributedCacheEnabled;
 
+export interface CacheKeyOptions {
+  depsHash?: string;
+  configHash?: string;
+  projectId?: string;
+}
+
 export function generateCacheKey(
   filePath: string,
   contentHash: string,
   ssr: boolean = false,
   studioEmbed: boolean = false,
+  options?: CacheKeyOptions,
 ): string {
-  return buildTransformCacheKey(filePath, contentHash, ssr, studioEmbed);
+  return buildTransformCacheKey(filePath, contentHash, ssr, studioEmbed, options);
 }
 
 export async function getCachedTransformAsync(
