@@ -7,9 +7,9 @@
 | Metric | Count |
 |--------|-------|
 | Total Issues | ~72 |
-| Validated | 36 |
+| Validated | 37 |
 | In Progress | 0 |
-| Completed | 13 |
+| Completed | 14 |
 | False Positive | 7 |
 | Downgraded | 16 |
 
@@ -37,7 +37,7 @@ Ready to proceed with remaining chapters (004-006, 010-014) - no CRITICAL issues
 | 002 | Global State | ✓ Complete | 1→0 | 4→0 | 2→0 | ██████████ 100% |
 | 003 | Cache Behavior | ✓ Complete | 2→0 | 2→0 | 0 | ██████████ 100% |
 | 004 | Bundle Dependencies | ✓ Validated | 0 | 3→2 | 3 | ██████░░░░ 60% |
-| 005 | Router Divergence | ⏳ Queued | 0 | 2 | 3 | ░░░░░░░░░░ 0% |
+| 005 | Router Divergence | 🔧 In Progress | 0 | 2→1 | 3 | ████░░░░░░ 40% |
 | 006 | Runtime Conditionals | ⏳ Queued | 0 | 1 | 2 | ░░░░░░░░░░ 0% |
 | 007 | Config Normalization | ✓ Validated | 1→0 | 3 | 3 | ██████░░░░ 60% |
 | 008 | Userland Config | ✓ Validated | 1→0 | 2 | 2 | ██████░░░░ 60% |
@@ -63,6 +63,7 @@ Ready to proceed with remaining chapters (004-006, 010-014) - no CRITICAL issues
 | 008.2 | Config - Unsafe execution | ⚠️ Downgraded | ⚠️ MEDIUM | - | Industry pattern |
 | 009.1 | Revalidation Semaphore Fairness | ✓ Completed | ⚠️ MEDIUM | ✅ | 7a3365c0 |
 | 009.2 | Domain Lookup - No timeout | ✓ Completed | ⚠️ HIGH | ✅ | 7a3365c0 |
+| 005.2 | SSG getAllPages() App Router | ✓ Completed | ⚠️ HIGH | ✅ | (pending) |
 | 012.1 | HTTP Client Timeouts (Partial) | ✓ Completed | ⚠️ HIGH | ✅ | (pending) |
 | 013.2 | Agent Cache Project Isolation | ✓ Completed | ⚠️ HIGH | ✅ | (pending) |
 | 014.1 | NODE_ENV Startup Validation | ✓ Completed | ⚠️ HIGH | ✅ | (pending) |
@@ -162,6 +163,7 @@ Ready to proceed with remaining chapters (004-006, 010-014) - no CRITICAL issues
 | 003.3 | Cross-Project Cache - Include project context | 1f82aa07 | 2026-01-28 |
 | 009.1 | Revalidation Semaphore - Per-project fairness | 7a3365c0 | 2026-01-28 |
 | 009.2 | Domain Lookup - Timeout protection | 7a3365c0 | 2026-01-28 |
+| 005.2 | SSG getAllPages() - App Router page discovery | (pending) | 2026-01-28 |
 | 012.1 | HTTP Client Timeouts (Veryfront API, Token Storage) | (pending) | 2026-01-28 |
 | 013.2 | Agent Cache - Project isolation (projectId in cache key) | (pending) | 2026-01-28 |
 | 014.1 | NODE_ENV - Startup validation in proxy mode | (pending) | 2026-01-28 |
