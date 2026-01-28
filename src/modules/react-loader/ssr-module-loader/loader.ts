@@ -54,6 +54,7 @@ import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache
 import { lookupMdxEsmCache } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import { ensureHttpBundlesExist } from "#veryfront/transforms/esm/http-cache.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { HTTP_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
 
 /** Pattern to match HTTP bundle file:// paths in transformed code */
 const HTTP_BUNDLE_PATTERN = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
@@ -365,7 +366,7 @@ export class SSRModuleLoader {
     });
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30000);
+    const timeout = setTimeout(() => controller.abort(), HTTP_FETCH_TIMEOUT_MS);
 
     try {
       const headers = new Headers({

@@ -130,14 +130,14 @@ P4: CODE CONSOLIDATION (lowest priority, do last)
 | [013](./013-ssr-module-path-consistency.md) | SSR Module Path Consistency | P2 | ✅ Fixed (1f82aa07) | [003.1](../003.1-ssr-module-path-mismatch.md) |
 | [014](./014-config-change-invalidation.md) | Config Change Invalidation | P2 | ✅ Fixed (7629b537) — configHash in keys | [004.6](../004.6-config-changes-not-invalidating.md) |
 | [015](./015-http-bundle-ttl-fix.md) | HTTP Bundle TTL Fix | P2 | ✅ Fixed (eef7dfe6) — bundle manifest | [003.2](../003.2-http-bundle-ttl-mismatch.md) |
-| [016](./016-unified-adapter-interface.md) | Unified Adapter Interface | P3 | Deferred — architectural refactor | [001.0](../001.0-unified-adapter-rfc.md) |
+| [016](./016-unified-adapter-interface.md) | Unified Adapter Interface | P3 | ✅ Closed — 19 checks are legitimate capability detection | [001.0](../001.0-unified-adapter-rfc.md) |
 | [017](./017-layout-discovery-unify.md) | Layout Discovery Unify | P3 | ✅ Fixed (60972782) | [001.1](../001.1-layout-bug-critical.md) |
 | [018](./018-config-middleware-parity.md) | Config/Middleware Parity | P3 | ✅ Partial (6fbf6ba9) — predicate unified | [001.5](../001.5-config-middleware-loading-divergence.md) |
 | [019](./019-css-cache-key-fix.md) | CSS Cache Key Fix | P3 | ⚠️ Deferred — by-design adapter difference | [001.6](../001.6-css-cache-key-divergence.md) |
 | [020](./020-router-detection-cache-fix.md) | Router Detection Cache Fix | P3 | ⚠️ Downgraded — low risk | [005.1](../005.1-global-router-detection-cache.md) |
 | [021](./021-import-rewriter-unify.md) | Import Rewriter Unify | P4 | ✅ Done — strategy pattern (688305c1) | [011.0](../011.0-import-rewriting-rfc.md) |
-| [022](./022-http-client-consolidate.md) | HTTP Client Consolidate | P4 | Deferred — code consolidation | [012.0](../012.0-http-clients-rfc.md) |
-| [023](./023-timeout-centralization.md) | Timeout Centralization | P4 | Deferred — code consolidation | [009.0](../009.0-timeout-handling-rfc.md) |
+| [022](./022-http-client-consolidate.md) | HTTP Client Consolidate | P4 | ✅ Closed — different contracts justify separate impls | [012.0](../012.0-http-clients-rfc.md) |
+| [023](./023-timeout-centralization.md) | Timeout Centralization | P4 | ✅ Fixed — centralized HTTP_FETCH_TIMEOUT_MS | [009.0](../009.0-timeout-handling-rfc.md) |
 | [024](./024-error-handling-patterns.md) | Error Handling Patterns | P4 | ✅ Partial (5af5ff4c, 66a2ffc0) | [010.0](../010.0-error-handling-rfc.md) |
 | [025](./025-environment-detection-unify.md) | Environment Detection | P4 | ✅ Fixed (1926ff65) | [006.0](../006.0-environment-detection-rfc.md) |
 | [026](./026-caching-strategy.md) | Caching Strategy | P0 | ✅ Done — manifest + deps tracking | [003.0](../003.0-cache-consistency-rfc.md) |
@@ -175,7 +175,7 @@ P4: CODE CONSOLIDATION (lowest priority, do last)
 | [053](./053-module-cache-lru.md) | Module Cache LRU | P2 | ✅ Mitigated — LRU 10K + 5min TTL | [018.4](../018.4-module-cache-bounds.md) |
 | [054](./054-transform-cache-lru.md) | Transform Cache LRU | P2 | ✅ Mitigated — LRU 500 + TTL | [018.5](../018.5-transform-cache-eviction.md) |
 | [055](./055-path-utils-consolidation.md) | Path Utils Consolidation | P4 | ✅ Fixed (6fbf6ba9) | [019.1](../019.1-getextension-duplication.md) |
-| [056](./056-large-file-decomposition.md) | Large File Decomposition | P4 | ⚠️ Deferred — files are cohesive | [019.4](../019.4-file-complexity.md) |
+| [056](./056-large-file-decomposition.md) | Large File Decomposition | P4 | ✅ Closed — single consumer, cohesive groupings | [019.4](../019.4-file-complexity.md) |
 | [057](./057-naming-conventions.md) | Naming Conventions | P4 | ✅ Closed — 95%+ consistent, enforce via review | [019.5](../019.5-naming-inconsistencies.md) |
 
 ## Priority Definitions
@@ -192,20 +192,15 @@ P4: CODE CONSOLIDATION (lowest priority, do last)
 
 All P0/P1 security and stability issues are resolved. Remaining items are deferred code quality improvements with no production impact.
 
-### Outstanding deferred work (optional, low priority)
-1. **016** - Unified adapter interface (P3 architectural refactor, ~3 weeks)
-2. **022** - HTTP client consolidation (P4 code quality)
-3. **023** - Timeout centralization (P4 code quality)
-4. **056** - Large file decomposition (P4, advanced-tools.ts 2K LOC)
+All deferred items have been reviewed and resolved. No outstanding work remains.
 
 ## Total: 57 Tasks
 
 | Category | Count |
 |----------|-------|
-| ✅ Fixed / Done / Closed | 34 |
+| ✅ Fixed / Done / Closed | 38 |
 | ❌ False positive | 5 |
 | ⚠️ Downgraded / Deferred | 14 |
-| Deferred (code consolidation) | 4 |
 | **Total** | **57** |
 
 ## Coverage Mapping

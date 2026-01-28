@@ -32,6 +32,7 @@ import {
   HTTP_MODULE_CACHE_MAX_ENTRIES,
   HTTP_MODULE_DISTRIBUTED_TTL_SEC,
 } from "#veryfront/utils/constants/cache.ts";
+import { HTTP_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
 
 /** Lazy-loaded distributed cache backend for cross-pod sharing */
 const getDistributedCache = createDistributedCacheAccessor(
@@ -347,7 +348,7 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
 
   const urlObj = new URL(normalizedUrl);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000);
+  const timeout = setTimeout(() => controller.abort(), HTTP_FETCH_TIMEOUT_MS);
 
   const response = await withSpan(
     SpanNames.HTTP_CLIENT_FETCH,
