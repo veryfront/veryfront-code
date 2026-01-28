@@ -12,7 +12,7 @@ import {
   isNetworkError,
   isRenderError,
   toError,
-  type VeryfrontError,
+  type VeryfrontErrorData,
 } from "./veryfront-error.ts";
 
 describe("veryfront-error", () => {
@@ -62,41 +62,41 @@ describe("veryfront-error", () => {
 
   describe("type guards", () => {
     it("should detect build errors", () => {
-      const error: VeryfrontError = { type: "build", message: "test" };
+      const error: VeryfrontErrorData = { type: "build", message: "test" };
       assertEquals(isBuildError(error), true);
       assertEquals(isAPIError(error), false);
     });
 
     it("should detect API errors", () => {
-      const error: VeryfrontError = { type: "api", message: "test" };
+      const error: VeryfrontErrorData = { type: "api", message: "test" };
       assertEquals(isAPIError(error), true);
       assertEquals(isBuildError(error), false);
     });
 
     it("should detect render errors", () => {
-      const error: VeryfrontError = { type: "render", message: "test" };
+      const error: VeryfrontErrorData = { type: "render", message: "test" };
       assertEquals(isRenderError(error), true);
     });
 
     it("should detect config errors", () => {
-      const error: VeryfrontError = { type: "config", message: "test" };
+      const error: VeryfrontErrorData = { type: "config", message: "test" };
       assertEquals(isConfigError(error), true);
     });
 
     it("should detect file errors", () => {
-      const error: VeryfrontError = { type: "file", message: "test" };
+      const error: VeryfrontErrorData = { type: "file", message: "test" };
       assertEquals(isFileError(error), true);
     });
 
     it("should detect network errors", () => {
-      const error: VeryfrontError = { type: "network", message: "test" };
+      const error: VeryfrontErrorData = { type: "network", message: "test" };
       assertEquals(isNetworkError(error), true);
     });
   });
 
   describe("toError", () => {
     it("should convert VeryfrontError to Error", () => {
-      const veryfrontError: VeryfrontError = {
+      const veryfrontError: VeryfrontErrorData = {
         type: "build",
         message: "Build failed",
       };
@@ -108,7 +108,7 @@ describe("veryfront-error", () => {
     });
 
     it("should attach context to error", () => {
-      const veryfrontError: VeryfrontError = {
+      const veryfrontError: VeryfrontErrorData = {
         type: "api",
         message: "Request failed",
         context: { endpoint: "/test" },
@@ -116,13 +116,13 @@ describe("veryfront-error", () => {
       const error = toError(veryfrontError);
 
       // Context is attached but not enumerable
-      assertEquals((error as { context: VeryfrontError }).context, veryfrontError);
+      assertEquals((error as unknown as { context: VeryfrontErrorData }).context, veryfrontError);
     });
   });
 
   describe("fromError", () => {
     it("should extract VeryfrontError from Error", () => {
-      const veryfrontError: VeryfrontError = {
+      const veryfrontError: VeryfrontErrorData = {
         type: "build",
         message: "Build failed",
       };

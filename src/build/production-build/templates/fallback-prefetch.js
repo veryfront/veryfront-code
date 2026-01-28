@@ -66,7 +66,7 @@ globalThis.PrefetchManager = class {
         // Also try to prefetch the data
         fetch(`/_veryfront/data${url}.json`, {
           credentials: "same-origin",
-        }).catch(() => {});
+        }).catch(() => { /* SILENT: data prefetch is best-effort */ });
 
         this.prefetched.add(url);
         console.log("[Prefetch] Success:", url);

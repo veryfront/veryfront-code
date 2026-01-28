@@ -22,9 +22,7 @@ export function LivePageContextProvider({
     slug: "",
     path: inBrowser ? globalThis.location.pathname : "/",
     params: {},
-    query: inBrowser
-      ? Object.fromEntries(new URLSearchParams(globalThis.location.search))
-      : {},
+    query: inBrowser ? Object.fromEntries(new URLSearchParams(globalThis.location.search)) : {},
     frontmatter: {},
   };
 

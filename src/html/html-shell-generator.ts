@@ -235,7 +235,7 @@ async function generateHTMLShellPartsImpl(
 
   const themePersistenceScript = options.colorSchemeFromParam
     ? `<script${nonce ? ` nonce="${nonce}"` : ""}>
-(function(){try{localStorage.setItem('theme','${colorScheme}')}catch(e){}})();
+(function(){try{localStorage.setItem('theme','${colorScheme}')}catch(e){/* SILENT: localStorage may be unavailable */}})();
 </script>`
     : "";
 

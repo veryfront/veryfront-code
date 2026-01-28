@@ -55,7 +55,7 @@ globalThis.VeryfrontRouter = class {
       fetch(`/_veryfront/data${url}.json`)
         .then((res) => res.json())
         .then((data) => this.cache.set(url, data))
-        .catch(() => {});
+        .catch(() => { /* SILENT: background prefetch is best-effort */ });
     }
   }
 };

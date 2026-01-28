@@ -291,7 +291,7 @@ export function generateErrorHTML(errorInfo: ErrorInfo, suggestion?: string): st
             if (data.type === 'reload' || data.type === 'update') {
               window.location.reload();
             }
-          } catch (e) {}
+          } catch (e) { /* SILENT: malformed HMR message is non-fatal */ }
         };
         ws.onclose = () => {
           reconnectAttempts++;

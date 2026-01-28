@@ -307,7 +307,7 @@ export class SSRHandler extends BaseHandler {
               .withContentType(getContentType(".html"), result.stream!, HTTP_OK);
 
             if (isHeadRequest) {
-              await response.body?.cancel().catch(() => {});
+              await response.body?.cancel().catch(() => {/* SILENT: HEAD request body discard */});
               return this.respond(
                 new Response(null, { status: response.status, headers: response.headers }),
               );
@@ -339,7 +339,7 @@ export class SSRHandler extends BaseHandler {
             .withContentType(getContentType(".html"), result.stream || result.html, HTTP_OK);
 
           if (isHeadRequest) {
-            await response.body?.cancel().catch(() => {});
+            await response.body?.cancel().catch(() => {/* SILENT: HEAD request body discard */});
             return this.respond(
               new Response(null, { status: response.status, headers: response.headers }),
             );

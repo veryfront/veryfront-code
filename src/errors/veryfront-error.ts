@@ -55,7 +55,13 @@ export interface NetworkContext {
   retryCount?: number;
 }
 
-export type VeryfrontError =
+/**
+ * Discriminated union for serializable error data.
+ *
+ * This represents error DATA (plain objects), not throwable errors.
+ * For throwable errors, use `VeryfrontError` class from `./types.ts`.
+ */
+export type VeryfrontErrorData =
   | { type: "build"; message: string; context?: BuildContext }
   | { type: "api"; message: string; context?: APIContext }
   | { type: "render"; message: string; context?: RenderContext }
@@ -66,15 +72,15 @@ export type VeryfrontError =
   | { type: "permission"; message: string; context?: FileContext }
   | { type: "not_supported"; message: string; feature?: string };
 
-export function createError(error: VeryfrontError): VeryfrontError {
+export function createError(error: VeryfrontErrorData): VeryfrontErrorData {
   return error;
 }
 
-/** Type guard factory for VeryfrontError types */
-function isErrorType<T extends VeryfrontError["type"]>(
+/** Type guard factory for VeryfrontErrorData types */
+function isErrorType<T extends VeryfrontErrorData["type"]>(
   type: T,
-): (error: VeryfrontError) => error is Extract<VeryfrontError, { type: T }> {
-  return (error): error is Extract<VeryfrontError, { type: T }> => error.type === type;
+): (error: VeryfrontErrorData) => error is Extract<VeryfrontErrorData, { type: T }> {
+  return (error): error is Extract<VeryfrontErrorData, { type: T }> => error.type === type;
 }
 
 export const isBuildError = isErrorType("build");
@@ -86,14 +92,14 @@ export const isFileError = isErrorType("file");
 export const isNetworkError = isErrorType("network");
 
 /**
- * Convert a VeryfrontError (plain object) to a throwable Error instance.
+ * Convert a VeryfrontErrorData (plain object) to a throwable Error instance.
  *
  * Uses Error.captureStackTrace when available (V8 engines) to exclude toError()
  * from the stack trace, making the stack point to the actual call site.
  *
  * @see plans/architecture-audit/010.3-dual-veryfront-error-definitions.md
  */
-export function toError(veryfrontError: VeryfrontError): Error {
+export function toError(veryfrontError: VeryfrontErrorData): Error {
   const error = new Error(veryfrontError.message);
   error.name = `VeryfrontError[${veryfrontError.type}]`;
 
@@ -111,7 +117,7 @@ export function toError(veryfrontError: VeryfrontError): Error {
   return error;
 }
 
-export function fromError(error: unknown): VeryfrontError | null {
+export function fromError(error: unknown): VeryfrontErrorData | null {
   if (!error || typeof error !== "object" || !("context" in error)) return null;
 
   const context = (error as { context?: unknown }).context;
@@ -119,11 +125,11 @@ export function fromError(error: unknown): VeryfrontError | null {
 
   if (!("type" in context) || !("message" in context)) return null;
 
-  return context as VeryfrontError;
+  return context as VeryfrontErrorData;
 }
 
 export function logError(
-  error: VeryfrontError,
+  error: VeryfrontErrorData,
   logger?: { error: (msg: string, ...args: unknown[]) => void },
 ): void {
   const log = logger ?? console;
