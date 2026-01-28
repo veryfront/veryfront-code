@@ -34,6 +34,11 @@ let lastStylesheetHash = "";
 
 const pluginCache = new Map<string, unknown>();
 const pluginErrors = new Map<string, string>();
+const pluginErrorExpiry = new Map<string, number>();
+
+// Retry configuration for esm.sh requests
+const ESM_RETRY_DELAYS = [100, 500, 2000]; // ms - exponential backoff
+const PLUGIN_ERROR_CACHE_TTL_MS = 60000; // 1 minute - don't retry failed plugins too frequently
 
 let cssCache: CacheBackend | null = null;
 let cssCacheInitPromise: Promise<CacheBackend> | null = null;
@@ -575,11 +580,65 @@ export function extractCandidatesFromFiles(
   return candidates;
 }
 
+/**
+ * Fetch with retry and exponential backoff for esm.sh requests.
+ * This helps handle transient 500 errors from the CDN.
+ */
+async function fetchWithRetry(url: string, retryDelays = ESM_RETRY_DELAYS): Promise<unknown> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= retryDelays.length; attempt++) {
+    try {
+      const mod = await import(url);
+      return mod;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+
+      // Check if this is a retryable error (5xx from esm.sh)
+      const isRetryable =
+        lastError.message.includes("500") ||
+        lastError.message.includes("502") ||
+        lastError.message.includes("503") ||
+        lastError.message.includes("504") ||
+        lastError.message.includes("Internal Server Error");
+
+      if (!isRetryable || attempt >= retryDelays.length) {
+        throw lastError;
+      }
+
+      const delay = retryDelays[attempt];
+      logger.debug("[tailwind] esm.sh request failed, retrying", {
+        url,
+        attempt: attempt + 1,
+        maxAttempts: retryDelays.length + 1,
+        delayMs: delay,
+        error: lastError.message,
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+
+  throw lastError;
+}
+
 async function loadPlugin(id: string): Promise<unknown> {
+  // Check if we have a cached successful result
   if (pluginCache.has(id)) {
     const errorMsg = pluginErrors.get(id);
-    if (errorMsg) throw new Error(errorMsg);
-    return pluginCache.get(id);
+    if (errorMsg) {
+      // Check if the error has expired (allow retry after TTL)
+      const expiry = pluginErrorExpiry.get(id) ?? 0;
+      if (Date.now() < expiry) {
+        throw new Error(errorMsg);
+      }
+      // Error expired, clear it and retry
+      pluginErrors.delete(id);
+      pluginErrorExpiry.delete(id);
+      pluginCache.delete(id);
+    } else {
+      return pluginCache.get(id);
+    }
   }
 
   // Use the proper isDeno check that distinguishes between real Deno and dnt shim
@@ -592,7 +651,7 @@ async function loadPlugin(id: string): Promise<unknown> {
       // Deno supports HTTP imports natively
       const url = `https://esm.sh/${id}`;
       logger.debug("[tailwind] Loading plugin via esm.sh", { id, url });
-      mod = await import(url);
+      mod = await fetchWithRetry(url);
     } else {
       // Node.js: Try to import from node_modules
       // First try the bare specifier, then fall back to global node_modules
@@ -610,13 +669,19 @@ async function loadPlugin(id: string): Promise<unknown> {
 
     const plugin = (mod as { default?: unknown }).default ?? mod;
     pluginCache.set(id, plugin);
+    // Clear any previous error state
+    pluginErrors.delete(id);
+    pluginErrorExpiry.delete(id);
     return plugin;
   } catch (error) {
     const errorMsg = `Failed to load plugin "${id}": ${
       error instanceof Error ? error.message : String(error)
     }`;
     logger.warn(`[tailwind] ${errorMsg}`);
+    // Cache the error with expiry so we don't hammer esm.sh on every request
     pluginErrors.set(id, errorMsg);
+    pluginErrorExpiry.set(id, Date.now() + PLUGIN_ERROR_CACHE_TTL_MS);
+    pluginCache.set(id, null); // Mark as attempted
     throw new Error(errorMsg);
   }
 }
@@ -625,11 +690,13 @@ export function clearPluginCache(id?: string): void {
   if (id) {
     pluginCache.delete(id);
     pluginErrors.delete(id);
+    pluginErrorExpiry.delete(id);
     return;
   }
 
   pluginCache.clear();
   pluginErrors.clear();
+  pluginErrorExpiry.clear();
 }
 
 async function getTailwindBaseCSS(): Promise<string> {
