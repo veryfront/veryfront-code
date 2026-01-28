@@ -17,7 +17,11 @@ import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { isKeyForProject, registerMapCache } from "#veryfront/cache/keys.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
-import { MAX_CONCURRENT_TRANSFORMS, SSR_TMP_DIRS_MAX_ENTRIES } from "../constants.ts";
+import {
+  MAX_CONCURRENT_TRANSFORMS,
+  SSR_TMP_DIRS_MAX_ENTRIES,
+  TRANSFORM_PER_PROJECT_LIMIT,
+} from "../constants.ts";
 import { Semaphore } from "../concurrency/semaphore.ts";
 import type { FailureRecord, ModuleCacheEntry } from "../types.ts";
 
@@ -42,6 +46,55 @@ export const failedComponents = new Map<string, FailureRecord>();
 
 export const transformSemaphore = new Semaphore(MAX_CONCURRENT_TRANSFORMS);
 
+/**
+ * Per-project active transform counter. Prevents a single noisy tenant from
+ * monopolizing the global semaphore and starving other projects.
+ * Only enforced when TRANSFORM_PER_PROJECT_LIMIT > 0.
+ */
+const projectTransformCounts = new Map<string, number>();
+
+/**
+ * Attempt to acquire a project-level transform slot.
+ * Returns true if acquired, false if project is at capacity.
+ */
+export function acquireTransformSlot(projectId: string): boolean {
+  if (TRANSFORM_PER_PROJECT_LIMIT <= 0) return true;
+  const current = projectTransformCounts.get(projectId) ?? 0;
+  if (current >= TRANSFORM_PER_PROJECT_LIMIT) return false;
+  projectTransformCounts.set(projectId, current + 1);
+  return true;
+}
+
+/**
+ * Release a project-level transform slot.
+ */
+export function releaseTransformSlot(projectId: string): void {
+  if (TRANSFORM_PER_PROJECT_LIMIT <= 0) return;
+  const current = projectTransformCounts.get(projectId) ?? 0;
+  if (current <= 1) {
+    projectTransformCounts.delete(projectId);
+  } else {
+    projectTransformCounts.set(projectId, current - 1);
+  }
+}
+
+/**
+ * Get per-project transform statistics.
+ */
+export function getTransformStats(): {
+  globalAvailable: number;
+  globalWaiting: number;
+  perProjectLimit: number;
+  activeProjects: Map<string, number>;
+} {
+  return {
+    globalAvailable: transformSemaphore.available,
+    globalWaiting: transformSemaphore.waiting,
+    perProjectLimit: TRANSFORM_PER_PROJECT_LIMIT,
+    activeProjects: new Map(projectTransformCounts),
+  };
+}
+
 registerCache("ssr-module-cache", () => ({
   name: "ssr-module-cache",
   entries: globalModuleCache.size,
@@ -60,6 +113,8 @@ registerCache("ssr-transform-semaphore", () => ({
   entries: MAX_CONCURRENT_TRANSFORMS - transformSemaphore.available,
   maxEntries: MAX_CONCURRENT_TRANSFORMS,
   waiting: transformSemaphore.waiting,
+  perProjectLimit: TRANSFORM_PER_PROJECT_LIMIT,
+  activeProjects: Object.fromEntries(projectTransformCounts),
 }));
 
 function createCacheRegistryWrapper<T>(cache: LRUCache<string, T>) {

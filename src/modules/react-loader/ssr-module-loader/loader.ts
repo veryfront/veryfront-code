@@ -36,6 +36,7 @@ import {
 } from "./constants.ts";
 import { withTimeoutThrow } from "#veryfront/rendering/utils/stream-utils.ts";
 import {
+  acquireTransformSlot,
   failedComponents,
   getFromRedis,
   globalCrossProjectCache,
@@ -43,6 +44,7 @@ import {
   globalModuleCache,
   globalTmpDirs,
   isSSRDistributedCacheEnabled,
+  releaseTransformSlot,
   setInRedis,
   transformSemaphore,
 } from "./cache/index.ts";
@@ -347,9 +349,22 @@ export class SSRModuleLoader {
       await this.fs.mkdir(tempPath.substring(0, tempPath.lastIndexOf("/")), { recursive: true });
 
       const useSemaphore = MAX_CONCURRENT_TRANSFORMS > 0;
+      const projectId = this.options.projectId;
+      let projectSlotAcquired = false;
+
+      // Per-project fairness check (fast, no waiting)
+      if (!acquireTransformSlot(projectId)) {
+        throw new Error(
+          `Project ${projectId} at transform capacity. Consider reducing page complexity or request rate.`,
+        );
+      }
+      projectSlotAcquired = true;
+
       if (useSemaphore) {
         const acquired = await transformSemaphore.tryAcquire(TRANSFORM_ACQUIRE_TIMEOUT_MS);
         if (!acquired) {
+          releaseTransformSlot(projectId);
+          projectSlotAcquired = false;
           throw new Error(
             `Transform capacity exceeded (${transformSemaphore.waiting} waiting). Service is overloaded.`,
           );
@@ -358,7 +373,7 @@ export class SSRModuleLoader {
 
       try {
         const transformOpts: TransformOptions = {
-          projectId: this.options.projectId,
+          projectId,
           dev: this.options.dev,
           ssr: true,
           apiBaseUrl: this.options.apiBaseUrl,
@@ -389,6 +404,7 @@ export class SSRModuleLoader {
         return tempPath;
       } finally {
         if (useSemaphore) transformSemaphore.release();
+        if (projectSlotAcquired) releaseTransformSlot(projectId);
       }
     } catch (error) {
       clearTimeout(timeout);
@@ -642,9 +658,27 @@ export class SSRModuleLoader {
       }
 
       const useSemaphore = MAX_CONCURRENT_TRANSFORMS > 0;
+      const projectId = this.options.projectId;
+      let projectSlotAcquired = false;
+
+      // Per-project fairness check (fast, no waiting)
+      if (!acquireTransformSlot(projectId)) {
+        throw toError(
+          createError({
+            type: "build",
+            message:
+              `Project ${projectId} at transform capacity. Consider reducing page complexity or request rate.`,
+            context: { file: filePath, phase: "transform" },
+          }),
+        );
+      }
+      projectSlotAcquired = true;
+
       if (useSemaphore) {
         const acquired = await transformSemaphore.tryAcquire(TRANSFORM_ACQUIRE_TIMEOUT_MS);
         if (!acquired) {
+          releaseTransformSlot(projectId);
+          projectSlotAcquired = false;
           throw toError(
             createError({
               type: "build",
@@ -658,7 +692,7 @@ export class SSRModuleLoader {
 
       try {
         const transformOpts: TransformOptions = {
-          projectId: this.options.projectId,
+          projectId,
           dev: this.options.dev,
           ssr: true,
           apiBaseUrl: this.options.apiBaseUrl,
@@ -727,6 +761,7 @@ export class SSRModuleLoader {
         globalModuleCache.set(filePathCacheKey, entry);
       } finally {
         if (useSemaphore) transformSemaphore.release();
+        if (projectSlotAcquired) releaseTransformSlot(projectId);
       }
 
       resolveTransform();
