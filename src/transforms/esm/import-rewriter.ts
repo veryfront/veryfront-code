@@ -100,7 +100,10 @@ export function rewriteBareImports(
 
         return `https://esm.sh/${finalSpecifier}?external=react&target=es2022`;
       }),
-    { "transforms.code_length": code.length, ...(projectId && { "transforms.project_id": projectId }) },
+    {
+      "transforms.code_length": code.length,
+      ...(projectId && { "transforms.project_id": projectId }),
+    },
   );
 }
 
