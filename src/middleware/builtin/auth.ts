@@ -1,5 +1,6 @@
 import type { Context, MiddlewareHandler, Next } from "../core/types.ts";
 import { HTTP_UNAUTHORIZED } from "#veryfront/utils/constants/http.ts";
+import { constantTimeEqual } from "../../security/utils/constant-time.ts";
 
 function unauthorizedResponse(realm?: string): Response {
   const headers: HeadersInit = realm ? { "WWW-Authenticate": `Basic realm="${realm}"` } : {};
@@ -19,7 +20,7 @@ export function basicAuth(options: {
     if (!authorization?.startsWith("Basic ")) return unauthorizedResponse(realm);
 
     const credentials = authorization.slice(6);
-    if (credentials !== expected) return unauthorizedResponse(realm);
+    if (!constantTimeEqual(credentials, expected)) return unauthorizedResponse(realm);
 
     return next();
   };
@@ -37,7 +38,7 @@ export function bearerAuth(options: {
 
     const bearerToken = authorization.slice(7);
 
-    if (token && bearerToken !== token) return unauthorizedResponse();
+    if (token && !constantTimeEqual(bearerToken, token)) return unauthorizedResponse();
     if (verifyToken && !(await verifyToken(bearerToken))) return unauthorizedResponse();
 
     c.var.token = bearerToken;
