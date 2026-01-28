@@ -145,13 +145,16 @@ registerMapCache("ssr-failed-components", failedComponents);
 export function clearSSRModuleCache(): void {
   const moduleCount = globalModuleCache.size;
   const failedCount = failedComponents.size;
+  const transformSlotsCount = projectTransformCounts.size;
 
   globalModuleCache.clear();
   failedComponents.clear();
+  projectTransformCounts.clear();
 
   logger.info("[SSR-MODULE-LOADER] ✓ Global cache cleared", {
     modulesCleared: moduleCount,
     failedComponentsCleared: failedCount,
+    transformSlotsCleared: transformSlotsCount,
   });
 }
 
@@ -183,6 +186,9 @@ export function clearSSRModuleCacheForProject(projectId: string): void {
     if (!key.includes(`:${projectId}`)) continue;
     globalTmpDirs.delete(key);
   }
+
+  // Clear project's transform slot count
+  projectTransformCounts.delete(projectId);
 
   logger.debug("[SSR-MODULE-LOADER] ✓ Project cache cleared", {
     projectId,
