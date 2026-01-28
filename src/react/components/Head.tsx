@@ -1,10 +1,6 @@
 import React, { useEffect, useRef } from "react";
 import { collectHead } from "#veryfront/react/head-collector.ts";
-
-function isServerEnvironment(): boolean {
-  const ssrFlag = (globalThis as Record<string, unknown>).__VERYFRONT_SSR__;
-  return ssrFlag === true || typeof window === "undefined";
-}
+import { isServerEnvironment } from "#veryfront/platform/compat/runtime.ts";
 
 export function Head({ children }: { children: React.ReactNode }): React.ReactElement {
   const mountedRef = useRef(false);

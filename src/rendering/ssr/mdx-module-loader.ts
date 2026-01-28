@@ -6,6 +6,7 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { MDX_RENDERER_MAX_ENTRIES, MDX_RENDERER_TTL_MS } from "#veryfront/utils/constants/cache.ts";
+import { isBrowserEnvironment } from "#veryfront/platform/compat/runtime.ts";
 import type { MDXModule } from "./types.ts";
 
 const mdxModuleCache = new LRUCache<string, MDXModule>({
@@ -60,8 +61,7 @@ export async function loadCompiledMDXModule(
     const cached = mdxModuleCache.get(key);
     if (cached) return cached;
 
-    const isBrowser = typeof window !== "undefined" && typeof document !== "undefined";
-    if (isBrowser) return await loadViaBlobURL(compiledCode, cacheKey, key);
+    if (isBrowserEnvironment()) return await loadViaBlobURL(compiledCode, cacheKey, key);
 
     return await loadViaTempFile(compiledCode, cacheKey, key);
   } catch (error) {

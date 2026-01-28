@@ -2,6 +2,7 @@ import type React from "react";
 import { createContext, useContext } from "react";
 import type { MDXFrontmatter, PageContext as TypedPageContext } from "#veryfront/types";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { isBrowserEnvironment } from "#veryfront/platform/compat/runtime.ts";
 
 interface PageContext extends Omit<TypedPageContext, "frontmatter"> {
   frontmatter?: MDXFrontmatter;
@@ -16,11 +17,12 @@ export function LivePageContextProvider({
   children: React.ReactNode;
   pageContext?: TypedPageContext;
 }): React.ReactElement {
+  const inBrowser = isBrowserEnvironment();
   const context: PageContext = pageContext ?? {
     slug: "",
-    path: typeof window !== "undefined" ? globalThis.location.pathname : "/",
+    path: inBrowser ? globalThis.location.pathname : "/",
     params: {},
-    query: typeof window !== "undefined"
+    query: inBrowser
       ? Object.fromEntries(new URLSearchParams(globalThis.location.search))
       : {},
     frontmatter: {},
