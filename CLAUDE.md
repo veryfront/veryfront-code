@@ -4,10 +4,10 @@ Zero-config React meta-framework with AI-native capabilities. Contains both the 
 
 ## Quick Reference
 
-| Component | Container  | Port  | Runtime |
-| --------- | ---------- | ----- | ------- |
-| Proxy     | `proxy`    | 20000 | Deno    |
-| Renderer  | `renderer` | 20000 | Deno    |
+| Component | Port  | Runtime |
+| --------- | ----- | ------- |
+| Proxy     | 20000 | Deno    |
+| Renderer  | 20000 | Deno    |
 
 ## Tech Stack
 
@@ -42,7 +42,6 @@ veryfront-renderer/
 │   ├── routing/          # File-based routing, API routes
 │   ├── security/         # Security utilities
 │   └── server/           # Dev & production servers
-├── chart/                 # Helm chart (deploys both)
 ├── tests/                 # Integration tests
 ├── deno.json             # Main Deno config
 └── veryfront.config.ts   # Framework config
@@ -65,7 +64,7 @@ Client → [Proxy Logic → Renderer] → API
 - Simpler, faster startup
 - Auto-discovers local projects
 
-### Split Mode (Production)
+### Split Mode
 
 ```
 Client → Proxy → Renderer → API
@@ -73,8 +72,9 @@ Client → Proxy → Renderer → API
    Token cache (Redis)
 ```
 
-- Separate containers for security isolation
+- Separate processes for isolation
 - OAuth credentials only in proxy
+- Production deployment handled by [veryfront-cloud-renderer](https://github.com/veryfront/veryfront-cloud-renderer)
 
 ## Development Commands
 
@@ -149,21 +149,6 @@ REDIS_URL=redis://...
 7. Response returned to client
 ```
 
-## Helm Chart
-
-Deploys both proxy and renderer:
-
-```yaml
-# chart/values.yaml
-proxy:
-  replicaCount: 2
-  image: ghcr.io/veryfront/veryfront-proxy
-
-renderer:
-  replicaCount: 2
-  image: ghcr.io/veryfront/veryfront-renderer
-```
-
 ## Debugging
 
 ### Local Setup
@@ -208,13 +193,7 @@ deno task start 2>&1 | tee server.log
 
 ## Remote Logs
 
-```bash
-# Proxy logs
-logcli query '{namespace="veryfront-production", container="proxy"} |= "error"' --limit=50
-
-# Renderer logs
-logcli query '{namespace="veryfront-production", container="renderer"} |= "error"' --limit=50
-```
+Production logs are available via Grafana. See [veryfront-cloud-renderer](https://github.com/veryfront/veryfront-cloud-renderer) for deployment and monitoring details.
 
 ## Key Files
 
@@ -228,7 +207,6 @@ logcli query '{namespace="veryfront-production", container="renderer"} |= "error
 | `src/rendering/`          | SSR/RSC rendering engine       |
 | `src/routing/`            | File-based routing             |
 | `veryfront.config.ts`     | Framework configuration        |
-| `chart/values.yaml`       | Kubernetes deployment config   |
 
 ## Troubleshooting Production 500 Errors
 
@@ -246,16 +224,13 @@ VERYFRONT_API_BASE_URL=https://api.veryfront.com PROXY_MODE=1 deno task start
 |---------------|----------|-----|
 | `Module not found "file://..."` | Cache path mismatch | Clear project cache |
 | `Transform failed` | Transform error | Check user code syntax |
-| `timeout` / `stuck` | Performance | Restart pods |
+| `timeout` / `stuck` | Performance | Restart server |
 
 **Step 3: Clear cache if needed**:
 ```bash
 # Clear one project's cache
 curl -X DELETE "https://api.veryfront.com/internal/cache/project/{projectId}/transforms" \
   -H "Authorization: Bearer $ADMIN_TOKEN"
-
-# Nuclear option - restart pods
-kubectl rollout restart deployment/veryfront-renderer -n veryfront-production
 ```
 
 See `docs/troubleshooting-500-errors.md` for full guide.
