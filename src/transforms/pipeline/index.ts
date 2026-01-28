@@ -16,11 +16,7 @@ import {
   compilePlugin,
   finalizePlugin,
   parsePlugin,
-  resolveAliasesPlugin,
-  resolveBarePlugin,
-  resolveContextPlugin,
-  resolveReactPlugin,
-  resolveRelativePlugin,
+  resolveImportsPlugin,
   ssrHttpCachePlugin,
   ssrHttpStubPlugin,
 } from "./stages/index.ts";
@@ -28,12 +24,8 @@ import {
 const SSR_PIPELINE: TransformPlugin[] = [
   parsePlugin,
   compilePlugin,
-  resolveAliasesPlugin,
-  resolveReactPlugin,
-  resolveContextPlugin,
+  resolveImportsPlugin, // Unified import resolution
   ssrHttpStubPlugin,
-  resolveRelativePlugin,
-  resolveBarePlugin,
   ssrHttpCachePlugin,
   finalizePlugin,
 ];
@@ -41,11 +33,7 @@ const SSR_PIPELINE: TransformPlugin[] = [
 const BROWSER_PIPELINE: TransformPlugin[] = [
   parsePlugin,
   compilePlugin,
-  resolveAliasesPlugin,
-  resolveReactPlugin,
-  resolveContextPlugin,
-  resolveRelativePlugin,
-  resolveBarePlugin,
+  resolveImportsPlugin, // Unified import resolution
   finalizePlugin,
 ];
 
