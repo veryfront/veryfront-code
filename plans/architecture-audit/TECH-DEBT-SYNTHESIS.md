@@ -40,6 +40,38 @@ All **HIGH** and **CRITICAL** priority issues have been resolved. The remaining 
 - Content-addressed derivations deduplicate identical outputs
 - "Memoized pure execve" model
 
+### Concrete Implementation Patterns
+
+**esbuild's Three-Step Hash Algorithm** (solves chicken-and-egg for cyclic imports):
+```
+Step 1: Generate output with TEMPORARY PATHS for cross-file imports
+        Hash = hash(code excluding temp paths) + hash(relative input paths)
+Step 2: Replace temporary paths with FINAL HASHES
+Step 3: Final output with stable cache keys
+```
+
+**Memoized Incremental Hash Tree**:
+```typescript
+interface DependencyNode {
+  filePath: string;
+  contentHash: string;        // Hash of this file only
+  transitiveDepsHash: string; // Hash of (contentHash + sorted children's hashes)
+  children: Set<string>;      // Direct imports
+  version: number;            // Invalidation counter
+}
+
+// O(1) for cache hit, O(depth) for cache miss
+async getTransitiveDepsHash(filePath: string): Promise<string>
+
+// O(affected nodes), NOT O(total nodes)
+invalidateFile(filePath: string): void
+```
+
+**Cycle Detection** (3 approaches):
+1. **SCC**: Strongly Connected Components treated as single unit
+2. **Visited Set**: Return content hash only for cycle members
+3. **Version Counter**: Salsa-style lazy recomputation
+
 ### Recommendation
 
 **Priority: P2 (~14 days effort)**
@@ -47,9 +79,9 @@ All **HIGH** and **CRITICAL** priority issues have been resolved. The remaining 
 The existing TTL-based caching and release-based invalidation provide acceptable staleness windows. Full dependency tracking would require:
 
 1. Building dependency graph during transform
-2. Computing transitive closure hash
+2. Computing transitive closure hash with cycle handling
 3. Updating all cache key generation sites
-4. Handling circular dependencies
+4. Adding config hash to cache keys
 
 **Deferred**: Implement when staleness becomes a reported issue.
 
@@ -192,9 +224,52 @@ src/errors/
 ### For Dependency Tracking (004)
 ```
 src/cache/
-├── keys.ts                 # Add depsHash parameter
+├── keys.ts                 # Add depsHash, configHash parameters
 ├── dependency-graph.ts     # Track imports during transform
+├── config-hash.ts          # Hash transform-affecting config
 └── hash-calculator.ts      # Compute transitive closure
+```
+
+**Key Implementation**: `dependency-graph.ts`
+```typescript
+export interface DependencyGraph {
+  imports: Map<string, Set<string>>;        // file -> direct imports
+  inverseImports: Map<string, Set<string>>; // file -> importers
+  contentHashes: Map<string, string>;
+  depsHashes: Map<string, string>;          // Memoized transitive hashes
+}
+
+// Build graph with parallel file reads
+export async function buildDependencyGraph(
+  entryPath: string,
+  adapter: RuntimeAdapter,
+  projectDir: string,
+): Promise<DependencyGraph>
+
+// Compute hash with cycle detection and memoization
+export async function computeDepsHash(
+  filePath: string,
+  graph: DependencyGraph,
+  computing: Set<string> = new Set(), // Cycle detection
+): Promise<string>
+
+// Get affected files for cache invalidation - O(affected) not O(total)
+export function getAffectedFiles(
+  changedPath: string,
+  graph: DependencyGraph,
+): Set<string>
+```
+
+**Updated Cache Key**:
+```typescript
+buildTransformCacheKey(
+  filePath,
+  contentHash,
+  depsHash,     // NEW: transitive dependency hash
+  configHash,   // NEW: transform-affecting config hash
+  ssr,
+  studioEmbed,
+)
 ```
 
 ---
@@ -223,8 +298,17 @@ src/cache/
 
 ## References
 
-- [Turbopack Documentation](https://turbo.build/pack/docs)
-- [Parcel v2.9.0 Release Notes](https://parceljs.org/blog/v2-9-0/)
+### Dependency Tracking & Build Systems
+- [Vite Dependency Pre-Bundling](https://vite.dev/guide/dep-pre-bundling)
+- [esbuild Release v0.9.4 - Hashing Algorithm](https://github.com/evanw/esbuild/releases/tag/v0.9.4)
+- [Turbopack Incremental Computation](https://nextjs.org/blog/turbopack-incremental-computation)
+- [Parcel Production Features](https://parceljs.org/features/production/)
+- [Rust Analyzer Durable Incrementality](https://rust-analyzer.github.io/blog/2023/07/24/durable-incrementality.html)
 - [Salsa - Rust Compiler Guide](https://rustc-dev-guide.rust-lang.org/queries/salsa.html)
+
+### Import Rewriting
 - [Vite Plugin API](https://vitejs.dev/guide/api-plugin.html)
+- [es-module-lexer](https://github.com/guybedford/es-module-lexer)
+
+### Error Handling
 - [ES2022 Error Cause](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error/cause)
