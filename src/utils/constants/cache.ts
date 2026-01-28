@@ -148,6 +148,12 @@ export const MAX_CONCURRENT_REVALIDATIONS = getEnvNumber("MAX_CONCURRENT_REVALID
 export const MAX_CONCURRENT_HTTP_FETCHES = getEnvNumber("MAX_CONCURRENT_HTTP_FETCHES", 50);
 export const REVALIDATION_TIMEOUT_MS = getEnvNumber("REVALIDATION_TIMEOUT_MS", 15000);
 
+// Per-project fairness limit for revalidations (prevents one project from starving others)
+export const REVALIDATION_PER_PROJECT_LIMIT = getEnvNumber(
+  "REVALIDATION_PER_PROJECT_LIMIT",
+  Math.ceil(MAX_CONCURRENT_REVALIDATIONS / 3),
+);
+
 // HTTP module cache (esm.sh, CDN bundles)
 // These bundles are immutable once fetched, so long TTLs are safe
 export const HTTP_MODULE_CACHE_MAX_ENTRIES = getEnvNumber("HTTP_MODULE_CACHE_MAX_ENTRIES", 2000);

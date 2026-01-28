@@ -9,6 +9,7 @@ import { getSemaphore } from "#veryfront/utils/semaphore.ts";
 import {
   MAX_CONCURRENT_REVALIDATIONS,
   REVALIDATION_TIMEOUT_MS,
+  REVALIDATION_PER_PROJECT_LIMIT,
 } from "#veryfront/utils/constants/cache.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
@@ -17,6 +18,31 @@ import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 const revalidationSemaphore = getSemaphore("revalidation", MAX_CONCURRENT_REVALIDATIONS, {
   acquireTimeoutMs: 5000, // Don't wait more than 5s for a permit
 });
+
+/**
+ * Per-project revalidation tracking for multi-tenant fairness.
+ * Prevents one project with many stale entries from starving other projects.
+ */
+const projectRevalidationCounts = new Map<string, number>();
+
+/** Acquire a revalidation slot for a project (returns false if at per-project limit) */
+function acquireRevalidationSlot(projectId: string): boolean {
+  if (REVALIDATION_PER_PROJECT_LIMIT <= 0) return true;
+  const current = projectRevalidationCounts.get(projectId) ?? 0;
+  if (current >= REVALIDATION_PER_PROJECT_LIMIT) return false;
+  projectRevalidationCounts.set(projectId, current + 1);
+  return true;
+}
+
+/** Release a revalidation slot for a project */
+function releaseRevalidationSlot(projectId: string): void {
+  const current = projectRevalidationCounts.get(projectId) ?? 0;
+  if (current <= 1) {
+    projectRevalidationCounts.delete(projectId);
+  } else {
+    projectRevalidationCounts.set(projectId, current - 1);
+  }
+}
 
 export class StaticDataFetcher {
   private pendingRevalidations = new Map<string, Promise<void>>();
@@ -154,6 +180,20 @@ export class StaticDataFetcher {
     if (typeof pageModule.getStaticData !== "function") return;
 
     const pathname = context.url?.pathname ?? "unknown";
+    // Use hostname as project identifier for per-project fairness
+    const projectId = context.url?.hostname ?? "unknown";
+
+    // Check per-project limit before acquiring global semaphore
+    if (!acquireRevalidationSlot(projectId)) {
+      serverLogger.debug("DATA_REVALIDATION_SKIPPED per-project limit reached", {
+        pathname,
+        projectId,
+        cacheKey,
+        limit: REVALIDATION_PER_PROJECT_LIMIT,
+      });
+      this.pendingRevalidations.delete(cacheKey);
+      return;
+    }
 
     try {
       await revalidationSemaphore.acquire(async () => {
@@ -201,6 +241,7 @@ export class StaticDataFetcher {
         waitingRevalidations: revalidationSemaphore.waitingCount,
       });
     } finally {
+      releaseRevalidationSlot(projectId);
       this.pendingRevalidations.delete(cacheKey);
     }
   }

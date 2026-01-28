@@ -21,6 +21,8 @@ interface CacheEntry {
 
 const DOMAIN_CACHE_TTL_MS = 60_000;
 const DOMAIN_CACHE_MAX_ENTRIES = 1000;
+/** Timeout for domain lookup API calls (10 seconds) */
+const DOMAIN_LOOKUP_TIMEOUT_MS = 10_000;
 
 const domainCache = new Map<string, CacheEntry>();
 const inFlightRequests = new Map<string, Promise<DomainLookupResult | null>>();
@@ -126,6 +128,9 @@ function fetchDomainLookup(
 
       logger.debug("[DomainLookup] Fetching from API", { domain, url });
 
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), DOMAIN_LOOKUP_TIMEOUT_MS);
+
       try {
         const headers = new Headers({
           Authorization: `Bearer ${config.apiToken}`,
@@ -133,7 +138,7 @@ function fetchDomainLookup(
         });
         injectContext(headers);
 
-        const response = await fetch(url, { headers });
+        const response = await fetch(url, { headers, signal: controller.signal });
 
         if (response.status === 404) {
           logger.debug("[DomainLookup] No project found for domain", { domain });
@@ -171,11 +176,15 @@ function fetchDomainLookup(
 
         return result;
       } catch (error) {
+        const isTimeout = error instanceof Error && error.name === "AbortError";
         logger.error("[DomainLookup] Failed to lookup domain", {
           domain,
           error: error instanceof Error ? error.message : String(error),
+          timeout: isTimeout,
         });
         return null;
+      } finally {
+        clearTimeout(timeoutId);
       }
     },
     { "domain.fetch.domain": domain },
