@@ -57,6 +57,9 @@ import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 /** Pattern to match HTTP bundle file:// paths in transformed code */
 const HTTP_BUNDLE_PATTERN = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
 
+/** Pattern to match ALL file:// paths in transformed code (local imports + HTTP bundles) */
+const ALL_FILE_PATHS_PATTERN = /file:\/\/([^"'\s]+\.(?:mjs|js))/gi;
+
 /** Extract HTTP bundle paths from transformed code for proactive recovery */
 function extractHttpBundlePaths(code: string): Array<{ path: string; hash: string }> {
   const bundles: Array<{ path: string; hash: string }> = [];
@@ -72,6 +75,27 @@ function extractHttpBundlePaths(code: string): Array<{ path: string; hash: strin
   }
   HTTP_BUNDLE_PATTERN.lastIndex = 0;
   return bundles;
+}
+
+/**
+ * Extract ALL file:// paths from cached code (local imports + HTTP bundles).
+ * Used to validate that all paths in cached transforms exist locally before use.
+ * This prevents "Module not found" errors when Redis returns transforms from
+ * other pods with different temp directories.
+ */
+function extractAllFilePaths(code: string): string[] {
+  const paths: string[] = [];
+  const seen = new Set<string>();
+  let match;
+  while ((match = ALL_FILE_PATHS_PATTERN.exec(code)) !== null) {
+    const path = match[1] as string;
+    if (!seen.has(path)) {
+      seen.add(path);
+      paths.push(path);
+    }
+  }
+  ALL_FILE_PATHS_PATTERN.lastIndex = 0;
+  return paths;
 }
 
 /**
@@ -308,7 +332,11 @@ export class SSRModuleLoader {
     crossProjectImport: CrossProjectImport,
   ): Promise<string> {
     const { specifier, projectSlug, version, path } = crossProjectImport;
-    const cacheKey = specifier;
+    // Include consuming project's context in cache key to prevent cross-project pollution.
+    // Different projects may use different React versions or JSX configs, so the same
+    // specifier can produce different transforms depending on the consumer.
+    const reactVersion = this.options.reactVersion ?? "default";
+    const cacheKey = `${specifier}:${this.options.projectId}:${reactVersion}`;
 
     const cachedEntry = globalCrossProjectCache.get(cacheKey);
     if (cachedEntry) return cachedEntry.tempPath;
@@ -512,7 +540,7 @@ export class SSRModuleLoader {
         // Proactively ensure HTTP bundles exist before using cached transform.
         // The cached code may reference file:// paths to HTTP bundles that were
         // created on a different pod and may not exist locally.
-        let httpBundlesOk = true;
+        let allPathsOk = true;
         const bundlePaths = extractHttpBundlePaths(redisCode);
         if (bundlePaths.length > 0) {
           const cacheDir = getHttpBundleCacheDir();
@@ -525,11 +553,35 @@ export class SSRModuleLoader {
               cacheDir,
               source: "redis-cache",
             });
-            httpBundlesOk = false;
+            allPathsOk = false;
           }
         }
 
-        if (httpBundlesOk) {
+        // Validate ALL file:// paths in cached code (including local imports).
+        // Redis may return cached transforms from other pods with different temp directories.
+        // If any local import paths are missing, we must re-transform.
+        if (allPathsOk) {
+          const allPaths = extractAllFilePaths(redisCode);
+          for (const path of allPaths) {
+            try {
+              const stat = await this.fs.stat(path);
+              if (!stat.isFile) {
+                allPathsOk = false;
+                break;
+              }
+            } catch {
+              // Path doesn't exist locally
+              logger.debug("[SSR-MODULE-LOADER] Redis cache has invalid local path, re-transforming", {
+                file: filePath.slice(-40),
+                missingPath: path.slice(-60),
+              });
+              allPathsOk = false;
+              break;
+            }
+          }
+        }
+
+        if (allPathsOk) {
           // CRITICAL: Use transformedHash (hash of the transformed code) for temp path,
           // NOT contentHash (hash of source). Other modules importing this file use
           // transformedHash in their import paths (set during fresh transform at line 703).
