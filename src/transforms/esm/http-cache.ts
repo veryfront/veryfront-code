@@ -616,21 +616,19 @@ export async function ensureHttpBundlesExist(
   const fs = createFileSystem();
   const absoluteCacheDir = ensureAbsoluteDir(cacheDir);
 
-  // Use [a-f0-9]+ to match both hex and decimal hashes consistently
-  const BUNDLE_RE = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
-
   const extractBundleRefs = (code: string): Array<{ hash: string }> => {
+    // Create regex per call to avoid shared lastIndex state across concurrent calls
+    const bundleRe = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
     const refs: Array<{ hash: string }> = [];
     const dedup = new Set<string>();
     let match;
-    while ((match = BUNDLE_RE.exec(code)) !== null) {
+    while ((match = bundleRe.exec(code)) !== null) {
       const hash = match[2] as string;
       if (!dedup.has(hash)) {
         dedup.add(hash);
         refs.push({ hash });
       }
     }
-    BUNDLE_RE.lastIndex = 0;
     return refs;
   };
 
