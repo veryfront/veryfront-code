@@ -8,7 +8,7 @@ import type { SSRRenderer } from "../ssr-renderer.ts";
 import { computeHash } from "../utils/index.ts";
 import type { HTMLGenerationContext, HTMLGenerator } from "./html.ts";
 import type { RenderOptions } from "./types.ts";
-import { flushHeadCollector, resetHeadCollector } from "#veryfront/react/head-collector.ts";
+import { runWithHeadCollector } from "#veryfront/react/head-collector.ts";
 
 export interface SSROrchestratorConfig {
   mode: "development" | "production";
@@ -58,24 +58,27 @@ export class SSROrchestrator {
       validatedType: getElementTypeName(validatedElement),
     });
 
-    resetHeadCollector();
-
     const wantsStream = options?.delivery === "stream";
-    const { html, stream } = await withSpan(
-      SpanNames.SSR_ORCHESTRATOR_RENDER,
+
+    // Use AsyncLocalStorage-based head collection for multi-tenant safety
+    const { result: renderResult, head: collectedHead } = await runWithHeadCollector(
       () =>
-        this.config.ssrRenderer.renderToHTML(validatedElement, {
-          mode: this.config.mode,
-          wantsStream,
-          debugMode: this.config.debugMode,
-        }),
-      {
-        "ssr.wants_stream": wantsStream,
-        "ssr.mode": this.config.mode,
-      },
+        withSpan(
+          SpanNames.SSR_ORCHESTRATOR_RENDER,
+          () =>
+            this.config.ssrRenderer.renderToHTML(validatedElement, {
+              mode: this.config.mode,
+              wantsStream,
+              debugMode: this.config.debugMode,
+            }),
+          {
+            "ssr.wants_stream": wantsStream,
+            "ssr.mode": this.config.mode,
+          },
+        ),
     );
 
-    const collectedHead = flushHeadCollector();
+    const { html, stream } = renderResult;
 
     const mergedOptions = {
       ...generationContext.options,

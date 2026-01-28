@@ -1,140 +1,180 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   collectHead,
-  flushHeadCollector,
   hasCollectedHead,
-  resetHeadCollector,
+  runWithHeadCollector,
 } from "./head-collector.ts";
 
 describe("head-collector", () => {
-  beforeEach(() => {
-    resetHeadCollector();
-  });
-
   describe("collectHead", () => {
-    it("collects title", () => {
-      collectHead({ title: "My Page" });
-      assertEquals(flushHeadCollector().title, "My Page");
-    });
-
-    it("collects description from direct field", () => {
-      collectHead({ description: "Page description" });
-      assertEquals(flushHeadCollector().description, "Page description");
-    });
-
-    it("collects description from meta tag", () => {
-      collectHead({
-        metas: [{ name: "description", content: "Meta description" }],
+    it("collects title", async () => {
+      const { head } = await runWithHeadCollector(() => {
+        collectHead({ title: "My Page" });
       });
-      assertEquals(flushHeadCollector().description, "Meta description");
+      assertEquals(head.title, "My Page");
     });
 
-    it("collects meta tags", () => {
-      collectHead({
-        metas: [
-          { name: "author", content: "John Doe" },
-          { property: "og:title", content: "OG Title" },
-        ],
+    it("collects description from direct field", async () => {
+      const { head } = await runWithHeadCollector(() => {
+        collectHead({ description: "Page description" });
       });
-
-      const { metas } = flushHeadCollector();
-      assertEquals(metas.length, 2);
-      assertEquals(metas[0], { name: "author", content: "John Doe" });
-      assertEquals(metas[1], { property: "og:title", content: "OG Title" });
+      assertEquals(head.description, "Page description");
     });
 
-    it("collects link tags", () => {
-      collectHead({
-        links: [
-          { rel: "stylesheet", href: "/style.css" },
-          { rel: "icon", href: "/favicon.ico" },
-        ],
+    it("collects description from meta tag", async () => {
+      const { head } = await runWithHeadCollector(() => {
+        collectHead({
+          metas: [{ name: "description", content: "Meta description" }],
+        });
+      });
+      assertEquals(head.description, "Meta description");
+    });
+
+    it("collects meta tags", async () => {
+      const { head } = await runWithHeadCollector(() => {
+        collectHead({
+          metas: [
+            { name: "author", content: "John Doe" },
+            { property: "og:title", content: "OG Title" },
+          ],
+        });
       });
 
-      const { links } = flushHeadCollector();
-      assertEquals(links.length, 2);
-      assertEquals(links[0], { rel: "stylesheet", href: "/style.css" });
+      assertEquals(head.metas.length, 2);
+      assertEquals(head.metas[0], { name: "author", content: "John Doe" });
+      assertEquals(head.metas[1], { property: "og:title", content: "OG Title" });
     });
 
-    it("collects style tags", () => {
-      collectHead({ styles: [".foo { color: red; }"] });
+    it("collects link tags", async () => {
+      const { head } = await runWithHeadCollector(() => {
+        collectHead({
+          links: [
+            { rel: "stylesheet", href: "/style.css" },
+            { rel: "icon", href: "/favicon.ico" },
+          ],
+        });
+      });
 
-      const { styles } = flushHeadCollector();
-      assertEquals(styles.length, 1);
-      assertEquals(styles[0], ".foo { color: red; }");
+      assertEquals(head.links.length, 2);
+      assertEquals(head.links[0], { rel: "stylesheet", href: "/style.css" });
     });
 
-    it("accumulates multiple calls", () => {
-      collectHead({ title: "Title" });
-      collectHead({ metas: [{ name: "author", content: "Jane" }] });
-      collectHead({ links: [{ rel: "stylesheet", href: "/a.css" }] });
-      collectHead({ links: [{ rel: "stylesheet", href: "/b.css" }] });
+    it("collects style tags", async () => {
+      const { head } = await runWithHeadCollector(() => {
+        collectHead({ styles: [".foo { color: red; }"] });
+      });
 
-      const head = flushHeadCollector();
+      assertEquals(head.styles.length, 1);
+      assertEquals(head.styles[0], ".foo { color: red; }");
+    });
+
+    it("accumulates multiple calls", async () => {
+      const { head } = await runWithHeadCollector(() => {
+        collectHead({ title: "Title" });
+        collectHead({ metas: [{ name: "author", content: "Jane" }] });
+        collectHead({ links: [{ rel: "stylesheet", href: "/a.css" }] });
+        collectHead({ links: [{ rel: "stylesheet", href: "/b.css" }] });
+      });
+
       assertEquals(head.title, "Title");
       assertEquals(head.metas.length, 1);
       assertEquals(head.links.length, 2);
     });
 
-    it("last title wins", () => {
-      collectHead({ title: "First" });
-      collectHead({ title: "Second" });
-      assertEquals(flushHeadCollector().title, "Second");
+    it("last title wins", async () => {
+      const { head } = await runWithHeadCollector(() => {
+        collectHead({ title: "First" });
+        collectHead({ title: "Second" });
+      });
+      assertEquals(head.title, "Second");
     });
   });
 
-  describe("flushHeadCollector", () => {
-    it("returns collected data and resets", () => {
-      collectHead({ title: "Test" });
+  describe("runWithHeadCollector", () => {
+    it("returns result and collected head", async () => {
+      const { result, head } = await runWithHeadCollector(() => {
+        collectHead({ title: "Test" });
+        return "my-result";
+      });
 
-      const first = flushHeadCollector();
-      const second = flushHeadCollector();
-
-      assertEquals(first.title, "Test");
-      assertEquals(second.title, undefined);
+      assertEquals(result, "my-result");
+      assertEquals(head.title, "Test");
     });
-  });
 
-  describe("resetHeadCollector", () => {
-    it("clears all collected data", () => {
-      collectHead({ title: "Title", metas: [{ content: "x" }] });
-      resetHeadCollector();
+    it("isolates concurrent contexts", async () => {
+      const [a, b] = await Promise.all([
+        runWithHeadCollector(async () => {
+          collectHead({ title: "A" });
+          await new Promise((r) => setTimeout(r, 10));
+          return "result-a";
+        }),
+        runWithHeadCollector(async () => {
+          collectHead({ title: "B" });
+          await new Promise((r) => setTimeout(r, 5));
+          return "result-b";
+        }),
+      ]);
 
-      const head = flushHeadCollector();
-      assertEquals(head.title, undefined);
-      assertEquals(head.metas.length, 0);
+      assertEquals(a.head.title, "A");
+      assertEquals(b.head.title, "B");
+      assertEquals(a.result, "result-a");
+      assertEquals(b.result, "result-b");
     });
   });
 
   describe("hasCollectedHead", () => {
-    it("returns false when empty", () => {
+    it("returns false when outside context", () => {
       assertEquals(hasCollectedHead(), false);
     });
 
-    it("returns true when title collected", () => {
-      collectHead({ title: "T" });
-      assertEquals(hasCollectedHead(), true);
+    it("returns false when empty", async () => {
+      await runWithHeadCollector(() => {
+        assertEquals(hasCollectedHead(), false);
+      });
     });
 
-    it("returns true when description collected", () => {
-      collectHead({ description: "D" });
-      assertEquals(hasCollectedHead(), true);
+    it("returns true when title collected", async () => {
+      await runWithHeadCollector(() => {
+        collectHead({ title: "T" });
+        assertEquals(hasCollectedHead(), true);
+      });
     });
 
-    it("returns true when metas collected", () => {
-      collectHead({ metas: [{ content: "x" }] });
-      assertEquals(hasCollectedHead(), true);
+    it("returns true when description collected", async () => {
+      await runWithHeadCollector(() => {
+        collectHead({ description: "D" });
+        assertEquals(hasCollectedHead(), true);
+      });
     });
 
-    it("returns true when links collected", () => {
-      collectHead({ links: [{ href: "/x" }] });
-      assertEquals(hasCollectedHead(), true);
+    it("returns true when metas collected", async () => {
+      await runWithHeadCollector(() => {
+        collectHead({ metas: [{ content: "x" }] });
+        assertEquals(hasCollectedHead(), true);
+      });
     });
 
-    it("returns true when styles collected", () => {
-      collectHead({ styles: [".x{}"] });
-      assertEquals(hasCollectedHead(), true);
+    it("returns true when links collected", async () => {
+      await runWithHeadCollector(() => {
+        collectHead({ links: [{ href: "/x" }] });
+        assertEquals(hasCollectedHead(), true);
+      });
+    });
+
+    it("returns true when styles collected", async () => {
+      await runWithHeadCollector(() => {
+        collectHead({ styles: [".x{}"] });
+        assertEquals(hasCollectedHead(), true);
+      });
+    });
+  });
+
+  describe("collectHead outside context", () => {
+    it("silently ignores calls outside context", () => {
+      // Should not throw
+      collectHead({ title: "Orphan" });
+      // No way to verify it was ignored, but no crash is success
     });
   });
 });
