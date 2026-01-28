@@ -19,57 +19,75 @@ import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 
 export type { VeryfrontConfig } from "./types.ts";
 
+/**
+ * Creates fresh default import map per-request.
+ * Previously this was called once at module load, causing all projects to share
+ * the same import map object which could be mutated.
+ *
+ * @see plans/architecture-audit/007.3-default-config-shared-reference.md
+ */
 function getDefaultImportMapForConfig(): { imports: ReturnType<typeof getReactImportMap> } {
   return { imports: getReactImportMap(REACT_DEFAULT_VERSION) };
 }
 
-const DEFAULT_CONFIG: Partial<VeryfrontConfig> = {
-  title: "Veryfront App",
-  description: "Built with Veryfront",
-  experimental: {
-    esmLayouts: true,
-  },
-  router: undefined,
-  theme: {
-    colors: {
-      primary: "#3B82F6",
+/**
+ * Creates a fresh copy of default config for each merge operation.
+ * This prevents shared mutable state between projects.
+ *
+ * Previously DEFAULT_CONFIG was a module-level object that could be mutated
+ * through shallow spreads, causing cross-tenant contamination.
+ *
+ * @see plans/architecture-audit/007.3-default-config-shared-reference.md
+ */
+function createFreshDefaults(): Partial<VeryfrontConfig> {
+  return {
+    title: "Veryfront App",
+    description: "Built with Veryfront",
+    experimental: {
+      esmLayouts: true,
     },
-  },
-  build: {
-    outDir: "dist",
-    trailingSlash: false,
-    esbuild: {
-      wasmURL: "https://deno.land/x/esbuild@v0.20.1/esbuild.wasm",
-      worker: false,
+    router: undefined,
+    theme: {
+      colors: {
+        primary: "#3B82F6",
+      },
     },
-  },
-  cache: {
-    dir: DEFAULT_CACHE_DIR,
-    render: {
-      type: "memory",
-      ttl: undefined,
-      maxEntries: 500,
-      kvPath: undefined,
-      redisUrl: undefined,
-      redisKeyPrefix: undefined,
+    build: {
+      outDir: "dist",
+      trailingSlash: false,
+      esbuild: {
+        wasmURL: "https://deno.land/x/esbuild@v0.20.1/esbuild.wasm",
+        worker: false,
+      },
     },
-  },
-  dev: {
-    port: DEFAULT_PORT,
-    host: "localhost",
-    open: false,
-  },
-  resolve: {
-    importMap: getDefaultImportMapForConfig(),
-  },
-  client: {
-    moduleResolution: "cdn",
-    cdn: {
-      provider: "esm.sh",
-      versions: "auto",
+    cache: {
+      dir: DEFAULT_CACHE_DIR,
+      render: {
+        type: "memory",
+        ttl: undefined,
+        maxEntries: 500,
+        kvPath: undefined,
+        redisUrl: undefined,
+        redisKeyPrefix: undefined,
+      },
     },
-  },
-};
+    dev: {
+      port: DEFAULT_PORT,
+      host: "localhost",
+      open: false,
+    },
+    resolve: {
+      importMap: getDefaultImportMapForConfig(), // Fresh per-request, not module-load-time
+    },
+    client: {
+      moduleResolution: "cdn",
+      cdn: {
+        provider: "esm.sh",
+        versions: "auto",
+      },
+    },
+  };
+}
 
 const configCacheByProject = new Map<string, { revision: number; config: VeryfrontConfig }>();
 let cacheRevision = 0;
@@ -109,40 +127,43 @@ function validateConfigShape(userConfig: unknown): void {
 }
 
 function mergeConfigs(userConfig: Partial<VeryfrontConfig>): VeryfrontConfig {
+  // Create fresh defaults per-merge to prevent shared mutable state
+  const defaults = createFreshDefaults();
+
   const merged = {
-    ...DEFAULT_CONFIG,
+    ...defaults,
     ...userConfig,
     dev: {
-      ...DEFAULT_CONFIG.dev,
+      ...defaults.dev,
       ...userConfig.dev,
     },
     theme: {
-      ...DEFAULT_CONFIG.theme,
+      ...defaults.theme,
       ...userConfig.theme,
     },
     build: {
-      ...DEFAULT_CONFIG.build,
+      ...defaults.build,
       ...userConfig.build,
     },
     cache: {
-      ...DEFAULT_CONFIG.cache,
+      ...defaults.cache,
       ...userConfig.cache,
     },
     resolve: {
-      ...DEFAULT_CONFIG.resolve,
+      ...defaults.resolve,
       ...userConfig.resolve,
     },
     client: {
-      ...DEFAULT_CONFIG.client,
+      ...defaults.client,
       ...userConfig.client,
       cdn: {
-        ...DEFAULT_CONFIG.client?.cdn,
+        ...defaults.client?.cdn,
         ...userConfig.client?.cdn,
       },
     },
   } as VeryfrontConfig;
 
-  const defaultMap = DEFAULT_CONFIG.resolve?.importMap;
+  const defaultMap = defaults.resolve?.importMap;
   const userMap = userConfig.resolve?.importMap;
 
   if (merged.resolve && (defaultMap || userMap)) {
@@ -387,7 +408,7 @@ export function getConfig(
         duration: `${(performance.now() - getConfigStartTime).toFixed(2)}ms`,
       });
 
-      const defaultConfig = DEFAULT_CONFIG as VeryfrontConfig;
+      const defaultConfig = createFreshDefaults() as VeryfrontConfig;
       configCacheByProject.set(effectiveCacheKey, {
         revision: cacheRevision,
         config: defaultConfig,
