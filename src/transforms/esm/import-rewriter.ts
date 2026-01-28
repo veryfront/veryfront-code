@@ -25,15 +25,22 @@ export function addHMRTimestamps(code: string, timestamp: string | number): Prom
   );
 }
 
+/**
+ * Track unversioned import warnings per-project to avoid cross-tenant warning suppression.
+ * Key format: `${projectId}:${specifier}` for project-scoped deduplication.
+ * @see plans/architecture-audit/011.1-global-warning-state-pollution.md
+ */
 const unversionedImportsWarned = new Set<string>();
 
 function hasVersionSpecifier(specifier: string): boolean {
   return /@[\d^~x][\d.x^~-]*(?=\/|$)/.test(specifier);
 }
 
-function warnUnversionedImport(specifier: string): void {
-  if (unversionedImportsWarned.has(specifier)) return;
-  unversionedImportsWarned.add(specifier);
+function warnUnversionedImport(specifier: string, projectId?: string): void {
+  // Scope warnings by project to prevent cross-tenant warning suppression
+  const key = projectId ? `${projectId}:${specifier}` : specifier;
+  if (unversionedImportsWarned.has(key)) return;
+  unversionedImportsWarned.add(key);
 
   const isScoped = specifier.startsWith("@");
   const parts = specifier.split("/");
@@ -41,6 +48,7 @@ function warnUnversionedImport(specifier: string): void {
 
   logger.warn("[ESM] Unversioned import may cause reproducibility issues", {
     import: specifier,
+    projectId,
     suggestion: `Pin version: import '${packageName}@x.y.z'`,
     help: `Run 'npm info ${packageName} version' to find current version`,
   });
@@ -67,6 +75,7 @@ export function rewriteBareImports(
   code: string,
   _moduleServerUrl?: string,
   reactVersion?: string,
+  projectId?: string,
 ): Promise<string> {
   // Get React import map for the specified version (uses centralized URL builder)
   const reactImportMap = getReactImportMap(reactVersion ?? REACT_DEFAULT_VERSION);
@@ -86,12 +95,12 @@ export function rewriteBareImports(
         if (normalized === "tailwindcss" || normalized.startsWith("tailwindcss/")) {
           finalSpecifier = normalized.replace(/^tailwindcss/, `tailwindcss@${TAILWIND_VERSION}`);
         } else if (!hasVersionSpecifier(specifier)) {
-          warnUnversionedImport(specifier);
+          warnUnversionedImport(specifier, projectId);
         }
 
         return `https://esm.sh/${finalSpecifier}?external=react&target=es2022`;
       }),
-    { "transforms.code_length": code.length },
+    { "transforms.code_length": code.length, ...(projectId && { "transforms.project_id": projectId }) },
   );
 }
 
