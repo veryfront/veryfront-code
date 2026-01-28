@@ -1,4 +1,4 @@
-name: CI/CD
+name: CI
 
 on:
   workflow_dispatch:
@@ -10,9 +10,6 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
-env:
-  REGISTRY: ghcr.io
 
 jobs:
   # ============================================
@@ -130,112 +127,3 @@ jobs:
         run: |
           VF_DISABLE_LRU_INTERVAL=1 NODE_ENV=production LOG_FORMAT=text ${{ matrix.command }}
         continue-on-error: true  # Tests may not pass yet on all runtimes
-
-  # ============================================
-  # BUILD (only on main, after all checks pass)
-  # Uses GHA cache with matrix for parallel builds
-  # ============================================
-
-  build:
-    needs: [format, lint, typecheck, unit-tests, integration-tests]
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    outputs:
-      image_tag: ${{ github.sha }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - component: proxy
-            dockerfile: Dockerfile.proxy
-            image: veryfront/veryfront-proxy
-          - component: renderer
-            dockerfile: Dockerfile.renderer
-            image: veryfront/veryfront-renderer
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ matrix.image }}
-          tags: |
-            type=raw,value=${{ github.sha }}
-            type=raw,value=latest
-      - uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ${{ matrix.dockerfile }}
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.component }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
-
-  # ============================================
-  # DEPLOY (only after build succeeds)
-  # ============================================
-
-  deploy:
-    needs: build
-    runs-on: veryfront-k8s-runners
-    steps:
-      - uses: actions/checkout@v4
-
-      # Setup cluster access (kubectl + kubeconfig from 1Password)
-      - uses: ./.github/actions/setup-cluster-access
-        with:
-          op-service-account-token: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          tailscale-oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
-          tailscale-oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
-
-      - uses: azure/setup-helm@v4
-
-      - name: Load secrets from 1Password
-        uses: 1password/load-secrets-action@v2
-        with:
-          export-env: true
-        env:
-          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          # Service Account OAuth (renderer proxy -> API)
-          API_CLIENT_ID_VERYFRONT_RENDERER_PROXY: op://VERYFRONT_CI/Veryfront Renderer Proxy OAuth/API_CLIENT_ID_VERYFRONT_RENDERER_PROXY
-          API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY: op://VERYFRONT_CI/Veryfront Renderer Proxy OAuth/API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY
-          # Cache
-          REDIS_URL: op://VERYFRONT_CI/UPSTASH_REDIS_VERYFRONT_RENDERER_PROXY/url
-          # Observability
-          OTEL_EXPORTER_OTLP_HEADERS: op://VERYFRONT_CI/GRAFANA/otlp_auth
-
-      - name: Create/Update Kubernetes Secrets
-        run: |
-          kubectl create secret generic veryfront-proxy-secret \
-            --namespace veryfront-production \
-            --from-literal=API_CLIENT_ID_VERYFRONT_RENDERER_PROXY="$API_CLIENT_ID_VERYFRONT_RENDERER_PROXY" \
-            --from-literal=API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY="$API_CLIENT_SECRET_VERYFRONT_RENDERER_PROXY" \
-            --from-literal=REDIS_URL="$REDIS_URL" \
-            --from-literal=VERYFRONT_API_BASE_URL="https://api.veryfront.com" \
-            --from-literal=OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic $OTEL_EXPORTER_OTLP_HEADERS" \
-            --dry-run=client -o yaml | kubectl apply -f -
-
-          kubectl create secret generic veryfront-renderer-secret \
-            --namespace veryfront-production \
-            --from-literal=VERYFRONT_API_BASE_URL="https://api.veryfront.com" \
-            --from-literal=OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic $OTEL_EXPORTER_OTLP_HEADERS" \
-            --dry-run=client -o yaml | kubectl apply -f -
-
-      - name: Deploy via Helm
-        run: |
-          helm upgrade --install veryfront-renderer ./chart \
-            --namespace veryfront-production \
-            --set proxy.image.repository=${{ env.REGISTRY }}/veryfront/veryfront-proxy \
-            --set proxy.image.tag=${{ needs.build.outputs.image_tag }} \
-            --set renderer.image.repository=${{ env.REGISTRY }}/veryfront/veryfront-renderer \
-            --set renderer.image.tag=${{ needs.build.outputs.image_tag }} \
-            --set proxy.ingress.enabled=true
