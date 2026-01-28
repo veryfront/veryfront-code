@@ -7,11 +7,11 @@
 | Metric | Count |
 |--------|-------|
 | Total Issues | ~72 |
-| Validated | 30 |
+| Validated | 33 |
 | In Progress | 0 |
 | Completed | 10 |
-| False Positive | 6 |
-| Downgraded | 14 |
+| False Positive | 7 |
+| Downgraded | 16 |
 
 ## Execution Queue
 
@@ -36,13 +36,13 @@ Ready to proceed with remaining chapters (004-006, 010-014) - no CRITICAL issues
 | 001 | Adapter Divergence | ✓ Complete | 2→0 | 3→0 | 4 | ██████████ 100% |
 | 002 | Global State | ✓ Complete | 1→0 | 4→0 | 2→0 | ██████████ 100% |
 | 003 | Cache Behavior | ✓ Complete | 2→0 | 2→0 | 0 | ██████████ 100% |
-| 004 | Bundle Dependencies | ⏳ Queued | 0 | 3 | 3 | ░░░░░░░░░░ 0% |
+| 004 | Bundle Dependencies | ✓ Validated | 0 | 3→2 | 3 | ██████░░░░ 60% |
 | 005 | Router Divergence | ⏳ Queued | 0 | 2 | 3 | ░░░░░░░░░░ 0% |
 | 006 | Runtime Conditionals | ⏳ Queued | 0 | 1 | 2 | ░░░░░░░░░░ 0% |
 | 007 | Config Normalization | ✓ Validated | 1→0 | 3 | 3 | ██████░░░░ 60% |
 | 008 | Userland Config | ✓ Validated | 1→0 | 2 | 2 | ██████░░░░ 60% |
 | 009 | Timeout Handling | ✓ Complete | 1→0 | 3→1 | 2 | ██████████ 100% |
-| 010 | Error Handling | ⏳ Queued | 0 | 4 | 2 | ░░░░░░░░░░ 0% |
+| 010 | Error Handling | ✓ Validated | 0 | 4→2 | 2 | ██████░░░░ 60% |
 | 011 | Import Rewriting | ⏳ Queued | 0 | 2 | 3 | ░░░░░░░░░░ 0% |
 | 012 | HTTP Clients | ⏳ Queued | 0 | 3 | 2 | ░░░░░░░░░░ 0% |
 | 013 | Cache Key Patterns | ⏳ Queued | 0 | 2 | 1 | ░░░░░░░░░░ 0% |
@@ -122,6 +122,23 @@ Ready to proceed with remaining chapters (004-006, 010-014) - no CRITICAL issues
 | 009.2 | Fetch Without Timeout | CRITICAL | ⚠️ HIGH | **FIXED** domain lookup timeout |
 
 **Note**: Most critical fetch paths already have timeouts. Domain lookup was the highest-risk unprotected path.
+
+## Chapter 004 Validation Summary
+
+| ID | Issue | Original | Validated | Action |
+|----|-------|----------|-----------|--------|
+| 004.1 | Transform Cache Missing Deps | HIGH | ⚠️ MEDIUM | Mitigated by release-based caching & TTL |
+
+**Note**: Remaining issues (004.2-004.6) are code improvements, not production bugs. The depsHash infrastructure exists but isn't connected - P2 tech debt.
+
+## Chapter 010 Validation Summary
+
+| ID | Issue | Original | Validated | Action |
+|----|-------|----------|-----------|--------|
+| 010.1 | Global failedComponents | CRITICAL | ❌ FALSE POSITIVE | DUPLICATE of 002.7 - keys include projectId |
+| 010.2 | Global Error Collector | HIGH | ⚠️ LOW | Dev tooling only, not production |
+
+**Note**: Remaining issues (010.3-010.6) are code quality improvements (dual VeryfrontError definitions, silent failures). Not security issues.
 
 ## Validation Reports
 
