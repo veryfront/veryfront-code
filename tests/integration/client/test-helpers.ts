@@ -865,7 +865,10 @@ export function setupDOMEnvironment(options: DOMEnvironmentOptions = {}): DOMEnv
   // (these don't exist in Node.js but are used by browser code)
   const eventListeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
   if (typeof globalThis.addEventListener !== "function") {
-    (globalThis as any).addEventListener = (type: string, listener: EventListenerOrEventListenerObject) => {
+    (globalThis as any).addEventListener = (
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+    ) => {
       if (!eventListeners.has(type)) {
         eventListeners.set(type, new Set());
       }
@@ -873,7 +876,10 @@ export function setupDOMEnvironment(options: DOMEnvironmentOptions = {}): DOMEnv
     };
   }
   if (typeof globalThis.removeEventListener !== "function") {
-    (globalThis as any).removeEventListener = (type: string, listener: EventListenerOrEventListenerObject) => {
+    (globalThis as any).removeEventListener = (
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+    ) => {
       eventListeners.get(type)?.delete(listener);
     };
   }
@@ -902,7 +908,9 @@ export function setupDOMEnvironment(options: DOMEnvironmentOptions = {}): DOMEnv
 
   // Setup mock document if it doesn't exist, is not functional, or is an SSR stub
   const isSSRStubDocument = (originalDocument as any)?.__veryfrontSSRStub === true;
-  if (!originalDocument || typeof originalDocument.createElement !== "function" || isSSRStubDocument) {
+  if (
+    !originalDocument || typeof originalDocument.createElement !== "function" || isSSRStubDocument
+  ) {
     global.document = createMinimalDocument() as unknown as Document;
   }
 

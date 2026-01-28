@@ -1,7 +1,7 @@
 import * as React from "react";
 import { assert, assertEquals } from "@veryfront/testing/assert";
 import { describe, it } from "@veryfront/testing/bdd";
-import { mdxRenderer, clearMDXRendererCache } from "@veryfront/transforms/mdx/index.ts";
+import { clearMDXRendererCache, mdxRenderer } from "@veryfront/transforms/mdx/index.ts";
 import { runWithCacheDir } from "@veryfront/utils/cache-dir.ts";
 import { makeTempDir, remove } from "@veryfront/testing/deno-compat";
 import { isDeno } from "@veryfront/platform/compat/runtime.ts";
@@ -57,7 +57,14 @@ describe(
           return jsx("div", { children: "hi" });
         }
       `;
-        const mod = await mdxRenderer.loadModuleESM(compiled, undefined, "test-mdx", projectDir, "test-mdx", "test");
+        const mod = await mdxRenderer.loadModuleESM(
+          compiled,
+          undefined,
+          "test-mdx",
+          projectDir,
+          "test-mdx",
+          "test",
+        );
         const Component = mod.MDXContent as () => React.ReactElement;
         const el = Component();
         assert(React.isValidElement(el));
@@ -75,7 +82,14 @@ describe(
           return jsx("div", { children: "content" });
         }
       `;
-        const mod = await mdxRenderer.loadModuleESM(compiled, undefined, "test-mdx", projectDir, "test-mdx", "test");
+        const mod = await mdxRenderer.loadModuleESM(
+          compiled,
+          undefined,
+          "test-mdx",
+          projectDir,
+          "test-mdx",
+          "test",
+        );
         const Layout = (mod.MDXLayout || mod.__vfLayout) as (
           props: { children: React.ReactNode },
         ) => React.ReactElement;
@@ -95,7 +109,14 @@ describe(
           return jsx('p', { children: 'foo' });
         }
       `;
-        const mod = await mdxRenderer.loadModuleESM(compiled, undefined, "test-mdx", projectDir, "test-mdx", "test");
+        const mod = await mdxRenderer.loadModuleESM(
+          compiled,
+          undefined,
+          "test-mdx",
+          projectDir,
+          "test-mdx",
+          "test",
+        );
         const Component = mod.MDXContent as () => React.ReactElement;
         const el = Component();
         assert(React.isValidElement(el));
@@ -110,7 +131,14 @@ describe(
         import { jsx } from "react/jsx-runtime";
         export function MDXContent(){ throw new Error('boom'); }
       `;
-        const mod = await mdxRenderer.loadModuleESM(compiled, undefined, "test-mdx", projectDir, "test-mdx", "test");
+        const mod = await mdxRenderer.loadModuleESM(
+          compiled,
+          undefined,
+          "test-mdx",
+          projectDir,
+          "test-mdx",
+          "test",
+        );
         const Component = mod.MDXContent as () => React.ReactElement;
         try {
           Component();
@@ -134,7 +162,14 @@ describe(
           return jsx("div", { children: "content" });
         }
       `;
-        const mod = await mdxRenderer.loadModuleESM(compiled, undefined, "test-mdx", projectDir, "test-mdx", "test");
+        const mod = await mdxRenderer.loadModuleESM(
+          compiled,
+          undefined,
+          "test-mdx",
+          projectDir,
+          "test-mdx",
+          "test",
+        );
         assertEquals(mod.frontmatter?.title, "Test Page");
         assertEquals(mod.frontmatter?.description, "Test description");
         assertEquals(mod.frontmatter?.author, "Test Author");
@@ -151,7 +186,14 @@ describe(
           return jsx(H1, { children: "Heading" });
         }
       `;
-        const mod = await mdxRenderer.loadModuleESM(compiled, undefined, "test-mdx", projectDir, "test-mdx", "test");
+        const mod = await mdxRenderer.loadModuleESM(
+          compiled,
+          undefined,
+          "test-mdx",
+          projectDir,
+          "test-mdx",
+          "test",
+        );
         const Component = mod.MDXContent as (
           props: { components?: Record<string, any> },
         ) => React.ReactElement;
@@ -178,7 +220,14 @@ describe(
           });
         }
       `;
-        const mod = await mdxRenderer.loadModuleESM(compiled, undefined, "test-mdx", projectDir, "test-mdx", "test");
+        const mod = await mdxRenderer.loadModuleESM(
+          compiled,
+          undefined,
+          "test-mdx",
+          projectDir,
+          "test-mdx",
+          "test",
+        );
         const Component = mod.MDXContent as () => React.ReactElement;
         const el = Component();
         assert(React.isValidElement(el));
@@ -205,7 +254,14 @@ describe(
           });
         }
       `;
-        const mod = await mdxRenderer.loadModuleESM(compiled, undefined, "test-mdx", projectDir, "test-mdx", "test");
+        const mod = await mdxRenderer.loadModuleESM(
+          compiled,
+          undefined,
+          "test-mdx",
+          projectDir,
+          "test-mdx",
+          "test",
+        );
         const Component = mod.MDXContent as () => React.ReactElement;
         const el = Component();
         assert(React.isValidElement(el));
@@ -222,7 +278,14 @@ describe(
           return jsx("div", { children: \`The answer is \${value}\` });
         }
       `;
-        const mod = await mdxRenderer.loadModuleESM(compiled, undefined, "test-mdx", projectDir, "test-mdx", "test");
+        const mod = await mdxRenderer.loadModuleESM(
+          compiled,
+          undefined,
+          "test-mdx",
+          projectDir,
+          "test-mdx",
+          "test",
+        );
         const Component = mod.MDXContent as () => React.ReactElement;
         const el = Component();
         assert(React.isValidElement(el));
@@ -243,10 +306,24 @@ describe(
         export const MDXLayout = ({ children }) => jsx('div', { children });
         export function MDXContent(){ return jsx('p', { children: 'ok' }); }
       `;
-        const mod1 = await mdxRenderer.loadModuleESM(code, undefined, "test-mdx", projectDir, "test-mdx", "test");
+        const mod1 = await mdxRenderer.loadModuleESM(
+          code,
+          undefined,
+          "test-mdx",
+          projectDir,
+          "test-mdx",
+          "test",
+        );
         assertEquals(typeof mod1.title, "string");
         assert(mod1.MDXLayout || (mod1 as any).__vfLayout !== undefined);
-        const mod2 = await mdxRenderer.loadModuleESM(code, undefined, "test-mdx", projectDir, "test-mdx", "test");
+        const mod2 = await mdxRenderer.loadModuleESM(
+          code,
+          undefined,
+          "test-mdx",
+          projectDir,
+          "test-mdx",
+          "test",
+        );
         assert(mod1 === mod2);
       });
     });
@@ -258,7 +335,14 @@ describe(
         export const config = { layout: "default" };
         export function MDXContent(){ return jsx('div', { children: 'content' }); }
       `;
-        const mod = await mdxRenderer.loadModuleESM(code, undefined, "test-mdx", projectDir, "test-mdx", "test");
+        const mod = await mdxRenderer.loadModuleESM(
+          code,
+          undefined,
+          "test-mdx",
+          projectDir,
+          "test-mdx",
+          "test",
+        );
         assert((mod as any).metadata);
         assert((mod as any).config);
       });
@@ -272,7 +356,14 @@ describe(
         }
         export const MDXContent = DefaultComponent;
       `;
-        const mod = await mdxRenderer.loadModuleESM(code, undefined, "test-mdx", projectDir, "test-mdx", "test");
+        const mod = await mdxRenderer.loadModuleESM(
+          code,
+          undefined,
+          "test-mdx",
+          projectDir,
+          "test-mdx",
+          "test",
+        );
         assert(mod.default || mod.MDXContent);
       });
     });
@@ -282,9 +373,30 @@ describe(
         const code1 = `export function MDXContent(){ return jsx('p', { children: '1' }); }`;
         const code2 = `export function MDXContent(){ return jsx('p', { children: '2' }); }`;
 
-        const mod1 = await mdxRenderer.loadModuleESM(code1, undefined, "test-mdx", projectDir, "test-mdx", "test");
-        const mod2 = await mdxRenderer.loadModuleESM(code2, undefined, "test-mdx", projectDir, "test-mdx", "test");
-        const mod1Again = await mdxRenderer.loadModuleESM(code1, undefined, "test-mdx", projectDir, "test-mdx", "test");
+        const mod1 = await mdxRenderer.loadModuleESM(
+          code1,
+          undefined,
+          "test-mdx",
+          projectDir,
+          "test-mdx",
+          "test",
+        );
+        const mod2 = await mdxRenderer.loadModuleESM(
+          code2,
+          undefined,
+          "test-mdx",
+          projectDir,
+          "test-mdx",
+          "test",
+        );
+        const mod1Again = await mdxRenderer.loadModuleESM(
+          code1,
+          undefined,
+          "test-mdx",
+          projectDir,
+          "test-mdx",
+          "test",
+        );
 
         assert(mod1 === mod1Again);
         assert(mod1 !== mod2);
@@ -303,7 +415,14 @@ describe(
           return LayoutComponent ? jsx(LayoutComponent, { children: content }) : content;
         }
       `;
-        const mod = await mdxRenderer.loadModuleESM(code, undefined, "test-mdx", projectDir, "test-mdx", "test");
+        const mod = await mdxRenderer.loadModuleESM(
+          code,
+          undefined,
+          "test-mdx",
+          projectDir,
+          "test-mdx",
+          "test",
+        );
         assert((mod as any).frontmatter);
         assert((mod as any).getStaticProps);
         assert((mod as any).Layout);

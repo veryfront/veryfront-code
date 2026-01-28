@@ -86,12 +86,21 @@ async function resolveExistingFiles(
   const results = await Promise.allSettled(candidates.map((file) => adapter.fs.stat(file)));
 
   const existing: string[] = [];
+  const seenDirs = new Set<string>();
+
   for (let i = 0; i < results.length; i++) {
     const result = results[i];
     if (!result) continue;
 
     if (result.status === "fulfilled" && result.value.isFile) {
-      existing.push(candidates[i]!);
+      const candidatePath = candidates[i]!;
+      const dir = dirname(candidatePath);
+
+      // Only include the first layout found per directory (based on extension priority)
+      if (!seenDirs.has(dir)) {
+        existing.push(candidatePath);
+        seenDirs.add(dir);
+      }
       continue;
     }
 
@@ -133,13 +142,18 @@ async function addMissedAncestorLayouts(
 ): Promise<void> {
   try {
     const included = new Set(existing);
+    // Track directories that already have a layout
+    const dirsWithLayouts = new Set(existing.map((p) => dirname(p)));
     const candidates: string[] = [];
     let dir = dirname(pageFilePath);
 
     while (dir.startsWith(rootDir)) {
-      for (const ext of LAYOUT_EXTENSIONS) {
-        const candidate = join(dir, `layout.${ext}`);
-        if (!included.has(candidate)) candidates.push(candidate);
+      // Skip directories that already have a layout
+      if (!dirsWithLayouts.has(dir)) {
+        for (const ext of LAYOUT_EXTENSIONS) {
+          const candidate = join(dir, `layout.${ext}`);
+          if (!included.has(candidate)) candidates.push(candidate);
+        }
       }
 
       const parent = dirname(dir);
@@ -155,8 +169,13 @@ async function addMissedAncestorLayouts(
       if (!result || !cand) continue;
 
       if (result.status === "fulfilled" && result.value.isFile) {
-        addLayoutsFromFiles([cand], nestedLayouts);
-        included.add(cand);
+        const candDir = dirname(cand);
+        // Only add if this directory doesn't already have a layout
+        if (!dirsWithLayouts.has(candDir)) {
+          addLayoutsFromFiles([cand], nestedLayouts);
+          included.add(cand);
+          dirsWithLayouts.add(candDir);
+        }
         continue;
       }
 

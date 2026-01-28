@@ -205,7 +205,8 @@ describe("extractCandidates", () => {
     });
 
     it("should extract empty/required/invalid/valid variants", () => {
-      const content = `className="empty:hidden required:border-red-500 invalid:border-red-500 valid:border-green-500"`;
+      const content =
+        `className="empty:hidden required:border-red-500 invalid:border-red-500 valid:border-green-500"`;
       assertExtractsClasses(content, [
         "empty:hidden",
         "required:border-red-500",
@@ -493,7 +494,8 @@ describe("extractCandidates", () => {
 
   describe("Pseudo-elements", () => {
     it("should extract before/after pseudo-elements", () => {
-      const content = `className="before:content-[''] after:content-[''] before:absolute after:block"`;
+      const content =
+        `className="before:content-[''] after:content-[''] before:absolute after:block"`;
       assertExtractsClasses(content, [
         "before:content-['']",
         "after:content-['']",

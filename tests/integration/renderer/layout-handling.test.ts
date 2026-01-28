@@ -796,7 +796,6 @@ describe(
           assertEquals(result, pageElement);
         });
       });
-
     });
 
     describe("applyLayoutsFunctionBody", () => {
@@ -1045,7 +1044,6 @@ describe(
           assertEquals(typeof result, "object");
         });
       });
-
     });
 
     describe("Integration Tests", () => {

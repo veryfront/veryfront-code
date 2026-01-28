@@ -11,9 +11,9 @@ import { makeTempDir, remove } from "@veryfront/compat/fs.ts";
 import { deleteEnv, getEnv, setEnv } from "@veryfront/compat/process.ts";
 import { deleteToken, readToken, saveToken } from "../../../src/cli/auth/token-store.ts";
 import {
+  type CallbackServer,
   getCallbackUrl,
   startCallbackServer,
-  type CallbackServer,
 } from "../../../src/cli/auth/callback-server.ts";
 import { scaleMs } from "@veryfront/testing";
 

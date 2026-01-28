@@ -403,7 +403,11 @@ describe("FS Compat", () => {
 
       await fs.mkdir(testDir);
 
-      const specialNames = ["file-with-dash.txt", "file_with_underscore.txt", "file.multiple.dots.txt"];
+      const specialNames = [
+        "file-with-dash.txt",
+        "file_with_underscore.txt",
+        "file.multiple.dots.txt",
+      ];
 
       for (const name of specialNames) {
         await fs.writeTextFile(join(testDir, name), "content");

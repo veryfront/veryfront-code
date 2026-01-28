@@ -10,21 +10,19 @@
 
 import { assertEquals } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
-import {
-  buildFileCacheKeyPrefix,
-  buildProxyManagerCacheKey,
-} from "@veryfront/cache";
+import { buildFileCacheKeyPrefix, buildProxyManagerCacheKey } from "@veryfront/cache";
 import type { ResolvedContentContext } from "@veryfront/platform/adapters/fs/veryfront/types.ts";
 
 describe("Branch Cache Isolation - Context Verification", () => {
   describe("Input validation", () => {
     it("rejects empty projectSlug", () => {
-      const mainKey = () => buildProxyManagerCacheKey(
-        "", // empty projectSlug
-        false,
-        null,
-        "main",
-      );
+      const mainKey = () =>
+        buildProxyManagerCacheKey(
+          "", // empty projectSlug
+          false,
+          null,
+          "main",
+        );
 
       // This should succeed because buildProxyManagerCacheKey doesn't validate
       // Validation happens in ProxyFSAdapterManager.getAdapter
@@ -192,8 +190,8 @@ describe("Branch Cache Isolation - Context Verification", () => {
       const expectedProductionMode = false;
 
       // This is the logic from proxy-manager.ts
-      const contextMismatch =
-        (expectedProductionMode && currentContext?.sourceType !== "release" && currentContext?.sourceType !== "environment") ||
+      const contextMismatch = (expectedProductionMode && currentContext?.sourceType !== "release" &&
+        currentContext?.sourceType !== "environment") ||
         (!expectedProductionMode && currentContext?.sourceType !== "branch") ||
         (!expectedProductionMode && currentContext?.branch !== expectedBranch);
 
@@ -214,8 +212,8 @@ describe("Branch Cache Isolation - Context Verification", () => {
       const expectedBranch = "main";
       const expectedProductionMode = false; // Preview mode expects branch
 
-      const contextMismatch =
-        (expectedProductionMode && currentContext?.sourceType !== "release" && currentContext?.sourceType !== "environment") ||
+      const contextMismatch = (expectedProductionMode && currentContext?.sourceType !== "release" &&
+        currentContext?.sourceType !== "environment") ||
         (!expectedProductionMode && currentContext?.sourceType !== "branch") ||
         (!expectedProductionMode && currentContext?.branch !== expectedBranch);
 
@@ -236,8 +234,8 @@ describe("Branch Cache Isolation - Context Verification", () => {
       const expectedBranch = "main";
       const expectedProductionMode = false;
 
-      const contextMismatch =
-        (expectedProductionMode && currentContext?.sourceType !== "release" && currentContext?.sourceType !== "environment") ||
+      const contextMismatch = (expectedProductionMode && currentContext?.sourceType !== "release" &&
+        currentContext?.sourceType !== "environment") ||
         (!expectedProductionMode && currentContext?.sourceType !== "branch") ||
         (!expectedProductionMode && currentContext?.branch !== expectedBranch);
 

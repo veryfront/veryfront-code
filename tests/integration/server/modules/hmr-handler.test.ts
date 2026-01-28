@@ -52,7 +52,9 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       const handler = new HMRHandler();
 
       // In local dev, HMR should be enabled even without preview mode
-      const productionModeCtx = { requestContext: { mode: "production", isLocalDev: true } } as Parameters<
+      const productionModeCtx = {
+        requestContext: { mode: "production", isLocalDev: true },
+      } as Parameters<
         NonNullable<typeof handler.metadata.enabled>
       >[0];
       assertEquals(handler.metadata.enabled?.(productionModeCtx), true);
@@ -65,7 +67,9 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       // 1. WebSocket API doesn't support custom headers
       // 2. Proxy forwards environment via query params
       // 3. Environment check happens in handle() method
-      const productionCtx = { requestContext: { mode: "production", isLocalDev: false } } as Parameters<
+      const productionCtx = {
+        requestContext: { mode: "production", isLocalDev: false },
+      } as Parameters<
         NonNullable<typeof handler.metadata.enabled>
       >[0];
       assertEquals(handler.metadata.enabled?.(productionCtx), true);

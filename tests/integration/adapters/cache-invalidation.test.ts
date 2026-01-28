@@ -13,10 +13,10 @@
 import { assertEquals, assertStringIncludes } from "@veryfront/testing/assert";
 import { describe, it } from "@veryfront/testing/bdd";
 import {
-  buildFileCacheKeyPrefix,
-  buildStatCacheKeyPrefix,
   buildDirCacheKeyPrefix,
+  buildFileCacheKeyPrefix,
   buildFileListCacheKey,
+  buildStatCacheKeyPrefix,
 } from "@veryfront/platform/adapters/fs/veryfront/cache-keys.ts";
 import type { ResolvedContentContext } from "@veryfront/platform/adapters/fs/veryfront/types.ts";
 import { FileCache } from "@veryfront/platform/adapters/fs/cache/file-cache.ts";
@@ -51,7 +51,11 @@ describe("Cache Invalidation - Key Prefix Matching", () => {
       const matchesPrefix = FULL_INVALIDATION_PREFIXES.file.some((prefix) =>
         key.startsWith(prefix)
       );
-      assertEquals(matchesPrefix, true, `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.file}`);
+      assertEquals(
+        matchesPrefix,
+        true,
+        `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.file}`,
+      );
     });
 
     it("stat cache key matches full invalidation prefix", () => {
@@ -60,16 +64,22 @@ describe("Cache Invalidation - Key Prefix Matching", () => {
       const matchesPrefix = FULL_INVALIDATION_PREFIXES.stat.some((prefix) =>
         key.startsWith(prefix)
       );
-      assertEquals(matchesPrefix, true, `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.stat}`);
+      assertEquals(
+        matchesPrefix,
+        true,
+        `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.stat}`,
+      );
     });
 
     it("dir cache key matches full invalidation prefix", () => {
       const key = buildDirCacheKeyPrefix(branchContext);
       assertEquals(key, "dir:branch:test-project:main");
-      const matchesPrefix = FULL_INVALIDATION_PREFIXES.dir.some((prefix) =>
-        key.startsWith(prefix)
+      const matchesPrefix = FULL_INVALIDATION_PREFIXES.dir.some((prefix) => key.startsWith(prefix));
+      assertEquals(
+        matchesPrefix,
+        true,
+        `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.dir}`,
       );
-      assertEquals(matchesPrefix, true, `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.dir}`);
     });
 
     it("files list cache key matches full invalidation prefix", () => {
@@ -78,7 +88,11 @@ describe("Cache Invalidation - Key Prefix Matching", () => {
       const matchesPrefix = FULL_INVALIDATION_PREFIXES.files.some((prefix) =>
         key.startsWith(prefix)
       );
-      assertEquals(matchesPrefix, true, `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.files}`);
+      assertEquals(
+        matchesPrefix,
+        true,
+        `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.files}`,
+      );
     });
   });
 
@@ -95,7 +109,11 @@ describe("Cache Invalidation - Key Prefix Matching", () => {
       const matchesPrefix = FULL_INVALIDATION_PREFIXES.file.some((prefix) =>
         key.startsWith(prefix)
       );
-      assertEquals(matchesPrefix, true, `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.file}`);
+      assertEquals(
+        matchesPrefix,
+        true,
+        `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.file}`,
+      );
     });
 
     it("stat cache key matches full invalidation prefix", () => {
@@ -104,16 +122,22 @@ describe("Cache Invalidation - Key Prefix Matching", () => {
       const matchesPrefix = FULL_INVALIDATION_PREFIXES.stat.some((prefix) =>
         key.startsWith(prefix)
       );
-      assertEquals(matchesPrefix, true, `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.stat}`);
+      assertEquals(
+        matchesPrefix,
+        true,
+        `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.stat}`,
+      );
     });
 
     it("dir cache key matches full invalidation prefix", () => {
       const key = buildDirCacheKeyPrefix(releaseContext);
       assertEquals(key, "dir:release:test-project:release-123");
-      const matchesPrefix = FULL_INVALIDATION_PREFIXES.dir.some((prefix) =>
-        key.startsWith(prefix)
+      const matchesPrefix = FULL_INVALIDATION_PREFIXES.dir.some((prefix) => key.startsWith(prefix));
+      assertEquals(
+        matchesPrefix,
+        true,
+        `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.dir}`,
       );
-      assertEquals(matchesPrefix, true, `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.dir}`);
     });
 
     it("files list cache key matches full invalidation prefix", () => {
@@ -122,7 +146,11 @@ describe("Cache Invalidation - Key Prefix Matching", () => {
       const matchesPrefix = FULL_INVALIDATION_PREFIXES.files.some((prefix) =>
         key.startsWith(prefix)
       );
-      assertEquals(matchesPrefix, true, `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.files}`);
+      assertEquals(
+        matchesPrefix,
+        true,
+        `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.files}`,
+      );
     });
   });
 
@@ -140,7 +168,11 @@ describe("Cache Invalidation - Key Prefix Matching", () => {
       const matchesPrefix = FULL_INVALIDATION_PREFIXES.file.some((prefix) =>
         key.startsWith(prefix)
       );
-      assertEquals(matchesPrefix, true, `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.file}`);
+      assertEquals(
+        matchesPrefix,
+        true,
+        `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.file}`,
+      );
     });
 
     it("stat cache key matches full invalidation prefix", () => {
@@ -149,16 +181,22 @@ describe("Cache Invalidation - Key Prefix Matching", () => {
       const matchesPrefix = FULL_INVALIDATION_PREFIXES.stat.some((prefix) =>
         key.startsWith(prefix)
       );
-      assertEquals(matchesPrefix, true, `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.stat}`);
+      assertEquals(
+        matchesPrefix,
+        true,
+        `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.stat}`,
+      );
     });
 
     it("dir cache key matches full invalidation prefix", () => {
       const key = buildDirCacheKeyPrefix(envContext);
       assertEquals(key, "dir:env:test-project:production:release-456");
-      const matchesPrefix = FULL_INVALIDATION_PREFIXES.dir.some((prefix) =>
-        key.startsWith(prefix)
+      const matchesPrefix = FULL_INVALIDATION_PREFIXES.dir.some((prefix) => key.startsWith(prefix));
+      assertEquals(
+        matchesPrefix,
+        true,
+        `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.dir}`,
       );
-      assertEquals(matchesPrefix, true, `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.dir}`);
     });
 
     it("files list cache key matches full invalidation prefix", () => {
@@ -167,7 +205,11 @@ describe("Cache Invalidation - Key Prefix Matching", () => {
       const matchesPrefix = FULL_INVALIDATION_PREFIXES.files.some((prefix) =>
         key.startsWith(prefix)
       );
-      assertEquals(matchesPrefix, true, `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.files}`);
+      assertEquals(
+        matchesPrefix,
+        true,
+        `Key "${key}" should match one of ${FULL_INVALIDATION_PREFIXES.files}`,
+      );
     });
   });
 });
@@ -324,8 +366,8 @@ describe("Cache Invalidation - FileCache Operations", () => {
   it("root directory parent calculation uses empty string not slash", () => {
     // Test various path scenarios to verify parent dir calculation
     const testCases = [
-      { path: "logo.png", expectedParent: "" },           // Root level
-      { path: "README.md", expectedParent: "" },          // Root level
+      { path: "logo.png", expectedParent: "" }, // Root level
+      { path: "README.md", expectedParent: "" }, // Root level
       { path: "components/Button.tsx", expectedParent: "components" },
       { path: "pages/api/health.ts", expectedParent: "pages/api" },
       { path: "a/b/c/d.ts", expectedParent: "a/b/c" },
@@ -337,7 +379,7 @@ describe("Cache Invalidation - FileCache Operations", () => {
       assertEquals(
         parentDir,
         expectedParent,
-        `Path "${path}" should have parent "${expectedParent}", got "${parentDir}"`
+        `Path "${path}" should have parent "${expectedParent}", got "${parentDir}"`,
       );
     }
   });
@@ -357,7 +399,12 @@ describe("Cache Invalidation - Invalid Prefix Detection", () => {
     const contexts: ResolvedContentContext[] = [
       { sourceType: "branch", projectSlug: "test", branch: "main" },
       { sourceType: "release", projectSlug: "test", releaseId: "rel-1" },
-      { sourceType: "environment", projectSlug: "test", environmentName: "prod", releaseId: "rel-1" },
+      {
+        sourceType: "environment",
+        projectSlug: "test",
+        environmentName: "prod",
+        releaseId: "rel-1",
+      },
     ];
 
     for (const ctx of contexts) {
@@ -370,22 +417,22 @@ describe("Cache Invalidation - Invalid Prefix Detection", () => {
         assertEquals(
           fileKey.startsWith(invalidPrefix),
           false,
-          `File key "${fileKey}" should NOT match invalid prefix "${invalidPrefix}"`
+          `File key "${fileKey}" should NOT match invalid prefix "${invalidPrefix}"`,
         );
         assertEquals(
           statKey.startsWith(invalidPrefix),
           false,
-          `Stat key "${statKey}" should NOT match invalid prefix "${invalidPrefix}"`
+          `Stat key "${statKey}" should NOT match invalid prefix "${invalidPrefix}"`,
         );
         assertEquals(
           dirKey.startsWith(invalidPrefix),
           false,
-          `Dir key "${dirKey}" should NOT match invalid prefix "${invalidPrefix}"`
+          `Dir key "${dirKey}" should NOT match invalid prefix "${invalidPrefix}"`,
         );
         assertEquals(
           filesKey.startsWith(invalidPrefix),
           false,
-          `Files key "${filesKey}" should NOT match invalid prefix "${invalidPrefix}"`
+          `Files key "${filesKey}" should NOT match invalid prefix "${invalidPrefix}"`,
         );
       }
     }

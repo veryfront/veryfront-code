@@ -49,7 +49,13 @@ describe("RenderContext", () => {
         config: mockConfig as any,
         securityConfig: null,
         cspUserHeader: null,
-        requestContext: { mode: "production", slug: "test-project", branch: null, token: "token_xyz", isLocalDev: true },
+        requestContext: {
+          mode: "production",
+          slug: "test-project",
+          branch: null,
+          token: "token_xyz",
+          isLocalDev: true,
+        },
         releaseId: "rel_456",
         proxyToken: "token_xyz",
       };
@@ -79,7 +85,13 @@ describe("RenderContext", () => {
         config: mockConfig as any,
         securityConfig: null,
         cspUserHeader: null,
-        requestContext: { mode: "preview", slug: "test-project", branch: null, token: "", isLocalDev: true },
+        requestContext: {
+          mode: "preview",
+          slug: "test-project",
+          branch: null,
+          token: "",
+          isLocalDev: true,
+        },
       };
 
       const ctx = createRenderContext(handlerCtx);
@@ -130,7 +142,13 @@ describe("RenderContext", () => {
         config: mockConfig as any,
         securityConfig: null,
         cspUserHeader: null,
-        requestContext: { mode: "production", slug: "test-project", branch: null, token: "", isLocalDev: false },
+        requestContext: {
+          mode: "production",
+          slug: "test-project",
+          branch: null,
+          token: "",
+          isLocalDev: false,
+        },
         // Missing releaseId
       };
 

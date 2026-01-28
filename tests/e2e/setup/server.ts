@@ -5,8 +5,8 @@
  * Uses Deno subprocess to spawn the server and polls for readiness.
  */
 
-import { spawn, ChildProcess } from "child_process";
-import { join, dirname } from "path";
+import { ChildProcess, spawn } from "child_process";
+import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -19,7 +19,7 @@ let serverProcess: ChildProcess | null = null;
  */
 async function waitForReady(
   url: string,
-  timeout: number = 30_000
+  timeout: number = 30_000,
 ): Promise<void> {
   const start = Date.now();
   const pollInterval = 500;

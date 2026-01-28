@@ -403,7 +403,9 @@ describe(
             // Content-type may have charset suffix depending on runtime
             assert(
               res.headers.get("content-type")?.startsWith("application/json"),
-              `Expected content-type to start with application/json, got ${res.headers.get("content-type")}`,
+              `Expected content-type to start with application/json, got ${
+                res.headers.get("content-type")
+              }`,
             );
             const data = await res.json();
             assertEquals(data.message, "Hello");

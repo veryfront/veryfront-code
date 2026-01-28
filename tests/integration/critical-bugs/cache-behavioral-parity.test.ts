@@ -14,17 +14,22 @@
  * The test renders pages multiple times and compares cache-hit vs cache-miss responses.
  */
 
-import { assertEquals, assert, assertStringIncludes, assertNotEquals } from "@veryfront/testing/assert";
-import { describe, it, beforeEach, afterEach } from "@veryfront/testing/bdd";
+import {
+  assert,
+  assertEquals,
+  assertNotEquals,
+  assertStringIncludes,
+} from "@veryfront/testing/assert";
+import { afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
 import { join } from "@veryfront/compat/path";
 import { mkdir, writeTextFile } from "@veryfront/compat/fs.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { clearLayoutDiscoveryCache } from "../../../src/rendering/layouts/utils/discovery.ts";
 import { FileCache } from "../../../src/platform/adapters/fs/cache/file-cache.ts";
 import {
-  InMemoryBundleManifestStore,
-  type BundleMetadata,
   type BundleCode,
+  type BundleMetadata,
+  InMemoryBundleManifestStore,
 } from "../../../src/utils/bundle-manifest.ts";
 
 describe("Cache Hit/Miss Behavioral Parity", {
@@ -53,7 +58,7 @@ describe("Cache Hit/Miss Behavioral Parity", {
         { key: "empty:string", value: "" },
         { key: "whitespace:only", value: "   \n\t\r   " },
         { key: "json:content", value: JSON.stringify({ nested: { deep: { value: 42 } } }) },
-        { key: "html:content", value: "<div class=\"test\">HTML & <special> chars</div>" },
+        { key: "html:content", value: '<div class="test">HTML & <special> chars</div>' },
         { key: "newlines:multiple", value: "line1\nline2\r\nline3\rline4" },
         { key: "null:bytes", value: "before\x00after" },
         { key: "long:content", value: "x".repeat(100000) }, // 100KB content
@@ -124,7 +129,7 @@ describe("Cache Hit/Miss Behavioral Parity", {
       assertEquals(cache.get("expiring:key"), "will expire", "Should hit before TTL");
 
       // Wait for TTL to expire
-      await new Promise(resolve => setTimeout(resolve, shortTTL + 50));
+      await new Promise((resolve) => setTimeout(resolve, shortTTL + 50));
 
       // After TTL, should miss
       const afterExpiry = cache.get("expiring:key");
@@ -246,8 +251,16 @@ describe("Cache Hit/Miss Behavioral Parity", {
       assertEquals(invalidated, 2, "Should invalidate 2 entries");
 
       // Verify source entries are gone
-      assertEquals(await store.getBundleMetadata("bundle:dev"), undefined, "dev bundle should be gone");
-      assertEquals(await store.getBundleMetadata("bundle:prod"), undefined, "prod bundle should be gone");
+      assertEquals(
+        await store.getBundleMetadata("bundle:dev"),
+        undefined,
+        "dev bundle should be gone",
+      );
+      assertEquals(
+        await store.getBundleMetadata("bundle:prod"),
+        undefined,
+        "prod bundle should be gone",
+      );
 
       // Verify other source is intact
       const other = await store.getBundleMetadata("bundle:other");
@@ -274,7 +287,7 @@ describe("Cache Hit/Miss Behavioral Parity", {
                 <body className="test-layout">{children}</body>
               </html>
             );
-          }`
+          }`,
         );
         await writeTextFile(
           join(context.projectDir, "app", "page.tsx"),
@@ -290,7 +303,7 @@ describe("Cache Hit/Miss Behavioral Parity", {
                 </ul>
               </div>
             );
-          }`
+          }`,
         );
 
         const { createRenderer } = await import("../../../src/rendering/index.ts");
@@ -350,7 +363,7 @@ describe("Cache Hit/Miss Behavioral Parity", {
           join(context.projectDir, "app", "layout.tsx"),
           `export default function Layout({ children }) {
             return <html><body>{children}</body></html>;
-          }`
+          }`,
         );
 
         // Version 1 of the page
@@ -358,7 +371,7 @@ describe("Cache Hit/Miss Behavioral Parity", {
           join(context.projectDir, "app", "page.tsx"),
           `export default function Page() {
             return <div data-version="1">Version 1 Content</div>;
-          }`
+          }`,
         );
 
         const { createRenderer } = await import("../../../src/rendering/index.ts");
@@ -380,7 +393,7 @@ describe("Cache Hit/Miss Behavioral Parity", {
             join(context.projectDir, "app", "page.tsx"),
             `export default function Page() {
               return <div data-version="2">Version 2 Content</div>;
-            }`
+            }`,
           );
 
           // Clear cache to simulate file change detection
@@ -390,7 +403,7 @@ describe("Cache Hit/Miss Behavioral Parity", {
           clearLayoutDiscoveryCache();
 
           // Wait a moment for file system to settle
-          await new Promise(resolve => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, 100));
 
           // Render after update
           const result2 = await renderer.renderPage("/");
@@ -398,14 +411,22 @@ describe("Cache Hit/Miss Behavioral Parity", {
           // CRITICAL: After cache clear, should get new content
           // Note: This may fail if module cache is not properly cleared
           // The test documents the expected behavior
-          assertStringIncludes(result2.html, 'data-version="2"',
-            "After cache clear, should render version 2");
-          assertStringIncludes(result2.html, "Version 2 Content",
-            "After cache clear, should have v2 content");
+          assertStringIncludes(
+            result2.html,
+            'data-version="2"',
+            "After cache clear, should render version 2",
+          );
+          assertStringIncludes(
+            result2.html,
+            "Version 2 Content",
+            "After cache clear, should have v2 content",
+          );
 
           // Should NOT have old content
-          assert(!result2.html.includes("Version 1 Content"),
-            "After cache clear, should NOT have v1 content");
+          assert(
+            !result2.html.includes("Version 1 Content"),
+            "After cache clear, should NOT have v1 content",
+          );
 
           if (renderer && typeof renderer.clearAllState === "function") {
             await renderer.clearAllState();
@@ -441,7 +462,7 @@ describe("Cache Hit/Miss Behavioral Parity", {
 
       // If paths are normalized, all should hit the same key
       // If not, this documents the behavior
-      const results = pathVariants.map(p => ({
+      const results = pathVariants.map((p) => ({
         path: p,
         cached: cache.get(p),
       }));
@@ -474,8 +495,11 @@ describe("Cache Hit/Miss Behavioral Parity", {
       assertEquals(cache.get(projectB), "Project B content", "Project B key should work");
 
       // Keys should be distinct
-      assertNotEquals(cache.get(projectA), cache.get(projectB),
-        "Different projects should have different content");
+      assertNotEquals(
+        cache.get(projectA),
+        cache.get(projectB),
+        "Different projects should have different content",
+      );
     });
 
     it("environment-scoped keys prevent cross-environment contamination", () => {
@@ -495,8 +519,16 @@ describe("Cache Hit/Miss Behavioral Parity", {
       // Deleting one environment shouldn't affect others
       cache.deleteByPrefix("branch:main:");
       assertEquals(cache.get("branch:main:project:/file.tsx"), undefined, "Deleted entry");
-      assertEquals(cache.get("branch:feature:project:/file.tsx"), "Branch feature content", "Other branch intact");
-      assertEquals(cache.get("release:v1:project:/file.tsx"), "Release v1 content", "Release intact");
+      assertEquals(
+        cache.get("branch:feature:project:/file.tsx"),
+        "Branch feature content",
+        "Other branch intact",
+      );
+      assertEquals(
+        cache.get("release:v1:project:/file.tsx"),
+        "Release v1 content",
+        "Release intact",
+      );
     });
   });
 
@@ -510,14 +542,17 @@ describe("Cache Hit/Miss Behavioral Parity", {
 
       // Fire multiple sets concurrently
       const values = Array.from({ length: 10 }, (_, i) => `value-${i}`);
-      await Promise.all(values.map(v => {
+      await Promise.all(values.map((v) => {
         cache.set(key, v);
         return Promise.resolve();
       }));
 
       // Result should be one of the values (last write wins)
       const result = cache.get(key);
-      assert(values.includes(result as string), `Result should be one of the set values: ${result}`);
+      assert(
+        values.includes(result as string),
+        `Result should be one of the set values: ${result}`,
+      );
     });
 
     it("async get during delete returns correct value or undefined", async () => {
@@ -545,7 +580,7 @@ describe("Cache Hit/Miss Behavioral Parity", {
       ];
 
       // Run all operations
-      await Promise.all(operations.map(op => op()));
+      await Promise.all(operations.map((op) => op()));
 
       // After all operations, all prefix items should be deleted
       for (let i = 0; i < 100; i++) {

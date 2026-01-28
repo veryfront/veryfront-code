@@ -7,7 +7,7 @@ import {
   getAdapter,
   nodeAdapter,
 } from "@veryfront/platform/adapters/detect.ts";
-import { isDeno, isNode, isBun } from "../../../src/platform/compat/runtime.ts";
+import { isBun, isDeno, isNode } from "../../../src/platform/compat/runtime.ts";
 
 describe("Runtime detection", () => {
   describe("detectRuntime", () => {

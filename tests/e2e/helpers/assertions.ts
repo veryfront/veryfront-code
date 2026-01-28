@@ -4,7 +4,7 @@
  * Common utilities for checking page state, errors, and hydration.
  */
 
-import { Page, expect, ConsoleMessage } from "@playwright/test";
+import { ConsoleMessage, expect, Page } from "@playwright/test";
 
 /**
  * Console error collection for a page.
@@ -50,9 +50,7 @@ function isIgnorableError(message: string): boolean {
     "OTS parsing error",
   ];
 
-  return ignorable.some((pattern) =>
-    message.toLowerCase().includes(pattern.toLowerCase())
-  );
+  return ignorable.some((pattern) => message.toLowerCase().includes(pattern.toLowerCase()));
 }
 
 /**
@@ -61,7 +59,7 @@ function isIgnorableError(message: string): boolean {
 export async function assertPageLoaded(
   page: Page,
   expectedMinStatusCode: number = 200,
-  expectedMaxStatusCode: number = 499
+  expectedMaxStatusCode: number = 499,
 ): Promise<void> {
   // Check the page has content
   const body = await page.locator("body").innerHTML();
@@ -73,7 +71,7 @@ export async function assertPageLoaded(
  */
 export async function assertHydrationWorks(
   page: Page,
-  errors: string[]
+  errors: string[],
 ): Promise<void> {
   // Wait for network to settle
   await page.waitForLoadState("networkidle");
@@ -95,7 +93,7 @@ export async function assertHydrationWorks(
     (e) =>
       e.includes("hydrat") ||
       e.includes("Minified React error") ||
-      e.includes("did not match")
+      e.includes("did not match"),
   );
 
   expect(hydrationErrors).toEqual([]);
@@ -106,7 +104,7 @@ export async function assertHydrationWorks(
  */
 export async function assertColorMode(
   page: Page,
-  mode: "light" | "dark"
+  mode: "light" | "dark",
 ): Promise<void> {
   const html = page.locator("html");
 

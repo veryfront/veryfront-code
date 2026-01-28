@@ -4,7 +4,11 @@
  * Focused test to verify debouncing functionality is working
  */
 
-import { assert as _assert, assertEquals as _assertEquals, assertExists } from "@veryfront/testing/assert";
+import {
+  assert as _assert,
+  assertEquals as _assertEquals,
+  assertExists,
+} from "@veryfront/testing/assert";
 import { join } from "@veryfront/compat/path";
 import { afterAll, describe, it } from "@veryfront/testing/bdd";
 import { delay, writeTextFile } from "@veryfront/testing/deno-compat";

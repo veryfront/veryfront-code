@@ -38,7 +38,10 @@ import {
 } from "@veryfront/compat/fs.ts";
 
 // Helper to write files (replaces Bun.write)
-async function writeFile(path: string, data: string | Uint8Array | { symlink: string }): Promise<void> {
+async function writeFile(
+  path: string,
+  data: string | Uint8Array | { symlink: string },
+): Promise<void> {
   if (typeof data === "object" && "symlink" in data) {
     await symlink(data.symlink, path);
   } else if (typeof data === "string") {
@@ -136,7 +139,9 @@ describe("Asset Generation Tests", { sanitizeOps: false, sanitizeResources: fals
           );
           expect(faviconExists).toBe(true);
 
-          const fontExists = await (await getAdapter()).fs.exists(join(outputDir, "fonts", "roboto.woff"));
+          const fontExists = await (await getAdapter()).fs.exists(
+            join(outputDir, "fonts", "roboto.woff"),
+          );
           expect(fontExists).toBe(true);
         });
       });
@@ -205,7 +210,12 @@ describe("Asset Generation Tests", { sanitizeOps: false, sanitizeResources: fals
           await writeFile(join(publicDir, "test.txt"), "content");
 
           // Run in dry-run mode
-          const stats = await copyStaticAssets(await getAdapter(), context.projectDir, outputDir, true);
+          const stats = await copyStaticAssets(
+            await getAdapter(),
+            context.projectDir,
+            outputDir,
+            true,
+          );
 
           expect(stats.assets).toBe(1);
           expect(stats.totalSize).toBe(7);
@@ -226,7 +236,12 @@ describe("Asset Generation Tests", { sanitizeOps: false, sanitizeResources: fals
           await writeFile(join(publicDir, "b.txt"), "BBBBB");
           await writeFile(join(publicDir, "c.txt"), "CC");
 
-          const stats = await copyStaticAssets(await getAdapter(), context.projectDir, outputDir, true);
+          const stats = await copyStaticAssets(
+            await getAdapter(),
+            context.projectDir,
+            outputDir,
+            true,
+          );
 
           expect(stats.assets).toBe(3);
           expect(stats.totalSize).toBe(10);
@@ -246,7 +261,12 @@ describe("Asset Generation Tests", { sanitizeOps: false, sanitizeResources: fals
           await mkdir(nestedDir, { recursive: true });
           await writeFile(join(nestedDir, "pic.jpg"), "JPEG");
 
-          const stats = await copyStaticAssets(await getAdapter(), context.projectDir, outputDir, true);
+          const stats = await copyStaticAssets(
+            await getAdapter(),
+            context.projectDir,
+            outputDir,
+            true,
+          );
 
           expect(stats.assets).toBe(1);
           expect(stats.totalSize).toBe(4);
@@ -279,7 +299,9 @@ describe("Asset Generation Tests", { sanitizeOps: false, sanitizeResources: fals
 
           expect(stats.assets).toBe(3);
 
-          expect(await (await getAdapter()).fs.exists(join(outputDir, "file-with-dash.txt"))).toBe(true);
+          expect(await (await getAdapter()).fs.exists(join(outputDir, "file-with-dash.txt"))).toBe(
+            true,
+          );
           expect(
             await (await getAdapter()).fs.exists(join(outputDir, "file_with_underscore.txt")),
           ).toBe(true);
@@ -390,10 +412,14 @@ describe("Asset Generation Tests", { sanitizeOps: false, sanitizeResources: fals
 
           // Verify files were copied (note: adapter readFile/writeFile treats files as text,
           // so binary data may be transcoded through UTF-8. The important thing is files exist.)
-          const copiedPngExists = await (await getAdapter()).fs.exists(join(outputDir, "image.png"));
+          const copiedPngExists = await (await getAdapter()).fs.exists(
+            join(outputDir, "image.png"),
+          );
           expect(copiedPngExists).toBe(true);
 
-          const copiedJpegExists = await (await getAdapter()).fs.exists(join(outputDir, "photo.jpg"));
+          const copiedJpegExists = await (await getAdapter()).fs.exists(
+            join(outputDir, "photo.jpg"),
+          );
           expect(copiedJpegExists).toBe(true);
 
           // Verify files have content
@@ -479,10 +505,14 @@ describe("Asset Generation Tests", { sanitizeOps: false, sanitizeResources: fals
           expect(stats.assets).toBe(3);
 
           // Verify text files - these should be copied correctly
-          const configContent = await (await getAdapter()).fs.readFile(join(outputDir, "config.json"));
+          const configContent = await (await getAdapter()).fs.readFile(
+            join(outputDir, "config.json"),
+          );
           expect(configContent.includes("key")).toBe(true);
 
-          const readmeContent = await (await getAdapter()).fs.readFile(join(outputDir, "readme.md"));
+          const readmeContent = await (await getAdapter()).fs.readFile(
+            join(outputDir, "readme.md"),
+          );
           expect(
             readmeContent.includes("README"),
           ).toBe(true);

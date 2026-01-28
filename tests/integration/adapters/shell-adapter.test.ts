@@ -6,11 +6,7 @@
  * - readFileSync()
  */
 
-import {
-  assert,
-  assertEquals,
-  assertExists,
-} from "@veryfront/testing/assert";
+import { assert, assertEquals, assertExists } from "@veryfront/testing/assert";
 import { symlink } from "@veryfront/compat/fs.ts";
 import { join } from "@veryfront/compat/path";
 import { describe, it } from "@veryfront/testing/bdd";

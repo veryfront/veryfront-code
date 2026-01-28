@@ -13,13 +13,7 @@
 import { assert, assertEquals, assertExists } from "@veryfront/testing/assert";
 import { join } from "@veryfront/compat/path";
 import { afterAll, describe, it } from "@veryfront/testing/bdd";
-import {
-  mkdir,
-  readDir,
-  remove,
-  stat,
-  writeTextFile,
-} from "@veryfront/compat/fs.ts";
+import { mkdir, readDir, remove, stat, writeTextFile } from "@veryfront/compat/fs.ts";
 import { buildProduction } from "../../../../src/build/production-build/index.ts";
 import type { BuildStats } from "../../../../src/server/build-types.ts";
 import { withTestContext } from "../../../_helpers/context.ts";

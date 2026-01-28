@@ -64,11 +64,13 @@ This is a test page for verifying parallel request handling.
 
           try {
             // Fire 5 concurrent requests to the same page
-            const promises = Array.from({ length: 5 }, () =>
-              renderer.renderPage("test").catch((error) => ({
-                error: true,
-                message: error instanceof Error ? error.message : String(error),
-              }))
+            const promises = Array.from(
+              { length: 5 },
+              () =>
+                renderer.renderPage("test").catch((error) => ({
+                  error: true,
+                  message: error instanceof Error ? error.message : String(error),
+                })),
             );
 
             const results = await Promise.all(promises);
@@ -80,7 +82,7 @@ This is a test page for verifying parallel request handling.
               // Check for error object
               if (result && typeof result === "object" && "error" in result) {
                 throw new Error(
-                  `Request ${i + 1} failed with: ${(result as { message: string }).message}`
+                  `Request ${i + 1} failed with: ${(result as { message: string }).message}`,
                 );
               }
 
@@ -89,7 +91,7 @@ This is a test page for verifying parallel request handling.
               assertStringIncludes(
                 renderResult.html,
                 "Parallel Test Page",
-                `Request ${i + 1} should contain expected content`
+                `Request ${i + 1} should contain expected content`,
               );
             }
 
@@ -99,7 +101,7 @@ This is a test page for verifying parallel request handling.
                 assertNotEquals(
                   (result as { html: string }).html.length,
                   0,
-                  "HTML should not be empty"
+                  "HTML should not be empty",
                 );
               }
             }
@@ -217,7 +219,7 @@ Testing that ESM imports don't cause deadlocks.
             assertEquals(
               duration < 10000,
               true,
-              `Render should complete quickly but took ${duration}ms`
+              `Render should complete quickly but took ${duration}ms`,
             );
 
             assertStringIncludes(result.html, "Import Test");
@@ -265,8 +267,7 @@ Testing concurrent request handling under load.`,
                   success: false,
                   error: error instanceof Error ? error.message : String(error),
                   index: i,
-                }))
-            );
+                })));
 
             const results = await Promise.all(promises);
 
@@ -280,7 +281,7 @@ Testing concurrent request handling under load.`,
               0,
               `Expected no failures but got ${failures.length}: ${
                 failures.map((f) => `#${f.index}: ${(f as { error: string }).error}`).join(", ")
-              }`
+              }`,
             );
 
             assertEquals(successes.length, 10, "All 10 requests should succeed");
@@ -289,7 +290,7 @@ Testing concurrent request handling under load.`,
             for (const result of successes) {
               assertStringIncludes(
                 (result as { html: string }).html,
-                "Stress Test Page"
+                "Stress Test Page",
               );
             }
           } finally {

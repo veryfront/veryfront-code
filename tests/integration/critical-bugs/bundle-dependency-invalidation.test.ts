@@ -14,16 +14,21 @@
  * The test modifies dependencies and verifies that dependent modules are re-bundled.
  */
 
-import { assertEquals, assert, assertStringIncludes, assertNotEquals } from "@veryfront/testing/assert";
-import { describe, it, beforeEach, afterEach } from "@veryfront/testing/bdd";
+import {
+  assert,
+  assertEquals,
+  assertNotEquals,
+  assertStringIncludes,
+} from "@veryfront/testing/assert";
+import { afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
 import { join } from "@veryfront/compat/path";
 import { mkdir, writeTextFile } from "@veryfront/compat/fs.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { clearLayoutDiscoveryCache } from "../../../src/rendering/layouts/utils/discovery.ts";
 import {
-  InMemoryBundleManifestStore,
   computeCodeHash,
   computeContentHash,
+  InMemoryBundleManifestStore,
 } from "../../../src/utils/bundle-manifest.ts";
 
 describe("Bundle Dependency Invalidation", {
@@ -53,7 +58,7 @@ describe("Bundle Dependency Invalidation", {
           join(context.projectDir, "app", "components", "Button.tsx"),
           `export default function Button() {
             return <button className="btn-v1">Button V1</button>;
-          }`
+          }`,
         );
 
         // Create a layout
@@ -61,7 +66,7 @@ describe("Bundle Dependency Invalidation", {
           join(context.projectDir, "app", "layout.tsx"),
           `export default function Layout({ children }) {
             return <html><body>{children}</body></html>;
-          }`
+          }`,
         );
 
         // Create a page that imports the Button
@@ -70,7 +75,7 @@ describe("Bundle Dependency Invalidation", {
           `import Button from './components/Button';
           export default function Page() {
             return <div className="page"><Button /></div>;
-          }`
+          }`,
         );
 
         const { createRenderer } = await import("../../../src/rendering/index.ts");
@@ -92,7 +97,7 @@ describe("Bundle Dependency Invalidation", {
             join(context.projectDir, "app", "components", "Button.tsx"),
             `export default function Button() {
               return <button className="btn-v2">Button V2</button>;
-            }`
+            }`,
           );
 
           // Clear caches to simulate file change detection
@@ -102,22 +107,32 @@ describe("Bundle Dependency Invalidation", {
           clearLayoutDiscoveryCache();
 
           // Wait for filesystem to settle
-          await new Promise(resolve => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, 100));
 
           // Render again - should now have V2
           const result2 = await renderer.renderPage("/");
 
           // CRITICAL: The page's rendered output must reflect the new Button version
-          assertStringIncludes(result2.html, "btn-v2",
-            "After dependency change, should have V2 button class");
-          assertStringIncludes(result2.html, "Button V2",
-            "After dependency change, should have V2 button text");
+          assertStringIncludes(
+            result2.html,
+            "btn-v2",
+            "After dependency change, should have V2 button class",
+          );
+          assertStringIncludes(
+            result2.html,
+            "Button V2",
+            "After dependency change, should have V2 button text",
+          );
 
           // Should NOT have old content
-          assert(!result2.html.includes("btn-v1"),
-            "After dependency change, should NOT have V1 class");
-          assert(!result2.html.includes("Button V1"),
-            "After dependency change, should NOT have V1 text");
+          assert(
+            !result2.html.includes("btn-v1"),
+            "After dependency change, should NOT have V1 class",
+          );
+          assert(
+            !result2.html.includes("Button V1"),
+            "After dependency change, should NOT have V1 text",
+          );
 
           if (renderer && typeof renderer.clearAllState === "function") {
             await renderer.clearAllState();
@@ -142,7 +157,7 @@ describe("Bundle Dependency Invalidation", {
         // C: Utility module (deepest dependency)
         await writeTextFile(
           join(context.projectDir, "app", "utils", "constants.ts"),
-          `export const VERSION = "v1.0.0";`
+          `export const VERSION = "v1.0.0";`,
         );
 
         // B: Component that uses C
@@ -151,7 +166,7 @@ describe("Bundle Dependency Invalidation", {
           `import { VERSION } from '../utils/constants';
           export default function Header() {
             return <header data-version={VERSION}>Version: {VERSION}</header>;
-          }`
+          }`,
         );
 
         // A: Page that uses B
@@ -160,14 +175,14 @@ describe("Bundle Dependency Invalidation", {
           `import Header from './components/Header';
           export default function Page() {
             return <div><Header /></div>;
-          }`
+          }`,
         );
 
         await writeTextFile(
           join(context.projectDir, "app", "layout.tsx"),
           `export default function Layout({ children }) {
             return <html><body>{children}</body></html>;
-          }`
+          }`,
         );
 
         const { createRenderer } = await import("../../../src/rendering/index.ts");
@@ -181,15 +196,22 @@ describe("Bundle Dependency Invalidation", {
 
           // First render
           const result1 = await renderer.renderPage("/");
-          assertStringIncludes(result1.html, 'data-version="v1.0.0"',
-            "Initial render should have v1.0.0");
-          assertStringIncludes(result1.html, "Version: v1.0.0",
-            "Initial render should display v1.0.0");
+          assertStringIncludes(
+            result1.html,
+            'data-version="v1.0.0"',
+            "Initial render should have v1.0.0",
+          );
+          // React SSR may insert comments between text and expressions (e.g., "Version: <!-- -->v1.0.0")
+          // Check for data-version attribute which is more reliable
+          assert(
+            result1.html.includes("v1.0.0") && result1.html.includes("Version:"),
+            "Initial render should display v1.0.0",
+          );
 
           // Change ONLY the deepest dependency (C)
           await writeTextFile(
             join(context.projectDir, "app", "utils", "constants.ts"),
-            `export const VERSION = "v2.0.0";`
+            `export const VERSION = "v2.0.0";`,
           );
 
           // Clear caches
@@ -197,20 +219,28 @@ describe("Bundle Dependency Invalidation", {
             renderer.clearCache();
           }
           clearLayoutDiscoveryCache();
-          await new Promise(resolve => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, 100));
 
           // Render again
           const result2 = await renderer.renderPage("/");
 
           // CRITICAL: All levels must see the new version
-          assertStringIncludes(result2.html, 'data-version="v2.0.0"',
-            "After transitive dep change, should have v2.0.0 in data attr");
-          assertStringIncludes(result2.html, "Version: v2.0.0",
-            "After transitive dep change, should display v2.0.0");
+          assertStringIncludes(
+            result2.html,
+            'data-version="v2.0.0"',
+            "After transitive dep change, should have v2.0.0 in data attr",
+          );
+          // React SSR may insert comments between text and expressions
+          assert(
+            result2.html.includes("v2.0.0") && result2.html.includes("Version:"),
+            "After transitive dep change, should display v2.0.0",
+          );
 
           // Should NOT have old version
-          assert(!result2.html.includes("v1.0.0"),
-            "After transitive dep change, should NOT have v1.0.0");
+          assert(
+            !result2.html.includes("v1.0.0"),
+            "After transitive dep change, should NOT have v1.0.0",
+          );
 
           if (renderer && typeof renderer.clearAllState === "function") {
             await renderer.clearAllState();
@@ -234,14 +264,14 @@ describe("Bundle Dependency Invalidation", {
         // Original module
         await writeTextFile(
           join(context.projectDir, "app", "lib", "original.ts"),
-          `export const ORIGINAL_VALUE = "original-v1";`
+          `export const ORIGINAL_VALUE = "original-v1";`,
         );
 
         // Re-export module (barrel file)
         await writeTextFile(
           join(context.projectDir, "app", "lib", "index.ts"),
           `export { ORIGINAL_VALUE } from './original';
-          export const BARREL_MARKER = "barrel";`
+          export const BARREL_MARKER = "barrel";`,
         );
 
         // Consumer page
@@ -250,14 +280,14 @@ describe("Bundle Dependency Invalidation", {
           `import { ORIGINAL_VALUE, BARREL_MARKER } from './lib';
           export default function Page() {
             return <div data-original={ORIGINAL_VALUE}>{ORIGINAL_VALUE} via {BARREL_MARKER}</div>;
-          }`
+          }`,
         );
 
         await writeTextFile(
           join(context.projectDir, "app", "layout.tsx"),
           `export default function Layout({ children }) {
             return <html><body>{children}</body></html>;
-          }`
+          }`,
         );
 
         const { createRenderer } = await import("../../../src/rendering/index.ts");
@@ -276,7 +306,7 @@ describe("Bundle Dependency Invalidation", {
           // Change the ORIGINAL module (not the re-export barrel)
           await writeTextFile(
             join(context.projectDir, "app", "lib", "original.ts"),
-            `export const ORIGINAL_VALUE = "original-v2";`
+            `export const ORIGINAL_VALUE = "original-v2";`,
           );
 
           // Clear caches
@@ -284,16 +314,21 @@ describe("Bundle Dependency Invalidation", {
             renderer.clearCache();
           }
           clearLayoutDiscoveryCache();
-          await new Promise(resolve => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, 100));
 
           // Render again
           const result2 = await renderer.renderPage("/");
 
           // CRITICAL: Re-exported value must be updated
-          assertStringIncludes(result2.html, "original-v2",
-            "After changing re-exported module, should have v2");
-          assert(!result2.html.includes("original-v1"),
-            "After changing re-exported module, should NOT have v1");
+          assertStringIncludes(
+            result2.html,
+            "original-v2",
+            "After changing re-exported module, should have v2",
+          );
+          assert(
+            !result2.html.includes("original-v1"),
+            "After changing re-exported module, should NOT have v1",
+          );
 
           if (renderer && typeof renderer.clearAllState === "function") {
             await renderer.clearAllState();
@@ -318,7 +353,7 @@ describe("Bundle Dependency Invalidation", {
         // Shared utility
         await writeTextFile(
           join(context.projectDir, "app", "utils", "theme.ts"),
-          `export const THEME_COLOR = "blue";`
+          `export const THEME_COLOR = "blue";`,
         );
 
         // Component A uses theme
@@ -327,7 +362,7 @@ describe("Bundle Dependency Invalidation", {
           `import { THEME_COLOR } from '../utils/theme';
           export default function Card() {
             return <div className={\`card-\${THEME_COLOR}\`}>Card</div>;
-          }`
+          }`,
         );
 
         // Component B also uses theme
@@ -336,7 +371,7 @@ describe("Bundle Dependency Invalidation", {
           `import { THEME_COLOR } from '../utils/theme';
           export default function Button() {
             return <button className={\`btn-\${THEME_COLOR}\`}>Button</button>;
-          }`
+          }`,
         );
 
         // Page uses both components
@@ -346,14 +381,14 @@ describe("Bundle Dependency Invalidation", {
           import Button from './components/Button';
           export default function Page() {
             return <div><Card /><Button /></div>;
-          }`
+          }`,
         );
 
         await writeTextFile(
           join(context.projectDir, "app", "layout.tsx"),
           `export default function Layout({ children }) {
             return <html><body>{children}</body></html>;
-          }`
+          }`,
         );
 
         const { createRenderer } = await import("../../../src/rendering/index.ts");
@@ -373,7 +408,7 @@ describe("Bundle Dependency Invalidation", {
           // Change the shared dependency
           await writeTextFile(
             join(context.projectDir, "app", "utils", "theme.ts"),
-            `export const THEME_COLOR = "red";`
+            `export const THEME_COLOR = "red";`,
           );
 
           // Clear caches
@@ -381,22 +416,26 @@ describe("Bundle Dependency Invalidation", {
             renderer.clearCache();
           }
           clearLayoutDiscoveryCache();
-          await new Promise(resolve => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, 100));
 
           // Render again
           const result2 = await renderer.renderPage("/");
 
           // CRITICAL: BOTH consumers must be updated
-          assertStringIncludes(result2.html, "card-red",
-            "After shared dep change, Card should be red");
-          assertStringIncludes(result2.html, "btn-red",
-            "After shared dep change, Button should be red");
+          assertStringIncludes(
+            result2.html,
+            "card-red",
+            "After shared dep change, Card should be red",
+          );
+          assertStringIncludes(
+            result2.html,
+            "btn-red",
+            "After shared dep change, Button should be red",
+          );
 
           // CRITICAL: Neither consumer should have old value
-          assert(!result2.html.includes("card-blue"),
-            "Card should NOT still be blue");
-          assert(!result2.html.includes("btn-blue"),
-            "Button should NOT still be blue");
+          assert(!result2.html.includes("card-blue"), "Card should NOT still be blue");
+          assert(!result2.html.includes("btn-blue"), "Button should NOT still be blue");
 
           if (renderer && typeof renderer.clearAllState === "function") {
             await renderer.clearAllState();
@@ -436,8 +475,7 @@ describe("Bundle Dependency Invalidation", {
       const metadata = await store.getBundleMetadata(bundleKey);
 
       // Verify depsHash is stored and retrievable
-      assertEquals(metadata?.meta?.depsHash, depsHash,
-        "Bundle metadata should include depsHash");
+      assertEquals(metadata?.meta?.depsHash, depsHash, "Bundle metadata should include depsHash");
     });
 
     it("different depsHash produces different cache key lookup", async () => {
@@ -483,15 +521,20 @@ describe("Bundle Dependency Invalidation", {
       assertEquals(invalidated, 1, "Should invalidate 1 bundle");
 
       // Component bundle should be gone
-      assertEquals(await store.getBundleMetadata("bundle:component"), undefined,
-        "Component bundle should be invalidated");
+      assertEquals(
+        await store.getBundleMetadata("bundle:component"),
+        undefined,
+        "Component bundle should be invalidated",
+      );
 
       // Note: The page bundle is NOT automatically invalidated by invalidateSource
       // because invalidateSource only matches the source field directly.
       // A real implementation would need to track dependency graphs.
       const pageBundle = await store.getBundleMetadata("bundle:page");
-      assert(pageBundle !== undefined,
-        "Page bundle still exists (demonstrates need for dependency graph)");
+      assert(
+        pageBundle !== undefined,
+        "Page bundle still exists (demonstrates need for dependency graph)",
+      );
     });
   });
 

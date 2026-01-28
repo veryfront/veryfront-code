@@ -25,8 +25,10 @@ export function createReactImportMap(reactVersion = "18.3.1"): ReactImportMap {
     react: `https://esm.sh/react@${reactVersion}?target=es2022`,
     "react-dom": `https://esm.sh/react-dom@${reactVersion}?target=es2022&external=react`,
     "react/jsx-runtime": `https://esm.sh/react@${reactVersion}/jsx-runtime?target=es2022`,
-    "react-dom/client": `https://esm.sh/react-dom@${reactVersion}/client?target=es2022&external=react`,
-    "react-dom/server": `https://esm.sh/react-dom@${reactVersion}/server?target=es2022&external=react`,
+    "react-dom/client":
+      `https://esm.sh/react-dom@${reactVersion}/client?target=es2022&external=react`,
+    "react-dom/server":
+      `https://esm.sh/react-dom@${reactVersion}/server?target=es2022&external=react`,
   };
 }
 

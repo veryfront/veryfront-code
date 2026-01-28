@@ -1,5 +1,5 @@
 import { assertEquals, assertExists } from "@veryfront/testing/assert";
-import { join, dirname } from "@veryfront/compat/path";
+import { dirname, join } from "@veryfront/compat/path";
 import { describe, it } from "@veryfront/testing/bdd";
 import { mkdir, writeTextFile } from "@veryfront/testing/deno-compat";
 import {
@@ -332,4 +332,3 @@ Generic layout`,
     });
   });
 });
-

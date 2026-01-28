@@ -15,27 +15,35 @@
  * all adapters discover the same layouts in the same order.
  */
 
-import { assertEquals, assert } from "@veryfront/testing/assert";
-import { describe, it, beforeEach, afterEach } from "@veryfront/testing/bdd";
+import { assert, assertEquals } from "@veryfront/testing/assert";
+import { afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
 import { join } from "@veryfront/compat/path";
 import { mkdir, writeTextFile } from "@veryfront/compat/fs.ts";
 import { withTestContext } from "../../_helpers/context.ts";
-import { discoverNestedLayouts, clearLayoutDiscoveryCache } from "../../../src/rendering/layouts/utils/discovery.ts";
+import {
+  clearLayoutDiscoveryCache,
+  discoverNestedLayouts,
+} from "../../../src/rendering/layouts/utils/discovery.ts";
 import type { RuntimeAdapter } from "../../../src/platform/adapters/base.ts";
 import type { LayoutItem } from "../../../src/types/index.ts";
 
 // Helper to check if array includes a value
 function assertArrayIncludes<T>(arr: T[], value: T, msg?: string): void {
-  const includes = arr.some(item =>
-    typeof item === 'string' && typeof value === 'string'
+  const includes = arr.some((item) =>
+    typeof item === "string" && typeof value === "string"
       ? item === value
       : JSON.stringify(item) === JSON.stringify(value)
   );
-  assert(includes, msg || `Expected array to include ${JSON.stringify(value)}, but got ${JSON.stringify(arr)}`);
+  assert(
+    includes,
+    msg || `Expected array to include ${JSON.stringify(value)}, but got ${JSON.stringify(arr)}`,
+  );
 }
 
 // Mock adapter factory that simulates different adapter behaviors
-function createMockFSAdapter(files: Map<string, { isFile: boolean; content?: string }>): Partial<RuntimeAdapter["fs"]> {
+function createMockFSAdapter(
+  files: Map<string, { isFile: boolean; content?: string }>,
+): Partial<RuntimeAdapter["fs"]> {
   return {
     stat(path: string) {
       const entry = files.get(path);
@@ -92,7 +100,9 @@ function createMockFSAdapter(files: Map<string, { isFile: boolean; content?: str
 }
 
 // Create a full mock RuntimeAdapter
-function createMockAdapter(files: Map<string, { isFile: boolean; content?: string }>): RuntimeAdapter {
+function createMockAdapter(
+  files: Map<string, { isFile: boolean; content?: string }>,
+): RuntimeAdapter {
   const mockFS = createMockFSAdapter(files);
   return {
     fs: mockFS as RuntimeAdapter["fs"],
@@ -138,8 +148,14 @@ describe("Cross-Adapter Layout Discovery Consistency", {
       const pageFile = `${projectDir}/app/page.tsx`;
 
       const files = new Map<string, { isFile: boolean; content?: string }>([
-        [`${projectDir}/app/layout.tsx`, { isFile: true, content: "export default function Layout({children}) { return children; }" }],
-        [`${projectDir}/app/page.tsx`, { isFile: true, content: "export default function Page() { return <div>Page</div>; }" }],
+        [`${projectDir}/app/layout.tsx`, {
+          isFile: true,
+          content: "export default function Layout({children}) { return children; }",
+        }],
+        [`${projectDir}/app/page.tsx`, {
+          isFile: true,
+          content: "export default function Page() { return <div>Page</div>; }",
+        }],
       ]);
 
       const adapter = createMockAdapter(files);
@@ -171,11 +187,17 @@ describe("Cross-Adapter Layout Discovery Consistency", {
       assertEquals(layouts.length, 3, "Should discover all three nested layouts");
 
       // Verify order: root -> blog -> posts
-      const paths = layouts.map(l => l.path);
-      assert(paths.indexOf(`${projectDir}/app/layout.tsx`) < paths.indexOf(`${projectDir}/app/blog/layout.tsx`),
-        "Root layout should come before blog layout");
-      assert(paths.indexOf(`${projectDir}/app/blog/layout.tsx`) < paths.indexOf(`${projectDir}/app/blog/posts/layout.tsx`),
-        "Blog layout should come before posts layout");
+      const paths = layouts.map((l) => l.path);
+      assert(
+        paths.indexOf(`${projectDir}/app/layout.tsx`) <
+          paths.indexOf(`${projectDir}/app/blog/layout.tsx`),
+        "Root layout should come before blog layout",
+      );
+      assert(
+        paths.indexOf(`${projectDir}/app/blog/layout.tsx`) <
+          paths.indexOf(`${projectDir}/app/blog/posts/layout.tsx`),
+        "Blog layout should come before posts layout",
+      );
     });
 
     it("handles missing intermediate layouts correctly", async () => {
@@ -199,7 +221,7 @@ describe("Cross-Adapter Layout Discovery Consistency", {
 
       // Should find only the layouts that exist
       assertEquals(layouts.length, 2, "Should discover only existing layouts");
-      const paths = layouts.map(l => l.path);
+      const paths = layouts.map((l) => l.path);
       assertArrayIncludes(paths, `${projectDir}/app/layout.tsx`, "Should include root layout");
       assertArrayIncludes(paths, `${projectDir}/app/a/b/c/layout.tsx`, "Should include c layout");
     });
@@ -222,7 +244,10 @@ describe("Cross-Adapter Layout Discovery Consistency", {
       const fileStructure = new Map<string, { isFile: boolean; content?: string }>([
         [`${projectDir}/app/layout.tsx`, { isFile: true, content: "// Root" }],
         [`${projectDir}/app/dashboard/layout.tsx`, { isFile: true, content: "// Dashboard" }],
-        [`${projectDir}/app/dashboard/settings/layout.tsx`, { isFile: true, content: "// Settings" }],
+        [`${projectDir}/app/dashboard/settings/layout.tsx`, {
+          isFile: true,
+          content: "// Settings",
+        }],
         [`${projectDir}/app/dashboard/settings/page.tsx`, { isFile: true, content: "// Page" }],
       ]);
 
@@ -234,7 +259,7 @@ describe("Cross-Adapter Layout Discovery Consistency", {
       const originalStat = apiAdapter.fs.stat.bind(apiAdapter.fs);
       apiAdapter.fs.stat = async (path: string) => {
         // Add artificial delay to simulate network latency
-        await new Promise(resolve => setTimeout(resolve, 1));
+        await new Promise((resolve) => setTimeout(resolve, 1));
         return originalStat(path);
       };
 
@@ -258,26 +283,41 @@ describe("Cross-Adapter Layout Discovery Consistency", {
       const apiLayouts = await discoverNestedLayouts(pageFile, rootDir, projectDir, apiAdapter);
 
       clearLayoutDiscoveryCache();
-      const githubLayouts = await discoverNestedLayouts(pageFile, rootDir, projectDir, githubAdapter);
+      const githubLayouts = await discoverNestedLayouts(
+        pageFile,
+        rootDir,
+        projectDir,
+        githubAdapter,
+      );
 
       // All adapters must discover the same number of layouts
-      assertEquals(localLayouts.length, apiLayouts.length,
-        `Local (${localLayouts.length}) and API (${apiLayouts.length}) adapters must find same number of layouts`);
-      assertEquals(apiLayouts.length, githubLayouts.length,
-        `API (${apiLayouts.length}) and GitHub (${githubLayouts.length}) adapters must find same number of layouts`);
+      assertEquals(
+        localLayouts.length,
+        apiLayouts.length,
+        `Local (${localLayouts.length}) and API (${apiLayouts.length}) adapters must find same number of layouts`,
+      );
+      assertEquals(
+        apiLayouts.length,
+        githubLayouts.length,
+        `API (${apiLayouts.length}) and GitHub (${githubLayouts.length}) adapters must find same number of layouts`,
+      );
 
       // All adapters must discover layouts at the same paths
-      const localPaths = localLayouts.map(l => l.path).sort();
-      const apiPaths = apiLayouts.map(l => l.path).sort();
-      const githubPaths = githubLayouts.map(l => l.path).sort();
+      const localPaths = localLayouts.map((l) => l.path).sort();
+      const apiPaths = apiLayouts.map((l) => l.path).sort();
+      const githubPaths = githubLayouts.map((l) => l.path).sort();
 
       assertEquals(localPaths, apiPaths, "Local and API adapters must find layouts at same paths");
-      assertEquals(apiPaths, githubPaths, "API and GitHub adapters must find layouts at same paths");
+      assertEquals(
+        apiPaths,
+        githubPaths,
+        "API and GitHub adapters must find layouts at same paths",
+      );
 
       // All adapters must classify layouts with the same kind
-      const localKinds = localLayouts.map(l => l.kind).sort();
-      const apiKinds = apiLayouts.map(l => l.kind).sort();
-      const githubKinds = githubLayouts.map(l => l.kind).sort();
+      const localKinds = localLayouts.map((l) => l.kind).sort();
+      const apiKinds = apiLayouts.map((l) => l.kind).sort();
+      const githubKinds = githubLayouts.map((l) => l.kind).sort();
 
       assertEquals(localKinds, apiKinds, "Local and API adapters must assign same layout kinds");
       assertEquals(apiKinds, githubKinds, "API and GitHub adapters must assign same layout kinds");
@@ -307,7 +347,7 @@ describe("Cross-Adapter Layout Discovery Consistency", {
         // Add random delays to simulate network jitter
         const originalStat = adapter.fs.stat.bind(adapter.fs);
         adapter.fs.stat = async (path: string) => {
-          await new Promise(resolve => setTimeout(resolve, Math.random() * 5));
+          await new Promise((resolve) => setTimeout(resolve, Math.random() * 5));
           return originalStat(path);
         };
 
@@ -318,13 +358,16 @@ describe("Cross-Adapter Layout Discovery Consistency", {
       // All runs must produce the same result
       const firstResult = results[0];
       assert(firstResult, "First result should exist");
-      const firstPaths = firstResult.map(l => l.path ?? "").join(",");
+      const firstPaths = firstResult.map((l) => l.path ?? "").join(",");
       for (let i = 1; i < results.length; i++) {
         const currentResult = results[i];
         assert(currentResult, `Result ${i} should exist`);
-        const currentPaths = currentResult.map(l => l.path ?? "").join(",");
-        assertEquals(currentPaths, firstPaths,
-          `Run ${i} produced different layout order than run 0. This indicates a race condition.`);
+        const currentPaths = currentResult.map((l) => l.path ?? "").join(",");
+        assertEquals(
+          currentPaths,
+          firstPaths,
+          `Run ${i} produced different layout order than run 0. This indicates a race condition.`,
+        );
       }
     });
   });
@@ -352,12 +395,16 @@ describe("Cross-Adapter Layout Discovery Consistency", {
       assert(layouts.length >= 1, "Should discover at least one layout");
 
       // Verify no duplicate directories in layout paths
-      const dirs = layouts.map(l => {
+      const dirs = layouts.map((l) => {
         const path = l.path ?? "";
         return path.substring(0, path.lastIndexOf("/"));
       });
       const uniqueDirs = new Set(dirs);
-      assertEquals(dirs.length, uniqueDirs.size, "Should not have duplicate layouts for same directory");
+      assertEquals(
+        dirs.length,
+        uniqueDirs.size,
+        "Should not have duplicate layouts for same directory",
+      );
     });
   });
 
@@ -395,9 +442,12 @@ describe("Cross-Adapter Layout Discovery Consistency", {
       const layouts = await discoverNestedLayouts(pageFile, rootDir, projectDir, adapter);
 
       assertEquals(layouts.length, 2, "Should discover layouts with special characters in path");
-      const paths = layouts.map(l => l.path);
-      assertArrayIncludes(paths, `${projectDir}/app/user-[id]/layout.tsx`,
-        "Should include dynamic route layout");
+      const paths = layouts.map((l) => l.path);
+      assertArrayIncludes(
+        paths,
+        `${projectDir}/app/user-[id]/layout.tsx`,
+        "Should include dynamic route layout",
+      );
     });
 
     it("respects rootDir boundary and does not discover layouts above it", async () => {
@@ -407,7 +457,10 @@ describe("Cross-Adapter Layout Discovery Consistency", {
 
       // Layout exists above rootDir but should NOT be discovered
       const files = new Map<string, { isFile: boolean; content?: string }>([
-        [`${projectDir}/app/layout.tsx`, { isFile: true, content: "// Above root - should be ignored" }],
+        [`${projectDir}/app/layout.tsx`, {
+          isFile: true,
+          content: "// Above root - should be ignored",
+        }],
         [`${projectDir}/app/dashboard/layout.tsx`, { isFile: true, content: "// Dashboard root" }],
         [`${projectDir}/app/dashboard/settings/page.tsx`, { isFile: true, content: "// Page" }],
       ]);
@@ -416,11 +469,16 @@ describe("Cross-Adapter Layout Discovery Consistency", {
       const layouts = await discoverNestedLayouts(pageFile, rootDir, projectDir, adapter);
 
       // Should only find the dashboard layout, not the app layout
-      const paths = layouts.map(l => l.path);
-      assert(!paths.includes(`${projectDir}/app/layout.tsx`),
-        "Should NOT discover layouts above rootDir");
-      assertArrayIncludes(paths, `${projectDir}/app/dashboard/layout.tsx`,
-        "Should discover layout at rootDir");
+      const paths = layouts.map((l) => l.path);
+      assert(
+        !paths.includes(`${projectDir}/app/layout.tsx`),
+        "Should NOT discover layouts above rootDir",
+      );
+      assertArrayIncludes(
+        paths,
+        `${projectDir}/app/dashboard/layout.tsx`,
+        "Should discover layout at rootDir",
+      );
     });
   });
 
@@ -432,17 +490,17 @@ describe("Cross-Adapter Layout Discovery Consistency", {
 
         await writeTextFile(
           join(context.projectDir, "app", "layout.tsx"),
-          `export default function RootLayout({ children }) { return <div className="root">{children}</div>; }`
+          `export default function RootLayout({ children }) { return <div className="root">{children}</div>; }`,
         );
 
         await writeTextFile(
           join(context.projectDir, "app", "dashboard", "layout.tsx"),
-          `export default function DashboardLayout({ children }) { return <div className="dashboard">{children}</div>; }`
+          `export default function DashboardLayout({ children }) { return <div className="dashboard">{children}</div>; }`,
         );
 
         await writeTextFile(
           join(context.projectDir, "app", "dashboard", "settings", "page.tsx"),
-          `export default function SettingsPage() { return <div>Settings</div>; }`
+          `export default function SettingsPage() { return <div>Settings</div>; }`,
         );
 
         // Get the runtime adapter
@@ -458,9 +516,12 @@ describe("Cross-Adapter Layout Discovery Consistency", {
         // Verify layouts are discovered
         assertEquals(layouts.length, 2, "Should discover both root and dashboard layouts");
 
-        const paths = layouts.map(l => l.path);
-        assert(paths.some(p => p && p.includes("app/layout.tsx")), "Should include root layout");
-        assert(paths.some(p => p && p.includes("dashboard/layout.tsx")), "Should include dashboard layout");
+        const paths = layouts.map((l) => l.path);
+        assert(paths.some((p) => p && p.includes("app/layout.tsx")), "Should include root layout");
+        assert(
+          paths.some((p) => p && p.includes("dashboard/layout.tsx")),
+          "Should include dashboard layout",
+        );
       });
     });
   });

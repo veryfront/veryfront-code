@@ -54,7 +54,11 @@ describe("ErrorOverlay Tests", () => {
 
       assertStringIncludes(runtime, "errorInfo.type", "Runtime should access error type");
       assertStringIncludes(runtime, "errorInfo.error.name", "Runtime should access error name");
-      assertStringIncludes(runtime, "errorInfo.error.message", "Runtime should access error message");
+      assertStringIncludes(
+        runtime,
+        "errorInfo.error.message",
+        "Runtime should access error message",
+      );
       assertStringIncludes(runtime, "errorInfo.file", "Runtime should access file path");
       assertStringIncludes(runtime, "errorInfo.line", "Runtime should access line number");
       assertStringIncludes(runtime, "errorInfo.suggestion", "Runtime should access suggestion");
@@ -90,7 +94,11 @@ describe("ErrorOverlay Tests", () => {
         "Runtime should handle error events",
       );
       assertStringIncludes(runtime, "event.filename", "Runtime should capture filename from event");
-      assertStringIncludes(runtime, "event.lineno", "Runtime should capture line number from event");
+      assertStringIncludes(
+        runtime,
+        "event.lineno",
+        "Runtime should capture line number from event",
+      );
       assertStringIncludes(runtime, "event.colno", "Runtime should capture column from event");
     });
 
@@ -182,7 +190,11 @@ describe("ErrorOverlay Tests", () => {
         "function components",
         "Suggestion should mention function components",
       );
-      assertStringIncludes(suggestion!, "server-side", "Suggestion should mention server-side code");
+      assertStringIncludes(
+        suggestion!,
+        "server-side",
+        "Suggestion should mention server-side code",
+      );
     });
 
     it("detects hydration errors", () => {
@@ -198,7 +210,11 @@ describe("ErrorOverlay Tests", () => {
         "server and client",
         "Suggestion should mention server/client mismatch",
       );
-      assertStringIncludes(suggestion!, "window", "Suggestion should mention window/document access");
+      assertStringIncludes(
+        suggestion!,
+        "window",
+        "Suggestion should mention window/document access",
+      );
     });
 
     it("returns undefined for unknown errors", () => {
@@ -314,7 +330,11 @@ describe("ErrorOverlay Tests", () => {
       const html = ErrorOverlay.createHTML(errorInfo);
 
       assertStringIncludes(html, "Suggestion:", "Should display auto-generated suggestion");
-      assertStringIncludes(html, "module exists", "Should include suggestion about module existence");
+      assertStringIncludes(
+        html,
+        "module exists",
+        "Should include suggestion about module existence",
+      );
     });
 
     it("includes stack trace", () => {

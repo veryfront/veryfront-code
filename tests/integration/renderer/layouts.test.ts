@@ -1014,7 +1014,6 @@ describe(
           assertEquals(typeof result, "object");
         });
       });
-
     });
 
     describe("Integration Tests", () => {

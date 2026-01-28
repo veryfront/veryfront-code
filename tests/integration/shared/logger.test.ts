@@ -280,7 +280,11 @@ describe("Logger", () => {
 
       // With VERYFRONT_DEBUG=true, should be DEBUG
       const debugLevelTrue = getDefaultLevel(undefined, "true");
-      assertEquals(debugLevelTrue, LogLevel.DEBUG, "Level with VERYFRONT_DEBUG=true should be DEBUG");
+      assertEquals(
+        debugLevelTrue,
+        LogLevel.DEBUG,
+        "Level with VERYFRONT_DEBUG=true should be DEBUG",
+      );
 
       // LOG_LEVEL takes precedence over VERYFRONT_DEBUG
       const explicitLevel = getDefaultLevel("ERROR", "1");

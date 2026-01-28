@@ -7,15 +7,15 @@
  * The key invariant: pending invalidations are shared across ALL adapter instances.
  */
 
-import { describe, it, beforeEach } from "@veryfront/testing/bdd";
+import { beforeEach, describe, it } from "@veryfront/testing/bdd";
 import { assertEquals } from "@veryfront/testing/assert";
 import {
   addPendingInvalidation,
-  removePendingInvalidation,
-  isPrefixBeingInvalidated,
-  getPendingInvalidationsCount,
-  getInvalidationDebugState,
   clearAllPendingInvalidations,
+  getInvalidationDebugState,
+  getPendingInvalidationsCount,
+  isPrefixBeingInvalidated,
+  removePendingInvalidation,
 } from "../../src/platform/adapters/fs/veryfront/invalidation-state.ts";
 
 describe("Global Invalidation State", () => {
@@ -31,7 +31,7 @@ describe("Global Invalidation State", () => {
     assertEquals(
       isPrefixBeingInvalidated("file:env:project:production:release-123:/pages/index.tsx"),
       true,
-      "Should block cache reads for files under the invalidated prefix"
+      "Should block cache reads for files under the invalidated prefix",
     );
   });
 
@@ -41,7 +41,7 @@ describe("Global Invalidation State", () => {
     assertEquals(
       isPrefixBeingInvalidated("file:env:project-b:production:rel2:/pages/index.tsx"),
       false,
-      "Should not block cache reads for different projects"
+      "Should not block cache reads for different projects",
     );
   });
 
@@ -52,7 +52,7 @@ describe("Global Invalidation State", () => {
     assertEquals(
       isPrefixBeingInvalidated("file:env:project:production:rel1:/pages/index.tsx"),
       false,
-      "Should allow cache reads after invalidation completes"
+      "Should allow cache reads after invalidation completes",
     );
   });
 
@@ -64,15 +64,15 @@ describe("Global Invalidation State", () => {
 
     assertEquals(
       isPrefixBeingInvalidated("file:env:project-a:production:rel1:/pages/index.tsx"),
-      true
+      true,
     );
     assertEquals(
       isPrefixBeingInvalidated("file:env:project-b:staging:rel2:/components/Button.tsx"),
-      true
+      true,
     );
     assertEquals(
       isPrefixBeingInvalidated("file:env:project-c:production:rel3:/pages/index.tsx"),
-      false
+      false,
     );
   });
 
@@ -84,14 +84,14 @@ describe("Global Invalidation State", () => {
     assertEquals(
       isPrefixBeingInvalidated("file:env:project:production:rel1:/pages/index.tsx"),
       true,
-      "Broad prefix should block specific file lookups"
+      "Broad prefix should block specific file lookups",
     );
 
     // Release-specific prefix should also be blocked
     assertEquals(
       isPrefixBeingInvalidated("file:env:project:production:rel1:"),
       true,
-      "Broad prefix should block release-specific prefix"
+      "Broad prefix should block release-specific prefix",
     );
   });
 
@@ -103,7 +103,7 @@ describe("Global Invalidation State", () => {
     assertEquals(
       isPrefixBeingInvalidated("file:env:project:production:rel1:"),
       true,
-      "Specific file invalidation should block broader prefix checks"
+      "Specific file invalidation should block broader prefix checks",
     );
   });
 
@@ -118,7 +118,7 @@ describe("Global Invalidation State", () => {
     assertEquals(getPendingInvalidationsCount(), 0);
     assertEquals(
       isPrefixBeingInvalidated("file:env:project:production:rel1:/pages/index.tsx"),
-      false
+      false,
     );
   });
 
@@ -129,7 +129,7 @@ describe("Global Invalidation State", () => {
     assertEquals(
       isPrefixBeingInvalidated(prefix),
       true,
-      "Exact prefix match should return true"
+      "Exact prefix match should return true",
     );
   });
 
@@ -140,7 +140,7 @@ describe("Global Invalidation State", () => {
     assertEquals(
       isPrefixBeingInvalidated("file:env:project-extra:production:rel1:"),
       false,
-      "Similar but different project should not match"
+      "Similar but different project should not match",
     );
   });
 });
@@ -225,7 +225,7 @@ describe("Global Invalidation State - Race Condition Scenario", () => {
     assertEquals(
       isPrefixBeingInvalidated(newAdapterFileKey),
       true,
-      "New adapter should see pending invalidation from old adapter when using broad prefix"
+      "New adapter should see pending invalidation from old adapter when using broad prefix",
     );
 
     // After invalidation completes
@@ -234,7 +234,7 @@ describe("Global Invalidation State - Race Condition Scenario", () => {
     assertEquals(
       isPrefixBeingInvalidated(newAdapterFileKey),
       false,
-      "Cache should be accessible after invalidation completes"
+      "Cache should be accessible after invalidation completes",
     );
   });
 
@@ -255,7 +255,7 @@ describe("Global Invalidation State - Race Condition Scenario", () => {
     assertEquals(
       state.totalBlockedReads >= 1,
       true,
-      "Should have at least one blocked read recorded"
+      "Should have at least one blocked read recorded",
     );
   });
 });

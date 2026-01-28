@@ -182,7 +182,9 @@ denoOnlyDescribe(
       it("should have a close method", async () => {
         // deno-lint-ignore require-await
         await withTestContext("file-watch-deno-close", async (context) => {
-          const watcher = await (await getAdapter()).fs.watch(context.projectDir, { recursive: true });
+          const watcher = await (await getAdapter()).fs.watch(context.projectDir, {
+            recursive: true,
+          });
 
           // Verify close method exists
           assertEquals(typeof watcher.close, "function", "Should have close method");

@@ -29,7 +29,6 @@ const ENABLED_PROJECTS = [
   "dashboard",
   "task-manager-template",
   "ai-assistant-template",
-
   // "tomcode", // RENDERER BUG: SVG components missing `export default` (see docs/E2E_PROJECT_ISSUES.md)
 
   // AI templates:
@@ -183,8 +182,7 @@ for (const subdomain of PROJECTS) {
           // Studio bridge should be present (postMessage communication script)
           // Check for StudioBridge in any script content
           const pageContent = await page.content();
-          const hasStudioBridge =
-            pageContent.includes("StudioBridge") ||
+          const hasStudioBridge = pageContent.includes("StudioBridge") ||
             pageContent.includes("studio-bridge") ||
             pageContent.includes("parent.postMessage");
           expect(hasStudioBridge).toBeTruthy();

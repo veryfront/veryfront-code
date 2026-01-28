@@ -16,7 +16,7 @@
  */
 
 import { assert, assertStringIncludes } from "@veryfront/testing/assert";
-import { describe, it, beforeEach, afterEach } from "@veryfront/testing/bdd";
+import { afterEach, beforeEach, describe, it } from "@veryfront/testing/bdd";
 import { join } from "@veryfront/compat/path";
 import { mkdir, writeTextFile } from "@veryfront/compat/fs.ts";
 import { withTestContext } from "../../_helpers/context.ts";
@@ -48,11 +48,11 @@ describe("Blast Radius Protection", {
             join(healthyContext.projectDir, "app", "layout.tsx"),
             `export default function Layout({ children }) {
               return <html><body className="healthy">{children}</body></html>;
-            }`
+            }`,
           );
           await writeTextFile(
             join(healthyContext.projectDir, "app", "page.tsx"),
-            `export default function Page() { return <div>Healthy Project</div>; }`
+            `export default function Page() { return <div>Healthy Project</div>; }`,
           );
 
           // Create a broken project with syntax error
@@ -61,7 +61,7 @@ describe("Blast Radius Protection", {
             join(brokenContext.projectDir, "app", "layout.tsx"),
             `export default function Layout({ children }) {
               return <html><body className="broken">{children}</body></html>;
-            }`
+            }`,
           );
           await writeTextFile(
             join(brokenContext.projectDir, "app", "page.tsx"),
@@ -70,7 +70,7 @@ describe("Blast Radius Protection", {
               const broken = {
                 unclosed: "object"
               // Missing closing brace and return
-            `
+            `,
           );
 
           const { createRenderer } = await import("../../../src/rendering/index.ts");
@@ -85,8 +85,11 @@ describe("Blast Radius Protection", {
 
             // Verify healthy project works before broken project is loaded
             const resultBefore = await healthyRenderer.renderPage("/");
-            assertStringIncludes(resultBefore.html, "Healthy Project",
-              "Healthy project should render before broken project is loaded");
+            assertStringIncludes(
+              resultBefore.html,
+              "Healthy Project",
+              "Healthy project should render before broken project is loaded",
+            );
 
             // Now create broken renderer - this should fail or error internally
             let brokenRenderer: any = null;
@@ -107,10 +110,16 @@ describe("Blast Radius Protection", {
 
             // THE CRITICAL CHECK: After broken project fails, healthy project must still work
             const resultAfter = await healthyRenderer.renderPage("/");
-            assertStringIncludes(resultAfter.html, "Healthy Project",
-              "Healthy project must still render after broken project fails");
-            assertStringIncludes(resultAfter.html, 'class="healthy"',
-              "Healthy project layout must be intact");
+            assertStringIncludes(
+              resultAfter.html,
+              "Healthy Project",
+              "Healthy project must still render after broken project fails",
+            );
+            assertStringIncludes(
+              resultAfter.html,
+              'class="healthy"',
+              "Healthy project layout must be intact",
+            );
 
             // Verify broken project actually failed (if renderer was created)
             if (brokenRenderer) {
@@ -146,11 +155,11 @@ describe("Blast Radius Protection", {
             join(healthyContext.projectDir, "app", "layout.tsx"),
             `export default function Layout({ children }) {
               return <html><body>{children}</body></html>;
-            }`
+            }`,
           );
           await writeTextFile(
             join(healthyContext.projectDir, "app", "page.tsx"),
-            `export default function Page() { return <div id="healthy-marker">Healthy</div>; }`
+            `export default function Page() { return <div id="healthy-marker">Healthy</div>; }`,
           );
 
           // Broken project with runtime error
@@ -159,7 +168,7 @@ describe("Blast Radius Protection", {
             join(brokenContext.projectDir, "app", "layout.tsx"),
             `export default function Layout({ children }) {
               return <html><body>{children}</body></html>;
-            }`
+            }`,
           );
           await writeTextFile(
             join(brokenContext.projectDir, "app", "page.tsx"),
@@ -168,7 +177,7 @@ describe("Blast Radius Protection", {
               const obj = { nested: { value: null } };
               // This will throw "Cannot read property 'call' of undefined" at render time
               return <div>{obj.nested.value.nonExistent.call()}</div>;
-            }`
+            }`,
           );
 
           const { createRenderer } = await import("../../../src/rendering/index.ts");
@@ -187,7 +196,11 @@ describe("Blast Radius Protection", {
 
             // Render healthy first
             const result1 = await healthyRenderer.renderPage("/");
-            assertStringIncludes(result1.html, "healthy-marker", "Initial healthy render should work");
+            assertStringIncludes(
+              result1.html,
+              "healthy-marker",
+              "Initial healthy render should work",
+            );
 
             // Try to render broken - should fail
             let _brokenFailed = false;
@@ -199,14 +212,20 @@ describe("Blast Radius Protection", {
 
             // CRITICAL: Healthy must still work after broken fails
             const result2 = await healthyRenderer.renderPage("/");
-            assertStringIncludes(result2.html, "healthy-marker",
-              "Healthy render must work after broken project's runtime error");
+            assertStringIncludes(
+              result2.html,
+              "healthy-marker",
+              "Healthy render must work after broken project's runtime error",
+            );
 
             // Multiple healthy renders should all work
             for (let i = 0; i < 5; i++) {
               const result = await healthyRenderer.renderPage("/");
-              assertStringIncludes(result.html, "healthy-marker",
-                `Healthy render ${i + 1} must work`);
+              assertStringIncludes(
+                result.html,
+                "healthy-marker",
+                `Healthy render ${i + 1} must work`,
+              );
             }
 
             if (healthyRenderer && typeof healthyRenderer.clearAllState === "function") {
@@ -237,7 +256,7 @@ describe("Blast Radius Protection", {
             join(slowContext.projectDir, "app", "layout.tsx"),
             `export default function Layout({ children }) {
               return <html><body>{children}</body></html>;
-            }`
+            }`,
           );
           await writeTextFile(
             join(slowContext.projectDir, "app", "page.tsx"),
@@ -246,7 +265,7 @@ describe("Blast Radius Protection", {
               // Here we just create a large component to slow things down
               const items = Array.from({ length: 10000 }, (_, i) => i);
               return <div>{items.map(i => <span key={i}>{i}</span>)}</div>;
-            }`
+            }`,
           );
 
           // Fast project
@@ -255,11 +274,11 @@ describe("Blast Radius Protection", {
             join(fastContext.projectDir, "app", "layout.tsx"),
             `export default function Layout({ children }) {
               return <html><body>{children}</body></html>;
-            }`
+            }`,
           );
           await writeTextFile(
             join(fastContext.projectDir, "app", "page.tsx"),
-            `export default function Page() { return <div>Fast</div>; }`
+            `export default function Page() { return <div>Fast</div>; }`,
           );
 
           const { createRenderer } = await import("../../../src/rendering/index.ts");
@@ -277,9 +296,7 @@ describe("Blast Radius Protection", {
             });
 
             // Start multiple slow renders
-            const slowPromises = Array.from({ length: 5 }, () =>
-              slowRenderer.renderPage("/")
-            );
+            const slowPromises = Array.from({ length: 5 }, () => slowRenderer.renderPage("/"));
 
             // Fast render should complete quickly even while slow renders are in progress
             const fastStart = Date.now();
@@ -290,8 +307,10 @@ describe("Blast Radius Protection", {
 
             // Fast render should complete in a reasonable time
             // (This is a soft check - adjust threshold based on system)
-            assert(fastDuration < 5000,
-              `Fast render took ${fastDuration}ms - should not be blocked by slow renders`);
+            assert(
+              fastDuration < 5000,
+              `Fast render took ${fastDuration}ms - should not be blocked by slow renders`,
+            );
 
             // Clean up slow renders
             await Promise.allSettled(slowPromises);
@@ -324,13 +343,13 @@ describe("Blast Radius Protection", {
             join(contextA.projectDir, "app", "layout.tsx"),
             `export default function Layout({ children }) {
               return <html><body data-project="A">{children}</body></html>;
-            }`
+            }`,
           );
           await writeTextFile(
             join(contextA.projectDir, "app", "page.tsx"),
             `export default function Page() {
               throw new Error("Project A intentional error: ERROR_MARKER_A_12345");
-            }`
+            }`,
           );
 
           // Project B: Should work fine
@@ -339,13 +358,13 @@ describe("Blast Radius Protection", {
             join(contextB.projectDir, "app", "layout.tsx"),
             `export default function Layout({ children }) {
               return <html><body data-project="B">{children}</body></html>;
-            }`
+            }`,
           );
           await writeTextFile(
             join(contextB.projectDir, "app", "page.tsx"),
             `export default function Page() {
               return <div id="project-b-success">Project B Success</div>;
-            }`
+            }`,
           );
 
           const { createRenderer } = await import("../../../src/rendering/index.ts");
@@ -374,18 +393,30 @@ describe("Blast Radius Protection", {
             // Project B should render successfully and have NO trace of Project A's error
             const resultB = await rendererB.renderPage("/");
 
-            assertStringIncludes(resultB.html, "project-b-success",
-              "Project B should render its content");
-            assertStringIncludes(resultB.html, 'data-project="B"',
-              "Project B should have its layout");
+            assertStringIncludes(
+              resultB.html,
+              "project-b-success",
+              "Project B should render its content",
+            );
+            assertStringIncludes(
+              resultB.html,
+              'data-project="B"',
+              "Project B should have its layout",
+            );
 
             // CRITICAL: Project B must NOT contain Project A's error marker
-            assert(!resultB.html.includes("ERROR_MARKER_A_12345"),
-              "Project B must NOT contain Project A's error marker");
-            assert(!resultB.html.includes("Project A intentional error"),
-              "Project B must NOT contain Project A's error message");
-            assert(!resultB.html.includes("data-project=\"A\""),
-              "Project B must NOT contain Project A's layout");
+            assert(
+              !resultB.html.includes("ERROR_MARKER_A_12345"),
+              "Project B must NOT contain Project A's error marker",
+            );
+            assert(
+              !resultB.html.includes("Project A intentional error"),
+              "Project B must NOT contain Project A's error message",
+            );
+            assert(
+              !resultB.html.includes('data-project="A"'),
+              "Project B must NOT contain Project A's layout",
+            );
 
             if (rendererA && typeof rendererA.clearAllState === "function") {
               await rendererA.clearAllState();
@@ -415,7 +446,7 @@ describe("Blast Radius Protection", {
             join(corruptContext.projectDir, "app", "layout.tsx"),
             `export default function Layout({ children }) {
               return <html><body>{children}</body></html>;
-            }`
+            }`,
           );
 
           // Clean project
@@ -424,13 +455,13 @@ describe("Blast Radius Protection", {
             join(cleanContext.projectDir, "app", "layout.tsx"),
             `export default function Layout({ children }) {
               return <html><body className="clean-layout">{children}</body></html>;
-            }`
+            }`,
           );
           await writeTextFile(
             join(cleanContext.projectDir, "app", "page.tsx"),
             `export default function Page() {
               return <div className="clean-page">Clean Content</div>;
-            }`
+            }`,
           );
 
           const { createRenderer } = await import("../../../src/rendering/index.ts");
@@ -444,7 +475,11 @@ describe("Blast Radius Protection", {
             });
 
             const result1 = await cleanRenderer.renderPage("/");
-            assertStringIncludes(result1.html, "Clean Content", "Clean project should work initially");
+            assertStringIncludes(
+              result1.html,
+              "Clean Content",
+              "Clean project should work initially",
+            );
 
             // Now write corrupt code to the corrupt project
             await writeTextFile(
@@ -456,7 +491,7 @@ describe("Blast Radius Protection", {
                   ${/* Unclosed tags */ ""}
                   <span>
                   <invalid-tag>
-              }`
+              }`,
             );
 
             // Try to render corrupt project (may or may not fail depending on JSX handling)
@@ -472,16 +507,21 @@ describe("Blast Radius Protection", {
 
             // CRITICAL: Clean project must STILL work after corrupt project attempt
             const result2 = await cleanRenderer.renderPage("/");
-            assertStringIncludes(result2.html, "Clean Content",
-              "Clean project must work after corrupt project attempt");
-            assertStringIncludes(result2.html, "clean-layout",
-              "Clean project layout must be intact");
+            assertStringIncludes(
+              result2.html,
+              "Clean Content",
+              "Clean project must work after corrupt project attempt",
+            );
+            assertStringIncludes(
+              result2.html,
+              "clean-layout",
+              "Clean project layout must be intact",
+            );
 
             // Multiple subsequent renders should all work
             for (let i = 0; i < 3; i++) {
               const result = await cleanRenderer.renderPage("/");
-              assertStringIncludes(result.html, "Clean Content",
-                `Clean render ${i + 1} must work`);
+              assertStringIncludes(result.html, "Clean Content", `Clean render ${i + 1} must work`);
             }
 
             if (cleanRenderer && typeof cleanRenderer.clearAllState === "function") {
@@ -509,12 +549,12 @@ describe("Blast Radius Protection", {
             join(contextA.projectDir, "app", "layout.tsx"),
             `export default function Layout({ children }) {
               return <html><body>{children}</body></html>;
-            }`
+            }`,
           );
           await writeTextFile(
             join(contextA.projectDir, "app", "page.tsx"),
             `import NonExistent from './components/DoesNotExist';
-             export default function Page() { return <NonExistent />; }`
+             export default function Page() { return <NonExistent />; }`,
           );
           // Note: components/DoesNotExist.tsx is NOT created
 
@@ -524,11 +564,11 @@ describe("Blast Radius Protection", {
             join(contextB.projectDir, "app", "layout.tsx"),
             `export default function Layout({ children }) {
               return <html><body>{children}</body></html>;
-            }`
+            }`,
           );
           await writeTextFile(
             join(contextB.projectDir, "app", "page.tsx"),
-            `export default function Page() { return <div>Project B Works</div>; }`
+            `export default function Page() { return <div>Project B Works</div>; }`,
           );
 
           const { createRenderer } = await import("../../../src/rendering/index.ts");
@@ -557,8 +597,11 @@ describe("Blast Radius Protection", {
 
             // CRITICAL: B must still work
             const result2 = await rendererB.renderPage("/");
-            assertStringIncludes(result2.html, "Project B Works",
-              "B must work after A's missing import error");
+            assertStringIncludes(
+              result2.html,
+              "Project B Works",
+              "B must work after A's missing import error",
+            );
 
             if (rendererB && typeof rendererB.clearAllState === "function") {
               await rendererB.clearAllState();

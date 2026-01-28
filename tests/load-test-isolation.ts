@@ -79,15 +79,13 @@ async function runConcurrentRequests(
 }
 
 function printResult(result: RequestResult): void {
-  const statusColor =
-    result.status === 200
-      ? COLORS.green
-      : result.status === "timeout"
-        ? COLORS.yellow
-        : COLORS.red;
+  const statusColor = result.status === 200
+    ? COLORS.green
+    : result.status === "timeout"
+    ? COLORS.yellow
+    : COLORS.red;
 
-  const statusStr =
-    typeof result.status === "number" ? result.status.toString() : result.status;
+  const statusStr = typeof result.status === "number" ? result.status.toString() : result.status;
 
   console.log(
     `  ${statusColor}${statusStr.padEnd(7)}${COLORS.reset} ` +
@@ -103,8 +101,7 @@ function printSummary(results: RequestResult[]): void {
     (r) => r.status !== 200 && r.status !== "timeout",
   );
 
-  const avgDuration =
-    results.reduce((sum, r) => sum + r.duration, 0) / results.length;
+  const avgDuration = results.reduce((sum, r) => sum + r.duration, 0) / results.length;
   const maxDuration = Math.max(...results.map((r) => r.duration));
   const minDuration = Math.min(...results.map((r) => r.duration));
 
@@ -173,21 +170,24 @@ async function testIsolation(config: TestConfig): Promise<boolean> {
   printSummary(allResults);
 
   // Verification: Check that we didn't have cascading failures
-  const successRate =
-    allResults.filter((r) => r.status === 200).length / allResults.length;
+  const successRate = allResults.filter((r) => r.status === 200).length / allResults.length;
   const passed = successRate > 0.8; // At least 80% success rate
 
   console.log("\n" + "=".repeat(60));
   if (passed) {
     console.log(
-      `${COLORS.green}✓ TEST PASSED${COLORS.reset} - Success rate: ${(successRate * 100).toFixed(1)}%`,
+      `${COLORS.green}✓ TEST PASSED${COLORS.reset} - Success rate: ${
+        (successRate * 100).toFixed(1)
+      }%`,
     );
     console.log(
       `  System remained responsive under load (no cascading failures)`,
     );
   } else {
     console.log(
-      `${COLORS.red}✗ TEST FAILED${COLORS.reset} - Success rate: ${(successRate * 100).toFixed(1)}%`,
+      `${COLORS.red}✗ TEST FAILED${COLORS.reset} - Success rate: ${
+        (successRate * 100).toFixed(1)
+      }%`,
     );
     console.log(
       `  System may have blocking issues - investigate timeouts and errors`,
