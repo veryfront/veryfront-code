@@ -144,6 +144,18 @@ export class ProjectScopedRegistryManager<T> {
   }
 
   /**
+   * Delete an item from the current project's registry.
+   */
+  delete(id: string): boolean {
+    const projectId = this.getCurrentProjectId();
+    const registry = this.registriesByProject.get(projectId);
+    if (!registry?.has(id)) return false;
+    registry.delete(id);
+    agentLogger.debug(`[${this.registryName}] Deleted "${id}" from project ${projectId}`);
+    return true;
+  }
+
+  /**
    * Clear all items for the current project.
    */
   clear(): void {

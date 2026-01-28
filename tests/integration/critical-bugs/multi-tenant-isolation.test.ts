@@ -29,6 +29,7 @@ import {
   collectHead,
   flushHeadCollector,
   resetHeadCollector,
+  runWithHeadCollector,
 } from "../../../src/react/head-collector.ts";
 
 describe("Multi-Tenant Isolation Under Concurrency", {
@@ -170,17 +171,17 @@ describe("Multi-Tenant Isolation Under Concurrency", {
       }
     });
 
-    it("properly resets state between requests", () => {
-      // First request
-      resetHeadCollector();
-      collectHead({ title: "First Request Title" });
-      collectHead({ metas: [{ name: "first", content: "first-value" }] });
-      const first = flushHeadCollector();
+    it("properly resets state between requests", async () => {
+      // First request (with AsyncLocalStorage context)
+      const { head: first } = await runWithHeadCollector(async () => {
+        collectHead({ title: "First Request Title" });
+        collectHead({ metas: [{ name: "first", content: "first-value" }] });
+      });
 
-      // Second request (fresh start)
-      resetHeadCollector();
-      collectHead({ title: "Second Request Title" });
-      const second = flushHeadCollector();
+      // Second request (fresh context)
+      const { head: second } = await runWithHeadCollector(async () => {
+        collectHead({ title: "Second Request Title" });
+      });
 
       // Verify second request doesn't contain first request's data
       assertEquals(

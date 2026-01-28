@@ -314,12 +314,10 @@ class WorkflowRegistryClass {
   /**
    * Remove a workflow
    */
-  unregister(_id: string): boolean {
-    // For project-scoped registries, we need to manually delete
-    // This is a limitation - we can't remove from current project easily
-    // For now, this is a no-op as the ProjectScopedRegistryManager doesn't expose delete
-    logger.warn(`[WorkflowRegistry] unregister() not fully supported with project scoping`);
-    return false;
+  unregister(id: string): boolean {
+    const metaDeleted = workflowMetadataManager.delete(id);
+    const defDeleted = workflowDefinitionManager.delete(id);
+    return metaDeleted || defDeleted;
   }
 
   /**

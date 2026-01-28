@@ -8,7 +8,7 @@
  */
 
 export class AsyncLocalStorage<T = unknown> {
-  run<R>(store: T, callback: (...args: unknown[]) => R, ...args: unknown[]): R {
+  run<R>(_store: T, callback: (...args: unknown[]) => R, ...args: unknown[]): R {
     return callback(...args);
   }
 
