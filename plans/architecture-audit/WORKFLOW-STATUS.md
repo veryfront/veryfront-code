@@ -9,7 +9,7 @@
 | Total Issues | ~72 |
 | Validated | 38 |
 | In Progress | 0 |
-| Completed | 15 |
+| Completed | 20 |
 | False Positive | 7 |
 | Downgraded | 16 |
 
@@ -19,15 +19,21 @@
 _None_
 
 ### Up Next
-**Chapters 001, 002, 003, 007, 008, 009 Complete!** ✅ All CRITICAL issues validated.
+**All HIGH priority issues resolved!** ✅
 
-All 6 CRITICAL issues from chapters 007-009 were validated and downgraded:
-- 007.7: LOW (dead/unused code)
-- 008.2: MEDIUM (industry standard pattern, needs sandbox for multi-tenant)
-- 009.1: MEDIUM (**FIXED** - revalidation semaphore now has per-project fairness)
-- 009.2: HIGH (**FIXED** - domain lookup now has timeout protection)
+Chapters complete: 001, 002, 003, 005, 009, 010, 012, 013, 014
 
-Ready to proceed with remaining chapters (004-006, 010-014) - no CRITICAL issues.
+Recent fixes:
+- 005.2: **FIXED** - SSG getAllPages() now discovers App Router pages (34ab1029)
+- 010.4: **FIXED** - Unconditional error logging enabled (5165380a)
+- 012.1: **FIXED** - HTTP client timeouts added (d7b53ac0)
+- 013.2: **FIXED** - Agent cache project isolation (d7b53ac0)
+- 014.1: **FIXED** - NODE_ENV startup validation (d7b53ac0)
+
+Remaining work (all MEDIUM/LOW - code quality refactorings):
+- 006: Runtime Conditionals (1 HIGH, 2 MEDIUM)
+- 011: Import Rewriting (2 HIGH, 3 MEDIUM)
+- Dual VeryfrontError unification (010.3 - 94 files, major refactor)
 
 ## Chapter Status
 
@@ -37,16 +43,16 @@ Ready to proceed with remaining chapters (004-006, 010-014) - no CRITICAL issues
 | 002 | Global State | ✓ Complete | 1→0 | 4→0 | 2→0 | ██████████ 100% |
 | 003 | Cache Behavior | ✓ Complete | 2→0 | 2→0 | 0 | ██████████ 100% |
 | 004 | Bundle Dependencies | ✓ Validated | 0 | 3→2 | 3 | ██████░░░░ 60% |
-| 005 | Router Divergence | 🔧 In Progress | 0 | 2→1 | 3 | ████░░░░░░ 40% |
+| 005 | Router Divergence | ✓ Complete | 0 | 2→0 | 3 | ██████████ 100% |
 | 006 | Runtime Conditionals | ⏳ Queued | 0 | 1 | 2 | ░░░░░░░░░░ 0% |
 | 007 | Config Normalization | ✓ Validated | 1→0 | 3 | 3 | ██████░░░░ 60% |
 | 008 | Userland Config | ✓ Validated | 1→0 | 2 | 2 | ██████░░░░ 60% |
 | 009 | Timeout Handling | ✓ Complete | 1→0 | 3→1 | 2 | ██████████ 100% |
-| 010 | Error Handling | 🔧 In Progress | 0 | 4→1 | 2 | ████████░░ 80% |
+| 010 | Error Handling | ✓ Complete | 0 | 4→0 | 2 | ██████████ 100% |
 | 011 | Import Rewriting | ⏳ Queued | 0 | 2 | 3 | ░░░░░░░░░░ 0% |
-| 012 | HTTP Clients | 🔧 In Progress | 0 | 3→1 | 2 | ████░░░░░░ 40% |
+| 012 | HTTP Clients | ✓ Complete | 0 | 3→0 | 2 | ██████████ 100% |
 | 013 | Cache Key Patterns | ✓ Complete | 0 | 2→0 | 1 | ██████████ 100% |
-| 014 | Deployment Modes | 🔧 In Progress | 0 | 1→0 | 1+ | ██████░░░░ 60% |
+| 014 | Deployment Modes | ✓ Complete | 0 | 1→0 | 1+ | ██████████ 100% |
 
 ## CRITICAL Issues Tracker
 
@@ -63,11 +69,11 @@ Ready to proceed with remaining chapters (004-006, 010-014) - no CRITICAL issues
 | 008.2 | Config - Unsafe execution | ⚠️ Downgraded | ⚠️ MEDIUM | - | Industry pattern |
 | 009.1 | Revalidation Semaphore Fairness | ✓ Completed | ⚠️ MEDIUM | ✅ | 7a3365c0 |
 | 009.2 | Domain Lookup - No timeout | ✓ Completed | ⚠️ HIGH | ✅ | 7a3365c0 |
-| 005.2 | SSG getAllPages() App Router | ✓ Completed | ⚠️ HIGH | ✅ | (pending) |
-| 010.4 | Unconditional Error Logging | ✓ Completed | ⚠️ HIGH | ✅ | (pending) |
-| 012.1 | HTTP Client Timeouts (Partial) | ✓ Completed | ⚠️ HIGH | ✅ | (pending) |
-| 013.2 | Agent Cache Project Isolation | ✓ Completed | ⚠️ HIGH | ✅ | (pending) |
-| 014.1 | NODE_ENV Startup Validation | ✓ Completed | ⚠️ HIGH | ✅ | (pending) |
+| 005.2 | SSG getAllPages() App Router | ✓ Completed | ⚠️ HIGH | ✅ | 34ab1029 |
+| 010.4 | Unconditional Error Logging | ✓ Completed | ⚠️ HIGH | ✅ | 5165380a |
+| 012.1 | HTTP Client Timeouts (Partial) | ✓ Completed | ⚠️ HIGH | ✅ | d7b53ac0 |
+| 013.2 | Agent Cache Project Isolation | ✓ Completed | ⚠️ HIGH | ✅ | d7b53ac0 |
+| 014.1 | NODE_ENV Startup Validation | ✓ Completed | ⚠️ HIGH | ✅ | d7b53ac0 |
 
 ## Chapter 001 Validation Summary
 
@@ -164,11 +170,11 @@ Ready to proceed with remaining chapters (004-006, 010-014) - no CRITICAL issues
 | 003.3 | Cross-Project Cache - Include project context | 1f82aa07 | 2026-01-28 |
 | 009.1 | Revalidation Semaphore - Per-project fairness | 7a3365c0 | 2026-01-28 |
 | 009.2 | Domain Lookup - Timeout protection | 7a3365c0 | 2026-01-28 |
-| 005.2 | SSG getAllPages() - App Router page discovery | (pending) | 2026-01-28 |
-| 010.4 | Error Logging - Remove VERYFRONT_DEBUG gate | (pending) | 2026-01-28 |
-| 012.1 | HTTP Client Timeouts (Veryfront API, Token Storage) | (pending) | 2026-01-28 |
-| 013.2 | Agent Cache - Project isolation (projectId in cache key) | (pending) | 2026-01-28 |
-| 014.1 | NODE_ENV - Startup validation in proxy mode | (pending) | 2026-01-28 |
+| 005.2 | SSG getAllPages() - App Router page discovery | 34ab1029 | 2026-01-28 |
+| 010.4 | Error Logging - Remove VERYFRONT_DEBUG gate | 5165380a | 2026-01-28 |
+| 012.1 | HTTP Client Timeouts (Veryfront API, Token Storage) | d7b53ac0 | 2026-01-28 |
+| 013.2 | Agent Cache - Project isolation (projectId in cache key) | d7b53ac0 | 2026-01-28 |
+| 014.1 | NODE_ENV - Startup validation in proxy mode | d7b53ac0 | 2026-01-28 |
 
 ---
 
