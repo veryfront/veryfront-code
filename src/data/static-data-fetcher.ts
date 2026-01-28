@@ -8,8 +8,8 @@ import { TimeoutError, withTimeoutThrow } from "#veryfront/rendering/utils/strea
 import { getSemaphore } from "#veryfront/utils/semaphore.ts";
 import {
   MAX_CONCURRENT_REVALIDATIONS,
-  REVALIDATION_TIMEOUT_MS,
   REVALIDATION_PER_PROJECT_LIMIT,
+  REVALIDATION_TIMEOUT_MS,
 } from "#veryfront/utils/constants/cache.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
@@ -246,8 +246,14 @@ export class StaticDataFetcher {
     }
   }
 
+  /**
+   * Log errors unconditionally. Production errors should always be logged
+   * for debugging and monitoring purposes.
+   *
+   * @see plans/architecture-audit/010-error-handling.md
+   */
   private logError(message: string, error: unknown, context?: Record<string, unknown>): void {
-    if (!this.adapter?.env.get("VERYFRONT_DEBUG")) return;
+    // Always log errors - silent failures hide production bugs
     serverLogger.error(message, context ?? {}, error);
   }
 }

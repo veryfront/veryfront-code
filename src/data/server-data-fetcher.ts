@@ -59,8 +59,11 @@ export class ServerDataFetcher {
     );
   }
 
+  /**
+   * Log errors unconditionally. Production errors should always be logged.
+   * @see plans/architecture-audit/010-error-handling.md
+   */
   private logError(message: string, error: unknown, context?: Record<string, unknown>): void {
-    if (!this.adapter?.env.get("VERYFRONT_DEBUG")) return;
     serverLogger.error(message, context ?? {}, error);
   }
 }

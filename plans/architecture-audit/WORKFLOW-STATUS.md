@@ -7,9 +7,9 @@
 | Metric | Count |
 |--------|-------|
 | Total Issues | ~72 |
-| Validated | 37 |
+| Validated | 38 |
 | In Progress | 0 |
-| Completed | 14 |
+| Completed | 15 |
 | False Positive | 7 |
 | Downgraded | 16 |
 
@@ -42,7 +42,7 @@ Ready to proceed with remaining chapters (004-006, 010-014) - no CRITICAL issues
 | 007 | Config Normalization | ✓ Validated | 1→0 | 3 | 3 | ██████░░░░ 60% |
 | 008 | Userland Config | ✓ Validated | 1→0 | 2 | 2 | ██████░░░░ 60% |
 | 009 | Timeout Handling | ✓ Complete | 1→0 | 3→1 | 2 | ██████████ 100% |
-| 010 | Error Handling | ✓ Validated | 0 | 4→2 | 2 | ██████░░░░ 60% |
+| 010 | Error Handling | 🔧 In Progress | 0 | 4→1 | 2 | ████████░░ 80% |
 | 011 | Import Rewriting | ⏳ Queued | 0 | 2 | 3 | ░░░░░░░░░░ 0% |
 | 012 | HTTP Clients | 🔧 In Progress | 0 | 3→1 | 2 | ████░░░░░░ 40% |
 | 013 | Cache Key Patterns | ✓ Complete | 0 | 2→0 | 1 | ██████████ 100% |
@@ -64,6 +64,7 @@ Ready to proceed with remaining chapters (004-006, 010-014) - no CRITICAL issues
 | 009.1 | Revalidation Semaphore Fairness | ✓ Completed | ⚠️ MEDIUM | ✅ | 7a3365c0 |
 | 009.2 | Domain Lookup - No timeout | ✓ Completed | ⚠️ HIGH | ✅ | 7a3365c0 |
 | 005.2 | SSG getAllPages() App Router | ✓ Completed | ⚠️ HIGH | ✅ | (pending) |
+| 010.4 | Unconditional Error Logging | ✓ Completed | ⚠️ HIGH | ✅ | (pending) |
 | 012.1 | HTTP Client Timeouts (Partial) | ✓ Completed | ⚠️ HIGH | ✅ | (pending) |
 | 013.2 | Agent Cache Project Isolation | ✓ Completed | ⚠️ HIGH | ✅ | (pending) |
 | 014.1 | NODE_ENV Startup Validation | ✓ Completed | ⚠️ HIGH | ✅ | (pending) |
@@ -164,6 +165,7 @@ Ready to proceed with remaining chapters (004-006, 010-014) - no CRITICAL issues
 | 009.1 | Revalidation Semaphore - Per-project fairness | 7a3365c0 | 2026-01-28 |
 | 009.2 | Domain Lookup - Timeout protection | 7a3365c0 | 2026-01-28 |
 | 005.2 | SSG getAllPages() - App Router page discovery | (pending) | 2026-01-28 |
+| 010.4 | Error Logging - Remove VERYFRONT_DEBUG gate | (pending) | 2026-01-28 |
 | 012.1 | HTTP Client Timeouts (Veryfront API, Token Storage) | (pending) | 2026-01-28 |
 | 013.2 | Agent Cache - Project isolation (projectId in cache key) | (pending) | 2026-01-28 |
 | 014.1 | NODE_ENV - Startup validation in proxy mode | (pending) | 2026-01-28 |
