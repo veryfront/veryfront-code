@@ -10,6 +10,8 @@ export interface TransformCacheEntry {
   code: string;
   hash: string;
   timestamp: number;
+  /** ID of the bundle manifest tracking HTTP bundles for this transform */
+  bundleManifestId?: string;
 }
 
 let cacheBackend: CacheBackend | null = null;
@@ -101,8 +103,9 @@ export async function setCachedTransformAsync(
   code: string,
   hash: string,
   ttlSeconds: number = DEFAULT_TTL_SECONDS,
+  bundleManifestId?: string,
 ): Promise<void> {
-  const entry: TransformCacheEntry = { code, hash, timestamp: Date.now() };
+  const entry: TransformCacheEntry = { code, hash, timestamp: Date.now(), bundleManifestId };
 
   if (cacheBackend) {
     try {
@@ -178,6 +181,15 @@ export async function getDistributedTransformBackend(): Promise<CacheBackend | n
   return cacheBackend;
 }
 
+/** Result from getOrComputeTransform including metadata */
+export interface TransformCacheResult {
+  code: string;
+  /** Bundle manifest ID if the cached entry has one (for manifest-based validation) */
+  bundleManifestId?: string;
+  /** Whether this was a cache hit */
+  cacheHit: boolean;
+}
+
 /**
  * Get a cached transform or compute it if not found.
  *
@@ -195,12 +207,12 @@ export async function getOrComputeTransform(
   key: string,
   computeFn: () => Promise<string>,
   ttlSeconds: number = DEFAULT_TTL_SECONDS,
-): Promise<string> {
+): Promise<TransformCacheResult> {
   // Try to get from cache first
   const cached = await getCachedTransformAsync(key);
   if (cached) {
     logger.debug("[TransformCache] Cache hit", { key });
-    return cached.code;
+    return { code: cached.code, bundleManifestId: cached.bundleManifestId, cacheHit: true };
   }
 
   // Compute on miss
@@ -213,7 +225,7 @@ export async function getOrComputeTransform(
     logger.debug("[TransformCache] Failed to cache computed transform", { key, error });
   });
 
-  return code;
+  return { code, cacheHit: false };
 }
 
 export function getTransformCacheStats(): {

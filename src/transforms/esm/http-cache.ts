@@ -22,6 +22,13 @@ import { getReactImportMap, REACT_VERSION } from "./package-registry.ts";
 import { parseImports, replaceSpecifiers } from "./lexer.ts";
 import { CacheBackends, createDistributedCacheAccessor } from "#veryfront/cache/backend.ts";
 import {
+  type BundleEntry,
+  createBundleManifest,
+  getManifestIdForHash,
+  refreshManifestTTL,
+  storeBundleManifest,
+} from "./bundle-manifest.ts";
+import {
   HTTP_MODULE_CACHE_MAX_ENTRIES,
   HTTP_MODULE_DISTRIBUTED_TTL_SEC,
 } from "#veryfront/utils/constants/cache.ts";
@@ -91,6 +98,9 @@ const lastDistributedRefresh = new LRUCache<string, number>({
   maxEntries: HTTP_MODULE_CACHE_MAX_ENTRIES,
 });
 const DISTRIBUTED_REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
+
+/** Module-level accumulator for bundle metadata during cacheHttpImportsToLocal. */
+let bundleMetadataAccumulator: BundleEntry[] | null = null;
 
 function ensureAbsoluteDir(path: string): string {
   return isAbsolute(path) ? path : join(cwd(), path);
@@ -255,10 +265,31 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
           ]);
           lastDistributedRefresh.set(hashStr, now);
           logger.debug("[HTTP-CACHE] Refreshed distributed cache TTL", { hash });
+
+          // Co-refresh manifest TTL when any bundle is refreshed
+          const manifestId = getManifestIdForHash(hashStr);
+          if (manifestId) {
+            refreshManifestTTL(manifestId).catch((err) => {
+              logger.debug("[HTTP-CACHE] Manifest TTL refresh failed", {
+                manifestId: manifestId.slice(0, 12),
+                err,
+              });
+            });
+          }
         } catch (error) {
           logger.debug("[HTTP-CACHE] Distributed cache refresh failed", { hash, error });
         }
       }
+    }
+
+    // Record bundle metadata for manifest creation
+    if (bundleMetadataAccumulator) {
+      const stat = await createFileSystem().stat(cachePath);
+      bundleMetadataAccumulator.push({
+        hash: String(simpleHash(normalizedUrl)),
+        url: normalizedUrl,
+        sizeBytes: stat?.size ?? 0,
+      });
     }
 
     return cachePath;
@@ -381,6 +412,16 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
   }
 
   cachedPaths.set(cacheKey, cachePath);
+
+  // Record bundle metadata for manifest creation
+  if (bundleMetadataAccumulator) {
+    bundleMetadataAccumulator.push({
+      hash: String(hash),
+      url: normalizedUrl,
+      sizeBytes: code.length,
+    });
+  }
+
   return cachePath;
 }
 
@@ -466,19 +507,56 @@ async function rewriteModuleImports(
   return replaceSpecifiers(code, (specifier) => replacements.get(specifier) ?? null);
 }
 
+/** Result of cacheHttpImportsToLocal including bundle manifest info. */
+export interface CacheHttpImportsResult {
+  code: string;
+  bundleManifestId?: string;
+}
+
 /**
  * Rewrite HTTP imports in the provided code to cached local file:// paths.
+ * Returns the rewritten code and an optional bundle manifest ID for atomic validation.
  */
 export async function cacheHttpImportsToLocal(
   code: string,
   options: CacheOptions,
-): Promise<string> {
-  const replacements = await buildReplacements(code, undefined, options);
-  if (replacements.size === 0) return code;
+): Promise<CacheHttpImportsResult> {
+  // Activate accumulator to collect bundle metadata during cacheHttpModule calls
+  bundleMetadataAccumulator = [];
 
-  logger.debug("[HTTP-CACHE] Cached HTTP imports", { count: replacements.size });
+  try {
+    const replacements = await buildReplacements(code, undefined, options);
+    if (replacements.size === 0) {
+      return { code };
+    }
 
-  return replaceSpecifiers(code, (specifier) => replacements.get(specifier) ?? null);
+    logger.debug("[HTTP-CACHE] Cached HTTP imports", { count: replacements.size });
+
+    const rewrittenCode = await replaceSpecifiers(
+      code,
+      (specifier) => replacements.get(specifier) ?? null,
+    );
+
+    // Create and store bundle manifest if bundles were cached
+    const bundles = bundleMetadataAccumulator;
+    if (bundles && bundles.length > 0) {
+      try {
+        const manifest = await createBundleManifest(bundles);
+        await storeBundleManifest(manifest);
+        logger.debug("[HTTP-CACHE] Created bundle manifest", {
+          manifestId: manifest.manifestId.slice(0, 12),
+          bundleCount: bundles.length,
+        });
+        return { code: rewrittenCode, bundleManifestId: manifest.manifestId };
+      } catch (error) {
+        logger.debug("[HTTP-CACHE] Failed to create bundle manifest", { error });
+      }
+    }
+
+    return { code: rewrittenCode };
+  } finally {
+    bundleMetadataAccumulator = null;
+  }
 }
 
 /**

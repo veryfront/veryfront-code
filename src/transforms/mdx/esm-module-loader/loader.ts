@@ -388,7 +388,11 @@ async function transformJsxImports(
  */
 async function cacheHttpImports(code: string, importMap: ImportMapConfig): Promise<string> {
   if (isDeno) return code;
-  return await cacheHttpImportsToLocal(code, { cacheDir: getHttpBundleCacheDir(), importMap });
+  const result = await cacheHttpImportsToLocal(code, {
+    cacheDir: getHttpBundleCacheDir(),
+    importMap,
+  });
+  return result.code;
 }
 
 /** Pattern to extract HTTP bundle paths from code */

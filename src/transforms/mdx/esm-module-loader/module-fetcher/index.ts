@@ -21,6 +21,11 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { transformToESM } from "../../../esm-transform.ts";
 import { TRANSFORM_CACHE_VERSION } from "../../../esm/package-registry.ts";
 import { ensureHttpBundlesExist } from "../../../esm/http-cache.ts";
+import {
+  createBundleManifest,
+  storeBundleManifest,
+  validateBundleGroup,
+} from "../../../esm/bundle-manifest.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import {
   LOG_PREFIX_MDX_LOADER,
@@ -648,28 +653,39 @@ async function doFetchAndCacheModule(
             cacheKey: transformCacheKey,
           });
 
-          // CRITICAL: Proactively ensure HTTP bundles exist before using cached code
-          // The cached code may have file:// paths to HTTP bundles that were created
-          // on a different pod. Fetch any missing bundles from distributed cache now.
-          const bundlePaths = extractHttpBundlePaths(cached);
-          if (bundlePaths.length > 0) {
+          // Check for bundle manifest (companion key pattern)
+          const bundleManifestKey = `${transformCacheKey}:bm`;
+          const manifestId = await distributedCache.get(bundleManifestKey).catch(() => null);
+
+          if (manifestId) {
+            // Manifest-based validation: atomic check that ALL bundles exist
             const cacheDir = getHttpBundleCacheDir();
-            const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
-            if (failed.length > 0) {
-              log.warn(`${LOG_PREFIX_MDX_LOADER} Some HTTP bundles could not be recovered`, {
+            const validation = await validateBundleGroup(manifestId, cacheDir);
+            if (!validation.valid) {
+              log.warn(`${LOG_PREFIX_MDX_LOADER} Bundle manifest validation failed`, {
                 normalizedPath,
-                failed,
+                manifestId: manifestId.slice(0, 12),
+                failedHashes: validation.failedHashes,
               });
-              // Don't use cached code if bundles can't be recovered - will re-transform
               moduleCode = null;
+            }
+          } else {
+            // Legacy path: extract bundle paths and ensure they exist
+            const bundlePaths = extractHttpBundlePaths(cached);
+            if (bundlePaths.length > 0) {
+              const cacheDir = getHttpBundleCacheDir();
+              const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
+              if (failed.length > 0) {
+                log.warn(`${LOG_PREFIX_MDX_LOADER} Some HTTP bundles could not be recovered`, {
+                  normalizedPath,
+                  failed,
+                });
+                moduleCode = null;
+              }
             }
           }
 
           // CRITICAL: Check for framework source paths from a different environment.
-          // Distributed cache may contain transforms with file:// paths to framework
-          // source files that are specific to the environment where the transform ran
-          // (e.g., /app/src/... in production vs /Users/.../veryfront-renderer/src/... locally).
-          // If paths don't match our FRAMEWORK_ROOT, invalidate cache and re-transform.
           if (moduleCode && await hasIncompatibleFrameworkPaths(cached, log)) {
             log.warn(`${LOG_PREFIX_MDX_LOADER} Cached code has incompatible framework paths`, {
               normalizedPath,
@@ -724,6 +740,7 @@ async function doFetchAndCacheModule(
       moduleCode = rewriteVeryfrontImports(moduleCode);
 
       if (distributedCache) {
+        // Store transformed code in distributed cache
         distributedCache
           .set(transformCacheKey, moduleCode, TRANSFORM_CACHE_TTL_SECONDS)
           .catch((error) => {
@@ -732,6 +749,26 @@ async function doFetchAndCacheModule(
               error,
             });
           });
+
+        // Create and store bundle manifest companion key for atomic validation
+        const bundlePaths = extractHttpBundlePaths(moduleCode);
+        if (bundlePaths.length > 0) {
+          const entries = bundlePaths.map((b) => ({ hash: b.hash, url: "", sizeBytes: 0 }));
+          createBundleManifest(entries).then(async (manifest) => {
+            await storeBundleManifest(manifest);
+            const bundleManifestKey = `${transformCacheKey}:bm`;
+            await distributedCache.set(
+              bundleManifestKey,
+              manifest.manifestId,
+              TRANSFORM_CACHE_TTL_SECONDS,
+            );
+          }).catch((error) => {
+            log.debug(`${LOG_PREFIX_MDX_LOADER} Bundle manifest creation failed`, {
+              normalizedPath,
+              error,
+            });
+          });
+        }
       }
     }
 

@@ -437,3 +437,7 @@ export function deleteAllKeysForProjectAsync(
     { "cache.project_id": projectId },
   );
 }
+
+export function buildBundleManifestCacheKey(manifestId: string): string {
+  return `bm:${manifestId}`;
+}

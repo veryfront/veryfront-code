@@ -35,16 +35,21 @@ export const ssrHttpCachePlugin: TransformPlugin = {
       ctx.metadata.set("importMap", importMap);
     }
 
-    const updated = await cacheHttpImportsToLocal(ctx.code, {
+    const result = await cacheHttpImportsToLocal(ctx.code, {
       cacheDir: getHttpBundleCacheDir(),
       importMap,
       reactVersion: ctx.reactVersion,
     });
 
-    if (updated !== ctx.code) {
+    if (result.code !== ctx.code) {
       logger.debug(`${LOG_PREFIX} Cached HTTP imports for ${ctx.filePath.slice(-40)}`);
     }
 
-    return updated;
+    // Store bundle manifest ID in context metadata for downstream consumers
+    if (result.bundleManifestId) {
+      ctx.metadata.set("bundleManifestId", result.bundleManifestId);
+    }
+
+    return result.code;
   },
 };

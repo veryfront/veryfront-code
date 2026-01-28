@@ -20,6 +20,7 @@ import {
 } from "#veryfront/transforms/esm/transform-cache.ts";
 import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 import { ensureHttpBundlesExist } from "#veryfront/transforms/esm/http-cache.ts";
+import { validateBundleGroup } from "#veryfront/transforms/esm/bundle-manifest.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { join } from "#veryfront/platform/compat/path/index.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
@@ -220,7 +221,7 @@ export async function transformModuleWithDeps(
   await initializeTransformCache();
 
   // Use consolidated transform cache with getOrCompute pattern
-  let transformedCode = await getOrComputeTransform(
+  const transformResult = await getOrComputeTransform(
     transformCacheKey,
     () => {
       logger.debug("[ModuleLoader] Transform cache miss, transforming", { filePath });
@@ -233,37 +234,57 @@ export async function transformModuleWithDeps(
     },
     TRANSFORM_CACHE_TTL_SECONDS,
   );
+  let transformedCode = transformResult.code;
 
-  // Proactively ensure HTTP bundles exist before writing the module.
-  // Cached transforms from a different pod may reference file:// paths
-  // to HTTP bundles that don't exist locally.
-  const bundlePaths = extractHttpBundlePaths(transformedCode);
-  if (bundlePaths.length > 0) {
-    const cacheDir = getHttpBundleCacheDir();
-    const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
-    if (failed.length > 0) {
-      logger.warn("[ModuleLoader] HTTP bundle recovery failed, re-transforming", {
+  // Validate HTTP bundles using manifest (preferred) or legacy extraction
+  const cacheDir = getHttpBundleCacheDir();
+  let bundlesValid = true;
+
+  if (transformResult.cacheHit && transformResult.bundleManifestId) {
+    // Manifest-based validation: atomic check that ALL bundles exist
+    const validation = await validateBundleGroup(transformResult.bundleManifestId, cacheDir);
+    if (!validation.valid) {
+      logger.warn("[ModuleLoader] Bundle manifest validation failed, re-transforming", {
         filePath,
-        failed,
+        manifestId: transformResult.bundleManifestId.slice(0, 12),
+        failedHashes: validation.failedHashes,
       });
-      transformedCode = await transformToESM(fileContent, filePath, projectDir, adapter, {
-        projectId: effectiveProjectId,
-        dev: mode === "development",
-        ssr: true,
-        reactVersion: config.reactVersion,
-      });
-      setCachedTransformAsync(
-        transformCacheKey,
-        transformedCode,
-        contentHash,
-        TRANSFORM_CACHE_TTL_SECONDS,
-      ).catch((error) => {
-        logger.debug("[ModuleLoader] Failed to update transform cache after re-transform", {
-          filePath,
-          error,
-        });
-      });
+      bundlesValid = false;
     }
+  } else {
+    // Legacy path: extract bundle paths and ensure they exist
+    const bundlePaths = extractHttpBundlePaths(transformedCode);
+    if (bundlePaths.length > 0) {
+      const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
+      if (failed.length > 0) {
+        logger.warn("[ModuleLoader] HTTP bundle recovery failed, re-transforming", {
+          filePath,
+          failed,
+        });
+        bundlesValid = false;
+      }
+    }
+  }
+
+  if (!bundlesValid) {
+    // Re-transform from source — this will create fresh bundles with a new manifest
+    transformedCode = await transformToESM(fileContent, filePath, projectDir, adapter, {
+      projectId: effectiveProjectId,
+      dev: mode === "development",
+      ssr: true,
+      reactVersion: config.reactVersion,
+    });
+    setCachedTransformAsync(
+      transformCacheKey,
+      transformedCode,
+      contentHash,
+      TRANSFORM_CACHE_TTL_SECONDS,
+    ).catch((error) => {
+      logger.debug("[ModuleLoader] Failed to update transform cache after re-transform", {
+        filePath,
+        error,
+      });
+    });
   }
 
   // Use TRANSFORMED hash for filename (matches SSR loader behavior)

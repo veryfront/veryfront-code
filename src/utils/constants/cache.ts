@@ -154,6 +154,16 @@ export const REVALIDATION_PER_PROJECT_LIMIT = getEnvNumber(
   Math.ceil(MAX_CONCURRENT_REVALIDATIONS / 3),
 );
 
+// Bundle manifest for atomic HTTP bundle group validation
+export const BUNDLE_MANIFEST_DISTRIBUTED_TTL_SEC = getEnvNumber(
+  "BUNDLE_MANIFEST_DISTRIBUTED_TTL_SEC",
+  HOURS_PER_DAY * MINUTES_PER_HOUR * SECONDS_PER_MINUTE, // 24 hours (86400)
+);
+export const BUNDLE_MANIFEST_LRU_MAX_ENTRIES = getEnvNumber(
+  "BUNDLE_MANIFEST_LRU_MAX_ENTRIES",
+  5000,
+);
+
 // HTTP module cache (esm.sh, CDN bundles)
 // These bundles are immutable once fetched, so long TTLs are safe
 export const HTTP_MODULE_CACHE_MAX_ENTRIES = getEnvNumber("HTTP_MODULE_CACHE_MAX_ENTRIES", 2000);
