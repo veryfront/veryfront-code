@@ -7,9 +7,9 @@
 | Metric | Count |
 |--------|-------|
 | Total Issues | ~72 |
-| Validated | 38 |
+| Validated | 41 |
 | In Progress | 0 |
-| Completed | 20 |
+| Completed | 23 |
 | False Positive | 7 |
 | Downgraded | 16 |
 
@@ -21,9 +21,12 @@ _None_
 ### Up Next
 **All HIGH priority issues resolved!** ✅
 
-Chapters complete: 001, 002, 003, 005, 009, 010, 012, 013, 014
+Chapters complete: 001, 002, 003, 005, 006, 007, 009, 010, 011, 012, 013, 014
 
 Recent fixes:
+- 011.1: **FIXED** - Scoped unversioned import warnings by project (af121bea)
+- 006.1: **FIXED** - Unified SSR detection to prevent hydration mismatches (1926ff65)
+- 007.3: **FIXED** - Fresh defaults per-request prevents config contamination (5c33cc85)
 - 005.2: **FIXED** - SSG getAllPages() now discovers App Router pages (34ab1029)
 - 010.4: **FIXED** - Unconditional error logging enabled (5165380a)
 - 012.1: **FIXED** - HTTP client timeouts added (d7b53ac0)
@@ -31,9 +34,9 @@ Recent fixes:
 - 014.1: **FIXED** - NODE_ENV startup validation (d7b53ac0)
 
 Remaining work (all MEDIUM/LOW - code quality refactorings):
-- 006: Runtime Conditionals (1 HIGH, 2 MEDIUM)
-- 011: Import Rewriting (2 HIGH, 3 MEDIUM)
-- Dual VeryfrontError unification (010.3 - 94 files, major refactor)
+- 004: Bundle Dependencies - P2 tech debt (depsHash infrastructure exists but not connected)
+- 011.2-011.5: Import rewriting unification - P2 tech debt (230 lines duplication)
+- 010.3: Dual VeryfrontError unification - P3 tech debt (94 files, major refactor)
 
 ## Chapter Status
 
@@ -44,12 +47,12 @@ Remaining work (all MEDIUM/LOW - code quality refactorings):
 | 003 | Cache Behavior | ✓ Complete | 2→0 | 2→0 | 0 | ██████████ 100% |
 | 004 | Bundle Dependencies | ✓ Validated | 0 | 3→2 | 3 | ██████░░░░ 60% |
 | 005 | Router Divergence | ✓ Complete | 0 | 2→0 | 3 | ██████████ 100% |
-| 006 | Runtime Conditionals | ⏳ Queued | 0 | 1 | 2 | ░░░░░░░░░░ 0% |
-| 007 | Config Normalization | ✓ Validated | 1→0 | 3 | 3 | ██████░░░░ 60% |
+| 006 | Runtime Conditionals | ✓ Complete | 0 | 1→0 | 2 | ██████████ 100% |
+| 007 | Config Normalization | ✓ Complete | 1→0 | 3→2 | 3 | ██████████ 100% |
 | 008 | Userland Config | ✓ Validated | 1→0 | 2 | 2 | ██████░░░░ 60% |
 | 009 | Timeout Handling | ✓ Complete | 1→0 | 3→1 | 2 | ██████████ 100% |
 | 010 | Error Handling | ✓ Complete | 0 | 4→0 | 2 | ██████████ 100% |
-| 011 | Import Rewriting | ⏳ Queued | 0 | 2 | 3 | ░░░░░░░░░░ 0% |
+| 011 | Import Rewriting | ✓ Complete | 0 | 2→1 | 3 | ██████████ 100% |
 | 012 | HTTP Clients | ✓ Complete | 0 | 3→0 | 2 | ██████████ 100% |
 | 013 | Cache Key Patterns | ✓ Complete | 0 | 2→0 | 1 | ██████████ 100% |
 | 014 | Deployment Modes | ✓ Complete | 0 | 1→0 | 1+ | ██████████ 100% |
@@ -151,6 +154,37 @@ Remaining work (all MEDIUM/LOW - code quality refactorings):
 
 **Note**: Remaining issues (010.3-010.6) are code quality improvements (dual VeryfrontError definitions, silent failures). Not security issues.
 
+## Chapter 011 Validation Summary
+
+| ID | Issue | Original | Validated | Action |
+|----|-------|----------|-----------|--------|
+| 011.1 | Global Warning State Pollution | HIGH | ✅ HIGH | **FIXED** (af121bea) |
+| 011.2 | SSR/Browser Resolution Divergence | HIGH | ⚠️ MEDIUM | P2 tech debt - behavioral differences documented |
+| 011.3 | Regex vs Lexer Inconsistencies | MEDIUM | ⚠️ LOW | P3 tech debt |
+| 011.4 | Multiple Parsing Passes | MEDIUM | ⚠️ LOW | P3 performance optimization |
+| 011.5 | Import Map Resolution Gaps | MEDIUM | ⚠️ LOW | P3 tech debt |
+
+**Note**: 011.1 fixed cross-tenant warning suppression. Remaining issues are refactoring opportunities documented in RFC.
+
+## Chapter 006 Validation Summary
+
+| ID | Issue | Original | Validated | Action |
+|----|-------|----------|-----------|--------|
+| 006.1 | SSR Detection Inconsistencies | HIGH | ✅ HIGH | **FIXED** (1926ff65) |
+| 006.2 | Conditional Platform Imports | MEDIUM | ⚠️ LOW | Works correctly via import maps |
+| 006.3 | Runtime Flag Checks | MEDIUM | ⚠️ LOW | Startup-only, no per-request pollution |
+
+**Note**: 006.1 unified 5 different SSR detection patterns to prevent hydration mismatches.
+
+## Chapter 007 Validation Summary (Updated)
+
+| ID | Issue | Original | Validated | Action |
+|----|-------|----------|-----------|--------|
+| 007.3 | DEFAULT_CONFIG Shared Reference | HIGH | ✅ HIGH | **FIXED** (5c33cc85) |
+| 007.7 | Runtime Config Global Singleton | CRITICAL | ❌ FALSE POSITIVE | Dead code - never used in production |
+
+**Note**: 007.3 fixed cross-tenant config contamination by creating fresh defaults per-request.
+
 ## Validation Reports
 
 - [002-validation-report.md](validation/002-validation-report.md) - Initial 3 issues
@@ -175,6 +209,9 @@ Remaining work (all MEDIUM/LOW - code quality refactorings):
 | 012.1 | HTTP Client Timeouts (Veryfront API, Token Storage) | d7b53ac0 | 2026-01-28 |
 | 013.2 | Agent Cache - Project isolation (projectId in cache key) | d7b53ac0 | 2026-01-28 |
 | 014.1 | NODE_ENV - Startup validation in proxy mode | d7b53ac0 | 2026-01-28 |
+| 011.1 | Import Rewriter - Per-project warning scoping | af121bea | 2026-01-28 |
+| 006.1 | SSR Detection - Unified isServerEnvironment/isBrowserEnvironment | 1926ff65 | 2026-01-28 |
+| 007.3 | Config Loader - Fresh defaults per-request | 5c33cc85 | 2026-01-28 |
 
 ---
 
