@@ -17,10 +17,10 @@ All **HIGH** and **CRITICAL** priority issues have been resolved. The remaining 
 
 ## 004: Dependency Tracking
 
-### Current State
-- Transform cache keys use only `contentHash`, not dependency hashes
-- Infrastructure exists (`depsHash` fields, hash calculators) but disconnected
-- RFC exists: `004.0-dependency-tracking-rfc.md`
+### Current State — ✅ COMPLETED (7629b537)
+- Transform cache keys now include `depsHash` and `configHash`
+- Dependency and config tracking wired into transform pipeline
+- Bundle manifest system adds atomic HTTP bundle validation (eef7dfe6)
 
 ### Research Findings
 
@@ -83,7 +83,7 @@ The existing TTL-based caching and release-based invalidation provide acceptable
 3. Updating all cache key generation sites
 4. Adding config hash to cache keys
 
-**Deferred**: Implement when staleness becomes a reported issue.
+**Status**: ✅ Completed — depsHash/configHash in cache keys (7629b537), bundle manifest for atomic validation (eef7dfe6).
 
 ---
 
@@ -288,11 +288,11 @@ buildTransformCacheKey(
 - [ ] JSON serialization works
 - [ ] Type guards work with both patterns
 
-### Dependency Tracking
-- [ ] Cache invalidates when dependency changes
-- [ ] Circular dependencies handled
-- [ ] Performance impact acceptable
-- [ ] TTL fallback still works
+### Dependency Tracking ✅
+- [x] Cache invalidates when dependency changes (depsHash in keys)
+- [x] Config changes invalidate cache (configHash in keys)
+- [x] Bundle manifest validates atomic bundle groups
+- [x] TTL fallback still works (legacy path for old entries)
 
 ---
 

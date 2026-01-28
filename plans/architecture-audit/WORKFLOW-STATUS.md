@@ -9,7 +9,7 @@
 | Total Issues | ~92 |
 | Validated | 92 |
 | In Progress | 0 |
-| Completed | 28 |
+| Completed | 30 |
 | False Positive | 9 |
 | Downgraded | 30 |
 | Already Mitigated | 5 |
@@ -46,8 +46,9 @@ All HIGH/CRITICAL issues resolved. P2 items completed 2026-01-28.
 
 | Issue | Effort | Status |
 |-------|--------|--------|
-| 004: Dependency Tracking | ~14 days | ✅ Completed - depsHash/configHash in cache keys |
+| 004: Dependency Tracking | ~14 days | ✅ Completed - depsHash/configHash in cache keys (7629b537) |
 | 011.2-011.5: Import Unification | ~10 days | ✅ Completed - Strategy pattern with 8 strategies |
+| 003.2: HTTP Bundle Atomic Validation | ~5 days | ✅ Completed - Bundle manifest system (eef7dfe6) |
 
 ### P3 - Low Priority ✅ COMPLETED
 
@@ -140,7 +141,7 @@ All HIGH/CRITICAL issues resolved. P2 items completed 2026-01-28.
 | ID | Issue | Original | Validated | Action |
 |----|-------|----------|-----------|--------|
 | 003.1 | SSR Module Path Mismatch | CRITICAL | ⚠️ HIGH | **FIXED** (1f82aa07) |
-| 003.2 | HTTP Bundle TTL Mismatch | HIGH | ❌ FALSE POSITIVE | TTLs are correct (24h > 6h) |
+| 003.2 | HTTP Bundle TTL Mismatch | HIGH | ✓ Completed | Bundle manifest system for atomic validation (eef7dfe6) |
 | 003.3 | Multi-tenancy Cache Isolation | CRITICAL | ⚠️ MEDIUM | **FIXED** (1f82aa07) |
 | 003.4 | Cache Hit Validation Skipped | HIGH | ⚠️ LOW | Documented design decision |
 
@@ -187,9 +188,9 @@ All HIGH/CRITICAL issues resolved. P2 items completed 2026-01-28.
 
 | ID | Issue | Original | Validated | Action |
 |----|-------|----------|-----------|--------|
-| 004.1 | Transform Cache Missing Deps | HIGH | ⚠️ MEDIUM | Mitigated by release-based caching & TTL |
+| 004.1 | Transform Cache Missing Deps | HIGH | ✓ Completed | **FIXED** (7629b537) - depsHash/configHash in cache keys |
 
-**Note**: Remaining issues (004.2-004.6) are code improvements, not production bugs. The depsHash infrastructure exists but isn't connected - P2 tech debt.
+**Note**: 004.1 fixed with dependency and config hash tracking in transform pipeline. Remaining issues (004.2-004.6) are code improvements addressed by the same work.
 
 ## Chapter 010 Validation Summary
 
@@ -321,11 +322,13 @@ All HIGH/CRITICAL issues resolved. P2 items completed 2026-01-28.
 | 010.3 | toError() - Stack trace capture at call site | 5af5ff4c | 2026-01-28 |
 | 016.1 | Timing Attack - constantTimeEqual for all auth comparisons | eafa78c1 | 2026-01-28 |
 | 016.5 | JSON.parse - Protected unguarded parse calls | 42126bcf | 2026-01-28 |
-| 017.1 | Cache Stampede - In-flight promise deduplication in memoize | pending | 2026-01-28 |
-| 017.2 | Global Regex - Per-call regex creation in extractBundleRefs | pending | 2026-01-28 |
-| 001.3 | isVirtualFilesystem - Unified to shared function in wrapper.ts | pending | 2026-01-28 |
-| 001.5 | Config/middleware predicate - Fixed via 001.3 unification | pending | 2026-01-28 |
-| 019.1 | getExtension() - Consolidated 6 impls to path-utils.ts | pending | 2026-01-28 |
+| 017.1 | Cache Stampede - In-flight promise deduplication in memoize | cbea3d14 | 2026-01-28 |
+| 017.2 | Global Regex - Per-call regex creation in extractBundleRefs | cbea3d14 | 2026-01-28 |
+| 001.3 | isVirtualFilesystem - Unified to shared function in wrapper.ts | 6fbf6ba9 | 2026-01-28 |
+| 001.5 | Config/middleware predicate - Fixed via 001.3 unification | 6fbf6ba9 | 2026-01-28 |
+| 019.1 | getExtension() - Consolidated 6 impls to path-utils.ts | 6fbf6ba9 | 2026-01-28 |
+| 003.2 | HTTP Bundle Atomic Validation - Bundle manifest system | eef7dfe6 | 2026-01-28 |
+| 004.1 | Transform Cache - Dependency & config hash tracking | 7629b537 | 2026-01-28 |
 
 ---
 

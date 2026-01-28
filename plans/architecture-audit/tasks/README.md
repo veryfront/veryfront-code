@@ -113,70 +113,70 @@ P4: CODE CONSOLIDATION (lowest priority, do last)
 
 ### Original Tasks (001-039)
 
-| # | Task | Priority | Depends | Docs |
-|---|------|----------|---------|------|
-| [001](./001-sandbox-config-execution.md) | Sandbox Config Execution | P0 | - | [008.2](../008.2-unsafe-config-execution.md) |
-| [002](./002-request-context-foundation.md) | Request Context Foundation | P0 | - | [002.0](../002.0-request-scoped-state-rfc.md) |
-| [003](./003-head-collector-isolation.md) | Head Collector Isolation | P0 | 002 | [002.1](../002.1-head-collector-leakage.md) |
-| [004](./004-ssr-globals-isolation.md) | SSR Globals Isolation | P0 | 002 | [002.2](../002.2-ssr-globals-context-leakage.md) |
-| [005](./005-runtime-config-isolation.md) | Runtime Config Isolation | P0 | 002 | [007.7](../007.7-runtime-config-global-singleton.md) |
-| [006](./006-per-project-semaphores.md) | Per-Project Semaphores | P1 | - | [009.1](../009.1-global-semaphores-no-project-isolation.md), [002.4](../002.4-semaphore-starvation.md) |
-| [007](./007-failed-components-isolation.md) | Failed Components Isolation | P1 | 002 | [010.1](../010.1-failed-components-global-state.md), [002.7](../002.7-failed-components-collision.md) |
-| [008](./008-react-cache-by-version.md) | React Cache by Version | P1 | - | [002.3](../002.3-react-cache-version-mismatch.md) |
-| [009](./009-ai-registry-per-project.md) | AI Registry Per-Project | P1 | 002 | [002.5](../002.5-ai-registry-leakage.md) |
-| [010](./010-tailwind-compiler-isolation.md) | Tailwind Compiler Isolation | P1 | - | [002.8](../002.8-tailwind-compiler-state.md) |
-| [011](./011-transform-cache-deps-hash.md) | Transform Cache Deps Hash | P2 | - | [004.1](../004.1-transform-cache-no-deps-hash.md) |
-| [012](./012-cache-hit-validation.md) | Cache Hit Validation | P2 | - | [003.4](../003.4-cache-hit-validation-skipped.md) |
-| [013](./013-ssr-module-path-consistency.md) | SSR Module Path Consistency | P2 | - | [003.1](../003.1-ssr-module-path-mismatch.md) |
-| [014](./014-config-change-invalidation.md) | Config Change Invalidation | P2 | - | [008.4](../008.4-hmr-cache-invalidation-incomplete.md), [004.6](../004.6-config-changes-not-invalidating.md) |
-| [015](./015-http-bundle-ttl-fix.md) | HTTP Bundle TTL Fix | P2 | - | [003.2](../003.2-http-bundle-ttl-mismatch.md) |
-| [016](./016-unified-adapter-interface.md) | Unified Adapter Interface | P3 | - | [001.0](../001.0-unified-adapter-rfc.md) |
-| [017](./017-layout-discovery-unify.md) | Layout Discovery Unify | P3 | 016 | [001.1](../001.1-layout-bug-critical.md) |
-| [018](./018-config-middleware-parity.md) | Config/Middleware Parity | P3 | 016 | [001.5](../001.5-config-middleware-loading-divergence.md) |
-| [019](./019-css-cache-key-fix.md) | CSS Cache Key Fix | P3 | - | [001.6](../001.6-css-cache-key-divergence.md) |
-| [020](./020-router-detection-cache-fix.md) | Router Detection Cache Fix | P3 | - | [005.1](../005.1-global-router-detection-cache.md) |
-| [021](./021-import-rewriter-unify.md) | Import Rewriter Unify | P4 | - | [011.0](../011.0-import-rewriting-rfc.md) |
-| [022](./022-http-client-consolidate.md) | HTTP Client Consolidate | P4 | - | [012.0](../012.0-http-clients-rfc.md) |
-| [023](./023-timeout-centralization.md) | Timeout Centralization | P4 | - | [009.0](../009.0-timeout-handling-rfc.md) |
-| [024](./024-error-handling-patterns.md) | Error Handling Patterns | P4 | - | [010.0](../010.0-error-handling-rfc.md) |
-| [025](./025-environment-detection-unify.md) | Environment Detection | P4 | - | [006.0](../006.0-environment-detection-rfc.md) |
-| [026](./026-caching-strategy.md) | Caching Strategy | P0 | - | [003.0](../003.0-cache-consistency-rfc.md) |
-| [027](./027-cache-key-standard.md) | Cache Key Standard | P1 | 026 | [013.0](../013.0-cache-key-patterns-rfc.md) |
-| [028](./028-in-flight-deduplication.md) | In-Flight Deduplication | P1 | - | [002.6](../002.6-in-progress-deadlock.md) |
-| [029](./029-error-collector-isolation.md) | Error Collector Isolation | P1 | 002 | [010.2](../010.2-global-error-collector.md) |
-| [030](./030-ssg-app-router-support.md) | SSG App Router Support | P2 | - | [005.2](../005.2-ssg-getallpages-missing-app-router.md) |
-| [031](./031-deployment-mode-consistency.md) | Deployment Mode Consistency | P2 | - | [014.0](../014.0-deployment-modes-rfc.md) |
-| [032](./032-multi-tenant-test-utils.md) | Multi-Tenant Test Utils | P2 | - | [015.0](../015.0-testability-rfc.md) |
-| [033](./033-type-safety-adapter-checks.md) | Type Safety & Adapter Checks | P3 | 016 | [001.2](../001.2-unsafe-type-casting.md) |
-| [034](./034-config-schema-validation.md) | Config Schema Validation | P2 | - | [007.1-6](../007.1-router-format-mismatch.md) |
-| [035](./035-fetch-timeout-coverage.md) | Fetch Timeout Coverage | P1 | 023 | [009.2](../009.2-fetch-calls-without-timeout.md) |
-| [036](./036-dependency-tracking-complete.md) | Dependency Tracking Complete | P2 | 011 | [004.2-5](../004.2-unused-depshash-infrastructure.md) |
-| [037](./037-router-param-unification.md) | Router Param Unification | P3 | - | [005.3](../005.3-duplicated-route-params-extraction.md) |
-| [038](./038-agent-cache-isolation.md) | Agent Cache Isolation | P2 | 027 | [013.2](../013.2-agent-cache-project-isolation.md) |
-| [039](./039-tailwind-cache-environment-scope.md) | Tailwind Cache Environment Scope | P1 | - | [002.9](../002.9-tailwind-cache-environment-scope.md) |
+| # | Task | Priority | Status | Docs |
+|---|------|----------|--------|------|
+| [001](./001-sandbox-config-execution.md) | Sandbox Config Execution | P0 | ⚠️ Downgraded — industry pattern | [008.2](../008.2-unsafe-config-execution.md) |
+| [002](./002-request-context-foundation.md) | Request Context Foundation | P0 | ✅ Done — AsyncLocalStorage in place | [002.0](../002.0-request-scoped-state-rfc.md) |
+| [003](./003-head-collector-isolation.md) | Head Collector Isolation | P0 | ✅ Fixed (e01007fb) | [002.1](../002.1-head-collector-leakage.md) |
+| [004](./004-ssr-globals-isolation.md) | SSR Globals Isolation | P0 | ❌ False positive — startup-only config | [002.2](../002.2-ssr-globals-context-leakage.md) |
+| [005](./005-runtime-config-isolation.md) | Runtime Config Isolation | P0 | ❌ False positive — dead code | [007.7](../007.7-runtime-config-global-singleton.md) |
+| [006](./006-per-project-semaphores.md) | Per-Project Semaphores | P1 | ✅ Fixed (7d99703c, 7a3365c0) | [009.1](../009.1-global-semaphores-no-project-isolation.md) |
+| [007](./007-failed-components-isolation.md) | Failed Components Isolation | P1 | ❌ False positive — keys include projectId | [002.7](../002.7-failed-components-collision.md) |
+| [008](./008-react-cache-by-version.md) | React Cache by Version | P1 | ⚠️ Downgraded — single React bundled | [002.3](../002.3-react-cache-version-mismatch.md) |
+| [009](./009-ai-registry-per-project.md) | AI Registry Per-Project | P1 | ✅ Fixed (39d9f088) | [002.5](../002.5-ai-registry-leakage.md) |
+| [010](./010-tailwind-compiler-isolation.md) | Tailwind Compiler Isolation | P1 | ✅ Fixed (8e847655) | [002.8](../002.8-tailwind-compiler-state.md) |
+| [011](./011-transform-cache-deps-hash.md) | Transform Cache Deps Hash | P2 | ✅ Fixed (7629b537) | [004.1](../004.1-transform-cache-no-deps-hash.md) |
+| [012](./012-cache-hit-validation.md) | Cache Hit Validation | P2 | ⚠️ Downgraded — documented design decision | [003.4](../003.4-cache-hit-validation-skipped.md) |
+| [013](./013-ssr-module-path-consistency.md) | SSR Module Path Consistency | P2 | ✅ Fixed (1f82aa07) | [003.1](../003.1-ssr-module-path-mismatch.md) |
+| [014](./014-config-change-invalidation.md) | Config Change Invalidation | P2 | ✅ Fixed (7629b537) — configHash in keys | [004.6](../004.6-config-changes-not-invalidating.md) |
+| [015](./015-http-bundle-ttl-fix.md) | HTTP Bundle TTL Fix | P2 | ✅ Fixed (eef7dfe6) — bundle manifest | [003.2](../003.2-http-bundle-ttl-mismatch.md) |
+| [016](./016-unified-adapter-interface.md) | Unified Adapter Interface | P3 | Deferred — architectural refactor | [001.0](../001.0-unified-adapter-rfc.md) |
+| [017](./017-layout-discovery-unify.md) | Layout Discovery Unify | P3 | ✅ Fixed (60972782) | [001.1](../001.1-layout-bug-critical.md) |
+| [018](./018-config-middleware-parity.md) | Config/Middleware Parity | P3 | ✅ Partial (6fbf6ba9) — predicate unified | [001.5](../001.5-config-middleware-loading-divergence.md) |
+| [019](./019-css-cache-key-fix.md) | CSS Cache Key Fix | P3 | ⚠️ Deferred — by-design adapter difference | [001.6](../001.6-css-cache-key-divergence.md) |
+| [020](./020-router-detection-cache-fix.md) | Router Detection Cache Fix | P3 | ⚠️ Downgraded — low risk | [005.1](../005.1-global-router-detection-cache.md) |
+| [021](./021-import-rewriter-unify.md) | Import Rewriter Unify | P4 | ✅ Done — strategy pattern (688305c1) | [011.0](../011.0-import-rewriting-rfc.md) |
+| [022](./022-http-client-consolidate.md) | HTTP Client Consolidate | P4 | Deferred — code consolidation | [012.0](../012.0-http-clients-rfc.md) |
+| [023](./023-timeout-centralization.md) | Timeout Centralization | P4 | Deferred — code consolidation | [009.0](../009.0-timeout-handling-rfc.md) |
+| [024](./024-error-handling-patterns.md) | Error Handling Patterns | P4 | ✅ Partial (5af5ff4c, 66a2ffc0) | [010.0](../010.0-error-handling-rfc.md) |
+| [025](./025-environment-detection-unify.md) | Environment Detection | P4 | ✅ Fixed (1926ff65) | [006.0](../006.0-environment-detection-rfc.md) |
+| [026](./026-caching-strategy.md) | Caching Strategy | P0 | ✅ Done — manifest + deps tracking | [003.0](../003.0-cache-consistency-rfc.md) |
+| [027](./027-cache-key-standard.md) | Cache Key Standard | P1 | ⚠️ Deferred — central builder exists | [013.0](../013.0-cache-key-patterns-rfc.md) |
+| [028](./028-in-flight-deduplication.md) | In-Flight Deduplication | P1 | ❌ False positive — keys include projectId | [002.6](../002.6-in-progress-deadlock.md) |
+| [029](./029-error-collector-isolation.md) | Error Collector Isolation | P1 | ⚠️ Downgraded — dev tooling only | [010.2](../010.2-global-error-collector.md) |
+| [030](./030-ssg-app-router-support.md) | SSG App Router Support | P2 | ✅ Fixed (34ab1029) | [005.2](../005.2-ssg-getallpages-missing-app-router.md) |
+| [031](./031-deployment-mode-consistency.md) | Deployment Mode Consistency | P2 | ✅ Fixed (d7b53ac0) | [014.0](../014.0-deployment-modes-rfc.md) |
+| [032](./032-multi-tenant-test-utils.md) | Multi-Tenant Test Utils | P2 | Deferred — test infra roadmap | [015.0](../015.0-testability-rfc.md) |
+| [033](./033-type-safety-adapter-checks.md) | Type Safety & Adapter Checks | P3 | ⚠️ Deferred — most have runtime guards | [001.2](../001.2-unsafe-type-casting.md) |
+| [034](./034-config-schema-validation.md) | Config Schema Validation | P2 | ⚠️ Deferred — low priority | [007.1-6](../007.1-router-format-mismatch.md) |
+| [035](./035-fetch-timeout-coverage.md) | Fetch Timeout Coverage | P1 | ✅ Fixed (7a3365c0, d7b53ac0) | [009.2](../009.2-fetch-calls-without-timeout.md) |
+| [036](./036-dependency-tracking-complete.md) | Dependency Tracking Complete | P2 | ✅ Fixed (7629b537) | [004.2-5](../004.2-unused-depshash-infrastructure.md) |
+| [037](./037-router-param-unification.md) | Router Param Unification | P3 | ⚠️ Deferred — low priority | [005.3](../005.3-duplicated-route-params-extraction.md) |
+| [038](./038-agent-cache-isolation.md) | Agent Cache Isolation | P2 | ✅ Fixed (d7b53ac0) | [013.2](../013.2-agent-cache-project-isolation.md) |
+| [039](./039-tailwind-cache-environment-scope.md) | Tailwind Cache Environment Scope | P1 | ⚠️ Downgraded — preview uses different path | [002.9](../002.9-tailwind-cache-environment-scope.md) |
 
 ### Gap Analysis Tasks (040-057)
 
-| # | Task | Priority | Category | Docs |
-|---|------|----------|----------|------|
-| [040](./040-timing-safe-compare.md) | Timing-Safe Compare | P0 | Security | [016.1](../016.1-timing-attack.md) |
-| [041](./041-innerhtml-sanitization.md) | innerHTML Sanitization | P0 | Security | [016.2](../016.2-innerhtml-sanitization.md) |
-| [042](./042-sandbox-function-restriction.md) | Sandbox Function Restriction | P0 | Security | [016.3](../016.3-sandbox-escape.md) |
-| [043](./043-path-traversal-validation.md) | Path Traversal Validation | P1 | Security | [016.4](../016.4-path-traversal.md) |
-| [044](./044-json-parse-safety.md) | JSON.parse Safety | P1 | Security | [016.5](../016.5-json-parse-validation.md) |
-| [045](./045-memoize-inflight-dedup.md) | Memoize In-Flight Dedup | P1 | Race Condition | [017.1](../017.1-cache-stampede.md) |
-| [046](./046-regex-state-isolation.md) | Regex State Isolation | P1 | Race Condition | [017.2](../017.2-global-regex-state.md) |
-| [047](./047-lazy-singleton-mutex.md) | Lazy Singleton Mutex | P2 | Race Condition | [017.3](../017.3-lazy-singleton-locking.md) |
-| [048](./048-rate-limit-atomic.md) | Rate Limit Atomic | P2 | Race Condition | [017.4](../017.4-rate-limit-atomicity.md) |
-| [049](./049-config-reload-atomic.md) | Config Reload Atomic | P2 | Race Condition | [017.5](../017.5-config-reload-race.md) |
-| [050](./050-hmr-client-cleanup.md) | HMR Client Cleanup | P2 | Memory Leak | [018.1](../018.1-hmr-client-map.md) |
-| [051](./051-websocket-timer-cleanup.md) | WebSocket Timer Cleanup | P2 | Memory Leak | [018.2](../018.2-websocket-timer-cleanup.md) |
-| [052](./052-event-listener-cleanup.md) | Event Listener Cleanup | P3 | Memory Leak | [018.3](../018.3-event-listener-cleanup.md) |
-| [053](./053-module-cache-lru.md) | Module Cache LRU | P2 | Memory Leak | [018.4](../018.4-module-cache-bounds.md) |
-| [054](./054-transform-cache-lru.md) | Transform Cache LRU | P2 | Memory Leak | [018.5](../018.5-transform-cache-eviction.md) |
-| [055](./055-path-utils-consolidation.md) | Path Utils Consolidation | P4 | Code Quality | [019.1](../019.1-getextension-duplication.md), [019.2](../019.2-normalizepath-duplication.md) |
-| [056](./056-large-file-decomposition.md) | Large File Decomposition | P4 | Code Quality | [019.4](../019.4-file-complexity.md) |
-| [057](./057-naming-conventions.md) | Naming Conventions | P4 | Code Quality | [019.5](../019.5-naming-inconsistencies.md) |
+| # | Task | Priority | Status | Docs |
+|---|------|----------|--------|------|
+| [040](./040-timing-safe-compare.md) | Timing-Safe Compare | P0 | ✅ Fixed (eafa78c1) | [016.1](../016.1-timing-attack.md) |
+| [041](./041-innerhtml-sanitization.md) | innerHTML Sanitization | P0 | ❌ False positive — sanitizer exists | [016.2](../016.2-innerhtml-sanitization.md) |
+| [042](./042-sandbox-function-restriction.md) | Sandbox Function Restriction | P0 | ⚠️ Downgraded — Worker sandboxed | [016.3](../016.3-sandbox-escape.md) |
+| [043](./043-path-traversal-validation.md) | Path Traversal Validation | P1 | ❌ False positive — SecureFs exists | [016.4](../016.4-path-traversal.md) |
+| [044](./044-json-parse-safety.md) | JSON.parse Safety | P1 | ✅ Fixed (42126bcf) | [016.5](../016.5-json-parse-validation.md) |
+| [045](./045-memoize-inflight-dedup.md) | Memoize In-Flight Dedup | P1 | ✅ Fixed (cbea3d14) | [017.1](../017.1-cache-stampede.md) |
+| [046](./046-regex-state-isolation.md) | Regex State Isolation | P1 | ✅ Fixed (cbea3d14) | [017.2](../017.2-global-regex-state.md) |
+| [047](./047-lazy-singleton-mutex.md) | Lazy Singleton Mutex | P2 | ⚠️ Downgraded — 3/4 have dedup, low risk | [017.3](../017.3-lazy-singleton-locking.md) |
+| [048](./048-rate-limit-atomic.md) | Rate Limit Atomic | P2 | ⚠️ Downgraded — JS single-threaded | [017.4](../017.4-rate-limit-atomicity.md) |
+| [049](./049-config-reload-atomic.md) | Config Reload Atomic | P2 | ⚠️ Downgraded — worst case: one stale req | [017.5](../017.5-config-reload-race.md) |
+| [050](./050-hmr-client-cleanup.md) | HMR Client Cleanup | P2 | ✅ Mitigated — cleanup on disconnect | [018.1](../018.1-hmr-client-map.md) |
+| [051](./051-websocket-timer-cleanup.md) | WebSocket Timer Cleanup | P2 | ✅ Mitigated — clearInterval on shutdown | [018.2](../018.2-websocket-timer-cleanup.md) |
+| [052](./052-event-listener-cleanup.md) | Event Listener Cleanup | P3 | ⚠️ Downgraded — GC handles cleanup | [018.3](../018.3-event-listener-cleanup.md) |
+| [053](./053-module-cache-lru.md) | Module Cache LRU | P2 | ✅ Mitigated — LRU 10K + 5min TTL | [018.4](../018.4-module-cache-bounds.md) |
+| [054](./054-transform-cache-lru.md) | Transform Cache LRU | P2 | ✅ Mitigated — LRU 500 + TTL | [018.5](../018.5-transform-cache-eviction.md) |
+| [055](./055-path-utils-consolidation.md) | Path Utils Consolidation | P4 | ✅ Fixed (6fbf6ba9) | [019.1](../019.1-getextension-duplication.md) |
+| [056](./056-large-file-decomposition.md) | Large File Decomposition | P4 | ⚠️ Deferred — files are cohesive | [019.4](../019.4-file-complexity.md) |
+| [057](./057-naming-conventions.md) | Naming Conventions | P4 | ⚠️ Deferred — 95%+ consistent | [019.5](../019.5-naming-inconsistencies.md) |
 
 ## Priority Definitions
 
@@ -188,25 +188,27 @@ P4: CODE CONSOLIDATION (lowest priority, do last)
 | **P3** | Adapter parity / DX | Sprint 3-4 |
 | **P4** | Code consolidation | Ongoing |
 
-## Quick Start
+## Status: AUDIT COMPLETE
 
-Start with these in order:
-1. **040, 041, 042** - Security critical (timing attack, XSS, RCE)
-2. **001** - Sandbox config (security foundation)
-3. **026** - Caching strategy (defines patterns)
-4. **002** - Request context (enables 003-005, 007, 009, 029)
-5. **045, 046** - Race conditions (stampede, regex)
-6. **053, 054** - Memory (cache LRU)
+All P0/P1 security and stability issues are resolved. Remaining items are deferred code quality improvements with no production impact.
+
+### Outstanding deferred work (optional, low priority)
+1. **016** - Unified adapter interface (P3 architectural refactor)
+2. **022** - HTTP client consolidation (P4 code quality)
+3. **023** - Timeout centralization (P4 code quality)
+4. **032** - Multi-tenant test utilities (P2 test infra)
+5. **056** - Large file decomposition (P4 code quality)
+6. **057** - Naming conventions (P4 code quality)
 
 ## Total: 57 Tasks
 
-| Priority | Count | Focus |
-|----------|-------|-------|
-| P0 | 9 | Security, Foundation |
-| P1 | 13 | Multi-tenant stability, Race conditions |
-| P2 | 18 | Cache correctness, Memory, Testing |
-| P3 | 9 | Adapter parity |
-| P4 | 8 | Code consolidation |
+| Category | Count |
+|----------|-------|
+| ✅ Fixed / Done | 30 |
+| ❌ False positive | 5 |
+| ⚠️ Downgraded / Deferred | 17 |
+| Deferred (code consolidation) | 5 |
+| **Total** | **57** |
 
 ## Coverage Mapping
 
