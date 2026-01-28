@@ -174,7 +174,9 @@ class ProviderRegistry {
     throw toError(
       createError({
         type: "agent",
-        message: `Provider "${name}" not found. Available providers: ${providerManager.getAllIds().join(", ")}`,
+        message: `Provider "${name}" not found. Available providers: ${
+          providerManager.getAllIds().join(", ")
+        }`,
       }),
     );
   }

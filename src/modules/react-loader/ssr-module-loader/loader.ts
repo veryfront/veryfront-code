@@ -571,10 +571,13 @@ export class SSRModuleLoader {
               }
             } catch {
               // Path doesn't exist locally
-              logger.debug("[SSR-MODULE-LOADER] Redis cache has invalid local path, re-transforming", {
-                file: filePath.slice(-40),
-                missingPath: path.slice(-60),
-              });
+              logger.debug(
+                "[SSR-MODULE-LOADER] Redis cache has invalid local path, re-transforming",
+                {
+                  file: filePath.slice(-40),
+                  missingPath: path.slice(-60),
+                },
+              );
               allPathsOk = false;
               break;
             }

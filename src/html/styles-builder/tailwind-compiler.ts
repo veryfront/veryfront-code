@@ -44,7 +44,6 @@ interface CompilerCacheEntry {
 const compilerCache = new Map<string, CompilerCacheEntry>();
 const MAX_CACHED_COMPILERS = 10;
 
-
 let cssCache: CacheBackend | null = null;
 let cssCacheInitPromise: Promise<CacheBackend> | null = null;
 const CSS_CACHE_TTL_SECONDS = 3600;

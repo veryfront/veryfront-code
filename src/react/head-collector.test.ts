@@ -1,10 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import {
-  collectHead,
-  hasCollectedHead,
-  runWithHeadCollector,
-} from "./head-collector.ts";
+import { collectHead, hasCollectedHead, runWithHeadCollector } from "./head-collector.ts";
 
 describe("head-collector", () => {
   describe("collectHead", () => {

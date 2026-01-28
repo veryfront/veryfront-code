@@ -137,7 +137,12 @@ export function flushHeadCollector(): CollectedHead {
     return createEmpty();
   }
 
-  const result = { ...store, metas: [...store.metas], links: [...store.links], styles: [...store.styles] };
+  const result = {
+    ...store,
+    metas: [...store.metas],
+    links: [...store.links],
+    styles: [...store.styles],
+  };
   store.title = undefined;
   store.description = undefined;
   store.metas = [];
