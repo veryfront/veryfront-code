@@ -21,6 +21,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { transformToESM } from "../../../esm-transform.ts";
 import { TRANSFORM_CACHE_VERSION } from "../../../esm/package-registry.ts";
 import { ensureHttpBundlesExist } from "../../../esm/http-cache.ts";
+import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
 import {
   createBundleManifest,
   storeBundleManifest,
@@ -88,9 +89,6 @@ function rewriteVeryfrontImports(code: string): string {
 function getVersionedPathCacheKey(normalizedPath: string): string {
   return `v${TRANSFORM_CACHE_VERSION}:${normalizedPath}`;
 }
-
-/** Pattern to extract HTTP bundle paths from code (file:// paths to veryfront-http-bundle) */
-const HTTP_BUNDLE_PATTERN = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
 
 /**
  * Check if cached code has file:// paths that are incompatible with this environment.
@@ -171,30 +169,6 @@ async function hasIncompatibleFrameworkPaths(code: string, log: Logger): Promise
   }
 
   return false;
-}
-
-/**
- * Extract HTTP bundle paths and hashes from module code.
- * Used to proactively ensure bundles exist before caching/importing.
- */
-function extractHttpBundlePaths(code: string): Array<{ path: string; hash: string }> {
-  const bundles: Array<{ path: string; hash: string }> = [];
-  const seen = new Set<string>();
-
-  let match;
-  while ((match = HTTP_BUNDLE_PATTERN.exec(code)) !== null) {
-    const path = match[1] as string;
-    const hash = match[2] as string;
-    if (!seen.has(hash)) {
-      seen.add(hash);
-      bundles.push({ path, hash });
-    }
-  }
-
-  // Reset regex state
-  HTTP_BUNDLE_PATTERN.lastIndex = 0;
-
-  return bundles;
 }
 
 /**

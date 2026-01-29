@@ -18,6 +18,7 @@ import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { loadImportMap, transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/index.ts";
 import { cacheHttpImportsToLocal, ensureHttpBundlesExist } from "../../esm/http-cache.ts";
+import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
 import { TRANSFORM_CACHE_VERSION } from "../../esm/package-registry.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { replaceSpecifiers } from "../../esm/lexer.ts";
@@ -393,33 +394,6 @@ async function cacheHttpImports(code: string, importMap: ImportMapConfig): Promi
     importMap,
   });
   return result.code;
-}
-
-/** Pattern to extract HTTP bundle paths from code */
-const HTTP_BUNDLE_PATTERN = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
-
-/**
- * Extract all HTTP bundle paths and hashes from code.
- * Returns array of {path, hash} for proactive bundle checking.
- */
-function extractHttpBundlePaths(code: string): Array<{ path: string; hash: string }> {
-  const bundles: Array<{ path: string; hash: string }> = [];
-  const seen = new Set<string>();
-
-  let match;
-  while ((match = HTTP_BUNDLE_PATTERN.exec(code)) !== null) {
-    const path = match[1] as string;
-    const hash = match[2] as string;
-    if (!seen.has(hash)) {
-      seen.add(hash);
-      bundles.push({ path, hash });
-    }
-  }
-
-  // Reset regex state
-  HTTP_BUNDLE_PATTERN.lastIndex = 0;
-
-  return bundles;
 }
 
 export async function loadModuleESM(

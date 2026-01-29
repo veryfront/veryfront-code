@@ -30,30 +30,11 @@ import {
   lookupMdxEsmCache,
   saveModulePathCache,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
+import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
 
 // Re-export utilities
 export { createEsmCache, createModuleCache, generateHash } from "./cache.ts";
 export { fetchEsmModule, rewriteEsmPaths } from "./esm-rewriter.ts";
-
-/** Pattern to match HTTP bundle file:// paths in transformed code */
-const HTTP_BUNDLE_PATTERN = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
-
-/** Extract HTTP bundle paths from transformed code for proactive recovery */
-function extractHttpBundlePaths(code: string): Array<{ path: string; hash: string }> {
-  const bundles: Array<{ path: string; hash: string }> = [];
-  const seen = new Set<string>();
-  let match;
-  while ((match = HTTP_BUNDLE_PATTERN.exec(code)) !== null) {
-    const path = match[1] as string;
-    const hash = match[2] as string;
-    if (!seen.has(hash)) {
-      seen.add(hash);
-      bundles.push({ path, hash });
-    }
-  }
-  HTTP_BUNDLE_PATTERN.lastIndex = 0;
-  return bundles;
-}
 
 /** Cache for created directories to avoid repeated mkdir calls */
 const createdDirs = new Set<string>();
