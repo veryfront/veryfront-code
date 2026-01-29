@@ -1,6 +1,6 @@
 import type { VeryfrontConfig } from "./types.ts";
 import { findUnknownTopLevelKeys, validateVeryfrontConfig } from "./schema.ts";
-import { dirname, extname, join } from "#veryfront/platform/compat/path/index.ts";
+import { extname, join } from "#veryfront/platform/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isVirtualFilesystem } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { isBun } from "#veryfront/platform/compat/runtime.ts";
@@ -12,7 +12,6 @@ import { DEFAULT_CACHE_DIR } from "#veryfront/utils/constants/server.ts";
 import { buildConfigCacheKey } from "../cache/keys.ts";
 import { DEFAULT_PORT } from "./defaults.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { getEsbuildLoader } from "../utils/path-utils.ts";
 import { getErrorMessage } from "../errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
@@ -215,7 +214,8 @@ function validateAndCacheConfig(userConfig: unknown, cacheKey: string): Veryfron
 }
 
 /**
- * Load config from virtual filesystem by transpiling TypeScript content
+ * Load config from virtual filesystem.
+ * Uses Deno's native TypeScript support - no esbuild transpilation needed.
  */
 function loadConfigFromVirtualFS(
   configPath: string,
@@ -230,41 +230,13 @@ function loadConfigFromVirtualFS(
       const content = await adapter.fs.readFile(configPath);
       const source = typeof content === "string" ? content : new TextDecoder().decode(content);
 
-      const loader = getEsbuildLoader(configPath);
-
-      const transpileResult = await withSpan(
-        SpanNames.CONFIG_TRANSPILE,
-        async () => {
-          const { build } = await import("esbuild");
-          return build({
-            bundle: false,
-            write: false,
-            format: "esm",
-            platform: "neutral",
-            target: "es2022",
-            stdin: {
-              contents: source,
-              loader,
-              resolveDir: dirname(configPath),
-              sourcefile: configPath,
-            },
-          });
-        },
-        { "config.path": configPath, "config.loader": loader },
-      );
-
-      if (transpileResult.errors?.length) {
-        const first = transpileResult.errors[0]?.text || "unknown error";
-        throw new ConfigValidationError(`Failed to transpile config: ${first}`);
-      }
-
-      const js = transpileResult.outputFiles?.[0]?.text ?? "export default {}";
-
+      // Keep original extension - Deno handles TS/TSX natively
+      const extension = extname(configPath) || ".mjs";
       const tempDir = await fs.makeTempDir({ prefix: "vf-config-" });
-      const tempFile = join(tempDir, "config.mjs");
+      const tempFile = join(tempDir, `config${extension}`);
 
       try {
-        await fs.writeTextFile(tempFile, js);
+        await fs.writeTextFile(tempFile, source);
         const configModule = await import(`file://${tempFile}?v=${Date.now()}`);
         const userConfig = configModule.default || configModule;
         return validateAndCacheConfig(userConfig, cacheKey);
