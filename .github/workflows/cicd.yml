@@ -187,7 +187,7 @@ jobs:
         uses: chrnorm/deployment-action@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          environment: production
+          environment: npm
           environment-url: https://www.npmjs.com/package/veryfront/v/${{ steps.version.outputs.version }}
           description: veryfront@${{ steps.version.outputs.version }}
           initial-status: success
