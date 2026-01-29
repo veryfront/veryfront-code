@@ -53,59 +53,13 @@ import type { ModuleCacheEntry, SSRModuleLoaderOptions } from "./types.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { lookupMdxEsmCache } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import { ensureHttpBundlesExist } from "#veryfront/transforms/esm/http-cache.ts";
-import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { HTTP_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
-
-/** Pattern to match HTTP bundle file:// paths in transformed code */
-const HTTP_BUNDLE_PATTERN = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
-
-/** Pattern to match ALL file:// paths in transformed code (local imports + HTTP bundles) */
-const ALL_FILE_PATHS_PATTERN = /file:\/\/([^"'\s]+\.(?:mjs|js))/gi;
-
-/** Extract HTTP bundle paths from transformed code for proactive recovery */
-function extractHttpBundlePaths(code: string): Array<{ path: string; hash: string }> {
-  const bundles: Array<{ path: string; hash: string }> = [];
-  const seen = new Set<string>();
-  let match;
-  while ((match = HTTP_BUNDLE_PATTERN.exec(code)) !== null) {
-    const path = match[1] as string;
-    const hash = match[2] as string;
-    if (!seen.has(hash)) {
-      seen.add(hash);
-      bundles.push({ path, hash });
-    }
-  }
-  HTTP_BUNDLE_PATTERN.lastIndex = 0;
-  return bundles;
-}
-
-/**
- * Extract ALL file:// paths from cached code (local imports + HTTP bundles).
- * Used to validate that all paths in cached transforms exist locally before use.
- * This prevents "Module not found" errors when Redis returns transforms from
- * other pods with different temp directories.
- */
-function extractAllFilePaths(code: string): string[] {
-  const paths: string[] = [];
-  const seen = new Set<string>();
-  let match;
-  while ((match = ALL_FILE_PATHS_PATTERN.exec(code)) !== null) {
-    const path = match[1] as string;
-    if (!seen.has(path)) {
-      seen.add(path);
-      paths.push(path);
-    }
-  }
-  ALL_FILE_PATHS_PATTERN.lastIndex = 0;
-  return paths;
-}
-
-/**
- * Track modules whose HTTP bundles have been verified, keyed by tempPath:contentHash.
- * Bounded LRU to prevent unbounded memory growth in long-running pods.
- * Keying by contentHash ensures verification is re-done when content changes at the same path.
- */
-const verifiedHttpBundlePaths = new LRUCache<string, true>({ maxEntries: 2000 });
+import {
+  extractAllFilePaths,
+  extractHttpBundlePaths,
+  verifiedHttpBundlePaths,
+} from "./http-bundle-helpers.ts";
+import { rewriteCrossProjectImport, rewriteLocalImports } from "./import-rewriter.ts";
 
 /**
  * SSR Module Loader with Redis Support.
@@ -783,12 +737,17 @@ export class SSRModuleLoader {
         );
 
         for (const [specifier, tempPath] of crossProjectPaths.entries()) {
-          transformed = this.rewriteCrossProjectImport(transformed, specifier, tempPath);
+          transformed = rewriteCrossProjectImport(transformed, specifier, tempPath);
         }
 
         // Rewrite local imports to use hashed temp paths
         // This ensures that each content version uses its own cached module
-        transformed = this.rewriteLocalImports(transformed, localImportPaths, filePath);
+        transformed = rewriteLocalImports(
+          transformed,
+          localImportPaths,
+          filePath,
+          this.options.projectDir,
+        );
 
         // Ensure HTTP bundles exist for this transform (handles nested bundle deps)
         const bundlePaths = extractHttpBundlePaths(transformed);
@@ -888,157 +847,6 @@ export class SSRModuleLoader {
     }
 
     return importPathMap;
-  }
-
-  private rewriteCrossProjectImport(
-    transformed: string,
-    specifier: string,
-    tempPath: string,
-  ): string {
-    const jsSpecifier = specifier.replace(/\.(tsx?|jsx|mdx)$/, ".js");
-    const escapedSpecifier = specifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const escapedJsSpecifier = jsSpecifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const pattern = new RegExp(`from\\s*["'](${escapedSpecifier}|${escapedJsSpecifier})["']`, "g");
-    return transformed.replace(pattern, `from "file://${tempPath}"`);
-  }
-
-  /**
-   * Rewrite local imports to use hashed temp paths.
-   * This ensures each content version uses its own cached module file.
-   */
-  private rewriteLocalImports(
-    transformed: string,
-    localImportPaths: Map<string, string>,
-    fromFilePath: string,
-  ): string {
-    if (localImportPaths.size === 0) return transformed;
-
-    const projectDir = this.options.projectDir.replace(/\/$/, "");
-    const fromFileDir = fromFilePath.substring(0, fromFilePath.lastIndexOf("/"));
-    const fromRelativeDir = fromFileDir.startsWith(projectDir)
-      ? fromFileDir.substring(projectDir.length + 1)
-      : fromFileDir;
-
-    let result = transformed;
-
-    for (const [specifierOrPath, tempPath] of localImportPaths.entries()) {
-      const patterns = this.buildImportPatterns(specifierOrPath, fromRelativeDir, projectDir);
-
-      for (const pattern of patterns) {
-        const escapedPattern = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const regex = new RegExp(`from\\s*["'](${escapedPattern})["']`, "g");
-        result = result.replace(regex, `from "file://${tempPath}"`);
-      }
-    }
-
-    return result;
-  }
-
-  /**
-   * Build import patterns for a given specifier to match in transformed code.
-   */
-  private buildImportPatterns(
-    specifierOrPath: string,
-    fromRelativeDir: string,
-    projectDir: string,
-  ): string[] {
-    // Handle @/ alias imports (e.g., @/components/Welcome)
-    if (specifierOrPath.startsWith("@/")) {
-      return this.buildAliasImportPatterns(specifierOrPath, fromRelativeDir);
-    }
-
-    // Handle absolute paths
-    if (specifierOrPath.startsWith("/") || specifierOrPath.startsWith(projectDir)) {
-      return this.buildAbsoluteImportPatterns(specifierOrPath, fromRelativeDir, projectDir);
-    }
-
-    // Handle relative imports (./foo, ../foo)
-    if (specifierOrPath.startsWith("./") || specifierOrPath.startsWith("../")) {
-      return this.buildRelativeImportPatterns(specifierOrPath);
-    }
-
-    return [];
-  }
-
-  private buildAliasImportPatterns(specifier: string, fromRelativeDir: string): string[] {
-    const aliasPath = specifier.substring(2); // Remove @/
-    const depth = fromRelativeDir.split("/").filter(Boolean).length;
-    const relativePrefix = depth === 0 ? "./" : "../".repeat(depth);
-
-    const patterns = [`${relativePrefix}${aliasPath}.js`];
-
-    // Handle paths that already have an extension
-    if (/\.(tsx?|jsx|mdx)$/.test(aliasPath)) {
-      patterns.push(`${relativePrefix}${this.toJsExtension(aliasPath)}`);
-    }
-
-    return patterns;
-  }
-
-  private buildAbsoluteImportPatterns(
-    absolutePath: string,
-    fromRelativeDir: string,
-    projectDir: string,
-  ): string[] {
-    const depRelativePath = absolutePath.startsWith(projectDir)
-      ? absolutePath.substring(projectDir.length + 1)
-      : absolutePath.substring(1);
-
-    const lastSlash = depRelativePath.lastIndexOf("/");
-    const depDir = depRelativePath.substring(0, lastSlash);
-    const depFile = depRelativePath.substring(lastSlash + 1);
-
-    const relativePath = this.computeRelativePath(fromRelativeDir, depDir, depFile);
-    return [this.toJsExtension(relativePath)];
-  }
-
-  private buildRelativeImportPatterns(specifier: string): string[] {
-    const jsPath = this.toJsExtension(specifier);
-    const patterns = [jsPath];
-
-    if (!jsPath.endsWith(".js")) {
-      patterns.push(`${jsPath}.js`);
-    }
-
-    return patterns;
-  }
-
-  /**
-   * Compute relative path from source directory to target file.
-   */
-  private computeRelativePath(fromDir: string, toDir: string, fileName: string): string {
-    const fromParts = fromDir.split("/").filter(Boolean);
-    const toParts = toDir.split("/").filter(Boolean);
-
-    let commonPrefixLen = 0;
-    while (
-      commonPrefixLen < fromParts.length &&
-      commonPrefixLen < toParts.length &&
-      fromParts[commonPrefixLen] === toParts[commonPrefixLen]
-    ) {
-      commonPrefixLen++;
-    }
-
-    const upCount = fromParts.length - commonPrefixLen;
-    const downParts = toParts.slice(commonPrefixLen);
-
-    if (upCount === 0 && downParts.length === 0) {
-      return `./${fileName}`;
-    }
-    if (upCount === 0) {
-      return `./${downParts.join("/")}/${fileName}`;
-    }
-
-    const upPath = "../".repeat(upCount);
-    const downPath = downParts.length > 0 ? `${downParts.join("/")}/` : "";
-    return `${upPath}${downPath}${fileName}`;
-  }
-
-  /**
-   * Convert TypeScript/JSX extension to .js
-   */
-  private toJsExtension(path: string): string {
-    return path.replace(/\.(tsx?|jsx|mdx)$/, ".js");
   }
 
   private async ensureDependenciesExist(
