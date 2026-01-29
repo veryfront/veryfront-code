@@ -154,7 +154,7 @@ describe("Dependency tracking cache invalidation", () => {
         projectId: "proj1",
       });
 
-      expect(key).toContain("deps=abcdef01");
+      expect(key).toContain("deps:abcdef01");
     });
 
     it("should include configHash in cache key when provided", () => {
@@ -163,7 +163,7 @@ describe("Dependency tracking cache invalidation", () => {
         projectId: "proj1",
       });
 
-      expect(key).toContain("cfg=cfg12345");
+      expect(key).toContain("cfg:cfg12345");
     });
 
     it("should produce different keys when depsHash differs", () => {
@@ -197,8 +197,8 @@ describe("Dependency tracking cache invalidation", () => {
     it("should work without dependency tracking (backward compatible)", () => {
       const key = buildTransformCacheKey("file.tsx", "content123", false, false);
 
-      expect(key).not.toContain("deps=");
-      expect(key).not.toContain("cfg=");
+      expect(key).not.toContain("deps:");
+      expect(key).not.toContain("cfg:");
       expect(key).toContain("file.tsx");
       expect(key).toContain("content123");
     });

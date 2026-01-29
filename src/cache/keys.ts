@@ -289,8 +289,8 @@ export function buildTransformCacheKey(
 ): string {
   const target = ssr ? "ssr" : "browser";
   const studioKey = studioEmbed ? ":studio" : "";
-  const depsKey = options?.depsHash ? `:deps=${options.depsHash.slice(0, 8)}` : "";
-  const configKey = options?.configHash ? `:cfg=${options.configHash.slice(0, 8)}` : "";
+  const depsKey = options?.depsHash ? `:deps:${options.depsHash.slice(0, 8)}` : "";
+  const configKey = options?.configHash ? `:cfg:${options.configHash.slice(0, 8)}` : "";
   const projectKey = options?.projectId ? `${options.projectId}:` : "";
 
   return `v${VERSION}:${projectKey}${filePath}:${contentHash}:${target}${studioKey}${depsKey}${configKey}`;

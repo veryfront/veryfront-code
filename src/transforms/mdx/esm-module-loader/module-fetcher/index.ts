@@ -12,7 +12,7 @@
  * @module build/transforms/mdx/esm-module-loader/module-fetcher
  */
 
-import { join, posix } from "#std/path.ts";
+import { dirname, join, posix, resolve } from "#std/path.ts";
 import { rendererLogger as globalLogger } from "#veryfront/utils";
 import type { Logger } from "#veryfront/utils/logger/logger.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -88,17 +88,17 @@ function rewriteVeryfrontImports(code: string): string {
 }
 
 /**
- * Rewrite _dnt.polyfills.js and _dnt.shims.js relative imports to absolute file:// paths.
+ * Rewrite relative imports in framework files to absolute file:// paths.
  *
- * The dnt (Deno-to-Node) build tool generates relative imports like:
+ * Framework files from the npm package (e.g., Head.js) contain relative imports like:
  *   import "../../../_dnt.polyfills.js"
- *   import * as dntShim from "../../_dnt.shims.js"
+ *   import { collectHead } from "../head-collector.js"
  *
  * These resolve correctly when loaded from the npm package directory, but break when
  * the transformed code is cached to a different directory (e.g., /app/.cache/veryfront-mdx-esm/...).
- * The relative path would resolve to /app/.cache/_dnt.polyfills.js which doesn't exist.
+ * The relative path would resolve to /app/.cache/head-collector.js which doesn't exist.
  *
- * Fix: Replace relative _dnt imports with absolute file:// paths to the npm package.
+ * Fix: Replace ALL relative imports with absolute file:// paths resolved from the source file's directory.
  */
 export function rewriteDntImports(code: string, sourceFilePath: string): string {
   // Only needed for framework files that come from the npm package
@@ -106,19 +106,19 @@ export function rewriteDntImports(code: string, sourceFilePath: string): string 
     return code;
   }
 
-  // FRAMEWORK_ROOT resolves to the esm/ directory (e.g., /usr/local/lib/node_modules/veryfront/esm/)
-  // _dnt.polyfills.js and _dnt.shims.js live directly in that directory
-  const esmDir = FRAMEWORK_ROOT;
+  const sourceDir = dirname(sourceFilePath);
 
   return code.replace(
-    /from\s+["'](\.\.?\/(?:\.\.\/)*_dnt\.(polyfills|shims)\.js)["']/g,
-    (_match, _relativePath: string, dntFile: string) => {
-      return `from "file://${join(esmDir, `_dnt.${dntFile}.js`)}"`;
+    /from\s+["'](\.\.?\/[^"']+)["']/g,
+    (_match, relativePath: string) => {
+      const absolutePath = resolve(sourceDir, relativePath);
+      return `from "file://${absolutePath}"`;
     },
   ).replace(
-    /import\s+["'](\.\.?\/(?:\.\.\/)*_dnt\.(polyfills|shims)\.js)["']/g,
-    (_match, _relativePath: string, dntFile: string) => {
-      return `import "file://${join(esmDir, `_dnt.${dntFile}.js`)}"`;
+    /import\s+["'](\.\.?\/[^"']+)["']/g,
+    (_match, relativePath: string) => {
+      const absolutePath = resolve(sourceDir, relativePath);
+      return `import "file://${absolutePath}"`;
     },
   );
 }
