@@ -6,6 +6,7 @@
 import { serverLogger as logger } from "#veryfront/utils";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import type { OtelInstruments } from "./types.ts";
+import { VERSION } from "#veryfront/utils/version.ts";
 
 let otelInitialized = false;
 const otel: OtelInstruments = {};
@@ -26,7 +27,7 @@ export async function ensureOtelInstruments(): Promise<void> {
 
   try {
     const { metrics } = await import("@opentelemetry/api");
-    const meter = metrics.getMeter("veryfront", "0.1.0");
+    const meter = metrics.getMeter("veryfront", VERSION);
 
     otel.meter = meter;
     otel.ssrHistogram = meter.createHistogram("veryfront.ssr.duration", {

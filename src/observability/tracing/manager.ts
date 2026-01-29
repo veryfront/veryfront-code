@@ -4,6 +4,7 @@ import type { OpenTelemetryAPI, TracingConfig, TracingState } from "./types.ts";
 import { loadConfig } from "./config.ts";
 import { SpanOperations } from "./span-operations.ts";
 import { ContextPropagation } from "./context-propagation.ts";
+import { VERSION } from "#veryfront/utils/version.ts";
 
 /**
  * Tracing manager class
@@ -57,7 +58,7 @@ export class TracingManager {
     const api = (await import("@opentelemetry/api")) as OpenTelemetryAPI;
     this.state.api = api;
 
-    this.state.tracer = api.trace.getTracer(config.serviceName || "veryfront", "0.1.0");
+    this.state.tracer = api.trace.getTracer(config.serviceName || "veryfront", VERSION);
 
     const { W3CTraceContextPropagator } = await import("@opentelemetry/core");
     const propagator = new W3CTraceContextPropagator();
