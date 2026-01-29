@@ -237,10 +237,13 @@ export class TestContext {
     signal?: AbortSignal;
   } = {}): Promise<TestServer> {
     const port = options.port || (await this.allocatePort());
+    // Allocate a separate HMR port to avoid port+1 collision with ephemeral ports
+    const hmrPort = (options.enableHMR ?? false) ? await this.allocatePort() : undefined;
 
     const server = await createDevServer({
       projectDir: this.projectDir,
       port,
+      hmrPort,
       enableHMR: options.enableHMR ?? false,
       fileWatcherDebounceMs: options.fileWatcherDebounceMs,
       signal: options.signal,

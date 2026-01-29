@@ -36,10 +36,10 @@ export function slidingWindowStrategy(
 ): Promise<RateLimitResult> {
   return withSpan(
     "security.rateLimit.slidingWindow",
-    () => {
+    async () => {
       // Fallback to fixed window for non-memory stores
       if (!(store instanceof MemoryRateLimitStore)) {
-        return fixedWindowStrategy(key, config, store);
+        return await fixedWindowStrategy(key, config, store);
       }
 
       const now = Date.now();
@@ -78,10 +78,10 @@ export function tokenBucketStrategy(
 ): Promise<RateLimitResult> {
   return withSpan(
     "security.rateLimit.tokenBucket",
-    () => {
+    async () => {
       // Fallback to fixed window for non-memory stores
       if (!(store instanceof MemoryRateLimitStore)) {
-        return fixedWindowStrategy(key, config, store);
+        return await fixedWindowStrategy(key, config, store);
       }
 
       const now = Date.now();

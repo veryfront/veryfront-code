@@ -1,4 +1,4 @@
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
 
@@ -7,10 +7,14 @@ describe("input-utils", () => {
     it("wraps a plain string into a user message array", () => {
       const result = normalizeInput("hello");
       assertEquals(result.length, 1);
-      assertEquals(result[0].role, "user");
-      assertEquals(result[0].parts.length, 1);
-      assertEquals(result[0].parts[0].type, "text");
-      assertEquals((result[0].parts[0] as { text: string }).text, "hello");
+      const message = result[0];
+      assertExists(message);
+      assertEquals(message.role, "user");
+      assertEquals(message.parts.length, 1);
+      const part = message.parts[0];
+      assertExists(part);
+      assertEquals(part.type, "text");
+      assertEquals((part as { text: string }).text, "hello");
     });
 
     it("preserves existing message array with ids", () => {
@@ -24,8 +28,10 @@ describe("input-utils", () => {
       ];
       const result = normalizeInput(messages);
       assertEquals(result.length, 1);
-      assertEquals(result[0].id, "msg_1");
-      assertEquals(result[0].timestamp, 1000);
+      const message = result[0];
+      assertExists(message);
+      assertEquals(message.id, "msg_1");
+      assertEquals(message.timestamp, 1000);
     });
 
     it("assigns generated ids when message has no id", () => {
@@ -37,8 +43,10 @@ describe("input-utils", () => {
       ];
       const result = normalizeInput(messages as Parameters<typeof normalizeInput>[0]);
       assertEquals(result.length, 1);
-      assertEquals(typeof result[0].id, "string");
-      assertEquals(result[0].id.startsWith("msg_"), true);
+      const message = result[0];
+      assertExists(message);
+      assertEquals(typeof message.id, "string");
+      assertEquals(message.id.startsWith("msg_"), true);
     });
 
     it("throws on empty string id", () => {
@@ -65,8 +73,10 @@ describe("input-utils", () => {
         },
       ];
       const result = normalizeInput(messages as Parameters<typeof normalizeInput>[0]);
-      assertEquals(typeof result[0].timestamp, "number");
-      assertEquals(result[0].timestamp > 0, true);
+      const message = result[0];
+      assertExists(message);
+      assertEquals(typeof message.timestamp, "number");
+      assertEquals(message.timestamp > 0, true);
     });
   });
 

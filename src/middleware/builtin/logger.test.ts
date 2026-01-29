@@ -1,4 +1,4 @@
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { devLogger, logger, prodLogger } from "./logger.ts";
 
@@ -13,6 +13,12 @@ function makeCtx(
 const nextOk = () => Promise.resolve(new Response("ok", { status: 200 }));
 const next404 = () => Promise.resolve(new Response("not found", { status: 404 }));
 const next500 = () => Promise.resolve(new Response("error", { status: 500 }));
+
+function getFirstLog(logs: string[]): string {
+  const entry = logs[0];
+  assertExists(entry);
+  return entry;
+}
 
 describe("middleware/builtin/logger", () => {
   describe("logger", () => {
@@ -29,9 +35,10 @@ describe("middleware/builtin/logger", () => {
       const mw = logger({ format: "tiny", log: (msg) => logs.push(msg) });
       await mw(makeCtx("http://localhost/hello"), nextOk);
       assertEquals(logs.length, 1);
-      assert(logs[0].includes("GET"));
-      assert(logs[0].includes("/hello"));
-      assert(logs[0].includes("200"));
+      const entry = getFirstLog(logs);
+      assert(entry.includes("GET"));
+      assert(entry.includes("/hello"));
+      assert(entry.includes("200"));
     });
 
     it("should log in short format", async () => {
@@ -42,10 +49,11 @@ describe("middleware/builtin/logger", () => {
         nextOk,
       );
       assertEquals(logs.length, 1);
-      assert(logs[0].includes("GET"));
-      assert(logs[0].includes("/test"));
-      assert(logs[0].includes("200"));
-      assert(logs[0].includes("1.2.3.4"));
+      const entry = getFirstLog(logs);
+      assert(entry.includes("GET"));
+      assert(entry.includes("/test"));
+      assert(entry.includes("200"));
+      assert(entry.includes("1.2.3.4"));
     });
 
     it("should log in common format", async () => {
@@ -53,8 +61,9 @@ describe("middleware/builtin/logger", () => {
       const mw = logger({ format: "common", log: (msg) => logs.push(msg) });
       await mw(makeCtx("http://localhost/page"), nextOk);
       assertEquals(logs.length, 1);
-      assert(logs[0].includes("GET /page HTTP/1.1"));
-      assert(logs[0].includes("200"));
+      const entry = getFirstLog(logs);
+      assert(entry.includes("GET /page HTTP/1.1"));
+      assert(entry.includes("200"));
     });
 
     it("should log in combined format", async () => {
@@ -68,9 +77,10 @@ describe("middleware/builtin/logger", () => {
         nextOk,
       );
       assertEquals(logs.length, 1);
-      assert(logs[0].includes("TestAgent/1.0"));
-      assert(logs[0].includes("http://example.com"));
-      assert(logs[0].includes("GET /page HTTP/1.1"));
+      const entry = getFirstLog(logs);
+      assert(entry.includes("TestAgent/1.0"));
+      assert(entry.includes("http://example.com"));
+      assert(entry.includes("GET /page HTTP/1.1"));
     });
 
     it("should log in dev format with color codes", async () => {
@@ -79,9 +89,10 @@ describe("middleware/builtin/logger", () => {
       await mw(makeCtx("http://localhost/api"), nextOk);
       assertEquals(logs.length, 1);
       // Dev format includes ANSI color codes
-      assert(logs[0].includes("GET"));
-      assert(logs[0].includes("/api"));
-      assert(logs[0].includes("200"));
+      const entry = getFirstLog(logs);
+      assert(entry.includes("GET"));
+      assert(entry.includes("/api"));
+      assert(entry.includes("200"));
     });
 
     it("should log in json format", async () => {
@@ -99,7 +110,7 @@ describe("middleware/builtin/logger", () => {
         next404,
       );
       assertEquals(logs.length, 1);
-      const entry = JSON.parse(logs[0]);
+      const entry = JSON.parse(getFirstLog(logs));
       assertEquals(entry.level, "warn");
       assertEquals(entry.service, "server");
       assertEquals(entry.http.method, "GET");
@@ -118,7 +129,7 @@ describe("middleware/builtin/logger", () => {
       const logs: string[] = [];
       const mw = logger({ format: "json", log: (msg) => logs.push(msg) });
       await mw(makeCtx(), next500);
-      const entry = JSON.parse(logs[0]);
+      const entry = JSON.parse(getFirstLog(logs));
       assertEquals(entry.level, "error");
     });
 
@@ -126,7 +137,7 @@ describe("middleware/builtin/logger", () => {
       const logs: string[] = [];
       const mw = logger({ format: "json", log: (msg) => logs.push(msg) });
       await mw(makeCtx(), nextOk);
-      const entry = JSON.parse(logs[0]);
+      const entry = JSON.parse(getFirstLog(logs));
       assertEquals(entry.level, "info");
     });
 
@@ -158,7 +169,7 @@ describe("middleware/builtin/logger", () => {
       const mw = logger({ format: "json", log: (msg) => logs.push(msg) });
       const res = await mw(makeCtx(), () => Promise.resolve(undefined));
       assertEquals(res, undefined);
-      const entry = JSON.parse(logs[0]);
+      const entry = JSON.parse(getFirstLog(logs));
       assertEquals(entry.http.status, 500);
       assertEquals(entry.level, "error");
     });
@@ -174,7 +185,7 @@ describe("middleware/builtin/logger", () => {
       }
       assertEquals(caught?.message, "boom");
       assertEquals(logs.length, 1);
-      const entry = JSON.parse(logs[0]);
+      const entry = JSON.parse(getFirstLog(logs));
       assertEquals(entry.http.status, 500);
     });
 
@@ -185,7 +196,7 @@ describe("middleware/builtin/logger", () => {
         makeCtx("http://localhost/", { "x-real-ip": "192.168.1.1" }),
         nextOk,
       );
-      const entry = JSON.parse(logs[0]);
+      const entry = JSON.parse(getFirstLog(logs));
       assertEquals(entry.http.remoteAddr, "192.168.1.1");
     });
 
@@ -193,7 +204,7 @@ describe("middleware/builtin/logger", () => {
       const logs: string[] = [];
       const mw = logger({ format: "json", log: (msg) => logs.push(msg) });
       await mw(makeCtx(), nextOk);
-      const entry = JSON.parse(logs[0]);
+      const entry = JSON.parse(getFirstLog(logs));
       assertEquals(entry.http.remoteAddr, "-");
     });
 
@@ -201,7 +212,7 @@ describe("middleware/builtin/logger", () => {
       const logs: string[] = [];
       const mw = logger({ format: "json", log: (msg) => logs.push(msg) });
       await mw(makeCtx(), nextOk);
-      const entry = JSON.parse(logs[0]);
+      const entry = JSON.parse(getFirstLog(logs));
       assertEquals(entry.requestId, undefined);
       assertEquals(entry.traceId, undefined);
       assertEquals(entry.projectSlug, undefined);
@@ -216,7 +227,7 @@ describe("middleware/builtin/logger", () => {
         makeCtx("http://localhost/", { traceparent: "00-abc-def-01" }),
         nextOk,
       );
-      const entry = JSON.parse(logs[0]);
+      const entry = JSON.parse(getFirstLog(logs));
       assertEquals(entry.traceId, "00-abc-def-01");
     });
 
@@ -226,7 +237,7 @@ describe("middleware/builtin/logger", () => {
       await mw(makeCtx("http://localhost/test"), nextOk);
       assertEquals(logs.length, 1);
       // Dev format has ANSI escape codes
-      assert(logs[0].includes("\x1b["));
+      assert(getFirstLog(logs).includes("\x1b["));
     });
   });
 

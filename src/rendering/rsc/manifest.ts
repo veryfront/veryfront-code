@@ -59,7 +59,9 @@ export async function buildVersionedManifest(
 
   // djb2 over bytes -> hex
   let h = HASH_SEED_DJB2;
-  for (let i = 0; i < data.length; i++) h = ((h << 5) + h) ^ data[i];
+  for (const byte of data) {
+    h = ((h << 5) + h) ^ byte;
+  }
   const hash = (h >>> 0).toString(16);
 
   return { version: 1, hash, modules };

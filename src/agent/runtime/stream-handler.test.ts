@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createStreamState, handleStreamEvent } from "./stream-handler.ts";
 import type { StreamState as _StreamState } from "./stream-handler.ts";
@@ -72,9 +72,11 @@ describe("stream-handler", () => {
 
       const events = decodeChunks(chunks);
       assertEquals(events.length, 1);
-      assertEquals(events[0].type, "text-delta");
-      assertEquals(events[0].delta, "Hi");
-      assertEquals(events[0].id, "text-1");
+      const first = events[0];
+      assertExists(first);
+      assertEquals(first.type, "text-delta");
+      assertEquals(first.delta, "Hi");
+      assertEquals(first.id, "text-1");
     });
 
     it("invokes onChunk callback for content events", () => {
@@ -107,7 +109,8 @@ describe("stream-handler", () => {
       );
 
       assertEquals(state.toolCalls.size, 1);
-      const tc = state.toolCalls.get("tc1")!;
+      const tc = state.toolCalls.get("tc1");
+      assertExists(tc);
       assertEquals(tc.name, "search");
       assertEquals(tc.arguments, "");
     });
@@ -134,7 +137,9 @@ describe("stream-handler", () => {
         undefined,
       );
 
-      assertEquals(state.toolCalls.get("tc1")!.arguments, '{"q":"hello"}');
+      const tc = state.toolCalls.get("tc1");
+      assertExists(tc);
+      assertEquals(tc.arguments, '{"q":"hello"}');
     });
 
     it("sets tool call on tool_call_complete", () => {
@@ -153,7 +158,9 @@ describe("stream-handler", () => {
       );
 
       assertEquals(state.toolCalls.size, 1);
-      assertEquals(state.toolCalls.get("tc2")!.arguments, '{"x":1}');
+      const tc = state.toolCalls.get("tc2");
+      assertExists(tc);
+      assertEquals(tc.arguments, '{"x":1}');
     });
 
     it("sets finish reason on finish event", () => {
@@ -174,7 +181,9 @@ describe("stream-handler", () => {
     it("invokes onUsage callback for usage events", () => {
       const state = createStreamState();
       const { controller } = createMockController();
-      let receivedUsage: Record<string, unknown> | null = null;
+      let receivedUsage:
+        | { promptTokens?: number; completionTokens?: number; totalTokens?: number }
+        | null = null;
 
       handleStreamEvent(
         { type: "usage", usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 } },
@@ -184,13 +193,13 @@ describe("stream-handler", () => {
         undefined,
         {
           onUsage: (u) => {
-            receivedUsage = u as unknown as Record<string, unknown>;
+            receivedUsage = u;
           },
         },
       );
 
       assertEquals(receivedUsage !== null, true);
-      assertEquals((receivedUsage as Record<string, unknown>).promptTokens, 10);
+      assertEquals(receivedUsage?.promptTokens, 10);
     });
 
     it("ignores tool_call_start with no id", () => {
