@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { extractHTMLMetadata } from "./metadata-extraction.ts";
 
@@ -28,17 +28,23 @@ describe("html/metadata-extraction", () => {
       const meta = extractHTMLMetadata({
         og: { title: "OG Title", image: "https://example.com/img.png" },
       });
-      assertEquals(meta.meta!.length, 2);
-      assertEquals(meta.meta![0].property, "og:title");
-      assertEquals(meta.meta![0].content, "OG Title");
+      assertExists(meta.meta);
+      const first = meta.meta[0];
+      assertExists(first);
+      assertEquals(meta.meta.length, 2);
+      assertEquals(first.property, "og:title");
+      assertEquals(first.content, "OG Title");
     });
 
     it("should extract twitter metadata into meta array", () => {
       const meta = extractHTMLMetadata({
         twitter: { card: "summary", site: "@veryfront" },
       });
-      assertEquals(meta.meta!.length, 2);
-      assertEquals(meta.meta![0].name, "twitter:card");
+      assertExists(meta.meta);
+      const first = meta.meta[0];
+      assertExists(first);
+      assertEquals(meta.meta.length, 2);
+      assertEquals(first.name, "twitter:card");
     });
 
     it("should handle nested metadata object", () => {
@@ -60,10 +66,14 @@ describe("html/metadata-extraction", () => {
         scripts: [{ src: "/app.js" }],
         styles: [{ href: "/style.css" }],
       });
-      assertEquals(meta.meta!.length, 1);
-      assertEquals(meta.links!.length, 1);
-      assertEquals(meta.scripts!.length, 1);
-      assertEquals(meta.styles!.length, 1);
+      assertExists(meta.meta);
+      assertExists(meta.links);
+      assertExists(meta.scripts);
+      assertExists(meta.styles);
+      assertEquals(meta.meta.length, 1);
+      assertEquals(meta.links.length, 1);
+      assertEquals(meta.scripts.length, 1);
+      assertEquals(meta.styles.length, 1);
     });
   });
 });

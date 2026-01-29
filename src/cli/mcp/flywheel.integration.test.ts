@@ -24,8 +24,10 @@ describe("Flywheel MCP", () => {
 
       const errors = collector.getAll();
       assertEquals(errors.length, 1);
-      assertEquals(errors[0].message, "Test error");
-      assertEquals(errors[0].type, "runtime");
+      const first = errors[0];
+      assertExists(first);
+      assertEquals(first.message, "Test error");
+      assertEquals(first.type, "runtime");
     });
 
     it("captures compile errors", () => {
@@ -36,8 +38,10 @@ describe("Flywheel MCP", () => {
 
       const errors = collector.getAll();
       assertEquals(errors.length, 1);
-      assertEquals(errors[0].type, "compile");
-      assertExists(errors[0].file);
+      const first = errors[0];
+      assertExists(first);
+      assertEquals(first.type, "compile");
+      assertExists(first.file);
     });
 
     it("clears errors", () => {
@@ -63,8 +67,10 @@ describe("Flywheel MCP", () => {
 
       const logs = buffer.getAll();
       assertEquals(logs.length, 1);
-      assertEquals(logs[0].message, "GET / → 200 (12ms)");
-      assertEquals(logs[0].source, "http");
+      const first = logs[0];
+      assertExists(first);
+      assertEquals(first.message, "GET / → 200 (12ms)");
+      assertEquals(first.source, "http");
     });
 
     it("clears logs", () => {
@@ -92,7 +98,9 @@ describe("Flywheel MCP", () => {
       // 2. OBSERVE: Check errors
       let currentErrors = errors.getAll();
       assertEquals(currentErrors.length, 1);
-      assertEquals(currentErrors[0].message, "useState is not defined");
+      const firstError = currentErrors[0];
+      assertExists(firstError);
+      assertEquals(firstError.message, "useState is not defined");
 
       // 3. FIX: Clear the error (simulates fixing the code)
       errors.clear();
@@ -106,7 +114,9 @@ describe("Flywheel MCP", () => {
 
       assertEquals(currentErrors.length, 0);
       assertEquals(currentLogs.length, 1);
-      assertEquals(currentLogs[0].data?.status, 200);
+      const firstLog = currentLogs[0];
+      assertExists(firstLog);
+      assertEquals(firstLog.data?.status, 200);
     });
   });
 });

@@ -34,8 +34,11 @@ function stripTrailingSlashes(path: string): string {
   return path.replace(/\/+$/, "");
 }
 
-/** Prefixes that indicate a framework-internal module (resolved locally, not via API) */
-const FRAMEWORK_PREFIXES = ["lib/", "src/exports/", "exports/", "react/"];
+/** Prefixes that indicate a framework-internal module (resolved locally, not via API).
+ * Note: "lib/" is intentionally excluded — user projects commonly have lib/ files
+ * (e.g. lib/utils.ts from shadcn). Project files are resolved first via the API adapter,
+ * with framework lib/ files (Head, Router, etc.) as a fallback in the framework lookup below. */
+const FRAMEWORK_PREFIXES = ["src/exports/", "exports/", "react/"];
 
 function isFrameworkPath(filePathWithoutJs: string): boolean {
   return FRAMEWORK_PREFIXES.some((prefix) => filePathWithoutJs.startsWith(prefix));
@@ -53,7 +56,7 @@ export async function resolveModuleFile(
     ? filePathWithoutJs.replace(/\.(tsx|ts|jsx|js|mdx)$/, "")
     : filePathWithoutJs;
 
-  // Framework modules (react/, lib/, exports/) are local files — skip the API adapter
+  // Framework modules (react/, exports/) are local files — skip the API adapter
   // to avoid unnecessary 404 errors from the remote API.
   const isFramework = isFrameworkPath(filePathWithoutJs);
 

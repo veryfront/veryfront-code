@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ErrorCode } from "../error-codes.ts";
 import { ERROR_CATALOG, getErrorSolution, searchErrors } from "./index.ts";
@@ -37,6 +37,7 @@ describe("errors/catalog/index", () => {
       const entries = Object.values(ERROR_CATALOG);
       if (entries.length > 0) {
         const first = entries[0];
+        assertExists(first);
         const word = first.title.split(" ")[0];
         const results = searchErrors(word);
         assertEquals(results.length > 0, true);
@@ -47,6 +48,7 @@ describe("errors/catalog/index", () => {
       const entries = Object.values(ERROR_CATALOG);
       if (entries.length > 0) {
         const first = entries[0];
+        assertExists(first);
         const word = first.title.split(" ")[0];
         const lower = searchErrors(word.toLowerCase());
         const upper = searchErrors(word.toUpperCase());
@@ -60,7 +62,10 @@ describe("errors/catalog/index", () => {
       );
       if (entriesWithSteps.length > 0) {
         const entry = entriesWithSteps[0];
-        const stepWord = entry.steps![0].split(" ")[0];
+        assertExists(entry);
+        const firstStep = entry.steps?.[0];
+        assertExists(firstStep);
+        const stepWord = firstStep.split(" ")[0];
         const results = searchErrors(stepWord);
         assertEquals(results.length > 0, true);
       }

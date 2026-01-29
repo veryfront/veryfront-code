@@ -36,8 +36,12 @@ const failingAdapter: RuntimeAdapter = {
     exists() {
       return Promise.resolve(false);
     },
-    mkdir() {},
-    remove() {},
+    mkdir() {
+      return Promise.resolve();
+    },
+    remove() {
+      return Promise.resolve();
+    },
     makeTempDir() {
       return Promise.resolve("");
     },
@@ -69,8 +73,12 @@ const failingAdapter: RuntimeAdapter = {
     get() {
       return Promise.resolve(null);
     },
-    set() {},
-    delete() {},
+    set() {
+      return Promise.resolve();
+    },
+    delete() {
+      return Promise.resolve();
+    },
     async *list() {},
   },
   watcher: {

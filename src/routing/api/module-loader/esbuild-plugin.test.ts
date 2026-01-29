@@ -42,7 +42,7 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
         },
       };
 
-      plugin.setup(mockBuild as Parameters<typeof plugin.setup>[0]);
+      plugin.setup(mockBuild as unknown as Parameters<typeof plugin.setup>[0]);
 
       // Should register multiple onResolve handlers
       assertEquals(resolveHandlers.length >= 3, true);
@@ -65,6 +65,7 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
 
       // First resolver should match http/https URLs
       const httpFilter = resolveFilters[0];
+      assertExists(httpFilter);
       assertEquals(httpFilter.test("https://esm.sh/react"), true);
       assertEquals(httpFilter.test("http://cdn.example.com/lib.js"), true);
     });
@@ -80,10 +81,11 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
         onLoad: () => {},
       };
 
-      plugin.setup(mockBuild as Parameters<typeof plugin.setup>[0]);
+      plugin.setup(mockBuild as unknown as Parameters<typeof plugin.setup>[0]);
 
       // Second resolver should match react/jsx-runtime
       const reactFilter = resolveFilters[1];
+      assertExists(reactFilter);
       assertEquals(reactFilter.test("react/jsx-runtime"), true);
       assertEquals(reactFilter.test("react/jsx-dev-runtime"), true);
     });
@@ -99,10 +101,11 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
         onLoad: () => {},
       };
 
-      plugin.setup(mockBuild as Parameters<typeof plugin.setup>[0]);
+      plugin.setup(mockBuild as unknown as Parameters<typeof plugin.setup>[0]);
 
       // Third resolver should match node: builtins and bare specifiers
       const nodeFilter = resolveFilters[2];
+      assertExists(nodeFilter);
       assertEquals(nodeFilter.test("node:path"), true);
       assertEquals(nodeFilter.test("node:fs"), true);
       assertEquals(nodeFilter.test("buffer"), true);
@@ -127,7 +130,7 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
         onLoad: () => {},
       };
 
-      plugin.setup(mockBuild as Parameters<typeof plugin.setup>[0]);
+      plugin.setup(mockBuild as unknown as Parameters<typeof plugin.setup>[0]);
 
       // Find the HTTP URL resolver (first one, matching http/https)
       const httpResolver = resolvers.find((r) => r.filter.test("https://esm.sh/react"));

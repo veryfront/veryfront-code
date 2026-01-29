@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateMCPToolsFromSpec } from "./mcp-tools.ts";
 import type { OpenAPISpec } from "./types.ts";
@@ -50,7 +50,9 @@ describe("routing/api/openapi/mcp-tools", () => {
         baseUrl: "http://localhost:3000",
       });
 
-      assertEquals(tools[0].id, "api:getItems");
+      const first = tools[0];
+      assertExists(first);
+      assertEquals(first.id, "api:getItems");
     });
 
     it("should use custom tool prefix", () => {
@@ -68,7 +70,9 @@ describe("routing/api/openapi/mcp-tools", () => {
         toolPrefix: "myapp",
       });
 
-      assertEquals(tools[0].id, "myapp:getItems");
+      const first = tools[0];
+      assertExists(first);
+      assertEquals(first.id, "myapp:getItems");
     });
 
     it("should return empty array for empty paths", () => {
@@ -152,7 +156,9 @@ describe("routing/api/openapi/mcp-tools", () => {
         baseUrl: "http://localhost:3000",
       });
 
-      assertEquals(tools[0].description.includes("List all users"), true);
+      const first = tools[0];
+      assertExists(first);
+      assertEquals(first.description.includes("List all users"), true);
     });
 
     it("should handle operations with tags in description", () => {
@@ -171,7 +177,9 @@ describe("routing/api/openapi/mcp-tools", () => {
         baseUrl: "http://localhost:3000",
       });
 
-      assertEquals(tools[0].description.includes("Tags: users, admin"), true);
+      const first = tools[0];
+      assertExists(first);
+      assertEquals(first.description.includes("Tags: users, admin"), true);
     });
 
     it("should handle deprecated operations", () => {
@@ -190,7 +198,9 @@ describe("routing/api/openapi/mcp-tools", () => {
         baseUrl: "http://localhost:3000",
       });
 
-      assertEquals(tools[0].description.includes("DEPRECATED"), true);
+      const first = tools[0];
+      assertExists(first);
+      assertEquals(first.description.includes("DEPRECATED"), true);
     });
 
     it("should skip null path items", () => {

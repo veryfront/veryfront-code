@@ -11,22 +11,22 @@ const branchCtx = {
   sourceType: "branch" as const,
   projectSlug: "my-project",
   branch: "main",
-  releaseId: null,
-  environmentName: null,
+  releaseId: undefined,
+  environmentName: undefined,
 };
 
 const releaseCtx = {
   sourceType: "release" as const,
   projectSlug: "my-project",
-  branch: null,
+  branch: undefined,
   releaseId: "rel-123",
-  environmentName: null,
+  environmentName: undefined,
 };
 
 const envCtx = {
   sourceType: "environment" as const,
   projectSlug: "my-project",
-  branch: null,
+  branch: undefined,
   releaseId: "rel-456",
   environmentName: "production",
 };

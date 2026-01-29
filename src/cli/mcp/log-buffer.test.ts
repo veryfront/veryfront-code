@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { LogBuffer } from "./log-buffer.ts";
 
@@ -38,7 +38,9 @@ describe("cli/mcp/log-buffer", () => {
       buf.info("3");
       buf.info("4");
       assertEquals(buf.count, 3);
-      assertEquals(buf.getAll()[0].message, "2");
+      const first = buf.getAll()[0];
+      assertExists(first);
+      assertEquals(first.message, "2");
     });
 
     it("should query by level", () => {
@@ -48,7 +50,9 @@ describe("cli/mcp/log-buffer", () => {
       buf.info("c");
       const errors = buf.query({ level: "error" });
       assertEquals(errors.length, 1);
-      assertEquals(errors[0].message, "b");
+      const first = errors[0];
+      assertExists(first);
+      assertEquals(first.message, "b");
     });
 
     it("should query by source", () => {
@@ -82,7 +86,9 @@ describe("cli/mcp/log-buffer", () => {
       buf.info("3");
       const results = buf.query({ limit: 2 });
       assertEquals(results.length, 2);
-      assertEquals(results[0].message, "2");
+      const first = results[0];
+      assertExists(first);
+      assertEquals(first.message, "2");
     });
 
     it("should tail entries", () => {
@@ -92,7 +98,9 @@ describe("cli/mcp/log-buffer", () => {
       buf.info("3");
       const tail = buf.tail(2);
       assertEquals(tail.length, 2);
-      assertEquals(tail[0].message, "2");
+      const first = tail[0];
+      assertExists(first);
+      assertEquals(first.message, "2");
     });
 
     it("should clear entries", () => {

@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ErrorCollector, parseCompileError } from "./error-collector.ts";
 
@@ -8,7 +8,9 @@ describe("cli/mcp/error-collector", () => {
       const ec = new ErrorCollector();
       ec.add({ type: "compile", message: "fail" });
       assertEquals(ec.count, 1);
-      assertEquals(ec.getAll()[0].message, "fail");
+      const first = ec.getAll()[0];
+      assertExists(first);
+      assertEquals(first.message, "fail");
     });
 
     it("should add typed errors", () => {
@@ -41,7 +43,9 @@ describe("cli/mcp/error-collector", () => {
       ec.addRuntimeError("b");
       const compiles = ec.getAll({ type: "compile" });
       assertEquals(compiles.length, 1);
-      assertEquals(compiles[0].type, "compile");
+      const first = compiles[0];
+      assertExists(first);
+      assertEquals(first.type, "compile");
     });
 
     it("should filter by file string", () => {

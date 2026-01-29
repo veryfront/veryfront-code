@@ -1,4 +1,4 @@
-import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { CacheBackend } from "./backend.ts";
 import {
@@ -67,11 +67,13 @@ describe("cache/request-cache-batcher", () => {
     });
 
     it("should return context inside runWithCacheBatching", async () => {
-      await runWithCacheBatching(() => {
+      // deno-lint-ignore require-await
+      await runWithCacheBatching(async () => {
         const ctx = getRequestCacheContext();
         assertNotEquals(ctx, undefined);
-        assertEquals(ctx!.cache instanceof Map, true);
-        assertEquals(ctx!.pending instanceof Map, true);
+        assertExists(ctx);
+        assertEquals(ctx.cache instanceof Map, true);
+        assertEquals(ctx.pending instanceof Map, true);
       });
     });
   });
@@ -82,20 +84,24 @@ describe("cache/request-cache-batcher", () => {
     });
 
     it("should return stats inside batching context", async () => {
-      await runWithCacheBatching(() => {
+      // deno-lint-ignore require-await
+      await runWithCacheBatching(async () => {
         const stats = getRequestCacheStats();
         assertNotEquals(stats, null);
-        assertEquals(stats!.hits, 0);
-        assertEquals(stats!.stored, 0);
+        assertExists(stats);
+        assertEquals(stats.hits, 0);
+        assertEquals(stats.stored, 0);
       });
     });
 
     it("should reflect stored entries count", async () => {
-      await runWithCacheBatching(() => {
+      // deno-lint-ignore require-await
+      await runWithCacheBatching(async () => {
         setInRequestCache("key1", "value1");
         setInRequestCache("key2", "value2");
         const stats = getRequestCacheStats();
-        assertEquals(stats!.stored, 2);
+        assertExists(stats);
+        assertEquals(stats.stored, 2);
       });
     });
   });
@@ -107,19 +113,23 @@ describe("cache/request-cache-batcher", () => {
     });
 
     it("should set value in the request cache", async () => {
-      await runWithCacheBatching(() => {
+      // deno-lint-ignore require-await
+      await runWithCacheBatching(async () => {
         setInRequestCache("myKey", "myValue");
         const ctx = getRequestCacheContext();
-        assertEquals(ctx!.cache.get("myKey"), "myValue");
+        assertExists(ctx);
+        assertEquals(ctx.cache.get("myKey"), "myValue");
       });
     });
 
     it("should allow null values", async () => {
-      await runWithCacheBatching(() => {
+      // deno-lint-ignore require-await
+      await runWithCacheBatching(async () => {
         setInRequestCache("nullKey", null);
         const ctx = getRequestCacheContext();
-        assertEquals(ctx!.cache.has("nullKey"), true);
-        assertEquals(ctx!.cache.get("nullKey"), null);
+        assertExists(ctx);
+        assertEquals(ctx.cache.has("nullKey"), true);
+        assertEquals(ctx.cache.get("nullKey"), null);
       });
     });
   });

@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RenderPipelineConfig } from "./pipeline.ts";
 
@@ -210,8 +210,10 @@ describe("RenderPipeline helpers", () => {
     it("should include page module for component pages in pages dir", () => {
       const result = collectModulesToLoad("/project/pages/index.tsx", true, true, []);
       assertEquals(result.length, 1);
-      assertEquals(result[0].type, "page");
-      assertEquals(result[0].path, "/project/pages/index.tsx");
+      const first = result[0];
+      assertExists(first);
+      assertEquals(first.type, "page");
+      assertEquals(first.path, "/project/pages/index.tsx");
     });
 
     it("should not include page module for non-component pages", () => {
@@ -232,9 +234,13 @@ describe("RenderPipeline helpers", () => {
       ];
       const result = collectModulesToLoad("/page.tsx", false, false, layouts);
       assertEquals(result.length, 2);
-      assertEquals(result[0].type, "layout");
-      assertEquals(result[0].path, "/project/app/layout.tsx");
-      assertEquals(result[1].path, "/project/app/sub/layout.tsx");
+      const first = result[0];
+      const second = result[1];
+      assertExists(first);
+      assertExists(second);
+      assertEquals(first.type, "layout");
+      assertEquals(first.path, "/project/app/layout.tsx");
+      assertEquals(second.path, "/project/app/sub/layout.tsx");
     });
 
     it("should skip tsx layouts without componentPath", () => {
@@ -247,8 +253,12 @@ describe("RenderPipeline helpers", () => {
       const layouts = [{ kind: "tsx", componentPath: "/layout.tsx" }];
       const result = collectModulesToLoad("/pages/index.tsx", true, true, layouts);
       assertEquals(result.length, 2);
-      assertEquals(result[0].type, "page");
-      assertEquals(result[1].type, "layout");
+      const first = result[0];
+      const second = result[1];
+      assertExists(first);
+      assertExists(second);
+      assertEquals(first.type, "page");
+      assertEquals(second.type, "layout");
     });
   });
 

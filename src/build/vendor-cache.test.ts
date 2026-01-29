@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateVendorCacheKey } from "./vendor-cache.ts";
 
@@ -12,6 +12,7 @@ describe("build/vendor-cache", () => {
     it("should produce 16-char hex hash suffix", async () => {
       const key = await generateVendorCacheKey("proj1", "18.3.1", {});
       const hash = key.split(":")[2];
+      assertExists(hash);
       assertEquals(hash.length, 16);
       assertEquals(/^[0-9a-f]{16}$/.test(hash), true);
     });

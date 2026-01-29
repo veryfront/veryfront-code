@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   DATA_FETCH_TIMEOUT_MS,
@@ -75,11 +75,14 @@ describe("config/defaults", () => {
     });
 
     it("should start at 5ms and end at 10000ms", () => {
-      assertEquals(DURATION_HISTOGRAM_BOUNDARIES_MS[0], 5);
-      assertEquals(
-        DURATION_HISTOGRAM_BOUNDARIES_MS[DURATION_HISTOGRAM_BOUNDARIES_MS.length - 1],
-        10000,
-      );
+      const first = DURATION_HISTOGRAM_BOUNDARIES_MS[0];
+      const last = DURATION_HISTOGRAM_BOUNDARIES_MS[
+        DURATION_HISTOGRAM_BOUNDARIES_MS.length - 1
+      ];
+      assertExists(first);
+      assertExists(last);
+      assertEquals(first, 5);
+      assertEquals(last, 10000);
     });
 
     it("should have 14 entries", () => {
@@ -98,11 +101,12 @@ describe("config/defaults", () => {
     });
 
     it("should start at 1KB and end at 10000KB", () => {
-      assertEquals(SIZE_HISTOGRAM_BOUNDARIES_KB[0], 1);
-      assertEquals(
-        SIZE_HISTOGRAM_BOUNDARIES_KB[SIZE_HISTOGRAM_BOUNDARIES_KB.length - 1],
-        10000,
-      );
+      const first = SIZE_HISTOGRAM_BOUNDARIES_KB[0];
+      const last = SIZE_HISTOGRAM_BOUNDARIES_KB[SIZE_HISTOGRAM_BOUNDARIES_KB.length - 1];
+      assertExists(first);
+      assertExists(last);
+      assertEquals(first, 1);
+      assertEquals(last, 10000);
     });
 
     it("should have 12 entries", () => {

@@ -98,7 +98,8 @@ describe("ReadOperations", () => {
         new PathNormalizer(),
         createBranchContext(),
         (path: string) => path,
-        () => [{ path: "pages/index.tsx", content: "export default () => <div />" }],
+        () =>
+          Promise.resolve([{ path: "pages/index.tsx", content: "export default () => <div />" }]),
       );
       assertExists(readOps);
     });
@@ -175,7 +176,7 @@ describe("ReadOperations", () => {
         new PathNormalizer(),
         createReleaseContext("rel-1"),
         (path: string) => path,
-        () => fileListCache,
+        () => Promise.resolve(fileListCache),
       );
 
       readOps.setFileListReadyPromise(Promise.resolve());
@@ -200,7 +201,7 @@ describe("ReadOperations", () => {
         new PathNormalizer(),
         createBranchContext(),
         (path: string) => path,
-        () => [{ path: "pages/index.tsx", content: "stale cache" }],
+        () => Promise.resolve([{ path: "pages/index.tsx", content: "stale cache" }]),
       );
 
       readOps.setFileListReadyPromise(Promise.resolve());
@@ -276,7 +277,7 @@ describe("ReadOperations", () => {
         new PathNormalizer(),
         createReleaseContext(),
         (path: string) => path,
-        () => [{ path: "pages/index.tsx", content: "test content" }],
+        () => Promise.resolve([{ path: "pages/index.tsx", content: "test content" }]),
       );
 
       readOps.setFileListReadyPromise(Promise.resolve());
@@ -572,7 +573,7 @@ describe("ReadOperations", () => {
         (path: string) => path,
         () => {
           indexBuildCount++;
-          return fileList;
+          return Promise.resolve(fileList);
         },
       );
 

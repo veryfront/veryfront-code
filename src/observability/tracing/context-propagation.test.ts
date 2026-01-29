@@ -42,12 +42,26 @@ function createMockPropagator(): TextMapPropagator {
 }
 
 function createMockSpan(): Span {
-  return {
+  const span: Span = {
     end() {},
-    setStatus() {},
-    setAttributes() {},
-    setAttribute() {},
-    addEvent() {},
+    setStatus() {
+      return span;
+    },
+    setAttributes() {
+      return span;
+    },
+    setAttribute() {
+      return span;
+    },
+    addEvent() {
+      return span;
+    },
+    addLink() {
+      return span;
+    },
+    addLinks() {
+      return span;
+    },
     recordException() {},
     spanContext() {
       return { traceId: "abc", spanId: "def", traceFlags: 1, isRemote: false };
@@ -56,9 +70,10 @@ function createMockSpan(): Span {
       return true;
     },
     updateName() {
-      return this;
+      return span;
     },
-  } as Span;
+  };
+  return span;
 }
 
 describe("observability/tracing/context-propagation", () => {
@@ -184,7 +199,11 @@ describe("observability/tracing/context-propagation", () => {
     it("should propagate errors", async () => {
       const span = createMockSpan();
       await assertRejects(
-        () => ctx.withActiveSpan(span, () => Promise.reject(new Error("test error"))),
+        () =>
+          // deno-lint-ignore require-await
+          ctx.withActiveSpan(span, async () => {
+            throw new Error("test error");
+          }),
         Error,
         "test error",
       );
@@ -264,7 +283,7 @@ describe("observability/tracing/context-propagation", () => {
 
       const result = await ctx.withSpanAsync(
         "test-operation",
-        (_span) => "async-result",
+        (_span) => Promise.resolve("async-result"),
         (_name) => {
           startCalled = true;
           return mockSpan;

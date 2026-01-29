@@ -68,7 +68,9 @@ describe("composeMiddleware", () => {
     const composed = composeMiddleware([middleware], []);
 
     await assertRejects(
-      () => composed(createContext(), () => Promise.resolve(new Response("OK"))),
+      async () => {
+        await composed(createContext(), () => Promise.resolve(new Response("OK")));
+      },
       Error,
       "next() called multiple times",
     );

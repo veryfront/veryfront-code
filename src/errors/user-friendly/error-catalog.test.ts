@@ -1,4 +1,4 @@
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ERROR_SOLUTIONS } from "./error-catalog.ts";
 
@@ -49,30 +49,35 @@ describe("ERROR_SOLUTIONS", () => {
   describe("missing-config", () => {
     it("should have steps and an example", () => {
       const sol = ERROR_SOLUTIONS["missing-config"];
-      assert(sol.steps !== undefined);
-      assert(sol.steps!.length >= 2);
-      assert(sol.example !== undefined);
-      assert(sol.example!.includes("export default"));
+      assertExists(sol);
+      assertExists(sol.steps);
+      assert(sol.steps.length >= 2);
+      assertExists(sol.example);
+      assert(sol.example.includes("export default"));
     });
   });
 
   describe("port-in-use", () => {
     it("should mention port in message", () => {
       const sol = ERROR_SOLUTIONS["port-in-use"];
+      assertExists(sol);
       assert(sol.message.toLowerCase().includes("port"));
     });
 
     it("should have an example with --port flag", () => {
-      assert(ERROR_SOLUTIONS["port-in-use"].example !== undefined);
-      assert(ERROR_SOLUTIONS["port-in-use"].example!.includes("--port"));
+      const sol = ERROR_SOLUTIONS["port-in-use"];
+      assertExists(sol);
+      assertExists(sol.example);
+      assert(sol.example.includes("--port"));
     });
   });
 
   describe("client-boundary", () => {
     it("should reference docs URL", () => {
       const sol = ERROR_SOLUTIONS["client-boundary"];
-      assert(sol.docs !== undefined);
-      assert(sol.docs!.includes("rsc-boundaries"));
+      assertExists(sol);
+      assertExists(sol.docs);
+      assert(sol.docs.includes("rsc-boundaries"));
     });
   });
 });

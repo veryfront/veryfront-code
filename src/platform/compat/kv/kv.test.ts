@@ -29,10 +29,13 @@ describe("openKv", () => {
     }
     assertEquals(limited.length, 1);
 
-    try {
-      await (kv as { close?: () => Promise<void> }).close?.();
-    } catch {
-      // ignore
+    const maybeClose = (kv as Record<string, unknown>).close;
+    if (typeof maybeClose === "function") {
+      try {
+        await (maybeClose as () => Promise<void>)();
+      } catch {
+        // ignore
+      }
     }
   });
 });

@@ -1,12 +1,32 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { basicAuth, bearerAuth } from "./auth.ts";
+import type { Context } from "../core/types.ts";
 
-function makeContext(headers: Record<string, string> = {}) {
+function makeContext(headers: Record<string, string> = {}): Context {
   const req = new Request("http://localhost/", { headers });
+  const store = new Map<string, unknown>();
   return {
     req,
-    var: {} as Record<string, unknown>,
+    request: req,
+    env: {},
+    var: {},
+    json: (object: unknown, init?: ResponseInit) =>
+      new Response(JSON.stringify(object), {
+        ...init,
+        headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
+      }),
+    text: (text: string, init?: ResponseInit) => new Response(text, init),
+    html: (html: string, init?: ResponseInit) =>
+      new Response(html, {
+        ...init,
+        headers: { "content-type": "text/html", ...(init?.headers ?? {}) },
+      }),
+    redirect: (location: string, status = 302) => Response.redirect(location, status),
+    set: (key: string, value: unknown) => {
+      store.set(key, value);
+    },
+    get: (key: string) => store.get(key),
   };
 }
 

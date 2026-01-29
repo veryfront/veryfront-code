@@ -5,7 +5,7 @@ import type { HTMLGenerationOptions } from "../types.ts";
 
 function parseHydrationData(
   slug: string,
-  params: Record<string, unknown>,
+  params: Record<string, string | string[]>,
   props: Record<string, unknown>,
   options: HTMLGenerationOptions,
 ): any {

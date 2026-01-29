@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { type ChunkAnalysis, generateChunkManifest } from "./chunk-optimizer.ts";
 
@@ -25,8 +25,10 @@ describe("rendering/chunk-optimizer", () => {
         ],
       };
       const manifest = generateChunkManifest(analysis);
-      assertEquals(manifest.chunks["common"].deps, ["react", "lodash"]);
-      assertEquals(manifest.chunks["common"].size, 5000);
+      const chunk = manifest.chunks["common"];
+      assertExists(chunk);
+      assertEquals(chunk.deps, ["react", "lodash"]);
+      assertEquals(chunk.size, 5000);
     });
 
     it("should map pages to their chunks and deps", () => {
@@ -54,6 +56,7 @@ describe("rendering/chunk-optimizer", () => {
       };
       const manifest = generateChunkManifest(analysis);
       const page = manifest.pages["/pages/index.mdx"];
+      assertExists(page);
       assertEquals(page.chunks.includes("common"), true);
       assertEquals(page.deps.local, ["./utils"]);
       assertEquals(page.deps.shared, ["lodash"]);
@@ -83,7 +86,9 @@ describe("rendering/chunk-optimizer", () => {
         ],
       };
       const manifest = generateChunkManifest(analysis);
-      assertEquals(manifest.pages["/pages/about.mdx"].chunks, ["react-vendor"]);
+      const page = manifest.pages["/pages/about.mdx"];
+      assertExists(page);
+      assertEquals(page.chunks, ["react-vendor"]);
     });
   });
 });

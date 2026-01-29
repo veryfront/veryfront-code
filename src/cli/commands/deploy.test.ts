@@ -15,16 +15,25 @@ import {
 import type { ApiClient } from "../shared/config.ts";
 import type { ParsedArgs } from "../index/types.ts";
 
-function createMockClient(
-  overrides: Partial<Pick<ApiClient, "get" | "post">> = {},
-): ApiClient {
+type MockClientOverrides = Partial<{
+  get: (path: string, params?: Record<string, string>) => Promise<unknown>;
+  post: (path: string, body?: unknown) => Promise<unknown>;
+}>;
+
+function createMockClient(overrides: MockClientOverrides = {}): ApiClient {
   return {
-    get: overrides.get ?? (() => Promise.resolve({ data: [] })),
-    post: overrides.post ?? (() => Promise.resolve({})),
-    put: () => Promise.resolve({}),
-    patch: () => Promise.resolve({}),
-    delete: () => Promise.resolve({}),
-  } as ApiClient;
+    get: async <T>(path: string, params?: Record<string, string>): Promise<T> => {
+      const result = overrides.get ? await overrides.get(path, params) : { data: [] };
+      return result as T;
+    },
+    post: async <T>(path: string, body?: unknown): Promise<T> => {
+      const result = overrides.post ? await overrides.post(path, body) : {};
+      return result as T;
+    },
+    put: <T>(): Promise<T> => Promise.resolve({} as T),
+    patch: <T>(): Promise<T> => Promise.resolve({} as T),
+    delete: <T>(): Promise<T> => Promise.resolve({} as T),
+  };
 }
 
 async function expectErrorMessage(fn: () => Promise<unknown>): Promise<string | undefined> {

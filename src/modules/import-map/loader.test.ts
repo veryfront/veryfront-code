@@ -1,4 +1,4 @@
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { loadImportMap } from "./loader.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
@@ -17,15 +17,17 @@ describe("modules/import-map/loader", () => {
       const adapter = createMockAdapter();
       const result = await loadImportMap("/any-project", adapter);
 
-      assert("react" in result.imports!, "should include react mapping");
-      assert("react-dom" in result.imports!, "should include react-dom mapping");
+      assertExists(result.imports);
+      assert("react" in result.imports, "should include react mapping");
+      assert("react-dom" in result.imports, "should include react-dom mapping");
     });
 
     it("should include veryfront framework mappings", async () => {
       const adapter = createMockAdapter();
       const result = await loadImportMap("/any-project", adapter);
 
-      const imports = result.imports!;
+      const imports = result.imports;
+      assertExists(imports);
       assert("veryfront/head" in imports, "should have veryfront/head");
       assert("veryfront/router" in imports, "should have veryfront/router");
       assert("veryfront/context" in imports, "should have veryfront/context");
@@ -64,7 +66,8 @@ describe("modules/import-map/loader", () => {
       const result = await loadImportMap("/loader-test-project", adapter);
 
       assert(result.imports !== undefined, "should have imports");
-      assert("react" in result.imports!, "should include default react");
+      assertExists(result.imports);
+      assert("react" in result.imports, "should include default react");
     });
 
     it("should handle malformed deno.json gracefully", async () => {
@@ -74,14 +77,17 @@ describe("modules/import-map/loader", () => {
       const result = await loadImportMap("/loader-bad-json", adapter);
 
       assert(result.imports !== undefined, "should have imports");
-      assert("react" in result.imports!, "should include default react");
+      assertExists(result.imports);
+      assert("react" in result.imports, "should include default react");
     });
 
     it("should use esm.sh URLs for React", async () => {
       const adapter = createMockAdapter();
       const result = await loadImportMap("/any-project", adapter);
 
-      const reactUrl = result.imports!["react"];
+      assertExists(result.imports);
+      const reactUrl = result.imports["react"];
+      assertExists(reactUrl);
       assert(
         reactUrl.includes("esm.sh") || reactUrl.startsWith("file://"),
         `Expected esm.sh or file:// URL for react, got: ${reactUrl}`,
@@ -93,7 +99,7 @@ describe("modules/import-map/loader", () => {
       const result = await loadImportMap("/any-project", adapter);
 
       assert(
-        "react/jsx-runtime" in result.imports!,
+        "react/jsx-runtime" in (result.imports ?? {}),
         "should include react/jsx-runtime mapping",
       );
     });

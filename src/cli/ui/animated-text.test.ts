@@ -16,7 +16,7 @@ describe("ANSI cursor codes", () => {
   });
 
   it("should have different values for hide and show cursor", () => {
-    assertEquals(HIDE_CURSOR !== SHOW_CURSOR, true);
+    assertEquals(new Set([HIDE_CURSOR, SHOW_CURSOR]).size, 2);
   });
 });
 

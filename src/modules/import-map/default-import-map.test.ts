@@ -1,4 +1,4 @@
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { getDefaultImportMap } from "./default-import-map.ts";
 
@@ -12,7 +12,8 @@ describe("modules/import-map/default-import-map", () => {
 
     it("should include React mappings", () => {
       const map = getDefaultImportMap();
-      const imports = map.imports!;
+      const imports = map.imports;
+      assertExists(imports);
 
       assert("react" in imports, "should have 'react' mapping");
       assert("react-dom" in imports, "should have 'react-dom' mapping");
@@ -20,7 +21,8 @@ describe("modules/import-map/default-import-map", () => {
 
     it("should include Veryfront framework mappings", () => {
       const map = getDefaultImportMap();
-      const imports = map.imports!;
+      const imports = map.imports;
+      assertExists(imports);
 
       assert("veryfront/head" in imports, "should have 'veryfront/head' mapping");
       assert("veryfront/router" in imports, "should have 'veryfront/router' mapping");
@@ -30,7 +32,8 @@ describe("modules/import-map/default-import-map", () => {
 
     it("should include veryfront/react/* alias mappings", () => {
       const map = getDefaultImportMap();
-      const imports = map.imports!;
+      const imports = map.imports;
+      assertExists(imports);
 
       assert("veryfront/react/head" in imports, "should have 'veryfront/react/head'");
       assert("veryfront/react/router" in imports, "should have 'veryfront/react/router'");
@@ -40,15 +43,18 @@ describe("modules/import-map/default-import-map", () => {
 
     it("should map veryfront aliases to file:// URLs", () => {
       const map = getDefaultImportMap();
-      const imports = map.imports!;
+      const imports = map.imports;
+      assertExists(imports);
 
       const headUrl = imports["veryfront/head"];
+      assertExists(headUrl);
       assert(headUrl.startsWith("file://"), `Expected file:// URL but got: ${headUrl}`);
     });
 
     it("should map veryfront/head and veryfront/react/head to the same file", () => {
       const map = getDefaultImportMap();
-      const imports = map.imports!;
+      const imports = map.imports;
+      assertExists(imports);
 
       assertEquals(imports["veryfront/head"], imports["veryfront/react/head"]);
       assertEquals(imports["veryfront/router"], imports["veryfront/react/router"]);
@@ -58,9 +64,11 @@ describe("modules/import-map/default-import-map", () => {
 
     it("should map React to esm.sh URLs", () => {
       const map = getDefaultImportMap();
-      const imports = map.imports!;
+      const imports = map.imports;
+      assertExists(imports);
 
       const reactUrl = imports["react"];
+      assertExists(reactUrl);
       assert(
         reactUrl.includes("esm.sh") || reactUrl.startsWith("file://"),
         `Expected esm.sh or file URL for react, got: ${reactUrl}`,

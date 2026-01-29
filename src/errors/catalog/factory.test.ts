@@ -1,7 +1,7 @@
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
 import { createErrorSolution, createSimpleError } from "./factory.ts";
-import { ErrorCode } from "../error-codes.ts";
+import { ErrorCode, type ErrorCodeType } from "../error-codes.ts";
 
 describe("factory", () => {
   describe("createErrorSolution", () => {
@@ -138,7 +138,7 @@ describe("factory", () => {
     });
 
     it("should work with different error code categories", () => {
-      const cases: Array<[ErrorCode, string]> = [
+      const cases: Array<[ErrorCodeType, string]> = [
         [ErrorCode.CONFIG_NOT_FOUND, "https://veryfront.com/docs/errors/VF001"],
         [ErrorCode.BUILD_FAILED, "https://veryfront.com/docs/errors/VF100"],
         [ErrorCode.RENDER_ERROR, "https://veryfront.com/docs/errors/VF201"],
@@ -254,7 +254,7 @@ describe("factory", () => {
     });
 
     it("should work with all error code categories", () => {
-      const cases: Array<[ErrorCode, string]> = [
+      const cases: Array<[ErrorCodeType, string]> = [
         [ErrorCode.CONFIG_INVALID, "https://veryfront.com/docs/errors/VF002"],
         [ErrorCode.BUNDLE_ERROR, "https://veryfront.com/docs/errors/VF101"],
         [ErrorCode.HYDRATION_MISMATCH, "https://veryfront.com/docs/errors/VF200"],

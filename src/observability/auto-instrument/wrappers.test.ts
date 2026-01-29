@@ -5,14 +5,20 @@ import { instrument, instrumentBatch, instrumentSync } from "./wrappers.ts";
 describe("observability/auto-instrument/wrappers", () => {
   describe("instrument (async wrapper)", () => {
     it("should wrap an async function and preserve its result", async () => {
-      const fn = (x: number) => x * 2;
+      const fn = (...args: unknown[]): Promise<number> => {
+        const [x] = args as [number];
+        return Promise.resolve(x * 2);
+      };
       const wrapped = instrument(fn, "test.double") as (x: number) => Promise<number>;
       const result = await wrapped(5);
       assertEquals(result, 10);
     });
 
     it("should preserve function arguments", async () => {
-      const fn = (a: string, b: string) => `${a}-${b}`;
+      const fn = (...args: unknown[]): Promise<string> => {
+        const [a, b] = args as [string, string];
+        return Promise.resolve(`${a}-${b}`);
+      };
       const wrapped = instrument(fn, "test.concat") as (
         a: string,
         b: string,
@@ -22,7 +28,7 @@ describe("observability/auto-instrument/wrappers", () => {
     });
 
     it("should rethrow errors from the wrapped function", async () => {
-      const fn = (): never => {
+      const fn = (): Promise<never> => {
         throw new Error("async failure");
       };
       const wrapped = instrument(fn, "test.fail");
@@ -30,14 +36,17 @@ describe("observability/auto-instrument/wrappers", () => {
     });
 
     it("should accept instrument options with kind", async () => {
-      const fn = () => "ok";
+      const fn = (): Promise<string> => Promise.resolve("ok");
       const wrapped = instrument(fn, "test.server", { kind: "server" });
       const result = await wrapped();
       assertEquals(result, "ok");
     });
 
     it("should accept instrument options with attributes factory", async () => {
-      const fn = (userId: string) => userId;
+      const fn = (...args: unknown[]): Promise<string> => {
+        const [userId] = args as [string];
+        return Promise.resolve(userId);
+      };
       const wrapped = instrument(fn, "test.user", {
         attributes: (args) => ({ userId: args[0] as string }),
       }) as (userId: string) => Promise<string>;
@@ -46,13 +55,18 @@ describe("observability/auto-instrument/wrappers", () => {
     });
 
     it("should handle functions that return resolved promises", async () => {
-      const fn = (x: number): Promise<number> => Promise.resolve(x + 1);
+      const fn = (...args: unknown[]): Promise<number> => {
+        const [x] = args as [number];
+        return Promise.resolve(x + 1);
+      };
       const wrapped = instrument(fn, "test.inc") as (x: number) => Promise<number>;
       assertEquals(await wrapped(9), 10);
     });
 
     it("should handle functions that return rejected promises", async () => {
-      const fn = (): Promise<never> => Promise.reject(new Error("rejected"));
+      const fn = (): Promise<never> => {
+        throw new Error("rejected");
+      };
       const wrapped = instrument(fn, "test.reject");
       await assertRejects(() => wrapped(), Error, "rejected");
     });
@@ -60,13 +74,19 @@ describe("observability/auto-instrument/wrappers", () => {
 
   describe("instrumentSync (sync wrapper)", () => {
     it("should wrap a sync function and preserve its result", () => {
-      const fn = (x: number): number => x * 3;
+      const fn = (...args: unknown[]): number => {
+        const [x] = args as [number];
+        return x * 3;
+      };
       const wrapped = instrumentSync(fn, "test.triple") as (x: number) => number;
       assertEquals(wrapped(4), 12);
     });
 
     it("should preserve function arguments", () => {
-      const fn = (a: number, b: number): number => a + b;
+      const fn = (...args: unknown[]): number => {
+        const [a, b] = args as [number, number];
+        return a + b;
+      };
       const wrapped = instrumentSync(fn, "test.add") as (
         a: number,
         b: number,
@@ -89,7 +109,10 @@ describe("observability/auto-instrument/wrappers", () => {
     });
 
     it("should accept instrument options with attributes factory", () => {
-      const fn = (name: string): string => `Hello ${name}`;
+      const fn = (...args: unknown[]): string => {
+        const [name] = args as [string];
+        return `Hello ${name}`;
+      };
       const wrapped = instrumentSync(fn, "test.greet", {
         attributes: (args) => ({ name: args[0] as string }),
       }) as (name: string) => string;
@@ -109,7 +132,8 @@ describe("observability/auto-instrument/wrappers", () => {
   describe("instrumentBatch", () => {
     it("should process all items", async () => {
       const results: number[] = [];
-      await instrumentBatch("test.batch", [1, 2, 3], (item) => {
+      // deno-lint-ignore require-await
+      await instrumentBatch("test.batch", [1, 2, 3], async (item, _index) => {
         results.push(item * 2);
       });
       assertEquals(results, [2, 4, 6]);
@@ -117,7 +141,8 @@ describe("observability/auto-instrument/wrappers", () => {
 
     it("should process empty array without error", async () => {
       let called = false;
-      await instrumentBatch("test.empty", [], () => {
+      // deno-lint-ignore require-await
+      await instrumentBatch("test.empty", [], async () => {
         called = true;
       });
       assertEquals(called, false);
@@ -125,7 +150,8 @@ describe("observability/auto-instrument/wrappers", () => {
 
     it("should pass correct indices to processor", async () => {
       const indices: number[] = [];
-      await instrumentBatch("test.indices", ["a", "b", "c"], (_item, index) => {
+      // deno-lint-ignore require-await
+      await instrumentBatch("test.indices", ["a", "b", "c"], async (_item, index) => {
         indices.push(index);
       });
       assertEquals(indices, [0, 1, 2]);
@@ -137,7 +163,8 @@ describe("observability/auto-instrument/wrappers", () => {
       await instrumentBatch(
         "test.sized",
         items,
-        (item) => {
+        // deno-lint-ignore require-await
+        async (item, _index) => {
           processed.push(item);
         },
         { batchSize: 5 },
@@ -149,7 +176,8 @@ describe("observability/auto-instrument/wrappers", () => {
     it("should default to batch size of 10", async () => {
       const items = Array.from({ length: 25 }, (_, i) => i);
       const processed: number[] = [];
-      await instrumentBatch("test.default-size", items, (item) => {
+      // deno-lint-ignore require-await
+      await instrumentBatch("test.default-size", items, async (item, _index) => {
         processed.push(item);
       });
       assertEquals(processed.length, 25);
@@ -158,7 +186,8 @@ describe("observability/auto-instrument/wrappers", () => {
     it("should rethrow errors from processor", async () => {
       await assertRejects(
         () =>
-          instrumentBatch("test.error", [1, 2, 3], (item) => {
+          // deno-lint-ignore require-await
+          instrumentBatch("test.error", [1, 2, 3], async (item, _index) => {
             if (item === 2) throw new Error("batch item error");
           }),
         Error,
@@ -167,7 +196,7 @@ describe("observability/auto-instrument/wrappers", () => {
     });
 
     it("should accept batch attributes", async () => {
-      await instrumentBatch("test.attrs", [1], () => {}, {
+      await instrumentBatch("test.attrs", [1], async () => {}, {
         attributes: { operation: "test", source: "unit" },
       });
       // Should not throw
@@ -175,7 +204,8 @@ describe("observability/auto-instrument/wrappers", () => {
 
     it("should handle single-item batch", async () => {
       const results: number[] = [];
-      await instrumentBatch("test.single", [42], (item) => {
+      // deno-lint-ignore require-await
+      await instrumentBatch("test.single", [42], async (item, _index) => {
         results.push(item);
       });
       assertEquals(results, [42]);
@@ -186,7 +216,8 @@ describe("observability/auto-instrument/wrappers", () => {
       await instrumentBatch(
         "test.oversized",
         ["a", "b"],
-        (item) => {
+        // deno-lint-ignore require-await
+        async (item, _index) => {
           results.push(item);
         },
         { batchSize: 100 },

@@ -194,14 +194,14 @@ describe("observability/tracing/span-operations", () => {
       const mockSpan = createMockSpan();
       ops.addEvent(mockSpan, "user.action", { "user.id": "123" });
       assertEquals(mockSpan._events.length, 1);
-      assertEquals(mockSpan._events[0].name, "user.action");
+      assertEquals(mockSpan._events[0]?.name, "user.action");
     });
 
     it("should add an event without attributes", () => {
       const mockSpan = createMockSpan();
       ops.addEvent(mockSpan, "checkpoint");
       assertEquals(mockSpan._events.length, 1);
-      assertEquals(mockSpan._events[0].name, "checkpoint");
+      assertEquals(mockSpan._events[0]?.name, "checkpoint");
     });
 
     it("should handle null span gracefully", () => {

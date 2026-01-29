@@ -4,14 +4,14 @@ import { wrapErrorHandler } from "./error-wrapper.ts";
 
 describe("wrapErrorHandler", () => {
   it("should return result on success", async () => {
-    const fn = (x: number) => x * 2;
+    const fn = (x: number) => Promise.resolve(x * 2);
     const wrapped = wrapErrorHandler(fn);
     const result = await wrapped(5);
     assertEquals(result, 10);
   });
 
   it("should preserve function arguments", async () => {
-    const fn = (a: string, b: string) => `${a}-${b}`;
+    const fn = (a: string, b: string) => Promise.resolve(`${a}-${b}`);
     const wrapped = wrapErrorHandler(fn);
     const result = await wrapped("hello", "world");
     assertEquals(result, "hello-world");

@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { AnthropicProvider } from "./anthropic.ts";
 
@@ -60,13 +60,13 @@ describe("AnthropicProvider", () => {
       assertEquals(result.stream, false);
       assertEquals(result.max_tokens, 4096);
       assertEquals(
-        (result.messages as Array<{ role: string; content: string }>)[0].role,
-        "user",
+        (result.messages as Array<{ role: string; content: string }>).length > 0,
+        true,
       );
-      assertEquals(
-        (result.messages as Array<{ role: string; content: string }>)[0].content,
-        "Hello",
-      );
+      const message = (result.messages as Array<{ role: string; content: string }>)[0];
+      assertExists(message);
+      assertEquals(message.role, "user");
+      assertEquals(message.content, "Hello");
     });
 
     it("includes system prompt when provided", () => {
@@ -94,10 +94,13 @@ describe("AnthropicProvider", () => {
       });
 
       const msg = (result.messages as Array<{ role: string; content: unknown[] }>)[0];
+      assertExists(msg);
       assertEquals(msg.role, "user");
       assertEquals(Array.isArray(msg.content), true);
-      assertEquals((msg.content[0] as { type: string }).type, "tool_result");
-      assertEquals((msg.content[0] as { tool_use_id: string }).tool_use_id, "tc_123");
+      const firstPart = msg.content[0];
+      assertExists(firstPart);
+      assertEquals((firstPart as { type: string }).type, "tool_result");
+      assertEquals((firstPart as { tool_use_id: string }).tool_use_id, "tc_123");
     });
 
     it("transforms assistant messages with tool calls", () => {
@@ -119,12 +122,17 @@ describe("AnthropicProvider", () => {
       });
 
       const msg = (result.messages as Array<{ role: string; content: unknown[] }>)[0];
+      assertExists(msg);
       assertEquals(msg.role, "assistant");
       assertEquals(Array.isArray(msg.content), true);
-      assertEquals((msg.content[0] as { type: string }).type, "text");
-      assertEquals((msg.content[0] as { text: string }).text, "Let me search");
-      assertEquals((msg.content[1] as { type: string }).type, "tool_use");
-      assertEquals((msg.content[1] as { name: string }).name, "search");
+      const textPart = msg.content[0];
+      const toolPart = msg.content[1];
+      assertExists(textPart);
+      assertExists(toolPart);
+      assertEquals((textPart as { type: string }).type, "text");
+      assertEquals((textPart as { text: string }).text, "Let me search");
+      assertEquals((toolPart as { type: string }).type, "tool_use");
+      assertEquals((toolPart as { name: string }).name, "search");
     });
 
     it("sets temperature and topP when provided", () => {
@@ -156,8 +164,10 @@ describe("AnthropicProvider", () => {
 
       const tools = result.tools as Array<{ name: string; input_schema: unknown }>;
       assertEquals(tools.length, 1);
-      assertEquals(tools[0].name, "search");
-      assertEquals(tools[0].input_schema, {
+      const tool = tools[0];
+      assertExists(tool);
+      assertEquals(tool.name, "search");
+      assertEquals(tool.input_schema, {
         type: "object",
         properties: { q: { type: "string" } },
       });
@@ -204,10 +214,13 @@ describe("AnthropicProvider", () => {
         stop_reason: "tool_use",
       });
 
-      assertEquals(result.toolCalls!.length, 1);
-      assertEquals(result.toolCalls![0].id, "tc1");
-      assertEquals(result.toolCalls![0].name, "search");
-      assertEquals(result.toolCalls![0].arguments, { q: "test" });
+      assertExists(result.toolCalls);
+      assertEquals(result.toolCalls.length, 1);
+      const call = result.toolCalls[0];
+      assertExists(call);
+      assertEquals(call.id, "tc1");
+      assertEquals(call.name, "search");
+      assertEquals(call.arguments, { q: "test" });
       assertEquals(result.finishReason, "tool_calls");
     });
 

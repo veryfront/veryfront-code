@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createSnapshot,
@@ -45,6 +45,7 @@ describe("observability/simple-metrics/metrics-state", () => {
     it("should return ssrHistogram with boundaries and counts", () => {
       resetMetrics();
       const snap = createSnapshot();
+      assertExists(snap.ssrHistogram);
       assertEquals(Array.isArray(snap.ssrHistogram.boundaries), true);
       assertEquals(Array.isArray(snap.ssrHistogram.counts), true);
     });

@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ClientLogHandler } from "./client-log.ts";
 
@@ -12,7 +12,8 @@ describe("server/handlers/monitoring/client-log", () => {
     it("should match POST to /_veryfront/log", () => {
       const handler = new ClientLogHandler();
       assertEquals(handler.metadata.patterns.length, 1);
-      const pattern = handler.metadata.patterns[0]!;
+      const pattern = handler.metadata.patterns[0];
+      assertExists(pattern);
       assertEquals(typeof pattern !== "string" && pattern.pattern, "/_veryfront/log");
       assertEquals(typeof pattern !== "string" && pattern.exact, true);
       assertEquals(typeof pattern !== "string" && pattern.method, "POST");

@@ -1,4 +1,4 @@
-import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { computeStableId, withStableIds } from "./ids.ts";
 
@@ -38,10 +38,14 @@ describe("rendering/rsc/ids", () => {
 
       assertEquals(result.client.length, 1);
       assertEquals(result.server.length, 1);
-      assertEquals(typeof result.client[0].id, "string");
-      assertEquals(typeof result.server[0].id, "string");
-      assertEquals(result.client[0].path, "/project/app/components/Button.tsx");
-      assertEquals(result.server[0].path, "/project/app/pages/index.tsx");
+      const clientEntry = result.client[0];
+      const serverEntry = result.server[0];
+      assertExists(clientEntry);
+      assertExists(serverEntry);
+      assertEquals(typeof clientEntry.id, "string");
+      assertEquals(typeof serverEntry.id, "string");
+      assertEquals(clientEntry.path, "/project/app/components/Button.tsx");
+      assertEquals(serverEntry.path, "/project/app/pages/index.tsx");
     });
 
     it("should compute relative paths from app root", () => {
@@ -50,7 +54,9 @@ describe("rendering/rsc/ids", () => {
         server: [],
       };
       const result = withStableIds("/project", graph);
-      assertEquals(result.client[0].rel, "/components/Button.tsx");
+      const entry = result.client[0];
+      assertExists(entry);
+      assertEquals(entry.rel, "/components/Button.tsx");
     });
 
     it("should sort entries by relative path", () => {
@@ -62,8 +68,12 @@ describe("rendering/rsc/ids", () => {
         server: [],
       };
       const result = withStableIds("/project", graph);
-      assertEquals(result.client[0].rel, "/a-file.tsx");
-      assertEquals(result.client[1].rel, "/z-file.tsx");
+      const first = result.client[0];
+      const second = result.client[1];
+      assertExists(first);
+      assertExists(second);
+      assertEquals(first.rel, "/a-file.tsx");
+      assertEquals(second.rel, "/z-file.tsx");
     });
 
     it("should handle paths outside app root", () => {
@@ -72,7 +82,9 @@ describe("rendering/rsc/ids", () => {
         server: [],
       };
       const result = withStableIds("/project", graph);
-      assertEquals(result.client[0].rel, "/other/place.tsx");
+      const entry = result.client[0];
+      assertExists(entry);
+      assertEquals(entry.rel, "/other/place.tsx");
     });
   });
 });

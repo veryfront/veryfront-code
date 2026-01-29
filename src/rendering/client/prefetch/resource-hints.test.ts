@@ -72,21 +72,35 @@ function setupMocks(): {
   const createdElements: CreatedElement[] = [];
   (globalThis as any).document = {
     head: {
-      appendChild: (element: any) => {
+      appendChild: (element: { tagName: string; attributes: Record<string, string> }) => {
         createdElements.push({
           tagName: element.tagName,
-          attributes: { ...element },
+          attributes: { ...element.attributes },
         });
       },
     },
-    createElement: (tagName: string) => ({
-      tagName,
-      rel: "",
-      href: "",
-      setAttribute(name: string, value: string) {
-        (this as Record<string, string>)[name] = value;
-      },
-    }),
+    createElement: (tagName: string) => {
+      const attributes: Record<string, string> = { rel: "", href: "" };
+      return {
+        tagName,
+        attributes,
+        get rel() {
+          return attributes.rel;
+        },
+        set rel(value: string) {
+          attributes.rel = value;
+        },
+        get href() {
+          return attributes.href;
+        },
+        set href(value: string) {
+          attributes.href = value;
+        },
+        setAttribute(name: string, value: string) {
+          attributes[name] = value;
+        },
+      };
+    },
     querySelector: (_selector: string) => null,
   };
 

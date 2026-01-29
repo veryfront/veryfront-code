@@ -1,49 +1,74 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { getTextContent, groupPartsInOrder, isReasoningPart, isToolPart } from "./message-parts.ts";
 import type { UIMessage, UIMessagePart } from "#veryfront/agent/react";
 
+function makeMessage(parts: UIMessagePart[]): UIMessage {
+  return {
+    id: "msg-1",
+    role: "user",
+    parts,
+  };
+}
+
 describe("message-parts", () => {
   describe("getTextContent", () => {
     it("extracts text from text parts", () => {
-      const message = {
-        parts: [
-          { type: "text", text: "Hello " },
-          { type: "text", text: "world" },
-        ],
-      } as UIMessage;
+      const message = makeMessage([
+        { type: "text", text: "Hello " },
+        { type: "text", text: "world" },
+      ]);
       assertEquals(getTextContent(message), "Hello world");
     });
 
     it("ignores non-text parts", () => {
-      const message = {
-        parts: [
-          { type: "text", text: "Hello" },
-          { type: "tool-search", toolCallId: "tc1", toolName: "search", args: {} },
-          { type: "text", text: " there" },
-        ],
-      } as UIMessage;
+      const message = makeMessage([
+        { type: "text", text: "Hello" },
+        {
+          type: "tool-search",
+          toolCallId: "tc1",
+          toolName: "search",
+          state: "input-available",
+          input: {},
+        },
+        { type: "text", text: " there" },
+      ]);
       assertEquals(getTextContent(message), "Hello there");
     });
 
     it("returns empty string when no text parts", () => {
-      const message = {
-        parts: [
-          { type: "tool-search", toolCallId: "tc1", toolName: "search", args: {} },
-        ],
-      } as UIMessage;
+      const message = makeMessage([
+        {
+          type: "tool-search",
+          toolCallId: "tc1",
+          toolName: "search",
+          state: "input-available",
+          input: {},
+        },
+      ]);
       assertEquals(getTextContent(message), "");
     });
   });
 
   describe("isToolPart", () => {
     it("returns true for tool-prefixed parts", () => {
-      const part = { type: "tool-search" } as UIMessagePart;
+      const part: UIMessagePart = {
+        type: "tool-search",
+        toolCallId: "tc1",
+        toolName: "search",
+        state: "input-available",
+        input: {},
+      };
       assertEquals(isToolPart(part), true);
     });
 
     it("returns true for dynamic-tool parts", () => {
-      const part = { type: "dynamic-tool" } as UIMessagePart;
+      const part: UIMessagePart = {
+        type: "dynamic-tool",
+        toolCallId: "tc1",
+        toolName: "dynamic",
+        state: "input-available",
+      };
       assertEquals(isToolPart(part), true);
     });
 
@@ -79,22 +104,36 @@ describe("message-parts", () => {
 
       const groups = groupPartsInOrder(parts);
       assertEquals(groups.length, 1);
-      assertEquals(groups[0].type, "text");
-      assertEquals((groups[0] as { content: string }).content, "Hello world");
+      const first = groups[0];
+      assertExists(first);
+      assertEquals(first.type, "text");
+      assertEquals((first as { content: string }).content, "Hello world");
     });
 
     it("separates tool parts from text", () => {
       const parts = [
         { type: "text", text: "Before" },
-        { type: "tool-search", toolCallId: "tc1", toolName: "search", args: {} },
+        {
+          type: "tool-search",
+          toolCallId: "tc1",
+          toolName: "search",
+          state: "input-available",
+          input: {},
+        },
         { type: "text", text: "After" },
       ] as UIMessagePart[];
 
       const groups = groupPartsInOrder(parts);
       assertEquals(groups.length, 3);
-      assertEquals(groups[0].type, "text");
-      assertEquals(groups[1].type, "tool");
-      assertEquals(groups[2].type, "text");
+      const first = groups[0];
+      const second = groups[1];
+      const third = groups[2];
+      assertExists(first);
+      assertExists(second);
+      assertExists(third);
+      assertEquals(first.type, "text");
+      assertEquals(second.type, "tool");
+      assertEquals(third.type, "text");
     });
 
     it("handles reasoning parts", () => {
@@ -105,12 +144,13 @@ describe("message-parts", () => {
 
       const groups = groupPartsInOrder(parts);
       assertEquals(groups.length, 2);
-      assertEquals(groups[0].type, "reasoning");
-      assertEquals(
-        (groups[0] as { isStreaming: boolean }).isStreaming,
-        true,
-      );
-      assertEquals(groups[1].type, "text");
+      const first = groups[0];
+      const second = groups[1];
+      assertExists(first);
+      assertExists(second);
+      assertEquals(first.type, "reasoning");
+      assertEquals((first as { isStreaming: boolean }).isStreaming, true);
+      assertEquals(second.type, "text");
     });
 
     it("skips tool-result parts", () => {
@@ -122,7 +162,9 @@ describe("message-parts", () => {
 
       const groups = groupPartsInOrder(parts);
       assertEquals(groups.length, 1);
-      assertEquals((groups[0] as { content: string }).content, "Result: done");
+      const first = groups[0];
+      assertExists(first);
+      assertEquals((first as { content: string }).content, "Result: done");
     });
 
     it("handles empty parts array", () => {

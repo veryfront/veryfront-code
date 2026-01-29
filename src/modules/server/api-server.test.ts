@@ -10,11 +10,11 @@ function createMockRenderer(
   return {
     renderPage: (_slug: string) => {
       if (error) throw error;
-      return {
+      return Promise.resolve({
         html: result?.html ?? "<p>Hello</p>",
         frontmatter: result?.frontmatter ?? {},
         headings: result?.headings,
-      };
+      });
     },
   };
 }

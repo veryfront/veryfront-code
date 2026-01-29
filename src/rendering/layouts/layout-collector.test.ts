@@ -98,7 +98,7 @@ describe("LayoutCollector", () => {
         "/project/components/layout.mdx",
       ]);
       const checker: FileExistenceChecker = {
-        exists: (path: string) => existingFiles.has(path),
+        exists: (path: string) => Promise.resolve(existingFiles.has(path)),
       };
 
       const result = await discoverComponentsLayoutPath("/project", checker);
@@ -107,7 +107,7 @@ describe("LayoutCollector", () => {
 
     it("should return null when no layout file exists", async () => {
       const checker: FileExistenceChecker = {
-        exists: () => false,
+        exists: () => Promise.resolve(false),
       };
 
       const result = await discoverComponentsLayoutPath("/project", checker);
@@ -120,7 +120,7 @@ describe("LayoutCollector", () => {
         "/project/components/layout.tsx",
       ]);
       const checker: FileExistenceChecker = {
-        exists: (path: string) => existingFiles.has(path),
+        exists: (path: string) => Promise.resolve(existingFiles.has(path)),
       };
 
       const result = await discoverComponentsLayoutPath("/project", checker);
@@ -134,7 +134,7 @@ describe("LayoutCollector", () => {
         "/project/components/layout.tsx",
       ]);
       const checker: FileExistenceChecker = {
-        exists: (path: string) => existingFiles.has(path),
+        exists: (path: string) => Promise.resolve(existingFiles.has(path)),
       };
 
       const result = await discoverComponentsLayoutPath("/project", checker);
@@ -146,7 +146,7 @@ describe("LayoutCollector", () => {
         "/project/components/layout.js",
       ]);
       const checker: FileExistenceChecker = {
-        exists: (path: string) => existingFiles.has(path),
+        exists: (path: string) => Promise.resolve(existingFiles.has(path)),
       };
 
       const result = await discoverComponentsLayoutPath("/project", checker);
@@ -158,7 +158,7 @@ describe("LayoutCollector", () => {
       const checker: FileExistenceChecker = {
         exists: (path: string) => {
           checkedPaths.push(path);
-          return false;
+          return Promise.resolve(false);
         },
       };
 

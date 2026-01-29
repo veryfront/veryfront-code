@@ -1,9 +1,13 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MemoryCacheStore } from "./memory-store.ts";
+import type { CachePayload } from "../types.ts";
 
-function makePayload(html = "<p>test</p>") {
-  return { html, headers: new Headers(), status: 200 };
+function makePayload(html = "<p>test</p>"): CachePayload {
+  return {
+    result: { html, frontmatter: {} },
+    storedAt: Date.now(),
+  };
 }
 
 describe("rendering/cache/stores/memory-store", () => {
@@ -13,7 +17,7 @@ describe("rendering/cache/stores/memory-store", () => {
       const payload = makePayload();
       await store.set("key1", payload);
       const result = await store.get("key1");
-      assertEquals(result?.html, "<p>test</p>");
+      assertEquals(result?.result.html, "<p>test</p>");
     });
 
     it("should return undefined for missing keys", async () => {
@@ -39,7 +43,7 @@ describe("rendering/cache/stores/memory-store", () => {
       assertEquals(deleted, 2);
       assertEquals(await store.get("proj:a:page1"), undefined);
       assertEquals(await store.get("proj:a:page2"), undefined);
-      assertEquals((await store.get("proj:b:page1"))?.html, "b1");
+      assertEquals((await store.get("proj:b:page1"))?.result.html, "b1");
     });
 
     it("should clear all entries", async () => {
@@ -58,7 +62,7 @@ describe("rendering/cache/stores/memory-store", () => {
       await store.set("c", makePayload("c"));
       // LRU eviction: 'a' should be evicted
       assertEquals(await store.get("a"), undefined);
-      assertEquals((await store.get("c"))?.html, "c");
+      assertEquals((await store.get("c"))?.result.html, "c");
     });
 
     it("should destroy without error", async () => {

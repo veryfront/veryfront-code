@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { HealthHandler, isServerInitialized, setServerInitialized } from "./health.ts";
 
@@ -32,7 +32,9 @@ describe("server/handlers/monitoring/health", () => {
 
     it("should have patterns for healthz, readyz, and _health", () => {
       const handler = new HealthHandler();
-      const patterns = handler.metadata.patterns.map((p) => typeof p === "string" ? p : p.pattern);
+      const handlerPatterns = handler.metadata.patterns;
+      assertExists(handlerPatterns);
+      const patterns = handlerPatterns.map((p) => typeof p === "string" ? p : p.pattern);
       assertEquals(patterns.includes("/healthz"), true);
       assertEquals(patterns.includes("/readyz"), true);
       assertEquals(patterns.includes("/_health"), true);
@@ -40,7 +42,9 @@ describe("server/handlers/monitoring/health", () => {
 
     it("should have all patterns marked as exact", () => {
       const handler = new HealthHandler();
-      for (const pattern of handler.metadata.patterns) {
+      const handlerPatterns = handler.metadata.patterns;
+      assertExists(handlerPatterns);
+      for (const pattern of handlerPatterns) {
         if (typeof pattern !== "string") {
           assertEquals(pattern.exact, true);
         }

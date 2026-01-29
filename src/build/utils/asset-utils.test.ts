@@ -64,12 +64,34 @@ describe("build/utils/asset-utils", () => {
   describe("generateSrcSet", () => {
     it("should generate srcset string from variants", () => {
       const metadata = {
-        originalPath: "hero.jpg",
-        defaultFormat: "webp" as const,
+        original: "hero.jpg",
+        defaultFormat: "webp",
+        aspectRatio: 4 / 3,
         variants: [
-          { path: "hero-400w.webp", format: "webp", width: 400, height: 300, size: 1000 },
-          { path: "hero-800w.webp", format: "webp", width: 800, height: 600, size: 2000 },
-          { path: "hero-400w.avif", format: "avif", width: 400, height: 300, size: 800 },
+          {
+            path: "hero-400w.webp",
+            format: "webp",
+            width: 400,
+            height: 300,
+            size: 1000,
+            fileSize: 1000,
+          },
+          {
+            path: "hero-800w.webp",
+            format: "webp",
+            width: 800,
+            height: 600,
+            size: 2000,
+            fileSize: 2000,
+          },
+          {
+            path: "hero-400w.avif",
+            format: "avif",
+            width: 400,
+            height: 300,
+            size: 800,
+            fileSize: 800,
+          },
         ],
       };
       const srcSet = generateSrcSet("hero.jpg", metadata, "assets");
@@ -79,11 +101,26 @@ describe("build/utils/asset-utils", () => {
 
     it("should filter by specified format", () => {
       const metadata = {
-        originalPath: "img.jpg",
-        defaultFormat: "webp" as const,
+        original: "img.jpg",
+        defaultFormat: "webp",
+        aspectRatio: 4 / 3,
         variants: [
-          { path: "img-400w.webp", format: "webp", width: 400, height: 300, size: 1000 },
-          { path: "img-400w.avif", format: "avif", width: 400, height: 300, size: 800 },
+          {
+            path: "img-400w.webp",
+            format: "webp",
+            width: 400,
+            height: 300,
+            size: 1000,
+            fileSize: 1000,
+          },
+          {
+            path: "img-400w.avif",
+            format: "avif",
+            width: 400,
+            height: 300,
+            size: 800,
+            fileSize: 800,
+          },
         ],
       };
       const srcSet = generateSrcSet("img.jpg", metadata, "assets", "avif");
@@ -95,11 +132,26 @@ describe("build/utils/asset-utils", () => {
   describe("getImageDimensions", () => {
     it("should return dimensions of default format variant", () => {
       const metadata = {
-        originalPath: "img.jpg",
-        defaultFormat: "webp" as const,
+        original: "img.jpg",
+        defaultFormat: "webp",
+        aspectRatio: 4 / 3,
         variants: [
-          { path: "img-800w.webp", format: "webp", width: 800, height: 600, size: 2000 },
-          { path: "img-400w.avif", format: "avif", width: 400, height: 300, size: 1000 },
+          {
+            path: "img-800w.webp",
+            format: "webp",
+            width: 800,
+            height: 600,
+            size: 2000,
+            fileSize: 2000,
+          },
+          {
+            path: "img-400w.avif",
+            format: "avif",
+            width: 400,
+            height: 300,
+            size: 1000,
+            fileSize: 1000,
+          },
         ],
       };
       const dims = getImageDimensions(metadata);
@@ -109,10 +161,18 @@ describe("build/utils/asset-utils", () => {
 
     it("should fallback to first variant", () => {
       const metadata = {
-        originalPath: "img.jpg",
-        defaultFormat: "png" as const,
+        original: "img.jpg",
+        defaultFormat: "png",
+        aspectRatio: 4 / 3,
         variants: [
-          { path: "img-400w.avif", format: "avif", width: 400, height: 300, size: 800 },
+          {
+            path: "img-400w.avif",
+            format: "avif",
+            width: 400,
+            height: 300,
+            size: 800,
+            fileSize: 800,
+          },
         ],
       };
       const dims = getImageDimensions(metadata);
@@ -122,8 +182,9 @@ describe("build/utils/asset-utils", () => {
 
     it("should throw if no variants", () => {
       const metadata = {
-        originalPath: "img.jpg",
-        defaultFormat: "webp" as const,
+        original: "img.jpg",
+        defaultFormat: "webp",
+        aspectRatio: 1,
         variants: [],
       };
       assertThrows(() => getImageDimensions(metadata));

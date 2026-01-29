@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateManifest, generateRedirects } from "./manifest.ts";
 
@@ -6,11 +6,18 @@ describe("build/production-build/manifest", () => {
   describe("generateManifest", () => {
     const baseOptions = {
       routes: [
-        { path: "/", slug: "index", file: "pages/index.tsx", type: "page" as const },
-        { path: "/about", slug: "about", file: "pages/about.tsx", type: "page" as const },
+        { path: "/", slug: "index", file: "pages/index.tsx" },
+        { path: "/about", slug: "about", file: "pages/about.tsx" },
       ],
       appRoutes: [],
-      stats: { pages: 2, chunks: 3, assets: 5, totalSize: 1048576 },
+      stats: {
+        pages: 2,
+        components: 0,
+        chunks: 3,
+        assets: 5,
+        totalSize: 1048576,
+        duration: 0,
+      },
       enableSplitting: false,
       enablePrefetch: false,
       enableCompression: false,
@@ -45,20 +52,31 @@ describe("build/production-build/manifest", () => {
     it("should map routes correctly", () => {
       const result = generateManifest(baseOptions);
       assertEquals(result.routes.length, 2);
-      assertEquals(result.routes[0].path, "/");
-      assertEquals(result.routes[0].slug, "index");
-      assertEquals(result.routes[1].path, "/about");
+      const first = result.routes[0];
+      const second = result.routes[1];
+      assertExists(first);
+      assertExists(second);
+      assertEquals(first.path, "/");
+      assertEquals(first.slug, "index");
+      assertEquals(second.path, "/about");
     });
 
     it("should include appRoutes", () => {
       const result = generateManifest({
         ...baseOptions,
         appRoutes: [
-          { path: "/api/data", handler: "api/data.ts", method: "GET" },
+          {
+            path: "/api/data",
+            pageFile: "app/api/data/route.ts",
+            segments: ["api", "data"],
+            segmentDirs: ["app", "api", "data"],
+          },
         ],
       });
       assertEquals(result.routes.length, 3);
-      assertEquals(result.routes[2].path, "/api/data");
+      const route = result.routes[2];
+      assertExists(route);
+      assertEquals(route.path, "/api/data");
     });
 
     it("should format stats with MB size", () => {
@@ -82,14 +100,17 @@ describe("build/production-build/manifest", () => {
         chunkManifest,
       });
       assertEquals(result.chunks !== null, true);
-      assertEquals(result.routes[0].chunks, ["chunk-a.js"]);
+      const route = result.routes[0];
+      assertExists(route);
+      assertEquals(route.chunks, ["chunk-a.js"]);
     });
 
     it("should return null chunks for invalid manifest", () => {
+      const invalidManifest = JSON.parse('{"invalid": true}');
       const result = generateManifest({
         ...baseOptions,
         enableSplitting: true,
-        chunkManifest: { invalid: true } as unknown as null,
+        chunkManifest: invalidManifest,
       });
       assertEquals(result.chunks, null);
     });

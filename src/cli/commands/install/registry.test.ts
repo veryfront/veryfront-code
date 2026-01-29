@@ -11,7 +11,8 @@ import {
 describe("AI_TOOLS registry", () => {
   it("should have all required tools", () => {
     const ids = AI_TOOLS.map((t) => t.id);
-    for (const id of ["cursor", "claude-code", "skill", "copilot", "windsurf", "agents"]) {
+    const expected = ["cursor", "claude-code", "skill", "copilot", "windsurf", "agents"] as const;
+    for (const id of expected) {
       assertEquals(ids.includes(id), true);
     }
   });
@@ -39,7 +40,8 @@ describe("getAllToolIds", () => {
   it("should return all tool IDs", () => {
     const ids = getAllToolIds();
     assertEquals(ids.length, AI_TOOLS.length);
-    for (const id of ["cursor", "claude-code"]) {
+    const expected = ["cursor", "claude-code"] as const;
+    for (const id of expected) {
       assertEquals(ids.includes(id), true);
     }
   });
@@ -71,7 +73,8 @@ describe("getToolById", () => {
 
 describe("isValidToolId", () => {
   it("should return true for valid IDs", () => {
-    for (const id of ["cursor", "claude-code", "skill", "copilot", "windsurf", "agents"]) {
+    const valid = ["cursor", "claude-code", "skill", "copilot", "windsurf", "agents"] as const;
+    for (const id of valid) {
       assertEquals(isValidToolId(id), true);
     }
   });

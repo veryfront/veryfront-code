@@ -34,6 +34,11 @@ function createEntry<TProps extends Record<string, unknown>>(
   };
 }
 
+function getEntryProps<T>(entry: CacheEntry<T>): T {
+  assertExists(entry.data.props);
+  return entry.data.props as T;
+}
+
 describe("CacheManager", () => {
   describe("constructor", () => {
     it("should create a new instance", () => {
@@ -55,7 +60,8 @@ describe("CacheManager", () => {
       const result = cache.get("test-key");
 
       assertExists(result);
-      assertEquals(result.data.props.title, "Test");
+      const props = getEntryProps<{ title: string }>(result);
+      assertEquals(props.title, "Test");
       assertEquals(result.revalidate, 60);
     });
 
@@ -68,7 +74,7 @@ describe("CacheManager", () => {
       cache.set("key", entry2);
 
       const result = cache.get("key");
-      assertEquals(result?.data.props.value, 2);
+      assertEquals(result ? getEntryProps<{ value: number }>(result).value : undefined, 2);
       assertEquals(result?.revalidate, 120);
     });
   });

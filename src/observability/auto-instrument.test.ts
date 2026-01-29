@@ -588,7 +588,10 @@ describe("Auto-Instrumentation", () => {
 
   describe("instrument (async wrapper)", () => {
     it("should instrument async function", async () => {
-      const fn = (x: number): Promise<number> => Promise.resolve(x * 2);
+      const fn = (...args: unknown[]): Promise<number> => {
+        const [x] = args as [number];
+        return Promise.resolve(x * 2);
+      };
       const instrumented = instrument(fn, "test.operation") as (x: number) => Promise<number>;
 
       const result = await instrumented(5);
@@ -596,8 +599,12 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should record custom attributes from function args", async () => {
-      const fn = (userId: string, action: string): Promise<{ userId: string; action: string }> =>
-        Promise.resolve({ userId, action });
+      const fn = (
+        ...args: unknown[]
+      ): Promise<{ userId: string; action: string }> => {
+        const [userId, action] = args as [string, string];
+        return Promise.resolve({ userId, action });
+      };
 
       const instrumented = instrument(fn, "user.action", {
         attributes: (args: unknown[]) => {
@@ -652,7 +659,10 @@ describe("Auto-Instrumentation", () => {
 
   describe("instrumentSync (sync wrapper)", () => {
     it("should instrument synchronous function", () => {
-      const fn = (x: number): number => x * 3;
+      const fn = (...args: unknown[]): number => {
+        const [x] = args as [number];
+        return x * 3;
+      };
       const instrumented = instrumentSync(fn, "sync.operation") as (x: number) => number;
 
       const result = instrumented(5);
@@ -660,7 +670,10 @@ describe("Auto-Instrumentation", () => {
     });
 
     it("should record custom attributes", () => {
-      const fn = (name: string): string => `Hello, ${name}`;
+      const fn = (...args: unknown[]): string => {
+        const [name] = args as [string];
+        return `Hello, ${name}`;
+      };
       const instrumented = instrumentSync(fn, "greet", {
         attributes: (args: unknown[]) => {
           const [name] = args as [string];
@@ -704,7 +717,7 @@ describe("Auto-Instrumentation", () => {
       const results: number[] = [];
 
       // deno-lint-ignore require-await
-      await instrumentBatch("test.batch", items, async (item: number) => {
+      await instrumentBatch("test.batch", items, async (item: number, _index: number) => {
         results.push(item * 2);
       });
 
@@ -719,7 +732,8 @@ describe("Auto-Instrumentation", () => {
       await instrumentBatch(
         "sized.batch",
         items,
-        (item: number) => {
+        // deno-lint-ignore require-await
+        async (item: number, _index: number) => {
           currentBatch.push(item);
           if (currentBatch.length === 10) {
             batches.push([...currentBatch]);
@@ -737,7 +751,7 @@ describe("Auto-Instrumentation", () => {
     it("should record batch metadata", async () => {
       const items = Array.from({ length: 15 }, (_, i) => i);
 
-      await instrumentBatch("metadata.batch", items, async () => {}, {
+      await instrumentBatch("metadata.batch", items, () => Promise.resolve(), {
         batchSize: 5,
         attributes: { operation: "test", source: "unit-test" },
       });

@@ -155,8 +155,8 @@ describe("middleware/core/pipeline/executor", () => {
     });
 
     it("should handle async middleware that rejects", async () => {
-      const handler: MiddlewareHandler = async () => {
-        await Promise.reject(new Error("async fail"));
+      const handler: MiddlewareHandler = () => {
+        throw new Error("async fail");
       };
       const res = await executeMiddlewarePipeline(
         new Request("http://localhost/"),

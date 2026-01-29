@@ -63,11 +63,12 @@ describe("watcher-queue", () => {
       const promise = iterator.next();
 
       // The resolver should have been set
-      const ready = resolver;
-      assertExists(ready);
+      if (!resolver) {
+        throw new Error("Expected resolver to be set");
+      }
 
       // Resolve it manually
-      ready({ done: false, value: makeEvent("modify", ["/c.ts"]) });
+      resolver({ done: false, value: makeEvent("modify", ["/c.ts"]) });
 
       const result = await promise;
       assertEquals(result.done, false);

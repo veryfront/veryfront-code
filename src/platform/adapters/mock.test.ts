@@ -1,4 +1,9 @@
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "./mock.ts";
 
@@ -51,6 +56,7 @@ describe("MockAdapter", () => {
       const adapter = createMockAdapter();
       adapter.fs.files.set("/test.txt", "hello");
 
+      assertExists(adapter.fs.readFileBytes);
       const bytes = await adapter.fs.readFileBytes("/test.txt");
       assertEquals(new TextDecoder().decode(bytes), "hello");
     });
@@ -59,7 +65,10 @@ describe("MockAdapter", () => {
       const adapter = createMockAdapter();
 
       await assertRejects(
-        () => adapter.fs.readFileBytes("/missing.txt"),
+        () => {
+          assertExists(adapter.fs.readFileBytes);
+          return adapter.fs.readFileBytes("/missing.txt");
+        },
         Error,
         "File not found: /missing.txt",
       );

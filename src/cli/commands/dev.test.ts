@@ -63,7 +63,7 @@ describe("cli/commands/dev", () => {
       const result: DevCommandResult = {
         ready: Promise.resolve(),
         done: Promise.resolve(),
-        stop: () => {},
+        stop: async () => {},
       };
       assertEquals(typeof result.ready.then, "function");
       assertEquals(typeof result.done.then, "function");
@@ -74,7 +74,7 @@ describe("cli/commands/dev", () => {
       const result: DevCommandResult = {
         ready: Promise.resolve(),
         done: new Promise(() => {}), // never resolves
-        stop: () => {},
+        stop: async () => {},
       };
       await result.ready;
     });
@@ -86,6 +86,7 @@ describe("cli/commands/dev", () => {
         done: Promise.resolve(),
         stop: () => {
           stopped = true;
+          return Promise.resolve();
         },
       };
       await result.stop();

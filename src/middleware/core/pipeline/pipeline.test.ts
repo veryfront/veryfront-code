@@ -1,4 +1,4 @@
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MiddlewarePipeline } from "./pipeline.ts";
 import type { MiddlewareHandler } from "../types.ts";
@@ -217,9 +217,13 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
 
       const list = pipeline.getMiddleware();
       assertEquals(list.length, 2);
-      assertEquals(list[0].name, "namedMiddleware");
-      assertEquals(list[0].order, 0);
-      assertEquals(list[1].order, 1);
+      const first = list[0];
+      const second = list[1];
+      assertExists(first);
+      assertExists(second);
+      assertEquals(first.name, "namedMiddleware");
+      assertEquals(first.order, 0);
+      assertEquals(second.order, 1);
     });
 
     it("should return empty array for empty pipeline", () => {

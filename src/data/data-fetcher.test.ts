@@ -1,7 +1,7 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { DataFetcher } from "./data-fetcher.ts";
-import type { DataContext, PageWithData } from "./types.ts";
+import type { DataContext, DataResult, PageWithData } from "./types.ts";
 
 function createContext(overrides: Partial<DataContext> = {}): DataContext {
   return {
@@ -11,6 +11,11 @@ function createContext(overrides: Partial<DataContext> = {}): DataContext {
     url: new URL("http://localhost/test"),
     ...overrides,
   };
+}
+
+function getProps<T>(result: DataResult): T {
+  assertExists(result.props);
+  return result.props as T;
 }
 
 describe("DataFetcher", () => {
@@ -52,7 +57,8 @@ describe("DataFetcher", () => {
           "development",
         );
 
-        assertEquals(result.props.source, "server");
+        const props = getProps<{ source: string }>(result);
+        assertEquals(props.source, "server");
       });
 
       it("should fallback to getStaticData if getServerData not defined", async () => {
@@ -68,7 +74,8 @@ describe("DataFetcher", () => {
           "development",
         );
 
-        assertEquals(result.props.source, "static");
+        const props = getProps<{ source: string }>(result);
+        assertEquals(props.source, "static");
       });
     });
 
@@ -87,7 +94,8 @@ describe("DataFetcher", () => {
           "production",
         );
 
-        assertEquals(result.props.source, "static");
+        const props = getProps<{ source: string }>(result);
+        assertEquals(props.source, "static");
       });
 
       it("should use getServerData if getStaticData not defined in production", async () => {
@@ -103,7 +111,8 @@ describe("DataFetcher", () => {
           "production",
         );
 
-        assertEquals(result.props.source, "server");
+        const props = getProps<{ source: string }>(result);
+        assertEquals(props.source, "server");
       });
     });
 
@@ -117,7 +126,8 @@ describe("DataFetcher", () => {
 
       const result = await fetcher.fetchData(pageModule, createContext());
 
-      assertEquals(result.props.source, "server");
+      const props = getProps<{ source: string }>(result);
+      assertEquals(props.source, "server");
     });
 
     it("should handle redirect from data function", async () => {
@@ -238,10 +248,12 @@ describe("DataFetcher", () => {
       });
 
       const devResult = await fetcher.fetchData(pageModule, context, "development");
-      assertEquals(devResult.props.title, "Server: 1");
+      const devProps = getProps<{ title: string }>(devResult);
+      assertEquals(devProps.title, "Server: 1");
 
       const prodResult = await fetcher.fetchData(pageModule, context, "production");
-      assertEquals(prodResult.props.title, "Static: 1");
+      const prodProps = getProps<{ title: string }>(prodResult);
+      assertEquals(prodProps.title, "Static: 1");
 
       const paths = await fetcher.getStaticPaths(pageModule);
       assertEquals(paths?.paths.length, 2);

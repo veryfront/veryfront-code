@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { RSCProductionOptimizer } from "./production-optimizer.ts";
 import type { RSCPayload } from "./types.ts";
@@ -126,8 +126,10 @@ describe("rendering/rsc/production-optimizer", () => {
     it("should generate modulepreload links", () => {
       const links = RSCProductionOptimizer.generatePreloadLinks({ Btn: "/btn.js" });
       assertEquals(links.length, 1);
-      assertEquals(links[0].includes('rel="modulepreload"'), true);
-      assertEquals(links[0].includes('href="/btn.js"'), true);
+      const first = links[0];
+      assertExists(first);
+      assertEquals(first.includes('rel="modulepreload"'), true);
+      assertEquals(first.includes('href="/btn.js"'), true);
     });
 
     it("should return empty for no refs", () => {

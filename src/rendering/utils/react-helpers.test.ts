@@ -22,21 +22,21 @@ describe("normalizeChild", () => {
 
   it("unwraps object with only children property", () => {
     const child = React.createElement("span", null, "Content");
-    const wrapped = { children: child };
+    const wrapped = { children: child } as unknown as React.ReactNode;
     const result = normalizeChild(wrapped);
     assertEquals(result, child);
     assert(React.isValidElement(result));
   });
 
   it("keeps objects with multiple properties", () => {
-    const obj = { children: "test", other: "prop" };
+    const obj = { children: "test", other: "prop" } as unknown as React.ReactNode;
     const result = normalizeChild(obj);
     assertEquals(result, obj);
   });
 
   it("memoizes object normalization", () => {
     const child = React.createElement("span", null, "Content");
-    const wrapped = { children: child };
+    const wrapped = { children: child } as unknown as React.ReactNode;
 
     const result1 = normalizeChild(wrapped);
     const result2 = normalizeChild(wrapped);
