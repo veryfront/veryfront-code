@@ -601,13 +601,16 @@ export function isDistributedBackend(backend: CacheBackend): boolean {
   return backend.type !== "memory";
 }
 
+/** Retry interval for distributed cache initialization failures (30 seconds). */
+const DISTRIBUTED_CACHE_RETRY_MS = 30_000;
+
 /**
  * Create a lazy-initialized distributed cache accessor.
  *
  * This encapsulates the common pattern of:
  * 1. Lazy-init a cache backend via Singleflight
  * 2. Skip if memory-only (not useful for cross-pod sharing)
- * 3. Return null if init fails
+ * 3. Return null if init fails, but retry after DISTRIBUTED_CACHE_RETRY_MS
  *
  * @param factory - Function that creates the cache backend
  * @param name - Log prefix for debug messages
@@ -618,6 +621,7 @@ export function createDistributedCacheAccessor(
   name: string,
 ): () => Promise<CacheBackend | null> {
   let backend: CacheBackend | null | undefined;
+  let lastFailureTime = 0;
   const singleflight = new (class {
     private promise: Promise<CacheBackend | null> | null = null;
     do(fn: () => Promise<CacheBackend | null>): Promise<CacheBackend | null> {
@@ -631,22 +635,34 @@ export function createDistributedCacheAccessor(
   })();
 
   return () => {
-    if (backend !== undefined) return Promise.resolve(backend);
+    if (backend !== undefined) {
+      // If backend is null (previous failure), check if enough time has passed to retry
+      if (backend === null && lastFailureTime > 0) {
+        if (Date.now() - lastFailureTime >= DISTRIBUTED_CACHE_RETRY_MS) {
+          backend = undefined;
+          logger.debug(`[${name}] Retrying distributed cache initialization after failure`);
+        }
+      }
+      if (backend !== undefined) return Promise.resolve(backend);
+    }
 
     return singleflight.do(async () => {
       try {
         const b = await factory();
         if (!isDistributedBackend(b)) {
           backend = null;
+          lastFailureTime = 0; // Not a failure, just memory-only — no retry needed
           logger.debug(`[${name}] No distributed cache available (memory only)`);
           return null;
         }
         backend = b;
+        lastFailureTime = 0;
         logger.debug(`[${name}] Distributed cache initialized`, { type: b.type });
         return b;
       } catch (error) {
         logger.debug(`[${name}] Failed to initialize distributed cache`, { error });
         backend = null;
+        lastFailureTime = Date.now();
         return null;
       }
     });

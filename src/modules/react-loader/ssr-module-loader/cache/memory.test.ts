@@ -12,6 +12,7 @@ import {
   globalTmpDirs,
   releaseTransformSlot,
 } from "./memory.ts";
+import { verifiedHttpBundlePaths } from "../http-bundle-helpers.ts";
 import { TRANSFORM_PER_PROJECT_LIMIT } from "../constants.ts";
 
 describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
@@ -20,6 +21,7 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
     globalCrossProjectCache.clear();
     globalInProgress.clear();
     globalTmpDirs.clear();
+    verifiedHttpBundlePaths.clear();
   }
 
   describe("acquireTransformSlot / releaseTransformSlot", () => {
@@ -150,6 +152,16 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
       const stats = getTransformStats();
       assertEquals(stats.activeProjects.size, 0);
     });
+
+    it("should clear verifiedHttpBundlePaths", () => {
+      resetState();
+      verifiedHttpBundlePaths.set("/tmp/a:hash1", true);
+      verifiedHttpBundlePaths.set("/tmp/b:hash2", true);
+      assertEquals(verifiedHttpBundlePaths.size, 2);
+
+      clearSSRModuleCache();
+      assertEquals(verifiedHttpBundlePaths.size, 0);
+    });
   });
 
   describe("clearSSRModuleCacheForProject", () => {
@@ -220,6 +232,16 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
       }
 
       releaseTransformSlot("proj-other");
+    });
+
+    it("should clear verifiedHttpBundlePaths", () => {
+      resetState();
+      verifiedHttpBundlePaths.set("/tmp/a:hash1", true);
+      verifiedHttpBundlePaths.set("/tmp/b:hash2", true);
+      assertEquals(verifiedHttpBundlePaths.size, 2);
+
+      clearSSRModuleCacheForProject("project-1");
+      assertEquals(verifiedHttpBundlePaths.size, 0);
     });
   });
 });

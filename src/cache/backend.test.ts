@@ -428,6 +428,87 @@ Deno.test({
 });
 
 Deno.test({
+  name: "createDistributedCacheAccessor retries after failure when enough time has passed",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const { createDistributedCacheAccessor, ApiCacheBackend } = await import("./backend.ts");
+
+    let callCount = 0;
+    const apiBackend = new ApiCacheBackend({});
+
+    const accessor = createDistributedCacheAccessor(
+      () => {
+        callCount++;
+        if (callCount === 1) {
+          return Promise.reject(new Error("Init failed"));
+        }
+        return Promise.resolve(apiBackend);
+      },
+      "test-retry",
+    );
+
+    // First call fails
+    const result1 = await accessor();
+    assertEquals(result1, null);
+    assertEquals(callCount, 1);
+
+    // Immediate second call returns cached null (no retry yet)
+    const result2 = await accessor();
+    assertEquals(result2, null);
+    assertEquals(callCount, 1);
+
+    // Simulate time passing by manipulating the internal state via a fresh accessor
+    // We test the retry mechanism by creating a new accessor with a patched Date.now
+    const originalDateNow = Date.now;
+    try {
+      // Advance time by 31 seconds
+      Date.now = () => originalDateNow() + 31_000;
+
+      // Now it should retry since enough time has passed
+      const result3 = await accessor();
+      assertEquals(result3, apiBackend);
+      assertEquals(callCount, 2);
+    } finally {
+      Date.now = originalDateNow;
+    }
+  },
+});
+
+Deno.test({
+  name: "createDistributedCacheAccessor does not retry for memory-only backend",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const { createDistributedCacheAccessor, MemoryCacheBackend } = await import("./backend.ts");
+
+    let callCount = 0;
+    const accessor = createDistributedCacheAccessor(
+      () => {
+        callCount++;
+        return Promise.resolve(new MemoryCacheBackend());
+      },
+      "test-no-retry-memory",
+    );
+
+    const result1 = await accessor();
+    assertEquals(result1, null);
+    assertEquals(callCount, 1);
+
+    // Even after time passes, memory-only result should not retry
+    const originalDateNow = Date.now;
+    try {
+      Date.now = () => originalDateNow() + 60_000;
+      const result2 = await accessor();
+      assertEquals(result2, null);
+      assertEquals(callCount, 1);
+    } finally {
+      Date.now = originalDateNow;
+    }
+  },
+});
+
+Deno.test({
   name: "createCacheBackend creates memory backend when preferred",
   sanitizeOps: false,
   sanitizeResources: false,

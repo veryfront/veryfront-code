@@ -23,6 +23,7 @@ import {
   TRANSFORM_PER_PROJECT_LIMIT,
 } from "../constants.ts";
 import { Semaphore } from "../concurrency/semaphore.ts";
+import { verifiedHttpBundlePaths } from "../http-bundle-helpers.ts";
 import type { FailureRecord, ModuleCacheEntry } from "../types.ts";
 
 /** Maximum entries for temp path tracking (small, just pointers) */
@@ -150,6 +151,7 @@ export function clearSSRModuleCache(): void {
   globalModuleCache.clear();
   failedComponents.clear();
   projectTransformCounts.clear();
+  verifiedHttpBundlePaths.clear();
 
   logger.info("[SSR-MODULE-LOADER] ✓ Global cache cleared", {
     modulesCleared: moduleCount,
@@ -189,6 +191,10 @@ export function clearSSRModuleCacheForProject(projectId: string): void {
 
   // Clear project's transform slot count
   projectTransformCounts.delete(projectId);
+
+  // Clear verified HTTP bundle paths — keys are tempPath:contentHash (not project-scoped),
+  // so full clear is needed. This just forces re-verification on next access.
+  verifiedHttpBundlePaths.clear();
 
   logger.debug("[SSR-MODULE-LOADER] ✓ Project cache cleared", {
     projectId,
